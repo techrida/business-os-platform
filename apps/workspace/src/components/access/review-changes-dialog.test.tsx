@@ -162,3 +162,23 @@ it('saves only after a dry run succeeds and every confirm box is ticked', async 
   expect(onSaved).toHaveBeenCalledTimes(1);
   expect(document.querySelector('[role="dialog"]')).toBeNull();
 });
+
+it('cannot save while a blocked warning applies, even with every confirm box ticked', async () => {
+  const warnings: AccessWarning[] = [
+    { code: 'W1', severity: 'blocked', message: 'Founders always have full access.' },
+    { code: 'W5', severity: 'confirm', message: '12 people will see every invoice.' },
+  ];
+  const runSave = vi.fn((_input: SaveInput) => Promise.resolve<ReviewSaveResult>({ ok: true }));
+  await openDialog({
+    runPreview: () => Promise.resolve({ ok: true, preview: preview(warnings) }),
+    runSave,
+  });
+
+  expect(document.querySelector('[role="dialog"]')?.textContent).toContain(
+    'Founders always have full access.',
+  );
+  await click(document.querySelector('[role="dialog"] input[type="checkbox"]'));
+  expect(button('Save changes').disabled).toBe(true);
+  await click(button('Save changes'));
+  expect(runSave).not.toHaveBeenCalled();
+});
