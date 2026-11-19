@@ -104,7 +104,7 @@ test('opportunities never offer Won or Quotation Sent as a move', async ({ brows
       await chooseOption(selectByName(page, 'stage'), 'contacted');
       await page.getByRole('button', { name: 'Move', exact: true }).click();
       await expect(page.getByText('Moved to Contacted.')).toBeVisible();
-      await page.getByRole('button', { name: 'Qualify lead', exact: true }).click();
+      await page.getByRole('button', { name: 'Qualify', exact: true }).click();
       await page
         .getByRole('dialog', { name: 'Qualify this lead?' })
         .getByRole('button', { name: 'Qualify lead', exact: true })
