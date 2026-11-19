@@ -7,7 +7,7 @@ import {
   customerLabel,
   isGuid,
   parseDecision,
-  parseStatusFilter,
+  parseStatusFilters,
 } from './format';
 
 const ID = '11111111-1111-4111-8111-111111111111';
@@ -119,12 +119,15 @@ describe('parseDecision', () => {
 });
 
 describe('small helpers', () => {
-  it('reads the status filter from the query string and defaults to the review queue', () => {
-    expect(parseStatusFilter(undefined)).toBe('submitted');
-    expect(parseStatusFilter('approved')).toBe('approved');
-    expect(parseStatusFilter('all')).toBe('all');
-    expect(parseStatusFilter('nonsense')).toBe('submitted');
-    expect(parseStatusFilter(['approved', 'rejected'])).toBe('submitted');
+  it('reads repeated status filters, drops unknown values and means all cases when none is left', () => {
+    expect(parseStatusFilters(undefined)).toEqual([]);
+    expect(parseStatusFilters('approved')).toEqual(['approved']);
+    expect(parseStatusFilters(['approved', 'rejected', 'approved'])).toEqual([
+      'approved',
+      'rejected',
+    ]);
+    expect(parseStatusFilters(['nonsense', 'draft'])).toEqual(['draft']);
+    expect(parseStatusFilters('all')).toEqual([]);
   });
 
   it('recognises a GUID before it goes into an API path', () => {

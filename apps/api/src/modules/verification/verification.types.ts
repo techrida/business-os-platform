@@ -2,7 +2,11 @@
 // @bos/contracts (crm.ts). Serves the NFR "inputs are validated at the edge".
 import {
   AttachVerificationDocumentBodySchema,
+  limitOffset,
+  multi,
   ReviewVerificationBodySchema,
+  searchParam,
+  VerificationPartyKindSchema,
   VerificationStatusSchema,
 } from '@bos/contracts';
 import { z } from 'zod';
@@ -14,10 +18,16 @@ export const VERIFICATION_OWNER_TYPE = 'verification_case';
 export const CreateVerificationCaseBodySchema = z.strictObject({ partyId: z.guid() });
 export type CreateVerificationCaseBody = z.infer<typeof CreateVerificationCaseBodySchema>;
 
-/** GET /v1/verification-cases?status&partyId */
+/**
+ * GET /v1/verification-cases?q&status&partyKind&partyId&limit&offset. `status` and `partyKind` may repeat; `q`
+ * searches the party's name and code. A bare array comes back, with the full count in X-Total-Count.
+ */
 export const ListVerificationCasesQuerySchema = z.strictObject({
-  status: VerificationStatusSchema.optional(),
+  q: searchParam,
+  status: multi(VerificationStatusSchema),
+  partyKind: multi(VerificationPartyKindSchema),
   partyId: z.guid().optional(),
+  ...limitOffset({ max: 100, fallback: 25 }),
 });
 export type ListVerificationCasesQuery = z.infer<typeof ListVerificationCasesQuerySchema>;
 
