@@ -16,18 +16,21 @@ export function FormStatus({
   state,
   pending,
   inline = true,
+  successToast = true,
 }: {
   state: ActionState;
   pending: boolean;
   inline?: boolean;
+  /** False when the caller already toasted the success itself (a form that remounts on save). */
+  successToast?: boolean;
 }) {
   const announced = useRef<ActionState | null>(null);
   useEffect(() => {
     if (pending || state.status === 'idle' || announced.current === state) return;
     announced.current = state;
     if (state.status === 'error') toast.error(state.message.split('\n')[0] ?? state.message);
-    else toast.success(state.message);
-  }, [state, pending]);
+    else if (successToast) toast.success(state.message);
+  }, [state, pending, successToast]);
   if (pending) {
     return (
       <span className="sr-only" role="status">
