@@ -51,7 +51,11 @@ import { systemActor, withTx, type TxScope } from '../../../platform/db/tx';
 import { NotifyService } from '../../../platform/notify/notify.service';
 import type { MoneyService } from '../../../platform/settings/money.service';
 import { NumberingService } from '../../../platform/settings/numbering.service';
+import { SettingsService } from '../../../platform/settings/settings.service';
 import { OpportunitiesService } from '../../opportunities/opportunities.service';
+import { PortalController } from '../../portal/portal.controller';
+import { PortalService } from '../../portal/portal.service';
+import { DrizzlePortalQuotationStore } from '../../portal/portal.store';
 import { DraftingService } from '../drafting/drafting.service';
 import {
   goldenCreateBody,
@@ -416,6 +420,72 @@ describe('QuotationSendService.send', () => {
     expect(audit).toHaveLength(1);
     // Nudged after the commit.
     expect(queue.add).toHaveBeenCalledTimes(1);
+  });
+
+  it('the emailed link opens the sent quotation in the customer portal, for that customer only', async () => {
+    const { quotationId, versionId, expectedVersion } = await quotationIn({
+      approved: true,
+      scan: 'clean',
+    });
+    await service.send(
+      quotationId,
+      versionId,
+      { recipientContactId: contactId, expectedVersion },
+      `send-${randomUUID()}`,
+    );
+    // The portal shows the selling entity's address on every quotation (buildIssuer): without it the page is a 503.
+    const settings = new SettingsService(db);
+    await withTx(db, scopeA, systemActor('test'), (tx) =>
+      settings.set(tx, 'entity.address', {
+        line1: 'Durbar Marg 1',
+        city: 'Kathmandu',
+        country: 'NP',
+      }),
+    );
+
+    // Follow the link exactly as the customer would: the path after PORTAL_PUBLIC_URL is the portal page
+    // `apps/portal/src/app/(portal)/quotations/[id]/page.tsx`, whose `id` goes to GET /v1/portal/quotations/:id.
+    const [email] = await outboxRowsFor(versionId);
+    const escaped = PORTAL.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    const match = new RegExp(`${escaped}/quotations/([^\\s"'<>/?#]+)`).exec(email!.bodyText);
+    expect(match, 'a portal quotation link in the email').not.toBeNull();
+    const emailedId = match![1]!;
+    expect(emailedId).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i);
+
+    // The real controller, service and store, as the customer's portal user (customer_user grants).
+    const portalAs = (partyId: string) => {
+      const p: Principal = {
+        userId: randomUUID(),
+        zitadelUserId: 'z-portal-buyer',
+        ...scopeA,
+        orgKind: 'customer',
+        partyId,
+        idpOrgId: randomUUID(),
+        roles: ['customer_user'],
+        departmentId: null,
+        status: 'active',
+        grants: new Map<Permission, Scope>([['portal.quotation.read', 'customer_org']]),
+      };
+      // Only the PDF's scan status is read through documents; this test is about the lookup, not the PDF.
+      const documents = { listForOwner: vi.fn().mockResolvedValue([]) };
+      return new PortalController(
+        new PortalService(
+          { current: () => p } as never,
+          new DrizzlePortalQuotationStore(db),
+          documents as never,
+          settings,
+        ),
+      );
+    };
+
+    const view = await portalAs(f.customerPartyId).get(emailedId);
+    expect(view).toMatchObject({ id: versionId, status: 'sent', revisionNo: 1 });
+    // The parent quotation id (what the email used to carry) is not a portal id: the old link was a dead end.
+    await expect(portalAs(f.customerPartyId).get(quotationId)).rejects.toBeInstanceOf(
+      NotFoundException,
+    );
+    // No leak: the same link opens nothing for another customer, and says nothing about whether it exists.
+    await expect(portalAs(randomUUID()).get(emailedId)).rejects.toBeInstanceOf(NotFoundException);
   });
 
   it('replays a retried send with the same key: the same answer and one outbox row', async () => {
