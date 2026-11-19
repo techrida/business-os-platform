@@ -3,6 +3,7 @@
 import {
   DEFAULT_BRAND_COLOUR,
   EMPTY_COMPANY_PROFILE,
+  type MemoDirectory,
   type MemoTemplateSnapshot,
 } from '@bos/contracts';
 import { ConflictException, ServiceUnavailableException } from '@nestjs/common';
@@ -20,6 +21,7 @@ import {
   TestMemoService,
   type LetterheadSettings,
 } from './test-memo.service';
+import type { TestMemoCaller } from './test-memo.caller';
 
 const scope: TxScope = {
   tenantId: '11111111-1111-4111-8111-111111111111',
@@ -202,34 +204,81 @@ const template: MemoTemplateSnapshot = {
   },
 };
 
-/** The service with only what frozenTemplate reads: settings and the logo factory. */
-function serviceWith(settings: LetterheadSettings, resolve: { current: DocumentLogoResolver }) {
-  const logos = {
-    forScope: () => (documentId: string) => resolve.current(documentId),
-  } as unknown as DocumentLogoResolverFactory;
+/**
+ * The service with only what the letterhead reads: settings, the logo factory (none: `resolve` is null) and the
+ * caller's scope. Everything else is null; the tests never reach it.
+ */
+function serviceWith(
+  settings: LetterheadSettings,
+  resolve: { current: DocumentLogoResolver } | null,
+): TestMemoService {
+  const logos =
+    resolve === null
+      ? undefined
+      : ({
+          forScope: () => (documentId: string) => resolve.current(documentId),
+        } as unknown as DocumentLogoResolverFactory);
+  const caller = { current: () => ({ scope }) } as unknown as TestMemoCaller;
   const n = null as never;
-  const service = new TestMemoService(
-    n,
-    n,
-    n,
-    n,
-    n,
-    n,
-    n,
-    n,
-    n,
-    settings as never,
-    undefined,
-    logos,
-  );
-  return (t: MemoTemplateSnapshot) => service['frozenTemplate'](scope, t);
+  return new TestMemoService(n, n, n, n, n, n, n, caller, n, settings as never, undefined, logos);
 }
+
+const freezer =
+  (settings: LetterheadSettings, resolve: { current: DocumentLogoResolver } | null) =>
+  (t: MemoTemplateSnapshot) =>
+    serviceWith(settings, resolve)['frozenTemplate'](scope, t);
+
+const people: MemoDirectory = {
+  organizationId: scope.organizationId,
+  organizationName: 'Acme Pvt. Ltd.',
+  currentUserId: template.preparedBy.userId,
+  departmentId: null,
+  departments: [],
+  people: [],
+};
+
+describe('directory carries the live letterhead', () => {
+  const directoryOf = (service: TestMemoService) => {
+    vi.spyOn(
+      service as unknown as { people: () => Promise<MemoDirectory> },
+      'people',
+    ).mockResolvedValue(people);
+    return service.directory();
+  };
+
+  it('adds the letterhead from the settings now to the people directory', async () => {
+    const values = settingsValues();
+    const service = serviceWith(fakeSettings(values), { current: resolvesTo(PNG) });
+    expect(await directoryOf(service)).toEqual({
+      ...people,
+      letterhead: {
+        addressLines: ['Balaju', 'Kathmandu, Kathmandu', 'Bagmati 44600', 'Nepal'],
+        logoDataUrl: PNG,
+        primaryColour: '#0f766e',
+      },
+    });
+    values['document.style'] = { layout: 'ledger', primaryColour: '#be123c' };
+    expect((await service.directory()).letterhead?.primaryColour).toBe('#be123c');
+  });
+
+  it('still answers when the logo cannot be read: no logo, the rest of the letterhead intact', async () => {
+    const service = serviceWith(fakeSettings(settingsValues()), { current: failing });
+    const directory = await directoryOf(service);
+    expect(directory.people).toEqual([]);
+    expect(directory.letterhead).toMatchObject({ logoDataUrl: null, primaryColour: '#0f766e' });
+  });
+
+  it('without a logo factory wired, a set logo is unreadable: the directory shows none', async () => {
+    const service = serviceWith(fakeSettings(settingsValues()), null);
+    expect((await directoryOf(service)).letterhead?.logoDataUrl).toBeNull();
+  });
+});
 
 describe('submit freezes the letterhead (frozenTemplate)', () => {
   it('keeps the frozen values after the settings and the logo change', async () => {
     const values = settingsValues();
     const resolve = { current: resolvesTo(PNG) };
-    const freeze = serviceWith(fakeSettings(values), resolve);
+    const freeze = freezer(fakeSettings(values), resolve);
     const frozen = await freeze(template);
     const before = structuredClone(frozen);
     expect(frozen.letterhead).toEqual({
@@ -255,15 +304,20 @@ describe('submit freezes the letterhead (frozenTemplate)', () => {
   });
 
   it('fails the submit visibly (503) when a set logo cannot be read', async () => {
-    const freeze = serviceWith(fakeSettings(settingsValues()), { current: failing });
+    const freeze = freezer(fakeSettings(settingsValues()), { current: failing });
     await expect(freeze(template)).rejects.toBeInstanceOf(ServiceUnavailableException);
   });
 
   it('refuses the submit (409) when the letterhead settings are not valid', async () => {
-    const freeze = serviceWith(
+    const freeze = freezer(
       fakeSettings(settingsValues({ 'entity.profile': { logoDocumentId: 'not-a-guid' } })),
       { current: resolvesTo(PNG) },
     );
     await expect(freeze(template)).rejects.toBeInstanceOf(ConflictException);
+  });
+
+  it('fails the submit (503) when no logo factory is wired but a logo is set', async () => {
+    const freeze = freezer(fakeSettings(settingsValues()), null);
+    await expect(freeze(template)).rejects.toBeInstanceOf(ServiceUnavailableException);
   });
 });
