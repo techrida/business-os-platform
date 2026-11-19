@@ -21,7 +21,7 @@ const labels = (can: ((p: string) => boolean) | undefined) =>
   visibleSettingsGroups(can).flatMap((g) => g.sections.map((s) => s.label));
 
 describe('SETTINGS_GROUPS', () => {
-  it('lists the twelve sections of the plan in four groups, in order', () => {
+  it('lists the thirteen sections of the plan in four groups, in order', () => {
     expect(SETTINGS_GROUPS.map((g) => g.label)).toEqual([
       'Company',
       'People and access',
@@ -34,7 +34,8 @@ describe('SETTINGS_GROUPS', () => {
       '/settings/formats',
       '/settings/terms',
       '/settings/users',
-      '/settings/roles',
+      '/settings/departments',
+      '/settings/access',
       '/settings/workflows',
       '/settings/currencies',
       '/settings/tax',

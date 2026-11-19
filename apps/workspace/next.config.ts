@@ -58,6 +58,14 @@ const nextConfig: NextConfig = {
   // `notFound()` guard in the dev page (wall 2) and the post-build checker (wall 3).
   pageExtensions: isDev ? ['dev.tsx', 'dev.ts', 'tsx', 'ts'] : ['tsx', 'ts'],
 
+  // Roles and permissions became Settings > Access (By role tab). Temporary (307), so browsers do
+  // not cache it for good.
+  redirects() {
+    return Promise.resolve([
+      { source: '/settings/roles', destination: '/settings/access/roles', permanent: false },
+    ]);
+  },
+
   headers() {
     return Promise.resolve([
       {
