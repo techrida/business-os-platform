@@ -414,6 +414,13 @@
       "when": 1783000000083,
       "tag": "0083_marketing_role",
       "breakpoints": true
+    },
+    {
+      "idx": 59,
+      "version": "7",
+      "when": 1783000000086,
+      "tag": "0086_departments_admin",
+      "breakpoints": true
     }
   ]
 }
