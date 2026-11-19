@@ -444,6 +444,35 @@ describe('ErrorBodyFilter', () => {
     });
   });
 
+  it('logs every 403 as one structured line with its reason, the route pattern and no user data', () => {
+    const warn = vi.spyOn(Logger.prototype, 'warn').mockImplementation(() => undefined);
+    try {
+      filter(
+        new ForbiddenException({
+          code: 'forbidden',
+          reason: 'out_of_scope',
+          message: 'You have no approval assignment',
+        }),
+        { correlationId: 'corr-403' },
+      );
+      filter(new NotFoundException('missing'));
+      expect(warn).toHaveBeenCalledTimes(1);
+      expect(warn.mock.calls[0]?.[0]).toEqual({
+        msg: 'request forbidden',
+        event: 'http.forbidden',
+        status: 403,
+        method: 'GET',
+        // The fake request has a path but no matched route: the path never reaches the line.
+        route: 'unmatched',
+        code: 'forbidden',
+        reason: 'out_of_scope',
+        correlationId: 'corr-403',
+      });
+    } finally {
+      warn.mockRestore();
+    }
+  });
+
   it('names a refused first-step approver with its 422 code', () => {
     const out = filter(
       new UnprocessableEntityException({

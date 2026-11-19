@@ -33,12 +33,13 @@ import {
   quotationStatusHistory,
   quotationTaxSummary,
   quotationVersions,
+  quotations,
   runMigrations,
   users,
 } from '@bos/db';
 import { ForbiddenException, HttpException } from '@nestjs/common';
 import { PostgreSqlContainer, type StartedPostgreSqlContainer } from '@testcontainers/postgresql';
-import { and, asc, eq, sql } from 'drizzle-orm';
+import { and, asc, eq, inArray, sql } from 'drizzle-orm';
 import { drizzle } from 'drizzle-orm/node-postgres';
 import { Pool } from 'pg';
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -783,6 +784,9 @@ describe('quotation approval: the author names the first-step approver', () => {
     X.warehouse = await staffOf(scopeA, 'warehouse');
     X.accB = await staffOf(scopeB, 'accountant');
     const other = await createTenantWithEntity(appPool, { code: 'OTHER-T' });
+    await read((tx) =>
+      tx.update(users).set({ displayName: 'Mina Rai' }).where(eq(users.id, X.acc2)),
+    );
     X.otherTenant = await staffOf(
       { tenantId: other.tenantId, organizationId: other.organizationId },
       'accountant',
@@ -862,6 +866,72 @@ describe('quotation approval: the author names the first-step approver', () => {
     // The later steps are unchanged: finance is next, open to finance as before.
     expect(decided.steps[1]).toMatchObject({ roleKey: 'finance', status: 'active' });
     expect(decided.steps[1]!.assigneeUserId ?? null).toBeNull();
+
+    // The request names its people itself, so the inbox page needs no admin directory.
+    as(X.acc2, 'accountant');
+    try {
+      const read2 = await approvals.get(request!.id);
+      expect(read2.people).toContainEqual({ userId: X.acc2, name: 'Mina Rai' });
+    } finally {
+      as(f.ownerUserId, 'sales');
+    }
+    // So does the quotation, for its owner and the actors of its history.
+    const detail = await drafting.detail(d.quotationId);
+    const named = new Set((detail.people ?? []).map((p) => p.userId));
+    for (const actor of detail.statusHistory.flatMap((h) => (h.actorId ? [h.actorId] : []))) {
+      expect(named.has(actor)).toBe(true);
+    }
+  });
+
+  it('a quotation names exactly its owner and its history actors; an unset owner adds no one', async () => {
+    const d = await draft('50000.00');
+    await submitNaming(d, X.acc2);
+    const [request] = await requestsOf(d.versionId);
+    await act(X.acc2, 'accountant', request!.id, 'approve');
+
+    // An owner who never acted on the quotation, so only the owner column can name them.
+    const setOwner = (ownerUserId: string | null) =>
+      read((tx) =>
+        tx.update(quotations).set({ ownerUserId }).where(eq(quotations.id, d.quotationId)),
+      );
+    await setOwner(X.mate);
+    const detailAs = async (user: string, role: RoleKey) => {
+      as(user, role);
+      try {
+        return await drafting.detail(d.quotationId);
+      } finally {
+        as(f.ownerUserId, 'sales');
+      }
+    };
+    /** The people as the API should name them: each id with its display name, sorted by id. */
+    const expectedPeople = async (ids: readonly string[]) => {
+      const rows = await read((tx) =>
+        tx
+          .select({ userId: users.id, name: users.displayName })
+          .from(users)
+          .where(inArray(users.id, [...ids])),
+      );
+      expect(rows).toHaveLength(ids.length);
+      return rows.sort((a, b) => a.userId.localeCompare(b.userId));
+    };
+    const sorted = (people: readonly { userId: string; name: string }[] | undefined) =>
+      [...(people ?? [])].sort((a, b) => a.userId.localeCompare(b.userId));
+
+    const owned = await detailAs(X.mate, 'sales');
+    expect(owned.quotation.ownerUserId).toBe(X.mate);
+    const actors = [...new Set(owned.statusHistory.flatMap((h) => (h.actorId ? [h.actorId] : [])))];
+    // The author drafted and submitted it; the owner is none of the actors.
+    expect(actors).toContain(f.ownerUserId);
+    expect(actors).not.toContain(X.mate);
+    // Exactly the owner and each distinct actor: no one else, and no one of another tenant.
+    expect(sorted(owned.people)).toEqual(await expectedPeople([X.mate, ...actors]));
+    expect((owned.people ?? []).map((p) => p.userId)).not.toContain(X.otherTenant);
+
+    // Without an owner the history actors remain, and nothing else; the read does not fail.
+    await setOwner(null);
+    const unowned = await detailAs(U.acc, 'accountant');
+    expect(unowned.quotation.ownerUserId ?? null).toBeNull();
+    expect(sorted(unowned.people)).toEqual(await expectedPeople(actors));
   });
 
   it('a named Sales colleague sees and decides only that step, and nothing else', async () => {

@@ -4,6 +4,7 @@ import { renderToStaticMarkup } from 'react-dom/server';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { ApiError } from '@/lib/api';
+import { __resetEnvForTests } from '@/lib/env';
 
 import QuotationDetailPage from './page';
 
@@ -239,5 +240,126 @@ describe('quotation detail page', () => {
     const name = 'Customer '.repeat(80).trim();
     mocks.getQuotation.mockResolvedValue(detail({ customerName: name }));
     expect(await render()).toContain(name);
+  });
+});
+
+/** The env the API client validates before any fetch; without it no request would reach the stub. */
+function stubApiEnv() {
+  for (const [k, v] of Object.entries({
+    API_INTERNAL_URL: 'http://api:3001',
+    OIDC_ISSUER: 'https://auth.test',
+    OIDC_CLIENT_ID: 'client-123',
+    OIDC_REDIRECT_URI: 'https://app.test/auth/callback',
+    OIDC_AUDIENCE: 'proj-42',
+    WORKSPACE_PUBLIC_URL: 'https://app.test',
+    VALKEY_URL: 'redis://valkey.test:6379',
+    SESSION_ENC_KEY: Buffer.alloc(32, 5).toString('base64'),
+  })) {
+    vi.stubEnv(k, v);
+  }
+  __resetEnvForTests();
+}
+
+describe('quotation detail page: names come with the quotation', () => {
+  const OWNER = '66666666-6666-4666-8666-666666666666';
+
+  it('names the owner from the quotation itself and calls no admin endpoint', async () => {
+    // Every fetch the page makes passes here (getQuotation itself is mocked above). The admin directory answers
+    // 403 to Sales and Accountants, as the API does.
+    const fetchMock = vi.fn<typeof fetch>(() =>
+      Promise.resolve(
+        new Response(
+          JSON.stringify({
+            error: { code: 'forbidden', message: 'Forbidden', correlationId: 'c' },
+          }),
+          { status: 403, headers: { 'content-type': 'application/json' } },
+        ),
+      ),
+    );
+    stubApiEnv();
+    vi.stubGlobal('fetch', fetchMock);
+    try {
+      const d = detail();
+      mocks.getQuotation.mockResolvedValue({
+        ...d,
+        quotation: { ...d.quotation, ownerUserId: OWNER },
+        people: [{ userId: OWNER, name: 'Ram Thapa' }],
+      });
+      const html = await render();
+      const admin = fetchMock.mock.calls
+        .map(([url]) => new URL(url as URL | string).pathname)
+        .filter((path) => path.startsWith('/v1/admin/'));
+      expect(admin).toEqual([]);
+      expect(html).toContain('Ram Thapa');
+    } finally {
+      vi.unstubAllGlobals();
+      vi.unstubAllEnvs();
+    }
+  });
+
+  // An owner who is none of the history actors, so only the owner fact can show their name.
+  const AUTHOR = '77777777-7777-4777-8777-777777777777';
+  const APPROVER = '88888888-8888-4888-8888-888888888888';
+  const STRAY = '99999999-9999-4999-8999-999999999999';
+  function namedDetail(ownerUserId: string | null, people: { userId: string; name: string }[]) {
+    const d = detail();
+    return {
+      ...d,
+      quotation: { ...d.quotation, ownerUserId },
+      statusHistory: [
+        { ...d.statusHistory[0]!, actorId: AUTHOR },
+        { ...d.statusHistory[0]!, fromStatus: 'draft', toStatus: 'submitted', actorId: AUTHOR },
+        {
+          ...d.statusHistory[0]!,
+          fromStatus: 'submitted',
+          toStatus: 'approved',
+          actorId: APPROVER,
+        },
+      ],
+      people,
+    } satisfies QuotationDetail;
+  }
+
+  it('names an owner who never acted and every history actor, and nobody it does not refer to', async () => {
+    mocks.getQuotation.mockResolvedValue(
+      namedDetail(OWNER, [
+        { userId: OWNER, name: 'Ram Thapa' },
+        { userId: AUTHOR, name: 'Sita Gurung' },
+        { userId: APPROVER, name: 'Mina Rai' },
+        { userId: STRAY, name: 'Stray Person' },
+      ]),
+    );
+    const html = await render();
+    expect(html).toMatch(/>Owner<\/dt><dd[^>]*><span>Ram Thapa<\/span>/);
+    expect(html).toContain('Sita Gurung');
+    expect(html).toContain('Mina Rai');
+    expect(html).not.toContain('Stray Person');
+    expect(html).not.toContain('name unavailable');
+  });
+
+  it('says the owner name is unavailable when the quotation omits it, not another name', async () => {
+    mocks.getQuotation.mockResolvedValue(
+      namedDetail(OWNER, [
+        { userId: AUTHOR, name: 'Sita Gurung' },
+        { userId: APPROVER, name: 'Mina Rai' },
+      ]),
+    );
+    const html = await render();
+    expect(html).toContain('Owner name unavailable');
+    expect(html).not.toContain('Person name unavailable');
+  });
+
+  it('shows an unset owner as Unassigned and still names the history actors', async () => {
+    mocks.getQuotation.mockResolvedValue(
+      namedDetail(null, [
+        { userId: AUTHOR, name: 'Sita Gurung' },
+        { userId: APPROVER, name: 'Mina Rai' },
+      ]),
+    );
+    const html = await render();
+    expect(html).toContain('Unassigned');
+    expect(html).toContain('Sita Gurung');
+    expect(html).toContain('Mina Rai');
+    expect(html).not.toContain('name unavailable');
   });
 });
