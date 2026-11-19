@@ -70,15 +70,22 @@ export function parseDiscount(
 ): { ok: true; data: Discount | undefined } | { ok: false; error: string } {
   if (mode === undefined || mode === '' || mode === 'none') return { ok: true, data: undefined };
   if (mode !== 'pct' && mode !== 'amount') return { ok: false, error: INCOMPLETE };
-  const value = (raw ?? '').replace(/[\s,]/g, '');
+  // A percentage has no grouping, so a comma stays and fails the check ("1,5" is not 15). Amounts may group.
+  const value = (raw ?? '').replace(mode === 'pct' ? /\s/g : /[\s,]/g, '');
   if (value === '') return { ok: false, error: 'Enter the discount, or choose No discount.' };
   const checked = DiscountSchema.safeParse({ mode, value });
+  if (checked.success && mode === 'pct' && Number(value) >= 100) {
+    return {
+      ok: false,
+      error: 'A discount of 100% leaves nothing to invoice. Enter less than 100.',
+    };
+  }
   if (checked.success) return { ok: true, data: checked.data };
   return {
     ok: false,
     error:
       mode === 'pct'
-        ? 'Enter a percentage from 0 to 100, with up to four decimals.'
+        ? 'Enter a percentage from 0 to 100, with up to four decimals and no commas.'
         : 'Enter an amount of zero or more, with up to two decimals.',
   };
 }

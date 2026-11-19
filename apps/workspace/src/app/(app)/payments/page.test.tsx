@@ -96,8 +96,10 @@ describe('payments list', () => {
     const links = html.match(/<a [^>]*>/g) ?? [];
     const numbered = links.find((a) => a.includes('aria-label="View RCPT-2083/84-00001"'));
     expect(numbered).toContain('href="/payments/22222222-2222-4222-8222-222222222222"');
-    const unnumbered = links.find((a) =>
-      a.includes('aria-label="View payment from Himalayan Traders Pvt. Ltd. received '),
+    const unnumbered = links.find(
+      (a) =>
+        a.includes('aria-label="View payment of ') &&
+        a.includes(' from Himalayan Traders Pvt. Ltd. received '),
     );
     expect(unnumbered).toContain('href="/payments/11111111-1111-4111-8111-111111111111"');
   });

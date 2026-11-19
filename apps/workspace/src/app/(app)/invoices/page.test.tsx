@@ -312,16 +312,22 @@ describe('outstanding balance card', () => {
 describe('record payment row action', () => {
   const RECORD = `href="/payments/new?customerId=${CUSTOMER}"`;
 
-  it('offers Record payment on an issued tax invoice to the people who record payments', async () => {
+  it('offers Record payment on an issued tax invoice when the filter selects owing states only', async () => {
     mocks.requireStaffSession.mockResolvedValue({ accessToken: 't', roles: ['accountant'] });
-    const html = await render();
+    const html = await render({ settlement: ['unpaid', 'overdue'] });
     expect(html).toContain(RECORD);
     expect(html).toContain('Record payment for INV-2083/84-00001');
   });
 
+  it('offers nothing with no Payment filter, or one that includes settled invoices', async () => {
+    mocks.requireStaffSession.mockResolvedValue({ accessToken: 't', roles: ['accountant'] });
+    expect(await render()).not.toContain('Record payment');
+    expect(await render({ settlement: ['paid', 'overdue'] })).not.toContain('Record payment');
+  });
+
   it('hides it from a role without payment.record', async () => {
     mocks.requireStaffSession.mockResolvedValue({ accessToken: 't', roles: ['management'] });
-    const html = await render();
+    const html = await render({ settlement: ['unpaid'] });
     expect(html).toContain('INV-2083/84-00001');
     expect(html).not.toContain('Record payment');
   });
@@ -334,6 +340,6 @@ describe('record payment row action', () => {
         item({ id: '55555555-5555-4555-8555-555555555555', kind: 'credit_note' }),
       ]),
     );
-    expect(await render()).not.toContain('Record payment');
+    expect(await render({ settlement: ['unpaid'] })).not.toContain('Record payment');
   });
 });
