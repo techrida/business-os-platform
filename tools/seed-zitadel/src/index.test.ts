@@ -874,6 +874,21 @@ describe('@bos/seed-zitadel', () => {
       expect(result.changes).toContain(`wrote .dev/${PORTAL_ENV_FILE}`);
     });
 
+    it('a re-run without a portal URL keeps an existing portal app in OIDC_ALLOWED_AZP and changes nothing else', async () => {
+      const { api, files, deps } = setup();
+      await runSeed({ ...deps, portalUrl });
+      const mutationsAfterFirst = api.mutations;
+
+      const second = await runSeed(deps);
+
+      expect(second.changes).toEqual([]);
+      expect(api.mutations).toBe(mutationsAfterFirst);
+      expect(api.apps.size).toBe(2);
+      expect(files.data.get(PORTAL_ENV_FILE)).toBe('OIDC_CLIENT_ID=client-2\n');
+      const env = parseEnv(files.data.get('zitadel.env'));
+      expect(env['OIDC_ALLOWED_AZP']).toBe('client-1,client-2,bos-loadtest,bos-loadtest-approver');
+    });
+
     it('a second run with the same portal URL changes nothing', async () => {
       const { api, files, deps } = setup();
       await runSeed({ ...deps, portalUrl });
