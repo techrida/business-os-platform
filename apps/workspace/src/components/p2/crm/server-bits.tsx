@@ -74,14 +74,6 @@ export const ALL_KINDS = ACTIVITY_KINDS.map((k) => ({ value: k, label: KIND_LABE
 /** The kinds a list can be filtered by: every kind but `task`, which nothing creates any more. */
 export const FILTER_KINDS = ALL_KINDS.filter((k) => k.value !== 'task');
 
-/** A user id to display name lookup, built from `GET /v1/leads/owners` (the users directory). */
-export function peopleById(
-  people: readonly { userId: string; displayName: string; email?: string }[],
-): ReadonlyMap<string, string> {
-  // The email stands in for a blank name, as the lead list does.
-  return new Map(people.map((p) => [p.userId, p.displayName || (p.email ?? '')]));
-}
-
 /** History keeps logged and completed activities only: planned and cancelled ones never show. */
 export function historyItems<A extends Pick<ActivityDto, 'planned' | 'cancelledAt'>>(
   items: readonly A[],
@@ -108,13 +100,13 @@ export const ACTIVITY_STATE_TONE = {
 /**
  * The time and the person on a History row. A completed follow-up shows when it was completed,
  * everything else when it happened. The actor is whoever logged it, or scheduled it when it was
- * planned first; unknown for older rows or for someone outside the directory, and then left out.
+ * planned first, by the display name the API joins onto the activity (D46); unknown only for older rows with no
+ * author, and then left out.
  */
 export function historyMeta(
-  a: Pick<ActivityDto, 'occurredAt' | 'completedAt' | 'dueAt' | 'createdByUserId'>,
-  people: ReadonlyMap<string, string> = new Map(),
+  a: Pick<ActivityDto, 'occurredAt' | 'completedAt' | 'dueAt' | 'createdByName'>,
 ): { at: string; actor: string | null } {
-  const name = a.createdByUserId ? people.get(a.createdByUserId) : undefined;
+  const name = a.createdByName;
   return {
     at: a.completedAt ?? a.occurredAt,
     actor: name ? `${a.dueAt ? 'Scheduled' : 'Logged'} by ${name}` : null,
@@ -137,13 +129,10 @@ function subjectLink(a: ActivityDto): { href: string; label: string } | null {
 export function ActivityList({
   items,
   showSubjectLink = false,
-  people,
   empty,
 }: {
   items: readonly ActivityDto[];
   showSubjectLink?: boolean;
-  /** Names for `createdByUserId`, from `peopleById`. Without it no actor is shown. */
-  people?: ReadonlyMap<string, string>;
   empty: ReactNode;
 }) {
   const rows = historyItems(items);
@@ -158,7 +147,7 @@ export function ActivityList({
     <ol className={styles.timeline}>
       {rows.map((a) => {
         const link = showSubjectLink ? subjectLink(a) : null;
-        const { at, actor } = historyMeta(a, people);
+        const { at, actor } = historyMeta(a);
         return (
           <li key={a.id} className={styles.entry}>
             <div className={styles.entryHead}>
