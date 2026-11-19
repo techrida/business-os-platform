@@ -4,11 +4,14 @@
 // so a picker lists exactly the people the API would accept.
 //
 // - Founder assigns anyone.
-// - Anyone assigns themselves.
+// - Finance, Accountant and PMO, when starting a lead (`create`), pick a Sales user with a department as its
+//   owner, never themselves or a colleague.
+// - Anyone else assigns themselves.
+// - Sales may not assign to Marketing, even inside one shared department.
 // - Within one department a person assigns at or below their own level: staff to same-level peers, managers to
 //   staff and managers, heads to anyone in the department. Nobody assigns upward.
-// - Marketing may hand to Sales, any level up to their own. Sales may not hand to Marketing.
-// - Finance, Accountant and PMO, when starting a lead (`create`), may pick any Sales user as its owner.
+// - Marketing may hand to Sales, any level up to their own, when both belong to a department (a lead with an
+//   owner who has no department would belong to no department).
 // Sales and Marketing are told apart by role key, never by a department's name. A person holding both roles
 // counts as Marketing for the hand-off, so they can reach Sales. A refusal carries a reason code for the 400
 // message and the picker.
@@ -27,6 +30,9 @@ const holds = (party: AssignmentParty, role: string): boolean =>
 
 const rank = (party: AssignmentParty): number => ACCESS_LEVEL_RANK[party.level];
 
+const isIntake = (party: AssignmentParty): boolean =>
+  LEAD_INTAKE_ROLE_KEYS.some((role) => holds(party, role));
+
 /** May `actor` hand work to `target`? */
 export function decideAssignment(
   actor: AssignmentParty,
@@ -34,7 +40,29 @@ export function decideAssignment(
   context: AssignmentContext = 'reassign',
 ): AssignmentDecision {
   if (holds(actor, 'founder')) return { allowed: true, reason: 'founder' };
+
+  if (context === 'create' && isIntake(actor)) {
+    if (holds(target, SALES_ROLE_KEY)) {
+      return target.departmentId === null
+        ? { allowed: false, reason: 'no_department' }
+        : { allowed: true, reason: 'intake_handoff' };
+    }
+    // Someone who only starts leads for Sales may not keep one; a person who also works leads falls through.
+    if (!holds(actor, SALES_ROLE_KEY) && !holds(actor, MARKETING_ROLE_KEY)) {
+      return { allowed: false, reason: 'sales_owner_required' };
+    }
+  }
+
   if (actor.userId === target.userId) return { allowed: true, reason: 'self' };
+
+  if (
+    holds(actor, SALES_ROLE_KEY) &&
+    !holds(actor, MARKETING_ROLE_KEY) &&
+    holds(target, MARKETING_ROLE_KEY) &&
+    !holds(target, SALES_ROLE_KEY)
+  ) {
+    return { allowed: false, reason: 'reverse_handoff' };
+  }
 
   if (actor.departmentId !== null && actor.departmentId === target.departmentId) {
     return rank(target) <= rank(actor)
@@ -43,25 +71,12 @@ export function decideAssignment(
   }
 
   if (holds(actor, MARKETING_ROLE_KEY) && holds(target, SALES_ROLE_KEY)) {
+    if (actor.departmentId === null || target.departmentId === null) {
+      return { allowed: false, reason: 'no_department' };
+    }
     return rank(target) <= rank(actor)
       ? { allowed: true, reason: 'sales_handoff' }
       : { allowed: false, reason: 'upward' };
-  }
-
-  if (
-    context === 'create' &&
-    LEAD_INTAKE_ROLE_KEYS.some((role) => holds(actor, role)) &&
-    holds(target, SALES_ROLE_KEY)
-  ) {
-    return { allowed: true, reason: 'intake_handoff' };
-  }
-
-  if (
-    holds(actor, SALES_ROLE_KEY) &&
-    !holds(actor, MARKETING_ROLE_KEY) &&
-    holds(target, MARKETING_ROLE_KEY)
-  ) {
-    return { allowed: false, reason: 'reverse_handoff' };
   }
 
   return {
