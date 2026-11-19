@@ -526,20 +526,43 @@ describe('list and cross-entity isolation', () => {
       key(),
     );
 
-    const all = await drafting.list();
+    const { rows: all, total } = await drafting.list();
+    expect(total).toBe(all.length);
     expect(all.every((i) => InvoiceListItemSchema.safeParse(i).success)).toBe(true);
     expect(all.map((i) => i.id)).toEqual(
       expect.arrayContaining([drafted.invoice.id, proforma.invoice.id]),
     );
     expect(all[0]?.customerName).toBe('Acme Pvt. Ltd.');
-    const proformas = await drafting.list({ kind: 'proforma' });
+    const proformas = (await drafting.list({ kind: ['proforma'] })).rows;
     expect(proformas.every((i) => i.kind === 'proforma')).toBe(true);
     expect(proformas.map((i) => i.id)).toContain(proforma.invoice.id);
-    expect((await drafting.list({ customerId: randomUUID() })).length).toBe(0);
+    expect((await drafting.list({ customerId: [randomUUID()] })).rows.length).toBe(0);
+
+    // Several values of one filter, a search, and a page with the total of all matches.
+    const either = await drafting.list({ kind: ['proforma', 'tax_invoice'], status: ['draft'] });
+    expect(either.rows.map((i) => i.id)).toEqual(
+      expect.arrayContaining([drafted.invoice.id, proforma.invoice.id]),
+    );
+    expect((await drafting.list({ q: 'Acme' })).total).toBe(all.length);
+    const page = await drafting.list({ limit: 1, offset: 1 });
+    expect(page.rows.length).toBe(1);
+    expect(page.total).toBe(all.length);
+    expect(page.rows[0]?.id).toBe(all[1]?.id);
+    // A filter that names the other entity's customer narrows to nothing; it never reaches further.
+    const summary = await drafting.summary({ q: 'Acme' });
+    expect(summary.total).toBe(all.length);
+    expect(summary.byStatus.draft).toBeGreaterThanOrEqual(2);
+    expect(summary.customers.map((c) => c.name)).toEqual(['Acme Pvt. Ltd.']);
+    // Settlement is derived from an open item, and a draft has none.
+    expect((await drafting.list({ settlement: ['paid', 'overdue', 'unpaid'] })).total).toBe(0);
 
     current.scope = scopeB;
     current.role = 'finance';
-    expect((await drafting.list()).length).toBe(0);
+    expect((await drafting.list()).rows.length).toBe(0);
+    expect((await drafting.list({ q: 'Acme' })).rows.length).toBe(0);
+    const other = await drafting.summary();
+    expect(other.total).toBe(0);
+    expect(other.customers).toEqual([]);
     await expect(drafting.detail(drafted.invoice.id)).rejects.toBeInstanceOf(NotFoundException);
     await expect(
       drafting.discard(drafted.invoice.id, { expectedVersion: 1, reason: 'not mine' }, key()),
