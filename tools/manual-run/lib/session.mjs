@@ -572,12 +572,26 @@ export async function realLogin(session, page, key, startUrl) {
   await page.goto(startUrl, { waitUntil: 'domcontentloaded' });
   const loginName = page.locator('input[name=loginName]');
   await loginName.waitFor({ state: 'visible', timeout: session.cfg.navTimeout });
-  await loginName.fill(p.preferredLoginName || p.username);
-  await page.locator('button[type=submit]', { hasText: 'Continue' }).click();
+  const cont = page.locator('button[type=submit]', { hasText: 'Continue' });
+  // The login app is a React page too: a value typed before it hydrates leaves Continue disabled.
+  const fillUntilEnabled = async (field, value) => {
+    for (let i = 0; i < 4; i++) {
+      await field.fill('');
+      await field.pressSequentially(value, { delay: 20 });
+      await cont.waitFor({ state: 'visible', timeout: 10000 }).catch(() => {});
+      for (let t = 0; t < 12; t++) {
+        if (await cont.isEnabled().catch(() => false)) return;
+        await sleep(500);
+      }
+      await sleep(3000);
+    }
+  };
+  await fillUntilEnabled(loginName, p.preferredLoginName || p.username);
+  await cont.click();
   const pw = page.locator('input[type=password]');
   await pw.waitFor({ state: 'visible' });
-  await pw.fill(p.password);
-  await page.locator('button[type=submit]', { hasText: 'Continue' }).click();
+  await fillUntilEnabled(pw, p.password);
+  await cont.click();
   if (p.totpSecret) {
     const code = page.locator('input[name=code]');
     await code.waitFor({ state: 'visible', timeout: 60000 });
