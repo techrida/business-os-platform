@@ -175,6 +175,7 @@ export function QuotationView({
             <Term label="Scope" value={view.scope} />
             <Term label="Assumptions" value={view.assumptions} />
             <Term label="Exclusions" value={view.exclusions} />
+            <Term label="Terms and conditions" value={view.termsAndConditions} />
             <Term label="Delivery timeline" value={view.deliveryTimeline} />
             <Term label="Payment terms" value={view.paymentTermName} />
           </dl>
