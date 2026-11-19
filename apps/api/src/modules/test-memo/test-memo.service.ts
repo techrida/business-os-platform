@@ -58,6 +58,7 @@ import {
 } from '@nestjs/common';
 import {
   and,
+  count,
   desc,
   eq,
   inArray,
@@ -82,6 +83,7 @@ import { AuthzService } from '../../platform/authz/authz.service';
 import { RoleCache } from '../../platform/authz/role-cache';
 import { DB, type Db, type DbTransaction } from '../../platform/db/db.module';
 import { withTx, type TxScope } from '../../platform/db/tx';
+import { exactMatch } from '../../platform/list';
 import { type DocumentOwnerPolicy } from '../../platform/documents/documents.ports';
 import { DocumentsService } from '../../platform/documents/documents.service';
 import { personLabel } from '../../platform/users/person-names';
@@ -506,9 +508,11 @@ export class TestMemoService implements OnModuleInit {
   /**
    * The memos the caller may open, newest first. The visibility filter is AuthzService.scopeWhere, the SQL twin
    * of the record check `get` runs, so a row appears here exactly when its id would open: own memos for Sales,
-   * the department's for a department lead, the entity's for `all`, never another tenant's or entity's. Keyset
-   * pagination on (created_at, id): the order is total, so a page edge neither skips nor repeats a memo, and
-   * a page costs the same however deep it is.
+   * the department's for a department lead, the entity's for `all`, never another tenant's or entity's. Status
+   * and search only narrow that set (they are AND-ed after it), so an owner's name or a status never reaches a
+   * draft the caller may not open. Keyset pagination on (created_at, id): the order is total, so a page edge
+   * neither skips nor repeats a memo, and a page costs the same however deep it is. Search is an exact
+   * substring match: a similarity order cannot be followed by this cursor.
    */
   async list(query: MemoListQuery): Promise<MemoList> {
     this.authz.assert('memo.read');
@@ -524,7 +528,22 @@ export class TestMemoService implements OnModuleInit {
         eq(testMemos.ownerUserId, principal.userId),
       )!,
     ];
-    if (query.status !== undefined) filters.push(eq(testMemos.status, query.status));
+    if (query.status !== undefined && query.status.length > 0) {
+      filters.push(inArray(testMemos.status, query.status));
+    }
+    if (query.q !== undefined) {
+      filters.push(exactMatch(query.q, [testMemos.number, testMemos.title, users.displayName]));
+    }
+    const ownerJoin = and(
+      eq(users.tenantId, testMemos.tenantId),
+      eq(users.id, testMemos.ownerUserId),
+    );
+    // The total ignores the cursor: it is every match, so "N memos" does not shrink as the reader pages on.
+    const total = await this.db
+      .select({ n: count() })
+      .from(testMemos)
+      .leftJoin(users, ownerJoin)
+      .where(and(...filters));
     if (cursor !== undefined) {
       filters.push(
         sql`(${testMemos.createdAt}, ${testMemos.id}) < (${cursor.createdAt}::timestamptz, ${cursor.id}::uuid)`,
@@ -538,10 +557,7 @@ export class TestMemoService implements OnModuleInit {
         departmentName: departments.name,
       })
       .from(testMemos)
-      .leftJoin(
-        users,
-        and(eq(users.tenantId, testMemos.tenantId), eq(users.id, testMemos.ownerUserId)),
-      )
+      .leftJoin(users, ownerJoin)
       .leftJoin(
         departments,
         and(
@@ -572,6 +588,7 @@ export class TestMemoService implements OnModuleInit {
         rows.length > query.limit && last !== undefined
           ? encodeCursor({ createdAt: last.createdKey, id: last.memo.id })
           : null,
+      total: total[0]?.n ?? 0,
     };
   }
 

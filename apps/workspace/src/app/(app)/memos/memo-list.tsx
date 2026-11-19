@@ -4,35 +4,40 @@ import Link from 'next/link';
 import { Alert } from '@/components/ui/alert';
 import { EmptyState } from '@/components/ui/empty-state';
 import { LinkButton } from '@/components/ui/button';
+import { ResultCount } from '@/components/ui/filter-bar';
 import { Icon } from '@/components/ui/icon';
 import { Skeleton } from '@/components/ui/panel';
 import { CellTitle, Table, Td, Th } from '@/components/ui/table';
 import { failureOf, listMemos } from '@/lib/api-kernel';
 import { requireStaffSession } from '@/lib/bff';
 import { when } from '@/lib/kernel-format';
-import { memoRowNote, MEMO_PAGE_SIZE, MEMO_STATUS_FILTERS } from '@/lib/memo-list-view';
+import {
+  activeFilterLabels,
+  clearFiltersHref,
+  hrefWith,
+  readList,
+  type RawParams,
+} from '@/lib/list-params';
+import { memoRowNote, MEMO_PAGE_SIZE } from '@/lib/memo-list-view';
 
 import styles from '../kit.module.css';
 import { PlusIcon } from './memo-icons';
 import pageStyles from './memo-pages.module.css';
+import { cursorOf, MEMO_LIST_SPEC, statusLabel } from './memo-list-params';
 import { MemoStatus } from './memo-status';
 
 /** The page's list: loads one page of the memos this person may open. Rendered inside Suspense by page.tsx. */
-export async function MemoList({
-  cursor,
-  status,
-}: {
-  cursor: string | undefined;
-  status: string | undefined;
-}) {
+export async function MemoList({ params }: { params: RawParams }) {
   const session = await requireStaffSession('/memos');
-  const filter = MEMO_STATUS_FILTERS.find((f) => f.value === status)?.value;
+  const { q, multi } = readList(params, MEMO_LIST_SPEC);
+  const cursor = cursorOf(params);
   let page;
   try {
     page = await listMemos(session, {
       limit: MEMO_PAGE_SIZE,
       ...(cursor !== undefined ? { cursor } : {}),
-      ...(filter !== undefined ? { status: filter } : {}),
+      ...(multi.status.length > 0 ? { status: multi.status } : {}),
+      ...(q !== undefined ? { q } : {}),
     });
   } catch (err) {
     const f = failureOf(err);
@@ -51,9 +56,9 @@ export async function MemoList({
         }
         actions={
           staleLink ? (
-            <Link href="/memos">Show the newest memos</Link>
+            <Link href={hrefWith('/memos', params, {})}>Show the newest memos</Link>
           ) : f.status !== 403 ? (
-            <Link href={filter ? `/memos?status=${filter}` : '/memos'}>Try again</Link>
+            <Link href={hrefWith('/memos', params, { page: cursor })}>Try again</Link>
           ) : null
         }
       >
@@ -67,16 +72,20 @@ export async function MemoList({
   }
 
   if (page.items.length === 0) {
-    return filter !== undefined ? (
+    const hiding = activeFilterLabels(
+      { q, multi, single: {} },
+      { status: { label: 'Status', format: statusLabel } },
+    );
+    return hiding.length > 0 ? (
       <EmptyState
-        title="No memos with this status"
+        title="No memos match"
         action={
-          <LinkButton href="/memos" variant="secondary">
-            Show every memo
+          <LinkButton href={clearFiltersHref('/memos', params, MEMO_LIST_SPEC)} variant="secondary">
+            Clear filters
           </LinkButton>
         }
       >
-        Nothing you can open has this status right now.
+        Nothing you can open matches {hiding.join(' · ')}.
       </EmptyState>
     ) : (
       <EmptyState
@@ -92,10 +101,6 @@ export async function MemoList({
       </EmptyState>
     );
   }
-
-  const next = new URLSearchParams();
-  if (page.nextCursor !== null) next.set('cursor', page.nextCursor);
-  if (filter !== undefined) next.set('status', filter);
 
   return (
     <div className={pageStyles.tableCard}>
@@ -114,22 +119,20 @@ export async function MemoList({
         </tbody>
       </Table>
       <div className={pageStyles.tableFooter}>
-        <p>
-          Showing {page.items.length} {page.items.length === 1 ? 'memo' : 'memos'}
-        </p>
+        <ResultCount shown={page.items.length} total={page.total} noun="memo" />
         {page.nextCursor !== null || cursor !== undefined ? (
           <nav className={pageStyles.pager} aria-label="Memo pages">
             {cursor !== undefined ? (
-              <LinkButton
-                href={filter ? `/memos?status=${filter}` : '/memos'}
-                size="small"
-                variant="ghost"
-              >
+              <LinkButton href={hrefWith('/memos', params, {})} size="small" variant="ghost">
                 Newest memos
               </LinkButton>
             ) : null}
             {page.nextCursor !== null ? (
-              <LinkButton href={`/memos?${next.toString()}`} size="small" variant="tertiary">
+              <LinkButton
+                href={hrefWith('/memos', params, { page: page.nextCursor })}
+                size="small"
+                variant="tertiary"
+              >
                 Older memos <Icon name="chevron-right" size={16} />
               </LinkButton>
             ) : null}
