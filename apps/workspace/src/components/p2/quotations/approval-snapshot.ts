@@ -31,16 +31,6 @@ export function exceedsDiscountLimit(effectiveDiscountPct: string): boolean {
   return Number(effectiveDiscountPct) > DISCOUNT_LIMIT_PCT;
 }
 
-/**
- * Drops trailing zeros from a decimal string for display ("13.0000" is "13"). It never rounds, so
- * "12.0001" stays as it is and cannot hide that it is over the limit.
- */
-export function trimPercent(value: string): string {
-  if (!value.includes('.')) return value;
-  const trimmed = value.replace(/0+$/, '').replace(/\.$/, '');
-  return trimmed === '' || trimmed === '-' ? '0' : trimmed;
-}
-
 /** The reason of each approval step, in step order, once each, with blanks left out. */
 export function routeReasons(steps: readonly { seq: number; reason: string }[]): string[] {
   const seen = new Set<string>();

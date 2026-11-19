@@ -1,7 +1,14 @@
 // Pure rules shared by the client, server actions and tests. Milestone amounts depend on the
 // server's final total. Pricing itself stays on the server.
-import { NonNegativeDecimalString, PaymentMilestoneSchema } from '@bos/contracts';
-import { Dec } from '@bos/locale';
+import {
+  formatPaymentPercentUnits,
+  FULL_PAYMENT_PERCENT_UNITS,
+  NonNegativeDecimalString,
+  PaymentMilestoneSchema,
+  paymentPercentUnits,
+  trimPercent,
+} from '@bos/contracts';
+import { allocatePaymentSchedule, Dec, roundPaymentShare } from '@bos/locale';
 import { z } from 'zod';
 
 export type Currency = 'NPR' | 'INR' | 'USD';
@@ -100,7 +107,6 @@ export function plainNumber(raw: string): string {
 // ---------------------------------------------------------------------------------------------
 
 const FULL_PERCENT = 100;
-const FULL_PERCENT_HUNDREDTHS = FULL_PERCENT * 100;
 
 /** Number inputs can produce ".5"; the wire contract expects a leading digit. */
 const milestoneNumber = (raw: string): string => plainNumber(raw).replace(/^\./, '0.');
@@ -115,19 +121,13 @@ function parseMilestoneMoney(raw: string): Dec | null {
   return value.success ? new Dec(value.data) : null;
 }
 
-function hundredths(percent: string): number | null {
-  const p = validPercent(percent);
-  if (p === null) return null;
-  const [whole = '0', frac = ''] = p.split('.');
-  return Number(whole) * 100 + Number(frac.padEnd(2, '0'));
+function percentUnits(percent: string): number | null {
+  const valid = validPercent(percent);
+  return valid === null ? null : paymentPercentUnits(valid);
 }
 
-const fromHundredths = (n: number): string =>
-  `${Math.floor(n / 100)}.${String(n % 100).padStart(2, '0')}`;
-
 function amountForPercent(percent: string, total: Dec): string {
-  // @bos/locale's Decimal rounds half up, the same rule as quotation pricing.
-  return total.times(percent).div(FULL_PERCENT).toFixed(2);
+  return roundPaymentShare(total, percent).toFixed(2);
 }
 
 /** Derive a row amount from the canonical percent and the current server-priced total. */
@@ -135,6 +135,21 @@ export function milestoneAmount(percent: string, total: string | null): string |
   const valid = validPercent(percent);
   const pricedTotal = total === null ? null : parseMilestoneMoney(total);
   return valid === null || pricedTotal === null ? null : amountForPercent(valid, pricedTotal);
+}
+
+/** Use final allocations for a complete schedule and independent estimates while editing. */
+export function milestoneAmounts(
+  milestones: readonly Pick<MilestoneValues, 'percent'>[],
+  total: string | null,
+): (string | null)[] {
+  const pricedTotal = total === null ? null : parseMilestoneMoney(total);
+  if (pricedTotal === null || scheduleState(milestones).kind !== 'ok') {
+    return milestones.map(({ percent }) => milestoneAmount(percent, total));
+  }
+  return allocatePaymentSchedule(
+    pricedTotal,
+    milestones.map(({ percent }) => milestoneNumber(percent)),
+  ).map((amount) => amount.toFixed(2));
 }
 
 export type MilestoneEdit = { field: 'percent' | 'amount'; value: string };
@@ -175,7 +190,7 @@ export function reconcileMilestone(
       : { ok: true, percent, amount: '0.00' };
   }
 
-  const percent = amount.times(FULL_PERCENT).div(pricedTotal).toFixed(2);
+  const percent = trimPercent(amount.times(FULL_PERCENT).div(pricedTotal).toFixed(4));
   return { ok: true, percent, amount: amountForPercent(percent, pricedTotal) };
 }
 
@@ -188,7 +203,9 @@ export type ScheduleState =
 
 /** The running total of valid entries, even while another row is incomplete. */
 export function scheduleProgress(milestones: readonly Pick<MilestoneValues, 'percent'>[]): string {
-  return fromHundredths(milestones.reduce((sum, m) => sum + (hundredths(m.percent) ?? 0), 0));
+  return formatPaymentPercentUnits(
+    milestones.reduce((sum, m) => sum + (percentUnits(m.percent) ?? 0), 0),
+  );
 }
 
 /** An empty schedule is allowed (the payment term applies); a filled one must total 100%. */
@@ -198,14 +215,14 @@ export function scheduleState(
   if (milestones.length === 0) return { kind: 'empty' };
   let sum = 0;
   for (const m of milestones) {
-    const h = hundredths(m.percent);
-    if (h === null) return { kind: 'invalid' };
-    sum += h;
+    const units = percentUnits(m.percent);
+    if (units === null) return { kind: 'invalid' };
+    sum += units;
   }
-  if (sum === FULL_PERCENT_HUNDREDTHS) return { kind: 'ok' };
-  return sum < FULL_PERCENT_HUNDREDTHS
-    ? { kind: 'short', by: fromHundredths(FULL_PERCENT_HUNDREDTHS - sum) }
-    : { kind: 'over', by: fromHundredths(sum - FULL_PERCENT_HUNDREDTHS) };
+  if (sum === FULL_PAYMENT_PERCENT_UNITS) return { kind: 'ok' };
+  return sum < FULL_PAYMENT_PERCENT_UNITS
+    ? { kind: 'short', by: formatPaymentPercentUnits(FULL_PAYMENT_PERCENT_UNITS - sum) }
+    : { kind: 'over', by: formatPaymentPercentUnits(sum - FULL_PAYMENT_PERCENT_UNITS) };
 }
 
 export function scheduleMessage(state: ScheduleState): string | null {
@@ -215,7 +232,7 @@ export function scheduleMessage(state: ScheduleState): string | null {
     case 'over':
       return `The payment schedule must add up to 100%. It is ${state.by}% over.`;
     case 'invalid':
-      return 'Enter each milestone as a percentage from 0 to 100 with up to two decimal places.';
+      return 'Enter each milestone as a percentage from 0 to 100 with up to four decimal places.';
     default:
       return null;
   }
@@ -378,7 +395,7 @@ export function valuesFromVersion(d: VersionLike): BuilderValues {
     schedule: d.paymentSchedule.map((m, i) => ({
       key: `m${i + 1}`,
       label: m.label,
-      percent: m.percent,
+      percent: trimPercent(m.percent),
       dueDescription: m.dueDescription ?? '',
     })),
   };

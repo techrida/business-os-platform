@@ -1,3 +1,4 @@
+import { trimPercent } from '@bos/contracts';
 import type { ApprovalRequestDto } from '@bos/contracts';
 
 import { Alert } from '@/components/ui/alert';
@@ -6,12 +7,7 @@ import { FactList, type Fact } from '@/components/ui/panel';
 import { money, snapshotEntries } from '@/lib/kernel-format';
 
 import styles from './approval-summary.module.css';
-import {
-  discountNeedsApproval,
-  parseApprovalSnapshot,
-  routeReasons,
-  trimPercent,
-} from './approval-snapshot';
+import { discountNeedsApproval, parseApprovalSnapshot, routeReasons } from './approval-snapshot';
 
 /** What the summary needs of an approval request: the frozen snapshot and the route's steps. */
 type SummaryRequest = Pick<ApprovalRequestDto, 'snapshot'> & {
