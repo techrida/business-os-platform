@@ -64,6 +64,7 @@ describe('MeController', () => {
 
     expect(MeResponseSchema.parse(body)).toEqual({
       userId: '312345678901234567',
+      id: null,
       tenantId: TENANT,
       organizationId: '22222222-2222-4222-8222-222222222222',
       orgKind: 'customer',

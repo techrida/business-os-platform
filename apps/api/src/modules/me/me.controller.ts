@@ -26,6 +26,7 @@ export class MeController {
       // Copy: the context's array is shared for the whole request, and a response body must not alias it.
       roles: [...c.roles],
       correlationId: c.correlationId,
+      id: currentPrincipal()?.userId ?? null,
       avatarDocumentId: await this.avatarOf(c.tenantId),
     };
   }

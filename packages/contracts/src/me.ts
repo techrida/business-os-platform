@@ -17,6 +17,8 @@ export const MeResponseSchema = z.object({
   partyId: z.guid().nullable(),
   roles: z.array(z.string()),
   correlationId: CorrelationIdSchema,
+  /** The caller's own `app.users.id` (not the identity provider's `userId`); the owner id of their profile picture. Absent when unknown. */
+  id: z.guid().nullable().optional(),
   /** The caller's picture (`app.users.avatar_document_id`); null or absent shows initials. */
   avatarDocumentId: z.guid().nullable().optional(),
 });
