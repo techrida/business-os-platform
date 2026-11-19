@@ -473,3 +473,60 @@ describe('listSubmissions', () => {
     expect((await httpErrorOf(service.listSubmissions(randomUUID()))).getStatus()).toBe(404);
   });
 });
+
+describe('invited vendor names (no vendor directory read)', () => {
+  it('names each invited vendor on the RFQ and each quoting vendor on the comparison, for sourcing', async () => {
+    as(U.proc, 'procurement');
+    const { rfqId, quoteIds } = await rfqWithQuotes(['1000.00', '2000.00']);
+    const rfq = await service.getRfq(rfqId);
+    const legal = (id: string) => `Vendor ${id.slice(0, 6)}`;
+    expect(rfq.vendors).toHaveLength(2);
+    expect([...rfq.vendors.map((v) => v.id)].sort()).toEqual([...rfq.vendorIds].sort());
+    for (const v of rfq.vendors) expect(v.name).toBe(legal(v.id));
+    const rows = await service.comparison(rfqId);
+    expect(rows.map((r) => r.id).sort()).toEqual([...quoteIds].sort());
+    for (const r of rows) expect(r.vendorName).toBe(legal(r.vendorId));
+  });
+
+  it('sends the names with the RFQ create response too', async () => {
+    as(U.proc, 'procurement');
+    const { rfq, vendorIds } = await openRfq(2);
+    expect(rfq.vendors.map((v) => v.id).sort()).toEqual([...vendorIds].sort());
+    expect(rfq.vendors.every((v) => v.name.startsWith('Vendor '))).toBe(true);
+  });
+
+  it('adds only id and name per invited vendor and only vendorName per quotation', async () => {
+    as(U.proc, 'procurement');
+    const { rfqId } = await rfqWithQuotes(['1000.00']);
+    const rfq = await service.getRfq(rfqId);
+    for (const v of rfq.vendors) expect(keysOf(v)).toEqual(['id', 'name']);
+    const [row] = await service.comparison(rfqId);
+    expect(keysOf(row!)).toEqual(
+      [
+        'averageScore',
+        'currency',
+        'deliveryDays',
+        'documentId',
+        'fxRate',
+        'id',
+        'rfqId',
+        'scores',
+        'subtotal',
+        'taxAmount',
+        'total',
+        'totalNpr',
+        'vendorId',
+        'vendorName',
+      ].sort(),
+    );
+  });
+
+  it('another entity cannot read the RFQ, so it learns no vendor name', async () => {
+    as(U.proc, 'procurement');
+    const { rfq } = await openRfq(1);
+    current.scope = scopeB;
+    expect((await httpErrorOf(service.getRfq(rfq.id))).getStatus()).toBe(404);
+    expect((await httpErrorOf(service.comparison(rfq.id))).getStatus()).toBe(404);
+    current.scope = null;
+  });
+});
