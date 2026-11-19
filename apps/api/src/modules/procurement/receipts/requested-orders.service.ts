@@ -2,8 +2,10 @@
 // may confirm a service receipt on such an order (ReceiptsService.assertMayReceive) and read its receipts under
 // `procurement.pr.read` own scope, but holds no purchase order read, so the receipts page had them paste a raw id.
 // This list is the picker instead. It is always the caller's own: the join keeps only orders whose request the
-// caller raised, whatever the scope of their grant, and only the acting entity's (scoped()). Each row carries what
-// the picker shows and nothing else: id, number, status and the vendor's legal name.
+// caller raised, and of those only the requests the caller may still read (`procurement.pr.read`, the predicate the
+// request's own detail uses, so a requester who moved out of a department-scoped read loses its old orders too),
+// and only the acting entity's (scoped()). Each row carries what the picker shows and nothing else: id, number,
+// status and the vendor's legal name.
 import type { PoStatus } from '@bos/contracts';
 import { purchaseOrders, purchaseRequests, scoped, vendors } from '@bos/db';
 import { Inject, Injectable } from '@nestjs/common';
@@ -12,6 +14,7 @@ import { z } from 'zod';
 
 import { DB, type Db } from '../../../platform/db/db.module';
 import { withTx } from '../../../platform/db/tx';
+import { purchaseRequestScopeWhere } from '../requests/purchase-requests.service';
 import { ReceiptsCaller } from './receipts.caller';
 
 /** Query of `GET /v1/procurement/requested-orders`: newest issued first, at most `limit` rows. */
@@ -69,6 +72,7 @@ export class RequestedOrdersService {
             purchaseOrders,
             and(
               eq(purchaseRequests.requesterUserId, principal.userId),
+              purchaseRequestScopeWhere(principal, 'procurement.pr.read'),
               notInArray(purchaseOrders.status, [...HIDDEN_STATUSES]),
             ),
           ),
