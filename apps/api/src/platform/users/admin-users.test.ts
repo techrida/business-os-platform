@@ -680,7 +680,13 @@ describe('SqlUsersStore against migration 0013 (ADR 0027: tenant-scoped users)',
 
     expect(await sqlStore.rolesOf(db, tenantId, ids.salesOnly)).toEqual(['finance', 'sales']);
     expect(await sqlStore.membershipsOf(db, tenantId, ids.full)).toEqual([
-      { organizationId: entityId, isDefault: true, roleKeys: null, departmentId: null },
+      {
+        organizationId: entityId,
+        isDefault: true,
+        roleKeys: null,
+        departmentId: null,
+        level: 'staff',
+      },
     ]);
     // role_keys ['sales'] narrows the finance holder out; no membership at all keeps the outsider out.
     expect(await sqlStore.userIdsWithRole(scope, 'finance')).toEqual([ids.full]);

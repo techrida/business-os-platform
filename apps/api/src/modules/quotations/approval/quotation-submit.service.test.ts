@@ -253,6 +253,8 @@ function setup(h: SubmitHead = head(), mayReadCost = true) {
   const approvals = {
     preview: vi.fn().mockResolvedValue(OPEN_PLAN),
     submit: vi.fn().mockResolvedValue({ requestId: REQUEST, status: 'pending' }),
+    // The tenant's live admin.roles.write holders (RoleCache through the engine); the defaults give the Founder.
+    blockedNoticeRoles: vi.fn().mockResolvedValue(['founder']),
   };
   const notify = { notifyRole: vi.fn().mockResolvedValue(undefined) };
   const audit = { record: vi.fn().mockResolvedValue(undefined) };
@@ -352,6 +354,23 @@ describe('QuotationSubmitService.submit', () => {
     expect(store.appendHistory).not.toHaveBeenCalled();
     expect(audit.record).not.toHaveBeenCalled();
     expect(notify.notifyRole).toHaveBeenCalled();
+  });
+
+  it('tells every role the tenant gave admin.roles.write, not a list fixed in code', async () => {
+    const { service, approvals, notify } = setup();
+    fakeUpdateVersioned(versionRow());
+    approvals.preview.mockResolvedValue(BLOCKED_PLAN);
+    // A Founder-made admin.roles.write row for management: the engine reads it from the live grants.
+    approvals.blockedNoticeRoles.mockResolvedValue(['founder', 'management']);
+
+    const error: unknown = await service.submit(QID, VID, BODY, 'key-1').catch((e: unknown) => e);
+
+    expect(error).toMatchObject({ status: 422, response: { code: 'NO_ELIGIBLE_APPROVER' } });
+    expect(approvals.blockedNoticeRoles).toHaveBeenCalledWith(SCOPE.tenantId);
+    expect(notify.notifyRole.mock.calls.map((c) => (c as unknown[])[1])).toEqual([
+      'founder',
+      'management',
+    ]);
   });
 
   it('submits with the unrounded facts, the snapshot, [owner, caller] and the quotation number', async () => {
