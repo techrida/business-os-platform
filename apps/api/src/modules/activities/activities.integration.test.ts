@@ -9,7 +9,7 @@ import type { Server } from 'node:http';
 import type { AddressInfo } from 'node:net';
 
 import { ActivityDtoSchema, ErrorBodySchema, LeadDtoSchema } from '@bos/contracts';
-import { activities, leads } from '@bos/db';
+import { activities, createParty, createPortalUser, createStaffUser, leads, users } from '@bos/db';
 import { type INestApplication } from '@nestjs/common';
 import { Test } from '@nestjs/testing';
 import { eq, inArray } from 'drizzle-orm';
@@ -97,6 +97,29 @@ const setOnRow = (id: string, set: { completedAt?: Date; cancelledAt?: Date }) =
   withTx(h.db, h.scopeA, systemActor('test'), (tx) =>
     tx.update(activities).set(set).where(eq(activities.id, id)),
   );
+/** An inactive staff member and a customer portal user of this tenant, made once. */
+let outsidersMade: { inactive: string; portal: string } | undefined;
+const outsiders = async () => {
+  if (outsidersMade !== undefined) return outsidersMade;
+  const pool = h.appPool as unknown as Parameters<typeof createParty>[0];
+  const [staff] = await withTx(h.db, h.scopeA, systemActor('test'), (tx) =>
+    tx.select({ idpOrgId: users.idpOrgId }).from(users).where(eq(users.id, h.users.salesA)),
+  );
+  const { userId: inactive } = await createStaffUser(pool, {
+    ...h.scopeA,
+    idpOrgId: staff!.idpOrgId,
+  });
+  await withTx(h.db, h.scopeA, systemActor('test'), (tx) =>
+    tx.update(users).set({ status: 'inactive' }).where(eq(users.id, inactive)),
+  );
+  const party = await createParty(pool, { tenantId: h.tenantId, kind: 'customer' });
+  const { userId: portal } = await createPortalUser(pool, {
+    tenantId: h.tenantId,
+    idpOrgId: party.idpOrgId,
+  });
+  outsidersMade = { inactive, portal };
+  return outsidersMade;
+};
 const DUE_1 = '2030-01-01T09:00:00.000Z';
 const DUE_2 = '2030-01-02T09:00:00.000Z';
 const DUE_3 = '2030-01-03T09:00:00.000Z';
@@ -261,20 +284,64 @@ describe('planned and logged activities', () => {
       (await post({ kind: 'meeting', subject: 'Visit', dueAt: DUE_1, customerId: customer })).body,
     );
     expect(mine).toMatchObject({ planned: true, assigneeUserId: h.users.salesA });
-
-    const lead = await seedLead();
-    const explicit = dto(
+    // Not a lead: any active staff member of the entity may be named.
+    const colleague = dto(
       (
         await post({
-          kind: 'email',
-          subject: 'Send deck',
-          dueAt: DUE_2,
+          kind: 'meeting',
+          subject: 'Visit too',
+          dueAt: DUE_1,
           assigneeUserId: h.users.salesB,
-          leadId: lead.id,
+          customerId: customer,
         })
       ).body,
     );
-    expect(explicit).toMatchObject({ assigneeUserId: h.users.salesB, createdByUserId: h.users.salesA });
+    expect(colleague).toMatchObject({ assigneeUserId: h.users.salesB });
+
+    const lead = await seedLead();
+    const send = () =>
+      post({
+        kind: 'email',
+        subject: 'Send deck',
+        dueAt: DUE_2,
+        assigneeUserId: h.users.salesB,
+        leadId: lead.id,
+      });
+    // On a lead, an own-scope caller hands work only to themselves.
+    const refused = await send();
+    expect(refused.status, JSON.stringify(refused.body)).toBe(400);
+    expect(errorOf(refused.body)).toMatchObject({
+      code: 'bad_request',
+      message: 'assigneeUserId cannot be someone else: your access covers only your own leads',
+    });
+    h.as('boss', 'founder');
+    const explicit = dto((await send()).body);
+    expect(explicit).toMatchObject({
+      assigneeUserId: h.users.salesB,
+      createdByUserId: h.users.boss,
+    });
+  });
+
+  it('refuses an assignee who is not an active staff member of the entity with 400', async () => {
+    const { inactive, portal } = await outsiders();
+    const lead = await seedLead();
+    const customer = await h.seedCustomer(h.users.boss);
+    h.as('boss', 'founder');
+    for (const assigneeUserId of [inactive, portal, crypto.randomUUID()]) {
+      for (const subject of [{ leadId: lead.id }, { customerId: customer }]) {
+        const res = await post({
+          kind: 'call',
+          subject: 'x',
+          dueAt: DUE_1,
+          assigneeUserId,
+          ...subject,
+        });
+        expect(res.status, JSON.stringify(res.body)).toBe(400);
+        expect(errorOf(res.body).message).toBe(
+          'assigneeUserId is not an active staff member of this entity',
+        );
+      }
+    }
   });
 
   it('filters by status: planned earliest first, logged newest first, cancelled never; scope unchanged', async () => {
@@ -448,6 +515,23 @@ describe('PATCH /v1/activities/:id/complete|reschedule|cancel', () => {
       'second',
     ]);
 
+    // An own-scope caller cannot hand a lead's follow-up to a colleague; a wider grant can.
+    const handed = await patch(first.id, 'reschedule', {
+      expectedVersion: 1,
+      dueAt: DUE_3,
+      assigneeUserId: h.users.salesB,
+    });
+    expect(handed.status, JSON.stringify(handed.body)).toBe(400);
+    expect(errorOf(handed.body).code).toBe('bad_request');
+    const { inactive, portal } = await outsiders();
+    h.as('boss', 'founder');
+    for (const assigneeUserId of [inactive, portal]) {
+      const res = await patch(first.id, 'reschedule', { expectedVersion: 1, dueAt: DUE_3, assigneeUserId });
+      expect(res.status, JSON.stringify(res.body)).toBe(400);
+      expect(errorOf(res.body).message).toBe(
+        'assigneeUserId is not an active staff member of this entity',
+      );
+    }
     const res = await patch(first.id, 'reschedule', {
       expectedVersion: 1,
       dueAt: DUE_3,

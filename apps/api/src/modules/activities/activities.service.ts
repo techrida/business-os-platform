@@ -25,7 +25,6 @@ import {
   opportunities,
   quotations,
   scoped,
-  users,
 } from '@bos/db';
 import {
   BadRequestException,
@@ -44,6 +43,7 @@ import { DB, type Db } from '../../platform/db/db.module';
 import { updateVersioned, withIdempotency } from '../../platform/db/idempotency';
 import { withTx, type DbTransaction, type TxScope } from '../../platform/db/tx';
 import { customerRef } from '../customers/customers.service';
+import { assertActiveStaff, assertLeadAssignee } from '../leads/lead-assignee';
 import { leadRef } from '../leads/leads.service';
 import { opportunityRef } from '../opportunities/opportunities.service';
 import { ActivitiesCaller } from './activities.caller';
@@ -115,8 +115,9 @@ export class ActivitiesService {
   /**
    * A `dueAt` plans the activity (a follow-up, audited `activity.scheduled`); without one it is logged
    * (`activity.created`). The caller is recorded as its creator. A planned activity without an assignee goes to
-   * the lead's owner when its subject is a lead, otherwise to the caller. The Idempotency-Key is optional: the
-   * workspace form does not send one.
+   * the lead's owner when its subject is a lead, otherwise to the caller. A named assignee must be an active staff
+   * member of the entity and, on a lead, someone the caller may hand lead work to (an `own` grant: only the
+   * caller), else 400. The Idempotency-Key is optional: the workspace form does not send one.
    */
   async create(body: CreateActivityBody, idempotencyKey?: string): Promise<ActivityDto> {
     const { scope, actor, principal } = this.caller.current();
@@ -135,7 +136,7 @@ export class ActivitiesService {
       const run = async (): Promise<ActivityDto> => {
         const ref = await this.assertSubject(tx, key, subjectId, 'write');
         if (body.assigneeUserId !== undefined) {
-          await this.assertUser(tx, scope.tenantId, body.assigneeUserId);
+          await this.assertAssignee(tx, scope, key, body.assigneeUserId);
         }
         const planned = body.dueAt !== undefined;
         // A lead without an owner falls back to the caller, so a follow-up always has someone to do it.
@@ -220,11 +221,12 @@ export class ActivitiesService {
     });
   }
 
-  /** Moves a planned activity to another due time, and optionally to another assignee of this tenant. */
+  /** Moves a planned activity to another due time, and optionally to another assignee (the same rule as create). */
   async reschedule(id: string, body: RescheduleActivityBody): Promise<ActivityDto> {
     return this.changePlanned(id, async (tx, row, scope) => {
       if (body.assigneeUserId !== undefined) {
-        await this.assertUser(tx, scope.tenantId, body.assigneeUserId);
+        const key = ACTIVITY_SUBJECT_KEYS.find((k) => row[k] !== null)!;
+        await this.assertAssignee(tx, scope, key, body.assigneeUserId);
       }
       const updated = await updateVersioned(tx, activities, id, body.expectedVersion, {
         dueAt: new Date(body.dueAt),
@@ -451,18 +453,26 @@ export class ActivitiesService {
     )!;
   }
 
-  /** The assignee must be a user of this tenant: say so as a 400 instead of a foreign-key 500. */
-  private async assertUser(tx: DbTransaction, tenantId: string, userId: string): Promise<void> {
-    const [user] = await tx
-      .select({ id: users.id })
-      .from(users)
-      .where(and(eq(users.tenantId, tenantId), eq(users.id, userId)))
-      .limit(1);
-    if (user === undefined) {
-      throw new BadRequestException({
-        code: 'bad_request',
-        message: 'assigneeUserId is not a user of this tenant',
-      });
+  /**
+   * A named assignee is an active staff member of the acting entity (400 otherwise, never a foreign-key 500). On a
+   * lead it is also someone the caller may hand lead work to, the rule of the lead owner select.
+   */
+  private async assertAssignee(
+    tx: DbTransaction,
+    scope: TxScope,
+    key: SubjectKey,
+    userId: string,
+  ): Promise<void> {
+    if (key === 'leadId') {
+      await assertLeadAssignee(
+        tx,
+        this.caller.current().principal,
+        scope,
+        userId,
+        'assigneeUserId',
+      );
+    } else {
+      await assertActiveStaff(tx, scope, userId, 'assigneeUserId');
     }
   }
 }
