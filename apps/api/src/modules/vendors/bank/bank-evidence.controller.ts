@@ -1,5 +1,8 @@
 // Staff routes for a bank account's call-back evidence (P4 V2b, AD9): whoever proposes accounts
-// (`vendor.bank.propose`, procurement) uploads the proof of the call-back for finance to verify with. Two steps, like
+// (`vendor.bank.propose`, procurement) or verifies them (`vendor.bank.verify`, finance) uploads the proof of the
+// call-back. `@Can` names one permission, so the routes are `@AnyAuthenticated` and the service refuses (403) a
+// caller holding neither grant before it reads anything; DocumentsService then checks either grant on the vendor's
+// ref. Two steps, like
 // /v1/payment-proofs: POST declares the file and returns `uploadPath`, then a raw PUT of the bytes to that path,
 // sent with the file's own Content-Type so the global body parsers leave the request stream untouched. No
 // Idempotency-Key: like every documents create, a retried POST leaves an empty draft document, nothing more.
@@ -16,7 +19,7 @@ import {
 } from '@nestjs/common';
 import type { Request } from 'express';
 
-import { Can } from '../../../platform/authz/decorators';
+import { AnyAuthenticated } from '../../../platform/authz/decorators';
 import { parseContentLength } from '../../../platform/documents/documents.controller';
 import { VendorBankEvidenceService, type CreatedBankEvidence } from './bank-evidence.service';
 
@@ -29,7 +32,7 @@ export class VendorBankEvidenceController {
    * not the vendor's in this tenant, 409 once the account is no longer proposed.
    */
   @Post()
-  @Can('vendor.bank.propose')
+  @AnyAuthenticated()
   create(
     @Param('id', ParseUUIDPipe) id: string,
     @Param('accountId', ParseUUIDPipe) accountId: string,
@@ -40,7 +43,7 @@ export class VendorBankEvidenceController {
 
   /** The raw file bytes for a version from `create`. Any id that is not evidence of this account is the same 404. */
   @Put(':docId/versions/:verId/content')
-  @Can('vendor.bank.propose')
+  @AnyAuthenticated()
   upload(
     @Param('id', ParseUUIDPipe) id: string,
     @Param('accountId', ParseUUIDPipe) accountId: string,
@@ -48,6 +51,7 @@ export class VendorBankEvidenceController {
     @Param('verId') verId: string,
     @Req() req: Request,
   ): Promise<DocumentVersionDto> {
+    this.evidence.assertMayAttach();
     const length = parseContentLength(req.headers['content-length']);
     if (req.readableEnded) {
       // A body parser already consumed the stream: the client sent the file as application/json or a form.

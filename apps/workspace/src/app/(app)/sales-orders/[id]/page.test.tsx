@@ -40,6 +40,10 @@ vi.mock('next/navigation', () => ({
   redirect: vi.fn(),
 }));
 vi.mock('next/cache', () => ({ revalidatePath: vi.fn() }));
+// The notice is a toast (it renders nothing on the server); a marker shows it was rendered with its words.
+vi.mock('@/components/p4/success-notice', () => ({
+  SuccessNotice: ({ message }: { message: string }) => <output data-notice>{message}</output>,
+}));
 
 const render = async (id: string = IDS.order): Promise<string> =>
   renderToStaticMarkup(await SalesOrderPage({ params: Promise.resolve({ id }) }));
@@ -107,13 +111,20 @@ describe('sales order detail', () => {
     mocks.getSalesOrder.mockResolvedValue(
       salesOrderDetail({
         schedule: [
-          scheduleLine({ id: IDS.advance, seq: 1, status: 'drafted', invoiceId: IDS.invoice }),
+          scheduleLine({
+            id: IDS.advance,
+            seq: 1,
+            status: 'drafted',
+            invoiceId: IDS.invoice,
+            can: { openInvoice: true },
+          }),
           scheduleLine({
             id: IDS.milestone,
             seq: 2,
             status: 'invoiced',
             trigger: 'milestone',
             invoiceId: IDS.invoice,
+            can: { openInvoice: true },
           }),
         ],
       }),
@@ -134,6 +145,9 @@ describe('sales order detail', () => {
 
   it('shows no action buttons to a role that may only read', async () => {
     mocks.requireStaffSession.mockResolvedValue({ accessToken: 't', roles: ['management'] });
+    mocks.getSalesOrder.mockResolvedValue(
+      salesOrderDetail({ can: { markBillable: false, draftInvoice: false } }),
+    );
     const html = await render();
     expect(html).toContain('Advance 60%');
     expect(html).not.toContain('Draft invoice');
@@ -192,5 +206,54 @@ describe('sales order detail', () => {
     const html = await render();
     expect(html).toContain('This sales order did not load');
     expect(html).toContain(`href="/sales-orders/${IDS.order}"`);
+  });
+});
+
+// Audit #7 as Sales: the order shows the held invoice's number and status, with no link the invoice route would
+// refuse, even when the session's role names would allow it (the line's flag decides).
+describe('a held invoice the person may not open', () => {
+  const held = () =>
+    salesOrderDetail({
+      schedule: [
+        scheduleLine({
+          id: IDS.advance,
+          seq: 1,
+          status: 'drafted',
+          invoiceId: IDS.invoice,
+          invoice: { number: 'INV-2083/84-00007', status: 'submitted' },
+          can: { openInvoice: false },
+        }),
+      ],
+      can: { markBillable: false, draftInvoice: false },
+    });
+
+  it('names the invoice as Sales without linking to it', async () => {
+    mocks.requireStaffSession.mockResolvedValue({ accessToken: 't', roles: ['sales'] });
+    mocks.getSalesOrder.mockResolvedValue(held());
+    const html = await render();
+    expect(html).not.toContain('/invoices/');
+    expect(html).not.toContain('Open invoice');
+    expect(html).toContain('INV-2083/84-00007 · Submitted');
+  });
+
+  it('follows the line flag, not the role names', async () => {
+    mocks.requireStaffSession.mockResolvedValue({ accessToken: 't', roles: ['founder'] });
+    mocks.getSalesOrder.mockResolvedValue(held());
+    expect(await render()).not.toContain('/invoices/');
+  });
+
+  // The draft invoice action comes back here (drafted=1) for someone who may draft but not read invoices.
+  it('says the draft was created, without a link to it, when the draft action returned here', async () => {
+    mocks.requireStaffSession.mockResolvedValue({ accessToken: 't', roles: ['accountant'] });
+    mocks.getSalesOrder.mockResolvedValue(held());
+    const html = renderToStaticMarkup(
+      await SalesOrderPage({
+        params: Promise.resolve({ id: IDS.order }),
+        searchParams: Promise.resolve({ drafted: '1' }),
+      }),
+    );
+    expect(html).toContain('The invoice draft was created.');
+    expect(html).not.toContain('/invoices/');
+    expect(await render()).not.toContain('data-notice');
   });
 });

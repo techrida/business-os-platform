@@ -22,8 +22,9 @@ export interface DraftInvoiceFormProps {
 }
 
 /**
- * Draft invoice for one billable step. A click starts the draft and opens it. When the step already
- * has a draft (somebody else was first) the refusal says so and links to that invoice.
+ * Draft invoice for one billable step. A click starts the draft and opens it (or, for someone who may
+ * not open invoices, returns to the order). When the step already has a draft (somebody else was
+ * first) the refusal says so and links to that invoice only when the person may open it.
  */
 export function DraftInvoiceForm({
   salesOrderId,

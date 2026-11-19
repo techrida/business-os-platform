@@ -4,7 +4,7 @@
 import { renderToStaticMarkup } from 'react-dom/server';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { stubApi, textOf } from '@/test/api-fetch-stub';
+import { meAs, stubApi, textOf } from '@/test/api-fetch-stub';
 
 vi.mock('server-only', () => ({}));
 vi.mock('@/lib/bff', () => ({
@@ -80,7 +80,10 @@ const earlierSubmission = {
 
 let rows: unknown[] = [submission()];
 beforeEach(() => {
-  stubApi(() => ({ '/v1/payables/bill-submissions': rows }));
+  stubApi(() => ({
+    '/v1/me': meAs('accountant'),
+    '/v1/payables/bill-submissions': rows,
+  }));
 });
 afterEach(() => {
   vi.unstubAllGlobals();

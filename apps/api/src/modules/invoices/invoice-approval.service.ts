@@ -12,6 +12,7 @@ import {
   DEFAULT_ROLE_PERMISSIONS,
   isInvoiceEditable,
   ROLE_KEYS,
+  type ApprovalContext,
   type InvoiceDetail,
   type SubmitInvoiceBody,
 } from '@bos/contracts';
@@ -28,12 +29,14 @@ import { and, asc, eq, sql } from 'drizzle-orm';
 
 import { AuditService } from '../../platform/audit/audit.service';
 import { AuthzService } from '../../platform/authz/authz.service';
+import type { Principal } from '../../platform/authz/principal';
 import { DB, type Db, type DbTransaction } from '../../platform/db/db.module';
 import { updateVersioned, withIdempotency } from '../../platform/db/idempotency';
 import { withTx, type Actor, type TxScope } from '../../platform/db/tx';
 import { readTxContext } from '../../platform/documents/tx-context';
 import { canonicalSha256 } from '../../platform/hashing/canonical-json';
 import { MoneyService } from '../../platform/settings/money.service';
+import { fact, hrefIfVisible } from '../approvals/context';
 import { ApprovalsNotify } from '../approvals/ports';
 import { ApprovalsService, type ApprovalSubject } from '../approvals/requests.service';
 import { InvoiceDraftingService } from './invoice-drafting.service';
@@ -153,6 +156,44 @@ export class InvoiceApprovalSubject implements ApprovalSubject {
     readonly documentType: ApprovableKind,
     private readonly clock: () => Date = () => new Date(),
   ) {}
+
+  /**
+   * The invoice as it stands now. Its PDF is drawn only at issue, so there is no file to list. The invoice page is
+   * linked only when the reader's `invoice.read` scope reaches it, as the invoice routes decide.
+   */
+  async context(
+    q: Db,
+    scope: TxScope,
+    request: { documentId: string },
+    viewer: Principal,
+  ): Promise<ApprovalContext | null> {
+    const [row] = await q
+      .select({
+        id: invoices.id,
+        number: invoices.number,
+        customerName: customers.legalName,
+        currency: invoices.currency,
+        total: invoices.total,
+        status: invoices.status,
+      })
+      .from(invoices)
+      .leftJoin(
+        customers,
+        and(eq(customers.tenantId, invoices.tenantId), eq(customers.id, invoices.customerPartyId)),
+      )
+      .where(scoped(scope).where(invoices, eq(invoices.id, request.documentId)));
+    if (row === undefined) return null;
+    return {
+      title: `${KIND_LABEL[this.documentType]} ${row.number ?? ''}`.trim(),
+      fields: [
+        ...fact.text('customer', 'Customer', row.customerName),
+        ...fact.money('total', 'Total', row.total, row.currency),
+        ...fact.status(row.status),
+      ],
+      documents: [],
+      href: await hrefIfVisible(q, viewer, invoices, 'invoice.read', row.id, `/invoices/${row.id}`),
+    };
+  }
 
   async onDecided(
     tx: DbTransaction,

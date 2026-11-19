@@ -10,6 +10,7 @@ import {
   searchParam,
   type CreatePurchaseRequestBody,
   type PrRequestType,
+  type PoStatus,
   type PrStatus,
   type PurchaseRequestLineBody,
 } from '@bos/contracts';
@@ -201,6 +202,7 @@ export function buildApprovalSnapshot(i: {
     PurchaseRequestRow,
     | 'requestType'
     | 'departmentId'
+    | 'costCenterId'
     | 'requesterUserId'
     | 'justification'
     | 'requiredBy'
@@ -218,6 +220,7 @@ export function buildApprovalSnapshot(i: {
       number: i.number,
       requestType: i.pr.requestType,
       departmentId: i.pr.departmentId,
+      costCenterId: i.pr.costCenterId,
       requesterUserId: i.pr.requesterUserId,
       justification: i.pr.justification,
       requiredBy: i.pr.requiredBy,
@@ -296,8 +299,25 @@ export interface PurchaseRequestListItem {
   costCenterName?: string | null;
 }
 
+/**
+ * A purchase order raised from the request, as the request's detail shows it (U18 #4): its number, status and
+ * vendor's legal name, read with the request under the request's own read, so a requester needs no purchase order
+ * or vendor read. `can.receiveService` is true when the caller may record a service receipt on it now: the
+ * requester themselves or a holder of procurement.receipt.confirm, on an order still taking receipts with a
+ * service line.
+ */
+export interface LinkedPurchaseOrderDto {
+  id: string;
+  number: string;
+  status: PoStatus;
+  vendorName: string;
+  can: { receiveService: boolean };
+}
+
 export interface PurchaseRequestDto extends PurchaseRequestListItem {
   lines: PurchaseRequestLineDto[];
+  /** The request's purchase orders other than drafts, by number. Sent by the detail read only. */
+  purchaseOrders?: LinkedPurchaseOrderDto[];
 }
 
 export function toListItem(row: PurchaseRequestRow, rfqId: string | null): PurchaseRequestListItem {

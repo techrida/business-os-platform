@@ -24,7 +24,6 @@ import {
   type PoVersion,
   type PurchaseOrder,
 } from '@/lib/api-purchase-orders';
-import { getVendor } from '@/lib/api-vendors';
 import { requireStaffSession } from '@/lib/bff';
 import { getNumberSystems } from '@/lib/display-settings';
 import { when } from '@/lib/kernel-format';
@@ -321,10 +320,9 @@ export default async function PurchaseOrderPage({ params }: { params: Promise<{ 
   }
 
   // The panels load on their own: one failing leaves the rest usable.
-  const [versions, progress, vendor] = await Promise.allSettled([
+  const [versions, progress] = await Promise.allSettled([
     listPoVersions(session, id),
     getPoProgress(session, id),
-    getVendor(session, po.vendorId),
   ]);
 
   const grants = poGrants(session.roles);
@@ -351,14 +349,11 @@ export default async function PurchaseOrderPage({ params }: { params: Promise<{ 
     {
       key: 'vendor',
       label: 'Vendor',
-      value:
-        vendor.status === 'fulfilled' ? (
-          <Link href={`/vendors/${encodeURIComponent(po.vendorId)}`} className={styles.long}>
-            {vendor.value.legalName}
-          </Link>
-        ) : (
-          <Link href={`/vendors/${encodeURIComponent(po.vendorId)}`}>Vendor name unavailable</Link>
-        ),
+      value: (
+        <Link href={`/vendors/${encodeURIComponent(po.vendorId)}`} className={styles.long}>
+          {po.vendorName ?? 'Open the vendor'}
+        </Link>
+      ),
     },
     {
       key: 'total',
@@ -454,6 +449,14 @@ export default async function PurchaseOrderPage({ params }: { params: Promise<{ 
                   variant="secondary"
                 >
                   Receive goods
+                </LinkButton>
+              ) : null}
+              {po.can?.enterBill === true ? (
+                <LinkButton
+                  href={`/payables/bills/new?po=${encodeURIComponent(po.id)}`}
+                  variant="secondary"
+                >
+                  Enter bill
                 </LinkButton>
               ) : null}
               {po.status !== 'draft' ? (

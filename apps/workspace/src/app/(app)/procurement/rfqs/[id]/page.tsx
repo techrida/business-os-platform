@@ -36,7 +36,6 @@ import {
   takesDecisions,
   takesQuotations,
 } from '../_lib/model';
-import { loadVendors, nameIndex } from '../_lib/vendors';
 
 export const metadata: Metadata = { title: 'RFQ · Business OS' };
 export const dynamic = 'force-dynamic';
@@ -137,18 +136,20 @@ export default async function RfqPage({
 
   const grants = rfqGrants(session.roles);
   const open = takesQuotations(rfq.status);
-  const [comparison, submissions, pr, vendors, approval] = await Promise.all([
+  const [comparison, submissions, pr, approval] = await Promise.all([
     attempt(() => getComparison(session, id)),
     grants.sourcing && open ? attempt(() => listSubmissions(session, id)) : Promise.resolve(null),
     attempt(() => getPurchaseRequest(session, rfq.purchaseRequestId)),
-    loadVendors(session),
     rfq.commitmentApprovalRequestId !== null
       ? attempt(() => getApprovalRequest(session, rfq.commitmentApprovalRequestId as string))
       : Promise.resolve(null),
   ]);
-  const names = nameIndex(vendors);
-  const vendorLabel = (vendorId: string): string =>
-    names.get(vendorId) ?? 'Vendor name unavailable';
+  // The names come with the RFQ and its quotations, under the RFQ's own grant: no vendor directory read.
+  const names = new Map([
+    ...rfq.vendors.map((v) => [v.id, v.name] as const),
+    ...(comparison.value ?? []).map((q) => [q.vendorId, q.vendorName] as const),
+  ]);
+  const vendorLabel = (vendorId: string): string => names.get(vendorId) ?? 'Invited vendor';
   const status = RFQ_STATUS_LABEL[rfq.status];
   const prNumber = pr.value?.number ?? null;
   const decide = grants.sourcing && takesDecisions(rfq.status);

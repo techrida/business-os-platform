@@ -27,6 +27,7 @@ import { requireStaffSession } from '@/lib/bff';
 import { getNumberSystems } from '@/lib/display-settings';
 import { documentNumberText, snapshotEntries, when } from '@/lib/kernel-format';
 
+import { CurrentRecord } from './current-record';
 import { DecisionForm } from './decision-form';
 import { MemoPaper } from '../../memos/memo-paper';
 import styles from '../inbox.module.css';
@@ -311,6 +312,10 @@ export default async function InboxDetailPage({ params }: { params: Promise<{ id
               </>
             )}
           </Panel>
+
+          {request.context !== undefined ? (
+            <CurrentRecord context={request.context} numberSystems={numberSystems} />
+          ) : null}
 
           {attachments.length > 0 ? (
             <Panel title="Attachments" className={styles.detailPanel}>

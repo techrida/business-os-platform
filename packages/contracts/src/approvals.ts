@@ -240,6 +240,41 @@ export type PersonName = z.infer<typeof PersonNameSchema>;
 export const ReferenceNameSchema = z.object({ id: z.string(), name: z.string().min(1) });
 export type ReferenceName = z.infer<typeof ReferenceNameSchema>;
 
+/**
+ * One fact of the record an approval is about, as it stands now (not as submitted). `money` holds a decimal in
+ * `currency`, `date` an ISO date or instant, `status` the record's raw status key; `text` is shown as it is.
+ */
+export const ApprovalContextFieldSchema = z.object({
+  key: z.string(),
+  label: z.string(),
+  value: z.string(),
+  kind: z.enum(['text', 'money', 'date', 'status']),
+  currency: z.string().optional(),
+});
+export type ApprovalContextField = z.infer<typeof ApprovalContextFieldSchema>;
+
+/** A file of the record that this reader may open: the newest version of the document, and only when it is clean. */
+export const ApprovalContextDocumentSchema = z.object({
+  documentId: z.string(),
+  versionId: z.string(),
+  filename: z.string(),
+  detectedMime: z.string().nullable(),
+});
+export type ApprovalContextDocument = z.infer<typeof ApprovalContextDocumentSchema>;
+
+/**
+ * A read-only view of the record an approval is about, for anyone who may read the approval request (its approvers
+ * included), so they can judge it without a read grant on the record itself. Main fields and the record's own files
+ * only. `href` is the record's own page, and is null when this reader could not open it.
+ */
+export const ApprovalContextSchema = z.object({
+  title: z.string(),
+  fields: z.array(ApprovalContextFieldSchema),
+  documents: z.array(ApprovalContextDocumentSchema),
+  href: z.string().nullable(),
+});
+export type ApprovalContext = z.infer<typeof ApprovalContextSchema>;
+
 export const ApprovalStepDtoSchema = z.object({
   seq: z.number().int().min(1),
   kind: StepKindSchema,
@@ -286,6 +321,8 @@ export const ApprovalRequestDtoSchema = z.object({
   people: z.array(PersonNameSchema).optional(),
   /** Names of the records the snapshot refers to by id, when its document type can name them. */
   references: z.array(ReferenceNameSchema).optional(),
+  /** The record as it stands now, when its document type can describe it (see ApprovalContextSchema). */
+  context: ApprovalContextSchema.optional(),
   submittedAt: isoDateTime,
   decidedAt: isoDateTime.nullable(),
 });

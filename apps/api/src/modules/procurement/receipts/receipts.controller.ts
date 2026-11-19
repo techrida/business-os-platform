@@ -34,6 +34,11 @@ import {
   type ReceivableOrderDto,
 } from './receivable-orders.service';
 import { ReceiptsService } from './receipts.service';
+import {
+  ListRequestedOrdersQuerySchema,
+  RequestedOrdersService,
+  type RequestedOrderDto,
+} from './requested-orders.service';
 
 @Controller('v1/procurement/receipts')
 @AnyAuthenticated()
@@ -131,5 +136,22 @@ export class ReceivableOrdersController {
   @Can('procurement.receipt.confirm')
   list(@Query() query: unknown): Promise<ReceivableOrderDto[]> {
     return this.orders.list(parseOr400(ListReceivableOrdersQuerySchema, query));
+  }
+}
+
+/**
+ * The purchase orders raised from the caller's own purchase requests (U18 #4): the receipts page's picker for a
+ * requester, who may receive a service on them but holds no purchase order read. Its own class for the same reason
+ * as ReceivableOrdersController: the grant alone decides, and the service keeps the list to the caller's requests.
+ */
+@Controller('v1/procurement/requested-orders')
+export class RequestedOrdersController {
+  constructor(private readonly orders: RequestedOrdersService) {}
+
+  /** Query: `limit` (default 100, at most 200). */
+  @Get()
+  @Can('procurement.pr.read')
+  list(@Query() query: unknown): Promise<RequestedOrderDto[]> {
+    return this.orders.list(parseOr400(ListRequestedOrdersQuerySchema, query));
   }
 }

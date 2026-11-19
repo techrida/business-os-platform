@@ -3,7 +3,7 @@
 import { renderToStaticMarkup } from 'react-dom/server';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { stubApi } from '@/test/api-fetch-stub';
+import { meAs, stubApi } from '@/test/api-fetch-stub';
 
 vi.mock('server-only', () => ({}));
 vi.mock('@/lib/bff', () => ({
@@ -23,6 +23,7 @@ const { default: NewBillPage } = await import('./page');
 
 beforeEach(() => {
   stubApi(() => ({
+    '/v1/me': meAs('accountant'),
     '/v1/vendors': {
       items: [
         {

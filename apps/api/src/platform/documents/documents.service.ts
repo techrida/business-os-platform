@@ -26,7 +26,8 @@
 // when the owner's `allowsCounterparty` says yes (P3: payment proof on the customer's own payment). Every other
 // refusal is the unchanged grant check, and `createVersion` and `remove` never ask the hook.
 // The grant checked for an upload is `documents.upload` unless the owner policy names its own `uploadPermission`
-// (payment proof: `payment.record`).
+// (payment proof: `payment.record`; a list means any one of them). A staff read needs `documents.read` or the
+// owner policy's `readPermission`, on the owner ref.
 import { randomUUID } from 'node:crypto';
 import { Readable } from 'node:stream';
 
@@ -1128,7 +1129,28 @@ export class DocumentsService {
     }
     const ref: ResourceRef | null = await policy.resource(scope, ownerId);
     if (ref === null) throw new NotFoundException('Owner record not found');
-    this.authz.assert(action === 'documents.upload' ? uploadPermissionOf(policy) : action, ref);
+    this.assertAnyOf(
+      action === 'documents.upload' ? uploadPermissionsOf(policy) : readPermissionsOf(policy),
+      ref,
+    );
+  }
+
+  /**
+   * Passes when the caller may do any one of `actions` on `ref`. Otherwise throws the refusal of the first one,
+   * so an owner with a single permission answers exactly as before.
+   */
+  private assertAnyOf(actions: readonly Permission[], ref: ResourceRef): void {
+    let first: ForbiddenException | undefined;
+    for (const action of actions) {
+      try {
+        this.authz.assert(action, ref);
+        return;
+      } catch (error) {
+        if (!(error instanceof ForbiddenException)) throw error;
+        first ??= error;
+      }
+    }
+    throw first ?? new ForbiddenException({ code: 'forbidden', reason: 'no_permission' });
   }
 
   /**
@@ -1157,7 +1179,7 @@ export class DocumentsService {
     if (ref === null) throw new NotFoundException('Owner record not found');
     // Called as a method, not detached: a policy class may use `this`.
     if (await policy.allowsCounterparty(counterparty, ownerId, tx)) return;
-    this.authz.assert(uploadPermissionOf(policy), ref);
+    this.assertAnyOf(uploadPermissionsOf(policy), ref);
   }
 
   /**
@@ -1348,9 +1370,18 @@ function counterpartyOf(
   };
 }
 
-/** The permission that authorises an upload to this owner: its own, or `documents.upload`. */
-function uploadPermissionOf(policy: DocumentOwnerPolicy): Permission {
-  return policy.uploadPermission ?? 'documents.upload';
+/** The permissions that authorise an upload to this owner (any one of them): its own, or `documents.upload`. */
+function uploadPermissionsOf(policy: DocumentOwnerPolicy): readonly Permission[] {
+  const own = policy.uploadPermission;
+  if (own === undefined) return ['documents.upload'];
+  return typeof own === 'string' ? [own] : own;
+}
+
+/** The permissions that authorise a staff read of this owner's files: `documents.read`, plus the owner's own. */
+function readPermissionsOf(policy: DocumentOwnerPolicy): readonly Permission[] {
+  return policy.readPermission === undefined
+    ? ['documents.read']
+    : ['documents.read', policy.readPermission];
 }
 
 /**

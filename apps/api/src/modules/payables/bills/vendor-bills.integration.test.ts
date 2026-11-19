@@ -35,7 +35,7 @@ import {
   runMigrations,
   vendorBills,
 } from '@bos/db';
-import { ForbiddenException, HttpException } from '@nestjs/common';
+import { ForbiddenException, HttpException, NotFoundException } from '@nestjs/common';
 import { PostgreSqlContainer, type StartedPostgreSqlContainer } from '@testcontainers/postgresql';
 import { asc, eq, sql } from 'drizzle-orm';
 import { drizzle } from 'drizzle-orm/node-postgres';
@@ -69,6 +69,7 @@ import {
 } from './vendor-bill.rules';
 import { MatchExceptionSubject, VendorBillSubject } from './vendor-bill.subject';
 import { VendorBillsService } from './vendor-bills.service';
+import { VendorOrdersService } from './vendor-orders.service';
 import { billDocumentOwnerPolicy, BillDocumentsService } from './bill-documents.service';
 
 vi.setConfig({ testTimeout: 60_000, hookTimeout: 180_000 });
@@ -87,6 +88,7 @@ let approvals: ApprovalsService;
 let service: VendorBillsService;
 let orders: PurchaseOrdersService;
 let receiptsService: ReceiptsService;
+let pickers: VendorOrdersService;
 let deptA = '';
 let vatCode = '';
 
@@ -95,7 +97,13 @@ const roles: Partial<Record<RoleKey, string[]>> = {};
 
 const grantsOf = (role: RoleKey) =>
   new Map(Object.entries(DEFAULT_ROLE_PERMISSIONS[role])) as Map<Permission, Scope>;
-const current: { userId: string; role: RoleKey; scope: TxScope | null } = {
+const current: {
+  userId: string;
+  role: RoleKey;
+  scope: TxScope | null;
+  /** Live grants an admin edited, instead of the role default (`as` clears it). */
+  grants?: Map<Permission, Scope> | undefined;
+} = {
   userId: '',
   role: 'accountant',
   scope: null,
@@ -103,6 +111,7 @@ const current: { userId: string; role: RoleKey; scope: TxScope | null } = {
 const as = (userId: string, role: RoleKey) => {
   current.userId = userId;
   current.role = role;
+  current.grants = undefined;
 };
 const scopeNow = (): TxScope => current.scope ?? scopeA;
 const principalNow = (): Principal => ({
@@ -115,7 +124,7 @@ const principalNow = (): Principal => ({
   roles: [current.role],
   departmentId: null,
   status: 'active',
-  grants: grantsOf(current.role),
+  grants: current.grants ?? grantsOf(current.role),
 });
 const caller = {
   current: () => ({
@@ -234,6 +243,7 @@ beforeAll(async () => {
     () => now,
   );
   orders = new PurchaseOrdersService(db, approvals, audit, caller, () => now);
+  pickers = new VendorOrdersService(db, caller);
   receiptsService = new ReceiptsService(
     db,
     authz as unknown as AuthzService,
@@ -301,8 +311,16 @@ interface Po {
   lineId: string;
   vendorId: string;
 }
-/** An issued PO in entity A with one line of `quantity` x `unitPrice` + 13% VAT, received `received`. */
-async function receivedPo(quantity: string, unitPrice: string, received: string): Promise<Po> {
+/**
+ * An issued PO in entity A with one line of `quantity` x `unitPrice` + 13% VAT, received `received`, raised from a
+ * request of `requester` (U.req unless given).
+ */
+async function receivedPo(
+  quantity: string,
+  unitPrice: string,
+  received: string,
+  requester = U.req,
+): Promise<Po> {
   const vendorId = await vendor();
   const a = quotationLineAmounts(quantity, unitPrice, 1300);
   const prId = randomUUID();
@@ -310,7 +328,7 @@ async function receivedPo(quantity: string, unitPrice: string, received: string)
     scopeA,
     sql`INSERT INTO app.purchase_requests (id, tenant_id, organization_id, request_type, department_id,
           requester_user_id, cost_center_id, justification, required_by, budget_code, currency)
-        VALUES (${prId}, ${scopeA.tenantId}, ${scopeA.organizationId}, 'goods', ${deptA}, ${U.req},
+        VALUES (${prId}, ${scopeA.tenantId}, ${scopeA.organizationId}, 'goods', ${deptA}, ${requester},
                 ${(await createCostCenter(appPool, scopeA)).costCenterId}, 'Laptops', '2026-12-01', 'IT-2083', 'NPR')`,
   );
   await exec(
@@ -520,6 +538,63 @@ describe('match (check 6, AD6 defaults from settings)', () => {
     expect((await service.list(PAGE)).rows.find((row) => row.id === bill.id)).toMatchObject(
       expected,
     );
+  });
+
+  it('names the purchase order on bill list and detail for Finance, who holds no purchase order read', async () => {
+    const po = await receivedPo('1', '1000.00', '1');
+    const bill = await billFor(po, '1', '1000.00');
+    const plain = await billWithoutPo(await doc(['clean']));
+    const [stored] = await read((tx) =>
+      tx.execute<{ number: string }>(
+        sql`SELECT number FROM app.purchase_orders WHERE id = ${po.id}`,
+      ),
+    ).then((r) => r.rows);
+    as(U.fin, 'finance');
+    expect(grantsOf('finance').has('procurement.po.issue')).toBe(false);
+    expect(grantsOf('finance').has('procurement.pr.read')).toBe(false);
+    expect(await service.get(bill.id)).toMatchObject({
+      purchaseOrderId: po.id,
+      purchaseOrderNumber: stored!.number,
+    });
+    const listed = (await service.list(PAGE)).rows;
+    expect(listed.find((row) => row.id === bill.id)?.purchaseOrderNumber).toBe(stored!.number);
+    expect(listed.find((row) => row.id === plain.id)?.purchaseOrderNumber).toBeNull();
+    expect((await service.get(plain.id)).purchaseOrderNumber).toBeNull();
+    as(U.acct, 'accountant');
+  });
+
+  it('adds only the order number to a bill: no other purchase order field rides along', async () => {
+    const po = await receivedPo('1', '1000.00', '1');
+    const bill = await billFor(po, '1', '1000.00');
+    as(U.fin, 'finance');
+    const { lines: _lines, fileStatus: _file, ...detail } = await service.get(bill.id);
+    const row = (await service.list(PAGE)).rows.find((r) => r.id === bill.id)!;
+    as(U.acct, 'accountant');
+    const expectedKeys = [
+      'approvalRequestId',
+      'currency',
+      'documentId',
+      'enteredBy',
+      'fiscalYear',
+      'id',
+      'invoiceDate',
+      'kind',
+      'matchStatus',
+      'netTotal',
+      'number',
+      'payableTotal',
+      'purchaseOrderId',
+      'purchaseOrderNumber',
+      'status',
+      'tdsTotal',
+      'vatTotal',
+      'vendorInvoiceNo',
+      'vendorName',
+      'vendorPartyId',
+      'version',
+    ];
+    expect(Object.keys(detail).sort()).toEqual(expectedKeys);
+    expect(Object.keys(row).sort()).toEqual(expectedKeys);
   });
 
   it('passes +2% on 10,000 and lets the bill through to Accountant -> Finance', async () => {
@@ -813,6 +888,52 @@ describe('invoice documents', () => {
   });
 });
 
+describe('the bill on its approval (U18 #2)', () => {
+  it('shows the approver the bill and its own file only, and links the bill only for a bill reader', async () => {
+    const vendorId = await vendor();
+    const bill = await billWithoutPo(await doc(['clean'], vendorId), vendorId);
+    // A second bill of the same vendor: its file has the same owner and must not appear on the first bill's approval.
+    const other = await billWithoutPo(await doc(['clean'], vendorId), vendorId);
+    const submitted = await service.submit(bill.id, randomUUID());
+
+    // The first step's approver is another accountant, who may read bills.
+    as(U.acct2, 'accountant');
+    const forAccountant = await approvals.get(submitted.approvalRequestId!);
+    expect(forAccountant.context).toMatchObject({
+      href: `/payables/bills/${bill.id}`,
+      documents: [{ documentId: bill.documentId, filename: 'invoice.pdf' }],
+    });
+    expect(forAccountant.context!.documents).toHaveLength(1);
+    expect(forAccountant.context!.documents.map((d) => d.documentId)).not.toContain(
+      other.documentId,
+    );
+    expect(forAccountant.context!.fields).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ key: 'vendor', value: `Vendor ${vendorId.slice(0, 6)}` }),
+        expect.objectContaining({ key: 'netTotal', kind: 'money', value: '1000.00' }),
+        expect.objectContaining({ key: 'status', value: 'pending_approval' }),
+      ]),
+    );
+    // Nothing beyond the bill's facts: not the vendor's PAN.
+    const { rows } = await exec(scopeA, sql`SELECT pan FROM app.vendors WHERE id = ${vendorId}`);
+    expect(JSON.stringify(forAccountant.context)).not.toContain((rows[0] as { pan: string }).pan);
+
+    // Management decides the larger bands. It reads approval requests and documents but not bills, so it sees the
+    // same record and file with no link to a page that would refuse it.
+    as(U.mgmt, 'management');
+    try {
+      expect(grantsOf('management').has('payables.bill.read')).toBe(false);
+      const forManagement = await approvals.get(submitted.approvalRequestId!);
+      expect(forManagement.context).toMatchObject({
+        href: null,
+        documents: [{ documentId: bill.documentId }],
+      });
+    } finally {
+      as(U.acct, 'accountant');
+    }
+  });
+});
+
 // ---------------------------------------------------------------------------------------- check 8, idempotency
 
 describe('duplicates (check 8) and replays', () => {
@@ -1020,5 +1141,108 @@ describe('entity wall', () => {
     );
     expect(e.getStatus()).toBe(422);
     expect(codeOf(e)).toBe('PO_LINE_NOT_FOUND');
+  });
+});
+
+// The payables purchase order pickers (U18 #12, #13): the accountant and Finance hold no purchase order read, so the
+// bill and payment request forms list orders through VendorOrdersService, under their own form grant.
+describe('purchase order pickers', () => {
+  /** A PO of `vendorId` in entity A left in draft: never offered by either picker. */
+  async function draftPo(vendorId: string): Promise<string> {
+    const prId = randomUUID();
+    await exec(
+      scopeA,
+      sql`INSERT INTO app.purchase_requests (id, tenant_id, organization_id, request_type, department_id,
+            requester_user_id, cost_center_id, justification, required_by, budget_code, currency)
+          VALUES (${prId}, ${scopeA.tenantId}, ${scopeA.organizationId}, 'goods', ${deptA}, ${U.req},
+                  ${(await createCostCenter(appPool, scopeA)).costCenterId}, 'Chairs', '2026-12-01', 'IT-2083', 'NPR')`,
+    );
+    const id = randomUUID();
+    poSeq += 1;
+    await exec(
+      scopeA,
+      sql`INSERT INTO app.purchase_orders (id, tenant_id, organization_id, number, number_seq, fiscal_year,
+            purchase_request_id, vendor_id, currency, payment_terms_days, approved_total, fx_rate,
+            approved_total_npr, approved_band, created_by)
+          VALUES (${id}, ${scopeA.tenantId}, ${scopeA.organizationId}, ${`PO-B-${poSeq}`}, ${poSeq}, '2082/83',
+                  ${prId}, ${vendorId}, 'NPR', 30, '100.00', 1, '100.00', 'base', ${U.proc})`,
+    );
+    return id;
+  }
+  const ids = (rows: { id: string }[]) => rows.map((r) => r.id);
+
+  it("offers the accountant the chosen vendor's billable orders, without a draft", async () => {
+    const part = await receivedPo('2', '100.00', '1');
+    const other = await receivedPo('1', '100.00', '1');
+    const draft = await draftPo(part.vendorId);
+    as(U.acct, 'accountant');
+
+    const mine = await pickers.billable({ vendorId: part.vendorId, limit: 100 });
+    expect(mine).toEqual([
+      {
+        id: part.id,
+        number: expect.stringMatching(/^PO-B-\d+$/) as string,
+        status: 'partially_received',
+        vendorId: part.vendorId,
+      },
+    ]);
+    const all = ids(await pickers.billable({ limit: 200 }));
+    expect(all).toEqual(expect.arrayContaining([part.id, other.id]));
+    expect(all).not.toContain(draft);
+  });
+
+  it('offers Finance the vendor orders a payment request can name, without a draft', async () => {
+    const full = await receivedPo('1', '100.00', '1');
+    const draft = await draftPo(full.vendorId);
+    as(U.fin, 'finance');
+
+    const rows = await pickers.forPaymentRequest({ vendorId: full.vendorId, limit: 100 });
+    expect(ids(rows)).toEqual([full.id]);
+    expect(rows[0]?.status).toBe('fully_received');
+    expect(ids(rows)).not.toContain(draft);
+  });
+
+  it('returns only id, number, status and vendor: no amount, request or creator rides along', async () => {
+    const po = await receivedPo('1', '100.00', '1');
+    as(U.acct, 'accountant');
+    const [bill] = await pickers.billable({ vendorId: po.vendorId, limit: 100 });
+    as(U.fin, 'finance');
+    const [pay] = await pickers.forPaymentRequest({ vendorId: po.vendorId, limit: 100 });
+    for (const row of [bill, pay]) {
+      expect(Object.keys(row ?? {}).sort()).toEqual(['id', 'number', 'status', 'vendorId']);
+    }
+  });
+
+  it('offers an accountant with own-scope bill entry only the orders raised from their own requests', async () => {
+    const mine = await receivedPo('1', '100.00', '1', U.acct);
+    const theirs = await receivedPo('1', '100.00', '1');
+    as(U.acct, 'accountant');
+    current.grants = new Map([...grantsOf('accountant'), ['payables.bill.enter', 'own']]);
+
+    const offered = await pickers.billable({ limit: 200 });
+    expect(ids(offered)).toContain(mine.id);
+    expect(ids(offered)).not.toContain(theirs.id);
+    // Nothing of the other order rides along, not even under its own vendor filter.
+    expect(await pickers.billable({ vendorId: theirs.vendorId, limit: 200 })).toEqual([]);
+    for (const row of offered) {
+      expect(Object.keys(row).sort()).toEqual(['id', 'number', 'status', 'vendorId']);
+    }
+    // The picker, the bill form's progress read and the order's Enter bill agree on both orders.
+    await expect(receiptsService.progress(mine.id)).resolves.toMatchObject({
+      purchaseOrderId: mine.id,
+    });
+    await expect(receiptsService.progress(theirs.id)).rejects.toBeInstanceOf(NotFoundException);
+    expect((await orders.get(mine.id)).can).toEqual({ enterBill: true });
+    expect((await orders.get(theirs.id)).can).toEqual({ enterBill: false });
+  });
+
+  it("never lists another entity's orders", async () => {
+    const po = await receivedPo('1', '100.00', '1');
+    current.scope = scopeB;
+    as(U.acct, 'accountant');
+    expect(ids(await pickers.billable({ limit: 200 }))).not.toContain(po.id);
+    expect(await pickers.billable({ vendorId: po.vendorId, limit: 200 })).toEqual([]);
+    as(U.fin, 'finance');
+    expect(await pickers.forPaymentRequest({ vendorId: po.vendorId, limit: 200 })).toEqual([]);
   });
 });

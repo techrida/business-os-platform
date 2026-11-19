@@ -10,6 +10,23 @@ const session = vi.hoisted(() => ({ roles: ['accountant'] as string[] }));
 vi.mock('@/lib/bff', () => ({
   requireStaffSession: () => Promise.resolve({ roles: session.roles }),
 }));
+// GET /v1/me for an unedited role answers the role's default grants; a test sets `live` for an edited one.
+const grants = vi.hoisted(() => ({ live: undefined as Map<string, string> | undefined }));
+vi.mock('@/lib/grants', async () => {
+  const { DEFAULT_ROLE_PERMISSIONS } = await import('@bos/contracts');
+  return {
+    getGrants: () =>
+      Promise.resolve(
+        grants.live ??
+          new Map(
+            session.roles.flatMap((r) =>
+              Object.entries(DEFAULT_ROLE_PERMISSIONS[r as keyof typeof DEFAULT_ROLE_PERMISSIONS]),
+            ),
+          ),
+      ),
+    hasGrant: (g: Map<string, string>, p: string) => g.has(p),
+  };
+});
 vi.mock('next/navigation', () => ({
   notFound: () => {
     throw new Error('NOT_FOUND');
@@ -41,6 +58,11 @@ const api = vi.hoisted(() => ({
   listTaxCodes: vi.fn(),
   listWithholdingCodes: vi.fn(),
   listVendors: vi.fn(),
+  listBillableOrders: vi.fn(),
+}));
+vi.mock('@/lib/api-payables-orders', () => ({
+  listBillableOrders: api.listBillableOrders,
+  ORDER_PICKER_LIMIT: 200,
 }));
 vi.mock('@/lib/api-payables', () => ({
   listBillsPage: api.listBillsPage,
@@ -83,6 +105,7 @@ const header = {
   fiscalYear: '2083/84',
   currency: 'NPR',
   purchaseOrderId: PO,
+  purchaseOrderNumber: 'PO-2083-0007',
   documentId: DOC,
   status: 'variance',
   matchStatus: 'variance',
@@ -160,6 +183,7 @@ const progress = {
 
 beforeEach(() => {
   session.roles = ['accountant'];
+  grants.live = undefined;
   for (const fn of Object.values(api)) fn.mockReset();
   api.getVendor.mockResolvedValue({ legalName: 'Himal Traders' });
   api.getPoProgress.mockResolvedValue(progress);
@@ -178,6 +202,7 @@ beforeEach(() => {
     items: [{ id: VENDOR, legalName: 'Himal Traders' }],
     total: 1,
   });
+  api.listBillableOrders.mockResolvedValue([]);
 });
 
 const page = (items: unknown[], total = items.length) => ({ items, total });
@@ -322,6 +347,17 @@ describe('bill detail', () => {
     expect(finance).not.toContain('Void bill');
   });
 
+  it('shows Finance the order number sent with the bill, with no purchase order read of its own', async () => {
+    session.roles = ['finance'];
+    api.getBill.mockResolvedValue({ ...header, status: 'pending_approval', lines: [line] });
+    api.getPoProgress.mockRejectedValue(apiError(403, 'forbidden'));
+    const out = await html(BillPage({ params: Promise.resolve({ id: BILL }) }));
+    expect(out).toContain('PO-2083-0007');
+    expect(out).not.toContain('An order');
+    expect(out).not.toContain(`/procurement/orders/${PO}`);
+    expect(api.getPoProgress).not.toHaveBeenCalled();
+  });
+
   it('still shows the bill when the vendor and the order cannot be read', async () => {
     api.getBill.mockResolvedValue({ ...header, lines: [line] });
     api.getVendor.mockRejectedValue(apiError(403));
@@ -371,6 +407,28 @@ describe('bill entry', () => {
     expect(api.getPoProgress).not.toHaveBeenCalled();
   });
 
+  it('points a malformed PO link at a fresh bill, naming no button that does not exist', async () => {
+    const out = await html(NewBillPage({ searchParams: Promise.resolve({ po: '../wrong' }) }));
+    expect(out).toContain('That link does not name a valid purchase order');
+    expect(out).toContain('href="/payables/bills/new"');
+    expect(out).toContain('Start a new bill');
+    expect(out).not.toContain('choose Enter bill');
+  });
+
+  it('loads the billable orders for the standalone picker, and enters without one if they fail', async () => {
+    await html(NewBillPage({ searchParams: search() }));
+    expect(api.listBillableOrders).toHaveBeenCalledOnce();
+    api.listBillableOrders.mockClear();
+    await html(NewBillPage({ searchParams: Promise.resolve({ po: PO }) }));
+    expect(api.listBillableOrders).not.toHaveBeenCalled();
+
+    api.listBillableOrders.mockRejectedValue(apiError(500));
+    const out = await html(NewBillPage({ searchParams: search() }));
+    expect(out).toContain('purchase orders did not load');
+    expect(out).toContain('name="vendorPartyId"');
+    expect(out).toContain('Upload invoice');
+  });
+
   it('says a submission that is not in the inbox any more is gone', async () => {
     api.listBillSubmissions.mockResolvedValue([]);
     const out = await html(NewBillPage({ searchParams: search(SUB) }));
@@ -406,6 +464,28 @@ describe('bill entry', () => {
     const out = await html(NewBillPage({ searchParams: search(SUB) }));
     expect(out).toContain('You cannot key in bills');
     expect(api.listBillSubmissions).not.toHaveBeenCalled();
+  });
+
+  // The PO page offers Enter bill from the API's live grants; the page it opens must agree (U18 #12).
+  it("opens for Procurement after an admin granted payables.bill.enter, from the order's Enter bill link", async () => {
+    session.roles = ['procurement'];
+    grants.live = new Map([
+      ['procurement.po.issue', 'all'],
+      ['payables.bill.enter', 'all'],
+    ]);
+    const out = await html(NewBillPage({ searchParams: Promise.resolve({ po: PO }) }));
+    expect(out).not.toContain('You cannot key in bills');
+    expect(api.getPoProgress).toHaveBeenCalledWith(expect.anything(), PO);
+    expect(out).toContain(`name="purchaseOrderId" value="${PO}"`);
+  });
+
+  it('blocks an accountant whose payables.bill.enter an admin removed, before loading anything', async () => {
+    grants.live = new Map([['payables.bill.read', 'all']]);
+    const out = await html(NewBillPage({ searchParams: Promise.resolve({ po: PO }) }));
+    expect(out).toContain('You cannot key in bills');
+    expect(api.getPoProgress).not.toHaveBeenCalled();
+    expect(api.listBillableOrders).not.toHaveBeenCalled();
+    expect(out).not.toContain('Himal Traders');
   });
 });
 

@@ -44,20 +44,6 @@
   gap: 8px;
 }
 
-/* ---- Picker: a plain GET form, so it works without scripts and the URL can be shared ---- */
-
-.picker {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: flex-end;
-  gap: 12px 16px;
-}
-
-.picker > :first-child {
-  flex: 1 1 22rem;
-  min-width: 0;
-}
-
 /* ---- Form ---- */
 
 .form {
