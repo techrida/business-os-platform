@@ -1,5 +1,6 @@
 'use client';
 
+import { DecimalString, WORKFLOW_AMOUNT_ERROR } from '@bos/contracts';
 import { ROLE_KEYS, WorkflowSpecSchema, type RoleKey, type StepKind } from '@bos/contracts';
 import {
   useActionState,
