@@ -76,3 +76,23 @@ it('writes the type selection to the URL and drops the page', async () => {
   await click(option('Call'));
   expect(router.push).toHaveBeenLastCalledWith('/activities?rows=50&kind=call', { scroll: false });
 });
+
+it('has due-from and due-to date pickers that carry the URL days without JavaScript', async () => {
+  params = new URLSearchParams('dueFrom=2030-01-01&dueTo=2030-01-31');
+  mounted = await mountForm(
+    <ActivityFilters
+      rows={25}
+      kinds={[]}
+      kindOptions={KINDS}
+      dueFrom="2030-01-01"
+      dueTo="2030-01-31"
+    />,
+  );
+  // React Aria puts the name on the field group; the exact element is its choice.
+  expect(mounted.container.innerHTML).toContain('aria-label="Due from"');
+  expect(mounted.container.innerHTML).toContain('aria-label="Due to"');
+  const data = new FormData(mounted.container.querySelector('form')!);
+  expect(data.get('dueFrom')).toBe('2030-01-01');
+  expect(data.get('dueTo')).toBe('2030-01-31');
+  expect(mounted.container.querySelector('button[type="submit"]')).toBeNull();
+});

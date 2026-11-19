@@ -436,6 +436,33 @@ describe('planned and logged activities', () => {
     expect((await list(`?leadId=${lead.id}&status=planned`)).status).toBe(404);
   });
 
+  it('filters by an inclusive due-day range in Asia/Kathmandu and drops rows without a due time', async () => {
+    const lead = await seedLead();
+    const make = (subject: string, dueAt?: string) =>
+      post({ leadId: lead.id, kind: dueAt ? 'call' : 'note', subject, ...(dueAt ? { dueAt } : {}) });
+    // 18:15 UTC is midnight in Kathmandu (UTC+5:45).
+    await make('before', '2029-12-31T18:14:00.000Z');
+    await make('first', '2029-12-31T18:15:00.000Z');
+    await make('middle', DUE_1);
+    await make('last', '2030-01-02T18:14:00.000Z');
+    await make('after', '2030-01-02T18:15:00.000Z');
+    await make('no due time');
+
+    const range = `?leadId=${lead.id}&dueFrom=2030-01-01&dueTo=2030-01-02`;
+    const planned = await listed(`${range}&status=planned`);
+    expect(planned.map((a) => a.subject)).toEqual(['first', 'middle', 'last']);
+    expect((await listed(range)).map((a) => a.subject).sort()).toEqual(['first', 'last', 'middle']);
+    const from = await listed(`?leadId=${lead.id}&dueFrom=2030-01-02&status=planned`);
+    expect(from.map((a) => a.subject)).toEqual(['last', 'after']);
+    const to = await listed(`?leadId=${lead.id}&dueTo=2029-12-31&status=planned`);
+    expect(to.map((a) => a.subject)).toEqual(['before']);
+
+    expect((await list(`?leadId=${lead.id}&dueFrom=2030-01-03&dueTo=2030-01-02`)).status).toBe(400);
+    expect((await list(`?leadId=${lead.id}&dueFrom=tomorrow`)).status).toBe(400);
+    h.as('salesB', 'sales');
+    expect((await list(`${range}&status=planned`)).status).toBe(404);
+  });
+
   it('records who changed a lead stage on its stage_change activity', async () => {
     const lead = await seedLead();
     await leadsService.changeStage(lead.id, { stage: 'contacted', expectedVersion: lead.version });

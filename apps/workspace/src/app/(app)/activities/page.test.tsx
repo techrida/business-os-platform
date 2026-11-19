@@ -163,3 +163,21 @@ it('shows one empty state when there is nothing at all', async () => {
   expect(html).toContain('No activity yet');
   expect(html).not.toContain('No follow-ups planned');
 });
+
+it('sends the due-day range to both lists, in order, and clears it with the other filters', async () => {
+  const html = await render(undefined, { dueFrom: '2030-01-05', dueTo: '2030-01-01', rows: '50' });
+  for (const [, opts] of mocks.listActivitiesPage.mock.calls)
+    expect(opts).toMatchObject({ dueFrom: '2030-01-01', dueTo: '2030-01-05' });
+  expect(html).toContain('No activities match');
+  expect(html).toContain('Due from: ');
+  expect(html).toContain('Due to: ');
+  expect(html).toContain('href="/activities?rows=50"');
+});
+
+it('drops a malformed due day instead of sending it', async () => {
+  await render(undefined, { dueFrom: '2030-02-30', dueTo: 'soon' });
+  for (const [, opts] of mocks.listActivitiesPage.mock.calls) {
+    expect(opts).not.toHaveProperty('dueFrom');
+    expect(opts).not.toHaveProperty('dueTo');
+  }
+});
