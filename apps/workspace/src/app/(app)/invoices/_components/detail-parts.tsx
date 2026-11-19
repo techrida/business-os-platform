@@ -100,6 +100,12 @@ export function LineBreakdown({
 }
 
 /** A date from the server, as a `<time>` with its Kathmandu date. */
-export function DayValue({ iso, pattern }: { iso: string; pattern?: CustomerDateFormat | undefined }) {
+export function DayValue({
+  iso,
+  pattern,
+}: {
+  iso: string;
+  pattern?: CustomerDateFormat | undefined;
+}) {
   return <time dateTime={iso}>{when(iso, 'date', pattern)}</time>;
 }

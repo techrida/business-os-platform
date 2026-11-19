@@ -37,7 +37,10 @@ function isObject(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
 
-function without(object: Record<string, unknown>, keys: readonly string[]): Record<string, unknown> {
+function without(
+  object: Record<string, unknown>,
+  keys: readonly string[],
+): Record<string, unknown> {
   return Object.fromEntries(Object.entries(object).filter(([key]) => !keys.includes(key)));
 }
 
@@ -75,6 +78,9 @@ export function withoutCostFigures(event: AuditEventDto): AuditEventDto {
 }
 
 /** A page of events as `p` may see it: unchanged with `quotation.cost.read`, cost figures removed otherwise. */
-export function eventsVisibleTo<E extends AuditEventDto>(p: Principal | undefined, events: E[]): E[] {
+export function eventsVisibleTo<E extends AuditEventDto>(
+  p: Principal | undefined,
+  events: E[],
+): E[] {
   return mayReadCostFigures(p) ? events : events.map((e) => withoutCostFigures(e) as E);
 }

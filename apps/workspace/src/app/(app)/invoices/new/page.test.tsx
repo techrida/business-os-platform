@@ -32,11 +32,13 @@ const customerPage = {
 
 beforeEach(() => {
   mocks.listCustomers.mockReset().mockResolvedValue(customerPage);
-  mocks.call.mockReset().mockImplementation((_session, path: string) =>
-    path === '/v1/settings/display'
-      ? Promise.resolve({ enabledCurrencies: ['NPR', 'INR', 'USD'] })
-      : Promise.reject(new ApiError(404, 'Not found')),
-  );
+  mocks.call
+    .mockReset()
+    .mockImplementation((_session, path: string) =>
+      path === '/v1/settings/display'
+        ? Promise.resolve({ enabledCurrencies: ['NPR', 'INR', 'USD'] })
+        : Promise.reject(new ApiError(404, 'Not found')),
+    );
 });
 
 /** The currency Select's choices: the options of the hidden native select after its named input. */

@@ -90,7 +90,10 @@ function staffWithRole(role: keyof typeof DEFAULT_ROLE_PERMISSIONS): Principal {
 // Retry from the same readers (quotations/[id]/pdf-retry.test.tsx).
 describe('POST /v1/quotations/:id/versions/:vid/document/retry: who is refused', () => {
   it('refuses a reader who may not send (management) and allows sales', () => {
-    const action = Reflect.getMetadata(CAN_KEY, QuotationDocumentController.prototype.retry) as Permission;
+    const action = Reflect.getMetadata(
+      CAN_KEY,
+      QuotationDocumentController.prototype.retry,
+    ) as Permission;
     const management = staffWithRole('management');
     expect(can(management, 'quotation.read').allowed).toBe(true);
     expect(can(management, action).allowed).toBe(false);

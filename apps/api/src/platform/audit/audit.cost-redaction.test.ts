@@ -3,7 +3,12 @@
 // A caller without `quotation.cost.read` keeps every row but loses unit_cost, internal_cost_total, margin_pct and a
 // quotation approval snapshot's marginPct, with the canonical text of those sides withheld. Fakes, no database.
 // Run with: pnpm --filter @bos/api exec vitest run src/platform/audit/audit.cost-redaction.test.ts
-import { type AuditEventDto, AuditEventDtoSchema, type Permission, type Scope } from '@bos/contracts';
+import {
+  type AuditEventDto,
+  AuditEventDtoSchema,
+  type Permission,
+  type Scope,
+} from '@bos/contracts';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import type { Principal } from '../authz/principal';
@@ -14,7 +19,10 @@ const id = (n: number) => `00000000-0000-4000-8000-${String(n).padStart(12, '0')
 const caller = { tenantId: id(1), organizationId: id(2) };
 
 let principal: Principal | undefined;
-vi.mock('../tenancy/request-context', () => ({ ctx: () => caller, currentPrincipal: () => principal }));
+vi.mock('../tenancy/request-context', () => ({
+  ctx: () => caller,
+  currentPrincipal: () => principal,
+}));
 
 function staff(granted: Permission[], over: Partial<Principal> = {}): Principal {
   return {
@@ -63,14 +71,30 @@ function event(entityType: string, before: unknown, after: unknown): AuditEventD
   });
 }
 
-const lineBefore = { id: id(50), line_no: 1, description: 'Router', unit_price: '1000.00', unit_cost: '700.00' };
+const lineBefore = {
+  id: id(50),
+  line_no: 1,
+  description: 'Router',
+  unit_price: '1000.00',
+  unit_cost: '700.00',
+};
 const lineAfter = { ...lineBefore, unit_price: '1100.00', unit_cost: '720.00' };
-const versionAfter = { id: id(60), total: '2240.00', internal_cost_total: '1440.00', margin_pct: '35.7143' };
+const versionAfter = {
+  id: id(60),
+  total: '2240.00',
+  internal_cost_total: '1440.00',
+  margin_pct: '35.7143',
+};
 const requestAfter = {
   id: id(70),
   document_type: 'quotation_version',
   status: 'pending',
-  snapshot: { nprTotal: '2240.00', marginPct: '35.7143', currency: 'NPR', customerName: 'Himal Traders' },
+  snapshot: {
+    nprTotal: '2240.00',
+    marginPct: '35.7143',
+    currency: 'NPR',
+    customerName: 'Himal Traders',
+  },
 };
 const memoAfter = { id: id(80), document_type: 'memo', snapshot: { marginPct: 'not a quotation' } };
 
@@ -131,7 +155,10 @@ describe('GET /v1/audit cost figures (D29)', () => {
   });
 
   it('removes the figures for a portal caller even if a role row grants the key, and for a missing principal', async () => {
-    principal = staff(['audit.read', 'quotation.cost.read'], { orgKind: 'customer', partyId: id(20) });
+    principal = staff(['audit.read', 'quotation.cost.read'], {
+      orgKind: 'customer',
+      partyId: id(20),
+    });
     expect(JSON.stringify((await controller.list({})).items)).not.toContain('35.7143');
     principal = undefined;
     expect(JSON.stringify((await controller.list({})).items)).not.toContain('720.00');

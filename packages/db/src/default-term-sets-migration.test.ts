@@ -69,7 +69,8 @@ let defaults: Preset[] = [];
 const validList = (value: unknown): boolean =>
   Array.isArray(value) &&
   value.length <= 200 &&
-  new Set((value as Preset[]).map((p) => `${p.kind}:${p.name.toLowerCase()}`)).size === value.length;
+  new Set((value as Preset[]).map((p) => `${p.kind}:${p.name.toLowerCase()}`)).size ===
+    value.length;
 
 async function inTx<T>(fn: (c: PoolClient) => Promise<T>): Promise<T> {
   const c = await owner.connect();
