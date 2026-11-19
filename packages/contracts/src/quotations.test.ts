@@ -442,6 +442,46 @@ describe('QuotationVersionDtoSchema', () => {
     ).toBe(true);
   });
 
+  it('parses a version whose viewer lacks quotation.cost.read: the cost fields are absent (D29a)', () => {
+    const line = {
+      lineNo: 1,
+      catalogItemId: null,
+      description: 'Rack server',
+      uom: 'pcs',
+      quantity: '2.0000',
+      unitPrice: '1000.00',
+      taxCodeId: id(),
+      gross: '2000.00',
+      discountAlloc: '0.00',
+      taxable: '2000.00',
+    };
+    const redacted: Record<string, unknown> = { ...version() };
+    delete redacted.internalCostTotal;
+    delete redacted.marginPct;
+    expect(QuotationVersionDtoSchema.safeParse({ ...redacted, lines: [line] }).success).toBe(true);
+    // Null still means "no cost recorded", and a recorded cost still parses.
+    expect(
+      QuotationVersionDtoSchema.safeParse({
+        ...redacted,
+        lines: [{ ...line, unitCost: null }],
+        internalCostTotal: null,
+        marginPct: null,
+      }).success,
+    ).toBe(true);
+    expect(
+      QuotationVersionDtoSchema.safeParse({
+        ...redacted,
+        lines: [{ ...line, unitCost: '800.00' }],
+        internalCostTotal: '1600.00',
+        marginPct: '20.0000',
+      }).success,
+    ).toBe(true);
+    // A malformed cost is still refused rather than ignored.
+    expect(
+      QuotationVersionDtoSchema.safeParse({ ...redacted, internalCostTotal: 1600 }).success,
+    ).toBe(false);
+  });
+
   it('rejects a JS number for a total, and an unknown rejection source', () => {
     const v = version();
     expect(

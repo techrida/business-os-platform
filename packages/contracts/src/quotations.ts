@@ -197,7 +197,10 @@ export const QuotationLineInputSchema = z.strictObject({
 });
 export type QuotationLineInput = z.infer<typeof QuotationLineInputSchema>;
 
-/** A line as the server returns it: the input plus the figures the pricing function computed. */
+/**
+ * A line as the server returns it: the input plus the figures the pricing function computed.
+ * `unitCost`: null means no cost is recorded; absent means the viewer lacks `quotation.cost.read`.
+ */
 export const QuotationLineDtoSchema = z.object({
   lineNo: z.number().int().min(1),
   catalogItemId: z.guid().nullable(),
@@ -205,7 +208,7 @@ export const QuotationLineDtoSchema = z.object({
   uom: z.string(),
   quantity: QuantityString,
   unitPrice: NonNegativeDecimalString,
-  unitCost: NonNegativeDecimalString.nullable(),
+  unitCost: NonNegativeDecimalString.nullable().optional(),
   taxCodeId: z.guid(),
   gross: DecimalString,
   discountAlloc: DecimalString,
@@ -481,11 +484,16 @@ export const QuotationVersionDtoSchema = z
     lines: z.array(QuotationLineDtoSchema),
     taxSummary: z.array(QuotationTaxSummaryItemSchema),
     totals: QuotationTotalsSchema,
-    internalCostTotal: DecimalString.nullable(),
+    /**
+     * Internal cost figures. null means no cost is recorded; absent means the viewer lacks
+     * `quotation.cost.read` (the API omits `internalCostTotal`, `marginPct` and each line's `unitCost`).
+     */
+    internalCostTotal: DecimalString.nullable().optional(),
     marginPct: z
       .string()
       .regex(/^-?\d{1,3}(\.\d{1,4})?$/)
-      .nullable(),
+      .nullable()
+      .optional(),
     /** The NPR equivalent frozen with its rate; null for NPR documents. */
     nprSnapshot: NprSnapshotSchema.nullable(),
     approvalRequestId: z.guid().nullable(),
