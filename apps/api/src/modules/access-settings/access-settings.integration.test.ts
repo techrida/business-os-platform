@@ -512,7 +512,13 @@ describe('AccessSettingsService integration (real Postgres)', () => {
     await env.service.save(env.scope, userActor(env.founderId), {
       expectedRevision: initial.revision,
       changes: [
-        { kind: 'assignment', area: 'leads', staff: 'self_only', managers: 'self_and_staff', handOvers: [] },
+        {
+          kind: 'assignment',
+          area: 'leads',
+          staff: 'self_only',
+          managers: 'self_and_staff',
+          handOvers: [],
+        },
       ],
       acknowledged: [],
     });

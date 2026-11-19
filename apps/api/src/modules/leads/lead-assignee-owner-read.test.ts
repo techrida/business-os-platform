@@ -5,7 +5,11 @@ import type { RoleCache } from '../../platform/authz/role-cache';
 import { partyHolds, type AssignmentCandidate } from './lead-assignee';
 
 const scope = { tenantId: 't', organizationId: 'o' };
-const party = { userId: 'u', roleKeys: ['sales'], level: 'staff' } as unknown as AssignmentCandidate;
+const party = {
+  userId: 'u',
+  roleKeys: ['sales'],
+  level: 'staff',
+} as unknown as AssignmentCandidate;
 
 const cacheWith = (scope: string | undefined) =>
   ({
