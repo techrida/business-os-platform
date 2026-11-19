@@ -22,6 +22,10 @@ vi.mock('next/navigation', () => ({
   notFound: () => {
     throw new Error('NEXT_NOT_FOUND');
   },
+  // The list's filter bar is a client component and reads these.
+  usePathname: () => '/vendor/rfqs',
+  useRouter: () => ({ push: vi.fn(), replace: vi.fn() }),
+  useSearchParams: () => new URLSearchParams(),
 }));
 vi.mock('@/lib/session', () => ({ getSession: m.getSession }));
 vi.mock('@/lib/api.vendor', () => ({
@@ -32,7 +36,8 @@ vi.mock('@/lib/api.vendor', () => ({
 const { default: RfqsPage } = await import('./page');
 
 const text = (html: string) => html.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ');
-const render = async () => renderToStaticMarkup((await RfqsPage()) as ReactElement);
+const render = async (params: Record<string, string | string[]> = {}) =>
+  renderToStaticMarkup((await RfqsPage({ searchParams: Promise.resolve(params) })) as ReactElement);
 
 beforeEach(() => {
   for (const f of Object.values(m)) f.mockReset();

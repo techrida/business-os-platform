@@ -9,6 +9,7 @@ import {
   getPaymentRequest,
   getVatRegister,
   listPaymentRequests,
+  listPaymentRequestsPage,
   listPaymentRequestItems,
   requestBillException,
   submitPaymentRequest,
@@ -183,6 +184,31 @@ describe('staff invoice upload client', () => {
       body: content.body,
       duplex: 'half',
     });
+  });
+});
+
+describe('payment request pages', () => {
+  it('repeats the status key, sends the search and offset, and reads the total from the header', async () => {
+    const { lines: _lines, ...row } = request;
+    vi.mocked(apiFetch).mockImplementation(() =>
+      Promise.resolve(
+        new Response(JSON.stringify([row]), { status: 200, headers: { 'x-total-count': '61' } }),
+      ),
+    );
+    const out = await listPaymentRequestsPage(session, {
+      status: ['draft', 'approved'],
+      q: 'Himal',
+      limit: 25,
+      offset: 25,
+    });
+    expect(out.total).toBe(61);
+    expect(apiFetch).toHaveBeenLastCalledWith(
+      session,
+      '/v1/payables/payment-requests?status=draft&status=approved&q=Himal&limit=25&offset=25',
+    );
+    expect(() =>
+      listPaymentRequestsPage(session, { status: ['other' as never], limit: 25, offset: 0 }),
+    ).toThrow();
   });
 });
 

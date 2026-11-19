@@ -10,13 +10,18 @@ import {
   Param,
   ParseUUIDPipe,
   Post,
+  Query,
+  Res,
 } from '@nestjs/common';
+import type { Response } from 'express';
 
 import { Can } from '../../../platform/authz/decorators';
+import { setTotalCount } from '../../../platform/list';
 import { parseOr400 } from '../../approvals/approvals.controller';
 import { requireIdempotencyKey } from '../../customers/customers.types';
 import {
   ConvertBillSubmissionBodySchema,
+  ListBillSubmissionsQuerySchema,
   RejectBillSubmissionBodySchema,
 } from './bill-submissions.types';
 import {
@@ -33,11 +38,22 @@ export class BillSubmissionsController {
     private readonly submissions: BillSubmissionsService,
   ) {}
 
-  /** The entity's received bill submissions, oldest first. */
+  /**
+   * The entity's received bill submissions, oldest first. Query: `q` (invoice number or vendor name), `limit` (at
+   * most 100; without it every row comes back), `offset`; X-Total-Count is the number of all matches.
+   */
   @Get()
   @Can('payables.bill.read')
-  list(): Promise<BillSubmissionDto[]> {
-    return this.submissions.list();
+  list(
+    @Query() query: unknown,
+    @Res({ passthrough: true }) res: Response,
+  ): Promise<BillSubmissionDto[]> {
+    return this.submissions
+      .list(parseOr400(ListBillSubmissionsQuerySchema, query))
+      .then(({ rows, total }) => {
+        setTotalCount(res, total);
+        return rows;
+      });
   }
 
   /**

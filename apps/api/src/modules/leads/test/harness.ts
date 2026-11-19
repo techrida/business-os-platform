@@ -94,6 +94,8 @@ export async function startHarness({ Pool, drizzle }: Driver): Promise<Harness> 
   await admin0.query('GRANT CONNECT ON DATABASE bos TO bos_app');
   await admin0.end();
   const bosAdmin = new Pool({ connectionString: urlFor('test', 'test', 'bos'), max: 1 });
+  // As infra/postgres/init-dbs.sh does: pg_trgm lives in public, so a missing grant shows up in the tests.
+  await bosAdmin.query('REVOKE ALL ON SCHEMA public FROM PUBLIC');
   await bosAdmin.query(
     'ALTER DEFAULT PRIVILEGES FOR ROLE bos_owner GRANT USAGE ON SCHEMAS TO bos_app',
   );

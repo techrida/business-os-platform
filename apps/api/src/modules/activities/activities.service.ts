@@ -42,6 +42,7 @@ import { type Principal, type ResourceRef } from '../../platform/authz/can';
 import { DB, type Db } from '../../platform/db/db.module';
 import { updateVersioned, withIdempotency } from '../../platform/db/idempotency';
 import { withTx, type DbTransaction, type TxScope } from '../../platform/db/tx';
+import { searchPage } from '../../platform/list';
 import { customerRef } from '../customers/customers.service';
 import { assertActiveStaff, assertLeadAssignee } from '../leads/lead-assignee';
 import { leadRef } from '../leads/leads.service';
@@ -81,7 +82,7 @@ export class ActivitiesService {
 
   // -------------------------------------------------------------------------------------------------- read
 
-  async list(q: ListActivitiesQuery): Promise<ActivityDto[]> {
+  async list(q: ListActivitiesQuery): Promise<{ items: ActivityDto[]; total: number }> {
     const { scope, principal } = this.caller.current();
     this.assertStaff(principal);
     const filters: SQL[] = [];
@@ -93,7 +94,7 @@ export class ActivitiesService {
     } else {
       filters.push(this.readableSubjects(principal));
     }
-    if (q.kind !== undefined) filters.push(eq(activities.kind, q.kind));
+    if (q.kind !== undefined && q.kind.length > 0) filters.push(inArray(activities.kind, q.kind));
     // A cancelled activity never lists. Planned ones are due earliest first; logged ones newest first.
     filters.push(isNull(activities.cancelledAt));
     if (q.status === 'planned') filters.push(isPlannedSql);
@@ -102,14 +103,25 @@ export class ActivitiesService {
       q.status === 'planned'
         ? [asc(activities.dueAt), asc(activities.id)]
         : [desc(activities.occurredAt), desc(activities.id)];
-    const rows = await this.db
-      .select()
-      .from(activities)
-      .where(scoped(scope).where(activities, and(...filters)))
-      .orderBy(...order)
-      .limit(q.limit);
+    const { rows, total } = await searchPage(this.db, {
+      q: q.q,
+      columns: [activities.subject, activities.body],
+      where: scoped(scope).where(activities, and(...filters)),
+      orderBy: order,
+      limit: q.limit,
+      offset: q.offset,
+      rows: (tx, p) =>
+        tx
+          .select()
+          .from(activities)
+          .where(p.where)
+          .orderBy(...p.orderBy)
+          .limit(p.limit)
+          .offset(p.offset),
+      count: (tx, where) => tx.$count(activities, where),
+    });
     const names = await activityNames(this.db, scope.tenantId, rows);
-    return rows.map((r) => toActivityDto(r, names));
+    return { items: rows.map((r) => toActivityDto(r, names)), total };
   }
 
   // ------------------------------------------------------------------------------------------------- create

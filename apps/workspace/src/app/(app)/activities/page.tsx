@@ -1,9 +1,20 @@
-import type { ActivityDto, ActivityKind, ActivityStatus, LeadOwnerOption } from '@bos/contracts';
+import {
+  type ActivityDto,
+  type ActivityKind,
+  type ActivityStatus,
+  DEFAULT_ROWS,
+  type LeadOwnerOption,
+  type PageWindow,
+  pageWindow,
+  ROWS_OPTIONS,
+} from '@bos/contracts';
 import type { Metadata } from 'next';
 import Link from 'next/link';
+import type { ReactNode } from 'react';
 
-import { listActivities } from '@/components/p2/crm/crm-api';
+import { type ActivitiesPage, listActivitiesPage } from '@/components/p2/crm/activities-api';
 import { FollowUpActions } from '@/components/p2/crm/follow-ups-card';
+import { ListFooter } from '@/components/p2/crm/list-footer';
 import { canAssignFollowUps, loadPeople } from '@/components/p2/crm/people';
 import {
   ACTIVITY_STATE_TONE,
@@ -13,34 +24,47 @@ import {
   LoadProblem,
 } from '@/components/p2/crm/server-bits';
 import { Badge } from '@/components/ui/badge';
-import { Button } from '@/components/ui/button';
 import { Card } from '@/components/ui/card';
 import { EmptyState } from '@/components/ui/empty-state';
-import { Field, Select } from '@/components/ui/field';
+import { ResultCount } from '@/components/ui/filter-bar';
 import { Page, PageHeader } from '@/components/ui/page';
 import { CellTitle, Table, Td, Th } from '@/components/ui/table';
 import { failureOf } from '@/lib/api-kernel';
 import { requireStaffSession } from '@/lib/bff';
 import { when } from '@/lib/kernel-format';
+import {
+  activeFilterLabels,
+  clearFiltersHref,
+  hrefWith,
+  readList,
+  type RawParams,
+} from '@/lib/list-params';
 
 import styles from './activities.module.css';
+import { ActivityFilters } from './filters';
 
 export const metadata: Metadata = { title: 'Activities · Business OS' };
 export const dynamic = 'force-dynamic';
 
-const LIMIT = 100;
+const PATH = '/activities';
+const SPEC = {
+  // `task` is not offered (D39); an old `?kind=task` link is dropped and falls back to every type.
+  multi: { kind: FILTER_KINDS.map((k) => k.value) },
+  rows: { allowed: ROWS_OPTIONS, default: DEFAULT_ROWS },
+} as const;
 const KIND_LABELS = new Map(ALL_KINDS.map(({ value, label }) => [value, label]));
-/** `task` is not offered (D39); an old `?kind=task` link falls back to every type. */
-const FILTERABLE = new Set<string>(FILTER_KINDS.map((k) => k.value));
+/** Planned follow-ups are one capped list (earliest due first); the logged history is paged. */
+const PLANNED_LIMIT = 100;
+
+/** Earliest due first; the API already sends them so, this keeps the order if it ever does not. */
+function byDue(x: ActivityDto, y: ActivityDto): number {
+  return (x.dueAt ?? '').localeCompare(y.dueAt ?? '');
+}
 
 interface Loaded {
   items: ActivityDto[];
+  total: number;
   problem: { message: string; status: number } | null;
-}
-
-/** Earliest due first; the API already sends them so, this keeps the order if it ever does not. */
-function byDue(a: ActivityDto, b: ActivityDto): number {
-  return (a.dueAt ?? '').localeCompare(b.dueAt ?? '');
 }
 
 function ActivityRow({
@@ -100,15 +124,15 @@ function ActivityTable({
   items,
   owners,
   now,
+  footer,
 }: {
   status: ActivityStatus;
   items: ActivityDto[];
   owners: readonly LeadOwnerOption[];
   now: Date;
+  footer: ReactNode;
 }) {
   const planned = status === 'planned';
-  const noun = planned ? 'follow-up' : 'activity';
-  const nouns = planned ? 'follow-ups' : 'activities';
   return (
     <Card className={styles.results}>
       <Table
@@ -137,11 +161,7 @@ function ActivityTable({
           ))}
         </tbody>
       </Table>
-      <p className={styles.footer}>
-        {items.length >= LIMIT
-          ? `Showing the ${planned ? 'first' : 'latest'} ${LIMIT} ${nouns}. Filter by type to narrow the list.`
-          : `Showing ${items.length} ${items.length === 1 ? noun : nouns}`}
-      </p>
+      {footer}
     </Card>
   );
 }
@@ -149,42 +169,69 @@ function ActivityTable({
 export default async function ActivitiesPage({
   searchParams,
 }: {
-  searchParams: Promise<{ kind?: string | string[] }>;
+  searchParams: Promise<RawParams>;
 }) {
-  const session = await requireStaffSession('/activities');
-  const { kind: kindParam } = await searchParams;
-  const kindValue = typeof kindParam === 'string' ? kindParam : undefined;
-  const kind = FILTERABLE.has(kindValue ?? '') ? (kindValue as ActivityKind) : undefined;
-  const reloadHref = kind ? `/activities?kind=${kind}` : '/activities';
+  const session = await requireStaffSession(PATH);
+  const sp = await searchParams;
+  const state = readList(sp, SPEC);
+  const kinds = state.multi.kind as ActivityKind[];
+  const { q } = state;
+  const filtered = q !== undefined || kinds.length > 0;
+  const filters = { ...(q !== undefined ? { q } : {}), kind: kinds };
+  const reloadHref = hrefWith(PATH, sp, { page: state.page > 1 ? state.page : null });
 
-  const load = async (status: ActivityStatus): Promise<Loaded> => {
+  const loadPlanned = async (): Promise<Loaded> => {
     try {
-      const items = await listActivities(session, {
-        ...(kind ? { kind } : {}),
-        status,
-        limit: LIMIT,
+      const page = await listActivitiesPage(session, {
+        ...filters,
+        status: 'planned',
+        limit: PLANNED_LIMIT,
       });
-      return { items, problem: null };
+      return { ...page, items: [...page.items].sort(byDue), problem: null };
     } catch (err) {
       const f = failureOf(err);
-      return { items: [], problem: { message: f.message, status: f.status } };
+      return { items: [], total: 0, problem: { message: f.message, status: f.status } };
+    }
+  };
+  const loadLogged = async (): Promise<Loaded & { pageInfo: PageWindow }> => {
+    let pageInfo = pageWindow(state.page, state.rows);
+    const read = (window: { limit: number; offset: number }): Promise<ActivitiesPage> =>
+      listActivitiesPage(session, { ...filters, status: 'logged', ...window });
+    try {
+      let page = await read(pageInfo);
+      pageInfo = pageWindow(pageInfo.page, pageInfo.limit, page.total);
+      if (page.items.length === 0 && page.total > 0) {
+        // The URL named a page past the end: show the last one instead of an empty table.
+        page = await read(pageInfo);
+      }
+      return { ...page, pageInfo, problem: null };
+    } catch (err) {
+      const f = failureOf(err);
+      return {
+        items: [],
+        total: 0,
+        pageInfo,
+        problem: { message: f.message, status: f.status },
+      };
     }
   };
   // The owners list (Reschedule's choices) needs crm.lead.write; without it Reschedule keeps the
   // current assignee. Names on the rows come from the activities themselves (D46).
   const [planned, logged, people] = await Promise.all([
-    load('planned'),
-    load('logged'),
+    loadPlanned(),
+    loadLogged(),
     loadPeople(session, { owners: canAssignFollowUps(session) }).catch(() => null),
   ]);
   const owners = people?.owners ?? [];
-  planned.items.sort(byDue);
   const now = new Date();
-  const nothing =
-    planned.problem === null &&
-    logged.problem === null &&
-    planned.items.length === 0 &&
-    logged.items.length === 0;
+  const problem = planned.problem ?? logged.problem;
+  const shown = planned.items.length + logged.items.length;
+  const total = planned.total + logged.total;
+  const nothing = problem === null && total === 0;
+  const hiding = activeFilterLabels(
+    { q, multi: { kind: kinds }, single: {} },
+    { kind: { label: 'Type', format: (v) => KIND_LABELS.get(v as ActivityKind) ?? v } },
+  );
 
   return (
     <Page>
@@ -194,41 +241,29 @@ export default async function ActivitiesPage({
       />
 
       <div className={styles.toolbar}>
-        <form
-          method="get"
-          action="/activities"
-          className={styles.filters}
-          role="search"
-          aria-label="Filter activities"
-        >
-          <Field label="Type" className={styles.typeField ?? ''}>
-            {(c) => (
-              <Select name="kind" defaultValue={kind ?? ''} {...c}>
-                <option value="">All types</option>
-                {FILTER_KINDS.map((k) => (
-                  <option key={k.value} value={k.value}>
-                    {k.label}
-                  </option>
-                ))}
-              </Select>
-            )}
-          </Field>
-          <Button type="submit" variant="secondary">
-            Apply
-          </Button>
-        </form>
+        <div className={styles.filters}>
+          <ActivityFilters rows={state.rows} kinds={kinds} kindOptions={FILTER_KINDS} />
+          {problem === null ? (
+            <ResultCount shown={shown} total={total} noun="activity" plural="activities" />
+          ) : null}
+        </div>
       </div>
 
       {nothing ? (
-        <EmptyState title="No activity yet" headingLevel={2} icon="inbox">
-          {kind ? (
-            <>
-              Nothing of this type yet. <Link href="/activities">Show all types</Link>.
-            </>
-          ) : (
-            'Log an activity from a lead or an opportunity to see it here.'
-          )}
-        </EmptyState>
+        filtered ? (
+          <EmptyState
+            title="No activities match"
+            headingLevel={2}
+            icon="inbox"
+            action={<Link href={clearFiltersHref(PATH, sp, SPEC)}>Clear filters</Link>}
+          >
+            Nothing matches {hiding.join(', ')}.
+          </EmptyState>
+        ) : (
+          <EmptyState title="No activity yet" headingLevel={2} icon="inbox">
+            Log an activity from a lead or an opportunity to see it here.
+          </EmptyState>
+        )
       ) : (
         <>
           <section aria-labelledby="activity-planned" className={styles.list}>
@@ -243,9 +278,23 @@ export default async function ActivitiesPage({
                 reloadHref={reloadHref}
               />
             ) : planned.items.length === 0 ? (
-              <p className={styles.meta}>No follow-ups planned.</p>
+              <p className={styles.meta}>
+                {filtered ? 'No follow-ups match.' : 'No follow-ups planned.'}
+              </p>
             ) : (
-              <ActivityTable status="planned" items={planned.items} owners={owners} now={now} />
+              <ActivityTable
+                status="planned"
+                items={planned.items}
+                owners={owners}
+                now={now}
+                footer={
+                  <p className={styles.footer}>
+                    {planned.total > planned.items.length
+                      ? `Showing the first ${planned.items.length} of ${planned.total} follow-ups. Filter to narrow the list.`
+                      : `Showing ${planned.items.length} ${planned.items.length === 1 ? 'follow-up' : 'follow-ups'}`}
+                  </p>
+                }
+              />
             )}
           </section>
 
@@ -261,9 +310,28 @@ export default async function ActivitiesPage({
                 reloadHref={reloadHref}
               />
             ) : logged.items.length === 0 ? (
-              <p className={styles.meta}>Nothing logged yet.</p>
+              <p className={styles.meta}>
+                {filtered ? 'No logged activities match.' : 'Nothing logged yet.'}
+              </p>
             ) : (
-              <ActivityTable status="logged" items={logged.items} owners={owners} now={now} />
+              <ActivityTable
+                status="logged"
+                items={logged.items}
+                owners={owners}
+                now={now}
+                footer={
+                  <ListFooter
+                    label="Activity pages"
+                    pathname={PATH}
+                    params={sp}
+                    pageInfo={logged.pageInfo}
+                    total={logged.total}
+                    noun="activity"
+                    plural="activities"
+                    rowsOptions={ROWS_OPTIONS}
+                  />
+                }
+              />
             )}
           </section>
         </>

@@ -1,8 +1,15 @@
 import { expect, test } from '@playwright/test';
 
 import { signInAs, type Signed } from '../helpers/memo-flow';
+import {
+  clearSelection,
+  expectParam,
+  expectSelected,
+  multiSelectByLabel,
+  toggleOptions,
+} from '../helpers/multi-select';
 import { minimalPdf } from '../helpers/pdf-fixture';
-import { chooseOption, selectByLabel, selectByName, selectedInput } from '../helpers/select';
+import { chooseOption, selectByLabel } from '../helpers/select';
 
 /**
  * The P3 payments screens (list and detail), against the real stack. Not run by the unit that wrote
@@ -39,17 +46,35 @@ test('the payments list loads and its status filter keeps the choice', async ({
       ).toBeVisible();
     });
 
-    await test.step('filtering by status updates the URL and the select', async () => {
-      await chooseOption(selectByName(finance.page, 'status'), 'rejected');
-      await finance.page.getByRole('button', { name: 'Apply filter' }).click();
-      await expect(finance.page).toHaveURL(/status=rejected/);
-      await expect(selectedInput(selectByName(finance.page, 'status'))).toHaveValue('rejected');
-      await expect(finance.page.getByRole('link', { name: 'Show all payments' })).toBeVisible();
+    await test.step('filtering by status updates the URL at once and the select', async () => {
+      // No Apply button: each change is written to the URL as a repeated param.
+      const status = multiSelectByLabel(finance.page, 'Status');
+      await toggleOptions(status, ['rejected']);
+      await expectParam(finance.page, 'status', ['rejected']);
+      await expectSelected(status, ['rejected']);
+      await expect(
+        finance.page
+          .getByRole('region', { name: /Payments/ })
+          .or(finance.page.getByText('No payments match these filters.')),
+      ).toBeVisible();
+      await toggleOptions(status, ['verified']);
+      await expectParam(finance.page, 'status', ['rejected', 'verified']);
+      await expect(status).toContainText('2 statuses');
+      await clearSelection(status);
+      await expectParam(finance.page, 'status', []);
+      await expectSelected(status, []);
+    });
+
+    await test.step('repeated params in the URL select several values', async () => {
+      await finance.page.goto('/payments?status=verified&status=rejected');
+      const status = multiSelectByLabel(finance.page, 'Status');
+      await expectSelected(status, ['verified', 'rejected']);
+      await expect(status).toContainText('2 statuses');
     });
 
     await test.step('a hand-edited filter is ignored, not sent to the API', async () => {
       await finance.page.goto('/payments?status=bogus');
-      await expect(selectedInput(selectByName(finance.page, 'status'))).toHaveValue('');
+      await expectSelected(multiSelectByLabel(finance.page, 'Status'), []);
     });
   } finally {
     await Promise.all(opened.map((s) => s.context.close()));

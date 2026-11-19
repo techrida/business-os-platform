@@ -1,7 +1,12 @@
 import { expect, test } from '@playwright/test';
 
 import { signInAs, type Signed } from '../helpers/memo-flow';
-import { chooseOption, selectByName, selectedInput } from '../helpers/select';
+import {
+  expectParam,
+  expectSelected,
+  multiSelectByLabel,
+  toggleOptions,
+} from '../helpers/multi-select';
 
 /**
  * The P4 payables screens (bill inbox, bills, bill detail, bill entry), against the real stack.
@@ -27,10 +32,11 @@ test('the bills list loads and filters', async ({ browser, baseURL }) => {
     opened.push(founder);
     await founder.page.goto('/payables/bills');
     await expect(founder.page.getByRole('heading', { level: 1, name: 'Bills' })).toBeVisible();
-    await chooseOption(selectByName(founder.page, 'status'), 'voided');
-    await founder.page.getByRole('button', { name: 'Show bills' }).click();
-    await expect(founder.page).toHaveURL(/status=voided/);
-    await expect(selectedInput(selectByName(founder.page, 'status'))).toHaveValue('voided');
+    // Filters apply as they change: no Show button, the URL is the state.
+    const status = multiSelectByLabel(founder.page, 'Status');
+    await toggleOptions(status, ['voided']);
+    await expectParam(founder.page, 'status', ['voided']);
+    await expectSelected(status, ['voided']);
   } finally {
     await Promise.all(opened.map((s) => s.context.close()));
   }

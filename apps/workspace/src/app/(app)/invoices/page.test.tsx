@@ -9,9 +9,22 @@ import InvoicesPage from './page';
 // `server-only` throws outside the react-server condition, which Vitest does not use.
 vi.mock('server-only', () => ({}));
 
-const mocks = vi.hoisted(() => ({ requireStaffSession: vi.fn(), listInvoices: vi.fn() }));
+const mocks = vi.hoisted(() => ({
+  requireStaffSession: vi.fn(),
+  listInvoicesPage: vi.fn(),
+  getInvoicesSummary: vi.fn(),
+}));
 vi.mock('@/lib/bff', () => ({ requireStaffSession: mocks.requireStaffSession }));
-vi.mock('@/lib/api-billing', () => ({ listInvoices: mocks.listInvoices }));
+vi.mock('@/lib/api-billing', () => ({
+  listInvoicesPage: mocks.listInvoicesPage,
+  getInvoicesSummary: mocks.getInvoicesSummary,
+}));
+// The filter toolbar is a client component that reads the router.
+vi.mock('next/navigation', () => ({
+  useRouter: () => ({ push: vi.fn(), replace: vi.fn() }),
+  usePathname: () => '/invoices',
+  useSearchParams: () => new URLSearchParams(),
+}));
 
 const ID = '11111111-1111-4111-8111-111111111111';
 const CUSTOMER = '33333333-3333-4333-8333-333333333333';
@@ -36,9 +49,21 @@ async function render(search: Record<string, string | string[]> = {}): Promise<s
   return renderToStaticMarkup(await InvoicesPage({ searchParams: Promise.resolve(search) }));
 }
 
+const OTHER = '44444444-4444-4444-8444-444444444444';
+const SUMMARY = {
+  total: 7,
+  byStatus: { draft: 2, submitted: 1, returned: 0, approved: 0, issued: 4, discarded: 0 },
+  customers: [
+    { id: CUSTOMER, name: 'Himalayan Agro Foods' },
+    { id: OTHER, name: 'Everest Traders' },
+  ],
+};
+const page = (items: InvoiceListItem[], total = items.length) => ({ items, total });
+
 beforeEach(() => {
   mocks.requireStaffSession.mockReset().mockResolvedValue({ accessToken: 't', roles: ['finance'] });
-  mocks.listInvoices.mockReset().mockResolvedValue([item()]);
+  mocks.listInvoicesPage.mockReset().mockResolvedValue(page([item()]));
+  mocks.getInvoicesSummary.mockReset().mockResolvedValue(SUMMARY);
 });
 
 describe('invoice list', () => {
@@ -53,9 +78,9 @@ describe('invoice list', () => {
   });
 
   it('names an unnumbered draft by its kind and never prints "null"', async () => {
-    mocks.listInvoices.mockResolvedValue([
-      item({ number: null, status: 'draft', issueDate: null, kind: 'proforma' }),
-    ]);
+    mocks.listInvoicesPage.mockResolvedValue(
+      page([item({ number: null, status: 'draft', issueDate: null, kind: 'proforma' })]),
+    );
     const html = await render();
     expect(html).toContain('Proforma');
     expect(html).toContain('Draft');
@@ -71,74 +96,147 @@ describe('invoice list', () => {
     expect(await render()).not.toContain('Create Invoice');
   });
 
-  it('passes only a valid kind and status to the API', async () => {
-    await render({ kind: 'credit_note', status: 'issued' });
-    expect(mocks.listInvoices).toHaveBeenCalledWith(expect.anything(), {
+  it('reads a repeated param as several values, not as no filter', async () => {
+    await render({
+      status: ['issued', 'draft'],
       kind: 'credit_note',
-      status: 'issued',
+      settlement: ['overdue', 'paid'],
+      customerId: [CUSTOMER, OTHER],
+      issuedFrom: '2026-11-01',
+      issuedTo: '2026-11-30',
+      q: ' acme ',
     });
+    expect(mocks.listInvoicesPage).toHaveBeenCalledWith(expect.anything(), {
+      status: ['issued', 'draft'],
+      kind: ['credit_note'],
+      settlement: ['overdue', 'paid'],
+      customerId: [CUSTOMER, OTHER],
+      issuedFrom: '2026-11-01',
+      issuedTo: '2026-11-30',
+      q: 'acme',
+      limit: 25,
+      offset: 0,
+    });
+  });
+
+  it('keeps chosen values selected in the form, so a no-JavaScript submit repeats them', async () => {
+    const html = await render({ status: ['approved', 'issued'], issuedFrom: '2026-11-01' });
+    expect(html).toContain('<input type="hidden" name="status" value="approved"');
+    expect(html).toContain('<input type="hidden" name="status" value="issued"');
+    expect(html).toContain('value="2026-11-01"');
+    expect(html).not.toContain('Apply');
   });
 
   it.each([
     { kind: 'Credit_Note' },
     { status: 'paid' },
-    { status: ['issued', 'draft'] },
-    { kind: 'x' },
-  ])('ignores a bad filter %j and asks for everything', async (search) => {
+    { status: ['x', 'y'] },
+    { customerId: 'not-an-id' },
+    { issuedFrom: 'yesterday' },
+    { rows: '7' },
+    { page: 'abc' },
+  ])('drops a bad value %j and asks for the unfiltered first page', async (search) => {
     await render(search);
-    expect(mocks.listInvoices).toHaveBeenCalledWith(expect.anything(), {});
+    expect(mocks.listInvoicesPage).toHaveBeenCalledWith(expect.anything(), {
+      status: [],
+      kind: [],
+      settlement: [],
+      customerId: [],
+      issuedFrom: undefined,
+      issuedTo: undefined,
+      q: undefined,
+      limit: 25,
+      offset: 0,
+    });
   });
 
-  it('keeps the chosen filter selected in the form and offers a way back', async () => {
-    const html = await render({ status: 'approved' });
-    expect(html).toMatch(/<option value="approved"[^>]*selected/);
-    expect(html).toContain('Show all invoices');
+  it('asks the server for the page and the counts, once each, and never fetches every invoice', async () => {
+    await render({ status: 'issued' });
+    expect(mocks.listInvoicesPage).toHaveBeenCalledTimes(1);
+    expect(mocks.getInvoicesSummary).toHaveBeenCalledTimes(1);
+    expect(mocks.getInvoicesSummary.mock.calls[0]?.[1]).not.toHaveProperty('limit');
   });
 
-  it('says what an empty filtered list means, and what an empty list means', async () => {
-    mocks.listInvoices.mockResolvedValue([]);
-    expect(await render({ status: 'issued' })).toContain('No invoices match these filters');
+  it('shows the server counts on the stat cards and the customer choices from the summary', async () => {
+    const html = await render();
+    expect(html).toContain('Total invoices');
+    expect(html).toMatch(/Issued<\/[^>]+>\s*<[^>]+>4</);
+    expect(html).toContain('Everest Traders');
+  });
+
+  it('pages by the server total, keeps the filters in the links and the rows choice', async () => {
+    mocks.listInvoicesPage.mockResolvedValue(
+      page(
+        Array.from({ length: 10 }, (_, i) =>
+          item({ id: `${i}1111111-1111-4111-8111-111111111111` }),
+        ),
+        60,
+      ),
+    );
+    const html = await render({ customerId: CUSTOMER, q: 'inv-2083', page: '3' });
+    expect(mocks.listInvoicesPage).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ limit: 25, offset: 50, customerId: [CUSTOMER], q: 'inv-2083' }),
+    );
+    expect(html).toContain('Showing 51–60 of 60');
+    expect(html).toContain(`href="/invoices?customerId=${CUSTOMER}&amp;q=inv-2083&amp;page=2"`);
+    // Another rows value drops the page and keeps the filters.
+    expect(html).toContain(`href="/invoices?customerId=${CUSTOMER}&amp;q=inv-2083&amp;rows=50"`);
+  });
+
+  it('shows the last page when the asked-for page is past the end', async () => {
+    mocks.listInvoicesPage
+      .mockResolvedValueOnce(page([], 30))
+      .mockResolvedValueOnce(page([item()], 30));
+    const html = await render({ page: '9' });
+    expect(mocks.listInvoicesPage).toHaveBeenLastCalledWith(
+      expect.anything(),
+      expect.objectContaining({ limit: 25, offset: 25 }),
+    );
+    expect(html).toContain('INV-2083/84-00001');
+  });
+
+  it('names the filters that hide everything, with a way to clear them', async () => {
+    mocks.listInvoicesPage.mockResolvedValue(page([], 0));
+    const html = await render({
+      status: ['issued', 'draft'],
+      customerId: OTHER,
+      q: 'zzz',
+      rows: '50',
+    });
+    expect(html).toContain('No invoices match these filters');
+    expect(html).toContain('Status: Issued, Draft');
+    expect(html).toContain('Customer: Everest Traders');
+    expect(html).toContain('Search “zzz”');
+    expect(html).toContain('href="/invoices?rows=50"');
+    expect(html).toContain('Clear filters');
     expect(await render()).toContain('No invoices yet');
   });
 
+  it('still shows the table when only the counts fail', async () => {
+    mocks.getInvoicesSummary.mockRejectedValue(new ApiError(500, 'boom'));
+    const html = await render();
+    expect(html).toContain('INV-2083/84-00001');
+    expect(html).not.toContain('Invoice summary');
+  });
+
   it('shows the no-access notice for a 403 and no table', async () => {
-    mocks.listInvoices.mockRejectedValue(new ApiError(403, 'no'));
+    mocks.listInvoicesPage.mockRejectedValue(new ApiError(403, 'no'));
     const html = await render();
     expect(html).toContain('Your roles do not include invoices');
     expect(html).not.toContain('<table');
   });
 
   it('shows the error and a reload link that keeps the filters for a 500', async () => {
-    mocks.listInvoices.mockRejectedValue(new ApiError(500, 'boom'));
-    const html = await render({ kind: 'proforma' });
+    mocks.listInvoicesPage.mockRejectedValue(new ApiError(500, 'boom'));
+    const html = await render({ kind: ['proforma', 'credit_note'] });
     expect(html).toContain('The invoices did not load');
-    expect(html).toContain('href="/invoices?kind=proforma"');
-  });
-
-  it('preserves the customer and search while paging the authorized result', async () => {
-    const scoped = Array.from({ length: 6 }, (_, index) =>
-      item({
-        id: `${index}1111111-1111-4111-8111-111111111111`,
-        number: `INV-2083/84-0000${index + 1}`,
-      }),
-    );
-    mocks.listInvoices
-      .mockResolvedValueOnce([...scoped, item({ number: 'INV-2082/83-OTHER' })])
-      .mockResolvedValueOnce(scoped);
-    const html = await render({ customerId: CUSTOMER, q: 'inv-2083/84', page: '2' });
-    expect(mocks.listInvoices).toHaveBeenNthCalledWith(1, expect.anything(), {
-      customerId: CUSTOMER,
-    });
-    expect(html).toContain('Showing 6–6 of 6');
-    expect(html).toContain('INV-2083/84-00006');
-    expect(html).not.toContain('INV-2083/84-00001');
-    expect(html).not.toContain('INV-2082/83-OTHER');
-    expect(html).toContain(`href="/invoices?customerId=${CUSTOMER}&amp;q=inv-2083%2F84"`);
+    expect(html).toContain('href="/invoices?kind=proforma&amp;kind=credit_note"');
   });
 
   it('keeps a very long customer name in the table cell, which wraps', async () => {
     const name = 'Long '.repeat(60).trim();
-    mocks.listInvoices.mockResolvedValue([item({ customerName: name })]);
+    mocks.listInvoicesPage.mockResolvedValue(page([item({ customerName: name })]));
     expect(await render()).toContain(name);
   });
 });

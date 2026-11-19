@@ -98,13 +98,6 @@
   background: var(--button-secondary-bg-hover);
 }
 
-.listTable .tableSummary {
-  padding-block: 16px;
-  border-top: var(--border-width-thin) solid var(--border-default);
-  color: var(--text-secondary);
-  font-size: var(--font-size-caption);
-}
-
 .quiet {
   color: var(--text-secondary);
 }

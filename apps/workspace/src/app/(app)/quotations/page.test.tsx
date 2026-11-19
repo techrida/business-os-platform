@@ -2,6 +2,8 @@ import type { QuotationListItem } from '@bos/contracts';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
+import { ApiError } from '@/lib/api';
+
 import QuotationsPage from './page';
 
 // `server-only` throws outside the react-server condition, which Vitest does not use.
@@ -9,11 +11,23 @@ vi.mock('server-only', () => ({}));
 
 const mocks = vi.hoisted(() => ({
   requireStaffSession: vi.fn(),
-  listQuotations: vi.fn(),
+  listQuotationsPage: vi.fn(),
+  getQuotationsSummary: vi.fn(),
+  listCustomers: vi.fn(),
 }));
 vi.mock('@/lib/bff', () => ({ requireStaffSession: mocks.requireStaffSession }));
-vi.mock('@/components/p2/quotations/api', () => ({ listQuotations: mocks.listQuotations }));
+vi.mock('@/components/p2/quotations/api', () => ({
+  listQuotationsPage: mocks.listQuotationsPage,
+  getQuotationsSummary: mocks.getQuotationsSummary,
+}));
+vi.mock('@/components/p2/customers/api', () => ({ listCustomers: mocks.listCustomers }));
+vi.mock('next/navigation', () => ({
+  useRouter: () => ({ push: vi.fn(), replace: vi.fn() }),
+  usePathname: () => '/quotations',
+  useSearchParams: () => new URLSearchParams(),
+}));
 
+const CUSTOMER = '33333333-3333-4333-8333-333333333333';
 const OPP = '11111111-1111-4111-8111-111111111111';
 const Q1 = '55555555-5555-4555-8555-555555555551';
 
@@ -36,30 +50,75 @@ const item = {
   canEdit: true,
 } satisfies QuotationListItem;
 
-async function render(query: Record<string, string> = {}): Promise<string> {
+const SUMMARY = {
+  total: 12,
+  byStatus: {
+    draft: 3,
+    submitted: 2,
+    returned: 0,
+    approved: 0,
+    sent: 4,
+    accepted: 3,
+    rejected: 0,
+    expired: 0,
+    cancelled: 0,
+    superseded: 0,
+  },
+};
+const page = (items: QuotationListItem[] = [item], total = items.length) => ({ items, total });
+
+async function render(query: Record<string, string | string[]> = {}): Promise<string> {
   return renderToStaticMarkup(await QuotationsPage({ searchParams: Promise.resolve(query) }));
 }
 
+const lastFilter = (): Record<string, unknown> | undefined =>
+  mocks.listQuotationsPage.mock.calls.at(-1)?.[1] as Record<string, unknown> | undefined;
+
 beforeEach(() => {
   mocks.requireStaffSession.mockReset().mockResolvedValue({ accessToken: 'tok' });
-  mocks.listQuotations.mockReset().mockResolvedValue([item]);
+  mocks.listQuotationsPage.mockReset().mockResolvedValue(page());
+  mocks.getQuotationsSummary.mockReset().mockResolvedValue(SUMMARY);
+  mocks.listCustomers.mockReset().mockResolvedValue({
+    items: [{ id: CUSTOMER, legalName: 'Himal Traders' }],
+    total: null,
+  });
 });
 
 describe('quotations list', () => {
-  it('lists everything the caller may read without an opportunity filter', async () => {
+  it('asks the server for the first page and shows the matching count', async () => {
     const html = await render();
-    expect(mocks.listQuotations).toHaveBeenCalledWith(expect.anything(), {});
+    expect(lastFilter()).toEqual({ status: [], customerId: [], limit: 5, offset: 0 });
     expect(html).toContain('<h1');
+    expect(html).toContain('1 quotation');
     expect(html).not.toContain('another=1');
     expect(html).not.toContain('name="opportunityId"');
+    expect(html).not.toContain('Apply');
+  });
+
+  it('sends repeated statuses, customers and the search, and trims nothing the API would refuse', async () => {
+    await render({
+      status: ['draft', 'sent', 'nonsense'],
+      customerId: [CUSTOMER, 'x'],
+      q: ' himal ',
+    });
+    expect(lastFilter()).toEqual({
+      status: ['draft', 'sent'],
+      customerId: [CUSTOMER],
+      q: 'himal',
+      limit: 5,
+      offset: 0,
+    });
+  });
+
+  it('turns page and rows into limit and offset', async () => {
+    mocks.listQuotationsPage.mockResolvedValue(page([item], 40));
+    await render({ page: '3', rows: '10' });
+    expect(lastFilter()).toMatchObject({ limit: 10, offset: 20 });
   });
 
   it('filters by opportunity (demo feedback: View quotations ignored it), keeping it through the status filter', async () => {
     const html = await render({ opportunityId: OPP, status: 'draft' });
-    expect(mocks.listQuotations).toHaveBeenCalledWith(expect.anything(), {
-      status: 'draft',
-      opportunityId: OPP,
-    });
+    expect(lastFilter()).toMatchObject({ status: ['draft'], opportunityId: OPP });
     expect(html).toContain('Quotations for this opportunity');
     expect(html).toContain(`<input type="hidden" name="opportunityId" value="${OPP}"/>`);
     // Starting another quotation from here is deliberate, so the New page does not resume a draft.
@@ -67,11 +126,18 @@ describe('quotations list', () => {
     expect(html).toContain(`href="/opportunities/${OPP}"`);
   });
 
+  it('ignores an opportunityId that is not a UUID', async () => {
+    await render({ opportunityId: '../x' });
+    expect(lastFilter()).not.toHaveProperty('opportunityId');
+  });
+
   it('offers Edit only when the list capability permits it', async () => {
-    mocks.listQuotations.mockResolvedValue([
-      { ...item, status: 'returned' },
-      { ...item, id: OPP, number: 'QT-2082-0042', status: 'returned', canEdit: false },
-    ]);
+    mocks.listQuotationsPage.mockResolvedValue(
+      page([
+        { ...item, status: 'returned' },
+        { ...item, id: OPP, number: 'QT-2082-0042', status: 'returned', canEdit: false },
+      ]),
+    );
 
     const html = await render();
     expect(html).toContain(`href="/quotations/${Q1}/edit" aria-label="Edit QT-2082-0001"`);
@@ -79,39 +145,105 @@ describe('quotations list', () => {
     expect(html).toContain(`href="/quotations/${OPP}" aria-label="View QT-2082-0042"`);
   });
 
-  it('paginates matching rows and carries the search and active filters onward', async () => {
-    mocks.listQuotations.mockResolvedValue([
-      ...Array.from({ length: 7 }, (_, index) => ({
-        ...item,
-        id: `quotation-${index + 1}`,
-        number: `QT-2082-000${index + 1}`,
-      })),
-      { ...item, id: 'other', customerName: 'Other organization', number: 'QT-2082-0099' },
-    ]);
+  it('shows the window and page links from the total, carrying filters and rows onward', async () => {
+    mocks.listQuotationsPage.mockResolvedValue(
+      page(
+        Array.from({ length: 2 }, (_, index) => ({
+          ...item,
+          id: `quotation-${index + 6}`,
+          number: `QT-2082-000${index + 6}`,
+        })),
+        7,
+      ),
+    );
 
-    const html = await render({ opportunityId: OPP, status: 'draft', q: 'HIMAL', page: '2' });
+    const html = await render({
+      opportunityId: OPP,
+      status: ['draft', 'sent'],
+      q: 'HIMAL',
+      page: '2',
+    });
 
     expect(html).toContain('Showing 6–7 of 7');
-    expect(html).toContain('QT-2082-0006');
-    expect(html).not.toContain('QT-2082-0001');
-    expect(html).not.toContain('QT-2082-0099');
-    expect(html).toContain(`href="/quotations?opportunityId=${OPP}&amp;status=draft&amp;q=HIMAL"`);
+    expect(html).toContain('Showing 2 of 7 quotations');
+    // Page 1 drops `page`; every filter and the scope stay in the link.
+    expect(html).toContain(
+      `href="/quotations?opportunityId=${OPP}&amp;status=draft&amp;status=sent&amp;q=HIMAL"`,
+    );
+    // Changing rows drops the page too, and the default stays out of the URL.
+    expect(html).toContain(
+      `href="/quotations?opportunityId=${OPP}&amp;status=draft&amp;status=sent&amp;q=HIMAL&amp;rows=10"`,
+    );
   });
 
-  it('shows status totals only for the unfiltered list, never for a filtered or scoped one', async () => {
-    mocks.listQuotations.mockResolvedValue([
-      item,
-      { ...item, id: 'q-sent', number: 'QT-2082-0002', status: 'sent', canEdit: false },
-    ]);
-    const all = await render();
-    expect(all).toContain('aria-label="Quotation totals by status"');
-    for (const query of [{ opportunityId: OPP }, { status: 'sent' }, { q: 'HIMAL' }]) {
-      expect(await render(query)).not.toContain('Quotation totals by status');
-    }
+  it('reads the last page when the requested page is past the end', async () => {
+    mocks.listQuotationsPage
+      .mockResolvedValueOnce(page([], 7))
+      .mockResolvedValueOnce(page([item], 7));
+    await render({ page: '9' });
+    expect(mocks.listQuotationsPage).toHaveBeenCalledTimes(2);
+    expect(lastFilter()).toMatchObject({ limit: 5, offset: 5 });
   });
 
-  it('ignores an opportunityId that is not a UUID', async () => {
-    await render({ opportunityId: '../x' });
-    expect(mocks.listQuotations).toHaveBeenCalledWith(expect.anything(), {});
+  it('draws the cards from the summary, for the same search and customers but never the status', async () => {
+    const html = await render({
+      status: 'sent',
+      q: 'himal',
+      customerId: CUSTOMER,
+      opportunityId: OPP,
+    });
+    expect(html).toContain('aria-label="Quotation totals by status"');
+    expect(html).toContain('Matching quotations');
+    expect(html).toContain('>12<');
+    expect(mocks.getQuotationsSummary).toHaveBeenCalledWith(expect.anything(), {
+      customerId: [CUSTOMER],
+      opportunityId: OPP,
+      q: 'himal',
+    });
+    expect(await render()).toContain('Total quotations');
+  });
+
+  it('still lists the quotations when the summary or the customers cannot be read', async () => {
+    mocks.getQuotationsSummary.mockRejectedValue(new Error('down'));
+    mocks.listCustomers.mockRejectedValue(new Error('down'));
+    const html = await render();
+    expect(html).toContain('QT-2082-0001');
+    expect(html).not.toContain('Quotation totals by status');
+    expect(html).toContain('All statuses');
+    expect(html).not.toContain('All customers');
+  });
+
+  it('names the filters hiding the rows and offers Clear filters that keeps the scope and rows', async () => {
+    mocks.listQuotationsPage.mockResolvedValue(page([], 0));
+    const html = await render({
+      opportunityId: OPP,
+      status: ['draft', 'sent'],
+      customerId: CUSTOMER,
+      q: 'zzz',
+      rows: '10',
+      page: '2',
+    });
+    expect(html).toContain('No matching quotations.');
+    expect(html).toContain('Search “zzz” · Status: Draft, Sent · Customer: Himal Traders');
+    expect(html).not.toContain(OPP + '”');
+    expect(html).toContain(`href="/quotations?opportunityId=${OPP}&amp;rows=10"`);
+    expect(html).toContain('Clear filters');
+  });
+
+  it('keeps the plain empty states when no filter is set', async () => {
+    mocks.listQuotationsPage.mockResolvedValue(page([], 0));
+    expect(await render()).toContain('No quotations yet.');
+    const scoped = await render({ opportunityId: OPP });
+    expect(scoped).toContain('No quotations for this opportunity yet.');
+    expect(scoped).not.toContain('Clear filters');
+  });
+
+  it('shows the no-access state for a 403 and an error with a reload link otherwise', async () => {
+    mocks.listQuotationsPage.mockRejectedValue(new ApiError(403, 'no'));
+    expect(await render()).toContain('Your roles do not include quotations');
+    mocks.listQuotationsPage.mockRejectedValue(new ApiError(500, 'down'));
+    const html = await render();
+    expect(html).toContain('The quotations did not load');
+    expect(html).toContain('Reload the quotations');
   });
 });

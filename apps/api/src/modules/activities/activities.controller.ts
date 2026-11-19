@@ -19,9 +19,12 @@ import {
   Patch,
   Post,
   Query,
+  Res,
 } from '@nestjs/common';
+import type { Response } from 'express';
 
 import { AnyAuthenticated } from '../../platform/authz/decorators';
+import { setTotalCount } from '../../platform/list';
 import { parseOr400 } from '../approvals/approvals.controller';
 import { requireIdempotencyKey } from '../customers/customers.types';
 import { ActivitiesService } from './activities.service';
@@ -31,11 +34,21 @@ import { ListActivitiesQuerySchema } from './activities.types';
 export class ActivitiesController {
   constructor(private readonly activities: ActivitiesService) {}
 
-  /** 200 with a bare array of ActivityDto, latest first. 404 when the named subject is out of the caller's reach. */
+  /**
+   * 200 with a bare array of ActivityDto, latest first; X-Total-Count is all matches, not just this page.
+   * 404 when the named subject is out of the caller's reach.
+   */
   @Get()
   @AnyAuthenticated()
-  list(@Query() query: unknown): Promise<ActivityDto[]> {
-    return this.activities.list(parseOr400(ListActivitiesQuerySchema, query));
+  async list(
+    @Query() query: unknown,
+    @Res({ passthrough: true }) res: Response,
+  ): Promise<ActivityDto[]> {
+    const { items, total } = await this.activities.list(
+      parseOr400(ListActivitiesQuerySchema, query),
+    );
+    setTotalCount(res, total);
+    return items;
   }
 
   /** 201 with the new ActivityDto. 400 unless exactly one subject is named; 404 for a subject out of reach. */

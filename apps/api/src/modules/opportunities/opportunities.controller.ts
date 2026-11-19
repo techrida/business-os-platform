@@ -2,9 +2,11 @@
 // route names its permission with @Can (route level); the service then checks the record itself (entity,
 // own scope), so a salesperson cannot read a colleague's deal by guessing its id.
 import { OpportunityStageChangeBodySchema, type OpportunityDto } from '@bos/contracts';
-import { Body, Controller, Get, Param, ParseUUIDPipe, Patch, Query } from '@nestjs/common';
+import { Body, Controller, Get, Param, ParseUUIDPipe, Patch, Query, Res } from '@nestjs/common';
+import type { Response } from 'express';
 
 import { Can } from '../../platform/authz/decorators';
+import { setTotalCount } from '../../platform/list';
 import { parseOr400 } from '../approvals/approvals.controller';
 import { OpportunitiesService } from './opportunities.service';
 import { ListOpportunitiesQuerySchema } from './opportunities.types';
@@ -13,11 +15,18 @@ import { ListOpportunitiesQuerySchema } from './opportunities.types';
 export class OpportunitiesController {
   constructor(private readonly opportunities: OpportunitiesService) {}
 
-  /** 200 with a bare array of OpportunityDto, newest first. */
+  /** 200 with a bare array of OpportunityDto, newest first; X-Total-Count is all matches, not just this page. */
   @Get()
   @Can('crm.opportunity.read')
-  list(@Query() query: unknown): Promise<OpportunityDto[]> {
-    return this.opportunities.list(parseOr400(ListOpportunitiesQuerySchema, query));
+  async list(
+    @Query() query: unknown,
+    @Res({ passthrough: true }) res: Response,
+  ): Promise<OpportunityDto[]> {
+    const { items, total } = await this.opportunities.list(
+      parseOr400(ListOpportunitiesQuerySchema, query),
+    );
+    setTotalCount(res, total);
+    return items;
   }
 
   /** 200 with the OpportunityDto. 404 for a record of another entity or outside the caller's scope. */

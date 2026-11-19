@@ -8,6 +8,7 @@ import { describe, expect, it } from 'vitest';
 import { buildDirectory, route, type DirectoryData } from '../../approvals/router';
 import {
   ExpectedVersionEnvelopeSchema,
+  ListPurchaseRequestsQuerySchema,
   PR_STATUS_AFTER_DECISION,
   PURCHASE_REQUEST_DOCUMENT_TYPE,
   PURCHASE_REQUEST_WORKFLOW_SPEC,
@@ -216,5 +217,30 @@ describe('approval facts and statuses', () => {
     expect(ExpectedVersionEnvelopeSchema.safeParse({ expectedVersion: 0 }).success).toBe(false);
     expect(ExpectedVersionEnvelopeSchema.safeParse({ expectedVersion: '2' }).success).toBe(false);
     expect(ExpectedVersionEnvelopeSchema.safeParse('x').success).toBe(false);
+  });
+});
+
+describe('the list query', () => {
+  it('takes a repeated status, a search, a limit and an offset', () => {
+    expect(ListPurchaseRequestsQuerySchema.parse({})).toEqual({ limit: 50, offset: 0 });
+    expect(
+      ListPurchaseRequestsQuerySchema.parse({
+        status: ['draft', 'submitted', 'draft'],
+        q: ' chairs ',
+        limit: '200',
+        offset: '400',
+      }),
+    ).toEqual({ status: ['draft', 'submitted'], q: 'chairs', limit: 200, offset: 400 });
+    expect(ListPurchaseRequestsQuerySchema.parse({ status: 'cancelled' }).status).toEqual([
+      'cancelled',
+    ]);
+  });
+
+  it('refuses an unknown status, a limit over 200 and an unknown key', () => {
+    expect(ListPurchaseRequestsQuerySchema.safeParse({ status: ['draft', 'nope'] }).success).toBe(
+      false,
+    );
+    expect(ListPurchaseRequestsQuerySchema.safeParse({ limit: '201' }).success).toBe(false);
+    expect(ListPurchaseRequestsQuerySchema.safeParse({ organizationId: 'x' }).success).toBe(false);
   });
 });

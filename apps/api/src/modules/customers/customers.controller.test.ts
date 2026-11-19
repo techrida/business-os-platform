@@ -33,6 +33,15 @@ describe('GET /v1/customers', () => {
     expect(service.list).toHaveBeenCalledWith({ q: 'acme', limit: 10, offset: 0 });
   });
 
+  it('passes repeated filters through, and is a 400 for an unknown relationship', async () => {
+    const { service, controller } = setup();
+    await controller.list({ relationship: ['active', 'prospect'], industry: 'Retail' });
+    expect(service.list).toHaveBeenCalledWith(
+      expect.objectContaining({ relationship: ['active', 'prospect'], industry: ['Retail'] }),
+    );
+    expect(() => controller.list({ relationship: 'vip' })).toThrow(BadRequestException);
+  });
+
   it('is a 400 for a limit over 100', () => {
     const { service, controller } = setup();
     expect(() => controller.list({ limit: '500' })).toThrow(BadRequestException);

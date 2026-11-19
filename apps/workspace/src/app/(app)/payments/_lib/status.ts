@@ -2,7 +2,7 @@
 // offers. Pure data and functions with no React import, so the list, the detail and the tests share
 // them. Serves the NFR "the UI never shows data the contract does not promise": the filter accepts
 // only the contract's statuses, and the action gate mirrors the contract's PAYMENT_TRANSITIONS.
-import { PAYMENT_STATUSES, type PaymentStatus } from '@bos/contracts';
+import { PAYMENT_METHODS, PAYMENT_STATUSES, type PaymentStatus } from '@bos/contracts';
 
 export type StatusTone = 'neutral' | 'info' | 'success' | 'warning' | 'error';
 
@@ -26,15 +26,6 @@ export function paymentStatusMeta(status: PaymentStatus): PaymentStatusMeta {
 
 export const PAYMENT_STATUS_OPTIONS: readonly { value: PaymentStatus; label: string }[] =
   PAYMENT_STATUSES.map((value) => ({ value, label: META[value].label }));
-
-/**
- * Reads the `status` query parameter. Anything that is not exactly one contract status (absent,
- * empty, wrong case, repeated, or an object key such as `toString`) means "no filter".
- */
-export function parseStatusFilter(raw: string | string[] | undefined): PaymentStatus | undefined {
-  if (typeof raw !== 'string') return undefined;
-  return (PAYMENT_STATUSES as readonly string[]).includes(raw) ? (raw as PaymentStatus) : undefined;
-}
 
 export interface PaymentActions {
   verify: boolean;
@@ -67,3 +58,7 @@ const METHODS: Record<string, string> = {
 export function methodLabel(method: string): string {
   return Object.hasOwn(METHODS, method) ? (METHODS[method] ?? method) : method;
 }
+
+/** The method filter's options, in the contract's order. */
+export const PAYMENT_METHOD_OPTIONS: readonly { value: string; label: string }[] =
+  PAYMENT_METHODS.map((value) => ({ value, label: methodLabel(value) }));

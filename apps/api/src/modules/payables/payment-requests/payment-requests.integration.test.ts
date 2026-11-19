@@ -271,6 +271,9 @@ beforeEach(() => {
 
 // ---------------------------------------------------------------------------------------- helpers
 
+/** A page wide enough for every row a test makes. */
+const PAGE = { limit: 100, offset: 0 } as const;
+
 async function httpErrorOf(promise: Promise<unknown>): Promise<HttpException> {
   try {
     await promise;
@@ -692,7 +695,37 @@ describe('entity wall', () => {
       service.create(body(v, [{ openItemId: bill.openItemId, amount: '100.00' }]), randomUUID()),
     );
     expect(foreign.getStatus()).toBe(404);
-    expect(await service.list()).toEqual([]);
+    expect((await service.list(PAGE)).rows).toEqual([]);
+  });
+});
+
+describe('list filters, search and paging', () => {
+  it('takes several statuses, searches by vendor name, pages by offset and stays in the entity', async () => {
+    const v = await vendor();
+    const name = `Vendor ${v.slice(0, 6)}`;
+    const bill = await approvedBill(v);
+    const first = await draft(v, [{ openItemId: bill.openItemId, amount: '100.00' }]);
+    const second = await draft(v, [{ openItemId: bill.openItemId, amount: '50.00' }]);
+    const ids = (page: { rows: { id: string }[] }) => page.rows.map((r) => r.id);
+
+    expect(ids(await service.list({ ...PAGE, status: ['draft', 'approved'] }))).toEqual(
+      expect.arrayContaining([first.id, second.id]),
+    );
+    expect(ids(await service.list({ ...PAGE, status: ['rejected'] }))).not.toContain(first.id);
+
+    const byVendor = await service.list({ ...PAGE, q: name });
+    expect(ids(byVendor)).toEqual(expect.arrayContaining([first.id, second.id]));
+
+    const all = await service.list(PAGE);
+    const next = await service.list({ limit: 1, offset: 1 });
+    expect(next.total).toBe(all.total);
+    expect(next.rows[0]?.id).toBe(all.rows[1]?.id);
+
+    current.inB = true;
+    as(U.fin2, 'finance');
+    const foreign = await service.list({ ...PAGE, q: name });
+    expect(ids(foreign)).not.toContain(first.id);
+    expect(foreign.total).toBe(foreign.rows.length);
   });
 });
 

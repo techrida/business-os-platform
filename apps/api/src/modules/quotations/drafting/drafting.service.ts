@@ -23,7 +23,10 @@ import {
   type QuotationDto,
   type QuotationLead,
   type QuotationListItem,
+  QUOTATION_STATUSES,
   type QuotationStatus,
+  type QuotationSummary,
+  type QuotationSummaryQuery,
   QuotationVersionContentSchema,
   type QuotationVersionDto,
   type UpdateQuotationDraftBody,
@@ -52,13 +55,14 @@ import {
   NotFoundException,
   Optional,
 } from '@nestjs/common';
-import { and, asc, desc, eq, inArray } from 'drizzle-orm';
+import { and, asc, desc, eq, inArray, sql, type SQL } from 'drizzle-orm';
 
 import { AuditService } from '../../../platform/audit/audit.service';
 import { AuthzService, scopeWhereFor } from '../../../platform/authz/authz.service';
 import { can, type Principal, type ResourceRef } from '../../../platform/authz/can';
 import { DB, type Db, type DbTransaction } from '../../../platform/db/db.module';
 import { updateVersioned, withIdempotency } from '../../../platform/db/idempotency';
+import { NO_LIMIT, type Reader, searchPage } from '../../../platform/list';
 import { withTx, type Actor, type TxScope } from '../../../platform/db/tx';
 import { NumberingService } from '../../../platform/settings/numbering.service';
 import { quotationRef } from '../preview/quotation-preview.service';
@@ -92,6 +96,29 @@ export const DRAFTING_CLOCK = Symbol('DRAFTING_CLOCK');
 export const QUOTATION_SERIES = 'QT';
 
 const AUDIT_ENTITY = 'quotations';
+
+// The joins every list read shares: the current version, the customer and the (optional) owner.
+const onCurrentVersion = and(
+  eq(quotationVersions.tenantId, quotations.tenantId),
+  eq(quotationVersions.id, quotations.currentVersionId),
+);
+const onCustomer = and(
+  eq(customers.tenantId, quotations.tenantId),
+  eq(customers.id, quotations.customerPartyId),
+);
+const onOwner = and(eq(users.tenantId, quotations.tenantId), eq(users.id, quotations.ownerUserId));
+const LIST_SEARCH_COLUMNS = [quotations.number, customers.legalName, users.displayName];
+
+async function countMatching(r: Reader, where: SQL | undefined): Promise<number> {
+  const [row] = await r
+    .select({ n: sql<number>`count(*)::int` })
+    .from(quotations)
+    .innerJoin(quotationVersions, onCurrentVersion)
+    .innerJoin(customers, onCustomer)
+    .leftJoin(users, onOwner)
+    .where(where);
+  return row?.n ?? 0;
+}
 
 const opportunityNotFound = () =>
   new NotFoundException({ code: 'not_found', message: 'Opportunity not found' });
@@ -400,56 +427,113 @@ export class DraftingService {
   // -------------------------------------------------------------------------------------------------- reads
 
   /**
-   * The quotations of the acting entity the caller may read, newest first. `status` is the current version's;
-   * `opportunityId` keeps one opportunity's quotations (a filter on top of the read scope, never a widening).
+   * The quotations of the acting entity the caller may read, newest first, one page of them and the total.
+   * `status` is the current version's; `customerId` and `opportunityId` are filters on top of the read scope,
+   * never a widening. `q` searches number, customer name and owner name (close matches when few match exactly).
+   * Without `limit` every match is returned (the pickers never page).
    */
-  async list(query: ListQuotationsQuery = {}): Promise<QuotationListItem[]> {
+  async list(
+    query: Partial<ListQuotationsQuery> = {},
+  ): Promise<{ rows: QuotationListItem[]; total: number }> {
     const { scope, actor, principal } = this.caller.current();
     this.assertStaff(principal);
-    const { status, opportunityId } = query;
-    const visible = scopeWhereFor(principal, quotations, 'quotation.read');
+    const { status, limit = NO_LIMIT, offset = 0 } = query;
     const where = and(
-      visible,
-      status === undefined ? undefined : eq(quotationVersions.status, status),
-      opportunityId === undefined ? undefined : eq(quotations.opportunityId, opportunityId),
+      scopeWhereFor(principal, quotations, 'quotation.read'),
+      status?.length ? inArray(quotationVersions.status, status) : undefined,
+      this.sharedFilters(query),
     );
     return withTx(this.db, scope, actor, async (tx) => {
-      const rows = await tx
-        .select({
-          quotation: quotations,
-          current: quotationVersions,
-          customerName: customers.legalName,
-          ownerName: users.displayName,
-        })
-        .from(quotations)
-        .innerJoin(
-          quotationVersions,
-          and(
-            eq(quotationVersions.tenantId, quotations.tenantId),
-            eq(quotationVersions.id, quotations.currentVersionId),
-          ),
-        )
-        .innerJoin(
-          customers,
-          and(
-            eq(customers.tenantId, quotations.tenantId),
-            eq(customers.id, quotations.customerPartyId),
-          ),
-        )
-        .leftJoin(
-          users,
-          and(eq(users.tenantId, quotations.tenantId), eq(users.id, quotations.ownerUserId)),
-        )
-        .where(where)
-        .orderBy(desc(quotations.createdAt), desc(quotations.id));
-      return rows.map((r) =>
-        toQuotationListItem(r.quotation, r.current, {
-          customerName: r.customerName,
-          ownerName: r.ownerName,
-          canEdit: capabilitiesOf(principal, r.quotation, r.current.status).canEdit,
-        }),
-      );
+      const { rows, total } = await searchPage(tx, {
+        q: query.q,
+        columns: LIST_SEARCH_COLUMNS,
+        where,
+        orderBy: [desc(quotations.createdAt), desc(quotations.id)],
+        limit,
+        offset,
+        rows: (r, p) =>
+          r
+            .select({
+              quotation: quotations,
+              current: quotationVersions,
+              customerName: customers.legalName,
+              ownerName: users.displayName,
+            })
+            .from(quotations)
+            .innerJoin(quotationVersions, onCurrentVersion)
+            .innerJoin(customers, onCustomer)
+            .leftJoin(users, onOwner)
+            .where(p.where)
+            .orderBy(...p.orderBy)
+            .limit(p.limit)
+            .offset(p.offset),
+        count: countMatching,
+      });
+      return {
+        total,
+        rows: rows.map((r) =>
+          toQuotationListItem(r.quotation, r.current, {
+            customerName: r.customerName,
+            ownerName: r.ownerName,
+            canEdit: capabilitiesOf(principal, r.quotation, r.current.status).canEdit,
+          }),
+        ),
+      };
     });
+  }
+
+  /**
+   * How many quotations match the list's filters other than `status`, in total and per current status, for the
+   * KPI cards. Same read scope, joins and search as `list`, so the cards add up to the list's total.
+   */
+  async summary(query: QuotationSummaryQuery = {}): Promise<QuotationSummary> {
+    const { scope, actor, principal } = this.caller.current();
+    this.assertStaff(principal);
+    const where = and(
+      scopeWhereFor(principal, quotations, 'quotation.read'),
+      this.sharedFilters(query),
+    );
+    return withTx(this.db, scope, actor, async (tx) => {
+      // One page of one row: searchPage settles exact or close matches from the total and hands the final
+      // predicate to `rows`, which counts per status over exactly that predicate.
+      const { rows, total } = await searchPage(tx, {
+        q: query.q,
+        columns: LIST_SEARCH_COLUMNS,
+        where,
+        orderBy: [desc(quotations.id)],
+        limit: 1,
+        offset: 0,
+        rows: (r, p) =>
+          r
+            .select({ status: quotationVersions.status, n: sql<number>`count(*)::int` })
+            .from(quotations)
+            .innerJoin(quotationVersions, onCurrentVersion)
+            .innerJoin(customers, onCustomer)
+            .leftJoin(users, onOwner)
+            .where(p.where)
+            .groupBy(quotationVersions.status),
+        count: countMatching,
+      });
+      const byStatus = Object.fromEntries(QUOTATION_STATUSES.map((st) => [st, 0])) as Record<
+        QuotationStatus,
+        number
+      >;
+      for (const r of rows) byStatus[r.status] = r.n;
+      return { total, byStatus };
+    });
+  }
+
+  /** The customer and opportunity filters of `list` and `summary`; `status` is not one of them. */
+  private sharedFilters(query: {
+    customerId?: string[] | undefined;
+    opportunityId?: string | undefined;
+  }): SQL | undefined {
+    return and(
+      query.customerId?.length ? inArray(quotations.customerPartyId, query.customerId) : undefined,
+      query.opportunityId === undefined
+        ? undefined
+        : eq(quotations.opportunityId, query.opportunityId),
+    );
   }
 
   /** Every version (Superseded included) with lines, tax summary and scan status, the history and the contacts. */
