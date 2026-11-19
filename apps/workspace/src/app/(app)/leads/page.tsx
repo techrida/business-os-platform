@@ -24,7 +24,6 @@ import { failureOf } from '@/lib/api-kernel';
 import { requireStaffSession } from '@/lib/bff';
 import { userNames } from '@/lib/business-labels';
 import { getNumberSystems } from '@/lib/display-settings';
-import { when } from '@/lib/kernel-format';
 
 import { moveLeadStageAction } from './actions';
 import { NextFollowUpCell, OwnerCell } from './lead-cells';
