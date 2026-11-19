@@ -219,7 +219,7 @@ function Accounts({
               {accounts.map((a) => (
                 <tr key={a.organizationId}>
                   <Td>
-                    <span>Legal entity name unavailable</span>
+                    <span>{a.organizationName ?? 'Legal entity name unavailable'}</span>
                   </Td>
                   <Td>
                     {a.paymentTermId !== null ? (
