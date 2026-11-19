@@ -10,7 +10,6 @@ import {
   type Permission,
   ROLE_KEYS,
   type RoleKey,
-  RoleKeySchema,
   SCOPES,
 } from './authz.js';
 
@@ -94,9 +93,9 @@ export const LEAD_INTAKE_ROLE_KEYS = [
 ] as const satisfies readonly RoleKey[];
 
 /**
- * The areas the Founder switches (U20b) and a department head reads whole (D51). `readPermission` is the grant
- * that opens the area's list; an area with `followsArea` has none of its own and reaches whatever its parent
- * reaches (activities follow their lead or opportunity).
+ * The record areas and the grant that opens each one's list. `readPermission` is the area's see permission; an
+ * area with `followsArea` has none of its own and reaches whatever its parent reaches (activities follow their
+ * lead or opportunity). Which areas a manager or head reaches whole is `LEVEL_RULE_AREAS`.
  */
 export const ACCESS_AREAS = [
   { key: 'leads', label: 'Leads', readPermission: 'crm.lead.read' },
@@ -120,64 +119,148 @@ export interface AccessArea {
 
 export type AccessAreaKey = (typeof ACCESS_AREAS)[number]['key'];
 
-// --- Default level grants (D50, D51). The seed and migration 0088 write exactly these rows. ---
+// --- Default level grants (D50, D51). Migration 0088 writes exactly these rows. ---
 
-/** What a Sales or Marketing manager works across their department instead of only their own (D50). */
-const MANAGER_DEPARTMENT_PERMISSIONS = [
-  'crm.lead.read',
-  'crm.lead.write',
-  'crm.opportunity.read',
-  'crm.opportunity.write',
-  'quotation.read',
-  'quotation.draft',
-  'quotation.submit',
-  'quotation.send',
-  'quotation.record_acceptance',
-  'quotation.revise',
-] as const satisfies readonly Permission[];
+/**
+ * One area's department-reach switches, as Settings > Access (U20b) models them: a manager or head reaches the
+ * department on the area's `seePermission`, and only where the area's records carry a department
+ * (`supportsDepartment`). The switches are the defaults a tenant starts with.
+ *
+ * `editPermission` pairs a write with the see permission under the same switch, for the areas where a manager or
+ * head must change the department's records and not only see them: a Sales manager reassigns a staff member's lead
+ * and reschedules its follow-ups, and both need write reach (D50). Every other write stays with the owner.
+ */
+export interface LevelRuleArea {
+  key: string;
+  seePermission: Permission;
+  editPermission?: Permission;
+  supportsDepartment: boolean;
+  managersSeeDepartment: boolean;
+  headsSeeDepartment: boolean;
+}
 
-/** Roles whose managers work the whole department; everyone else gains department reach only as a head. */
-const DEPARTMENT_MANAGER_ROLE_KEYS: readonly RoleKey[] = [SALES_ROLE_KEY, MARKETING_ROLE_KEY];
+/**
+ * The nine areas of Settings > Access with their default level switches (D50, D51). Contracts cannot import the
+ * API catalogue, so this is the one copy the defaults derive from; the API's ACCESS_AREA_CATALOGUE and
+ * DEFAULT_LEVEL_RULES must agree with it. Sales orders, invoices, payables, approvals and documents carry no
+ * department, so no level row reaches them.
+ */
+export const LEVEL_RULE_AREAS = [
+  {
+    key: 'leads',
+    seePermission: 'crm.lead.read',
+    editPermission: 'crm.lead.write',
+    supportsDepartment: true,
+    managersSeeDepartment: true,
+    headsSeeDepartment: true,
+  },
+  {
+    key: 'opportunities',
+    seePermission: 'crm.opportunity.read',
+    editPermission: 'crm.opportunity.write',
+    supportsDepartment: true,
+    managersSeeDepartment: true,
+    headsSeeDepartment: true,
+  },
+  {
+    key: 'quotations',
+    seePermission: 'quotation.read',
+    supportsDepartment: true,
+    managersSeeDepartment: true,
+    headsSeeDepartment: true,
+  },
+  {
+    key: 'sales_orders',
+    seePermission: 'sales_order.read',
+    supportsDepartment: false,
+    managersSeeDepartment: false,
+    headsSeeDepartment: false,
+  },
+  {
+    key: 'invoices',
+    seePermission: 'invoice.read',
+    supportsDepartment: false,
+    managersSeeDepartment: false,
+    headsSeeDepartment: false,
+  },
+  {
+    key: 'procurement',
+    seePermission: 'procurement.pr.read',
+    supportsDepartment: true,
+    managersSeeDepartment: false,
+    headsSeeDepartment: true,
+  },
+  {
+    key: 'payables',
+    seePermission: 'payables.bill.read',
+    supportsDepartment: false,
+    managersSeeDepartment: false,
+    headsSeeDepartment: false,
+  },
+  {
+    key: 'approvals',
+    seePermission: 'approvals.requests.read',
+    supportsDepartment: false,
+    managersSeeDepartment: false,
+    headsSeeDepartment: false,
+  },
+  {
+    key: 'documents',
+    seePermission: 'documents.read',
+    supportsDepartment: false,
+    managersSeeDepartment: false,
+    headsSeeDepartment: false,
+  },
+] as const satisfies readonly LevelRuleArea[];
 
 /** Portal users hold no department membership, so no level grant applies to them. */
 const PORTAL_ROLE_KEYS: readonly RoleKey[] = ['customer_user', 'vendor_user'];
 
-const AREA_READ_PERMISSIONS: readonly Permission[] = ACCESS_AREAS.flatMap((area) =>
-  'readPermission' in area ? [area.readPermission] : [],
+/** The roles a level row may name: every role but the Founder (who reaches everything) and the portal roles. */
+const LEVEL_STAFF_ROLE_KEYS: readonly RoleKey[] = ROLE_KEYS.filter(
+  (role) => role !== 'founder' && !PORTAL_ROLE_KEYS.includes(role),
 );
 
-const CRM_READ_PERMISSIONS: readonly Permission[] = ['crm.lead.read', 'crm.opportunity.read'];
+/**
+ * A base grant a department row would widen. The access settings rank `customer_org` below `department`, so it
+ * counts too; no grant at all does not, because a level row never creates access.
+ */
+function widenableByDepartment(scope: AccessScope | undefined): boolean {
+  return scope !== undefined && scope !== 'department' && scope !== 'all';
+}
 
 /**
- * One role's default level rows, derived from its base grants so the two cannot drift:
- *   * Sales and Marketing managers reach the department on every lead, opportunity and quotation permission the
- *     role holds at `own` (heads inherit it: the most senior row at or below a level applies).
- *   * A department head reads the whole department (D51) in every area the role reads at `own`. Finance,
- *     Accountant and PMO are the exception on leads and opportunities: their `own` there is the `created` reach,
- *     the same at every level (D50).
- *   * Every head reads the department's purchase requests (D50, dead-end #11), even when the role has no base
- *     grant for them; a role that already reads further gets no row.
- * A row is never narrower than the base grant, and areas without a department on their records simply reach
- * the head's own records.
+ * The intake roles hold crm.lead.write only so they can start a lead for a Sales owner; they never edit leads, so
+ * no switch widens that write for their managers or heads.
+ */
+function editsArea(role: RoleKey): boolean {
+  return !(LEAD_INTAKE_ROLE_KEYS as readonly RoleKey[]).includes(role);
+}
+
+/**
+ * One role's default level rows, derived the way Settings > Access materialises them so the two cannot drift: for
+ * every area with department reach, a manager row when the area's managers see the department and a head row when
+ * its heads do, on the area's see permission and, for a role that edits the area, its edit permission. Each
+ * permission gets rows only where the role's base grant on it exists and is narrower than the department, the same
+ * test migration 0088 applies per tenant row.
  */
 function defaultLevelGrants(role: RoleKey): LevelGrant[] {
-  if (PORTAL_ROLE_KEYS.includes(role)) return [];
-  const base = DEFAULT_ROLE_PERMISSIONS[role];
+  if (!LEVEL_STAFF_ROLE_KEYS.includes(role)) return [];
+  const base: Partial<Record<Permission, AccessScope>> = DEFAULT_ROLE_PERMISSIONS[role];
+  const areas: readonly LevelRuleArea[] = LEVEL_RULE_AREAS;
   const rows: LevelGrant[] = [];
-  if (DEPARTMENT_MANAGER_ROLE_KEYS.includes(role)) {
-    for (const permission of MANAGER_DEPARTMENT_PERMISSIONS) {
-      if (base[permission] === 'own') {
+  for (const area of areas) {
+    if (!area.supportsDepartment) continue;
+    const permissions = [area.seePermission];
+    if (area.editPermission !== undefined && editsArea(role)) permissions.push(area.editPermission);
+    for (const permission of permissions) {
+      if (!widenableByDepartment(base[permission])) continue;
+      if (area.managersSeeDepartment) {
         rows.push({ permission, minLevel: 'manager', scope: 'department' });
       }
-    }
-  }
-  const intake = (LEAD_INTAKE_ROLE_KEYS as readonly RoleKey[]).includes(role);
-  for (const permission of AREA_READ_PERMISSIONS) {
-    if (intake && CRM_READ_PERMISSIONS.includes(permission)) continue;
-    const scope = base[permission];
-    const unheldRequests = permission === 'procurement.pr.read' && scope === undefined;
-    if (scope === 'own' || unheldRequests) {
-      rows.push({ permission, minLevel: 'head', scope: 'department' });
+      if (area.headsSeeDepartment) {
+        rows.push({ permission, minLevel: 'head', scope: 'department' });
+      }
     }
   }
   return rows;
@@ -225,14 +308,25 @@ const forEveryLevel = (cell: AccessCell): Record<AccessLevel, AccessCell> => ({
   manager: cell,
   head: cell,
 });
-/** Staff work their own records; their managers and heads work the whole department (D50). */
+/**
+ * Staff work their own records; their managers and heads see and edit the whole department (D50), so they can hand
+ * a staff member's lead to someone else and reschedule its follow-ups. The edit rows come from the same switch as
+ * the see rows (`editPermission` in LEVEL_RULE_AREAS).
+ */
 const workOwnThenDepartment: Record<AccessLevel, AccessCell> = {
   staff: { create: true, read: 'own', write: 'own', assigned: true },
   manager: { create: true, read: 'department', write: 'department', assigned: true },
   head: { create: true, read: 'department', write: 'department', assigned: true },
 };
-/** Starts leads for Sales and reads, but does not edit, what they started. */
-const intakeOnly: AccessCell = { create: true, read: 'created', write: 'none', assigned: false };
+/**
+ * Starts leads for Sales and reads, but does not edit, what they started. Their own read is narrower than the
+ * department, so the default lead and opportunity switches widen it for their managers and heads as for anyone.
+ */
+const intakeOnly: Record<AccessLevel, AccessCell> = {
+  staff: { create: true, read: 'created', write: 'none', assigned: false },
+  manager: { create: true, read: 'department', write: 'none', assigned: false },
+  head: { create: true, read: 'department', write: 'none', assigned: false },
+};
 
 /**
  * What each role reaches on leads by default, per membership level. Opportunities and quotations follow their
@@ -244,9 +338,9 @@ export const TARGET_LEAD_ACCESS: Readonly<Record<RoleKey, Record<AccessLevel, Ac
   management: forEveryLevel({ create: false, read: 'all', write: 'none', assigned: false }),
   sales: workOwnThenDepartment,
   marketing: workOwnThenDepartment,
-  finance: forEveryLevel(intakeOnly),
-  accountant: forEveryLevel(intakeOnly),
-  pmo: forEveryLevel(intakeOnly),
+  finance: intakeOnly,
+  accountant: intakeOnly,
+  pmo: intakeOnly,
   operations_head: forEveryLevel(NO_ACCESS),
   procurement: forEveryLevel(NO_ACCESS),
   warehouse: forEveryLevel(NO_ACCESS),
