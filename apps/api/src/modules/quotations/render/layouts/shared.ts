@@ -10,7 +10,7 @@ import {
   richTextToHtml,
   trimPercent,
   type BrandPalette,
-  type CompanyProfile,
+  type SnapshotCompanyProfile,
   type CustomerQuotationView,
 } from '@bos/contracts';
 import {
@@ -27,7 +27,7 @@ import {
 export interface RenderContext {
   view: CustomerQuotationView;
   palette: BrandPalette;
-  profile: CompanyProfile;
+  profile: SnapshotCompanyProfile;
   numberSystems: NumberSystems;
   dateFormat: CustomerDateFormat;
   showBs: boolean;

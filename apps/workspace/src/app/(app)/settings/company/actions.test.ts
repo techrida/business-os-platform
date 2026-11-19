@@ -34,7 +34,7 @@ const session = { accessToken: 't' };
 const stored: CompanyProfile = {
   ...EMPTY_COMPANY_PROFILE,
   displayName: 'Acme',
-  logoDataUrl: PNG,
+  legacyLogoDataUrl: PNG,
   phones: ['01-4000000'],
   email: 'a@acme.test',
   signatoryName: 'Sita',
@@ -126,14 +126,14 @@ describe('saveCompanyCardAction', () => {
   });
 
   it('Logo saves a PNG and removes it with an empty value; SVG is refused', async () => {
-    values['entity.profile'] = { ...stored, logoDataUrl: null };
+    values['entity.profile'] = { ...stored, legacyLogoDataUrl: null };
     await saveCompanyCardAction(IDLE, form({ card: 'logo', logo: PNG }));
-    expect(written()).toEqual([['entity.profile', { ...stored, logoDataUrl: PNG }]]);
+    expect(written()).toEqual([['entity.profile', { ...stored, legacyLogoDataUrl: PNG }]]);
 
     putSetting.mockClear();
     values['entity.profile'] = stored;
     await saveCompanyCardAction(IDLE, form({ card: 'logo', logo: '' }));
-    expect(written()).toEqual([['entity.profile', { ...stored, logoDataUrl: null }]]);
+    expect(written()).toEqual([['entity.profile', { ...stored, legacyLogoDataUrl: null }]]);
 
     putSetting.mockClear();
     const svg = await saveCompanyCardAction(
@@ -287,7 +287,7 @@ describe('resetCompanyCardAction', () => {
       3,
     );
     const profile = putSetting.mock.calls[0]?.[2] as CompanyProfile;
-    expect(profile.logoDataUrl).toBe(PNG);
+    expect(profile.legacyLogoDataUrl).toBe(PNG);
     expect(profile.displayName).toBe('Acme');
     expect(profile.signatoryName).toBe('Sita');
     expect(revalidatePath).toHaveBeenCalledWith('/settings/company');

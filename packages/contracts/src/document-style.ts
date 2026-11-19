@@ -183,19 +183,21 @@ export const DEFAULT_DATE_FORMAT: DateFormatSetting = 'dd MMM yyyy';
 // Company profile and the settings values
 // ---------------------------------------------------------------------------------------------
 
-/** A logo small enough to live in a settings row: PNG, JPEG or WebP as a data URL (no SVG: script risk), at most ~200 KB. */
+/**
+ * A logo inlined into a document: PNG, JPEG or WebP as a data URL (no SVG: script risk). The cap fits a 512 KiB
+ * image once base64 encoded (4/3 of the bytes plus the prefix).
+ */
 export const LogoDataUrlSchema = z
   .string()
-  .max(280_000)
+  .max(720_000)
   .regex(
     /^data:image\/(?:png|jpeg|webp);base64,[A-Za-z0-9+/=]+$/,
     'must be a PNG, JPEG or WebP image',
   );
 
-/** What the document footer and signature block print about the selling company. */
-export const CompanyProfileSchema = z.strictObject({
+/** The company fields every profile shape shares: what the footer and signature block print. */
+const companyProfileFields = {
   displayName: text(120).nullable(),
-  logoDataUrl: LogoDataUrlSchema.nullable(),
   phones: z.array(text(40)).max(4),
   email: z.email().max(200).nullable(),
   website: text(200).nullable(),
@@ -203,10 +205,48 @@ export const CompanyProfileSchema = z.strictObject({
   panVatNo: PanVatNoSchema.nullable(),
   signatoryName: text(120).nullable(),
   signatoryTitle: text(120).nullable(),
+};
+
+/**
+ * The stored setting `entity.profile`. The logo is a scanned document, referenced by id; the bytes are never in the
+ * setting. `legacyLogoDataUrl` is set only by migration 0058 for a logo saved before logos were documents, and is
+ * cleared once that logo is uploaded as a document; reads fall back to it until then.
+ */
+export const CompanyProfileSchema = z.strictObject({
+  ...companyProfileFields,
+  logoDocumentId: z.guid().nullable(),
+  legacyLogoDataUrl: LogoDataUrlSchema.nullable().optional(),
 });
 export type CompanyProfile = z.infer<typeof CompanyProfileSchema>;
 
 export const EMPTY_COMPANY_PROFILE: CompanyProfile = {
+  displayName: null,
+  logoDocumentId: null,
+  phones: [],
+  email: null,
+  website: null,
+  panVatNo: null,
+  signatoryName: null,
+  signatoryTitle: null,
+};
+
+/**
+ * The profile as frozen onto a document: the logo is its bytes, so changing or removing the logo later never alters
+ * a document already sent. This is the shape every stored snapshot already has.
+ */
+export const SnapshotCompanyProfileSchema = z.strictObject({
+  displayName: companyProfileFields.displayName,
+  logoDataUrl: LogoDataUrlSchema.nullable(),
+  phones: companyProfileFields.phones,
+  email: companyProfileFields.email,
+  website: companyProfileFields.website,
+  panVatNo: companyProfileFields.panVatNo,
+  signatoryName: companyProfileFields.signatoryName,
+  signatoryTitle: companyProfileFields.signatoryTitle,
+});
+export type SnapshotCompanyProfile = z.infer<typeof SnapshotCompanyProfileSchema>;
+
+export const EMPTY_SNAPSHOT_COMPANY_PROFILE: SnapshotCompanyProfile = {
   displayName: null,
   logoDataUrl: null,
   phones: [],
@@ -216,6 +256,23 @@ export const EMPTY_COMPANY_PROFILE: CompanyProfile = {
   signatoryName: null,
   signatoryTitle: null,
 };
+
+/** The snapshot profile from the stored setting and the logo bytes resolved for it (null: no logo). Pure. */
+export function snapshotProfileFrom(
+  profile: CompanyProfile,
+  logoDataUrl: string | null,
+): SnapshotCompanyProfile {
+  return {
+    displayName: profile.displayName,
+    logoDataUrl,
+    phones: [...profile.phones],
+    email: profile.email,
+    website: profile.website,
+    panVatNo: profile.panVatNo,
+    signatoryName: profile.signatoryName,
+    signatoryTitle: profile.signatoryTitle,
+  };
+}
 
 export const DocumentStyleSchema = z.strictObject({
   layout: DocumentLayoutSchema,
@@ -235,7 +292,7 @@ export const DEFAULT_DOCUMENT_STYLE: DocumentStyle = {
 export const DocumentStyleSnapshotSchema = z
   .strictObject({
     style: DocumentStyleSchema,
-    profile: CompanyProfileSchema,
+    profile: SnapshotCompanyProfileSchema,
     /** Snapshots taken before D30 hold one system for every currency; new ones hold `numberSystems`. */
     numberSystem: NumberSystemSchema.optional(),
     numberSystems: NumberSystemsSchema.optional(),

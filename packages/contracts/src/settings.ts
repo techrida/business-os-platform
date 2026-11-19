@@ -93,7 +93,7 @@ export const SETTINGS = {
   // P3 sales and invoicing.
   /** Billing split used when the accepted quotation has no payment schedule: slices that add up to 100%. */
   'sales.default_schedule': ScheduleTemplateSchema,
-  /** Company details the document footer and signature print. Per entity. */
+  /** Company details the document footer and signature print. Per entity. The logo is a document id, never bytes. */
   'entity.profile': CompanyProfileSchema,
   /** Layout and brand colour of customer documents. Per entity; only the Founder changes it. */
   'document.style': DocumentStyleSchema,

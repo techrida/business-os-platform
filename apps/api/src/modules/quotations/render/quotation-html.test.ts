@@ -3,9 +3,10 @@ import {
   CUSTOMER_VIEW_FORBIDDEN_WORDS,
   CustomerQuotationViewSchema,
   DOCUMENT_LAYOUTS,
-  EMPTY_COMPANY_PROFILE,
+  DocumentStyleSnapshotSchema,
+  EMPTY_SNAPSHOT_COMPANY_PROFILE,
   deriveBrandPalette,
-  type CompanyProfile,
+  type SnapshotCompanyProfile,
   type CustomerQuotationView,
   type DocumentLayout,
   type DocumentStyleSnapshot,
@@ -81,7 +82,7 @@ const sample = (currency: 'USD' | 'NPR', over: Partial<CustomerQuotationView> = 
 const LOGO =
   'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNkYAAAAAYAAjCB0C8AAAAASUVORK5CYII=';
 
-const PROFILE: CompanyProfile = {
+const PROFILE: SnapshotCompanyProfile = {
   displayName: 'Techrida',
   logoDataUrl: null,
   phones: ['+977 1 4000000', '+977 9800000000'],
@@ -526,7 +527,7 @@ describe.each(CASES)('layout %s in %s', (layout, colour) => {
   });
 
   it('falls back to the entity PAN and the legal name when the profile is empty', () => {
-    const html = render(sample('NPR'), { profile: EMPTY_COMPANY_PROFILE });
+    const html = render(sample('NPR'), { profile: EMPTY_SNAPSHOT_COMPANY_PROFILE });
     expect(html).toContain('PAN/VAT No. 301234567');
     expect(html).toContain('<span class="wordmark">Techrida Pvt. Ltd.</span>');
     expect(html).toContain('Authorised signatory');
@@ -541,6 +542,15 @@ describe.each(CASES)('layout %s in %s', (layout, colour) => {
     const without = render();
     expect(without).not.toMatch(/<img\b/);
     expect(without).not.toContain('img-src');
+  });
+
+  it('prints the logo of a snapshot stored before logos became documents (U12), read back through the schema', () => {
+    const stored: unknown = JSON.parse(
+      JSON.stringify(snapshot('banded', '#1d4ed8', { profile: { ...PROFILE, logoDataUrl: LOGO } })),
+    );
+    const parsed = DocumentStyleSnapshotSchema.parse(stored);
+    const html = renderQuotationHtml(sample('NPR'), { snapshot: parsed });
+    expect(html).toContain(`<img src="${LOGO}"`);
   });
 
   it('drops a logo that is not a schema-valid data URL', () => {
