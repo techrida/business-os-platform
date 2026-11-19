@@ -11,7 +11,7 @@ export interface SignedLink {
 }
 
 export interface SignedFileRouteOptions {
-  /** `download` streams the API's attachment as is; `preview` is the inline variant for an iframe. */
+  /** `download` streams the API's attachment as is; `preview` is the inline variant for the viewer. */
   mode: 'download' | 'preview';
   /** The org kind this route serves. Anyone else gets the same "not found" as a foreign id. */
   orgKind: Session['orgKind'];
@@ -58,7 +58,7 @@ const isPdf = (contentType: string | null): boolean =>
  * layout, so this checks the session itself; order is session, org kind, id, then the API.
  *
  * Download passes the API's safe headers through, including its sandbox CSP. Preview is for an
- * iframe in the app's own document viewer: only a PDF is served, inline, with no CSP or sandbox
+ * the app's own document viewer: only a PDF is served, inline, with no CSP or sandbox
  * header (a sandbox stops the browser's PDF viewer) and nothing that could set a cookie.
  *
  * A bad id, a 404 and a 403 all answer the same `notFound` text, and 409 and 410 both mean the PDF

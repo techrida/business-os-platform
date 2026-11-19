@@ -83,7 +83,7 @@ it('withDownload adds a plain download anchor that is never fetched or prefetche
   const anchor = mounted.container.querySelector<HTMLAnchorElement>('a');
   expect(anchor?.textContent).toBe('Download');
   expect(anchor?.getAttribute('href')).toBe(PROPS.downloadUrl);
-  expect(anchor?.hasAttribute('download')).toBe(true);
+  expect(anchor?.hasAttribute('download')).toBe(false);
   expect(anchor?.getAttribute('rel')).not.toBe('prefetch');
   expect(fetchMock).not.toHaveBeenCalled();
   anchor?.addEventListener('click', (event) => event.preventDefault());

@@ -7,7 +7,7 @@ export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
 
 /**
- * Inline preview of the issued purchase order PDF, for the document viewer's iframe. Same session,
+ * Inline preview of the issued purchase order PDF, for the document viewer. Same session,
  * ownership and not-found handling as the download route next to it; only a PDF is served, inline,
  * without the API's sandbox CSP. `next.config.ts` lets this one path be framed by the app itself.
  */

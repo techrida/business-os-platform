@@ -87,7 +87,6 @@ export function ViewDocument({
           variant="secondary"
           size={size}
           href={downloadUrl}
-          download={name}
           aria-label={context ? `Download ${context}` : undefined}
           onClick={() => onDownload?.()}
         >
