@@ -613,6 +613,10 @@ export const activities = appSchema.table(
     assigneeUserId: uuid('assignee_user_id'),
     completedAt: timestamp('completed_at', { withTimezone: true }),
     occurredAt: timestamp('occurred_at', { withTimezone: true }).notNull().defaultNow(),
+    /** 0062: a planned activity that was called off. Cancelled rows never list. */
+    cancelledAt: timestamp('cancelled_at', { withTimezone: true }),
+    /** 0062: the staff user who wrote the row; NULL for system and migrated rows. */
+    createdByUserId: uuid('created_by_user_id'),
     version: integer('version').notNull().default(1),
     ...timestamps,
   },
@@ -647,7 +651,18 @@ export const activities = appSchema.table(
       columns: [t.tenantId, t.assigneeUserId],
       foreignColumns: [users.tenantId, users.id],
     }),
+    foreignKey({
+      name: 'activities_created_by_user_fk',
+      columns: [t.tenantId, t.createdByUserId],
+      foreignColumns: [users.tenantId, users.id],
+    }),
     index('activities_tenant_org_lead_idx').on(t.tenantId, t.organizationId, t.leadId),
+    /** 0062: the planned rows (follow-ups) of a lead, earliest first. */
+    index('activities_tenant_org_lead_planned_idx')
+      .on(t.tenantId, t.organizationId, t.leadId, t.dueAt)
+      .where(
+        sql`${t.dueAt} IS NOT NULL AND ${t.completedAt} IS NULL AND ${t.cancelledAt} IS NULL`,
+      ),
     index('activities_tenant_org_opportunity_idx').on(
       t.tenantId,
       t.organizationId,

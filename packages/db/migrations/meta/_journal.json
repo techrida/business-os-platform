@@ -309,6 +309,20 @@
       "when": 1783000000047,
       "tag": "0047_quotation_terms_conditions",
       "breakpoints": true
+    },
+    {
+      "idx": 44,
+      "version": "7",
+      "when": 1783000000062,
+      "tag": "0062_activity_follow_ups",
+      "breakpoints": true
+    },
+    {
+      "idx": 45,
+      "version": "7",
+      "when": 1783000000063,
+      "tag": "0063_follow_up_data",
+      "breakpoints": true
     }
   ]
 }
