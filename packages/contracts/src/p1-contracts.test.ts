@@ -18,6 +18,7 @@ import {
   SOD_PERMISSIONS,
   StepSpecSchema,
   WorkflowSpecSchema,
+  WorkflowWriteSpecSchema,
 } from './index.js';
 
 const leaf = { field: 'amountNpr', op: 'gt', value: '100000' } as const;
@@ -59,6 +60,25 @@ describe('StepSpecSchema', () => {
     expect(
       StepSpecSchema.safeParse({ id: 's1', kind: 'role', role: 'ceo', reason: 'r' }).success,
     ).toBe(false);
+  });
+});
+
+describe('workflow amount threshold writes', () => {
+  it.each(['1.01', '1.005', 1.01])('validates nested money threshold %s', (value) => {
+    const spec = {
+      documentType: 'test_memo',
+      steps: [],
+      rules: [
+        {
+          id: 'escalate',
+          when: { all: [{ field: 'amountNpr', op: 'gte', value }] },
+          add: { id: 'finance', kind: 'role', role: 'finance', reason: 'Review' },
+          reason: 'Review',
+        },
+      ],
+    };
+    expect(WorkflowSpecSchema.safeParse(spec).success).toBe(true);
+    expect(WorkflowWriteSpecSchema.safeParse(spec).success).toBe(value === '1.01');
   });
 });
 
