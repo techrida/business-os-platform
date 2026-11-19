@@ -23,6 +23,11 @@ import {
 } from '@/components/p2/crm/crm-api';
 import { duplicatesFrom } from '@/components/p2/crm/duplicates';
 import {
+  followUpPaths,
+  isFollowUpSubjectKind,
+  type FollowUpSubject,
+} from '@/components/p2/crm/follow-up-subject';
+import {
   parseCancelActivity,
   parseCompleteActivity,
   parseConvert,
@@ -168,21 +173,41 @@ export async function scheduleFollowUpAction(_prev: FormState, form: FormData): 
 }
 
 /**
- * The shared body of complete, reschedule and cancel: check both ids and the session, parse, call,
- * revalidate. A bad `expectedVersion` is not something the person can fix in a field, so it comes
- * back as the reload message instead of a field error.
+ * The record a follow-up change refreshes, from `subjectKind` + `subjectId` (or the older `leadId`
+ * field). `null` when the form names none (only `/activities` is refreshed); `false` when it names
+ * one that is not a known kind and an id, which means the form was tampered with or is stale.
+ */
+function changedSubject(form: FormData): FollowUpSubject | null | false {
+  const kind = form.get('subjectKind');
+  const id = form.get('subjectId');
+  if ((kind !== null && kind !== '') || (id !== null && id !== '')) {
+    return isFollowUpSubjectKind(kind) && typeof id === 'string' && UUID.test(id)
+      ? { kind, id }
+      : false;
+  }
+  const leadId = form.get('leadId');
+  if (leadId === null || leadId === '') return null;
+  return typeof leadId === 'string' && UUID.test(leadId) ? { kind: 'leadId', id: leadId } : false;
+}
+
+/**
+ * The shared body of complete, reschedule and cancel: check the activity id, the subject and the
+ * session, parse, call, revalidate. Any subject works (a lead, an opportunity, a migrated task on a
+ * customer); the pages refreshed are built here from its kind and id, never from a client path. A
+ * bad `expectedVersion` is not something the person can fix in a field, so it comes back as the
+ * reload message instead of a field error.
  */
 async function changeFollowUp<T>(
   form: FormData,
   parse: (form: FormData) => Parsed<T>,
   send: (session: Session, id: string, body: T) => Promise<unknown>,
 ): Promise<FollowUpState> {
-  const leadValue = form.get('leadId');
   const activityValue = form.get('activityId');
-  const leadId = typeof leadValue === 'string' ? leadValue : '';
   const activityId = typeof activityValue === 'string' ? activityValue : '';
-  if (!UUID.test(leadId) || !UUID.test(activityId)) return { error: INCOMPLETE, reload: true };
-  const session = await requireStaffSession(`/leads/${leadId}`);
+  const subject = changedSubject(form);
+  if (!UUID.test(activityId) || subject === false) return { error: INCOMPLETE, reload: true };
+  const paths = followUpPaths(subject);
+  const session = await requireStaffSession(paths[0] ?? '/activities');
 
   const parsed = parse(form);
   if (!parsed.ok) {
@@ -196,7 +221,7 @@ async function changeFollowUp<T>(
     const f = failureOf(err);
     return { error: f.message, reload: f.reload };
   }
-  revalidateLead(leadId);
+  for (const path of paths) revalidatePath(path);
   return { ok: true };
 }
 
