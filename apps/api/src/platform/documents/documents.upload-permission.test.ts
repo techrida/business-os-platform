@@ -1,7 +1,8 @@
 // An owner policy may name the permission that authorises uploads to it (`uploadPermission`, P3 U13: payment
 // proof is uploaded by whoever records payments, `payment.record`). Unit level, with the REAL AuthzService.assert
 // and the principal bound in the real request store; only the database is faked. Without the field the check is
-// `documents.upload`, exactly as before; with it, that permission replaces `documents.upload` on the same owner ref.
+// `documents.upload`, exactly as before; with it, that permission replaces `documents.upload` on the same owner ref,
+// and a list means any one of them. A staff read passes with `documents.read` or the policy's `readPermission`.
 import 'reflect-metadata';
 
 import { randomUUID } from 'node:crypto';
@@ -137,5 +138,120 @@ describe('DocumentsService.create and the owner policy uploadPermission', () => 
     it('no longer accepts documents.upload in its place', async () => {
       expect(await tryCreate(service, staff([['documents.upload', 'all']]))).toBe('403 0');
     });
+  });
+
+  describe('a policy with a list of upload permissions (any one of them)', () => {
+    const service = serviceWith({
+      uploadPermission: ['vendor.bank.propose', 'vendor.bank.verify'],
+    });
+
+    it('authorises with the first or the second', async () => {
+      expect(await tryCreate(service, staff([['vendor.bank.propose', 'all']]))).toBe('created 2');
+      expect(await tryCreate(service, staff([['vendor.bank.verify', 'all']]))).toBe('created 2');
+    });
+
+    it('refuses a caller holding neither, even with documents.upload, and writes nothing', async () => {
+      expect(await tryCreate(service, staff([['documents.upload', 'all']]))).toBe('403 0');
+      expect(await tryCreate(service, staff([]))).toBe('403 0');
+    });
+
+    it('checks each on the owner ref: an own-scope grant on a record owned by someone else is refused', async () => {
+      const owned = serviceWith({
+        uploadPermission: ['vendor.bank.propose', 'vendor.bank.verify'],
+        resource: (scope) => Promise.resolve({ ...scope, ownerUserId: randomUUID() }),
+      });
+      expect(await tryCreate(owned, staff([['vendor.bank.verify', 'own']]))).toBe('403 0');
+      expect(await tryCreate(owned, staff([['vendor.bank.verify', 'all']]))).toBe('created 2');
+    });
+  });
+});
+
+/** A database that answers `get`: the document row, then its (here: no) versions. */
+function readDb(): Db {
+  const answers: unknown[][] = [
+    [
+      {
+        id: randomUUID(),
+        ownerType: OWNER_TYPE,
+        ownerId: OWNER_ID,
+        currentVersionId: null,
+        createdAt: new Date('2026-11-19T00:00:00Z'),
+      },
+    ],
+    [],
+  ];
+  return {
+    select: () => {
+      const rows = answers.shift() ?? [];
+      const q = {
+        from: () => q,
+        where: () => q,
+        limit: () => Promise.resolve(rows),
+        orderBy: () => Promise.resolve(rows),
+      };
+      return q;
+    },
+  } as unknown as Db;
+}
+
+async function tryGet(policy: Partial<DocumentOwnerPolicy>, p: Principal): Promise<string> {
+  const service = new DocumentsService(
+    readDb(),
+    {} as StorageAdapter,
+    {} as SignedLinks,
+    { add: vi.fn() } as unknown as Queue,
+    new AuthzService({} as Db, {} as RoleCache),
+    { record: vi.fn().mockResolvedValue(undefined) },
+  );
+  service.registerOwner({
+    ownerType: OWNER_TYPE,
+    // A record owned by someone other than the caller, so `own` scopes do not reach it.
+    resource: (scope) => Promise.resolve({ ...scope, ownerUserId: randomUUID() }),
+    ...policy,
+  });
+  try {
+    const doc = await asCaller(p, () =>
+      service.get({ tenantId: TENANT, organizationId: ORG }, 'd'),
+    );
+    return `read ${doc.ownerId === OWNER_ID ? 'owner' : '?'}`;
+  } catch (e) {
+    if (e instanceof ForbiddenException) return '403';
+    throw e;
+  }
+}
+
+describe('DocumentsService reads and the owner policy readPermission', () => {
+  it('without readPermission, reads need documents.read at a scope that reaches the record (unchanged)', async () => {
+    expect(await tryGet({}, staff([['documents.read', 'all']]))).toBe('read owner');
+    expect(await tryGet({}, staff([['documents.read', 'own']]))).toBe('403');
+    expect(await tryGet({}, staff([['vendor.read', 'all']]))).toBe('403');
+  });
+
+  it("with readPermission: 'vendor.read', the owning module's read opens a record someone else owns", async () => {
+    const policy = { readPermission: 'vendor.read' as const };
+    // Procurement: documents.read own plus vendor.read all.
+    expect(
+      await tryGet(
+        policy,
+        staff([
+          ['documents.read', 'own'],
+          ['vendor.read', 'all'],
+        ]),
+      ),
+    ).toBe('read owner');
+  });
+
+  it('readPermission is in addition to documents.read: documents.read all still reads', async () => {
+    expect(
+      await tryGet({ readPermission: 'vendor.read' }, staff([['documents.read', 'all']])),
+    ).toBe('read owner');
+  });
+
+  it('a caller with neither (or only own scopes) is still refused', async () => {
+    const policy = { readPermission: 'vendor.read' as const };
+    expect(await tryGet(policy, staff([['documents.read', 'own']]))).toBe('403');
+    expect(await tryGet(policy, staff([['vendor.read', 'own']]))).toBe('403');
+    expect(await tryGet(policy, staff([['vendor.bank.propose', 'all']]))).toBe('403');
+    expect(await tryGet(policy, staff([]))).toBe('403');
   });
 });
