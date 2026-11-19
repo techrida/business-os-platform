@@ -83,6 +83,15 @@ describe('sanitizeRichText', () => {
     expect(sanitizeRichText(deep).match(/<ul>/g)?.length).toBeLessThanOrEqual(4);
   });
 
+  it('keeps the text after a too-deep list inside its item and stays idempotent', () => {
+    const deep =
+      '<ul><li>a<ul><li>b<ul><li>c<ul><li>d<ul><li>e</li></ul>f</li></ul></li></ul></li></ul></li></ul>';
+    const out = sanitizeRichText(deep);
+    expect(sanitizeRichText(out)).toBe(out);
+    expect(out).toContain('f');
+    expect((out.match(/<ul>/g) ?? []).length).toBe((out.match(/<\/ul>/g) ?? []).length);
+  });
+
   it('drops empty paragraphs, items and emphasis', () => {
     expect(sanitizeRichText('<p></p><p><br></p><ul><li></li></ul><p><strong></strong>x</p>')).toBe(
       '<p>x</p>',

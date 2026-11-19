@@ -21,14 +21,14 @@ export const CARD_KEYS = {
 } as const satisfies Record<string, readonly SettingKey[]>;
 
 /**
- * The settings each section's "reset to default" may write (D32): its card keys, plus the keys of
- * the sections that have their own editors. A separate list, so widening what a reset may touch
- * never widens what `saveCardAction` accepts.
+ * The settings the generic "reset to default" (`resetSettingAction`) may write (D32): its card keys,
+ * plus the document style and the saved term sets. A separate list, so widening what a reset may
+ * touch never widens what `saveCardAction` accepts. Sections with their own versioned reset actions
+ * (company profile cards, number and date formats) are deliberately absent: the generic reset would
+ * write a whole setting (the company profile includes the logo and every card) or skip their checks.
  */
 export const RESET_KEYS = {
   ...CARD_KEYS,
-  company: ['entity.profile', 'entity.pan_vat_no', 'entity.address'],
   documents: ['document.style'],
-  formats: ['format.number_systems', 'format.date'],
   terms: ['quotation.term_presets'],
 } as const satisfies Partial<Record<SettingsSectionId, readonly SettingKey[]>>;

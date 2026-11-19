@@ -40,6 +40,8 @@ export default async function DocumentsSettingsPage() {
       style,
       // A stored value this screen cannot read is not the default: the undo icon stays available.
       isDefault: isDefaultValue('document.style', current.value),
+      // Sent back with a reset, so a screen that is out of date cannot overwrite a newer save.
+      version: current.version,
       previews: await loadPreviews(session, style.primaryColour),
     };
   });
@@ -66,6 +68,7 @@ export default async function DocumentsSettingsPage() {
                 settingKey="document.style"
                 label="Document style"
                 isDefault={loaded.data.isDefault}
+                loadedVersion={loaded.data.version}
                 defaultText={DEFAULT_STYLE_TEXT}
               />
             }

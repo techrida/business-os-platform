@@ -1,7 +1,6 @@
 'use client';
 
 import type { TermPreset, TermPresetKind } from '@bos/contracts';
-import { useRouter } from 'next/navigation';
 
 import type { FieldControlProps } from '@/components/ui/field';
 import { RichTextEditor } from '@/components/ui/rich-text-editor';
@@ -40,7 +39,6 @@ export function TermsField({
   /** The form is busy: a disabled fieldset does not reach a contenteditable, so the editor is told. */
   disabled?: boolean | undefined;
 }) {
-  const router = useRouter();
   return (
     <>
       <SavedOptionsSelect
@@ -49,7 +47,7 @@ export function TermsField({
         value={value}
         maxLength={maxChars}
         onFill={onChange}
-        onAddMore={canAddTerms ? () => router.push(SAVED_TERMS_HREF) : undefined}
+        onAddMore={canAddTerms ? () => window.open(SAVED_TERMS_HREF, '_blank', 'noopener') : undefined}
       />
       <RichTextEditor
         id={control.id}

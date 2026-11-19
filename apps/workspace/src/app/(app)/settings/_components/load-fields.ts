@@ -127,6 +127,7 @@ function toSpec(key: SettingKey, current: SettingCurrent): FieldSpec {
     ...(copy.help ? { help: copy.help } : {}),
     kind: copy.kind,
     current: compact(current.value, copy.kind),
+    version: current.version,
     defaultText: defaultLabel(key, copy.kind),
     isDefault: isDefaultValue(key, current.value),
     ...(copy.kind === 'select'

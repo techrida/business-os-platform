@@ -166,12 +166,15 @@ describe('TermsField', () => {
     await view.unmount();
   });
 
-  it('gives the Founder an "Add more" entry that opens Settings > Saved terms in the same tab', async () => {
+  it('gives the Founder an "Add more" entry that opens Settings > Saved terms in a new tab', async () => {
+    const open = vi.fn();
+    vi.stubGlobal('open', open);
     const view = await mountForm(<Host canAddTerms />);
     await settle();
     await choose(document.body, NAME, 'Add more');
-    expect(router.push).toHaveBeenCalledTimes(1);
-    expect(router.push).toHaveBeenCalledWith('/settings/terms');
+    // A new tab, so an unsaved quotation is never thrown away; reload this page to see new sets.
+    expect(open).toHaveBeenCalledWith('/settings/terms', '_blank', 'noopener');
+    expect(router.push).not.toHaveBeenCalled();
     expect(stored()).toBe('');
     await view.unmount();
   });

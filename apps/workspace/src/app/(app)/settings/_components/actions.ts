@@ -3,6 +3,7 @@
 import { SETTING_DEFAULTS, SettingKeySchema, type SettingKey } from '@bos/contracts';
 import { revalidatePath } from 'next/cache';
 
+import { isStaleSettingError, STALE_SETTING_MESSAGE } from '@/components/settings/stale-setting';
 import { putSetting } from '@/lib/api-admin';
 import { settingsSection, type SettingsSectionId } from '@/lib/settings-nav';
 
@@ -71,10 +72,16 @@ export async function saveCardAction(
  * Puts one setting back to its default (D32). A reset is a normal save of the default value, so it
  * appends a version and lands in the audit trail like any other change. One setting only, and only a
  * key the section owns; the section permission is checked here, apart from the page.
+ *
+ * `loadedVersion` is the version the page loaded (null when it loaded the default). It goes to the API
+ * as `expectedVersion`, so a page that is out of date cannot overwrite what another founder saved
+ * since: the API refuses, the person sees the stale message and nothing is written. Anything that is
+ * not a whole number or null fails closed, because a reset without it would be an unconditional write.
  */
 export async function resetSettingAction(
   section: SettingsSectionId,
   key: SettingKey,
+  loadedVersion: number | null,
 ): Promise<ActionState> {
   const allowed: readonly SettingKey[] | undefined = Object.hasOwn(RESET_KEYS, section)
     ? RESET_KEYS[section as keyof typeof RESET_KEYS]
@@ -84,10 +91,15 @@ export async function resetSettingAction(
 
   const parsed = SettingKeySchema.safeParse(key);
   if (!parsed.success || !allowed.includes(parsed.data)) return fail('Unknown setting.');
+  if (loadedVersion !== null && !Number.isInteger(loadedVersion)) {
+    return fail('Reload the page and try again.');
+  }
 
   try {
-    await putSetting(session, parsed.data, SETTING_DEFAULTS[parsed.data]);
+    await putSetting(session, parsed.data, SETTING_DEFAULTS[parsed.data], loadedVersion);
   } catch (error) {
+    // A stale reset changed nothing, so there is nothing to refresh; the message tells them to reload.
+    if (isStaleSettingError(error)) return fail(STALE_SETTING_MESSAGE);
     revalidatePath(settingsSection(section).href);
     return fail(describeError(error, 'reset this setting'));
   }
