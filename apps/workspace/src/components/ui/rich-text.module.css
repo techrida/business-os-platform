@@ -1,0 +1,81 @@
+/* The one look for terms wording: the display (RichText) and the editing surface
+   (RichTextEditor) both carry `.prose`, so what is typed is what is read. */
+.prose {
+  color: var(--text-primary);
+  font-size: var(--font-size-body-small);
+  line-height: var(--line-height-body-small);
+  overflow-wrap: anywhere;
+}
+
+.prose p {
+  margin: 0 0 8px;
+}
+
+.prose ul,
+.prose ol {
+  margin: 0 0 8px;
+  padding: 0 0 0 22px;
+}
+
+.prose ul {
+  list-style: disc;
+}
+
+.prose ol {
+  list-style: decimal;
+}
+
+.prose li {
+  margin: 0;
+  padding: 0;
+}
+
+.prose li + li {
+  margin-top: 2px;
+}
+
+.prose li > p {
+  margin: 0;
+}
+
+/* Nested lists sit tight under their parent item and change marker per level. */
+.prose li > ul,
+.prose li > ol {
+  margin: 2px 0 0;
+}
+
+.prose ul ul {
+  list-style: circle;
+}
+
+.prose ul ul ul {
+  list-style: square;
+}
+
+.prose ol ol {
+  list-style: lower-alpha;
+}
+
+.prose ol ol ol {
+  list-style: lower-roman;
+}
+
+.prose strong {
+  font-weight: var(--font-weight-semibold);
+}
+
+.prose em {
+  font-style: italic;
+}
+
+/* The last block ends flush, so the wrapper's own padding is the only space below. */
+.prose > :last-child {
+  margin-bottom: 0;
+}
+
+/* Keep typed text at 16px on touch screens to avoid automatic focus zoom (editor only). */
+@media (pointer: coarse) {
+  .prose[contenteditable='true'] {
+    font-size: max(16px, var(--font-size-body-small));
+  }
+}
