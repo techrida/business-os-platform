@@ -319,7 +319,7 @@ export default async function QuotationDetailPage({
         <div className={`${styles.stack} ${styles.revisionStack}`}>
           {view !== null ? (
             <>
-              {current !== null ? (
+              {current !== null && !earlier ? (
                 <ClientDecision
                   quotationId={quotation.id}
                   number={quotation.number}
