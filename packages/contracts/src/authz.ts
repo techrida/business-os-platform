@@ -259,6 +259,7 @@ export const DEFAULT_ROLE_PERMISSIONS: Record<RoleKey, RoleGrants> = {
     'quotation.send': 'own',
     'quotation.record_acceptance': 'own',
     'quotation.revise': 'own',
+    'sales_order.read': 'own',
     'verification.read': 'own',
   },
   // Portal users see and answer only quotations naming their own party (`customer_org`). Staff roles

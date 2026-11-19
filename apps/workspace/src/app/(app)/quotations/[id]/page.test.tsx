@@ -14,11 +14,13 @@ vi.mock('server-only', () => ({}));
 const mocks = vi.hoisted(() => ({
   requireStaffSession: vi.fn(),
   getQuotation: vi.fn(),
+  listSalesOrders: vi.fn(),
   notFound: vi.fn(() => {
     throw new Error('NEXT_NOT_FOUND');
   }),
 }));
 
+vi.mock('@/lib/api-billing', () => ({ listSalesOrders: mocks.listSalesOrders }));
 vi.mock('@/lib/bff', () => ({ requireStaffSession: mocks.requireStaffSession }));
 vi.mock('@/components/p2/quotations/api', () => ({ getQuotation: mocks.getQuotation }));
 vi.mock('next/navigation', () => ({ notFound: mocks.notFound, redirect: vi.fn() }));
@@ -156,6 +158,7 @@ beforeEach(() => {
   mocks.requireStaffSession.mockReset().mockResolvedValue({ accessToken: 'tok', roles: ['sales'] });
   mocks.getQuotation.mockReset().mockResolvedValue(detail());
   mocks.notFound.mockClear();
+  mocks.listSalesOrders.mockReset().mockResolvedValue([]);
 });
 
 describe('quotation detail page', () => {
@@ -167,6 +170,24 @@ describe('quotation detail page', () => {
     // Rev 2 is current: its total is shown, not Rev 1's.
     expect(html).toContain('22,60,000');
     expect(html).toContain('Rev 2 of 2');
+  });
+
+  it('links to the visible live order for the accepted revision', async () => {
+    const quote = detail();
+    quote.quotation.status = 'accepted';
+    quote.versions[1]!.status = 'accepted';
+    mocks.getQuotation.mockResolvedValue(quote);
+    mocks.listSalesOrders.mockResolvedValue([
+      { id: CUSTOMER, number: 'SO-0042', status: 'confirmed' },
+    ]);
+
+    expect(await render()).toContain(`href="/sales-orders/${CUSTOMER}"`);
+    expect(mocks.listSalesOrders).toHaveBeenCalledWith(expect.anything(), {
+      quotationVersionId: V2,
+    });
+
+    mocks.listSalesOrders.mockResolvedValue([]);
+    expect(await render()).not.toContain('href="/sales-orders/');
   });
 
   it('lists the superseded revision in the dialog, with its own total', async () => {

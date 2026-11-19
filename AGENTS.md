@@ -71,3 +71,9 @@ wait for Kuu to repeat the cascade request.
   it and follow applicable Next.js documentation before changing framework code.
 
 Attribution: Codex, following Kuu's explicit instructions on 2026-11-10.
+
+## Money precision
+
+Follow Business OS decision D22 in the shared `docs/platform/DECISIONS.md`.
+Store, calculate and display money to at most two decimals using half-up rounding.
+Percentages may have four decimals. Round derived amounts to two decimals and put any split remainder on the last line. FX rates follow their own precision.

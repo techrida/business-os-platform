@@ -6,7 +6,12 @@
 // (`customerPartyId`, `vendorPartyId`) are compared with it.
 import { performance } from 'node:perf_hooks';
 
-import type { OrgKind, Permission, Scope } from '@bos/contracts';
+import {
+  DEFAULT_ROLE_PERMISSIONS,
+  type OrgKind,
+  type Permission,
+  type Scope,
+} from '@bos/contracts';
 import { describe, expect, it } from 'vitest';
 
 import { can } from './can';
@@ -457,5 +462,22 @@ describe('can(): latency budget', () => {
 
     expect(allowed).toBeGreaterThan(0); // the sink: proves the calls ran and returned decisions
     expect(p99).toBeLessThan(0.05);
+  });
+});
+
+describe('default Sales order permissions', () => {
+  it('grants only read access to quotations owned in the acting entity', () => {
+    const salesperson = principalWith(DEFAULT_ROLE_PERMISSIONS.sales);
+    expect(can(salesperson, 'sales_order.read', rec({ ownerUserId: ME }))).toEqual(ALLOWED('own'));
+    for (const resource of [
+      rec({ ownerUserId: SOMEONE_ELSE }),
+      rec({ ownerUserId: null }),
+      rec({ ownerUserId: ME, organizationId: OTHER_ENTITY }),
+      rec({ ownerUserId: ME, tenantId: OTHER_TENANT }),
+    ]) {
+      expect(can(salesperson, 'sales_order.read', resource)).toEqual(DENIED('out_of_scope'));
+    }
+    expect(can(salesperson, 'sales_order.confirm')).toEqual(DENIED('no_permission'));
+    expect(can(salesperson, 'sales_order.mark_billable')).toEqual(DENIED('no_permission'));
   });
 });
