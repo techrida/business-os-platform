@@ -95,7 +95,7 @@ class FakeZitadel implements ZitadelApi {
     for (const p of this.projects.values()) if (p.id === projectId) p.authRequired = true;
     return Promise.resolve();
   }
-  ensureOrgLoginPolicyNoRegister(orgId: string): Promise<boolean> {
+  ensureStaffLoginPolicy(orgId: string): Promise<boolean> {
     this.noRegisterCalls.push(orgId);
     if (this.noRegisterOrgs.has(orgId)) return Promise.resolve(false);
     this.mutate();
@@ -334,7 +334,7 @@ describe('@bos/seed-zitadel', () => {
     const result = await runSeed(deps);
 
     expect(api.noRegisterCalls).toEqual([api.staffOrgId]);
-    expect(result.changes).toContain('disabled self-registration on the staff org');
+    expect(result.changes).toContain('configured staff login policy for invitations and private password reset');
   });
 
   it('is idempotent for authorization and self-registration (CR-02)', async () => {

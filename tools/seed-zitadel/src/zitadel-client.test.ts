@@ -148,7 +148,7 @@ describe('ZitadelClient request shapes', () => {
   });
 });
 
-describe('ensureOrgLoginPolicyNoRegister (management v1 login policy, CR-02)', () => {
+describe('ensureStaffLoginPolicy (management v1 login policy, CR-02)', () => {
   // What GET /management/v1/policies/login returns for an org that inherits the instance default.
   const inherited = {
     isDefault: true,
@@ -165,9 +165,9 @@ describe('ensureOrgLoginPolicyNoRegister (management v1 login policy, CR-02)', (
     },
   };
 
-  it('creates a custom org policy from the inherited one with allowRegister false', async () => {
+  it('creates a custom org policy from the inherited one with private password reset and registration off', async () => {
     const { transport, calls } = recording({ [ENDPOINTS.orgLoginPolicy]: inherited });
-    const changed = await client(transport).ensureOrgLoginPolicyNoRegister('staff-org');
+    const changed = await client(transport).ensureStaffLoginPolicy('staff-org');
     expect(changed).toBe(true);
     expect(calls.map((c) => c.method)).toEqual(['GET', 'POST']);
     expect(calls.every((c) => c.path === ENDPOINTS.orgLoginPolicy)).toBe(true);
@@ -175,6 +175,8 @@ describe('ensureOrgLoginPolicyNoRegister (management v1 login policy, CR-02)', (
     expect(calls[1]?.body).toEqual({
       allowUsernamePassword: true,
       allowRegister: false,
+      hidePasswordReset: false,
+      ignoreUnknownUsernames: true,
       allowExternalIdp: true,
       passwordlessType: 'PASSWORDLESS_TYPE_ALLOWED',
       passwordCheckLifetime: '864000s',
@@ -186,15 +188,17 @@ describe('ensureOrgLoginPolicyNoRegister (management v1 login policy, CR-02)', (
   it('updates an existing custom org policy, keeping every other setting', async () => {
     const custom = {
       isDefault: false,
-      policy: { ...inherited.policy, isDefault: false, forceMfa: true },
+      policy: { ...inherited.policy, isDefault: false, forceMfa: true, hidePasswordReset: true },
     };
     const { transport, calls } = recording({ [ENDPOINTS.orgLoginPolicy]: custom });
-    expect(await client(transport).ensureOrgLoginPolicyNoRegister('staff-org')).toBe(true);
+    expect(await client(transport).ensureStaffLoginPolicy('staff-org')).toBe(true);
     expect(calls.map((c) => c.method)).toEqual(['GET', 'PUT']);
     // Update has no factor lists (they are managed by their own endpoints) and must not drop the rest.
     expect(calls[1]?.body).toEqual({
       allowUsernamePassword: true,
       allowRegister: false,
+      hidePasswordReset: false,
+      ignoreUnknownUsernames: true,
       allowExternalIdp: true,
       forceMfa: true,
       passwordlessType: 'PASSWORDLESS_TYPE_ALLOWED',
@@ -202,23 +206,72 @@ describe('ensureOrgLoginPolicyNoRegister (management v1 login policy, CR-02)', (
     });
   });
 
-  it('sends nothing but the read when self-registration is already off', async () => {
+  it('only reads when the desired policy is already applied', async () => {
     const off = {
       isDefault: false,
-      policy: { ...inherited.policy, isDefault: false, allowRegister: false },
+      policy: {
+        ...inherited.policy,
+        isDefault: false,
+        allowRegister: false,
+        ignoreUnknownUsernames: true,
+      },
     };
     const { transport, calls } = recording({ [ENDPOINTS.orgLoginPolicy]: off });
-    expect(await client(transport).ensureOrgLoginPolicyNoRegister('staff-org')).toBe(false);
+    expect(await client(transport).ensureStaffLoginPolicy('staff-org')).toBe(false);
     expect(calls.map((c) => c.method)).toEqual(['GET']);
   });
 
   it('refuses to copy identity-provider links into a custom policy instead of dropping them', async () => {
     const withIdp = { ...inherited, policy: { ...inherited.policy, idps: [{ idpId: 'i1' }] } };
     const { transport, calls } = recording({ [ENDPOINTS.orgLoginPolicy]: withIdp });
-    await expect(client(transport).ensureOrgLoginPolicyNoRegister('o')).rejects.toThrow(
+    await expect(client(transport).ensureStaffLoginPolicy('o')).rejects.toThrow(
       /identity provider/i,
     );
     expect(calls.map((c) => c.method)).toEqual(['GET']);
+  });
+});
+
+describe('ensureSmtp', () => {
+  const mailpit = {
+    description: 'bos-dev-mailpit',
+    host: 'mailpit:1025',
+    senderAddress: 'noreply@bos.test',
+    senderName: 'Business OS (dev)',
+  };
+  const activation = ENDPOINTS.activateEmailProvider('provider');
+  const provider = { id: 'provider', description: mailpit.description };
+
+  it('creates and activates the Mailpit provider', async () => {
+    const { transport, calls } = recording({
+      [ENDPOINTS.addEmailProviderSmtp]: { id: provider.id },
+    });
+    expect(await client(transport).ensureSmtp(mailpit)).toBe(true);
+    expect(calls.map(({ path }) => path)).toEqual([
+      ENDPOINTS.listEmailProviders,
+      ENDPOINTS.addEmailProviderSmtp,
+      activation,
+    ]);
+    expect(calls[1]?.body).toMatchObject({ ...mailpit, tls: false, none: {} });
+  });
+
+  it('retries activation if the provider was created but is inactive', async () => {
+    const { transport, calls } = recording({
+      [ENDPOINTS.listEmailProviders]: {
+        result: [{ ...provider, state: 'EMAIL_PROVIDER_INACTIVE' }],
+      },
+    });
+    expect(await client(transport).ensureSmtp(mailpit)).toBe(true);
+    expect(calls.map(({ path }) => path)).toEqual([ENDPOINTS.listEmailProviders, activation]);
+  });
+
+  it('leaves an active provider alone', async () => {
+    const { transport, calls } = recording({
+      [ENDPOINTS.listEmailProviders]: {
+        result: [{ ...provider, state: 'EMAIL_PROVIDER_ACTIVE' }],
+      },
+    });
+    expect(await client(transport).ensureSmtp(mailpit)).toBe(false);
+    expect(calls.map(({ path }) => path)).toEqual([ENDPOINTS.listEmailProviders]);
   });
 });
 
