@@ -3,7 +3,7 @@
 // Only Draft and Returned versions are editable; every later change is a revision with a reason.
 import { z } from 'zod';
 
-import { RoutePlanSchema } from './approvals.js';
+import { PersonNameSchema, RoutePlanSchema } from './approvals.js';
 import { RoleKeySchema } from './authz.js';
 import { DocumentVersionStatusSchema } from './documents.js';
 import { CurrencySchema, DecimalString, NprSnapshotSchema, RateString } from './money.js';
@@ -588,6 +588,8 @@ export const QuotationDetailSchema = z.object({
   customerName: z.string().min(1),
   contacts: z.array(QuotationContactSchema),
   capabilities: QuotationCapabilitiesSchema,
+  /** Names of the people the quotation names: its owner and the actors of its status history. */
+  people: z.array(PersonNameSchema).optional(),
 });
 export type QuotationDetail = z.infer<typeof QuotationDetailSchema>;
 
