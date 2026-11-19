@@ -17,11 +17,18 @@
 // between the two steps) is soft-removed after ORPHAN_AFTER_MS, which makes its version a candidate again.
 //
 // Number and date format: a delivered PO PDF is never rendered again (its document cannot be removed), so the format
-// is the one in force at the first render. No snapshot column is needed.
+// is the one in force at the first render. No snapshot column is needed. The same render freezes the company logo's
+// bytes into that format (U12, see frozen-logo.ts): the PDF stored once is the frozen copy, so a later logo change or
+// removal never alters it.
 //
 // The tests drive the sweeper through a RenderStore fake; the drizzle store below is checked by the integration test.
 import { InjectQueue, Processor, WorkerHost } from '@nestjs/bullmq';
-import { DEFAULT_DATE_FORMAT, DEFAULT_NUMBER_SYSTEMS, SETTINGS } from '@bos/contracts';
+import {
+  DEFAULT_DATE_FORMAT,
+  DEFAULT_NUMBER_SYSTEMS,
+  SETTINGS,
+  type DocumentFormatSnapshot,
+} from '@bos/contracts';
 import {
   documents,
   documentVersions,
@@ -45,11 +52,14 @@ import { and, asc, eq, inArray, isNull, lt, notExists, notInArray, sql } from 'd
 
 import type { Db, DbTransaction } from '../../../../platform/db/db.module';
 import { systemActor, type TxScope } from '../../../../platform/db/tx';
+import { freezeEntityLogo } from '../../../invoices/render/frozen-logo';
 import { GotenbergError } from '../../../quotations/render/gotenberg.client';
+import { DocumentLogoUnavailableError } from '../../../quotations/render/issuer';
 import type {
   Clock,
   PdfRenderer,
   RenderDocuments,
+  RenderLogos,
   RenderSettings,
   RunInTx,
 } from '../../../quotations/render/quotation-render.sweeper';
@@ -80,6 +90,8 @@ export const PO_RENDER_DOCUMENTS = Symbol('PO_RENDER_DOCUMENTS');
 export const PO_RENDER_SETTINGS = Symbol('PO_RENDER_SETTINGS');
 export const PO_RENDER_PDF = Symbol('PO_RENDER_PDF');
 export const PO_RENDER_CLOCK = Symbol('PO_RENDER_CLOCK');
+/** DocumentLogoResolverFactory in the worker: turns the profile's logo document into the bytes the render freezes. */
+export const PO_RENDER_LOGOS = Symbol('PO_RENDER_LOGOS');
 
 export interface RenderCandidate {
   tenantId: string;
@@ -139,7 +151,8 @@ export function failureKind(error: unknown): string {
   if (error instanceof GotenbergError) return `gotenberg_${error.kind}`;
   if (
     error instanceof PurchaseOrderNotRenderableError ||
-    error instanceof RenderSourceMissingError
+    error instanceof RenderSourceMissingError ||
+    error instanceof DocumentLogoUnavailableError
   ) {
     return error.kind;
   }
@@ -163,6 +176,7 @@ export class PurchaseOrderRenderSweeper {
     @Inject(PO_RENDER_SETTINGS) private readonly settings: RenderSettings,
     @Inject(PO_RENDER_PDF) private readonly pdf: PdfRenderer,
     @Inject(PO_RENDER_CLOCK) private readonly clock: Clock,
+    @Inject(PO_RENDER_LOGOS) private readonly logos: RenderLogos,
   ) {}
 
   /** One pass over every tenant: render what is due, then clean up what crashed renders left behind. */
@@ -221,10 +235,19 @@ export class PurchaseOrderRenderSweeper {
         ...rows,
         buyer: { legalName: buyerLegalName, panVatNo: pan.success ? pan.data : null },
       });
+      // What this render prints with, frozen into the one PDF it stores. A referenced logo that cannot be read
+      // fails the render (it retries later) rather than storing a logo-less PO for good.
+      const format: DocumentFormatSnapshot = {
+        numberSystems: numberSystems.success ? numberSystems.data : DEFAULT_NUMBER_SYSTEMS,
+        dateFormat: dateFormat.success ? dateFormat.data : DEFAULT_DATE_FORMAT,
+        logoDataUrl: await freezeEntityLogo(this.settings, this.logos, scope),
+        capturedAt: this.clock().toISOString(),
+      };
       const bytes = await this.pdf.htmlToPdf(
         renderPurchaseOrderHtml(view, {
-          numberSystems: numberSystems.success ? numberSystems.data : DEFAULT_NUMBER_SYSTEMS,
-          dateFormat: dateFormat.success ? dateFormat.data : DEFAULT_DATE_FORMAT,
+          numberSystems: format.numberSystems,
+          dateFormat: format.dateFormat,
+          logoDataUrl: format.logoDataUrl ?? null,
         }),
       );
       const file = {

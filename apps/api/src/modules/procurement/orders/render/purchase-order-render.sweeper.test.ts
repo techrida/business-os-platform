@@ -3,7 +3,10 @@ import { describe, expect, it, vi } from 'vitest';
 
 import type { DbTransaction } from '../../../../platform/db/db.module';
 import type { TxScope } from '../../../../platform/db/tx';
+import { EMPTY_COMPANY_PROFILE } from '@bos/contracts';
+
 import { GotenbergError } from '../../../quotations/render/gotenberg.client';
+import type { DocumentLogoResolver } from '../../../quotations/render/issuer';
 import type { RenderSettings, RunInTx } from '../../../quotations/render/quotation-render.sweeper';
 import {
   failureKind,
@@ -71,9 +74,14 @@ function fixture(
     numberSystems?: unknown;
     /** The raw `format.date` value; an omitted key reads as the stored default. */
     dateFormat?: unknown;
+    /** The raw `entity.profile` value; omitted, the key is unset (no logo). */
+    profile?: unknown;
+    /** What the logo document resolves to; omitted, nothing (null). */
+    logo?: DocumentLogoResolver;
   } = {},
 ) {
   let now = NOW;
+  const live: { profile: unknown } = { profile: over.profile };
   const store = {
     candidates: vi.fn().mockResolvedValue(over.candidates ?? []),
     load: vi.fn().mockResolvedValue('src' in over ? over.src : source()),
@@ -93,18 +101,33 @@ function fixture(
       if (key === 'format.date') {
         return Promise.resolve('dateFormat' in over ? over.dateFormat : 'dd MMM yyyy');
       }
+      if (key === 'entity.profile') return Promise.resolve(live.profile);
       return Promise.resolve('pan' in over ? over.pan : '301234567');
     }),
   } as unknown as RenderSettings;
   const pdf = { htmlToPdf: vi.fn().mockResolvedValue(PDF) };
   const runTx: RunInTx = (_scope, _actor, fn) => fn(TX);
-  const sweeper = new PurchaseOrderRenderSweeper(store, runTx, documents, settings, pdf, () => now);
+  // A watched resolver per scope, standing in for DocumentLogoResolverFactory.
+  const resolveLogo = vi.fn<DocumentLogoResolver>(over.logo ?? (() => Promise.resolve(null)));
+  const logos = { forScope: vi.fn((_scope: TxScope) => resolveLogo) };
+  const sweeper = new PurchaseOrderRenderSweeper(
+    store,
+    runTx,
+    documents,
+    settings,
+    pdf,
+    () => now,
+    logos,
+  );
   return {
     store,
     documents,
     settings,
     pdf,
     sweeper,
+    live,
+    logos,
+    resolveLogo,
     advance: (ms: number) => (now = new Date(now.getTime() + ms)),
   };
 }
@@ -289,5 +312,75 @@ describe('failureKind', () => {
     expect(failureKind(new PurchaseOrderNotRenderableError('x'))).toBe('not_renderable');
     expect(failureKind(new BadRequestException('x'))).toBe('http_400');
     expect(failureKind(new Error('vendor data'))).toBe('error');
+  });
+});
+
+describe('PurchaseOrderRenderSweeper: the company logo', () => {
+  const scope = { tenantId: 'tenant-1', organizationId: 'org-1' };
+  const LOGO_A = 'data:image/png;base64,TE9HT0E=';
+  const LOGO_B = 'data:image/png;base64,TE9HT0I=';
+  const DOC_A = '0b6c2a10-0000-4000-8000-00000000000a';
+  const DOC_B = '0b6c2a10-0000-4000-8000-00000000000b';
+  const profile = (over: Record<string, unknown> = {}) => ({ ...EMPTY_COMPANY_PROFILE, ...over });
+  const htmlOf = (f: ReturnType<typeof fixture>, n = 0) =>
+    f.pdf.htmlToPdf.mock.calls[n]?.[0] as string;
+
+  it('freezes the logo into the render and draws it, resolved in the version scope', async () => {
+    const f = fixture({
+      profile: profile({ logoDocumentId: DOC_A }),
+      logo: (id) => Promise.resolve(id === DOC_A ? LOGO_A : null),
+    });
+    await expect(f.sweeper.renderOne(candidate(1))).resolves.toBe('rendered');
+    expect(f.logos.forScope).toHaveBeenCalledWith(scope);
+    expect(f.resolveLogo).toHaveBeenCalledWith(DOC_A);
+    expect(htmlOf(f)).toContain(`<img class="logo" src="${LOGO_A}" alt="Techrida Pvt. Ltd.">`);
+    expect(htmlOf(f)).toContain('img-src data:');
+  });
+
+  it.each([
+    ['the profile has no logo', profile()],
+    ['the profile is unset', undefined],
+    ['the profile no longer parses', { displayName: 42 }],
+  ])('prints no logo, and never calls the resolver, when %s', async (_name, value) => {
+    const f = fixture({ profile: value });
+    await expect(f.sweeper.renderOne(candidate(1))).resolves.toBe('rendered');
+    expect(f.logos.forScope).not.toHaveBeenCalled();
+    expect(f.resolveLogo).not.toHaveBeenCalled();
+    expect(htmlOf(f)).not.toContain('<img');
+  });
+
+  it('falls back to the legacy logo when the document resolves to nothing', async () => {
+    const f = fixture({ profile: profile({ logoDocumentId: DOC_A, legacyLogoDataUrl: LOGO_B }) });
+    await expect(f.sweeper.renderOne(candidate(1))).resolves.toBe('rendered');
+    expect(f.resolveLogo).toHaveBeenCalledWith(DOC_A);
+    expect(htmlOf(f)).toContain(`src="${LOGO_B}"`);
+  });
+
+  it('fails, without storing a document, when a referenced logo cannot be read', async () => {
+    const f = fixture({
+      profile: profile({ logoDocumentId: DOC_A, legacyLogoDataUrl: LOGO_B }),
+      logo: () => Promise.reject(new Error('disk gone: /srv/files/secret')),
+      candidates: [candidate(1)],
+    });
+    const swept = await f.sweeper.sweep();
+    expect(swept.rendered).toBe(0);
+    expect(swept.failures).toEqual([
+      { versionId: candidate(1).versionId, kind: 'document_logo_unavailable' },
+    ]);
+    expect(f.pdf.htmlToPdf).not.toHaveBeenCalled();
+    expect(f.documents.createGenerated).not.toHaveBeenCalled();
+  });
+
+  it('prints each version with the logo in force at its render', async () => {
+    const f = fixture({
+      profile: profile({ logoDocumentId: DOC_A }),
+      logo: (id) => Promise.resolve(id === DOC_A ? LOGO_A : LOGO_B),
+    });
+    await expect(f.sweeper.renderOne(candidate(1))).resolves.toBe('rendered');
+    f.live.profile = profile({ logoDocumentId: DOC_B });
+    await expect(f.sweeper.renderOne(candidate(2))).resolves.toBe('rendered');
+    expect(htmlOf(f, 0)).toContain(`src="${LOGO_A}"`);
+    expect(htmlOf(f, 1)).toContain(`src="${LOGO_B}"`);
+    expect(htmlOf(f, 1)).not.toContain(LOGO_A);
   });
 });
