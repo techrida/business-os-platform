@@ -9,6 +9,7 @@ import {
   createPurchaseRequest,
   getPurchaseRequest,
   listPurchaseRequests,
+  listPurchaseRequestsPage,
   listDepartments,
   listCostCenters,
   submitPurchaseRequest,
@@ -162,6 +163,48 @@ describe('listPurchaseRequests', () => {
   it('throws the API status and body on a refusal', async () => {
     answer(reply({ error: { code: 'forbidden' } }, 403));
     await expect(listPurchaseRequests(session, {})).rejects.toBeInstanceOf(ApiError);
+  });
+});
+
+describe('listPurchaseRequestsPage', () => {
+  it('repeats the status key, sends the search and offset, and reads the total from the header', async () => {
+    fetchMock.mockImplementation(() =>
+      Promise.resolve(
+        new Response(JSON.stringify([item]), { status: 200, headers: { 'x-total-count': '134' } }),
+      ),
+    );
+    const out = await listPurchaseRequestsPage(session, {
+      status: ['draft', 'submitted'],
+      q: 'chairs',
+      limit: 25,
+      offset: 50,
+    });
+    expect(out.total).toBe(134);
+    expect(out.items).toHaveLength(1);
+    expect(lastCall().url).toBe(
+      'http://api:3001/v1/procurement/purchase-requests?status=draft&status=submitted&q=chairs&limit=25&offset=50',
+    );
+  });
+
+  it('falls back to the row count without a usable header, and refuses an unknown status first', async () => {
+    answer(reply([item]));
+    expect((await listPurchaseRequestsPage(session, { limit: 25, offset: 0 })).total).toBe(1);
+    expect(() =>
+      listPurchaseRequestsPage(session, { status: ['bogus' as never], limit: 25, offset: 0 }),
+    ).toThrow();
+  });
+
+  it('turns an answer that breaks the contract into a 502 and passes a refusal on', async () => {
+    answer(reply([{ ...item, estimatedTotal: 45000 }]));
+    await expect(listPurchaseRequestsPage(session, { limit: 25, offset: 0 })).rejects.toMatchObject(
+      {
+        status: 502,
+      },
+    );
+    answer(reply({ error: { code: 'forbidden' } }, 403));
+    await expect(
+      listPurchaseRequestsPage(session, { limit: 25, offset: 0 }),
+    ).rejects.toBeInstanceOf(ApiError);
   });
 });
 

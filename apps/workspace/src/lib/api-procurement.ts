@@ -126,6 +126,45 @@ function withQuery(path: string, params: Record<string, string | number | undefi
   return text === '' ? path : `${path}?${text}`;
 }
 
+/** Like `withQuery`, but an array value repeats the key (`status=a&status=b`), which is how multi-select filters travel. */
+export function listQuery(
+  path: string,
+  params: Record<string, string | number | readonly string[] | undefined>,
+): string {
+  const query = new URLSearchParams();
+  for (const [name, value] of Object.entries(params)) {
+    if (value === undefined) continue;
+    if (typeof value === 'object') {
+      for (const item of value) if (item !== '') query.append(name, item);
+    } else if (value !== '') query.set(name, String(value));
+  }
+  const text = query.toString();
+  return text === '' ? path : `${path}?${text}`;
+}
+
+/**
+ * A list endpoint that answers a bare array plus `X-Total-Count` (all matches, not just this page). A missing or
+ * unreadable header falls back to the row count, so a page never claims more rows than it can show.
+ */
+export async function callList<T>(
+  session: Session,
+  path: string,
+  schema: z.ZodType<T>,
+): Promise<{ items: T[]; total: number }> {
+  const res = await apiFetch(session, path);
+  const body = await readBody(res);
+  const label = `GET ${path.split('?')[0] ?? path}`;
+  if (!res.ok) throw new ApiError(res.status, `${label} failed with ${res.status}`, body);
+  const parsed = z.array(schema).safeParse(body);
+  if (!parsed.success) {
+    throw new ApiError(502, `${label} returned an invalid body`, parsed.error.issues);
+  }
+  const header = Number(res.headers.get('x-total-count'));
+  const total =
+    Number.isInteger(header) && header >= parsed.data.length ? header : parsed.data.length;
+  return { items: parsed.data, total };
+}
+
 // ------------------------------------------------------------------------- purchase requests
 
 const PR_PATH = '/v1/procurement/purchase-requests';
@@ -146,6 +185,26 @@ export function listPurchaseRequests(
       limit: query.limit,
     }),
     z.array(PurchaseRequestListItemSchema),
+  );
+}
+
+/**
+ * One page of `GET /v1/procurement/purchase-requests` with several statuses, a search and `offset`, plus the total of
+ * all matches from `X-Total-Count`. The API scopes the rows to what the caller may read; nothing here widens that.
+ */
+export function listPurchaseRequestsPage(
+  session: Session,
+  query: { status?: readonly PrStatus[]; q?: string; limit: number; offset: number },
+): Promise<{ items: PurchaseRequestListItem[]; total: number }> {
+  return callList(
+    session,
+    listQuery(PR_PATH, {
+      status: query.status?.map((s) => PrStatusSchema.parse(s)),
+      q: query.q,
+      limit: query.limit,
+      offset: query.offset,
+    }),
+    PurchaseRequestListItemSchema,
   );
 }
 

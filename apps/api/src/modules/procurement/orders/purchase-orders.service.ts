@@ -29,6 +29,7 @@ import { AuditService } from '../../../platform/audit/audit.service';
 import { DB, type Db, type DbTransaction } from '../../../platform/db/db.module';
 import { withIdempotency } from '../../../platform/db/idempotency';
 import { withTx, type TxScope } from '../../../platform/db/tx';
+import { searchPage } from '../../../platform/list';
 import { ApprovalsService } from '../../approvals/requests.service';
 import { PurchaseOrdersCaller } from './purchase-orders.caller';
 import {
@@ -41,6 +42,7 @@ import {
   type AmendPurchaseOrderBody,
   type AmendmentFacts,
   type CancelPurchaseOrderBody,
+  type ListPurchaseOrdersQuery,
   type ShortClosePurchaseOrderBody,
 } from './purchase-order.rules';
 import {
@@ -189,26 +191,57 @@ export class PurchaseOrdersService {
 
   // ------------------------------------------------------------------------------------------------- reads
 
-  /** The entity's purchase orders, newest first, optionally of one status. Lines are left to the detail. */
-  async list(status?: PoStatus): Promise<PurchaseOrderListItemDto[]> {
+  /**
+   * One page of the entity's purchase orders, newest first, optionally of some statuses and a search over the number
+   * and the vendor name, with the total of all matches. Lines are left to the detail. The id closes the order so
+   * two orders created in the same instant never swap between pages.
+   */
+  async list(
+    query: ListPurchaseOrdersQuery,
+  ): Promise<{ rows: PurchaseOrderListItemDto[]; total: number }> {
     const { scope, actor } = this.caller.current();
     return withTx(this.db, scope, actor, async (tx) => {
-      const rows = await tx
-        .select({ po: purchaseOrders, vendorName: vendors.legalName })
-        .from(purchaseOrders)
-        .innerJoin(vendors, vendorOf(purchaseOrders))
-        .where(
-          scoped(scope).where(
-            purchaseOrders,
-            status === undefined ? undefined : eq(purchaseOrders.status, status),
-          ),
-        )
-        .orderBy(desc(purchaseOrders.createdAt), desc(purchaseOrders.number))
-        .limit(500);
-      return rows.map((r) => {
-        const { lines: _lines, ...dto } = toDto(r.po, []);
-        return { ...dto, vendorName: r.vendorName };
+      const page = await searchPage(tx, {
+        q: query.q,
+        columns: [purchaseOrders.number, vendors.legalName],
+        where: scoped(scope).where(
+          purchaseOrders,
+          query.status === undefined || query.status.length === 0
+            ? undefined
+            : inArray(purchaseOrders.status, query.status),
+        ),
+        orderBy: [
+          desc(purchaseOrders.createdAt),
+          desc(purchaseOrders.number),
+          desc(purchaseOrders.id),
+        ],
+        limit: query.limit,
+        offset: query.offset,
+        rows: (reader, p) =>
+          reader
+            .select({ po: purchaseOrders, vendorName: vendors.legalName })
+            .from(purchaseOrders)
+            .innerJoin(vendors, vendorOf(purchaseOrders))
+            .where(p.where)
+            .orderBy(...p.orderBy)
+            .limit(p.limit)
+            .offset(p.offset),
+        count: async (reader, where) => {
+          const [row] = await reader
+            .select({ n: sql<number>`count(*)::int` })
+            .from(purchaseOrders)
+            .innerJoin(vendors, vendorOf(purchaseOrders))
+            .where(where);
+          return row?.n ?? 0;
+        },
       });
+      return {
+        rows: page.rows.map((r) => {
+          const { lines: _lines, ...dto } = toDto(r.po, []);
+          return { ...dto, vendorName: r.vendorName };
+        }),
+        total: page.total,
+      };
     });
   }
 
