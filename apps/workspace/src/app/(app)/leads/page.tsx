@@ -12,7 +12,13 @@ import {
 } from '@/components/p2/crm/leads-api';
 import { moneyOrNull, sentence } from '@/components/p2/crm/format';
 import { LoadProblem, StageBadge, ViewSwitch } from '@/components/p2/crm/server-bits';
-import { boardColumns, groupByStage, stageLabel, userMoves } from '@/components/p2/crm/stages';
+import {
+  boardColumns,
+  boardMoves,
+  groupByStage,
+  stageLabel,
+  userMoves,
+} from '@/components/p2/crm/stages';
 import type { BoardColumnData } from '@/components/p2/crm/types';
 import { Avatar } from '@/components/ui/avatar';
 import { Badge } from '@/components/ui/badge';
@@ -67,7 +73,7 @@ function columnsFor(leads: LeadDto[], numberSystems: NumberSystems): BoardColumn
       subtitle: `${lead.companyName} · ${lead.contactName}`,
       value: moneyOrNull(lead.expectedValue, lead.currency, numberSystems),
       version: lead.version,
-      moves: userMoves('lead', lead.stage),
+      moves: boardMoves('lead', lead.stage),
     })),
   }));
 }
