@@ -143,7 +143,10 @@ export function failureOf(
 // Approvals
 // ---------------------------------------------------------------------------------------------
 
-/** `GET /v1/approvals/inbox`: a bare array. Needs `approvals.requests.act`, so Sales gets 403. */
+/**
+ * `GET /v1/approvals/inbox`: a bare array of what waits on the caller. Approvers see their steps; a Sales user
+ * sees only a quotation step the author named them for (else an empty list); other staff may get 403.
+ */
 export function getInbox(session: Session): Promise<InboxItemDto[]> {
   return call(session, '/v1/approvals/inbox', z.array(InboxItemDtoSchema));
 }
