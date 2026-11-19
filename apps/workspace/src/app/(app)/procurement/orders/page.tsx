@@ -13,12 +13,10 @@ import { Page, PageHeader } from '@/components/ui/page';
 import { Pagination } from '@/components/ui/pagination';
 
 import { CellTitle, Table, Td, Th } from '@/components/ui/table';
-import { getVendor } from '@/lib/api-vendors';
 import { listPurchaseOrders, type PoListItem } from '@/lib/api-purchase-orders';
 import { requireStaffSession } from '@/lib/bff';
 import { getNumberSystems } from '@/lib/display-settings';
 import { when } from '@/lib/kernel-format';
-import type { Session } from '@/lib/session';
 
 import layout from '../procurement.module.css';
 import { poFailure } from './_lib/failure';
@@ -38,27 +36,7 @@ function href(status: PoStatus | undefined, page: number): string {
   return text === '' ? '/procurement/orders' : `/procurement/orders?${text}`;
 }
 
-/** Vendor names for the rows on this page. Unreadable vendors show an explicit unavailable-name label. */
-async function vendorNames(session: Session, ids: readonly string[]): Promise<Map<string, string>> {
-  const unique = [...new Set(ids)];
-  const settled = await Promise.allSettled(unique.map((id) => getVendor(session, id)));
-  const names = new Map<string, string>();
-  settled.forEach((r, i) => {
-    const id = unique[i];
-    if (id !== undefined && r.status === 'fulfilled') names.set(id, r.value.legalName);
-  });
-  return names;
-}
-
-function Row({
-  po,
-  vendor,
-  numberSystems,
-}: {
-  po: PoListItem;
-  vendor: string | undefined;
-  numberSystems: NumberSystems;
-}) {
+function Row({ po, numberSystems }: { po: PoListItem; numberSystems: NumberSystems }) {
   const status = PO_STATUS_LABEL[po.status];
   return (
     <tr>
@@ -68,15 +46,7 @@ function Row({
         </Link>
       </Td>
       <Td>
-        <CellTitle
-          title={
-            vendor !== undefined ? (
-              <span className={styles.long}>{vendor}</span>
-            ) : (
-              <span className={styles.quiet}>Vendor name unavailable</span>
-            )
-          }
-        />
+        <CellTitle title={<span className={styles.long}>{po.vendorName}</span>} />
       </Td>
       <Td nowrap>
         <Badge tone={status.tone}>{status.text}</Badge>
@@ -126,13 +96,6 @@ export default async function PurchaseOrdersPage({
   // The API answers the whole list, newest first, so the page slices it.
   const total = orders?.length ?? 0;
   const shown = orders?.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE) ?? [];
-  const names =
-    shown.length > 0
-      ? await vendorNames(
-          session,
-          shown.map((o) => o.vendorId),
-        )
-      : new Map<string, string>();
   const first = (page - 1) * PAGE_SIZE + 1;
   const hasNext = page * PAGE_SIZE < total;
 
@@ -225,12 +188,7 @@ export default async function PurchaseOrdersPage({
             </thead>
             <tbody>
               {shown.map((po) => (
-                <Row
-                  numberSystems={numberSystems}
-                  key={po.id}
-                  po={po}
-                  vendor={names.get(po.vendorId)}
-                />
+                <Row numberSystems={numberSystems} key={po.id} po={po} />
               ))}
             </tbody>
           </Table>

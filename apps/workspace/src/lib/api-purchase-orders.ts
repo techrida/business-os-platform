@@ -70,12 +70,14 @@ const poFields = {
   version: z.number().int(),
 };
 
-/** A row of the list: the PO without its lines. */
-export const PoListItemSchema = z.object(poFields);
+/** A row of the list: the PO without its lines, always with its vendor's legal name. */
+export const PoListItemSchema = z.object({ ...poFields, vendorName: Text });
 export type PoListItem = z.infer<typeof PoListItemSchema>;
 
 export const PurchaseOrderSchema = z.object({
   ...poFields,
+  /** The vendor's legal name: sent by the detail read, left out by the write routes. */
+  vendorName: Text.optional(),
   lines: z.array(PoLineSchema),
   /** A draft with no lines yet: the approved quotation's lines that issue will copy in. Read-only. */
   proposedLines: z.array(PoLineSchema).optional(),

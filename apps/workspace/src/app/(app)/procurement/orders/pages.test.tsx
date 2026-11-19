@@ -70,6 +70,7 @@ const order = (over: Record<string, unknown> = {}) => ({
   rfqId: null,
   vendorQuotationId: null,
   vendorId: VENDOR,
+  vendorName: 'Himal Traders Pvt. Ltd.',
   currency: 'NPR',
   paymentTermsDays: 30,
   advancePercent: '0.00',
@@ -156,12 +157,6 @@ describe('the purchase order list', () => {
     expect(await list({ status: 'cancelled' })).toContain('No cancelled purchase orders.');
   });
 
-  it('falls back to an unavailable-name label when the vendor cannot be read, and keeps a long name wrapping', async () => {
-    vendors.getVendor.mockRejectedValue(apiError(403));
-    api.listPurchaseOrders.mockResolvedValue([order()]);
-    expect(await list()).toContain('Vendor name unavailable');
-  });
-
   it('shows the no-access pattern for a 403 and a retry for any other failure', async () => {
     api.listPurchaseOrders.mockRejectedValue(
       apiError(403, 'forbidden', { reason: 'no_permission' }),
@@ -237,16 +232,15 @@ describe('the purchase order page', () => {
     expect(out).toContain('Receive goods');
   });
 
-  it('still shows the order when the vendor, versions and progress panels fail', async () => {
+  it('still shows the order when the versions and progress panels fail', async () => {
     api.getPurchaseOrder.mockResolvedValue(order());
     api.listPoVersions.mockRejectedValue(apiError(500));
     api.getPoProgress.mockRejectedValue(apiError(500));
-    vendors.getVendor.mockRejectedValue(apiError(403));
     const out = await detail();
     expect(out).toContain('PO-2082-0001');
     expect(out).toContain('The versions did not load');
     expect(out).toContain('The receipt progress did not load');
-    expect(out).toContain('Vendor name unavailable');
+    expect(out).toContain('Himal Traders Pvt. Ltd.');
     expect(out).toContain('Approved total');
   });
 
