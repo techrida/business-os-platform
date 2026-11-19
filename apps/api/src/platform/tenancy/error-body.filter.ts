@@ -117,7 +117,6 @@ export type ErrorCode =
   | 'CURRENCY_MISMATCH'
   | 'PURCHASE_ORDER_NOT_FOUND'
   // U20b access settings and last-Founder guard.
-  | 'stale_access'
   | 'confirmation_required'
   | 'last_founder'
   | 'unprocessable'

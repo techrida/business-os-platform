@@ -9,7 +9,7 @@ vi.mock('next/navigation', () => ({
   },
 }));
 const revalidatePath = vi.fn();
-vi.mock('next/cache', () => ({ revalidatePath: (...args: unknown[]) => revalidatePath(...args) }));
+vi.mock('next/cache', () => ({ revalidatePath: (...args: unknown[]) => void revalidatePath(...args) }));
 const getSession = vi.fn<() => Promise<Session | null>>();
 vi.mock('@/lib/session', () => ({ getSession: () => getSession() }));
 
