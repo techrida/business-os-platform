@@ -4,7 +4,7 @@ import { useState } from 'react';
 import { act } from 'react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { choose, click, fill, mountForm } from '@/test/form-interactions';
+import { choose, click, mountForm } from '@/test/form-interactions';
 
 import { SavedOptionsSelect } from './saved-options-select';
 
