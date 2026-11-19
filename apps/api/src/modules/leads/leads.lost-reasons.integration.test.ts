@@ -189,7 +189,9 @@ describe('D49 lost reasons: marking a lead lost', () => {
     const after = await getLead(lead.id);
     expect(after).toMatchObject({ stage: 'new', lostReason: null, version: lead.version });
     const count = await h.db.select().from(leadLostReasons);
-    expect(count.filter((o) => o.tenantId === h.tenantId && o.labelNorm === 'price')).toHaveLength(1);
+    expect(count.filter((o) => o.tenantId === h.tenantId && o.labelNorm === 'price')).toHaveLength(
+      1,
+    );
   });
 
   it('refuses an unknown option, a retired one, a missing choice, both choices, and the old free text', async () => {
@@ -215,9 +217,18 @@ describe('D49 lost reasons: marking a lead lost', () => {
     const held = await seed();
     const res = await request(baseUrl)
       .patch(`/v1/leads/${held.id}/stage`)
-      .send({ stage: 'on_hold', reason: 'budget', note: 'next year', expectedVersion: held.version });
+      .send({
+        stage: 'on_hold',
+        reason: 'budget',
+        note: 'next year',
+        expectedVersion: held.version,
+      });
     expect(res.status, JSON.stringify(res.body)).toBe(200);
-    expect(dto(res.body)).toMatchObject({ stage: 'on_hold', stageReason: 'budget', lostReason: null });
+    expect(dto(res.body)).toMatchObject({
+      stage: 'on_hold',
+      stageReason: 'budget',
+      lostReason: null,
+    });
     const sent = await request(baseUrl)
       .patch(`/v1/leads/${held.id}/stage`)
       .send({ stage: 'contacted', lostReasonId: crypto.randomUUID(), expectedVersion: 2 });
@@ -300,7 +311,9 @@ describe('D49 lost reasons: order and reset', () => {
   it('reorders the whole list, and refuses an order that leaves an option out', async () => {
     const before = await adminList();
     const reversed = [...before].reverse().map((o) => o.id);
-    const res = await request(baseUrl).put('/v1/admin/lead-lost-reasons/order').send({ ids: reversed });
+    const res = await request(baseUrl)
+      .put('/v1/admin/lead-lost-reasons/order')
+      .send({ ids: reversed });
     expect(res.status, JSON.stringify(res.body)).toBe(200);
     expect(options.parse(res.body).map((o) => o.id)).toEqual(reversed);
     expect((await choices()).map((o) => o.id)).toEqual(
@@ -313,10 +326,15 @@ describe('D49 lost reasons: order and reset', () => {
   });
 
   it('resets to the defaults: labels, order and active state back, custom options retired after them', async () => {
-    await request(baseUrl).post('/v1/admin/lead-lost-reasons').send({ label: 'Price' }).then((res) => {
-      expect(res.status).toBe(409);
-    });
-    const added = await request(baseUrl).post('/v1/admin/lead-lost-reasons').send({ label: 'Out of stock' });
+    await request(baseUrl)
+      .post('/v1/admin/lead-lost-reasons')
+      .send({ label: 'Price' })
+      .then((res) => {
+        expect(res.status).toBe(409);
+      });
+    const added = await request(baseUrl)
+      .post('/v1/admin/lead-lost-reasons')
+      .send({ label: 'Out of stock' });
     expect(added.status, JSON.stringify(added.body)).toBe(201);
     const price = await labelOf('Price');
     const renamed = await request(baseUrl)
@@ -324,19 +342,27 @@ describe('D49 lost reasons: order and reset', () => {
       .send({ label: 'Cost', retired: true, expectedVersion: price.version });
     expect(renamed.status).toBe(200);
     // A custom option now takes the words Price once held.
-    const taken = await request(baseUrl).post('/v1/admin/lead-lost-reasons').send({ label: 'Price' });
+    const taken = await request(baseUrl)
+      .post('/v1/admin/lead-lost-reasons')
+      .send({ label: 'Price' });
     expect(taken.status).toBe(201);
 
     const reset = await request(baseUrl).post('/v1/admin/lead-lost-reasons/reset').send({});
     expect(reset.status, JSON.stringify(reset.body)).toBe(200);
     const list = options.parse(reset.body);
-    expect(list.slice(0, 7).map((o) => o.label)).toEqual(DEFAULT_LEAD_LOST_REASONS.map((d) => d.label));
+    expect(list.slice(0, 7).map((o) => o.label)).toEqual(
+      DEFAULT_LEAD_LOST_REASONS.map((d) => d.label),
+    );
     expect(list.slice(0, 7).every((o) => o.isDefault && !o.retired)).toBe(true);
     const custom = list.slice(7);
     expect(custom.every((o) => !o.isDefault && o.retired)).toBe(true);
-    expect(custom.map((o) => o.label)).toEqual(expect.arrayContaining(['Out of stock', 'Price (custom)']));
+    expect(custom.map((o) => o.label)).toEqual(
+      expect.arrayContaining(['Out of stock', 'Price (custom)']),
+    );
     // The retired custom option still shows on a lead that carries it (nothing was deleted).
-    expect((await choices()).map((o) => o.label)).toEqual(DEFAULT_LEAD_LOST_REASONS.map((d) => d.label));
+    expect((await choices()).map((o) => o.label)).toEqual(
+      DEFAULT_LEAD_LOST_REASONS.map((d) => d.label),
+    );
     const events = await h.auditOf(h.tenantId);
     expect(events.map((e) => e.action)).toContain('lead_lost_reasons.reset');
 
@@ -349,7 +375,9 @@ describe('D49 lost reasons: order and reset', () => {
           .send({ label: 'Cost', expectedVersion: price2.version })
       ).status,
     ).toBe(200);
-    expect((await request(baseUrl).post('/v1/admin/lead-lost-reasons').send({ label: 'Price' })).status).toBe(201);
+    expect(
+      (await request(baseUrl).post('/v1/admin/lead-lost-reasons').send({ label: 'Price' })).status,
+    ).toBe(201);
     const again = await request(baseUrl).post('/v1/admin/lead-lost-reasons/reset').send({});
     expect(again.status, JSON.stringify(again.body)).toBe(200);
     const labels = options.parse(again.body).map((o) => o.label);

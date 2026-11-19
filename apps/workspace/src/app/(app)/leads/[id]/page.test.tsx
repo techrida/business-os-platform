@@ -279,7 +279,14 @@ describe('lead detail page composition (U14 D39, D41)', () => {
 
   it('reads the lost reasons only when Mark lost is offered, and shows the reason by its option label (D49)', async () => {
     mocks.listLeadLostReasonChoices.mockResolvedValue([
-      { id: LOST_REASON, label: 'No budget', position: 2, isDefault: true, retired: false, version: 1 },
+      {
+        id: LOST_REASON,
+        label: 'No budget',
+        position: 2,
+        isDefault: true,
+        retired: false,
+        version: 1,
+      },
     ]);
     await render();
     expect(mocks.listLeadLostReasonChoices).toHaveBeenCalledOnce();

@@ -3,11 +3,7 @@ import { describe, expect, it } from 'vitest';
 
 import { isDefaultList, labelProblem, movedOrder } from './lost-reasons-model';
 
-const reason = (
-  n: number,
-  label: string,
-  extra: Partial<LeadLostReason> = {},
-): LeadLostReason => ({
+const reason = (n: number, label: string, extra: Partial<LeadLostReason> = {}): LeadLostReason => ({
   id: `00000000-0000-4000-8000-00000000000${n}`,
   label,
   position: n,

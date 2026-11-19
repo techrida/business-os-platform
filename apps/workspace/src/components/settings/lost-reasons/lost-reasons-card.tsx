@@ -91,8 +91,9 @@ export function LostReasonsCard({ reasons }: { reasons: readonly LeadLostReason[
     <div className={styles.card}>
       <div className={styles.head}>
         <p className={styles.hint}>
-          Offered when a lead is marked lost, in this order. Renaming a reason renames it on every lead
-          that used it. A retired reason is no longer offered but stays on the leads that have it.
+          Offered when a lead is marked lost, in this order. Renaming a reason renames it on every
+          lead that used it. A retired reason is no longer offered but stays on the leads that have
+          it.
         </p>
         <ResetToDefaultButton
           section="sales"
@@ -181,7 +182,9 @@ export function LostReasonsCard({ reasons }: { reasons: readonly LeadLostReason[
                     disabled={pending}
                     aria-label={`${reason.retired ? 'Restore' : 'Retire'} ${reason.label}`}
                     onClick={() =>
-                      run(() => setLostReasonRetiredAction(reason.id, !reason.retired, reason.version))
+                      run(() =>
+                        setLostReasonRetiredAction(reason.id, !reason.retired, reason.version),
+                      )
                     }
                   >
                     {reason.retired ? 'Restore' : 'Retire'}

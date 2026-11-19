@@ -701,9 +701,7 @@ export const activities = appSchema.table(
     /** 0062: the planned rows (follow-ups) of a lead, earliest first. */
     index('activities_tenant_org_lead_planned_idx')
       .on(t.tenantId, t.organizationId, t.leadId, t.dueAt)
-      .where(
-        sql`${t.dueAt} IS NOT NULL AND ${t.completedAt} IS NULL AND ${t.cancelledAt} IS NULL`,
-      ),
+      .where(sql`${t.dueAt} IS NOT NULL AND ${t.completedAt} IS NULL AND ${t.cancelledAt} IS NULL`),
     index('activities_tenant_org_opportunity_idx').on(
       t.tenantId,
       t.organizationId,

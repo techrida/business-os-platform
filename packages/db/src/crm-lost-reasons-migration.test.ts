@@ -160,9 +160,20 @@ describe('0071-0072 lost reasons on seeded old-shape leads', () => {
         [[exact, spaced, key, other, open, otherTenant]],
       );
       const by = new Map(leads.rows.map((r) => [r.id, r]));
-      expect(by.get(exact!)).toMatchObject({ label: 'Price', stage_reason: 'Price', stage_note: 'Too dear' });
-      expect(by.get(spaced!)).toMatchObject({ label: 'Chose a competitor', stage_reason: 'Chose a competitor' });
-      expect(by.get(key!)).toMatchObject({ label: 'No budget', stage_reason: 'No budget', stage_note: 'Went quiet' });
+      expect(by.get(exact!)).toMatchObject({
+        label: 'Price',
+        stage_reason: 'Price',
+        stage_note: 'Too dear',
+      });
+      expect(by.get(spaced!)).toMatchObject({
+        label: 'Chose a competitor',
+        stage_reason: 'Chose a competitor',
+      });
+      expect(by.get(key!)).toMatchObject({
+        label: 'No budget',
+        stage_reason: 'No budget',
+        stage_note: 'Went quiet',
+      });
       // No option matches: Other, with the old words kept at the front of the note.
       expect(by.get(other!)).toMatchObject({
         label: 'Other',
