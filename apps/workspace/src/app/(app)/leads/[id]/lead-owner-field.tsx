@@ -35,7 +35,7 @@ export function LeadOwnerField({ leadId, version, ownerUserId, owners }: LeadOwn
       owned={ownerUserId !== null}
       name={owner ? nameOf(owner) : undefined}
       seedId={ownerUserId}
-      imageDocumentId={owner?.avatarDocumentId}
+      imageDocumentId={owner?.avatarDocumentId ?? null}
     />
   );
   if (owners.length <= 1) return display;

@@ -73,7 +73,7 @@ function QuotationRow({
             <Avatar
               name={item.ownerName}
               seedId={item.ownerUserId}
-              imageDocumentId={item.ownerAvatarDocumentId}
+              imageDocumentId={item.ownerAvatarDocumentId ?? null}
               shape="circle"
               size="small"
             />
