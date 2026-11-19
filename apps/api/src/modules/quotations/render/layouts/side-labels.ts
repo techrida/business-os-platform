@@ -4,6 +4,7 @@ import {
   NEUTRALS as N,
   addressLines,
   brandMark,
+  breakableAddress,
   detailRows,
   esc,
   itemsTable,
@@ -32,7 +33,10 @@ function cards(ctx: RenderContext): string {
     ['Address', addressLines(customer.address)],
     ['PAN/VAT', esc(customer.panVatNo)],
     ['Attention', contact ? esc(contact.fullName) : ''],
-    ['Email', contact?.email ? esc(contact.email) : ''],
+    [
+      'Email',
+      contact?.email ? `<span class="email">${breakableAddress(contact.email)}</span>` : '',
+    ],
   ]);
   return `<section class="cards"><div class="card party">${by}</div><div class="card party">${to}</div></section>`;
 }
@@ -49,6 +53,7 @@ export const sideLabels: LayoutRenderer = (ctx) => {
   table.lab { width: 100%; border-collapse: collapse; }
   table.lab th { width: 25mm; padding: 2pt 8pt 2pt 0; text-align: left; vertical-align: top; font-weight: 400; color: ${N.muted}; }
   table.lab td { padding: 2pt 0; vertical-align: top; overflow-wrap: anywhere; }
+  table.lab td .email { overflow-wrap: break-word; }
   table.lab .legal { font-size: 9.5pt; }
   table.lab .addr, table.lab td div { color: ${N.ink}; }
   table.items th { background: ${p.primary}; color: ${p.onPrimary}; }
