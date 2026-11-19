@@ -1,5 +1,5 @@
 import { renderToStaticMarkup } from 'react-dom/server';
-import { expect, it, vi } from 'vitest';
+import { beforeEach, expect, it, vi } from 'vitest';
 
 import { CUSTOMER_LIST_MAX_LIMIT } from '@bos/contracts';
 import { ApiError } from '@/lib/api';
@@ -7,20 +7,44 @@ import { ApiError } from '@/lib/api';
 import NewInvoicePage from './page';
 
 vi.mock('server-only', () => ({}));
-const mocks = vi.hoisted(() => ({ listCustomers: vi.fn() }));
+const mocks = vi.hoisted(() => ({ listCustomers: vi.fn(), call: vi.fn() }));
 vi.mock('@/lib/bff', () => ({
   requireStaffSession: () => Promise.resolve({ accessToken: 'test-token', roles: ['accountant'] }),
 }));
 vi.mock('@/components/p2/customers/api', () => ({ listCustomers: mocks.listCustomers }));
 vi.mock('@/lib/api-tax-codes', () => ({ listTaxCodes: () => Promise.resolve([]) }));
+// The real `loadEnabledCurrencies` reads `GET /v1/settings/display` through this client.
+vi.mock('@/lib/api-procurement', () => ({ call: mocks.call }));
 vi.mock('./actions', () => ({ createManualInvoiceAction: vi.fn() }));
-vi.mock('./manual-invoice-form', () => ({
-  ManualInvoiceForm: ({ customers }: { customers: readonly { label: string }[] }) => (
-    <form aria-label="Manual invoice">
-      {customers.map((customer) => customer.label).join(', ')}
-    </form>
-  ),
-}));
+
+const customerPage = {
+  items: [
+    {
+      id: '11111111-1111-4111-8111-111111111111',
+      legalName: 'Invoice customer',
+      number: 'CUS-001',
+      defaultCurrency: 'NPR',
+      mergedIntoId: null,
+    },
+  ],
+  total: 1,
+};
+
+beforeEach(() => {
+  mocks.listCustomers.mockReset().mockResolvedValue(customerPage);
+  mocks.call.mockReset().mockImplementation((_session, path: string) =>
+    path === '/v1/settings/display'
+      ? Promise.resolve({ enabledCurrencies: ['NPR', 'INR', 'USD'] })
+      : Promise.reject(new ApiError(404, 'Not found')),
+  );
+});
+
+/** The currency Select's choices: the options of the hidden native select after its named input. */
+const currencyOptions = (html: string): string[] => {
+  const after = html.slice(html.lastIndexOf('name="currency"'));
+  const select = /<select[^>]*>(.*?)<\/select>/s.exec(after)?.[1] ?? '';
+  return [...select.matchAll(/<option[^>]*value="([^"]+)"/g)].map((m) => m[1] ?? '');
+};
 
 it('loads the manual invoice picker using a query accepted by the real customer API', async () => {
   mocks.listCustomers.mockImplementation((_session, query: { limit: number }) => {
@@ -35,22 +59,27 @@ it('loads the manual invoice picker using a query accepted by the real customer 
     ) {
       return Promise.reject(new ApiError(400, 'Invalid customer page size'));
     }
-    return Promise.resolve({
-      items: [
-        {
-          id: '11111111-1111-4111-8111-111111111111',
-          legalName: 'Invoice customer',
-          number: 'CUS-001',
-          defaultCurrency: 'NPR',
-          mergedIntoId: null,
-        },
-      ],
-      total: 1,
-    });
+    return Promise.resolve(customerPage);
   });
 
   const html = renderToStaticMarkup(await NewInvoicePage());
-  expect(html).toContain('aria-label="Manual invoice"');
-  expect(html).toContain('Invoice customer');
+  expect(html).toContain('Save draft invoice');
+  expect(html).toContain('Invoice customer (CUS-001)');
   expect(html).not.toContain('The customers did not load');
+});
+
+it('offers only the currencies the company has switched on', async () => {
+  mocks.call.mockResolvedValue({ enabledCurrencies: ['NPR', 'USD'] });
+
+  const html = renderToStaticMarkup(await NewInvoicePage());
+  expect(currencyOptions(html)).toEqual(['NPR', 'USD']);
+  expect(html).not.toContain('INR (Indian rupee)');
+});
+
+it('offers the default list when the display settings cannot be read', async () => {
+  mocks.call.mockRejectedValue(new ApiError(503, 'Unavailable'));
+
+  const html = renderToStaticMarkup(await NewInvoicePage());
+  expect(currencyOptions(html)).toEqual(['NPR', 'INR', 'USD']);
+  expect(html).toContain('Save draft invoice');
 });
