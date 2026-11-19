@@ -12,7 +12,10 @@ import type { AuditService } from './audit.service';
 
 const caller = { tenantId: 't-caller', organizationId: 'o-caller' };
 
-vi.mock('../tenancy/request-context', () => ({ ctx: () => caller, currentPrincipal: () => undefined }));
+vi.mock('../tenancy/request-context', () => ({
+  ctx: () => caller,
+  currentPrincipal: () => undefined,
+}));
 
 const fakeAudit = { list: vi.fn(), verifyChain: vi.fn() };
 let controller: AuditController;

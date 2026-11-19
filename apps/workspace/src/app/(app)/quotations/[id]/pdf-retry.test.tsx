@@ -45,7 +45,13 @@ vi.mock('@radix-ui/react-dialog', async (importOriginal) => {
 // The viewer dialog draws PDF pages in the browser. The page only needs its trigger and the URLs it is handed.
 vi.mock('@/components/ui/file-preview-dialog', () => ({
   DownloadIcon: () => null,
-  FilePreviewDialog: ({ trigger, retryUrl }: { trigger: ReactNode; retryUrl?: string | undefined }) => (
+  FilePreviewDialog: ({
+    trigger,
+    retryUrl,
+  }: {
+    trigger: ReactNode;
+    retryUrl?: string | undefined;
+  }) => (
     <span data-pdf-viewer="" data-retry-url={retryUrl}>
       {trigger}
     </span>

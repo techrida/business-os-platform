@@ -15,7 +15,8 @@ vi.mock('next/navigation', () => ({
   },
 }));
 vi.mock('@/lib/session', () => ({
-  getSession: () => Promise.resolve({ accessToken: 't', orgKind: 'staff', roles: ['founder'] } as Session),
+  getSession: () =>
+    Promise.resolve({ accessToken: 't', orgKind: 'staff', roles: ['founder'] } as Session),
 }));
 vi.mock('@/lib/api-admin', () => ({
   listUsers: vi.fn(() => Promise.resolve({ items: [], nextAfter: null })),
