@@ -462,7 +462,7 @@ export default async function VendorPage({
       <div className={styles.columns}>
         {/* The identity card comes first in the reading order, so the page's h1 precedes every panel
             heading; on a wide screen the grid places it at the top of the side column (Figma 648:10415). */}
-        <Card className={styles.profile} as="aside" aria-labelledby="vendor-name">
+        <Card className={styles.profile} as="section" aria-labelledby="vendor-name">
           <div className={styles.profileIdentity}>
             <div className={styles.profileLogo}>
               <CompanyLogoUpload
