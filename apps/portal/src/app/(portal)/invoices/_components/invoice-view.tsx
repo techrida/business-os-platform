@@ -1,24 +1,50 @@
 import type { CustomerInvoiceView, PortalDisplay } from '@bos/contracts';
+import { amountInWords, toBs } from '@bos/locale';
 
 import { Alert } from '@/components/portal/alert';
-import styles from '@/components/portal/quotation.module.css';
 import { Badge } from '@/components/ui/badge';
 import { LinkButton } from '@/components/ui/button';
-import { Card } from '@/components/ui/card';
 import { ViewDocument } from '@/components/ui/document-viewer';
 import type { PortalSettlement } from '@/lib/api.billing';
-import { displayFormat } from '@/lib/display';
+import { DEFAULT_PORTAL_DISPLAY, displayFormat } from '@/lib/display';
 
 import { canPay, KIND_LABEL, SETTLEMENT_LOOK } from './invoice-status';
+import styles from './invoice-view.module.css';
 
 type View = CustomerInvoiceView;
 
+/** The label of the document number and the big balance, by kind. */
+const WORDING: Record<View['kind'], { number: string; balance: string; to: string }> = {
+  tax_invoice: { number: 'Invoice no.', balance: 'Total due', to: 'Invoice to' },
+  debit_note: { number: 'Debit note no.', balance: 'Total due', to: 'Issued to' },
+  credit_note: { number: 'Credit note no.', balance: 'Total credited', to: 'Issued to' },
+};
+
+const isZero = (amount: string | undefined): boolean =>
+  amount === undefined || /^-?0*(\.0*)?$/.test(amount);
+
 /**
- * One issued invoice as the customer sees it. It reads only `CustomerInvoiceView`, a strict
- * whitelist with no NPR value, FX rate, approval or editor data, so nothing internal can reach this
- * markup. Every amount is the server's string, formatted for display and never computed here.
- * `settlement` is the server's derived status; null means the settlement call failed, and the page
- * says so instead of guessing.
+ * The Bikram Sambat date of a calendar day, read at noon in Kathmandu (UTC+05:45) so no timezone
+ * moves the day, written as the printed invoice writes it. Null outside the converter's range.
+ */
+function bsDate(isoDate: string): string | null {
+  try {
+    const bs = toBs(new Date(`${isoDate}T12:00:00+05:45`));
+    return `${String(bs.day).padStart(2, '0')} ${bs.monthNameEn} ${bs.year} BS`;
+  } catch (error) {
+    if (error instanceof RangeError) return null;
+    throw error;
+  }
+}
+
+/**
+ * One issued invoice as the customer sees it, laid out like its printed copy. It reads only
+ * `CustomerInvoiceView`, a strict whitelist with no NPR value, FX rate, approval or editor data, so
+ * nothing internal can reach this markup. Every amount is the server's string, formatted for display
+ * and never computed here. Numbers, dates and the amount in words follow the format the first print
+ * used (`view.format`), so the page matches the PDF; an invoice never printed with one stored uses
+ * the company's current `display`. `settlement` is the server's derived status; null means the
+ * settlement call failed, and the page says so instead of guessing.
  */
 export function InvoiceView({
   view,
@@ -29,43 +55,54 @@ export function InvoiceView({
   settlement: PortalSettlement | null;
   display?: PortalDisplay;
 }) {
-  const { money: formatAmount, day: formatDay } = displayFormat(display);
+  const effective: PortalDisplay = view.format
+    ? { numberSystems: view.format.numberSystems, dateFormat: view.format.dateFormat }
+    : (display ?? DEFAULT_PORTAL_DISPLAY);
+  const { money: formatAmount, day: formatDay } = displayFormat(effective);
   const money = (amount: string) => formatAmount(amount, view.currency);
-  const hasDiscount = !/^0+(\.0+)?$/.test(view.totals.discountAmount);
   const look = settlement ? SETTLEMENT_LOOK[settlement.settlement] : null;
+  const wording = WORDING[view.kind];
+  const dueBs = view.dueDate ? bsDate(view.dueDate) : null;
+  const words = amountInWords(
+    view.totals.total,
+    view.currency,
+    effective.numberSystems[view.currency],
+  );
+  const contact = view.sellerContact ?? null;
 
   return (
-    <div className={styles.document}>
-      <header className={styles.docHead}>
-        <div className={styles.titleRow}>
-          <h1 className={styles.docTitle}>
-            {view.number} <span className={styles.revision}>{KIND_LABEL[view.kind]}</span>
-          </h1>
-          {look ? <Badge tone={look.tone}>{look.label}</Badge> : null}
+    <div className={styles.wrap}>
+      <section className={styles.status} aria-label="Payment status">
+        <div className={styles.statusRow}>
+          <div className={styles.statusLead}>
+            {look ? <Badge tone={look.tone}>{look.label}</Badge> : null}
+            {settlement ? (
+              <dl className={styles.balance}>
+                <dt>Amount open</dt>
+                <dd>{money(settlement.openAmount)}</dd>
+              </dl>
+            ) : null}
+          </div>
+          <div className={styles.actions}>
+            {view.file ? (
+              <ViewDocument
+                name={view.file.filename}
+                previewUrl={`/invoices/${view.id}/document/preview`}
+                downloadUrl={`/invoices/${view.id}/document`}
+                variant="secondary"
+                size="small"
+                withDownload
+              />
+            ) : (
+              <p className={styles.muted}>The PDF copy is being prepared.</p>
+            )}
+            {settlement && canPay(view.kind, settlement.settlement) ? (
+              <LinkButton size="small" href={`/payments/new?invoice=${view.id}`}>
+                Submit a payment
+              </LinkButton>
+            ) : null}
+          </div>
         </div>
-        <dl className={styles.facts}>
-          <div>
-            <dt>Issued</dt>
-            <dd>
-              {formatDay(view.issueDate)}
-              <span className={styles.muted}> · BS {view.issueDateBs}</span>
-            </dd>
-          </div>
-          <div>
-            <dt>Due</dt>
-            <dd>{view.dueDate ? formatDay(view.dueDate) : 'On receipt'}</dd>
-          </div>
-          <div>
-            <dt>Total</dt>
-            <dd className={styles.factTotal}>{money(view.totals.total)}</dd>
-          </div>
-          {settlement ? (
-            <div>
-              <dt>Amount open</dt>
-              <dd className={styles.factTotal}>{money(settlement.openAmount)}</dd>
-            </div>
-          ) : null}
-        </dl>
         {settlement === null ? (
           <Alert tone="warning" role="status">
             We could not load the payment status of this invoice just now. Reload the page to try
@@ -78,25 +115,6 @@ export function InvoiceView({
             past its due date.
           </p>
         ) : null}
-        <div className={styles.download}>
-          {view.file ? (
-            <ViewDocument
-              name={view.file.filename}
-              previewUrl={`/invoices/${view.id}/document/preview`}
-              downloadUrl={`/invoices/${view.id}/document`}
-              variant="secondary"
-              size="small"
-              withDownload
-            />
-          ) : (
-            <p className={styles.muted}>The PDF copy is being prepared.</p>
-          )}
-          {settlement && canPay(view.kind, settlement.settlement) ? (
-            <LinkButton size="small" href={`/payments/new?invoice=${view.id}`}>
-              Submit a payment
-            </LinkButton>
-          ) : null}
-        </div>
         {view.file ? (
           <p className={styles.checksum}>
             {view.file.filename}
@@ -106,104 +124,227 @@ export function InvoiceView({
             </span>
           </p>
         ) : null}
-      </header>
+      </section>
 
-      <Card as="section" aria-labelledby="parties-h" className={styles.section}>
-        <h2 id="parties-h" className={styles.sectionTitle}>
-          Parties
-        </h2>
-        <div className={styles.parties}>
-          <PartyBlock heading="From" party={view.seller} />
-          <PartyBlock heading="To" party={view.buyer} />
-        </div>
-      </Card>
+      <article className={styles.paper} aria-labelledby="invoice-title">
+        <div className={styles.sheet}>
+          <header className={styles.head}>
+            {/* A company logo goes before the name here once the profile carries one. */}
+            <div className={styles.brand}>
+              <p className={styles.brandName}>{view.seller.legalName}</p>
+            </div>
+            <h1 id="invoice-title" className={styles.title}>
+              {KIND_LABEL[view.kind]}
+              <span className={styles.visuallyHidden}> {view.number}</span>
+            </h1>
+          </header>
 
-      <Card as="section" aria-labelledby="lines-h" className={styles.section}>
-        <h2 id="lines-h" className={styles.sectionTitle}>
-          Items
-        </h2>
-        <div className={styles.tableFrame}>
-          <table className={styles.table}>
-            <caption className={styles.visuallyHidden}>Items, in {view.currency}</caption>
-            <thead>
-              <tr>
-                <th scope="col" className={styles.num}>
-                  #
-                </th>
-                <th scope="col">Description</th>
-                <th scope="col" className={styles.num}>
-                  Quantity
-                </th>
-                <th scope="col" className={styles.num}>
-                  Unit price
-                </th>
-                <th scope="col" className={styles.num}>
-                  Amount
-                </th>
-              </tr>
-            </thead>
-            <tbody>
-              {view.lines.map((line) => (
-                <tr key={line.lineNo}>
-                  <td className={styles.num}>{line.lineNo}</td>
-                  <td className={styles.description}>{line.description}</td>
-                  <td className={`${styles.num} ${styles.nowrap}`}>
-                    {line.quantity} {line.uom}
-                  </td>
-                  <td className={`${styles.num} ${styles.nowrap}`}>{money(line.unitPrice)}</td>
-                  <td className={`${styles.num} ${styles.nowrap}`}>{money(line.amount)}</td>
+          <div className={styles.billing}>
+            <section className={styles.billTo} aria-labelledby="invoice-to">
+              <h2 id="invoice-to" className={styles.label}>
+                {wording.to}
+              </h2>
+              <p className={styles.buyerName}>{view.buyer.legalName}</p>
+              {view.buyer.address ? (
+                <address className={`${styles.address} ${styles.small}`}>
+                  {view.buyer.address}
+                </address>
+              ) : null}
+              {view.buyer.panVatNo ? (
+                <p className={styles.small}>PAN/VAT {view.buyer.panVatNo}</p>
+              ) : null}
+            </section>
+
+            <dl className={styles.details}>
+              <div>
+                <dt>{wording.number}</dt>
+                <dd>{view.number}</dd>
+              </div>
+              <div>
+                <dt>Issue date</dt>
+                <dd>
+                  {formatDay(view.issueDate)}
+                  <span className={styles.bs}>{view.issueDateBs} BS</span>
+                </dd>
+              </div>
+              <div>
+                <dt>Due date</dt>
+                <dd>
+                  {view.dueDate ? formatDay(view.dueDate) : 'On receipt'}
+                  {dueBs ? <span className={styles.bs}>{dueBs}</span> : null}
+                </dd>
+              </div>
+              <div>
+                <dt>Currency</dt>
+                <dd>{view.currency}</dd>
+              </div>
+            </dl>
+          </div>
+
+          <div className={styles.itemsFrame}>
+            <table className={styles.items}>
+              <caption className={styles.visuallyHidden}>Items, in {view.currency}</caption>
+              <thead>
+                <tr>
+                  <th scope="col" className={styles.num}>
+                    #
+                  </th>
+                  <th scope="col">Description</th>
+                  <th scope="col" className={styles.num}>
+                    Unit price
+                  </th>
+                  <th scope="col" className={styles.num}>
+                    Quantity
+                  </th>
+                  <th scope="col" className={styles.num}>
+                    Amount
+                  </th>
                 </tr>
+              </thead>
+              <tbody>
+                {view.lines.map((line) => (
+                  <tr key={line.lineNo}>
+                    <td className={`${styles.num} ${styles.lineNo}`}>{line.lineNo}</td>
+                    <td className={styles.description}>{line.description}</td>
+                    <td className={styles.num}>
+                      <span className={styles.cellLabel}>Unit price</span>
+                      <span>{money(line.unitPrice)}</span>
+                    </td>
+                    <td className={styles.num}>
+                      <span className={styles.cellLabel}>Quantity</span>
+                      <span>
+                        {line.quantity} <span className={styles.unit}>{line.uom}</span>
+                      </span>
+                    </td>
+                    <td className={styles.num}>
+                      <span className={styles.cellLabel}>Amount</span>
+                      <span>{money(line.amount)}</span>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+
+          <div className={styles.summary}>
+            <div className={styles.due}>
+              <p className={styles.dueLabel}>{wording.balance}</p>
+              <p className={styles.dueAmount}>{money(view.totals.total)}</p>
+              <p className={styles.dueWhen}>
+                {view.dueDate ? `Due ${formatDay(view.dueDate)}` : 'Due on receipt'}
+              </p>
+            </div>
+
+            <dl className={styles.totals}>
+              <div>
+                <dt>Subtotal</dt>
+                <dd>{money(view.totals.subtotal)}</dd>
+              </div>
+              {!isZero(view.totals.discountAmount) ? (
+                <div>
+                  <dt>Discount</dt>
+                  <dd>−{money(view.totals.discountAmount)}</dd>
+                </div>
+              ) : null}
+              <div>
+                <dt>Taxable amount</dt>
+                <dd>{money(view.totals.taxableAmount)}</dd>
+              </div>
+              {view.totals.exemptAmount !== undefined && !isZero(view.totals.exemptAmount) ? (
+                <div>
+                  <dt>Exempt amount</dt>
+                  <dd>{money(view.totals.exemptAmount)}</dd>
+                </div>
+              ) : null}
+              {view.totals.zeroRatedAmount !== undefined && !isZero(view.totals.zeroRatedAmount) ? (
+                <div>
+                  <dt>Zero-rated amount</dt>
+                  <dd>{money(view.totals.zeroRatedAmount)}</dd>
+                </div>
+              ) : null}
+              {view.taxSummary.map((t) => (
+                <div key={`${t.label}-${t.percent}`}>
+                  <dt>
+                    {t.label} {t.percent}% on {money(t.base)}
+                  </dt>
+                  <dd>{money(t.tax)}</dd>
+                </div>
               ))}
-            </tbody>
-          </table>
+              {view.taxSummary.length === 0 ? (
+                <div>
+                  <dt>Tax</dt>
+                  <dd>{money(view.totals.taxAmount)}</dd>
+                </div>
+              ) : null}
+              <div className={styles.grandTotal}>
+                <dt>Total</dt>
+                <dd>{money(view.totals.total)}</dd>
+              </div>
+            </dl>
+          </div>
+
+          <p className={styles.words}>
+            Amount in words: <span>{words}</span>
+          </p>
+
+          {contact?.signatoryName ? (
+            <div className={styles.signatory}>
+              <p className={styles.signatoryName}>{contact.signatoryName}</p>
+              <p className={styles.small}>{contact.signatoryTitle ?? 'Authorised signatory'}</p>
+            </div>
+          ) : null}
         </div>
 
-        <dl className={styles.totals}>
-          <div>
-            <dt>Subtotal</dt>
-            <dd>{money(view.totals.subtotal)}</dd>
-          </div>
-          {hasDiscount ? (
-            <div>
-              <dt>Discount</dt>
-              <dd>−{money(view.totals.discountAmount)}</dd>
-            </div>
-          ) : null}
-          <div>
-            <dt>Taxable amount</dt>
-            <dd>{money(view.totals.taxableAmount)}</dd>
-          </div>
-          {view.taxSummary.map((t) => (
-            <div key={`${t.label}-${t.percent}`}>
-              <dt>
-                {t.label} {t.percent}% on {money(t.base)}
-              </dt>
-              <dd>{money(t.tax)}</dd>
-            </div>
-          ))}
-          {view.taxSummary.length === 0 ? (
-            <div>
-              <dt>Tax</dt>
-              <dd>{money(view.totals.taxAmount)}</dd>
-            </div>
-          ) : null}
-          <div className={styles.grandTotal}>
-            <dt>Total</dt>
-            <dd>{money(view.totals.total)}</dd>
-          </div>
-        </dl>
-      </Card>
+        <SellerFooter seller={view.seller} contact={contact} />
+      </article>
     </div>
   );
 }
 
-function PartyBlock({ heading, party }: { heading: string; party: View['seller'] }) {
+/**
+ * How to reach the seller. The address and PAN/VAT number are the ones frozen on the invoice; the
+ * phones and email come from the company profile as it is now, and are left out when it is unknown.
+ */
+function SellerFooter({
+  seller,
+  contact,
+}: {
+  seller: View['seller'];
+  contact: NonNullable<View['sellerContact']> | null;
+}) {
+  const phones = contact?.phones.filter((p) => p.trim() !== '') ?? [];
+  const email = contact?.email ?? null;
+  if (phones.length === 0 && !seller.address && !email && !seller.panVatNo) return null;
+
   return (
-    <div className={styles.party}>
-      <h3 className={styles.partyHeading}>{heading}</h3>
-      <p className={styles.partyName}>{party.legalName}</p>
-      {party.address ? <address className={styles.address}>{party.address}</address> : null}
-      {party.panVatNo ? <p className={styles.muted}>PAN/VAT {party.panVatNo}</p> : null}
-    </div>
+    <footer className={styles.footer}>
+      {phones.length > 0 ? (
+        <div>
+          <p className={styles.muted}>{phones.length === 1 ? 'Phone' : 'Phones'}</p>
+          {phones.map((phone) => (
+            <a key={phone} href={`tel:${phone.replace(/[^\d+]/g, '')}`}>
+              {phone}
+            </a>
+          ))}
+        </div>
+      ) : null}
+      {seller.address ? (
+        <div>
+          <p className={styles.muted}>Address</p>
+          <address className={styles.address}>{seller.address}</address>
+        </div>
+      ) : null}
+      {email || seller.panVatNo ? (
+        <div>
+          {email ? (
+            <>
+              <p className={styles.muted}>Email</p>
+              <a href={`mailto:${email}`}>{email}</a>
+            </>
+          ) : null}
+          {seller.panVatNo ? <p>PAN/VAT {seller.panVatNo}</p> : null}
+        </div>
+      ) : null}
+    </footer>
   );
 }
