@@ -1,5 +1,6 @@
 // Configuration from the environment and the command line. Every value has one source of truth
 // here; workflows read `cfg` and never `process.env` directly.
+import { existsSync } from 'node:fs';
 import path from 'node:path';
 
 const env = process.env;
@@ -27,6 +28,43 @@ export function parseArgs(argv) {
   return out;
 }
 
+/** Hosts of a development stack on this machine or the local *.bos.test workspaces. */
+export function isLocalHost(hostname) {
+  const h = String(hostname).toLowerCase();
+  return (
+    h === 'localhost' || h.endsWith('.localhost') || h === '127.0.0.1' || h.endsWith('.bos.test')
+  );
+}
+
+/**
+ * Every origin the driver talks to must be https (TLS is always verified against the stack CA)
+ * and, unless ALLOW_NON_LOCAL_TARGET=1, a local development host. The driver creates and approves
+ * records with real accounts; it must never be pointed at a shared or production stack by accident.
+ * Returns the normalised origin (no trailing slash).
+ */
+export function checkOrigin(name, value, { allowNonLocal = false } = {}) {
+  let u;
+  try {
+    u = new URL(String(value));
+  } catch {
+    throw new Error(`${name} is not a URL: ${JSON.stringify(value)}`);
+  }
+  if (u.protocol !== 'https:')
+    throw new Error(
+      `${name} must use https:// (got ${u.protocol}//${u.host}); TLS is always verified.`,
+    );
+  if (u.username || u.password)
+    throw new Error(`${name} must not contain a user name or password.`);
+  if (u.pathname !== '/' || u.search || u.hash)
+    throw new Error(`${name} must be an origin only, like https://app.testrun.localhost:58343`);
+  if (!allowNonLocal && !isLocalHost(u.hostname))
+    throw new Error(
+      `${name} host ${u.hostname} is not a local development host (localhost, *.localhost, ` +
+        '127.0.0.1 or *.bos.test). Set ALLOW_NON_LOCAL_TARGET=1 only if you mean to drive that stack.',
+    );
+  return u.origin;
+}
+
 const bool = (v, dflt) =>
   v === undefined || v === '' ? dflt : !/^(0|false|no|off)$/i.test(String(v));
 
@@ -44,16 +82,24 @@ export function loadConfig(args = {}) {
     throw new Error(
       "Set PERSONAS_FILE to the stack's .dev/personas.json (read-only; never printed).",
     );
-  const caFile =
-    env.CA_FILE ||
-    env.NODE_EXTRA_CA_CERTS ||
-    path.join(path.dirname(personasFile), 'caddy-root.crt');
+  // Only the stack's own CA: never a general bundle such as NODE_EXTRA_CA_CERTS, which may hold
+  // every public root and would make any public site look like the stack.
+  const caFile = env.CA_FILE || path.join(path.dirname(personasFile), 'caddy-root.crt');
+  if (!existsSync(caFile))
+    throw new Error(
+      `CA file ${caFile} not found. Set CA_FILE to the stack's local root certificate ` +
+        "(the personas folder's caddy-root.crt).",
+    );
+  const allowNonLocal = env.ALLOW_NON_LOCAL_TARGET === '1';
+  const origin = (name, value) => checkOrigin(name, value, { allowNonLocal });
+  const appUrl = origin('APP_URL', env.APP_URL || 'https://app.testrun.localhost:58343');
   const videoRoot = env.VIDEO_DIR || '/home/crestia/bos-runtimes/manual-run';
   const outDir = path.join(videoRoot, label, viewportText);
   return {
-    appUrl: trimSlash(env.APP_URL || 'https://app.testrun.localhost:58343'),
-    portalUrl: trimSlash(env.PORTAL_URL || 'https://portal.testrun.localhost:58343'),
-    mailUrl: trimSlash(env.MAIL_URL || 'https://mail.testrun.localhost:58343'),
+    appUrl,
+    portalUrl: origin('PORTAL_URL', env.PORTAL_URL || 'https://portal.testrun.localhost:58343'),
+    mailUrl: origin('MAIL_URL', env.MAIL_URL || 'https://mail.testrun.localhost:58343'),
+    authUrl: origin('AUTH_URL', env.AUTH_URL || appUrl.replace('://app.', '://auth.')),
     personasFile,
     caFile,
     label,
@@ -74,10 +120,6 @@ export function loadConfig(args = {}) {
     navTimeout: Number(env.NAV_TIMEOUT_MS || 120_000),
     only: args.only ? String(args.only).split(',') : null,
   };
-}
-
-function trimSlash(u) {
-  return u.replace(/\/+$/, '');
 }
 
 /** Short, stable, label-derived values so repeated runs never collide with each other or the manual run. */

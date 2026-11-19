@@ -23,8 +23,7 @@ function writeJson(file, value) {
 }
 
 export function origins(cfg) {
-  const auth = process.env.AUTH_URL || cfg.appUrl.replace('://app.', '://auth.');
-  return [cfg.appUrl, cfg.portalUrl, cfg.mailUrl, auth];
+  return [cfg.appUrl, cfg.portalUrl, cfg.mailUrl, cfg.authUrl];
 }
 
 /**

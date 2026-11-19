@@ -36,16 +36,25 @@ export const shq = (p) => `'${String(p).replace(/'/g, `'\\''`)}'`;
 const loopback = (host) =>
   host === 'localhost' || host.endsWith('.localhost') || host === '127.0.0.1';
 
-/** Only for stacks whose every origin is on this machine's loopback (e.g. *.testrun.localhost). */
-export function netnsWanted(origins) {
-  const v = process.env.NETNS ?? 'auto';
-  if (/^(0|false|no|off)$/i.test(v)) return false;
-  if (!origins.every((o) => loopback(new URL(o).hostname))) {
-    if (v !== 'auto') throw new Error('NETNS=1 supports only loopback (*.localhost) origins');
-    return false;
-  }
+/**
+ * Only for stacks whose every origin is on this machine's loopback (e.g. *.testrun.localhost).
+ * A non-loopback origin (a *.bos.test host, or a target allowed by ALLOW_NON_LOCAL_TARGET) is an
+ * error unless NETNS=0 says to run without isolation: isolation is never turned off silently.
+ */
+export function netnsWanted(origins, value = process.env.NETNS ?? 'auto') {
+  if (/^(0|false|no|off)$/i.test(value)) return false;
+  const remote = origins.map((o) => new URL(o).hostname).filter((h) => !loopback(h));
+  if (remote.length)
+    throw new Error(
+      `Network isolation (NETNS=${value}) needs every origin on loopback; ${remote.join(', ')} ` +
+        'is not. Set NETNS=0 to run that stack without isolation.',
+    );
   const ok = process.platform === 'linux' && has('unshare') && has('socat') && has('ip');
-  if (!ok && v !== 'auto') throw new Error('NETNS=1 needs Linux with unshare, socat and ip');
+  if (!ok && value !== 'auto') throw new Error('NETNS=1 needs Linux with unshare, socat and ip');
+  if (!ok)
+    console.warn(
+      'note: unshare, socat or ip is missing, so the browser runs without network isolation (NETNS=auto).',
+    );
   return ok;
 }
 
