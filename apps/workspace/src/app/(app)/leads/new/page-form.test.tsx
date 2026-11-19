@@ -56,7 +56,7 @@ it('submits the lead form from the page header with the action’s original fiel
   }
 });
 
-async function mountLead(owners = OWNERS, defaultOwnerId: string | undefined = ME) {
+async function mountLead(owners: typeof OWNERS, defaultOwnerId: string | undefined) {
   const action = vi.fn<FormAction>().mockResolvedValue({ values: {}, fieldErrors: {} });
   const mounted = await mountForm(
     <LeadForm
@@ -81,19 +81,35 @@ async function mountLead(owners = OWNERS, defaultOwnerId: string | undefined = M
 }
 
 it('starts the lead owner on the signed-in user, not the first person in the list', async () => {
-  const mounted = await mountLead();
+  const mounted = await mountLead(OWNERS, ME);
   try {
     const data = await mounted.send();
     expect(data.get('ownerUserId')).toBe(ME);
-    expect(parseLead(data)).toMatchObject({ ok: true, data: { ownerUserId: ME } });
-    expect(parseLead(data).ok && parseLead(data).data).not.toHaveProperty('followUp');
+    const parsed = parseLead(data);
+    if (!parsed.ok) throw new Error(JSON.stringify(parsed.fieldErrors));
+    expect(parsed.data.ownerUserId).toBe(ME);
+    expect(parsed.data).not.toHaveProperty('followUp');
+  } finally {
+    await mounted.unmount();
+  }
+});
+
+it('preselects nobody else when the signed-in user is not placed in the owner list', async () => {
+  const mounted = await mountLead(OWNERS, undefined);
+  try {
+    const { container } = mounted;
+    await fill(container.querySelector('[name="followUpAt"]'), '2026-12-01T10:30');
+    const parsed = parseLead(await mounted.send());
+    if (!parsed.ok) throw new Error(JSON.stringify(parsed.fieldErrors));
+    expect(parsed.data).not.toHaveProperty('ownerUserId');
+    expect(parsed.data.followUp).not.toHaveProperty('assigneeUserId');
   } finally {
     await mounted.unmount();
   }
 });
 
 it('shows a single owner read-only and still posts it', async () => {
-  const mounted = await mountLead([{ value: ME, label: 'Asha Gurung' }]);
+  const mounted = await mountLead([{ value: ME, label: 'Asha Gurung' }], ME);
   try {
     const owner = mounted.container.querySelector('input[type="hidden"][name="ownerUserId"]');
     expect(owner?.parentElement?.querySelector('button')?.hasAttribute('disabled')).toBe(true);
@@ -117,7 +133,7 @@ it('posts no owner when the owner list did not load, so the API defaults to the 
 });
 
 it('sends the scheduled follow-up with its type, Kathmandu time and the owner as assignee', async () => {
-  const mounted = await mountLead();
+  const mounted = await mountLead(OWNERS, ME);
   try {
     const { container } = mounted;
     await choose(container, 'ownerUserId', 'Sita Rai');
@@ -142,7 +158,7 @@ it('sends the scheduled follow-up with its type, Kathmandu time and the owner as
 });
 
 it('keeps a chosen assignee when the owner changes afterwards', async () => {
-  const mounted = await mountLead();
+  const mounted = await mountLead(OWNERS, ME);
   try {
     const { container } = mounted;
     await choose(container, 'followUpAssigneeUserId', 'Ram Thapa');
