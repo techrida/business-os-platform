@@ -5,6 +5,7 @@
 // - returned: request back to sourcing and the RFQ reopened to re-source (RFQ_TRANSITIONS recommended → open).
 // - rejected: request rejected and the RFQ cancelled.
 // A request that is not waiting for this decision is refused (409), never silently skipped.
+import type { ApprovalContext } from '@bos/contracts';
 import {
   paymentTerms,
   purchaseOrders,
@@ -13,15 +14,19 @@ import {
   scoped,
   vendorAccounts,
   vendorQuotations,
+  vendors,
 } from '@bos/db';
 import { ConflictException, Logger } from '@nestjs/common';
 import { and, eq, sql } from 'drizzle-orm';
 
+import type { Principal } from '../../../platform/authz/principal';
 import type { Db, DbTransaction } from '../../../platform/db/db.module';
 import type { TxScope } from '../../../platform/db/tx';
 import { actorUuid, readTxContext } from '../../../platform/documents/tx-context';
 import type { NumberingService } from '../../../platform/settings/numbering.service';
+import { fact, hrefFor, readableDocuments } from '../../approvals/context';
 import type { ApprovalSubject } from '../../approvals/requests.service';
+import { vendorIntakeOwnerPolicy } from '../../portal-vendor/inbox/vendor-intake.policy';
 import { idAt, procurementReferenceNames } from '../reference-names';
 import { PO_SERIES, PR_COMMITMENT_DOCUMENT_TYPE, poBandOf } from './sourcing.rules';
 
@@ -101,6 +106,76 @@ export class PrCommitmentSubject implements ApprovalSubject {
     return procurementReferenceNames(q, scope, {
       vendorIds: [idAt(snapshot, 'commitment', 'vendorId')],
     });
+  }
+
+  /**
+   * The RFQ as it stands now, with its request and the recommended quotation's vendor and total, and that quotation's
+   * own file. A file the vendor sent from the portal is listed when the reader may read it; a file of any other owner
+   * type is left out (deny by default). The RFQ page is linked only for a holder of `procurement.sourcing`.
+   */
+  async context(
+    q: Db,
+    scope: TxScope,
+    request: { documentId: string },
+    viewer: Principal,
+  ): Promise<ApprovalContext | null> {
+    const [rfq] = await q
+      .select({
+        id: rfqs.id,
+        number: rfqs.number,
+        status: rfqs.status,
+        purchaseRequestNumber: purchaseRequests.number,
+        quotationId: rfqs.recommendedQuotationId,
+      })
+      .from(rfqs)
+      .leftJoin(
+        purchaseRequests,
+        and(
+          eq(purchaseRequests.tenantId, rfqs.tenantId),
+          eq(purchaseRequests.organizationId, rfqs.organizationId),
+          eq(purchaseRequests.id, rfqs.purchaseRequestId),
+        ),
+      )
+      .where(scoped(scope).where(rfqs, eq(rfqs.id, request.documentId)));
+    if (rfq === undefined) return null;
+    const [quote] =
+      rfq.quotationId === null
+        ? []
+        : await q
+            .select({
+              vendorName: vendors.legalName,
+              total: vendorQuotations.total,
+              currency: vendorQuotations.currency,
+              documentId: vendorQuotations.documentId,
+            })
+            .from(vendorQuotations)
+            .leftJoin(
+              vendors,
+              and(
+                eq(vendors.tenantId, vendorQuotations.tenantId),
+                eq(vendors.id, vendorQuotations.vendorId),
+              ),
+            )
+            .where(scoped(scope).where(vendorQuotations, eq(vendorQuotations.id, rfq.quotationId)));
+    return {
+      title: `RFQ ${rfq.number}`,
+      fields: [
+        ...fact.text('purchaseRequest', 'Purchase request', rfq.purchaseRequestNumber),
+        ...fact.text('vendor', 'Recommended vendor', quote?.vendorName),
+        ...(quote === undefined
+          ? []
+          : fact.money('quotationTotal', 'Quotation total', quote.total, quote.currency)),
+        ...fact.status(rfq.status),
+      ],
+      documents: await readableDocuments(
+        q,
+        scope,
+        viewer,
+        [quote?.documentId],
+        [vendorIntakeOwnerPolicy(q)],
+      ),
+      href: hrefFor(viewer, `/procurement/rfqs/${rfq.id}`, 'procurement.sourcing'),
+    };
   }
 
   async onDecided(tx: DbTransaction, rfqId: string, outcome: Outcome): Promise<void> {

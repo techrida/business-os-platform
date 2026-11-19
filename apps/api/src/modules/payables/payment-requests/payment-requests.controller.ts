@@ -27,6 +27,7 @@ import {
 } from './payment-request.rules';
 import {
   PaymentRequestsService,
+  type PaymentRequestDetailDto,
   type PaymentRequestDto,
   type PaymentRequestItemDto,
 } from './payment-requests.service';
@@ -63,7 +64,7 @@ export class PaymentRequestsController {
   /** 404 outside the acting entity. */
   @Get(':id')
   @Can('payables.payment.request')
-  get(@Param('id', ParseUUIDPipe) id: string): Promise<PaymentRequestDto> {
+  get(@Param('id', ParseUUIDPipe) id: string): Promise<PaymentRequestDetailDto> {
     return this.requests.get(id);
   }
 

@@ -14,7 +14,7 @@ import { Table, Td, Th } from '@/components/ui/table';
 import {
   getPaymentRequest,
   listPaymentRequestItems,
-  type PaymentRequest,
+  type PaymentRequestDetail,
 } from '@/lib/api-payables';
 import { requireStaffSession } from '@/lib/bff';
 import { getNumberSystems } from '@/lib/display-settings';
@@ -41,7 +41,7 @@ export default async function PaymentRequestPage({ params }: { params: Promise<{
         </Alert>
       </Page>
     );
-  let request: PaymentRequest;
+  let request: PaymentRequestDetail;
   try {
     request = await getPaymentRequest(session, id);
   } catch (err) {
@@ -127,7 +127,14 @@ export default async function PaymentRequestPage({ params }: { params: Promise<{
               {
                 key: 'vendor',
                 label: 'Vendor',
-                value: <Link href={`/vendors/${request.vendorPartyId}`}>View vendor</Link>,
+                // The link shows only when the vendor page would open for this person (their live grants).
+                value: request.can.readVendor ? (
+                  <Link href={`/vendors/${request.vendorPartyId}`}>
+                    {request.vendorName ?? 'View vendor'}
+                  </Link>
+                ) : (
+                  (request.vendorName ?? 'Vendor name unavailable')
+                ),
               },
               {
                 key: 'bank',

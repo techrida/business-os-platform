@@ -435,6 +435,12 @@ export const PaymentRequestSchema = z.object({
   ),
 });
 export type PaymentRequest = z.infer<typeof PaymentRequestSchema>;
+/** The request page's read: the vendor's name and whether the caller may open the vendor (live grants). */
+export const PaymentRequestDetailSchema = PaymentRequestSchema.extend({
+  vendorName: Text.nullable(),
+  can: z.object({ readVendor: z.boolean() }),
+});
+export type PaymentRequestDetail = z.infer<typeof PaymentRequestDetailSchema>;
 export type PaymentRequestListItem = z.infer<typeof PaymentRequestListSchema>;
 const REQUESTS = '/v1/payables/payment-requests';
 
@@ -485,8 +491,8 @@ export function listPaymentRequestsPage(
   );
 }
 
-export function getPaymentRequest(session: Session, id: string): Promise<PaymentRequest> {
-  return call(session, `${REQUESTS}/${seg(id)}`, PaymentRequestSchema);
+export function getPaymentRequest(session: Session, id: string): Promise<PaymentRequestDetail> {
+  return call(session, `${REQUESTS}/${seg(id)}`, PaymentRequestDetailSchema);
 }
 
 export function createPaymentRequest(
