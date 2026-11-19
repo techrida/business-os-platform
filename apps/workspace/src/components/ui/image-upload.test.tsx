@@ -265,7 +265,7 @@ describe('ImageUpload', () => {
     expect(document.querySelector('[role="status"]')?.textContent).not.toContain('Scanning');
   });
 
-  it('polls the scan on the backoff schedule and stops quietly after a minute', async () => {
+  it('polls the scan on the backoff schedule and, after a minute, stops and says so once', async () => {
     vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
     resize.shrink = () => Promise.resolve(png('shrunk.png', 32));
     mounted = await mountForm(picker());
@@ -279,6 +279,8 @@ describe('ImageUpload', () => {
         await vi.advanceTimersByTimeAsync(delay - 1);
       });
       expect(scans()).toBe(expected);
+      // Nothing is said while the budget lasts.
+      expect(toasts.error).not.toHaveBeenCalled();
       await act(async () => {
         await vi.advanceTimersByTimeAsync(1);
       });
@@ -287,12 +289,91 @@ describe('ImageUpload', () => {
     }
     await settle();
     expect(document.querySelector('[role="status"]')?.textContent).not.toContain('Scanning');
+    expect(toasts.error).toHaveBeenCalledTimes(1);
+    expect(toasts.error).toHaveBeenCalledWith(
+      'The picture could not be used yet. If it does not appear soon, upload another.',
+    );
     await act(async () => {
       await vi.advanceTimersByTimeAsync(120_000);
     });
     expect(scans()).toBe(7);
-    expect(toasts.error).not.toHaveBeenCalled();
+    expect(toasts.error).toHaveBeenCalledTimes(1);
     expect(onChange).toHaveBeenCalledTimes(1);
+  });
+
+  it('says nothing when the picture is served on the last check of the budget', async () => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+    scanStatuses = [404, 404, 404, 404, 404, 404, 200];
+    resize.shrink = () => Promise.resolve(png('shrunk.png', 32));
+    mounted = await mountForm(picker());
+    await choose(png());
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(180_000);
+    });
+    expect(fetchMock.mock.calls.filter(([url]) => url === SCAN_URL)).toHaveLength(7);
+    expect(toasts.error).not.toHaveBeenCalled();
+  });
+
+  it('says nothing when unmounted part way through the scan', async () => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+    resize.shrink = () => Promise.resolve(png('shrunk.png', 32));
+    mounted = await mountForm(picker());
+    await choose(png());
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(10_000);
+    });
+    expect(fetchMock.mock.calls.filter(([url]) => url === SCAN_URL).length).toBeGreaterThan(0);
+    await mounted.unmount();
+    mounted = undefined;
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(180_000);
+    });
+    expect(toasts.error).not.toHaveBeenCalled();
+  });
+
+  it('says nothing for a scan the user removed part way through', async () => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+    resize.shrink = () => Promise.resolve(png('shrunk.png', 32));
+    mounted = await mountForm(picker());
+    await choose(png());
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(10_000);
+    });
+    await click(byName('Remove Ada Lovelace picture'));
+    await click(byName('Remove picture'));
+    await settle();
+    expect(calls('DELETE')).toHaveLength(1);
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(180_000);
+    });
+    expect(toasts.error).not.toHaveBeenCalled();
+  });
+
+  it('says it once, at the end of the newer budget, when a second upload replaces a scan', async () => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+    resize.shrink = () => Promise.resolve(png('shrunk.png', 32));
+    const budget = scanPollDelays().reduce((sum, delay) => sum + delay, 0);
+    mounted = await mountForm(picker());
+    await choose(png());
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(10_000);
+    });
+    await choose(png('second.png'));
+    expect(calls('POST')).toHaveLength(2);
+    // Past the first upload's budget end, before the second's.
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(budget - 1);
+    });
+    expect(toasts.error).not.toHaveBeenCalled();
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(1);
+    });
+    await settle();
+    expect(toasts.error).toHaveBeenCalledTimes(1);
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(180_000);
+    });
+    expect(toasts.error).toHaveBeenCalledTimes(1);
   });
 
   it('stops polling as soon as the picture is served', async () => {
@@ -324,6 +405,7 @@ describe('ImageUpload', () => {
       await vi.advanceTimersByTimeAsync(120_000);
     });
     expect(fetchMock.mock.calls.filter(([url]) => url === SCAN_URL)).toHaveLength(0);
+    expect(toasts.error).not.toHaveBeenCalled();
   });
 
   it('removes only after the confirmation, then reports null', async () => {
