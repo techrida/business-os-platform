@@ -1,5 +1,6 @@
 // @vitest-environment jsdom
 import type { AdminDepartmentDetail } from '@bos/contracts';
+import { act } from 'react';
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 
 import type { DepartmentStaffOption } from '@/lib/api-departments';
@@ -23,7 +24,7 @@ vi.mock('next/navigation', () => ({
   useSearchParams: () => new URLSearchParams(),
 }));
 
-import { PeopleCard } from './people-card';
+import { PEOPLE_STALE_MESSAGE, PeopleCard } from './people-card';
 
 const SALES = '00000000-0000-4000-8000-0000000000d1';
 const MARKETING = '00000000-0000-4000-8000-0000000000d2';
@@ -141,4 +142,16 @@ it('says a person added from another department moves from it, and stages a memb
   expect(dialogs.props.at(-1)?.changes).toEqual([
     { kind: 'memberAdd', departmentId: SALES, userId: CHANDRA, level: 'staff' },
   ]);
+});
+
+it('keeps the staged changes and offers Reload when the save finds a newer revision', async () => {
+  const { container } = await mount();
+  await choose(container, `level-${BIBEK}`, 'Manager');
+  await click(button(container, 'Review changes'));
+  const onStale = dialogs.props.at(-1)?.onStale as () => void;
+  await act(() => Promise.resolve(onStale()));
+  expect(dialogs.props.at(-1)?.open).toBe(false);
+  expect(container.querySelector('[role="alert"]')?.textContent).toContain(PEOPLE_STALE_MESSAGE);
+  expect(button(container, 'Reload')).not.toBeNull();
+  expect(button(container, 'Review changes')?.disabled).toBe(false);
 });
