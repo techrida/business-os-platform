@@ -165,6 +165,14 @@ const vendorPort: PartyOwnerPort = {
       );
     return new Map(rows.map((r) => [r.id, vendorOwners.get(r.id) ?? null]));
   },
+  labelsOf: async (q, tenantId, partyIds) => {
+    if (partyIds.length === 0) return new Map();
+    const rows = await q
+      .select({ id: parties.id, name: parties.name })
+      .from(parties)
+      .where(and(eq(parties.tenantId, tenantId), inArray(parties.id, [...partyIds])));
+    return new Map(rows.map((r) => [r.id, { name: r.name, number: null }]));
+  },
   ownedBy: (q, tenantId, userId) =>
     q
       .select({ id: parties.id })
@@ -446,6 +454,30 @@ describe('a vendor case, once the vendor adapter is registered', () => {
     const list = await api().get('/v1/verification-cases').query({ partyId });
     expect(list.status).toBe(200);
     expect((list.body as VerificationCaseDto[]).map((c) => c.id)).toEqual([dto.id]);
+  });
+
+  it('names the vendor in the case list for pmo, who holds no vendor.read, and sends only the label (audit #8)', async () => {
+    const partyId = await newVendor();
+    const dto = await openCase(partyId);
+    const { rows } = await appPool.query<{ name: string }>(
+      'SELECT name FROM app.parties WHERE id = $1',
+      [partyId],
+    );
+
+    as(U.pmo, 'pmo');
+    const list = await api().get('/v1/verification-cases').query({ partyId });
+    expect(list.status).toBe(200);
+    const [item] = list.body as Record<string, unknown>[];
+    expect(item).toMatchObject({
+      id: dto.id,
+      partyKind: 'vendor',
+      partyName: rows[0]?.name,
+      partyNumber: null,
+    });
+    // The label only: the DTO's own keys plus the two label fields, nothing of the vendor record itself.
+    expect(Object.keys(item ?? {}).sort()).toEqual(
+      [...Object.keys(dto), 'partyName', 'partyNumber'].sort(),
+    );
   });
 
   it('is still 404 for an unknown party', async () => {
