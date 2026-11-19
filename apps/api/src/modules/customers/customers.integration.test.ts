@@ -799,6 +799,38 @@ describe('detail accounts', () => {
       version: 1,
     });
   });
+
+  it('names the legal entity on each terms row, as Sales, and adds nothing else (audit #16)', async () => {
+    const customer = await createCustomer();
+    await withTx(db, a, systemActor('test'), async (tx) => {
+      await tx.insert(userEntities).values({
+        tenantId: a.tenantId,
+        organizationId: entityA2,
+        userId: a.userId,
+        isDefault: false,
+      }).onConflictDoNothing();
+      await tx.insert(partyAccounts).values({
+        tenantId: a.tenantId,
+        organizationId: entityA2,
+        partyId: customer.id,
+        creditLimit: '75000.00',
+      });
+    });
+    asStaff(a, a.organizationId); // Sales grants
+    const res = await request(baseUrl).get(`/v1/customers/${customer.id}`);
+    expect(res.status).toBe(200);
+    const rows = (res.body as { accounts: Record<string, unknown>[] }).accounts;
+    const second = rows.find((x) => x.organizationId === entityA2);
+    expect(second).toEqual({
+      partyId: customer.id,
+      organizationId: entityA2,
+      organizationName: 'Second entity',
+      paymentTermId: null,
+      creditLimit: '75000.00',
+      version: 1,
+    });
+    expect(PartyAccountDtoSchema.parse(second).organizationName).toBe('Second entity');
+  });
 });
 
 describe('detail people (the account owner by name)', () => {
