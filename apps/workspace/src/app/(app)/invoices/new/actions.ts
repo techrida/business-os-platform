@@ -16,8 +16,9 @@ import { parseLinesJson } from './lines';
 /**
  * `POST /v1/invoices`: a tax invoice with no sales order. Serves the NFR "no double issue" and "amounts
  * are exact": the form carries an Idempotency-Key the page made once per render, the body carries
- * quantities, prices and tax codes only, and the person lands on the invoice the server answered
- * with, to read its totals. Nothing here computes an amount, a number or a date.
+ * quantities, prices, tax codes and an optional document discount only, and the person lands on the
+ * invoice the server answered with, to read its totals. Nothing here computes an amount, a number or
+ * a date.
  *
  * Asks `requireStaffSession` first and checks `invoice.draft` (deny by default: the API still decides
  * every call). A form refused by validation is never posted, so the same key is still unused afterwards.
@@ -46,6 +47,8 @@ export async function createManualInvoiceAction(
       currency: textOf(form, 'currency') as 'NPR',
       manualReason: textOf(form, 'manualReason'),
       dueDate: textOf(form, 'dueDate'),
+      discountMode: textOf(form, 'discountMode'),
+      discountValue: textOf(form, 'discountValue'),
       lines,
     },
     await loadEnabledCurrencies(session),

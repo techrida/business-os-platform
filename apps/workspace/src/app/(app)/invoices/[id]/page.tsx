@@ -7,6 +7,7 @@ import { notFound } from 'next/navigation';
 import { hasPermission } from '@/components/p2/customers/permissions';
 import { Alert } from '@/components/ui/alert';
 import { Badge } from '@/components/ui/badge';
+import { LinkButton } from '@/components/ui/button';
 import { Breadcrumb, Page, PageHeader } from '@/components/ui/page';
 import { FactList, Panel, type Fact } from '@/components/ui/panel';
 import { getInvoice } from '@/lib/api-billing';
@@ -27,7 +28,7 @@ import { InvoicePreview } from '../_components/invoice-preview';
 import { InvoiceProgress } from '../_components/invoice-progress';
 import styles from '../_components/invoice.module.css';
 import { InvoiceNoteActions } from '../_components/notes/note-actions';
-import { invoiceGates } from '../_lib/gates';
+import { invoiceGates, recordPaymentHref } from '../_lib/gates';
 import { approvalWords, kindMeta } from '../_lib/meta';
 import { settlementMeta } from '../../receivables/_lib/settlement';
 
@@ -201,6 +202,12 @@ export default async function InvoiceDetailPage({ params }: { params: Promise<{ 
     settlementOf(session, invoice),
   ]);
   const payment = settlement === null ? null : settlementMeta(settlement.settlement);
+  // Only while something is still owed, as the server's settlement says; unknown settlement offers nothing.
+  const recordPayment = recordPaymentHref(
+    invoice,
+    session.roles,
+    settlement === null ? null : settlement.settlement,
+  );
 
   return (
     <Page>
@@ -218,12 +225,13 @@ export default async function InvoiceDetailPage({ params }: { params: Promise<{ 
         }
         description={customerName}
         actions={
-          pdfNumber || gates.submit || gates.issue || gates.discard ? (
+          pdfNumber || gates.submit || gates.issue || gates.discard || recordPayment ? (
             <>
               <InvoiceActions invoice={invoice} gates={gates} reloadHref={path} />
               {pdfNumber ? (
                 <InvoicePreview documentUrl={`${path}/document`} number={pdfNumber} />
               ) : null}
+              {recordPayment ? <LinkButton href={recordPayment}>Record payment</LinkButton> : null}
             </>
           ) : undefined
         }
