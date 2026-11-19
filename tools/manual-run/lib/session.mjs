@@ -5,6 +5,8 @@
 import { createHmac } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 
+import { redactText, redactUrl } from './redact.mjs';
+
 // The app's route error panel ("This page/sales order/… did not open") or a raw server error.
 const BROKEN_PAGE = /\bdid not open\b|Application error|Internal Server Error/;
 
@@ -64,7 +66,7 @@ export class Session {
     const add = (kind, text) => {
       if (/React DevTools|preloaded using link preload/.test(text)) return;
       this.consoleErrors.push(
-        `${kind}: ${text.replace(/\s+/g, ' ').slice(0, 300)} @ ${page.url()}`,
+        `${kind}: ${redactText(text).replace(/\s+/g, ' ').slice(0, 300)} @ ${redactUrl(page.url())}`,
       );
     };
     page.on('pageerror', (e) => add('pageerror', e.message));
@@ -75,8 +77,10 @@ export class Session {
         !/Failed to load resource/.test(m.text()) &&
         add('console', m.text()),
     );
-    page.on('response', (r) => r.status() >= 500 && add(`http ${r.status()}`, r.url()));
-    page.on('requestfailed', (r) => add('request failed', `${r.failure()?.errorText} ${r.url()}`));
+    page.on('response', (r) => r.status() >= 500 && add(`http ${r.status()}`, redactUrl(r.url())));
+    page.on('requestfailed', (r) =>
+      add('request failed', `${r.failure()?.errorText} ${redactUrl(r.url())}`),
+    );
     return page;
   }
 
@@ -136,7 +140,7 @@ export class Session {
       await this.recoverable(locator, timeout);
     } catch {
       throw new StepFailure(
-        `Expected to see: ${message} (not visible after ${Math.round(timeout / 1000)} s on ${this.page.url()})`,
+        `Expected to see: ${message} (not visible after ${Math.round(timeout / 1000)} s on ${redactUrl(this.page.url())})`,
       );
     }
     this.checks.push(`saw: ${message}`);
@@ -168,8 +172,9 @@ export class Session {
           ]);
       if (winner === 'ok') return;
       if (reloads >= 3) throw new Error('error page after three reloads');
-      this.checks.push(`note: error page on ${this.page.url()}, reloaded (${reloads + 1})`);
-      this.log(`    (error page on ${this.page.url()}, reloading)`);
+      const where = redactUrl(this.page.url());
+      this.checks.push(`note: error page on ${where}, reloaded (${reloads + 1})`);
+      this.log(`    (error page on ${where}, reloading)`);
       await sleep(reloads === 0 ? 5000 : 15000);
       await this.page.reload({ waitUntil: 'domcontentloaded' }).catch(() => {});
     }

@@ -4,6 +4,7 @@ import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from '
 import path from 'node:path';
 
 import { launch, newRecordedContext } from './browser.mjs';
+import { redactText, redactUrl } from './redact.mjs';
 import { Session, StepFailure } from './session.mjs';
 
 const now = () => new Date().toISOString();
@@ -39,7 +40,7 @@ export async function runWorkflow(cfg, workflow, opts = {}) {
 
   const stateFile = path.join(cfg.outDir, 'state.json');
   const state = readJson(stateFile, {});
-  const log = (line) => console.log(`[${cfg.viewportText} ${workflow.name}] ${line}`);
+  const log = (line) => console.log(`[${cfg.viewportText} ${workflow.name}] ${redactText(line)}`);
   const result = {
     name: workflow.name,
     title: workflow.title,
@@ -106,10 +107,11 @@ export async function runWorkflow(cfg, workflow, opts = {}) {
       await session.pause();
     } catch (error) {
       entry.status = 'FAIL';
-      entry.error =
+      entry.error = redactText(
         (error instanceof StepFailure ? '' : 'Error: ') +
-        error.message.split('\n').slice(0, 6).join(' | ');
-      entry.url = session.page.url();
+          error.message.split('\n').slice(0, 6).join(' | '),
+      );
+      entry.url = redactUrl(session.page.url());
       const shot = path.join(shotsDir, `${step.id}-FAIL.png`);
       await session.page.screenshot({ path: shot, fullPage: true }).catch(() => {});
       entry.screenshot = shot;
@@ -120,11 +122,14 @@ export async function runWorkflow(cfg, workflow, opts = {}) {
       result.status = 'FAIL';
     }
     entry.durationMs = Date.now() - s0;
-    entry.checks = session.checks;
-    entry.findings = session.findings;
-    if (session.consoleErrors.length) entry.consoleErrors = session.consoleErrors.slice(0, 12);
+    // Playwright messages and checks can embed full URLs: strip their query strings before saving.
+    entry.checks = session.checks.map(redactText);
+    entry.findings = session.findings.map((f) => ({ ...f, text: redactText(f.text) }));
+    if (session.consoleErrors.length)
+      entry.consoleErrors = session.consoleErrors.slice(0, 12).map(redactText);
     for (const [k, v] of Object.entries(state))
-      if (JSON.stringify(before[k]) !== JSON.stringify(v)) entry.records[k] = v;
+      if (JSON.stringify(before[k]) !== JSON.stringify(v))
+        entry.records[k] = typeof v === 'string' ? redactText(v) : v;
     writeJson(stateFile, state);
     log(`${entry.status} ${step.id} (${(entry.durationMs / 1000).toFixed(1)} s)`);
   }
