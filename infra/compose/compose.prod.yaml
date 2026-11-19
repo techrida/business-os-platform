@@ -29,7 +29,17 @@ services:
     <<: *restart
   zitadel-api:
     <<: *restart
+    command: start-from-init --masterkeyFromEnv --config /etc/zitadel/smtp-bootstrap.yaml
+    volumes:
+      - ../zitadel/smtp-bootstrap.yaml:/etc/zitadel/smtp-bootstrap.yaml:ro
     environment:
+      # Native SMTP bootstrap settings. They apply when the identity instance is first created.
+      ZITADEL_DEFAULTINSTANCE_SMTPCONFIGURATION_SMTP_HOST: ${ZITADEL_SMTP_HOST:-}
+      ZITADEL_DEFAULTINSTANCE_SMTPCONFIGURATION_SMTP_PLAINAUTH_USER: ${ZITADEL_SMTP_USER:-}
+      ZITADEL_DEFAULTINSTANCE_SMTPCONFIGURATION_SMTP_PLAINAUTH_PASSWORD: ${ZITADEL_SMTP_PASSWORD:-}
+      ZITADEL_DEFAULTINSTANCE_SMTPCONFIGURATION_TLS: ${ZITADEL_SMTP_TLS:-}
+      ZITADEL_DEFAULTINSTANCE_SMTPCONFIGURATION_FROM: ${ZITADEL_SMTP_FROM:-}
+      ZITADEL_DEFAULTINSTANCE_SMTPCONFIGURATION_FROMNAME: ${ZITADEL_SMTP_FROM_NAME:-}
       # Prod must choose an expiry for the two bootstrap tokens (compose.yaml defaults to 2099 for dev). Required, so
       # a prod start without it fails instead of minting tokens that never expire (CR-10). Format:
       # ZITADEL_PAT_EXPIRATION=2027-01-01T00:00:00Z. It only applies when the first instance is created.

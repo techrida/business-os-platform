@@ -72,6 +72,10 @@ services:
           # 40M, not 64M: keeps the dev core total under 3.2 GB now that valkey-oidc exists (see compose.yaml header).
           memory: 40M
 
+  seed-zitadel:
+    environment:
+      BOS_SEED_DEV_MAILPIT: 'true'
+
   workspace:
     environment:
       # Dev only: the login limit (CR-03) is 20 per minute per client IP, and all local traffic shares one Caddy
