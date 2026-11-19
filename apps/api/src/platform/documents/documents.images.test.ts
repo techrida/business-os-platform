@@ -2,7 +2,9 @@
 // JPEG, WebP up to 512 KiB), `openImage` serves a clean image to any signed-in staff of the tenant and entity (a
 // profile picture, customer or vendor logo: of the tenant) with one 404 for every refusal and a storage-free "not
 // modified" for a matching If-None-Match, `removeInTransaction` removes such a tenant-wide image in the entity it
-// was uploaded in, and `createAndReceiveScanned` (the legacy-logo migrator) never skips the virus scan.
+// was uploaded in, `remove` (DELETE /v1/documents/:id) refuses a picture with 409 after the permission check while
+// `removeManagedImage` (the images module) still removes one, and `createAndReceiveScanned` (the legacy-logo
+// migrator) never skips the virus scan.
 // Unit level with fakes: the SQL filters are checked by their rendered parameters, not against Postgres.
 import 'reflect-metadata';
 
@@ -14,6 +16,7 @@ import { Readable } from 'node:stream';
 
 import { IMAGE_MAX_BYTES, IMAGE_MIME, type CreateDocumentBody } from '@bos/contracts';
 import {
+  ConflictException,
   ForbiddenException,
   NotFoundException,
   PayloadTooLargeException,
@@ -543,6 +546,125 @@ describe('DocumentsService.removeInTransaction of an image', () => {
     expect(paramsOf(r.reads[0]!)).toEqual(expect.arrayContaining([TENANT, ORG, r.id]));
     expect(paramsOf(r.reads[0]!)).not.toContain('customer_logo');
   });
+});
+
+describe('DocumentsService.remove (DELETE /v1/documents/:id) of a picture', () => {
+  const actor = { kind: 'user' as const, id: USER, correlationId: 'c-1' };
+
+  /**
+   * The whole remove road of one live document of `ownerType` (one quarantined version): a database whose
+   * transaction runs on a fake tx, the storage for the cleanup, and every update of the tx recorded.
+   */
+  function road(ownerType: string, authz?: { assert: () => void }) {
+    const id = randomUUID();
+    const row = { id, ownerType, ownerId: OWNER_ID, organizationId: ORG };
+    const version = {
+      id: randomUUID(),
+      documentId: id,
+      version: 1,
+      status: 'quarantined',
+      storageKey: `${TENANT}/v`,
+    };
+    const updates: SQL[] = [];
+    const chain = {
+      from: () => chain,
+      where: () => chain,
+      limit: () => chain,
+      orderBy: () => Promise.resolve([version]),
+      for: () => Promise.resolve([row]),
+      then: (resolve: (rows: unknown[]) => unknown) => Promise.resolve([row]).then(resolve),
+    };
+    const tx = {
+      execute: vi.fn().mockResolvedValue({ rows: [] }),
+      select: vi.fn(() => chain),
+      update: vi.fn(() => ({
+        set: () => ({
+          where: (condition: SQL) => {
+            updates.push(condition);
+            return Promise.resolve();
+          },
+        }),
+      })),
+    };
+    const db = { transaction: (fn: (t: DbTransaction) => Promise<unknown>) => fn(tx as never) };
+    const storage = { removeQuarantine: vi.fn().mockResolvedValue(undefined) };
+    const policy = imagePolicy({ ownerType, canAttach: vi.fn().mockResolvedValue(true) });
+    const s = service(policy, { db, storage, ...(authz ? { authz } : {}) });
+    return { ...s, id, version, updates, storage, policy };
+  }
+
+  const PICTURES = ['entity_logo', 'user_avatar', 'customer_logo', 'vendor_logo'];
+
+  it.each(PICTURES)(
+    'refuses a %s with 409 and writes, audits and deletes nothing',
+    async (ownerType) => {
+      const r = road(ownerType);
+
+      const error: unknown = await r.svc
+        .remove(r.id, { who: { scope, actor } })
+        .catch((e: unknown) => e);
+
+      expect(error).toBeInstanceOf(ConflictException);
+      expect((error as ConflictException).getResponse()).toEqual({
+        code: 'conflict',
+        message: 'This picture is managed from its own settings: replace or remove it there.',
+      });
+      // The permission was checked first.
+      expect(r.authz.assert).toHaveBeenCalledTimes(1);
+      expect(r.updates).toHaveLength(0);
+      expect(r.audit.record).not.toHaveBeenCalled();
+      expect(r.storage.removeQuarantine).not.toHaveBeenCalled();
+    },
+  );
+
+  it.each(PICTURES)(
+    'answers 403, not 409, for a %s when the caller may not remove it',
+    async (ownerType) => {
+      const authz = {
+        assert: vi.fn(() => {
+          throw new ForbiddenException({ code: 'forbidden', reason: 'no_permission' });
+        }),
+      };
+      const r = road(ownerType, authz);
+
+      await expect(r.svc.remove(r.id, { who: { scope, actor } })).rejects.toBeInstanceOf(
+        ForbiddenException,
+      );
+      expect(r.updates).toHaveLength(0);
+      expect(r.audit.record).not.toHaveBeenCalled();
+    },
+  );
+
+  it('still removes a document of another owner type: soft-remove, audit, cleanup', async () => {
+    const r = road('test_memo');
+
+    await r.svc.remove(r.id, { who: { scope, actor } });
+
+    expect(r.updates).toHaveLength(1);
+    expect(paramsOf(r.updates[0]!)).toContain(r.id);
+    expect(r.audit.record).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ action: 'document.removed', entityId: r.id }),
+    );
+    expect(r.storage.removeQuarantine).toHaveBeenCalledWith(r.version.storageKey);
+  });
+
+  it.each(PICTURES)(
+    'removeManagedImage (the images module only) still removes a %s, with the same checks and cleanup',
+    async (ownerType) => {
+      const r = road(ownerType);
+
+      await r.svc.removeManagedImage(r.id, { who: { scope, actor } });
+
+      expect(r.authz.assert).toHaveBeenCalledTimes(1);
+      expect(r.updates).toHaveLength(1);
+      expect(r.audit.record).toHaveBeenCalledWith(
+        expect.anything(),
+        expect.objectContaining({ action: 'document.removed', entityId: r.id }),
+      );
+      expect(r.storage.removeQuarantine).toHaveBeenCalledWith(r.version.storageKey);
+    },
+  );
 });
 
 describe('DocumentsService.createAndReceiveScanned', () => {

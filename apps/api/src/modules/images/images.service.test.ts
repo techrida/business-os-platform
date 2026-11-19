@@ -86,6 +86,7 @@ const documents = {
   removeInTransaction: vi.fn(),
   cleanupRemoved: vi.fn(),
   createAndReceiveUpload: vi.fn(),
+  removeManagedImage: vi.fn(),
   remove: vi.fn(),
 };
 let profile: { value: CompanyProfile; version: number | null };
@@ -132,6 +133,7 @@ beforeEach(() => {
         versionId: randomUUID(),
       }),
     );
+  documents.removeManagedImage.mockReset().mockResolvedValue(undefined);
   documents.remove.mockReset().mockResolvedValue(undefined);
   settings.getLocked.mockReset().mockImplementation(() => Promise.resolve(profile));
   settings.set.mockReset().mockResolvedValue({ version: 4 });
@@ -505,7 +507,7 @@ describe('upload', () => {
       action: 'image.set',
       meta: { oldDocumentId: null, newDocumentId: result.documentId },
     });
-    expect(documents.remove).not.toHaveBeenCalled();
+    expect(documents.removeManagedImage).not.toHaveBeenCalled();
   });
 
   it('takes a chunked body without Content-Length up to exactly the cap', async () => {
@@ -644,17 +646,19 @@ describe('upload', () => {
     const created = (await documents.createAndReceiveUpload.mock.results[0]?.value) as {
       documentId: string;
     };
-    expect(documents.remove).toHaveBeenCalledWith(created.documentId, {
+    expect(documents.removeManagedImage).toHaveBeenCalledWith(created.documentId, {
       who: { scope, actor: staff.actor },
     });
+    // Not the HTTP path, which refuses a picture with 409 and would leave the new document behind.
+    expect(documents.remove).not.toHaveBeenCalled();
   });
 
   it('still throws the pointer error when removing the new document fails too', async () => {
-    documents.remove.mockRejectedValue(new Error('database down'));
+    documents.removeManagedImage.mockRejectedValue(new Error('database down'));
     expect(await statusOf(service.upload('customer_logo', randomUUID(), request(), staff))).toBe(
       404,
     );
-    expect(documents.remove).toHaveBeenCalledTimes(1);
+    expect(documents.removeManagedImage).toHaveBeenCalledTimes(1);
   });
 
   it('throws the upload error unchanged and moves no pointer when storing fails', async () => {
@@ -665,6 +669,6 @@ describe('upload', () => {
     );
     expect(await statusOf(service.upload('customer_logo', ownerId, request(), staff))).toBe(415);
     expect(pointers.get(key('customer_logo', ownerId))).toBeNull();
-    expect(documents.remove).not.toHaveBeenCalled();
+    expect(documents.removeManagedImage).not.toHaveBeenCalled();
   });
 });

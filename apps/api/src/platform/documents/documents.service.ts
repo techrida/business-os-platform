@@ -5,6 +5,9 @@
 //
 // Removal is soft: documents.removed_at is set, nothing is deleted, and a removed document is invisible to every
 // read here. Only the owner's `canAttach` decides whether someone may add to or remove from its attachments.
+// One exception (U12): a picture (an image owner type: a company logo, a profile picture, a customer or vendor
+// logo) is never removed through `remove`, the HTTP path, because a pointer may still name it. The images module
+// moves the pointer and removes the previous picture itself (removeInTransaction, removeManagedImage).
 //
 // Lifecycle of one version (status):
 //   create()          -> awaiting_content   a row exists, no bytes yet
@@ -436,7 +439,7 @@ export class DocumentsService {
       });
     } catch (error) {
       try {
-        await this.remove(created.documentId, { who });
+        await this.removeManagedImage(created.documentId, { who });
       } catch (cleanup) {
         this.logger.warn(
           `upload of document ${created.documentId} failed and it could not be removed: ${describe(cleanup)}`,
@@ -499,15 +502,35 @@ export class DocumentsService {
    * and never scanned) and a clean file on a draft. There is no age limit for a quarantined version: the
    * owner's canAttach is the gate, and a scan finishing on a removed document changes nothing anyone can see.
    * Rows are kept (audit); only the not-yet-clean bytes are deleted.
+   * A picture (an image owner type) is a 409 here, after the permission check and before anything is written: a
+   * pointer may still name it, so only the images API (PUT /v1/images/:ownerType/:ownerId) removes one.
    * `opts.who` is the request's scope and actor (default: requestTx(), HTTP only); tests pass their own.
    */
   async remove(
     documentId: string,
     opts: { who?: { scope: TxScope; actor: Actor } } = {},
   ): Promise<void> {
-    const who = opts.who ?? requestTx();
+    await this.removeAndCleanUp(documentId, opts.who ?? requestTx(), true);
+  }
+
+  /**
+   * `remove` without the picture refusal, for the images module only (no controller calls it): it removes an image
+   * document that no pointer names yet, after its upload or pointer move failed. Same checks and cleanup otherwise.
+   */
+  async removeManagedImage(
+    documentId: string,
+    opts: { who: { scope: TxScope; actor: Actor } },
+  ): Promise<void> {
+    await this.removeAndCleanUp(documentId, opts.who, false);
+  }
+
+  private async removeAndCleanUp(
+    documentId: string,
+    who: { scope: TxScope; actor: Actor },
+    refuseImages: boolean,
+  ): Promise<void> {
     const unclean = await withTx(this.db, who.scope, who.actor, (tx) =>
-      this.removeInTransaction(tx, who.scope, documentId),
+      this.removeDocument(tx, who.scope, documentId, refuseImages),
     );
     await this.cleanupRemoved(unclean);
   }
@@ -525,11 +548,28 @@ export class DocumentsService {
    * The removal itself, inside the caller's transaction. A tenant-wide image (image-scope.ts: a profile picture, a
    * customer or vendor logo) may have been uploaded in another entity of the tenant: it is found by tenant alone, the
    * owner policy still decides with the caller's scope, and its rows are written under the entity they carry.
+   * Removes a picture too: the images module calls this while it moves the pointer in the same transaction.
    */
   async removeInTransaction(tx: DbTransaction, scope: TxScope, documentId: string) {
+    return this.removeDocument(tx, scope, documentId, false);
+  }
+
+  private async removeDocument(
+    tx: DbTransaction,
+    scope: TxScope,
+    documentId: string,
+    refuseImages: boolean,
+  ) {
     const doc = await this.loadDocument(tx, scope, documentId, false, true);
     await this.assertOwner(scope, doc.ownerType, doc.ownerId, 'documents.upload');
     await this.assertCanAttach(scope, doc.ownerType, doc.ownerId, tx, documentId);
+    // After the permission check (someone who may not remove learns nothing), before the lock and any write.
+    if (refuseImages && isImageOwnerType(doc.ownerType)) {
+      throw new ConflictException({
+        code: 'conflict',
+        message: 'This picture is managed from its own settings: replace or remove it there.',
+      });
+    }
     await this.loadDocument(tx, scope, documentId, true, true);
     // The document's own entity: the caller's, except for a tenant-wide image uploaded in another one.
     const s = scoped({ tenantId: scope.tenantId, organizationId: doc.organizationId });

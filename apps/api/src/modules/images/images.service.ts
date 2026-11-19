@@ -10,6 +10,8 @@
 //   without the grant), and the new document must be a live image of exactly that owner (404 otherwise);
 // - "every change is audited and nothing is lost": the pointer moves, the previous image is soft-removed
 //   (DocumentsService.removeInTransaction) and `image.set` / `image.removed` is recorded, all in one transaction.
+//   This is the only way a picture is removed: DELETE /v1/documents/:id refuses one with 409, so no pointer is left
+//   naming a removed document.
 import type { Readable } from 'node:stream';
 
 import {
@@ -383,7 +385,7 @@ export class ImagesService {
    * upload check (404 / 403); 415 a Content-Type outside PNG, JPEG, WebP; 400 a missing or bad `x-file-name`; 413 a
    * Content-Length over the image cap. Then the body is read with a counting cap (413), stored and scanned
    * (DocumentsService.createAndReceiveUpload), and the pointer moves (`set`). If the pointer move fails, the new
-   * document is removed (best effort) and that error is thrown.
+   * document is removed (DocumentsService.removeManagedImage, best effort) and that error is thrown.
    */
   async upload(
     ownerType: string,
@@ -414,7 +416,8 @@ export class ImagesService {
       await this.set(who, ownerType, ownerId, { documentId });
     } catch (error) {
       try {
-        await this.documents.remove(documentId, { who: actorOnly });
+        // Not `remove`: that is the HTTP path, which refuses a picture.
+        await this.documents.removeManagedImage(documentId, { who: actorOnly });
       } catch (cleanup) {
         this.logger.warn(
           `image ${ownerType}/${ownerId}: could not remove ${documentId} after a failed pointer move: ${
