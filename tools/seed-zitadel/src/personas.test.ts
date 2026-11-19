@@ -31,13 +31,62 @@ describe('generatePassword', () => {
 });
 
 describe('personas', () => {
-  it('has twelve personas: ten staff, one customer, one vendor', () => {
+  it('has eighteen personas: sixteen staff, one customer, one vendor', () => {
     expect(PERSONAS.map((p) => p.orgKind).sort()).toEqual([
       'customer',
-      ...Array.from({ length: 10 }, () => 'staff'),
+      ...Array.from({ length: 16 }, () => 'staff'),
       'vendor',
     ]);
-    expect(new Set(PERSONAS.map((p) => personaUsername(p.key))).size).toBe(12);
+    expect(new Set(PERSONAS.map((p) => personaUsername(p.key))).size).toBe(18);
+  });
+
+  it('keeps the frozen logins first, in their order, and appends the new ones after them', () => {
+    // Logins are frozen: Playwright, the account switcher and life-kb Logins use these keys.
+    expect(PERSONAS.slice(0, 12).map((p) => p.key)).toEqual([
+      'founder',
+      'management',
+      'finance',
+      'sales',
+      'customer',
+      'vendor',
+      'accountant',
+      'procurement',
+      'warehouse',
+      'depthead',
+      'management2',
+      'finance2',
+    ]);
+    expect(PERSONAS.slice(12).map((p) => p.key)).toEqual([
+      'sales2',
+      'salesmgr',
+      'saleshead',
+      'marketing',
+      'marketingmgr',
+      'marketinghead',
+    ]);
+  });
+
+  it('adds the Sales and Marketing department people with their department role (D50)', () => {
+    const roleOf = new Map(PERSONAS.map((p) => [p.key, p.role]));
+    for (const key of ['sales', 'sales2', 'salesmgr', 'saleshead']) {
+      expect(roleOf.get(key), key).toBe('sales');
+    }
+    for (const key of ['marketing', 'marketingmgr', 'marketinghead']) {
+      expect(roleOf.get(key), key).toBe('marketing');
+    }
+    for (const p of PERSONAS.slice(12)) {
+      expect(p.orgKind, p.key).toBe('staff');
+      expect(p.givenName, p.key).toBe('Dev');
+    }
+    // The original Sales persona keeps its name, so its label in .dev/personas.json does not change.
+    expect(PERSONAS).toContainEqual({
+      key: 'sales',
+      givenName: 'Dev',
+      familyName: 'Sales',
+      orgKind: 'staff',
+      role: 'sales',
+    });
+    expect(personaUsername('saleshead')).toBe('saleshead@dev.bos.test');
   });
 
   it('adds a second Finance user, so a Finance-created note can get an independent Finance approver', () => {
@@ -53,8 +102,8 @@ describe('personas', () => {
       'finance',
       'finance2',
     ]);
-    // Appended last, so the order (and every earlier login) of the existing personas does not change.
-    expect(PERSONAS.at(-1)?.key).toBe('finance2');
+    // Appended after the P4 personas, so the order (and every earlier login) of the existing personas does not change.
+    expect(PERSONAS.findIndex((p) => p.key === 'finance2')).toBe(11);
   });
 
   it('adds the P4 personas: procurement, warehouse, a department head and a second management user', () => {

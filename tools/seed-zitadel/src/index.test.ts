@@ -579,9 +579,14 @@ describe('@bos/seed-zitadel', () => {
       ['customer', 'CUST-DEV'],
       ['vendor', 'VEND-DEV'],
     ]);
-    expect(PERSONAS).toHaveLength(12);
+    expect(PERSONAS).toHaveLength(18);
     const personas = personasOf(files);
-    expect(personas).toHaveLength(12);
+    expect(personas).toHaveLength(18);
+    // The Marketing department people hold the marketing project role.
+    const marketingHead = await api.findAuthorization(
+      api.userIdOf(personaUsername('marketinghead')),
+    );
+    expect(marketingHead?.roleKeys).toEqual(['marketing']);
     expect(personas.map((p) => p.username)).toContain('accountant@dev.bos.test');
     // Both k6 machine users got a secret; the approver holds exactly the accountant role.
     expect(api.secretsIssued).toBe(2);
@@ -609,7 +614,7 @@ describe('@bos/seed-zitadel', () => {
       expect(p.totpSecret).toBe(api.totpIssued.get(userId));
       expect(p.totpSecret).toMatch(/^[A-Z2-7]{32}$/);
     }
-    expect(api.calls.filter((c) => c.startsWith('verifyTotp:'))).toHaveLength(12);
+    expect(api.calls.filter((c) => c.startsWith('verifyTotp:'))).toHaveLength(18);
   });
 
   it('enables forceMfa only after every persona has TOTP, and OTP before any registration', async () => {
