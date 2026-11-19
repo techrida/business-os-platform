@@ -80,7 +80,7 @@ test('save, reopen, edit, price and submit a quotation', async ({ browser, baseU
     const fullAmount = await amount.inputValue();
     await percent.fill('60');
     await expect(amount).not.toHaveValue(fullAmount);
-    await expect(page.getByText('60.00% / 100% allocated')).toBeVisible();
+    await expect(page.getByText('60% / 100% allocated')).toBeVisible();
 
     await submit.click();
     await expect(page.getByText(/The payment schedule must add up to 100%/)).toBeVisible();
@@ -90,7 +90,7 @@ test('save, reopen, edit, price and submit a quotation', async ({ browser, baseU
     await expect(page.getByText(/The payment schedule must add up to 100%/)).toBeVisible();
 
     await amount.fill('1.23');
-    await expect(page.getByText(/This amount needs more than two decimal places/)).toBeVisible();
+    await expect(page.getByText(/This amount needs more than four decimal places/)).toBeVisible();
     await expect(percent).toHaveValue('60');
     await amount.press('Escape');
     await expect(amount).not.toHaveAttribute('aria-invalid', 'true');
@@ -99,7 +99,7 @@ test('save, reopen, edit, price and submit a quotation', async ({ browser, baseU
     await expect(amount).toHaveAttribute('aria-invalid', 'true');
     await expect(percent).toHaveValue('60');
     await amount.fill(fullAmount);
-    await expect(percent).toHaveValue('100.00');
+    await expect(percent).toHaveValue('100');
     await expect(percent).not.toHaveAttribute('aria-invalid', 'true');
   });
 
@@ -125,7 +125,7 @@ test('save, reopen, edit, price and submit a quotation', async ({ browser, baseU
       await issueDate.locator(`[data-type="${segment}"]`).pressSequentially(digits);
     }
     await expect(amount).toBeDisabled();
-    await expect(percent).toHaveValue('100.00');
+    await expect(percent).toHaveValue('100');
     await save.click();
     await expect(page.getByText('All changes saved')).toBeVisible();
     await expect(amount).toBeEnabled();
@@ -138,7 +138,16 @@ test('save, reopen, edit, price and submit a quotation', async ({ browser, baseU
     await expect(page.getByText('This discount needs approval')).toBeVisible();
     await expect(amount).not.toHaveValue('');
     await expect(amount).toBeEnabled();
-    await expect(percent).toHaveValue('100.00');
+    await expect(percent).toHaveValue('100');
+    await expect(percent).toHaveAttribute('step', '0.0001');
+    await page.getByRole('button', { name: 'Add milestone' }).click();
+    await page.getByRole('button', { name: 'Add milestone' }).click();
+    await page.getByLabel('Milestone 2', { exact: true }).fill('Delivery');
+    await page.getByLabel('Milestone 3', { exact: true }).fill('Balance');
+    await percent.nth(0).fill('33.3333');
+    await percent.nth(1).fill('33.3333');
+    await percent.nth(2).fill('33.3334');
+    await expect(page.getByText('100% / 100% allocated')).toBeVisible();
     const due = page.getByRole('group', { name: 'Due when' }).first();
     for (const [segment, digits] of [
       ['year', '2030'],
@@ -150,6 +159,9 @@ test('save, reopen, edit, price and submit a quotation', async ({ browser, baseU
     await save.click();
     await expect(page.getByText('All changes saved')).toBeVisible();
     await page.reload();
+    await expect(percent.nth(0)).toHaveValue('33.3333');
+    await expect(percent.nth(1)).toHaveValue('33.3333');
+    await expect(percent.nth(2)).toHaveValue('33.3334');
     for (const [segment, digits] of [
       ['year', '2030'],
       ['month', '6'],
