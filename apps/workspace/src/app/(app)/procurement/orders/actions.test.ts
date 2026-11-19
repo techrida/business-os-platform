@@ -8,6 +8,23 @@ const session = vi.hoisted(() => ({ roles: ['procurement'] as string[] }));
 vi.mock('@/lib/bff', () => ({
   requireStaffSession: () => Promise.resolve({ roles: session.roles }),
 }));
+// GET /v1/me for an unedited role answers the role's default grants; a test sets `live` for an edited one.
+const grants = vi.hoisted(() => ({ live: undefined as Map<string, string> | undefined }));
+vi.mock('@/lib/grants', async () => {
+  const { DEFAULT_ROLE_PERMISSIONS } = await import('@bos/contracts');
+  return {
+    getGrants: () =>
+      Promise.resolve(
+        grants.live ??
+          new Map(
+            session.roles.flatMap((r) =>
+              Object.entries(DEFAULT_ROLE_PERMISSIONS[r as keyof typeof DEFAULT_ROLE_PERMISSIONS]),
+            ),
+          ),
+      ),
+    hasGrant: (g: Map<string, string>, p: string) => g.has(p),
+  };
+});
 vi.mock('next/cache', () => ({ revalidatePath: vi.fn() }));
 
 const api = vi.hoisted(() => ({
@@ -47,6 +64,7 @@ const currentOrder = {
 
 beforeEach(() => {
   session.roles = ['procurement'];
+  grants.live = undefined;
   for (const fn of Object.values(api)) fn.mockReset();
   api.getPurchaseOrder.mockResolvedValue(currentOrder);
 });
@@ -91,6 +109,21 @@ describe('issueAction', () => {
     session.roles = ['warehouse'];
     const out = await issueAction(prev, form(base));
     expect(out.error).toMatch(/roles do not include/i);
+    expect(api.issuePurchaseOrder).not.toHaveBeenCalled();
+  });
+
+  // The live grants decide, not the role defaults: both cases fail on the old role-default gate.
+  it('issues for a role an admin granted procurement.po.issue, whatever its defaults', async () => {
+    session.roles = ['warehouse'];
+    grants.live = new Map([['procurement.po.issue', 'own']]);
+    api.issuePurchaseOrder.mockResolvedValue({ ...currentOrder, number: 'PO-1' });
+    expect((await issueAction(prev, form(base))).done).toMatch(/issued/i);
+    expect(api.issuePurchaseOrder).toHaveBeenCalledOnce();
+  });
+
+  it('refuses Procurement whose procurement.po.issue an admin removed, before any API call', async () => {
+    grants.live = new Map([['procurement.pr.read', 'all']]);
+    expect((await issueAction(prev, form(base))).error).toMatch(/roles do not include/i);
     expect(api.issuePurchaseOrder).not.toHaveBeenCalled();
   });
 

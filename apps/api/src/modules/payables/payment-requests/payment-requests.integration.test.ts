@@ -7,7 +7,8 @@
 // the request context and authz.assert (the real pure can()).
 // Covers: a line above the open amount is refused; an unverified bank account is 409 (check 14); Finance only for
 // PO-matched bills, the bands otherwise (AD5); SoD excludes the requester, the bill enterer and the bill approvers
-// (check 4); approved is terminal and posts nothing; two submits on one item serialize; the entity wall (404).
+// (check 4); approved is terminal and posts nothing; two submits on one item serialize; the entity wall (404); an
+// `own` or `department` grant reaches only the caller's own requests (404 for another person's).
 // Run: pnpm --filter @bos/api exec vitest run src/modules/payables/payment-requests/payment-requests.integration.test.ts
 import 'reflect-metadata';
 
@@ -702,6 +703,57 @@ describe('entity wall', () => {
     );
     expect(foreign.getStatus()).toBe(404);
     expect((await service.list(PAGE)).rows).toEqual([]);
+  });
+});
+
+// ---------------------------------------------------------------------------------------- reach (U20a)
+
+describe('a narrow grant (U20a phase 2)', () => {
+  /** Accountant's defaults plus payables.payment.request at `scope`, as an admin would save it. */
+  const requestGrant = (scope: Scope) => {
+    const grants = grantsOf('accountant');
+    grants.set('payables.payment.request', scope);
+    return grants;
+  };
+
+  it("reaches only the caller's own requests on `own` and `department`: another person's is a 404 and not listed", async () => {
+    const v = await vendor();
+    const bill = await approvedBill(v);
+    const theirs = await draft(v, [{ openItemId: bill.openItemId, amount: '100.00' }]);
+
+    as(U.acct, 'accountant');
+    current.grants = requestGrant('own');
+    const mine = await service.create(
+      body(v, [{ openItemId: bill.openItemId, amount: '50.00' }]),
+      randomUUID(),
+    );
+    expect(mine.requestedBy).toBe(U.acct);
+    const listed = await service.list(PAGE);
+    expect(listed.rows.map((r) => r.id)).toContain(mine.id);
+    expect(listed.rows.map((r) => r.id)).not.toContain(theirs.id);
+    expect(listed.total).toBe(listed.rows.length);
+    expect((await service.get(mine.id)).id).toBe(mine.id);
+    expect((await httpErrorOf(service.get(theirs.id))).getStatus()).toBe(404);
+    expect((await httpErrorOf(service.submit(theirs.id, randomUUID()))).getStatus()).toBe(404);
+    expect(
+      (await httpErrorOf(service.cancel(theirs.id, { reason: 'x' }, randomUUID()))).getStatus(),
+    ).toBe(404);
+    expect((await requestRow(theirs.id)).status).toBe('draft');
+
+    // Requests carry no department, so a department grant reaches the same requests as `own`.
+    current.grants = requestGrant('department');
+    expect((await service.list(PAGE)).rows.map((r) => r.id)).not.toContain(theirs.id);
+    expect((await httpErrorOf(service.get(theirs.id))).getStatus()).toBe(404);
+    const cancelled = await service.cancel(mine.id, { reason: 'Mine to cancel' }, randomUUID());
+    expect(cancelled.status).toBe('cancelled');
+
+    // Finance's default `all` still reaches both.
+    as(U.fin, 'finance');
+    current.grants = undefined;
+    expect((await service.list(PAGE)).rows.map((r) => r.id)).toEqual(
+      expect.arrayContaining([mine.id, theirs.id]),
+    );
+    expect((await service.get(theirs.id)).id).toBe(theirs.id);
   });
 });
 

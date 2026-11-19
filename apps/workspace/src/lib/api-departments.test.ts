@@ -13,7 +13,6 @@ import {
   mapDepartmentWriteError,
   renameDepartment,
   retireDepartment,
-  saveDepartmentPeople,
 } from './api-departments';
 import { __resetEnvForTests } from './env';
 import type { Session } from './session';
@@ -229,21 +228,6 @@ describe('departments writes', () => {
     await retireDepartment(session, DEPT_A, { expectedVersion: 3, moveMembersTo: DEPT_B });
     expect(lastCall().body).toEqual({ expectedVersion: 3, moveMembersTo: DEPT_B });
     expect(lastCall().url.pathname).toBe(`/v1/admin/departments/${DEPT_A}/retire`);
-  });
-
-  it('saves people changes against the access revision with a boolean acknowledgement', async () => {
-    fetchMock.mockResolvedValueOnce(json({ ...detail, revision: '13', applied: [] }));
-    const changes = [{ kind: 'head' as const, departmentId: DEPT_A, userId: USER_B }];
-    const out = await saveDepartmentPeople(session, DEPT_A, {
-      changes,
-      expectedRevision: '12',
-      note: '  ',
-      acknowledged: true,
-    });
-    expect(out.revision).toBe('13');
-    const call = lastCall();
-    expect(call.url.pathname).toBe(`/v1/admin/departments/${DEPT_A}/people`);
-    expect(call.body).toEqual({ changes, expectedRevision: '12', acknowledged: true });
   });
 });
 

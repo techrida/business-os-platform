@@ -205,3 +205,44 @@ it('says so when there are none, and names the filters that match none', async (
   expect(html).toContain('No payment requests match.');
   expect(html).toContain('Clear filters');
 });
+
+// The pages read the live grants (GET /v1/me), not the role defaults. Accountant holds no payment request grant by
+// default and Finance does, so both cases fail on the old role-default gate.
+it('opens the list and the entry for a role an admin granted payment requests at own scope', async () => {
+  session.roles = ['accountant'];
+  grants.live = new Map([['payables.payment.request', 'own']]);
+  expect(await listOf()).toContain('PAY-2083-0001');
+  expect(api.listPaymentRequestsPage).toHaveBeenCalledOnce();
+  const entry = renderToStaticMarkup(await NewPage());
+  expect(entry).not.toContain('Your roles do not include payment requests.');
+  expect(entry).toContain('name="vendorPartyId"');
+  expect(api.listPaymentRequestItems).toHaveBeenCalledOnce();
+});
+
+it('refuses Finance whose payment request grant an admin removed, before loading any data', async () => {
+  grants.live = new Map([['payables.bill.read', 'all']]);
+  expect(await listOf()).toContain('Your roles do not include payment requests.');
+  expect(await listOf()).not.toContain('/payables/payment-requests/new');
+  expect(renderToStaticMarkup(await NewPage())).toContain(
+    'Your roles do not include payment requests.',
+  );
+  expect(api.listPaymentRequestsPage).not.toHaveBeenCalled();
+  expect(api.listPaymentRequestItems).not.toHaveBeenCalled();
+  expect(currencies.loadEnabledCurrencies).not.toHaveBeenCalled();
+});
+
+it('links a bill only when the live grants hold payables.bill.read', async () => {
+  // Finance holds payables.bill.read by default; here an admin took it away.
+  grants.live = new Map([['payables.payment.request', 'own']]);
+  const without = renderToStaticMarkup(await DetailPage({ params: Promise.resolve({ id }) }));
+  expect(without).toContain('BILL-1');
+  expect(without).not.toContain(`/payables/bills/${id}`);
+  // Procurement holds neither by default; an admin granted both.
+  session.roles = ['procurement'];
+  grants.live = new Map([
+    ['payables.payment.request', 'own'],
+    ['payables.bill.read', 'own'],
+  ]);
+  const withRead = renderToStaticMarkup(await DetailPage({ params: Promise.resolve({ id }) }));
+  expect(withRead).toContain(`/payables/bills/${id}`);
+});

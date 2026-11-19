@@ -18,7 +18,6 @@ import {
   type RoleKey,
   type Scope,
   UnassignedPeopleResponseSchema,
-  UpdateDepartmentPeopleResponseSchema,
 } from '@bos/contracts';
 import {
   createStaffUser,
@@ -332,15 +331,36 @@ describe('Route metadata and permission enforcement', () => {
     for (const readRoute of [proto.list, proto.listUnassigned, proto.getById]) {
       expect(reflector.get(ANY_AUTHENTICATED_KEY, readRoute)).toBe(true);
     }
-    for (const writeRoute of [
-      proto.create,
-      proto.rename,
-      proto.retire,
-      proto.restore,
-      proto.updatePeople,
-    ]) {
+    for (const writeRoute of [proto.create, proto.rename, proto.retire, proto.restore]) {
       expect(reflector.get(CAN_KEY, writeRoute)).toBe('admin.roles.write');
     }
+  });
+
+  // People changes are saved only through the access save, which re-checks every warning (W6 included). The
+  // department's own people route skipped them, so it is gone, not merely unused.
+  it('has no people route of its own', async () => {
+    expect('updatePeople' in DepartmentsAdminController.prototype).toBe(false);
+    const created = await request(baseUrl)
+      .post('/v1/admin/departments')
+      .send({ name: 'No People Route' });
+    expect(created.status, JSON.stringify(created.body)).toBe(201);
+    const dept = AdminDepartmentDetailSchema.parse(created.body);
+    const res = await request(baseUrl)
+      .post(`/v1/admin/departments/${dept.id}/people`)
+      .send({
+        changes: [{ kind: 'memberAdd', departmentId: dept.id, userId: ashaId }],
+        expectedRevision: dept.revision,
+      });
+    expect(res.status).toBe(404);
+    const after = AdminDepartmentDetailSchema.parse(
+      (await request(baseUrl).get(`/v1/admin/departments/${dept.id}`)).body,
+    );
+    expect(after.members.some((m) => m.userId === ashaId)).toBe(false);
+    expect(after.revision).toBe(dept.revision);
+    const retired = await request(baseUrl)
+      .post(`/v1/admin/departments/${dept.id}/retire`)
+      .send({ expectedVersion: dept.version });
+    expect(retired.status).toBe(200);
   });
 
   it('allows reads with admin.users.read or admin.roles.read, refuses writes for read-only callers, and refuses non-admin or portal callers', async () => {
@@ -372,16 +392,6 @@ describe('Route metadata and permission enforcement', () => {
           await request(baseUrl)
             .post(`/v1/admin/departments/${dept.id}/retire`)
             .send({ expectedVersion: dept.version })
-        ).status,
-      ).toBe(403);
-      expect(
-        (
-          await request(baseUrl)
-            .post(`/v1/admin/departments/${dept.id}/people`)
-            .send({
-              changes: [{ kind: 'memberAdd', departmentId: dept.id, userId: ashaId }],
-              expectedRevision: dept.revision,
-            })
         ).status,
       ).toBe(403);
     }
@@ -643,186 +653,6 @@ describe('Department lifecycle: create, duplicate name, list, search, rename, re
   });
 });
 
-describe('Department people mutations, head switching, stale_access 409, and audit', () => {
-  it('applies member add/move/remove/level/jobTitle/head changes, enforces stale_access, invalidates after commit, and writes audit entries', async () => {
-    const deptA = AdminDepartmentDetailSchema.parse(
-      (
-        await request(baseUrl)
-          .post('/v1/admin/departments')
-          .send({ name: 'Product Engineering', headUserId: bikashId })
-      ).body,
-    );
-    const deptB = AdminDepartmentDetailSchema.parse(
-      (
-        await request(baseUrl)
-          .post('/v1/admin/departments')
-          .send({ name: 'Customer Success', headUserId: nishaId })
-      ).body,
-    );
-
-    // Creating deptB with a head bumped the shared entity access revision; re-read deptA to get it.
-    const deptAFresh = AdminDepartmentDetailSchema.parse(
-      (await request(baseUrl).get(`/v1/admin/departments/${deptA.id}`)).body,
-    );
-    expect(deptAFresh.revision).toBe(deptB.revision);
-
-    // 1. Add unassigned Dipak with jobTitle, verify invalidate runs AFTER commit.
-    let committedVisibleDuringInvalidate = false;
-    invalidateSpy.mockImplementationOnce(async () => {
-      const check = await ownerPool.query<{ department_id: string | null }>(
-        'SELECT department_id FROM app.user_entities WHERE tenant_id = $1 AND organization_id = $2 AND user_id = $3',
-        [scope1A.tenantId, scope1A.organizationId, dipakId],
-      );
-      committedVisibleDuringInvalidate = check.rows[0]?.department_id === deptA.id;
-    });
-
-    const addRes = await request(baseUrl)
-      .post(`/v1/admin/departments/${deptA.id}/people`)
-      .send({
-        changes: [
-          {
-            kind: 'memberAdd',
-            departmentId: deptA.id,
-            userId: dipakId,
-            jobTitle: 'Senior Engineer',
-          },
-        ],
-        expectedRevision: deptAFresh.revision,
-        note: 'Joining Product Engineering',
-      });
-    expect(addRes.status, JSON.stringify(addRes.body)).toBe(200);
-    const afterAdd = UpdateDepartmentPeopleResponseSchema.parse(addRes.body);
-    expect(committedVisibleDuringInvalidate).toBe(true);
-    expect(afterAdd.revision).toBe(String(Number(deptAFresh.revision) + 1));
-    expect(afterAdd.members.find((m) => m.userId === dipakId)).toMatchObject({
-      jobTitle: 'Senior Engineer',
-      level: 'staff',
-    });
-
-    // 2. Stale expectedRevision -> 409 with code `stale_access`, no DB mutation.
-    const staleRes = await request(baseUrl)
-      .post(`/v1/admin/departments/${deptA.id}/people`)
-      .send({
-        changes: [
-          {
-            kind: 'memberJobTitle',
-            departmentId: deptA.id,
-            userId: dipakId,
-            jobTitle: 'Should Not Apply',
-          },
-        ],
-        expectedRevision: deptAFresh.revision,
-      });
-    expect(staleRes.status).toBe(409);
-    expect(errorOf(staleRes.body).code).toBe('stale_access');
-
-    // 3. Switch head by promoting Dipak via `memberLevel: 'head'` -> Bikash becomes manager.
-    const switchHeadRes = await request(baseUrl)
-      .post(`/v1/admin/departments/${deptA.id}/people`)
-      .send({
-        changes: [{ kind: 'memberLevel', departmentId: deptA.id, userId: dipakId, level: 'head' }],
-        expectedRevision: afterAdd.revision,
-      });
-    expect(switchHeadRes.status, JSON.stringify(switchHeadRes.body)).toBe(200);
-    const afterSwitch = UpdateDepartmentPeopleResponseSchema.parse(switchHeadRes.body);
-    expect(afterSwitch.head).toEqual({ id: dipakId, name: 'Dipak Shrestha' });
-    expect(afterSwitch.members.find((m) => m.userId === bikashId)?.level).toBe('manager');
-    expect(afterSwitch.managers).toBe(1);
-    expect(
-      afterSwitch.applied.some(
-        (e) => e.kind === 'headDemoted' && e.alsoChanges && e.userId === bikashId,
-      ),
-    ).toBe(true);
-
-    // 4. Switch head back via `head`, then clear head via `head: null`, and edit job title.
-    const headBackRes = await request(baseUrl)
-      .post(`/v1/admin/departments/${deptA.id}/people`)
-      .send({
-        changes: [
-          { kind: 'head', departmentId: deptA.id, userId: bikashId },
-          {
-            kind: 'memberJobTitle',
-            departmentId: deptA.id,
-            userId: dipakId,
-            jobTitle: 'Staff Eng',
-          },
-        ],
-        expectedRevision: afterSwitch.revision,
-      });
-    expect(headBackRes.status).toBe(200);
-    const afterHeadBack = UpdateDepartmentPeopleResponseSchema.parse(headBackRes.body);
-    expect(afterHeadBack.head).toEqual({ id: bikashId, name: 'Bikash Rai' });
-    expect(afterHeadBack.members.find((m) => m.userId === dipakId)).toMatchObject({
-      level: 'manager',
-      jobTitle: 'Staff Eng',
-    });
-
-    const clearHeadRes = await request(baseUrl)
-      .post(`/v1/admin/departments/${deptA.id}/people`)
-      .send({
-        changes: [{ kind: 'head', departmentId: deptA.id, userId: null }],
-        expectedRevision: afterHeadBack.revision,
-      });
-    expect(clearHeadRes.status).toBe(200);
-    const afterClear = UpdateDepartmentPeopleResponseSchema.parse(clearHeadRes.body);
-    expect(afterClear.head).toBeNull();
-    expect(afterClear.members.find((m) => m.userId === bikashId)?.level).toBe('manager');
-
-    // 5. Move Nisha (head of deptB) into deptA via `memberMove`, and remove Bikash from deptA.
-    const moveAndRemoveRes = await request(baseUrl)
-      .post(`/v1/admin/departments/${deptA.id}/people`)
-      .send({
-        changes: [
-          {
-            kind: 'memberMove',
-            userId: nishaId,
-            fromDepartmentId: deptB.id,
-            toDepartmentId: deptA.id,
-          },
-          { kind: 'memberRemove', departmentId: deptA.id, userId: bikashId },
-        ],
-        expectedRevision: afterClear.revision,
-      });
-    expect(moveAndRemoveRes.status, JSON.stringify(moveAndRemoveRes.body)).toBe(200);
-    const afterMoveRemove = UpdateDepartmentPeopleResponseSchema.parse(moveAndRemoveRes.body);
-    expect(afterMoveRemove.members.find((m) => m.userId === nishaId)?.level).toBe('manager');
-    expect(afterMoveRemove.members.some((m) => m.userId === bikashId)).toBe(false);
-
-    const deptBAfter = AdminDepartmentDetailSchema.parse(
-      (await request(baseUrl).get(`/v1/admin/departments/${deptB.id}`)).body,
-    );
-    expect(deptBAfter.head).toBeNull();
-    expect(deptBAfter.memberCount).toBe(0);
-
-    // 6. User from another legal entity is refused with 422, and revision is NOT bumped.
-    const badMemberRes = await request(baseUrl)
-      .post(`/v1/admin/departments/${deptA.id}/people`)
-      .send({
-        changes: [{ kind: 'memberAdd', departmentId: deptA.id, userId: entity1BUserId }],
-        expectedRevision: afterMoveRemove.revision,
-      });
-    expect(badMemberRes.status).toBe(422);
-    const deptAAfterFail = AdminDepartmentDetailSchema.parse(
-      (await request(baseUrl).get(`/v1/admin/departments/${deptA.id}`)).body,
-    );
-    expect(deptAAfterFail.revision).toBe(afterMoveRemove.revision);
-
-    // 7. Verify all expected domain audit actions were recorded on deptA.
-    const actions = (await auditEventsOf(scope1A, deptA.id)).map((e) => e.action);
-    expect(actions).toEqual(
-      expect.arrayContaining([
-        'department.created',
-        'department.member.added',
-        'department.member.level_changed',
-        'department.head.changed',
-        'department.member.job_title_changed',
-        'department.member.moved',
-        'department.member.removed',
-      ]),
-    );
-  });
-});
-
 describe('Tenant and legal entity isolation', () => {
   it('returns 404 across legal entities of the same tenant and across tenants, and never leaks lists', async () => {
     const dept1A = AdminDepartmentDetailSchema.parse(
@@ -845,16 +675,6 @@ describe('Tenant and legal entity isolation', () => {
         await request(baseUrl)
           .post(`/v1/admin/departments/${dept1A.id}/retire`)
           .send({ expectedVersion: dept1A.version })
-      ).status,
-    ).toBe(404);
-    expect(
-      (
-        await request(baseUrl)
-          .post(`/v1/admin/departments/${dept1A.id}/people`)
-          .send({
-            changes: [{ kind: 'head', departmentId: dept1A.id, userId: null }],
-            expectedRevision: '0',
-          })
       ).status,
     ).toBe(404);
 

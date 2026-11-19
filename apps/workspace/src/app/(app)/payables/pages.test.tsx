@@ -367,6 +367,43 @@ describe('bill detail', () => {
     expect(out).toContain('INV-001');
   });
 
+  // The live grants decide, not the role defaults: each case below fails on the old role-default gate.
+  it('offers bill actions and the order link to a role an admin granted them, whatever its defaults', async () => {
+    session.roles = ['finance'];
+    grants.live = new Map([
+      ['payables.bill.read', 'own'],
+      ['payables.bill.enter', 'own'],
+      ['procurement.po.issue', 'own'],
+    ]);
+    api.getBill.mockResolvedValue({
+      ...header,
+      status: 'matching',
+      matchStatus: 'matched',
+      lines: [line],
+    });
+    const out = await html(BillPage({ params: Promise.resolve({ id: BILL }) }));
+    expect(out).toContain('Submit for approval');
+    expect(out).toContain(`/procurement/orders/${PO}`);
+  });
+
+  it('hides bill actions from an accountant whose payables.bill.enter an admin removed', async () => {
+    grants.live = new Map([['payables.bill.read', 'all']]);
+    api.getBill.mockResolvedValue({ ...header, status: 'draft', lines: [line] });
+    const draft = await html(BillPage({ params: Promise.resolve({ id: BILL }) }));
+    expect(draft).toContain('INV-001');
+    expect(draft).not.toContain('Discard draft');
+    api.getBill.mockResolvedValue({
+      ...header,
+      status: 'approved',
+      matchStatus: 'matched',
+      approvalRequestId: SUB,
+      lines: [line],
+    });
+    expect(await html(BillPage({ params: Promise.resolve({ id: BILL }) }))).not.toContain(
+      'Void bill',
+    );
+  });
+
   it('answers not found for an id that is not a GUID without calling the API, and for a 404', async () => {
     await expect(BillPage({ params: Promise.resolve({ id: '../x' }) })).rejects.toThrow(
       'NOT_FOUND',

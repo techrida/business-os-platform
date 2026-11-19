@@ -8,7 +8,6 @@ import PaymentRequestPage from './page';
 
 vi.mock('server-only', () => ({}));
 vi.mock('@/lib/bff', () => ({ requireStaffSession: vi.fn().mockResolvedValue({ roles: [] }) }));
-vi.mock('@/components/p2/customers/permissions', () => ({ hasPermission: () => true }));
 // The caller's live grants (GET /v1/me); a test replaces them for an edited role.
 const grants = vi.hoisted(() => ({
   live: new Map<string, string>([['payables.payment.request', 'all']]),

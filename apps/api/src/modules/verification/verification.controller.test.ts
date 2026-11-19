@@ -76,6 +76,15 @@ describe('route policy', () => {
       expect(Reflect.getMetadata(CAN_KEY, proto[method]!), method).toBeUndefined();
     }
   });
+
+  // Detaching a checklist file and removing a loose file exist only on customer document-review cases (a vendor
+  // case has no case files), so customer.write is the right route permission, not a dead end for vendor writers.
+  it('names customer.write on the two customer-only file routes', () => {
+    for (const method of ['detachItem', 'removeLooseDocument']) {
+      expect(Reflect.getMetadata(CAN_KEY, proto[method]!), method).toBe('customer.write');
+      expect(Reflect.getMetadata(ANY_AUTHENTICATED_KEY, proto[method]!), method).toBeUndefined();
+    }
+  });
 });
 
 describe('POST /v1/verification-cases', () => {

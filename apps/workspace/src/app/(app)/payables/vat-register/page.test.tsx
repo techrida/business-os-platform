@@ -9,6 +9,23 @@ const session = vi.hoisted(() => ({ roles: ['accountant'] as string[] }));
 const api = vi.hoisted(() => ({ getVatRegister: vi.fn() }));
 const guard = vi.hoisted(() => ({ requireStaffSession: vi.fn() }));
 vi.mock('@/lib/bff', () => guard);
+// GET /v1/me for an unedited role answers the role's default grants; a test sets `live` for an edited one.
+const grants = vi.hoisted(() => ({ live: undefined as Map<string, string> | undefined }));
+vi.mock('@/lib/grants', async () => {
+  const { DEFAULT_ROLE_PERMISSIONS } = await import('@bos/contracts');
+  return {
+    getGrants: (s: { roles: string[] }) =>
+      Promise.resolve(
+        grants.live ??
+          new Map(
+            s.roles.flatMap((r) =>
+              Object.entries(DEFAULT_ROLE_PERMISSIONS[r as keyof typeof DEFAULT_ROLE_PERMISSIONS]),
+            ),
+          ),
+      ),
+    hasGrant: (g: Map<string, string>, p: string) => g.has(p),
+  };
+});
 vi.mock('@/lib/api-payables', async (importOriginal) => ({
   ...(await importOriginal<typeof import('@/lib/api-payables')>()),
   ...api,
@@ -41,6 +58,7 @@ const render = async (params: { from?: string | string[]; to?: string | string[]
 
 beforeEach(() => {
   vi.clearAllMocks();
+  grants.live = undefined;
   session.roles = ['accountant'];
   guard.requireStaffSession.mockResolvedValue(session);
   api.getVatRegister.mockResolvedValue(register);
@@ -103,4 +121,20 @@ it('shows a failed load without an export or unrelated payment-request instructi
   expect(html).not.toContain('payment requests');
   expect(html).not.toContain('Export CSV');
   expect(html).not.toContain('INV-1');
+});
+
+// The page reads the live grants, not the role defaults (both cases fail on the old role-default gate).
+it('opens for a role an admin granted the register, whatever its defaults', async () => {
+  session.roles = ['warehouse'];
+  grants.live = new Map([['payables.vat_register.read', 'own']]);
+  const html = await render();
+  expect(html).not.toContain('Your roles do not include the purchase VAT register.');
+  expect(html).toContain('BILL-2083-0001');
+  expect(api.getVatRegister).toHaveBeenCalledOnce();
+});
+
+it('refuses an Accountant whose register grant an admin removed, before loading VAT data', async () => {
+  grants.live = new Map([['payables.bill.read', 'all']]);
+  expect(await render()).toContain('Your roles do not include the purchase VAT register.');
+  expect(api.getVatRegister).not.toHaveBeenCalled();
 });
