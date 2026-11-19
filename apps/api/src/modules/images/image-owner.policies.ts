@@ -6,8 +6,8 @@
 //   a file from a background job (the legacy-logo migrator), and no portal caller uploads here;
 // - "who may change it is who may edit the record": the company logo needs `admin.settings.write`, a customer or
 //   vendor logo the grant that edits the customer or vendor (`customer.write`, `vendor.write`);
-// - a profile picture keeps `documents.upload` against a ref whose owner is the pictured user, so scope `own` is
-//   "my own picture" and scope `all` is "anyone's picture" (see userAvatarOwnerPolicy).
+// - a profile picture needs `profile.avatar.write` against a ref whose owner is the pictured user, so scope `own`
+//   (every staff role) is "my own picture" and scope `all` (founder, user managers) is "anyone's picture".
 // ImagesModule registers them through ImageOwnerRegistrar (images.registrar.ts).
 import { IMAGE_MAX_BYTES, IMAGE_MIME, type ImageOwnerType, type Permission } from '@bos/contracts';
 import { customers, users, vendors } from '@bos/db';
@@ -19,10 +19,10 @@ import type { Db } from '../../platform/db/db.module';
 import type { Actor, TxScope } from '../../platform/db/tx';
 import type { DocumentOwnerPolicy } from '../../platform/documents/documents.ports';
 
-/** The grant that uploads each kind of image (staff path). `user_avatar` uses the documents default. */
+/** The grant that uploads each kind of image (staff path). */
 export const IMAGE_UPLOAD_PERMISSIONS = {
   entity_logo: 'admin.settings.write',
-  user_avatar: 'documents.upload',
+  user_avatar: 'profile.avatar.write',
   customer_logo: 'customer.write',
   vendor_logo: 'vendor.write',
 } as const satisfies Record<ImageOwnerType, Permission>;
@@ -81,9 +81,10 @@ export function entityLogoOwnerPolicy(): DocumentOwnerPolicy {
 
 /**
  * A user's profile picture: owner id = `app.users.id` of a user of the tenant (people are tenant-wide). The ref's
- * `ownerUserId` is that user, so with the documents default grant (`documents.upload`) scope `own` lets a user set
- * only their own picture and scope `all` (founder by default) anyone's. DocumentOwnerPolicy has one upload grant and
- * `can()` refuses on the grant before it reads the ref, so "self, or an admin-users permission" cannot be said here.
+ * `ownerUserId` is that user, so with `profile.avatar.write` scope `own` (every staff role by default, finance and
+ * accountant included, who hold no `documents.upload`) lets a user set only their own picture, and scope `all`
+ * (founder and any role holding `admin.users.invite`, migration 0053) anyone's. DocumentOwnerPolicy has one upload
+ * grant and `can()` refuses on the grant before it reads the ref, so the admin case is a scope, not a second grant.
  */
 export function userAvatarOwnerPolicy(loadUser: ImageOwnerLoader): DocumentOwnerPolicy {
   return {

@@ -155,8 +155,8 @@ describe('entity_logo', () => {
 });
 
 describe('user_avatar', () => {
-  it('uses the documents default grant against a ref owned by the pictured user', async () => {
-    expect(userAvatar.uploadPermission).toBe('documents.upload');
+  it('is uploaded with profile.avatar.write against a ref owned by the pictured user', async () => {
+    expect(userAvatar.uploadPermission).toBe('profile.avatar.write');
     expect(await userAvatar.resource(scope, SELF)).toEqual({
       tenantId: TENANT,
       organizationId: ORG,
@@ -164,13 +164,42 @@ describe('user_avatar', () => {
     });
   });
 
-  it('lets a user with documents.upload at own set only their own picture', async () => {
-    expect(await mayUpload(staff(SELF, 'sales'), userAvatar, SELF)).toBe('allowed');
-    expect(await mayUpload(staff(SELF, 'sales'), userAvatar, OTHER_USER)).toBe('out_of_scope');
+  it("lets every default staff role set its own picture and nobody else's (scope own)", async () => {
+    const staffRoles: RoleKey[] = [
+      'management',
+      'finance',
+      'accountant',
+      'sales',
+      'pmo',
+      'operations_head',
+      'procurement',
+      'warehouse',
+      'operations_officer',
+    ];
+    for (const role of staffRoles) {
+      expect(await mayUpload(staff(SELF, role), userAvatar, SELF), role).toBe('allowed');
+      expect(await mayUpload(staff(SELF, role), userAvatar, OTHER_USER), role).toBe('out_of_scope');
+    }
   });
 
-  it('lets a holder of documents.upload at all (the founder) set anyone in the tenant', async () => {
+  it('lets finance, which holds no documents.upload, set its own picture', async () => {
+    const finance = staff(SELF, 'finance');
+    expect(finance.grants.has('documents.upload')).toBe(false);
+    expect(await mayUpload(finance, userAvatar, SELF)).toBe('allowed');
+  });
+
+  it('lets a holder of profile.avatar.write at all (the founder) set anyone in the tenant', async () => {
     expect(await mayUpload(staff(SELF, 'founder'), userAvatar, OTHER_USER)).toBe('allowed');
+  });
+
+  it('no longer accepts documents.upload, even at all, and gives portal roles nothing', async () => {
+    const uploader: Principal = {
+      ...staff(SELF),
+      grants: new Map<Permission, Scope>([['documents.upload', 'all']]),
+    };
+    expect(await mayUpload(uploader, userAvatar, SELF)).toBe('no_permission');
+    expect(await mayUpload(staff(SELF, 'customer_user'), userAvatar, SELF)).toBe('no_permission');
+    expect(await mayUpload(staff(SELF, 'vendor_user'), userAvatar, SELF)).toBe('no_permission');
   });
 
   it('is null (404) for a user not in the tenant or a malformed id, and asks no database for the latter', async () => {
