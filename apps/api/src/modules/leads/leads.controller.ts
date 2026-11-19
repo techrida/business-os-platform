@@ -13,23 +13,40 @@ import {
   Patch,
   Post,
   Query,
+  Res,
 } from '@nestjs/common';
 
 import { Can } from '../../platform/authz/decorators';
+import { type HeaderTarget, setTotalCount } from '../../platform/list';
 import { parseOr400 } from '../approvals/approvals.controller';
 import { requireIdempotencyKey } from '../customers/customers.types';
 import { LeadsService } from './leads.service';
-import { ListLeadsQuerySchema } from './leads.types';
+import { LeadSummaryQuerySchema, ListLeadsQuerySchema, type LeadSummary } from './leads.types';
 
 @Controller('v1/leads')
 export class LeadsController {
   constructor(private readonly leads: LeadsService) {}
 
-  /** 200 with a bare array of LeadDto, newest first. */
+  /** 200 with a bare array of LeadDto, newest first; X-Total-Count is all matches, not just this page. */
   @Get()
   @Can('crm.lead.read')
-  list(@Query() query: unknown): Promise<LeadDto[]> {
-    return this.leads.list(parseOr400(ListLeadsQuerySchema, query));
+  async list(
+    @Query() query: unknown,
+    @Res({ passthrough: true }) res: HeaderTarget,
+  ): Promise<LeadDto[]> {
+    const { rows, total } = await this.leads.list(parseOr400(ListLeadsQuerySchema, query));
+    setTotalCount(res, total);
+    return rows;
+  }
+
+  /**
+   * 200 with the lead count per stage under the list's scope, search and filters (but no stage filter). Declared
+   * before ':id' so that "summary" is not read as an id.
+   */
+  @Get('summary')
+  @Can('crm.lead.read')
+  summary(@Query() query: unknown): Promise<LeadSummary> {
+    return this.leads.summary(parseOr400(LeadSummaryQuerySchema, query));
   }
 
   /** 200 with the LeadDto. 404 for a record of another entity or outside the caller's scope. */
