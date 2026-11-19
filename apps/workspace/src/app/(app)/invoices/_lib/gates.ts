@@ -49,6 +49,14 @@ export function invoiceGates(
 const PAYABLE: ReadonlySet<SettlementStatus> = new Set(['unpaid', 'partly_paid', 'overdue']);
 
 /**
+ * False when the Payment filter selects only settled states (paid, credited), so the rows cannot owe anything and the
+ * list offers no Record payment button. No filter, or any owing state in it, keeps the buttons.
+ */
+export function settlementMayOwe(selected: readonly string[]): boolean {
+  return selected.length === 0 || selected.some((s) => PAYABLE.has(s as SettlementStatus));
+}
+
+/**
  * Where "Record payment" leads for one invoice, or null when it is not offered. Only an issued tax invoice or debit
  * note opens an item a customer pays, and only `payment.record` (the permission the payment form checks) sees the
  * button. A payment is recorded against the customer and allocated to invoices afterwards, so the link preselects the
