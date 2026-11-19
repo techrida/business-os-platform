@@ -9,15 +9,20 @@ export type Dec = InstanceType<typeof Dec>;
 
 export type Currency = 'NPR' | 'INR' | 'USD';
 
-/** Lakh/crore grouping unless a setting says otherwise (Nepal is the home market). */
+/** One number system for the single-currency helpers; the per-currency choice is `NumberSystems`. */
 export const DEFAULT_NUMBER_SYSTEM: NumberSystem = 'south_asian';
 
-const SYMBOLS: Record<Currency, string> = { NPR: 'रू', INR: '₹', USD: '$' };
+/** How each currency groups digits and names big numbers (D30). */
+export type NumberSystems = Record<Currency, NumberSystem>;
 
-// NPR and INR use lakh/crore grouping (12,50,000). USD uses western grouping (1,250,000) because that is how USD is written.
-const grouper = (cur: Currency): Intl.NumberFormat =>
-  new Intl.NumberFormat(cur === 'USD' ? 'en-US' : 'en-IN');
-const groupers = new Map<Currency, Intl.NumberFormat>();
+/** Today's behaviour: NPR and INR write lakh/crore, USD writes thousand/million. */
+export const DEFAULT_NUMBER_SYSTEMS: NumberSystems = {
+  NPR: 'south_asian',
+  INR: 'south_asian',
+  USD: 'international',
+};
+
+const SYMBOLS: Record<Currency, string> = { NPR: 'रू', INR: '₹', USD: '$' };
 
 /**
  * Groups the digits of a non-negative integer string: south_asian `20,18,180` (3 then 2s), international `2,018,180`.
@@ -33,12 +38,12 @@ export function groupDigits(intPart: string, system: NumberSystem): string {
  * Formats a decimal string for display, e.g. `NPR 12,50,000.00`.
  * Takes a string (never a number) so no precision is lost before we round to 2 places, half up.
  * The integer part goes through BigInt, so it stays exact above 2^53.
- * `numberSystem` picks the grouping for every currency; left out, NPR/INR use lakh grouping and USD western.
+ * `numberSystems` gives each currency its grouping (D30); left out, NPR/INR use lakh grouping and USD western.
  */
 export function formatMoney(
   amount: string,
   currency: Currency,
-  opts?: { symbol?: boolean; numberSystem?: NumberSystem },
+  opts?: { symbol?: boolean; numberSystems?: NumberSystems },
 ): string {
   const value = new Dec(amount);
   if (!value.isFinite()) throw new RangeError(`Not a finite decimal: ${amount}`);
@@ -47,17 +52,10 @@ export function formatMoney(
   const negative = fixed.startsWith('-');
   const [intPart = '0', fraction = '00'] = (negative ? fixed.slice(1) : fixed).split('.');
 
-  let groupedInt: string;
-  if (opts?.numberSystem) {
-    groupedInt = groupDigits(intPart, opts.numberSystem);
-  } else {
-    let fmt = groupers.get(currency);
-    if (!fmt) {
-      fmt = grouper(currency);
-      groupers.set(currency, fmt);
-    }
-    groupedInt = fmt.format(BigInt(intPart));
-  }
+  const groupedInt = groupDigits(
+    intPart,
+    (opts?.numberSystems ?? DEFAULT_NUMBER_SYSTEMS)[currency],
+  );
   const body = `${groupedInt}.${fraction}`;
 
   // "-0.00" must display as "0.00": a rounded-away negative is not a negative amount.
