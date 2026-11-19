@@ -3,9 +3,10 @@ import { randomUUID } from 'node:crypto';
 import { expect, test, type Page } from '@playwright/test';
 
 import { signInAs } from '../helpers/memo-flow';
+import { chooseOption, selectByName } from '../helpers/select';
 
 async function moveStage(page: Page, value: string, label: string) {
-  await page.getByLabel('Move to', { exact: true }).selectOption(value);
+  await chooseOption(selectByName(page, 'stage'), value);
   if (value === 'lost') {
     await page.getByLabel('Reason', { exact: true }).fill('Customer declined');
     await page.getByLabel('Note', { exact: true }).fill('No further work planned.');
@@ -23,7 +24,7 @@ async function moveStage(page: Page, value: string, label: string) {
 async function createOpportunity(page: Page, name: string) {
   await page.goto('/leads/new');
   await page.getByRole('textbox', { name: 'Lead title', exact: true }).fill(name);
-  await page.getByRole('combobox', { name: 'Lead source', exact: true }).selectOption('referral');
+  await chooseOption(selectByName(page, 'source'), 'referral');
   await page
     .getByRole('textbox', { name: 'Company or organization', exact: true })
     .fill(`${name} Company`);

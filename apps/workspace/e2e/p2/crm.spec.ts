@@ -1,6 +1,7 @@
 import { expect, test } from '@playwright/test';
 
 import { signInAs } from '../helpers/memo-flow';
+import { chooseOption, optionLabels, selectByName } from '../helpers/select';
 
 /**
  * The CRM screens against the real stack, as the sales persona: create a lead, log a call, move
@@ -22,9 +23,7 @@ test('a salesperson creates a lead, logs a call and moves it with the Move contr
     await test.step('create a lead', async () => {
       await page.goto('/leads/new');
       await page.getByRole('textbox', { name: 'Lead title', exact: true }).fill(title);
-      await page
-        .getByRole('combobox', { name: 'Lead source', exact: true })
-        .selectOption('referral');
+      await chooseOption(selectByName(page, 'source'), 'referral');
       await page
         .getByRole('textbox', { name: 'Company or organization', exact: true })
         .fill('Binford Ltd.');
@@ -53,13 +52,13 @@ test('a salesperson creates a lead, logs a call and moves it with the Move contr
     });
 
     await test.step('move to Contacted with the select, no mouse drag', async () => {
-      await page.getByLabel('Move to').selectOption('contacted');
+      await chooseOption(selectByName(page, 'stage'), 'contacted');
       await page.getByRole('button', { name: 'Move', exact: true }).click();
       await expect(page.getByText('Moved to Contacted.')).toBeVisible();
     });
 
     await test.step('Lost needs a reason and a note', async () => {
-      await page.getByLabel('Move to').selectOption('lost');
+      await chooseOption(selectByName(page, 'stage'), 'lost');
       await page.getByRole('button', { name: 'Move', exact: true }).click();
       await expect(page.getByText('Give a reason, up to 200 characters.')).toBeVisible();
       await expect(
@@ -92,9 +91,7 @@ test('opportunities never offer Won or Quotation Sent as a move', async ({ brows
       await page.goto('/leads/new');
       await page.waitForLoadState('networkidle');
       await page.getByRole('textbox', { name: 'Lead title', exact: true }).fill(title);
-      await page
-        .getByRole('combobox', { name: 'Lead source', exact: true })
-        .selectOption('referral');
+      await chooseOption(selectByName(page, 'source'), 'referral');
       await page
         .getByRole('textbox', { name: 'Company or organization', exact: true })
         .fill(`Board Test ${stamp} Pvt. Ltd.`);
@@ -104,7 +101,7 @@ test('opportunities never offer Won or Quotation Sent as a move', async ({ brows
       await page.waitForLoadState('networkidle');
 
       // A lead must be Qualified before it can be converted: New, Contacted, Qualified.
-      await page.getByLabel('Move to').selectOption('contacted');
+      await chooseOption(selectByName(page, 'stage'), 'contacted');
       await page.getByRole('button', { name: 'Move', exact: true }).click();
       await expect(page.getByText('Moved to Contacted.')).toBeVisible();
       await page.getByRole('button', { name: 'Qualify lead', exact: true }).click();
@@ -133,10 +130,14 @@ test('opportunities never offer Won or Quotation Sent as a move', async ({ brows
       );
       // The new opportunity is on the board, so at least one Move select exists to inspect.
       await expect(page.getByRole('link', { name: title })).toBeVisible();
-      const selects = page.locator('select[name="stage"]');
-      expect(await selects.count()).toBeGreaterThan(0);
-      // No Move select anywhere lists Won or Quotation Sent.
-      const options = await page.locator('select[name="stage"] option').allTextContents();
+      const selects = page.locator('input[type="hidden"][name="stage"]');
+      const count = await selects.count();
+      expect(count).toBeGreaterThan(0);
+      // No Move select anywhere lists Won or Quotation Sent. Each list is opened to read it.
+      const options: string[] = [];
+      for (let i = 0; i < count; i += 1) {
+        options.push(...(await optionLabels(selectByName(page, 'stage').nth(i))));
+      }
       expect(options.some((o) => /^(Won|Quotation Sent)/.test(o))).toBe(false);
     });
   } finally {

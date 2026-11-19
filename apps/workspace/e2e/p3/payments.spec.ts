@@ -2,6 +2,7 @@ import { expect, test } from '@playwright/test';
 
 import { signInAs, type Signed } from '../helpers/memo-flow';
 import { minimalPdf } from '../helpers/pdf-fixture';
+import { chooseOption, selectByLabel, selectByName, selectedInput } from '../helpers/select';
 
 /**
  * The P3 payments screens (list and detail), against the real stack. Not run by the unit that wrote
@@ -39,16 +40,16 @@ test('the payments list loads and its status filter keeps the choice', async ({
     });
 
     await test.step('filtering by status updates the URL and the select', async () => {
-      await finance.page.getByLabel('Status').selectOption('rejected');
+      await chooseOption(selectByName(finance.page, 'status'), 'rejected');
       await finance.page.getByRole('button', { name: 'Apply filter' }).click();
       await expect(finance.page).toHaveURL(/status=rejected/);
-      await expect(finance.page.getByLabel('Status')).toHaveValue('rejected');
+      await expect(selectedInput(selectByName(finance.page, 'status'))).toHaveValue('rejected');
       await expect(finance.page.getByRole('link', { name: 'Show all payments' })).toBeVisible();
     });
 
     await test.step('a hand-edited filter is ignored, not sent to the API', async () => {
       await finance.page.goto('/payments?status=bogus');
-      await expect(finance.page.getByLabel('Status')).toHaveValue('');
+      await expect(selectedInput(selectByName(finance.page, 'status'))).toHaveValue('');
     });
   } finally {
     await Promise.all(opened.map((s) => s.context.close()));
@@ -83,13 +84,7 @@ test('the person who recorded a payment cannot verify it', async ({ browser, bas
   try {
     const page = finance.page;
     await page.goto('/payments/new');
-    const select = page.getByLabel('Customer', { exact: true });
-    const value = await select
-      .locator('option', { hasText: customer ?? '' })
-      .first()
-      .getAttribute('value');
-    expect(value).toBeTruthy();
-    await select.selectOption(value ?? '');
+    await chooseOption(selectByLabel(page, 'Customer'), { label: customer ?? '' });
     await page.getByLabel('Amount received').fill('2.00');
     await page.getByLabel('Bank reference').fill('E2E-self-verification-' + Date.now());
     await page.getByLabel('Add proof files').setInputFiles({
