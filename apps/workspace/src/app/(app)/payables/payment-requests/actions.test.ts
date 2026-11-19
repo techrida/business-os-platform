@@ -135,4 +135,26 @@ describe('payment request actions', () => {
       key,
     );
   });
+
+  // The request's page opens on the live grants; its submit and cancel agree with it.
+  it('lets a Management approver granted payables.payment.request submit and cancel the request', async () => {
+    session.roles = ['management'];
+    grants.live = new Map([['payables.payment.request', 'all']]);
+    api.submitPaymentRequest.mockResolvedValue({ id });
+    api.cancelPaymentRequest.mockResolvedValue({ id });
+    expect((await submitPaymentRequestAction(prev, form())).done).toMatch(/approvals inbox/i);
+    expect((await cancelPaymentRequestAction(prev, form({ reason: 'Paid by cash' }))).done).toMatch(
+      /cancelled/i,
+    );
+  });
+
+  it('refuses Finance whose payables.payment.request an admin removed, before any write', async () => {
+    grants.live = new Map([['payables.bill.read', 'all']]);
+    expect((await submitPaymentRequestAction(prev, form())).error).toMatch(/roles/i);
+    expect((await cancelPaymentRequestAction(prev, form({ reason: 'x y' }))).error).toMatch(
+      /roles/i,
+    );
+    expect(api.submitPaymentRequest).not.toHaveBeenCalled();
+    expect(api.cancelPaymentRequest).not.toHaveBeenCalled();
+  });
 });
