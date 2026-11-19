@@ -7,6 +7,7 @@ import { createRequire } from 'node:module';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
+import { onCleanup } from './cleanup.mjs';
 import { netnsWanted, prepareNetns } from './netns.mjs';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
@@ -102,7 +103,12 @@ export async function launch(cfg, probeOrigins, allOrigins = probeOrigins) {
     net?.stop(); // the forwarders were started for this browser only
     throw error;
   }
-  if (net) browser.on('disconnected', () => net.stop());
+  // Ctrl-C or a kill mid-run still closes this browser (and its forwarders).
+  const unregister = onCleanup((sync) => (sync ? undefined : browser.close()));
+  browser.on('disconnected', () => {
+    unregister();
+    net?.stop();
+  });
   return browser;
 }
 

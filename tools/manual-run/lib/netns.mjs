@@ -8,6 +8,8 @@ import { execFileSync, spawn } from 'node:child_process';
 import { chmodSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 
+import { onCleanup } from './cleanup.mjs';
+
 function has(cmd) {
   try {
     execFileSync('sh', ['-c', 'command -v "$1"', 'sh', cmd], { stdio: 'ignore' });
@@ -74,20 +76,18 @@ export function prepareNetns(dir, origins, realExecutable) {
         .map((u) => Number(u.port || (u.protocol === 'https:' ? 443 : 80))),
     ),
   ];
-  const forwarders = [];
-  const inner = [];
-  for (const port of ports) {
-    const sock = path.join(dir, `app-${port}.sock`);
-    rmSync(sock, { force: true });
-    const fwd = spawn('socat', [`UNIX-LISTEN:${sock},fork,mode=0600`, `TCP:127.0.0.1:${port}`], {
-      stdio: 'ignore',
-      detached: false,
-    });
-    forwarders.push(fwd);
-    inner.push(
-      `socat TCP-LISTEN:${port},bind=127.0.0.1,fork,reuseaddr ${shq(`UNIX-CONNECT:${sock}`)} & PIDS="$PIDS $!"`,
-    );
-  }
+  const sock = (port) => path.join(dir, `app-${port}.sock`);
+  // A Unix socket path longer than ~107 bytes cannot be bound; socat would fail silently and every
+  // page load would end in ERR_CONNECTION_CLOSED.
+  for (const port of ports)
+    if (Buffer.byteLength(sock(port)) > 100)
+      throw new Error(
+        `The network socket path ${sock(port)} is too long for a Unix socket; use a shorter VIDEO_DIR or NETNS=0.`,
+      );
+  const inner = ports.map(
+    (port) =>
+      `socat TCP-LISTEN:${port},bind=127.0.0.1,fork,reuseaddr ${shq(`UNIX-CONNECT:${sock(port)}`)} & PIDS="$PIDS $!"`,
+  );
   const innerScript = path.join(dir, 'inner.sh');
   writeFileSync(
     innerScript,
@@ -109,14 +109,31 @@ export function prepareNetns(dir, origins, realExecutable) {
   writeFileSync(launcher, `#!/bin/bash\nexec unshare -Urn ${shq(innerScript)} "$@"\n`);
   chmodSync(innerScript, 0o755);
   chmodSync(launcher, 0o755);
-  // A script that crashes never closes its browser; take the forwarders down with the process.
-  process.once('exit', () => {
-    for (const f of forwarders) f.kill();
-  });
-  return {
-    executablePath: launcher,
-    stop() {
-      for (const f of forwarders) f.kill();
-    },
+
+  // The forwarders start last, so a failure above leaves nothing running. They do not keep the
+  // process alive (unref), and stop() runs on browser close, launch failure, a signal or exit.
+  const forwarders = [];
+  let unregister = () => {};
+  const stop = () => {
+    unregister();
+    for (const f of forwarders.splice(0)) if (f.exitCode === null) f.kill();
   };
+  unregister = onCleanup(stop);
+  try {
+    for (const port of ports) {
+      rmSync(sock(port), { force: true });
+      const fwd = spawn(
+        'socat',
+        [`UNIX-LISTEN:${sock(port)},fork,mode=0600`, `TCP:127.0.0.1:${port}`],
+        { stdio: 'ignore' },
+      );
+      fwd.on('error', () => {}); // reported by the browser failing to connect
+      fwd.unref();
+      forwarders.push(fwd);
+    }
+  } catch (error) {
+    stop();
+    throw error;
+  }
+  return { executablePath: launcher, stop };
 }

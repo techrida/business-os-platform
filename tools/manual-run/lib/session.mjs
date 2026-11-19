@@ -62,6 +62,23 @@ export class Session {
     this.consoleErrors = [];
   }
 
+  /**
+   * The step ran out of time. Its body may still be inside an action; from now on every Session
+   * helper refuses to act, and all network requests of this session's windows are aborted, so
+   * nothing it still does (including a raw dialog click) reaches the server while the failure is
+   * captioned, screenshotted and the context closes. The workflow ends after a failed step.
+   */
+  async abort(reason) {
+    if (this.abortReason) return;
+    this.abortReason = reason;
+    for (const c of [this.context, ...(this.windows ?? [])])
+      await c.route('**/*', (route) => route.abort('aborted')).catch(() => {});
+  }
+
+  guard() {
+    if (this.abortReason) throw new StepFailure(`Stopped: ${this.abortReason}`);
+  }
+
   watch(page) {
     const add = (kind, text) => {
       if (/React DevTools|preloaded using link preload/.test(text)) return;
@@ -136,6 +153,7 @@ export class Session {
   // ---- assertions -----------------------------------------------------------------------------
   /** Wait until the locator is visible; fail the step with a sentence a person can act on. */
   async see(locator, message, timeout = this.cfg.actionTimeout) {
+    this.guard();
     try {
       await this.recoverable(locator, timeout);
     } catch {
@@ -238,6 +256,7 @@ export class Session {
     const full = url.startsWith('http') ? url : this.cfg.appUrl + url;
     let lastError = '';
     for (let i = 1; i <= attempts; i++) {
+      this.guard();
       try {
         if (i === 1 || page.url() !== full)
           await page.goto(full, { waitUntil: 'domcontentloaded' });
@@ -274,6 +293,7 @@ export class Session {
   // ---- accounts -------------------------------------------------------------------------------
   /** One-click development sign-in through the real /dev/personas page (same context, same video). */
   async switchTo(name) {
+    this.guard();
     if (this.persona === name) return;
     await this.caption(`${this.captionText.split(' — ')[0]} — switch to ${name}`);
     const button = (p) => p.getByRole('button', { name, exact: true });
@@ -338,6 +358,7 @@ export class Session {
     const el = locator.first();
     // Five attempts: after a dev-server restart the first compile of a route can take minutes.
     for (let attempt = 0; attempt < 5; attempt++) {
+      this.guard();
       await el.waitFor({ state: 'visible', timeout: this.cfg.actionTimeout });
       const until = Date.now() + timeout;
       let state = 'unknown';
@@ -423,6 +444,7 @@ export class Session {
   }
 
   async click(locator, what) {
+    this.guard();
     await locator
       .first()
       .scrollIntoViewIfNeeded()
@@ -433,6 +455,7 @@ export class Session {
   }
 
   async fill(label, value, { exact = true } = {}) {
+    this.guard();
     const f = typeof label === 'string' ? this.field(label, { exact }) : label;
     await this.hydrated(f);
     await f.first().fill(String(value));
@@ -455,6 +478,7 @@ export class Session {
    * selects; `selectOption` would only touch a hidden input.
    */
   async choose(trigger, option, { scope = this.page, exact = true } = {}) {
+    this.guard();
     if (typeof trigger === 'string' && (await this.select(trigger, { scope }).count()) === 0) {
       // A native <select>: pick the option whose text matches.
       const native = scope.getByLabel(trigger, { exact }).first();
@@ -494,6 +518,7 @@ export class Session {
    * whose own name line is exactly `name` (a prefix match would pick "Dev Finance Two" for "Dev Finance").
    */
   async typeahead(box, name, { scope = this.page } = {}) {
+    this.guard();
     const el = (
       typeof box === 'string' ? scope.getByRole('combobox', { name: box, exact: true }) : box
     ).first();
@@ -511,6 +536,7 @@ export class Session {
 
   /** A button that opens the native file chooser (headless-safe). */
   async chooseFile(buttonLocator, file) {
+    this.guard();
     await this.hydrated(buttonLocator);
     const [chooser] = await Promise.all([
       buttonLocator.page().waitForEvent('filechooser', { timeout: 20000 }),
@@ -521,6 +547,7 @@ export class Session {
 
   /** Click and capture a download; returns { path, bytes, name }. */
   async download(locator, saveDir) {
+    this.guard();
     await this.hydrated(locator);
     const [d] = await Promise.all([
       locator.page().waitForEvent('download', { timeout: 90000 }),

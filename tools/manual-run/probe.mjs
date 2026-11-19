@@ -71,6 +71,11 @@ try {
         (await session.page.locator('body').innerText()).slice(0, Number(args.max ?? 6000)),
     );
   if (args.shot) await session.page.screenshot({ path: String(args.shot), fullPage: true });
+} catch (error) {
+  console.error(`probe: ${error.message.split('\n')[0]}`);
+  process.exitCode = 1;
 } finally {
   await browser.close();
 }
+// Nothing else may keep the process alive (forwarders are unref'd, but say it plainly).
+process.exit(process.exitCode ?? 0);

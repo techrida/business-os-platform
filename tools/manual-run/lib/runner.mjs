@@ -17,6 +17,7 @@ import {
 } from './store.mjs';
 
 const now = () => new Date().toISOString();
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 export function origins(cfg) {
   return [cfg.appUrl, cfg.portalUrl, cfg.mailUrl, cfg.authUrl];
@@ -134,13 +135,17 @@ export async function runWorkflow(cfg, workflow, opts = {}) {
       try {
         await session.caption(`${step.id} — ${step.title}`);
         const limit = step.timeoutMs ?? cfg.stepTimeout;
-        await withTimeout(
-          step.run(session),
-          limit,
-          `${step.id} did not finish within ${limit / 1000} s`,
-        );
+        const message = `${step.id} did not finish within ${limit / 1000} s`;
+        const body = step.run(session);
+        await withTimeout(body, limit, message, async () => {
+          // Cancel the step, then give its current action a moment to fail before the screenshot.
+          await session.abort(message);
+          await Promise.race([body.catch(() => {}), sleep(10000)]);
+        });
         await session.pause();
-      } catch (error) {
+      } catch (thrown) {
+        // After a timeout the body's own error (an aborted request) is a consequence, not the cause.
+        const error = session.abortReason ? new StepFailure(session.abortReason) : thrown;
         entry.status = 'FAIL';
         entry.error = redactText(
           (error instanceof StepFailure ? '' : 'Error: ') +
@@ -220,12 +225,17 @@ export async function runWorkflow(cfg, workflow, opts = {}) {
   return saveResults(cfg, result, earlier);
 }
 
-function withTimeout(promise, ms, message) {
+export function withTimeout(promise, ms, message, onTimeout = () => {}) {
   let timer;
   return Promise.race([
     promise.finally(() => clearTimeout(timer)),
     new Promise((_, reject) => {
-      timer = setTimeout(() => reject(new StepFailure(message)), ms);
+      timer = setTimeout(() => {
+        Promise.resolve()
+          .then(onTimeout)
+          .catch(() => {})
+          .finally(() => reject(new StepFailure(message)));
+      }, ms);
     }),
   ]);
 }
