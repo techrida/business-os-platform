@@ -1,0 +1,132 @@
+/* Access > Check a person. Tokens only. The report is a table from 768px and one card per area
+   below it; only one of the two is ever displayed. Nothing here may scroll the page sideways at
+   390px. */
+
+.check {
+  display: grid;
+  gap: 16px;
+  min-width: 0;
+}
+
+.picker {
+  max-width: 480px;
+}
+
+.header {
+  margin: 0;
+  font-size: var(--font-size-body);
+  font-weight: var(--font-weight-semibold);
+  line-height: var(--line-height-body);
+  overflow-wrap: anywhere;
+}
+
+.table {
+  display: none;
+}
+
+.cards {
+  display: grid;
+  gap: 12px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+@media (min-width: 768px) {
+  .table {
+    display: block;
+  }
+
+  .cards {
+    display: none;
+  }
+}
+
+.reach {
+  display: grid;
+  gap: 2px;
+}
+
+.count,
+.was {
+  color: var(--text-secondary);
+  font-size: var(--font-size-caption);
+  line-height: var(--line-height-caption);
+}
+
+.why {
+  display: grid;
+  gap: 2px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.names {
+  display: grid;
+  gap: 2px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  font-size: var(--font-size-body-small);
+  line-height: var(--line-height-body-small);
+}
+
+.muted {
+  color: var(--text-secondary);
+}
+
+.change {
+  color: var(--text-link);
+  white-space: nowrap;
+}
+
+/* ---- cards (under 768px) ---------------------------------------------------------------------- */
+
+.card {
+  display: grid;
+  gap: 12px;
+  padding: 16px;
+  border: var(--border-width-thin) solid var(--border-default);
+  border-radius: var(--radius-xl);
+  background: var(--surface-default);
+}
+
+.cardTitle {
+  margin: 0;
+  font-size: var(--font-size-body);
+  font-weight: var(--font-weight-semibold);
+  line-height: var(--line-height-body);
+}
+
+.facts {
+  display: grid;
+  gap: 8px;
+  margin: 0;
+}
+
+.fact {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+}
+
+.fact dt {
+  color: var(--text-secondary);
+  font-size: var(--font-size-caption);
+  line-height: var(--line-height-caption);
+}
+
+.fact dd {
+  margin: 0;
+  font-size: var(--font-size-body-small);
+  line-height: var(--line-height-body-small);
+  overflow-wrap: anywhere;
+}
+
+.cardChange {
+  display: inline-flex;
+  align-items: center;
+  min-height: 44px;
+  color: var(--text-link);
+}
