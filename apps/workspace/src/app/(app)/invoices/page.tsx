@@ -1,4 +1,14 @@
-import type { InvoiceListItem } from '@bos/contracts';
+import {
+  DEFAULT_ROWS,
+  INVOICE_KINDS,
+  INVOICE_STATUSES,
+  type InvoiceKind,
+  type InvoiceListItem,
+  type InvoiceStatus,
+  pageWindow,
+  ROWS_OPTIONS,
+  SETTLEMENT_STATUSES,
+} from '@bos/contracts';
 import type { Metadata } from 'next';
 import Link from 'next/link';
 import type { NumberSystem } from '@bos/locale';
@@ -6,39 +16,39 @@ import type { NumberSystem } from '@bos/locale';
 import { hasPermission } from '@/components/p2/customers/permissions';
 import { Alert } from '@/components/ui/alert';
 import { Badge } from '@/components/ui/badge';
-import { Button, LinkButton } from '@/components/ui/button';
+import { LinkButton } from '@/components/ui/button';
 import { EmptyState } from '@/components/ui/empty-state';
-import { Field, Select } from '@/components/ui/field';
+import { ResultCount } from '@/components/ui/filter-bar';
 import { Icon } from '@/components/ui/icon';
 import { Page, PageHeader } from '@/components/ui/page';
-import { Pagination } from '@/components/ui/pagination';
-import { SearchInput } from '@/components/ui/search-input';
 import { StatCard } from '@/components/ui/stat-card';
 import { Table, Td, Th } from '@/components/ui/table';
-import { listInvoices, type InvoiceFilter } from '@/lib/api-billing';
+import {
+  getInvoicesSummary,
+  type InvoicePageFilter,
+  type InvoicesSummary,
+  listInvoicesPage,
+} from '@/lib/api-billing';
 import { failureOf } from '@/lib/api-kernel';
 import { requireStaffSession } from '@/lib/bff';
 import { getNumberSystem } from '@/lib/display-settings';
 import { money, when } from '@/lib/kernel-format';
+import {
+  activeFilterLabels,
+  clearFiltersHref,
+  hrefWith,
+  type RawParams,
+  readList,
+} from '@/lib/list-params';
 
+import { InvoiceFilters } from './_components/invoice-filters';
 import { InvoiceStatusBadge } from './_components/badges';
 import styles from './_components/invoice.module.css';
-import {
-  KIND_FILTER_OPTIONS,
-  kindMeta,
-  parseKindFilter,
-  parseStatusFilter,
-  STATUS_FILTER_OPTIONS,
-  statusMeta,
-} from './_lib/meta';
+import { ListPager } from './_components/list-pager';
+import { kindMeta, settlementLabel, statusMeta } from './_lib/meta';
 
 export const metadata: Metadata = { title: 'Invoices · Business OS' };
 export const dynamic = 'force-dynamic';
-
-const CUSTOMER_ID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-const SIZES = [5, 10, 25] as const;
-const stringParam = (value: string | string[] | undefined) =>
-  typeof value === 'string' ? value : '';
 
 function InvoiceRow({ item, numberSystem }: { item: InvoiceListItem; numberSystem: NumberSystem }) {
   const kind = kindMeta(item.kind).label;
@@ -86,109 +96,96 @@ function InvoiceRow({ item, numberSystem }: { item: InvoiceListItem; numberSyste
   );
 }
 
-function InvoiceStats({ invoices }: { invoices: readonly InvoiceListItem[] }) {
+function InvoiceStats({ summary }: { summary: InvoicesSummary }) {
   return (
     <section aria-label="Invoice summary" className={styles.stats}>
-      <StatCard label="Total invoices" value={invoices.length} icon="receipt" />
-      <StatCard
-        label="Drafts"
-        value={invoices.filter((item) => item.status === 'draft').length}
-        icon="file-text"
-        tone="neutral"
-      />
+      <StatCard label="Total invoices" value={summary.total} icon="receipt" />
+      <StatCard label="Drafts" value={summary.byStatus.draft} icon="file-text" tone="neutral" />
       <StatCard
         label="Pending approval"
-        value={invoices.filter((item) => item.status === 'submitted').length}
+        value={summary.byStatus.submitted}
         icon="inbox"
         tone="warning"
       />
-      <StatCard
-        label="Issued"
-        value={invoices.filter((item) => item.status === 'issued').length}
-        icon="check-circle"
-        tone="success"
-      />
+      <StatCard label="Issued" value={summary.byStatus.issued} icon="check-circle" tone="success" />
     </section>
   );
 }
 
-type SearchParams = Record<
-  'kind' | 'status' | 'customerId' | 'q' | 'page' | 'rows',
-  string | string[] | undefined
->;
+const GUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+const DAY = /^\d{4}-\d{2}-\d{2}$/;
 
-function invoiceUrl(params: URLSearchParams) {
-  return params.size > 0 ? `/invoices?${params}` : '/invoices';
-}
+/** What the URL may carry. `readList` drops anything else, and a repeated param is several values. */
+const LIST = {
+  multi: {
+    status: INVOICE_STATUSES,
+    kind: INVOICE_KINDS,
+    settlement: SETTLEMENT_STATUSES,
+    customerId: GUID,
+  },
+  single: { issuedFrom: DAY, issuedTo: DAY },
+  rows: { allowed: ROWS_OPTIONS, default: DEFAULT_ROWS },
+} as const;
 
-export default async function InvoicesPage({
-  searchParams,
-}: {
-  searchParams: Promise<Partial<SearchParams>>;
-}) {
+export default async function InvoicesPage({ searchParams }: { searchParams: Promise<RawParams> }) {
   const raw = await searchParams;
-  const kind = parseKindFilter(raw.kind);
-  const status = parseStatusFilter(raw.status);
-  const candidate = stringParam(raw.customerId);
-  const customerId = CUSTOMER_ID.test(candidate) ? candidate : '';
-  const q = stringParam(raw.q).trim().slice(0, 100);
-  const rows = SIZES.find((size) => size.toString() === raw.rows) ?? SIZES[0];
-  const pageParam = stringParam(raw.page);
-  const requestedPage = /^\d{1,9}$/.test(pageParam) ? Math.max(1, Number(pageParam)) : 1;
-  const filter: InvoiceFilter = {
-    ...(kind !== undefined ? { kind } : {}),
-    ...(status !== undefined ? { status } : {}),
-    ...(customerId ? { customerId } : {}),
+  const state = readList(raw, LIST);
+  const { q, rows, multi, single } = state;
+  const filter: InvoicePageFilter = {
+    kind: multi.kind,
+    status: multi.status,
+    settlement: multi.settlement,
+    customerId: multi.customerId,
+    issuedFrom: single.issuedFrom,
+    issuedTo: single.issuedTo,
+    q,
   };
-  const filters = new URLSearchParams();
-  if (kind !== undefined) filters.set('kind', kind);
-  if (status !== undefined) filters.set('status', status);
-  if (customerId) filters.set('customerId', customerId);
-  if (q) filters.set('q', q);
-  const hereQuery = new URLSearchParams(filters);
-  if (rows !== SIZES[0]) hereQuery.set('rows', rows.toString());
-  if (requestedPage > 1) hereQuery.set('page', requestedPage.toString());
-  const here = invoiceUrl(hereQuery);
+  const here = hrefWith('/invoices', raw, { page: state.page > 1 ? state.page : undefined });
   const session = await requireStaffSession(here);
   const numberSystem = await getNumberSystem();
 
   let items: InvoiceListItem[] | null = null;
-  let summary: InvoiceListItem[] | null = null;
+  let total = 0;
+  let window = pageWindow(state.page, rows);
+  let summary: InvoicesSummary | null = null;
   let problem: { message: string; status: number } | null = null;
   try {
-    const result = listInvoices(session, filter);
-    // Use the same scope as the table for summary counts and the customer choices.
-    const all = Object.keys(filter).length ? listInvoices(session).catch(() => null) : result;
-    [items, summary] = await Promise.all([result, all]);
+    // The summary is the stat cards and the customer choices; a failure there hides them, not the table.
+    const counts = getInvoicesSummary(session, filter).catch(() => null);
+    const page = await listInvoicesPage(session, {
+      ...filter,
+      limit: window.limit,
+      offset: window.offset,
+    });
+    window = pageWindow(state.page, rows, page.total);
+    items = page.items;
+    total = page.total;
+    // A page past the end (rows changed, or rows deleted) shows the last page instead of nothing.
+    if (items.length === 0 && total > 0) {
+      items = (
+        await listInvoicesPage(session, { ...filter, limit: window.limit, offset: window.offset })
+      ).items;
+    }
+    summary = await counts;
   } catch (err) {
     const f = failureOf(err);
     problem = { message: f.message, status: f.status };
   }
-  const names = new Map(
-    (summary ?? items ?? []).map((item) => [item.customerId, item.customerName]),
+  const customers = summary?.customers ?? [];
+  const customerName = new Map(customers.map((c) => [c.id, c.name]));
+  const hiding = activeFilterLabels(
+    { q, multi, single },
+    {
+      status: { label: 'Status', format: (v) => statusMeta(v as InvoiceStatus).label },
+      kind: { label: 'Kind', format: (v) => kindMeta(v as InvoiceKind).label },
+      settlement: { label: 'Payment', format: settlementLabel },
+      customerId: { label: 'Customer', format: (v) => customerName.get(v) ?? 'Selected customer' },
+      issuedFrom: { label: 'Issued from' },
+      issuedTo: { label: 'Issued to' },
+    },
+    'Search',
   );
-  const customers = [...names.entries()].sort((a, b) => a[1].localeCompare(b[1]));
-  const needle = q.toLocaleLowerCase();
-  const matches =
-    items?.filter(
-      (item) =>
-        !needle ||
-        item.customerName.toLocaleLowerCase().includes(needle) ||
-        item.number?.toLocaleLowerCase().includes(needle),
-    ) ?? [];
-  const pageCount = Math.max(1, Math.ceil(matches.length / rows));
-  const page = Math.min(requestedPage, pageCount);
-  const first = (page - 1) * rows;
-  const pageHref = (number: number) => {
-    const params = new URLSearchParams(filters);
-    if (rows !== SIZES[0]) params.set('rows', rows.toString());
-    if (number > 1) params.set('page', number.toString());
-    return invoiceUrl(params);
-  };
-  const pages = Array.from({ length: Math.min(3, pageCount) }, (_, index) => {
-    const number = Math.max(1, Math.min(page - 1, pageCount - 2)) + index;
-    return { page: number, href: pageHref(number) };
-  });
+  const clearHref = clearFiltersHref('/invoices', raw, LIST);
 
   return (
     <Page>
@@ -207,64 +204,19 @@ export default async function InvoicesPage({
         }
       />
 
-      {summary !== null ? <InvoiceStats invoices={summary} /> : null}
+      {summary !== null ? <InvoiceStats summary={summary} /> : null}
 
-      <form method="get" action="/invoices" className={styles.toolbar}>
-        {rows !== SIZES[0] ? <input type="hidden" name="rows" value={rows} /> : null}
-        <SearchInput
-          name="q"
-          aria-label="Search invoices"
-          placeholder="Search invoices"
-          defaultValue={q}
-          maxLength={100}
-          wrapperClassName={styles.search}
-        />
-        <div className={styles.filterFields}>
-          <Field label="Customer">
-            {(control) => (
-              <Select name="customerId" defaultValue={customerId} {...control}>
-                <option value="">All customers</option>
-                {customerId && !names.has(customerId) ? (
-                  <option value={customerId}>Selected customer</option>
-                ) : null}
-                {customers.map(([id, name]) => (
-                  <option key={id} value={id}>
-                    {name}
-                  </option>
-                ))}
-              </Select>
-            )}
-          </Field>
-          <Field label="Kind">
-            {(control) => (
-              <Select name="kind" defaultValue={kind ?? ''} {...control}>
-                <option value="">All kinds</option>
-                {KIND_FILTER_OPTIONS.map((option) => (
-                  <option key={option.value} value={option.value}>
-                    {option.label}
-                  </option>
-                ))}
-              </Select>
-            )}
-          </Field>
-          <Field label="Status">
-            {(control) => (
-              <Select name="status" defaultValue={status ?? ''} {...control}>
-                <option value="">All statuses</option>
-                {STATUS_FILTER_OPTIONS.map((option) => (
-                  <option key={option.value} value={option.value}>
-                    {option.label}
-                  </option>
-                ))}
-              </Select>
-            )}
-          </Field>
-          <Button type="submit" variant="secondary">
-            Apply filters
-          </Button>
-          {filters.size ? <Link href="/invoices">Show all invoices</Link> : null}
-        </div>
-      </form>
+      <InvoiceFilters
+        status={multi.status}
+        kind={multi.kind}
+        settlement={multi.settlement}
+        customerId={multi.customerId}
+        issuedFrom={single.issuedFrom}
+        issuedTo={single.issuedTo}
+        customers={customers}
+        preserve={{ rows: rows === DEFAULT_ROWS ? undefined : String(rows) }}
+      />
+      {items !== null ? <ResultCount shown={items.length} total={total} noun="invoice" /> : null}
 
       {problem !== null ? (
         <Alert
@@ -281,10 +233,10 @@ export default async function InvoicesPage({
             ? 'Invoices are for the accounts and finance teams and for management. Ask an administrator if you need access.'
             : problem.message}
         </Alert>
-      ) : matches.length === 0 ? (
-        filters.size ? (
+      ) : items === null || items.length === 0 ? (
+        hiding.length > 0 ? (
           <EmptyState icon="file-text" title="No invoices match these filters.">
-            Choose other filters, or show all invoices.
+            Nothing matches {hiding.join('; ')}. <Link href={clearHref}>Clear filters</Link>
           </EmptyState>
         ) : (
           <EmptyState icon="file-text" title="No invoices yet.">
@@ -307,39 +259,18 @@ export default async function InvoicesPage({
               </tr>
             </thead>
             <tbody>
-              {matches.slice(first, first + rows).map((item) => (
+              {items.map((item) => (
                 <InvoiceRow numberSystem={numberSystem} key={item.id} item={item} />
               ))}
             </tbody>
           </Table>
-          <div className={styles.tableFooter}>
-            <Pagination
-              label="Invoice pages"
-              summary={`Showing ${first + 1}–${Math.min(first + rows, matches.length)} of ${matches.length}`}
-              {...(page > 1 ? { previousHref: pageHref(page - 1) } : {})}
-              {...(page < pageCount ? { nextHref: pageHref(page + 1) } : {})}
-              currentPage={page}
-              pages={pages}
-            />
-            <form action="/invoices" className={styles.rowsForm}>
-              {[...filters].map(([name, value]) => (
-                <input key={name} type="hidden" name={name} value={value} />
-              ))}
-              <label>
-                Rows
-                <Select name="rows" defaultValue={rows}>
-                  {SIZES.map((size) => (
-                    <option key={size} value={size}>
-                      {size}
-                    </option>
-                  ))}
-                </Select>
-              </label>
-              <Button type="submit" size="small" variant="tertiary">
-                Apply
-              </Button>
-            </form>
-          </div>
+          <ListPager
+            pathname="/invoices"
+            current={raw}
+            window={window}
+            total={total}
+            label="Invoice pages"
+          />
         </div>
       )}
     </Page>
