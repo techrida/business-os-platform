@@ -59,6 +59,8 @@ export interface UserFields {
 }
 
 export type ListedUser = AdminUser & UserRow;
+/** Up to `limit + 1` rows (the extra one says another page exists) and the count of all matches. */
+export type ListedUsers = { rows: ListedUser[]; total: number };
 export type StaffSummary = Omit<AdminUsersSummary, 'canSendPasswordReset'>;
 
 /** One ZITADEL event id as the webhook delivered it; the triple is the dedupe key (§3). */
@@ -124,8 +126,11 @@ export abstract class UsersStore {
   abstract userIdsWithRole(scope: TxScope, role: RoleKey): Promise<string[]>;
   /** The address of an `active` user only: notifications must not mail a deactivated or invited person. */
   abstract emailOf(userId: string): Promise<string | null>;
-  /** The tenant's staff users (the staff IdP org's), with their mirrored roles. */
-  abstract list(scope: TxScope, q: AdminUsersQuery): Promise<ListedUser[]>;
+  /**
+   * The tenant's staff users (the staff IdP org's), with their mirrored roles. `total` counts every match of
+   * the same scope, filters and search, ignoring the id cursor and the page.
+   */
+  abstract list(scope: TxScope, q: AdminUsersQuery): Promise<ListedUsers>;
   abstract summary(scope: TxScope): Promise<StaffSummary>;
   abstract recordActivity(scope: TxScope, actor: Actor): Promise<void>;
 
@@ -375,7 +380,7 @@ export class SqlUsersStore extends UsersStore {
     return row?.email ?? null;
   }
 
-  async list(scope: TxScope, q: AdminUsersQuery): Promise<ListedUser[]> {
+  async list(scope: TxScope, q: AdminUsersQuery): Promise<ListedUsers> {
     const from = sql`${STAFF_USERS}
           LEFT JOIN app.user_entities ue ON ue.tenant_id = u.tenant_id AND ue.user_id = u.id
             AND ue.organization_id = ${scope.organizationId}
@@ -397,6 +402,13 @@ export class SqlUsersStore extends UsersStore {
           : sql``
       }`;
     const order = q.sort ? DIRECTORY_ORDER[q.sort] : sql`u.id`;
+    const count = async (reader: Queryable, where: SQL | undefined) => {
+      const [row] = await rows<{ n: number }>(
+        reader,
+        sql`SELECT count(*)::int AS n ${from} WHERE ${where}`,
+      );
+      return row?.n ?? 0;
+    };
     const select = (where: SQL | undefined, orderBy: SQL[], tail: SQL) => sql`
       SELECT ${USER_COLUMNS},
         to_char(u.last_active_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"') AS "lastActiveAt",
@@ -414,16 +426,21 @@ export class SqlUsersStore extends UsersStore {
     if (!q.q || q.after) {
       // Search punctuation literally. ILIKE supplies case folding and uses the trigram indexes.
       const pattern = q.q ? `%${q.q.replace(/[!%_]/g, '!$&')}%` : null;
-      return rows<ListedUser & Record<string, unknown>>(
-        this.db,
-        select(
-          sql`${filters}
-            ${pattern ? sql`AND (u.display_name ILIKE ${pattern} ESCAPE '!' OR u.email ILIKE ${pattern} ESCAPE '!')` : sql``}
-            ${q.after ? sql`AND u.id > ${q.after}` : sql``}`,
-          [order],
-          sql`LIMIT ${q.limit + 1} OFFSET ${((q.page ?? 1) - 1) * q.limit}`,
+      const matching = sql`${filters}
+            ${pattern ? sql`AND (u.display_name ILIKE ${pattern} ESCAPE '!' OR u.email ILIKE ${pattern} ESCAPE '!')` : sql``}`;
+      const [found, total] = await Promise.all([
+        rows<ListedUser & Record<string, unknown>>(
+          this.db,
+          select(
+            sql`${matching} ${q.after ? sql`AND u.id > ${q.after}` : sql``}`,
+            [order],
+            sql`LIMIT ${q.limit + 1} OFFSET ${((q.page ?? 1) - 1) * q.limit}`,
+          ),
         ),
-      );
+        // The cursor only moves through the matches, so the total leaves it out.
+        count(this.db, matching),
+      ]);
+      return { rows: found, total };
     }
 
     // One extra row tells the controller whether another page exists.
@@ -437,15 +454,9 @@ export class SqlUsersStore extends UsersStore {
       // Run on `tx`, not this.db: fuzzy mode sets its similarity threshold for that transaction only.
       rows: (tx, p) =>
         rows(tx, select(p.where, p.orderBy, sql`LIMIT ${p.limit} OFFSET ${p.offset}`)),
-      count: async (tx, where) => {
-        const [row] = await rows<{ n: number }>(
-          tx,
-          sql`SELECT count(*)::int AS n ${from} WHERE ${where}`,
-        );
-        return row?.n ?? 0;
-      },
+      count,
     });
-    return result.rows;
+    return { rows: result.rows, total: result.total };
   }
 
   async summary(scope: TxScope): Promise<StaffSummary> {

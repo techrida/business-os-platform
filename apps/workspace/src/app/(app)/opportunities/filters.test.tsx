@@ -66,7 +66,10 @@ const trigger = (label: string) =>
 
 it('has a search box and the two dropdowns, and no Apply or Search button', async () => {
   mounted = await show('');
-  expect(mounted.container.querySelector('input[type="search"], input[name="q"]')).not.toBeNull();
+  const search = mounted.container.querySelector('input[type="search"], input[name="q"]');
+  expect(search).not.toBeNull();
+  // The API search also matches the customer's name.
+  expect(search?.getAttribute('placeholder')).toBe('Search name, number or customer');
   expect(buttons()).toEqual(expect.arrayContaining(['All stages', 'All owners']));
   expect(buttons()).not.toContain('Search');
   expect(buttons()).not.toContain('Apply');
