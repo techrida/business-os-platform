@@ -101,7 +101,12 @@ export function workflow(cfg) {
             await s.click(s.button('Expand sidebar'), 'Expand sidebar');
             await s.see(s.button('Collapse sidebar'), 'sidebar open again');
             await s.button('Collapse sidebar').focus();
-          } else {
+          } else if (
+            await s
+              .button('Open menu')
+              .isVisible()
+              .catch(() => false)
+          ) {
             await s.click(s.button('Open menu'), 'Open menu (narrow screen)');
             await s.see(s.button('Close menu'), 'navigation drawer open');
             await s.pause(500);
@@ -110,6 +115,16 @@ export function workflow(cfg) {
             await s.click(s.button('Open menu'), 'Open menu again');
             await s.see(s.button('Close menu'), 'drawer open again');
             await s.button('Close menu').focus();
+          } else {
+            // Tablet width: the navigation is a fixed icon rail with no toggle to exercise.
+            await s.see(
+              s.page.getByRole('navigation', { name: 'Main' }),
+              'the Main navigation (icon rail)',
+            );
+            s.checks.push(
+              'note: no sidebar toggle at this width (icon rail); Tab from the page top',
+            );
+            await s.page.evaluate(() => document.activeElement?.blur());
           }
           // Keyboard: Tab until a link in the Main navigation has focus, then Enter follows it.
           let href = null;
@@ -331,7 +346,14 @@ export function workflow(cfg) {
         title: 'Final approval and notification',
         async run(s) {
           await asPersona(s, 'Dev Finance');
-          await approveFromInbox(s, 'Demo memo approved by Finance.');
+          // Retry-safe: an earlier attempt may already have given the final approval.
+          await s.goto(`/inbox/${s.need('memoRequestId')}`, (p) =>
+            p.getByRole('list', { name: 'Approval route steps' }),
+          );
+          const done = await routeSteps(s);
+          if (done.length >= 2 && /Approved/i.test(done[1]))
+            s.checks.push('note: Finance approved in an earlier attempt of this run');
+          else await approveFromInbox(s, 'Demo memo approved by Finance.');
 
           await s.caption(
             'start-5 — Finance opens the approved memo: audit timeline and decisions',
@@ -393,7 +415,9 @@ export function workflow(cfg) {
           s.record('memoMailSubject', mail.Subject);
           if (/(^|\s)[a-z]+_[a-z_]+\s/.test(mail.Subject))
             s.checks.push(`observation: the e-mail subject uses the type key ("${mail.Subject}")`);
-          await s.goto(`${cfg.mailUrl}/view/${mail.ID}`, (p) => p.getByText(mail.Subject).first());
+          await s.goto(`${cfg.mailUrl}/view/${mail.ID}`, (p) =>
+            p.getByText(mail.Subject).filter({ visible: true }).first(),
+          );
           await s.pause(1500);
         },
       },
