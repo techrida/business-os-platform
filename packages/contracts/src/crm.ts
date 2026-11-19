@@ -384,7 +384,23 @@ export const LEAD_SOURCES = [
 export const LeadSourceSchema = z.enum(LEAD_SOURCES);
 export type LeadSource = z.infer<typeof LeadSourceSchema>;
 
-export const CreateLeadBodySchema = z.strictObject({
+/** The kinds a person can plan for later: a note is something that already happened. */
+export const SCHEDULABLE_ACTIVITY_KINDS = ['call', 'meeting', 'email'] as const;
+export const SchedulableActivityKindSchema = z.enum(SCHEDULABLE_ACTIVITY_KINDS);
+export type SchedulableActivityKind = z.infer<typeof SchedulableActivityKindSchema>;
+
+/** A follow-up planned while creating the lead: becomes a planned activity of that kind (D39). */
+export const LeadFollowUpSchema = z.strictObject({
+  kind: SchedulableActivityKindSchema,
+  dueAt: isoDateTime,
+  /** Defaults to the lead owner. */
+  assigneeUserId: z.guid().optional(),
+  subject: text(200).optional(),
+  body: text(10000).optional(),
+});
+export type LeadFollowUp = z.infer<typeof LeadFollowUpSchema>;
+
+const LeadFieldsSchema = z.strictObject({
   title: text(200),
   source: LeadSourceSchema,
   campaign: text(100).optional(),
@@ -399,12 +415,24 @@ export const CreateLeadBodySchema = z.strictObject({
   currency: CurrencySchema.default('NPR'),
   probability: ProbabilitySchema.optional(),
   expectedClose: isoDate.optional(),
-  nextFollowUpAt: isoDateTime.optional(),
   notes: text(5000).optional(),
+});
+
+/**
+ * `followUp` plans the first follow-up. `nextFollowUpAt` is the pre-D39 spelling of the same thing, kept so old
+ * callers still work: it plans a call named "Follow up". Send one or the other.
+ */
+export const CreateLeadBodySchema = LeadFieldsSchema.extend({
+  followUp: LeadFollowUpSchema.optional(),
+  nextFollowUpAt: isoDateTime.optional(),
+}).refine((b) => b.followUp === undefined || b.nextFollowUpAt === undefined, {
+  path: ['followUp'],
+  message: 'Send followUp or nextFollowUpAt, not both',
 });
 export type CreateLeadBody = z.infer<typeof CreateLeadBodySchema>;
 
-export const UpdateLeadBodySchema = CreateLeadBodySchema.partial().extend({
+/** Follow-ups are activities, so an edit changes the lead's own fields (owner included), not the next follow-up. */
+export const UpdateLeadBodySchema = LeadFieldsSchema.partial().extend({
   expectedVersion: z.number().int().min(1),
 });
 export type UpdateLeadBody = z.infer<typeof UpdateLeadBodySchema>;
@@ -522,7 +550,11 @@ export const ACTIVITY_KINDS = [
 export const ActivityKindSchema = z.enum(ACTIVITY_KINDS);
 export type ActivityKind = z.infer<typeof ActivityKindSchema>;
 
-export const USER_ACTIVITY_KINDS = ['call', 'meeting', 'email', 'note', 'task'] as const;
+/**
+ * What a person logs or plans (D39, D40). `task` is no longer one of them: a follow-up is a planned call, meeting
+ * or email. The value stays in ACTIVITY_KINDS so rows written before D39 still read.
+ */
+export const USER_ACTIVITY_KINDS = ['call', 'meeting', 'email', 'note'] as const;
 export const UserActivityKindSchema = z.enum(USER_ACTIVITY_KINDS);
 
 /** An activity hangs off exactly one of these records. */
@@ -557,7 +589,15 @@ export const CreateActivityBodySchema = z
     contactId: z.guid().optional(),
     quotationId: z.guid().optional(),
   })
-  .refine(exactlyOneSubject, ONE_SUBJECT);
+  .refine(exactlyOneSubject, ONE_SUBJECT)
+  .refine((a) => a.dueAt === undefined || a.kind !== 'note', {
+    path: ['kind'],
+    message: 'A note cannot be planned for later',
+  })
+  .refine((a) => a.dueAt === undefined || a.occurredAt === undefined, {
+    path: ['occurredAt'],
+    message: 'A planned activity has no occurred time until it is completed',
+  });
 export type CreateActivityBody = z.infer<typeof CreateActivityBodySchema>;
 
 export const ActivityDtoSchema = z
@@ -574,10 +614,39 @@ export const ActivityDtoSchema = z
     dueAt: isoDateTime.nullable(),
     assigneeUserId: z.guid().nullable(),
     completedAt: isoDateTime.nullable(),
+    /** Set when a planned activity is cancelled. A cancelled one is neither planned nor in History. */
+    cancelledAt: isoDateTime.nullable(),
+    /** Derived: has a due time and is neither completed nor cancelled. Planned ones stay out of History. */
+    planned: z.boolean(),
+    /** Who logged or scheduled it; null for rows written before this was recorded. */
+    createdByUserId: z.guid().nullable(),
     occurredAt: isoDateTime,
+    version: z.number().int().min(1),
   })
   .refine(exactlyOneSubject, ONE_SUBJECT);
 export type ActivityDto = z.infer<typeof ActivityDtoSchema>;
+
+/** Completing a planned activity turns it into a logged one: `occurredAt` becomes the completion time. */
+export const CompleteActivityBodySchema = z.strictObject({
+  expectedVersion: z.number().int().min(1),
+  /** Appended to the activity's details when it is completed. */
+  note: text(10000).optional(),
+  /** When it actually happened; defaults to now. */
+  occurredAt: isoDateTime.optional(),
+});
+export type CompleteActivityBody = z.infer<typeof CompleteActivityBodySchema>;
+
+export const RescheduleActivityBodySchema = z.strictObject({
+  expectedVersion: z.number().int().min(1),
+  dueAt: isoDateTime,
+  assigneeUserId: z.guid().optional(),
+});
+export type RescheduleActivityBody = z.infer<typeof RescheduleActivityBodySchema>;
+
+export const CancelActivityBodySchema = z.strictObject({
+  expectedVersion: z.number().int().min(1),
+});
+export type CancelActivityBody = z.infer<typeof CancelActivityBodySchema>;
 
 // ---------------------------------------------------------------------------------------------
 // Verification case (KYB). Tenant-level, like the party it verifies.
