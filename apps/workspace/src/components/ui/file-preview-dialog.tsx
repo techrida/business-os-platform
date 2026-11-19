@@ -120,7 +120,6 @@ export function FilePreviewDialog({
       initialFocusRef={actions === undefined ? closeRef : undefined}
       footer={
         <Footer
-          name={name}
           mimeType={mimeType}
           previewUrl={previewUrl}
           downloadUrl={downloadUrl}
@@ -146,7 +145,6 @@ export function FilePreviewDialog({
 
 /** Footer and Stage read `window.location.origin`. They only render inside the dialog portal, which mounts on the client. */
 function Footer({
-  name,
   mimeType,
   previewUrl,
   downloadUrl,
@@ -156,7 +154,7 @@ function Footer({
   actions,
 }: Pick<
   FilePreviewDialogProps,
-  'name' | 'mimeType' | 'previewUrl' | 'downloadUrl' | 'onDownload' | 'actions'
+  'mimeType' | 'previewUrl' | 'downloadUrl' | 'onDownload' | 'actions'
 > & {
   failed: boolean;
   closeRef: RefObject<HTMLButtonElement | null>;
@@ -176,7 +174,6 @@ function Footer({
         <LinkButton
           variant={canPreview || actions !== undefined ? 'secondary' : 'primary'}
           href={downloadUrl}
-          download={name}
           onClick={() => onDownload?.()}
         >
           <DownloadIcon />

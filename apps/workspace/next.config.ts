@@ -80,22 +80,6 @@ const nextConfig: NextConfig = {
           { key: 'Content-Security-Policy', value: filePreviewPolicy },
         ],
       },
-      {
-        // Quotation version previews stream only the authenticated, scan-approved customer PDF.
-        source: '/quotations/:id/versions/:vid/document/preview',
-        headers: [
-          { key: 'X-Frame-Options', value: 'SAMEORIGIN' },
-          { key: 'Content-Security-Policy', value: filePreviewPolicy },
-        ],
-      },
-      {
-        // Purchase order version previews stream only the authenticated, scan-approved PDF.
-        source: '/procurement/orders/:id/versions/:version/document/preview',
-        headers: [
-          { key: 'X-Frame-Options', value: 'SAMEORIGIN' },
-          { key: 'Content-Security-Policy', value: filePreviewPolicy },
-        ],
-      },
     ]);
   },
 };

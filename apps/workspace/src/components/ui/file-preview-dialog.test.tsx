@@ -105,7 +105,7 @@ it('requests exactly once under StrictMode and again for a second open', async (
 it('does not fetch a dialog that is not open and keeps Download a plain unfetched link', async () => {
   mounted = await mountForm(viewer({ defaultOpen: true }));
   await flush();
-  const download = document.querySelector<HTMLAnchorElement>('a[download]');
+  const download = document.querySelector<HTMLAnchorElement>('a[href="/api/files/7/download"]');
   expect(download?.getAttribute('href')).toBe(DOWNLOAD);
   expect(fetchMock.mock.calls.map((call) => call[0])).toEqual([PREVIEW]);
 });
@@ -202,7 +202,7 @@ it('shows the fallback and Download as the main action for an unknown type', asy
   expect(document.body.textContent).toContain('No preview');
   expect(document.querySelector('iframe, img')).toBeNull();
   expect(fetchMock).not.toHaveBeenCalled();
-  expect(document.querySelector('a[download]')?.getAttribute('href')).toBe(DOWNLOAD);
+  expect(document.querySelector('a[href="' + DOWNLOAD + '"]')?.getAttribute('href')).toBe(DOWNLOAD);
 });
 
 it.each(['https://evil.test/x.pdf', '//evil.test/x.pdf', 'javascript:alert(1)'])(

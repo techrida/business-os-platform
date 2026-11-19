@@ -26,18 +26,6 @@ const contentSecurityPolicy = [
   "frame-ancestors 'none'",
 ].join('; ');
 
-// The document viewer frames the PDF preview routes from the app's own pages, so those paths (and
-// only those) are framable by the same origin. Same policy otherwise: derived, not copied.
-const framableContentSecurityPolicy = [
-  ...contentSecurityPolicy.split('; ').filter((d) => !d.startsWith('frame-ancestors')),
-  "frame-ancestors 'self'",
-].join('; ');
-const previewPaths = [
-  '/quotations/:id/document/preview',
-  '/invoices/:id/document/preview',
-  '/vendor/purchase-orders/:id/pdf/preview',
-];
-
 const nextConfig: NextConfig = {
   output: 'standalone',
   outputFileTracingRoot: monorepoRoot,
@@ -65,14 +53,6 @@ const nextConfig: NextConfig = {
           { key: 'Content-Security-Policy', value: contentSecurityPolicy },
         ],
       },
-      // Later rules win for the same key, so these override the framing headers above.
-      ...previewPaths.map((source) => ({
-        source,
-        headers: [
-          { key: 'X-Frame-Options', value: 'SAMEORIGIN' },
-          { key: 'Content-Security-Policy', value: framableContentSecurityPolicy },
-        ],
-      })),
     ]);
   },
 };
