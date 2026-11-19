@@ -1,4 +1,4 @@
-import { OPPORTUNITY_STAGES, type OpportunityDto } from '@bos/contracts';
+import { type LeadLostReason, OPPORTUNITY_STAGES, type OpportunityDto } from '@bos/contracts';
 import type { Metadata } from 'next';
 import Link from 'next/link';
 import { notFound } from 'next/navigation';
@@ -134,11 +134,18 @@ export default async function OpportunityPage({ params }: { params: Promise<{ id
   const quotations = quotationsResult.status === 'fulfilled' ? quotationsResult.value : [];
   const quotesHref = opportunityQuotationsHref(opp.id);
   const open = opp.stage !== 'lost' && opp.stage !== 'won';
-  const canMarkLost = moves.some((move) => move.stage === 'lost');
-  // The options Mark lost offers (D54-3). Only asked for when the action is shown; a failure leaves the dialog able to add one.
-  const lostReasons = canMarkLost
-    ? await listOpportunityLostReasonChoices(session).catch(() => [])
-    : [];
+  // The options Mark lost offers (D54-3). Only asked for when the stage allows it. A 403 means this
+  // person may read the opportunity but not change it, so the action is left out rather than shown and refused;
+  // any other failure leaves the dialog able to add a reason.
+  let canMarkLost = moves.some((move) => move.stage === 'lost');
+  let lostReasons: LeadLostReason[] = [];
+  if (canMarkLost) {
+    try {
+      lostReasons = await listOpportunityLostReasonChoices(session);
+    } catch (err) {
+      if (failureOf(err).status === 403) canMarkLost = false;
+    }
+  }
   const reasonLabel = opp.lostReason?.label ?? opp.stageReason;
   // A list that did not load falls back to New:
   // the New page checks again before it shows the builder.
