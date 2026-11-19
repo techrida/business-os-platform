@@ -1,4 +1,4 @@
-import { BOS_LIGHT_ONLY } from '@/lib/theme-mode';
+import { BOS_LIGHT_ONLY } from '@bos/locale';
 import type { Metadata } from 'next';
 import type { ReactNode } from 'react';
 
