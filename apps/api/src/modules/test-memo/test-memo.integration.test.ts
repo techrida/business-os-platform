@@ -1095,6 +1095,7 @@ describe('internal memo template', () => {
       (p) => p.userId === staff.userId,
     );
     expect(person?.name).toBe('accounts.desk');
+    expect(person?.avatarDocumentId).toBeNull();
   });
 
   it('returns only the active company directory and snapshots authoritative staff metadata', async () => {
@@ -1153,7 +1154,14 @@ describe('internal memo template', () => {
       'SELECT snapshot FROM app.approval_requests WHERE id = $1',
       [(submitted.body as { requestId: string }).requestId],
     );
-    expect(rows.rows[0]!.snapshot.template).toEqual(MemoDtoSchema.parse(created.body).template);
+    // Submit freezes the letterhead onto the template; the draft carries none (the directory shows it live).
+    const frozen = rows.rows[0]!.snapshot.template as { letterhead?: { primaryColour?: string } };
+    expect(typeof frozen.letterhead?.primaryColour).toBe('string');
+    const { letterhead: _frozenLetterhead, ...withoutLetterhead } = frozen as Record<
+      string,
+      unknown
+    >;
+    expect(withoutLetterhead).toEqual(MemoDtoSchema.parse(created.body).template);
     const requestId = (submitted.body as { requestId: string }).requestId;
     // Someone who is not the named person for the active step is refused, whatever role they hold.
     as(U.boss, 'founder');

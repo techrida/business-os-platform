@@ -12,7 +12,8 @@
 // How the document looks (layout, colour, company profile, number system) is frozen with the version too: the
 // first attempt captures it from settings and stores it on the version before rendering, and every later attempt
 // (a retry after a failure) renders from the stored value, so a settings change never alters a document that was
-// already issued and a retry never drifts.
+// already issued and a retry never drifts. The company logo is frozen as its bytes (a data URL), read from the
+// logo document the profile references, so changing or removing the logo later never alters a sent document.
 //
 // The tests drive the sweeper through a RenderStore fake; the drizzle store below is checked by the R3
 // integration test against a real database.
@@ -56,7 +57,9 @@ import { GotenbergError } from './gotenberg.client';
 import {
   buildDocumentStyleSnapshot,
   buildIssuer,
+  DocumentLogoUnavailableError,
   DocumentStyleInvalidError,
+  type DocumentLogoResolver,
   IssuerIncompleteError,
   parseStoredDocumentStyle,
 } from './issuer';
@@ -81,6 +84,7 @@ export const RENDER_DOCUMENTS = Symbol('QUOTATION_RENDER_DOCUMENTS');
 export const RENDER_SETTINGS = Symbol('QUOTATION_RENDER_SETTINGS');
 export const RENDER_PDF = Symbol('QUOTATION_RENDER_PDF');
 export const RENDER_CLOCK = Symbol('QUOTATION_RENDER_CLOCK');
+export const RENDER_LOGOS = Symbol('QUOTATION_RENDER_LOGOS');
 
 export interface RenderCandidate {
   tenantId: string;
@@ -140,6 +144,10 @@ export interface PdfRenderer {
   htmlToPdf(html: string): Promise<Buffer>;
 }
 export type Clock = () => Date;
+/** Turns the profile's logo document into bytes for the frozen style (DocumentLogoResolverFactory in the worker). */
+export interface RenderLogos {
+  forScope(scope: TxScope): DocumentLogoResolver;
+}
 
 export type RenderOutcome = 'rendered' | 'failed' | 'skipped';
 export interface RenderFailure {
@@ -171,7 +179,8 @@ export function failureKind(error: unknown): string {
   if (
     error instanceof IssuerIncompleteError ||
     error instanceof RenderSourceMissingError ||
-    error instanceof DocumentStyleInvalidError
+    error instanceof DocumentStyleInvalidError ||
+    error instanceof DocumentLogoUnavailableError
   ) {
     return error.kind;
   }
@@ -191,6 +200,7 @@ export class QuotationRenderSweeper {
     @Inject(RENDER_SETTINGS) private readonly settings: RenderSettings,
     @Inject(RENDER_PDF) private readonly pdf: PdfRenderer,
     @Inject(RENDER_CLOCK) private readonly clock: Clock,
+    @Inject(RENDER_LOGOS) private readonly logos: RenderLogos,
   ) {}
 
   /** One pass over every tenant: render what is due, then clean up what crashed renders left behind. */
@@ -288,7 +298,13 @@ export class QuotationRenderSweeper {
     stored: unknown,
   ): Promise<DocumentStyleSnapshot> {
     if (stored !== null && stored !== undefined) return parseStoredDocumentStyle(stored);
-    const built = await buildDocumentStyleSnapshot(this.settings, scope, this.clock());
+    // The logo is frozen as bytes: a later change or removal of the logo never alters this version's document.
+    const built = await buildDocumentStyleSnapshot(
+      this.settings,
+      scope,
+      this.clock(),
+      this.logos.forScope(scope),
+    );
     const held = await this.runTx(scope, actor, (tx) => this.store.saveDocumentStyle(tx, c, built));
     // Nothing stored and nothing written: the claim was lost to another worker, like markRendered says.
     if (held === null || held === undefined) throw new Error('render claim was lost');

@@ -16,7 +16,7 @@ import { toCustomerInvoiceView, toSellerContact } from './portal-billing.service
 
 const PROFILE = {
   displayName: 'Techrida',
-  logoDataUrl: 'data:image/png;base64,AAAA',
+  logoDocumentId: null,
   phones: ['+977 1 5550100', '+977 98 0000 0000'],
   email: 'billing@techrida.example',
   website: 'https://techrida.example',
@@ -101,7 +101,7 @@ describe('CustomerInvoiceViewSchema', () => {
     });
     const withLogo = {
       ...view,
-      sellerContact: { ...toSellerContact(PROFILE), logoDataUrl: PROFILE.logoDataUrl },
+      sellerContact: { ...toSellerContact(PROFILE), logoDataUrl: 'data:image/png;base64,AAAA' },
     };
     expect(CustomerInvoiceViewSchema.safeParse(withLogo).success).toBe(false);
   });

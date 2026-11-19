@@ -55,6 +55,7 @@ beforeEach(() => {
 const mountEditor = () =>
   mountForm(
     <CompanyEditor
+      organisationId="22222222-2222-4222-8222-222222222222"
       settings={{ profile, address: null, panVatNo: null }}
       versions={{ 'entity.profile': 3, 'entity.address': null, 'entity.pan_vat_no': 5 }}
       action={saveCompanyCardAction}

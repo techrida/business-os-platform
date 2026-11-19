@@ -483,7 +483,7 @@ describe('portal invoice reads over HTTP on a real database', () => {
       });
       await settings.set(tx, 'entity.profile', {
         displayName: 'Techrida',
-        logoDataUrl: null,
+        logoDocumentId: null,
         phones: ['+977 1 5550100'],
         email: 'billing@techrida.example',
         website: 'https://techrida.example',

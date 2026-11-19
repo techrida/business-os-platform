@@ -265,6 +265,23 @@ describe('DEFAULT_ROLE_PERMISSIONS', () => {
     }
   });
 
+  it('lets every staff role set its own profile picture and founder anyone, and no portal role either', () => {
+    for (const role of ROLE_KEYS) {
+      const expected =
+        role === 'founder'
+          ? 'all'
+          : role === 'customer_user' || role === 'vendor_user'
+            ? undefined
+            : 'own';
+      expect(DEFAULT_ROLE_PERMISSIONS[role]['profile.avatar.write'], role).toBe(expected);
+    }
+    // Migration 0053 also gives `all` to a role holding admin.users.invite; by default only founder does.
+    const inviters = ROLE_KEYS.filter(
+      (role) => DEFAULT_ROLE_PERMISSIONS[role]['admin.users.invite'],
+    );
+    expect(inviters).toEqual(['founder']);
+  });
+
   it('only lists real permissions as separation-of-duties permissions', () => {
     for (const p of SOD_PERMISSIONS) expect(PERMISSIONS).toContain(p);
   });

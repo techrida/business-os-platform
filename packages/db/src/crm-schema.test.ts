@@ -184,6 +184,11 @@ describe('0015_crm and src/schema/crm.ts', () => {
     parsed,
     readFileSync(new URL('../migrations/0062_activity_follow_ups.sql', import.meta.url), 'utf8'),
   );
+  // 0054 adds customers.logo_document_id (no FK, no index).
+  applyAlters(
+    parsed,
+    readFileSync(new URL('../migrations/0054_party_logos.sql', import.meta.url), 'utf8'),
+  );
   // 0071 adds leads.lost_reason_id (with its FK) and creates lead_lost_reasons, checked on its own below.
   const lostReasonsSql = readFileSync(
     new URL('../migrations/0071_lead_lost_reasons.sql', import.meta.url),

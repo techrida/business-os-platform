@@ -5,7 +5,8 @@
 // Differences: a PO is drawn from its immutable version snapshot, so only the buying entity's PAN comes from settings
 // (SettingsModule, as in the quotation worker). This instance registers PurchaseOrderVersionOwnerPolicy as
 // PurchaseOrderRenderModule does on the API's instance. Without it every render is refused (no policy means no
-// generated files).
+// generated files). DocumentLogoModule gives the sweeper the entity logo's clean bytes, so the render freezes the logo
+// itself (U12).
 import { BullModule } from '@nestjs/bullmq';
 import { ForbiddenException, Inject, Module, type OnModuleInit } from '@nestjs/common';
 
@@ -27,12 +28,17 @@ import {
 } from '../../../../platform/documents/storage.adapter';
 import { SettingsModule } from '../../../../platform/settings/settings.module';
 import { SettingsService } from '../../../../platform/settings/settings.service';
+import {
+  DocumentLogoModule,
+  DocumentLogoResolverFactory,
+} from '../../../images/document-logo.resolver';
 import { GotenbergClient } from '../../../quotations/render/gotenberg.client';
 import type { RunInTx } from '../../../quotations/render/quotation-render.sweeper';
 import {
   drizzlePurchaseOrderRenderStore,
   PO_RENDER_CLOCK,
   PO_RENDER_DOCUMENTS,
+  PO_RENDER_LOGOS,
   PO_RENDER_PDF,
   PO_RENDER_QUEUE,
   PO_RENDER_SETTINGS,
@@ -51,6 +57,7 @@ import {
   imports: [
     AuditModule,
     SettingsModule,
+    DocumentLogoModule,
     BullModule.registerQueue({ name: DOCS_SCAN_QUEUE }, { name: PO_RENDER_QUEUE }),
   ],
   providers: [
@@ -104,6 +111,7 @@ import {
       },
     },
     { provide: PO_RENDER_CLOCK, useValue: () => new Date() },
+    { provide: PO_RENDER_LOGOS, useExisting: DocumentLogoResolverFactory },
     PurchaseOrderRenderSweeper,
     PurchaseOrderRenderProcessor,
     PurchaseOrderRenderScheduler,

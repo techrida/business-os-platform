@@ -41,6 +41,7 @@ import { userNames } from '@/lib/business-labels';
 import { listPaymentTerms } from '@/components/p2/quote-builder/api';
 
 import { OpenCaseForm } from '../../verification/open-case-form';
+import { CompanyLogoUpload } from '../_components/company-logo-upload';
 
 import { CustomerFeedback } from './customer-feedback';
 import styles from './customer.module.css';
@@ -467,12 +468,16 @@ export default async function CustomerPage({
         <div className={styles.columns}>
           <Card className={styles.profile} as="aside" aria-labelledby="organization-name">
             <div className={styles.profileIdentity}>
-              <Avatar
-                name={customer.legalName}
-                size="large"
-                shape="circle"
-                className={styles.profileAvatar}
-              />
+              <div className={styles.profileLogo}>
+                <CompanyLogoUpload
+                  ownerType="customer_logo"
+                  companyId={customer.id}
+                  legalName={customer.legalName}
+                  logoDocumentId={customer.logoDocumentId ?? null}
+                  label="Customer logo"
+                  readOnly={!(mayWrite && !merged)}
+                />
+              </div>
               <h1 id="organization-name" className={styles.profileName}>
                 {customer.legalName}
               </h1>

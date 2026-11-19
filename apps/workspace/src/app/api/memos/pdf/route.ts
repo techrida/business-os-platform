@@ -6,8 +6,11 @@ import { MemoPdfInputSchema } from '@/lib/memo-pdf-input';
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
 
-/** A memo is at most 10,000 characters of body plus 20 signers: 256 KB is generous and still bounds the work. */
-const MAX_BODY_BYTES = 256 * 1024;
+/**
+ * A memo is at most 10,000 characters of body plus 20 signers (well under 256 KB) and a letterhead logo of at most
+ * 720,000 characters: 1 MiB fits both and still bounds the work.
+ */
+const MAX_BODY_BYTES = 1024 * 1024;
 
 /**
  * The values currently in the memo form as a real PDF, so a draft can be downloaded before it is saved. The body

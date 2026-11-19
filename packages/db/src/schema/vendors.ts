@@ -84,6 +84,11 @@ export const vendors = appSchema.table(
     createdBy: uuid('created_by').notNull(),
     /** Never the creator (CHECK), and required once the vendor is approved. */
     approvedBy: uuid('approved_by'),
+    /**
+     * The logo, an `app.documents.id` (migration 0054). No foreign key: documents are owned per tenant and
+     * entity. NULL shows the initials avatar.
+     */
+    logoDocumentId: uuid('logo_document_id'),
     version: integer('version').notNull().default(1),
     ...timestamps,
   },

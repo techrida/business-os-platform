@@ -574,6 +574,8 @@ export const QuotationListItemSchema = QuotationDtoSchema.extend({
   total: NonNegativeDecimalString,
   validUntil: isoDate,
   ownerName: z.string().nullable(),
+  /** The owner's picture (`app.users.avatar_document_id`); null or absent shows initials. */
+  ownerAvatarDocumentId: z.guid().nullable().optional(),
   /**
    * The caller may edit the current version now: it is Draft or Returned and the server's
    * `quotation.draft` rule allows this caller on this record. Lets a screen resume a draft instead of

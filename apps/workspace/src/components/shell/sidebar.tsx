@@ -4,6 +4,7 @@ import { canSeeAdmin } from '@/lib/kernel-format';
 import { visibleGroups } from '@/lib/nav';
 
 import { Brand } from './brand';
+import { ProfilePictureDialog } from './profile-picture-dialog';
 import { ShellNav, ShellNavSearch } from './shell-nav';
 import { CollapseToggle, DrawerCloseButton } from './shell-state';
 import styles from './sidebar.module.css';
@@ -11,6 +12,13 @@ import styles from './sidebar.module.css';
 export interface SidebarUser {
   name: string;
   detail: string;
+  /**
+   * The person's `app.users.id` (a guid): the initials colour and the owner of their picture. Without it the
+   * avatar shows only and cannot be changed from here.
+   */
+  id?: string | null | undefined;
+  /** Their current picture; null or absent shows initials. */
+  imageDocumentId?: string | null | undefined;
 }
 
 /**
@@ -26,6 +34,8 @@ export function Sidebar({
   roles: readonly string[];
   counts?: Readonly<Record<string, number>>;
 }) {
+  const avatarName = user.name.split(',')[0] ?? user.name;
+  const imageDocumentId = user.imageDocumentId ?? null;
   return (
     <div id="app-sidebar" className={styles.sidebar}>
       <div className={styles.top}>
@@ -37,7 +47,15 @@ export function Sidebar({
       <ShellNav groups={visibleGroups(canSeeAdmin(roles), permissionChecker(roles))} counts={counts} />
       <div className={styles.footer}>
         <div className={styles.userCard}>
-          <Avatar name={user.name.split(',')[0] ?? user.name} />
+          {user.id ? (
+            <ProfilePictureDialog
+              userId={user.id}
+              imageDocumentId={imageDocumentId}
+              name={avatarName}
+            />
+          ) : (
+            <Avatar name={avatarName} imageDocumentId={imageDocumentId} />
+          )}
           <span className={styles.userText}>
             <span className={styles.userName}>{user.name}</span>
             <span className={styles.userDetail}>{user.detail}</span>

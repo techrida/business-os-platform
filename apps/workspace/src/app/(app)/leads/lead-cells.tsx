@@ -7,13 +7,28 @@ import styles from './leads.module.css';
 
 /**
  * The lead's owner with initials. The name is the display name the API joins onto the lead (D46), so every
- * role that can read the lead sees it; null means the lead has no owner.
+ * role that can read the lead sees it; null means the lead has no owner. `seedId` (the owner's user id) picks the
+ * initials colour and `imageDocumentId` their picture, so the owner looks the same here as on every other screen.
  */
-export function OwnerCell({ name }: { name: string | null }) {
+export function OwnerCell({
+  name,
+  seedId,
+  imageDocumentId,
+}: {
+  name: string | null;
+  seedId?: string | null;
+  imageDocumentId?: string | null;
+}) {
   if (name === null) return <span className={styles.quiet}>No owner</span>;
   return (
     <div className={styles.contact}>
-      <Avatar name={name} shape="circle" aria-hidden="true" />
+      <Avatar
+        name={name}
+        seedId={seedId ?? null}
+        imageDocumentId={imageDocumentId ?? null}
+        shape="circle"
+        aria-hidden="true"
+      />
       <span>{name}</span>
     </div>
   );
