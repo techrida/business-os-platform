@@ -1,0 +1,48 @@
+/* The undo icon beside a changed setting (D32). A quiet icon button: it carries no label text, so the
+   name lives in aria-label and the default in the title. 32px square, 44px on touch. */
+
+.button {
+  display: inline-grid;
+  place-items: center;
+  flex: none;
+  width: 32px;
+  height: 32px;
+  padding: 0;
+  border: 0;
+  border-radius: var(--radius-lg);
+  background: transparent;
+  color: var(--text-secondary);
+  cursor: pointer;
+  transition:
+    background-color 120ms ease,
+    color 120ms ease;
+}
+
+.button:hover {
+  background: var(--interactive-hover);
+  color: var(--text-primary);
+}
+
+.button:focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: 2px;
+}
+
+/* While the reset runs the button stays focusable (so focus is not dropped) but reads as busy. */
+.button[aria-busy='true'] {
+  color: var(--icon-disabled);
+  cursor: progress;
+}
+
+@media (pointer: coarse) {
+  .button {
+    width: 44px;
+    height: 44px;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .button {
+    transition: none;
+  }
+}

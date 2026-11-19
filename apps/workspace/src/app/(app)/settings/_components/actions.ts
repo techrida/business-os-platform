@@ -1,6 +1,6 @@
 'use server';
 
-import { SettingKeySchema, type SettingKey } from '@bos/contracts';
+import { SETTING_DEFAULTS, SettingKeySchema, type SettingKey } from '@bos/contracts';
 import { revalidatePath } from 'next/cache';
 
 import { putSetting } from '@/lib/api-admin';
@@ -9,7 +9,7 @@ import { settingsSection, type SettingsSectionId } from '@/lib/settings-nav';
 import { describeError } from '../admin-errors';
 import { fail, ok, type ActionState } from '../action-state';
 import { requireSection } from '../guard';
-import { CARD_KEYS } from './card-keys';
+import { CARD_KEYS, RESET_KEYS } from './card-keys';
 import { parseSettingInput } from './setting-input';
 
 // Saves one settings card. Each action is its own request, so the section permission is checked
@@ -65,4 +65,34 @@ export async function saveCardAction(
   }
   revalidatePath(settingsSection(id).href);
   return ok('Changes saved.');
+}
+
+/**
+ * Puts one setting back to its default (D32). A reset is a normal save of the default value, so it
+ * appends a version and lands in the audit trail like any other change. One setting only, and only a
+ * key the section owns; the section permission is checked here, apart from the page.
+ */
+export async function resetSettingAction(
+  section: SettingsSectionId,
+  key: SettingKey,
+): Promise<ActionState> {
+  const allowed: readonly SettingKey[] | undefined = Object.hasOwn(RESET_KEYS, section)
+    ? RESET_KEYS[section as keyof typeof RESET_KEYS]
+    : undefined;
+  if (allowed === undefined) return fail('Unknown settings section.');
+  const session = await requireSection(section);
+
+  const parsed = SettingKeySchema.safeParse(key);
+  if (!parsed.success || !allowed.includes(parsed.data)) return fail('Unknown setting.');
+
+  try {
+    await putSetting(session, parsed.data, SETTING_DEFAULTS[parsed.data]);
+  } catch (error) {
+    revalidatePath(settingsSection(section).href);
+    return fail(describeError(error, 'reset this setting'));
+  }
+  revalidatePath(settingsSection(section).href);
+  // Settings feed the shell and the document screens too, so the layout refreshes with the section.
+  revalidatePath('/', 'layout');
+  return ok('Reset to default.');
 }

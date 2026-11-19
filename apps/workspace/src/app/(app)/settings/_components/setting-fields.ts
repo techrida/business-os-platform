@@ -11,6 +11,10 @@ export interface FieldSpec {
   help?: string;
   kind: FieldKind;
   current: string;
+  /** The default (D32) as short text for the reset tooltip: `13`, `NPR, INR, USD`, an option's label. */
+  defaultText: string;
+  /** True when the saved value already equals the default: the card then draws no reset button. */
+  isDefault: boolean;
   /** For `select`. */
   options?: readonly { value: string; label: string }[];
 }
