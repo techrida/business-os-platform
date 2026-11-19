@@ -27,10 +27,10 @@ and a note is written.
 ## Run
 
 ```sh
-node tools/manual-run/run.mjs --workflow start,sales --viewport 1440x900 --label scr1
-node tools/manual-run/run.mjs --workflow all --viewport all --label scr2   # three viewports, one after another
-node tools/manual-run/run.mjs --workflow sales --label scr1 --from sales-7  # resume (see limits)
-node tools/manual-run/run.mjs --workflow sales --label scr1 --only sales-3,sales-4
+node tools/manual-run/run.mjs --workflow start,sales --viewport 1440x900 --label run1
+node tools/manual-run/run.mjs --workflow all --viewport all --label run2   # three viewports, one after another
+node tools/manual-run/run.mjs --workflow sales --label run1 --from sales-7  # resume (see limits)
+node tools/manual-run/run.mjs --workflow sales --label run1 --only sales-3,sales-4
 ```
 
 Flags: `--workflow start|sales|procurement|branches|all` (comma list allowed), `--viewport 1440x900|820x1180|390x844|all`, `--label`, `--from <step>`, `--only <step,step>`, `--fresh`, `--headed`, `--no-captions`.
@@ -115,7 +115,7 @@ Network isolation needs every origin on loopback (`localhost`, `*.localhost`, `1
 - **Step time limits.** A step that runs past its limit is cancelled: every `Session` helper refuses to act from then on, and the session's windows abort all network requests, so nothing the step still does (a raw dialog click included) reaches the server. The step is saved as FAIL with the time-limit message, and its screenshot and caption follow.
 - **Stopping early.** Ctrl-C (SIGINT) or `kill` (SIGTERM) closes the browser and the network forwarders, then exits with 130 or 143. `results.json` keeps the steps that finished (status `RUNNING`, see above).
 - **Captions.** The caption banner is a fixed shadow-DOM overlay with `pointer-events:none`. It is inserted only after hydration, because inserting it earlier broke hydration. Turn it off with `--no-captions`.
-- **Unique data.** All unique values come from `runKey = <label>-<viewport width as four digits>` (`scr1-1440`, `scr1-0390`), so the three viewport runs of one label never collide. Labels are lower-cased and hold no dash, so `SCR1` and `scr1` are the same label, and with the fixed-width width one run key can never be the start of another. Rows, links and headings are therefore found by this run's name as literal, case-sensitive text (`runMatch` in `lib/config.mjs`), which also works where a table row runs the next cell straight on after the name. A run only opens and changes records it created; existing manual-run records are never touched. Output folders from before 20 Nov 2026 with upper-case labels (`SCR1`, `SCR2`) cannot be resumed under the lower-cased label.
+- **Unique data.** All unique values come from `runKey = <label>-<viewport width as four digits>` (`scr1-1440`, `scr1-0390`), so the three viewport runs of one label never collide. Labels are lower-cased and hold no dash, so `SCR1` and `scr1` are the same label, and with the fixed-width width one run key can never be the start of another. Rows, links and headings are therefore found by this run's name as literal, case-sensitive text (`runMatch` in `lib/config.mjs`), which also works where a table row runs the next cell straight on after the name. A run only opens and changes records it created; existing manual-run records are never touched. Output folders from before 20 Nov 2026 with upper-case labels (`SCR1`, `SCR2`, `SCR3`) cannot be resumed under the lower-cased label. Do not reuse those labels either: the app may compare customer names without case, so pick a label not used before.
 
 ## Adding steps or a workflow (Phase B)
 

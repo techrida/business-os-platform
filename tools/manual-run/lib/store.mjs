@@ -57,7 +57,8 @@ export function hasEarlierRun(outDir, name) {
   const state = isV2(raw) ? (raw.workflows[name] ?? raw.legacy ?? {}) : raw;
   if (Object.keys(state).length) return true;
   const entry = readJson(path.join(outDir, 'results.json'), {}).workflows?.[name];
-  return Boolean(entry && entry.status !== 'NOT-IMPLEMENTED');
+  // A run that could not start (no steps) or skipped everything changed nothing on the stack.
+  return Boolean(entry?.steps?.some((st) => st.status !== 'SKIPPED'));
 }
 
 /**

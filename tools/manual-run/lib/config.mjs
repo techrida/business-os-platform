@@ -155,7 +155,9 @@ export function uniqueValues(label) {
   return {
     suffix: ` SCR-${label}`,
     pan,
-    emailLocal: `anu.scr-${slug}`,
+    // `mr-`, not the `scr-` of runs before 20 Nov 2026: their upper-case labels lower-cased to the
+    // same local part (anu.scr-scr1-1440), so a new scr1 run would find SCR1's mail.
+    emailLocal: `anu.mr-${slug}`,
     bankRef: (n) => `BOS-DEMO-PAY-0${n}-${label}`,
   };
 }

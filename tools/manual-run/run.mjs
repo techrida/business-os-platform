@@ -129,7 +129,14 @@ for (const cfg of configs) {
       // runWorkflow saves its own failures; this is the last resort, so one workflow's crash
       // never stops the others.
       console.error(`[${viewport} ${name}] driver error: ${error.message.split('\n')[0]}`);
-      r = { status: 'FAIL', wallMs: 0, videos: [], steps: [] };
+      r = { name, title: '', status: 'FAIL', wallMs: 0, videos: [], steps: [] };
+      r.error = `Driver error: ${error.message.split('\n')[0]}`;
+      r.runId = `${new Date().toISOString()}-${process.pid}`;
+      try {
+        saveResults(cfg, r);
+      } catch (saveError) {
+        console.error(`[${viewport} ${name}] results not saved: ${saveError.message}`);
+      }
     }
     const counts = r.steps.reduce((m, s) => ({ ...m, [s.status]: (m[s.status] ?? 0) + 1 }), {});
     summary.push({ viewport, name, status: r.status, wallMs: r.wallMs, videos: r.videos, counts });
