@@ -1,4 +1,5 @@
 import type { QuotationStatusHistoryDto } from '@bos/contracts';
+import type { CustomerDateFormat } from '@bos/locale';
 
 import { Panel } from '@/components/ui/panel';
 import { when } from '@/lib/kernel-format';
@@ -56,10 +57,13 @@ export function StatusHistory({
   history,
   versions,
   people,
+  dateFormat,
 }: {
   history: readonly QuotationStatusHistoryDto[];
   versions: readonly { id: string; revisionNo: number }[];
   people?: ReadonlyMap<string, string>;
+  /** The tenant's date pattern (`getDateFormat()`); omitted keeps the default wording. */
+  dateFormat?: CustomerDateFormat | undefined;
 }) {
   const rows = historyRows(history, versions, people);
   return (
@@ -72,7 +76,7 @@ export function StatusHistory({
             <li key={row.key} className={styles.event}>
               <span className={styles.eventName}>{row.title}</span>
               <div className={styles.eventMeta}>
-                <time dateTime={row.at}>{when(row.at)}</time>
+                <time dateTime={row.at}>{when(row.at, 'datetime', dateFormat)}</time>
                 <span>{row.actor}</span>
                 {row.revision !== null ? <span>{row.revision}</span> : null}
               </div>

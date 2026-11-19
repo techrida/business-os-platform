@@ -3,7 +3,12 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { DEFAULT_NUMBER_SYSTEMS } from '@bos/locale';
 
 import { ApiError } from './api';
-import { getNumberSystems, loadNumberSystems } from './display-settings';
+import {
+  getDateFormat,
+  getNumberSystems,
+  loadDisplaySettings,
+  loadNumberSystems,
+} from './display-settings';
 import type { Session } from './session';
 
 vi.mock('server-only', () => ({}));
@@ -66,5 +71,48 @@ describe('getNumberSystems', () => {
   it('never throws, even when the session lookup does', async () => {
     sessions.getSession.mockRejectedValue(new Error('valkey down'));
     expect(await getNumberSystems()).toEqual(DEFAULT_NUMBER_SYSTEMS);
+  });
+});
+
+describe('loadDisplaySettings', () => {
+  it('returns the number systems and the date format from one read', async () => {
+    const map = { NPR: 'international', INR: 'south_asian', USD: 'international' };
+    api.apiFetch.mockImplementation(() =>
+      Response.json({ numberSystems: map, dateFormat: 'dd/MM/yyyy' }),
+    );
+    expect(await loadDisplaySettings(session)).toEqual({
+      numberSystems: map,
+      dateFormat: 'dd/MM/yyyy',
+    });
+    expect(api.apiFetch).toHaveBeenCalledTimes(1);
+  });
+
+  it('falls back to both defaults on a failed or malformed read', async () => {
+    const fallback = { numberSystems: DEFAULT_NUMBER_SYSTEMS, dateFormat: 'dd MMM yyyy' };
+    api.apiFetch.mockImplementation(() =>
+      Response.json({ numberSystems: DEFAULT_NUMBER_SYSTEMS, dateFormat: 'yyyy/dd/MM' }),
+    );
+    expect(await loadDisplaySettings(session)).toEqual(fallback);
+    api.apiFetch.mockRejectedValue(new Error('network down'));
+    expect(await loadDisplaySettings(session)).toEqual(fallback);
+    expect(await loadDisplaySettings(null)).toEqual(fallback);
+  });
+});
+
+describe('getDateFormat', () => {
+  it("reads the tenant's date pattern with the current session", async () => {
+    sessions.getSession.mockResolvedValue(session);
+    api.apiFetch.mockImplementation(() =>
+      Response.json({ numberSystems: DEFAULT_NUMBER_SYSTEMS, dateFormat: 'MMM dd, yyyy' }),
+    );
+    expect(await getDateFormat()).toBe('MMM dd, yyyy');
+  });
+
+  it('never throws: the default pattern when the read or the session fails', async () => {
+    sessions.getSession.mockResolvedValue(session);
+    api.apiFetch.mockImplementation(() => Response.json({ error: 'boom' }, { status: 500 }));
+    expect(await getDateFormat()).toBe('dd MMM yyyy');
+    sessions.getSession.mockRejectedValue(new Error('valkey down'));
+    expect(await getDateFormat()).toBe('dd MMM yyyy');
   });
 });
