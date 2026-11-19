@@ -4,6 +4,7 @@ import type { TermPreset, TermPresetKind } from '@bos/contracts';
 import { useState } from 'react';
 
 import { removePresetAction } from '@/app/(app)/settings/terms/actions';
+import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { ConfirmDialog } from '@/components/ui/dialog';
 import { EmptyState } from '@/components/ui/empty-state';
@@ -15,8 +16,9 @@ import { TermPresetDialog } from './term-preset-dialog';
 import {
   TERM_KIND_HINTS,
   TERM_TAB_ORDER,
-  firstLine,
+  isAppDefaultSet,
   presetsOfKind,
+  previewLine,
   termKindLabel,
 } from './term-preset-model';
 import styles from './term-presets.module.css';
@@ -24,9 +26,10 @@ import styles from './term-presets.module.css';
 type Editing = { kind: TermPresetKind; preset?: TermPreset };
 
 /**
- * The Saved terms screen: one tab per kind, each a list of saved options with edit and remove, and
- * an "Add option" button. Add and edit open one dialog; remove asks first (UIP-FEED-002). The list
- * comes from the server page, and every action revalidates it.
+ * The Saved terms screen: one tab per kind, each a list of term sets (name, an "App default" label
+ * for the ones the app ships, a one-line preview) with edit and remove, and an "Add term set"
+ * button. Add and edit open one dialog; remove asks first (UIP-FEED-002). The list comes from the
+ * server page, and every action revalidates it.
  */
 export function TermPresetsManager({ presets }: { presets: readonly TermPreset[] }) {
   const [editing, setEditing] = useState<Editing | null>(null);
@@ -35,7 +38,7 @@ export function TermPresetsManager({ presets }: { presets: readonly TermPreset[]
   return (
     <>
       <Tabs defaultSelectedKey="scope">
-        <TabList aria-label="Kinds of saved text">
+        <TabList aria-label="Kinds of term set">
           {TERM_TAB_ORDER.map((kind) => (
             <Tab key={kind} id={kind}>
               {termKindLabel(kind)}
@@ -51,27 +54,30 @@ export function TermPresetsManager({ presets }: { presets: readonly TermPreset[]
                 <p className={styles.hint}>{TERM_KIND_HINTS[kind]}</p>
                 {items.length > 0 ? (
                   <Button size="small" className={styles.addButton} onClick={add}>
-                    Add option
+                    Add term set
                   </Button>
                 ) : null}
               </div>
               {items.length === 0 ? (
                 <EmptyState
-                  title={`No saved options for ${termKindLabel(kind)} yet`}
+                  title={`No term sets for ${termKindLabel(kind)} yet`}
                   icon="bookmark"
                   headingLevel={3}
-                  action={<Button onClick={add}>Add option</Button>}
+                  action={<Button onClick={add}>Add term set</Button>}
                   className={styles.empty ?? ''}
                 >
                   Add wording you use often, then pick it from the field on a quotation.
                 </EmptyState>
               ) : (
-                <ul className={styles.list} aria-label={`${termKindLabel(kind)} options`}>
+                <ul className={styles.list} aria-label={`${termKindLabel(kind)} term sets`}>
                   {items.map((preset) => (
                     <li key={preset.id} className={styles.row}>
                       <div className={styles.text}>
-                        <p className={styles.name}>{preset.name}</p>
-                        <p className={styles.preview}>{firstLine(preset.body)}</p>
+                        <div className={styles.nameLine}>
+                          <p className={styles.name}>{preset.name}</p>
+                          {isAppDefaultSet(preset.id) ? <Badge>App default</Badge> : null}
+                        </div>
+                        <p className={styles.preview}>{previewLine(preset.body)}</p>
                       </div>
                       <div className={styles.rowActions}>
                         <button
@@ -119,8 +125,8 @@ export function TermPresetsManager({ presets }: { presets: readonly TermPreset[]
             if (!open) setRemoving(null);
           }}
           title={`Remove "${removing.name}"?`}
-          description="It leaves the Saved options list. Quotations already written keep their text."
-          confirmLabel="Remove option"
+          description="It leaves the term sets list. Quotations already written keep their text."
+          confirmLabel="Remove term set"
           destructive
           onConfirm={async () => {
             const result = await removePresetAction(removing.id);

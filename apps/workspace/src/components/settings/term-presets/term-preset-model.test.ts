@@ -1,12 +1,15 @@
-import type { TermPreset } from '@bos/contracts';
+import { DEFAULT_TERM_PRESETS, type TermPreset } from '@bos/contracts';
 import { describe, expect, it } from 'vitest';
 
 import {
   TERM_BODY_LIMITS,
   TERM_TAB_ORDER,
-  firstLine,
+  isAppDefaultSet,
   isTermKind,
+  normalizeBody,
   presetsOfKind,
+  previewLine,
+  termSetsAreDefault,
   validatePreset,
 } from './term-preset-model';
 
@@ -30,13 +33,54 @@ describe('presetsOfKind', () => {
   });
 });
 
-describe('firstLine', () => {
-  it('takes the first non-empty line and cuts a long one with an ellipsis', () => {
-    expect(firstLine('\n  \nFifty percent advance\nthen the rest')).toBe('Fifty percent advance');
-    expect(firstLine('')).toBe('');
-    const cut = firstLine('x'.repeat(300), 20);
+describe('previewLine', () => {
+  it('turns rich text into one line of plain words, list markers dropped', () => {
+    expect(
+      previewLine(
+        '<p><strong>Website</strong> terms</p><ul><li>Half up front</li><li>Rest later</li></ul>',
+      ),
+    ).toBe('Website terms · Half up front · Rest later');
+    expect(previewLine('<ol><li>First</li><li>Second</li></ol>')).toBe('First · Second');
+  });
+
+  it('shows legacy plain text as it is, on one line', () => {
+    expect(previewLine('\n  \nFifty percent advance\nthen the rest')).toBe(
+      'Fifty percent advance · then the rest',
+    );
+    expect(previewLine('')).toBe('');
+  });
+
+  it('never shows markup or a script, and cuts a long text with an ellipsis', () => {
+    expect(previewLine('<p>Hi</p><script>alert(1)</script>')).toBe('Hi');
+    const cut = previewLine(`<p>${'x'.repeat(300)}</p>`, 20);
     expect(cut).toHaveLength(20);
     expect(cut.endsWith('…')).toBe(true);
+  });
+});
+
+describe('app default sets', () => {
+  it('knows the ids the app ships with, and no others', () => {
+    for (const d of DEFAULT_TERM_PRESETS) expect(isAppDefaultSet(d.id)).toBe(true);
+    expect(isAppDefaultSet('00000000-0000-4000-8000-000000000001')).toBe(false);
+  });
+
+  it('is at the default only when the list is exactly the defaults, in any order', () => {
+    expect(termSetsAreDefault(DEFAULT_TERM_PRESETS)).toBe(true);
+    expect(termSetsAreDefault([...DEFAULT_TERM_PRESETS].reverse())).toBe(true);
+    expect(termSetsAreDefault([])).toBe(false);
+    expect(termSetsAreDefault(DEFAULT_TERM_PRESETS.slice(1))).toBe(false);
+    expect(termSetsAreDefault([...DEFAULT_TERM_PRESETS, preset(9, 'scope', 'Mine')])).toBe(false);
+    const [first, ...rest] = DEFAULT_TERM_PRESETS;
+    expect(
+      termSetsAreDefault([{ ...(first as TermPreset), body: '<p>Changed</p>' }, ...rest]),
+    ).toBe(false);
+  });
+});
+
+describe('normalizeBody', () => {
+  it('rebuilds rich text from the allow-list and only trims plain text', () => {
+    expect(normalizeBody('<p onclick="x()">Hi</p><script>y()</script>')).toBe('<p>Hi</p>');
+    expect(normalizeBody('  Net 30  ')).toBe('Net 30');
   });
 });
 
@@ -46,6 +90,28 @@ describe('validatePreset', () => {
       ok: true,
       value: { name: 'Standard', body: 'Build it.' },
     });
+  });
+
+  it('sanitises rich text and keeps plain text plain', () => {
+    expect(
+      validatePreset('scope', { name: 'a', body: '<p>Hi <em>there</em></p><script>x()</script>' }),
+    ).toEqual({ ok: true, value: { name: 'a', body: '<p>Hi <em>there</em></p>' } });
+  });
+
+  it('counts words, not markup, and treats markup without words as empty', () => {
+    const body = `<p><strong>${'b'.repeat(2_000)}</strong></p>`;
+    expect(validatePreset('delivery_timeline', { name: 'ok', body }).ok).toBe(true);
+    expect(
+      validatePreset('delivery_timeline', {
+        name: 'ok',
+        body: body.replace('</strong>', 'b</strong>'),
+      }).ok,
+    ).toBe(false);
+    for (const empty of ['<p></p>', '<p> </p>', '<ul><li></li></ul>']) {
+      const result = validatePreset('scope', { name: 'ok', body: empty });
+      expect(result.ok).toBe(false);
+      if (!result.ok) expect(result.fieldErrors.body).toContain('Write the text');
+    }
   });
 
   it('says what is missing at the field', () => {
