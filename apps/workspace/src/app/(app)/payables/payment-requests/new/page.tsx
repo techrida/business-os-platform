@@ -8,6 +8,9 @@ import { Alert } from '@/components/ui/alert';
 import { Breadcrumb, Page, PageHeader } from '@/components/ui/page';
 import { requireStaffSession } from '@/lib/bff';
 import { listPaymentRequestItems, type PaymentRequestItem } from '@/lib/api-payables';
+import { listPaymentRequestOrders } from '@/lib/api-payables-orders';
+
+import { PO_STATUS_LABEL } from '../../../procurement/orders/_lib/model';
 
 import { PaymentRequestEntry } from '../forms';
 import { paymentRequestFailure } from '../failure';
@@ -19,6 +22,7 @@ export default async function NewPaymentRequestPage() {
   const session = await requireStaffSession('/payables/payment-requests/new');
   const allowed = hasPermission(session.roles, 'payables.payment.request');
   let items: PaymentRequestItem[] = [];
+  let orders: { id: string; vendorId: string; label: string }[] = [];
   let problem: string | undefined;
   if (allowed) {
     try {
@@ -26,6 +30,16 @@ export default async function NewPaymentRequestPage() {
     } catch (err) {
       problem = paymentRequestFailure(err).message;
     }
+    // The order is optional on a request: if the picker does not load, the request goes without one.
+    orders = await listPaymentRequestOrders(session).then(
+      (rows) =>
+        rows.map((o) => ({
+          id: o.id,
+          vendorId: o.vendorId,
+          label: `${o.number} · ${PO_STATUS_LABEL[o.status].text}`,
+        })),
+      () => [],
+    );
   }
   return (
     <Page>
@@ -54,7 +68,7 @@ export default async function NewPaymentRequestPage() {
             have claimed the remaining balances.
           </Alert>
         ) : (
-          <PaymentRequestEntry idempotencyKey={randomUUID()} items={items} />
+          <PaymentRequestEntry idempotencyKey={randomUUID()} items={items} orders={orders} />
         )
       ) : (
         <Alert tone="info" role="alert">
