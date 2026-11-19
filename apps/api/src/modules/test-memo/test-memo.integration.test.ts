@@ -1095,6 +1095,7 @@ describe('internal memo template', () => {
       (p) => p.userId === staff.userId,
     );
     expect(person?.name).toBe('accounts.desk');
+    expect(person?.avatarDocumentId).toBeNull();
   });
 
   it('returns only the active company directory and snapshots authoritative staff metadata', async () => {

@@ -311,6 +311,7 @@ export class TestMemoService implements OnModuleInit {
         userId: users.id,
         displayName: users.displayName,
         email: users.email,
+        avatarDocumentId: users.avatarDocumentId,
         jobTitle: userEntities.jobTitle,
         departmentId: userEntities.departmentId,
       })
@@ -350,6 +351,7 @@ export class TestMemoService implements OnModuleInit {
         jobTitle: p.jobTitle,
         department: depts.find((d) => d.id === p.departmentId)?.name ?? null,
         canApprove: approvers.has(p.userId),
+        avatarDocumentId: p.avatarDocumentId,
       })),
     };
   }
@@ -551,6 +553,7 @@ export class TestMemoService implements OnModuleInit {
         memo: testMemos,
         createdKey,
         ownerName: users.displayName,
+        ownerAvatarDocumentId: users.avatarDocumentId,
         departmentName: departments.name,
       })
       .from(testMemos)
@@ -571,7 +574,7 @@ export class TestMemoService implements OnModuleInit {
     const page = rows.slice(0, query.limit);
     const last = page[page.length - 1];
     return {
-      items: page.map(({ memo, ownerName, departmentName }) => ({
+      items: page.map(({ memo, ownerName, ownerAvatarDocumentId, departmentName }) => ({
         id: memo.id,
         number: memo.number,
         title: memo.title,
@@ -580,6 +583,7 @@ export class TestMemoService implements OnModuleInit {
         currency: memo.currency as MemoDto['currency'],
         ownerUserId: memo.ownerUserId,
         ownerName: ownerName?.trim() ? ownerName : null,
+        ownerAvatarDocumentId: ownerAvatarDocumentId ?? null,
         departmentName: departmentName ?? null,
         createdAt: iso(memo.createdAt),
         updatedAt: iso(memo.updatedAt),

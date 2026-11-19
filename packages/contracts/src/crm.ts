@@ -448,6 +448,8 @@ export const LeadOwnerOptionSchema = z.object({
   userId: z.guid(),
   displayName: z.string(),
   email: z.string(),
+  /** The person's picture (`app.users.avatar_document_id`); null or absent shows initials. */
+  avatarDocumentId: z.guid().nullable().optional(),
 });
 export type LeadOwnerOption = z.infer<typeof LeadOwnerOptionSchema>;
 
@@ -740,6 +742,8 @@ export const VerificationReviewHistorySchema = z.object({
   items: z.array(
     VerificationReviewSchema.extend({
       reviewerName: z.string().nullable().optional(),
+      /** The reviewer's picture (`app.users.avatar_document_id`); null or absent shows initials. */
+      reviewerAvatarDocumentId: z.guid().nullable().optional(),
       itemKey: ChecklistItemKeySchema.nullable(),
       kind: z.enum(['item_decided', 'case_decided', 'legacy_case_decided']),
     }),

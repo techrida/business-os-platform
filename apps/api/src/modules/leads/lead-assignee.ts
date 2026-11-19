@@ -23,6 +23,7 @@ export function activeStaffOfEntity(tx: DbTransaction, scope: EntityScope, userI
       userId: users.id,
       displayName: users.displayName,
       email: users.email,
+      avatarDocumentId: users.avatarDocumentId,
       roleKeys: userEntities.roleKeys,
     })
     .from(users)

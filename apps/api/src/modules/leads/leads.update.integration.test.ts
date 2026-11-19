@@ -280,6 +280,8 @@ describe('GET /v1/leads/owners', () => {
   it('offers an own-scope caller only themselves', async () => {
     const list = await owners();
     expect(list.map((o) => o.userId)).toEqual([h.users.salesA]);
+    // No picture set: the option still names the pointer, as null.
+    expect(list[0]).toHaveProperty('avatarDocumentId', null);
   });
 
   it('offers a wide-scope caller every active user whose roles may own a lead, and nobody else', async () => {
