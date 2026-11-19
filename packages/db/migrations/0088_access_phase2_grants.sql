@@ -9,9 +9,15 @@
 --   * D50 lead access, on seeded rows only (a Founder's row is never changed): Finance, Accountant and PMO read the
 --     leads and opportunities they started (own, which covers what they created) instead of all of them, and
 --     Operations Head no longer reads leads or opportunities. Their quotation, customer and verification reads stay.
+--     Their managers and heads see the department's leads and opportunities through the level rows below.
 --   * The default level rows, a frozen copy of DEFAULT_ROLE_PERMISSION_LEVELS in packages/contracts (its test
---     compares the two): Sales and Marketing managers work their department, and every head reads their department
---     (D51). Seeded; an existing row for the same role, permission and level is kept.
+--     compares the two), which follows the default switches of Settings > Access: managers and heads see their
+--     department's leads, opportunities and quotations, and heads their department's purchase requests (D50, D51).
+--     Sales and Marketing managers and heads also edit their department's leads (and Sales its opportunities), so
+--     they can hand a staff member's lead over and reschedule its follow-ups (D50); every other write stays with the
+--     owner, and Finance, Accountant and PMO, which only start leads, get no write row. A row is written only where
+--     the tenant's role holds that permission below the department (a level row never creates access). Seeded; an
+--     existing row for the same role, permission and level is kept.
 -- Department reach on quotations (K4): quotations.department_id is the department of the quotation's opportunity,
 -- stamped on insert, cascaded when the opportunity's department changes, and backfilled, so a department grant
 -- reaches quotations the way it reaches leads and opportunities. Always derived: a value written by hand is replaced.
@@ -84,50 +90,48 @@ BEGIN
     GET DIAGNOSTICS changed_rows = ROW_COUNT;
     total_rows := total_rows + changed_rows;
 
+    -- After the D50 changes above, so the filter sees this tenant's grants as they now stand: a row is written only
+    -- where the role holds the permission below the department, as Settings > Access materialises it. A level row
+    -- never creates access, and a role a Founder already widened to the department or further needs none.
     INSERT INTO app.role_permission_levels (tenant_id, role_key, permission, min_level, scope, seeded)
     SELECT target.tenant_id, level_grant.role, level_grant.permission, level_grant.min_level, level_grant.scope, true
     FROM jsonb_to_recordset('[
-      {"role": "management", "permission": "procurement.pr.read", "min_level": "head", "scope": "department"},
-      {"role": "finance", "permission": "procurement.pr.read", "min_level": "head", "scope": "department"},
-      {"role": "accountant", "permission": "procurement.pr.read", "min_level": "head", "scope": "department"},
+      {"role": "finance", "permission": "crm.lead.read", "min_level": "manager", "scope": "department"},
+      {"role": "finance", "permission": "crm.lead.read", "min_level": "head", "scope": "department"},
+      {"role": "finance", "permission": "crm.opportunity.read", "min_level": "manager", "scope": "department"},
+      {"role": "finance", "permission": "crm.opportunity.read", "min_level": "head", "scope": "department"},
+      {"role": "accountant", "permission": "crm.lead.read", "min_level": "manager", "scope": "department"},
+      {"role": "accountant", "permission": "crm.lead.read", "min_level": "head", "scope": "department"},
+      {"role": "accountant", "permission": "crm.opportunity.read", "min_level": "manager", "scope": "department"},
+      {"role": "accountant", "permission": "crm.opportunity.read", "min_level": "head", "scope": "department"},
       {"role": "sales", "permission": "crm.lead.read", "min_level": "manager", "scope": "department"},
-      {"role": "sales", "permission": "crm.lead.write", "min_level": "manager", "scope": "department"},
-      {"role": "sales", "permission": "crm.opportunity.read", "min_level": "manager", "scope": "department"},
-      {"role": "sales", "permission": "crm.opportunity.write", "min_level": "manager", "scope": "department"},
-      {"role": "sales", "permission": "quotation.read", "min_level": "manager", "scope": "department"},
-      {"role": "sales", "permission": "quotation.draft", "min_level": "manager", "scope": "department"},
-      {"role": "sales", "permission": "quotation.submit", "min_level": "manager", "scope": "department"},
-      {"role": "sales", "permission": "quotation.send", "min_level": "manager", "scope": "department"},
-      {"role": "sales", "permission": "quotation.record_acceptance", "min_level": "manager", "scope": "department"},
-      {"role": "sales", "permission": "quotation.revise", "min_level": "manager", "scope": "department"},
       {"role": "sales", "permission": "crm.lead.read", "min_level": "head", "scope": "department"},
+      {"role": "sales", "permission": "crm.opportunity.read", "min_level": "manager", "scope": "department"},
       {"role": "sales", "permission": "crm.opportunity.read", "min_level": "head", "scope": "department"},
+      {"role": "sales", "permission": "crm.lead.write", "min_level": "manager", "scope": "department"},
+      {"role": "sales", "permission": "crm.lead.write", "min_level": "head", "scope": "department"},
+      {"role": "sales", "permission": "crm.opportunity.write", "min_level": "manager", "scope": "department"},
+      {"role": "sales", "permission": "crm.opportunity.write", "min_level": "head", "scope": "department"},
+      {"role": "sales", "permission": "quotation.read", "min_level": "manager", "scope": "department"},
       {"role": "sales", "permission": "quotation.read", "min_level": "head", "scope": "department"},
-      {"role": "sales", "permission": "sales_order.read", "min_level": "head", "scope": "department"},
-      {"role": "sales", "permission": "procurement.pr.read", "min_level": "head", "scope": "department"},
-      {"role": "sales", "permission": "approvals.requests.read", "min_level": "head", "scope": "department"},
-      {"role": "sales", "permission": "documents.read", "min_level": "head", "scope": "department"},
       {"role": "marketing", "permission": "crm.lead.read", "min_level": "manager", "scope": "department"},
-      {"role": "marketing", "permission": "crm.lead.write", "min_level": "manager", "scope": "department"},
       {"role": "marketing", "permission": "crm.lead.read", "min_level": "head", "scope": "department"},
-      {"role": "marketing", "permission": "procurement.pr.read", "min_level": "head", "scope": "department"},
-      {"role": "marketing", "permission": "approvals.requests.read", "min_level": "head", "scope": "department"},
-      {"role": "marketing", "permission": "documents.read", "min_level": "head", "scope": "department"},
-      {"role": "pmo", "permission": "procurement.pr.read", "min_level": "head", "scope": "department"},
-      {"role": "pmo", "permission": "approvals.requests.read", "min_level": "head", "scope": "department"},
-      {"role": "pmo", "permission": "documents.read", "min_level": "head", "scope": "department"},
-      {"role": "operations_head", "permission": "procurement.pr.read", "min_level": "head", "scope": "department"},
-      {"role": "operations_head", "permission": "approvals.requests.read", "min_level": "head", "scope": "department"},
-      {"role": "operations_head", "permission": "documents.read", "min_level": "head", "scope": "department"},
-      {"role": "procurement", "permission": "approvals.requests.read", "min_level": "head", "scope": "department"},
-      {"role": "procurement", "permission": "documents.read", "min_level": "head", "scope": "department"},
-      {"role": "warehouse", "permission": "procurement.pr.read", "min_level": "head", "scope": "department"},
-      {"role": "warehouse", "permission": "approvals.requests.read", "min_level": "head", "scope": "department"},
-      {"role": "warehouse", "permission": "documents.read", "min_level": "head", "scope": "department"},
-      {"role": "operations_officer", "permission": "procurement.pr.read", "min_level": "head", "scope": "department"},
-      {"role": "operations_officer", "permission": "approvals.requests.read", "min_level": "head", "scope": "department"},
-      {"role": "operations_officer", "permission": "documents.read", "min_level": "head", "scope": "department"}
+      {"role": "marketing", "permission": "crm.lead.write", "min_level": "manager", "scope": "department"},
+      {"role": "marketing", "permission": "crm.lead.write", "min_level": "head", "scope": "department"},
+      {"role": "pmo", "permission": "crm.lead.read", "min_level": "manager", "scope": "department"},
+      {"role": "pmo", "permission": "crm.lead.read", "min_level": "head", "scope": "department"},
+      {"role": "pmo", "permission": "crm.opportunity.read", "min_level": "manager", "scope": "department"},
+      {"role": "pmo", "permission": "crm.opportunity.read", "min_level": "head", "scope": "department"},
+      {"role": "operations_officer", "permission": "procurement.pr.read", "min_level": "head", "scope": "department"}
     ]'::jsonb) AS level_grant(role text, permission text, min_level text, scope text)
+    WHERE EXISTS (
+      SELECT 1
+      FROM app.role_permissions base
+      WHERE base.tenant_id = target.tenant_id
+        AND base.role_key = level_grant.role
+        AND base.permission = level_grant.permission
+        AND base.scope NOT IN ('department', 'all')
+    )
     ON CONFLICT (tenant_id, role_key, permission, min_level) DO NOTHING;
     GET DIAGNOSTICS changed_rows = ROW_COUNT;
     total_rows := total_rows + changed_rows;
