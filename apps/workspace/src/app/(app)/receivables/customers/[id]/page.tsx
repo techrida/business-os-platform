@@ -1,6 +1,7 @@
 import type { CustomerAdvance, InvoiceSettlement } from '@bos/contracts';
 import type { Metadata } from 'next';
 import Link from 'next/link';
+import type { NumberSystem } from '@bos/locale';
 
 import { getCustomer } from '@/components/p2/customers/api';
 import { isGuid } from '@/components/p2/customers/format';
@@ -15,6 +16,7 @@ import { Table, Td, Th } from '@/components/ui/table';
 import { failureOf } from '@/lib/api-kernel';
 import { getCustomerAdvance, getCustomerStatement } from '@/lib/api-receivables';
 import { requireStaffSession } from '@/lib/bff';
+import { getNumberSystem } from '@/lib/display-settings';
 import { money, when } from '@/lib/kernel-format';
 
 import { isZeroAmount } from '../../_lib/aging';
@@ -58,7 +60,13 @@ function overdueText(days: number): string {
   return `${days} ${days === 1 ? 'day' : 'days'} overdue`;
 }
 
-function ItemsTable({ items }: { items: InvoiceSettlement[] }) {
+function ItemsTable({
+  items,
+  numberSystem,
+}: {
+  items: InvoiceSettlement[];
+  numberSystem: NumberSystem;
+}) {
   return (
     <Table caption="Open items on this statement" minWidth={620}>
       <thead>
@@ -99,10 +107,12 @@ function ItemsTable({ items }: { items: InvoiceSettlement[] }) {
                 ) : null}
               </Td>
               <Td align="end" nowrap>
-                {money(item.total, item.currency)}
+                {money(item.total, item.currency, numberSystem)}
               </Td>
               <Td align="end" nowrap>
-                <span className={styles.amount}>{money(item.openAmount, item.currency)}</span>
+                <span className={styles.amount}>
+                  {money(item.openAmount, item.currency, numberSystem)}
+                </span>
               </Td>
             </tr>
           );
@@ -112,14 +122,22 @@ function ItemsTable({ items }: { items: InvoiceSettlement[] }) {
   );
 }
 
-function AdvanceList({ rows }: { rows: CustomerAdvance[] }) {
+function AdvanceList({
+  rows,
+  numberSystem,
+}: {
+  rows: CustomerAdvance[];
+  numberSystem: NumberSystem;
+}) {
   const held = rows.filter((row) => !isZeroAmount(row.amount));
   if (held.length === 0) return <p className={styles.quiet}>This customer has no advance.</p>;
   return (
     <ul className={styles.advance}>
       {held.map((row) => (
         <li key={row.currency} className={styles.advanceItem}>
-          <strong className={styles.advanceValue}>{money(row.amount, row.currency)}</strong>
+          <strong className={styles.advanceValue}>
+            {money(row.amount, row.currency, numberSystem)}
+          </strong>
           <span className={styles.quiet}>unallocated in {row.currency}</span>
         </li>
       ))}
@@ -135,6 +153,7 @@ export default async function CustomerStatementPage({
   const { id } = await params;
   const here = `/receivables/customers/${id}`;
   const session = await requireStaffSession(here);
+  const numberSystem = await getNumberSystem();
 
   // A person without ar.read is told so without the page fetching anything for them.
   if (!hasPermission(session.roles, 'ar.read')) {
@@ -213,7 +232,7 @@ export default async function CustomerStatementPage({
               No invoice for this customer has an open amount.
             </EmptyState>
           ) : (
-            <ItemsTable items={items} />
+            <ItemsTable numberSystem={numberSystem} items={items} />
           )}
         </Panel>
 
@@ -227,7 +246,7 @@ export default async function CustomerStatementPage({
               The advance could not be loaded. Reload the page to try again.
             </Alert>
           ) : (
-            <AdvanceList rows={advance} />
+            <AdvanceList numberSystem={numberSystem} rows={advance} />
           )}
         </Panel>
       </div>

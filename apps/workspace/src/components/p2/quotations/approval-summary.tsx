@@ -72,12 +72,18 @@ export function QuotationApprovalSummary({
     {
       key: 'total',
       label: 'Total (NPR)',
-      value: <span className={`${styles.figure} ${styles.total}`}>{money(snap.nprTotal, 'NPR', numberSystem)}</span>,
+      value: (
+        <span className={`${styles.figure} ${styles.total}`}>
+          {money(snap.nprTotal, 'NPR', numberSystem)}
+        </span>
+      ),
     },
     {
       key: 'discount',
       label: 'Discount',
-      value: <span className={styles.figure}>{money(snap.nprDiscountAmount, 'NPR', numberSystem)}</span>,
+      value: (
+        <span className={styles.figure}>{money(snap.nprDiscountAmount, 'NPR', numberSystem)}</span>
+      ),
     },
     {
       key: 'discountPct',

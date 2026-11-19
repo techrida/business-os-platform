@@ -1,6 +1,7 @@
 import { PO_STATUSES, PoStatusSchema, type PoStatus } from '@bos/contracts';
 import type { Metadata } from 'next';
 import Link from 'next/link';
+import type { NumberSystem } from '@bos/locale';
 
 import { parsePage } from '@/components/p2/customers/duplicates';
 import { Alert } from '@/components/ui/alert';
@@ -15,6 +16,7 @@ import { CellTitle, Table, Td, Th } from '@/components/ui/table';
 import { getVendor } from '@/lib/api-vendors';
 import { listPurchaseOrders, type PoListItem } from '@/lib/api-purchase-orders';
 import { requireStaffSession } from '@/lib/bff';
+import { getNumberSystem } from '@/lib/display-settings';
 import { when } from '@/lib/kernel-format';
 import type { Session } from '@/lib/session';
 
@@ -48,7 +50,15 @@ async function vendorNames(session: Session, ids: readonly string[]): Promise<Ma
   return names;
 }
 
-function Row({ po, vendor }: { po: PoListItem; vendor: string | undefined }) {
+function Row({
+  po,
+  vendor,
+  numberSystem,
+}: {
+  po: PoListItem;
+  vendor: string | undefined;
+  numberSystem: NumberSystem;
+}) {
   const status = PO_STATUS_LABEL[po.status];
   return (
     <tr>
@@ -72,7 +82,9 @@ function Row({ po, vendor }: { po: PoListItem; vendor: string | undefined }) {
         <Badge tone={status.tone}>{status.text}</Badge>
       </Td>
       <Td align="end" nowrap>
-        <span className={styles.numeric}>{poMoney(po.approvedTotal, po.currency)}</span>
+        <span className={styles.numeric}>
+          {poMoney(po.approvedTotal, po.currency, numberSystem)}
+        </span>
       </Td>
       <Td align="end" nowrap>
         <span className={styles.numeric}>v{po.currentVersion}</span>
@@ -94,6 +106,7 @@ export default async function PurchaseOrdersPage({
   searchParams: Promise<{ status?: string | string[]; page?: string | string[] }>;
 }) {
   const session = await requireStaffSession('/procurement/orders');
+  const numberSystem = await getNumberSystem();
   const params = await searchParams;
   const parsedStatus = PoStatusSchema.safeParse(
     typeof params.status === 'string' ? params.status : undefined,
@@ -212,7 +225,12 @@ export default async function PurchaseOrdersPage({
             </thead>
             <tbody>
               {shown.map((po) => (
-                <Row key={po.id} po={po} vendor={names.get(po.vendorId)} />
+                <Row
+                  numberSystem={numberSystem}
+                  key={po.id}
+                  po={po}
+                  vendor={names.get(po.vendorId)}
+                />
               ))}
             </tbody>
           </Table>

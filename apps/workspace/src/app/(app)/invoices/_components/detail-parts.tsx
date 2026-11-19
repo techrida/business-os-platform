@@ -1,4 +1,5 @@
 import type { InvoiceDetail } from '@bos/contracts';
+import type { NumberSystem } from '@bos/locale';
 
 import { FactList, Panel, type Fact } from '@/components/ui/panel';
 import { Table, Td, Th } from '@/components/ui/table';
@@ -9,7 +10,13 @@ import styles from './invoice.module.css';
 type Invoice = InvoiceDetail['invoice'];
 
 /** Every figure below is a string the server sent: this file formats, it never adds or rounds. */
-export function Totals({ invoice }: { invoice: Invoice }) {
+export function Totals({
+  invoice,
+  numberSystem,
+}: {
+  invoice: Invoice;
+  numberSystem: NumberSystem;
+}) {
   const { totals, currency } = invoice;
   const rows: { key: string; label: string; value: string; grand?: boolean }[] = [
     { key: 'subtotal', label: 'Subtotal', value: totals.subtotal },
@@ -29,7 +36,7 @@ export function Totals({ invoice }: { invoice: Invoice }) {
             className={row.grand ? `${styles.totalRow} ${styles.grandTotal}` : styles.totalRow}
           >
             <dt className={styles.totalTerm}>{row.label}</dt>
-            <dd className={styles.totalValue}>{money(row.value, currency)}</dd>
+            <dd className={styles.totalValue}>{money(row.value, currency, numberSystem)}</dd>
           </div>
         ))}
       </dl>
@@ -38,7 +45,13 @@ export function Totals({ invoice }: { invoice: Invoice }) {
 }
 
 /** The NPR value frozen at issue, with the rate that produced it. Only for a foreign-currency invoice. */
-export function NprSnapshot({ invoice }: { invoice: Invoice }) {
+export function NprSnapshot({
+  invoice,
+  numberSystem,
+}: {
+  invoice: Invoice;
+  numberSystem: NumberSystem;
+}) {
   const { npr, currency } = invoice;
   if (currency === 'NPR') return null;
   if (npr === null) {
@@ -52,7 +65,7 @@ export function NprSnapshot({ invoice }: { invoice: Invoice }) {
     );
   }
   const facts: Fact[] = [
-    { key: 'amount', label: 'Value in NPR', value: money(npr.amountNpr, 'NPR') },
+    { key: 'amount', label: 'Value in NPR', value: money(npr.amountNpr, 'NPR', numberSystem) },
     { key: 'rate', label: `Rate (${currency} to NPR)`, value: npr.rate },
     {
       key: 'source',
@@ -68,7 +81,13 @@ export function NprSnapshot({ invoice }: { invoice: Invoice }) {
   );
 }
 
-export function Lines({ detail }: { detail: InvoiceDetail }) {
+export function Lines({
+  detail,
+  numberSystem,
+}: {
+  detail: InvoiceDetail;
+  numberSystem: NumberSystem;
+}) {
   const { invoice, lines, taxSummary } = detail;
   const { currency } = invoice;
   return (
@@ -100,19 +119,19 @@ export function Lines({ detail }: { detail: InvoiceDetail }) {
                   </span>
                 </Td>
                 <Td align="end" nowrap>
-                  {money(line.unitPrice, currency)}
+                  {money(line.unitPrice, currency, numberSystem)}
                 </Td>
                 <Td align="end" nowrap>
-                  {money(line.gross, currency)}
+                  {money(line.gross, currency, numberSystem)}
                 </Td>
                 <Td align="end" nowrap>
-                  {money(line.discountAlloc, currency)}
+                  {money(line.discountAlloc, currency, numberSystem)}
                 </Td>
                 <Td align="end" nowrap>
-                  {money(line.taxable, currency)}
+                  {money(line.taxable, currency, numberSystem)}
                 </Td>
                 <Td align="end" nowrap>
-                  {money(line.taxAmount, currency)}
+                  {money(line.taxAmount, currency, numberSystem)}
                 </Td>
               </tr>
             ))}
@@ -140,10 +159,10 @@ export function Lines({ detail }: { detail: InvoiceDetail }) {
                     {row.percent}%
                   </Td>
                   <Td align="end" nowrap>
-                    {money(row.base, currency)}
+                    {money(row.base, currency, numberSystem)}
                   </Td>
                   <Td align="end" nowrap>
-                    {money(row.tax, currency)}
+                    {money(row.tax, currency, numberSystem)}
                   </Td>
                 </tr>
               ))}

@@ -1,6 +1,7 @@
 import { PR_STATUSES, PrStatusSchema, type PrStatus } from '@bos/contracts';
 import type { Metadata } from 'next';
 import Link from 'next/link';
+import type { NumberSystem } from '@bos/locale';
 
 import { Alert } from '@/components/ui/alert';
 import { Badge } from '@/components/ui/badge';
@@ -12,6 +13,7 @@ import { Page, PageHeader } from '@/components/ui/page';
 import { CellTitle, Table, Td, Th } from '@/components/ui/table';
 import { listPurchaseRequests, type PurchaseRequestListItem } from '@/lib/api-procurement';
 import { requireStaffSession } from '@/lib/bff';
+import { getNumberSystem } from '@/lib/display-settings';
 import { money, when } from '@/lib/kernel-format';
 
 import layout from '../procurement.module.css';
@@ -31,7 +33,7 @@ function href(status: PrStatus | undefined): string {
     : `/procurement/requests?status=${encodeURIComponent(status)}`;
 }
 
-function Row({ pr }: { pr: PurchaseRequestListItem }) {
+function Row({ pr, numberSystem }: { pr: PurchaseRequestListItem; numberSystem: NumberSystem }) {
   const status = PR_STATUS_LABEL[pr.status];
   return (
     <tr>
@@ -53,7 +55,9 @@ function Row({ pr }: { pr: PurchaseRequestListItem }) {
       </Td>
       <Td nowrap>{when(pr.requiredBy, 'date')}</Td>
       <Td align="end" nowrap>
-        <span className={styles.numeric}>{money(pr.estimatedTotal, pr.currency)}</span>
+        <span className={styles.numeric}>
+          {money(pr.estimatedTotal, pr.currency, numberSystem)}
+        </span>
       </Td>
       <Td nowrap>
         <span className={styles.badges}>
@@ -71,6 +75,7 @@ export default async function PurchaseRequestsPage({
   searchParams: Promise<{ status?: string | string[] }>;
 }) {
   const session = await requireStaffSession('/procurement/requests');
+  const numberSystem = await getNumberSystem();
   const params = await searchParams;
   const parsed = PrStatusSchema.safeParse(
     typeof params.status === 'string' ? params.status : undefined,
@@ -184,7 +189,7 @@ export default async function PurchaseRequestsPage({
             </thead>
             <tbody>
               {requests.map((pr) => (
-                <Row key={pr.id} pr={pr} />
+                <Row numberSystem={numberSystem} key={pr.id} pr={pr} />
               ))}
             </tbody>
           </Table>

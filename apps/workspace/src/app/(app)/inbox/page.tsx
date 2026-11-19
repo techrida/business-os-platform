@@ -1,6 +1,7 @@
 import type { InboxItemDto } from '@bos/contracts';
 import type { Metadata } from 'next';
 import Link from 'next/link';
+import type { NumberSystem } from '@bos/locale';
 
 import { Alert } from '@/components/ui/alert';
 import { Button, LinkButton } from '@/components/ui/button';
@@ -10,6 +11,7 @@ import { SearchInput } from '@/components/ui/search-input';
 import { CellTitle, Table, Td, Th } from '@/components/ui/table';
 import { getInbox, failureOf } from '@/lib/api-kernel';
 import { requireStaffSession } from '@/lib/bff';
+import { getNumberSystem } from '@/lib/display-settings';
 import { money, when } from '@/lib/kernel-format';
 
 import { INBOX_DENIED, inboxDenialMessage } from './denial';
@@ -19,7 +21,7 @@ import styles from './inbox.module.css';
 export const metadata: Metadata = { title: 'Inbox · Business OS' };
 export const dynamic = 'force-dynamic';
 
-function InboxRow({ item }: { item: InboxItemDto }) {
+function InboxRow({ item, numberSystem }: { item: InboxItemDto; numberSystem: NumberSystem }) {
   return (
     <tr>
       <Td>
@@ -36,7 +38,7 @@ function InboxRow({ item }: { item: InboxItemDto }) {
       <Td className={styles.reason}>{item.reason}</Td>
       <Td align="end" nowrap>
         {item.amountNpr !== null ? (
-          <span className={styles.amount}>{money(item.amountNpr, 'NPR')}</span>
+          <span className={styles.amount}>{money(item.amountNpr, 'NPR', numberSystem)}</span>
         ) : (
           <span className={styles.quiet}>No amount</span>
         )}
@@ -54,6 +56,7 @@ export default async function InboxPage({
   searchParams: Promise<{ decided?: string | string[]; q?: string | string[] }>;
 }) {
   const session = await requireStaffSession('/inbox');
+  const numberSystem = await getNumberSystem();
   const { decided, q } = await searchParams;
   const query = typeof q === 'string' ? q.trim().slice(0, 120) : '';
   const search = query.toLowerCase();
@@ -132,7 +135,7 @@ export default async function InboxPage({
                 </thead>
                 <tbody>
                   {matches.map((item) => (
-                    <InboxRow key={item.requestId} item={item} />
+                    <InboxRow numberSystem={numberSystem} key={item.requestId} item={item} />
                   ))}
                 </tbody>
               </Table>

@@ -36,5 +36,7 @@ export async function saveNumberSystemAction(
     return fail(describeError(error, 'change the number format'));
   }
   revalidatePath('/settings/formats');
+  // Every screen formats money through the layout's provider, so the layout reloads with the new setting.
+  revalidatePath('/', 'layout');
   return ok('Number format saved.');
 }

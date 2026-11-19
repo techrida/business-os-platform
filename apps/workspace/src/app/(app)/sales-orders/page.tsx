@@ -3,6 +3,7 @@ import { randomUUID } from 'node:crypto';
 import type { SalesOrderListItem } from '@bos/contracts';
 import type { Metadata } from 'next';
 import Link from 'next/link';
+import type { NumberSystem } from '@bos/locale';
 
 import { listCustomers } from '@/components/p2/customers/api';
 import { hasPermission } from '@/components/p2/customers/permissions';
@@ -19,6 +20,7 @@ import { Table, Td, Th } from '@/components/ui/table';
 import { listSalesOrders } from '@/lib/api-billing';
 import { failureOf } from '@/lib/api-kernel';
 import { requireStaffSession } from '@/lib/bff';
+import { getNumberSystem } from '@/lib/display-settings';
 import { money, when } from '@/lib/kernel-format';
 
 import {
@@ -45,7 +47,13 @@ export const dynamic = 'force-dynamic';
 /** How many customers the filter offers. A longer list needs a search box, which is not built yet. */
 const CUSTOMER_OPTIONS = 100;
 
-function OrderRow({ item }: { item: SalesOrderListItem }) {
+function OrderRow({
+  item,
+  numberSystem,
+}: {
+  item: SalesOrderListItem;
+  numberSystem: NumberSystem;
+}) {
   const { label, tone } = salesOrderStatusMeta(item.status);
   return (
     <tr>
@@ -61,7 +69,7 @@ function OrderRow({ item }: { item: SalesOrderListItem }) {
         <Badge tone={tone}>{label}</Badge>
       </Td>
       <Td align="end" nowrap>
-        <span className={layout.amount}>{money(item.total, item.currency)}</span>
+        <span className={layout.amount}>{money(item.total, item.currency, numberSystem)}</span>
       </Td>
       <Td nowrap>
         {item.confirmedAt !== null ? (
@@ -87,6 +95,7 @@ export default async function SalesOrdersPage({
   const filters = { status, customerId, q };
   const here = listHref('/sales-orders', filters, page);
   const session = await requireStaffSession(here);
+  const numberSystem = await getNumberSystem();
   const canConfirm = hasPermission(session.roles, 'sales_order.confirm');
 
   // The three reads do not depend on each other. Only the orders decide whether the page works:
@@ -108,7 +117,7 @@ export default async function SalesOrdersPage({
           (items): ConfirmOption[] =>
             items.map((q) => ({
               versionId: q.currentVersionId,
-              label: `${q.number} · ${q.customerName} · ${money(q.total, q.currency)}`,
+              label: `${q.number} · ${q.customerName} · ${money(q.total, q.currency, numberSystem)}`,
             })),
           () => null,
         )
@@ -277,7 +286,7 @@ export default async function SalesOrdersPage({
             </thead>
             <tbody>
               {window.rows.map((item) => (
-                <OrderRow key={item.id} item={item} />
+                <OrderRow numberSystem={numberSystem} key={item.id} item={item} />
               ))}
             </tbody>
           </Table>

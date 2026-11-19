@@ -49,6 +49,7 @@ export interface BuilderValues {
   scope: string;
   assumptions: string;
   exclusions: string;
+  termsAndConditions: string;
   deliveryTimeline: string;
   discountMode: DiscountMode;
   discountValue: string;
@@ -71,6 +72,7 @@ export function emptyValues(
     scope: '',
     assumptions: '',
     exclusions: '',
+    termsAndConditions: '',
     deliveryTimeline: '',
     discountMode: 'none',
     discountValue: '',
@@ -312,6 +314,7 @@ export function toContent(v: BuilderValues, mode: 'create' | 'update' = 'create'
     scope: opt(v.scope) ?? blank,
     assumptions: opt(v.assumptions) ?? blank,
     exclusions: opt(v.exclusions) ?? blank,
+    termsAndConditions: opt(v.termsAndConditions) ?? blank,
     deliveryTimeline: opt(v.deliveryTimeline) ?? blank,
     paymentTermId: opt(v.paymentTermId) ?? blank,
     paymentSchedule:
@@ -351,6 +354,7 @@ export interface VersionLike {
   scope: string | null;
   assumptions: string | null;
   exclusions: string | null;
+  termsAndConditions: string | null;
   deliveryTimeline: string | null;
   discount: { mode: 'pct' | 'amount'; value: string } | null;
   lines: readonly {
@@ -379,6 +383,7 @@ export function valuesFromVersion(d: VersionLike): BuilderValues {
     scope: d.scope ?? '',
     assumptions: d.assumptions ?? '',
     exclusions: d.exclusions ?? '',
+    termsAndConditions: d.termsAndConditions ?? '',
     deliveryTimeline: d.deliveryTimeline ?? '',
     discountMode: d.discount?.mode ?? 'none',
     discountValue: d.discount?.value ?? '',

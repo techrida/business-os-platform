@@ -10,6 +10,7 @@ import { getInvoice } from '@/lib/api-billing';
 import { failureOf } from '@/lib/api-kernel';
 import { listTaxCodes } from '@/lib/api-tax-codes';
 import { requireStaffSession } from '@/lib/bff';
+import { getNumberSystem } from '@/lib/display-settings';
 import { when } from '@/lib/kernel-format';
 
 import { InvoiceKindBadge, InvoiceStatusBadge } from '../_components/badges';
@@ -159,6 +160,7 @@ export default async function InvoiceDetailPage({ params }: { params: Promise<{ 
   if (!UUID.test(id)) notFound();
   const path = `/invoices/${encodeURIComponent(id)}`;
   const session = await requireStaffSession(path);
+  const numberSystem = await getNumberSystem();
 
   let detail: InvoiceDetail;
   try {
@@ -235,11 +237,11 @@ export default async function InvoiceDetailPage({ params }: { params: Promise<{ 
           <Panel title="Invoice details" description={`Last changed ${when(invoice.updatedAt)}`}>
             <FactList facts={facts(invoice)} />
           </Panel>
-          <Lines detail={detail} />
+          <Lines detail={detail} numberSystem={numberSystem} />
         </div>
         <div className={styles.side}>
-          <Totals invoice={invoice} />
-          <NprSnapshot invoice={invoice} />
+          <Totals invoice={invoice} numberSystem={numberSystem} />
+          <NprSnapshot invoice={invoice} numberSystem={numberSystem} />
           {gates.notes ? (
             <Panel as="aside" title="Adjustments">
               <div className={styles.noteSlot} data-slot="invoice-note-actions">

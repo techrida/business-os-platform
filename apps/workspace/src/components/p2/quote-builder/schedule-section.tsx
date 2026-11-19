@@ -84,7 +84,9 @@ export function ScheduleSection({
     // Reject an amount that the four-decimal percentage cannot represent exactly.
     if (result.amount === null || !new Dec(value).eq(result.amount)) {
       const suggestion =
-        result.amount === null ? '' : ` Try ${formatMoney(result.amount, currency, { numberSystem })}.`;
+        result.amount === null
+          ? ''
+          : ` Try ${formatMoney(result.amount, currency, { numberSystem })}.`;
       onAmountDraft(milestone.key, {
         ...draft,
         error: `This amount needs more than four decimal places in the percentage.${suggestion}`,
