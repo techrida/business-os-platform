@@ -1582,6 +1582,58 @@ describe('request eligibility before disclosure or locking', () => {
     expect((await service.get(second.requestId)).status).toBe('pending');
     expect(await countActions(second.requestId, 'approve')).toBe(0);
   });
+
+  it('lets a department head who decided a request reload it, and still refuses a stranger (U18 #10)', async () => {
+    me = U.founder;
+    const { departmentId } = await createDepartment(ownerPool, scope);
+    await withTx(db, scope, systemActor('head-seed'), (tx) =>
+      tx.execute(
+        sql`UPDATE app.departments SET head_user_id = ${U.deputy} WHERE id = ${departmentId}`,
+      ),
+    );
+    if (!(await admin.listWorkflows()).some((w) => w.key === 'purchase_request')) {
+      await admin.createWorkflow({
+        key: 'purchase_request',
+        name: 'Head approval',
+        spec: {
+          documentType: 'purchase_request',
+          steps: [
+            {
+              id: 'head',
+              kind: 'department_head',
+              fallbackRole: 'operations_head',
+              reason: 'Head approves',
+            },
+          ],
+          rules: [],
+        },
+      });
+      await admin.publish('purchase_request', 1);
+    }
+    try {
+      service.registerSubject({ documentType: 'purchase_request', onDecided });
+    } catch {
+      // Registered by the test above when it ran first.
+    }
+    const { requestId } = await submit({
+      documentType: 'purchase_request',
+      facts: { departmentId },
+    });
+    // A head holds only the staff base grant: their own requests, not every request.
+    const staffBase = new Map<Permission, Scope>([['approvals.requests.read', 'own']]);
+    me = U.deputy;
+    grants = staffBase;
+    const decided = await service.act(requestId, action, randomUUID());
+    expect(decided.status).toBe('approved');
+    // The reload after the decision: the step is no longer active, but the head acted on the request.
+    const reloaded = await service.get(requestId);
+    expect(reloaded).toMatchObject({ requestId, status: 'approved' });
+    expect(reloaded.steps[0]).toMatchObject({ status: 'approved', decidedBy: U.deputy });
+
+    // No leak: a staff member with the same grant and no action on the request still gets the unknown-id answer.
+    me = U.stranger;
+    await expect(service.get(requestId)).rejects.toMatchObject({ status: 404 });
+  });
 });
 
 describe('approvals.sla_defaults setting (a spec that leaves sla out)', () => {
