@@ -3,7 +3,14 @@
 // A client component only because the picture needs an error fallback (state). It still renders on the server first,
 // so the initials are in the HTML before any script runs; the picture sits above them once it loads.
 import { avatarColour, avatarInitials, imagePath } from '@bos/contracts';
-import { useCallback, useEffect, useRef, useState, type CSSProperties, type HTMLAttributes } from 'react';
+import {
+  useCallback,
+  useEffect,
+  useRef,
+  useState,
+  type CSSProperties,
+  type HTMLAttributes,
+} from 'react';
 
 import styles from './avatar.module.css';
 import { scanPollDelays } from './scan-poll';
@@ -29,7 +36,9 @@ const IMAGE_READY_EVENT = 'bos:image-ready';
  */
 export function announceImageReady(documentId: string): void {
   if (typeof window === 'undefined') return;
-  window.dispatchEvent(new CustomEvent<string>(IMAGE_READY_EVENT, { detail: imagePath(documentId) }));
+  window.dispatchEvent(
+    new CustomEvent<string>(IMAGE_READY_EVENT, { detail: imagePath(documentId) }),
+  );
 }
 
 /** A picture or initials avatar for use alongside the person's or company's name. Decorative: the name is beside it. */
@@ -85,7 +94,8 @@ function AvatarImage({ src, fit }: { src: string; fit: 'cover' | 'contain' }) {
 
   // One failure path for both error sources; a second report of the same try is ignored, so it spends one wait.
   const fail = useCallback(
-    () => setLoad((prev) => (prev.failed ? prev : { ...prev, errors: prev.errors + 1, failed: true })),
+    () =>
+      setLoad((prev) => (prev.failed ? prev : { ...prev, errors: prev.errors + 1, failed: true })),
     [],
   );
 
@@ -101,7 +111,8 @@ function AvatarImage({ src, fit }: { src: string; fit: 'cover' | 'contain' }) {
     const delay = scanPollDelays()[errors - 1];
     if (delay === undefined) return;
     const timer = window.setTimeout(
-      () => setLoad((prev) => ({ ...prev, attempt: prev.attempt + 1, failed: false, loaded: false })),
+      () =>
+        setLoad((prev) => ({ ...prev, attempt: prev.attempt + 1, failed: false, loaded: false })),
       delay,
     );
     return () => window.clearTimeout(timer);

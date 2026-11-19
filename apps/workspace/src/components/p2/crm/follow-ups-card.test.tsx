@@ -166,7 +166,7 @@ it("shows the assignee's picture over the colour seeded from their user id", asy
   await mounted.unmount();
 });
 
-it("seeds the assignee avatar from their user id, with the picture the owners list carries", () => {
+it('seeds the assignee avatar from their user id, with the picture the owners list carries', () => {
   const picture = '66666666-6666-4666-8666-666666666666';
   const withPicture = [{ ...owners[0]!, avatarDocumentId: picture }];
   expect(assigneeAvatar({ assigneeUserId: OWNER }, withPicture)).toEqual({

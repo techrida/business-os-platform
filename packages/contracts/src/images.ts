@@ -4,7 +4,12 @@
 import { z } from 'zod';
 
 /** The owner types of image documents (`documents.owner_type`). */
-export const IMAGE_OWNER_TYPES = ['entity_logo', 'user_avatar', 'customer_logo', 'vendor_logo'] as const;
+export const IMAGE_OWNER_TYPES = [
+  'entity_logo',
+  'user_avatar',
+  'customer_logo',
+  'vendor_logo',
+] as const;
 export const ImageOwnerTypeSchema = z.enum(IMAGE_OWNER_TYPES);
 export type ImageOwnerType = z.infer<typeof ImageOwnerTypeSchema>;
 

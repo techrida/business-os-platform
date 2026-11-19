@@ -203,12 +203,7 @@ function FollowUpRow({
         </p>
         <p className={styles.meta}>
           <span className={styles.assignee}>
-            <Avatar
-              name={assignee}
-              {...assigneeAvatar(item, owners)}
-              size="small"
-              shape="circle"
-            />
+            <Avatar name={assignee} {...assigneeAvatar(item, owners)} size="small" shape="circle" />
             <span>{assignee}</span>
           </span>
         </p>

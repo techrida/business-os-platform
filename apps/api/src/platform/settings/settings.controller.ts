@@ -1,11 +1,6 @@
 // Admin routes for settings, number series and FX rates. Serves the NFR "authorization is deny-by-default":
 // every route names the permission it needs, and every write goes through withTx so it is audited.
-import {
-  RateString,
-  SettingKeySchema,
-  type SettingKey,
-  type SettingValue,
-} from '@bos/contracts';
+import { RateString, SettingKeySchema, type SettingKey, type SettingValue } from '@bos/contracts';
 import { Dec } from '@bos/locale';
 import {
   BadRequestException,
@@ -79,7 +74,9 @@ function withStoredLogo(value: unknown, stored: SettingValue<'entity.profile'>):
   return {
     ...rest,
     logoDocumentId: stored.logoDocumentId,
-    ...(stored.legacyLogoDataUrl === undefined ? {} : { legacyLogoDataUrl: stored.legacyLogoDataUrl }),
+    ...(stored.legacyLogoDataUrl === undefined
+      ? {}
+      : { legacyLogoDataUrl: stored.legacyLogoDataUrl }),
   };
 }
 

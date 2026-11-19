@@ -153,8 +153,7 @@ describe('saveCompanyCardAction', () => {
       const result = await saveCompanyCardAction(IDLE, form(entries));
       expect(result.status).toBe('ok');
       const profile = putSetting.mock.calls.find(([, key]) => key === 'entity.profile')?.[2] as
-        | CompanyProfile
-        | undefined;
+        CompanyProfile | undefined;
       expect(profile?.logoDocumentId).toBe(DOC_ID);
       expect(profile?.legacyLogoDataUrl).toBe(PNG);
     }

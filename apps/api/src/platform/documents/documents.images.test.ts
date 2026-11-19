@@ -220,7 +220,6 @@ describe('DocumentsService.create with an image owner policy', () => {
     ).rejects.toBeInstanceOf(PayloadTooLargeException);
     expect(inserted).toHaveLength(0);
   });
-
 });
 
 const PICTURE_TYPES = ['entity_logo', 'user_avatar', 'customer_logo', 'vendor_logo'];
@@ -330,7 +329,11 @@ describe('DocumentsService.createVersion of a picture', () => {
       const v = versionTx(ownerType);
 
       const error: unknown = await svc
-        .createVersion(v.tx, v.id, { filename: 'logo.png', declaredMime: 'image/png', sizeBytes: 10 })
+        .createVersion(v.tx, v.id, {
+          filename: 'logo.png',
+          declaredMime: 'image/png',
+          sizeBytes: 10,
+        })
         .catch((e: unknown) => e);
 
       expect(error).toBeInstanceOf(ConflictException);

@@ -480,7 +480,8 @@ describe('set: refusals', () => {
       expect(error).toBeInstanceOf(ConflictException);
       expect((error as ConflictException).getResponse()).toEqual({
         code: 'conflict',
-        message: 'This image is not ready: its upload or virus scan did not finish. Upload it again.',
+        message:
+          'This image is not ready: its upload or virus scan did not finish. Upload it again.',
       });
       expect(pointers.get(key('customer_logo', ownerId))).toBe(old);
       expect(documents.removeInTransaction).not.toHaveBeenCalled();
