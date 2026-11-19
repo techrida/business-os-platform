@@ -4,6 +4,7 @@
 // added to the contract is a compile error here until it has words.
 import {
   SALES_ORDER_STATUSES,
+  type InvoiceStatus,
   type SalesOrderDetail,
   type SalesOrderStatus,
   type ScheduleLineStatus,
@@ -42,6 +43,23 @@ const LINE: Record<ScheduleLineStatus, StatusMeta> = {
 
 export function scheduleLineStatusMeta(status: ScheduleLineStatus): StatusMeta {
   return LINE[status];
+}
+
+const INVOICE_STATUS: Record<InvoiceStatus, string> = {
+  draft: 'Draft',
+  submitted: 'Submitted',
+  returned: 'Returned',
+  approved: 'Approved',
+  issued: 'Issued',
+  discarded: 'Discarded',
+};
+
+/** The invoice a line holds, in words: its number (or that it has none yet) and its status. */
+export function heldInvoiceLabel(
+  invoice: SalesOrderDetail['schedule'][number]['invoice'],
+): string | null {
+  if (invoice === undefined || invoice === null) return null;
+  return `${invoice.number ?? 'Not numbered yet'} · ${INVOICE_STATUS[invoice.status]}`;
 }
 
 const TRIGGER: Record<ScheduleTrigger, string> = {
@@ -90,20 +108,25 @@ export function parseCustomerFilter(raw: string | string[] | undefined): string 
   return typeof raw === 'string' && GUID.test(raw) ? raw : undefined;
 }
 
-export type LineAction = 'mark_billable' | 'draft_invoice' | 'open_invoice' | 'none';
+export type LineAction =
+  | 'mark_billable'
+  | 'draft_invoice'
+  | 'open_invoice'
+  | 'show_invoice'
+  | 'none';
 
 /**
- * What one schedule line offers this person. A line that already has an invoice always links to it.
- * Otherwise only a confirmed order has actions: Mark billable on a planned line that is not the
- * advance (the advance starts billable), and Draft invoice on a billable one, each only with the
- * permission. The API still decides every call.
+ * What one schedule line offers this person. A line that already has an invoice links to it when the
+ * line says this person may open it, and otherwise only names it. Otherwise only a confirmed order has
+ * actions: Mark billable on a planned line that is not the advance (the advance starts billable), and
+ * Draft invoice on a billable one, each only with the permission. The API still decides every call.
  */
 export function lineAction(
   orderStatus: SalesOrderStatus,
-  line: Pick<SalesOrderDetail['schedule'][number], 'status' | 'trigger' | 'invoiceId'>,
+  line: Pick<SalesOrderDetail['schedule'][number], 'status' | 'trigger' | 'invoiceId' | 'can'>,
   can: { mark: boolean; draft: boolean },
 ): LineAction {
-  if (line.invoiceId !== null) return 'open_invoice';
+  if (line.invoiceId !== null) return line.can?.openInvoice === true ? 'open_invoice' : 'show_invoice';
   if (orderStatus !== 'confirmed') return 'none';
   if (line.status === 'planned' && line.trigger !== 'advance') {
     return can.mark ? 'mark_billable' : 'none';

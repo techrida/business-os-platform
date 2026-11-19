@@ -3,6 +3,7 @@
 // quotation version plus a billing schedule whose live lines add up to the order total (plan A7).
 import { z } from 'zod';
 
+import { InvoiceStatusSchema } from './invoicing.js';
 import { CurrencySchema, DecimalString, NprSnapshotSchema } from './money.js';
 import {
   FULL_PAYMENT_PERCENT_UNITS,
@@ -86,6 +87,13 @@ export const DEFAULT_SALES_SCHEDULE: ScheduleTemplate = [
 // DTOs
 // ---------------------------------------------------------------------------------------------
 
+/** The invoice a schedule line holds, as the order's reader may see it: its number (none until issued) and status. */
+export const ScheduleLineInvoiceSchema = z.object({
+  number: z.string().nullable(),
+  status: InvoiceStatusSchema,
+});
+export type ScheduleLineInvoice = z.infer<typeof ScheduleLineInvoiceSchema>;
+
 export const ScheduleLineDtoSchema = z
   .object({
     id: z.guid(),
@@ -102,6 +110,10 @@ export const ScheduleLineDtoSchema = z
     billableMarkedAt: isoDateTime.nullable(),
     /** Set exactly while the line is drafted or invoiced. */
     invoiceId: z.guid().nullable(),
+    /** The held invoice's number and status, read with the order (no invoice.read needed); null without one. */
+    invoice: ScheduleLineInvoiceSchema.nullable().optional(),
+    /** Whether the caller may open the held invoice (invoice.read on that invoice). */
+    can: z.object({ openInvoice: z.boolean() }).optional(),
   })
   .refine((l) => (l.status === 'drafted' || l.status === 'invoiced') === (l.invoiceId !== null), {
     message: 'invoiceId is set exactly when the line is drafted or invoiced',
@@ -183,6 +195,8 @@ export const SalesOrderDetailSchema = z.object({
   evidence: z.array(SalesOrderEvidenceDtoSchema),
   /** Plan A14: true when the advance invoice has an open amount of 0. P4's delivery module reads it. */
   deliveryReleased: z.boolean(),
+  /** What the caller may do on this order's schedule, from its live grants. */
+  can: z.object({ markBillable: z.boolean(), draftInvoice: z.boolean() }).optional(),
 });
 export type SalesOrderDetail = z.infer<typeof SalesOrderDetailSchema>;
 

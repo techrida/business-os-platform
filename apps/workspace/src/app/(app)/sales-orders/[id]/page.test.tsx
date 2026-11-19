@@ -107,13 +107,20 @@ describe('sales order detail', () => {
     mocks.getSalesOrder.mockResolvedValue(
       salesOrderDetail({
         schedule: [
-          scheduleLine({ id: IDS.advance, seq: 1, status: 'drafted', invoiceId: IDS.invoice }),
+          scheduleLine({
+            id: IDS.advance,
+            seq: 1,
+            status: 'drafted',
+            invoiceId: IDS.invoice,
+            can: { openInvoice: true },
+          }),
           scheduleLine({
             id: IDS.milestone,
             seq: 2,
             status: 'invoiced',
             trigger: 'milestone',
             invoiceId: IDS.invoice,
+            can: { openInvoice: true },
           }),
         ],
       }),
@@ -134,6 +141,9 @@ describe('sales order detail', () => {
 
   it('shows no action buttons to a role that may only read', async () => {
     mocks.requireStaffSession.mockResolvedValue({ accessToken: 't', roles: ['management'] });
+    mocks.getSalesOrder.mockResolvedValue(
+      salesOrderDetail({ can: { markBillable: false, draftInvoice: false } }),
+    );
     const html = await render();
     expect(html).toContain('Advance 60%');
     expect(html).not.toContain('Draft invoice');
