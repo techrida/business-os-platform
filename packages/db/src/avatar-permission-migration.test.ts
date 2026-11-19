@@ -63,10 +63,7 @@ async function folderOf(journal: Journal, entries: JournalEntry[], name: string)
   await mkdir(join(folder, 'meta'));
   await writeFile(join(folder, 'meta/_journal.json'), JSON.stringify({ ...journal, entries }));
   for (const entry of entries) {
-    await copyFile(
-      join(MIGRATIONS_FOLDER, `${entry.tag}.sql`),
-      join(folder, `${entry.tag}.sql`),
-    );
+    await copyFile(join(MIGRATIONS_FOLDER, `${entry.tag}.sql`), join(folder, `${entry.tag}.sql`));
   }
   return folder;
 }
@@ -152,7 +149,9 @@ async function authzVersion(pool: Pool, org: TenantWithEntity): Promise<number> 
 }
 
 async function rowCount(pool: Pool): Promise<number> {
-  const { rows } = await pool.query<{ n: string }>('SELECT count(*) AS n FROM app.role_permissions');
+  const { rows } = await pool.query<{ n: string }>(
+    'SELECT count(*) AS n FROM app.role_permissions',
+  );
   return Number(rows[0]?.n);
 }
 
