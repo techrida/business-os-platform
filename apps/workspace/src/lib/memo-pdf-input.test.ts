@@ -56,13 +56,13 @@ describe('MemoPdfInputSchema letterhead bounds', () => {
     expect(MemoPdfInputSchema.safeParse(body(ok)).success).toBe(true);
   });
 
-  it('refuses a fifth address line and a line over 200 characters', () => {
+  it('refuses a fifth address line and a line over 400 characters', () => {
     expect(
       MemoPdfInputSchema.safeParse(body({ ...frozen, addressLines: ['a', 'b', 'c', 'd', 'e'] }))
         .success,
     ).toBe(false);
     expect(
-      MemoPdfInputSchema.safeParse(body({ ...frozen, addressLines: ['x'.repeat(201)] })).success,
+      MemoPdfInputSchema.safeParse(body({ ...frozen, addressLines: ['x'.repeat(401)] })).success,
     ).toBe(false);
   });
 
