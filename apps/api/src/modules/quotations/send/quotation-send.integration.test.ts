@@ -470,7 +470,7 @@ describe('QuotationSendService.send', () => {
       const documents = { listForOwner: vi.fn().mockResolvedValue([]) };
       return new PortalController(
         new PortalService(
-          { current: () => p } as never,
+          { current: () => p },
           new DrizzlePortalQuotationStore(db),
           documents as never,
           settings,
