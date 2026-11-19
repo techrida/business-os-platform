@@ -19,6 +19,7 @@ import {
   createActivity,
   createLead,
   rescheduleActivity,
+  updateLead,
 } from '@/components/p2/crm/crm-api';
 import { duplicatesFrom } from '@/components/p2/crm/duplicates';
 import {
@@ -26,6 +27,7 @@ import {
   parseCompleteActivity,
   parseConvert,
   parseLead,
+  parseLeadUpdate,
   parseRescheduleActivity,
   parseScheduleFollowUp,
   type FieldErrors,
@@ -220,4 +222,43 @@ export async function cancelFollowUpAction(
   form: FormData,
 ): Promise<FollowUpState> {
   return changeFollowUp(form, parseCancelActivity, cancelActivity);
+}
+
+// ---------------------------------------------------------------------------------------------
+// Lead owner (D38)
+// ---------------------------------------------------------------------------------------------
+
+/** What the owner control gets back. `reload` means the lead changed underneath the page. */
+export type LeadOwnerState = FollowUpState;
+
+/**
+ * Hand the lead to another person (`PATCH /v1/leads/:id` with only `ownerUserId` and the version
+ * the page showed). The API applies the create-time rule, so a refusal (403) comes back as words
+ * for the form; a stale version (409) comes back as the reload message.
+ */
+export async function updateLeadOwnerAction(
+  _prev: LeadOwnerState,
+  form: FormData,
+): Promise<LeadOwnerState> {
+  const leadValue = form.get('leadId');
+  const leadId = typeof leadValue === 'string' ? leadValue : '';
+  if (!UUID.test(leadId)) return { error: INCOMPLETE, reload: true };
+  const session = await requireStaffSession(`/leads/${leadId}`);
+
+  const parsed = parseLeadUpdate(form);
+  if (!parsed.ok) {
+    // A bad version is not something the person can fix in the field: it asks for a reload.
+    const { ownerUserId, expectedVersion } = parsed.fieldErrors;
+    if (expectedVersion) return { error: expectedVersion, reload: true };
+    return { fieldErrors: { ownerUserId: ownerUserId ?? 'Choose who owns this lead.' } };
+  }
+  try {
+    await updateLead(session, leadId, parsed.data);
+  } catch (err) {
+    const f = failureOf(err);
+    return { error: f.message, reload: f.reload };
+  }
+  revalidatePath(`/leads/${leadId}`);
+  revalidatePath('/leads');
+  return { ok: true };
 }
