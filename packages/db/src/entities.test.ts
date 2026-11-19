@@ -747,8 +747,8 @@ describe('0013 data move on a database that already has rows (K1-U1b)', () => {
       tenantId,
     ]);
     // 5 after the 0013 dedupe, plus one when 0053 grants profile.avatar.write to the finance role in the seeded
-    // tenant, plus one when 0083 gives the tenant its Marketing rows.
-    expect(av.rows).toEqual([{ version: '7' }]);
+    // tenant, plus one when 0083 gives the tenant its Marketing rows, plus one when 0088 widens the access model.
+    expect(av.rows).toEqual([{ version: '8' }]);
     const ur = await pool.query(
       'SELECT user_id, role_key FROM app.user_roles WHERE tenant_id = $1 ORDER BY role_key',
       [tenantId],
