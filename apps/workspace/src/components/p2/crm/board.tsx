@@ -12,7 +12,8 @@ import type { BoardCard, BoardColumnData, MoveAction } from './types';
  * A stage board for leads or opportunities. Every card has a "Move" control (a native select in a
  * disclosure) that works with a keyboard and no pointer; dragging a card onto a column is a
  * shortcut that opens the same control with the stage chosen, and the person confirms with Move.
- * Columns for stages only the system sets (Won, Converted, Quotation Sent) never take a drop.
+ * Columns for stages only the system sets (Won, Converted, Quotation Sent) and Lost never take a
+ * drop (Lost is marked on the record page with a reason from the tenant list).
  *
  * Money arrives formatted and nothing is totalled here: totals come from the server.
  */
@@ -48,15 +49,14 @@ export function Board({
   const refs = useRef(new Map<string, HTMLLIElement>());
 
   const dragged = cards.find((c) => c.id === dragId);
-  const canDrop = (stage: string) => dragged?.moves.some((m) => m.stage === stage) ?? false;
+  const canDrop = (stage: string) =>
+    stage !== 'lost' && (dragged?.moves.some((m) => m.stage === stage) ?? false);
 
   function drop(column: BoardColumnData) {
     if (dragged === undefined || !canDrop(column.stage)) return;
     setPreset({ id: dragged.id, stage: column.stage });
     setOpenId(dragged.id);
-    setAnnounce(
-      `Choose Move to put ${dragged.title} in ${column.label}. Lost and On Hold need a reason.`,
-    );
+    setAnnounce(`Choose Move to put ${dragged.title} in ${column.label}. On Hold needs a reason.`);
     const el = refs.current.get(dragged.id);
     requestAnimationFrame(() => el?.querySelector('select')?.focus());
   }
@@ -175,7 +175,8 @@ function BoardCardItem({
   onDragEnd: () => void;
   register: (el: HTMLLIElement | null) => void;
 }) {
-  const movable = card.moves.length > 0;
+  const moves = card.moves.filter((m) => m.stage !== 'lost');
+  const movable = moves.length > 0;
   return (
     <li
       ref={register}
@@ -207,7 +208,7 @@ function BoardCardItem({
             action={action}
             recordId={card.id}
             version={card.version}
-            moves={card.moves}
+            moves={moves}
             presetStage={presetStage}
             emptyText=""
             compact
