@@ -6,6 +6,7 @@ import { notFound } from 'next/navigation';
 import { Alert } from '@/components/ui/alert';
 import { Badge } from '@/components/ui/badge';
 import { Breadcrumb, Page, PageHeader } from '@/components/ui/page';
+import { Disclosure } from '@/components/ui/disclosure';
 import { FactList, Panel, type Fact } from '@/components/ui/panel';
 import {
   failureOf,
@@ -185,17 +186,22 @@ export default async function MemoPage({
           },
         ]
       : []),
-    {
-      key: 'details',
-      label: 'Details',
-      wide: true,
-      value:
-        memo.body === '' ? (
-          <span className={styles.note}>No details were written.</span>
-        ) : (
-          <span className={styles.comment}>{memo.body}</span>
-        ),
-    },
+    // The memo preview already shows the body. A memo without a template has no preview, so it keeps the text here.
+    ...(memo.template
+      ? []
+      : [
+          {
+            key: 'details',
+            label: 'Details',
+            wide: true,
+            value:
+              memo.body === '' ? (
+                <span className={styles.note}>No details were written.</span>
+              ) : (
+                <span className={styles.comment}>{memo.body}</span>
+              ),
+          },
+        ]),
   ];
 
   const editor = showEditor ? (
@@ -262,7 +268,15 @@ export default async function MemoPage({
                     noun="memo"
                   />
                 ) : null}
-                <FactList facts={facts} />
+                {memo.template ? (
+                  facts.length > 0 ? (
+                    <Disclosure title="Details">
+                      <FactList facts={facts} />
+                    </Disclosure>
+                  ) : null
+                ) : (
+                  <FactList facts={facts} />
+                )}
               </Panel>
             ) : null}
 
