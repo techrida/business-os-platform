@@ -13,7 +13,6 @@ import { Breadcrumb, Page, PageHeader } from '@/components/ui/page';
 import { FactList, Panel, type Fact } from '@/components/ui/panel';
 import { Table, Td, Th } from '@/components/ui/table';
 import { getBill, type VendorBill } from '@/lib/api-payables';
-import { getPoProgress } from '@/lib/api-purchase-orders';
 import { requireStaffSession } from '@/lib/bff';
 import { getNumberSystems } from '@/lib/display-settings';
 import { when } from '@/lib/kernel-format';
@@ -219,13 +218,9 @@ export default async function BillPage({
     );
   }
 
-  // Both are context only: a failure leaves the bill and its buttons usable.
-  const order =
-    bill.purchaseOrderId === null
-      ? undefined
-      : await getPoProgress(session, bill.purchaseOrderId).catch(() => undefined);
+  // Both names come with the bill, under the bill's own read: no vendor or order read is needed.
   const vendorName = bill.vendorName;
-  const orderNumber = order?.number;
+  const orderNumber = bill.purchaseOrderNumber ?? undefined;
 
   const grants = billGrants(session.roles);
   const can = billActions(bill, grants);

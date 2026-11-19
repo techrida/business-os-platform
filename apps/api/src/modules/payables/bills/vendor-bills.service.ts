@@ -135,6 +135,11 @@ export interface VendorBillDto {
   fiscalYear: string;
   currency: BillRow['currency'];
   purchaseOrderId: string | null;
+  /**
+   * The PO's number, joined in the bill's own tenant and entity, so a reader of the bill (Finance included) sees it
+   * with no purchase order read of their own. Null when the bill names no PO.
+   */
+  purchaseOrderNumber: string | null;
   documentId: string;
   fileStatus?: string | null;
   status: BillStatus;
@@ -256,12 +261,17 @@ export class VendorBillsService {
     const { scope, actor } = this.caller.current();
     return withTx(this.db, scope, actor, async (tx) => {
       const rows = await tx
-        .select({ bill: vendorBills, vendorName: vendors.legalName })
+        .select({
+          bill: vendorBills,
+          vendorName: vendors.legalName,
+          purchaseOrderNumber: purchaseOrders.number,
+        })
         .from(vendorBills)
         .innerJoin(
           vendors,
           and(eq(vendors.tenantId, vendorBills.tenantId), eq(vendors.id, vendorBills.vendorId)),
         )
+        .leftJoin(purchaseOrders, poOfBill())
         .where(
           scoped(scope).where(
             vendorBills,
@@ -270,7 +280,13 @@ export class VendorBillsService {
         )
         .orderBy(desc(vendorBills.createdAt));
       return rows.map((row) => {
-        const { lines: _lines, ...rest } = toDto(row.bill, row.vendorName, [], []);
+        const { lines: _lines, ...rest } = toDto(
+          row.bill,
+          row.vendorName,
+          row.purchaseOrderNumber,
+          [],
+          [],
+        );
         return rest;
       });
     });
@@ -1413,18 +1429,24 @@ export class VendorBillsService {
 
   private async dto(tx: DbTransaction, scope: TxScope, id: string): Promise<VendorBillDto> {
     const [bill] = await tx
-      .select({ bill: vendorBills, vendorName: vendors.legalName })
+      .select({
+        bill: vendorBills,
+        vendorName: vendors.legalName,
+        purchaseOrderNumber: purchaseOrders.number,
+      })
       .from(vendorBills)
       .innerJoin(
         vendors,
         and(eq(vendors.tenantId, vendorBills.tenantId), eq(vendors.id, vendorBills.vendorId)),
       )
+      .leftJoin(purchaseOrders, poOfBill())
       .where(scoped(scope).where(vendorBills, eq(vendorBills.id, id)));
     if (bill === undefined) throw notFound('Bill');
     return {
       ...toDto(
         bill.bill,
         bill.vendorName,
+        bill.purchaseOrderNumber,
         await this.linesOf(tx, scope, id),
         await this.latestResults(tx, scope, id),
       ),
@@ -1439,9 +1461,18 @@ function isoDateOf(instant: Date): string {
   return `${y}-${String(m).padStart(2, '0')}-${String(d).padStart(2, '0')}`;
 }
 
+/** A bill's PO in the bill's own tenant and entity: another entity's order never joins. */
+const poOfBill = () =>
+  and(
+    eq(purchaseOrders.tenantId, vendorBills.tenantId),
+    eq(purchaseOrders.organizationId, vendorBills.organizationId),
+    eq(purchaseOrders.id, vendorBills.purchaseOrderId),
+  );
+
 function toDto(
   bill: BillRow,
   vendorName: string,
+  purchaseOrderNumber: string | null,
   lines: BillLineRow[],
   results: MatchResultRow[],
 ): VendorBillDto {
@@ -1457,6 +1488,7 @@ function toDto(
     fiscalYear: bill.fiscalYear,
     currency: bill.currency,
     purchaseOrderId: bill.purchaseOrderId,
+    purchaseOrderNumber,
     documentId: bill.documentId,
     status: bill.status,
     matchStatus: bill.matchStatus,

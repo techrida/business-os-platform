@@ -81,6 +81,8 @@ const billFields = {
   fiscalYear: Text,
   currency: Text,
   purchaseOrderId: z.guid().nullable(),
+  /** The PO's number, sent with the bill so any reader of the bill sees it; older APIs leave it out. */
+  purchaseOrderNumber: Text.nullable().optional(),
   documentId: z.guid(),
   status: BillStatusSchema,
   matchStatus: MatchStatusSchema,
