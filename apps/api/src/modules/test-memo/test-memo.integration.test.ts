@@ -1667,6 +1667,7 @@ describe('GET /v1/test-memos (the Memos list)', () => {
     const page = await parsed();
     expect(page.items.map((m) => m.id)).toEqual([second.id, first.id]);
     expect(page.nextCursor).toBeNull();
+    expect(page.total).toBe(2);
     expect(page.items[0]).toMatchObject({
       title: 'Second',
       status: 'draft',
@@ -1814,6 +1815,121 @@ describe('GET /v1/test-memos (the Memos list)', () => {
     expect((await parsed('?status=draft')).items).toHaveLength(1);
   });
 
+  /** Sets the status (and optionally the owner's display name) directly: the list tests do not need a full approval. */
+  const setStatus = (
+    id: string,
+    status: 'draft' | 'submitted' | 'approved' | 'returned' | 'rejected',
+  ) =>
+    withTx(db, scope, systemActor('test'), (tx) =>
+      tx.update(testMemos).set({ status }).where(eq(testMemos.id, id)),
+    );
+  const rename = (userId: string, displayName: string) =>
+    withTx(db, scope, systemActor('test'), (tx) =>
+      tx.update(users).set({ displayName }).where(eq(users.id, userId)),
+    );
+
+  it('filters by several statuses at once, repeated in the URL, and counts every match', async () => {
+    const mine = await freshStaff();
+    as(mine, 'sales');
+    const [a, b, c] = [
+      await createMemo({ title: 'Multi one' }),
+      await createMemo({ title: 'Multi two' }),
+      await createMemo({ title: 'Multi three' }),
+    ];
+    await setStatus(b.id, 'approved');
+    await setStatus(c.id, 'rejected');
+    const both = await parsed('?status=draft&status=approved');
+    expect(both.items.map((m) => m.id).sort()).toEqual([a.id, b.id].sort());
+    expect(both.total).toBe(2);
+    const all = await parsed('');
+    expect(all.total).toBe(3);
+    expect((await parsed('?status=rejected&status=rejected')).total).toBe(1);
+  });
+
+  it('searches number, title and owner name by substring, ignoring case and one-character input', async () => {
+    const mine = await freshStaff();
+    const other = await freshStaff();
+    await rename(mine, 'Zephyrine Quillfeather');
+    as(mine, 'sales');
+    const budget = await createMemo({ title: 'Annual Budget Review' });
+    await createMemo({ title: 'Office plants' });
+    as(other, 'sales');
+    await createMemo({ title: 'Budget of someone else' });
+    as(mine, 'sales');
+
+    const number = (await parsed('')).items.find((m) => m.id === budget.id)!.number;
+    expect((await parsed('?q=budget')).items.map((m) => m.id)).toEqual([budget.id]);
+    expect((await parsed(`?q=${number}`)).items.map((m) => m.id)).toEqual([budget.id]);
+    expect((await parsed('?q=QUILLFEATHER')).total).toBe(2);
+    // Wildcards are text, not patterns; one character is no search at all.
+    expect((await parsed('?q=%25%25')).total).toBe(0);
+    expect((await parsed('?q=__')).total).toBe(0);
+    expect((await parsed('?q=_')).total).toBe(2);
+    expect((await parsed('?q=zz-nothing')).items).toEqual([]);
+    // Statuses and search narrow together.
+    expect((await parsed('?q=budget&status=approved')).total).toBe(0);
+  });
+
+  it('reports the same total on every page of a search while the cursor keeps paging', async () => {
+    const mine = await freshStaff();
+    as(mine, 'sales');
+    at('2026-11-07T04:00:00Z');
+    for (let i = 0; i < 5; i += 1) await createMemo({ title: `Quarterly review ${i}` });
+    await createMemo({ title: 'Unrelated' });
+
+    const seen: string[] = [];
+    const totals = new Set<number>();
+    let cursor: string | null = null;
+    let pages = 0;
+    do {
+      const page = await parsed(`?q=quarterly&limit=2${cursor ? `&cursor=${cursor}` : ''}`);
+      seen.push(...page.items.map((m) => m.id));
+      totals.add(page.total);
+      cursor = page.nextCursor;
+      pages += 1;
+    } while (cursor !== null && pages < 10);
+    expect(pages).toBe(3);
+    expect(new Set(seen).size).toBe(5);
+    expect([...totals]).toEqual([5]);
+  });
+
+  it('never lets a status or a search reach another user’s draft or returned memo', async () => {
+    const owner = await freshStaff();
+    await rename(owner, 'Ottoline Hiddenhall');
+    as(owner, 'sales');
+    const memo = await createMemo({ title: 'Confidential staffing plan' });
+    for (const status of ['draft', 'returned'] as const) {
+      await setStatus(memo.id, status);
+      as(U.boss, 'founder');
+      for (const query of [
+        `?status=${status}`,
+        '?q=confidential',
+        '?q=hiddenhall',
+        `?status=${status}&q=Ottoline`,
+        '?status=draft&status=returned&status=approved&q=staffing',
+      ]) {
+        const page = await parsed(`${query}${query.includes('?') ? '&' : '?'}limit=50`);
+        expect(
+          page.items.map((m) => m.id),
+          query,
+        ).not.toContain(memo.id);
+        // The count must not leak that a hidden memo matched.
+        if (query.includes('q=')) expect(page.total, query).toBe(0);
+      }
+      expect((await parsed('?q=confidential')).total).toBe(0);
+      as(owner, 'sales');
+      expect((await parsed(`?status=${status}&q=hiddenhall`)).items.map((m) => m.id)).toEqual([
+        memo.id,
+      ]);
+    }
+    // Once approved the same query finds it for a reader with entity-wide scope.
+    await setStatus(memo.id, 'approved');
+    as(U.boss, 'founder');
+    expect((await parsed('?q=hiddenhall&status=approved')).items.map((m) => m.id)).toEqual([
+      memo.id,
+    ]);
+  });
+
   it('answers 400, not a database error, for a forged cursor, an out-of-range limit or an unknown parameter', async () => {
     expect((await list('?cursor=not-a-real-cursor')).status).toBe(400);
     const forged = Buffer.from(JSON.stringify(["1'; DROP TABLE x;--", randomUUID()])).toString(
@@ -1825,6 +1941,8 @@ describe('GET /v1/test-memos (the Memos list)', () => {
     expect((await list('?limit=abc')).status).toBe(400);
     expect((await list('?ownerUserId=' + U.boss)).status).toBe(400);
     expect((await list('?status=weird')).status).toBe(400);
+    expect((await list('?status=draft&status=weird')).status).toBe(400);
+    expect((await list('?q=ab&q=cd')).status).toBe(400);
   });
 });
 
