@@ -14,6 +14,17 @@
   grid-column: 1 / -1;
 }
 
+/* Figma card eyebrow ("01 · The basics") above each card title, as on the create-lead form. */
+.eyebrow {
+  display: block;
+  margin-bottom: 4px;
+  color: var(--text-secondary);
+  font-size: var(--font-size-caption);
+  font-weight: var(--font-weight-medium);
+  line-height: var(--line-height-caption);
+  letter-spacing: var(--letter-spacing-normal);
+}
+
 .lineItems {
   box-shadow: none;
 }
@@ -44,6 +55,10 @@
   gap: 4px 16px;
   margin: 0;
   font-weight: var(--font-weight-semibold);
+}
+
+.summary .minor {
+  font-weight: var(--font-weight-regular);
 }
 
 .summary dd {

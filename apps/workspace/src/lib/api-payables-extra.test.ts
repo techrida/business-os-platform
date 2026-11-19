@@ -226,10 +226,11 @@ describe('payment request client', () => {
   });
 
   it('encodes ids and keeps amounts and the bank snapshot as server values', async () => {
-    reply(request);
+    reply({ ...request, vendorName: 'Himal Supplies', can: { readVendor: false } });
     const result = await getPaymentRequest(session, '../private?x');
     expect(result.lines[0]?.amount).toBe('111500.00');
     expect(result.bankLast4).toBe('1234');
+    expect(result).toMatchObject({ vendorName: 'Himal Supplies', can: { readVendor: false } });
     expect(apiFetch).toHaveBeenCalledWith(
       session,
       '/v1/payables/payment-requests/..%2Fprivate%3Fx',

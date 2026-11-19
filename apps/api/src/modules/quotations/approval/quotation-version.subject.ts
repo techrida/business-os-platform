@@ -5,8 +5,11 @@
 // an approved version keeps render_state 'none' and the render sweeper (worker) draws its PDF.
 // Registered by QuotationsModule in the API only. ApprovalsService.act is an API route, so the worker never
 // calls onDecided.
+import type { ApprovalContext } from '@bos/contracts';
 import {
+  customers,
   quotationLines,
+  quotations,
   quotationStatusHistory,
   quotationTaxSummary,
   quotationVersions,
@@ -15,8 +18,11 @@ import {
 import { ConflictException, Logger } from '@nestjs/common';
 import { and, eq, sql } from 'drizzle-orm';
 
-import type { DbTransaction } from '../../../platform/db/db.module';
+import type { Principal } from '../../../platform/authz/principal';
+import type { Db, DbTransaction } from '../../../platform/db/db.module';
+import type { TxScope } from '../../../platform/db/tx';
 import { actorUuid, readTxContext } from '../../../platform/documents/tx-context';
+import { fact, hrefIfVisible } from '../../approvals/context';
 import type { ApprovalSubject } from '../../approvals/requests.service';
 import { contentSha256, materialFieldsOf } from './quotation-approval-snapshot';
 
@@ -56,6 +62,66 @@ export class QuotationVersionSubject implements ApprovalSubject {
   /** The decided notice opens the quotation, not the request in the inbox. */
   readonly link = (tx: DbTransaction, versionId: string): Promise<string | undefined> =>
     quotationLinkOf(tx, versionId);
+
+  /**
+   * The version as it stands now. Its PDF is drawn only after approval, so there is no file to list. The quotation
+   * page is linked only when the reader's `quotation.read` scope reaches the quotation, as its own routes decide.
+   */
+  async context(
+    q: Db,
+    scope: TxScope,
+    request: { documentId: string },
+    viewer: Principal,
+  ): Promise<ApprovalContext | null> {
+    const [row] = await q
+      .select({
+        quotationId: quotations.id,
+        number: quotations.number,
+        revisionNo: quotationVersions.revisionNo,
+        customerName: customers.legalName,
+        validUntil: quotationVersions.validUntil,
+        currency: quotationVersions.currency,
+        total: quotationVersions.total,
+        status: quotationVersions.status,
+      })
+      .from(quotationVersions)
+      .innerJoin(
+        quotations,
+        and(
+          eq(quotations.tenantId, quotationVersions.tenantId),
+          eq(quotations.organizationId, quotationVersions.organizationId),
+          eq(quotations.id, quotationVersions.quotationId),
+        ),
+      )
+      .leftJoin(
+        customers,
+        and(
+          eq(customers.tenantId, quotations.tenantId),
+          eq(customers.id, quotations.customerPartyId),
+        ),
+      )
+      .where(scoped(scope).where(quotationVersions, eq(quotationVersions.id, request.documentId)));
+    if (row === undefined) return null;
+    return {
+      title: `Quotation ${row.number}`,
+      fields: [
+        ...fact.text('revision', 'Revision', String(row.revisionNo)),
+        ...fact.text('customer', 'Customer', row.customerName),
+        ...fact.date('validUntil', 'Valid until', row.validUntil),
+        ...fact.money('total', 'Total', row.total, row.currency),
+        ...fact.status(row.status),
+      ],
+      documents: [],
+      href: await hrefIfVisible(
+        q,
+        viewer,
+        quotations,
+        'quotation.read',
+        row.quotationId,
+        `/quotations/${row.quotationId}`,
+      ),
+    };
+  }
 
   async onDecided(tx: DbTransaction, versionId: string, outcome: Outcome): Promise<void> {
     const ctx = await readTxContext(tx);

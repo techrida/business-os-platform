@@ -85,3 +85,24 @@ it('offers the default list when the display settings cannot be read', async () 
   expect(currencyOptions(html)).toEqual(['NPR', 'INR', 'USD']);
   expect(html).toContain('Save draft invoice');
 });
+
+it('draws the Figma card eyebrows as decoration and one column header row for the lines', async () => {
+  const html = renderToStaticMarkup(await NewInvoicePage());
+  expect(html).toMatch(
+    /<span[^>]*aria-hidden="true"[^>]*>01 · The basics<\/span>Customer and source/,
+  );
+  expect(html).toMatch(/<span[^>]*aria-hidden="true"[^>]*>02 · The story<\/span>Line Items/);
+  // The header row is hidden from assistive technology; each input keeps its own label.
+  expect(html).toMatch(/<div[^>]*aria-hidden="true"[^>]*><span>#<\/span>/);
+  // Once in the header row, once as line 1's own label.
+  expect(html.match(/Unit price \(NPR\)/g)).toHaveLength(2);
+});
+
+it('offers an optional document discount, none by default', async () => {
+  const html = renderToStaticMarkup(await NewInvoicePage());
+  expect(html).toContain('name="discountMode"');
+  expect(html).toContain('No discount');
+  expect(html).toContain('Fixed amount');
+  // No value field until a discount type is chosen.
+  expect(html).not.toContain('name="discountValue"');
+});

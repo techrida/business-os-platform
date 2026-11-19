@@ -19,6 +19,8 @@ export type SettingsSectionId =
   | 'formats'
   | 'terms'
   | 'users'
+  | 'departments'
+  // The Access section keeps the id 'roles' so existing guards keep working; it is labelled Access.
   | 'roles'
   | 'workflows'
   | 'currencies'
@@ -105,11 +107,20 @@ export const SETTINGS_GROUPS: readonly SettingsGroup[] = [
         ready: true,
       },
       {
+        id: 'departments',
+        label: 'Departments',
+        href: '/settings/departments',
+        icon: 'layers',
+        description: 'Who works in each department, their level and the department head.',
+        permission: ['admin.users.read', 'admin.roles.read'],
+        ready: true,
+      },
+      {
         id: 'roles',
-        label: 'Roles and permissions',
-        href: '/settings/roles',
+        label: 'Access',
+        href: '/settings/access',
         icon: 'shield-check',
-        description: 'What each role may do, and how far each permission reaches.',
+        description: 'Who can see and do what, and who can hand work to whom.',
         permission: ['admin.roles.read', 'admin.roles.write'],
         ready: true,
       },

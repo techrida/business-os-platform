@@ -24,6 +24,7 @@ import {
   type ChecklistItem,
   type Permission,
   type RemoveVerificationDocumentBody,
+  type VerificationCaseCan,
   type VerificationCaseDto,
   type VerificationPartyKind,
 } from '@bos/contracts';
@@ -42,7 +43,7 @@ import { sql, getTableColumns, and, asc, desc, eq, inArray, lt, or, type SQL } f
 
 import { AuditService } from '../../platform/audit/audit.service';
 import { AuthzService } from '../../platform/authz/authz.service';
-import { type ResourceRef } from '../../platform/authz/can';
+import { can as decide, type Principal, type ResourceRef } from '../../platform/authz/can';
 import { DB, type Db, type DbTransaction } from '../../platform/db/db.module';
 import { updateVersioned, withIdempotency } from '../../platform/db/idempotency';
 import { withTx, type TxScope } from '../../platform/db/tx';
@@ -50,7 +51,12 @@ import { type DocumentOwnerPolicy } from '../../platform/documents/documents.por
 import { DocumentsService } from '../../platform/documents/documents.service';
 import { searchPage } from '../../platform/list';
 import { CustomerPartyOwner } from './customer-party-owner';
-import { PartyOwnerRegistry, type PartyOwnerPort, type PartyQuery } from './party-owner.port';
+import {
+  PartyOwnerRegistry,
+  type PartyLabel,
+  type PartyOwnerPort,
+  type PartyQuery,
+} from './party-owner.port';
 import { VerificationCaller } from './verification.caller';
 import {
   acceptProvided,
@@ -74,7 +80,7 @@ type CaseRow = typeof verificationCases.$inferSelect;
 type Q = PartyQuery;
 
 /** A case with the owner of its party (what the `own` scope of verification.read means) and the party's port. */
-interface Loaded {
+export interface Loaded {
   row: CaseRow;
   partyOwnerUserId: string | null;
   port: PartyOwnerPort;
@@ -112,6 +118,34 @@ export function toVerificationCaseDto(row: CaseRow): VerificationCaseDto {
     decidedAt: row.decidedAt === null ? null : row.decidedAt.toISOString(),
     decisionNote: row.reason,
     version: row.version,
+  };
+}
+
+/** A case's party name and number from `labels`; both null when the party was not found. */
+function labelOf(
+  labels: ReadonlyMap<string, PartyLabel>,
+  row: Pick<CaseRow, 'partyKind' | 'partyId'>,
+): { partyName: string | null; partyNumber: string | null } {
+  const label = labels.get(`${row.partyKind}:${row.partyId}`);
+  return { partyName: label?.name ?? null, partyNumber: label?.number ?? null };
+}
+
+/**
+ * What `p` may do with this case, by the same record checks the write and review routes make: review needs
+ * verification.review and, like every review route, someone other than the case's submitter (separation of
+ * duties); edit needs the kind's write permission (and verification read, as every write here does);
+ * attach adds documents.upload and remove adds verification.read, each on the case's ref.
+ */
+export function caseCapabilities(p: Principal, scope: TxScope, l: Loaded): VerificationCaseCan {
+  const ref = caseRef(scope, l);
+  const allowed = (action: Permission) => decide(p, action, ref).allowed;
+  const staff = p.orgKind === 'staff';
+  const edit = staff && allowed(l.port.writePermission) && allowed('verification.read');
+  return {
+    review: staff && allowed('verification.review') && l.row.submittedByUserId !== p.userId,
+    edit,
+    attach: edit && allowed('documents.upload'),
+    remove: edit,
   };
 }
 
@@ -166,6 +200,10 @@ export class VerificationService implements OnModuleInit {
   onModuleInit(): void {
     const policy: DocumentOwnerPolicy = {
       ownerType: VERIFICATION_OWNER_TYPE,
+      // The reviewer must see the files they decide on. verification.review on the case authorises reading its
+      // files beside documents.read (audit #19: pmo reviews every case but holds documents.read only for its own
+      // records). It opens this owner type's files only; it never widens documents.read elsewhere.
+      readPermission: 'verification.review',
       resource: async (scope, ownerId) => {
         const l = await this.load(this.db, scope.tenantId, ownerId);
         return l === undefined ? null : caseRef(scope, l);
@@ -200,15 +238,14 @@ export class VerificationService implements OnModuleInit {
   // -------------------------------------------------------------------------------------------------- read
 
   /**
-   * One page of the cases the caller may read, and how many there are in all. Who may read a case depends on its
-   * party's owner (the `own` scope), which SQL cannot see without joining each kind's table, so the SQL narrows
-   * by tenant, filters and search and the same check as GET /:id runs on each row. The scan walks the matches in
-   * batches, so the page and the total are both counted after that check (a LIMIT before it hid readable cases).
+   * One page of the cases the caller may read, and how many there are in all. The caller's scope is applied in
+   * SQL via `readableWhere` before pagination (audit #9), and `mayRead` stays as the per-row record check so a
+   * list never shows what GET /:id would refuse. Each page row carries its party's name and number (audit #8).
    */
   async list(
     query: ListVerificationCasesQuery,
   ): Promise<{ rows: VerificationCaseDto[]; total: number }> {
-    const { scope } = this.caller.current();
+    const { scope, principal } = this.caller.current();
     const readable = async (
       tx: Db | DbTransaction,
       where: SQL | undefined,
@@ -247,6 +284,9 @@ export class VerificationService implements OnModuleInit {
           ? undefined
           : inArray(verificationCases.partyKind, query.partyKind),
         query.partyId === undefined ? undefined : eq(verificationCases.partyId, query.partyId),
+        // The caller's scope in SQL, before the limit: an own-scope reader gets their newest cases, not the
+        // tenant's newest 500 filtered down (audit #9). mayRead above stays as the record-level check.
+        this.readableWhere(scope.tenantId, principal),
       ),
       orderBy: [desc(verificationCases.createdAt), desc(verificationCases.id)],
       limit: query.limit,
@@ -260,7 +300,32 @@ export class VerificationService implements OnModuleInit {
       count: async (tx, where) =>
         (await readable(tx, where, [asc(verificationCases.id)], Infinity)).length,
     });
-    return { rows: rows.map((l) => toVerificationCaseDto(l.row)), total };
+    // Each party's name and number, one query per kind, under the case's own read (audit #8).
+    const labels = await this.labelsOf(scope.tenantId, rows);
+    return {
+      rows: rows.map((l) => ({ ...toVerificationCaseDto(l.row), ...labelOf(labels, l.row) })),
+      total,
+    };
+  }
+
+  /** The labels of the cases' parties, one query per party kind, keyed by `${kind}:${partyId}`. */
+  private async labelsOf(
+    tenantId: string,
+    cases: readonly Loaded[],
+  ): Promise<ReadonlyMap<string, PartyLabel>> {
+    const out = new Map<string, PartyLabel>();
+    for (const kind of new Set(cases.map((l) => l.row.partyKind))) {
+      const ofKind = cases.filter((l) => l.row.partyKind === kind);
+      const port = ofKind[0]?.port;
+      if (port === undefined) continue;
+      const found = await port.labelsOf(
+        this.db,
+        tenantId,
+        ofKind.map((l) => l.row.partyId),
+      );
+      for (const [id, label] of found) out.set(`${kind}:${id}`, label);
+    }
+    return out;
   }
 
   async get(id: string): Promise<VerificationCaseDto> {
@@ -268,7 +333,16 @@ export class VerificationService implements OnModuleInit {
     const l = await this.load(this.db, scope.tenantId, id);
     if (l === undefined) throw notFound('Verification case');
     this.assertVisible('verification.read', scope, l);
-    if (l.row.partyKind === 'vendor') return toVerificationCaseDto(l.row);
+    const label = labelOf(await this.labelsOf(scope.tenantId, [l]), l.row);
+    const can = caseCapabilities(this.caller.current().principal, scope, l);
+    // Both party kinds: the decision routes refuse the submitter (separation of duties) whatever the kind.
+    const reviewBlockedReason =
+      l.row.submittedByUserId === this.caller.current().principal.userId
+        ? 'The submitter cannot review this case.'
+        : null;
+    if (l.row.partyKind === 'vendor') {
+      return { ...toVerificationCaseDto(l.row), ...label, can, reviewBlockedReason };
+    }
     const versions = await this.documents.listForOwner(scope, VERIFICATION_OWNER_TYPE, id);
     const used = new Set(checklistOf(l.row).map((i) => i.documentId));
     const latest = new Map<string, (typeof versions)[number]>();
@@ -317,20 +391,23 @@ export class VerificationService implements OnModuleInit {
               : null;
     return {
       ...toVerificationCaseDto(l.row),
+      ...label,
+      can,
       approvalBlockedReason,
       reviewerNames:
         l.row.status === 'submitted'
           ? await this.reviewerNames(scope, l.row.submittedByUserId)
           : [],
       looseEvidence: [...latest.values()],
-      reviewBlockedReason:
-        l.row.submittedByUserId === this.caller.current().principal.userId
-          ? 'The submitter cannot review this case.'
-          : null,
+      reviewBlockedReason,
     };
   }
 
-  /** Name active staff who can open the files and review any case in this entity. */
+  /**
+   * Name active staff who can open the files and review any case in this entity: verification.review and
+   * verification.read at scope all. The review grant also opens the case files (the owner policy's
+   * readPermission), so documents.read is not required (audit #19: pmo was missing from this list).
+   */
   private async reviewerNames(scope: TxScope, submittedBy: string | null): Promise<string[]> {
     const result = await this.db.execute<{ name: string }>(sql`
       SELECT DISTINCT u.display_name AS name
@@ -343,8 +420,8 @@ export class VerificationService implements OnModuleInit {
       WHERE u.tenant_id = ${scope.tenantId} AND e.organization_id = ${scope.organizationId}
         AND u.status = 'active' AND NULLIF(btrim(u.display_name), '') IS NOT NULL
         AND u.id IS DISTINCT FROM ${submittedBy}::uuid AND p.scope = 'all'
-        AND p.permission IN ('verification.review', 'verification.read', 'documents.read')
-      GROUP BY u.id, u.display_name HAVING COUNT(DISTINCT p.permission) = 3
+        AND p.permission IN ('verification.review', 'verification.read')
+      GROUP BY u.id, u.display_name HAVING COUNT(DISTINCT p.permission) = 2
       ORDER BY name
     `);
     return result.rows.map((row) => row.name);
@@ -1158,6 +1235,43 @@ export class VerificationService implements OnModuleInit {
       this.authz.assert(action, caseRef(scope, l));
     } catch (error) {
       hideOutOfScope(error, 'Verification case');
+    }
+  }
+
+  /**
+   * The cases `p` may read under verification.read, as SQL: the twin of mayRead (can() on caseRef) for every row.
+   * `all` is the whole tenant for staff; `own` is a case whose party the caller owns (through each kind's port);
+   * a portal caller reaches only the case of its own party, of its own kind. Anything else matches nothing.
+   */
+  private readableWhere(tenantId: string, p: Principal): SQL {
+    const none = sql`false`;
+    if (p.status !== 'active') return none;
+    const myParty = (): SQL => {
+      const kind = p.orgKind === 'customer' || p.orgKind === 'vendor' ? p.orgKind : undefined;
+      if (kind === undefined || p.partyId === null || p.partyId === '') return none;
+      return and(
+        eq(verificationCases.partyKind, kind),
+        eq(verificationCases.partyId, p.partyId),
+      ) as SQL;
+    };
+    switch (p.grants.get('verification.read')) {
+      case 'all':
+        return p.orgKind === 'staff' ? sql`true` : myParty();
+      case 'customer_org':
+        return myParty();
+      case 'own': {
+        const arms = this.partyOwners
+          .all()
+          .map((port) =>
+            and(
+              eq(verificationCases.partyKind, port.kind),
+              inArray(verificationCases.partyId, port.ownedBy(this.db, tenantId, p.userId)),
+            ),
+          );
+        return arms.length === 0 ? none : (or(...arms) as SQL);
+      }
+      default:
+        return none;
     }
   }
 

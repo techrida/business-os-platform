@@ -13,8 +13,9 @@ import styles from './lines-editor.module.css';
 
 /**
  * The lines of a manual invoice or a debit note, one small group per line: what, unit, quantity,
- * price and tax code. The invoice layout uses a table-like row where there is space. The debit
- * note retains the stacked field groups suited to its dialog.
+ * price and tax code. Where there is space the invoice layout is a table: one header row names the
+ * columns and each line's own labels are hidden visually (screen readers and tests still get
+ * "Quantity (line 1)"). The debit note retains the stacked field groups suited to its dialog.
  */
 export function useLines(initial: number = 1): {
   lines: LineValues[];
@@ -77,6 +78,21 @@ export function LinesEditor({
         </Alert>
       ) : null}
 
+      {layout === 'invoice' ? (
+        <div className={styles.head} aria-hidden="true">
+          <span>#</span>
+          <span className={styles.headFields}>
+            <span>Description</span>
+            <span>Unit</span>
+            <span>Quantity</span>
+            <span>Unit price ({currency})</span>
+            <span>Tax code</span>
+          </span>
+          {/* Remove shows only when there is more than one line. */}
+          <span className={styles.headAction}>{lines.length > 1 ? 'Action' : null}</span>
+        </div>
+      ) : null}
+
       <ol className={styles.lines}>
         {lines.map((line, index) => {
           const no = index + 1;
@@ -89,7 +105,10 @@ export function LinesEditor({
           );
           return (
             <li key={line.key} className={styles.line}>
-              <span className={styles.lineNo}>Line {no}</span>
+              <span className={styles.lineNo}>
+                <span className={styles.lineWord}>Line </span>
+                {no}
+              </span>
               <div className={styles.fields}>
                 <Field
                   label={label('Description')}

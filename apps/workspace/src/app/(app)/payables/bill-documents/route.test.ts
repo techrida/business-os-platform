@@ -8,6 +8,23 @@ const api = vi.hoisted(() => ({
 }));
 const bff = vi.hoisted(() => ({ isSameOrigin: vi.fn(), routeSession: vi.fn() }));
 vi.mock('@/lib/api-payables', () => api);
+// GET /v1/me for an unedited role answers the role's default grants; a test sets `live` for an edited one.
+const grants = vi.hoisted(() => ({ live: undefined as Map<string, string> | undefined }));
+vi.mock('@/lib/grants', async () => {
+  const { DEFAULT_ROLE_PERMISSIONS } = await import('@bos/contracts');
+  return {
+    getGrants: () =>
+      Promise.resolve(
+        grants.live ??
+          new Map(
+            session.roles.flatMap((r) =>
+              Object.entries(DEFAULT_ROLE_PERMISSIONS[r as keyof typeof DEFAULT_ROLE_PERMISSIONS]),
+            ),
+          ),
+      ),
+    hasGrant: (g: Map<string, string>, p: string) => g.has(p),
+  };
+});
 vi.mock('@/lib/bff', () => ({
   ...bff,
   forbiddenOrigin: () => new Response(null, { status: 403 }),
@@ -39,6 +56,7 @@ const req = (headers: Record<string, string> = {}) =>
 beforeEach(() => {
   vi.clearAllMocks();
   session.roles = ['accountant'];
+  grants.live = undefined;
   bff.isSameOrigin.mockReturnValue(true);
   bff.routeSession.mockResolvedValue(session);
   api.createBillDocument.mockResolvedValue(created);
@@ -104,6 +122,19 @@ it('replaces the existing invoice document without creating a second document', 
   const upload: unknown = api.uploadBillDocumentContent.mock.calls[0]?.[2];
   expect(upload).toMatchObject({ contentType: 'application/pdf', contentLength: 4 });
   expect((upload as { body: unknown }).body).toBeInstanceOf(ReadableStream);
+});
+
+// The new-bill page opens on the live grants; the invoice upload it makes agrees with it.
+it('lets Procurement upload once an admin granted payables.bill.enter, and refuses an accountant without it', async () => {
+  session.roles = ['procurement'];
+  grants.live = new Map([['payables.bill.enter', 'all']]);
+  expect((await POST(req())).status).toBe(201);
+  expect(api.createBillDocument).toHaveBeenCalledOnce();
+  api.createBillDocument.mockClear();
+  session.roles = ['accountant'];
+  grants.live = new Map([['payables.bill.read', 'all']]);
+  expect((await POST(req())).status).toBe(403);
+  expect(api.createBillDocument).not.toHaveBeenCalled();
 });
 
 it('rejects a malformed replacement id instead of silently creating a new document', async () => {

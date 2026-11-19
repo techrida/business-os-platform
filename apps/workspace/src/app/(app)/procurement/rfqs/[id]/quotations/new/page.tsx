@@ -20,7 +20,6 @@ import { recordQuotationAction } from '../../../actions';
 import { QuoteForm, type SubmissionInfo } from '../../../_components/quote-form';
 import { rfqFailure } from '../../../_lib/failure';
 import { rfqGrants, submissionConvertibility, takesQuotations } from '../../../_lib/model';
-import { loadVendors, nameIndex } from '../../../_lib/vendors';
 
 export const metadata: Metadata = { title: 'Enter a quotation · Business OS' };
 export const dynamic = 'force-dynamic';
@@ -148,8 +147,7 @@ export default async function NewQuotationPage({
     };
   }
 
-  const [vendorLookup, taxLookup, enabledCurrencies] = await Promise.all([
-    loadVendors(session),
+  const [taxLookup, enabledCurrencies] = await Promise.all([
     listTaxCodes(session).then(
       (rows) => ({ taxCodes: rows, problem: undefined }),
       (err) => ({ taxCodes: null, problem: rfqFailure(err, 'load') }),
@@ -157,26 +155,17 @@ export default async function NewQuotationPage({
     loadEnabledCurrencies(session),
   ]);
   const { taxCodes, problem: taxCodeProblem } = taxLookup;
-  const names = nameIndex(vendorLookup);
 
   return (
     <Page className={layout.formPage}>
       {crumbs}
-      {vendorLookup.problem !== undefined && !convert ? (
-        <Alert tone="info" role="status" title="Vendor names did not load">
-          The invited vendors are listed by id instead.
-        </Alert>
-      ) : null}
       <QuoteForm
         action={recordQuotationAction}
         idempotencyKey={randomUUID()}
         rfqId={rfq.id}
         rfqNumber={rfq.number}
         mode={convert ? 'convert' : 'record'}
-        vendors={rfq.vendorIds.map((vid) => ({
-          id: vid,
-          name: names.get(vid) ?? 'Vendor name unavailable',
-        }))}
+        vendors={rfq.vendors}
         {...(submission !== undefined ? { submission } : {})}
         prLines={pr.lines.map((l) => ({
           id: l.id,

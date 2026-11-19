@@ -23,6 +23,7 @@ describe('requireSection', () => {
     getSession.mockResolvedValue(session(['founder']));
     for (const id of [
       'users',
+      'departments',
       'roles',
       'workflows',
       'currencies',
@@ -51,6 +52,7 @@ describe('requireSection', () => {
     getSession.mockResolvedValue(session(['sales']));
     for (const id of [
       'users',
+      'departments',
       'roles',
       'workflows',
       'currencies',

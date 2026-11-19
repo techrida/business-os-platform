@@ -59,5 +59,6 @@ export * from './schema/procurement.js';
 export * from './schema/procurement-orders.js';
 export * from './schema/payables.js';
 export * from './schema/cost-centers.js';
+export * from './schema/access-settings.js';
 
 export * from './schema/verification-review.js';

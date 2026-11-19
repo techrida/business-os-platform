@@ -7,7 +7,7 @@ import {
 } from '@bos/contracts';
 import { describe, expect, it } from 'vitest';
 
-import { invoiceGates } from './gates';
+import { invoiceGates, recordPaymentHref, settlementMayOwe } from './gates';
 
 const ACCOUNTANT = ['accountant'];
 const FINANCE = ['finance'];
@@ -82,5 +82,50 @@ describe('invoiceGates follow canTransitionInvoice and the role', () => {
       expect(gates('tax_invoice', status, NOBODY)).toEqual(NONE);
       expect(gates('tax_invoice', status, [])).toEqual(NONE);
     }
+  });
+});
+
+describe('recordPaymentHref', () => {
+  const CUSTOMER = '33333333-3333-4333-8333-333333333333';
+  const HREF = `/payments/new?customerId=${CUSTOMER}`;
+  const href = (
+    kind: InvoiceKind,
+    status: InvoiceStatus,
+    roles: string[],
+    settlement?: Parameters<typeof recordPaymentHref>[2],
+  ) => recordPaymentHref({ kind, status, customerId: CUSTOMER }, roles, settlement);
+
+  it.each(INVOICE_KINDS.flatMap((k) => INVOICE_STATUSES.map((s) => [k, s] as const)))(
+    'offers it on %s %s only when it opens a receivable',
+    (kind, status) => {
+      const open = status === 'issued' && (kind === 'tax_invoice' || kind === 'debit_note');
+      expect(href(kind, status, ACCOUNTANT)).toBe(open ? HREF : null);
+    },
+  );
+
+  it('needs payment.record, the permission the payment form checks', () => {
+    expect(href('tax_invoice', 'issued', FINANCE)).toBe(HREF);
+    expect(href('tax_invoice', 'issued', ['founder'])).toBe(HREF);
+    expect(href('tax_invoice', 'issued', ['management'])).toBeNull();
+    expect(href('tax_invoice', 'issued', NOBODY)).toBeNull();
+  });
+
+  it('follows a settlement the caller read: open ones yes, settled or unknown no', () => {
+    expect(href('tax_invoice', 'issued', ACCOUNTANT, 'unpaid')).toBe(HREF);
+    expect(href('tax_invoice', 'issued', ACCOUNTANT, 'partly_paid')).toBe(HREF);
+    expect(href('debit_note', 'issued', ACCOUNTANT, 'overdue')).toBe(HREF);
+    expect(href('tax_invoice', 'issued', ACCOUNTANT, 'paid')).toBeNull();
+    expect(href('tax_invoice', 'issued', ACCOUNTANT, 'credited')).toBeNull();
+    expect(href('tax_invoice', 'issued', ACCOUNTANT, null)).toBeNull();
+  });
+});
+
+describe('settlementMayOwe', () => {
+  it('offers Record payment on the list only when the filter selects owing states alone', () => {
+    expect(settlementMayOwe([])).toBe(false);
+    expect(settlementMayOwe(['unpaid', 'overdue'])).toBe(true);
+    expect(settlementMayOwe(['paid', 'overdue'])).toBe(false);
+    expect(settlementMayOwe(['paid'])).toBe(false);
+    expect(settlementMayOwe(['credited'])).toBe(false);
   });
 });
