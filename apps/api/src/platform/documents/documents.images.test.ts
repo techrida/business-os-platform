@@ -175,6 +175,36 @@ describe('DocumentsService.create with an image owner policy', () => {
     ).rejects.toBeInstanceOf(PayloadTooLargeException);
     expect(inserted).toHaveLength(0);
   });
+
+  it('applies the same rules to a new version: an image document never takes a PDF as version 2', async () => {
+    const { svc } = service(imagePolicy());
+    const { tx, inserted } = fakeTx();
+    const doc = [{ id: randomUUID(), ownerType: 'entity_logo', ownerId: OWNER_ID }];
+    const chain = {
+      from: () => chain,
+      where: () => chain,
+      limit: () => chain,
+      then: (resolve: (rows: unknown[]) => unknown) => Promise.resolve(doc).then(resolve),
+      for: () => Promise.resolve(doc),
+    };
+    Object.assign(tx, { select: vi.fn(() => chain) });
+
+    await expect(
+      svc.createVersion(tx, doc[0]!.id, {
+        filename: 'logo.pdf',
+        declaredMime: 'application/pdf',
+        sizeBytes: 2048,
+      }),
+    ).rejects.toBeInstanceOf(UnsupportedMediaTypeException);
+    await expect(
+      svc.createVersion(tx, doc[0]!.id, {
+        filename: 'logo.png',
+        declaredMime: 'image/png',
+        sizeBytes: IMAGE_MAX_BYTES + 1,
+      }),
+    ).rejects.toBeInstanceOf(PayloadTooLargeException);
+    expect(inserted).toHaveLength(0);
+  });
 });
 
 describe('DocumentsService.openImage', () => {
