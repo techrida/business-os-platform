@@ -82,6 +82,10 @@ export function prepareNetns(dir, origins, realExecutable) {
   writeFileSync(launcher, `#!/bin/bash\nexec unshare -Urn "${innerScript}" "$@"\n`);
   chmodSync(innerScript, 0o755);
   chmodSync(launcher, 0o755);
+  // A script that crashes never closes its browser; take the forwarders down with the process.
+  process.once('exit', () => {
+    for (const f of forwarders) f.kill();
+  });
   return {
     executablePath: launcher,
     stop() {
