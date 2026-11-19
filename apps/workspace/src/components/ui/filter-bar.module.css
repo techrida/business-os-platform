@@ -1,0 +1,71 @@
+.bar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+}
+
+.search {
+  position: relative;
+  flex: 0 1 280px;
+  min-width: 0;
+}
+
+.controls {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+}
+
+.controls > * {
+  min-width: 0;
+  max-width: 100%;
+}
+
+/* Shown only after a short wait, so a fast refresh does not flicker. */
+.busy {
+  position: absolute;
+  inset-block-start: 50%;
+  inset-inline-end: 12px;
+  width: 12px;
+  height: 12px;
+  margin-block-start: -6px;
+  border: 2px solid var(--search-border);
+  border-block-start-color: var(--icon-default);
+  border-radius: 50%;
+  opacity: 0;
+  pointer-events: none;
+}
+
+.busy[data-pending] {
+  opacity: 1;
+  transition: opacity 120ms ease 200ms;
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .busy[data-pending] {
+    animation: spin 700ms linear infinite;
+  }
+}
+
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+.count {
+  margin: 0;
+  color: var(--text-secondary);
+  font-size: var(--font-size-body-small);
+  line-height: var(--line-height-body-small);
+}
+
+@media (max-width: 640px) {
+  .search {
+    flex-basis: 100%;
+  }
+}
