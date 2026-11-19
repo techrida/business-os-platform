@@ -80,6 +80,19 @@ describe('QuotationApprovalSummary', () => {
     expect(html).not.toContain('0%');
   });
 
+  it('leaves the margin row out when the snapshot carries no margin (no cost permission)', () => {
+    const { marginPct, ...noMargin } = snapshot();
+    expect(marginPct).toBe('22.5000');
+    const html = render(noMargin);
+    expect(html).not.toContain('Margin');
+    expect(html).not.toContain('Not recorded');
+    expect(html).not.toContain('22.5%');
+    // The rest of the summary still renders.
+    expect(html).toContain('NPR 26,90,999.99');
+    expect(html).toContain('Above the 12% limit');
+    expect(html).not.toContain('Not in this snapshot');
+  });
+
   it('shows "Not in this snapshot" and the stored values when it does not parse', () => {
     const html = render({ title: 'Quotation QT-1', amount: '1250000.00', currency: 'NPR' });
     expect(html).toContain('Not in this snapshot');

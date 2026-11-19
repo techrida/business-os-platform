@@ -75,6 +75,20 @@ describe('logActivityAction', () => {
     expect(api.createActivity).not.toHaveBeenCalled();
   });
 
+  it('refuses a task: it is no longer a kind a person logs', async () => {
+    const res = await logActivityAction(empty, form({ kind: 'task' }));
+    expect(res.ok).toBeFalsy();
+    expect(res.fieldErrors['kind']).toBeTruthy();
+    expect(api.createActivity).not.toHaveBeenCalled();
+  });
+
+  it('refuses a note with a due time: a note cannot be planned', async () => {
+    const res = await logActivityAction(empty, form({ kind: 'note', dueAt: '2026-12-01T10:00' }));
+    expect(res.ok).toBeFalsy();
+    expect(res.fieldErrors['kind']).toMatch(/note records something that happened/);
+    expect(api.createActivity).not.toHaveBeenCalled();
+  });
+
   it('replaces a missing or tampered key with a fresh one', async () => {
     api.createActivity.mockResolvedValue({ id: 'a' });
     await logActivityAction(empty, form({ idempotencyKey: '' }));

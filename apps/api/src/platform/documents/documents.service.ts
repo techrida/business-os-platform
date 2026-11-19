@@ -1,6 +1,7 @@
 // The documents service: create, receive, scan hand-off, read, signed links.
-// Serves NFR Security ("no unscanned file is ever served"): every state change goes through here, and a
-// download link is only ever issued for a version whose status is `clean`.
+// Serves NFR Security ("no unscanned upload is ever served"; only bytes the system rendered itself skip the scan,
+// D28): every state change goes through here, and a download link is only ever issued for a version whose status
+// is `clean`.
 //
 // Removal is soft: documents.removed_at is set, nothing is deleted, and a removed document is invisible to every
 // read here. Only the owner's `canAttach` decides whether someone may add to or remove from its attachments.
@@ -11,9 +12,12 @@
 //                     -> rejected           wrong type or too big (file deleted)
 //   scan processor    -> clean | infected | scan_failed
 //
-// Generated files (a quotation PDF a job rendered) take the same road under the system actor:
-//   createGenerated() -> receiveGenerated() -> the same receiveContent, scan and `clean` gate as an upload.
-// The only difference is who is asked: the owner's `allowsSystemActor`, not the request principal's authz.
+// Generated files (a quotation PDF a job rendered) take the same road under the system actor, minus the scan
+// (decision D28: bytes the system rendered itself are not scanned; uploads always are):
+//   createGenerated() -> receiveGenerated() -> quarantine, type check, sha256, then straight to `clean`
+//   (scan_engine 'generated', no docs.scan job, clamd never called).
+// Who is asked differs too: the owner's `allowsSystemActor`, not the request principal's authz. Only
+// receiveGenerated can skip the scan; the HTTP-facing receiveContent never can.
 //
 // A portal caller (a customer) holds no `documents.upload`. `create` and `receiveContent` still let one upload
 // when the owner's `allowsCounterparty` says yes (P3: payment proof on the customer's own payment). Every other
@@ -68,6 +72,7 @@ import {
   type DocumentOwnerPolicy,
   type ScanJobData,
 } from './documents.ports';
+import { GENERATED_ENGINE, markVersionClean } from './mark-version-clean';
 import { SCAN_JOB_OPTIONS } from './scan.processor';
 import { LinkError, SignedLinks } from './signed-link';
 import {
@@ -301,9 +306,16 @@ export class DocumentsService {
 
   /**
    * Hands the bytes of a generated file (from `createGenerated`, after its transaction committed) to the
-   * ordinary `receiveContent` pipeline: quarantine, type check against the declared type, sha256, and the
-   * queued virus scan. The version is downloadable only once the scan marks it `clean`, like an upload.
-   * `who` must be a system actor; the owner is asked again through `allowsSystemActor`.
+   * receive pipeline: quarantine, type check against the declared type and sha256, exactly like an upload.
+   * Then it SKIPS the virus scan (decision D28: the system rendered these bytes itself): the file is promoted
+   * to clean storage and the version is marked `clean` with scan_engine 'generated' and a `document.scanned`
+   * audit event (result 'generated'). Nothing is queued and clamd is never called.
+   * `who` must be a system actor (anything else is a 403, so a request principal can never skip the scan); the
+   * owner is asked again through `allowsSystemActor`. This is the only caller of the skip: `receiveContent`,
+   * which the HTTP controller uses, always scans.
+   * If promoting or the database update fails, the version stays `quarantined` and the error is thrown; the
+   * scan is queued as a fallback (and the scan sweeper re-queues it if that fails too), so it ends `clean`
+   * through an ordinary scan.
    */
   async receiveGenerated(
     created: { documentId: string; versionId: string },
@@ -313,10 +325,13 @@ export class DocumentsService {
     if (who.actor.kind !== 'system') {
       throw new ForbiddenException({ code: 'forbidden', reason: 'no_permission' });
     }
-    return this.receiveContent(created.versionId, Readable.from(file.bytes), file.bytes.length, {
-      documentId: created.documentId,
-      who,
-    });
+    return this.receiveInternal(
+      created.versionId,
+      Readable.from(file.bytes),
+      file.bytes.length,
+      { documentId: created.documentId, who },
+      { skipScan: true },
+    );
   }
 
   /**
@@ -428,7 +443,8 @@ export class DocumentsService {
   // -------------------------------------------------------------------------------------- receive
 
   /**
-   * Takes the file bytes, quarantines them, checks the type and queues the scan.
+   * Takes the file bytes, quarantines them, checks the type and queues the scan. Always scans: this is what
+   * the HTTP controller calls, and nothing a request carries can skip the scan.
    * `opts.who` is the request's scope and actor (default: requestTx(), HTTP only); tests pass their own.
    */
   async receiveContent(
@@ -436,6 +452,21 @@ export class DocumentsService {
     src: Readable,
     contentLength: number,
     opts: { documentId?: string; who?: { scope: TxScope; actor: Actor } } = {},
+  ): Promise<DocumentVersionDto> {
+    return this.receiveInternal(versionId, src, contentLength, opts, { skipScan: false });
+  }
+
+  /**
+   * The receive steps. `flags.skipScan` is not reachable from outside the service: the public
+   * `receiveContent` passes false and only `receiveGenerated` passes true. It also needs a system actor
+   * here, so a bug in a caller still cannot skip the scan for a user.
+   */
+  private async receiveInternal(
+    versionId: string,
+    src: Readable,
+    contentLength: number,
+    opts: { documentId?: string; who?: { scope: TxScope; actor: Actor } },
+    flags: { skipScan: boolean },
   ): Promise<DocumentVersionDto> {
     if (!Number.isInteger(contentLength) || contentLength < 0) {
       throw new BadRequestException('Content-Length must be a non-negative integer');
@@ -445,6 +476,9 @@ export class DocumentsService {
       throw new PayloadTooLargeException(`File is larger than ${MAX_UPLOAD_BYTES} bytes`);
     }
     const who = opts.who ?? requestTx();
+    if (flags.skipScan && who.actor.kind !== 'system') {
+      throw new ForbiddenException({ code: 'forbidden', reason: 'no_permission' });
+    }
     const s = scoped(who.scope);
 
     // Step 1, one short transaction: check, then claim the version. The row lock makes the claim atomic, so
@@ -531,6 +565,9 @@ export class DocumentsService {
       return saved;
     });
 
+    // Step 5 for a generated file (D28): no scan. Promote, then mark clean.
+    if (flags.skipScan) return this.finishGenerated(who, updated);
+
     // Step 5: queue the scan AFTER the commit, so the worker always finds the row.
     const job: ScanJobData = {
       versionId,
@@ -554,6 +591,53 @@ export class DocumentsService {
       );
     }
     return toVersionDto(updated);
+  }
+
+  /**
+   * Steps 5-6 of a generated file (D28), in place of the scan: move the quarantined bytes to clean storage,
+   * then mark the version clean in one transaction (same helper as the scan processor). `promote` is
+   * idempotent and the update only applies to a still-quarantined version, so a retry finds either state and
+   * never audits twice. A failure leaves the version `quarantined` (recoverable): the scan is queued as a
+   * fallback, the sweeper re-queues it later if that fails too, and the original error is thrown.
+   */
+  private async finishGenerated(
+    who: { scope: TxScope; actor: Actor },
+    received: VersionRow,
+  ): Promise<DocumentVersionDto> {
+    try {
+      await this.storage.promote(received.storageKey);
+      const clean = await withTx(this.db, who.scope, who.actor, (tx) =>
+        markVersionClean(tx, this.audit, who.scope, received, {
+          result: GENERATED_ENGINE,
+          engine: GENERATED_ENGINE,
+        }),
+      );
+      // Null: it is no longer quarantined (a repeat finished it first). Report what is stored.
+      if (clean !== null) return toVersionDto(clean);
+      const found = await this.loadVersion(this.db, who.scope, received.id, received.documentId);
+      return toVersionDto(found.version);
+    } catch (error) {
+      this.logger.error(
+        `generated version ${received.id} could not be marked clean, falling back to the scan: ${describe(error)}`,
+      );
+      try {
+        await this.queue.add(
+          DOCS_SCAN_JOB,
+          {
+            versionId: received.id,
+            tenantId: who.scope.tenantId,
+            organizationId: who.scope.organizationId,
+          } satisfies ScanJobData,
+          { ...SCAN_JOB_OPTIONS, jobId: received.id },
+        );
+      } catch (queueError) {
+        // The sweeper re-queues a quarantined version after 15 minutes with no live job.
+        this.logger.error(
+          `could not queue the fallback scan for version ${received.id}: ${describe(queueError)}`,
+        );
+      }
+      throw error;
+    }
   }
 
   // ------------------------------------------------------------------------------------------ read

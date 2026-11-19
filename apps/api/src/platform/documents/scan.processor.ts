@@ -1,5 +1,6 @@
 // The docs.scan worker: streams a quarantined file to clamd and acts on the verdict.
-// Serves NFR Security (nothing is downloadable before this says `clean`) and Availability (a down
+// Serves NFR Security (no upload is downloadable before this says `clean`; files the system renders itself skip
+// the scan, D28, and are marked clean by DocumentsService.receiveGenerated) and Availability (a down
 // scanner means retries over about half an hour, then `scan_failed`; it never means "treat as clean"; a
 // sweeper keeps trying versions the retries gave up on, ADR 0022).
 //
@@ -13,7 +14,7 @@ import { stat } from 'node:fs/promises';
 import { documents, documentVersions, scoped } from '@bos/db';
 import { InjectQueue, Processor, WorkerHost } from '@nestjs/bullmq';
 import { Inject, Injectable, Logger, type OnModuleInit } from '@nestjs/common';
-import { and, asc, eq, isNull, lt, sql } from 'drizzle-orm';
+import { and, asc, eq, isNull, lt } from 'drizzle-orm';
 import type { Job, Queue } from 'bullmq';
 
 import { DB, type Db } from '../db/db.module';
@@ -28,6 +29,7 @@ import {
   type NotifyPort,
   type ScanJobData,
 } from './documents.ports';
+import { GENERATED_ENGINE, markVersionClean, stillQuarantined } from './mark-version-clean';
 import { STORAGE_ADAPTER, type StorageAdapter } from './storage.adapter';
 
 /**
@@ -118,7 +120,12 @@ export class ScanProcessor extends WorkerHost {
         return applied ? 'scan_failed' : 'skipped';
       }
       // Outside the try: a database error here must fail the job, not turn into "file missing".
-      return (await this.markClean(scope, v, await this.engine())) ? 'clean' : 'skipped';
+      // Nothing was scanned on this run. A system-rendered file (D28) whose clean mark failed after its promote
+      // is finished as such, with the generated label, never with the scanner's name.
+      const applied = (await this.isGenerated(s, v))
+        ? await this.markClean(scope, v, { result: GENERATED_ENGINE, engine: GENERATED_ENGINE })
+        : await this.markClean(scope, v, { result: 'clean', engine: await this.engine() });
+      return applied ? 'clean' : 'skipped';
     }
 
     const stream = createReadStream(path);
@@ -126,7 +133,9 @@ export class ScanProcessor extends WorkerHost {
 
     if (result.verdict === 'clean') {
       await this.storage.promote(v.storageKey);
-      return (await this.markClean(scope, v, await this.engine())) ? 'clean' : 'skipped';
+      return (await this.markClean(scope, v, { result: 'clean', engine: await this.engine() }))
+        ? 'clean'
+        : 'skipped';
     }
 
     if (result.verdict === 'infected') {
@@ -219,6 +228,27 @@ export class ScanProcessor extends WorkerHost {
   }
 
   /**
+   * Was this version made by the system's generated path (createGenerated writes actorUuid(system) = null into both
+   * `documents.created_by` and `document_versions.uploaded_by`)? A user upload always records its user, and no
+   * request can set either column, so the pair is not client-controlled. Used only where nothing was scanned
+   * (the quarantine file is already promoted) to label the version honestly. Limit: a non-user actor that used the
+   * ordinary create + receiveContent path would carry the same null pair and be labelled generated here; only the
+   * label would differ (the bytes are in clean storage either way).
+   */
+  private async isGenerated(
+    s: ReturnType<typeof scoped>,
+    v: typeof documentVersions.$inferSelect,
+  ): Promise<boolean> {
+    if (v.uploadedBy !== null) return false;
+    const [doc] = await this.db
+      .select({ createdBy: documents.createdBy })
+      .from(documents)
+      .where(s.where(documents, eq(documents.id, v.documentId)))
+      .limit(1);
+    return doc !== undefined && doc.createdBy === null;
+  }
+
+  /**
    * Where the "file blocked" notice points. Emails may only link under /inbox/ or /memos/ (buildLink), so a
    * known memo gets its own page and anything else the inbox. A bad path here would make notifyUser throw
    * and roll back the whole infected transaction.
@@ -244,48 +274,16 @@ export class ScanProcessor extends WorkerHost {
   private async markClean(
     scope: { tenantId: string; organizationId: string },
     v: typeof documentVersions.$inferSelect,
-    engine: string,
+    how: { result: string; engine: string },
   ): Promise<boolean> {
-    const s = scoped(scope);
     // Errors propagate on purpose: the job fails and BullMQ retries; swallowing one here once turned a
     // database blip into a permanent scan_failed.
-    const applied = await withTx(this.db, scope, systemActor('docs.scan'), async (tx) => {
-      const updated = await tx
-        .update(documentVersions)
-        .set({
-          status: 'clean',
-          scanSignature: null,
-          scanEngine: engine,
-          scannedAt: new Date(),
-          updatedAt: new Date(),
-        })
-        .where(s.where(documentVersions, stillQuarantined(v.id)))
-        .returning({ id: documentVersions.id });
-      // Zero rows: the version moved on since we read it. Do not point the document at it or audit a scan.
-      if (updated.length === 0) return false;
-      // The document points at its newest clean version: set it when it has none, or only an older one.
-      await tx
-        .update(documents)
-        .set({ currentVersionId: v.id, updatedAt: new Date() })
-        .where(
-          s.where(
-            documents,
-            and(
-              eq(documents.id, v.documentId),
-              sql`(${documents.currentVersionId} IS NULL OR EXISTS (
-                SELECT 1 FROM ${documentVersions} c
-                 WHERE c.id = ${documents.currentVersionId} AND c.version < ${v.version}))`,
-            ),
-          ),
-        );
-      await this.audit.record(tx, {
-        action: 'document.scanned',
-        entityType: 'document_version',
-        entityId: v.id,
-        meta: { result: 'clean', engine, sha256: v.sha256?.toString('hex') ?? null },
-      });
-      return true;
-    });
+    const applied = await withTx(
+      this.db,
+      scope,
+      systemActor('docs.scan'),
+      async (tx) => (await markVersionClean(tx, this.audit, scope, v, how)) !== null,
+    );
     if (!applied) this.noOp(v.id, 'clean verdict');
     return applied;
   }
@@ -314,11 +312,6 @@ export class ScanProcessor extends WorkerHost {
     else this.noOp(versionId, 'scan_failed verdict');
     return applied;
   }
-}
-
-/** Every verdict update carries this: it only applies to a version that is still waiting for its scan. */
-function stillQuarantined(versionId: string) {
-  return and(eq(documentVersions.id, versionId), eq(documentVersions.status, 'quarantined'));
 }
 
 function isNotFound(error: unknown): boolean {

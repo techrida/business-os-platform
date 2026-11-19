@@ -4,7 +4,7 @@ import Link from 'next/link';
 import type { NumberSystems } from '@bos/locale';
 
 import { Board } from '@/components/p2/crm/board';
-import { listLeads } from '@/components/p2/crm/crm-api';
+import { listLeadOwners, listLeads } from '@/components/p2/crm/crm-api';
 import { moneyOrNull, sentence } from '@/components/p2/crm/format';
 import { LoadProblem, StageBadge, ViewSwitch } from '@/components/p2/crm/server-bits';
 import { boardColumns, groupByStage, stageLabel, userMoves } from '@/components/p2/crm/stages';
@@ -22,10 +22,12 @@ import { StatCard } from '@/components/ui/stat-card';
 import { CellTitle, Table, Td, Th } from '@/components/ui/table';
 import { failureOf } from '@/lib/api-kernel';
 import { requireStaffSession } from '@/lib/bff';
+import { userNames } from '@/lib/business-labels';
 import { getNumberSystems } from '@/lib/display-settings';
 import { when } from '@/lib/kernel-format';
 
 import { moveLeadStageAction } from './actions';
+import { NextFollowUpCell, OwnerCell } from './lead-cells';
 import styles from './leads.module.css';
 import { QualifyLead } from './qualify-lead';
 
@@ -120,6 +122,18 @@ export default async function LeadsPage({ searchParams }: { searchParams: Promis
       </Page>
     );
   }
+
+  // Owner names: the people the caller may assign to, plus the users directory for administrators.
+  // Either failing only blanks names; the list still renders.
+  const [ownerList, directory] = await Promise.allSettled([
+    listLeadOwners(session),
+    userNames(session),
+  ]);
+  const ownerNames = new Map(directory.status === 'fulfilled' ? directory.value : []);
+  if (ownerList.status === 'fulfilled') {
+    for (const o of ownerList.value) ownerNames.set(o.userId, o.displayName || o.email);
+  }
+  const now = new Date();
 
   // The API supports search and stage filters and returns a capped array. Source and pages
   // narrow that returned set, so the totals describe these results only.
@@ -248,13 +262,14 @@ export default async function LeadsPage({ searchParams }: { searchParams: Promis
           />
         ) : (
           <div className={styles.listCard}>
-            <Table caption="Leads" minWidth={900} className={styles.table ?? ''}>
+            <Table caption="Leads" minWidth={1080} className={styles.table ?? ''}>
               <thead>
                 <tr>
                   <Th>Lead name</Th>
                   <Th>Organization</Th>
                   <Th>Contact person</Th>
                   <Th>Source</Th>
+                  <Th>Owner</Th>
                   <Th className={styles.followUpColumn}>Status</Th>
                   <Th className={styles.followUpColumn}>Next follow-up</Th>
                   <Th className={styles.followUpColumn}>Quick action</Th>
@@ -290,17 +305,17 @@ export default async function LeadsPage({ searchParams }: { searchParams: Promis
                       <Td>
                         <Badge tone="neutral">{sentence(lead.source)}</Badge>
                       </Td>
+                      <Td>
+                        <OwnerCell
+                          owned={lead.ownerUserId !== null}
+                          name={lead.ownerUserId ? ownerNames.get(lead.ownerUserId) : undefined}
+                        />
+                      </Td>
                       <Td nowrap className={styles.followUpColumn}>
                         <StageBadge kind="lead" stage={lead.stage} />
                       </Td>
                       <Td nowrap className={styles.followUpColumn}>
-                        {lead.nextFollowUpAt ? (
-                          <time dateTime={lead.nextFollowUpAt}>
-                            {when(lead.nextFollowUpAt, 'date')}
-                          </time>
-                        ) : (
-                          <span className={styles.quiet}>None planned</span>
-                        )}
+                        <NextFollowUpCell at={lead.nextFollowUpAt} now={now} />
                       </Td>
                       <Td nowrap className={styles.followUpColumn}>
                         {canQualify ? (

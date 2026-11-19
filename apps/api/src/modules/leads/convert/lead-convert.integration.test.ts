@@ -195,7 +195,10 @@ describe('POST /v1/leads/:id/convert', () => {
       .select()
       .from(activities)
       .where(eq(activities.leadId, lead.id));
-    expect(stageActivities.filter((a) => a.subject.endsWith('to converted'))).toHaveLength(1);
+    const converted = stageActivities.filter((a) => a.subject.endsWith('to converted'));
+    expect(converted).toHaveLength(1);
+    // The caller is recorded as who converted it, as on a stage change.
+    expect(converted[0]).toMatchObject({ kind: 'stage_change', createdByUserId: h.users.salesA });
   });
 
   it('links an existing customer and a new contact, and numbers deals one after the other', async () => {

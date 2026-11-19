@@ -47,8 +47,8 @@ export function sampleQuotationView(): CustomerQuotationView {
     deliveryTimeline: 'Eight weeks from the advance payment.',
     paymentTermName: '50% advance, balance on go-live',
     paymentSchedule: [
-      { label: 'Advance', percent: '50', dueDescription: 'On order' },
-      { label: 'Go-live', percent: '50', dueDescription: 'On sign-off' },
+      { label: 'Advance', percent: '50', amount: '518500.50', dueDescription: 'On order' },
+      { label: 'Go-live', percent: '50', amount: '518500.50', dueDescription: 'On sign-off' },
     ],
     lines: LINES.map(([description, uom, quantity, unitPrice, amount], i) => ({
       lineNo: i + 1,

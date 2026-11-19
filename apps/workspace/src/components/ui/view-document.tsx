@@ -27,6 +27,11 @@ export interface ViewDocumentProps {
   onDownload?: (() => void) | undefined;
   /** Accessible name for the button and Download link when the visible text lacks context, e.g. "version 2". */
   context?: string | undefined;
+  /**
+   * Same-origin route that asks for a fresh PDF when the file could not be prepared. Pass it only for staff
+   * viewers of a document that can be regenerated; without it the dialog offers no Retry.
+   */
+  retryUrl?: string | undefined;
 }
 
 /**
@@ -47,6 +52,7 @@ export function ViewDocument({
   withDownload = false,
   onDownload,
   context,
+  retryUrl,
 }: ViewDocumentProps) {
   const content = (
     <>
@@ -81,6 +87,7 @@ export function ViewDocument({
         downloadUrl={downloadUrl}
         trigger={trigger}
         onDownload={onDownload}
+        retryUrl={retryUrl}
       />
       {withDownload ? (
         <LinkButton

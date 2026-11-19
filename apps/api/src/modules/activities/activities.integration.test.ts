@@ -9,10 +9,10 @@ import type { Server } from 'node:http';
 import type { AddressInfo } from 'node:net';
 
 import { ActivityDtoSchema, ErrorBodySchema, LeadDtoSchema } from '@bos/contracts';
-import { activities } from '@bos/db';
+import { activities, createParty, createPortalUser, createStaffUser, leads, users } from '@bos/db';
 import { type INestApplication } from '@nestjs/common';
 import { Test } from '@nestjs/testing';
-import { eq } from 'drizzle-orm';
+import { eq, inArray } from 'drizzle-orm';
 import { drizzle } from 'drizzle-orm/node-postgres';
 import { Pool } from 'pg';
 import request from 'supertest';
@@ -29,6 +29,7 @@ import { LeadsService } from '../leads/leads.service';
 import { startHarness, type Harness } from '../leads/test/harness';
 import { ActivitiesController } from './activities.controller';
 import { ActivitiesService } from './activities.service';
+import { nextFollowUpSql } from './activities.types';
 
 vi.setConfig({ testTimeout: 60_000, hookTimeout: 180_000 });
 
@@ -86,6 +87,42 @@ const post = (body: Record<string, unknown>, key?: string) => {
 const list = (query: string) => request(baseUrl).get(`/v1/activities${query}`);
 const dto = (body: unknown) => ActivityDtoSchema.parse(body);
 const errorOf = (body: unknown) => ErrorBodySchema.parse(body).error;
+const listed = async (query: string) => {
+  const res = await list(query);
+  expect(res.status, JSON.stringify(res.body)).toBe(200);
+  return z.array(ActivityDtoSchema).parse(res.body);
+};
+/** Stands in for the complete and cancel routes (another unit): sets the column on the row directly. */
+const setOnRow = (id: string, set: { completedAt?: Date; cancelledAt?: Date }) =>
+  withTx(h.db, h.scopeA, systemActor('test'), (tx) =>
+    tx.update(activities).set(set).where(eq(activities.id, id)),
+  );
+/** An inactive staff member and a customer portal user of this tenant, made once. */
+let outsidersMade: { inactive: string; portal: string } | undefined;
+const outsiders = async () => {
+  if (outsidersMade !== undefined) return outsidersMade;
+  const pool = h.appPool as unknown as Parameters<typeof createParty>[0];
+  const [staff] = await withTx(h.db, h.scopeA, systemActor('test'), (tx) =>
+    tx.select({ idpOrgId: users.idpOrgId }).from(users).where(eq(users.id, h.users.salesA)),
+  );
+  const { userId: inactive } = await createStaffUser(pool, {
+    ...h.scopeA,
+    idpOrgId: staff!.idpOrgId,
+  });
+  await withTx(h.db, h.scopeA, systemActor('test'), (tx) =>
+    tx.update(users).set({ status: 'inactive' }).where(eq(users.id, inactive)),
+  );
+  const party = await createParty(pool, { tenantId: h.tenantId, kind: 'customer' });
+  const { userId: portal } = await createPortalUser(pool, {
+    tenantId: h.tenantId,
+    idpOrgId: party.idpOrgId,
+  });
+  outsidersMade = { inactive, portal };
+  return outsidersMade;
+};
+const DUE_1 = '2030-01-01T09:00:00.000Z';
+const DUE_2 = '2030-01-02T09:00:00.000Z';
+const DUE_3 = '2030-01-03T09:00:00.000Z';
 
 describe('POST /v1/activities', () => {
   it('logs a call on a lead the caller owns, audits it, and replays an Idempotency-Key', async () => {
@@ -207,5 +244,387 @@ describe('GET /v1/activities', () => {
       .map((a) => a.subject);
     expect(bossSees).toEqual(expect.arrayContaining(['mine-visible', 'theirs-hidden']));
     expect(bossSees).not.toContain('entity-b-hidden');
+  });
+});
+
+describe('planned and logged activities', () => {
+  it('plans an activity with a due time: assignee defaults to the lead owner, creator is the caller, audited as scheduled', async () => {
+    const lead = await seedLead(); // owned by salesA
+    h.as('boss', 'founder');
+    const res = await post({ kind: 'call', subject: 'Chase', dueAt: DUE_1, leadId: lead.id });
+    expect(res.status, JSON.stringify(res.body)).toBe(201);
+    const planned = dto(res.body);
+    expect(planned).toMatchObject({
+      planned: true,
+      dueAt: DUE_1,
+      completedAt: null,
+      cancelledAt: null,
+      assigneeUserId: h.users.salesA,
+      createdByUserId: h.users.boss,
+      version: 1,
+    });
+    const actions = (await h.auditOf(planned.id)).map((e) => e.action);
+    expect(actions).toContain('activity.scheduled');
+    expect(actions).not.toContain('activity.created');
+
+    const logged = dto((await post({ kind: 'note', subject: 'Called', leadId: lead.id })).body);
+    expect(logged).toMatchObject({
+      planned: false,
+      dueAt: null,
+      assigneeUserId: null,
+      createdByUserId: h.users.boss,
+    });
+    expect((await h.auditOf(logged.id)).map((e) => e.action)).toContain('activity.created');
+  });
+
+  it('assigns a planned activity on another subject to the caller; an explicit assignee wins', async () => {
+    const customer = await h.seedCustomer(h.users.boss);
+    h.as('salesA', 'sales');
+    const mine = dto(
+      (await post({ kind: 'meeting', subject: 'Visit', dueAt: DUE_1, customerId: customer })).body,
+    );
+    expect(mine).toMatchObject({ planned: true, assigneeUserId: h.users.salesA });
+    // Not a lead: any active staff member of the entity may be named.
+    const colleague = dto(
+      (
+        await post({
+          kind: 'meeting',
+          subject: 'Visit too',
+          dueAt: DUE_1,
+          assigneeUserId: h.users.salesB,
+          customerId: customer,
+        })
+      ).body,
+    );
+    expect(colleague).toMatchObject({ assigneeUserId: h.users.salesB });
+
+    const lead = await seedLead();
+    const send = () =>
+      post({
+        kind: 'email',
+        subject: 'Send deck',
+        dueAt: DUE_2,
+        assigneeUserId: h.users.salesB,
+        leadId: lead.id,
+      });
+    // On a lead, an own-scope caller hands work only to themselves.
+    const refused = await send();
+    expect(refused.status, JSON.stringify(refused.body)).toBe(400);
+    expect(errorOf(refused.body)).toMatchObject({
+      code: 'bad_request',
+      message: 'assigneeUserId cannot be someone else: your access covers only your own leads',
+    });
+    h.as('boss', 'founder');
+    const explicit = dto((await send()).body);
+    expect(explicit).toMatchObject({
+      assigneeUserId: h.users.salesB,
+      createdByUserId: h.users.boss,
+    });
+  });
+
+  it('refuses an assignee who is not an active staff member of the entity with 400', async () => {
+    const { inactive, portal } = await outsiders();
+    const lead = await seedLead();
+    const customer = await h.seedCustomer(h.users.boss);
+    h.as('boss', 'founder');
+    for (const assigneeUserId of [inactive, portal, crypto.randomUUID()]) {
+      for (const subject of [{ leadId: lead.id }, { customerId: customer }]) {
+        const res = await post({
+          kind: 'call',
+          subject: 'x',
+          dueAt: DUE_1,
+          assigneeUserId,
+          ...subject,
+        });
+        expect(res.status, JSON.stringify(res.body)).toBe(400);
+        expect(errorOf(res.body).message).toBe(
+          'assigneeUserId is not an active staff member of this entity',
+        );
+      }
+    }
+  });
+
+  it('filters by status: planned earliest first, logged newest first, cancelled never; scope unchanged', async () => {
+    const lead = await seedLead();
+    const make = async (body: Record<string, unknown>) =>
+      dto((await post({ leadId: lead.id, ...body })).body);
+    const p2 = await make({ kind: 'call', subject: 'p2', dueAt: DUE_2 });
+    const p1 = await make({ kind: 'call', subject: 'p1', dueAt: DUE_1 });
+    const cancelled = await make({ kind: 'call', subject: 'cancelled', dueAt: DUE_3 });
+    const done = await make({ kind: 'meeting', subject: 'done', dueAt: DUE_3 });
+    await make({ kind: 'note', subject: 'old', occurredAt: '2026-01-01T09:00:00.000Z' });
+    await make({ kind: 'call', subject: 'new', occurredAt: '2026-02-01T09:00:00.000Z' });
+    await setOnRow(cancelled.id, { cancelledAt: new Date() });
+    await setOnRow(done.id, { completedAt: new Date() });
+
+    const planned = await listed(`?leadId=${lead.id}&status=planned`);
+    expect(planned.map((a) => a.subject)).toEqual(['p1', 'p2']);
+    expect(planned.every((a) => a.planned)).toBe(true);
+
+    // `done` was planned and completed, so it is History now; its occurred time is its creation (now).
+    const logged = await listed(`?leadId=${lead.id}&status=logged`);
+    expect(logged.map((a) => a.subject)).toEqual(['done', 'new', 'old']);
+    expect(logged.some((a) => a.planned)).toBe(false);
+
+    const all = (await listed(`?leadId=${lead.id}`)).map((a) => a.subject);
+    expect(all.sort()).toEqual(['done', 'new', 'old', 'p1', 'p2']);
+    expect(all).not.toContain(cancelled.subject);
+    expect(p2.id).not.toBe(p1.id);
+
+    expect((await list(`?leadId=${lead.id}&status=nonsense`)).status).toBe(400);
+    h.as('salesB', 'sales');
+    expect((await list(`?leadId=${lead.id}&status=planned`)).status).toBe(404);
+  });
+
+  it('records who changed a lead stage on its stage_change activity', async () => {
+    const lead = await seedLead();
+    await leadsService.changeStage(lead.id, { stage: 'contacted', expectedVersion: lead.version });
+    const [change] = await listed(`?leadId=${lead.id}&kind=stage_change`);
+    expect(change).toMatchObject({ kind: 'stage_change', createdByUserId: h.users.salesA });
+  });
+
+  it('nextFollowUpSql gives each lead the earliest due time of its own planned activities', async () => {
+    const a = await seedLead();
+    const b = await seedLead();
+    const none = await seedLead();
+    await post({ kind: 'call', subject: 'a later', dueAt: DUE_3, leadId: a.id });
+    await post({ kind: 'call', subject: 'a next', dueAt: DUE_2, leadId: a.id });
+    const gone = dto((await post({ kind: 'call', subject: 'x', dueAt: DUE_1, leadId: a.id })).body);
+    await setOnRow(gone.id, { cancelledAt: new Date() });
+    await post({ kind: 'email', subject: 'b next', dueAt: DUE_1, leadId: b.id });
+    await post({ kind: 'note', subject: 'logged only', leadId: none.id });
+
+    const rows = await h.db
+      .select({ id: leads.id, next: nextFollowUpSql() })
+      .from(leads)
+      .where(inArray(leads.id, [a.id, b.id, none.id]));
+    const byId = new Map(rows.map((r) => [r.id, r.next]));
+    expect(byId.get(a.id)).toBeInstanceOf(Date);
+    expect(byId.get(a.id)?.toISOString()).toBe(DUE_2);
+    expect(byId.get(b.id)?.toISOString()).toBe(DUE_1);
+    expect(byId.get(none.id)).toBeNull();
+  });
+
+  it('never counts an old note, system or stage_change row with a due time as planned', async () => {
+    const lead = await seedLead();
+    // Old shapes the API no longer writes: a due time on a kind that is not a call, meeting or email.
+    const old = await withTx(h.db, h.scopeA, systemActor('test'), (tx) =>
+      tx
+        .insert(activities)
+        .values(
+          (['note', 'system', 'stage_change'] as const).map((kind) => ({
+            ...h.scopeA,
+            kind,
+            subject: `old ${kind}`,
+            leadId: lead.id,
+            dueAt: new Date(DUE_1),
+          })),
+        )
+        .returning(),
+    );
+    const oldIds = old.map((a) => a.id);
+
+    expect(await listed(`?leadId=${lead.id}&status=planned`)).toEqual([]);
+    const logged = await listed(`?leadId=${lead.id}&status=logged`);
+    expect(logged.filter((a) => oldIds.includes(a.id)).map((a) => a.planned)).toEqual([
+      false,
+      false,
+      false,
+    ]);
+    const [row] = await h.db
+      .select({ next: nextFollowUpSql() })
+      .from(leads)
+      .where(eq(leads.id, lead.id));
+    expect(row?.next).toBeNull();
+    expect(LeadDtoSchema.parse(await leadsService.get(lead.id)).nextFollowUpAt).toBeNull();
+  });
+});
+
+describe('PATCH /v1/activities/:id/complete|reschedule|cancel', () => {
+  const patch = (id: string, action: 'complete' | 'reschedule' | 'cancel', body: unknown) =>
+    request(baseUrl).patch(`/v1/activities/${id}/${action}`).send(body as object);
+  const plan = async (leadId: string, subject: string, dueAt: string, body?: string) => {
+    const res = await post({ kind: 'call', subject, dueAt, leadId, ...(body ? { body } : {}) });
+    expect(res.status, JSON.stringify(res.body)).toBe(201);
+    return dto(res.body);
+  };
+
+  it('complete turns a planned activity into a logged one, appends the note, and refuses a second complete', async () => {
+    const lead = await seedLead();
+    const p = await plan(lead.id, 'Chase', DUE_1, 'Ask about budget');
+    const before = Date.now();
+    const res = await patch(p.id, 'complete', { expectedVersion: 1, note: 'Budget approved' });
+    expect(res.status, JSON.stringify(res.body)).toBe(200);
+    const done = dto(res.body);
+    expect(done).toMatchObject({
+      planned: false,
+      dueAt: DUE_1,
+      cancelledAt: null,
+      body: 'Ask about budget\n\nBudget approved',
+      version: 2,
+    });
+    expect(done.completedAt).not.toBeNull();
+    expect(Date.parse(done.completedAt!)).toBeGreaterThanOrEqual(before - 1000);
+    // Without an occurredAt it happened when it was completed.
+    expect(done.occurredAt).toBe(done.completedAt);
+
+    expect((await listed(`?leadId=${lead.id}&status=planned`)).map((a) => a.id)).not.toContain(p.id);
+    const logged = await listed(`?leadId=${lead.id}&status=logged`);
+    expect(logged.find((a) => a.id === p.id)).toMatchObject({ occurredAt: done.completedAt });
+    expect((await h.auditOf(p.id)).map((e) => e.action)).toContain('activity.completed');
+
+    // Already done: not planned any more, even with the current version.
+    const again = await patch(p.id, 'complete', { expectedVersion: 2 });
+    expect(again.status, JSON.stringify(again.body)).toBe(409);
+    expect(errorOf(again.body).code).toBe('conflict');
+    expect((await patch(p.id, 'cancel', { expectedVersion: 2 })).status).toBe(409);
+  });
+
+  it('complete takes the time it actually happened, and keeps a note as the only details', async () => {
+    const lead = await seedLead();
+    const p = await plan(lead.id, 'Chase', DUE_1);
+    const at = '2026-03-04T05:06:07.000Z';
+    const res = await patch(p.id, 'complete', { expectedVersion: 1, occurredAt: at, note: 'Done' });
+    expect(res.status, JSON.stringify(res.body)).toBe(200);
+    expect(dto(res.body)).toMatchObject({ occurredAt: at, body: 'Done', planned: false });
+  });
+
+  it('answers 409 for a stale expectedVersion on a row that is still planned', async () => {
+    const lead = await seedLead();
+    const p = await plan(lead.id, 'Chase', DUE_1);
+    expect((await patch(p.id, 'reschedule', { expectedVersion: 1, dueAt: DUE_2 })).status).toBe(200);
+    for (const [action, body] of [
+      ['complete', { expectedVersion: 1 }],
+      ['reschedule', { expectedVersion: 1, dueAt: DUE_3 }],
+      ['cancel', { expectedVersion: 1 }],
+    ] as const) {
+      const res = await patch(p.id, action, body);
+      expect(res.status, action).toBe(409);
+      expect(errorOf(res.body).code).toBe('conflict');
+    }
+    const [still] = await listed(`?leadId=${lead.id}&status=planned`);
+    expect(still).toMatchObject({ id: p.id, planned: true, dueAt: DUE_2, version: 2 });
+  });
+
+  it('reschedule moves the due time (and the planned order) and can hand it to another user', async () => {
+    const lead = await seedLead();
+    const first = await plan(lead.id, 'first', DUE_1);
+    await plan(lead.id, 'second', DUE_2);
+    expect((await listed(`?leadId=${lead.id}&status=planned`)).map((a) => a.subject)).toEqual([
+      'first',
+      'second',
+    ]);
+
+    // An own-scope caller cannot hand a lead's follow-up to a colleague; a wider grant can.
+    const handed = await patch(first.id, 'reschedule', {
+      expectedVersion: 1,
+      dueAt: DUE_3,
+      assigneeUserId: h.users.salesB,
+    });
+    expect(handed.status, JSON.stringify(handed.body)).toBe(400);
+    expect(errorOf(handed.body).code).toBe('bad_request');
+    const { inactive, portal } = await outsiders();
+    h.as('boss', 'founder');
+    for (const assigneeUserId of [inactive, portal]) {
+      const res = await patch(first.id, 'reschedule', { expectedVersion: 1, dueAt: DUE_3, assigneeUserId });
+      expect(res.status, JSON.stringify(res.body)).toBe(400);
+      expect(errorOf(res.body).message).toBe(
+        'assigneeUserId is not an active staff member of this entity',
+      );
+    }
+    const res = await patch(first.id, 'reschedule', {
+      expectedVersion: 1,
+      dueAt: DUE_3,
+      assigneeUserId: h.users.salesB,
+    });
+    expect(res.status, JSON.stringify(res.body)).toBe(200);
+    expect(dto(res.body)).toMatchObject({
+      dueAt: DUE_3,
+      assigneeUserId: h.users.salesB,
+      planned: true,
+      version: 2,
+    });
+    expect((await listed(`?leadId=${lead.id}&status=planned`)).map((a) => a.subject)).toEqual([
+      'second',
+      'first',
+    ]);
+    expect((await h.auditOf(first.id)).map((e) => e.action)).toContain('activity.rescheduled');
+
+    const stranger = await patch(first.id, 'reschedule', {
+      expectedVersion: 2,
+      dueAt: DUE_1,
+      assigneeUserId: crypto.randomUUID(),
+    });
+    expect(stranger.status, JSON.stringify(stranger.body)).toBe(400);
+  });
+
+  it('cancel hides the activity from both lists and is audited', async () => {
+    const lead = await seedLead();
+    const p = await plan(lead.id, 'Never mind', DUE_1);
+    const res = await patch(p.id, 'cancel', { expectedVersion: 1 });
+    expect(res.status, JSON.stringify(res.body)).toBe(200);
+    const cancelled = dto(res.body);
+    expect(cancelled).toMatchObject({ planned: false, completedAt: null, version: 2 });
+    expect(cancelled.cancelledAt).not.toBeNull();
+    for (const query of [`?leadId=${lead.id}&status=planned`, `?leadId=${lead.id}&status=logged`]) {
+      expect((await listed(query)).map((a) => a.id), query).not.toContain(p.id);
+    }
+    expect((await h.auditOf(p.id)).map((e) => e.action)).toContain('activity.cancelled');
+    expect((await patch(p.id, 'cancel', { expectedVersion: 2 })).status).toBe(409);
+  });
+
+  it('refuses a logged activity and a system-written kind with 409', async () => {
+    const lead = await seedLead();
+    const logged = dto((await post({ kind: 'note', subject: 'Called', leadId: lead.id })).body);
+    expect((await patch(logged.id, 'complete', { expectedVersion: 1 })).status).toBe(409);
+    // A system row with a due time would look planned by the column rule; its kind still refuses it.
+    const [system] = await withTx(h.db, h.scopeA, systemActor('test'), (tx) =>
+      tx
+        .insert(activities)
+        .values({ ...h.scopeA, kind: 'system', subject: 'x', leadId: lead.id, dueAt: new Date(DUE_1) })
+        .returning(),
+    );
+    for (const action of ['complete', 'cancel'] as const) {
+      const res = await patch(system!.id, action, { expectedVersion: 1 });
+      expect(res.status, action).toBe(409);
+    }
+    const res = await patch(system!.id, 'reschedule', { expectedVersion: 1, dueAt: DUE_2 });
+    expect(res.status).toBe(409);
+  });
+
+  it('answers 404 outside the caller scope, 403 for a read-only role, 400 for a bad id or body', async () => {
+    const lead = await seedLead(); // salesA's
+    const p = await plan(lead.id, 'Mine', DUE_1);
+
+    // An unknown id and a colleague's activity answer the same 404, so a guessed id learns nothing.
+    const unknown = await patch(crypto.randomUUID(), 'complete', { expectedVersion: 1 });
+    expect(unknown.status).toBe(404);
+    const unknownError = errorOf(unknown.body);
+    expect(unknownError).toMatchObject({ code: 'not_found', message: 'Activity not found' });
+    h.as('salesB', 'sales'); // own scope: a colleague's lead is out of reach
+    for (const [action, body] of [
+      ['complete', { expectedVersion: 1 }],
+      ['reschedule', { expectedVersion: 1, dueAt: DUE_2 }],
+      ['cancel', { expectedVersion: 1 }],
+    ] as const) {
+      const res = await patch(p.id, action, body);
+      expect(res.status, action).toBe(404);
+      const error = errorOf(res.body);
+      expect({ code: error.code, message: error.message }, action).toEqual({
+        code: unknownError.code,
+        message: unknownError.message,
+      });
+    }
+    h.as('salesB', 'sales', 'B'); // another entity: the row itself is not found
+    expect((await patch(p.id, 'complete', { expectedVersion: 1 })).status).toBe(404);
+    h.as('viewer', 'management');
+    expect((await patch(p.id, 'complete', { expectedVersion: 1 })).status).toBe(403);
+
+    h.as('salesA', 'sales');
+    expect((await patch(crypto.randomUUID(), 'cancel', { expectedVersion: 1 })).status).toBe(404);
+    expect((await patch('not-a-guid', 'cancel', { expectedVersion: 1 })).status).toBe(400);
+    expect((await patch(p.id, 'complete', { expectedVersion: 1, extra: true })).status).toBe(400);
+    const [untouched] = await listed(`?leadId=${lead.id}&status=planned`);
+    expect(untouched).toMatchObject({ id: p.id, version: 1 });
   });
 });

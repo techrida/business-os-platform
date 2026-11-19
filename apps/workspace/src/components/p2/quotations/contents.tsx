@@ -1,5 +1,5 @@
 import { richTextToPlain, type QuotationVersionDto } from '@bos/contracts';
-import { Dec, allocatePaymentSchedule, formatCustomerDate, type NumberSystems } from '@bos/locale';
+import { Dec, formatCustomerDate, type NumberSystems } from '@bos/locale';
 import type { ReactNode } from 'react';
 
 import { Badge } from '@/components/ui/badge';
@@ -98,7 +98,7 @@ function LineItems({
             </Td>
             {showCost ? (
               <Td align="end" nowrap>
-                {line.unitCost === null ? '–' : money(line.unitCost, currency, numberSystems)}
+                {line.unitCost == null ? '–' : money(line.unitCost, currency, numberSystems)}
               </Td>
             ) : null}
           </tr>
@@ -115,11 +115,7 @@ function PaymentSchedule({
   version: QuotationVersionDto;
   numberSystems?: NumberSystems | undefined;
 }) {
-  const { currency, paymentSchedule, totals } = version;
-  const amounts = allocatePaymentSchedule(
-    new Dec(totals.total),
-    paymentSchedule.map((m) => m.percent),
-  );
+  const { currency, paymentSchedule } = version;
   return (
     <Table caption="Payment schedule" minWidth={560}>
       <thead>
@@ -138,7 +134,7 @@ function PaymentSchedule({
               {percentText(milestone.percent)}
             </Td>
             <Td align="end" nowrap>
-              {money(amounts[index]!.toFixed(2), currency, numberSystems)}
+              {money(milestone.amount, currency, numberSystems)}
             </Td>
             <Td>{milestone.dueDescription ? dateText(milestone.dueDescription) : '–'}</Td>
           </tr>
@@ -150,23 +146,20 @@ function PaymentSchedule({
 
 /**
  * The "Contents" card of a quotation revision: what is being sold and on what terms. A server
- * component: only `LongText` (the Show more toggle) is a client component. It shows what the DTO carries and computes
- * nothing but the payment amounts, which D22 derives from the total (2 decimals half-up, the
- * remainder on the last row).
+ * component: only `LongText` is a client component. It shows what the DTO carries and computes
+ * nothing: the payment amounts come from the server (D36).
  *
- * `internalVisible` is decided by the caller from the viewer's roles; with `false` the unit cost
- * column and the internal totals are not rendered. The caller should also strip the figures from
- * the data (`withoutInternalFigures`), so they never reach the page at all.
+ * Unit cost, cost total and margin (D29) are shown only when the DTO carries them: the API leaves
+ * them out for a viewer without `quotation.cost.read`, so an absent field hides its column or row.
+ * A present `null` means no cost is recorded: a line shows an en dash, a total shows nothing.
  */
 export function QuotationContents({
   version,
-  internalVisible,
   paymentTermsName,
   today,
   numberSystems,
 }: {
   version: QuotationVersionDto;
-  internalVisible: boolean;
   /** The payment term's name; the DTO has only its id, so the caller resolves it. Omitted when absent. */
   paymentTermsName?: string | undefined;
   /** Today as YYYY-MM-DD in Kathmandu; defaults to the current day. */
@@ -174,9 +167,10 @@ export function QuotationContents({
   /** How amounts are grouped (the tenant setting); omitted keeps the per-currency default. */
   numberSystems?: NumberSystems | undefined;
 }) {
-  const showCost = internalVisible && version.lines.some((l) => l.unitCost !== null);
-  const showInternalTotals =
-    internalVisible && (version.internalCostTotal !== null || version.marginPct !== null);
+  const internalCostTotal = version.internalCostTotal ?? null;
+  const marginPct = version.marginPct ?? null;
+  const showCost = version.lines.some((l) => l.unitCost != null);
+  const showInternalTotals = internalCostTotal !== null || marginPct !== null;
   const termsName = paymentTermsName?.trim();
 
   const facts: Fact[] = [
@@ -211,16 +205,16 @@ export function QuotationContents({
           <LineItems version={version} showCost={showCost} numberSystems={numberSystems} />
           {showInternalTotals ? (
             <dl className={styles.internal}>
-              {version.internalCostTotal !== null ? (
+              {internalCostTotal !== null ? (
                 <div>
                   <dt>Internal cost:</dt>
-                  <dd>{money(version.internalCostTotal, version.currency, numberSystems)}</dd>
+                  <dd>{money(internalCostTotal, version.currency, numberSystems)}</dd>
                 </div>
               ) : null}
-              {version.marginPct !== null ? (
+              {marginPct !== null ? (
                 <div>
                   <dt>Margin:</dt>
-                  <dd>{percentText(version.marginPct)}</dd>
+                  <dd>{percentText(marginPct)}</dd>
                 </div>
               ) : null}
             </dl>

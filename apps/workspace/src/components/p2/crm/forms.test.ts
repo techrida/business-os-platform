@@ -1,10 +1,17 @@
 import { describe, expect, it } from 'vitest';
 
 import {
+  isOverdue,
+  isPastDue,
   kathmanduLocalToIso,
   parseActivity,
+  parseCancelActivity,
+  parseCompleteActivity,
   parseConvert,
   parseLead,
+  parseLeadUpdate,
+  parseRescheduleActivity,
+  parseScheduleFollowUp,
   parseStageMove,
 } from './forms';
 
@@ -140,7 +147,7 @@ describe('parseActivity', () => {
     expect(kathmanduLocalToIso('')).toBeUndefined();
     const r = parseActivity(
       form({
-        kind: 'task',
+        kind: 'email',
         subject: 'Send brochure',
         dueAt: '2026-11-09T09:00',
         subjectKind: 'opportunityId',
@@ -271,5 +278,179 @@ describe('parseConvert', () => {
     const r = parseConvert(form({ ...create, ...withContact, opportunityName: '  ' }));
     expect(r.ok).toBe(false);
     if (!r.ok) expect(r.fieldErrors.opportunityName).toBeDefined();
+  });
+});
+
+describe('parseLead owner and first follow-up', () => {
+  const base = {
+    title: 'Dispatch automation',
+    source: 'referral',
+    companyName: 'Binford Ltd.',
+    contactName: 'Sunita Shrestha',
+  };
+
+  it('sends the chosen owner and plans the follow-up only when it has a time', () => {
+    const r = parseLead(
+      form({
+        ...base,
+        ownerUserId: GUID,
+        followUpKind: 'meeting',
+        followUpAt: '2026-11-20T14:00',
+        followUpAssigneeUserId: OTHER,
+        followUpSubject: '',
+      }),
+    );
+    expect(r.ok && r.data.ownerUserId).toBe(GUID);
+    expect(r.ok && r.data.followUp).toEqual({
+      kind: 'meeting',
+      dueAt: '2026-11-20T14:00:00+05:45',
+      assigneeUserId: OTHER,
+    });
+
+    const noTime = parseLead(form({ ...base, followUpKind: 'call', followUpAt: '' }));
+    expect(noTime.ok && noTime.data.followUp).toBeUndefined();
+  });
+
+  it('refuses a note or task as the first follow-up, on the follow-up type field', () => {
+    for (const kind of ['note', 'task']) {
+      const r = parseLead(form({ ...base, followUpKind: kind, followUpAt: '2026-11-20T14:00' }));
+      expect(r.ok, kind).toBe(false);
+      if (!r.ok) expect(r.fieldErrors.followUpKind).toMatch(/call, meeting or email/);
+    }
+  });
+
+  it('names a bad owner id', () => {
+    const r = parseLead(form({ ...base, ownerUserId: 'someone' }));
+    expect(r.ok).toBe(false);
+    if (!r.ok) expect(r.fieldErrors.ownerUserId).toMatch(/owns this lead/);
+  });
+});
+
+describe('parseLeadUpdate', () => {
+  it('builds an owner change with the version', () => {
+    expect(parseLeadUpdate(form({ ownerUserId: OTHER, expectedVersion: '5' }))).toEqual({
+      ok: true,
+      data: { ownerUserId: OTHER, expectedVersion: 5 },
+    });
+  });
+
+  it('needs an owner and a version', () => {
+    const r = parseLeadUpdate(form({}));
+    expect(r.ok).toBe(false);
+    if (!r.ok) {
+      expect(r.fieldErrors.ownerUserId).toBeDefined();
+      expect(r.fieldErrors.expectedVersion).toMatch(/reload/i);
+    }
+  });
+});
+
+describe('logging and scheduling activities', () => {
+  const onLead = { subjectKind: 'leadId', subjectId: GUID };
+
+  it('refuses task as a logged kind', () => {
+    const r = parseActivity(form({ ...onLead, kind: 'task', subject: 'Old habit' }));
+    expect(r.ok).toBe(false);
+    if (!r.ok) expect(r.fieldErrors.kind).toBe('Choose call, meeting, email or note.');
+  });
+
+  it('logs a note, but refuses a note with a due time', () => {
+    expect(parseActivity(form({ ...onLead, kind: 'note', subject: 'Prefers email' })).ok).toBe(
+      true,
+    );
+    const planned = parseActivity(
+      form({ ...onLead, kind: 'note', subject: 'x', dueAt: '2026-11-20T09:00' }),
+    );
+    expect(planned.ok).toBe(false);
+    if (!planned.ok) expect(planned.fieldErrors.kind).toMatch(/note records something/);
+  });
+
+  it('schedules a call with the kind label as the default subject', () => {
+    const r = parseScheduleFollowUp(
+      form({ ...onLead, kind: 'call', dueAt: '2026-11-20T09:00', assigneeUserId: OTHER }),
+    );
+    expect(r).toEqual({
+      ok: true,
+      data: {
+        kind: 'call',
+        subject: 'Call',
+        dueAt: '2026-11-20T09:00:00+05:45',
+        assigneeUserId: OTHER,
+        leadId: GUID,
+      },
+    });
+  });
+
+  it('refuses to schedule a note or a task, or a follow-up without a time', () => {
+    const note = parseScheduleFollowUp(
+      form({ ...onLead, kind: 'note', dueAt: '2026-11-20T09:00' }),
+    );
+    expect(note.ok).toBe(false);
+    if (!note.ok) expect(note.fieldErrors.kind).toMatch(/note records something/);
+
+    const task = parseScheduleFollowUp(
+      form({ ...onLead, kind: 'task', dueAt: '2026-11-20T09:00' }),
+    );
+    expect(task.ok).toBe(false);
+    if (!task.ok) expect(task.fieldErrors.kind).toBe('Choose call, meeting or email.');
+
+    const noTime = parseScheduleFollowUp(form({ ...onLead, kind: 'email', subject: 'Quote' }));
+    expect(noTime.ok).toBe(false);
+    if (!noTime.ok) expect(Object.keys(noTime.fieldErrors)).toEqual(['dueAt']);
+
+    expect(parseScheduleFollowUp(form({ kind: 'call', dueAt: '2026-11-20T09:00' }))).toEqual({
+      ok: false,
+      fieldErrors: { form: 'This form is incomplete. Reload the page.' },
+    });
+  });
+});
+
+describe('complete, reschedule and cancel', () => {
+  it('builds each body with the version', () => {
+    expect(
+      parseCompleteActivity(
+        form({ expectedVersion: '2', note: 'Agreed a demo', occurredAt: '2026-11-19T16:10' }),
+      ),
+    ).toEqual({
+      ok: true,
+      data: { expectedVersion: 2, note: 'Agreed a demo', occurredAt: '2026-11-19T16:10:00+05:45' },
+    });
+    expect(parseCompleteActivity(form({ expectedVersion: '2', note: '' }))).toEqual({
+      ok: true,
+      data: { expectedVersion: 2 },
+    });
+    expect(
+      parseRescheduleActivity(form({ expectedVersion: '3', dueAt: '2026-11-21T10:00' })),
+    ).toEqual({ ok: true, data: { expectedVersion: 3, dueAt: '2026-11-21T10:00:00+05:45' } });
+    expect(parseCancelActivity(form({ expectedVersion: '4' }))).toEqual({
+      ok: true,
+      data: { expectedVersion: 4 },
+    });
+  });
+
+  it('asks for a new time to reschedule and a reload when the version is missing', () => {
+    const r = parseRescheduleActivity(form({ expectedVersion: '3' }));
+    expect(r.ok).toBe(false);
+    if (!r.ok) expect(r.fieldErrors.dueAt).toMatch(/new due time/);
+    const stale = parseCancelActivity(form({}));
+    expect(stale.ok).toBe(false);
+    if (!stale.ok) expect(stale.fieldErrors.expectedVersion).toMatch(/reload/i);
+  });
+});
+
+describe('isOverdue', () => {
+  const now = new Date('2026-11-19T12:00:00+05:45');
+
+  it('is overdue only when planned and due before now', () => {
+    expect(isOverdue({ planned: true, dueAt: '2026-11-19T11:59:00+05:45' }, now)).toBe(true);
+    expect(isOverdue({ planned: true, dueAt: '2026-11-19T12:00:00+05:45' }, now)).toBe(false);
+    expect(isOverdue({ planned: true, dueAt: '2026-11-20T09:00:00+05:45' }, now)).toBe(false);
+    expect(isOverdue({ planned: false, dueAt: '2026-11-01T09:00:00+05:45' }, now)).toBe(false);
+    expect(isOverdue({ planned: true, dueAt: null }, now)).toBe(false);
+  });
+
+  it('reads a lead next follow-up time the same way', () => {
+    expect(isPastDue('2026-11-18T09:00:00+05:45', now)).toBe(true);
+    expect(isPastDue(null, now)).toBe(false);
+    expect(isPastDue('not a time', now)).toBe(false);
   });
 });

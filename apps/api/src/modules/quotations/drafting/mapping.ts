@@ -13,6 +13,7 @@ import {
   type QuotationContact,
   type QuotationDetail,
   type QuotationDto,
+  type QuotationLead,
   type QuotationLineDto,
   type QuotationCapabilities,
   type QuotationListItem,
@@ -29,6 +30,8 @@ import type {
   quotationTaxSummary,
   quotationVersions,
 } from '@bos/db';
+
+import { paymentScheduleAmounts } from './payment-schedule';
 
 export type QuotationRow = typeof quotations.$inferSelect;
 export type QuotationVersionRow = typeof quotationVersions.$inferSelect;
@@ -144,8 +147,12 @@ export function toQuotationVersionDto(parts: QuotationVersionParts): QuotationVe
     termsAndConditions: v.termsAndConditions,
     deliveryTimeline: v.deliveryTimeline,
     paymentTermId: v.paymentTermId,
-    // jsonb is untyped: check it against the contract instead of casting.
-    paymentSchedule: PaymentMilestoneSchema.array().parse(v.paymentSchedule),
+    // jsonb is untyped: check it against the contract instead of casting. It holds no amounts (D36): the API
+    // splits the stored total over the milestones, so every screen, the PDF and the portal read the same figures.
+    paymentSchedule: paymentScheduleAmounts(
+      v.total,
+      PaymentMilestoneSchema.array().parse(v.paymentSchedule),
+    ),
     discount: discountOf(v),
     lines: [...parts.lines].sort((a, b) => a.lineNo - b.lineNo).map(toLineDto),
     taxSummary: parts.taxSummary.map(toTaxSummaryItem),
@@ -245,6 +252,8 @@ export interface QuotationDetailParts {
   capabilities: QuotationCapabilities;
   /** The people the quotation names, by display name (owner, history actors). */
   people?: readonly PersonName[];
+  /** The lead behind the opportunity (D35), only when the caller may read it; undefined = none or hidden (key omitted). */
+  lead?: QuotationLead;
 }
 
 /** `GET /v1/quotations/:id`. Versions run oldest first, history in the order it happened. */
@@ -268,5 +277,6 @@ export function toQuotationDetail(parts: QuotationDetailParts): QuotationDetail 
     contacts: parts.contacts.map(toContact),
     capabilities: { ...parts.capabilities },
     ...(parts.people === undefined ? {} : { people: [...parts.people] }),
+    ...(parts.lead === undefined ? {} : { lead: parts.lead }),
   };
 }

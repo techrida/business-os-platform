@@ -1,5 +1,6 @@
-// ActivitiesService: the calls, meetings, emails, notes and tasks logged against a lead, opportunity, customer,
-// contact or quotation. Serves the NFRs:
+// ActivitiesService: the calls, meetings, emails and notes logged or planned against a lead, opportunity, customer,
+// contact or quotation. A planned one (a follow-up, D39) has a due time and is neither completed nor cancelled
+// (isPlannedSql); everything else that is not cancelled is logged. Serves the NFRs:
 // - "authorization is deny-by-default": an activity takes the permission of its subject (crm.lead.* for a lead, and
 //   so on). The route carries only @AnyAuthenticated because one static @Can cannot name "the subject's
 //   permission"; every read and write here asserts that permission on the subject row (404 for another entity or
@@ -10,8 +11,11 @@
 import {
   ACTIVITY_SUBJECT_KEYS,
   type ActivityDto,
+  type CancelActivityBody,
+  type CompleteActivityBody,
   type CreateActivityBody,
   type Permission,
+  type RescheduleActivityBody,
 } from '@bos/contracts';
 import {
   activities,
@@ -21,38 +25,49 @@ import {
   opportunities,
   quotations,
   scoped,
-  users,
 } from '@bos/db';
 import {
   BadRequestException,
+  ConflictException,
   ForbiddenException,
   Inject,
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
-import { and, desc, eq, inArray, or, type SQL } from 'drizzle-orm';
+import { and, asc, desc, eq, inArray, isNull, not, or, type SQL } from 'drizzle-orm';
 
 import { AuditService } from '../../platform/audit/audit.service';
 import { AuthzService, scopeWhereFor } from '../../platform/authz/authz.service';
 import { type Principal, type ResourceRef } from '../../platform/authz/can';
 import { DB, type Db } from '../../platform/db/db.module';
-import { withIdempotency } from '../../platform/db/idempotency';
-import { withTx, type DbTransaction } from '../../platform/db/tx';
+import { updateVersioned, withIdempotency } from '../../platform/db/idempotency';
+import { withTx, type DbTransaction, type TxScope } from '../../platform/db/tx';
 import { customerRef } from '../customers/customers.service';
+import { assertActiveStaff, assertLeadAssignee } from '../leads/lead-assignee';
 import { leadRef } from '../leads/leads.service';
 import { opportunityRef } from '../opportunities/opportunities.service';
 import { ActivitiesCaller } from './activities.caller';
 import {
+  isPlannedRow,
+  isPlannedSql,
   SUBJECT_PERMISSION,
   toActivityDto,
+  type ActivityRow,
   type ListActivitiesQuery,
   type SubjectKey,
 } from './activities.types';
 
 type Q = Db | DbTransaction;
 
+const AUDIT_ENTITY = 'activities';
+
 const subjectNotFound = () =>
   new NotFoundException({ code: 'not_found', message: 'Subject not found' });
+const activityNotFound = () =>
+  new NotFoundException({ code: 'not_found', message: 'Activity not found' });
+
+/** Kinds only the server writes: they record what happened and are never planned, done or called off by hand. */
+const SYSTEM_KINDS: ReadonlySet<ActivityRow['kind']> = new Set(['system', 'stage_change']);
 
 @Injectable()
 export class ActivitiesService {
@@ -78,18 +93,32 @@ export class ActivitiesService {
       filters.push(this.readableSubjects(principal));
     }
     if (q.kind !== undefined) filters.push(eq(activities.kind, q.kind));
+    // A cancelled activity never lists. Planned ones are due earliest first; logged ones newest first.
+    filters.push(isNull(activities.cancelledAt));
+    if (q.status === 'planned') filters.push(isPlannedSql);
+    if (q.status === 'logged') filters.push(not(isPlannedSql));
+    const order =
+      q.status === 'planned'
+        ? [asc(activities.dueAt), asc(activities.id)]
+        : [desc(activities.occurredAt), desc(activities.id)];
     const rows = await this.db
       .select()
       .from(activities)
       .where(scoped(scope).where(activities, and(...filters)))
-      .orderBy(desc(activities.occurredAt), desc(activities.id))
+      .orderBy(...order)
       .limit(q.limit);
     return rows.map(toActivityDto);
   }
 
   // ------------------------------------------------------------------------------------------------- create
 
-  /** The Idempotency-Key is optional: the workspace form does not send one. */
+  /**
+   * A `dueAt` plans the activity (a follow-up, audited `activity.scheduled`); without one it is logged
+   * (`activity.created`). The caller is recorded as its creator. A planned activity without an assignee goes to
+   * the lead's owner when its subject is a lead, otherwise to the caller. A named assignee must be an active staff
+   * member of the entity and, on a lead, someone the caller may hand lead work to (an `own` grant: only the
+   * caller), else 400. The Idempotency-Key is optional: the workspace form does not send one.
+   */
   async create(body: CreateActivityBody, idempotencyKey?: string): Promise<ActivityDto> {
     const { scope, actor, principal } = this.caller.current();
     this.assertStaff(principal);
@@ -105,10 +134,15 @@ export class ActivitiesService {
     const subjectId = body[key]!;
     return withTx(this.db, scope, actor, async (tx) => {
       const run = async (): Promise<ActivityDto> => {
-        await this.assertSubject(tx, key, subjectId, 'write');
+        const ref = await this.assertSubject(tx, key, subjectId, 'write');
         if (body.assigneeUserId !== undefined) {
-          await this.assertUser(tx, scope.tenantId, body.assigneeUserId);
+          await this.assertAssignee(tx, scope, key, body.assigneeUserId);
         }
+        const planned = body.dueAt !== undefined;
+        // A lead without an owner falls back to the caller, so a follow-up always has someone to do it.
+        const defaultAssignee =
+          key === 'leadId' ? (ref.ownerUserId ?? principal.userId) : principal.userId;
+        const assigneeUserId = body.assigneeUserId ?? (planned ? defaultAssignee : null);
         const [row] = await tx
           .insert(activities)
           .values({
@@ -118,15 +152,20 @@ export class ActivitiesService {
             body: body.body ?? null,
             [key]: subjectId,
             dueAt: body.dueAt === undefined ? null : new Date(body.dueAt),
-            assigneeUserId: body.assigneeUserId ?? null,
+            assigneeUserId,
+            createdByUserId: principal.userId,
             ...(body.occurredAt === undefined ? {} : { occurredAt: new Date(body.occurredAt) }),
           })
           .returning();
         await this.audit.record(tx, {
-          action: 'activity.created',
+          action: planned ? 'activity.scheduled' : 'activity.created',
           entityType: 'activities',
           entityId: row!.id,
-          after: { kind: body.kind, [key]: subjectId },
+          after: {
+            kind: body.kind,
+            [key]: subjectId,
+            ...(planned ? { dueAt: body.dueAt, assigneeUserId } : {}),
+          },
         });
         return toActivityDto(row!);
       };
@@ -137,6 +176,137 @@ export class ActivitiesService {
         async () => ({ status: 201, response: await run() }),
       );
       return done.response;
+    });
+  }
+
+  // ------------------------------------------------------------------------------ planned: complete, reschedule, cancel
+
+  /**
+   * Marks a planned activity done: it becomes logged (History) with `occurredAt` = when it actually happened
+   * (default now). A note is appended to its details after a blank line.
+   */
+  async complete(id: string, body: CompleteActivityBody): Promise<ActivityDto> {
+    return this.changePlanned(id, async (tx, row) => {
+      const now = new Date();
+      const note = body.note?.trim();
+      const details =
+        note === undefined || note === ''
+          ? row.body
+          : row.body === null || row.body.trim() === ''
+            ? note
+            : `${row.body}\n\n${note}`;
+      const updated = await updateVersioned(tx, activities, id, body.expectedVersion, {
+        completedAt: now,
+        occurredAt: body.occurredAt === undefined ? now : new Date(body.occurredAt),
+        body: details,
+        updatedAt: now,
+      });
+      await this.audit.record(tx, {
+        action: 'activity.completed',
+        entityType: AUDIT_ENTITY,
+        entityId: id,
+        before: {
+          completedAt: null,
+          occurredAt: row.occurredAt.toISOString(),
+          version: row.version,
+        },
+        after: {
+          completedAt: now.toISOString(),
+          occurredAt: updated.occurredAt.toISOString(),
+          version: updated.version,
+        },
+        ...(details === row.body ? {} : { meta: { noteAppended: true } }),
+      });
+      return updated;
+    });
+  }
+
+  /** Moves a planned activity to another due time, and optionally to another assignee (the same rule as create). */
+  async reschedule(id: string, body: RescheduleActivityBody): Promise<ActivityDto> {
+    return this.changePlanned(id, async (tx, row, scope) => {
+      if (body.assigneeUserId !== undefined) {
+        const key = ACTIVITY_SUBJECT_KEYS.find((k) => row[k] !== null)!;
+        await this.assertAssignee(tx, scope, key, body.assigneeUserId);
+      }
+      const updated = await updateVersioned(tx, activities, id, body.expectedVersion, {
+        dueAt: new Date(body.dueAt),
+        ...(body.assigneeUserId === undefined ? {} : { assigneeUserId: body.assigneeUserId }),
+        updatedAt: new Date(),
+      });
+      await this.audit.record(tx, {
+        action: 'activity.rescheduled',
+        entityType: AUDIT_ENTITY,
+        entityId: id,
+        before: {
+          dueAt: row.dueAt?.toISOString() ?? null,
+          assigneeUserId: row.assigneeUserId,
+          version: row.version,
+        },
+        after: {
+          dueAt: updated.dueAt?.toISOString() ?? null,
+          assigneeUserId: updated.assigneeUserId,
+          version: updated.version,
+        },
+      });
+      return updated;
+    });
+  }
+
+  /** Calls off a planned activity: it never lists again (neither planned nor logged). */
+  async cancel(id: string, body: CancelActivityBody): Promise<ActivityDto> {
+    return this.changePlanned(id, async (tx, row) => {
+      const now = new Date();
+      const updated = await updateVersioned(tx, activities, id, body.expectedVersion, {
+        cancelledAt: now,
+        updatedAt: now,
+      });
+      await this.audit.record(tx, {
+        action: 'activity.cancelled',
+        entityType: AUDIT_ENTITY,
+        entityId: id,
+        before: { cancelledAt: null, version: row.version },
+        after: { cancelledAt: now.toISOString(), version: updated.version },
+      });
+      return updated;
+    });
+  }
+
+  /**
+   * The shared frame of the three planned-activity changes: staff only; the row is locked in this entity (404
+   * otherwise); the caller must hold the write permission of its subject (404 out of scope, before anything
+   * that would reveal the row's state); then 409 for a server-written kind or a row that is no longer planned.
+   * `change` writes through updateVersioned, so a stale `expectedVersion` is a 409 too.
+   */
+  private async changePlanned(
+    id: string,
+    change: (tx: DbTransaction, row: ActivityRow, scope: TxScope) => Promise<ActivityRow>,
+  ): Promise<ActivityDto> {
+    const { scope, actor, principal } = this.caller.current();
+    this.assertStaff(principal);
+    return withTx(this.db, scope, actor, async (tx) => {
+      const [row] = await tx
+        .select()
+        .from(activities)
+        .where(scoped(scope).where(activities, eq(activities.id, id)))
+        .for('update');
+      if (row === undefined) throw activityNotFound();
+      const key = ACTIVITY_SUBJECT_KEYS.find((k) => row[k] !== null);
+      if (key === undefined) throw activityNotFound();
+      // Out of scope answers exactly like an unknown id, so a guessed activity id learns nothing.
+      await this.assertSubject(tx, key, row[key]!, 'write', activityNotFound);
+      if (SYSTEM_KINDS.has(row.kind)) {
+        throw new ConflictException({
+          code: 'conflict',
+          message: 'This activity was written by the system and cannot be changed',
+        });
+      }
+      if (!isPlannedRow(row)) {
+        throw new ConflictException({
+          code: 'conflict',
+          message: 'Only a planned activity can be changed; this one is already done or cancelled',
+        });
+      }
+      return toActivityDto(await change(tx, row, scope));
     });
   }
 
@@ -156,25 +326,29 @@ export class ActivitiesService {
   /**
    * The subject row must exist in this entity (tenant, for a customer or contact) and the caller must hold the
    * subject's read or write permission on it. Out of scope is a 404, never a 403, so a guessed id learns nothing.
+   * Returns the subject's ref (a lead's carries its owner). `notFound` is the 404 to answer with: a route keyed by
+   * an activity id answers as if the activity itself were unknown.
    */
   private async assertSubject(
     q: Q,
     key: SubjectKey,
     id: string,
     mode: 'read' | 'write',
-  ): Promise<void> {
+    notFound: () => NotFoundException = subjectNotFound,
+  ): Promise<ResourceRef> {
     const { scope, principal } = this.caller.current();
     const ref = await this.refOf(q, key, id, scope, principal);
-    if (ref === undefined) throw subjectNotFound();
+    if (ref === undefined) throw notFound();
     const action: Permission = SUBJECT_PERMISSION[key][mode];
     try {
       this.authz.assert(action, ref);
+      return ref;
     } catch (error) {
       const reason =
         error instanceof ForbiddenException
           ? (error.getResponse() as { reason?: unknown }).reason
           : undefined;
-      if (reason === 'out_of_scope') throw subjectNotFound();
+      if (reason === 'out_of_scope') throw notFound();
       throw error;
     }
   }
@@ -279,18 +453,26 @@ export class ActivitiesService {
     )!;
   }
 
-  /** The assignee must be a user of this tenant: say so as a 400 instead of a foreign-key 500. */
-  private async assertUser(tx: DbTransaction, tenantId: string, userId: string): Promise<void> {
-    const [user] = await tx
-      .select({ id: users.id })
-      .from(users)
-      .where(and(eq(users.tenantId, tenantId), eq(users.id, userId)))
-      .limit(1);
-    if (user === undefined) {
-      throw new BadRequestException({
-        code: 'bad_request',
-        message: 'assigneeUserId is not a user of this tenant',
-      });
+  /**
+   * A named assignee is an active staff member of the acting entity (400 otherwise, never a foreign-key 500). On a
+   * lead it is also someone the caller may hand lead work to, the rule of the lead owner select.
+   */
+  private async assertAssignee(
+    tx: DbTransaction,
+    scope: TxScope,
+    key: SubjectKey,
+    userId: string,
+  ): Promise<void> {
+    if (key === 'leadId') {
+      await assertLeadAssignee(
+        tx,
+        this.caller.current().principal,
+        scope,
+        userId,
+        'assigneeUserId',
+      );
+    } else {
+      await assertActiveStaff(tx, scope, userId, 'assigneeUserId');
     }
   }
 }

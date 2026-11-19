@@ -55,6 +55,9 @@ export const NO_APPROVER_MESSAGE =
 
 export const NO_WORKFLOW_MESSAGE = "Approvals for quotations aren't set up yet. Ask an admin.";
 
+export const COST_FIGURES_RESTRICTED_MESSAGE =
+  'You cannot add, remove or reorder lines on this quotation, because its cost figures are hidden from you. Nothing was saved. You can still change quantities, prices and tax codes, or ask someone who can see costs to change the lines.';
+
 export const STILL_SAVING_MESSAGE = 'Still saving — wait a moment and try again.';
 
 export const DIFFERENT_CONTENT_MESSAGE =
@@ -140,6 +143,10 @@ export function describeQuoteFailure(
     };
   }
   if (status === 409) {
+    // The API's code, not a stale row version: reloading would not help, the edit itself is refused.
+    if (f.code === 'cost_figures_restricted') {
+      return { kind: 'error', message: COST_FIGURES_RESTRICTED_MESSAGE };
+    }
     if (isIdempotency(f)) return { kind: 'error', message: STILL_SAVING_MESSAGE };
     if (isFxConflict(f)) return { kind: 'stale_fx', message: staleFxMessage(f.details) };
     const missing = missingRateCurrency(f.message);

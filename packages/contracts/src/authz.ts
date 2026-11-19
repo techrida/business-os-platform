@@ -35,6 +35,8 @@ export const PERMISSIONS = [
   'quotation.send',
   'quotation.record_acceptance',
   'quotation.revise',
+  // See the internal cost and margin on a quotation. Without it the API omits those fields.
+  'quotation.cost.read',
   'verification.read',
   'verification.review',
   // Customer portal: a customer user reads and answers their own company's quotations.
@@ -135,6 +137,14 @@ const salesCreatorGrants: RoleGrants = {
   'quotation.submit': 'own',
 };
 
+/**
+ * See the internal unit cost, cost total and margin on a quotation (D29a). The roles that draft or approve
+ * quotations hold it; operations_head, procurement, warehouse and the portal roles do not. Founder gets it
+ * through PERMISSIONS. Migration 0055 gives it to existing roles that hold `quotation.draft` or
+ * `approvals.requests.act`.
+ */
+const salesCostReadGrants: RoleGrants = { 'quotation.cost.read': 'all' };
+
 // --- P3 sales and invoicing grants (a separate block, so the merge with P4 stays small) ---
 
 /** Read every sales order, invoice, payment and the receivables aging. Reading is not changing. */
@@ -225,12 +235,18 @@ const p4VendorUserGrants: RoleGrants = {
  */
 export const DEFAULT_ROLE_PERMISSIONS: Record<RoleKey, RoleGrants> = {
   founder: founderGrants,
-  management: { ...approverGrants, ...salesReadAllGrants, ...billingReadAllGrants },
+  management: {
+    ...approverGrants,
+    ...salesReadAllGrants,
+    ...salesCostReadGrants,
+    ...billingReadAllGrants,
+  },
   finance: {
     ...approverGrants,
     'audit.read': 'all',
     ...salesReadAllGrants,
     ...salesCreatorGrants,
+    ...salesCostReadGrants,
     ...billingReadAllGrants,
     ...billingPreparerGrants,
     ...billingFinanceGrants,
@@ -240,6 +256,7 @@ export const DEFAULT_ROLE_PERMISSIONS: Record<RoleKey, RoleGrants> = {
     ...approverGrants,
     ...salesReadAllGrants,
     ...salesCreatorGrants,
+    ...salesCostReadGrants,
     ...billingReadAllGrants,
     ...billingPreparerGrants,
     ...p4AccountantGrants,
@@ -259,6 +276,7 @@ export const DEFAULT_ROLE_PERMISSIONS: Record<RoleKey, RoleGrants> = {
     'quotation.send': 'own',
     'quotation.record_acceptance': 'own',
     'quotation.revise': 'own',
+    ...salesCostReadGrants,
     'sales_order.read': 'own',
     'verification.read': 'own',
   },
@@ -275,6 +293,7 @@ export const DEFAULT_ROLE_PERMISSIONS: Record<RoleKey, RoleGrants> = {
     ...staffBaseGrants,
     ...salesReadAllGrants,
     ...salesCreatorGrants,
+    ...salesCostReadGrants,
     'verification.review': 'all',
   },
   operations_head: { ...staffBaseGrants, ...salesReadAllGrants },

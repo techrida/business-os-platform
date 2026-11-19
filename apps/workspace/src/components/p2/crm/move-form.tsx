@@ -26,6 +26,10 @@ export function toastMoveResult(state: MoveState, id: string): void {
  *
  * `presetStage` lets the board's drag-and-drop pick the stage; the person still presses Move, so a
  * slip of the mouse never changes a record.
+ *
+ * `exclude` drops targets another control owns, so one transition never has two controls: the lead
+ * page passes `['qualified', 'lost', 'converted']` because its header has Qualify and Mark lost and
+ * Convert has its own card. When nothing is left, `emptyText` shows instead of the form.
  */
 export function MoveForm({
   action,
@@ -33,6 +37,7 @@ export function MoveForm({
   version,
   moves,
   presetStage,
+  exclude,
   emptyText,
   compact = false,
   label = 'Move to',
@@ -43,7 +48,9 @@ export function MoveForm({
   version: number;
   moves: Move[];
   presetStage?: string | undefined;
-  /** Shown when no move is open from the current stage. */
+  /** Stages left out of the list because another control on the page makes that move. */
+  exclude?: readonly string[] | undefined;
+  /** Shown when no move is open from the current stage (after `exclude`). */
   emptyText: string;
   compact?: boolean;
   label?: string;
@@ -51,7 +58,8 @@ export function MoveForm({
   toasts?: boolean;
 }) {
   const [state, formAction, pending] = useActionState<MoveState, FormData>(action, {});
-  const [stage, setStage] = useState(presetStage ?? moves[0]?.stage ?? '');
+  const offered = exclude ? moves.filter((m) => !exclude.includes(m.stage)) : moves;
+  const [stage, setStage] = useState(presetStage ?? offered[0]?.stage ?? '');
   const [reason, setReason] = useState('');
   const [note, setNote] = useState('');
   const statusId = useId();
@@ -80,12 +88,12 @@ export function MoveForm({
     setSeenVersion(version);
     setReason('');
     setNote('');
-    if (!moves.some((m) => m.stage === stage)) setStage(moves[0]?.stage ?? '');
+    if (!offered.some((m) => m.stage === stage)) setStage(offered[0]?.stage ?? '');
   }
 
-  if (moves.length === 0) return <p className={styles.quiet}>{emptyText}</p>;
+  if (offered.length === 0) return <p className={styles.quiet}>{emptyText}</p>;
 
-  const chosen = moves.find((m) => m.stage === stage);
+  const chosen = offered.find((m) => m.stage === stage);
   const needsReason = chosen?.needsReason ?? false;
   const showReason = !hydrated || needsReason;
   const errors = state.fieldErrors ?? {};
@@ -114,7 +122,7 @@ export function MoveForm({
             onChange={(e) => setStage(e.target.value)}
             {...control}
           >
-            {moves.map((m) => (
+            {offered.map((m) => (
               <option key={m.stage} value={m.stage}>
                 {m.label}
                 {m.needsReason ? ' (needs a reason)' : ''}

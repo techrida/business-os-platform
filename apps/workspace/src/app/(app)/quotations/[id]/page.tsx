@@ -11,10 +11,6 @@ import { QuotationContents } from '@/components/p2/quotations/contents';
 import styles from '@/components/p2/quotations/detail.module.css';
 import { ClientDecision, DetailActions } from '@/components/p2/quotations/detail-actions';
 import { pdfLinkFor } from '@/components/p2/quotations/document-link';
-import {
-  canSeeInternalFigures,
-  withoutInternalFigures,
-} from '@/components/p2/quotations/internal-data';
 import { PreparingRefresh } from '@/components/p2/quotations/preparing-refresh';
 import { QuotationStatusBadge } from '@/components/p2/quotations/status-badge';
 import { StatusHistory } from '@/components/p2/quotations/status-history';
@@ -59,6 +55,7 @@ function Pdf({
       label="View PDF"
       variant="link"
       withDownload
+      retryUrl={`${pdf.href}/retry`}
       context={`of revision ${version.revisionNo}`}
     />
   ) : (
@@ -157,13 +154,11 @@ export default async function QuotationDetailPage({
   const session = await requireStaffSession(path);
 
   const numberSystems = await getNumberSystems();
-  // Internal figures (unit cost, cost total, margin) are removed here, before the data reaches any
-  // component: the rest of this function only ever sees `detail`, so they cannot leak into a client prop.
-  const internalVisible = canSeeInternalFigures(session.roles);
+  // Unit cost, cost total and margin (D29) arrive only when the viewer's live grants include
+  // `quotation.cost.read`: the API leaves them out otherwise, and the components show what is present.
   let detail: QuotationDetail;
   try {
-    const loaded = await getQuotation(session, id);
-    detail = internalVisible ? loaded : withoutInternalFigures(loaded);
+    detail = await getQuotation(session, id);
   } catch (err) {
     const f = failureOf(err);
     if (f.status === 404) notFound();
@@ -366,7 +361,6 @@ export default async function QuotationDetailPage({
               ) : null}
               <QuotationContents
                 version={view}
-                internalVisible={internalVisible}
                 paymentTermsName={paymentTermsName}
                 numberSystems={numberSystems}
               />
@@ -398,6 +392,14 @@ export default async function QuotationDetailPage({
                   {customerName}
                 </Link>
               </li>
+              {detail.lead != null ? (
+                <li>
+                  <Icon name="target" size={18} />
+                  <Link href={`/leads/${encodeURIComponent(detail.lead.id)}`}>
+                    {detail.lead.name}
+                  </Link>
+                </li>
+              ) : null}
               <li>
                 <Icon name="briefcase" size={18} />
                 <Link href={`/opportunities/${encodeURIComponent(quotation.opportunityId)}`}>

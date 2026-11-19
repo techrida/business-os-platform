@@ -57,8 +57,8 @@ export function sampleView(over: Partial<CustomerQuotationView> = {}): CustomerQ
     deliveryTimeline: 'Three weeks from the purchase order.',
     paymentTermName: 'Net 30',
     paymentSchedule: [
-      { label: 'Advance', percent: '40', dueDescription: 'On order' },
-      { label: 'On completion', percent: '60' },
+      { label: 'Advance', percent: '40', amount: '1356.00', dueDescription: 'On order' },
+      { label: 'On completion', percent: '60', amount: '2034.00' },
     ],
     lines: [
       {

@@ -27,7 +27,8 @@ export interface LineValues {
   /**
    * Hidden: the builder never shows or edits these, but the API replaces lines wholesale on save,
    * so they travel with the line or a saved cost (and the margin from it) is erased. A new line
-   * has both null.
+   * has both null. For a viewer without `quotation.cost.read` the API leaves `unitCost` out of the
+   * line (D29): it is held as null and not sent, and the server keeps the stored cost itself.
    */
   unitCost?: string | null;
   catalogItemId?: string | null;

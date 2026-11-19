@@ -6,6 +6,11 @@ import { toast } from '@/components/ui/toast';
 
 import { moveLeadStageAction } from './actions';
 
+/**
+ * The Qualify header action (D41): a plain confirm, because the stage rules ask for no reason or
+ * note on the way into Qualified. The fixed footer comes from ConfirmDialog (UIP-DLG-001); the
+ * outcome is a toast (UIP-FEED-001), and a stale page (409) keeps the dialog open with a Reload.
+ */
 export function QualifyLead({
   id,
   number,
@@ -41,7 +46,7 @@ export function QualifyLead({
     <ConfirmDialog
       trigger={
         <Button variant="secondary" size={size}>
-          Qualify lead
+          Qualify
         </Button>
       }
       title="Qualify this lead?"

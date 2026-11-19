@@ -102,11 +102,15 @@ describe('GET /quotations/:id/versions/:vid/document/preview', () => {
     expect(mocks.apiFetch).not.toHaveBeenCalled();
   });
 
-  it.each([409, 404])('turns a %i from the API into a plain "not available"', async (status) => {
-    mocks.apiFetch.mockResolvedValue(json(status, { error: { code: 'not_clean' } }));
+  it.each([
+    [409, 'quotation_pdf_not_ready', 'This PDF is still being prepared.'],
+    [424, 'quotation_pdf_failed', 'The PDF could not be prepared.'],
+    [404, 'quotation_pdf_unavailable', 'This PDF is not available.'],
+  ])('turns a %i (%s) from the API into plain words', async (status, code, message) => {
+    mocks.apiFetch.mockResolvedValue(json(status, { error: { code } }));
     const res = await call();
     expect(res.status).toBe(status);
-    expect(await res.text()).toMatch(/not available/i);
+    expect(await res.text()).toBe(message);
     expect(mocks.apiFetch).toHaveBeenCalledTimes(1);
     expect(mocks.openSignedFile).not.toHaveBeenCalled();
   });
