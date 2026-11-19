@@ -231,8 +231,15 @@ describe('GET /v1/admin/users validation', () => {
 describe('POST /v1/admin/users/:id/password-reset', () => {
   const adminGrant = ['admin.roles.write'] as const;
 
+  // ZITADEL refuses a reset for an open invite, so these targets have accepted theirs.
   async function inviteForReset() {
-    return asAdmin(['admin.users.invite'], () => controller.invite({ ...NEW_USER, roles: [] }));
+    const invited = await asAdmin(['admin.users.invite'], () =>
+      controller.invite({ ...NEW_USER, roles: [] }),
+    );
+    const target = store.users.find(({ id }) => id === invited.userId)!;
+    target.status = 'active';
+    zitadel.users.get(target.zitadelUserId)!.status = 'active';
+    return invited;
   }
 
   it('requires the administrative grant and audits the target before requesting email', async () => {
@@ -266,6 +273,21 @@ describe('POST /v1/admin/users/:id/password-reset', () => {
     target.status = 'active';
     live.status = 'inactive';
     await expect(reset()).rejects.toBeInstanceOf(ConflictException);
+    expect(zitadel.resetEmails).toEqual([]);
+  });
+
+  it('rejects an invited user in either the mirror or ZITADEL without auditing', async () => {
+    const { userId } = await inviteForReset();
+    const target = store.users[0]!;
+    const live = zitadel.users.get(target.zitadelUserId)!;
+    const record = vi.spyOn(audit, 'record').mockResolvedValue(undefined);
+    const reset = () => asAdmin([...adminGrant], () => controller.sendPasswordReset(userId));
+    target.status = 'invited';
+    await expect(reset()).rejects.toBeInstanceOf(ConflictException);
+    target.status = 'active';
+    live.status = 'invited';
+    await expect(reset()).rejects.toBeInstanceOf(ConflictException);
+    expect(record).not.toHaveBeenCalled();
     expect(zitadel.resetEmails).toEqual([]);
   });
 
