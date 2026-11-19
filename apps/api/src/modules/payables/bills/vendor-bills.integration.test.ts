@@ -35,7 +35,7 @@ import {
   runMigrations,
   vendorBills,
 } from '@bos/db';
-import { ForbiddenException, HttpException } from '@nestjs/common';
+import { ForbiddenException, HttpException, NotFoundException } from '@nestjs/common';
 import { PostgreSqlContainer, type StartedPostgreSqlContainer } from '@testcontainers/postgresql';
 import { asc, eq, sql } from 'drizzle-orm';
 import { drizzle } from 'drizzle-orm/node-postgres';
@@ -97,7 +97,13 @@ const roles: Partial<Record<RoleKey, string[]>> = {};
 
 const grantsOf = (role: RoleKey) =>
   new Map(Object.entries(DEFAULT_ROLE_PERMISSIONS[role])) as Map<Permission, Scope>;
-const current: { userId: string; role: RoleKey; scope: TxScope | null } = {
+const current: {
+  userId: string;
+  role: RoleKey;
+  scope: TxScope | null;
+  /** Live grants an admin edited, instead of the role default (`as` clears it). */
+  grants?: Map<Permission, Scope>;
+} = {
   userId: '',
   role: 'accountant',
   scope: null,
@@ -105,6 +111,7 @@ const current: { userId: string; role: RoleKey; scope: TxScope | null } = {
 const as = (userId: string, role: RoleKey) => {
   current.userId = userId;
   current.role = role;
+  current.grants = undefined;
 };
 const scopeNow = (): TxScope => current.scope ?? scopeA;
 const principalNow = (): Principal => ({
@@ -117,7 +124,7 @@ const principalNow = (): Principal => ({
   roles: [current.role],
   departmentId: null,
   status: 'active',
-  grants: grantsOf(current.role),
+  grants: current.grants ?? grantsOf(current.role),
 });
 const caller = {
   current: () => ({
@@ -304,8 +311,16 @@ interface Po {
   lineId: string;
   vendorId: string;
 }
-/** An issued PO in entity A with one line of `quantity` x `unitPrice` + 13% VAT, received `received`. */
-async function receivedPo(quantity: string, unitPrice: string, received: string): Promise<Po> {
+/**
+ * An issued PO in entity A with one line of `quantity` x `unitPrice` + 13% VAT, received `received`, raised from a
+ * request of `requester` (U.req unless given).
+ */
+async function receivedPo(
+  quantity: string,
+  unitPrice: string,
+  received: string,
+  requester = U.req,
+): Promise<Po> {
   const vendorId = await vendor();
   const a = quotationLineAmounts(quantity, unitPrice, 1300);
   const prId = randomUUID();
@@ -313,7 +328,7 @@ async function receivedPo(quantity: string, unitPrice: string, received: string)
     scopeA,
     sql`INSERT INTO app.purchase_requests (id, tenant_id, organization_id, request_type, department_id,
           requester_user_id, cost_center_id, justification, required_by, budget_code, currency)
-        VALUES (${prId}, ${scopeA.tenantId}, ${scopeA.organizationId}, 'goods', ${deptA}, ${U.req},
+        VALUES (${prId}, ${scopeA.tenantId}, ${scopeA.organizationId}, 'goods', ${deptA}, ${requester},
                 ${(await createCostCenter(appPool, scopeA)).costCenterId}, 'Laptops', '2026-12-01', 'IT-2083', 'NPR')`,
   );
   await exec(
@@ -1196,6 +1211,27 @@ describe('purchase order pickers', () => {
     for (const row of [bill, pay]) {
       expect(Object.keys(row ?? {}).sort()).toEqual(['id', 'number', 'status', 'vendorId']);
     }
+  });
+
+  it('offers an accountant with own-scope bill entry only the orders raised from their own requests', async () => {
+    const mine = await receivedPo('1', '100.00', '1', U.acct);
+    const theirs = await receivedPo('1', '100.00', '1');
+    as(U.acct, 'accountant');
+    current.grants = new Map([...grantsOf('accountant'), ['payables.bill.enter', 'own']]);
+
+    const offered = await pickers.billable({ limit: 200 });
+    expect(ids(offered)).toContain(mine.id);
+    expect(ids(offered)).not.toContain(theirs.id);
+    // Nothing of the other order rides along, not even under its own vendor filter.
+    expect(await pickers.billable({ vendorId: theirs.vendorId, limit: 200 })).toEqual([]);
+    for (const row of offered) {
+      expect(Object.keys(row).sort()).toEqual(['id', 'number', 'status', 'vendorId']);
+    }
+    // The picker, the bill form's progress read and the order's Enter bill agree on both orders.
+    await expect(receiptsService.progress(mine.id)).resolves.toMatchObject({ purchaseOrderId: mine.id });
+    await expect(receiptsService.progress(theirs.id)).rejects.toBeInstanceOf(NotFoundException);
+    expect((await orders.get(mine.id)).can).toEqual({ enterBill: true });
+    expect((await orders.get(theirs.id)).can).toEqual({ enterBill: false });
   });
 
   it("never lists another entity's orders", async () => {
