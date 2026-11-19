@@ -155,6 +155,19 @@ export function DocumentStyleForm({
     IDLE,
   );
 
+  // The saved style changed on the server without this form saving it (an undo from the header): take it over.
+  // After this form's own save `saved` already holds it, so nothing happens and the success toast stays.
+  useEffect(() => {
+    if (initial.layout === saved.layout && initial.primaryColour === saved.primaryColour) return;
+    setSaved(initial);
+    setLayout(initial.layout);
+    setColour(initial.primaryColour);
+    setPreviews(initialPreviews);
+    wanted.current = initial.primaryColour;
+    shown.current = initial.primaryColour;
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- reacts to the server value only
+  }, [initial.layout, initial.primaryColour]);
+
   // Previews: one request in flight, and the latest wanted colour is remembered and sent when the
   // running one finishes (Next runs server actions one after another anyway).
   const wanted = useRef(initial.primaryColour);
