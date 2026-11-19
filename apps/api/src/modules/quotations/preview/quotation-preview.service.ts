@@ -44,17 +44,24 @@ interface VersionHead {
   ref: ResourceRef;
 }
 
-/** The ResourceRef authz decides on: the quotation's entity, owner and customer. */
+/**
+ * The ResourceRef authz decides on: the quotation's entity, owner, department and customer. The department is
+ * stamped from the opportunity (migration 0088), so a department grant reaches the quotation; a caller that loads
+ * a narrow row without it gets no department match (never a wider one). No creator or assignees: every caller
+ * checks a write (D55-3).
+ */
 export function quotationRef(row: {
   tenantId: string;
   organizationId: string;
   ownerUserId: string | null;
   customerPartyId: string | null;
+  departmentId?: string | null;
 }): ResourceRef {
   return {
     tenantId: row.tenantId,
     organizationId: row.organizationId,
     ownerUserId: row.ownerUserId,
+    departmentId: row.departmentId ?? null,
     customerPartyId: row.customerPartyId,
     sodUserIds: [],
   };
@@ -211,6 +218,7 @@ export class QuotationPreviewService {
         tenantId: quotationVersions.tenantId,
         organizationId: quotationVersions.organizationId,
         ownerUserId: quotations.ownerUserId,
+        departmentId: quotations.departmentId,
         customerPartyId: quotations.customerPartyId,
       })
       .from(quotationVersions)
