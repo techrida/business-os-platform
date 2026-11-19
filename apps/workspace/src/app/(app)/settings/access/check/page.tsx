@@ -180,7 +180,7 @@ function Report({ report }: { report: CheckPersonReport }) {
                       <Why row={row} />
                     </Td>
                     <Td nowrap>
-                      <ChangeLink row={row} className={styles.change} />
+                      <ChangeLink row={row} className={styles.change ?? ''} />
                     </Td>
                   </tr>
                 ))}
@@ -215,7 +215,7 @@ function Report({ report }: { report: CheckPersonReport }) {
                     </dd>
                   </div>
                 </dl>
-                <ChangeLink row={row} className={styles.cardChange} />
+                <ChangeLink row={row} className={styles.cardChange ?? ''} />
               </li>
             ))}
           </ul>

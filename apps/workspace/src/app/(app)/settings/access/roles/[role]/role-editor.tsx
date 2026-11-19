@@ -162,7 +162,9 @@ export function RoleEditor({ role, roles, groups, edited, canWrite, revision }: 
   const dirty = changes.length > 0;
   const visible = filterGroups(groups, staged, { query, onlyGranted });
   const shownRows = visible.reduce((sum, group) => sum + group.rows.length, 0);
-  const anyDiffersFromDefault = groups.some((g) => g.rows.some((r) => differsFromDefault(r, staged)));
+  const anyDiffersFromDefault = groups.some((g) =>
+    g.rows.some((r) => differsFromDefault(r, staged)),
+  );
   const title = `Review changes to the ${role.label} role`;
 
   const attemptLeave = useCallback((href: string) => setLeaveTo(href), []);
@@ -231,7 +233,7 @@ export function RoleEditor({ role, roles, groups, edited, canWrite, revision }: 
       ) : null}
 
       <div className={styles.tools}>
-        <Field label="Find a permission" className={styles.find}>
+        <Field label="Find a permission" className={styles.find ?? ''}>
           {(control) => (
             <Input
               {...control}

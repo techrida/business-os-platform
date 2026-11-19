@@ -41,7 +41,8 @@ export function headerLine(person: Person): string {
 
 /** The notice above the report, when the person's state needs one (spec 6.2 "States"). */
 export function personNotice(person: Person): string | null {
-  if (person.roles.length === 0) return `${person.name} has no roles, so they cannot open anything.`;
+  if (person.roles.length === 0)
+    return `${person.name} has no roles, so they cannot open anything.`;
   if (person.status === 'inactive') {
     return `${person.name} is disabled and cannot sign in. This shows what their roles would allow.`;
   }

@@ -27,8 +27,7 @@ import { z } from 'zod';
 import { ApiError, apiFetch } from './api';
 import type { Session } from './session';
 
-export const ACCESS_LOAD_ERROR_MESSAGE =
-  'Access settings could not load. Try again in a moment.';
+export const ACCESS_LOAD_ERROR_MESSAGE = 'Access settings could not load. Try again in a moment.';
 export const ACCESS_STALE_ERROR_MESSAGE =
   'Access was changed by someone else. Reload to see the latest.';
 export const ACCESS_SAVE_ERROR_MESSAGE =
@@ -130,10 +129,7 @@ export function saveAccessChanges(
 }
 
 /** `GET /v1/admin/access/check?person=<id>` — effective access report for one person. */
-export function checkPersonAccess(
-  session: Session,
-  personId: string,
-): Promise<CheckPersonReport> {
+export function checkPersonAccess(session: Session, personId: string): Promise<CheckPersonReport> {
   const params = new URLSearchParams({ person: personId });
   return requestParsed(
     session,

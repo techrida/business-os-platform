@@ -93,9 +93,7 @@ describe('area row wording', () => {
     expect(
       actionsText(
         row({
-          actions: [
-            { permission: 'crm.lead.write', label: 'Create and edit leads', scope: 'own' },
-          ],
+          actions: [{ permission: 'crm.lead.write', label: 'Create and edit leads', scope: 'own' }],
         }),
       ),
     ).toBe('Create and edit leads');

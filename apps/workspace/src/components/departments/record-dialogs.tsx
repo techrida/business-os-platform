@@ -315,8 +315,7 @@ export function RetireDepartmentDialog({
   const [pending, setPending] = useState(false);
   const [result, setResult] = useState<DepartmentRecordResult | null>(null);
   const hasMembers = department.members > 0;
-  const fieldError =
-    result !== null && !result.ok ? result.fieldErrors?.moveMembersTo : undefined;
+  const fieldError = result !== null && !result.ok ? result.fieldErrors?.moveMembersTo : undefined;
   const ready = !hasMembers || destination !== '';
 
   function change(next: boolean) {

@@ -31,8 +31,7 @@ import {
 import styles from './review-changes-dialog.module.css';
 
 export type ReviewPreviewResult =
-  | { ok: true; preview: AccessPreviewResponse }
-  | { ok: false; message: string };
+  { ok: true; preview: AccessPreviewResponse } | { ok: false; message: string };
 
 export type ReviewSaveResult =
   | { ok: true }
@@ -45,8 +44,7 @@ export type ReviewSaveResult =
     };
 
 export type ReviewCheckResult =
-  | { ok: true; report: CheckPersonReport }
-  | { ok: false; message: string };
+  { ok: true; report: CheckPersonReport } | { ok: false; message: string };
 
 /** Dry run of the staged changes (`POST /v1/admin/access/preview`). Never writes. */
 export type ReviewRunPreview = (changes: AccessChange[]) => Promise<ReviewPreviewResult>;
@@ -545,9 +543,7 @@ function CheckRows({ report }: { report: CheckPersonReport }) {
                 {row.assignableCount === 1 ? 'person' : 'people'}
               </p>
             ) : null}
-            {row.why.length > 0 ? (
-              <p className={styles.muted}>Why: {row.why.join(' ')}</p>
-            ) : null}
+            {row.why.length > 0 ? <p className={styles.muted}>Why: {row.why.join(' ')}</p> : null}
           </li>
         );
       })}
