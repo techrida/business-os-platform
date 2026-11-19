@@ -40,6 +40,7 @@ it.each(['create', 'edit'] as const)(
         action={mode === 'create' ? createPrAction : updatePrAction}
         costCenters={[{ id: PROJECT, code: 'OPS', name: 'Operations', active: true }]}
         departments={[{ id: PROJECT, name: 'Operations' }]}
+        enabledCurrencies={['NPR', 'INR', 'USD']}
         initial={{
           ...EMPTY_PR_VALUES,
           departmentId: PROJECT,

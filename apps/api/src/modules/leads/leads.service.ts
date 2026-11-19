@@ -38,6 +38,7 @@ import { type ResourceRef } from '../../platform/authz/can';
 import { DB, type Db } from '../../platform/db/db.module';
 import { updateVersioned, withIdempotency } from '../../platform/db/idempotency';
 import { withTx, type DbTransaction, type TxScope } from '../../platform/db/tx';
+import { CurrencyEnabledService } from '../../platform/settings/currency-enabled';
 import { searchPage } from '../../platform/list';
 import { NumberingService } from '../../platform/settings/numbering.service';
 import { nameIn, personNameMap } from '../../platform/users/person-names';
@@ -126,6 +127,7 @@ export class LeadsService {
     private readonly audit: AuditService,
     private readonly numbering: NumberingService,
     private readonly caller: LeadsCaller,
+    private readonly currencies: CurrencyEnabledService,
     private readonly lostReasons: LeadLostReasonsService,
   ) {}
 
@@ -231,6 +233,9 @@ export class LeadsService {
    * `followUp` (or the old `nextFollowUpAt`, a call named "Follow up") plans the first follow-up as a planned
    * activity in the same transaction (D39): assigned to the owner unless named, named after its kind unless given a
    * subject. The `leads.next_follow_up_at` column is no longer written.
+   *
+   * The currency must be switched on for the company (D44, 422 CURRENCY_NOT_ENABLED), checked before the LD number
+   * is taken so a refusal uses up no number.
    */
   async create(body: CreateLeadBody, idempotencyKey?: string): Promise<LeadDto> {
     const { scope, actor, principal } = this.caller.current();
@@ -258,6 +263,7 @@ export class LeadsService {
             'followUp.assigneeUserId',
           );
         }
+        await this.currencies.assertEnabled(scope, body.currency);
         const { number } = await this.numbering.issue(tx, LEAD_SERIES, now);
         const [row] = await tx
           .insert(leads)
@@ -406,8 +412,9 @@ export class LeadsService {
    * An edit of the lead's own fields; only the fields sent change. Checks run in this order, the first failure is
    * the answer: out of scope 404, stale version 409, converted 400, nothing changed 400, then a new owner (the same
    * rule as create: an `own` grant cannot hand the lead to someone else, 403; not an active staff member of the
-   * entity, 400).
-   * Currency has no default here, so an owner-only edit keeps the lead's currency.
+   * entity, 400), then a new currency that the company has not switched on (D44, 422 CURRENCY_NOT_ENABLED).
+   * Currency has no default here, so an owner-only edit keeps the lead's currency. Only a changed currency is
+   * checked: a lead whose currency was switched off later can still have its other fields edited.
    */
   async update(id: string, body: UpdateLeadBody): Promise<LeadDto> {
     const { scope, actor, principal } = this.caller.current();
@@ -439,6 +446,9 @@ export class LeadsService {
         // assert, not assertVisible: refusing a new owner is a 403, the lead itself is already in scope.
         this.authz.assert('crm.lead.write', leadRef({ ...row, ownerUserId: newOwner }));
         await assertLeadAssignee(tx, principal, scope, newOwner, 'ownerUserId');
+      }
+      if (changes.some((c) => c.field === 'currency')) {
+        await this.currencies.assertEnabled(scope, fields.currency);
       }
 
       const updated = await updateVersioned(tx, leads, id, expectedVersion, {

@@ -15,6 +15,7 @@ import { Field } from '@/components/ui/field';
 import { Breadcrumb, Page, PageHeader } from '@/components/ui/page';
 import { failureOf } from '@/lib/api-kernel';
 import { requireStaffSession } from '@/lib/bff';
+import { loadEnabledCurrencies } from '@/lib/enabled-currencies.server';
 
 import { type CustomerOption, PaymentForm } from './payment-form';
 import styles from './payment-form.module.css';
@@ -70,6 +71,8 @@ export default async function NewPaymentPage({
     );
   }
 
+  // Never throws: a failed read gives the default list, and the API still refuses a disabled one.
+  const enabledCurrencies = loadEnabledCurrencies(session);
   let customers: CustomerOption[] = [];
   let truncated = false;
   let problem: { message: string; status: number } | null = null;
@@ -175,6 +178,7 @@ export default async function NewPaymentPage({
               idempotencyKey={randomUUID()}
               today={todayInKathmandu()}
               customers={customers}
+              enabledCurrencies={await enabledCurrencies}
               initialCustomerId={customers.some((c) => c.id === customerId) ? customerId : ''}
               reloadHref={here}
             >

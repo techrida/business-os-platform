@@ -7,6 +7,8 @@ import {
   DEFAULT_WEBHOOK_URL,
   FOUNDER_ORG_ROLE,
   LOADTEST_APPROVER_USER,
+  PORTAL_APP_NAME,
+  PORTAL_ENV_FILE,
   PROVISIONER_IAM_ROLES,
   PROVISIONER_ROLES,
   PROVISIONER_USER,
@@ -106,6 +108,8 @@ class FakeZitadel implements SeedApi {
   patsIssued = 0;
   tokenClaims: Record<string, unknown> | undefined;
   appTokenType = 'OIDC_TOKEN_TYPE_JWT';
+  /** Per app name; wins over appTokenType. */
+  readonly appTokenTypes = new Map<string, string>();
   private seq = 0;
   private readonly orgs = new Map<string, string>(); // name -> id
   private readonly projects = new Map<
@@ -114,7 +118,10 @@ class FakeZitadel implements SeedApi {
   >();
   private readonly roles = new Set<string>();
   private readonly grants = new Map<string, string[]>(); // org id -> roles
-  private app: AppInfo | undefined;
+  /** OIDC apps by name, with the spec they were created from. Client ids count up from client-1. */
+  readonly apps = new Map<string, AppInfo & { spec: OidcAppSpec }>();
+  /** Every setOidcAppRedirects call, so a test can see the full lists the seed sent. */
+  readonly redirectUpdates: { appId: string; redirectUris: string[]; postLogout: string[] }[] = [];
   private readonly users = new Map<string, UserInfo & { orgId: string; username: string }>();
   private readonly auths = new Map<string, { id: string; roles: string[] }>(); // user id -> auth
   readonly members = new Map<string, string[]>(); // `${org}:${user}` -> roles
@@ -240,13 +247,48 @@ class FakeZitadel implements SeedApi {
     this.grants.set(org, roleKeys);
     return Promise.resolve();
   }
-  findOidcApp(): Promise<AppInfo | undefined> {
-    return Promise.resolve(this.app && { ...this.app, accessTokenType: this.appTokenType });
+  findOidcApp(_p: string, name: string): Promise<AppInfo | undefined> {
+    const app = this.apps.get(name);
+    return Promise.resolve(
+      app && {
+        id: app.id,
+        clientId: app.clientId,
+        accessTokenType: this.appTokenTypes.get(name) ?? this.appTokenType,
+        redirectUris: [...app.redirectUris],
+        postLogoutRedirectUris: [...app.postLogoutRedirectUris],
+      },
+    );
   }
-  createOidcApp(_p: string, _spec: OidcAppSpec): Promise<AppInfo> {
+  createOidcApp(_p: string, spec: OidcAppSpec): Promise<AppInfo> {
     this.mutate();
-    this.app = { id: this.id('app'), clientId: 'client-1', accessTokenType: 'OIDC_TOKEN_TYPE_JWT' };
-    return Promise.resolve(this.app);
+    const app = {
+      id: this.id('app'),
+      clientId: `client-${this.apps.size + 1}`,
+      accessTokenType: 'OIDC_TOKEN_TYPE_JWT',
+      redirectUris: [...spec.redirectUris],
+      postLogoutRedirectUris: [...spec.postLogoutRedirectUris],
+      spec,
+    };
+    this.apps.set(spec.name, app);
+    return Promise.resolve(app);
+  }
+  setOidcAppRedirects(
+    _p: string,
+    appId: string,
+    uris: Pick<OidcAppSpec, 'redirectUris' | 'postLogoutRedirectUris'>,
+  ): Promise<void> {
+    this.mutate();
+    this.redirectUpdates.push({
+      appId,
+      redirectUris: uris.redirectUris,
+      postLogout: uris.postLogoutRedirectUris,
+    });
+    for (const app of this.apps.values()) {
+      if (app.id !== appId) continue;
+      app.redirectUris = [...uris.redirectUris];
+      app.postLogoutRedirectUris = [...uris.postLogoutRedirectUris];
+    }
+    return Promise.resolve();
   }
   findUser(orgId: string, username: string): Promise<UserInfo | undefined> {
     const user = [...this.users.values()].find((u) => u.orgId === orgId && u.username === username);
@@ -795,6 +837,107 @@ describe('@bos/seed-zitadel', () => {
     await expect(runSeed(deps)).rejects.toThrow(
       /R7 failed.*token client "someone-else" is not in OIDC_ALLOWED_AZP/,
     );
+  });
+
+  describe('customer portal OIDC app (PORTAL_PUBLIC_URL)', () => {
+    const portalUrl = 'https://portal.localhost';
+
+    it('without a portal URL creates only the workspace app and no zitadel-portal.env', async () => {
+      const { api, files, deps } = setup();
+      await runSeed(deps);
+      expect([...api.apps.keys()]).toEqual(['workspace']);
+      expect(files.data.has(PORTAL_ENV_FILE)).toBe(false);
+    });
+
+    it('creates the portal app as a second app with its callback and writes its client id', async () => {
+      const { api, files, deps } = setup();
+      const result = await runSeed({ ...deps, portalUrl });
+
+      expect(result.warnings).toEqual([]);
+      expect([...api.apps.keys()]).toEqual(['workspace', PORTAL_APP_NAME]);
+      const portal = api.apps.get(PORTAL_APP_NAME);
+      // The same createOidcApp as the workspace: public PKCE client, JWT access tokens.
+      expect(portal?.spec).toEqual({
+        name: PORTAL_APP_NAME,
+        redirectUris: ['https://portal.localhost/auth/callback'],
+        postLogoutRedirectUris: ['https://portal.localhost/'],
+      });
+      expect(api.apps.get('workspace')?.spec.redirectUris).toEqual([
+        'https://app.localhost/auth/callback',
+      ]);
+      expect(files.data.get(PORTAL_ENV_FILE)).toBe('OIDC_CLIENT_ID=client-2\n');
+      // zitadel.env keeps the workspace client; the API also accepts the portal's tokens.
+      const env = parseEnv(files.data.get('zitadel.env'));
+      expect(env['OIDC_CLIENT_ID']).toBe('client-1');
+      expect(env['OIDC_ALLOWED_AZP']).toBe('client-1,client-2,bos-loadtest,bos-loadtest-approver');
+      expect(result.changes).toContain(`created OIDC app "${PORTAL_APP_NAME}"`);
+      expect(result.changes).toContain(`wrote .dev/${PORTAL_ENV_FILE}`);
+    });
+
+    it('a re-run without a portal URL keeps an existing portal app in OIDC_ALLOWED_AZP and changes nothing else', async () => {
+      const { api, files, deps } = setup();
+      await runSeed({ ...deps, portalUrl });
+      const mutationsAfterFirst = api.mutations;
+
+      const second = await runSeed(deps);
+
+      expect(second.changes).toEqual([]);
+      expect(api.mutations).toBe(mutationsAfterFirst);
+      expect(api.apps.size).toBe(2);
+      expect(files.data.get(PORTAL_ENV_FILE)).toBe('OIDC_CLIENT_ID=client-2\n');
+      const env = parseEnv(files.data.get('zitadel.env'));
+      expect(env['OIDC_ALLOWED_AZP']).toBe('client-1,client-2,bos-loadtest,bos-loadtest-approver');
+    });
+
+    it('a second run with the same portal URL changes nothing', async () => {
+      const { api, files, deps } = setup();
+      await runSeed({ ...deps, portalUrl });
+      const mutationsAfterFirst = api.mutations;
+      const writesAfterFirst = files.writes;
+
+      const second = await runSeed({ ...deps, portalUrl });
+
+      expect(second.changes).toEqual([]);
+      expect(api.mutations).toBe(mutationsAfterFirst);
+      expect(files.writes).toBe(writesAfterFirst);
+      expect(api.redirectUpdates).toEqual([]);
+      expect(api.apps.size).toBe(2);
+    });
+
+    it('adds a missing redirect to an existing portal app and keeps the URIs already there', async () => {
+      const { api, files, deps } = setup();
+      await runSeed({ ...deps, portalUrl });
+
+      const other = 'https://portal.r3-u10.localhost:59343';
+      const result = await runSeed({ ...deps, portalUrl: other });
+
+      const portal = api.apps.get(PORTAL_APP_NAME);
+      expect(api.redirectUpdates).toEqual([
+        {
+          appId: portal?.id,
+          redirectUris: [
+            'https://portal.localhost/auth/callback',
+            'https://portal.r3-u10.localhost:59343/auth/callback',
+          ],
+          postLogout: ['https://portal.localhost/', 'https://portal.r3-u10.localhost:59343/'],
+        },
+      ]);
+      expect(result.changes).toEqual([
+        `added ${other} to the redirect URIs of OIDC app "${PORTAL_APP_NAME}"`,
+      ]);
+      // Still the same app and client: nothing new to write.
+      expect(api.apps.size).toBe(2);
+      expect(files.data.get(PORTAL_ENV_FILE)).toBe('OIDC_CLIENT_ID=client-2\n');
+    });
+
+    it('fails when the portal app issues non-JWT tokens', async () => {
+      const { api, deps } = setup();
+      await runSeed({ ...deps, portalUrl });
+      api.appTokenTypes.set(PORTAL_APP_NAME, 'OIDC_TOKEN_TYPE_BEARER');
+      await expect(runSeed({ ...deps, portalUrl })).rejects.toThrow(
+        /"Business OS portal" exists with access token type OIDC_TOKEN_TYPE_BEARER, expected JWT/,
+      );
+    });
   });
 
   describe('P1 step 5: provisioner PAT', () => {

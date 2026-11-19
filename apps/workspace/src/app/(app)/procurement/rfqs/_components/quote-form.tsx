@@ -1,6 +1,6 @@
 'use client';
 
-import { CURRENCIES, type TaxCode } from '@bos/contracts';
+import { type Currency, type TaxCode } from '@bos/contracts';
 import { useActionState, useEffect, useRef, useState } from 'react';
 
 import { Alert } from '@/components/ui/alert';
@@ -8,6 +8,7 @@ import { Field, Input, Select } from '@/components/ui/field';
 import { PageHeader } from '@/components/ui/page';
 import { FactList, Panel } from '@/components/ui/panel';
 import { RichTextEditor } from '@/components/ui/rich-text-editor';
+import { currencyChoices } from '@/lib/enabled-currencies';
 
 import { ProcurementFormActions } from '../../form-actions';
 import styles from '../../requests/requests.module.css';
@@ -56,6 +57,7 @@ export function QuoteForm({
   prLines,
   taxCodes,
   taxCodeProblem,
+  enabledCurrencies,
   cancelHref,
   reloadHref,
 }: {
@@ -72,6 +74,8 @@ export function QuoteForm({
   /** Null when the list could not be read. Entry waits for an available tax-code list. */
   taxCodes: TaxCode[] | null;
   taxCodeProblem?: { status: number; message: string };
+  /** The currencies the company has switched on (`currency.enabled`, D44), read once on the server. */
+  enabledCurrencies: readonly Currency[];
   cancelHref: string;
   reloadHref: string;
 }) {
@@ -253,9 +257,9 @@ export function QuoteForm({
                 onChange={set('currency')}
                 {...control}
               >
-                {CURRENCIES.map((c) => (
-                  <option key={c} value={c}>
-                    {c}
+                {currencyChoices(enabledCurrencies).map((c) => (
+                  <option key={c.value} value={c.value}>
+                    {c.value}
                   </option>
                 ))}
               </Select>

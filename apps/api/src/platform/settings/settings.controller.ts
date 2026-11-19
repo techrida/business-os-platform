@@ -94,7 +94,20 @@ export class SettingsController {
   @Get('settings/:key')
   @Can('admin.settings.write')
   async getSetting(@Param('key') rawKey: string) {
-    const key = settingKey(rawKey);
+    return this.current(settingKey(rawKey));
+  }
+
+  /**
+   * The default reminder and escalation times, for anyone who may edit approval workflows: a new
+   * workflow starts from them. Only this one key; every other setting stays behind admin.settings.write.
+   */
+  @Get('approval-sla-defaults')
+  @Can('approvals.definitions.write')
+  async approvalSlaDefaults() {
+    return this.current('approvals.sla_defaults');
+  }
+
+  private async current(key: SettingKey) {
     const { scope } = requestTx();
     const { value, version } = await this.settings.getCurrent(scope, key);
     // version null means nobody has saved this key yet and `value` is the built-in default.

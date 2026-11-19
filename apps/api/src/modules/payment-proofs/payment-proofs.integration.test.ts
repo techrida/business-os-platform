@@ -55,6 +55,7 @@ import { SignedLinks, type LinkStore } from '../../platform/documents/signed-lin
 import { DiskStorageAdapter } from '../../platform/documents/storage.adapter';
 import { MoneyService } from '../../platform/settings/money.service';
 import { NumberingService } from '../../platform/settings/numbering.service';
+import type { CurrencyEnabledService } from '../../platform/settings/currency-enabled';
 import type { SettingsService } from '../../platform/settings/settings.service';
 import {
   bindIdentity,
@@ -285,6 +286,10 @@ beforeAll(async () => {
   );
 
   const settings = { get: () => Promise.resolve(7) } as unknown as SettingsService;
+  // Every currency passes here; the refusal of a disabled one is unit-tested in payments.currency.test.ts.
+  const currencies = {
+    assertEnabled: () => Promise.resolve(),
+  } as unknown as CurrencyEnabledService;
   payments = new PaymentsService(
     db,
     { assert: () => undefined } as unknown as AuthzService,
@@ -292,6 +297,7 @@ beforeAll(async () => {
     new NumberingService(),
     audit,
     new LedgerService(),
+    currencies,
     () => NOW,
   );
 }, 180_000);
