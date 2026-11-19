@@ -14,6 +14,7 @@ import {
   ErrorBodySchema,
   LeadDtoSchema,
   LeadLostReasonSchema,
+  lostReasonsToken,
 } from '@bos/contracts';
 import { leadLostReasons, leads } from '@bos/db';
 import { type INestApplication } from '@nestjs/common';
@@ -134,6 +135,7 @@ describe('D49 lost reasons: the list', () => {
     const reflector = new Reflector();
     const proto = LeadLostReasonsController.prototype;
     expect(reflector.get(CAN_KEY, proto.choices)).toBe('crm.lead.write');
+    expect(reflector.get(CAN_KEY, proto.opportunityChoices)).toBe('crm.opportunity.write');
     for (const route of [proto.listAll, proto.create, proto.reorder, proto.reset, proto.update]) {
       expect(reflector.get(CAN_KEY, route)).toBe('admin.settings.write');
     }
@@ -311,15 +313,16 @@ describe('D49 lost reasons: order and reset', () => {
     const reversed = [...before].reverse().map((o) => o.id);
     const res = await request(baseUrl)
       .put('/v1/admin/lead-lost-reasons/order')
-      .send({ ids: reversed });
+      .send({ ids: reversed, expectedOrder: lostReasonsToken(before) });
     expect(res.status, JSON.stringify(res.body)).toBe(200);
-    expect(options.parse(res.body).map((o) => o.id)).toEqual(reversed);
+    const after = options.parse(res.body);
+    expect(after.map((o) => o.id)).toEqual(reversed);
     expect((await choices()).map((o) => o.id)).toEqual(
       reversed.filter((id) => before.find((o) => o.id === id && !o.retired)),
     );
     const partial = await request(baseUrl)
       .put('/v1/admin/lead-lost-reasons/order')
-      .send({ ids: reversed.slice(1) });
+      .send({ ids: reversed.slice(1), expectedOrder: lostReasonsToken(after) });
     expect(partial.status).toBe(400);
   });
 
@@ -345,7 +348,9 @@ describe('D49 lost reasons: order and reset', () => {
       .send({ label: 'Price' });
     expect(taken.status).toBe(201);
 
-    const reset = await request(baseUrl).post('/v1/admin/lead-lost-reasons/reset').send({});
+    const reset = await request(baseUrl)
+      .post('/v1/admin/lead-lost-reasons/reset')
+      .send({ expectedOrder: lostReasonsToken(await adminList()) });
     expect(reset.status, JSON.stringify(reset.body)).toBe(200);
     const list = options.parse(reset.body);
     expect(list.slice(0, 7).map((o) => o.label)).toEqual(
@@ -376,7 +381,9 @@ describe('D49 lost reasons: order and reset', () => {
     expect(
       (await request(baseUrl).post('/v1/admin/lead-lost-reasons').send({ label: 'Price' })).status,
     ).toBe(201);
-    const again = await request(baseUrl).post('/v1/admin/lead-lost-reasons/reset').send({});
+    const again = await request(baseUrl)
+      .post('/v1/admin/lead-lost-reasons/reset')
+      .send({ expectedOrder: lostReasonsToken(await adminList()) });
     expect(again.status, JSON.stringify(again.body)).toBe(200);
     const labels = options.parse(again.body).map((o) => o.label);
     expect(labels).toEqual(expect.arrayContaining(['Price (custom)', 'Price (custom 2)']));
