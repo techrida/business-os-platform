@@ -15,6 +15,7 @@ import {
   type PurchaseRequestDto,
 } from '@/lib/api-procurement';
 import { requireStaffSession } from '@/lib/bff';
+import { loadEnabledCurrencies } from '@/lib/enabled-currencies.server';
 
 import layout from '../../../procurement.module.css';
 import { updatePrAction } from '../../actions';
@@ -59,6 +60,7 @@ export default async function EditPurchaseRequestPage({
   const label = pr.number ?? 'Draft purchase request';
   const editable = isPrEditable(pr.status) && prGrants(session.roles).create;
   const departments = editable ? await listDepartments(session).catch(() => []) : [];
+  const enabledCurrencies = editable ? await loadEnabledCurrencies(session) : [];
   let costCenters: Awaited<ReturnType<typeof listCostCenters>> = [];
   if (editable) {
     try {
@@ -92,6 +94,7 @@ export default async function EditPurchaseRequestPage({
         <PrForm
           departments={departments}
           costCenters={costCenters}
+          enabledCurrencies={enabledCurrencies}
           action={updatePrAction}
           initial={valuesFromDto(pr)}
           mode="edit"
