@@ -609,6 +609,32 @@ describe('the purchase orders on a purchase request', () => {
     expect(seen[0]?.can.receiveService).toBe(false);
   });
 
+  it('offers Receive service only while a service line has room left, as the new receipt page counts it', async () => {
+    const SERVICE2: LineSpec = { kind: 'service', quantity: '2' };
+    // Mixed order: the service is fully received, goods remain (so the order stays partially received).
+    const served = await newPo({ lines: [GOODS5, SERVICE1] });
+    await receive(served, '1', { line: 1, kind: 'service' });
+    // The whole service is held by a draft receipt, which reserves its quantity.
+    const held = await newPo({ lines: [SERVICE1] });
+    await receive(held, '1', { kind: 'service', draft: true });
+    // Half the service is confirmed: the other half is still to receive.
+    const half = await newPo({ lines: [SERVICE2] });
+    await receive(half, '1', { kind: 'service' });
+
+    current.userId = U.requester;
+    current.role = 'operations_officer';
+    const flag = async (po: Po) => {
+      const [order] = (await requests.get(po.prId)).purchaseOrders ?? [];
+      return order?.can.receiveService;
+    };
+    expect((await requests.get(served.prId)).purchaseOrders?.[0]?.status).toBe(
+      'partially_received',
+    );
+    expect(await flag(served)).toBe(false);
+    expect(await flag(held)).toBe(false);
+    expect(await flag(half)).toBe(true);
+  });
+
   it('adds only number, status, vendor name and the flag: no amount or vendor id rides along', async () => {
     const po = await newPo({ lines: [SERVICE1, GOODS3] });
     current.userId = U.requester;
