@@ -33,6 +33,7 @@ import type { Principal } from '../../platform/authz/principal';
 import type { Db } from '../../platform/db/db.module';
 import { systemActor, withTx } from '../../platform/db/tx';
 import { buildLink, renderEmail } from '../../platform/notify/templates';
+import { SettingsService } from '../../platform/settings/settings.service';
 import { SqlUsersStore } from '../../platform/users/users.store';
 import { ApprovalsAdminService } from './admin.service';
 import { canonicalSha256 } from '../../platform/hashing/canonical-json';
@@ -1769,4 +1770,194 @@ describe('inbox filters: search and type narrow the list, never widen who may de
   // only other scope (scopeB) is an entity of the same tenant with no published route. The tenant and entity
   // predicates in eligibleInbox are asserted by the SQL where-clause, not by a fixture here.
   it.skip('never lists another tenant’s request (needs a second-tenant workflow fixture)', () => {});
+});
+
+describe('approvals.sla_defaults setting (a spec that leaves sla out)', () => {
+  // Own document types, so the test_memo versions other tests publish do not change these routes.
+  let settings: SettingsService;
+  let withSettings: ApprovalsAdminService;
+  const setSla = (value: unknown) =>
+    withTx(db, scope, systemActor('test'), (tx) =>
+      settings.set(tx, 'approvals.sla_defaults', value),
+    );
+  /** Creates and publishes `documentType` through the settings-aware admin service, then submits once. */
+  const publishAndSubmit = async (documentType: string, sla?: object) => {
+    me = U.founder;
+    await withSettings.createWorkflow({
+      key: documentType,
+      name: documentType,
+      spec: { documentType, steps: seedSpec.steps, ...(sla === undefined ? {} : { sla }) },
+    });
+    await withSettings.publish(documentType, 1);
+    service.registerSubject({ documentType, onDecided });
+    const { requestId } = await submit({ documentType });
+    const steps = await db
+      .select()
+      .from(approvalSteps)
+      .where(eq(approvalSteps.requestId, requestId));
+    const first = steps.find((s) => s.seq === 1)!;
+    const stored = (await withSettings.listWorkflows()).find((w) => w.key === documentType)!;
+    return {
+      remindAt: first.remindAt?.toISOString(),
+      escalateAt: first.escalateAt?.toISOString(),
+      sla: WorkflowSpecSchema.parse(stored.versions[0]!.spec).sla,
+    };
+  };
+
+  beforeAll(() => {
+    settings = new SettingsService(db);
+    withSettings = new ApprovalsAdminService(db, audit, caller, clock, settings);
+  });
+
+  it('with nothing set, uses the 24h/72h/founder default exactly as before the setting existed', async () => {
+    expect(await publishAndSubmit('sla_unset')).toEqual({
+      remindAt: '2026-11-09T04:00:00.000Z',
+      escalateAt: '2026-11-11T04:00:00.000Z',
+      sla: { remindAfterHours: 24, escalateAfterHours: 72, escalateTo: { role: 'founder' } },
+    });
+  });
+
+  it('a changed setting drives the reminder, escalation and escalation role; an explicit sla still wins', async () => {
+    try {
+      await setSla({
+        remindAfterHours: 4,
+        escalateAfterHours: 8,
+        escalateTo: { role: 'management' },
+      });
+      expect(await publishAndSubmit('sla_from_setting')).toEqual({
+        remindAt: '2026-11-08T08:00:00.000Z',
+        escalateAt: '2026-11-08T12:00:00.000Z',
+        sla: { remindAfterHours: 4, escalateAfterHours: 8, escalateTo: { role: 'management' } },
+      });
+      // A spec that names sla (even partly) keeps today's behaviour: the schema fills the rest, not the setting.
+      expect(
+        await publishAndSubmit('sla_explicit', { remindAfterHours: 48, escalateAfterHours: 96 }),
+      ).toEqual({
+        remindAt: '2026-11-10T04:00:00.000Z',
+        escalateAt: '2026-11-12T04:00:00.000Z',
+        sla: { remindAfterHours: 48, escalateAfterHours: 96, escalateTo: { role: 'founder' } },
+      });
+    } finally {
+      await setSla({});
+    }
+  });
+});
+
+describe('quotation snapshot cost figures follow the viewer (D29)', () => {
+  const QUOTE = 'quotation_version';
+  const SNAPSHOT = {
+    nprTotal: '2690999.99',
+    effectiveDiscountPct: '13.0000',
+    marginPct: '21.5000',
+    nprDiscountAmount: '402500.00',
+    currency: 'NPR',
+    fxRate: '1',
+    customerName: 'Himal Traders',
+    quotationNumber: 'QT-2082/83-00001',
+    revisionNo: 1,
+    discountApprovalRequired: true,
+  };
+  // A reader of approvals with, and without, the cost permission. Same user, same request: only the grants differ.
+  const readerWithoutCost = new Map<Permission, Scope>([['approvals.requests.read', 'all']]);
+  const readerWithCost = new Map<Permission, Scope>([
+    ['approvals.requests.read', 'all'],
+    ['quotation.cost.read', 'all'],
+  ]);
+  const submitQuote = (over: Partial<SubmitInput> = {}) =>
+    submit({
+      documentType: QUOTE,
+      documentNumber: 'QT-2082/83-00001',
+      title: 'Quotation QT-2082/83-00001 revision 1',
+      snapshot: SNAPSHOT,
+      ...over,
+    });
+  const storedSnapshot = async (requestId: string) => {
+    const [row] = await db
+      .select()
+      .from(approvalRequests)
+      .where(eq(approvalRequests.id, requestId));
+    return row!;
+  };
+
+  beforeAll(async () => {
+    me = U.founder;
+    await admin.createWorkflow({
+      key: QUOTE,
+      name: 'Quotation version',
+      spec: { documentType: QUOTE, steps: [seedSpec.steps[0]!] },
+    });
+    await admin.publish(QUOTE, 1);
+    service.registerSubject({ documentType: QUOTE, onDecided });
+  });
+
+  it('omits marginPct (key absent) for a reader without quotation.cost.read', async () => {
+    const { requestId } = await submitQuote();
+    me = U.acc;
+    grants = readerWithoutCost;
+    const { marginPct: _margin, ...visible } = SNAPSHOT;
+    const dto = await service.get(requestId);
+    expect(dto.snapshot).toEqual(visible);
+    expect('marginPct' in (dto.snapshot as object)).toBe(false);
+  });
+
+  it('shows marginPct to the same reader once the grant is present', async () => {
+    const { requestId } = await submitQuote();
+    me = U.acc;
+    grants = readerWithCost;
+    expect((await service.get(requestId)).snapshot).toEqual(SNAPSHOT);
+  });
+
+  it('keeps the stored snapshot and its hash whatever the reader sees', async () => {
+    const { requestId } = await submitQuote();
+    const before = await storedSnapshot(requestId);
+    me = U.acc;
+    grants = readerWithoutCost;
+    await service.get(requestId);
+    const after = await storedSnapshot(requestId);
+    expect(after.snapshot).toEqual(SNAPSHOT);
+    expect(after.snapshotSha256.equals(canonicalSha256(SNAPSHOT))).toBe(true);
+    expect(after.snapshotSha256.equals(before.snapshotSha256)).toBe(true);
+    // The grant is read live: the next read by a holder is full again.
+    grants = readerWithCost;
+    expect((await service.get(requestId)).snapshot).toEqual(SNAPSHOT);
+  });
+
+  it('filters the answer of a decision and of its replay, and stores the full snapshot', async () => {
+    const { requestId } = await submitQuote();
+    me = U.acc;
+    grants = new Map<Permission, Scope>([['approvals.requests.act', 'all']]);
+    const key = randomUUID();
+    const body = { action: 'approve' as const, expectedVersion: 1 };
+    const first = await service.act(requestId, body, key);
+    expect(first.status).toBe('approved');
+    expect(first.snapshot).not.toHaveProperty('marginPct');
+    expect(first.snapshot).toMatchObject({ nprTotal: SNAPSHOT.nprTotal });
+    // An exact retry replays the stored result; it is filtered for the caller too.
+    const replay = await service.act(requestId, body, key);
+    expect(replay.snapshot).not.toHaveProperty('marginPct');
+    expect((await storedSnapshot(requestId)).snapshot).toEqual(SNAPSHOT);
+  });
+
+  it('shows marginPct in the answer of a decision to an approver who holds quotation.cost.read', async () => {
+    const { requestId } = await submitQuote();
+    me = U.acc;
+    grants = new Map<Permission, Scope>([
+      ['approvals.requests.act', 'all'],
+      ['quotation.cost.read', 'all'],
+    ]);
+    const done = await service.act(
+      requestId,
+      { action: 'approve', expectedVersion: 1 },
+      randomUUID(),
+    );
+    expect(done.snapshot).toEqual(SNAPSHOT);
+  });
+
+  it('leaves another document type alone, even if its snapshot has a marginPct key', async () => {
+    const snapshot = { title: 'Office chairs', marginPct: '5.0000' };
+    const { requestId } = await submit({ snapshot });
+    me = U.acc;
+    grants = readerWithoutCost;
+    expect((await service.get(requestId)).snapshot).toEqual(snapshot);
+  });
 });

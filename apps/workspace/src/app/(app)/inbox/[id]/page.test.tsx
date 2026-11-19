@@ -125,7 +125,12 @@ afterEach(() => {
   vi.unstubAllEnvs();
 });
 
-const person = (userId: string, name: string) => ({ userId, name, jobTitle: null, department: null });
+const person = (userId: string, name: string) => ({
+  userId,
+  name,
+  jobTitle: null,
+  department: null,
+});
 const PERSON = person(NAMED, 'Mina Rai');
 const memoSnapshot = {
   title: 'Two laptops',

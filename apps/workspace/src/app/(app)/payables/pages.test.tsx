@@ -130,6 +130,9 @@ const submission = {
   note: null,
   status: 'received',
   receivedAt: '2026-11-08T05:45:00.000Z',
+  claimedTotal: null,
+  currency: null,
+  duplicates: [],
 };
 const progress = {
   vendorId: VENDOR,

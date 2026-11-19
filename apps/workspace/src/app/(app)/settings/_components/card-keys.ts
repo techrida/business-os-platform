@@ -2,6 +2,8 @@
 // cannot be pointed at a setting that belongs to another section. Plain module (no 'use server').
 import type { SettingKey } from '@bos/contracts';
 
+import type { SettingsSectionId } from '@/lib/settings-nav';
+
 export const CARD_KEYS = {
   currencies: ['currency.enabled', 'fx.max_rate_age_days'],
   tax: ['tax.vat_rate'],
@@ -17,3 +19,16 @@ export const CARD_KEYS = {
   ],
   workflows: ['approvals.sla_defaults'],
 } as const satisfies Record<string, readonly SettingKey[]>;
+
+/**
+ * The settings the generic "reset to default" (`resetSettingAction`) may write (D32): its card keys,
+ * plus the document style and the saved term sets. A separate list, so widening what a reset may
+ * touch never widens what `saveCardAction` accepts. Sections with their own versioned reset actions
+ * (company profile cards, number and date formats) are deliberately absent: the generic reset would
+ * write a whole setting (the company profile includes the logo and every card) or skip their checks.
+ */
+export const RESET_KEYS = {
+  ...CARD_KEYS,
+  documents: ['document.style'],
+  terms: ['quotation.term_presets'],
+} as const satisfies Partial<Record<SettingsSectionId, readonly SettingKey[]>>;

@@ -5,6 +5,7 @@ import { QuotationList } from '@/components/portal/quotation-list';
 import { todayInKathmandu } from '@/components/portal/quotation-status';
 import { EmptyState } from '@/components/ui/empty-state';
 import { ApiError, listPortalQuotations } from '@/lib/api';
+import { getPortalDisplay } from '@/lib/portal-display';
 import { getSession } from '@/lib/session';
 
 export const dynamic = 'force-dynamic';
@@ -20,6 +21,7 @@ export default async function QuotationsPage() {
   if (!session) redirect('/auth/login?returnTo=%2F');
   if (session.orgKind !== 'customer') redirect('/vendor');
 
+  const display = getPortalDisplay(session);
   let items;
   try {
     items = await listPortalQuotations(session);
@@ -40,7 +42,7 @@ export default async function QuotationsPage() {
           When we send you a quotation, it will be listed here for you to review.
         </EmptyState>
       ) : (
-        <QuotationList items={items} today={todayInKathmandu()} />
+        <QuotationList items={items} today={todayInKathmandu()} display={await display} />
       )}
     </main>
   );

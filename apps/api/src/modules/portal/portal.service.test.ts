@@ -4,7 +4,12 @@
 // 404), the list shows the newest customer-visible version of each quotation (never a draft), and nothing in the
 // JSON is named like an internal field. The SQL scoping itself is the drizzle store's job; the integration test
 // covers it against a real database.
-import { CUSTOMER_VIEW_FORBIDDEN_WORDS } from '@bos/contracts';
+import {
+  CUSTOMER_VIEW_FORBIDDEN_WORDS,
+  DEFAULT_DOCUMENT_STYLE,
+  EMPTY_COMPANY_PROFILE,
+  type PortalDisplay,
+} from '@bos/contracts';
 import { ForbiddenException, NotFoundException, ServiceUnavailableException } from '@nestjs/common';
 import { describe, expect, it, vi } from 'vitest';
 
@@ -50,6 +55,8 @@ interface Seed {
   rejectionSource?: 'customer' | 'internal' | null;
   partyId?: string;
   rendered?: boolean;
+  /** The version's stored document_style; absent means never rendered (null). */
+  documentStyle?: unknown;
 }
 
 /** A whole internal source; internal columns ride along so a leak shows up in the output. */
@@ -99,8 +106,23 @@ function sourceOf(s: Seed): PortalViewSource {
     ],
     taxSummary: [{ label: 'VAT', rate: '13.0000', base: '540000.00', tax: '70200.00' }],
     issuerLegalName: 'Techrida Pvt. Ltd.',
+    documentStyle: s.documentStyle ?? null,
   };
 }
+
+/** The live settings in these tests: unlike the defaults on purpose, so a test can tell live from default. */
+const LIVE: PortalDisplay = {
+  numberSystems: { NPR: 'south_asian', INR: 'south_asian', USD: 'south_asian' },
+  dateFormat: 'yyyy-MM-dd',
+};
+
+/** A stored document_style as the render job freezes it, with the given number and date fields. */
+const snapshotWith = (fields: Record<string, unknown>) => ({
+  style: DEFAULT_DOCUMENT_STYLE,
+  profile: EMPTY_COMPANY_PROFILE,
+  capturedAt: '2026-11-08T10:00:00.000Z',
+  ...fields,
+});
 
 /** Mimics the drizzle store's scope: rows of the caller's tenant, acting entity and party only. */
 function fakeStore(seeds: Seed[]) {
@@ -148,7 +170,12 @@ function fakeStore(seeds: Seed[]) {
 
 function setup(
   seeds: Seed[],
-  opts: { caller?: Principal; docStatus?: string; address?: unknown } = {},
+  opts: {
+    caller?: Principal;
+    docStatus?: string;
+    address?: unknown;
+    live?: { numberSystems?: unknown; dateFormat?: unknown };
+  } = {},
 ) {
   const store = fakeStore(seeds);
   const caller = { current: () => opts.caller ?? principalOf() };
@@ -161,14 +188,28 @@ function setup(
     ),
   };
   const settings = {
-    get: vi.fn((_scope: unknown, key: string) =>
-      Promise.resolve(
-        key === 'entity.address' ? ('address' in opts ? opts.address : address) : '301234567',
-      ),
-    ),
+    get: vi.fn((_scope: unknown, key: string): Promise<unknown> => {
+      if (key === 'entity.address')
+        return Promise.resolve('address' in opts ? opts.address : address);
+      if (key === 'format.number_systems') {
+        return Promise.resolve(
+          opts.live && 'numberSystems' in opts.live ? opts.live.numberSystems : LIVE.numberSystems,
+        );
+      }
+      if (key === 'format.date') {
+        return Promise.resolve(
+          opts.live && 'dateFormat' in opts.live ? opts.live.dateFormat : LIVE.dateFormat,
+        );
+      }
+      return Promise.resolve('301234567');
+    }),
   };
   const service = new PortalService(caller, store, documents as never, settings as never);
-  return { service, store, documents };
+  const formatReads = () =>
+    settings.get.mock.calls.filter(
+      ([, key]) => key === 'format.number_systems' || key === 'format.date',
+    );
+  return { service, store, documents, settings, formatReads };
 }
 
 /** Every key of a JSON value, split into lower-case words (camelCase and snake_case). */
@@ -315,7 +356,9 @@ describe('PortalService.get', () => {
       address,
     });
     const json = JSON.stringify(view);
-    const words = keyWords(JSON.parse(json));
+    // `display` is left out of the scan: its NPR/INR/USD keys are currency codes for formatting, not an NPR equivalent.
+    const { display: _display, ...scanned } = JSON.parse(json) as Record<string, unknown>;
+    const words = keyWords(scanned);
     for (const word of CUSTOMER_VIEW_FORBIDDEN_WORDS) expect(words).not.toContain(word);
     // The internal values the source carried never reach the JSON.
     for (const secret of ['133.5', '81463700', '400000', '25.9259', '30000.00']) {
@@ -436,6 +479,117 @@ describe('PortalService.get', () => {
       message: 'This quotation cannot be shown right now',
     });
   });
+});
+
+describe('PortalService.get: the display it was sent with', () => {
+  it('shows a frozen snapshot display even when the live settings differ, without reading them', async () => {
+    const frozen = snapshotWith({
+      numberSystems: { NPR: 'international', INR: 'south_asian', USD: 'international' },
+      dateFormat: 'dd/MM/yyyy',
+    });
+    const { service, formatReads } = setup([{ ...SENT, documentStyle: frozen }]);
+    const view = await service.get(SENT.versionId);
+    expect(view.display).toEqual({
+      numberSystems: { NPR: 'international', INR: 'south_asian', USD: 'international' },
+      dateFormat: 'dd/MM/yyyy',
+    });
+    expect(formatReads()).toEqual([]);
+  });
+
+  it('reads a legacy snapshot (one number system, no date format) as that system for every currency', async () => {
+    const legacy = snapshotWith({ numberSystem: 'international' });
+    const { service, formatReads } = setup([{ ...SENT, documentStyle: legacy }]);
+    const view = await service.get(SENT.versionId);
+    expect(view.display).toEqual({
+      numberSystems: { NPR: 'international', INR: 'international', USD: 'international' },
+      // A snapshot taken before the date setting printed the default.
+      dateFormat: 'dd MMM yyyy',
+    });
+    expect(formatReads()).toEqual([]);
+  });
+
+  it('falls back to the live settings of the selling entity when the version has no snapshot', async () => {
+    const { service, settings } = setup([SENT]);
+    const view = await service.get(SENT.versionId);
+    expect(view.display).toEqual(LIVE);
+    expect(settings.get).toHaveBeenCalledWith(
+      { tenantId: TENANT, organizationId: ENTITY },
+      'format.number_systems',
+    );
+    expect(settings.get).toHaveBeenCalledWith(
+      { tenantId: TENANT, organizationId: ENTITY },
+      'format.date',
+    );
+  });
+
+  it('falls back to the live settings, never fails, when the stored snapshot does not validate', async () => {
+    for (const bad of [
+      { style: 'banded' },
+      snapshotWith({}),
+      snapshotWith({ numberSystems: { NPR: 'arabic', INR: 'south_asian', USD: 'international' } }),
+      snapshotWith({ numberSystem: 'international', dateFormat: 'MM/dd/yyyy' }),
+      'not an object',
+    ]) {
+      const view = await setup([{ ...SENT, documentStyle: bad }]).service.get(SENT.versionId);
+      expect(view.display, JSON.stringify(bad)).toEqual(LIVE);
+    }
+  });
+
+  it('shows the defaults when a live setting does not validate', async () => {
+    const { service } = setup([SENT], {
+      live: { numberSystems: 'international', dateFormat: 'MM/dd/yyyy' },
+    });
+    const view = await service.get(SENT.versionId);
+    expect(view.display).toEqual({
+      numberSystems: { NPR: 'south_asian', INR: 'south_asian', USD: 'international' },
+      dateFormat: 'dd MMM yyyy',
+    });
+  });
+});
+
+describe('PortalService.display', () => {
+  const VENDOR_PARTY = '0a000000-0000-4000-8000-00000000000b';
+
+  it('answers a customer with the live settings of its acting entity', async () => {
+    const { service, settings } = setup([SENT]);
+    await expect(service.display()).resolves.toEqual(LIVE);
+    expect(settings.get).toHaveBeenCalledWith(
+      { tenantId: TENANT, organizationId: ENTITY },
+      'format.number_systems',
+    );
+  });
+
+  it('answers a vendor with a party too', async () => {
+    const { service } = setup([], {
+      caller: principalOf({ orgKind: 'vendor', partyId: VENDOR_PARTY, grants: new Map() }),
+    });
+    await expect(service.display()).resolves.toEqual(LIVE);
+  });
+
+  it('never uses a version snapshot: it is the company setting now', async () => {
+    const frozen = snapshotWith({ numberSystem: 'international', dateFormat: 'dd/MM/yyyy' });
+    const { service } = setup([{ ...SENT, documentStyle: frozen }]);
+    await expect(service.display()).resolves.toEqual(LIVE);
+  });
+
+  const refused: [string, Partial<Principal>][] = [
+    [
+      'a staff founder (portal grants at all)',
+      { orgKind: 'staff', partyId: null, grants: new Map([['portal.quotation.read', 'all']]) },
+    ],
+    ['a staff user who somehow has a party', { orgKind: 'staff' }],
+    ['a customer with no party', { partyId: null }],
+    ['a vendor with no party', { orgKind: 'vendor', partyId: null }],
+    ['a vendor with an empty party', { orgKind: 'vendor', partyId: '' }],
+    ['an invited (not yet active) customer', { status: 'invited' }],
+  ];
+  for (const [name, over] of refused) {
+    it(`answers 403 to ${name}, before reading settings`, async () => {
+      const { service, settings } = setup([SENT], { caller: principalOf(over) });
+      await expect(service.display()).rejects.toBeInstanceOf(ForbiddenException);
+      expect(settings.get).not.toHaveBeenCalled();
+    });
+  }
 });
 
 describe('PortalService.quotationPdfLink', () => {

@@ -57,8 +57,8 @@ describe('QuotationView markup', () => {
   it('shows precise milestone shares and customer-readable due dates', () => {
     const view = sampleView({
       paymentSchedule: [
-        { label: 'Advance', percent: '33.3333', dueDescription: 'On order' },
-        { label: 'Delivery', percent: '66.6667', dueDescription: '2026-11-19' },
+        { label: 'Advance', percent: '33.3333', amount: '1129.99', dueDescription: 'On order' },
+        { label: 'Delivery', percent: '66.6667', amount: '2260.01', dueDescription: '2026-11-19' },
       ],
     });
     const html = renderToStaticMarkup(<QuotationView view={view} today={TODAY} />);
@@ -66,6 +66,22 @@ describe('QuotationView markup', () => {
     expect(html).toContain('66.6667%');
     expect(html).toContain('On order');
     expect(html).toContain('19 Nov 2026');
+  });
+
+  it("shows each milestone's amount exactly as the API sent it, never recomputed (D36)", () => {
+    // 3,390.00 at 40/60 would be 1,356.00 and 2,034.00; these amounts differ on purpose, so a screen that
+    // recomputed from the percents would show the wrong figures.
+    const view = sampleView({
+      paymentSchedule: [
+        { label: 'Advance', percent: '40', amount: '1000.00' },
+        { label: 'Balance', percent: '60', amount: '2390.00' },
+      ],
+    });
+    const html = renderToStaticMarkup(<QuotationView view={view} today={TODAY} />);
+    expect(html).toContain('USD 1,000.00');
+    expect(html).toContain('USD 2,390.00');
+    expect(html).not.toContain('1,356.00');
+    expect(html).not.toContain('2,034.00');
   });
 
   it('renders View PDF and a plain Download link to the BFF route, and neither without a file', () => {
@@ -81,6 +97,87 @@ describe('QuotationView markup', () => {
     );
     expect(none).not.toContain('/document"');
     expect(none).not.toContain('View PDF');
+  });
+});
+
+describe('QuotationView display setting', () => {
+  const international = { NPR: 'international', INR: 'south_asian', USD: 'international' } as const;
+
+  it('draws amounts and dates with the setting the version was sent with', () => {
+    const base = sampleView();
+    const view = sampleView({
+      currency: 'NPR',
+      issueDate: '2026-11-19',
+      validUntil: '2026-11-30',
+      totals: { ...base.totals, total: '2018180.00' },
+      display: { numberSystems: international, dateFormat: 'dd/MM/yyyy' },
+    });
+    const html = renderToStaticMarkup(<QuotationView view={view} today={TODAY} />);
+    expect(html).toContain('NPR 2,018,180.00');
+    expect(html).toContain('19/11/2026');
+    expect(html).toContain('30/11/2026');
+    expect(html).not.toContain('20,18,180.00');
+    expect(html).not.toContain('19 Nov 2026');
+  });
+
+  it('says when an expired quotation lapsed in the same date format', () => {
+    const view = sampleView({
+      validUntil: '2026-11-09',
+      display: { numberSystems: international, dateFormat: 'dd/MM/yyyy' },
+    });
+    const result = canRespond(view, TODAY);
+    expect(result).toMatchObject({ open: false, expired: true });
+    expect(result.open === false && result.reason).toContain('09/11/2026');
+  });
+
+  it('draws a list with the display it is given, and the defaults without one', () => {
+    const items = [
+      sampleListItem({ currency: 'NPR', total: '2018180.00', validUntil: '2026-11-23' }),
+    ];
+    const given = renderToStaticMarkup(
+      <QuotationList
+        items={items}
+        today={TODAY}
+        display={{ numberSystems: international, dateFormat: 'yyyy-MM-dd' }}
+      />,
+    );
+    expect(given).toContain('NPR 2,018,180.00');
+    expect(given).toContain('2026-11-23');
+    const defaults = renderToStaticMarkup(<QuotationList items={items} today={TODAY} />);
+    expect(defaults).toContain('NPR 20,18,180.00');
+    expect(defaults).toContain('23 Nov 2026');
+  });
+});
+
+describe('QuotationView terms as rich text', () => {
+  it('draws lists as real lists, nested ones inside their item', () => {
+    const view = sampleView({
+      scope: '<p>Includes:</p><ul><li>Cabling<ul><li>Cat6</li></ul></li><li>Racks</li></ul>',
+      assumptions: '<ol><li>Access granted</li><li>Power on site</li></ol>',
+    });
+    const html = renderToStaticMarkup(<QuotationView view={view} today={TODAY} />);
+    expect(html).toContain('<p>Includes:</p>');
+    expect(html).toContain('<ul><li>Cabling<ul><li>Cat6</li></ul></li><li>Racks</li></ul>');
+    expect(html).toContain('<ol><li>Access granted</li><li>Power on site</li></ol>');
+  });
+
+  it('leaves out scripts, links and handlers a stored term might carry', () => {
+    const view = sampleView({
+      termsAndConditions:
+        '<p onclick="steal()">Pay <strong>on time</strong>. See <a href="https://evil.test/x">the site</a></p><script>alert(1)</script><p><img src=x onerror=alert(2)>End</p>',
+    });
+    const html = renderToStaticMarkup(<QuotationView view={view} today={TODAY} />);
+    expect(html).toContain('<p>Pay <strong>on time</strong>. See the site</p>');
+    expect(html).toContain('End');
+    for (const bad of ['<script', 'alert(1)', 'evil.test', 'onclick', 'onerror', '<img']) {
+      expect(html).not.toContain(bad);
+    }
+  });
+
+  it('still draws wording saved as plain text, escaped, one paragraph per block', () => {
+    const view = sampleView({ exclusions: 'Civil works <b>& painting</b>.\n\nPermits.' });
+    const html = renderToStaticMarkup(<QuotationView view={view} today={TODAY} />);
+    expect(html).toContain('<p>Civil works &lt;b&gt;&amp; painting&lt;/b&gt;.</p><p>Permits.</p>');
   });
 });
 

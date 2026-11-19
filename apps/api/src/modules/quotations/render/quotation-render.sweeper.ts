@@ -18,7 +18,7 @@
 // integration test against a real database.
 import { createHash } from 'node:crypto';
 
-import type { DocumentStyleSnapshot } from '@bos/contracts';
+import { defaultPortalDisplay, type DocumentStyleSnapshot } from '@bos/contracts';
 import { InjectQueue, Processor, WorkerHost } from '@nestjs/bullmq';
 import {
   customerContacts,
@@ -89,7 +89,7 @@ export interface RenderCandidate {
 }
 
 /** What the mapper needs of a version's rows, plus the issuing entity's legal name. */
-export type RenderSource = Omit<CustomerViewInput, 'issuer' | 'renderedScanClean'> & {
+export type RenderSource = Omit<CustomerViewInput, 'issuer' | 'renderedScanClean' | 'display'> & {
   issuerLegalName: string;
   /** The version's stored `document_style` as read (unchecked); null until its first render captured it. */
   documentStyle: unknown;
@@ -233,9 +233,10 @@ export class QuotationRenderSweeper {
       const issuer = await buildIssuer(this.settings, scope, issuerLegalName);
       const snapshot = await this.documentStyleOf(c, scope, actor, storedStyle);
       // The `render` purpose lets the mapper draw an approved version (a customer cannot see one) as the
-      // document that will be sent. The file field stays null: this PDF is not its own attachment.
+      // document that will be sent. The file field stays null: this PDF is not its own attachment. The renderer
+      // formats from `snapshot`, never from the view's display, so the display is the default.
       const view = toCustomerQuotationView(
-        { ...rows, issuer, renderedScanClean: false },
+        { ...rows, issuer, renderedScanClean: false, display: defaultPortalDisplay() },
         { purpose: 'render' },
       );
       const bytes = await this.pdf.htmlToPdf(renderQuotationHtml(view, { snapshot }));

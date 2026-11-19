@@ -1,8 +1,7 @@
-import { formatCustomerDate } from '@bos/locale';
-import type { VendorPortalBillView } from '@bos/contracts';
-import { formatMoney } from '@bos/locale';
+import type { PortalDisplay, VendorPortalBillView } from '@bos/contracts';
 
 import { Badge } from '@/components/ui/badge';
+import { displayFormat } from '@/lib/display';
 
 import styles from './vendor.module.css';
 import { BILL_STATUS_LOOK } from './vendor-status';
@@ -12,9 +11,16 @@ import { BILL_STATUS_LOOK } from './vendor-status';
  * bill, and each payment made against it (date, amount and bank reference). Every figure is the
  * server's; no balance is worked out in the browser.
  */
-export function BillView({ view }: { view: VendorPortalBillView }) {
+export function BillView({
+  view,
+  display,
+}: {
+  view: VendorPortalBillView;
+  display?: PortalDisplay;
+}) {
+  const { money: formatAmount, day } = displayFormat(display);
   const look = BILL_STATUS_LOOK[view.status];
-  const money = (amount: string) => formatMoney(amount, view.currency);
+  const money = (amount: string) => formatAmount(amount, view.currency);
   return (
     <div className={styles.document}>
       <header className={styles.docHead}>
@@ -29,7 +35,7 @@ export function BillView({ view }: { view: VendorPortalBillView }) {
           </div>
           <div>
             <dt>Invoice date</dt>
-            <dd>{formatCustomerDate(view.invoiceDate)}</dd>
+            <dd>{day(view.invoiceDate)}</dd>
           </div>
           <div>
             <dt>TDS withheld</dt>
@@ -64,7 +70,7 @@ export function BillView({ view }: { view: VendorPortalBillView }) {
               <tbody>
                 {view.payments.map((p) => (
                   <tr key={`${p.paidOn}-${p.reference}`}>
-                    <td className={styles.nowrap}>{formatCustomerDate(p.paidOn)}</td>
+                    <td className={styles.nowrap}>{day(p.paidOn)}</td>
                     <td className={styles.description}>{p.reference}</td>
                     <td className={`${styles.num} ${styles.nowrap}`}>{money(p.amount)}</td>
                   </tr>

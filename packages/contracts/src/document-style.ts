@@ -4,6 +4,8 @@
 import { z } from 'zod';
 
 import { PanVatNoSchema } from './crm.js';
+import { CURRENCIES, type Currency } from './money.js';
+import { richTextSchema } from './rich-text.js';
 
 const text = (max: number) => z.string().trim().min(1).max(max);
 
@@ -150,6 +152,33 @@ export const NUMBER_SYSTEM_LABELS: Record<NumberSystemSetting, { name: string; e
     international: { name: 'International (million, billion)', example: '2,018,180.00' },
   };
 
+/** One number system per currency (D30). Mirrors `NumberSystems` in @bos/locale. */
+export const NumberSystemsSchema = z.strictObject(
+  Object.fromEntries(CURRENCIES.map((c) => [c, NumberSystemSchema])) as Record<
+    Currency,
+    typeof NumberSystemSchema
+  >,
+);
+export type NumberSystemsSetting = z.infer<typeof NumberSystemsSchema>;
+
+/** NPR and INR write lakh/crore; USD writes thousand/million: what the app did before the setting existed. */
+export const DEFAULT_NUMBER_SYSTEMS: NumberSystemsSetting = {
+  NPR: 'south_asian',
+  INR: 'south_asian',
+  USD: 'international',
+};
+
+/** The date patterns for customer-facing documents. Mirrors `CustomerDateFormat` in @bos/locale. */
+export const DATE_FORMAT_VALUES = [
+  'dd MMM yyyy',
+  'dd/MM/yyyy',
+  'yyyy-MM-dd',
+  'MMM dd, yyyy',
+] as const;
+export const DateFormatSchema = z.enum(DATE_FORMAT_VALUES);
+export type DateFormatSetting = z.infer<typeof DateFormatSchema>;
+export const DEFAULT_DATE_FORMAT: DateFormatSetting = 'dd MMM yyyy';
+
 // ---------------------------------------------------------------------------------------------
 // Company profile and the settings values
 // ---------------------------------------------------------------------------------------------
@@ -203,13 +232,39 @@ export const DEFAULT_DOCUMENT_STYLE: DocumentStyle = {
  * Everything the renderer needs that is not the document's own data. Frozen onto a quotation version when
  * its PDF is rendered, so changing a setting later never alters a sent document.
  */
-export const DocumentStyleSnapshotSchema = z.strictObject({
-  style: DocumentStyleSchema,
-  profile: CompanyProfileSchema,
-  numberSystem: NumberSystemSchema,
+export const DocumentStyleSnapshotSchema = z
+  .strictObject({
+    style: DocumentStyleSchema,
+    profile: CompanyProfileSchema,
+    /** Snapshots taken before D30 hold one system for every currency; new ones hold `numberSystems`. */
+    numberSystem: NumberSystemSchema.optional(),
+    numberSystems: NumberSystemsSchema.optional(),
+    /** Absent on snapshots taken before the date format existed: they print the default. */
+    dateFormat: DateFormatSchema.optional(),
+    capturedAt: z.iso.datetime(),
+  })
+  .refine((v) => v.numberSystem !== undefined || v.numberSystems !== undefined, {
+    message: 'a snapshot needs numberSystems (or the legacy numberSystem)',
+  });
+export type DocumentStyleSnapshot = z.infer<typeof DocumentStyleSnapshotSchema>;
+
+/**
+ * The number grouping and date pattern a document was printed with. Invoices keep it on their first print so a copy
+ * printed later looks the same; purchase orders print once and use the settings in force at that moment.
+ */
+export const DocumentFormatSnapshotSchema = z.strictObject({
+  numberSystems: NumberSystemsSchema,
+  dateFormat: DateFormatSchema,
   capturedAt: z.iso.datetime(),
 });
-export type DocumentStyleSnapshot = z.infer<typeof DocumentStyleSnapshotSchema>;
+export type DocumentFormatSnapshot = z.infer<typeof DocumentFormatSnapshotSchema>;
+
+/** What a stored snapshot printed: its per-currency map, else its single legacy system for every currency. */
+export function snapshotNumberSystems(snapshot: DocumentStyleSnapshot): NumberSystemsSetting {
+  if (snapshot.numberSystems) return snapshot.numberSystems;
+  const legacy = snapshot.numberSystem ?? 'south_asian';
+  return { NPR: legacy, INR: legacy, USD: legacy };
+}
 
 // ---------------------------------------------------------------------------------------------
 // Term presets
@@ -240,7 +295,8 @@ export const TermPresetSchema = z.strictObject({
   id: z.guid(),
   kind: TermPresetKindSchema,
   name: text(80),
-  body: text(10_000),
+  /** Rich text (D31): sanitised HTML from the editor, or plain text saved before it existed. */
+  body: richTextSchema(10_000),
 });
 export type TermPreset = z.infer<typeof TermPresetSchema>;
 
@@ -253,3 +309,54 @@ export const TermPresetListSchema = z
     'preset names must be unique within a field',
   );
 export type TermPresetList = z.infer<typeof TermPresetListSchema>;
+
+/**
+ * The sets every company starts with (D31). They are the default of `quotation.term_presets`, so a company that
+ * never saved the key sees them, and "reset to default" brings them back. The ids are fixed so a reset is stable.
+ */
+export const DEFAULT_TERM_PRESETS: TermPresetList = [
+  {
+    id: '6c1e8a40-5b0b-4f0e-9a52-0c8d1a7e0001',
+    kind: 'terms_conditions',
+    name: 'Casual website terms',
+    body:
+      '<p><strong>Website project terms</strong></p>' +
+      '<ul><li>Fifty percent is due before work starts and the balance on launch.</li>' +
+      '<li>The price covers the pages and features listed in the scope. Extra work is quoted separately.</li>' +
+      '<li>We need your content, logo and feedback within the times we agree. Delays on your side can move the launch date.</li>' +
+      '<li>Two rounds of changes are included. Further rounds are charged by the hour.</li>' +
+      '<li>You own the finished site once the invoice is paid in full.</li></ul>',
+  },
+  {
+    id: '6c1e8a40-5b0b-4f0e-9a52-0c8d1a7e0002',
+    kind: 'terms_conditions',
+    name: 'Software project terms',
+    body:
+      '<p><strong>Software project terms</strong></p>' +
+      '<ol><li>Work follows the milestones in the payment schedule. A milestone is payable when it is delivered for review.</li>' +
+      '<li>Anything outside the scope and assumptions is a change request. We quote it and start it only after you approve.</li>' +
+      '<li>You review each delivery within <strong>seven days</strong>. Silence after that counts as acceptance.</li>' +
+      '<li>Confidential material shared by either side stays confidential.</li>' +
+      '<li>Either side may end the work with written notice. You pay for work done up to that date.</li></ol>',
+  },
+  {
+    id: '6c1e8a40-5b0b-4f0e-9a52-0c8d1a7e0003',
+    kind: 'terms_conditions',
+    name: 'Support and maintenance terms',
+    body:
+      '<p><strong>Support and maintenance terms</strong></p>' +
+      '<ul><li>The fee is charged <em>in advance</em> for each period and is not refunded for unused time.</li>' +
+      '<li>Support covers fixes and questions about what we delivered. New features are quoted separately.</li>' +
+      '<li>We reply within one working day. Urgent faults that stop your business are looked at first.</li>' +
+      '<li>Either side can end the arrangement with thirty days of written notice.</li></ul>',
+  },
+  {
+    id: '6c1e8a40-5b0b-4f0e-9a52-0c8d1a7e0004',
+    kind: 'payment_terms',
+    name: 'Half up front',
+    body:
+      '<ul><li><strong>50%</strong> when you accept this quotation.</li>' +
+      '<li><strong>50%</strong> when the work is delivered.</li></ul>' +
+      '<p>Invoices are payable within the term shown above.</p>',
+  },
+];

@@ -51,6 +51,7 @@ import { PricingService } from '../pricing/pricing.service';
 import type { PricingInput } from '../pricing/pricing.types';
 import { quotationRef } from '../preview/quotation-preview.service';
 import { kathmanduDay } from '../reference/reference.types';
+import { versionVisibleTo } from './cost-visibility';
 import { DraftingCaller } from './drafting.caller';
 import { toQuotationVersionDto, type QuotationLineRow, type QuotationVersionRow } from './mapping';
 
@@ -146,7 +147,8 @@ export class ReviseService {
     const now = this.clock();
     // Read outside the transaction: a committed setting, the same for every retry of this request.
     const validityDays = await this.settings.get(scope, 'quotation.validity_days');
-    return withTx(this.db, scope, actor, async (tx) => {
+    // The stored answer (replayed on a retry) is the full DTO; the cost figures are dropped for this caller per reply.
+    const dto = await withTx(this.db, scope, actor, async (tx) => {
       const done = await withIdempotency(
         tx,
         { command: 'quotation.revise', key: idempotencyKey, body: { id: quotationId, ...body } },
@@ -157,6 +159,7 @@ export class ReviseService {
       );
       return done.response;
     });
+    return versionVisibleTo(principal, dto);
   }
 
   private async reviseInTx(

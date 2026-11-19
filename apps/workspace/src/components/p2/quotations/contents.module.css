@@ -76,19 +76,15 @@
   max-width: 100%;
 }
 
+/* The wording inside is <RichText>, which brings its own paragraph and list look. */
 .prose {
-  margin: 0;
+  min-width: 0;
   max-width: 100%;
-  font-size: var(--font-size-body-small);
-  line-height: var(--line-height-body-small);
-  white-space: pre-wrap;
-  overflow-wrap: anywhere;
 }
 
+/* Three lines of body text; a bounded height clamps paragraphs and lists alike. */
 .clamped {
-  display: -webkit-box;
-  -webkit-box-orient: vertical;
-  -webkit-line-clamp: 3;
+  max-height: calc(var(--line-height-body-small) * 3);
   overflow: hidden;
 }
 

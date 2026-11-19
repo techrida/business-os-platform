@@ -12,7 +12,7 @@ import { Pagination } from '@/components/ui/pagination';
 import { Table, Td, Th } from '@/components/ui/table';
 import { listBillsPage, type BillListItem } from '@/lib/api-payables';
 import { requireStaffSession } from '@/lib/bff';
-import { getNumberSystem } from '@/lib/display-settings';
+import { getNumberSystems } from '@/lib/display-settings';
 import { when } from '@/lib/kernel-format';
 import { activeFilterLabels, clearFiltersHref, hrefWith, readList } from '@/lib/list-params';
 
@@ -39,7 +39,7 @@ export default async function BillsPage({
 
   const session = await requireStaffSession(PATH);
 
-  const numberSystem = await getNumberSystem();
+  const numberSystems = await getNumberSystems();
   const grants = billGrants(session.roles);
 
   const header = (
@@ -201,7 +201,7 @@ export default async function BillsPage({
                     </Td>
                     <Td align="end" nowrap>
                       <span className={styles.numeric}>
-                        {poMoney(b.payableTotal, b.currency, numberSystem)}
+                        {poMoney(b.payableTotal, b.currency, numberSystems)}
                       </span>
                     </Td>
                   </tr>

@@ -9,7 +9,7 @@ import { Alert } from '@/components/ui/alert';
 import { Button } from '@/components/ui/button';
 import { toast } from '@/components/ui/toast';
 import { Input } from '@/components/ui/field';
-import { useNumberSystem } from '@/components/ui/number-system-context';
+import { useNumberSystems } from '@/components/ui/number-system-context';
 import { Panel, FactList } from '@/components/ui/panel';
 import { Table, Td, Th } from '@/components/ui/table';
 import { money, when } from '@/lib/kernel-format';
@@ -47,7 +47,7 @@ export function AllocatePanel({
   idempotencyKey,
   reloadHref,
 }: AllocatePanelProps) {
-  const numberSystem = useNumberSystem();
+  const numberSystems = useNumberSystems();
   return (
     <Panel
       title="Allocate this payment"
@@ -59,13 +59,13 @@ export function AllocatePanel({
             {
               key: 'left',
               label: 'Left on this payment',
-              value: money(remaining, currency, numberSystem),
+              value: money(remaining, currency, numberSystems),
             },
             {
               key: 'advance',
               label: `Customer advance in ${currency}`,
               value:
-                advance === null ? 'Could not be loaded' : money(advance, currency, numberSystem),
+                advance === null ? 'Could not be loaded' : money(advance, currency, numberSystems),
             },
           ]}
         />
@@ -105,7 +105,7 @@ function AllocateForm({
 }: Pick<AllocatePanelProps, 'paymentId' | 'currency' | 'idempotencyKey' | 'reloadHref'> & {
   items: readonly InvoiceSettlement[];
 }) {
-  const numberSystem = useNumberSystem();
+  const numberSystems = useNumberSystems();
   // Controlled: React 19 resets uncontrolled fields after every action, which would wipe what the
   // person typed when the API refuses. Cleared once an allocation is accepted.
   const [amounts, setAmounts] = useState<Record<string, string>>({});
@@ -180,7 +180,7 @@ function AllocateForm({
                   </Td>
                   <Td align="end" nowrap>
                     <span className={styles.openAmount}>
-                      {money(item.openAmount, currency, numberSystem)}
+                      {money(item.openAmount, currency, numberSystems)}
                     </span>
                   </Td>
                   <Td>

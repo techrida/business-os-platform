@@ -69,7 +69,10 @@ let issuing: InvoiceIssueService;
 
 const grantsOf = (role: RoleKey) =>
   new Map(Object.entries(DEFAULT_ROLE_PERMISSIONS[role])) as Map<Permission, Scope>;
-const current: { role: RoleKey; scope: TxScope | null } = { role: 'accountant', scope: null };
+const current: { role: RoleKey; scope: TxScope | null; grants?: Map<Permission, Scope> } = {
+  role: 'accountant',
+  scope: null,
+};
 const scopeNow = (): TxScope => current.scope ?? scopeA;
 
 const principalNow = (): Principal => ({
@@ -82,7 +85,7 @@ const principalNow = (): Principal => ({
   roles: [],
   departmentId: null,
   status: 'active',
-  grants: grantsOf(current.role),
+  grants: current.grants ?? grantsOf(current.role),
 });
 const caller = {
   current: () => ({
@@ -261,6 +264,7 @@ afterAll(async () => {
 beforeEach(() => {
   current.role = 'accountant';
   current.scope = null;
+  delete current.grants;
 });
 
 describe('manual invoice (done check 1, golden case)', () => {
@@ -510,6 +514,24 @@ describe('proforma (plan A12)', () => {
     const b = await drafting.draftProforma(proformaBody(), key());
     const next = await issuing.issue(b.invoice.id, { expectedVersion: b.invoice.version }, key());
     expect(Number(next.number.split('-')[2])).toBe(n + 1);
+  });
+});
+
+describe('detail customer name', () => {
+  it('names the customer of a draft for a caller who may read invoices but not customers', async () => {
+    const draft = await drafting.draftManual(manualBody(), key());
+    expect(draft.invoice.buyer).toBeNull();
+    current.grants = new Map<Permission, Scope>([['invoice.read', 'all']]);
+    const detail = await drafting.detail(draft.invoice.id);
+    expect(InvoiceDetailSchema.parse(detail).customerName).toBe('Acme Pvt. Ltd.');
+    expect(detail.invoice.buyer).toBeNull();
+  });
+
+  it('stays a 404 from another legal entity, so no name leaks there', async () => {
+    const draft = await drafting.draftManual(manualBody(), key());
+    current.grants = new Map<Permission, Scope>([['invoice.read', 'all']]);
+    current.scope = scopeB;
+    await expect(drafting.detail(draft.invoice.id)).rejects.toBeInstanceOf(NotFoundException);
   });
 });
 

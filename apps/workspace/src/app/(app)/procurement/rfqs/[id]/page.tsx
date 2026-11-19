@@ -17,7 +17,7 @@ import { getApprovalRequest } from '@/lib/api-kernel';
 import { getPurchaseRequest } from '@/lib/api-procurement';
 import { getComparison, getRfq, listSubmissions, type RfqDto } from '@/lib/api-rfqs';
 import { requireStaffSession } from '@/lib/bff';
-import { getNumberSystem } from '@/lib/display-settings';
+import { getNumberSystems } from '@/lib/display-settings';
 import { money, when } from '@/lib/kernel-format';
 import { humanizeKey } from '@/lib/kernel-ui';
 
@@ -108,7 +108,7 @@ export default async function RfqPage({
   const { id } = await params;
   if (!isGuid(id)) notFound();
   const session = await requireStaffSession(`/procurement/rfqs/${id}`);
-  const numberSystem = await getNumberSystem();
+  const numberSystems = await getNumberSystems();
   const sp = await searchParams;
   const self = `/procurement/rfqs/${encodeURIComponent(id)}`;
 
@@ -194,7 +194,7 @@ export default async function RfqPage({
                 {(() => {
                   const row = comparison.value?.find((q) => q.id === rfq.recommendedQuotationId);
                   return row !== undefined
-                    ? `${vendorLabel(row.vendorId)}, ${money(row.total, row.currency, numberSystem)}`
+                    ? `${vendorLabel(row.vendorId)}, ${money(row.total, row.currency, numberSystems)}`
                     : 'Recommended quotation';
                 })()}
               </span>
@@ -318,11 +318,13 @@ export default async function RfqPage({
                   </Td>
                   <Td align="end" nowrap>
                     <span className={styles.numeric}>
-                      {money(q.total, q.currency, numberSystem)}
+                      {money(q.total, q.currency, numberSystems)}
                     </span>
                   </Td>
                   <Td align="end" nowrap>
-                    <span className={styles.numeric}>{money(q.totalNpr, 'NPR', numberSystem)}</span>
+                    <span className={styles.numeric}>
+                      {money(q.totalNpr, 'NPR', numberSystems)}
+                    </span>
                     {q.currency !== 'NPR' ? (
                       <span className={styles.quiet}> at {q.fxRate}</span>
                     ) : null}
@@ -379,7 +381,7 @@ export default async function RfqPage({
               rfqId={rfq.id}
               choices={quotations.map((q) => ({
                 id: q.id,
-                label: `${vendorLabel(q.vendorId)}, ${money(q.total, q.currency, numberSystem)}`,
+                label: `${vendorLabel(q.vendorId)}, ${money(q.total, q.currency, numberSystems)}`,
               }))}
               reloadHref={self}
             />

@@ -1,14 +1,13 @@
-import type { CustomerInvoiceView } from '@bos/contracts';
-import { formatMoney } from '@bos/locale';
+import type { CustomerInvoiceView, PortalDisplay } from '@bos/contracts';
 
 import { Alert } from '@/components/portal/alert';
-import { formatDay } from '@/components/portal/quotation-status';
 import styles from '@/components/portal/quotation.module.css';
 import { Badge } from '@/components/ui/badge';
 import { LinkButton } from '@/components/ui/button';
 import { Card } from '@/components/ui/card';
 import { ViewDocument } from '@/components/ui/document-viewer';
 import type { PortalSettlement } from '@/lib/api.billing';
+import { displayFormat } from '@/lib/display';
 
 import { canPay, KIND_LABEL, SETTLEMENT_LOOK } from './invoice-status';
 
@@ -24,11 +23,14 @@ type View = CustomerInvoiceView;
 export function InvoiceView({
   view,
   settlement,
+  display,
 }: {
   view: View;
   settlement: PortalSettlement | null;
+  display?: PortalDisplay;
 }) {
-  const money = (amount: string) => formatMoney(amount, view.currency);
+  const { money: formatAmount, day: formatDay } = displayFormat(display);
+  const money = (amount: string) => formatAmount(amount, view.currency);
   const hasDiscount = !/^0+(\.0+)?$/.test(view.totals.discountAmount);
   const look = settlement ? SETTLEMENT_LOOK[settlement.settlement] : null;
 

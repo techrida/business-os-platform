@@ -4,7 +4,7 @@ import { trimPercent } from '@bos/contracts';
 import type { Metadata } from 'next';
 import Link from 'next/link';
 import { notFound } from 'next/navigation';
-import type { NumberSystem } from '@bos/locale';
+import type { NumberSystems } from '@bos/locale';
 
 import { isGuid } from '@/components/p2/customers/format';
 import { Alert } from '@/components/ui/alert';
@@ -26,7 +26,7 @@ import {
 } from '@/lib/api-purchase-orders';
 import { getVendor } from '@/lib/api-vendors';
 import { requireStaffSession } from '@/lib/bff';
-import { getNumberSystem } from '@/lib/display-settings';
+import { getNumberSystems } from '@/lib/display-settings';
 import { when } from '@/lib/kernel-format';
 
 import layout from '../../procurement.module.css';
@@ -66,30 +66,38 @@ function PanelProblem({ what, err, retry }: { what: string; err: unknown; retry:
 function Lines({
   po,
   progress,
-  numberSystem,
+  numberSystems,
 }: {
   po: PurchaseOrder;
   progress: PromiseSettledResult<PoProgress>;
-  numberSystem: NumberSystem;
+  numberSystems: NumberSystems;
 }) {
   const byLine = new Map<string, PoProgressLine>();
   if (progress.status === 'fulfilled') {
     for (const l of progress.value.lines) byLine.set(l.poLineId, l);
   }
-  const withProgress = progress.status === 'fulfilled';
+  // A draft from an approved commitment gets its lines at issue, copied from the approved quotation: until then
+  // the API sends those lines as `proposedLines`, shown read-only as what the order will be issued with.
+  const proposed = po.lines.length === 0 && (po.proposedLines?.length ?? 0) > 0;
+  const lines = proposed ? (po.proposedLines ?? []) : po.lines;
+  const withProgress = progress.status === 'fulfilled' && !proposed;
   return (
     <Panel
       className={styles.tablePanel}
       title="Lines"
       description={
-        withProgress
-          ? 'What was ordered, what has arrived, and what is still open. Amounts are as the server worked them out.'
-          : 'What was ordered. Amounts are as the server worked them out.'
+        proposed
+          ? 'The lines of the approved quotation. They are written to the order when it is issued. Amounts are as the server worked them out.'
+          : withProgress
+            ? 'What was ordered, what has arrived, and what is still open. Amounts are as the server worked them out.'
+            : 'What was ordered. Amounts are as the server worked them out.'
       }
     >
-      {po.lines.length === 0 ? (
+      {lines.length === 0 ? (
         <EmptyState title="This order has no lines." icon="file-text" headingLevel={3}>
-          A purchase order needs at least one line before it can be issued.
+          {po.status === 'draft'
+            ? 'The lines of the approved quotation are copied in when the order is issued.'
+            : 'No lines were ordered.'}
         </EmptyState>
       ) : (
         <Table
@@ -115,7 +123,7 @@ function Lines({
             </tr>
           </thead>
           <tbody>
-            {po.lines.map((l) => {
+            {lines.map((l) => {
               const p = byLine.get(l.id);
               return (
                 <tr key={l.id}>
@@ -158,17 +166,17 @@ function Lines({
                   ) : null}
                   <Td align="end" nowrap>
                     <span className={styles.numeric}>
-                      {poMoney(l.unitPrice, po.currency, numberSystem)}
+                      {poMoney(l.unitPrice, po.currency, numberSystems)}
                     </span>
                   </Td>
                   <Td align="end" nowrap>
                     <span className={styles.numeric}>
-                      {poMoney(l.taxAmount, po.currency, numberSystem)}
+                      {poMoney(l.taxAmount, po.currency, numberSystems)}
                     </span>
                   </Td>
                   <Td align="end" nowrap>
                     <span className={styles.numeric}>
-                      {poMoney(l.lineTotal, po.currency, numberSystem)}
+                      {poMoney(l.lineTotal, po.currency, numberSystems)}
                     </span>
                   </Td>
                 </tr>
@@ -192,12 +200,12 @@ function Versions({
   po,
   result,
   here,
-  numberSystem,
+  numberSystems,
 }: {
   po: PurchaseOrder;
   result: PromiseSettledResult<PoVersion[]>;
   here: string;
-  numberSystem: NumberSystem;
+  numberSystems: NumberSystems;
 }) {
   return (
     <Panel
@@ -240,11 +248,13 @@ function Versions({
                 </Td>
                 <Td align="end" nowrap>
                   <span className={styles.numeric}>
-                    {poMoney(v.total, po.currency, numberSystem)}
+                    {poMoney(v.total, po.currency, numberSystems)}
                   </span>
                 </Td>
                 <Td align="end" nowrap>
-                  <span className={styles.numeric}>{poMoney(v.totalNpr, 'NPR', numberSystem)}</span>
+                  <span className={styles.numeric}>
+                    {poMoney(v.totalNpr, 'NPR', numberSystems)}
+                  </span>
                 </Td>
                 <Td nowrap>{v.band}</Td>
                 <Td nowrap>
@@ -276,7 +286,7 @@ export default async function PurchaseOrderPage({ params }: { params: Promise<{ 
   if (!isGuid(id)) notFound();
   const here = `/procurement/orders/${id}`;
   const session = await requireStaffSession(here);
-  const numberSystem = await getNumberSystem();
+  const numberSystems = await getNumberSystems();
 
   let po: PurchaseOrder;
   try {
@@ -355,7 +365,7 @@ export default async function PurchaseOrderPage({ params }: { params: Promise<{ 
       label: current !== undefined ? `Total, version ${current.version}` : 'Approved total',
       value: (
         <span className={styles.numeric}>
-          {poMoney(current?.total ?? po.approvedTotal, po.currency, numberSystem)}
+          {poMoney(current?.total ?? po.approvedTotal, po.currency, numberSystems)}
         </span>
       ),
     },
@@ -364,7 +374,7 @@ export default async function PurchaseOrderPage({ params }: { params: Promise<{ 
       label: 'Total in NPR',
       value: (
         <span className={styles.numeric}>
-          {poMoney(current?.totalNpr ?? po.approvedTotalNpr, 'NPR', numberSystem)}
+          {poMoney(current?.totalNpr ?? po.approvedTotalNpr, 'NPR', numberSystems)}
         </span>
       ),
     },
@@ -475,8 +485,8 @@ export default async function PurchaseOrderPage({ params }: { params: Promise<{ 
         </Panel>
       </div>
 
-      <Lines numberSystem={numberSystem} po={po} progress={progress} />
-      <Versions numberSystem={numberSystem} po={po} result={versions} here={here} />
+      <Lines numberSystems={numberSystems} po={po} progress={progress} />
+      <Versions numberSystems={numberSystems} po={po} result={versions} here={here} />
     </Page>
   );
 }

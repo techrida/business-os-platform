@@ -44,6 +44,8 @@ export interface SelectOption {
   label: string;
   disabled?: boolean;
   icon?: IconName | undefined;
+  /** Draws a divider above this option, to set an action ("Add more") apart from the choices. */
+  separatorBefore?: boolean | undefined;
 }
 
 export interface SelectProps {
@@ -257,7 +259,7 @@ export function Select({
               id={option.id}
               textValue={option.label}
               isDisabled={Boolean(option.disabled)}
-              className={styles.item ?? ''}
+              className={`${styles.item ?? ''} ${option.separatorBefore ? (styles.separated ?? '') : ''}`}
             >
               {({ isSelected }) => (
                 <>

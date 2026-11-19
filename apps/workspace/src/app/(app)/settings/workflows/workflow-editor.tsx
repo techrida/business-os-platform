@@ -45,6 +45,8 @@ import {
 } from './spec-form';
 import type { UserOption } from './user-field';
 
+type SlaDefaults = Parameters<typeof emptySpecForm>[1];
+
 type ServerAction = (previous: ActionState, formData: FormData) => Promise<ActionState>;
 
 interface Initial {
@@ -60,15 +62,15 @@ const SPAN = styles.span ?? '';
 const pretty = (value: unknown): string => JSON.stringify(value, null, 2);
 
 /** Opens in form mode when the spec fits the form without loss, otherwise in JSON mode with the reasons. */
-function initialState(spec: unknown, documentType: string): Initial {
+function initialState(spec: unknown, documentType: string, sla: SlaDefaults | undefined): Initial {
   if (spec === undefined) {
-    return { mode: 'form', form: emptySpecForm(documentType), json: '', notes: [] };
+    return { mode: 'form', form: emptySpecForm(documentType, sla), json: '', notes: [] };
   }
   const parsed = WorkflowSpecSchema.safeParse(spec);
   if (!parsed.success) {
     return {
       mode: 'json',
-      form: emptySpecForm(documentType),
+      form: emptySpecForm(documentType, sla),
       json: pretty(spec),
       notes: [
         'The saved spec does not match the current format, so it can only be edited as JSON.',
@@ -81,7 +83,7 @@ function initialState(spec: unknown, documentType: string): Initial {
   }
   return {
     mode: 'json',
-    form: emptySpecForm(parsed.data.documentType),
+    form: emptySpecForm(parsed.data.documentType, sla),
     json: pretty(parsed.data),
     notes: converted.reasons,
   };
@@ -136,6 +138,7 @@ export function WorkflowEditor({
   submitLabel,
   groupKeys,
   users,
+  slaDefaults,
 }: {
   action: ServerAction;
   mode: 'create' | 'version';
@@ -145,10 +148,12 @@ export function WorkflowEditor({
   submitLabel: string;
   groupKeys: readonly string[];
   users: readonly UserOption[] | null;
+  /** The saved default reminder and escalation times a new form starts from; the built-in default when omitted. */
+  slaDefaults?: SlaDefaults;
 }) {
   const viewLabelId = useId();
   const [state, formAction, pending] = useActionState(action, IDLE);
-  const [initial] = useState(() => initialState(initialSpec, documentType));
+  const [initial] = useState(() => initialState(initialSpec, documentType, slaDefaults));
   const [view, setView] = useState<'form' | 'json'>(initial.mode);
   const [form, setForm] = useState<SpecForm>(initial.form);
   const [json, setJson] = useState(initial.json);

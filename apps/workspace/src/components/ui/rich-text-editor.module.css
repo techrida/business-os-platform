@@ -1,0 +1,166 @@
+/* Same look as the text field in field.module.css: border, radius, hover, focus and error
+   states. The typing surface also carries rich-text.module.css `.prose`, so it reads like the
+   RichText display. */
+.wrap {
+  display: grid;
+  gap: 6px;
+  min-width: 0;
+}
+
+.root {
+  display: grid;
+  grid-template-rows: auto 1fr;
+  min-width: 0;
+  border: var(--border-width-thin) solid var(--input-border);
+  border-radius: var(--radius-lg);
+  background: var(--input-bg);
+  color: var(--input-text);
+  transition: border-color 120ms ease;
+}
+
+.root:hover:not([data-disabled]):not([data-invalid]) {
+  border-color: var(--input-hover-border);
+}
+
+/* The field's own focus treatment follows the typing surface, not the toolbar buttons. */
+.root:has(.content:focus) {
+  border-color: var(--input-focus-border);
+  box-shadow: var(--bos-field-focus-shadow);
+}
+
+.root[data-invalid] {
+  border-color: var(--input-error-border);
+}
+
+.root[data-invalid]:has(.content:focus) {
+  box-shadow: var(--bos-field-focus-shadow-error);
+}
+
+.root[data-disabled] {
+  background: var(--input-disabled-bg);
+  color: var(--input-disabled-text);
+  cursor: not-allowed;
+}
+
+.toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 2px;
+  padding: 4px 6px;
+  border-bottom: var(--border-width-thin) solid var(--border-subtle);
+  border-radius: calc(var(--radius-lg) - 1px) calc(var(--radius-lg) - 1px) 0 0;
+  background: var(--surface-subtle);
+}
+
+.root[data-disabled] .toolbar {
+  background: transparent;
+}
+
+.sep {
+  align-self: stretch;
+  width: 1px;
+  margin: 4px 4px;
+  background: var(--border-default);
+}
+
+.tool {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  padding: 0;
+  border: var(--border-width-thin) solid transparent;
+  border-radius: var(--radius-md);
+  background: transparent;
+  color: var(--icon-default);
+  cursor: pointer;
+  transition:
+    background-color 120ms ease,
+    border-color 120ms ease,
+    color 120ms ease;
+}
+
+.tool:hover:not(:disabled) {
+  background: var(--surface-muted);
+  color: var(--text-primary);
+}
+
+/* Pressed is a fill, a border and a darker icon, so it never rests on colour alone. */
+.tool[aria-pressed='true'] {
+  border-color: var(--icon-brand);
+  background: var(--surface-brand);
+  color: var(--icon-brand);
+}
+
+/* An inset ring: the generic outset ring would be clipped by the toolbar's edge. */
+.tool:focus-visible {
+  box-shadow: inset 0 0 0 2px var(--focus-ring);
+}
+
+.tool:disabled {
+  color: var(--icon-disabled);
+  cursor: not-allowed;
+}
+
+.scroll {
+  position: relative;
+  min-height: var(--rte-min-height);
+  max-height: max(24rem, var(--rte-min-height));
+  overflow-y: auto;
+  font-size: var(--font-size-body-small);
+  line-height: var(--line-height-body-small);
+}
+
+.content {
+  box-sizing: border-box;
+  min-height: var(--rte-min-height);
+  padding: 10px 12px;
+  outline: none;
+  cursor: text;
+}
+
+.content:focus-visible {
+  outline: 2px solid transparent;
+  box-shadow: none;
+}
+
+.content[aria-disabled='true'] {
+  cursor: not-allowed;
+}
+
+.placeholder {
+  position: absolute;
+  inset: 10px 12px auto;
+  color: var(--input-placeholder);
+  pointer-events: none;
+}
+
+.footer {
+  display: flex;
+  justify-content: flex-end;
+}
+
+.counter {
+  color: var(--text-secondary);
+  font-size: var(--font-size-caption);
+  font-variant-numeric: tabular-nums;
+  line-height: var(--line-height-caption);
+}
+
+.counter[data-over] {
+  color: var(--status-error);
+  font-weight: var(--font-weight-medium);
+}
+
+@media (pointer: coarse) {
+  .tool {
+    width: 40px;
+    height: 40px;
+  }
+
+  .scroll {
+    font-size: max(16px, var(--font-size-body-small));
+  }
+}

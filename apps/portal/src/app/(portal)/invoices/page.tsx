@@ -8,6 +8,7 @@ import { ApiError } from '@/lib/api';
 import { listPortalInvoices } from '@/lib/api.billing';
 import { matchesSelection, matchesText } from '@/lib/list-filter';
 import { activeFilterLabels, clearFiltersHref, readList, type RawParams } from '@/lib/list-params';
+import { getPortalDisplay } from '@/lib/portal-display';
 import { getSession } from '@/lib/session';
 
 import { InvoiceList } from './_components/invoice-list';
@@ -31,6 +32,7 @@ export default async function InvoicesPage({ searchParams }: { searchParams: Pro
   const session = await getSession();
   if (!session) redirect(LOGIN);
 
+  const display = getPortalDisplay(session);
   let items;
   try {
     items = await listPortalInvoices(session);
@@ -83,7 +85,7 @@ export default async function InvoicesPage({ searchParams }: { searchParams: Pro
               clearHref={clearFiltersHref(HERE, raw, INVOICE_FILTER_SPEC)}
             />
           ) : (
-            <InvoiceList items={shown} />
+            <InvoiceList items={shown} display={await display} />
           )}
         </>
       )}

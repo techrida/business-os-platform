@@ -67,8 +67,10 @@ describe('previewFetchOutcome', () => {
   it.each([
     [200, 'ready'],
     [409, 'preparing'],
-    [404, 'preparing'],
     [425, 'preparing'],
+    [424, 'failed'],
+    [404, 'unavailable'],
+    [410, 'unavailable'],
     [401, 'denied'],
     [403, 'denied'],
     [500, 'error'],

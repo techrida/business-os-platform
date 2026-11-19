@@ -11,7 +11,7 @@ import {
 } from '@bos/contracts';
 import type { Metadata } from 'next';
 import Link from 'next/link';
-import type { NumberSystem } from '@bos/locale';
+import type { NumberSystems } from '@bos/locale';
 
 import { hasPermission } from '@/components/p2/customers/permissions';
 import { Alert } from '@/components/ui/alert';
@@ -31,7 +31,7 @@ import {
 } from '@/lib/api-billing';
 import { failureOf } from '@/lib/api-kernel';
 import { requireStaffSession } from '@/lib/bff';
-import { getNumberSystem } from '@/lib/display-settings';
+import { getNumberSystems } from '@/lib/display-settings';
 import { money, when } from '@/lib/kernel-format';
 import {
   activeFilterLabels,
@@ -50,7 +50,13 @@ import { kindMeta, settlementLabel, statusMeta } from './_lib/meta';
 export const metadata: Metadata = { title: 'Invoices · Business OS' };
 export const dynamic = 'force-dynamic';
 
-function InvoiceRow({ item, numberSystem }: { item: InvoiceListItem; numberSystem: NumberSystem }) {
+function InvoiceRow({
+  item,
+  numberSystems,
+}: {
+  item: InvoiceListItem;
+  numberSystems: NumberSystems;
+}) {
   const kind = kindMeta(item.kind).label;
   const name = item.number ?? `${kind} (${statusMeta(item.status).label.toLowerCase()})`;
   const href = `/invoices/${encodeURIComponent(item.id)}`;
@@ -82,7 +88,7 @@ function InvoiceRow({ item, numberSystem }: { item: InvoiceListItem; numberSyste
         )}
       </Td>
       <Td align="end" nowrap>
-        <span className={styles.amount}>{money(item.total, item.currency, numberSystem)}</span>
+        <span className={styles.amount}>{money(item.total, item.currency, numberSystems)}</span>
       </Td>
       <Td nowrap>
         <InvoiceStatusBadge status={item.status} />
@@ -142,7 +148,7 @@ export default async function InvoicesPage({ searchParams }: { searchParams: Pro
   };
   const here = hrefWith('/invoices', raw, { page: state.page > 1 ? state.page : undefined });
   const session = await requireStaffSession(here);
-  const numberSystem = await getNumberSystem();
+  const numberSystems = await getNumberSystems();
 
   let items: InvoiceListItem[] | null = null;
   let total = 0;
@@ -260,7 +266,7 @@ export default async function InvoicesPage({ searchParams }: { searchParams: Pro
             </thead>
             <tbody>
               {items.map((item) => (
-                <InvoiceRow numberSystem={numberSystem} key={item.id} item={item} />
+                <InvoiceRow numberSystems={numberSystems} key={item.id} item={item} />
               ))}
             </tbody>
           </Table>

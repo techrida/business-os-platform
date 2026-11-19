@@ -1,5 +1,5 @@
 import type { InvoiceDetail } from '@bos/contracts';
-import type { NumberSystem } from '@bos/locale';
+import type { NumberSystems } from '@bos/locale';
 
 import { FactList, Panel, type Fact } from '@/components/ui/panel';
 import { Table, Td, Th } from '@/components/ui/table';
@@ -12,10 +12,10 @@ type Invoice = InvoiceDetail['invoice'];
 /** Every figure below is a string the server sent: this file formats, it never adds or rounds. */
 export function Totals({
   invoice,
-  numberSystem,
+  numberSystems,
 }: {
   invoice: Invoice;
-  numberSystem: NumberSystem;
+  numberSystems: NumberSystems;
 }) {
   const { totals, currency } = invoice;
   const rows: { key: string; label: string; value: string; grand?: boolean }[] = [
@@ -36,7 +36,7 @@ export function Totals({
             className={row.grand ? `${styles.totalRow} ${styles.grandTotal}` : styles.totalRow}
           >
             <dt className={styles.totalTerm}>{row.label}</dt>
-            <dd className={styles.totalValue}>{money(row.value, currency, numberSystem)}</dd>
+            <dd className={styles.totalValue}>{money(row.value, currency, numberSystems)}</dd>
           </div>
         ))}
       </dl>
@@ -47,10 +47,10 @@ export function Totals({
 /** The NPR value frozen at issue, with the rate that produced it. Only for a foreign-currency invoice. */
 export function NprSnapshot({
   invoice,
-  numberSystem,
+  numberSystems,
 }: {
   invoice: Invoice;
-  numberSystem: NumberSystem;
+  numberSystems: NumberSystems;
 }) {
   const { npr, currency } = invoice;
   if (currency === 'NPR') return null;
@@ -65,7 +65,7 @@ export function NprSnapshot({
     );
   }
   const facts: Fact[] = [
-    { key: 'amount', label: 'Value in NPR', value: money(npr.amountNpr, 'NPR', numberSystem) },
+    { key: 'amount', label: 'Value in NPR', value: money(npr.amountNpr, 'NPR', numberSystems) },
     { key: 'rate', label: `Rate (${currency} to NPR)`, value: npr.rate },
     {
       key: 'source',
@@ -83,10 +83,10 @@ export function NprSnapshot({
 
 export function Lines({
   detail,
-  numberSystem,
+  numberSystems,
 }: {
   detail: InvoiceDetail;
-  numberSystem: NumberSystem;
+  numberSystems: NumberSystems;
 }) {
   const { invoice, lines, taxSummary } = detail;
   const { currency } = invoice;
@@ -119,19 +119,19 @@ export function Lines({
                   </span>
                 </Td>
                 <Td align="end" nowrap>
-                  {money(line.unitPrice, currency, numberSystem)}
+                  {money(line.unitPrice, currency, numberSystems)}
                 </Td>
                 <Td align="end" nowrap>
-                  {money(line.gross, currency, numberSystem)}
+                  {money(line.gross, currency, numberSystems)}
                 </Td>
                 <Td align="end" nowrap>
-                  {money(line.discountAlloc, currency, numberSystem)}
+                  {money(line.discountAlloc, currency, numberSystems)}
                 </Td>
                 <Td align="end" nowrap>
-                  {money(line.taxable, currency, numberSystem)}
+                  {money(line.taxable, currency, numberSystems)}
                 </Td>
                 <Td align="end" nowrap>
-                  {money(line.taxAmount, currency, numberSystem)}
+                  {money(line.taxAmount, currency, numberSystems)}
                 </Td>
               </tr>
             ))}
@@ -159,10 +159,10 @@ export function Lines({
                     {row.percent}%
                   </Td>
                   <Td align="end" nowrap>
-                    {money(row.base, currency, numberSystem)}
+                    {money(row.base, currency, numberSystems)}
                   </Td>
                   <Td align="end" nowrap>
-                    {money(row.tax, currency, numberSystem)}
+                    {money(row.tax, currency, numberSystems)}
                   </Td>
                 </tr>
               ))}

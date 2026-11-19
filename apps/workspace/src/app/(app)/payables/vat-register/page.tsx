@@ -14,7 +14,7 @@ import { Table, Td, Th } from '@/components/ui/table';
 import { getVatRegister, VatPeriodSchema, type VatRegister } from '@/lib/api-payables';
 import { failureOf } from '@/lib/api-kernel';
 import { requireStaffSession } from '@/lib/bff';
-import { getNumberSystem } from '@/lib/display-settings';
+import { getNumberSystems } from '@/lib/display-settings';
 
 import { poMoney } from '../../procurement/orders/_lib/model';
 import styles from '../payables.module.css';
@@ -28,7 +28,7 @@ export default async function VatRegisterPage({
   searchParams: Promise<{ from?: string | string[]; to?: string | string[] }>;
 }) {
   const session = await requireStaffSession('/payables/vat-register');
-  const numberSystem = await getNumberSystem();
+  const numberSystems = await getNumberSystems();
   const params = await searchParams;
   const from = typeof params.from === 'string' ? params.from : '';
   const to = typeof params.to === 'string' ? params.to : '';
@@ -85,12 +85,12 @@ export default async function VatRegisterPage({
         <div className={styles.registerTotals}>
           <StatCard
             label="Taxable purchases"
-            value={poMoney(register.total.taxableAmount, 'NPR', numberSystem)}
+            value={poMoney(register.total.taxableAmount, 'NPR', numberSystems)}
             icon="receipt"
           />
           <StatCard
             label="Creditable VAT"
-            value={poMoney(register.total.vatAmount, 'NPR', numberSystem)}
+            value={poMoney(register.total.vatAmount, 'NPR', numberSystems)}
             icon="credit-card"
           />
         </div>
@@ -135,8 +135,8 @@ export default async function VatRegisterPage({
                       </Link>
                     </Td>
                     <Td nowrap>{row.invoiceDateBs}</Td>
-                    <Td align="end">{poMoney(row.taxableAmount, 'NPR', numberSystem)}</Td>
-                    <Td align="end">{poMoney(row.vatAmount, 'NPR', numberSystem)}</Td>
+                    <Td align="end">{poMoney(row.taxableAmount, 'NPR', numberSystems)}</Td>
+                    <Td align="end">{poMoney(row.vatAmount, 'NPR', numberSystems)}</Td>
                   </tr>
                 ))}
               </tbody>
@@ -145,8 +145,8 @@ export default async function VatRegisterPage({
                   <Td>Total</Td>
                   <Td />
                   <Td />
-                  <Td align="end">{poMoney(register.total.taxableAmount, 'NPR', numberSystem)}</Td>
-                  <Td align="end">{poMoney(register.total.vatAmount, 'NPR', numberSystem)}</Td>
+                  <Td align="end">{poMoney(register.total.taxableAmount, 'NPR', numberSystems)}</Td>
+                  <Td align="end">{poMoney(register.total.vatAmount, 'NPR', numberSystems)}</Td>
                 </tr>
               </tfoot>
             </Table>

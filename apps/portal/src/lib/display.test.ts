@@ -1,0 +1,25 @@
+import { describe, expect, it } from 'vitest';
+
+import { DEFAULT_PORTAL_DISPLAY, displayFormat } from './display';
+
+describe('displayFormat', () => {
+  it('draws the defaults without a setting: lakh for NPR, international for USD, 23 Nov 2026', () => {
+    const { money, day } = displayFormat();
+    expect(money('2018180', 'NPR')).toBe('NPR 20,18,180.00');
+    expect(money('2018180', 'USD')).toBe('USD 2,018,180.00');
+    expect(day('2026-11-19')).toBe('19 Nov 2026');
+    expect(DEFAULT_PORTAL_DISPLAY.dateFormat).toBe('dd MMM yyyy');
+  });
+
+  it('follows the per-currency number system and the date pattern it is given', () => {
+    const { money, day } = displayFormat({
+      numberSystems: { NPR: 'international', INR: 'international', USD: 'south_asian' },
+      dateFormat: 'MMM dd, yyyy',
+    });
+    expect(money('2018180', 'NPR')).toBe('NPR 2,018,180.00');
+    expect(money('2018180', 'USD')).toBe('USD 20,18,180.00');
+    expect(day('2026-11-19')).toBe('Nov 19, 2026');
+    // Not a calendar date (a legacy milestone wording): passes through as written.
+    expect(day('On order')).toBe('On order');
+  });
+});

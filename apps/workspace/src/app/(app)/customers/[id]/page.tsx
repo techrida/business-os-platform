@@ -4,7 +4,7 @@ import type { ContactDto, PartyAccountDto, VerificationCaseDto } from '@bos/cont
 import type { Metadata } from 'next';
 import Link from 'next/link';
 import { notFound } from 'next/navigation';
-import type { NumberSystem } from '@bos/locale';
+import type { NumberSystems } from '@bos/locale';
 
 import { addContactAction } from '@/components/p2/customers/actions';
 import {
@@ -35,7 +35,7 @@ import { Table, Td, Th } from '@/components/ui/table';
 import { Tab, TabList, TabPanel, Tabs } from '@/components/ui/tabs';
 import { failureOf } from '@/lib/api-kernel';
 import { requireStaffSession } from '@/lib/bff';
-import { getNumberSystem } from '@/lib/display-settings';
+import { getNumberSystems } from '@/lib/display-settings';
 import { money, when } from '@/lib/kernel-format';
 import { userNames } from '@/lib/business-labels';
 import { listPaymentTerms } from '@/components/p2/quote-builder/api';
@@ -184,11 +184,11 @@ function Contacts({
 function Accounts({
   customer,
   terms,
-  numberSystem,
+  numberSystems,
 }: {
   customer: CustomerDetail;
   terms: Map<string, string>;
-  numberSystem: NumberSystem;
+  numberSystems: NumberSystems;
 }) {
   const accounts: PartyAccountDto[] | undefined = customer.accounts;
   const currency = customer.defaultCurrency;
@@ -233,7 +233,7 @@ function Accounts({
                       <span className={styles.quiet}>Not set</span>
                     ) : currency !== null ? (
                       <span className={styles.numeric}>
-                        {money(a.creditLimit, currency, numberSystem)}
+                        {money(a.creditLimit, currency, numberSystems)}
                       </span>
                     ) : (
                       <span className={styles.numeric}>{a.creditLimit}</span>
@@ -327,6 +327,23 @@ function Verification({
   );
 }
 
+/**
+ * The account owner's name: from the record itself first (the API sends it to every staff reader), then from the
+ * admin directory, which only administrators can read.
+ */
+function ownerName(
+  customer: CustomerDetail,
+  directory: PromiseSettledResult<Map<string, string>>,
+): string {
+  const owner = customer.ownerUserId;
+  if (owner === null) return 'Owner name unavailable';
+  return (
+    customer.people?.find((p) => p.userId === owner)?.name ??
+    (directory.status === 'fulfilled' ? directory.value.get(owner) : undefined) ??
+    'Owner name unavailable'
+  );
+}
+
 export default async function CustomerPage({
   params,
   searchParams,
@@ -339,7 +356,7 @@ export default async function CustomerPage({
   if (!isGuid(id)) notFound();
   const here = `/customers/${id}`;
   const session = await requireStaffSession(here);
-  const numberSystem = await getNumberSystem();
+  const numberSystems = await getNumberSystems();
   const flags = await searchParams;
 
   let customer: CustomerDetail;
@@ -407,9 +424,7 @@ export default async function CustomerPage({
       value:
         customer.ownerUserId !== null ? (
           <span>
-            {people.status === 'fulfilled'
-              ? (people.value.get(customer.ownerUserId) ?? 'Owner name unavailable')
-              : 'Owner name unavailable'}
+            {ownerName(customer, people)}
           </span>
         ) : (
           <span className={styles.quiet}>Not assigned</span>
@@ -491,7 +506,7 @@ export default async function CustomerPage({
             </TabPanel>
             <TabPanel id="terms">
               <Accounts
-                numberSystem={numberSystem}
+                numberSystems={numberSystems}
                 customer={customer}
                 terms={
                   new Map(

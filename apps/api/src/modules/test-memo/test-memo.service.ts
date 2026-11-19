@@ -91,6 +91,7 @@ import { readTxContext } from '../../platform/documents/tx-context';
 import { NotifyService } from '../../platform/notify/notify.service';
 import { MoneyService } from '../../platform/settings/money.service';
 import { NumberingService } from '../../platform/settings/numbering.service';
+import { SettingsService } from '../../platform/settings/settings.service';
 import { TestMemoCaller } from './test-memo.caller';
 import {
   MEMO_OWNER_TYPE,
@@ -103,8 +104,18 @@ import {
 type MemoRow = typeof testMemos.$inferSelect;
 type Q = Db | DbTransaction;
 
-/** The numbering series key; `numbering.memo_prefix` in settings is the display prefix of the same series. */
+/**
+ * The numbering series key. It never changes: `numbering.memo_prefix` in settings is only the printed prefix of
+ * this one counter, so renaming the prefix neither resets nor forks the series (NOTE-2082/83-00008 follows
+ * MEMO-2082/83-00007), and numbers already issued keep the prefix they were stored with.
+ */
 const MEMO_SERIES = 'MEMO';
+
+/** The issued number with the series' stored prefix replaced by `prefix`: `MEMO-2082/83-00007` -> `NOTE-2082/83-00007`. */
+export function withMemoPrefix(number: string, fiscalYear: string, prefix: string): string {
+  const tail = number.lastIndexOf(`-${fiscalYear}-`);
+  return tail === -1 ? number : `${prefix}${number.slice(tail)}`;
+}
 /** Only these two states may be edited or submitted: a submitted memo is frozen for the approvers. */
 const EDITABLE: readonly MemoRow['status'][] = ['draft', 'returned'];
 
@@ -248,6 +259,7 @@ export class TestMemoService implements OnModuleInit {
     private readonly roleCache: RoleCache,
     private readonly caller: TestMemoCaller,
     @Inject(APPROVALS_CLOCK) private readonly clock: Clock,
+    private readonly settings: SettingsService,
     // Optional: a missing notify module only slows delivery (the 5 s drain still sends), it never fails a submit.
     @Optional() private readonly notify?: NotifyService,
   ) {}
@@ -424,6 +436,9 @@ export class TestMemoService implements OnModuleInit {
     }
     const template = body.template ? await this.templateSnapshot(body.template) : undefined;
     const now = this.clock();
+    // Read before the transaction: the read uses the pool, so it must not hold a second connection while the
+    // series row is locked. The default (MEMO) prints exactly what the series stored before the setting existed.
+    const prefix = await this.settings.get(scope, 'numbering.memo_prefix');
     return withTx(this.db, scope, actor, async (tx) => {
       // The FK also refuses a vendor or foreign party, but as a 500; name the problem as a 400 instead.
       if (body.customerPartyId) {
@@ -445,7 +460,8 @@ export class TestMemoService implements OnModuleInit {
           });
         }
       }
-      const number = await this.numbering.next(tx, MEMO_SERIES, now);
+      const issued = await this.numbering.issue(tx, MEMO_SERIES, now);
+      const number = withMemoPrefix(issued.number, issued.fiscalYear, prefix);
       // A template memo may omit the money (the contract allows it only then): store NPR 0.00. A legacy memo
       // always sends both; the contract refuses it otherwise.
       const money: Money = {

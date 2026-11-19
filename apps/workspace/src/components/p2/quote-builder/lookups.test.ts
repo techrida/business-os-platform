@@ -36,6 +36,7 @@ describe('loadLookups', () => {
       paymentTerms: [],
       contacts: [],
       termPresets: [],
+      canAddTerms: false,
     });
     tax.listTaxCodes.mockResolvedValue([]);
     expect((await loadLookups(session, 'customer')).taxCodes).toEqual([]);
@@ -63,5 +64,16 @@ describe('loadLookups', () => {
     expect(result.termPresets).toBeNull();
     expect(result.taxCodes).toEqual([code]);
     expect(result.paymentTerms).toEqual([]);
+  });
+
+  it('offers "Add more" to a session with admin.settings.write (the Founder) and to nobody else', async () => {
+    tax.listTaxCodes.mockResolvedValue([]);
+    expect((await loadLookups({ roles: ['founder'] } as Session, 'customer')).canAddTerms).toBe(
+      true,
+    );
+    expect((await loadLookups(session, 'customer')).canAddTerms).toBe(false);
+    expect((await loadLookups({ roles: [] } as unknown as Session, 'customer')).canAddTerms).toBe(
+      false,
+    );
   });
 });

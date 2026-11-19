@@ -692,7 +692,27 @@ export class InvoiceDraftingService {
       .orderBy(asc(invoiceLines.lineNo));
     const taxSummary = await tx.select().from(invoiceTaxSummary).where(child(invoiceTaxSummary));
     const prints = await tx.select().from(invoicePrintLog).where(child(invoicePrintLog));
-    return toInvoiceDetail({ invoice, lines, taxSummary, prints });
+    // The name a draft shows before the buyer is frozen at issue; the caller may read the invoice, which names it.
+    const [customer] =
+      invoice.customerPartyId === null
+        ? []
+        : await tx
+            .select({ legalName: customers.legalName })
+            .from(customers)
+            .where(
+              and(
+                eq(customers.tenantId, scope.tenantId),
+                eq(customers.id, invoice.customerPartyId),
+              ),
+            )
+            .limit(1);
+    return toInvoiceDetail({
+      invoice,
+      lines,
+      taxSummary,
+      prints,
+      customerName: customer?.legalName,
+    });
   }
 }
 

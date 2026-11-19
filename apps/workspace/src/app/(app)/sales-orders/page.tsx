@@ -3,7 +3,7 @@ import { randomUUID } from 'node:crypto';
 import { pageWindow, type SalesOrderListItem } from '@bos/contracts';
 import type { Metadata } from 'next';
 import Link from 'next/link';
-import type { NumberSystem } from '@bos/locale';
+import type { NumberSystems } from '@bos/locale';
 
 import { listCustomers } from '@/components/p2/customers/api';
 import { hasPermission } from '@/components/p2/customers/permissions';
@@ -19,7 +19,7 @@ import { Table, Td, Th } from '@/components/ui/table';
 import { getSalesOrdersSummary, listSalesOrdersPage } from '@/lib/api-billing';
 import { failureOf } from '@/lib/api-kernel';
 import { requireStaffSession } from '@/lib/bff';
-import { getNumberSystem } from '@/lib/display-settings';
+import { getNumberSystems } from '@/lib/display-settings';
 import { money, when } from '@/lib/kernel-format';
 import {
   activeFilterLabels,
@@ -49,10 +49,10 @@ const CUSTOMER_OPTIONS = 100;
 
 function OrderRow({
   item,
-  numberSystem,
+  numberSystems,
 }: {
   item: SalesOrderListItem;
-  numberSystem: NumberSystem;
+  numberSystems: NumberSystems;
 }) {
   const { label, tone } = salesOrderStatusMeta(item.status);
   return (
@@ -69,7 +69,7 @@ function OrderRow({
         <Badge tone={tone}>{label}</Badge>
       </Td>
       <Td align="end" nowrap>
-        <span className={layout.amount}>{money(item.total, item.currency, numberSystem)}</span>
+        <span className={layout.amount}>{money(item.total, item.currency, numberSystems)}</span>
       </Td>
       <Td nowrap>
         {item.confirmedAt !== null ? (
@@ -99,7 +99,7 @@ export default async function SalesOrdersPage({
   const pageHref = (page: number) => hrefWith(PATH, params, { page: page > 1 ? page : undefined });
   const here = pageHref(state.page);
   const session = await requireStaffSession(here);
-  const numberSystem = await getNumberSystem();
+  const numberSystems = await getNumberSystems();
   const canConfirm = hasPermission(session.roles, 'sales_order.confirm');
   const filter = { status: statuses, customerId: customerIds, ...(q !== undefined ? { q } : {}) };
   const readOrders = (page: number) =>
@@ -132,7 +132,7 @@ export default async function SalesOrdersPage({
           (items): ConfirmOption[] =>
             items.map((q) => ({
               versionId: q.currentVersionId,
-              label: `${q.number} · ${q.customerName} · ${money(q.total, q.currency, numberSystem)}`,
+              label: `${q.number} · ${q.customerName} · ${money(q.total, q.currency, numberSystems)}`,
             })),
           () => null,
         )
@@ -275,7 +275,7 @@ export default async function SalesOrdersPage({
             </thead>
             <tbody>
               {items.map((item) => (
-                <OrderRow numberSystem={numberSystem} key={item.id} item={item} />
+                <OrderRow numberSystems={numberSystems} key={item.id} item={item} />
               ))}
             </tbody>
           </Table>

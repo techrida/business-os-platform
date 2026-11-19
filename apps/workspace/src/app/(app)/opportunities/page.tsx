@@ -7,7 +7,7 @@ import {
 } from '@bos/contracts';
 import type { Metadata } from 'next';
 import Link from 'next/link';
-import type { NumberSystem } from '@bos/locale';
+import type { NumberSystems } from '@bos/locale';
 
 import { Board } from '@/components/p2/crm/board';
 import { ListFooter } from '@/components/p2/crm/list-footer';
@@ -27,7 +27,7 @@ import { StatCard } from '@/components/ui/stat-card';
 import { CellTitle, Table, Td, Th } from '@/components/ui/table';
 import { failureOf } from '@/lib/api-kernel';
 import { requireStaffSession } from '@/lib/bff';
-import { getNumberSystem } from '@/lib/display-settings';
+import { getNumberSystems } from '@/lib/display-settings';
 import { userNames } from '@/lib/business-labels';
 import { when } from '@/lib/kernel-format';
 import {
@@ -56,7 +56,7 @@ const stageOptions = OPPORTUNITY_STAGES.map((value) => ({
   label: stageLabel('opportunity', value),
 }));
 
-function columnsFor(items: OpportunityDto[], numberSystem: NumberSystem): BoardColumnData[] {
+function columnsFor(items: OpportunityDto[], numberSystems: NumberSystems): BoardColumnData[] {
   const groups = groupByStage('opportunity', items);
   return boardColumns('opportunity').map((c) => ({
     stage: c.stage,
@@ -68,7 +68,7 @@ function columnsFor(items: OpportunityDto[], numberSystem: NumberSystem): BoardC
       title: o.name,
       number: o.number,
       subtitle: o.expectedClose ? `Expected close ${when(o.expectedClose, 'date')}` : '',
-      value: moneyOrNull(o.value, o.currency, numberSystem),
+      value: moneyOrNull(o.value, o.currency, numberSystems),
       version: o.version,
       moves: userMoves('opportunity', o.stage),
     })),
@@ -124,7 +124,7 @@ export default async function OpportunitiesPage({
   searchParams: Promise<RawParams>;
 }) {
   const session = await requireStaffSession(PATH);
-  const numberSystem = await getNumberSystem();
+  const numberSystems = await getNumberSystems();
   const sp = await searchParams;
   const names = await userNames(session);
   const ownerOptions = [...names]
@@ -241,7 +241,7 @@ export default async function OpportunitiesPage({
         )
       ) : items !== null && board ? (
         <Board
-          columns={columnsFor(items, numberSystem)}
+          columns={columnsFor(items, numberSystems)}
           action={moveOpportunityStageAction}
           noun="opportunity"
           className={styles.board}
@@ -276,7 +276,7 @@ export default async function OpportunitiesPage({
                   <StageBadge kind="opportunity" stage={o.stage} />
                 </Td>
                 <Td align="end" nowrap>
-                  {moneyOrNull(o.value, o.currency, numberSystem) ?? (
+                  {moneyOrNull(o.value, o.currency, numberSystems) ?? (
                     <span className={styles.quiet}>Not set</span>
                   )}
                 </Td>

@@ -97,12 +97,15 @@ describe('GET /invoices/:id/document', () => {
     expect(mocks.apiFetch).not.toHaveBeenCalled();
   });
 
-  it.each([409, 404])('turns a %i from the API into a plain "not available"', async (status) => {
+  it.each([
+    [409, /still being prepared/i],
+    [404, /not available/i],
+  ])('turns a %i from the API into a plain message', async (status, message) => {
     mocks.apiFetch.mockResolvedValue(json(status, { error: { code: 'not_clean' } }));
     const res = await call();
     expect(res.status).toBe(status);
     expect(res.headers.get('content-type')).toContain('text/plain');
-    expect(await res.text()).toMatch(/not available/i);
+    expect(await res.text()).toMatch(message);
     // One call and no retry: every call issues a single-use link, so nothing may probe.
     expect(mocks.apiFetch).toHaveBeenCalledTimes(1);
     expect(mocks.openSignedFile).not.toHaveBeenCalled();

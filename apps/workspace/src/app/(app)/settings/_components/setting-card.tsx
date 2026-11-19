@@ -3,6 +3,7 @@
 import { CURRENCIES, ROLE_KEYS, type SettingKey } from '@bos/contracts';
 import { useActionState, useId, useState, type ReactNode } from 'react';
 
+import { ResetToDefaultButton } from '@/components/settings/reset-to-default';
 import { Button } from '@/components/ui/button';
 import { Field, Input, Select } from '@/components/ui/field';
 import { Panel } from '@/components/ui/panel';
@@ -44,7 +45,9 @@ function parseJson<T>(text: string, fallback: T): T {
  * One card, one decision, one Save. Typed controls per setting; Save is enabled only while the card
  * differs from what is saved. Success is a toast (FormStatus); a refused field keeps its input and
  * shows its message at the field. The page remounts the card (new `key`) after a save, so the saved
- * values become the new baseline.
+ * values become the new baseline. A setting that differs from its default shows an undo icon beside
+ * its label (D32); pressing it saves that one default immediately, apart from this card's Save, and
+ * the remount drops any unsaved edits in the card's other fields.
  */
 export function SettingCard({
   section,
@@ -76,9 +79,15 @@ export function SettingCard({
             <div
               key={f.key}
               className={
-                f.kind === 'currencies' || f.kind === 'schedule' || f.kind === 'sla'
-                  ? styles.wide
-                  : undefined
+                [
+                  f.kind === 'currencies' || f.kind === 'schedule' || f.kind === 'sla'
+                    ? styles.wide
+                    : undefined,
+                  // Makes room beside the label for the undo icon, only while there is one.
+                  f.isDefault ? undefined : styles.resettable,
+                ]
+                  .filter(Boolean)
+                  .join(' ') || undefined
               }
             >
               <input type="hidden" name="key" value={f.key} />
@@ -88,6 +97,17 @@ export function SettingCard({
                 value={values[f.key] ?? []}
                 onChange={(next) => set(f.key, next)}
                 error={state.status === 'error' ? state.fieldErrors?.[f.key] : undefined}
+              />
+              {/* A sibling of the control, never inside its label: the control keeps its own name.
+                  A reset saves the default straight away, so the page remounts the card with it. */}
+              <ResetToDefaultButton
+                className={styles.resetSlot}
+                section={section}
+                settingKey={f.key}
+                label={f.label}
+                isDefault={f.isDefault}
+                defaultText={f.defaultText}
+                loadedVersion={f.version}
               />
             </div>
           ))}

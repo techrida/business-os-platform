@@ -1,6 +1,6 @@
 import { trimPercent } from '@bos/contracts';
 import type { ApprovalRequestDto } from '@bos/contracts';
-import type { NumberSystem } from '@bos/locale';
+import type { NumberSystems } from '@bos/locale';
 
 import { Alert } from '@/components/ui/alert';
 import { Badge } from '@/components/ui/badge';
@@ -18,12 +18,12 @@ type SummaryRequest = Pick<ApprovalRequestDto, 'snapshot'> & {
 /** The stored values as they are, for a snapshot that is not a quotation snapshot. */
 function StoredValues({
   snapshot,
-  numberSystem,
+  numberSystems,
 }: {
   snapshot: unknown;
-  numberSystem: NumberSystem | undefined;
+  numberSystems: NumberSystems | undefined;
 }) {
-  const facts: Fact[] = snapshotEntries(snapshot, undefined, numberSystem).map((row) => ({
+  const facts: Fact[] = snapshotEntries(snapshot, undefined, numberSystems).map((row) => ({
     key: row.key,
     label: row.label,
     value: row.block ? <pre className={styles.pre}>{row.value}</pre> : row.value,
@@ -44,11 +44,11 @@ function StoredValues({
  */
 export function QuotationApprovalSummary({
   request,
-  numberSystem,
+  numberSystems,
 }: {
   request: SummaryRequest;
   /** The tenant's grouping setting; left out, each currency keeps its own grouping. */
-  numberSystem?: NumberSystem;
+  numberSystems?: NumberSystems;
 }) {
   const snap = parseApprovalSnapshot(request.snapshot);
 
@@ -59,7 +59,7 @@ export function QuotationApprovalSummary({
           The quotation summary could not be read from this request, so the stored values are shown
           as they are.
         </Alert>
-        <StoredValues snapshot={request.snapshot} numberSystem={numberSystem} />
+        <StoredValues snapshot={request.snapshot} numberSystems={numberSystems} />
       </div>
     );
   }
@@ -74,7 +74,7 @@ export function QuotationApprovalSummary({
       label: 'Total (NPR)',
       value: (
         <span className={`${styles.figure} ${styles.total}`}>
-          {money(snap.nprTotal, 'NPR', numberSystem)}
+          {money(snap.nprTotal, 'NPR', numberSystems)}
         </span>
       ),
     },
@@ -82,7 +82,7 @@ export function QuotationApprovalSummary({
       key: 'discount',
       label: 'Discount',
       value: (
-        <span className={styles.figure}>{money(snap.nprDiscountAmount, 'NPR', numberSystem)}</span>
+        <span className={styles.figure}>{money(snap.nprDiscountAmount, 'NPR', numberSystems)}</span>
       ),
     },
     {
@@ -96,7 +96,10 @@ export function QuotationApprovalSummary({
         <span className={styles.figure}>{trimPercent(snap.effectiveDiscountPct)}%</span>
       ),
     },
-    {
+  ];
+  // Absent: the viewer lacks `quotation.cost.read` (D29), so the row is not shown at all. Null: no cost is recorded.
+  if (snap.marginPct !== undefined) {
+    facts.push({
       key: 'margin',
       label: 'Margin',
       value:
@@ -105,8 +108,8 @@ export function QuotationApprovalSummary({
         ) : (
           <span className={styles.figure}>{trimPercent(snap.marginPct)}%</span>
         ),
-    },
-  ];
+    });
+  }
   if (foreign) {
     facts.push(
       { key: 'currency', label: 'Document currency', value: snap.currency },

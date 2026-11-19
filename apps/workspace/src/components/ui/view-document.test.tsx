@@ -91,3 +91,44 @@ it('withDownload adds a plain download anchor that is never fetched or prefetche
   expect(onDownload).toHaveBeenCalledTimes(1);
   expect(fetchMock).not.toHaveBeenCalled();
 });
+
+const RETRY = '/api/q/1/pdf/retry';
+
+async function openOnFailedPreparation(props: { retryUrl?: string }) {
+  fetchMock.mockImplementation((url: string) =>
+    Promise.resolve(new Response(null, { status: url === RETRY ? 202 : 424 })),
+  );
+  mounted = await mountForm(<ViewDocument {...PROPS} {...props} />);
+  await click(mounted.container.querySelector('button'));
+  await new Promise((resolve) => setTimeout(resolve, 0));
+}
+
+const retryButton = () =>
+  [...document.querySelectorAll<HTMLButtonElement>('[role="dialog"] button')].find(
+    (b) => b.textContent === 'Retry',
+  );
+
+it('passes retryUrl through: a PDF that could not be prepared offers Retry, which posts to it', async () => {
+  await openOnFailedPreparation({ retryUrl: RETRY });
+  expect(document.body.textContent).toContain('Could not prepare');
+  const retry = retryButton();
+  expect(retry).toBeDefined();
+  fetchMock.mockImplementation((url: string) =>
+    Promise.resolve(
+      url === RETRY
+        ? new Response(null, { status: 202 })
+        : new Response('%PDF-1.7', { status: 200 }),
+    ),
+  );
+  await click(retry ?? null);
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  const retried = fetchMock.mock.calls.find(([url]) => url === RETRY);
+  expect(retried?.[1]).toEqual(expect.objectContaining({ method: 'POST' }));
+});
+
+it('offers no Retry without a retryUrl (invoices and other documents)', async () => {
+  await openOnFailedPreparation({});
+  expect(document.body.textContent).toContain('Could not prepare');
+  expect(retryButton()).toBeUndefined();
+  expect(fetchMock.mock.calls.some(([url]) => url === RETRY)).toBe(false);
+});

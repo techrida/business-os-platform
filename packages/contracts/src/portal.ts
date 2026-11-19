@@ -4,8 +4,14 @@
 import { z } from 'zod';
 
 import { AddressSchema, PanVatNoSchema } from './crm.js';
+import {
+  DEFAULT_DATE_FORMAT,
+  DEFAULT_NUMBER_SYSTEMS,
+  DateFormatSchema,
+  NumberSystemsSchema,
+} from './document-style.js';
 import { CurrencySchema, DecimalString } from './money.js';
-import { PaymentMilestoneSchema, QuantityString, type QuotationStatus } from './quotations.js';
+import { PaymentMilestoneDtoSchema, QuantityString, type QuotationStatus } from './quotations.js';
 
 const isoDate = z.iso.date();
 const sha256Hex = z.string().regex(/^[0-9a-f]{64}$/);
@@ -47,6 +53,18 @@ const PartyBlock = z.strictObject({
   address: AddressSchema,
 });
 
+/** How the selling company writes numbers and dates; the portal draws every amount and date with it (D30, D27). */
+export const PortalDisplaySchema = z.strictObject({
+  numberSystems: NumberSystemsSchema,
+  dateFormat: DateFormatSchema,
+});
+export type PortalDisplay = z.infer<typeof PortalDisplaySchema>;
+
+/** The display a company that never changed its settings gets. A fresh object each call, so no caller can edit it. */
+export function defaultPortalDisplay(): PortalDisplay {
+  return { numberSystems: { ...DEFAULT_NUMBER_SYSTEMS }, dateFormat: DEFAULT_DATE_FORMAT };
+}
+
 /**
  * What the customer sees of one quotation version. Strict on purpose: an object with an extra key,
  * such as a whole internal version, fails to parse instead of leaking. A mapper builds this field by
@@ -72,7 +90,7 @@ export const CustomerQuotationViewSchema = z.strictObject({
   termsAndConditions: z.string().nullable(),
   deliveryTimeline: z.string().nullable(),
   paymentTermName: z.string().nullable(),
-  paymentSchedule: z.array(PaymentMilestoneSchema),
+  paymentSchedule: z.array(PaymentMilestoneDtoSchema),
   lines: z.array(
     z.strictObject({
       lineNo: z.number().int().min(1),
@@ -100,6 +118,11 @@ export const CustomerQuotationViewSchema = z.strictObject({
       tax: DecimalString,
     }),
   ),
+  /**
+   * Number grouping and date pattern: the ones frozen with this version when it was first rendered, else the
+   * selling company's current settings. The portal draws this version's amounts and dates with it.
+   */
+  display: PortalDisplaySchema,
   /** The frozen PDF. Null until it is rendered and scanned clean. The hash lets the customer check a download. */
   file: z
     .strictObject({ documentId: z.guid(), filename: z.string(), sha256: sha256Hex })

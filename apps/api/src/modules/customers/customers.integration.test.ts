@@ -30,6 +30,7 @@ import {
   partyAccounts,
   runMigrations,
   userEntities,
+  users,
 } from '@bos/db';
 import { fiscalYearOf } from '@bos/locale';
 import { ConflictException, ForbiddenException, type INestApplication } from '@nestjs/common';
@@ -847,6 +848,73 @@ describe('detail accounts', () => {
       creditLimit: '50000.00',
       version: 1,
     });
+  });
+});
+
+describe('detail people (the account owner by name)', () => {
+  /** The name a user of the fixtures has, read as the owner role so the test does not trust the API's lookup. */
+  const nameOf = async (userId: string) => {
+    const [row] = await db
+      .select({ displayName: users.displayName })
+      .from(users)
+      .where(eq(users.id, userId));
+    expect(row?.displayName).toBeTruthy();
+    return row!.displayName!;
+  };
+  const readPeople = async (id: string) => {
+    const res = await request(baseUrl).get(`/v1/customers/${id}`);
+    expect(res.status, JSON.stringify(res.body)).toBe(200);
+    return (res.body as { people?: { userId: string; name: string }[] }).people;
+  };
+
+  it('names the owner for a Sales caller who owns the customer, without the admin directory', async () => {
+    const customer = await createCustomer({ ownerUserId: a.userId });
+    asStaff(a);
+    expect(await readPeople(customer.id)).toEqual([
+      { userId: a.userId, name: await nameOf(a.userId) },
+    ]);
+  });
+
+  it('names a different owner, and only that owner, for a Sales colleague who reads the customer', async () => {
+    const { userId: mate } = await createStaffUser(appPool, { ...a, roleKeys: ['sales'] });
+    const customer = await createCustomer({ ownerUserId: mate });
+    asStaff(a);
+    expect(await readPeople(customer.id)).toEqual([{ userId: mate, name: await nameOf(mate) }]);
+  });
+
+  it('names nobody when the customer has no owner', async () => {
+    // A create defaults the owner to the caller; an imported or older row may have none.
+    const customer = await createCustomer();
+    await withTx(db, a, systemActor('test'), (tx) =>
+      tx.update(customers).set({ ownerUserId: null }).where(eq(customers.id, customer.id)),
+    );
+    const res = await request(baseUrl).get(`/v1/customers/${customer.id}`);
+    expect((res.body as { ownerUserId: string | null }).ownerUserId).toBeNull();
+    expect(await readPeople(customer.id)).toEqual([]);
+  });
+
+  it("keeps another tenant's owner name in that tenant", async () => {
+    asStaff(b);
+    const theirs = await createCustomer({ ownerUserId: b.userId });
+    const theirName = await nameOf(b.userId);
+    expect(await readPeople(theirs.id)).toEqual([{ userId: b.userId, name: theirName }]);
+
+    asStaff(a);
+    const res = await request(baseUrl).get(`/v1/customers/${theirs.id}`);
+    expect(res.status).toBe(404);
+    expect(JSON.stringify(res.body)).not.toContain(theirName);
+    const mine = await createCustomer({ ownerUserId: a.userId });
+    const people = await readPeople(mine.id);
+    expect(people?.map((p) => p.userId)).toEqual([a.userId]);
+    expect(JSON.stringify(people)).not.toContain(theirName);
+  });
+
+  it('is left out for a portal caller, who must not learn staff names', async () => {
+    const mine = await createCustomer({ ownerUserId: a.userId });
+    asPortal(a, mine.id);
+    const own = await request(baseUrl).get(`/v1/customers/${mine.id}`);
+    expect(own.status).toBe(200);
+    expect(own.body).not.toHaveProperty('people');
   });
 });
 

@@ -16,7 +16,7 @@ import { CellTitle, Table, Td, Th } from '@/components/ui/table';
 import { getPurchaseRequest, type PurchaseRequestDto } from '@/lib/api-procurement';
 import { getApprovalRequest } from '@/lib/api-kernel';
 import { requireStaffSession } from '@/lib/bff';
-import { getNumberSystem } from '@/lib/display-settings';
+import { getNumberSystems } from '@/lib/display-settings';
 import { money, when } from '@/lib/kernel-format';
 import { humanizeKey } from '@/lib/kernel-ui';
 
@@ -99,12 +99,16 @@ function factsOf(pr: PurchaseRequestDto): Fact[] {
     {
       key: 'dept',
       label: 'Department',
-      value: <span className={styles.numeric}>Department name unavailable</span>,
+      value: pr.departmentName ?? (
+        <span className={styles.numeric}>Department name unavailable</span>
+      ),
     },
     {
       key: 'cost',
       label: 'Cost centre',
-      value: <span className={styles.numeric}>Cost centre name unavailable</span>,
+      value: pr.costCenterName ?? (
+        <span className={styles.numeric}>Cost centre name unavailable</span>
+      ),
     },
     { key: 'budget', label: 'Budget code', value: pr.budgetCode },
     { key: 'currency', label: 'Currency', value: pr.currency },
@@ -162,7 +166,7 @@ export default async function PurchaseRequestPage({
   const { id } = await params;
   if (!isGuid(id)) notFound();
   const session = await requireStaffSession(`/procurement/requests/${id}`);
-  const numberSystem = await getNumberSystem();
+  const numberSystems = await getNumberSystems();
   const sp = await searchParams;
   const self = `/procurement/requests/${encodeURIComponent(id)}`;
 
@@ -318,12 +322,12 @@ export default async function PurchaseRequestPage({
                 </Td>
                 <Td align="end" nowrap>
                   <span className={styles.numeric}>
-                    {money(l.estimatedUnitPrice, pr.currency, numberSystem)}
+                    {money(l.estimatedUnitPrice, pr.currency, numberSystems)}
                   </span>
                 </Td>
                 <Td align="end" nowrap>
                   <span className={styles.numeric}>
-                    {money(l.estimatedAmount, pr.currency, numberSystem)}
+                    {money(l.estimatedAmount, pr.currency, numberSystems)}
                   </span>
                 </Td>
               </tr>
@@ -338,7 +342,7 @@ export default async function PurchaseRequestPage({
               label: `Estimated total (${pr.currency})`,
               value: (
                 <strong className={styles.numeric}>
-                  {money(pr.estimatedTotal, pr.currency, numberSystem)}
+                  {money(pr.estimatedTotal, pr.currency, numberSystems)}
                 </strong>
               ),
             },
@@ -349,7 +353,7 @@ export default async function PurchaseRequestPage({
                     label: 'Estimated total in NPR',
                     value: (
                       <span className={styles.numeric}>
-                        {money(pr.estimatedTotalNpr, 'NPR', numberSystem)}
+                        {money(pr.estimatedTotalNpr, 'NPR', numberSystems)}
                         {pr.fxRate !== null ? (
                           <span className={styles.quiet}>
                             {' '}

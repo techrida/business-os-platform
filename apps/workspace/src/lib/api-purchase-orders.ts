@@ -75,7 +75,12 @@ const poFields = {
 export const PoListItemSchema = z.object(poFields);
 export type PoListItem = z.infer<typeof PoListItemSchema>;
 
-export const PurchaseOrderSchema = z.object({ ...poFields, lines: z.array(PoLineSchema) });
+export const PurchaseOrderSchema = z.object({
+  ...poFields,
+  lines: z.array(PoLineSchema),
+  /** A draft with no lines yet: the approved quotation's lines that issue will copy in. Read-only. */
+  proposedLines: z.array(PoLineSchema).optional(),
+});
 export type PurchaseOrder = z.infer<typeof PurchaseOrderSchema>;
 
 export const PoVersionSchema = z.object({

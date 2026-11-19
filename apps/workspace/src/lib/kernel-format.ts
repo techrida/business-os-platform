@@ -1,8 +1,8 @@
 // Display helpers for Server Components that need @bos/locale or contract constants (kept out of
 // kernel-ui.ts so Client Components do not pull in decimal.js and the Nepali calendar).
 // Serves the NFR "amounts are exact and dates are Kathmandu time" for every kernel screen.
-import { DEFAULT_ROLE_PERMISSIONS } from '@bos/contracts';
-import { formatKathmandu, formatMoney, type NumberSystem } from '@bos/locale';
+import { DEFAULT_ROLE_PERMISSIONS, richTextToPlain } from '@bos/contracts';
+import { formatKathmandu, formatMoney, type NumberSystems } from '@bos/locale';
 
 import { humanizeKey } from './kernel-ui';
 
@@ -20,16 +20,16 @@ const ISO_INSTANT = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(:\d{2}(\.\d+)?)?(Z|[+-]\d{2}
 
 /**
  * Money for display, or the raw text when it is not a decimal (never throws on odd data).
- * `numberSystem` is the tenant's grouping setting (`getNumberSystem()` on the server); left out,
+ * `numberSystems` is the tenant's grouping setting (`getNumberSystems()` on the server); left out,
  * each currency keeps its own grouping.
  */
 export function money(
   amount: string,
   currency: Currency = 'NPR',
-  numberSystem?: NumberSystem,
+  numberSystems?: NumberSystems,
 ): string {
   return DECIMAL.test(amount)
-    ? formatMoney(amount, currency, numberSystem === undefined ? undefined : { numberSystem })
+    ? formatMoney(amount, currency, numberSystems === undefined ? undefined : { numberSystems })
     : amount;
 }
 
@@ -106,6 +106,19 @@ function snapshotValue(value: unknown, references: ReadonlyMap<string, string>):
 }
 
 /**
+ * Snapshot keys that hold terms wording, which is stored as rich text (D31). The frozen value (and
+ * so the approval hash) stays as saved; the row shows its words, never the markup.
+ */
+const richTextKeys: ReadonlySet<string> = new Set([
+  'scope',
+  'assumptions',
+  'exclusions',
+  'deliveryTimeline',
+  'termsAndConditions',
+  'terms',
+]);
+
+/**
  * Turns the frozen snapshot (an unknown JSON value) into labelled rows. The snapshot is exactly
  * what the approvers saw: business values are preserved and money and dates are formatted.
  * Technical references use unavailable-name labels; the stored snapshot remains unchanged.
@@ -113,7 +126,7 @@ function snapshotValue(value: unknown, references: ReadonlyMap<string, string>):
 export function snapshotEntries(
   snapshot: unknown,
   references: ReadonlyMap<string, string> = new Map(),
-  numberSystem?: NumberSystem,
+  numberSystems?: NumberSystems,
 ): SnapshotEntry[] {
   if (isEmptyValue(snapshot)) return [];
   if (typeof snapshot !== 'object' || snapshot === null || Array.isArray(snapshot)) {
@@ -130,16 +143,24 @@ export function snapshotEntries(
   const currency = asCurrency(record['currency']);
   return Object.entries(record)
     .filter(([, raw]) => !isEmptyValue(raw))
+    .filter(
+      ([key, raw]) =>
+        !(richTextKeys.has(key) && typeof raw === 'string' && richTextToPlain(raw).trim() === ''),
+    )
     .map(([key, raw]): SnapshotEntry => {
       const label = humanizeKey(key);
       if (typeof raw === 'string') {
         if (/Npr$/.test(key) && DECIMAL.test(raw)) {
-          return { key, label, value: money(raw, 'NPR', numberSystem), block: false };
+          return { key, label, value: money(raw, 'NPR', numberSystems), block: false };
         }
         if (key === 'amount' && currency !== null && DECIMAL.test(raw)) {
-          return { key, label, value: money(raw, currency, numberSystem), block: false };
+          return { key, label, value: money(raw, currency, numberSystems), block: false };
         }
         if (ISO_INSTANT.test(raw)) return { key, label, value: when(raw), block: false };
+        if (richTextKeys.has(key)) {
+          const words = richTextToPlain(raw);
+          return { key, label, value: words, block: words.includes('\n') || words.length > 120 };
+        }
         return { key, label, value: raw, block: raw.includes('\n') || raw.length > 120 };
       }
       if (typeof raw === 'number' || typeof raw === 'boolean') {

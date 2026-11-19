@@ -190,6 +190,29 @@ describe('BillList and BillView', () => {
   });
 });
 
+describe('vendor views with the company display setting', () => {
+  const display = {
+    numberSystems: { NPR: 'international', INR: 'south_asian', USD: 'international' },
+    dateFormat: 'dd/MM/yyyy',
+  } as const;
+
+  it('draws order and bill amounts and dates with the setting passed in', () => {
+    const render = (node: React.ReactElement) => text(renderToStaticMarkup(node));
+    const list = render(<PurchaseOrderList items={[samplePoListItem()]} display={display} />);
+    expect(list).toContain('NPR 1,250,000.50');
+    expect(list).toContain('08/11/2026');
+    expect(list).not.toContain('12,50,000.50');
+    const po = render(<PurchaseOrderView view={samplePo()} display={display} />);
+    expect(po).toContain('NPR 1,250,000.50');
+    expect(po).toContain('08/11/2026');
+    const bills = render(<BillList items={[sampleBill()]} display={display} />);
+    expect(bills).toContain('NPR 1,180,000.00');
+    expect(bills).toContain('02/11/2026');
+    const bill = render(<BillView view={sampleBill()} display={display} />);
+    expect(bill).toContain('07/11/2026');
+  });
+});
+
 describe('VendorNoAccess and VendorNotFound', () => {
   it('the no-access notice is rendered in place with a sign-out form, and does not redirect', () => {
     const html = renderToStaticMarkup(<VendorNoAccess />);

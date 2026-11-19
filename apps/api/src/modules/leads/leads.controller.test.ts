@@ -27,6 +27,8 @@ async function setup() {
     get: vi.fn().mockResolvedValue({}),
     create: vi.fn().mockResolvedValue({}),
     changeStage: vi.fn().mockResolvedValue({}),
+    update: vi.fn().mockResolvedValue({}),
+    owners: vi.fn().mockResolvedValue([]),
   };
   const moduleRef = await Test.createTestingModule({
     controllers: [LeadsController],
@@ -50,6 +52,42 @@ describe('LeadsController', () => {
     expect(can('get')).toBe('crm.lead.read');
     expect(can('create')).toBe('crm.lead.write');
     expect(can('changeStage')).toBe('crm.lead.write');
+    expect(can('update')).toBe('crm.lead.write');
+    expect(can('owners')).toBe('crm.lead.write');
+  });
+
+  it('declares GET owners before GET :id, so "owners" is never parsed as a lead id', () => {
+    const names = Object.getOwnPropertyNames(LeadsController.prototype);
+    expect(names.indexOf('owners')).toBeGreaterThan(-1);
+    expect(names.indexOf('owners')).toBeLessThan(names.indexOf('get'));
+    expect(Reflect.getMetadata('path', LeadsController.prototype.owners)).toBe('owners');
+  });
+
+  it('edits with only the fields sent: no currency default, and a bad body never reaches the service', async () => {
+    const { service, controller } = await setup();
+    const owner = '0b7d4c1e-5a2f-4e3b-8c9d-1a2b3c4d5e6f';
+    await controller.update(ID, { ownerUserId: owner, expectedVersion: 3 });
+    expect(service.update).toHaveBeenCalledWith(ID, { ownerUserId: owner, expectedVersion: 3 });
+    expect(service.update.mock.calls[0]![1]).not.toHaveProperty('currency');
+
+    service.update.mockClear();
+    for (const body of [
+      { title: 'x' },
+      { title: 'x', expectedVersion: 0 },
+      { stage: 'qualified', expectedVersion: 1 },
+      { ownerUserId: 'not-a-uuid', expectedVersion: 1 },
+      { source: 'telepathy', expectedVersion: 1 },
+      { followUp: { kind: 'call', dueAt: '2026-12-01T09:00:00Z' }, expectedVersion: 1 },
+    ]) {
+      expect(() => controller.update(ID, body), JSON.stringify(body)).toThrow(BadRequestException);
+    }
+    expect(service.update).not.toHaveBeenCalled();
+  });
+
+  it('lists owners through the service', async () => {
+    const { service, controller } = await setup();
+    await controller.owners();
+    expect(service.owners).toHaveBeenCalledWith();
   });
 
   it('parses the list query: repeats become arrays, limit and offset numbers with defaults', async () => {

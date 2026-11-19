@@ -544,6 +544,33 @@ describe('match (check 6, AD6 defaults from settings)', () => {
     expect(await stepRoles(submitted.approvalRequestId!)).toEqual(['accountant', 'finance']);
   });
 
+  it('names the vendor and the order of a submitted bill for its approver, in this entity only (I-31)', async () => {
+    const po = await receivedPo('1', '10000.00', '1');
+    const bill = await billFor(po, '1', '10000.00');
+    const submitted = await service.submit(bill.id, randomUUID());
+    const [stored] = await read((tx) =>
+      tx.execute<{ number: string }>(
+        sql`SELECT number FROM app.purchase_orders WHERE id = ${po.id}`,
+      ),
+    ).then((r) => r.rows);
+    // The approver of the first step is another accountant, who reads the request, not the vendor directory.
+    as(U.acct2, 'accountant');
+    const request = await approvals.get(submitted.approvalRequestId!);
+    expect(request.snapshot).toMatchObject({ vendorPartyId: po.vendorId, purchaseOrderId: po.id });
+    expect(request.references).toEqual(
+      expect.arrayContaining([
+        { id: po.vendorId, name: `Vendor ${po.vendorId.slice(0, 6)}` },
+        { id: po.id, name: stored!.number },
+      ]),
+    );
+    expect(request.references).toHaveLength(2);
+
+    // Entity B cannot open entity A's request, so it learns neither name.
+    current.scope = scopeB;
+    expect((await httpErrorOf(approvals.get(submitted.approvalRequestId!))).getStatus()).toBe(404);
+    current.scope = null;
+  });
+
   it('fails +1% on 1,00,000 (past the NPR 500 cap)', async () => {
     const po = await receivedPo('1', '100000.00', '1');
     const bill = await billFor(po, '1', '101000.00');

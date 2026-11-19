@@ -1352,9 +1352,8 @@ it('rechecks expiry after individual approvals before making the final decision'
   let c = await fillRequired(await openCase());
   const item = c.checklist.find((i) => i.key === 'registration_certificate')!;
   c = VerificationCaseDtoSchema.parse(
-    (
-      await putDocument(c.id, 'registration_certificate', item.documentId!, c.version, '2026-11-09')
-    ).body,
+    (await putDocument(c.id, 'registration_certificate', item.documentId!, c.version, '2026-11-09'))
+      .body,
   );
   c = VerificationCaseDtoSchema.parse((await submitCase(c.id)).body);
   as(U.pmo, 'pmo');

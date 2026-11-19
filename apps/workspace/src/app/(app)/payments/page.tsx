@@ -9,7 +9,7 @@ import {
 } from '@bos/contracts';
 import type { Metadata } from 'next';
 import Link from 'next/link';
-import type { NumberSystem } from '@bos/locale';
+import type { NumberSystems } from '@bos/locale';
 
 import { hasPermission } from '@/components/p2/customers/permissions';
 import { Alert } from '@/components/ui/alert';
@@ -28,7 +28,7 @@ import {
 } from '@/lib/api-receivables';
 import { failureOf } from '@/lib/api-kernel';
 import { requireStaffSession } from '@/lib/bff';
-import { getNumberSystem } from '@/lib/display-settings';
+import { getNumberSystems } from '@/lib/display-settings';
 import { money, when } from '@/lib/kernel-format';
 import {
   activeFilterLabels,
@@ -48,7 +48,13 @@ import styles from './payments.module.css';
 export const metadata: Metadata = { title: 'Payments · Business OS' };
 export const dynamic = 'force-dynamic';
 
-function PaymentRow({ item, numberSystem }: { item: PaymentListItem; numberSystem: NumberSystem }) {
+function PaymentRow({
+  item,
+  numberSystems,
+}: {
+  item: PaymentListItem;
+  numberSystems: NumberSystems;
+}) {
   const meta = paymentStatusMeta(item.status);
   return (
     <tr>
@@ -65,11 +71,11 @@ function PaymentRow({ item, numberSystem }: { item: PaymentListItem; numberSyste
       </Td>
       <Td>{methodLabel(item.method)}</Td>
       <Td align="end" nowrap>
-        <span className={styles.amount}>{money(item.amount, item.currency, numberSystem)}</span>
+        <span className={styles.amount}>{money(item.amount, item.currency, numberSystems)}</span>
       </Td>
       <Td align="end" nowrap>
         {Number(item.unallocatedAmount) > 0 ? (
-          money(item.unallocatedAmount, item.currency, numberSystem)
+          money(item.unallocatedAmount, item.currency, numberSystems)
         ) : (
           <span className={styles.quiet}>None</span>
         )}
@@ -99,7 +105,7 @@ export default async function PaymentsPage({
   const filter: PaymentPageFilter = { status: multi.status, method: multi.method, q };
   const here = hrefWith('/payments', raw, { page: state.page > 1 ? state.page : undefined });
   const session = await requireStaffSession(here);
-  const numberSystem = await getNumberSystem();
+  const numberSystems = await getNumberSystems();
 
   let items: PaymentListItem[] | null = null;
   let total = 0;
@@ -229,7 +235,7 @@ export default async function PaymentsPage({
             </thead>
             <tbody>
               {items.map((item) => (
-                <PaymentRow numberSystem={numberSystem} key={item.id} item={item} />
+                <PaymentRow numberSystems={numberSystems} key={item.id} item={item} />
               ))}
             </tbody>
           </Table>

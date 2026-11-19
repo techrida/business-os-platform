@@ -1,5 +1,5 @@
 import type { PoStatus } from '@bos/contracts';
-import type { NumberSystem } from '@bos/locale';
+import type { NumberSystems } from '@bos/locale';
 
 import { hasPermission } from '@/components/p2/customers/permissions';
 import { money } from '@/lib/kernel-format';
@@ -77,7 +77,7 @@ const CURRENCIES = ['NPR', 'INR', 'USD'] as const;
  * Money from the server in the order's currency, grouped by the tenant's number system (left out:
  * lakh grouping for NPR and INR); an unknown currency keeps its code.
  */
-export function poMoney(amount: string, currency: string, numberSystem?: NumberSystem): string {
+export function poMoney(amount: string, currency: string, numberSystems?: NumberSystems): string {
   const known = CURRENCIES.find((c) => c === currency);
-  return known !== undefined ? money(amount, known, numberSystem) : `${currency} ${amount}`;
+  return known !== undefined ? money(amount, known, numberSystems) : `${currency} ${amount}`;
 }

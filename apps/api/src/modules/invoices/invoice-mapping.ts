@@ -113,6 +113,8 @@ export function toTaxSummaryItems(rows: readonly InvoiceTaxSummaryRow[]): Invoic
 
 export interface InvoiceParts {
   invoice: InvoiceRow;
+  /** The customer's current legal name; undefined when the customer row is not found. */
+  customerName?: string | undefined;
   lines: readonly InvoiceLineRow[];
   taxSummary: readonly InvoiceTaxSummaryRow[];
   prints: readonly InvoicePrintRow[];
@@ -121,6 +123,7 @@ export interface InvoiceParts {
 export function toInvoiceDetail(parts: InvoiceParts): InvoiceDetail {
   return {
     invoice: toInvoiceDto(parts.invoice),
+    ...(parts.customerName ? { customerName: parts.customerName } : {}),
     lines: toLineDtos(parts.lines, parts.taxSummary),
     taxSummary: toTaxSummaryItems(parts.taxSummary),
     prints: [...parts.prints]

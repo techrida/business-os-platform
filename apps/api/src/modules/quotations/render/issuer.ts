@@ -66,10 +66,11 @@ export async function buildDocumentStyleSnapshot(
   scope: TxScope,
   capturedAt: Date,
 ): Promise<DocumentStyleSnapshot> {
-  const [style, profile, numberSystem, entityPan] = await Promise.all([
+  const [style, profile, numberSystems, dateFormat, entityPan] = await Promise.all([
     settings.get(scope, 'document.style'),
     settings.get(scope, 'entity.profile'),
-    settings.get(scope, 'format.number_system'),
+    settings.get(scope, 'format.number_systems'),
+    settings.get(scope, 'format.date'),
     settings.get(scope, 'entity.pan_vat_no'),
   ]);
   const pan = SETTINGS['entity.pan_vat_no'].safeParse(entityPan);
@@ -81,7 +82,8 @@ export async function buildDocumentStyleSnapshot(
       ...rawProfile.data,
       panVatNo: rawProfile.data.panVatNo ?? (pan.success ? pan.data : null),
     },
-    numberSystem,
+    numberSystems,
+    dateFormat,
     capturedAt: capturedAt.toISOString(),
   });
   if (!parsed.success) throw new DocumentStyleInvalidError();

@@ -4,38 +4,17 @@
 // Reads take a TxScope (the worker has no request); writes take the caller's transaction, which withTx has
 // already stamped with tenant, organization and actor. A setting nobody has written yet falls back to a
 // default kept here, because most SETTINGS schemas have no default of their own (they only validate).
-import {
-  DOCUMENT_SETTING_DEFAULTS,
-  P2_SETTING_DEFAULTS,
-  P3_SETTING_DEFAULTS,
-  P4_SETTING_DEFAULTS,
-  SETTINGS,
-  type SettingKey,
-  type SettingValue,
-  SlaSpecSchema,
-} from '@bos/contracts';
+import { SETTING_DEFAULTS, SETTINGS, type SettingKey, type SettingValue } from '@bos/contracts';
 import { numberSeries } from '@bos/db';
-import { BadRequestException, Inject, Injectable } from '@nestjs/common';
+import { BadRequestException, ConflictException, Inject, Injectable } from '@nestjs/common';
 import { and, asc, desc, eq, sql } from 'drizzle-orm';
 import type { z } from 'zod';
 
 import { DB, type Db, type DbTransaction } from '../db/db.module';
 import type { TxScope } from '../db/tx';
 
-/** What a key reads as before anyone has written it. Each default is checked against SETTINGS in a test. */
-export const SETTING_DEFAULTS: { readonly [K in SettingKey]: SettingValue<K> } = {
-  'currency.enabled': ['NPR', 'INR', 'USD'],
-  'tax.vat_rate': '13',
-  'numbering.memo_prefix': 'MEMO',
-  // The schema fills in its own defaults (24 h, 72 h, founder), so the two never drift apart.
-  'approvals.sla_defaults': SlaSpecSchema.parse({}),
-  // fx.max_rate_age_days, quotation.validity_days and sales.evidence_policy: one source in contracts.
-  // procurement.*: the P4 block, also one source in contracts.
-  ...P2_SETTING_DEFAULTS,
-  ...P3_SETTING_DEFAULTS,
-  ...P4_SETTING_DEFAULTS,
-  ...DOCUMENT_SETTING_DEFAULTS,
-};
+/** What a key reads as before anyone has written it: one source, in contracts, shared with the workspace's reset. */
+export { SETTING_DEFAULTS };
 
 export interface SettingVersion {
   version: number;
@@ -43,6 +22,11 @@ export interface SettingVersion {
   /** `app.users.id` of the editor, or null when a system job wrote it. */
   createdBy: string | null;
   createdAt: Date;
+}
+
+/** Optional guard for `set()`: the version the editor loaded. `null` means they loaded the default (nothing saved). */
+export interface SetOptions {
+  expectedVersion?: number | null;
 }
 
 export interface TxContext {
@@ -159,8 +143,17 @@ export class SettingsService {
    * the unique constraint and, in Postgres, a unique violation aborts the whole transaction. An advisory
    * lock keyed on (tenant, organization, key) makes the second caller wait until the first commits, then
    * read max(version) = 4 and take 5. The lock is per transaction, so COMMIT or ROLLBACK frees it.
+   *
+   * `options.expectedVersion` stops a save from overwriting a concurrent edit: the editor passes the version it
+   * loaded (null for "nothing saved yet"), and once the lock is won the saved version is read again. Any
+   * difference refuses with 409 `stale_setting` and writes nothing. Left out, the write is unconditional.
    */
-  async set(tx: DbTransaction, key: SettingKey, value: unknown): Promise<{ version: number }> {
+  async set(
+    tx: DbTransaction,
+    key: SettingKey,
+    value: unknown,
+    options: SetOptions = {},
+  ): Promise<{ version: number }> {
     const schema: z.ZodType = SETTINGS[key];
     const parsed = schema.safeParse(value);
     if (!parsed.success) {
@@ -171,6 +164,23 @@ export class SettingsService {
     const { tenantId, organizationId, userId } = await readTxContext(tx, 'SettingsService.set');
 
     await this.lockWith(tx, { tenantId, organizationId, userId }, key);
+
+    if (options.expectedVersion !== undefined) {
+      // Read after the lock: a writer that queued behind us sees what the winner committed (READ COMMITTED).
+      const current = await tx.execute<{ version: number }>(sql`
+        SELECT version FROM app.settings
+         WHERE tenant_id = ${tenantId}::uuid AND organization_id = ${organizationId}::uuid
+           AND key = ${key}::text
+         ORDER BY version DESC LIMIT 1`);
+      const currentRow = current.rows[0];
+      const currentVersion = currentRow ? Number(currentRow.version) : null;
+      if (currentVersion !== options.expectedVersion) {
+        throw new ConflictException({
+          code: 'stale_setting',
+          message: 'This setting was changed by someone else. Reload to see the current value.',
+        });
+      }
+    }
 
     // The parsed value, not the raw one: a schema may fill in defaults, and the stored row should be complete.
     const result = await tx.execute<{ version: number }>(sql`

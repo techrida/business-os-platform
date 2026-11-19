@@ -29,6 +29,35 @@
   grid-column: 1 / -1;
 }
 
+/* The undo icon (D32) sits at the end of the label line, level with the label text. The label keeps
+   room for it so a long label wraps before it instead of running underneath. */
+.resettable {
+  position: relative;
+}
+
+.resettable > div > label,
+.resettable > fieldset > legend {
+  padding-inline-end: 36px;
+  overflow-wrap: anywhere;
+}
+
+.resetSlot {
+  position: absolute;
+  top: -6px;
+  right: 0;
+}
+
+@media (pointer: coarse) {
+  .resettable > div > label,
+  .resettable > fieldset > legend {
+    padding-inline-end: 48px;
+  }
+
+  .resetSlot {
+    top: -12px;
+  }
+}
+
 .formRow {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(min(100%, 180px), 1fr));

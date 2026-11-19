@@ -15,6 +15,7 @@ export type IconName =
   | 'search'
   | 'menu'
   | 'x'
+  | 'plus'
   | 'chevrons-left'
   | 'chevrons-right'
   | 'chevron-right'
@@ -22,7 +23,12 @@ export type IconName =
   | 'bell'
   | 'info'
   | 'alert-triangle'
-  | 'x-circle';
+  | 'x-circle'
+  | 'bold'
+  | 'italic'
+  | 'list'
+  | 'list-ordered'
+  | 'undo-2';
 
 // Lucide-style drawings (24x24 grid, 2px round strokes), inlined so there is no icon package
 // and no request. Each entry is the inside of the <svg>.
@@ -173,6 +179,12 @@ const DRAWINGS: Record<IconName, ReactNode> = {
       <path d="M4 18h16" />
     </>
   ),
+  plus: (
+    <>
+      <path d="M5 12h14" />
+      <path d="M12 5v14" />
+    </>
+  ),
   x: (
     <>
       <path d="M18 6 6 18" />
@@ -193,6 +205,34 @@ const DRAWINGS: Record<IconName, ReactNode> = {
     </>
   ),
   'chevron-down': <path d="m6 9 6 6 6-6" />,
+  bold: <path d="M6 12h9a4 4 0 0 1 0 8H7a1 1 0 0 1-1-1V5a1 1 0 0 1 1-1h7a4 4 0 0 1 0 8" />,
+  italic: (
+    <>
+      <line x1="19" x2="10" y1="4" y2="4" />
+      <line x1="14" x2="5" y1="20" y2="20" />
+      <line x1="15" x2="9" y1="4" y2="20" />
+    </>
+  ),
+  list: (
+    <>
+      <path d="M3 5h.01" />
+      <path d="M3 12h.01" />
+      <path d="M3 19h.01" />
+      <path d="M8 5h13" />
+      <path d="M8 12h13" />
+      <path d="M8 19h13" />
+    </>
+  ),
+  'list-ordered': (
+    <>
+      <path d="M11 5h10" />
+      <path d="M11 12h10" />
+      <path d="M11 19h10" />
+      <path d="M4 4h1v5" />
+      <path d="M4 9h2" />
+      <path d="M6.5 20H3.4c0-1 2.6-1.925 2.6-3.5a1.5 1.5 0 0 0-2.6-1.02" />
+    </>
+  ),
   bell: (
     <>
       <path d="M10.268 21a2 2 0 0 0 3.464 0" />
@@ -268,6 +308,12 @@ const DRAWINGS: Record<IconName, ReactNode> = {
     </>
   ),
   bookmark: <path d="m19 21-7-4-7 4V5a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2v16z" />,
+  'undo-2': (
+    <>
+      <path d="M9 14 4 9l5-5" />
+      <path d="M4 9h10.5a5.5 5.5 0 0 1 5.5 5.5a5.5 5.5 0 0 1-5.5 5.5H11" />
+    </>
+  ),
   hash: (
     <>
       <line x1="4" x2="20" y1="9" y2="9" />

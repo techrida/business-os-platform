@@ -6,7 +6,16 @@
 //
 // A tax invoice says "Tax Invoice". A proforma says "Proforma Invoice" and that it is not a tax invoice. A reprint
 // says "Copy of original (n)" beside the title.
-import { Dec, formatCustomerDate, formatMoney, toBs, type NumberSystem } from '@bos/locale';
+import {
+  DEFAULT_CUSTOMER_DATE_FORMAT,
+  DEFAULT_NUMBER_SYSTEMS,
+  Dec,
+  formatCustomerDate,
+  formatMoney,
+  toBs,
+  type CustomerDateFormat,
+  type NumberSystems,
+} from '@bos/locale';
 
 import type { InvoiceRenderView } from './invoice-view';
 
@@ -22,8 +31,12 @@ const escapeHtml = (text: string): string =>
 const kathmanduNoon = (isoDate: string): Date => new Date(`${isoDate}T12:00:00+05:45`);
 
 /** The Gregorian date with the Bikram Sambat date beside it. The issue date's BS form is the one frozen at issue. */
-function dateCell(isoDate: string, bsFrozen: string | null): string {
-  const gregorian = escapeHtml(formatCustomerDate(isoDate));
+function dateCell(
+  isoDate: string,
+  bsFrozen: string | null,
+  dateFormat: CustomerDateFormat,
+): string {
+  const gregorian = escapeHtml(formatCustomerDate(isoDate, dateFormat));
   if (bsFrozen !== null) {
     return `${gregorian} <span class="bs">(${escapeHtml(bsFrozen)} BS)</span>`;
   }
@@ -112,8 +125,10 @@ function partyBlock(heading: string, p: InvoiceRenderView['seller'], text: (v: s
 }
 
 export interface RenderInvoiceOptions {
-  /** The tenant's `format.number_system`. Left out, each currency keeps its own grouping (NPR/INR lakh, USD western). */
-  numberSystem?: NumberSystem;
+  /** The company's `format.number_systems`, by currency. Left out, NPR/INR keep lakh grouping and USD thousands. */
+  numberSystems?: NumberSystems;
+  /** The company's `format.date`. Left out, the default `19 Nov 2026`. */
+  dateFormat?: CustomerDateFormat;
 }
 
 /** Returns the full HTML document for an issued invoice. Every text is escaped. */
@@ -121,10 +136,12 @@ export function renderInvoiceHtml(
   view: InvoiceRenderView,
   opts: RenderInvoiceOptions = {},
 ): string {
-  const numberSystem = opts.numberSystem;
+  const dateFormat = opts.dateFormat ?? DEFAULT_CUSTOMER_DATE_FORMAT;
   const fmt = (amount: string): string =>
     escapeHtml(
-      formatMoney(amount, view.currency, numberSystem === undefined ? undefined : { numberSystem }),
+      formatMoney(amount, view.currency, {
+        numberSystems: opts.numberSystems ?? DEFAULT_NUMBER_SYSTEMS,
+      }),
     );
   const text = (value: string): string => escapeHtml(value);
   const title = TITLES[view.kind];
@@ -133,9 +150,9 @@ export function renderInvoiceHtml(
 
   const meta: [string, string][] = [
     ['Invoice no.', text(view.number)],
-    ['Issue date', dateCell(view.issueDate, view.issueDateBs)],
+    ['Issue date', dateCell(view.issueDate, view.issueDateBs, dateFormat)],
   ];
-  if (view.dueDate !== null) meta.push(['Due date', dateCell(view.dueDate, null)]);
+  if (view.dueDate !== null) meta.push(['Due date', dateCell(view.dueDate, null, dateFormat)]);
   meta.push(['Currency', text(view.currency)]);
 
   const rows = view.lines
@@ -200,7 +217,7 @@ export function renderInvoiceHtml(
     <div>
       <h2>${title} total</h2>
       <p class="amount">${fmt(view.totals.total)}</p>
-      ${view.dueDate !== null ? `<p class="due">Due ${dateCell(view.dueDate, null)}</p>` : ''}
+      ${view.dueDate !== null ? `<p class="due">Due ${dateCell(view.dueDate, null, dateFormat)}</p>` : ''}
     </div>
     <table class="totals">
     <tr><td>Subtotal</td><td class="num">${fmt(view.totals.subtotal)}</td></tr>

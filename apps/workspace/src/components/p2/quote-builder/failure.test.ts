@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest';
 import {
   describeQuoteFailure,
   isIdempotencyInProgress,
+  COST_FIGURES_RESTRICTED_MESSAGE,
   STALE_FX_MESSAGE,
   STALE_VERSION_MESSAGE,
 } from './failure';
@@ -137,5 +138,22 @@ describe('describeQuoteFailure: conflicts that are not a stale version', () => {
         message: STALE_VERSION_MESSAGE,
       });
     }
+  });
+});
+
+describe('describeQuoteFailure: hidden cost figures', () => {
+  it('tells a drafter plainly that lines cannot be added, removed or reordered (409 cost_figures_restricted), not "reload"', () => {
+    const f = describeQuoteFailure(
+      err(
+        409,
+        'cost_figures_restricted',
+        'Lines cannot be added, removed or reordered on a quotation whose cost figures you cannot see',
+      ),
+      'save',
+    );
+    expect(f).toEqual({ kind: 'error', message: COST_FIGURES_RESTRICTED_MESSAGE });
+    expect(f.message).toMatch(/add, remove or reorder lines/);
+    expect(f.message).toMatch(/Nothing was saved/);
+    expect(f.message).not.toBe(STALE_VERSION_MESSAGE);
   });
 });

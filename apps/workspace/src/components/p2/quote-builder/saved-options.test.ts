@@ -25,6 +25,18 @@ describe('offeredPresets', () => {
     expect(offeredPresets(all, 'delivery_timeline', 10_000)).toEqual([long]);
   });
 
+  it('counts the words of a rich text body, not its markup, against the field limit', () => {
+    const html = make(
+      5,
+      'delivery_timeline',
+      'Marked up',
+      `<p><strong>${'x'.repeat(1_990)}</strong></p>`,
+    );
+    expect(offeredPresets([html], 'delivery_timeline', 2_000)).toEqual([html]);
+    const over = make(6, 'delivery_timeline', 'Over', `<p><em>${'x'.repeat(2_001)}</em></p>`);
+    expect(offeredPresets([over], 'delivery_timeline', 2_000)).toEqual([]);
+  });
+
   it('offers nothing when the presets are missing or failed to load', () => {
     expect(offeredPresets(null, 'scope', 10)).toEqual([]);
     expect(offeredPresets(undefined, 'scope', 10)).toEqual([]);
@@ -48,6 +60,32 @@ describe('canFillSilently', () => {
     expect(canFillSilently(`${a.body} Plus extras.`, a.body, offered)).toBe(false);
     expect(canFillSilently('Typed by hand', null, offered)).toBe(false);
     expect(canFillSilently('Typed by hand', a.body, offered)).toBe(false);
+  });
+});
+
+describe('canFillSilently on rich text', () => {
+  const rich = make(7, 'scope', 'Rich', '<p>We build it.</p><ul><li>Phase one</li></ul>');
+  const offered = offeredPresets([rich, a], 'scope', 10_000);
+
+  it('treats the editor rewriting a set as untouched: same words, different markup', () => {
+    expect(
+      canFillSilently('<p>We build it.</p><ul><li>Phase one</li></ul>', rich.body, offered),
+    ).toBe(true);
+    expect(
+      canFillSilently('<p>We build it.</p>\n<ul>\n<li>Phase one</li>\n</ul>', rich.body, offered),
+    ).toBe(true);
+    // A plain-text set the editor re-emitted as a paragraph.
+    expect(canFillSilently('<p>We build it.</p>', a.body, offered)).toBe(true);
+  });
+
+  it('fills over an editor that holds only empty paragraphs', () => {
+    expect(canFillSilently('<p></p>', null, offered)).toBe(true);
+  });
+
+  it('asks once the words changed', () => {
+    expect(
+      canFillSilently('<p>We build it. Later.</p><ul><li>Phase one</li></ul>', rich.body, offered),
+    ).toBe(false);
   });
 });
 
