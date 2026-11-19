@@ -102,7 +102,7 @@ function stubApiEnv() {
 const json = (status: number, body: unknown) =>
   new Response(JSON.stringify(body), { status, headers: { 'content-type': 'application/json' } });
 
-const fetchMock = vi.fn<typeof fetch>((input) => {
+const defaultFetch = ((input) => {
   const path = new URL(input as URL | string).pathname;
   if (path === `/v1/approvals/requests/${RID}`) return Promise.resolve(json(200, request));
   if (path === '/v1/approvals/inbox') return Promise.resolve(json(200, []));
@@ -110,11 +110,12 @@ const fetchMock = vi.fn<typeof fetch>((input) => {
   return Promise.resolve(
     json(403, { error: { code: 'forbidden', message: 'Forbidden', correlationId: 'c' } }),
   );
-});
+}) satisfies typeof fetch;
+const fetchMock = vi.fn<typeof fetch>(defaultFetch);
 
 beforeEach(() => {
   mocks.requireStaffSession.mockReset().mockResolvedValue({ accessToken: 'tok' });
-  fetchMock.mockClear();
+  fetchMock.mockReset().mockImplementation(defaultFetch);
   stubApiEnv();
   vi.stubGlobal('fetch', fetchMock);
 });
@@ -124,7 +125,61 @@ afterEach(() => {
   vi.unstubAllEnvs();
 });
 
+const person = (userId: string, name: string) => ({ userId, name, jobTitle: null, department: null });
+const PERSON = person(NAMED, 'Mina Rai');
+const memoSnapshot = {
+  title: 'Two laptops',
+  number: 'PR-2082-0007',
+  body: 'Please approve two laptops for the design team.',
+  template: {
+    organizationId: '66666666-6666-4666-8666-666666666666',
+    organizationName: 'Techrida',
+    departmentId: '77777777-7777-4777-8777-777777777777',
+    departmentName: 'Design',
+    date: '2026-11-17',
+    closing: 'Regards',
+    preparedBy: person(REQUESTER, 'Ram Thapa'),
+    recommenders: [PERSON],
+    approvedBy: person(GROUP, 'Sita Karki'),
+  },
+};
+
 describe('inbox detail page', () => {
+  it('shows a submitted memo body once and keeps its other details collapsed, with no inbox-reason card', async () => {
+    fetchMock.mockImplementation((input) => {
+      const path = new URL(input as URL | string).pathname;
+      if (path === `/v1/approvals/requests/${RID}`)
+        return Promise.resolve(json(200, { ...request, snapshot: memoSnapshot }));
+      if (path === '/v1/approvals/inbox')
+        return Promise.resolve(
+          json(200, [
+            {
+              requestId: RID,
+              documentType: 'test_memo',
+              documentId: DOC,
+              documentNumber: 'PR-2082-0007',
+              title: 'Two laptops',
+              amountNpr: null,
+              reason: 'Selected recommender 1',
+              activeStep: request.steps[0],
+              submittedAt: WHEN,
+              version: 1,
+            },
+          ]),
+        );
+      return Promise.resolve(json(403, { error: { code: 'forbidden', message: 'Forbidden' } }));
+    });
+    const html = renderToStaticMarkup(
+      await InboxDetailPage({ params: Promise.resolve({ id: RID }) }),
+    );
+    expect(html.split('Please approve two laptops').length - 1).toBe(1);
+    expect(html).not.toContain('>Body<');
+    expect(html).not.toContain('Why this is in your inbox');
+    expect(html).not.toContain('Selected recommender 1');
+    expect(html).toMatch(/<button[^>]*aria-expanded="false"[^>]*>[\s\S]*?Details/);
+    expect(html).toContain('Approve');
+  });
+
   it('labels people and groups from the request itself and calls no admin endpoint', async () => {
     const html = renderToStaticMarkup(
       await InboxDetailPage({ params: Promise.resolve({ id: RID }) }),
