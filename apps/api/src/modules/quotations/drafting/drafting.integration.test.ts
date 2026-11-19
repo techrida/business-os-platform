@@ -34,6 +34,7 @@ import {
 } from '@bos/db';
 import {
   BadRequestException,
+  ConflictException,
   ForbiddenException,
   HttpException,
   NotFoundException,
@@ -1006,24 +1007,119 @@ describe('quotation cost figures follow the live role grants (D29b)', () => {
     expect(seen.internalCostTotal).toBe('2460000.00');
   });
 
-  it('gives a line number that did not exist before no cost, so the total cost is unknown again', async () => {
-    await customiseRoles(true);
-    current.grants = await live('sales');
-    const created = await service.create(costedBody(), 'cost-save-2');
-    const before = await storedVersion(created.currentVersionId);
+  describe('a drafter without the permission cannot change which lines a costed quotation has', () => {
+    /** A costed quotation, then the caller loses quotation.cost.read. */
+    async function costedThenRestricted(key: string) {
+      await customiseRoles(true);
+      current.grants = await live('sales');
+      const created = await service.create(costedBody(), key);
+      const before = await storedVersion(created.currentVersionId);
+      await customiseRoles(false);
+      current.grants = await live('sales');
+      return { created, before };
+    }
+    const restricted = async (promise: Promise<unknown>) => {
+      const error = await promise.then(
+        () => undefined,
+        (e: unknown) => e,
+      );
+      expect(error).toBeInstanceOf(ConflictException);
+      expect((error as ConflictException).getResponse()).toMatchObject({
+        code: 'cost_figures_restricted',
+      });
+    };
+    /** Nothing was written: every line keeps its cost and the version is untouched. */
+    async function expectUntouched(versionId: string, version: number) {
+      const stored = await storedLines(versionId);
+      expect(stored.map((l) => l.description)).toEqual(['Implementation', 'Licences', 'Training']);
+      expect(stored.map((l) => l.unitCost)).toEqual([...GOLDEN_UNIT_COSTS]);
+      const row = await storedVersion(versionId);
+      expect(row.version).toBe(version);
+      expect(row.internalCostTotal).toBe(GOLDEN_INTERNAL_COST);
+    }
 
-    await customiseRoles(false);
-    current.grants = await live('sales');
-    await service.updateDraft(created.id, created.currentVersionId, {
-      expectedVersion: before.version,
-      lines: [...goldenLines(f), { ...goldenLines(f)[0]!, description: 'Extra', unitCost: '5.00' }],
+    it('drafter without cost read deletes line 1: refused, stored unit_cost of every line unchanged', async () => {
+      const { created, before } = await costedThenRestricted('cost-del-1');
+      await restricted(
+        service.updateDraft(created.id, created.currentVersionId, {
+          expectedVersion: before.version,
+          lines: goldenLines(f).slice(1),
+        }),
+      );
+      await expectUntouched(created.currentVersionId, before.version);
     });
 
-    const stored = await storedLines(created.currentVersionId);
-    expect(stored.map((l) => l.unitCost)).toEqual([...GOLDEN_UNIT_COSTS, null]);
-    const after = await storedVersion(created.currentVersionId);
-    expect(after.internalCostTotal).toBeNull();
-    expect(after.marginPct).toBeNull();
+    it('refuses a reorder', async () => {
+      const { created, before } = await costedThenRestricted('cost-reorder-1');
+      const [first, second, third] = goldenLines(f);
+      await restricted(
+        service.updateDraft(created.id, created.currentVersionId, {
+          expectedVersion: before.version,
+          lines: [second!, first!, third!],
+        }),
+      );
+      await expectUntouched(created.currentVersionId, before.version);
+    });
+
+    it('refuses an inserted line and an appended line', async () => {
+      const { created, before } = await costedThenRestricted('cost-insert-1');
+      const lines = goldenLines(f);
+      const extra = { ...lines[0]!, description: 'Extra', unitCost: '5.00' };
+      await restricted(
+        service.updateDraft(created.id, created.currentVersionId, {
+          expectedVersion: before.version,
+          lines: [lines[0]!, extra, lines[1]!, lines[2]!],
+        }),
+      );
+      await restricted(
+        service.updateDraft(created.id, created.currentVersionId, {
+          expectedVersion: before.version,
+          lines: [...lines, extra],
+        }),
+      );
+      await expectUntouched(created.currentVersionId, before.version);
+    });
+
+    it('refuses an edit of a stored line identity (its description)', async () => {
+      const { created, before } = await costedThenRestricted('cost-identity-1');
+      await restricted(
+        service.updateDraft(created.id, created.currentVersionId, {
+          expectedVersion: before.version,
+          lines: goldenLines(f).map((l, i) => (i === 1 ? { ...l, description: 'Renamed' } : l)),
+        }),
+      );
+      await expectUntouched(created.currentVersionId, before.version);
+    });
+
+    it('allows a same-structure edit (quantity, price): costs kept, totals recomputed from them', async () => {
+      const { created, before } = await costedThenRestricted('cost-same-1');
+      await service.updateDraft(created.id, created.currentVersionId, {
+        expectedVersion: before.version,
+        lines: goldenLines(f).map((l, i) =>
+          i === 0 ? { ...l, quantity: '2', unitPrice: '1900000.00' } : l,
+        ),
+      });
+      const stored = await storedLines(created.currentVersionId);
+      expect(stored.map((l) => l.unitCost)).toEqual([...GOLDEN_UNIT_COSTS]);
+      expect(stored[0]!.unitPrice).toBe('1900000.00');
+      const after = await storedVersion(created.currentVersionId);
+      expect(after.internalCostTotal).toBe('2460000.00');
+      expect(after.marginPct).not.toBeNull();
+    });
+
+    it('lets a drafter who holds the permission delete a line, as before: the other lines keep their own costs', async () => {
+      await customiseRoles(true);
+      current.grants = await live('sales');
+      const created = await service.create(costedBody(), 'cost-del-2');
+      const before = await storedVersion(created.currentVersionId);
+      await service.updateDraft(created.id, created.currentVersionId, {
+        expectedVersion: before.version,
+        lines: goldenCostedLines(f).slice(1),
+      });
+      const stored = await storedLines(created.currentVersionId);
+      expect(stored.map((l) => l.description)).toEqual(['Licences', 'Training']);
+      expect(stored.map((l) => l.unitCost)).toEqual(['400000.00', '20000.00']);
+    });
   });
 
   it('stores no cost for a quotation created by a drafter without the permission', async () => {
@@ -1157,11 +1253,11 @@ describe('DraftingService.detail lead (D35)', () => {
     });
   });
 
-  it('answers null when the opportunity has no lead', async () => {
+  it('leaves the lead out when the opportunity has no lead, exactly as for a hidden one', async () => {
     // The fixture opportunity has no lead. (quotations.opportunity_id is NOT NULL, so "no opportunity" cannot occur.)
     const created = await service.create(goldenCreateBody(f), 'lead-none');
     const detail = QuotationDetailSchema.parse(await service.detail(created.id));
-    expect(detail.lead).toBeNull();
+    expect('lead' in detail).toBe(false);
   });
 
   it("never shows a lead of another entity: it is read in its own entity, and A's detail does not carry B's", async () => {
