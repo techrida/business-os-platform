@@ -277,6 +277,15 @@ describe('lead follow-up (D39)', () => {
     ).toBe(false);
   });
 
+  it('does not default the currency on an edit, so an owner change cannot reset it', () => {
+    const parsed = UpdateLeadBodySchema.parse({
+      expectedVersion: 2,
+      ownerUserId: crypto.randomUUID(),
+    });
+    expect('currency' in parsed).toBe(false);
+    expect(CreateLeadBodySchema.parse(lead).currency).toBe('NPR');
+  });
+
   it('refuses a note as a follow-up, and does not let an edit change the follow-up', () => {
     expect(
       CreateLeadBodySchema.safeParse({ ...lead, followUp: { kind: 'note', dueAt: due } }).success,
