@@ -8,6 +8,7 @@ import type { NumberSystems } from '@bos/locale';
 
 import { addContactAction } from '@/components/p2/customers/actions';
 import {
+  customerCan,
   getCustomerDetail,
   listContacts,
   listVerificationCases,
@@ -21,7 +22,6 @@ import {
   isGuid,
   VERIFICATION_STATUS_LABEL,
 } from '@/components/p2/customers/format';
-import { hasPermission } from '@/components/p2/customers/permissions';
 import { Alert } from '@/components/ui/alert';
 import { Avatar } from '@/components/ui/avatar';
 import { Badge } from '@/components/ui/badge';
@@ -258,12 +258,15 @@ function Verification({
   result,
   here,
   maySee,
+  caseExists,
   open,
 }: {
   result: PromiseSettledResult<Listing<VerificationCaseDto>>;
   here: string;
   maySee: boolean;
-  /** Set when this person may start a case (customer.write on a customer that was not merged away). */
+  /** The customer has a case, whether or not this person may open it. */
+  caseExists: boolean;
+  /** Set when the API says this person may start or reopen this customer's case. */
   open: { customerId: string; idempotencyKey: string } | null;
 }) {
   return (
@@ -275,6 +278,10 @@ function Verification({
           retry={here}
           forbiddenText="Verification is for the finance team."
         />
+      ) : result.value.items.length === 0 && !maySee && caseExists ? (
+        <p className={styles.note}>
+          This customer has a verification case. The account owner or a reviewer can open it.
+        </p>
       ) : result.value.items.length === 0 ? (
         <div className={styles.cases}>
           <p className={styles.note}>
@@ -388,16 +395,21 @@ export default async function CustomerPage({
     );
   }
 
+  // What this person may do here, decided by the API on this customer (scope included).
+  const can = customerCan(customer);
   // The panels below load on their own: one failing leaves the profile and the other panels usable.
+  // The case list is asked for only when the API says this person may read this customer's case.
   const [contacts, cases, people, paymentTerms] = await Promise.allSettled([
     listContacts(session, id),
-    listVerificationCases(session, { partyId: id }),
+    can.readVerification
+      ? listVerificationCases(session, { partyId: id })
+      : Promise.resolve<Listing<VerificationCaseDto>>({ items: [], total: 0 }),
     userNames(session),
     listPaymentTerms(session),
   ]);
 
-  const mayWrite = hasPermission(session.roles, 'customer.write');
-  const maySeeVerification = hasPermission(session.roles, 'verification.read');
+  const mayWrite = can.write;
+  const maySeeVerification = can.readVerification;
   const relationship = RELATIONSHIP[customer.relationship];
   const merged = customer.mergedIntoId !== null;
 
@@ -523,9 +535,10 @@ export default async function CustomerPage({
               result={cases}
               here={here}
               maySee={maySeeVerification}
+              caseExists={customer.verification?.exists === true}
               // One key per render, so retrying names the same request.
               open={
-                mayWrite && !merged
+                can.openVerification
                   ? { customerId: customer.id, idempotencyKey: randomUUID() }
                   : null
               }

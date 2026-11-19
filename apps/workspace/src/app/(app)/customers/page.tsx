@@ -8,7 +8,6 @@ import {
   parsePage,
   type DuplicateReason,
 } from '@/components/p2/customers/duplicates';
-import { hasPermission } from '@/components/p2/customers/permissions';
 import { Avatar } from '@/components/ui/avatar';
 import { Alert } from '@/components/ui/alert';
 import { Badge } from '@/components/ui/badge';
@@ -21,6 +20,7 @@ import { StatCard } from '@/components/ui/stat-card';
 import { Table, Td, Th } from '@/components/ui/table';
 import { failureOf } from '@/lib/api-kernel';
 import { requireStaffSession } from '@/lib/bff';
+import { getGrants, hasGrant } from '@/lib/grants';
 import { when } from '@/lib/kernel-format';
 
 import styles from './customers.module.css';
@@ -157,7 +157,8 @@ export default async function CustomersPage({
     customers !== null &&
     (total !== null ? page * pageSize < total : customers.length === pageSize);
   const first = (page - 1) * pageSize + 1;
-  const mayWrite = hasPermission(session.roles, 'customer.write');
+  // Page level: may this person add a customer at all (the live grant, not the role defaults).
+  const mayWrite = hasGrant(await getGrants(session), 'customer.write');
   const addButton = mayWrite ? (
     <LinkButton href="/customers/new" size="large">
       <span aria-hidden="true" className={styles.plus}>

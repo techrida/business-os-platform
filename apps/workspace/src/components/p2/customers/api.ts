@@ -2,8 +2,12 @@ import 'server-only';
 
 import {
   ContactDtoSchema,
+  CustomerCanSchema,
   CustomerDtoSchema,
+  CustomerVerificationPresenceSchema,
   PartyAccountDtoSchema,
+  type CustomerCan,
+  type CustomerVerificationPresence,
   type PersonName,
   PersonNameSchema,
   VerificationCaseDtoSchema,
@@ -120,11 +124,22 @@ const CustomerDetailSchema = CustomerDtoSchema.extend({
   accounts: z.array(PartyAccountDtoSchema).optional(),
   /** The account owner by name, sent with the record (staff only); older APIs leave it out. */
   people: z.array(PersonNameSchema).optional(),
+  /** What this person may do with this customer, decided by the API on the record; absent reads as "nothing". */
+  can: CustomerCanSchema.optional(),
+  /** Whether the customer has a verification case, even one this person may not open. */
+  verification: CustomerVerificationPresenceSchema.optional(),
 });
 export type CustomerDetail = CustomerDto & {
   accounts?: PartyAccountDto[] | undefined;
   people?: PersonName[] | undefined;
+  can?: CustomerCan | undefined;
+  verification?: CustomerVerificationPresence | undefined;
 };
+
+/** The record's `can` flags, every one "no" when the API sent none. */
+export function customerCan(customer: Pick<CustomerDetail, 'can'>): CustomerCan {
+  return customer.can ?? { write: false, readVerification: false, openVerification: false };
+}
 
 /** `GET /v1/customers/:id` with the optional `accounts` kept. */
 export function getCustomerDetail(session: Session, id: string): Promise<CustomerDetail> {
