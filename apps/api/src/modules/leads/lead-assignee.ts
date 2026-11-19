@@ -231,7 +231,9 @@ export async function assertAssignable(
   if (target === undefined) throw assignmentRefused(field, 'not_active_staff');
   const decision = decideAssignment(actor, target, check.context, await check.rule());
   if (!decision.allowed) throw assignmentRefused(field, decision.reason);
-  if (!(await partyHolds(check.roleCache, scope, target, check.subjectRead, field === 'ownerUserId'))) {
+  if (
+    !(await partyHolds(check.roleCache, scope, target, check.subjectRead, field === 'ownerUserId'))
+  ) {
     throw assignmentRefused(field, 'cannot_read_subject');
   }
 }
