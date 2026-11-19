@@ -52,7 +52,7 @@ Output goes to `$VIDEO_DIR/<label>/<viewport>/`:
 
 `$VIDEO_DIR/<label>/summary.md` and `summary.json` hold the totals for one invocation.
 
-When a step fails, the rest of that workflow is BLOCKED and the run moves on to the next workflow. A workflow that cannot start, or a driver error, is saved as FAIL and the next workflow still runs; the browser and network forwarders are closed in every case. `results.json` is saved before every step. A run that is killed therefore keeps the steps it finished, with workflow status `RUNNING`. Its video stays unnamed in `.video-tmp/` and has no duration header; `ffmpeg -i <file> -c copy <out>.webm` makes it playable.
+When a step fails, the rest of that workflow is BLOCKED and the run moves on to the next workflow. A workflow that cannot start, or a driver error, is saved as FAIL and the next workflow still runs; the browser and network forwarders are closed in every case. `results.json` is saved before every step. A run that is stopped (Ctrl-C, `kill`, a crash) therefore keeps the steps it finished, with workflow status `RUNNING`. Its video stays unnamed in `.video-tmp/` and has no duration header (also after Ctrl-C or SIGTERM, checked on 20 Nov 2026); `ffmpeg -i <file> -c copy <out>.webm` makes it playable.
 
 Step authoring helper (records nothing):
 
@@ -119,7 +119,7 @@ Network isolation needs every origin on loopback (`localhost`, `*.localhost`, `1
 
 ## Adding steps or a workflow (Phase B)
 
-A workflow module exports `workflow(cfg)`, which returns `{ name, title, steps: [{ id, title, timeoutMs?, run(s) }] }`. See `workflows/start.mjs`.
+A workflow module exports `workflow(cfg)`, which returns `{ name, title, origins?, steps: [{ id, title, timeoutMs?, run(s) }] }`. `origins` lists the origins whose certificates are checked before launch (`app`, `portal`, `mail`, `auth`; all four when omitted), so a stack whose portal is down can still run a staff-only workflow. See `workflows/start.mjs`.
 
 Inside `run(s)`, use the `Session` API from `lib/session.mjs`. Never call `page.click` directly:
 
@@ -148,7 +148,7 @@ Assert on something the action changes. For example, count the rows that carry a
 - Invoice actions (Submit, Issue): confirm in the dialog, which then shows **Done**. Clicking Done reloads the page to the new status; until then the page behind it still shows the old status.
 - The guide says "Download PDF", but the issued invoice has **View PDF**, which opens a preview dialog named `<INV number with / as ->.pdf` with a Download link inside. The PDF is rendered and scanned in the background, and the document route answers 404 until then (sales-11 waits for it).
 - The sales order links to its quotation through a **View quotation** link, not by showing the QT number.
-- Payments list rows carry no bank reference. Match a row by this run's unique customer name.
+- Payments list rows carry no bank reference. Match a row by this run's unique customer name (`/payments?q=<name>` filters the list); the payment page itself shows **Bank reference**.
 - Navigation by width: 1440 has Collapse/Expand sidebar, 820 has a fixed icon rail with no toggle, and 390 has Open menu/Close menu.
 - Mailpit's message view also has hidden copies of the subject at narrow widths. Match it with `.filter({ visible: true })`.
 
