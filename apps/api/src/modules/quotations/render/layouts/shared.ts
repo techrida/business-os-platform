@@ -7,6 +7,7 @@
 // footer itself is `position: fixed`, so Chromium paints it at the bottom of every page, the last one included,
 // without ever covering a row. The items table repeats its own header; rows and blocks do not split.
 import {
+  richTextToHtml,
   trimPercent,
   type BrandPalette,
   type CompanyProfile,
@@ -18,7 +19,8 @@ import {
   formatCustomerDate,
   formatMoney,
   toBs,
-  type NumberSystem,
+  type CustomerDateFormat,
+  type NumberSystems,
 } from '@bos/locale';
 
 /** Everything a layout may read. `logo` is set only when it passed the data-URL schema. */
@@ -26,7 +28,8 @@ export interface RenderContext {
   view: CustomerQuotationView;
   palette: BrandPalette;
   profile: CompanyProfile;
-  numberSystem: NumberSystem;
+  numberSystems: NumberSystems;
+  dateFormat: CustomerDateFormat;
   showBs: boolean;
   logo: string | null;
 }
@@ -74,11 +77,11 @@ export const breakableAddress = (value: string): string =>
 
 /** A full amount with its currency code, grouped by the document's number system. */
 export const money = (ctx: RenderContext, amount: string): string =>
-  escapeHtml(formatMoney(amount, ctx.view.currency, { numberSystem: ctx.numberSystem }));
+  escapeHtml(formatMoney(amount, ctx.view.currency, { numberSystems: ctx.numberSystems }));
 
 /** The amount without the currency code, for table cells under a header that names the currency. */
 export function figure(ctx: RenderContext, amount: string): string {
-  const full = formatMoney(amount, ctx.view.currency, { numberSystem: ctx.numberSystem });
+  const full = formatMoney(amount, ctx.view.currency, { numberSystems: ctx.numberSystems });
   const prefix = `${ctx.view.currency} `;
   return escapeHtml(full.startsWith(prefix) ? full.slice(prefix.length) : full);
 }
@@ -86,8 +89,12 @@ export function figure(ctx: RenderContext, amount: string): string {
 /** Noon in Kathmandu (UTC+05:45) on the calendar day, so no timezone shifts the day. */
 const kathmanduNoon = (isoDate: string): Date => new Date(`${isoDate}T12:00:00+05:45`);
 
-export function dateCell(isoDate: string, showBs: boolean): string {
-  const gregorian = escapeHtml(formatCustomerDate(isoDate));
+export function dateCell(
+  isoDate: string,
+  ctx: Pick<RenderContext, 'showBs' | 'dateFormat'>,
+): string {
+  const { showBs } = ctx;
+  const gregorian = escapeHtml(formatCustomerDate(isoDate, ctx.dateFormat));
   if (!showBs) return gregorian;
   try {
     const bs = toBs(kathmanduNoon(isoDate));
@@ -169,11 +176,11 @@ export function customerParty(ctx: RenderContext): string {
 
 /** Label and value pairs of the quotation's own details. Values are already escaped HTML. */
 export function detailRows(ctx: RenderContext): [string, string][] {
-  const { view, showBs } = ctx;
+  const { view } = ctx;
   const rows: [string, string][] = [
     ['Quotation no.', `<span class="number">${docRef(view)}</span>`],
-    ['Issue date', dateCell(view.issueDate, showBs)],
-    ['Valid until', dateCell(view.validUntil, showBs)],
+    ['Issue date', dateCell(view.issueDate, ctx)],
+    ['Valid until', dateCell(view.validUntil, ctx)],
   ];
   if (view.paymentTermName) rows.push(['Payment terms', esc(view.paymentTermName)]);
   return rows;
@@ -235,7 +242,7 @@ export function totalsTable(ctx: RenderContext): string {
 
 export const amountWords = (ctx: RenderContext): string =>
   `<p class="words"><span class="words-label">Amount in words:</span> <strong>${esc(
-    amountInWords(ctx.view.totals.total, ctx.view.currency, ctx.numberSystem),
+    amountInWords(ctx.view.totals.total, ctx.view.currency, ctx.numberSystems[ctx.view.currency]),
   )}</strong></p>`;
 
 export function scheduleBlock(ctx: RenderContext): string {
@@ -244,7 +251,7 @@ export function scheduleBlock(ctx: RenderContext): string {
   return `<section class="block"><h2>Payment schedule</h2><table class="schedule">${s
     .map(
       (m) =>
-        `<tr><td>${esc(m.label)}</td><td>${esc(trimPercent(m.percent))}%</td><td class="muted">${esc(m.dueDescription && formatCustomerDate(m.dueDescription))}</td></tr>`,
+        `<tr><td>${esc(m.label)}</td><td>${esc(trimPercent(m.percent))}%</td><td class="muted">${esc(m.dueDescription && formatCustomerDate(m.dueDescription, ctx.dateFormat))}</td></tr>`,
     )
     .join('')}</table></section>`;
 }
@@ -253,10 +260,20 @@ export function scheduleBlock(ctx: RenderContext): string {
 export const summary = (ctx: RenderContext): string =>
   `<section class="summary"><div class="summary-side">${scheduleBlock(ctx)}</div><div class="summary-main">${totalsTable(ctx)}${amountWords(ctx)}</div></section>`;
 
-const textBlock = (heading: string, body: string | null): string =>
-  body
-    ? `<section class="block"><h2>${heading}</h2><p class="text">${escapeHtml(body)}</p></section>`
-    : '';
+/**
+ * A stored wording (scope, terms and the like) as HTML safe to print, or '' when there is none. Rich text is rebuilt
+ * from its allow-listed tags and legacy plain text is escaped, both by `richTextToHtml`; nothing else may put such
+ * wording into the page.
+ */
+export function richBlock(value: string | null | undefined): string {
+  const html = richTextToHtml(value);
+  return html === '' ? '' : `<div class="rich">${html}</div>`;
+}
+
+const textBlock = (heading: string, body: string | null): string => {
+  const rich = richBlock(body);
+  return rich === '' ? '' : `<section class="block"><h2>${heading}</h2>${rich}</section>`;
+};
 
 /** The text sections that have content, in reading order. */
 const textBlockList = (ctx: RenderContext): string[] =>
@@ -369,7 +386,7 @@ export const baseCss = (p: BrandPalette): string => `
     border-radius: 8pt; font-size: 7.5pt; font-weight: 700; text-transform: uppercase; letter-spacing: 0.06em;
   }
   .legal { font-weight: 700; font-size: 10.5pt; line-height: 1.3; margin-bottom: 2pt; }
-  .party, .party *, .desc, .text, .kv td, .wordmark, .legal, .words, .sign, .schedule td {
+  .party, .party *, .desc, .rich, .kv td, .wordmark, .legal, .words, .sign, .schedule td {
     overflow-wrap: anywhere;
   }
   /* Addresses break at their <wbr> points; splitting a word is the last resort, for one longer than the column. */
@@ -413,7 +430,21 @@ export const baseCss = (p: BrandPalette): string => `
   .words strong { color: ${N.ink}; font-weight: 600; }
 
   .block { margin-top: 6mm; break-inside: avoid; }
-  .text { white-space: pre-wrap; max-width: 160mm; }
+  /* Rich wording (D31): paragraphs, lists, bold and italic. A list item never splits across pages. */
+  .rich { max-width: 160mm; }
+  .rich p { margin: 0 0 4pt; orphans: 2; widows: 2; }
+  .rich ul, .rich ol { margin: 0 0 4pt; padding-left: 5mm; }
+  .rich ul { list-style: disc outside; }
+  .rich ol { list-style: decimal outside; }
+  .rich ul ul, .rich ol ul { list-style-type: circle; }
+  .rich ul ul ul, .rich ol ul ul, .rich ul ol ul, .rich ol ol ul { list-style-type: square; }
+  .rich ol ol { list-style-type: lower-alpha; }
+  .rich ol ol ol { list-style-type: lower-roman; }
+  .rich li ul, .rich li ol { margin: 2pt 0 0; }
+  .rich li { margin: 0 0 2pt; padding-left: 1pt; break-inside: avoid; orphans: 2; widows: 2; }
+  .rich > :last-child { margin-bottom: 0; }
+  .rich strong { font-weight: 700; }
+  .rich em { font-style: italic; }
   table.schedule { border-collapse: collapse; }
   table.schedule td { padding: 2pt 12pt 2pt 0; vertical-align: top; }
   table.schedule td:nth-child(2) { font-weight: 600; white-space: nowrap; }

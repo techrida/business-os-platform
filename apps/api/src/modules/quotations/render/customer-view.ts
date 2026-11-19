@@ -9,6 +9,7 @@ import {
   isCustomerVisibleStatus,
   type CustomerQuotationView,
   type CustomerVisibleStatus,
+  type PortalDisplay,
 } from '@bos/contracts';
 import type {
   customerContacts,
@@ -79,6 +80,12 @@ export interface CustomerViewInput {
   >[];
   taxSummary: readonly Pick<Row<typeof quotationTaxSummary>, 'label' | 'rate' | 'base' | 'tax'>[];
   issuer: CustomerViewIssuer;
+  /**
+   * The number grouping and date pattern the portal draws this version with: the portal passes the ones frozen with
+   * the version (else the live settings). The PDF renderer ignores it (it reads the snapshot itself) and passes
+   * `defaultPortalDisplay()`.
+   */
+  display: PortalDisplay;
   /**
    * True once the rendered PDF's malware scan came back clean. The file goes in the view only then; the
    * default is deny.
@@ -199,6 +206,14 @@ export function toCustomerQuotationView(
       base: t.base,
       tax: t.tax,
     })),
+    display: {
+      numberSystems: {
+        NPR: input.display.numberSystems.NPR,
+        INR: input.display.numberSystems.INR,
+        USD: input.display.numberSystems.USD,
+      },
+      dateFormat: input.display.dateFormat,
+    },
     file,
   });
 }

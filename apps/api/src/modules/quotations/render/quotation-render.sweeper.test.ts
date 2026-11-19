@@ -383,7 +383,12 @@ describe('QuotationRenderSweeper', () => {
         displayName: 'Techrida Nepal',
         panVatNo: null,
       };
-      settingValues['format.number_system'] = 'international';
+      settingValues['format.number_systems'] = {
+        NPR: 'international',
+        INR: 'international',
+        USD: 'international',
+      };
+      settingValues['format.date'] = 'yyyy-MM-dd';
       await expect(sweeper.sweep()).resolves.toMatchObject({ rendered: 1, failed: 0 });
       const expected = {
         style: { layout: 'tinted', primaryColour: '#b45309' },
@@ -393,7 +398,8 @@ describe('QuotationRenderSweeper', () => {
           displayName: 'Techrida Nepal',
           panVatNo: '301234567',
         },
-        numberSystem: 'international',
+        numberSystems: { NPR: 'international', INR: 'international', USD: 'international' },
+        dateFormat: 'yyyy-MM-dd',
         capturedAt: NOW.toISOString(),
       };
       expect(styles.get(c.versionId)).toEqual(expected);
@@ -432,7 +438,11 @@ describe('QuotationRenderSweeper', () => {
 
       // The admin changes the look between the failed attempt and the retry.
       settingValues['document.style'] = { layout: 'banded', primaryColour: '#be123c' };
-      settingValues['format.number_system'] = 'international';
+      settingValues['format.number_systems'] = {
+        NPR: 'international',
+        INR: 'international',
+        USD: 'international',
+      };
       settingValues['entity.profile'] = {
         ...DOCUMENT_SETTING_DEFAULTS['entity.profile'],
         displayName: 'Renamed Co',
