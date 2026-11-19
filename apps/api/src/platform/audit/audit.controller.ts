@@ -6,8 +6,9 @@ import { BadRequestException, Controller, Get, Query } from '@nestjs/common';
 import { z } from 'zod';
 
 import { Can } from '../authz/decorators';
-import { ctx } from '../tenancy/request-context';
+import { ctx, currentPrincipal } from '../tenancy/request-context';
 import { AuditService } from './audit.service';
+import { eventsVisibleTo } from './cost-redaction';
 
 /** `?entityId=` (an empty value) means "not given", the same as leaving the parameter out. */
 const optional = <S extends z.ZodType>(schema: S) =>
@@ -50,7 +51,8 @@ export class AuditController {
     const q = parse(ListQuery, query, 'query');
     const { tenantId, organizationId } = ctx();
     const items = await this.audit.list({ tenantId, organizationId }, q);
-    return { items };
+    // Internal cost figures (D29) leave only with `quotation.cost.read`: the row stays, the figures do not.
+    return { items: eventsVisibleTo(currentPrincipal(), items) };
   }
 
   /** Always the caller's own tenant: there is no tenant parameter to tamper with. */
