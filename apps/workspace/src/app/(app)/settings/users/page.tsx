@@ -43,6 +43,7 @@ export const metadata: Metadata = { title: 'Users · Business OS' };
 const PATH = '/settings/users';
 const DEFAULT_SIZE = 50;
 const USER_PAGE_SIZES = [5, 10, 25, DEFAULT_SIZE];
+const PAGE_LINKS = 5;
 const GUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 // Sort is a view choice, not a filter: it stays out of the filter spec so Clear filters keeps it.
 const FILTERS = { multi: { status: UserStatusSchema.options, role: ROLE_KEYS } } as const;
@@ -51,6 +52,14 @@ const SPEC = {
   single: { departmentId: GUID, sort: AdminUserSortSchema.options },
   rows: { allowed: USER_PAGE_SIZES, default: DEFAULT_SIZE },
 } as const;
+
+/** Up to five page numbers around the current one. */
+function pageNumbers(current: number, count: number): number[] {
+  const last = Math.min(count, ADMIN_USERS_MAX_PAGE);
+  const start = Math.max(1, Math.min(current - 2, last - PAGE_LINKS + 1));
+  const end = Math.min(last, start + PAGE_LINKS - 1);
+  return Array.from({ length: end - start + 1 }, (_, i) => start + i);
+}
 
 export default async function UsersPage({ searchParams }: { searchParams: Promise<RawParams> }) {
   const params = await searchParams;
@@ -95,6 +104,13 @@ export default async function UsersPage({ searchParams }: { searchParams: Promis
   const pastFirstPage = page > 1;
   const numberFormat = new Intl.NumberFormat();
   const count = (value: number) => numberFormat.format(value);
+  // All matches of the filters and search; the tenant figure only stands in when the list sent none.
+  const total =
+    (users.ok ? users.data.total : null) ?? (!filtered && summary.ok ? summary.data.total : null);
+  const pageLinks =
+    total === null
+      ? []
+      : pageNumbers(page, Math.ceil(total / limit)).map((n) => ({ page: n, href: href(n) }));
   const add = (
     <LinkButton href="/settings/users/new" size="large">
       <span aria-hidden="true">＋</span>Add user
@@ -278,9 +294,11 @@ export default async function UsersPage({ searchParams }: { searchParams: Promis
                   <span role="status">
                     {items.length === 0
                       ? '0 users'
-                      : `Showing ${count((page - 1) * limit + 1)}–${count((page - 1) * limit + items.length)}${!filtered && summary.ok ? ` of ${count(summary.data.total)}` : ''}`}
+                      : `Showing ${count((page - 1) * limit + 1)}–${count((page - 1) * limit + items.length)}${total !== null ? ` of ${count(total)}` : ''}`}
                   </span>
                 }
+                pages={pageLinks}
+                currentPage={page}
                 {...(pastFirstPage ? { previousHref: href(page - 1) } : {})}
                 {...(next ? { nextHref: href(next) } : {})}
               />

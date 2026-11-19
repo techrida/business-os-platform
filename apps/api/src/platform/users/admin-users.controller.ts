@@ -15,6 +15,7 @@ import {
   Post,
   Put,
   Query,
+  Res,
   ServiceUnavailableException,
 } from '@nestjs/common';
 import { z } from 'zod';
@@ -24,6 +25,7 @@ import { Can } from '../authz/decorators';
 import { principal } from '../authz/principal';
 import { DB, type Db } from '../db/db.module';
 import { requestTx, withTx } from '../db/tx';
+import { type HeaderTarget, setTotalCount } from '../list';
 import { UsersService } from './users.service';
 import { ZitadelNotConfiguredError } from './zitadel-admin.client';
 
@@ -74,14 +76,16 @@ export class AdminUsersController {
     private readonly authz: AuthzService,
   ) {}
 
+  /** X-Total-Count is every user matching the scope, filters and search, not just this page. */
   @Get()
   @Can('admin.users.read')
-  async list(@Query() query: unknown) {
+  async list(@Query() query: unknown, @Res({ passthrough: true }) res: HeaderTarget) {
     const q = parse(AdminUsersQuerySchema, query, 'query');
     const { scope } = requestTx();
-    const results = await this.users.list(scope, q);
-    const items = results.slice(0, q.limit);
-    const hasMore = results.length > q.limit;
+    const { rows, total } = await this.users.list(scope, q);
+    setTotalCount(res, total);
+    const items = rows.slice(0, q.limit);
+    const hasMore = rows.length > q.limit;
     const usingPages = q.page !== undefined || q.sort !== undefined;
     const page = q.page ?? 1;
     return {
