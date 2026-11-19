@@ -113,3 +113,36 @@ it('shows the nine areas in the catalogue order, each with its summary', async (
   expect(container.textContent).toContain('Sales and Marketing see their own leads.');
   expect(container.textContent).toContain('Only Founders can see invoices.');
 });
+
+const card = (title: string): HTMLElement => {
+  const headings = [...document.querySelectorAll('section h2')];
+  const heading = headings.find((h) => h.textContent === title);
+  const section = heading?.closest('section');
+  if (!section) throw new Error(`No card ${title}`);
+  return section;
+};
+
+it('opens Leads with a locked Founder row, staff roles, levels and the assign block', async () => {
+  await render();
+  await click(byLabel('Edit Leads'));
+  const leads = card('Leads');
+
+  const founder = [...leads.querySelectorAll('li')].find((li) =>
+    li.textContent?.includes('Founders always have full access.'),
+  );
+  expect(founder?.querySelector('button')?.disabled).toBe(true);
+  for (const role of ['Management', 'Sales', 'Marketing']) {
+    expect(leads.querySelector(`[aria-label="${role} can see leads"]`)).not.toBeNull();
+  }
+  expect(leads.textContent).toContain('2 roles with no access');
+  expect(leads.textContent).toContain('Managers also see their whole department');
+  expect(leads.textContent).toContain('Department heads also see their whole department');
+  expect(leads.textContent).toContain('Who can assign leads');
+  expect(leads.textContent).toContain('Staff can assign to');
+  expect(leads.textContent).toContain(
+    'Founders can assign to anyone. Nobody can assign to someone above their own level.',
+  );
+  // Portal roles never appear in an area card (acceptance criterion 4.3).
+  expect(leads.textContent).not.toContain('Customer portal user');
+  expect(leads.textContent).not.toContain('Vendor portal user');
+});
