@@ -701,6 +701,24 @@ describe('POST admin/settings/documents/preview', () => {
       expect(logos.resolve).not.toHaveBeenCalled();
     });
 
+    it('draws the legacy logo of a profile saved before logoDocumentId existed', async () => {
+      // SettingsService.get returns the stored JSON as saved, without the schema's defaults.
+      const logos = fakeLogos(new Error('no document id'));
+      const { documentSettings } = build(
+        [],
+        // Cast: the type says the field is always there; the old stored row does not have it.
+        {
+          profile: {
+            logoDocumentId: undefined,
+            legacyLogoDataUrl: LEGACY,
+          } as unknown as Partial<CompanyProfile>,
+        },
+        logos,
+      );
+      expect((await preview(documentSettings)).html).toContain(LEGACY);
+      expect(logos.resolve).not.toHaveBeenCalled();
+    });
+
     it('still draws the preview, without a logo and with a warning, when the resolver fails', async () => {
       const warn = vi.spyOn(Logger.prototype, 'warn').mockImplementation(() => undefined);
       const { documentSettings } = build(

@@ -158,11 +158,12 @@ export class DocumentSettingsService {
    */
   private async previewLogo(
     scope: TxScope,
-    logoDocumentId: string | null,
+    logoDocumentId: string | null | undefined,
     legacyLogoDataUrl: string | null | undefined,
   ): Promise<string | null> {
     const legacy = legacyLogoDataUrl ?? null;
-    if (logoDocumentId === null) return legacy;
+    // The stored JSON is read as saved: a profile saved before logoDocumentId existed has no such field.
+    if (typeof logoDocumentId !== 'string') return legacy;
     try {
       return (await this.logos.forScope(scope)(logoDocumentId)) ?? legacy;
     } catch (error) {
