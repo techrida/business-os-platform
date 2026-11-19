@@ -9,6 +9,11 @@
 --     all for founder and any role holding `admin.users.invite` (anyone's), the same rule as the code defaults.
 --     Only the named staff roles get it (a custom role or a portal role gets nothing until someone grants it). A role that already holds it is left alone, and the
 --     authz cache version is bumped only for a tenant that gained a row.
+--   * `seeded` (0081): where 0081 has already run, a row that matches the code defaults (founder `all`, a named
+--     staff role `own`) is written seeded = true, like 0083's rows, so a reseed may refresh it. An `all` row for
+--     any other role that holds admin.users.invite is not a default, so it stays false (Founder-owned: a reseed
+--     never removes it). Where 0053 runs before 0081 the column does not exist yet and 0081's backfill marks every
+--     existing row seeded, so the INSERTs are built with EXECUTE and name the column only when it exists.
 --
 -- Runs as bos_owner, in the migrator's one transaction, split at the breakpoint comments (same rule as 0000).
 
@@ -32,6 +37,16 @@ DECLARE
   target record;
   inserted_rows integer;
   total_rows integer;
+  -- 0081 adds the column. Read once: nothing below changes the table's shape.
+  has_seeded boolean := EXISTS (
+    SELECT 1
+    FROM information_schema.columns
+    WHERE table_schema = 'app' AND table_name = 'role_permissions' AND column_name = 'seeded'
+  );
+  seeded_column text := CASE WHEN has_seeded THEN ', seeded' ELSE '' END;
+  -- Founder's `all` is its default; another role reaches `all` only through admin.users.invite, not a default.
+  seeded_all text := CASE WHEN has_seeded THEN ', grant_row.role_key = ''founder''' ELSE '' END;
+  seeded_own text := CASE WHEN has_seeded THEN ', true' ELSE '' END;
 BEGIN
   FOR target IN
     SELECT org.tenant_id, org.id AS organization_id
@@ -42,37 +57,41 @@ BEGIN
     PERFORM set_config('bos.organization_id', target.organization_id::text, true);
 
     -- Anyone's picture: founder, and whoever manages users (holds admin.users.invite).
-    INSERT INTO app.role_permissions (tenant_id, role_key, permission, scope)
-    SELECT DISTINCT grant_row.tenant_id, grant_row.role_key, 'profile.avatar.write'::text, 'all'::text
-    FROM app.role_permissions grant_row
-    WHERE grant_row.tenant_id = target.tenant_id
-      AND (grant_row.role_key = 'founder' OR grant_row.permission = 'admin.users.invite')
-      AND NOT EXISTS (
-        SELECT 1
-        FROM app.role_permissions existing
-        WHERE existing.tenant_id = grant_row.tenant_id
-          AND existing.role_key = grant_row.role_key
-          AND existing.permission = 'profile.avatar.write'
-      )
-    ON CONFLICT (tenant_id, role_key, permission) DO NOTHING;
+    EXECUTE format($sql$
+      INSERT INTO app.role_permissions (tenant_id, role_key, permission, scope%s)
+      SELECT DISTINCT grant_row.tenant_id, grant_row.role_key, 'profile.avatar.write'::text, 'all'::text%s
+      FROM app.role_permissions grant_row
+      WHERE grant_row.tenant_id = $1
+        AND (grant_row.role_key = 'founder' OR grant_row.permission = 'admin.users.invite')
+        AND NOT EXISTS (
+          SELECT 1
+          FROM app.role_permissions existing
+          WHERE existing.tenant_id = grant_row.tenant_id
+            AND existing.role_key = grant_row.role_key
+            AND existing.permission = 'profile.avatar.write'
+        )
+      ON CONFLICT (tenant_id, role_key, permission) DO NOTHING
+    $sql$, seeded_column, seeded_all) USING target.tenant_id;
     GET DIAGNOSTICS inserted_rows = ROW_COUNT;
     total_rows := inserted_rows;
 
     -- Their own picture: every other staff role (the rows above already exist, so NOT EXISTS skips them).
-    INSERT INTO app.role_permissions (tenant_id, role_key, permission, scope)
-    SELECT DISTINCT grant_row.tenant_id, grant_row.role_key, 'profile.avatar.write'::text, 'own'::text
-    FROM app.role_permissions grant_row
-    WHERE grant_row.tenant_id = target.tenant_id
-      AND grant_row.role_key IN ('sales', 'pmo', 'operations_head', 'procurement', 'warehouse',
-                                 'operations_officer', 'management', 'finance', 'accountant')
-      AND NOT EXISTS (
-        SELECT 1
-        FROM app.role_permissions existing
-        WHERE existing.tenant_id = grant_row.tenant_id
-          AND existing.role_key = grant_row.role_key
-          AND existing.permission = 'profile.avatar.write'
-      )
-    ON CONFLICT (tenant_id, role_key, permission) DO NOTHING;
+    EXECUTE format($sql$
+      INSERT INTO app.role_permissions (tenant_id, role_key, permission, scope%s)
+      SELECT DISTINCT grant_row.tenant_id, grant_row.role_key, 'profile.avatar.write'::text, 'own'::text%s
+      FROM app.role_permissions grant_row
+      WHERE grant_row.tenant_id = $1
+        AND grant_row.role_key IN ('sales', 'marketing', 'pmo', 'operations_head', 'procurement', 'warehouse',
+                                   'operations_officer', 'management', 'finance', 'accountant')
+        AND NOT EXISTS (
+          SELECT 1
+          FROM app.role_permissions existing
+          WHERE existing.tenant_id = grant_row.tenant_id
+            AND existing.role_key = grant_row.role_key
+            AND existing.permission = 'profile.avatar.write'
+        )
+      ON CONFLICT (tenant_id, role_key, permission) DO NOTHING
+    $sql$, seeded_column, seeded_own) USING target.tenant_id;
     GET DIAGNOSTICS inserted_rows = ROW_COUNT;
     total_rows := total_rows + inserted_rows;
 
