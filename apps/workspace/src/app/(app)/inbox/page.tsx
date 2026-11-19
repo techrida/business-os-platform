@@ -13,7 +13,7 @@ import { CellTitle, Table, Td, Th } from '@/components/ui/table';
 import { failureOf, getInbox, getInboxPage, type InboxPage } from '@/lib/api-kernel';
 import { requireStaffSession } from '@/lib/bff';
 import { getNumberSystems } from '@/lib/display-settings';
-import { money, when } from '@/lib/kernel-format';
+import { documentNumberText, money, when } from '@/lib/kernel-format';
 import { activeFilterLabels, clearFiltersHref, readList, type RawParams } from '@/lib/list-params';
 
 import { EyeIcon } from '../memos/memo-icons';
@@ -39,7 +39,7 @@ function InboxRow({ item, numberSystems }: { item: InboxItemDto; numberSystems: 
           meta={
             <>
               <span className="sr-only">Document number: </span>
-              {item.documentNumber}
+              {documentNumberText(item.documentNumber)}
             </>
           }
         />
