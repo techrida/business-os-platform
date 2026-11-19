@@ -9,11 +9,16 @@
   grid-template-columns: auto minmax(0, 1fr) auto;
   gap: var(--spacing-content-gap);
   align-items: center;
+  /* Size containment gives the root no width of its own, so it takes its container's width (also in a flex row). */
+  width: 100%;
   min-width: 0;
   container: image-upload / inline-size;
 }
 
+/* Read only is just the picture: it keeps its own width beside a name and needs no container query. */
 .root[data-readonly='true'] {
+  width: auto;
+  container-type: normal;
   grid-template-columns: auto;
   justify-content: start;
 }

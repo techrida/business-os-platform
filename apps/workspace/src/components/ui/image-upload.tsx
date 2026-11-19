@@ -385,6 +385,10 @@ export function ImageUpload({
             disabled={disabled}
             aria-labelledby={titleId}
             aria-describedby={hintId}
+            onClick={(event) => {
+              // The chooser stays shut during an upload, rather than opening for a pick that would be ignored.
+              if (busyRef.current) event.preventDefault();
+            }}
             onChange={(event) => {
               const file = event.target.files?.[0];
               event.target.value = '';
@@ -420,7 +424,7 @@ export function ImageUpload({
             </Button>
           }
           title={`Remove the picture of ${name}?`}
-          description="Initials show in its place until a new picture is uploaded. Documents already sent keep the picture they were printed with."
+          description="Initials show in its place until a new picture is uploaded."
           confirmLabel="Remove picture"
           destructive
           onConfirm={remove}
