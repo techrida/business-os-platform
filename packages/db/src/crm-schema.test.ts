@@ -198,7 +198,10 @@ describe('0015_crm and src/schema/crm.ts', () => {
   // 0090 adds opportunities.lost_reason_id (with its FK to lead_lost_reasons).
   applyAlters(
     parsed,
-    readFileSync(new URL('../migrations/0090_opportunity_lost_reason.sql', import.meta.url), 'utf8'),
+    readFileSync(
+      new URL('../migrations/0090_opportunity_lost_reason.sql', import.meta.url),
+      'utf8',
+    ),
   );
 
   it('create the same nine tables', () => {

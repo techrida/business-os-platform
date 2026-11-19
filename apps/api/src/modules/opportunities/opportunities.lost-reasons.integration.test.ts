@@ -15,11 +15,12 @@ import {
   LeadDtoSchema,
   LeadLostReasonSchema,
   OpportunityDtoSchema,
+  type OpportunityStage,
   type Permission,
   type RoleKey,
   type Scope,
 } from '@bos/contracts';
-import { leadLostReasons, opportunities, type OpportunityStage } from '@bos/db';
+import { leadLostReasons, opportunities } from '@bos/db';
 import {
   type CanActivate,
   type ExecutionContext,
@@ -40,7 +41,7 @@ import type { AuthzService } from '../../platform/authz/authz.service';
 import { can } from '../../platform/authz/can';
 import { CAN_KEY } from '../../platform/authz/decorators';
 import { systemActor, withTx } from '../../platform/db/tx';
-import { ErrorBodyFilter } from '../../platform/http/error-body.filter';
+import { ErrorBodyFilter } from '../../platform/tenancy/error-body.filter';
 import { NumberingService } from '../../platform/settings/numbering.service';
 import { LeadsController } from '../leads/leads.controller';
 import { LeadsService } from '../leads/leads.service';
@@ -271,7 +272,9 @@ describe('D49 / D54-3 opportunity lost reasons', () => {
 
     // Mark one deal lost with Timing before retiring Timing.
     const existingId = await seedOpportunity();
-    expect((await markOpportunityLost(existingId, 1, { lostReasonId: timing.id })).status).toBe(200);
+    expect((await markOpportunityLost(existingId, 1, { lostReasonId: timing.id })).status).toBe(
+      200,
+    );
 
     asRole('boss', 'founder');
     const retire = await request(baseUrl)
@@ -339,14 +342,12 @@ describe('D49 / D54-3 opportunity lost reasons', () => {
 
     // A lead can be marked lost with the exact option created from the opportunity dialog.
     const lead = await seedLead();
-    const leadLost = await request(baseUrl)
-      .patch(`/v1/leads/${lead.id}/stage`)
-      .send({
-        stage: 'lost',
-        lostReasonId: createdId,
-        note: 'Same reason on lead',
-        expectedVersion: lead.version,
-      });
+    const leadLost = await request(baseUrl).patch(`/v1/leads/${lead.id}/stage`).send({
+      stage: 'lost',
+      lostReasonId: createdId,
+      note: 'Same reason on lead',
+      expectedVersion: lead.version,
+    });
     expect(leadLost.status, JSON.stringify(leadLost.body)).toBe(200);
     expect(leadDto(leadLost.body).lostReason).toEqual({
       id: createdId,
@@ -369,9 +370,9 @@ describe('D49 / D54-3 opportunity lost reasons', () => {
       version: 1,
     });
     const priceRows = await h.db.select().from(leadLostReasons);
-    expect(priceRows.filter((r) => r.tenantId === h.tenantId && r.labelNorm === 'price')).toHaveLength(
-      1,
-    );
+    expect(
+      priceRows.filter((r) => r.tenantId === h.tenantId && r.labelNorm === 'price'),
+    ).toHaveLength(1);
   });
 
   it('shows a renamed option on an already-lost opportunity', async () => {
@@ -440,9 +441,9 @@ describe('D49 / D54-3 opportunity lost reasons', () => {
 
   it('serves GET /v1/opportunity-lost-reasons to a crm.opportunity.write caller without crm.lead.write', async () => {
     const reflector = new Reflector();
-    expect(
-      reflector.get(CAN_KEY, LeadLostReasonsController.prototype.opportunityChoices),
-    ).toBe('crm.opportunity.write');
+    expect(reflector.get(CAN_KEY, LeadLostReasonsController.prototype.opportunityChoices)).toBe(
+      'crm.opportunity.write',
+    );
 
     // A user with crm.opportunity.write ONLY (no crm.lead.write) can fetch opportunity choices, not lead choices.
     asGrants('salesA', { 'crm.opportunity.write': 'own' });
