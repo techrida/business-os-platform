@@ -20,6 +20,7 @@ import {
 } from '../_lib/forms';
 import type { RfqFormState } from '../_lib/state';
 import type { VendorOption } from './rfq-form';
+import rows from './line-rows.module.css';
 
 const WIDE = styles.wide ?? '';
 
@@ -321,103 +322,128 @@ export function QuoteForm({
 
       <Panel
         title="Line items"
-        description="One row for each line of the purchase request. Untick a line the vendor did not quote."
+        description="One row for each line of the purchase request. Untick a line the vendor did not quote. The platform works out the totals when you save."
       >
-        <div className={styles.lines}>
-          {prLines.map((pl, i) => {
-            const line = values.lines[i];
-            if (line === undefined) return null;
-            return (
-              <fieldset key={pl.id} className={styles.line}>
-                <legend>Line {pl.lineNo}</legend>
-                <input type="hidden" name={`lines.${i}.prLineId`} value={pl.id} />
-                <div className={styles.lineGrid}>
-                  <div className={WIDE}>
-                    <label className={styles.check}>
-                      <input
-                        type="checkbox"
-                        name={`lines.${i}.include`}
-                        checked={line.include}
-                        onChange={(e) => setLine(i, { include: e.target.checked })}
-                      />
-                      <span className={styles.long}>
-                        Quote this line: {pl.description} ({pl.quantity} {pl.uom} requested)
-                      </span>
-                    </label>
+        <div className={`${rows.editor} ${rows.quote}`}>
+          {/* The column heads; each line's own labels stay for screen readers ("Quantity (line 1)"). */}
+          <div className={rows.head} aria-hidden="true">
+            <span>#</span>
+            <span className={rows.headFields}>
+              <span>Item</span>
+              <span>Quantity</span>
+              <span>Unit price ({values.currency})</span>
+              <span>Tax code</span>
+            </span>
+          </div>
+          <ol className={rows.lines}>
+            {prLines.map((pl, i) => {
+              const line = values.lines[i];
+              if (line === undefined) return null;
+              const lineLabel = (text: string) => (
+                <>
+                  {text}
+                  <span className="sr-only"> (line {pl.lineNo})</span>
+                </>
+              );
+              return (
+                <li key={pl.id} className={rows.line}>
+                  <input type="hidden" name={`lines.${i}.prLineId`} value={pl.id} />
+                  <span className={rows.lineNo}>
+                    <span className={rows.lineWord}>Line </span>
+                    {pl.lineNo}
+                  </span>
+                  <div className={rows.fields}>
+                    <div className={rows.item}>
+                      <label className={rows.include}>
+                        <input
+                          type="checkbox"
+                          name={`lines.${i}.include`}
+                          checked={line.include}
+                          onChange={(e) => setLine(i, { include: e.target.checked })}
+                        />
+                        <span className={rows.item}>
+                          <span className="sr-only">Quote line {pl.lineNo}: </span>
+                          <span className={rows.itemName}>{pl.description}</span>
+                          <span className={rows.itemNote}>
+                            {pl.quantity} {pl.uom} requested
+                          </span>
+                        </span>
+                      </label>
+                    </div>
+                    <Field label={lineLabel('Quantity')} error={err[`lines.${i}.quantity`]}>
+                      {(control) => (
+                        <Input
+                          name={`lines.${i}.quantity`}
+                          value={line.quantity}
+                          onChange={(e) => setLine(i, { quantity: e.target.value })}
+                          inputMode="decimal"
+                          autoComplete="off"
+                          className={styles.numeric}
+                          disabled={!line.include}
+                          {...control}
+                        />
+                      )}
+                    </Field>
+                    <Field
+                      label={lineLabel(`Unit price (${values.currency})`)}
+                      error={err[`lines.${i}.unitPrice`]}
+                    >
+                      {(control) => (
+                        <Input
+                          name={`lines.${i}.unitPrice`}
+                          value={line.unitPrice}
+                          onChange={(e) => setLine(i, { unitPrice: e.target.value })}
+                          inputMode="decimal"
+                          autoComplete="off"
+                          className={styles.numeric}
+                          disabled={!line.include}
+                          {...control}
+                        />
+                      )}
+                    </Field>
+                    <Field
+                      label={lineLabel('Tax code')}
+                      hint={
+                        unavailableTax(line.taxCodeId)
+                          ? 'Choose an available tax code for this line.'
+                          : undefined
+                      }
+                      error={err[`lines.${i}.taxCodeId`]}
+                    >
+                      {(control) => (
+                        <Select
+                          name={`lines.${i}.taxCodeId`}
+                          value={line.taxCodeId}
+                          onChange={(e) => setLine(i, { taxCodeId: e.target.value })}
+                          disabled={!line.include || !hasTaxCodes}
+                          required={line.include}
+                          {...control}
+                        >
+                          <option value="">Choose a tax code</option>
+                          {unavailableTax(line.taxCodeId) ? (
+                            <option value={line.taxCodeId} disabled>
+                              Unavailable tax code
+                            </option>
+                          ) : null}
+                          {(taxCodes ?? []).map((t) => (
+                            <option key={t.id} value={t.id}>
+                              {t.label}
+                            </option>
+                          ))}
+                        </Select>
+                      )}
+                    </Field>
                   </div>
-                  <Field label="Quantity" error={err[`lines.${i}.quantity`]}>
-                    {(control) => (
-                      <Input
-                        name={`lines.${i}.quantity`}
-                        value={line.quantity}
-                        onChange={(e) => setLine(i, { quantity: e.target.value })}
-                        inputMode="decimal"
-                        autoComplete="off"
-                        className={styles.numeric}
-                        disabled={!line.include}
-                        {...control}
-                      />
-                    )}
-                  </Field>
-                  <Field
-                    label={`Unit price (${values.currency})`}
-                    error={err[`lines.${i}.unitPrice`]}
-                  >
-                    {(control) => (
-                      <Input
-                        name={`lines.${i}.unitPrice`}
-                        value={line.unitPrice}
-                        onChange={(e) => setLine(i, { unitPrice: e.target.value })}
-                        inputMode="decimal"
-                        autoComplete="off"
-                        className={styles.numeric}
-                        disabled={!line.include}
-                        {...control}
-                      />
-                    )}
-                  </Field>
-                  <Field
-                    label="Tax code"
-                    hint={
-                      unavailableTax(line.taxCodeId)
-                        ? 'Choose an available tax code for this line.'
-                        : undefined
-                    }
-                    error={err[`lines.${i}.taxCodeId`]}
-                  >
-                    {(control) => (
-                      <Select
-                        name={`lines.${i}.taxCodeId`}
-                        value={line.taxCodeId}
-                        onChange={(e) => setLine(i, { taxCodeId: e.target.value })}
-                        disabled={!line.include || !hasTaxCodes}
-                        required={line.include}
-                        {...control}
-                      >
-                        <option value="">Choose a tax code</option>
-                        {unavailableTax(line.taxCodeId) ? (
-                          <option value={line.taxCodeId} disabled>
-                            Unavailable tax code
-                          </option>
-                        ) : null}
-                        {(taxCodes ?? []).map((t) => (
-                          <option key={t.id} value={t.id}>
-                            {t.label}
-                          </option>
-                        ))}
-                      </Select>
-                    )}
-                  </Field>
-                </div>
-              </fieldset>
-            );
-          })}
+                </li>
+              );
+            })}
+          </ol>
+          {err.lines ? (
+            <p role="alert" className={styles.status}>
+              {err.lines}
+            </p>
+          ) : null}
         </div>
-        {err.lines ? (
-          <p role="alert" className={styles.status}>
-            {err.lines}
-          </p>
-        ) : null}
       </Panel>
     </form>
   );

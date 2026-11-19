@@ -1,7 +1,35 @@
 import { PO_STATUSES } from '@bos/contracts';
 import { describe, expect, it } from 'vitest';
 
-import { isReceivable, orderActions, PO_STATUS_LABEL, poGrants, poMoney, qtyText } from './model';
+import {
+  bandText,
+  isReceivable,
+  orderActions,
+  PO_STATUS_LABEL,
+  poGrants,
+  poMoney,
+  primaryOrderAction,
+  qtyText,
+} from './model';
+
+describe('primaryOrderAction', () => {
+  it('picks the next step: issue, then receive, then enter the bill', () => {
+    expect(primaryOrderAction({ issue: true, receive: false, enterBill: false })).toBe('issue');
+    expect(primaryOrderAction({ issue: false, receive: true, enterBill: true })).toBe('receive');
+    expect(primaryOrderAction({ issue: false, receive: false, enterBill: true })).toBe('enterBill');
+    expect(primaryOrderAction({ issue: false, receive: false, enterBill: false })).toBeNull();
+  });
+});
+
+describe('bandText', () => {
+  it('names each approval band in words, and capitalises one it does not know', () => {
+    expect(bandText('base')).toBe('Base');
+    expect(bandText('management')).toBe('Management');
+    expect(bandText('founder')).toBe('Founder');
+    expect(bandText('board_level')).toBe('Board level');
+    expect(bandText('')).toBe('Not recorded');
+  });
+});
 
 describe('poGrants', () => {
   it('reads the defaults of the session roles, and denies by default', () => {

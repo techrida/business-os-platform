@@ -13,6 +13,7 @@ import { ProcurementFormActions } from '../../form-actions';
 
 import type { ActionState } from '../../orders/_lib/state';
 import { createReceiptAction } from '../actions';
+import rows from '../../rfqs/_components/line-rows.module.css';
 import styles from '../receipts.module.css';
 
 /**
@@ -194,110 +195,135 @@ export function ReceiptForm({
           </div>
         </Panel>
 
-        <Panel title="Line items">
-          {shown.map((l) => {
-            const v = valueOf(l.poLineId);
-            const count = serialCount(v.serials);
-            const units = /^\d{1,4}$/.test(v.quantity.trim()) ? Number(v.quantity) : null;
-            return (
-              <fieldset key={l.poLineId} className={styles.lineGroup}>
-                <legend>
-                  Line {l.lineNo}: {l.description}
-                </legend>
-                <p className={styles.note}>
-                  Ordered {l.ordered} {l.uom}. Received {l.received}
-                  {l.pending !== '0' ? `, ${l.pending} waiting in draft receipts` : ''}.{' '}
-                  {l.hasRoom
-                    ? `Up to ${l.cap} ${l.uom} can be received now.`
-                    : 'Nothing is left to receive on this line.'}
-                  {l.requiresSerials ? ' Each unit has a serial number.' : ''}
-                </p>
-                {l.hasRoom ? (
+        <Panel
+          title="Line items"
+          description="Type what arrived on each line. Leave a quantity empty to skip that line. Inspection and discrepancy notes are optional."
+        >
+          <div className={`${rows.editor} ${rows.receipt}`}>
+            {/* The column heads; each line's own labels stay for screen readers ("Inspection (line 1)"). */}
+            <div className={rows.head} aria-hidden="true">
+              <span>#</span>
+              <span className={rows.headFields}>
+                <span>Item</span>
+                <span>Quantity received</span>
+                <span>Inspection</span>
+                <span>Discrepancy note</span>
+              </span>
+            </div>
+            <ol className={rows.lines}>
+              {shown.map((l) => {
+                const v = valueOf(l.poLineId);
+                const count = serialCount(v.serials);
+                const units = /^\d{1,4}$/.test(v.quantity.trim()) ? Number(v.quantity) : null;
+                const lineLabel = (text: string) => (
                   <>
-                    <div className={styles.lineFields}>
-                      <Field
-                        label={`Quantity received (${l.uom})`}
-                        hint="Leave empty to skip this line."
-                        error={errors[`${l.poLineId}.quantity`]}
-                      >
-                        {(c) => (
-                          <Input
-                            name={`qty:${l.poLineId}`}
-                            value={v.quantity}
-                            onChange={(e) => set(l.poLineId, 'quantity', e.target.value)}
-                            inputMode="decimal"
-                            autoComplete="off"
-                            className={styles.numeric}
-                            {...c}
-                          />
-                        )}
-                      </Field>
-                    </div>
-                    {l.requiresSerials ? (
-                      <Field
-                        label="Serial numbers"
-                        hint="One per line, as many as units received. Each must be different."
-                        error={errors[`${l.poLineId}.serials`]}
-                      >
-                        {(c) => (
-                          <>
-                            <Textarea
-                              name={`serials:${l.poLineId}`}
-                              value={v.serials}
-                              onChange={(e) => set(l.poLineId, 'serials', e.target.value)}
-                              rows={4}
-                              autoComplete="off"
-                              spellCheck={false}
-                              {...c}
-                            />
-                            <p className={styles.note} aria-live="polite">
-                              {units !== null
-                                ? `${count} of ${units} serial numbers entered`
-                                : `${count} serial numbers entered`}
-                            </p>
-                          </>
-                        )}
-                      </Field>
-                    ) : null}
-                    <div className={styles.lineFields}>
-                      <Field
-                        label="Inspection"
-                        hint="Optional. What was checked."
-                        error={errors[`${l.poLineId}.inspection`]}
-                      >
-                        {(c) => (
-                          <Input
-                            name={`inspection:${l.poLineId}`}
-                            value={v.inspection}
-                            onChange={(e) => set(l.poLineId, 'inspection', e.target.value)}
-                            maxLength={500}
-                            autoComplete="off"
-                            {...c}
-                          />
-                        )}
-                      </Field>
-                      <Field
-                        label="Discrepancy note"
-                        hint="Optional. Damage, shortage or a wrong item."
-                        error={errors[`${l.poLineId}.note`]}
-                      >
-                        {(c) => (
-                          <Input
-                            name={`note:${l.poLineId}`}
-                            value={v.note}
-                            onChange={(e) => set(l.poLineId, 'note', e.target.value)}
-                            maxLength={1000}
-                            autoComplete="off"
-                            {...c}
-                          />
-                        )}
-                      </Field>
-                    </div>
+                    {text}
+                    <span className="sr-only"> (line {l.lineNo})</span>
                   </>
-                ) : null}
-              </fieldset>
-            );
-          })}
+                );
+                return (
+                  <li key={l.poLineId} className={rows.line}>
+                    <span className={rows.lineNo}>
+                      <span className={rows.lineWord}>Line </span>
+                      {l.lineNo}
+                    </span>
+                    <div className={rows.fields}>
+                      <div className={rows.item}>
+                        <span className={rows.itemName}>{l.description}</span>
+                        <span className={rows.itemNote}>
+                          Ordered {l.ordered} {l.uom}. Received {l.received}
+                          {l.pending !== '0'
+                            ? `, ${l.pending} waiting in draft receipts`
+                            : ''}.{' '}
+                          {l.hasRoom
+                            ? `Up to ${l.cap} ${l.uom} can be received now.`
+                            : 'Nothing is left to receive on this line.'}
+                          {l.requiresSerials ? ' Each unit has a serial number.' : ''}
+                        </span>
+                      </div>
+                      {l.hasRoom ? (
+                        <>
+                          <Field
+                            label={lineLabel(`Quantity received (${l.uom})`)}
+                            error={errors[`${l.poLineId}.quantity`]}
+                          >
+                            {(c) => (
+                              <Input
+                                name={`qty:${l.poLineId}`}
+                                value={v.quantity}
+                                onChange={(e) => set(l.poLineId, 'quantity', e.target.value)}
+                                inputMode="decimal"
+                                autoComplete="off"
+                                className={styles.numeric}
+                                {...c}
+                              />
+                            )}
+                          </Field>
+                          <Field
+                            label={lineLabel('Inspection')}
+                            error={errors[`${l.poLineId}.inspection`]}
+                          >
+                            {(c) => (
+                              <Input
+                                name={`inspection:${l.poLineId}`}
+                                value={v.inspection}
+                                onChange={(e) => set(l.poLineId, 'inspection', e.target.value)}
+                                maxLength={500}
+                                autoComplete="off"
+                                {...c}
+                              />
+                            )}
+                          </Field>
+                          <Field
+                            label={lineLabel('Discrepancy note')}
+                            error={errors[`${l.poLineId}.note`]}
+                          >
+                            {(c) => (
+                              <Input
+                                name={`note:${l.poLineId}`}
+                                value={v.note}
+                                onChange={(e) => set(l.poLineId, 'note', e.target.value)}
+                                maxLength={1000}
+                                autoComplete="off"
+                                {...c}
+                              />
+                            )}
+                          </Field>
+                          {l.requiresSerials ? (
+                            <Field
+                              className={rows.full ?? ''}
+                              label={lineLabel('Serial numbers')}
+                              hint="One per line, as many as units received. Each must be different."
+                              error={errors[`${l.poLineId}.serials`]}
+                            >
+                              {(c) => (
+                                <>
+                                  <Textarea
+                                    name={`serials:${l.poLineId}`}
+                                    value={v.serials}
+                                    onChange={(e) => set(l.poLineId, 'serials', e.target.value)}
+                                    rows={4}
+                                    autoComplete="off"
+                                    spellCheck={false}
+                                    {...c}
+                                  />
+                                  <p className={styles.note} aria-live="polite">
+                                    {units !== null
+                                      ? `${count} of ${units} serial numbers entered`
+                                      : `${count} serial numbers entered`}
+                                  </p>
+                                </>
+                              )}
+                            </Field>
+                          ) : null}
+                        </>
+                      ) : null}
+                    </div>
+                  </li>
+                );
+              })}
+            </ol>
+          </div>
 
           <p className={styles.note}>
             The receipt is saved as a draft. Nothing counts as received on {number} until it is

@@ -333,6 +333,18 @@ describe('the new receipt form', () => {
     expect(api.getReceipt).not.toHaveBeenCalled();
   });
 
+  it('lays each line out as a table row, with the same field names and a per-line name per input', async () => {
+    const out = await newPage();
+    expect(out).toMatch(/aria-hidden="true"[^>]*><span>#<\/span>/);
+    expect(out).toContain('<span>Quantity received</span>');
+    expect(out.match(/<li class="[^"]*line[^"]*"/g)).toHaveLength(1);
+    for (const name of ['qty', 'inspection', 'note', 'serials']) {
+      expect(out).toContain(`name="${name}:${SERIAL}"`);
+    }
+    expect(out).toContain('Inspection<span class="sr-only"> (line 1)</span>');
+    expect(out).toContain('Serial numbers<span class="sr-only"> (line 1)</span>');
+  });
+
   it('offers a choice of kind when the person may receive both', async () => {
     api.getPoProgress.mockResolvedValue(
       progress({}, [

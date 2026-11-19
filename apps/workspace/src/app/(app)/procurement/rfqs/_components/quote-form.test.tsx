@@ -74,3 +74,33 @@ describe('currency picker (D44)', () => {
     expect(values.filter((v) => v !== '')).toEqual(['NPR', 'USD']);
   });
 });
+
+describe('line items as table rows', () => {
+  it('keeps one row per request line with the same field names and a per-line name for each input', () => {
+    const out = renderToStaticMarkup(
+      <QuoteForm
+        action={vi.fn()}
+        idempotencyKey="key"
+        rfqId="rfq"
+        mode="record"
+        vendors={[{ id: 'vendor', name: 'Vendor' }]}
+        prLines={[
+          { id: 'line-a', lineNo: 1, description: 'Chair', uom: 'pcs', quantity: '4' },
+          { id: 'line-b', lineNo: 2, description: 'Desk', uom: 'pcs', quantity: '2' },
+        ]}
+        taxCodes={[{ id: '22222222-2222-4222-8222-222222222222', label: 'VAT 13%' }]}
+        enabledCurrencies={['NPR']}
+        cancelHref="/procurement/rfqs/rfq"
+        reloadHref="/procurement/rfqs/rfq/quotations/new"
+      />,
+    );
+    expect(out.match(/<li /g)).toHaveLength(2);
+    for (const name of ['prLineId', 'include', 'quantity', 'unitPrice', 'taxCodeId']) {
+      expect(out).toContain(`name="lines.1.${name}"`);
+    }
+    expect(out).toContain('Quantity<span class="sr-only"> (line 2)</span>');
+    expect(out).toContain('Quote line 2: </span>');
+    expect(out).toContain('2 pcs requested');
+    expect(out).toMatch(/aria-hidden="true"[^>]*><span>#<\/span>/);
+  });
+});
