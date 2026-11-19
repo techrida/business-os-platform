@@ -36,9 +36,8 @@ vi.mock('@/lib/api.vendor', () => ({
 }));
 
 const { default: BillsPage } = await import('../../app/(vendor)/vendor/bills/page');
-const { default: PurchaseOrderPage } = await import(
-  '../../app/(vendor)/vendor/purchase-orders/[id]/page'
-);
+const { default: PurchaseOrderPage } =
+  await import('../../app/(vendor)/vendor/purchase-orders/[id]/page');
 
 const text = (html: string) => html.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ');
 const hrefs = (html: string) => [...html.matchAll(/href="([^"]*)"/g)].map((x) => x[1]);
