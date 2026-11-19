@@ -224,7 +224,9 @@ describe('DocumentsService.createAndReceiveUpload', () => {
   it('still throws the receive error when removing the document fails too', async () => {
     const p = pipeline();
     p.queue.add.mockRejectedValue(new Error('valkey down'));
-    const remove = vi.spyOn(p.svc, 'removeManagedImage').mockRejectedValue(new Error('database down'));
+    const remove = vi
+      .spyOn(p.svc, 'removeManagedImage')
+      .mockRejectedValue(new Error('database down'));
 
     await expect(
       p.svc.createAndReceiveUpload(owner, file, { scope, actor: user }),
