@@ -27,6 +27,7 @@ import { and, desc, eq, inArray, sql, type SQL } from 'drizzle-orm';
 import { AuditService } from '../../platform/audit/audit.service';
 import { AuthzService, scopeWhereFor } from '../../platform/authz/authz.service';
 import { type ResourceRef } from '../../platform/authz/can';
+import { loadRecordReaders, type RecordReaders } from '../../platform/authz/record-reach';
 import { DB, type Db } from '../../platform/db/db.module';
 import { updateVersioned } from '../../platform/db/idempotency';
 import { withTx, type DbTransaction, type TxScope } from '../../platform/db/tx';
@@ -48,12 +49,23 @@ const AUDIT_ENTITY = 'opportunities';
 const notFound = () =>
   new NotFoundException({ code: 'not_found', message: 'Opportunity not found' });
 
-/** What authz decides on for one opportunity. No party column: a portal grant reaches no opportunity. */
-export function opportunityRef(row: OpportunityRow): ResourceRef {
+/**
+ * What authz decides on for one opportunity: its entity, owner and department (stamped from the owner, migration
+ * 0080), so a department grant reaches it. `readers` (its assignees, record-reach.ts) only for a read: assigned
+ * reach never lets anyone change a deal (D55-3). No party column: a portal grant reaches no opportunity.
+ */
+export function opportunityRef(
+  row: Pick<OpportunityRow, 'tenantId' | 'organizationId' | 'ownerUserId' | 'departmentId'>,
+  readers?: RecordReaders,
+): ResourceRef {
   return {
     tenantId: row.tenantId,
     organizationId: row.organizationId,
     ownerUserId: row.ownerUserId,
+    departmentId: row.departmentId,
+    ...(readers === undefined
+      ? {}
+      : { creatorUserId: readers.creatorUserId, assigneeUserIds: readers.assigneeUserIds }),
   };
 }
 
@@ -166,7 +178,12 @@ export class OpportunitiesService {
       .from(opportunities)
       .where(scoped(scope).where(opportunities, eq(opportunities.id, id)));
     if (row === undefined) throw notFound();
-    this.assertVisible('crm.opportunity.read', row);
+    // The list reaches a deal through a follow-up assigned to the caller; the record check must see it too.
+    this.assertVisible(
+      'crm.opportunity.read',
+      row,
+      await loadRecordReaders(this.db, scope, opportunities, id),
+    );
     return toOpportunityDto(
       row,
       await this.ownerNameOf(this.db, row),
@@ -353,11 +370,12 @@ export class OpportunitiesService {
 
   /**
    * Record-level authz that answers 404, not 403, for an opportunity outside the caller's scope: a 403 would
-   * confirm that a guessed id exists. Other denials (no grant at all, inactive user) stay 403.
+   * confirm that a guessed id exists. Other denials (no grant at all, inactive user) stay 403. `readers` only on a
+   * read (opportunityRef).
    */
-  private assertVisible(action: Permission, row: OpportunityRow): void {
+  private assertVisible(action: Permission, row: OpportunityRow, readers?: RecordReaders): void {
     try {
-      this.authz.assert(action, opportunityRef(row));
+      this.authz.assert(action, opportunityRef(row, readers));
     } catch (error) {
       const reason =
         error instanceof ForbiddenException

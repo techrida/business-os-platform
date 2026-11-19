@@ -1,7 +1,11 @@
 // HTTP routes of the opportunities. Thin on purpose: parsing here, every rule in OpportunitiesService. Each
 // route names its permission with @Can (route level); the service then checks the record itself (entity,
 // own scope), so a salesperson cannot read a colleague's deal by guessing its id.
-import { OpportunityStageChangeBodySchema, type OpportunityDto } from '@bos/contracts';
+import {
+  type LeadOwnerOption,
+  OpportunityStageChangeBodySchema,
+  type OpportunityDto,
+} from '@bos/contracts';
 import { Body, Controller, Get, Param, ParseUUIDPipe, Patch, Query, Res } from '@nestjs/common';
 import type { Response } from 'express';
 
@@ -10,10 +14,14 @@ import { setTotalCount } from '../../platform/list';
 import { parseOr400 } from '../approvals/approvals.controller';
 import { OpportunitiesService } from './opportunities.service';
 import { ListOpportunitiesQuerySchema } from './opportunities.types';
+import { OpportunityOwnersService } from './opportunity-owners.service';
 
 @Controller('v1/opportunities')
 export class OpportunitiesController {
-  constructor(private readonly opportunities: OpportunitiesService) {}
+  constructor(
+    private readonly opportunities: OpportunitiesService,
+    private readonly owners: OpportunityOwnersService,
+  ) {}
 
   /** 200 with a bare array of OpportunityDto, newest first; X-Total-Count is all matches, not just this page. */
   @Get()
@@ -27,6 +35,17 @@ export class OpportunitiesController {
     );
     setTotalCount(res, total);
     return items;
+  }
+
+  /**
+   * 200 with the LeadOwnerOption[] the list's Owner filter offers: the owners of opportunities the caller can read
+   * and the people they may hand an opportunity's work to, without addresses (`email` is empty). Needs only read,
+   * so every role that sees the list gets the filter. Declared before ':id' so "owner-filter" is never read as an id.
+   */
+  @Get('owner-filter')
+  @Can('crm.opportunity.read')
+  ownerFilter(): Promise<LeadOwnerOption[]> {
+    return this.owners.ownerFilter();
   }
 
   /** 200 with the OpportunityDto. 404 for a record of another entity or outside the caller's scope. */
