@@ -157,3 +157,43 @@ it('shows no Who can assign block on Invoices and only a fixed line on Quotation
   expect(quotations.textContent).toContain('Quotations follow their opportunity.');
   expect(quotations.textContent).not.toContain('Staff can assign to');
 });
+
+async function flush() {
+  const { act } = await import('react');
+  await act(async () => {
+    await new Promise((resolve) => setTimeout(resolve, 0));
+  });
+}
+
+const checkbox = (scope: HTMLElement, text: string): HTMLInputElement => {
+  const label = [...scope.querySelectorAll('label')].find((l) => l.textContent?.includes(text));
+  const input = label?.querySelector('input');
+  if (!input) throw new Error(`No checkbox "${text}"`);
+  return input;
+};
+
+it('sends nothing that writes until Save changes in the review dialog', async () => {
+  await render();
+  await click(byLabel('Edit Leads'));
+  const leads = card('Leads');
+  expect(textButton('Review changes').disabled).toBe(true);
+
+  await click(checkbox(leads, 'Managers also see their whole department'));
+  expect(textButton('Review changes').disabled).toBe(false);
+  await click(textButton('Review changes'));
+  await flush();
+  expect(actions.preview).toHaveBeenCalledWith({
+    changes: [{ kind: 'levelRule', area: 'leads', managersSeeDepartment: false }],
+  });
+  expect(actions.save).not.toHaveBeenCalled();
+
+  await click(textButton('Save changes'));
+  await flush();
+  expect(actions.save).toHaveBeenCalledWith({
+    changes: [{ kind: 'levelRule', area: 'leads', managersSeeDepartment: false }],
+    expectedRevision: '7',
+    acknowledged: [],
+    note: '',
+  });
+  expect(router.refresh).toHaveBeenCalled();
+});
