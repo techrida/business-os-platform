@@ -399,6 +399,57 @@ export class DocumentsService {
   }
 
   /**
+   * Creates a document from bytes a signed-in user sent in one request (U12: `POST /v1/images/:ownerType/:ownerId`,
+   * the image route, whose callers may hold the owner's grant but not `documents.upload`), then receives them through
+   * the ordinary pipeline: quarantine, type check, sha256 and a queued docs.scan job. The scan is never skipped.
+   *
+   * `who` must be a user actor (a system actor is a 403 before anything is written; jobs use createAndReceiveScanned
+   * or createGenerated). The create runs in its own `withTx`, so the owner's upload grant, `canAttach` and its type
+   * and size rules are checked before any row exists; a bad file name or empty file is a 400.
+   *
+   * If the receive fails after the create committed (wrong type: 415; queue down: 503), the new document is removed
+   * (best effort, logged when that fails too) and the receive's error is thrown.
+   */
+  async createAndReceiveUpload(
+    owner: { ownerType: string; ownerId: string },
+    file: GeneratedFile,
+    who: { scope: TxScope; actor: Actor },
+  ): Promise<{ documentId: string; versionId: string }> {
+    if (who.actor.kind === 'system') {
+      throw new ForbiddenException({ code: 'forbidden', reason: 'no_permission' });
+    }
+    const parsed = CreateDocumentBodySchema.safeParse({
+      ownerType: owner.ownerType,
+      ownerId: owner.ownerId,
+      filename: file.filename,
+      declaredMime: file.declaredMime,
+      // A zero-byte file fails `positive()`.
+      sizeBytes: file.bytes.length,
+    });
+    if (!parsed.success) {
+      throw new BadRequestException(`Invalid upload: ${parsed.error.message}`);
+    }
+    const body = parsed.data;
+    const created = await withTx(this.db, who.scope, who.actor, (tx) => this.create(tx, body));
+    try {
+      await this.receiveContent(created.versionId, Readable.from(file.bytes), file.bytes.length, {
+        documentId: created.documentId,
+        who,
+      });
+    } catch (error) {
+      try {
+        await this.remove(created.documentId, { who });
+      } catch (cleanup) {
+        this.logger.warn(
+          `upload of document ${created.documentId} failed and it could not be removed: ${describe(cleanup)}`,
+        );
+      }
+      throw error;
+    }
+    return { documentId: created.documentId, versionId: created.versionId };
+  }
+
+  /**
    * Adds version N+1 to an existing document (status awaiting_content). Runs in the caller's transaction.
    * Allowed on top of any earlier version, in particular an infected or scan_failed one: that is the way out
    * of a bad attachment. `allClean` only looks at the newest version that was not rejected.
