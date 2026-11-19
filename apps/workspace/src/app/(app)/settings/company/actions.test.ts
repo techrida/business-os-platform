@@ -153,10 +153,10 @@ describe('saveCompanyCardAction', () => {
   });
 
   it('is stopped by the section guard before any read or write', async () => {
-    requireSection.mockRejectedValue(new Error('REDIRECT:/no-access'));
+    requireSection.mockRejectedValue(new Error('REDIRECT:/settings/denied'));
     await expect(
       saveCompanyCardAction(IDLE, form({ card: 'signatory', name: 'Ram', title: '' })),
-    ).rejects.toThrow('REDIRECT:/no-access');
+    ).rejects.toThrow('REDIRECT:/settings/denied');
     expect(getSetting).not.toHaveBeenCalled();
     expect(putSetting).not.toHaveBeenCalled();
   });

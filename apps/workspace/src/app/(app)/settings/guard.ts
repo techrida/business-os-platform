@@ -26,7 +26,7 @@ export async function requireSession(returnTo: string): Promise<Session> {
 
 /**
  * `requireSession`, then the section's own permission (deny by default). A person without it is
- * sent to the first section they may open, or to the no-access page when there is none. The API
+ * sent to the first section they may open, or to the Settings denied page when there is none. The API
  * still enforces every call; this keeps the page, and the actions behind it, shut to people
  * whose role does not open the section. Call it outside any try block.
  */
@@ -35,7 +35,7 @@ export async function requireSection(id: SettingsSectionId, returnTo?: string): 
   const session = await requireSession(returnTo ?? section.href);
   const can = permissionChecker(session.roles);
   if (!canOpenSection(section, can)) {
-    redirect(firstAllowedSection(can)?.href ?? '/no-access');
+    redirect(firstAllowedSection(can)?.href ?? '/settings/denied');
   }
   return session;
 }

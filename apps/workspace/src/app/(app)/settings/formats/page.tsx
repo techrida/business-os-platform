@@ -40,11 +40,7 @@ export default async function FormatsSettingsPage() {
       />
       <div className={`${styles.column} ${styles.narrow}`}>
         {loaded.ok ? (
-          <NumberSystemCard
-            key={loaded.data}
-            current={loaded.data}
-            action={saveNumberSystemAction}
-          />
+          <NumberSystemCard current={loaded.data} action={saveNumberSystemAction} />
         ) : (
           <SectionError message={loaded.message} />
         )}

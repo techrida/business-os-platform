@@ -19,7 +19,7 @@ export default async function SettingsIndexPage() {
   const session = await requireSession('/settings');
   const groups = visibleSettingsGroups(permissionChecker(session.roles));
   // Deny by default: nothing to open here means nothing to see.
-  if (groups.length === 0) redirect('/no-access');
+  if (groups.length === 0) redirect('/settings/denied');
 
   return (
     <Page className={admin.page}>

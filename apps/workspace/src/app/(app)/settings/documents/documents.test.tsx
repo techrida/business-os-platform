@@ -75,7 +75,7 @@ const form = (fields: Record<string, string>) => {
 describe('the Document templates page', () => {
   it('sends a sales user to the no-access page and reads nothing', async () => {
     getSession.mockResolvedValue(session(['sales']));
-    await expect(DocumentsPage()).rejects.toThrow('REDIRECT:/no-access');
+    await expect(DocumentsPage()).rejects.toThrow('REDIRECT:/settings/denied');
     expect(getSetting).not.toHaveBeenCalled();
     expect(apiFetch).not.toHaveBeenCalled();
   });
@@ -201,7 +201,7 @@ describe('saveDocumentStyleAction', () => {
     getSession.mockResolvedValue(session(['sales']));
     await expect(
       saveDocumentStyleAction(IDLE, form({ layout: 'tinted', primaryColour: '#1d4ed8' })),
-    ).rejects.toThrow('REDIRECT:/no-access');
+    ).rejects.toThrow('REDIRECT:/settings/denied');
     expect(putSetting).not.toHaveBeenCalled();
   });
 
@@ -219,7 +219,7 @@ describe('saveDocumentStyleAction', () => {
 describe('previewsAction', () => {
   it('is refused for a person without the section, before any request', async () => {
     getSession.mockResolvedValue(session(['sales']));
-    await expect(previewsAction('#1d4ed8')).rejects.toThrow('REDIRECT:/no-access');
+    await expect(previewsAction('#1d4ed8')).rejects.toThrow('REDIRECT:/settings/denied');
     expect(apiFetch).not.toHaveBeenCalled();
   });
 
