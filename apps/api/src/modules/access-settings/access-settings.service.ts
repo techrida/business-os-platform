@@ -46,11 +46,13 @@ import {
   ACCESS_ROLE_CATALOGUE,
   AREA_BY_KEY,
   DEFAULT_LEVEL_RULES,
+  LEVEL_AREA_BY_PERMISSION,
   PERMISSION_BY_KEY,
   defaultScopeFor,
+  impliedLevelRows,
+  levelRulePermissions,
   permissionLabel,
   reachLabel,
-  reachRank,
   roleLabel,
 } from './access-catalogue';
 import {
@@ -156,14 +158,17 @@ function deriveLevelRules(
         defaults: { ...def },
       };
     }
-    const managersSeeDepartment = rplRows.some(
-      (r) =>
-        r.permission === area.seePermission && r.minLevel === 'manager' && r.scope === 'department',
-    );
-    const headsSeeDepartment = rplRows.some(
-      (r) =>
-        r.permission === area.seePermission && r.minLevel === 'head' && r.scope === 'department',
-    );
+    // A switch is on while any of its rows exists, on the see or the paired edit permission: a
+    // tenant where no role qualifies for a see row can still hold edit rows, which apply at run
+    // time.
+    const permissions: readonly string[] = levelRulePermissions(area.key);
+    const switchOn = (minLevel: 'manager' | 'head'): boolean =>
+      rplRows.some(
+        (r) =>
+          permissions.includes(r.permission) && r.minLevel === minLevel && r.scope === 'department',
+      );
+    const managersSeeDepartment = switchOn('manager');
+    const headsSeeDepartment = switchOn('head');
     return {
       area: area.key,
       managersSeeDepartment,
@@ -344,12 +349,14 @@ export class AccessSettingsService {
         await this.materializeDefaultGrants(tx, scope.tenantId);
       }
 
-      let markLevelRulesMaterialized = false;
+      // A tenant on the code default level rows gets them written out before its first level-rule
+      // or grant change. A grant change counts too: the role cache applies the code defaults as
+      // computed from the default grants, so a role a grant makes newly eligible would get no row
+      // there while Check a person showed it the department.
       let levelRulesActive =
         loaded.revisionRow.levelRulesMaterialized || loaded.hasPersistedLevelRows;
-      if (hasLevelRuleChange && !levelRulesActive) {
+      if ((hasLevelRuleChange || hasGrantOrReset) && !levelRulesActive) {
         await this.materializeDefaultLevelRules(tx, scope.tenantId, evalResult.before.grants);
-        markLevelRulesMaterialized = true;
         levelRulesActive = true;
       }
 
@@ -368,9 +375,12 @@ export class AccessSettingsService {
         auditMeta,
       );
 
+      // Once the rows are the tenant's truth, mark it so, including for rows migration 0088 wrote
+      // without the flag: otherwise switching every rule off leaves zero rows and the role cache
+      // falls back to the code defaults (the flag only ever turns on).
       await bumpAccessRevision(tx, scope, {
         actorUserId: actor.kind === 'user' ? actor.id : null,
-        markLevelRulesMaterialized,
+        markLevelRulesMaterialized: levelRulesActive,
       });
     });
 
@@ -397,44 +407,36 @@ export class AccessSettingsService {
     }
   }
 
+  /**
+   * Writes the default switches out as rows, computed from the tenant's grants before this save.
+   * Seeded, and an existing row is kept.
+   */
   private async materializeDefaultLevelRules(
     tx: DbTransaction,
     tenantId: string,
     grantsBefore: readonly AccessGrantRow[],
   ): Promise<void> {
     const grantMap = new Map(grantsBefore.map((g) => [grantKey(g.role, g.permission), g.scope]));
-    const staffRoles = ACCESS_ROLE_CATALOGUE.filter((r) => r.kind === 'staff').map((r) => r.key);
-
-    for (const area of ACCESS_AREA_CATALOGUE) {
-      if (!area.supportsDepartment) continue;
-      const def = DEFAULT_LEVEL_RULES[area.key];
-      const eligible = staffRoles.filter((role) => {
-        const s = grantMap.get(grantKey(role, area.seePermission)) ?? null;
-        return s !== null && reachRank(s) < reachRank('department');
-      });
-      for (const role of eligible) {
-        if (def.managersSeeDepartment) {
-          await tx.execute(sql`
-            INSERT INTO app.role_permission_levels (
-              tenant_id, role_key, permission, min_level, scope, seeded
-            )
-            VALUES (${tenantId}, ${role}, ${area.seePermission}, 'manager', 'department', true)
-            ON CONFLICT (tenant_id, role_key, permission, min_level) DO NOTHING
-          `);
-        }
-        if (def.headsSeeDepartment) {
-          await tx.execute(sql`
-            INSERT INTO app.role_permission_levels (
-              tenant_id, role_key, permission, min_level, scope, seeded
-            )
-            VALUES (${tenantId}, ${role}, ${area.seePermission}, 'head', 'department', true)
-            ON CONFLICT (tenant_id, role_key, permission, min_level) DO NOTHING
-          `);
-        }
-      }
+    const defaults = ACCESS_AREA_CATALOGUE.map((area) => ({
+      area: area.key,
+      ...DEFAULT_LEVEL_RULES[area.key],
+    }));
+    for (const row of impliedLevelRows(grantMap, defaults)) {
+      await tx.execute(sql`
+        INSERT INTO app.role_permission_levels (
+          tenant_id, role_key, permission, min_level, scope, seeded
+        )
+        VALUES (${tenantId}, ${row.role}, ${row.permission}, ${row.minLevel}, 'department', true)
+        ON CONFLICT (tenant_id, role_key, permission, min_level) DO NOTHING
+      `);
     }
   }
 
+  /**
+   * Rewrites one area's rows, on its see permission and its paired edit permission together,
+   * from its switches and the grants after this save. Turning a switch off therefore also takes
+   * the write reach it gave, so a manager cannot edit by id what they can no longer list.
+   */
   private async reconcileLevelRulesForArea(
     tx: DbTransaction,
     tenantId: string,
@@ -442,46 +444,35 @@ export class AccessSettingsService {
     afterRule: AccessLevelRule,
     afterGrantMap: ReadonlyMap<string, AccessScope | null>,
   ): Promise<void> {
-    const area = AREA_BY_KEY.get(areaKey);
-    if (!area || !area.supportsDepartment) return;
+    const permissions = levelRulePermissions(areaKey);
+    if (permissions.length === 0) return;
 
-    const staffRoles = ACCESS_ROLE_CATALOGUE.filter((r) => r.kind === 'staff').map((r) => r.key);
-    const eligible = staffRoles.filter((role) => {
-      const s = afterGrantMap.get(grantKey(role, area.seePermission)) ?? null;
-      return s !== null && reachRank(s) < reachRank('department');
-    });
-
-    const syncMinLevel = async (minLevel: 'manager' | 'head', enabled: boolean, isDef: boolean) => {
+    for (const permission of permissions) {
       await tx.execute(sql`
         DELETE FROM app.role_permission_levels
          WHERE tenant_id = ${tenantId}
-           AND permission = ${area.seePermission}
-           AND min_level = ${minLevel}
+           AND permission = ${permission}
       `);
-      if (!enabled) return;
-      for (const role of eligible) {
-        await tx.execute(sql`
-          INSERT INTO app.role_permission_levels (
-            tenant_id, role_key, permission, min_level, scope, seeded
-          )
-          VALUES (${tenantId}, ${role}, ${area.seePermission}, ${minLevel}, 'department', ${isDef})
-          ON CONFLICT (tenant_id, role_key, permission, min_level) DO UPDATE
-            SET scope = EXCLUDED.scope, seeded = EXCLUDED.seeded
-        `);
-      }
-    };
+    }
 
     const def = DEFAULT_LEVEL_RULES[areaKey];
-    await syncMinLevel(
-      'manager',
-      afterRule.managersSeeDepartment,
-      afterRule.managersSeeDepartment === def.managersSeeDepartment,
-    );
-    await syncMinLevel(
-      'head',
-      afterRule.headsSeeDepartment,
-      afterRule.headsSeeDepartment === def.headsSeeDepartment,
-    );
+    const seededAt = {
+      manager: afterRule.managersSeeDepartment === def.managersSeeDepartment,
+      head: afterRule.headsSeeDepartment === def.headsSeeDepartment,
+    };
+    for (const row of impliedLevelRows(afterGrantMap, [afterRule])) {
+      await tx.execute(sql`
+        INSERT INTO app.role_permission_levels (
+          tenant_id, role_key, permission, min_level, scope, seeded
+        )
+        VALUES (
+          ${tenantId}, ${row.role}, ${row.permission}, ${row.minLevel}, 'department',
+          ${seededAt[row.minLevel]}
+        )
+        ON CONFLICT (tenant_id, role_key, permission, min_level) DO UPDATE
+          SET scope = EXCLUDED.scope, seeded = EXCLUDED.seeded
+      `);
+    }
   }
 
   private async applyChangesAndAudit(
@@ -554,11 +545,10 @@ export class AccessSettingsService {
             meta: auditMeta,
           });
 
+          // The see or the paired edit permission: either changes which roles the switch widens.
           if (levelRulesActive) {
-            const area = ACCESS_AREA_CATALOGUE.find((a) => a.seePermission === change.permission);
-            if (area && area.supportsDepartment) {
-              levelAreasToReconcile.add(area.key);
-            }
+            const levelArea = LEVEL_AREA_BY_PERMISSION.get(change.permission);
+            if (levelArea !== undefined) levelAreasToReconcile.add(levelArea.area);
           }
           break;
         }

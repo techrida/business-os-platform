@@ -4,6 +4,8 @@
 import {
   type AccessAreaInfo,
   type AccessConflictRule,
+  type AccessLevel,
+  type AccessLevelRule,
   type AccessLevelRuleDefaults,
   type AccessPermissionGroup,
   type AccessPermissionInfo,
@@ -11,6 +13,9 @@ import {
   type AccessScope,
   type AccessSettingAreaKey,
   DEFAULT_ROLE_PERMISSIONS,
+  LEAD_INTAKE_ROLE_KEYS,
+  LEVEL_RULE_AREAS,
+  type LevelRuleArea,
   type ManagerAssignmentRule,
   type Permission,
   type RoleKey,
@@ -255,19 +260,138 @@ export const AREA_PLURAL_NOUN: Readonly<Record<AccessSettingAreaKey, string>> = 
   documents: 'documents',
 };
 
+/**
+ * The department-reach switch of each area as the contracts define it (`LEVEL_RULE_AREAS`): its see
+ * permission, the write it pairs with (`editPermission`), whether its records carry a department,
+ * and the default switches. Migration 0088 and the role cache's code defaults derive from the same
+ * list, so Settings > Access reads it rather than keep a copy. `ACCESS_AREA_CATALOGUE` repeats
+ * `seePermission` and `supportsDepartment` for the wire shape; a test holds the two equal.
+ */
+export const LEVEL_RULE_AREA_BY_KEY: ReadonlyMap<AccessSettingAreaKey, LevelRuleArea> = new Map(
+  (LEVEL_RULE_AREAS as readonly LevelRuleArea[]).map((area) => [
+    area.key as AccessSettingAreaKey,
+    area,
+  ]),
+);
+
 /** Default manager/head department-level switches per area (D50, D51). */
 export const DEFAULT_LEVEL_RULES: Readonly<Record<AccessSettingAreaKey, AccessLevelRuleDefaults>> =
-  {
-    leads: { managersSeeDepartment: true, headsSeeDepartment: true },
-    opportunities: { managersSeeDepartment: true, headsSeeDepartment: true },
-    quotations: { managersSeeDepartment: true, headsSeeDepartment: true },
-    sales_orders: { managersSeeDepartment: false, headsSeeDepartment: false },
-    invoices: { managersSeeDepartment: false, headsSeeDepartment: false },
-    procurement: { managersSeeDepartment: false, headsSeeDepartment: true },
-    payables: { managersSeeDepartment: false, headsSeeDepartment: false },
-    approvals: { managersSeeDepartment: false, headsSeeDepartment: false },
-    documents: { managersSeeDepartment: false, headsSeeDepartment: false },
-  };
+  Object.fromEntries(
+    [...LEVEL_RULE_AREA_BY_KEY].map(([key, area]) => [
+      key,
+      {
+        managersSeeDepartment: area.managersSeeDepartment,
+        headsSeeDepartment: area.headsSeeDepartment,
+      },
+    ]),
+  ) as Record<AccessSettingAreaKey, AccessLevelRuleDefaults>;
+
+/**
+ * The permissions one area's switch writes level rows for: the see permission and, where the area
+ * pairs one, the edit permission (D50: a Sales manager hands a staff member's lead over, which is a
+ * write). Empty for an area whose records carry no department.
+ */
+export function levelRulePermissions(areaKey: AccessSettingAreaKey): Permission[] {
+  const area = LEVEL_RULE_AREA_BY_KEY.get(areaKey);
+  if (area === undefined || !area.supportsDepartment) return [];
+  return area.editPermission === undefined
+    ? [area.seePermission]
+    : [area.seePermission, area.editPermission];
+}
+
+/** The area whose switch governs a see or edit permission, and which of the two it is. */
+export const LEVEL_AREA_BY_PERMISSION: ReadonlyMap<
+  Permission,
+  { area: AccessSettingAreaKey; edit: boolean }
+> = new Map(
+  [...LEVEL_RULE_AREA_BY_KEY].flatMap(([key, area]) => {
+    if (!area.supportsDepartment) return [];
+    const entries: [Permission, { area: AccessSettingAreaKey; edit: boolean }][] = [
+      [area.seePermission, { area: key, edit: false }],
+    ];
+    if (area.editPermission !== undefined) {
+      entries.push([area.editPermission, { area: key, edit: true }]);
+    }
+    return entries;
+  }),
+);
+
+/**
+ * Whether an area switch widens `role`'s grant of `scope` on `permission` to the department, the
+ * rule migration 0088 and `DEFAULT_ROLE_PERMISSION_LEVELS` apply: staff roles only (the Founder
+ * reaches everything, portal users hold no department), a grant the role already holds below the
+ * department (a level row never creates access), and no edit row for the lead intake roles, which
+ * hold the write only to start a lead for Sales (the contracts' `editsArea`).
+ */
+export function levelSwitchWidens(
+  role: RoleKey,
+  permission: Permission,
+  scope: AccessScope | null,
+): boolean {
+  const entry = LEVEL_AREA_BY_PERMISSION.get(permission);
+  if (entry === undefined) return false;
+  if (ROLE_BY_KEY.get(role)?.kind !== 'staff') return false;
+  if (scope === null || reachRank(scope) >= reachRank('department')) return false;
+  if (entry.edit && (LEAD_INTAKE_ROLE_KEYS as readonly RoleKey[]).includes(role)) return false;
+  return true;
+}
+
+/**
+ * Whether a member of `level` gets the area's department row. The role cache gives a member the
+ * most senior row at or below their level, so a head with no head row keeps the manager row: heads
+ * reach the department when either switch is on.
+ */
+export function levelReachesDepartment(
+  level: AccessLevel,
+  rule: Pick<AccessLevelRule, 'managersSeeDepartment' | 'headsSeeDepartment'> | undefined,
+): boolean {
+  if (rule === undefined) return false;
+  switch (level) {
+    case 'staff':
+      return false;
+    case 'manager':
+      return rule.managersSeeDepartment;
+    case 'head':
+      return rule.headsSeeDepartment || rule.managersSeeDepartment;
+  }
+}
+
+/** One `app.role_permission_levels` row the switches imply; the scope is always the department. */
+export interface ImpliedLevelRow {
+  role: RoleKey;
+  permission: Permission;
+  minLevel: 'manager' | 'head';
+}
+
+/**
+ * Every level row the given grants and switches imply: per area switch that is on, a row at that
+ * level for each of the area's see and edit permissions and each role the switch widens there.
+ * Materialising, reconciling and Check a person all go through this, and with the default grants
+ * and switches it equals `DEFAULT_ROLE_PERMISSION_LEVELS`.
+ */
+export function impliedLevelRows(
+  grantMap: ReadonlyMap<string, AccessScope | null>,
+  levelRules: readonly Pick<
+    AccessLevelRule,
+    'area' | 'managersSeeDepartment' | 'headsSeeDepartment'
+  >[],
+): ImpliedLevelRow[] {
+  const rows: ImpliedLevelRow[] = [];
+  for (const rule of levelRules) {
+    const permissions = levelRulePermissions(rule.area);
+    for (const permission of permissions) {
+      for (const role of ACCESS_ROLE_CATALOGUE) {
+        const scope = grantMap.get(`${role.key}:${permission}`) ?? null;
+        if (!levelSwitchWidens(role.key, permission, scope)) continue;
+        if (rule.managersSeeDepartment) {
+          rows.push({ role: role.key, permission, minLevel: 'manager' });
+        }
+        if (rule.headsSeeDepartment) rows.push({ role: role.key, permission, minLevel: 'head' });
+      }
+    }
+  }
+  return rows;
+}
 
 /**
  * Every permission in PERMISSIONS grouped in display order for Access > By role.
