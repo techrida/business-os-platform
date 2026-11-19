@@ -57,13 +57,16 @@ test('a salesperson creates a lead, logs a call and moves it with the Move contr
       await expect(page.getByText('Moved to Contacted.')).toBeVisible();
     });
 
-    await test.step('Lost needs a reason and a note', async () => {
-      await chooseOption(selectByName(page, 'stage'), 'lost');
-      await page.getByRole('button', { name: 'Move', exact: true }).click();
-      await expect(page.getByText('Give a reason, up to 200 characters.')).toBeVisible();
+    await test.step('Mark lost needs a reason and a note', async () => {
+      await page.getByRole('button', { name: 'Mark lost', exact: true }).click();
+      const lost = page.getByRole('dialog', { name: 'Mark this lead lost?' });
+      await lost.getByRole('button', { name: 'Mark lost', exact: true }).click();
+      await expect(lost.getByText('Give a reason, up to 200 characters.')).toBeVisible();
       await expect(
-        page.getByText('Add a note for the record, up to 2,000 characters.'),
+        lost.getByText('Add a note for the record, up to 2,000 characters.'),
       ).toBeVisible();
+      await lost.getByRole('button', { name: 'Cancel', exact: true }).click();
+      await expect(lost).toBeHidden();
     });
 
     await test.step('the board shows the lead in Contacted and Converted takes no cards', async () => {
