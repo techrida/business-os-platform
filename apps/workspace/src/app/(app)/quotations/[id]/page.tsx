@@ -299,7 +299,7 @@ export default async function QuotationDetailPage({ params }: { params: Promise<
                 <li>
                   <Icon name="briefcase" size={18} />
                   <Link href={`/sales-orders/${encodeURIComponent(order.id)}`}>
-                    Sales order {order.number ?? ''}
+                    {order.number === null ? 'Sales order' : `Sales order ${order.number}`}
                   </Link>
                 </li>
               ) : null}

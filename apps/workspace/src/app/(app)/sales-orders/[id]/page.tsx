@@ -354,7 +354,7 @@ export default async function SalesOrderPage({ params }: { params: Promise<{ id:
           actions={f.status !== 403 ? <Link href={path}>Try again</Link> : null}
         >
           {f.status === 403
-            ? 'Sales orders are for Accounts, Finance and the people who oversee them. Ask an administrator if you need access.'
+            ? 'Ask an administrator if you need access to sales orders.'
             : f.message}
         </Alert>
       </Page>
