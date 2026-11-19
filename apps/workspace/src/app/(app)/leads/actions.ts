@@ -9,11 +9,28 @@ import { ApiError } from '@/lib/api';
 import { apiCodeOf } from '@/lib/api-code';
 import { failureOf } from '@/lib/api-kernel';
 import { requireStaffSession } from '@/lib/bff';
+import type { Session } from '@/lib/session';
 
 import { echo, IDEMPOTENCY_KEY, runStageMove, UUID } from '@/components/p2/crm/action-helpers';
-import { convertLead, createLead } from '@/components/p2/crm/crm-api';
+import {
+  cancelActivity,
+  completeActivity,
+  convertLead,
+  createActivity,
+  createLead,
+  rescheduleActivity,
+} from '@/components/p2/crm/crm-api';
 import { duplicatesFrom } from '@/components/p2/crm/duplicates';
-import { parseConvert, parseLead } from '@/components/p2/crm/forms';
+import {
+  parseCancelActivity,
+  parseCompleteActivity,
+  parseConvert,
+  parseLead,
+  parseRescheduleActivity,
+  parseScheduleFollowUp,
+  type FieldErrors,
+  type Parsed,
+} from '@/components/p2/crm/forms';
 import { keyOf, nextKey } from '@/components/p2/crm/idempotency';
 import type { ConvertState, FormState, MoveState } from '@/components/p2/crm/types';
 
@@ -96,4 +113,111 @@ export async function convertLeadAction(
   revalidatePath(`/leads/${leadId}`);
   revalidatePath('/opportunities');
   redirect(`/opportunities/${opportunityId}`);
+}
+
+// ---------------------------------------------------------------------------------------------
+// Follow-ups (D39): planned calls, meetings and emails on a lead
+// ---------------------------------------------------------------------------------------------
+
+const INCOMPLETE = 'This form is incomplete. Reload the page.';
+
+/** What a follow-up change (complete, reschedule, cancel) hands back to its control. */
+export interface FollowUpState {
+  ok?: boolean;
+  error?: string;
+  fieldErrors?: FieldErrors;
+  /** The follow-up changed underneath the page (stale version, already done): reloading fixes it. */
+  reload?: boolean;
+}
+
+function revalidateLead(leadId: string) {
+  revalidatePath(`/leads/${leadId}`);
+  revalidatePath('/leads');
+  revalidatePath('/activities');
+}
+
+/**
+ * Schedule a follow-up on a lead. The dialog posts `subjectKind=leadId` and `subjectId`; any other
+ * subject is refused here, as this action only revalidates lead pages. The key handling matches
+ * `logActivityAction`: the same key after an unknown outcome, a new one after a save or a refusal.
+ */
+export async function scheduleFollowUpAction(_prev: FormState, form: FormData): Promise<FormState> {
+  const kind = form.get('subjectKind');
+  const id = form.get('subjectId');
+  const values = echo(form);
+  const key = keyOf(form);
+  if (kind !== 'leadId' || typeof id !== 'string' || !UUID.test(id)) {
+    return { values, fieldErrors: {}, error: INCOMPLETE, key };
+  }
+  const session = await requireStaffSession(`/leads/${id}`);
+
+  const parsed = parseScheduleFollowUp(form);
+  if (!parsed.ok) {
+    const { form: formError, ...fieldErrors } = parsed.fieldErrors;
+    return { values, fieldErrors, ...(formError ? { error: formError } : {}), key };
+  }
+  try {
+    await createActivity(session, parsed.data, key);
+  } catch (err) {
+    return { values, fieldErrors: {}, error: failureOf(err).message, key: nextKey(err, key) };
+  }
+  revalidateLead(id);
+  return { values: {}, fieldErrors: {}, ok: true, key: randomUUID() };
+}
+
+/**
+ * The shared body of complete, reschedule and cancel: check both ids and the session, parse, call,
+ * revalidate. A bad `expectedVersion` is not something the person can fix in a field, so it comes
+ * back as the reload message instead of a field error.
+ */
+async function changeFollowUp<T>(
+  form: FormData,
+  parse: (form: FormData) => Parsed<T>,
+  send: (session: Session, id: string, body: T) => Promise<unknown>,
+): Promise<FollowUpState> {
+  const leadValue = form.get('leadId');
+  const activityValue = form.get('activityId');
+  const leadId = typeof leadValue === 'string' ? leadValue : '';
+  const activityId = typeof activityValue === 'string' ? activityValue : '';
+  if (!UUID.test(leadId) || !UUID.test(activityId)) return { error: INCOMPLETE, reload: true };
+  const session = await requireStaffSession(`/leads/${leadId}`);
+
+  const parsed = parse(form);
+  if (!parsed.ok) {
+    const { expectedVersion, ...fieldErrors } = parsed.fieldErrors;
+    if (expectedVersion) return { error: expectedVersion, reload: true };
+    return { fieldErrors };
+  }
+  try {
+    await send(session, activityId, parsed.data);
+  } catch (err) {
+    const f = failureOf(err);
+    return { error: f.message, reload: f.reload };
+  }
+  revalidateLead(leadId);
+  return { ok: true };
+}
+
+/** Mark a planned follow-up done. It leaves the Follow-ups card and shows in History. */
+export async function completeFollowUpAction(
+  _prev: FollowUpState,
+  form: FormData,
+): Promise<FollowUpState> {
+  return changeFollowUp(form, parseCompleteActivity, completeActivity);
+}
+
+/** Move a planned follow-up to a new time, optionally to another person. */
+export async function rescheduleFollowUpAction(
+  _prev: FollowUpState,
+  form: FormData,
+): Promise<FollowUpState> {
+  return changeFollowUp(form, parseRescheduleActivity, rescheduleActivity);
+}
+
+/** Drop a planned follow-up. It shows nowhere afterwards (neither planned nor History). */
+export async function cancelFollowUpAction(
+  _prev: FollowUpState,
+  form: FormData,
+): Promise<FollowUpState> {
+  return changeFollowUp(form, parseCancelActivity, cancelActivity);
 }
