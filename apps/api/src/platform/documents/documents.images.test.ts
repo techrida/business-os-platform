@@ -496,7 +496,14 @@ describe('DocumentsService.removeInTransaction of an image', () => {
       // The lookups: the tenant, and the caller's entity OR a tenant-wide image type.
       for (const lookup of r.reads.slice(0, 2)) {
         expect(paramsOf(lookup)).toEqual(
-          expect.arrayContaining([TENANT, r.id, ORG, 'user_avatar', 'customer_logo', 'vendor_logo']),
+          expect.arrayContaining([
+            TENANT,
+            r.id,
+            ORG,
+            'user_avatar',
+            'customer_logo',
+            'vendor_logo',
+          ]),
         );
         expect(paramsOf(lookup)).not.toContain('entity_logo');
       }
