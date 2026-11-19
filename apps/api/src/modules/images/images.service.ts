@@ -10,7 +10,12 @@
 //   without the grant), and the new document must be a live image of exactly that owner (404 otherwise);
 // - "every change is audited and nothing is lost": the pointer moves, the previous image is soft-removed
 //   (DocumentsService.removeInTransaction) and `image.set` / `image.removed` is recorded, all in one transaction.
+import type { Readable } from 'node:stream';
+
 import {
+  CreateDocumentBodySchema,
+  IMAGE_MAX_BYTES,
+  IMAGE_MIME,
   isImageOwnerType,
   SetImageBodySchema,
   type CompanyProfile,
@@ -25,6 +30,8 @@ import {
   Injectable,
   Logger,
   NotFoundException,
+  PayloadTooLargeException,
+  UnsupportedMediaTypeException,
 } from '@nestjs/common';
 import { and, desc, eq, isNull } from 'drizzle-orm';
 import { z } from 'zod';
@@ -80,6 +87,120 @@ export interface ImageCaller {
   scope: TxScope;
   actor: Actor;
   principal: Principal | undefined;
+}
+
+/**
+ * The raw request of `POST /v1/images/:ownerType/:ownerId` (the controller passes the headers untouched): the body is
+ * the image bytes, `contentType` its mime, `fileNameHeader` the percent-encoded `x-file-name`.
+ */
+export interface ImageUploadRequest {
+  contentType: string | undefined;
+  contentLength: string | undefined;
+  fileNameHeader: string | undefined;
+  stream: Readable;
+}
+
+const IMAGE_MIMES: ReadonlySet<string> = new Set(IMAGE_MIME);
+const TOO_LARGE = `The image is larger than ${IMAGE_MAX_BYTES} bytes`;
+
+/** The bare, lower-cased mime of a Content-Type header (parameters dropped), or 415 when it is not an image type. */
+function imageMimeOf(contentType: string | undefined): string {
+  const mime = (contentType ?? '').split(';')[0]?.trim().toLowerCase() ?? '';
+  if (!IMAGE_MIMES.has(mime)) {
+    throw new UnsupportedMediaTypeException(
+      `Image type ${mime || '(none)'} is not allowed. Allowed: ${IMAGE_MIME.join(', ')}`,
+    );
+  }
+  return mime;
+}
+
+/** The decoded `x-file-name`, under the same rule as a documents create body; 400 otherwise. */
+function fileNameOf(header: string | undefined): string {
+  let decoded: string | undefined;
+  try {
+    decoded = header === undefined || header === '' ? undefined : decodeURIComponent(header);
+  } catch {
+    decoded = undefined;
+  }
+  if (
+    decoded === undefined ||
+    !CreateDocumentBodySchema.shape.filename.safeParse(decoded).success
+  ) {
+    throw new BadRequestException({
+      code: 'bad_request',
+      message: 'Header x-file-name must be a percent-encoded file name without path separators',
+    });
+  }
+  return decoded;
+}
+
+/** 413 when a declared Content-Length is over the image cap; 400 when it is not a non-negative integer. */
+function assertDeclaredLength(header: string | undefined): void {
+  if (header === undefined) return; // Chunked: the counting reader enforces the cap.
+  if (!/^\d+$/.test(header.trim())) {
+    throw new BadRequestException('Content-Length must be a non-negative integer');
+  }
+  if (Number(header.trim()) > IMAGE_MAX_BYTES) throw new PayloadTooLargeException(TOO_LARGE);
+}
+
+/**
+ * Reads the whole body, at most `cap` bytes. Event listeners, not `for await`: leaving a for-await loop destroys the
+ * stream (the socket), and the client would never see the 413. Over the cap the listeners are detached and the rest
+ * of the body is drained and discarded, so the response can still be written. Settles exactly once on every path.
+ */
+export function readCapped(stream: Readable, cap: number): Promise<Buffer> {
+  if (stream.readableEnded || stream.destroyed) {
+    // Nothing left to read (an earlier body parser, or a closed connection): an empty body.
+    return Promise.resolve(Buffer.alloc(0));
+  }
+  return new Promise<Buffer>((resolve, reject) => {
+    const chunks: Buffer[] = [];
+    let total = 0;
+    let settled = false;
+    const detach = () => {
+      stream.off('data', onData);
+      stream.off('end', onEnd);
+      stream.off('error', onError);
+      stream.off('close', onClose);
+    };
+    const settle = (fn: () => void) => {
+      if (settled) return;
+      settled = true;
+      detach();
+      fn();
+    };
+    const interrupted = () =>
+      new BadRequestException('The upload was interrupted. Send the image again.');
+    function onData(chunk: Buffer | string) {
+      const buf = typeof chunk === 'string' ? Buffer.from(chunk) : chunk;
+      total += buf.length;
+      if (total > cap) {
+        settle(() => {
+          chunks.length = 0;
+          // A late error on the discarded rest must not become an unhandled 'error' event.
+          stream.on('error', () => undefined);
+          stream.resume();
+          reject(new PayloadTooLargeException(TOO_LARGE));
+        });
+        return;
+      }
+      chunks.push(buf);
+    }
+    function onEnd() {
+      settle(() => resolve(Buffer.concat(chunks, total)));
+    }
+    function onError() {
+      settle(() => reject(interrupted()));
+    }
+    function onClose() {
+      // 'close' after 'end' is already settled; before it, the client went away mid-body.
+      settle(() => reject(interrupted()));
+    }
+    stream.on('data', onData);
+    stream.on('end', onEnd);
+    stream.on('error', onError);
+    stream.on('close', onClose);
+  });
 }
 
 /** Version states that can never become a picture: the bytes were refused or carry a virus. */
@@ -254,6 +375,57 @@ export class ImagesService {
     });
     await this.documents.cleanupRemoved(unclean);
     return result;
+  }
+
+  /**
+   * Uploads an image and makes it the owner's current one, in one request: the route a caller with the owner's grant
+   * (`profile.avatar.write`, `customer.write`, ...) but without `documents.upload` uses. Checks in this order, all
+   * before a byte of the body is read: 403 not staff; 404 unknown owner type or malformed owner id; the owner's
+   * upload check (404 / 403); 415 a Content-Type outside PNG, JPEG, WebP; 400 a missing or bad `x-file-name`; 413 a
+   * Content-Length over the image cap. Then the body is read with a counting cap (413), stored and scanned
+   * (DocumentsService.createAndReceiveUpload), and the pointer moves (`set`). If the pointer move fails, the new
+   * document is removed (best effort) and that error is thrown.
+   */
+  async upload(
+    ownerType: string,
+    ownerId: string,
+    req: ImageUploadRequest,
+    who: ImageCaller,
+  ): Promise<{ documentId: string }> {
+    assertStaff(who.principal);
+    if (!isImageOwnerType(ownerType) || !Guid.safeParse(ownerId).success) {
+      throw new NotFoundException(OWNER_NOT_FOUND);
+    }
+    await this.documents.assertCanManage(who.scope, ownerType, ownerId);
+    const declaredMime = imageMimeOf(req.contentType);
+    const filename = fileNameOf(req.fileNameHeader);
+    assertDeclaredLength(req.contentLength);
+    const bytes = await readCapped(req.stream, IMAGE_MAX_BYTES);
+    if (bytes.length === 0) {
+      throw new BadRequestException({ code: 'bad_request', message: 'The image is empty' });
+    }
+
+    const actorOnly = { scope: who.scope, actor: who.actor };
+    const { documentId } = await this.documents.createAndReceiveUpload(
+      { ownerType, ownerId },
+      { filename, declaredMime, bytes },
+      actorOnly,
+    );
+    try {
+      await this.set(who, ownerType, ownerId, { documentId });
+    } catch (error) {
+      try {
+        await this.documents.remove(documentId, { who: actorOnly });
+      } catch (cleanup) {
+        this.logger.warn(
+          `image ${ownerType}/${ownerId}: could not remove ${documentId} after a failed pointer move: ${
+            cleanup instanceof Error ? cleanup.message : 'unknown error'
+          }`,
+        );
+      }
+      throw error;
+    }
+    return { documentId };
   }
 
   /** The new document must be live in the tenant, of exactly this owner, in this entity (an avatar: any entity). */
