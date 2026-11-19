@@ -32,7 +32,7 @@ async function createOpportunity(page: Page, name: string) {
   await page.getByRole('button', { name: 'Create lead' }).click();
   await expect(page.getByRole('heading', { level: 1, name })).toBeVisible();
   await moveStage(page, 'contacted', 'Contacted');
-  await page.getByRole('button', { name: 'Qualify lead', exact: true }).click();
+  await page.getByRole('button', { name: 'Qualify', exact: true }).click();
   const qualification = page.getByRole('dialog', { name: 'Qualify this lead?' });
   await qualification.getByRole('button', { name: 'Qualify lead', exact: true }).click();
   await expect(qualification).toBeHidden();
