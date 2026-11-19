@@ -30,8 +30,9 @@ COPY apps/workspace/src/styles/tokens.css apps/workspace/src/styles/token-overri
 FROM overlay AS test
 # The upstream API tests generate a temporary RSA fixture using the OpenSSL CLI.
 RUN apk add --no-cache openssl
-COPY infra/login/patches/otp-tests.patch /tmp/
-RUN git apply --check /tmp/otp-tests.patch && git apply /tmp/otp-tests.patch
+COPY infra/login/patches/otp-tests.patch infra/login/patches/reset-tests.patch /tmp/
+RUN git apply --check /tmp/otp-tests.patch /tmp/reset-tests.patch \
+    && git apply /tmp/otp-tests.patch /tmp/reset-tests.patch
 RUN pnpm --filter @zitadel/login test-unit --maxWorkers=4
 
 FROM overlay AS build
