@@ -192,7 +192,8 @@ test('the completed Journey 11 remains connected across requests, sourcing, rece
 
     await test.step('the approved bill is matched and points to the same order and vendor', async () => {
       await page.goto(`/payables/bills/${billId}`);
-      await expect(page.getByText('Approved', { exact: true })).toBeVisible();
+      // The approval history repeats the word for each step, so take the first match: the status badge.
+      await expect(page.getByText('Approved', { exact: true }).first()).toBeVisible();
       await expect(page.getByRole('table', { name: 'Match result by bill line' })).toContainText(
         'Matched',
       );
