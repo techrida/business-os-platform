@@ -1,11 +1,12 @@
 'use client';
 
 import { PR_REQUEST_TYPES, type CostCenter, type Currency } from '@bos/contracts';
-import { useActionState, useEffect, useRef, useState } from 'react';
+import { useActionState, useEffect, useRef, useState, type ReactNode } from 'react';
 
 import { Alert } from '@/components/ui/alert';
 import { Button } from '@/components/ui/button';
 import { Field, Input, Select, Textarea } from '@/components/ui/field';
+import { Icon } from '@/components/ui/icon';
 import { PageHeader } from '@/components/ui/page';
 import { Panel } from '@/components/ui/panel';
 import { currencyChoices } from '@/lib/enabled-currencies';
@@ -15,9 +16,22 @@ import { REQUEST_TYPE_LABEL } from '../_lib/model';
 import type { PrFormState } from '../_lib/state';
 import { ProcurementFormActions } from '../../form-actions';
 import styles from '../requests.module.css';
+import lines from './pr-lines.module.css';
 
 const WIDE = styles.wide ?? '';
 const MAX_LINES = 200;
+
+/** Card heading with its Figma eyebrow ("01 · The basics"). The eyebrow is decoration. */
+function SectionTitle({ eyebrow, children }: { eyebrow: string; children: ReactNode }) {
+  return (
+    <>
+      <span className={lines.eyebrow} aria-hidden="true">
+        {eyebrow}
+      </span>
+      {children}
+    </>
+  );
+}
 
 interface Row {
   /** Stable across add and remove, so a typed value never jumps to another line. */
@@ -153,7 +167,7 @@ export function PrForm({
         </Alert>
       ) : null}
 
-      <Panel title="Request details">
+      <Panel title={<SectionTitle eyebrow="01 · The basics">Request details</SectionTitle>}>
         <div className={styles.grid}>
           <Field label="Type" error={err.requestType}>
             {(control) => (
@@ -346,135 +360,159 @@ export function PrForm({
       </Panel>
 
       <Panel
-        title="Line items"
-        actions={
-          <Button variant="tertiary" onClick={addLine} disabled={rows.length >= MAX_LINES}>
-            <span aria-hidden="true">+</span>
-            Add a line
-          </Button>
-        }
+        title={<SectionTitle eyebrow="02 · The items">Line items</SectionTitle>}
         description="What is needed, with your estimate of the unit price. The platform works out the totals when you save."
       >
-        <div className={styles.lines}>
-          {rows.map((row, i) => (
-            <fieldset key={row.uid} className={styles.line}>
-              <legend>Line {i + 1}</legend>
-              <div className={styles.lineGrid}>
-                <Field label="Description" error={err[`lines.${i}.description`]} className={WIDE}>
-                  {(control) => (
-                    <Input
-                      name={`lines.${i}.description`}
-                      value={row.line.description}
-                      onChange={setLine(row.uid, 'description')}
-                      maxLength={500}
-                      required
-                      {...control}
-                    />
-                  )}
-                </Field>
-                <Field
-                  label="Specification"
-                  hint="Optional."
-                  error={err[`lines.${i}.specification`]}
-                  className={WIDE}
+        <div className={lines.editor}>
+          {/* The column heads. Each line is a group named "Line 1" and its fields keep their own labels,
+              hidden on wide cards, for screen readers. */}
+          <div className={lines.head} aria-hidden="true">
+            <span>#</span>
+            <span className={lines.headFields}>
+              <span>Item</span>
+              <span>Specification</span>
+              <span>Unit</span>
+              <span>Quantity</span>
+              <span>Unit price ({values.currency})</span>
+            </span>
+            <span className={lines.headAction}>{rows.length > 1 ? 'Action' : null}</span>
+          </div>
+          <div className={lines.lines}>
+            {rows.map((row, i) => {
+              const no = i + 1;
+              return (
+                <div
+                  key={row.uid}
+                  className={lines.line}
+                  role="group"
+                  aria-labelledby={`pr-line-${row.uid}`}
                 >
-                  {(control) => (
-                    <Textarea
-                      name={`lines.${i}.specification`}
-                      value={row.line.specification}
-                      onChange={setLine(row.uid, 'specification')}
-                      rows={2}
-                      maxLength={2000}
-                      {...control}
-                    />
-                  )}
-                </Field>
-                {values.requestType === 'goods' ? (
-                  <label className={styles.check}>
-                    <input
-                      type="checkbox"
-                      name={`lines.${i}.requiresSerials`}
-                      checked={row.line.requiresSerials ?? false}
-                      onChange={(e) => {
-                        const checked = e.target.checked;
-                        setRows((rs) =>
-                          rs.map((r) =>
-                            r.uid === row.uid
-                              ? { ...r, line: { ...r.line, requiresSerials: checked } }
-                              : r,
-                          ),
-                        );
-                      }}
-                    />{' '}
-                    Record serial numbers at receipt
-                  </label>
-                ) : null}
-                <Field label="Unit" error={err[`lines.${i}.uom`]}>
-                  {(control) => (
-                    <Input
-                      name={`lines.${i}.uom`}
-                      value={row.line.uom}
-                      onChange={setLine(row.uid, 'uom')}
-                      maxLength={20}
-                      required
-                      {...control}
-                    />
-                  )}
-                </Field>
-                <Field label="Quantity" error={err[`lines.${i}.quantity`]}>
-                  {(control) => (
-                    <Input
-                      name={`lines.${i}.quantity`}
-                      value={row.line.quantity}
-                      onChange={setLine(row.uid, 'quantity')}
-                      inputMode="decimal"
-                      autoComplete="off"
-                      className={styles.numeric}
-                      required
-                      {...control}
-                    />
-                  )}
-                </Field>
-                <Field
-                  label={`Estimated unit price (${values.currency})`}
-                  error={err[`lines.${i}.estimatedUnitPrice`]}
-                >
-                  {(control) => (
-                    <Input
-                      name={`lines.${i}.estimatedUnitPrice`}
-                      value={row.line.estimatedUnitPrice}
-                      onChange={setLine(row.uid, 'estimatedUnitPrice')}
-                      inputMode="decimal"
-                      autoComplete="off"
-                      className={styles.numeric}
-                      required
-                      {...control}
-                    />
-                  )}
-                </Field>
-              </div>
-              <div className={styles.lineHead}>
-                <Button
-                  variant="ghost"
-                  size="small"
-                  onClick={() => removeLine(row.uid)}
-                  disabled={rows.length <= 1}
-                  aria-label={`Remove line ${i + 1}`}
-                >
-                  <span aria-hidden="true">×</span>
-                </Button>
-              </div>
-            </fieldset>
-          ))}
+                  <span className={lines.lineNo} id={`pr-line-${row.uid}`}>
+                    <span className={lines.lineWord}>Line </span>
+                    {no}
+                  </span>
+                  <div className={lines.fields}>
+                    <Field label="Description" error={err[`lines.${i}.description`]}>
+                      {(control) => (
+                        <Input
+                          name={`lines.${i}.description`}
+                          value={row.line.description}
+                          onChange={setLine(row.uid, 'description')}
+                          maxLength={500}
+                          required
+                          {...control}
+                        />
+                      )}
+                    </Field>
+                    <Field label="Specification (optional)" error={err[`lines.${i}.specification`]}>
+                      {(control) => (
+                        <Textarea
+                          name={`lines.${i}.specification`}
+                          value={row.line.specification}
+                          onChange={setLine(row.uid, 'specification')}
+                          rows={1}
+                          maxLength={2000}
+                          {...control}
+                        />
+                      )}
+                    </Field>
+                    <Field label="Unit" error={err[`lines.${i}.uom`]}>
+                      {(control) => (
+                        <Input
+                          name={`lines.${i}.uom`}
+                          value={row.line.uom}
+                          onChange={setLine(row.uid, 'uom')}
+                          maxLength={20}
+                          placeholder="pcs, hrs, lot"
+                          required
+                          {...control}
+                        />
+                      )}
+                    </Field>
+                    <Field label="Quantity" error={err[`lines.${i}.quantity`]}>
+                      {(control) => (
+                        <Input
+                          name={`lines.${i}.quantity`}
+                          value={row.line.quantity}
+                          onChange={setLine(row.uid, 'quantity')}
+                          inputMode="decimal"
+                          autoComplete="off"
+                          className={styles.numeric}
+                          required
+                          {...control}
+                        />
+                      )}
+                    </Field>
+                    <Field
+                      label={`Estimated unit price (${values.currency})`}
+                      error={err[`lines.${i}.estimatedUnitPrice`]}
+                    >
+                      {(control) => (
+                        <Input
+                          name={`lines.${i}.estimatedUnitPrice`}
+                          value={row.line.estimatedUnitPrice}
+                          onChange={setLine(row.uid, 'estimatedUnitPrice')}
+                          inputMode="decimal"
+                          autoComplete="off"
+                          className={styles.numeric}
+                          required
+                          {...control}
+                        />
+                      )}
+                    </Field>
+                    {values.requestType === 'goods' ? (
+                      <label className={`${styles.check} ${lines.serials}`}>
+                        <input
+                          type="checkbox"
+                          name={`lines.${i}.requiresSerials`}
+                          checked={row.line.requiresSerials ?? false}
+                          onChange={(e) => {
+                            const checked = e.target.checked;
+                            setRows((rs) =>
+                              rs.map((r) =>
+                                r.uid === row.uid
+                                  ? { ...r, line: { ...r.line, requiresSerials: checked } }
+                                  : r,
+                              ),
+                            );
+                          }}
+                        />{' '}
+                        Record serial numbers at receipt
+                      </label>
+                    ) : null}
+                  </div>
+                  {rows.length > 1 ? (
+                    <Button
+                      className={lines.remove}
+                      variant="ghost"
+                      size="small"
+                      onClick={() => removeLine(row.uid)}
+                      aria-label={`Remove line ${no}`}
+                    >
+                      <Icon name="x" size={18} />
+                    </Button>
+                  ) : null}
+                </div>
+              );
+            })}
+          </div>
+          {err.lines ? (
+            <p role="alert" className={styles.status}>
+              {err.lines}
+            </p>
+          ) : null}
+          <div className={lines.add}>
+            <Button variant="tertiary" onClick={addLine} disabled={rows.length >= MAX_LINES}>
+              <span aria-hidden="true" className={lines.plus}>
+                +
+              </span>{' '}
+              Add items
+            </Button>
+            {rows.length >= MAX_LINES ? (
+              <span className={styles.status}>A request takes up to {MAX_LINES} lines.</span>
+            ) : null}
+          </div>
         </div>
-        {err.lines ? (
-          <p role="alert" className={styles.status}>
-            {err.lines}
-          </p>
-        ) : null}
-        {rows.length >= MAX_LINES ? (
-          <p className={styles.status}>A request takes up to {MAX_LINES} lines.</p>
-        ) : null}
       </Panel>
     </form>
   );

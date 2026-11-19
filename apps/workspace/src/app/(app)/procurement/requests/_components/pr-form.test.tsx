@@ -168,3 +168,62 @@ describe('currency picker (D44)', () => {
     expect(action).toHaveBeenCalledTimes(1);
   });
 });
+
+describe('line items', () => {
+  const mount = (action = vi.fn()) =>
+    mountForm(
+      <PrForm
+        action={action}
+        departments={[]}
+        enabledCurrencies={['NPR', 'INR', 'USD']}
+        costCenters={[{ id: PROJECT, code: 'OPS', name: 'Operations', active: true }]}
+        initial={EMPTY_PR_VALUES}
+        mode="create"
+        idempotencyKey={PROJECT}
+        cancelHref="/"
+        reloadHref="/"
+      />,
+    );
+  const button = (container: HTMLElement, name: string) =>
+    Array.from(container.querySelectorAll('button')).find(
+      (b) => (b.getAttribute('aria-label') ?? b.textContent?.trim()) === name,
+    ) ?? null;
+
+  it('names each line as a group with labelled fields, keeps the submitted names and has no remove on one line', async () => {
+    mounted = await mount();
+    const qty = mounted.container.querySelector<HTMLInputElement>(
+      'input[name="lines.0.quantity"]',
+    )!;
+    expect(mounted.container.querySelector(`label[for="${qty.id}"]`)?.textContent).toBe('Quantity');
+    const group = qty.closest('[role="group"]')!;
+    expect(
+      mounted.container.querySelector(`#${group.getAttribute('aria-labelledby')}`)?.textContent,
+    ).toBe('Line 1');
+    expect(button(mounted.container, 'Remove line 1')).toBeNull();
+    // The card eyebrows are decoration.
+    for (const eyebrow of ['01 · The basics', '02 · The items']) {
+      const el = Array.from(mounted.container.querySelectorAll('[aria-hidden="true"]')).find(
+        (e) => e.textContent === eyebrow,
+      );
+      expect(el).toBeDefined();
+    }
+  });
+
+  it('Add items adds a row; removing the first keeps what was typed in the second', async () => {
+    const action = vi.fn((_prev, form: FormData) => {
+      expect(form.get('lines.0.description')).toBe('Desk');
+      expect(form.get('lines.1.description')).toBeNull();
+      return Promise.resolve({ key: PROJECT, errors: {} });
+    });
+    mounted = await mount(action);
+    await click(button(mounted.container, '+ Add items'));
+    await fill(mounted.container.querySelector('input[name="lines.0.description"]'), 'Chair');
+    await fill(mounted.container.querySelector('input[name="lines.1.description"]'), 'Desk');
+    await click(button(mounted.container, 'Remove line 1'));
+    expect(
+      mounted.container.querySelector<HTMLInputElement>('input[name="lines.0.description"]')!.value,
+    ).toBe('Desk');
+    await submit(mounted.container);
+    expect(action).toHaveBeenCalledTimes(1);
+  });
+});

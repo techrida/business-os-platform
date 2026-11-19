@@ -1,4 +1,11 @@
-import { PR_STATUSES, PrStatusSchema, pageWindow } from '@bos/contracts';
+import {
+  DEFAULT_ROWS,
+  PR_STATUSES,
+  PrStatusSchema,
+  ROWS_OPTIONS,
+  pageWindow,
+  type PrStatus,
+} from '@bos/contracts';
 import type { Metadata } from 'next';
 import Link from 'next/link';
 import type { NumberSystems } from '@bos/locale';
@@ -8,9 +15,9 @@ import { Badge } from '@/components/ui/badge';
 import { LinkButton } from '@/components/ui/button';
 import { EmptyState } from '@/components/ui/empty-state';
 import { ResultCount } from '@/components/ui/filter-bar';
+import { Icon } from '@/components/ui/icon';
 import { Page, PageHeader } from '@/components/ui/page';
-import { Pagination } from '@/components/ui/pagination';
-
+import { StatCard } from '@/components/ui/stat-card';
 import { CellTitle, Table, Td, Th } from '@/components/ui/table';
 import { listPurchaseRequestsPage, type PurchaseRequestListItem } from '@/lib/api-procurement';
 import { requireStaffSession } from '@/lib/bff';
@@ -18,29 +25,70 @@ import { getNumberSystems } from '@/lib/display-settings';
 import { money, when } from '@/lib/kernel-format';
 import { activeFilterLabels, clearFiltersHref, hrefWith, readList } from '@/lib/list-params';
 
+import { ListPager } from '../../invoices/_components/list-pager';
+
 import layout from '../procurement.module.css';
 import { prFailure } from './_lib/failure';
 import { RequestsFilters } from './requests-filters';
-import { PR_STATUS_LABEL, prGrants } from './_lib/model';
+import { countStatuses, PR_COUNT_GROUPS, PR_STATUS_LABEL, prGrants } from './_lib/model';
 import styles from './requests.module.css';
 
 export const metadata: Metadata = { title: 'Purchase requests · Business OS' };
 export const dynamic = 'force-dynamic';
 
 const PATH = '/procurement/requests';
-const LIST = { multi: { status: PR_STATUSES } } as const;
+const LIST = {
+  multi: { status: PR_STATUSES },
+  rows: { allowed: ROWS_OPTIONS, default: DEFAULT_ROWS },
+} as const;
+
+type Counts = Record<keyof typeof PR_COUNT_GROUPS, number>;
+
+/**
+ * The count cards: one `limit: 1` read per card under the same filters and the caller's own scope, using only
+ * the total it returns. Nothing here widens what the list may show. Null when any count fails, which hides
+ * the cards and leaves the table alone.
+ */
+async function loadCounts(
+  session: Awaited<ReturnType<typeof requireStaffSession>>,
+  picked: readonly PrStatus[],
+  q: string | undefined,
+): Promise<Counts | null> {
+  const count = (group: readonly PrStatus[]): Promise<number> => {
+    const status = countStatuses(group, picked);
+    if (status.length === 0) return Promise.resolve(0);
+    return listPurchaseRequestsPage(session, {
+      status,
+      ...(q !== undefined ? { q } : {}),
+      limit: 1,
+      offset: 0,
+    }).then((r) => r.total);
+  };
+  try {
+    const [awaiting, sourcing, approved] = await Promise.all([
+      count(PR_COUNT_GROUPS.awaiting),
+      count(PR_COUNT_GROUPS.sourcing),
+      count(PR_COUNT_GROUPS.approved),
+    ]);
+    return { awaiting, sourcing, approved };
+  } catch {
+    return null;
+  }
+}
 
 function Row({ pr, numberSystems }: { pr: PurchaseRequestListItem; numberSystems: NumberSystems }) {
   const status = PR_STATUS_LABEL[pr.status];
+  const href = `/procurement/requests/${encodeURIComponent(pr.id)}`;
+  // A draft has no number yet, so its row action is named by what it asks for, when and for how much.
+  const name =
+    pr.number ??
+    `draft request of ${money(pr.estimatedTotal, pr.currency, numberSystems)} needed by ${when(pr.requiredBy, 'date')}: ${pr.justification.slice(0, 60)}`;
   return (
     <tr>
       <Td>
         <CellTitle
           title={
-            <Link
-              href={`/procurement/requests/${encodeURIComponent(pr.id)}`}
-              className={styles.name}
-            >
+            <Link href={href} className={styles.name}>
               {pr.number ?? 'Not numbered yet'}
             </Link>
           }
@@ -56,11 +104,16 @@ function Row({ pr, numberSystems }: { pr: PurchaseRequestListItem; numberSystems
           {money(pr.estimatedTotal, pr.currency, numberSystems)}
         </span>
       </Td>
-      <Td nowrap>
+      <Td nowrap className={styles.statusColumn}>
         <span className={styles.badges}>
           <Badge tone={status.tone}>{status.text}</Badge>
           {pr.isEmergency ? <Badge tone="error">Emergency</Badge> : null}
         </span>
+      </Td>
+      <Td nowrap className={styles.actionColumn}>
+        <Link href={href} className={styles.rowAction} aria-label={`View ${name}`}>
+          <Icon name="chevron-right" size={20} />
+        </Link>
       </Td>
     </tr>
   );
@@ -82,6 +135,7 @@ export default async function PurchaseRequestsPage({
   let total = 0;
   let window = pageWindow(list.page, list.rows);
   let problem: { message: string; status: number } | null = null;
+  let counts: Counts | null = null;
   try {
     const fetchPage = () =>
       listPurchaseRequestsPage(session, {
@@ -90,7 +144,10 @@ export default async function PurchaseRequestsPage({
         limit: window.limit,
         offset: window.offset,
       });
-    let result = await fetchPage();
+    const firstPage = fetchPage();
+    // The counts run beside the first page; loadCounts never rejects, and a failed count only hides the cards.
+    const pendingCounts = loadCounts(session, status, list.q);
+    let result = await firstPage;
     // A page number past the end (a stale link) shows the last page instead of an empty table.
     const clamped = pageWindow(list.page, list.rows, result.total);
     if (result.items.length === 0 && result.total > 0 && clamped.page !== window.page) {
@@ -101,6 +158,7 @@ export default async function PurchaseRequestsPage({
     }
     requests = result.items;
     total = result.total;
+    counts = await pendingCounts;
   } catch (err) {
     const f = prFailure(err, 'load');
     problem = { message: f.message, status: f.status };
@@ -118,10 +176,6 @@ export default async function PurchaseRequestsPage({
       },
     },
   );
-  const pageHref = (page: number) => hrefWith(PATH, params, { page: page > 1 ? page : null });
-  const nearby = Array.from({ length: window.pageCount }, (_, i) => i + 1).filter(
-    (n) => Math.abs(n - window.page) <= 2,
-  );
 
   return (
     <Page className={layout.list}>
@@ -134,6 +188,29 @@ export default async function PurchaseRequestsPage({
         }
         actions={newButton}
       />
+
+      {counts !== null ? (
+        <section aria-label="Purchase request summary" className={styles.stats}>
+          <StatCard
+            label={filtered.length > 0 ? 'Matching requests' : 'All requests'}
+            icon="file-text"
+            value={total}
+          />
+          <StatCard
+            label="Awaiting approval"
+            icon="list-checks"
+            tone="warning"
+            value={counts.awaiting}
+          />
+          <StatCard label="With procurement" icon="search" tone="info" value={counts.sourcing} />
+          <StatCard
+            label="Approved or ordered"
+            icon="check-circle"
+            tone="success"
+            value={counts.approved}
+          />
+        </section>
+      ) : null}
 
       <RequestsFilters
         statusOptions={PR_STATUSES.map((s) => ({ value: s, label: PR_STATUS_LABEL[s].text }))}
@@ -183,14 +260,19 @@ export default async function PurchaseRequestsPage({
       ) : requests !== null ? (
         <div className={layout.results}>
           <ResultCount shown={requests.length} total={total} noun="request" />
-          <Table className={layout.resultsTable ?? ''} caption="Purchase requests" minWidth={720}>
+          <Table
+            className={`${layout.resultsTable ?? ''} ${styles.list ?? ''}`}
+            caption="Purchase requests"
+            minWidth={860}
+          >
             <thead>
               <tr>
                 <Th>Request</Th>
                 <Th>Department</Th>
                 <Th>Needed by</Th>
                 <Th align="end">Estimated total</Th>
-                <Th>Status</Th>
+                <Th className={styles.statusColumn}>Status</Th>
+                <Th className={styles.actionColumn}>Action</Th>
               </tr>
             </thead>
             <tbody>
@@ -199,13 +281,12 @@ export default async function PurchaseRequestsPage({
               ))}
             </tbody>
           </Table>
-          <Pagination
-            label="Pages"
-            summary={`Showing ${window.first}-${window.last} of ${total}`}
-            {...(window.page > 1 ? { previousHref: pageHref(window.page - 1) } : {})}
-            {...(window.page < window.pageCount ? { nextHref: pageHref(window.page + 1) } : {})}
-            pages={nearby.map((n) => ({ page: n, href: pageHref(n) }))}
-            currentPage={window.page}
+          <ListPager
+            pathname={PATH}
+            current={params}
+            window={window}
+            total={total}
+            label="Purchase request pages"
           />
         </div>
       ) : null}

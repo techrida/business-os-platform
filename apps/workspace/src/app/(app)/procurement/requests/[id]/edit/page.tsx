@@ -58,6 +58,8 @@ export default async function EditPurchaseRequestPage({
   }
 
   const label = pr.number ?? 'Draft purchase request';
+  // Mid-sentence in the title ("Edit PR-…", "Edit draft purchase request"); the crumb keeps the capital.
+  const titleName = pr.number ?? 'draft purchase request';
   const editable = isPrEditable(pr.status) && prGrants(session.roles).create;
   const departments = editable ? await listDepartments(session).catch(() => []) : [];
   const enabledCurrencies = editable ? await loadEnabledCurrencies(session) : [];
@@ -98,7 +100,7 @@ export default async function EditPurchaseRequestPage({
           action={updatePrAction}
           initial={valuesFromDto(pr)}
           mode="edit"
-          requestLabel={label}
+          requestLabel={titleName}
           idempotencyKey={randomUUID()}
           prId={pr.id}
           version={pr.version}
@@ -107,7 +109,7 @@ export default async function EditPurchaseRequestPage({
         />
       ) : (
         <>
-          <PageHeader title={`Edit ${label}`} />
+          <PageHeader title={`Edit ${titleName}`} />
           <Alert
             tone="info"
             role="status"
