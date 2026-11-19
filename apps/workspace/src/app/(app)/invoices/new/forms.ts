@@ -3,10 +3,12 @@ import {
   CreditNoteBodySchema,
   CURRENCIES,
   DebitNoteBodySchema,
+  DiscountSchema,
   type CreateManualInvoiceBody,
   type CreditNoteBody,
   type Currency,
   type DebitNoteBody,
+  type Discount,
 } from '@bos/contracts';
 
 import {
@@ -41,13 +43,44 @@ function reasonError(reason: string, ask: string): string | undefined {
   return undefined;
 }
 
+/** The document discount's type on the form: none, a percentage of the subtotal, or a fixed amount. */
+export const DISCOUNT_MODES = ['none', 'pct', 'amount'] as const;
+export type DiscountMode = (typeof DISCOUNT_MODES)[number];
+
 export interface ManualInvoiceValues {
   customerId: string;
   currency: Currency;
   manualReason: string;
   /** `YYYY-MM-DD`, or blank for none. */
   dueDate: string;
+  /** One document discount (the contract's `discount`); left out or 'none' sends none. */
+  discountMode?: string;
+  /** As typed: grouping commas and spaces are dropped before it is checked. */
+  discountValue?: string;
   lines: LineValues[];
+}
+
+/**
+ * The document discount as the contract's `DiscountSchema` takes it, or the words for why it cannot be sent. The
+ * server works out the amount and spreads it over the lines; nothing here computes money.
+ */
+export function parseDiscount(
+  mode: string | undefined,
+  raw: string | undefined,
+): { ok: true; data: Discount | undefined } | { ok: false; error: string } {
+  if (mode === undefined || mode === '' || mode === 'none') return { ok: true, data: undefined };
+  if (mode !== 'pct' && mode !== 'amount') return { ok: false, error: INCOMPLETE };
+  const value = (raw ?? '').replace(/[\s,]/g, '');
+  if (value === '') return { ok: false, error: 'Enter the discount, or choose No discount.' };
+  const checked = DiscountSchema.safeParse({ mode, value });
+  if (checked.success) return { ok: true, data: checked.data };
+  return {
+    ok: false,
+    error:
+      mode === 'pct'
+        ? 'Enter a percentage from 0 to 100, with up to four decimals.'
+        : 'Enter an amount of zero or more, with up to two decimals.',
+  };
 }
 
 /** "NPR", "NPR or USD", "NPR, INR or USD". */
@@ -83,15 +116,18 @@ export function parseManualInvoice(
   if (why !== undefined) errors['manualReason'] = why;
   if (dueDate !== '' && !isRealDay(dueDate))
     errors['dueDate'] = 'Enter a real date, or leave it blank.';
+  const discount = parseDiscount(values.discountMode, values.discountValue);
+  if (!discount.ok) errors['discount'] = discount.error;
   const lines = parseLines(values.lines);
   if (!lines.ok) Object.assign(errors, lines.errors);
-  if (Object.keys(errors).length > 0 || !lines.ok) return { ok: false, errors };
+  if (Object.keys(errors).length > 0 || !lines.ok || !discount.ok) return { ok: false, errors };
 
   const body = {
     customerId: values.customerId,
     currency: values.currency,
     manualReason,
     ...(dueDate !== '' ? { dueDate } : {}),
+    ...(discount.data !== undefined ? { discount: discount.data } : {}),
     lines: lines.data,
   };
   const checked = CreateManualInvoiceBodySchema.safeParse(body);

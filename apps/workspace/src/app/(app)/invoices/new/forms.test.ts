@@ -9,6 +9,7 @@ import {
   currencyNotEnabledMessage,
   parseCreditNote,
   parseDebitNote,
+  parseDiscount,
   parseManualInvoice,
   type ManualInvoiceValues,
 } from './forms';
@@ -48,6 +49,22 @@ describe('parseManualInvoice', () => {
       'manualReason',
     ]);
     expect(out.data.manualReason).toBe('Work done before the order was confirmed.');
+  });
+
+  it('adds the document discount to the contract body only when one is chosen', () => {
+    const out = parseManualInvoice(values({ discountMode: 'pct', discountValue: '5' }));
+    expect(out.ok).toBe(true);
+    if (!out.ok) return;
+    expect(CreateManualInvoiceBodySchema.safeParse(out.data).success).toBe(true);
+    expect(out.data.discount).toEqual({ mode: 'pct', value: '5' });
+    const none = parseManualInvoice(values({ discountMode: 'none', discountValue: '5' }));
+    expect(none.ok && 'discount' in none.data).toBe(false);
+  });
+
+  it('names a discount problem on the discount field', () => {
+    const out = parseManualInvoice(values({ discountMode: 'amount', discountValue: '' }));
+    expect(out.ok).toBe(false);
+    if (!out.ok) expect(out.errors['discount']).toMatch(/Enter the discount/);
   });
 
   it('leaves the due date out when it is blank', () => {
@@ -177,5 +194,32 @@ describe('parseDebitNote', () => {
     if (bad.ok) return;
     expect(bad.errors['reason']).toBeTruthy();
     expect(bad.errors['lines.0.taxCodeId']).toBeTruthy();
+  });
+});
+
+describe('parseDiscount', () => {
+  it.each<[string | undefined, string | undefined, unknown]>([
+    [undefined, undefined, undefined],
+    ['', '', undefined],
+    ['none', '12', undefined],
+    ['pct', '0', { mode: 'pct', value: '0' }],
+    ['pct', '100', { mode: 'pct', value: '100' }],
+    ['pct', '33.3333', { mode: 'pct', value: '33.3333' }],
+    ['amount', ' 1,00,000.50 ', { mode: 'amount', value: '100000.50' }],
+  ])('%s %j sends %j', (mode, value, data) => {
+    expect(parseDiscount(mode, value)).toEqual({ ok: true, data });
+  });
+
+  it.each([
+    ['pct', '100.5'],
+    ['pct', '-1'],
+    ['pct', '1.23456'],
+    ['amount', '-5'],
+    ['amount', '1.005'],
+    ['amount', 'ten'],
+    ['pct', ''],
+    ['bogus', '5'],
+  ])('refuses %s %j', (mode, value) => {
+    expect(parseDiscount(mode, value).ok).toBe(false);
   });
 });
