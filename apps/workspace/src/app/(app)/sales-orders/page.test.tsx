@@ -179,3 +179,15 @@ describe('sales orders list', () => {
   });
 });
 
+// The Confirm button follows the live grants from GET /v1/me, not the role's defaults.
+describe('confirm gate on live grants', () => {
+  it('offers Confirm to a role given sales_order.confirm, and hides it from a role that lost it', async () => {
+    mocks.requireStaffSession.mockResolvedValue({ accessToken: 't', roles: ['management'] });
+    mocks.getGrants.mockResolvedValueOnce(new Map([['sales_order.confirm', 'all']]));
+    expect(await render()).toContain('Confirm from quotation');
+
+    mocks.requireStaffSession.mockResolvedValue({ accessToken: 't', roles: ['accountant'] });
+    mocks.getGrants.mockResolvedValueOnce(new Map([['sales_order.read', 'all']]));
+    expect(await render()).not.toContain('Confirm from quotation');
+  });
+});
