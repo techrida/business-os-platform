@@ -29,6 +29,7 @@ import {
   documents,
   opportunities,
   quotationVersions,
+  quotations,
   runMigrations,
   salesOrderEvidence,
   salesOrderLines,
@@ -56,6 +57,7 @@ import { OpportunitiesService } from '../opportunities/opportunities.service';
 import { DraftingService } from '../quotations/drafting/drafting.service';
 import {
   GOLDEN_ISSUE_DATE,
+  seedOtherStaffUser,
   seedQuotationFixture,
   type QuotationFixture,
   type QuotationFixtureDb,
@@ -560,6 +562,52 @@ describe('SalesOrdersService.list and detail', () => {
     const byCustomer = await service.list({ customerId: f.customerPartyId });
     expect(byCustomer.map((i) => i.id)).toContain(detail.order.id);
     expect(await service.list({ customerId: randomUUID() })).toEqual([]);
+  });
+
+  it('uses the source quotation owner for Sales reads and hides other, unassigned and cross-tenant orders', async () => {
+    const ownQuote = await acceptedQuotation();
+    const otherQuote = await acceptedQuotation();
+    const unassignedQuote = await acceptedQuotation();
+    const own = await confirm(ownQuote);
+    const other = await confirm(otherQuote);
+    const unassigned = await confirm(unassignedQuote);
+    const otherOwner = await seedOtherStaffUser(db, f);
+
+    await withTx(db, scopeA, userActor(), async (tx) => {
+      await tx
+        .update(quotations)
+        .set({ ownerUserId: otherOwner })
+        .where(eq(quotations.id, otherQuote.id));
+      await tx
+        .update(quotations)
+        .set({ ownerUserId: null })
+        .where(eq(quotations.id, unassignedQuote.id));
+    });
+
+    const listed = (await service.list({})).map((item) => item.id);
+    expect(listed).toContain(own.order.id);
+    expect(listed).not.toContain(other.order.id);
+    expect(listed).not.toContain(unassigned.order.id);
+    expect(await service.list({ quotationVersionId: otherQuote.currentVersionId })).toEqual([]);
+    expect(await service.list({ quotationVersionId: ownQuote.currentVersionId })).toMatchObject([
+      { id: own.order.id },
+    ]);
+    expect((await service.detail(own.order.id)).order.id).toBe(own.order.id);
+    for (const { order } of [other, unassigned]) {
+      expect(await statusOf(service.detail(order.id))).toEqual({ status: 404, code: 'not_found' });
+    }
+
+    const outside = await seedQuotationFixture(db);
+    current.scope = { tenantId: outside.tenantId, organizationId: outside.entityId };
+    expect(await statusOf(service.detail(own.order.id))).toEqual({
+      status: 404,
+      code: 'not_found',
+    });
+    expect(await service.list({})).toEqual([]);
+
+    current.scope = scopeA;
+    current.grants = grantsOf('finance');
+    expect((await service.detail(other.order.id)).order.id).toBe(other.order.id);
   });
 
   it('answers 404 to a read of another entity, and an empty list there', async () => {
