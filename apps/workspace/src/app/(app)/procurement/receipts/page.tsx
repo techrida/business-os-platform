@@ -284,7 +284,7 @@ function Progress({ progress }: { progress: PoProgress }) {
       >
         <thead>
           <tr>
-            <Th align="end">#</Th>
+            <Th>#</Th>
             <Th>Item</Th>
             <Th align="end">Ordered</Th>
             <Th align="end">Received</Th>
@@ -295,9 +295,7 @@ function Progress({ progress }: { progress: PoProgress }) {
         <tbody>
           {progress.lines.map((l) => (
             <tr key={l.poLineId}>
-              <Td align="end" nowrap>
-                {l.lineNo}
-              </Td>
+              <Td nowrap>{l.lineNo}</Td>
               <Td>
                 <span className={styles.long}>{l.description}</span>
                 <span className={styles.note}>

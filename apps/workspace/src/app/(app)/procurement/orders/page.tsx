@@ -1,4 +1,10 @@
-import { PO_STATUSES, PoStatusSchema, pageWindow } from '@bos/contracts';
+import {
+  DEFAULT_ROWS,
+  PO_STATUSES,
+  PoStatusSchema,
+  ROWS_OPTIONS,
+  pageWindow,
+} from '@bos/contracts';
 import type { Metadata } from 'next';
 import Link from 'next/link';
 import type { NumberSystems } from '@bos/locale';
@@ -8,9 +14,9 @@ import { Badge } from '@/components/ui/badge';
 import { LinkButton } from '@/components/ui/button';
 import { EmptyState } from '@/components/ui/empty-state';
 import { ResultCount } from '@/components/ui/filter-bar';
+import { Icon } from '@/components/ui/icon';
 import { Page, PageHeader } from '@/components/ui/page';
-import { Pagination } from '@/components/ui/pagination';
-
+import { StatCard } from '@/components/ui/stat-card';
 import { CellTitle, Table, Td, Th } from '@/components/ui/table';
 import { listPurchaseOrdersPage, type PoListItem } from '@/lib/api-purchase-orders';
 import { requireStaffSession } from '@/lib/bff';
@@ -18,7 +24,11 @@ import { getNumberSystems } from '@/lib/display-settings';
 import { when } from '@/lib/kernel-format';
 import { activeFilterLabels, clearFiltersHref, hrefWith, readList } from '@/lib/list-params';
 
+import listLayout from '@/components/p3/list.module.css';
+
+import { ListPager } from '../../invoices/_components/list-pager';
 import layout from '../procurement.module.css';
+import { PO_SUMMARY, summaryCards } from '../rfqs/_lib/summary';
 import { poFailure } from './_lib/failure';
 import { PO_STATUS_LABEL, poMoney } from './_lib/model';
 import styles from './orders.module.css';
@@ -28,22 +38,23 @@ export const metadata: Metadata = { title: 'Purchase orders · Business OS' };
 export const dynamic = 'force-dynamic';
 
 const PATH = '/procurement/orders';
-const LIST = { multi: { status: PO_STATUSES } } as const;
+const LIST = {
+  multi: { status: PO_STATUSES },
+  rows: { allowed: ROWS_OPTIONS, default: DEFAULT_ROWS },
+} as const;
 
 function Row({ po, numberSystems }: { po: PoListItem; numberSystems: NumberSystems }) {
   const status = PO_STATUS_LABEL[po.status];
+  const href = `/procurement/orders/${encodeURIComponent(po.id)}`;
   return (
     <tr>
       <Td>
-        <Link href={`/procurement/orders/${encodeURIComponent(po.id)}`} className={styles.name}>
+        <Link href={href} className={styles.name}>
           {po.number}
         </Link>
       </Td>
       <Td>
         <CellTitle title={<span className={styles.long}>{po.vendorName}</span>} />
-      </Td>
-      <Td nowrap>
-        <Badge tone={status.tone}>{status.text}</Badge>
       </Td>
       <Td align="end" nowrap>
         <span className={styles.numeric}>
@@ -59,6 +70,14 @@ function Row({ po, numberSystems }: { po: PoListItem; numberSystems: NumberSyste
         ) : (
           <span className={styles.quiet}>Not issued</span>
         )}
+      </Td>
+      <Td nowrap className={styles.statusColumn}>
+        <Badge tone={status.tone}>{status.text}</Badge>
+      </Td>
+      <Td nowrap className={styles.actionColumn}>
+        <Link href={href} className={styles.rowAction} aria-label={`View ${po.number}`}>
+          <Icon name="chevron-right" size={20} />
+        </Link>
       </Td>
     </tr>
   );
@@ -79,6 +98,10 @@ export default async function PurchaseOrdersPage({
   let total = 0;
   let window = pageWindow(list.page, list.rows);
   let problem: { message: string; status: number } | null = null;
+  // Started before the table's read; a failure here hides the cards, not the table.
+  const summary = summaryCards(PO_SUMMARY, (s) =>
+    listPurchaseOrdersPage(session, { status: s, limit: 1, offset: 0 }),
+  );
   try {
     const fetchPage = () =>
       listPurchaseOrdersPage(session, {
@@ -112,10 +135,7 @@ export default async function PurchaseOrdersPage({
       },
     },
   );
-  const pageHref = (page: number) => hrefWith(PATH, params, { page: page > 1 ? page : null });
-  const nearby = Array.from({ length: window.pageCount }, (_, i) => i + 1).filter(
-    (n) => Math.abs(n - window.page) <= 2,
-  );
+  const cards = await summary;
 
   return (
     <Page className={layout.list}>
@@ -124,10 +144,24 @@ export default async function PurchaseOrdersPage({
         description="Orders placed with approved vendors. An order is issued once, and every change after that is a new version."
       />
 
+      {cards !== null ? (
+        <section aria-label="Purchase order summary" className={listLayout.stats}>
+          {cards.map((card) => (
+            <StatCard
+              key={card.key}
+              label={card.label}
+              icon={card.icon}
+              tone={card.tone}
+              value={card.value}
+            />
+          ))}
+        </section>
+      ) : null}
+
       <OrdersFilters
         statusOptions={PO_STATUSES.map((s) => ({ value: s, label: PO_STATUS_LABEL[s].text }))}
         status={status}
-        rows={typeof params.rows === 'string' ? params.rows : undefined}
+        rows={list.rows === DEFAULT_ROWS ? undefined : String(list.rows)}
       />
 
       {problem !== null ? (
@@ -171,15 +205,20 @@ export default async function PurchaseOrdersPage({
       ) : orders !== null ? (
         <div className={layout.results}>
           <ResultCount shown={orders.length} total={total} noun="purchase order" />
-          <Table className={layout.resultsTable ?? ''} caption="Purchase orders" minWidth={760}>
+          <Table
+            className={`${layout.resultsTable ?? ''} ${styles.list ?? ''}`}
+            caption="Purchase orders"
+            minWidth={860}
+          >
             <thead>
               <tr>
                 <Th>Number</Th>
                 <Th>Vendor</Th>
-                <Th>Status</Th>
                 <Th align="end">Approved total</Th>
                 <Th align="end">Version</Th>
                 <Th>Issued</Th>
+                <Th className={styles.statusColumn}>Status</Th>
+                <Th className={styles.actionColumn}>Action</Th>
               </tr>
             </thead>
             <tbody>
@@ -188,13 +227,12 @@ export default async function PurchaseOrdersPage({
               ))}
             </tbody>
           </Table>
-          <Pagination
-            label="Pages"
-            summary={`Showing ${window.first}-${window.last} of ${total}`}
-            {...(window.page > 1 ? { previousHref: pageHref(window.page - 1) } : {})}
-            {...(window.page < window.pageCount ? { nextHref: pageHref(window.page + 1) } : {})}
-            pages={nearby.map((n) => ({ page: n, href: pageHref(n) }))}
-            currentPage={window.page}
+          <ListPager
+            pathname={PATH}
+            current={params}
+            window={window}
+            total={total}
+            label="Purchase order pages"
           />
         </div>
       ) : null}

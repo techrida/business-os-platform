@@ -26,6 +26,7 @@ import {
   DiscardBillDialog,
   VoidDialog,
 } from '../../_components/bill-actions';
+import { ApprovalHistory, loadApproval } from '../../_components/approval-history';
 import { InvoiceReplacement } from '../../_components/invoice-replacement';
 import { billFailure } from '../../_lib/failure';
 import {
@@ -223,6 +224,7 @@ export default async function BillPage({
   const vendorName = bill.vendorName;
   const orderNumber = bill.purchaseOrderNumber ?? undefined;
 
+  const approval = await loadApproval(session, bill.approvalRequestId);
   // Live grants (GET /v1/me), not the role defaults: the actions and the order link show for whoever an admin
   // granted them, and hide for a role whose grant was removed. The API still checks the bill itself.
   const live = await getGrants(session);
@@ -361,13 +363,12 @@ export default async function BillPage({
             <Panel title="Bill">
               <FactList facts={facts} />
             </Panel>
-            <Lines numberSystems={numberSystems} bill={bill} />
-            <MatchPanel numberSystems={numberSystems} bill={bill} />
           </div>
           <aside className={styles.stack}>
             <Panel title="Totals" description="Worked out by the platform from the lines.">
               <FactList facts={totals} />
             </Panel>
+            {approval !== null ? <ApprovalHistory approval={approval} /> : null}
             {grants.enter && bill.status === 'variance' && bill.matchStatus === 'variance' ? (
               <Panel
                 title="Match exception"
@@ -378,6 +379,9 @@ export default async function BillPage({
             ) : null}
           </aside>
         </div>
+        {/* The line tables run the full width: seven or eight columns do not fit beside the totals. */}
+        <Lines numberSystems={numberSystems} bill={bill} />
+        <MatchPanel numberSystems={numberSystems} bill={bill} />
       </div>
     </Page>
   );

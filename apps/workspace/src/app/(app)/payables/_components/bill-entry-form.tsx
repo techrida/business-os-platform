@@ -1,17 +1,18 @@
 'use client';
 
-import { useActionState, useRef, useState } from 'react';
+import { type ReactNode, useActionState, useId, useRef, useState } from 'react';
 
 import { PendingLine, useFocusOnProblem } from '@/components/p2/quotations/action-dialog';
 import { Alert } from '@/components/ui/alert';
 import { Button, LinkButton } from '@/components/ui/button';
+import { PageHeader } from '@/components/ui/page';
 import { Panel } from '@/components/ui/panel';
 import { Field, Input, Select } from '@/components/ui/field';
 
 import type { ActionState } from '../../procurement/orders/_lib/state';
 import { convertSubmissionAction, createBillAction } from '../actions';
 import { BillHeaderInputs, type BillEntryHeader } from './bill-header-inputs';
-import { EMPTY_ROW, MAX_LINES, type LineRow } from '../_lib/forms';
+import { EMPTY_ROW, MAX_LINES, NEW_BILL_HEADING, type LineRow } from '../_lib/forms';
 import styles from '../payables.module.css';
 
 /**
@@ -51,8 +52,11 @@ export function BillEntryForm({
   cancelHref,
   reloadHref,
   entry,
+  children,
 }: {
   invoiceTitle?: string;
+  /** Shown between the page heading (which holds Cancel and Create bill) and the form, outside the form. */
+  children?: ReactNode;
   submissionId?: string;
   entry?: BillEntryHeader;
   idempotencyKey: string;
@@ -82,185 +86,202 @@ export function BillEntryForm({
   const set = (i: number, field: keyof LineRow, value: string): void =>
     setRows((all) => all.map((r, at) => (at === i ? { ...r, [field]: value } : r)));
 
+  const formId = useId();
+
   return (
-    <div ref={wrapRef}>
-      <form action={formAction} noValidate className={styles.form}>
-        {submissionId !== undefined ? (
-          <input type="hidden" name="submissionId" value={submissionId} />
-        ) : null}
-        <input type="hidden" name="idempotencyKey" value={state.key} />
-        <input type="hidden" name="lineCount" value={rows.length} />
-
-        {state.error ? (
-          <Alert
-            ref={summaryRef}
-            tabIndex={-1}
-            tone="error"
-            role="alert"
-            actions={state.reload ? <a href={reloadHref}>Reload this page</a> : null}
-          >
-            {state.error}
-          </Alert>
-        ) : null}
-        {errors['lines'] ? (
-          <p role="alert" className={styles.fieldError}>
-            {errors['lines']}
-          </p>
-        ) : null}
-
-        {entry !== undefined ? (
-          <Panel title={invoiceTitle}>
-            <BillHeaderInputs
-              entry={entry}
-              errors={errors}
-              pending={pending}
-              onReady={setInvoiceReady}
-            />
-          </Panel>
-        ) : null}
-
-        <Panel title="Invoice lines">
-          <p className={styles.note}>
-            {fixed
-              ? 'Enter what the invoice charges for each order line. A line you leave empty is not billed now. The platform works out the totals.'
-              : 'Enter each line as the invoice shows it. The platform works out the VAT, the withholding and the totals.'}
-          </p>
-
-          {rows.map((row, i) => {
-            const order = orderLines[i];
-            const legend =
-              order !== undefined
-                ? `Line ${order.lineNo}: ${order.description}`
-                : `Invoice line ${i + 1}`;
-            return (
-              <fieldset key={order?.poLineId ?? i} className={styles.lineGroup}>
-                <legend>{legend}</legend>
-                {order !== undefined ? (
-                  <>
-                    <input type="hidden" name={fieldName(i, 'poLineId')} value={order.poLineId} />
-                    <p className={styles.note}>
-                      Still open on the order: {order.open} {order.uom}
-                    </p>
-                  </>
-                ) : null}
-                <div className={styles.lineFields}>
-                  <Field label="Quantity" error={errors[`${i}.quantity`]}>
-                    {(control) => (
-                      <Input
-                        name={fieldName(i, 'quantity')}
-                        value={row.quantity}
-                        onChange={(e) => set(i, 'quantity', e.target.value)}
-                        inputMode="decimal"
-                        autoComplete="off"
-                        {...control}
-                      />
-                    )}
-                  </Field>
-                  <Field label="Unit price (NPR)" error={errors[`${i}.unitPrice`]}>
-                    {(control) => (
-                      <Input
-                        name={fieldName(i, 'unitPrice')}
-                        value={row.unitPrice}
-                        onChange={(e) => set(i, 'unitPrice', e.target.value)}
-                        inputMode="decimal"
-                        autoComplete="off"
-                        {...control}
-                      />
-                    )}
-                  </Field>
-                  <Field label="VAT" error={errors[`${i}.taxCodeId`]}>
-                    {(control) => (
-                      <Select
-                        name={fieldName(i, 'taxCodeId')}
-                        value={row.taxCodeId}
-                        onChange={(e) => set(i, 'taxCodeId', e.target.value)}
-                        {...control}
-                      >
-                        <option value="">Choose the VAT treatment</option>
-                        {taxCodes.map((t) => (
-                          <option key={t.id} value={t.id}>
-                            {t.label}
-                          </option>
-                        ))}
-                      </Select>
-                    )}
-                  </Field>
-                  <Field
-                    label="Account ID"
-                    hint="The ledger account this line is booked to."
-                    error={errors[`${i}.accountId`]}
-                  >
-                    {(control) => (
-                      <Input
-                        name={fieldName(i, 'accountId')}
-                        value={row.accountId}
-                        onChange={(e) => set(i, 'accountId', e.target.value)}
-                        autoComplete="off"
-                        spellCheck={false}
-                        {...control}
-                      />
-                    )}
-                  </Field>
-                  <Field
-                    label="Withholding (optional)"
-                    hint="Leave empty when no tax is withheld."
-                    error={errors[`${i}.tdsCodeId`]}
-                  >
-                    {(control) => (
-                      <Select
-                        name={fieldName(i, 'tdsCodeId')}
-                        value={row.tdsCodeId}
-                        onChange={(e) => set(i, 'tdsCodeId', e.target.value)}
-                        {...control}
-                      >
-                        <option value="">No withholding</option>
-                        {withholdingCodes.map((code) => (
-                          <option key={code.id} value={code.id}>
-                            {code.label}
-                          </option>
-                        ))}
-                      </Select>
-                    )}
-                  </Field>
-                </div>
-                {!fixed && rows.length > 1 ? (
-                  <div>
-                    <Button
-                      type="button"
-                      variant="ghost"
-                      size="small"
-                      onClick={() => setRows((all) => all.filter((_, at) => at !== i))}
-                    >
-                      Remove line {i + 1}
-                    </Button>
-                  </div>
-                ) : null}
-              </fieldset>
-            );
-          })}
-
-          {!fixed && rows.length < MAX_LINES ? (
-            <div>
-              <Button
-                type="button"
-                variant="secondary"
-                onClick={() => setRows((all) => [...all, { ...EMPTY_ROW }])}
-              >
-                Add a line
-              </Button>
-            </div>
+    <>
+      <PageHeader
+        title={NEW_BILL_HEADING.title}
+        description={NEW_BILL_HEADING.description}
+        actions={
+          <>
+            <LinkButton href={cancelHref} variant="secondary">
+              Cancel
+            </LinkButton>
+            <Button
+              type="submit"
+              form={formId}
+              variant="primary"
+              disabled={pending || !invoiceReady}
+              aria-busy={pending || undefined}
+            >
+              Create bill
+            </Button>
+          </>
+        }
+      />
+      {children}
+      <div ref={wrapRef}>
+        <form id={formId} action={formAction} noValidate className={styles.form}>
+          {submissionId !== undefined ? (
+            <input type="hidden" name="submissionId" value={submissionId} />
           ) : null}
-        </Panel>
-        <div className={styles.entryActions}>
-          <Button type="submit" variant="primary" disabled={pending || !invoiceReady}>
-            Create bill
-          </Button>
-          <LinkButton href={cancelHref} variant="secondary">
-            Cancel
-          </LinkButton>
-        </div>
-        <PendingLine pending={pending} words="Creating the bill" />
-      </form>
-    </div>
+          <input type="hidden" name="idempotencyKey" value={state.key} />
+          <input type="hidden" name="lineCount" value={rows.length} />
+
+          {state.error ? (
+            <Alert
+              ref={summaryRef}
+              tabIndex={-1}
+              tone="error"
+              role="alert"
+              actions={state.reload ? <a href={reloadHref}>Reload this page</a> : null}
+            >
+              {state.error}
+            </Alert>
+          ) : null}
+          {errors['lines'] ? (
+            <p role="alert" className={styles.fieldError}>
+              {errors['lines']}
+            </p>
+          ) : null}
+
+          {entry !== undefined ? (
+            <Panel title={invoiceTitle}>
+              <BillHeaderInputs
+                entry={entry}
+                errors={errors}
+                pending={pending}
+                onReady={setInvoiceReady}
+              />
+            </Panel>
+          ) : null}
+
+          <Panel title="Invoice lines">
+            <p className={styles.note}>
+              {fixed
+                ? 'Enter what the invoice charges for each order line. A line you leave empty is not billed now. The platform works out the totals.'
+                : 'Enter each line as the invoice shows it. The platform works out the VAT, the withholding and the totals.'}
+            </p>
+
+            {rows.map((row, i) => {
+              const order = orderLines[i];
+              const legend =
+                order !== undefined
+                  ? `Line ${order.lineNo}: ${order.description}`
+                  : `Invoice line ${i + 1}`;
+              return (
+                <fieldset key={order?.poLineId ?? i} className={styles.lineGroup}>
+                  <legend>{legend}</legend>
+                  {order !== undefined ? (
+                    <>
+                      <input type="hidden" name={fieldName(i, 'poLineId')} value={order.poLineId} />
+                      <p className={styles.note}>
+                        Still open on the order: {order.open} {order.uom}
+                      </p>
+                    </>
+                  ) : null}
+                  <div className={styles.lineFields}>
+                    <Field label="Quantity" error={errors[`${i}.quantity`]}>
+                      {(control) => (
+                        <Input
+                          name={fieldName(i, 'quantity')}
+                          value={row.quantity}
+                          onChange={(e) => set(i, 'quantity', e.target.value)}
+                          inputMode="decimal"
+                          autoComplete="off"
+                          {...control}
+                        />
+                      )}
+                    </Field>
+                    <Field label="Unit price (NPR)" error={errors[`${i}.unitPrice`]}>
+                      {(control) => (
+                        <Input
+                          name={fieldName(i, 'unitPrice')}
+                          value={row.unitPrice}
+                          onChange={(e) => set(i, 'unitPrice', e.target.value)}
+                          inputMode="decimal"
+                          autoComplete="off"
+                          {...control}
+                        />
+                      )}
+                    </Field>
+                    <Field label="VAT" error={errors[`${i}.taxCodeId`]}>
+                      {(control) => (
+                        <Select
+                          name={fieldName(i, 'taxCodeId')}
+                          value={row.taxCodeId}
+                          onChange={(e) => set(i, 'taxCodeId', e.target.value)}
+                          {...control}
+                        >
+                          <option value="">Choose the VAT treatment</option>
+                          {taxCodes.map((t) => (
+                            <option key={t.id} value={t.id}>
+                              {t.label}
+                            </option>
+                          ))}
+                        </Select>
+                      )}
+                    </Field>
+                    <Field
+                      label="Account ID"
+                      hint="The ledger account this line is booked to."
+                      error={errors[`${i}.accountId`]}
+                    >
+                      {(control) => (
+                        <Input
+                          name={fieldName(i, 'accountId')}
+                          value={row.accountId}
+                          onChange={(e) => set(i, 'accountId', e.target.value)}
+                          autoComplete="off"
+                          spellCheck={false}
+                          {...control}
+                        />
+                      )}
+                    </Field>
+                    <Field
+                      label="Withholding (optional)"
+                      hint="Leave empty when no tax is withheld."
+                      error={errors[`${i}.tdsCodeId`]}
+                    >
+                      {(control) => (
+                        <Select
+                          name={fieldName(i, 'tdsCodeId')}
+                          value={row.tdsCodeId}
+                          onChange={(e) => set(i, 'tdsCodeId', e.target.value)}
+                          {...control}
+                        >
+                          <option value="">No withholding</option>
+                          {withholdingCodes.map((code) => (
+                            <option key={code.id} value={code.id}>
+                              {code.label}
+                            </option>
+                          ))}
+                        </Select>
+                      )}
+                    </Field>
+                  </div>
+                  {!fixed && rows.length > 1 ? (
+                    <div>
+                      <Button
+                        type="button"
+                        variant="ghost"
+                        size="small"
+                        onClick={() => setRows((all) => all.filter((_, at) => at !== i))}
+                      >
+                        Remove line {i + 1}
+                      </Button>
+                    </div>
+                  ) : null}
+                </fieldset>
+              );
+            })}
+
+            {!fixed && rows.length < MAX_LINES ? (
+              <div>
+                <Button
+                  type="button"
+                  variant="secondary"
+                  onClick={() => setRows((all) => [...all, { ...EMPTY_ROW }])}
+                >
+                  Add a line
+                </Button>
+              </div>
+            ) : null}
+          </Panel>
+          <PendingLine pending={pending} words="Creating the bill" />
+        </form>
+      </div>
+    </>
   );
 }

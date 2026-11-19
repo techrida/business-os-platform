@@ -1,4 +1,11 @@
-import { RFQ_STATUSES, RfqStatusSchema, pageWindow, type RfqListItem } from '@bos/contracts';
+import {
+  DEFAULT_ROWS,
+  RFQ_STATUSES,
+  ROWS_OPTIONS,
+  RfqStatusSchema,
+  pageWindow,
+  type RfqListItem,
+} from '@bos/contracts';
 import type { Metadata } from 'next';
 import Link from 'next/link';
 
@@ -7,35 +14,44 @@ import { Badge } from '@/components/ui/badge';
 import { LinkButton } from '@/components/ui/button';
 import { EmptyState } from '@/components/ui/empty-state';
 import { ResultCount } from '@/components/ui/filter-bar';
+import { Icon } from '@/components/ui/icon';
 import { Page, PageHeader } from '@/components/ui/page';
-import { Pagination } from '@/components/ui/pagination';
-
+import { StatCard } from '@/components/ui/stat-card';
 import { CellTitle, Table, Td, Th } from '@/components/ui/table';
 import { listRfqsPage } from '@/lib/api-rfqs';
 import { requireStaffSession } from '@/lib/bff';
 import { when } from '@/lib/kernel-format';
 import { activeFilterLabels, clearFiltersHref, hrefWith, readList } from '@/lib/list-params';
 
+import listLayout from '@/components/p3/list.module.css';
+
+import { ListPager } from '../../invoices/_components/list-pager';
 import layout from '../procurement.module.css';
 import styles from '../requests/requests.module.css';
 import { rfqFailure } from './_lib/failure';
 import { RFQ_STATUS_LABEL, rfqGrants } from './_lib/model';
+import { RFQ_SUMMARY, summaryCards } from './_lib/summary';
+import local from './rfqs.module.css';
 import { RfqsFilters } from './rfqs-filters';
 
 export const metadata: Metadata = { title: 'Requests for quotation · Business OS' };
 export const dynamic = 'force-dynamic';
 
 const PATH = '/procurement/rfqs';
-const LIST = { multi: { status: RFQ_STATUSES } } as const;
+const LIST = {
+  multi: { status: RFQ_STATUSES },
+  rows: { allowed: ROWS_OPTIONS, default: DEFAULT_ROWS },
+} as const;
 
 function Row({ rfq }: { rfq: RfqListItem }) {
   const status = RFQ_STATUS_LABEL[rfq.status];
+  const href = `/procurement/rfqs/${encodeURIComponent(rfq.id)}`;
   return (
     <tr>
       <Td>
         <CellTitle
           title={
-            <Link href={`/procurement/rfqs/${encodeURIComponent(rfq.id)}`} className={styles.name}>
+            <Link href={href} className={styles.name}>
               {rfq.number}
             </Link>
           }
@@ -55,8 +71,13 @@ function Row({ rfq }: { rfq: RfqListItem }) {
           {rfq.quotationCount} of {rfq.invitedVendorCount}
         </span>
       </Td>
-      <Td nowrap>
+      <Td nowrap className={local.statusColumn}>
         <Badge tone={status.tone}>{status.text}</Badge>
+      </Td>
+      <Td nowrap className={local.actionColumn}>
+        <Link href={href} className={local.rowAction} aria-label={`View ${rfq.number}`}>
+          <Icon name="chevron-right" size={20} />
+        </Link>
       </Td>
     </tr>
   );
@@ -77,6 +98,10 @@ export default async function RfqsPage({
   let total = 0;
   let window = pageWindow(list.page, list.rows);
   let problem: { message: string; status: number } | null = null;
+  // Started before the table's read; a failure here hides the cards, not the table.
+  const summary = summaryCards(RFQ_SUMMARY, (s) =>
+    listRfqsPage(session, { status: s, limit: 1, offset: 0 }),
+  );
   try {
     const fetchPage = () =>
       listRfqsPage(session, {
@@ -110,10 +135,7 @@ export default async function RfqsPage({
       },
     },
   );
-  const pageHref = (page: number) => hrefWith(PATH, params, { page: page > 1 ? page : null });
-  const nearby = Array.from({ length: window.pageCount }, (_, i) => i + 1).filter(
-    (n) => Math.abs(n - window.page) <= 2,
-  );
+  const cards = await summary;
 
   return (
     <Page className={layout.list}>
@@ -125,10 +147,24 @@ export default async function RfqsPage({
         }
       />
 
+      {cards !== null ? (
+        <section aria-label="RFQ summary" className={listLayout.stats}>
+          {cards.map((card) => (
+            <StatCard
+              key={card.key}
+              label={card.label}
+              icon={card.icon}
+              tone={card.tone}
+              value={card.value}
+            />
+          ))}
+        </section>
+      ) : null}
+
       <RfqsFilters
         statusOptions={RFQ_STATUSES.map((s) => ({ value: s, label: RFQ_STATUS_LABEL[s].text }))}
         status={status}
-        rows={typeof params.rows === 'string' ? params.rows : undefined}
+        rows={list.rows === DEFAULT_ROWS ? undefined : String(list.rows)}
       />
 
       {problem !== null ? (
@@ -180,9 +216,9 @@ export default async function RfqsPage({
         <div className={layout.results}>
           <ResultCount shown={rfqs.length} total={total} noun="RFQ" />
           <Table
-            className={layout.resultsTable ?? ''}
+            className={`${layout.resultsTable ?? ''} ${local.list ?? ''}`}
             caption="Requests for quotation"
-            minWidth={720}
+            minWidth={820}
           >
             <thead>
               <tr>
@@ -190,7 +226,8 @@ export default async function RfqsPage({
                 <Th>Purchase request</Th>
                 <Th>Deadline</Th>
                 <Th align="end">Quotations</Th>
-                <Th>Status</Th>
+                <Th className={local.statusColumn}>Status</Th>
+                <Th className={local.actionColumn}>Action</Th>
               </tr>
             </thead>
             <tbody>
@@ -199,13 +236,12 @@ export default async function RfqsPage({
               ))}
             </tbody>
           </Table>
-          <Pagination
-            label="Pages"
-            summary={`Showing ${window.first}-${window.last} of ${total}`}
-            {...(window.page > 1 ? { previousHref: pageHref(window.page - 1) } : {})}
-            {...(window.page < window.pageCount ? { nextHref: pageHref(window.page + 1) } : {})}
-            pages={nearby.map((n) => ({ page: n, href: pageHref(n) }))}
-            currentPage={window.page}
+          <ListPager
+            pathname={PATH}
+            current={params}
+            window={window}
+            total={total}
+            label="RFQ pages"
           />
         </div>
       ) : null}

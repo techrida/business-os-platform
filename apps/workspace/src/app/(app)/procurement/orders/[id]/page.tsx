@@ -33,11 +33,13 @@ import layout from '../../procurement.module.css';
 import { AmendDialog, IssueDialog, ReasonDialog } from '../_components/order-actions';
 import { poFailure } from '../_lib/failure';
 import {
+  bandText,
   isReceivable,
   orderActions,
   PO_STATUS_LABEL,
   poGrants,
   poMoney,
+  primaryOrderAction,
   qtyText,
 } from '../_lib/model';
 import styles from '../orders.module.css';
@@ -107,7 +109,7 @@ function Lines({
         >
           <thead>
             <tr>
-              <Th align="end">#</Th>
+              <Th>#</Th>
               <Th>Item</Th>
               <Th align="end">Ordered</Th>
               {withProgress ? (
@@ -127,9 +129,7 @@ function Lines({
               const p = byLine.get(l.id);
               return (
                 <tr key={l.id}>
-                  <Td align="end" nowrap>
-                    {l.lineNo}
-                  </Td>
+                  <Td nowrap>{l.lineNo}</Td>
                   <Td>
                     <span className={styles.long}>{l.description}</span>
                     <span className={styles.note}>
@@ -256,7 +256,7 @@ function Versions({
                     {poMoney(v.totalNpr, 'NPR', numberSystems)}
                   </span>
                 </Td>
-                <Td nowrap>{v.band}</Td>
+                <Td nowrap>{bandText(v.band)}</Td>
                 <Td nowrap>
                   <time dateTime={v.createdAt}>{when(v.createdAt)}</time>
                 </Td>
@@ -335,6 +335,13 @@ export default async function PurchaseOrderPage({ params }: { params: Promise<{ 
       : undefined;
   const hasServiceLines = po.lines.some((l) => l.kind === 'service');
   const mayReceive = isReceivable(po.status) && (grants.confirm || hasServiceLines);
+  const mayEnterBill = po.can?.enterBill === true;
+  const primary = primaryOrderAction({
+    issue: can.issue,
+    // Receive goods is promoted only for the warehouse grant: without it the receipt page may refuse the lines left.
+    receive: mayReceive && grants.confirm,
+    enterBill: mayEnterBill,
+  });
   const received = (lineId: string): string | null =>
     progress.status === 'fulfilled'
       ? (progress.value.lines.find((l) => l.poLineId === lineId)?.receivedQuantity ?? null)
@@ -374,7 +381,7 @@ export default async function PurchaseOrderPage({ params }: { params: Promise<{ 
         </span>
       ),
     },
-    { key: 'band', label: 'Approved band', value: po.approvedBand },
+    { key: 'band', label: 'Approved band', value: bandText(po.approvedBand) },
     {
       key: 'terms',
       label: 'Payment terms',
@@ -419,7 +426,14 @@ export default async function PurchaseOrderPage({ params }: { params: Promise<{ 
           status={<Badge tone={status.tone}>{status.text}</Badge>}
           actions={
             <div className={styles.headActions}>
-              {can.issue ? <IssueDialog {...common} idempotencyKey={randomUUID()} /> : null}
+              {po.status !== 'draft' ? (
+                <LinkButton
+                  href={`/procurement/receipts?po=${encodeURIComponent(po.id)}`}
+                  variant="secondary"
+                >
+                  Receipts
+                </LinkButton>
+              ) : null}
               {can.amend ? (
                 <AmendDialog
                   {...common}
@@ -444,30 +458,23 @@ export default async function PurchaseOrderPage({ params }: { params: Promise<{ 
               {can.cancel ? (
                 <ReasonDialog kind="cancel" {...common} idempotencyKey={randomUUID()} />
               ) : null}
-              {mayReceive ? (
-                <LinkButton
-                  href={`/procurement/receipts/new?po=${encodeURIComponent(po.id)}`}
-                  variant="secondary"
-                >
-                  Receive goods
-                </LinkButton>
-              ) : null}
-              {po.can?.enterBill === true ? (
+              {mayEnterBill ? (
                 <LinkButton
                   href={`/payables/bills/new?po=${encodeURIComponent(po.id)}`}
-                  variant="secondary"
+                  variant={primary === 'enterBill' ? 'primary' : 'secondary'}
                 >
                   Enter bill
                 </LinkButton>
               ) : null}
-              {po.status !== 'draft' ? (
+              {mayReceive ? (
                 <LinkButton
-                  href={`/procurement/receipts?po=${encodeURIComponent(po.id)}`}
-                  variant="ghost"
+                  href={`/procurement/receipts/new?po=${encodeURIComponent(po.id)}`}
+                  variant={primary === 'receive' ? 'primary' : 'secondary'}
                 >
-                  Receipts
+                  Receive goods
                 </LinkButton>
               ) : null}
+              {can.issue ? <IssueDialog {...common} idempotencyKey={randomUUID()} /> : null}
             </div>
           }
         />

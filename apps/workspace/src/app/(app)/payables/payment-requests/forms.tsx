@@ -12,6 +12,7 @@ import {
 import { Alert } from '@/components/ui/alert';
 import { Button, LinkButton } from '@/components/ui/button';
 import { useNumberSystems } from '@/components/ui/number-system-context';
+import { PageHeader } from '@/components/ui/page';
 import { Panel } from '@/components/ui/panel';
 import { Field, Input, Select, Textarea } from '@/components/ui/field';
 import type { PaymentRequestItem } from '@/lib/api-payables';
@@ -25,15 +26,19 @@ import {
   createPaymentRequestAction,
   submitPaymentRequestAction,
 } from './actions';
+import { NEW_REQUEST_HEADING } from './model';
 
 export function PaymentRequestEntry({
   idempotencyKey,
   items,
   orders = [],
   enabledCurrencies,
+  start,
 }: {
   idempotencyKey: string;
   items: PaymentRequestItem[];
+  /** The bill item chosen from the bills list ("Request payment"): its vendor, currency and balance start filled in. */
+  start?: PaymentRequestItem | undefined;
   /**
    * The orders a payment request can name (the payables picker), each with its vendor and the text the
    * picker shows. Only the chosen vendor's orders are offered.
@@ -50,13 +55,20 @@ export function PaymentRequestEntry({
     createPaymentRequestAction,
     { key: idempotencyKey },
   );
-  const [header, setHeader] = useState({
-    vendorPartyId: '',
+  const [header, setHeader] = useState<{
+    vendorPartyId: string;
+    fromBankAccountId: string;
+    purchaseOrderId: string;
+    currency: string;
+  }>({
+    vendorPartyId: start?.vendorPartyId ?? '',
     fromBankAccountId: '',
     purchaseOrderId: '',
-    currency: 'NPR',
+    currency: start?.currency ?? 'NPR',
   });
-  const [rows, setRows] = useState([{ openItemId: '', amount: '' }]);
+  const [rows, setRows] = useState([
+    { openItemId: start?.openItemId ?? '', amount: start?.availableAmount ?? '' },
+  ]);
   const wrap = useRef<HTMLDivElement>(null);
   const summary = useRef<HTMLDivElement>(null);
   useFocusOnProblem(state, wrap, summary);
@@ -75,217 +87,233 @@ export function PaymentRequestEntry({
     (item) => item.vendorPartyId === header.vendorPartyId && item.currency === header.currency,
   );
   const vendorOrders = orders.filter((o) => o.vendorId === header.vendorPartyId);
+  const formId = useId();
   return (
-    <div ref={wrap}>
-      <form action={action} noValidate className={styles.form}>
-        <input type="hidden" name="idempotencyKey" value={state.key} />
-        <input type="hidden" name="lineCount" value={rows.length} />
-        {state.error ? (
-          <Alert
-            ref={summary}
-            tabIndex={-1}
-            role="alert"
-            tone="error"
-            actions={
-              state.reload ? (
-                <Link href="/payables/payment-requests/new">Reload this page</Link>
-              ) : null
-            }
-          >
-            {state.error}
-          </Alert>
-        ) : null}
-        <Panel title="Request details">
-          <div className={styles.lineFields}>
-            <Field label="Vendor" error={errors['vendorPartyId']}>
-              {(control) => (
-                <Select
-                  name="vendorPartyId"
-                  value={header.vendorPartyId}
-                  onChange={(e) => {
-                    const vendorPartyId = e.target.value;
-                    setHeader((current) => ({
-                      ...current,
-                      vendorPartyId,
-                      purchaseOrderId: '',
-                      currency:
-                        items.find(
-                          (item) =>
-                            item.vendorPartyId === vendorPartyId && enabled.has(item.currency),
-                        )?.currency ?? '',
-                    }));
-                    setRows([{ openItemId: '', amount: '' }]);
-                  }}
-                  {...control}
-                >
-                  <option value="">Choose a vendor</option>
-                  {vendors.map(([id, name]) => (
-                    <option key={id} value={id}>
-                      {name}
-                    </option>
-                  ))}
-                </Select>
-              )}
-            </Field>
-            <Field label="Paying entity bank account ID" error={errors['fromBankAccountId']}>
-              {(control) => (
-                <Input
-                  name="fromBankAccountId"
-                  value={header.fromBankAccountId}
-                  onChange={(e) =>
-                    setHeader((current) => ({ ...current, fromBankAccountId: e.target.value }))
-                  }
-                  autoComplete="off"
-                  spellCheck={false}
-                  {...control}
-                />
-              )}
-            </Field>
-            <Field label="Purchase order (optional)" error={errors['purchaseOrderId']}>
-              {(control) => (
-                <Select
-                  name="purchaseOrderId"
-                  value={header.purchaseOrderId}
-                  onChange={(e) =>
-                    setHeader((current) => ({ ...current, purchaseOrderId: e.target.value }))
-                  }
-                  disabled={header.vendorPartyId === '' || vendorOrders.length === 0}
-                  {...control}
-                >
-                  <option value="">
-                    {header.vendorPartyId !== '' && vendorOrders.length === 0
-                      ? 'This vendor has no purchase orders'
-                      : 'No purchase order'}
-                  </option>
-                  {vendorOrders.map((o) => (
-                    <option key={o.id} value={o.id}>
-                      {o.label}
-                    </option>
-                  ))}
-                </Select>
-              )}
-            </Field>
-            <Field
-              label="Currency"
-              hint={
-                vendorCurrencies.size > 0 && currencies.length === 0
-                  ? "This vendor's approved bills are only in currencies switched off in Settings."
-                  : undefined
-              }
-              error={errors['currency']}
+    <>
+      <PageHeader
+        title={NEW_REQUEST_HEADING.title}
+        description={NEW_REQUEST_HEADING.description}
+        actions={
+          <>
+            <LinkButton href="/payables/payment-requests" variant="secondary">
+              Cancel
+            </LinkButton>
+            <Button
+              type="submit"
+              form={formId}
+              disabled={pending || eligible.length === 0}
+              aria-busy={pending || undefined}
             >
-              {(control) => (
-                <Select
-                  name="currency"
-                  value={header.currency}
-                  onChange={(e) => {
-                    setHeader((current) => ({ ...current, currency: e.target.value }));
-                    setRows([{ openItemId: '', amount: '' }]);
-                  }}
-                  disabled={header.vendorPartyId === ''}
-                  {...control}
-                >
-                  {currencies.map((currency) => (
-                    <option key={currency} value={currency}>
-                      {currency}
-                    </option>
-                  ))}
-                </Select>
-              )}
-            </Field>
-          </div>
-        </Panel>
-        <Panel title="Payable items">
-          <p className={styles.note}>
-            Request settlement of this vendor&apos;s approved bills. The platform checks each open
-            item and snapshots the vendor&apos;s active, verified bank account. Available amounts
-            exclude claims by pending and approved requests and are checked again when you save.
-          </p>
-          {rows.map((row, i) => (
-            <fieldset key={i} className={styles.lineGroup}>
-              <legend>Payable item {i + 1}</legend>
-              <div className={styles.lineFields}>
-                <Field label={`Bill ${i + 1}`} error={errors[`allocations.${i}.openItemId`]}>
-                  {(control) => (
-                    <Select
-                      name={`allocation:${i}:openItemId`}
-                      value={row.openItemId}
-                      onChange={(e) =>
-                        setRows((current) =>
-                          current.map((line, index) =>
-                            index === i ? { ...line, openItemId: e.target.value } : line,
-                          ),
-                        )
-                      }
-                      disabled={header.vendorPartyId === ''}
-                      {...control}
-                    >
-                      <option value="">Choose an approved bill</option>
-                      {eligible.map((item) => (
-                        <option key={item.openItemId} value={item.openItemId}>
-                          {item.billNumber ?? item.vendorInvoiceNo} · {item.vendorInvoiceNo} ·{' '}
-                          {money(item.availableAmount, item.currency, numberSystems)} available
-                        </option>
-                      ))}
-                    </Select>
-                  )}
-                </Field>
-                <Field label={`Amount ${i + 1}`} error={errors[`allocations.${i}.amount`]}>
-                  {(control) => (
-                    <Input
-                      name={`allocation:${i}:amount`}
-                      value={row.amount}
-                      inputMode="decimal"
-                      onChange={(e) =>
-                        setRows((current) =>
-                          current.map((line, index) =>
-                            index === i ? { ...line, amount: e.target.value } : line,
-                          ),
-                        )
-                      }
-                      {...control}
-                    />
-                  )}
-                </Field>
-              </div>
-              {rows.length > 1 ? (
-                <div>
-                  <Button
-                    type="button"
-                    variant="ghost"
-                    disabled={pending}
-                    onClick={() => setRows((current) => current.filter((_, index) => index !== i))}
-                  >
-                    Remove item {i + 1}
-                  </Button>
-                </div>
-              ) : null}
-            </fieldset>
-          ))}
-          {rows.length < 200 ? (
-            <div>
-              <Button
-                type="button"
-                variant="secondary"
-                disabled={pending}
-                onClick={() => setRows((current) => [...current, { openItemId: '', amount: '' }])}
-              >
-                Add a payable item
-              </Button>
-            </div>
+              Create draft request
+            </Button>
+          </>
+        }
+      />
+      <div ref={wrap}>
+        <form id={formId} action={action} noValidate className={styles.form}>
+          <input type="hidden" name="idempotencyKey" value={state.key} />
+          <input type="hidden" name="lineCount" value={rows.length} />
+          {state.error ? (
+            <Alert
+              ref={summary}
+              tabIndex={-1}
+              role="alert"
+              tone="error"
+              actions={
+                state.reload ? (
+                  <Link href="/payables/payment-requests/new">Reload this page</Link>
+                ) : null
+              }
+            >
+              {state.error}
+            </Alert>
           ) : null}
-        </Panel>
-        <div className={styles.entryActions}>
-          <Button type="submit" disabled={pending || eligible.length === 0}>
-            Create draft request
-          </Button>
-          <LinkButton href="/payables/payment-requests" variant="secondary">
-            Cancel
-          </LinkButton>
-        </div>
-        <PendingLine pending={pending} words="Creating the payment request" />
-      </form>
-    </div>
+          <Panel title="Request details">
+            <div className={styles.lineFields}>
+              <Field label="Vendor" error={errors['vendorPartyId']}>
+                {(control) => (
+                  <Select
+                    name="vendorPartyId"
+                    value={header.vendorPartyId}
+                    onChange={(e) => {
+                      const vendorPartyId = e.target.value;
+                      setHeader((current) => ({
+                        ...current,
+                        vendorPartyId,
+                        purchaseOrderId: '',
+                        currency:
+                          items.find(
+                            (item) =>
+                              item.vendorPartyId === vendorPartyId && enabled.has(item.currency),
+                          )?.currency ?? '',
+                      }));
+                      setRows([{ openItemId: '', amount: '' }]);
+                    }}
+                    {...control}
+                  >
+                    <option value="">Choose a vendor</option>
+                    {vendors.map(([id, name]) => (
+                      <option key={id} value={id}>
+                        {name}
+                      </option>
+                    ))}
+                  </Select>
+                )}
+              </Field>
+              <Field label="Paying entity bank account ID" error={errors['fromBankAccountId']}>
+                {(control) => (
+                  <Input
+                    name="fromBankAccountId"
+                    value={header.fromBankAccountId}
+                    onChange={(e) =>
+                      setHeader((current) => ({ ...current, fromBankAccountId: e.target.value }))
+                    }
+                    autoComplete="off"
+                    spellCheck={false}
+                    {...control}
+                  />
+                )}
+              </Field>
+              <Field label="Purchase order (optional)" error={errors['purchaseOrderId']}>
+                {(control) => (
+                  <Select
+                    name="purchaseOrderId"
+                    value={header.purchaseOrderId}
+                    onChange={(e) =>
+                      setHeader((current) => ({ ...current, purchaseOrderId: e.target.value }))
+                    }
+                    disabled={header.vendorPartyId === '' || vendorOrders.length === 0}
+                    {...control}
+                  >
+                    <option value="">
+                      {header.vendorPartyId !== '' && vendorOrders.length === 0
+                        ? 'This vendor has no purchase orders'
+                        : 'No purchase order'}
+                    </option>
+                    {vendorOrders.map((o) => (
+                      <option key={o.id} value={o.id}>
+                        {o.label}
+                      </option>
+                    ))}
+                  </Select>
+                )}
+              </Field>
+              <Field
+                label="Currency"
+                hint={
+                  vendorCurrencies.size > 0 && currencies.length === 0
+                    ? "This vendor's approved bills are only in currencies switched off in Settings."
+                    : undefined
+                }
+                error={errors['currency']}
+              >
+                {(control) => (
+                  <Select
+                    name="currency"
+                    value={header.currency}
+                    onChange={(e) => {
+                      setHeader((current) => ({ ...current, currency: e.target.value }));
+                      setRows([{ openItemId: '', amount: '' }]);
+                    }}
+                    disabled={header.vendorPartyId === ''}
+                    {...control}
+                  >
+                    {currencies.map((currency) => (
+                      <option key={currency} value={currency}>
+                        {currency}
+                      </option>
+                    ))}
+                  </Select>
+                )}
+              </Field>
+            </div>
+          </Panel>
+          <Panel title="Payable items">
+            <p className={styles.note}>
+              Request settlement of this vendor&apos;s approved bills. The platform checks each open
+              item and snapshots the vendor&apos;s active, verified bank account. Available amounts
+              exclude claims by pending and approved requests and are checked again when you save.
+            </p>
+            {rows.map((row, i) => (
+              <fieldset key={i} className={styles.lineGroup}>
+                <legend>Payable item {i + 1}</legend>
+                <div className={styles.lineFields}>
+                  <Field label={`Bill ${i + 1}`} error={errors[`allocations.${i}.openItemId`]}>
+                    {(control) => (
+                      <Select
+                        name={`allocation:${i}:openItemId`}
+                        value={row.openItemId}
+                        onChange={(e) =>
+                          setRows((current) =>
+                            current.map((line, index) =>
+                              index === i ? { ...line, openItemId: e.target.value } : line,
+                            ),
+                          )
+                        }
+                        disabled={header.vendorPartyId === ''}
+                        {...control}
+                      >
+                        <option value="">Choose an approved bill</option>
+                        {eligible.map((item) => (
+                          <option key={item.openItemId} value={item.openItemId}>
+                            {item.billNumber ?? item.vendorInvoiceNo} · {item.vendorInvoiceNo} ·{' '}
+                            {money(item.availableAmount, item.currency, numberSystems)} available
+                          </option>
+                        ))}
+                      </Select>
+                    )}
+                  </Field>
+                  <Field label={`Amount ${i + 1}`} error={errors[`allocations.${i}.amount`]}>
+                    {(control) => (
+                      <Input
+                        name={`allocation:${i}:amount`}
+                        value={row.amount}
+                        inputMode="decimal"
+                        onChange={(e) =>
+                          setRows((current) =>
+                            current.map((line, index) =>
+                              index === i ? { ...line, amount: e.target.value } : line,
+                            ),
+                          )
+                        }
+                        {...control}
+                      />
+                    )}
+                  </Field>
+                </div>
+                {rows.length > 1 ? (
+                  <div>
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      disabled={pending}
+                      onClick={() =>
+                        setRows((current) => current.filter((_, index) => index !== i))
+                      }
+                    >
+                      Remove item {i + 1}
+                    </Button>
+                  </div>
+                ) : null}
+              </fieldset>
+            ))}
+            {rows.length < 200 ? (
+              <div>
+                <Button
+                  type="button"
+                  variant="secondary"
+                  disabled={pending}
+                  onClick={() => setRows((current) => [...current, { openItemId: '', amount: '' }])}
+                >
+                  Add a payable item
+                </Button>
+              </div>
+            ) : null}
+          </Panel>
+          <PendingLine pending={pending} words="Creating the payment request" />
+        </form>
+      </div>
+    </>
   );
 }
 

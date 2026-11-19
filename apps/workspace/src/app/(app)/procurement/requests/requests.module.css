@@ -44,10 +44,12 @@
   min-width: 0;
 }
 
-/* Fields flow into as many columns as fit, so a narrow screen gets one. */
+/* Two columns, one on a narrow screen. Fields keep their own height: a neighbour's hint must not
+   stretch an input (start, not the grid's default stretch). */
 .grid {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
+  align-items: start;
   gap: 20px;
 }
 
@@ -82,38 +84,6 @@
   height: 16px;
 }
 
-/* One line of the request: a bordered group that is a real fieldset, so its legend names its fields. */
-.lines {
-  display: grid;
-  gap: 16px;
-}
-
-.line {
-  min-width: 0;
-  margin: 0;
-  padding: 12px 0 16px;
-  border: 0;
-  border-bottom: var(--border-width-thin) solid var(--border-default);
-}
-
-.line legend {
-  padding: 0;
-  font-weight: var(--font-weight-medium);
-}
-
-.lineHead {
-  display: flex;
-  align-items: center;
-  justify-content: flex-end;
-  margin-top: 8px;
-}
-
-.lineGrid {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(min(100%, 11rem), 1fr));
-  gap: 16px;
-}
-
 .panelForm {
   display: grid;
   gap: 16px;
@@ -137,4 +107,54 @@
   overflow: hidden;
   clip-path: inset(50%);
   white-space: nowrap;
+}
+
+/* ---- List ---- */
+
+/* The count cards above the list, as on the other lists. */
+.stats {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 190px), 1fr));
+  gap: var(--spacing-content-gap);
+}
+
+@media (max-width: 767px) {
+  .stats {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 12px;
+  }
+}
+
+/* The trailing Status and Action columns sit on a shaded band behind a divider, as on the other lists
+   (Figma's pinned columns). Declared on the table wrapper so it out-ranks the shared cell background; a
+   hovered row still highlights end to end. */
+.list th.statusColumn,
+.list td.statusColumn,
+.list th.actionColumn,
+.list td.actionColumn {
+  background: var(--surface-subtle);
+}
+
+.list th.statusColumn,
+.list td.statusColumn {
+  border-inline-start: var(--border-width-thin) solid var(--border-default);
+}
+
+.list tbody tr:hover > td,
+.list tbody tr:focus-within > td {
+  background: var(--table-row-hover-bg);
+}
+
+.rowAction {
+  display: inline-grid;
+  width: 40px;
+  height: 40px;
+  place-items: center;
+  border-radius: var(--radius-lg);
+  color: var(--icon-secondary);
+}
+
+.rowAction:hover {
+  background: var(--action-primary-subtle);
+  color: var(--action-primary);
 }

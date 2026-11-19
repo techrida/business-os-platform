@@ -1,24 +1,42 @@
-import { BILL_STATUSES, BillStatusSchema, pageWindow } from '@bos/contracts';
+import {
+  BILL_STATUSES,
+  BillStatusSchema,
+  DEFAULT_ROWS,
+  ROWS_OPTIONS,
+  pageWindow,
+} from '@bos/contracts';
 import type { Metadata } from 'next';
 import Link from 'next/link';
 
+import { hasPermission } from '@/components/p2/customers/permissions';
 import { Alert } from '@/components/ui/alert';
 import { Badge } from '@/components/ui/badge';
 import { LinkButton } from '@/components/ui/button';
 import { EmptyState } from '@/components/ui/empty-state';
 import { ResultCount } from '@/components/ui/filter-bar';
+import { Icon } from '@/components/ui/icon';
 import { Page, PageHeader } from '@/components/ui/page';
-import { Pagination } from '@/components/ui/pagination';
+import { StatCard } from '@/components/ui/stat-card';
 import { Table, Td, Th } from '@/components/ui/table';
-import { listBillsPage, type BillListItem } from '@/lib/api-payables';
+import layout from '@/components/p3/list.module.css';
+import {
+  listBillsPage,
+  listPaymentRequestItems,
+  type BillListItem,
+  type PaymentRequestItem,
+} from '@/lib/api-payables';
 import { requireStaffSession } from '@/lib/bff';
 import { getNumberSystems } from '@/lib/display-settings';
+import { loadEnabledCurrencies } from '@/lib/enabled-currencies.server';
 import { when } from '@/lib/kernel-format';
 import { activeFilterLabels, clearFiltersHref, hrefWith, readList } from '@/lib/list-params';
 
+import { ListPager } from '../../invoices/_components/list-pager';
 import { poMoney } from '../../procurement/orders/_lib/model';
 import { billFailure } from '../_lib/failure';
 import { BILL_STATUS_LABEL, MATCH_STATUS_LABEL, billGrants } from '../_lib/model';
+import { BILL_COUNT_CARDS, countCards } from '../_lib/summary';
+import { requestableItem } from '../payment-requests/model';
 import styles from '../payables.module.css';
 import { BillsFilters } from './bills-filters';
 
@@ -26,7 +44,11 @@ export const metadata: Metadata = { title: 'Bills · Business OS' };
 export const dynamic = 'force-dynamic';
 
 const PATH = '/payables/bills';
-const LIST = { multi: { status: BILL_STATUSES } } as const;
+/** ListPager offers every ROWS_OPTIONS choice, so the list accepts each one. */
+const LIST = {
+  multi: { status: BILL_STATUSES },
+  rows: { allowed: ROWS_OPTIONS, default: DEFAULT_ROWS },
+} as const;
 
 export default async function BillsPage({
   searchParams,
@@ -59,6 +81,19 @@ export default async function BillsPage({
     />
   );
 
+  // The count cards: every bill this person may open, whatever the filters. A failed read hides them, not the table.
+  const counts = countCards(BILL_COUNT_CARDS, (statuses) =>
+    listBillsPage(session, { status: statuses, limit: 1, offset: 0 }).then((r) => r.total),
+  );
+  // "Request payment" on a row: only for someone the payment request form lets in (the same check it makes), and
+  // only on a bill with a balance still free to claim. If those reads fail the rows just go without it.
+  const mayRequest = hasPermission(session.roles, 'payables.payment.request');
+  const requestable: Promise<{ items: PaymentRequestItem[]; currencies: string[] }> = mayRequest
+    ? Promise.all([listPaymentRequestItems(session), loadEnabledCurrencies(session)]).then(
+        ([items, currencies]) => ({ items, currencies }),
+        () => ({ items: [], currencies: [] }),
+      )
+    : Promise.resolve({ items: [], currencies: [] });
   let bills: BillListItem[];
   let total = 0;
   let window = pageWindow(list.page, list.rows);
@@ -109,14 +144,25 @@ export default async function BillsPage({
       },
     },
   );
-  const pageHref = (page: number) => hrefWith(PATH, params, { page: page > 1 ? page : null });
-  const nearby = Array.from({ length: window.pageCount }, (_, i) => i + 1).filter(
-    (n) => Math.abs(n - window.page) <= 2,
-  );
+  const cards = await counts;
+  const payable = await requestable;
 
   return (
     <Page>
       {header}
+      {cards !== null ? (
+        <section aria-label="Bill summary" className={styles.stats}>
+          {cards.map((card) => (
+            <StatCard
+              key={card.key}
+              label={card.label}
+              value={card.value}
+              icon={card.icon}
+              tone={card.tone}
+            />
+          ))}
+        </section>
+      ) : null}
       <BillsFilters
         statusOptions={BILL_STATUSES.map((s) => ({ value: s, label: BILL_STATUS_LABEL[s].text }))}
         status={status}
@@ -155,68 +201,96 @@ export default async function BillsPage({
       ) : (
         <>
           <ResultCount shown={bills.length} total={total} noun="bill" />
-          <Table caption="Vendor bills, newest first" minWidth={900}>
-            <thead>
-              <tr>
-                <Th>Bill</Th>
-                <Th>Vendor</Th>
-                <Th>Vendor invoice</Th>
-                <Th>Invoice date</Th>
-                <Th>Status</Th>
-                <Th>Match</Th>
-                <Th align="end">Payable</Th>
-              </tr>
-            </thead>
-            <tbody>
-              {bills.map((b) => {
-                const st = BILL_STATUS_LABEL[b.status];
-                const match = MATCH_STATUS_LABEL[b.matchStatus];
-                return (
-                  <tr key={b.id}>
-                    <Td>
-                      <Link
-                        href={`/payables/bills/${encodeURIComponent(b.id)}`}
-                        className={styles.name}
-                      >
-                        {b.number ?? 'Draft bill'}
-                      </Link>
-                      {b.kind === 'vendor_credit_note' ? (
-                        <span className={styles.note}> Credit note</span>
-                      ) : null}
-                    </Td>
-                    <Td>
-                      <span className={styles.long}>{b.vendorName}</span>
-                    </Td>
-                    <Td>
-                      <span className={styles.long}>{b.vendorInvoiceNo}</span>
-                    </Td>
-                    <Td nowrap>
-                      <time dateTime={b.invoiceDate}>{when(b.invoiceDate, 'date')}</time>
-                    </Td>
-                    <Td nowrap>
-                      <Badge tone={st.tone}>{st.text}</Badge>
-                    </Td>
-                    <Td nowrap>
-                      <Badge tone={match.tone}>{match.text}</Badge>
-                    </Td>
-                    <Td align="end" nowrap>
-                      <span className={styles.numeric}>
-                        {poMoney(b.payableTotal, b.currency, numberSystems)}
-                      </span>
-                    </Td>
-                  </tr>
-                );
-              })}
-            </tbody>
-          </Table>
-          <Pagination
-            label="Pages"
-            summary={`Showing ${window.first}-${window.last} of ${total}`}
-            {...(window.page > 1 ? { previousHref: pageHref(window.page - 1) } : {})}
-            {...(window.page < window.pageCount ? { nextHref: pageHref(window.page + 1) } : {})}
-            pages={nearby.map((n) => ({ page: n, href: pageHref(n) }))}
-            currentPage={window.page}
-          />
+          <div className={layout.results}>
+            <Table
+              caption="Vendor bills, newest first"
+              minWidth={1000}
+              className={styles.list ?? ''}
+            >
+              <thead>
+                <tr>
+                  <Th>Bill</Th>
+                  <Th>Vendor</Th>
+                  <Th>Vendor invoice</Th>
+                  <Th>Invoice date</Th>
+                  <Th>Match</Th>
+                  <Th align="end">Payable</Th>
+                  <Th className={styles.statusColumn}>Status</Th>
+                  <Th className={styles.actionColumn}>Action</Th>
+                </tr>
+              </thead>
+              <tbody>
+                {bills.map((b) => {
+                  const st = BILL_STATUS_LABEL[b.status];
+                  const match = MATCH_STATUS_LABEL[b.matchStatus];
+                  const href = `/payables/bills/${encodeURIComponent(b.id)}`;
+                  // Drafts share a name, so the action is named by the vendor's invoice too: one name per row.
+                  const name = `${b.number ?? 'draft bill'} for invoice ${b.vendorInvoiceNo} from ${b.vendorName}`;
+                  return (
+                    <tr key={b.id}>
+                      <Td nowrap>
+                        <Link href={href} className={styles.name}>
+                          {b.number ?? 'Draft bill'}
+                        </Link>
+                        {b.kind === 'vendor_credit_note' ? (
+                          <span className={styles.note}> Credit note</span>
+                        ) : null}
+                      </Td>
+                      <Td>
+                        <span className={styles.long}>{b.vendorName}</span>
+                      </Td>
+                      <Td>
+                        <span className={styles.long}>{b.vendorInvoiceNo}</span>
+                      </Td>
+                      <Td nowrap>
+                        <time dateTime={b.invoiceDate}>{when(b.invoiceDate, 'date')}</time>
+                      </Td>
+                      <Td nowrap>
+                        <Badge tone={match.tone}>{match.text}</Badge>
+                      </Td>
+                      <Td align="end" nowrap>
+                        <span className={styles.numeric}>
+                          {poMoney(b.payableTotal, b.currency, numberSystems)}
+                        </span>
+                      </Td>
+                      <Td nowrap className={styles.statusColumn}>
+                        <Badge tone={st.tone}>{st.text}</Badge>
+                      </Td>
+                      <Td nowrap className={styles.actionColumn}>
+                        <span className={styles.rowActions}>
+                          {requestableItem(payable.items, b.id, payable.currencies) !==
+                          undefined ? (
+                            <LinkButton
+                              href={`/payables/payment-requests/new?bill=${encodeURIComponent(b.id)}`}
+                              variant="secondary"
+                              size="small"
+                              aria-label={`Request payment of ${name}`}
+                            >
+                              Request payment
+                            </LinkButton>
+                          ) : null}
+                          <Link
+                            href={href}
+                            className={styles.rowAction}
+                            aria-label={`View ${name}`}
+                          >
+                            <Icon name="chevron-right" size={20} />
+                          </Link>
+                        </span>
+                      </Td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </Table>
+            <ListPager
+              pathname={PATH}
+              current={params}
+              window={window}
+              total={total}
+              label="Bill pages"
+            />
+          </div>
         </>
       )}
     </Page>

@@ -29,6 +29,7 @@
 // test against a real database.
 import { InjectQueue, Processor, WorkerHost } from '@nestjs/bullmq';
 import { customers, outbox, quotations, quotationStatusHistory, quotationVersions } from '@bos/db';
+import { kathmanduDateString } from '@bos/locale';
 import { Inject, Injectable, Logger, type OnApplicationBootstrap } from '@nestjs/common';
 import { type Job, Queue } from 'bullmq';
 import {
@@ -145,13 +146,6 @@ export interface SweepResult {
   expiring: number;
 }
 
-const KATHMANDU_DATE = new Intl.DateTimeFormat('en-CA', {
-  timeZone: 'Asia/Kathmandu',
-  year: 'numeric',
-  month: '2-digit',
-  day: '2-digit',
-});
-
 /** A calendar date (YYYY-MM-DD) `days` later (or earlier, when negative). Pure date arithmetic, no time zone. */
 export function addDays(day: string, days: number): string {
   const moved = new Date(`${day}T00:00:00.000Z`);
@@ -164,7 +158,7 @@ export function addDays(day: string, days: number): string {
  * today stays valid until Kathmandu midnight, so a version expires when valid_until is before this date.
  */
 export function kathmanduToday(now: Date): string {
-  return KATHMANDU_DATE.format(now);
+  return kathmanduDateString(now);
 }
 
 @Injectable()

@@ -172,21 +172,27 @@ describe('the list', () => {
     api.listPurchaseRequestsPage.mockResolvedValue(page([item(), item()], 134));
     const out = await list({ status: 'draft' });
     expect(out).toContain('Showing 2 of 134 requests');
-    expect(out).toContain('Showing 1-25 of 134');
+    expect(out).toContain('Showing 1–25 of 134');
+    // Rows per page are links that keep the filters.
+    expect(out).toContain('aria-label="Rows per page"');
+    expect(out).toContain('href="/procurement/requests?status=draft&amp;rows=50"');
     expect(out).toContain('type="search"');
     expect(out).not.toContain('>Apply<');
   });
 
   it('a page past the end falls back to the last page', async () => {
-    api.listPurchaseRequestsPage
-      .mockResolvedValueOnce(page([], 30))
-      .mockResolvedValueOnce(page([item()], 30));
-    const out = await list({ page: '9' });
-    expect(api.listPurchaseRequestsPage).toHaveBeenLastCalledWith(
-      expect.anything(),
-      expect.objectContaining({ offset: 25 }),
+    // The count cards ask for one row; the list's own pages answer by offset.
+    api.listPurchaseRequestsPage.mockImplementation((_s, q: { limit: number; offset: number }) =>
+      Promise.resolve(
+        q.limit === 1 ? page([], 3) : q.offset === 25 ? page([item()], 30) : page([], 30),
+      ),
     );
-    expect(out).toContain('Showing 26-30 of 30');
+    const out = await list({ page: '9' });
+    expect(api.listPurchaseRequestsPage).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ limit: 25, offset: 25 }),
+    );
+    expect(out).toContain('Showing 26–30 of 30');
   });
 
   it('says "My purchase requests" for a role that reads only its own, and hides New without the grant', async () => {
@@ -227,6 +233,64 @@ describe('the list', () => {
     const out = await list();
     expect(out).toContain('Purchase requests did not load');
     expect(out).toContain('Reload purchase requests');
+  });
+
+  it('shows count cards from one-row reads under the same filters and scope', async () => {
+    api.listPurchaseRequestsPage.mockImplementation((_s, q: { status: string[]; limit: number }) =>
+      Promise.resolve(
+        q.limit === 1
+          ? page([], q.status.includes('submitted') ? 4 : q.status.includes('sourcing') ? 2 : 7)
+          : page([item()], 13),
+      ),
+    );
+    const out = await list({ q: 'chairs' });
+    expect(out).toContain('aria-label="Purchase request summary"');
+    expect(out).toMatch(/Matching requests<\/dt><dd[^>]*>13</);
+    expect(out).toMatch(/Awaiting approval<\/dt><dd[^>]*>4</);
+    expect(out).toMatch(/With procurement<\/dt><dd[^>]*>2</);
+    expect(out).toMatch(/Approved or ordered<\/dt><dd[^>]*>7</);
+    expect(api.listPurchaseRequestsPage).toHaveBeenCalledWith(expect.anything(), {
+      status: ['submitted'],
+      q: 'chairs',
+      limit: 1,
+      offset: 0,
+    });
+    expect(api.listPurchaseRequestsPage).toHaveBeenCalledWith(expect.anything(), {
+      status: ['approved', 'po_issued'],
+      q: 'chairs',
+      limit: 1,
+      offset: 0,
+    });
+  });
+
+  it('a card outside the status filter is 0 without a call', async () => {
+    api.listPurchaseRequestsPage.mockResolvedValue(page([item()], 1));
+    const out = await list({ status: 'draft' });
+    expect(out).toMatch(/Awaiting approval<\/dt><dd[^>]*>0</);
+    // Only the list itself was read: every card's group excludes drafts.
+    expect(api.listPurchaseRequestsPage).toHaveBeenCalledTimes(1);
+  });
+
+  it('a failed count hides the cards, not the table', async () => {
+    api.listPurchaseRequestsPage.mockImplementation((_s, q: { limit: number }) =>
+      q.limit === 1 ? Promise.reject(new ApiError(502, 'x')) : Promise.resolve(page([item()], 1)),
+    );
+    const out = await list();
+    expect(out).not.toContain('Purchase request summary');
+    expect(out).toContain('Chairs for the new office');
+    expect(out).not.toContain('did not load');
+  });
+
+  it('each row ends in pinned Status and Action columns with a uniquely named View link', async () => {
+    api.listPurchaseRequestsPage.mockResolvedValue(
+      page([item({ number: 'PR-2082/83-00001' }), item({ id: DEPT })]),
+    );
+    const out = await list();
+    expect(out).toContain('>Action</th>');
+    expect(out).toContain('aria-label="View PR-2082/83-00001"');
+    expect(out).toContain(
+      'aria-label="View draft request of NPR 45,00,000.00 needed by 01 Dec 2026: Chairs for the new office"',
+    );
   });
 
   it('a long justification wraps without breaking the table', async () => {
@@ -270,6 +334,22 @@ describe('the detail', () => {
     expect(out).not.toContain('Cancel request');
     expect(out).toContain('the head of the requesting department approves the need');
     expect(kernel.getApprovalRequest).toHaveBeenCalledWith(expect.anything(), APPROVAL);
+  });
+
+  it('says where the approval stands in plain words and shows a quantity without trailing zeros', async () => {
+    api.getPurchaseRequest.mockResolvedValue(
+      detail({ status: 'dept_approved', number: 'PR-1', approvalRequestId: APPROVAL }),
+    );
+    kernel.getApprovalRequest.mockResolvedValue({
+      status: 'approved',
+      decidedAt: '2026-11-10T05:45:00.000Z',
+      steps: [],
+    });
+    const out = await detailHtml();
+    expect(out).toMatch(/Approved on 10 Nov 2026[^<]*\./);
+    expect(out).not.toContain('Approval approved');
+    expect(out).toContain('10 pcs');
+    expect(out).not.toContain('10.0000');
   });
 
   it('a returned request offers resubmit and edit but not cancel', async () => {
@@ -421,6 +501,15 @@ describe('edit and new', () => {
     expect(out).toContain('name="expectedVersion"');
     expect(out).toContain('value="2"');
     expect(out).toContain('Save changes');
+  });
+
+  it('titles the edit page by number, or as a draft without a stray capital', async () => {
+    api.getPurchaseRequest.mockResolvedValue(detail());
+    const draft = await editHtml();
+    expect(draft).toContain('>Edit draft purchase request</h1>');
+    expect(draft).not.toContain('Edit Draft');
+    api.getPurchaseRequest.mockResolvedValue(detail({ status: 'returned', number: 'PR-7' }));
+    expect(await editHtml()).toContain('>Edit PR-7</h1>');
   });
 
   it('a submitted request is read-only on the edit page', async () => {

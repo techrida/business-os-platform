@@ -21,6 +21,13 @@ export function kathmanduDate(instant: Date): { y: number; m: number; d: number 
   return { y: get('year'), m: get('month'), d: get('day') };
 }
 
+/** The calendar date in Kathmandu at the given instant, as YYYY-MM-DD (the business "today" for date rules). */
+export function kathmanduDateString(instant: Date): string {
+  const { y, m, d } = kathmanduDate(instant);
+  const pad = (n: number, width: number) => String(n).padStart(width, '0');
+  return `${pad(y, 4)}-${pad(m, 2)}-${pad(d, 2)}`;
+}
+
 export interface BsDate {
   year: number;
   /** 1-12 (Baisakh = 1). */

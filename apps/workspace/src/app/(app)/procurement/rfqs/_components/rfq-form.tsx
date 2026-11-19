@@ -10,6 +10,7 @@ import { Panel } from '@/components/ui/panel';
 import { ProcurementFormActions } from '../../form-actions';
 import styles from '../../requests/requests.module.css';
 import type { RfqFormState } from '../_lib/state';
+import rows from './line-rows.module.css';
 
 const WIDE = styles.wide ?? '';
 
@@ -149,7 +150,7 @@ export function RfqForm({
         description="Only approved vendors with an account in this entity can be invited. Invite enough to meet the minimum number of quotations your company requires."
       >
         <fieldset
-          className={styles.line}
+          className={rows.group}
           aria-describedby={err.vendorIds ? 'vendors-error' : undefined}
         >
           <legend>Invited vendors ({chosen.size} chosen)</legend>

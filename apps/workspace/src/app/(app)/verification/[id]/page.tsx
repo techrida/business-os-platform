@@ -10,6 +10,7 @@ import type { Metadata } from 'next';
 import Link from 'next/link';
 import { notFound } from 'next/navigation';
 
+import { todayInKathmandu } from '@/app/(app)/settings/format';
 import { getVerificationReviewHistory, getDocument } from '@/components/p2/crm/verification-api';
 import { fileOf, type FileView } from '@/components/p2/crm/verification-file';
 import { getCustomer, getVerificationCase } from '@/components/p2/customers/api';
@@ -345,8 +346,7 @@ export default async function VerificationCasePage({
                           canApprove={
                             !!item.documentId &&
                             files.get(item.documentId)?.status === 'clean' &&
-                            (!item.expiresOn ||
-                              item.expiresOn > new Date().toISOString().slice(0, 10))
+                            (!item.expiresOn || item.expiresOn > todayInKathmandu())
                           }
                         />
                       ) : null}

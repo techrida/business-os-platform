@@ -1377,6 +1377,116 @@ it('rechecks expiry after individual approvals before making the final decision'
   ).toBe(409);
 });
 
+describe('evidence expiry uses the Kathmandu day, not the UTC day', () => {
+  // 2026-11-19T20:30Z is 02:15 on 2026-11-20 in Kathmandu; the UTC date is still 2026-11-19.
+  const KATHMANDU_EARLY_MORNING = new Date('2026-11-19T20:30:00Z');
+
+  /** A filled case whose registration certificate expires on `expiresOn`. */
+  async function caseExpiring(expiresOn: string) {
+    const c = await fillRequired(await openCase());
+    const item = c.checklist.find((i) => i.key === 'registration_certificate')!;
+    const res = await putDocument(
+      c.id,
+      'registration_certificate',
+      item.documentId!,
+      c.version,
+      expiresOn,
+    );
+    expect(res.status, JSON.stringify(res.body)).toBe(200);
+    return VerificationCaseDtoSchema.parse(res.body);
+  }
+
+  it('refuses to submit evidence that expires today in Kathmandu and accepts tomorrow', async () => {
+    clock = KATHMANDU_EARLY_MORNING;
+    const today = await caseExpiring('2026-11-20');
+    const refused = await submitCase(today.id);
+    expect(refused.status).toBe(409);
+    expect(refused.body).toMatchObject({ error: { message: 'Evidence has expired' } });
+
+    const tomorrow = await caseExpiring('2026-11-21');
+    expect((await submitCase(tomorrow.id)).status).toBe(200);
+  });
+
+  it('refuses to approve a row whose evidence expires today in Kathmandu and accepts tomorrow', async () => {
+    clock = new Date('2026-11-19T12:00:00Z');
+    const submit = async (expiresOn: string) => {
+      const res = await submitCase((await caseExpiring(expiresOn)).id);
+      expect(res.status, JSON.stringify(res.body)).toBe(200);
+      return VerificationCaseDtoSchema.parse(res.body);
+    };
+    const today = await submit('2026-11-20');
+    const tomorrow = await submit('2026-11-21');
+    as(U.pmo, 'pmo');
+    clock = KATHMANDU_EARLY_MORNING;
+    const approve = (c: VerificationCaseDto) =>
+      api()
+        .post(`/v1/verification-cases/${c.id}/checklist/registration_certificate/decision`)
+        .set('Idempotency-Key', randomUUID())
+        .send({ decision: 'approve', expectedVersion: c.version });
+    const refused = await approve(today);
+    expect(refused.status).toBe(409);
+    expect(refused.body).toMatchObject({
+      error: { message: 'Evidence must be clean and unexpired' },
+    });
+    expect((await approve(tomorrow)).status).toBe(200);
+  });
+
+  it('reports a case whose evidence expires today in Kathmandu as not approvable, and tomorrow as approvable', async () => {
+    clock = new Date('2026-11-19T12:00:00Z');
+    const reviewed = async (expiresOn: string) => {
+      const c = await caseExpiring(expiresOn);
+      const res = await submitCase(c.id);
+      expect(res.status, JSON.stringify(res.body)).toBe(200);
+      as(U.pmo, 'pmo');
+      const done = await reviewAll(VerificationCaseDtoSchema.parse(res.body));
+      as(U.founder, 'founder');
+      return done;
+    };
+    const today = await reviewed('2026-11-20');
+    const tomorrow = await reviewed('2026-11-21');
+    as(U.pmo, 'pmo');
+    clock = KATHMANDU_EARLY_MORNING;
+    const blocked = async (c: VerificationCaseDto) =>
+      (
+        (await api().get(`/v1/verification-cases/${c.id}`)).body as {
+          approvalBlockedReason?: unknown;
+        }
+      ).approvalBlockedReason;
+    expect(await blocked(today)).toBe(
+      'All active evidence must be readable, clean, unchanged and unexpired',
+    );
+    expect(await blocked(tomorrow)).toBeNull();
+  });
+
+  it('reopens an expired case emptying evidence that expires today in Kathmandu and keeping tomorrow', async () => {
+    clock = KATHMANDU_EARLY_MORNING;
+    const filled = await caseExpiring('2026-11-20');
+    const pan = filled.checklist.find((i) => i.key === 'pan_vat_certificate')!;
+    const res = await putDocument(
+      filled.id,
+      'pan_vat_certificate',
+      pan.documentId!,
+      filled.version,
+      '2026-11-21',
+    );
+    expect(res.status, JSON.stringify(res.body)).toBe(200);
+    await withTx(db, scope, systemActor('test'), (tx) =>
+      tx.execute(sql`UPDATE app.verification_cases SET status = 'expired' WHERE id = ${filled.id}`),
+    );
+    const reopened = await api().post('/v1/verification-cases').send({ partyId: filled.partyId });
+    expect(reopened.status, JSON.stringify(reopened.body)).toBe(200);
+    const dto = VerificationCaseDtoSchema.parse(reopened.body);
+    expect(dto.checklist.find((i) => i.key === 'registration_certificate')).toMatchObject({
+      status: 'missing',
+      documentId: null,
+    });
+    expect(dto.checklist.find((i) => i.key === 'pan_vat_certificate')).toMatchObject({
+      status: 'provided',
+      expiresOn: '2026-11-21',
+    });
+  });
+});
+
 it('preserves real legacy case notes before correction and leaves legacy approved cases approved', async () => {
   const approved = await submittedCase();
   const rejected = await submittedCase();

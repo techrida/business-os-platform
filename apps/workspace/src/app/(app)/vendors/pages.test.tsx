@@ -207,8 +207,60 @@ describe('vendor list', () => {
     api.listVendors.mockResolvedValue({ items: [vendor()], total: 60 });
     const out = await list();
     expect(out).toContain('Showing 1 of 60 vendors');
-    expect(out).toContain('Showing 1 to 1 of 60');
+    expect(out).toContain('Showing 1–25 of 60');
     expect(out).toContain('/vendors?page=2');
+    expect(out).toContain('aria-label="Rows per page"');
+    expect(out).toContain('href="/vendors?rows=50"');
+  });
+
+  it('counts the vendors per status group in the KPI cards, unfiltered by the search', async () => {
+    const totals: Record<string, number> = { approved: 4, draft: 2, suspended: 1 };
+    api.listVendors.mockImplementation((_s: unknown, query: { status?: string[] }) =>
+      Promise.resolve({
+        items: query.status === undefined ? [vendor()] : [],
+        total:
+          query.status === undefined
+            ? 1
+            : query.status.reduce((sum, status) => sum + (totals[status] ?? 0), 0),
+      }),
+    );
+    const out = await list({ q: 'Himal' });
+    const cards = out.slice(out.indexOf('aria-label="Vendors by status"'));
+    expect(cards).toMatch(/Vendors<\/dt><dd[^>]*>7</);
+    expect(cards).toMatch(/Approved<\/dt><dd[^>]*>4</);
+    expect(cards).toMatch(/In onboarding<\/dt><dd[^>]*>2</);
+    expect(cards).toMatch(/Inactive<\/dt><dd[^>]*>1</);
+    // Three count calls, none of them carrying the search, then the page itself.
+    const queries = api.listVendors.mock.calls.map((c) => c[1] as Record<string, unknown>);
+    expect(queries.slice(0, 3)).toEqual([
+      { status: ['approved'], limit: 1 },
+      { status: ['draft', 'pending_kyc', 'under_review'], limit: 1 },
+      { status: ['suspended', 'blocked', 'archived'], limit: 1 },
+    ]);
+    expect(queries.at(-1)).toMatchObject({ q: 'Himal' });
+  });
+
+  it('leaves the KPI cards out when a count fails, and keeps the list', async () => {
+    api.listVendors.mockImplementation((_s: unknown, query: { status?: string[] }) =>
+      query.status !== undefined
+        ? Promise.reject(apiError(500, 'internal'))
+        : Promise.resolve({ items: [vendor()], total: 1 }),
+    );
+    const out = await list();
+    expect(out).not.toContain('Vendors by status');
+    expect(out).toContain('Himal Traders Pvt. Ltd.');
+  });
+
+  it('ends each row with the status and a View link named after that vendor', async () => {
+    api.listVendors.mockResolvedValue({
+      items: [vendor(), vendor({ id: ACCOUNT, pan: null, legalName: 'Foreign Ltd' })],
+      total: 2,
+    });
+    const out = await list();
+    expect(out).toContain('aria-label="View Himal Traders Pvt. Ltd., PAN 301234567"');
+    expect(out).toContain('aria-label="View Foreign Ltd"');
+    expect(out).toContain(`href="/vendors/${ACCOUNT}"`);
+    expect(out).toContain('>Action</th>');
   });
 });
 
@@ -232,7 +284,12 @@ describe('vendor detail', () => {
     expect(out).toContain('No contacts yet.');
     expect(out).toContain('No terms set yet.');
     expect(out).toContain('No bank account yet.');
-    expect(out).toContain('Edit vendor');
+    // The identity card carries the page heading and the full-width edit link.
+    expect(out).toMatch(/<h1 id="vendor-name"[^>]*>Himal Traders Pvt. Ltd.<\/h1>/);
+    expect(out).toContain(`href="/vendors/${ID}/edit"`);
+    expect(out).toContain('Edit Details');
+    // The h1 comes before every panel heading.
+    expect(out.indexOf('<h1')).toBeLessThan(out.indexOf('<h2'));
   });
 
   it('one failing panel does not take the profile down', async () => {
@@ -289,10 +346,10 @@ describe('vendor detail', () => {
 
   it('an archived or blocked vendor has no edit link', async () => {
     api.getVendor.mockResolvedValue(vendor({ status: 'blocked' }));
-    expect(await detail()).not.toContain('Edit vendor');
+    expect(await detail()).not.toContain(`/vendors/${ID}/edit`);
     api.getVendor.mockResolvedValue(vendor({ status: 'archived' }));
     const out = await detail();
-    expect(out).not.toContain('Edit vendor');
+    expect(out).not.toContain(`/vendors/${ID}/edit`);
     expect(out).toContain('Nothing more can be done');
   });
 
@@ -382,7 +439,7 @@ describe('vendor logo', () => {
     const out = await detail();
     expect(logoGroup(out)).toContain(`src="${imagePath(LOGO)}"`);
     expect(logoGroup(out)).not.toContain('type="file"');
-    expect(out).not.toContain('Edit vendor');
+    expect(out).not.toContain(`/vendors/${ID}/edit`);
   });
 
   it('is the picture only once the vendor can no longer be edited', async () => {

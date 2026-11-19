@@ -27,6 +27,12 @@ vi.mock('@/lib/grants', async () => {
   };
 });
 vi.mock('@/lib/api-payables', () => api);
+const reads = vi.hoisted(() => ({ getVendor: vi.fn(), getApprovalRequest: vi.fn() }));
+vi.mock('@/lib/api-vendors', () => ({ getVendor: reads.getVendor }));
+vi.mock('@/lib/api-kernel', async (original) => ({
+  ...(await original<typeof import('@/lib/api-kernel')>()),
+  getApprovalRequest: reads.getApprovalRequest,
+}));
 const currencies = vi.hoisted(() => ({ loadEnabledCurrencies: vi.fn() }));
 vi.mock('@/lib/enabled-currencies.server', () => currencies);
 vi.mock('next/navigation', () => ({
@@ -74,6 +80,8 @@ beforeEach(() => {
   grants.live = undefined;
   currencies.loadEnabledCurrencies.mockResolvedValue(['NPR', 'INR', 'USD']);
   api.listPaymentRequestsPage.mockResolvedValue({ items: [record], total: 1 });
+  reads.getVendor.mockResolvedValue({ legalName: 'Himal Supplies' });
+  reads.getApprovalRequest.mockRejectedValue(new Error('forbidden'));
   api.getPaymentRequest.mockResolvedValue(record);
   api.listPaymentRequestItems.mockResolvedValue([
     {
@@ -193,7 +201,7 @@ it('shows the server total and range, with no Show button', async () => {
   api.listPaymentRequestsPage.mockResolvedValue({ items: [record], total: 61 });
   const html = await listOf();
   expect(html).toContain('Showing 1 of 61 payment requests');
-  expect(html).toContain('Showing 1-25 of 61');
+  expect(html).toContain('Showing 1–25 of 61');
   expect(html).toContain('type="search"');
   expect(html).not.toContain('Show requests');
 });
@@ -245,4 +253,137 @@ it('links a bill only when the live grants hold payables.bill.read', async () =>
   ]);
   const withRead = renderToStaticMarkup(await DetailPage({ params: Promise.resolve({ id }) }));
   expect(withRead).toContain(`/payables/bills/${id}`);
+
+it('counts each card with one limit-1 read, after the permission check', async () => {
+  api.listPaymentRequestsPage.mockImplementation(
+    (_s: unknown, q: { status: string[]; limit: number }) =>
+      Promise.resolve({
+        items: [record],
+        total: q.limit === 1 ? (q.status.length === 0 ? 12 : 3) : 1,
+      }),
+  );
+  const html = await listOf({ q: 'Himal' });
+  const counts = api.listPaymentRequestsPage.mock.calls
+    .map((call) => call[1] as { limit: number })
+    .filter((q) => q.limit === 1);
+  expect(counts).toEqual([
+    { status: [], limit: 1, offset: 0 },
+    { status: ['draft'], limit: 1, offset: 0 },
+    { status: ['pending_approval'], limit: 1, offset: 0 },
+    { status: ['approved'], limit: 1, offset: 0 },
+    { status: ['rejected'], limit: 1, offset: 0 },
+  ]);
+  expect(html).toMatch(/All requests<\/dt><dd[^>]*>12</);
+  expect(html).toMatch(/Rejected<\/dt><dd[^>]*>3</);
+});
+
+it('names each vendor once from its own read, and shows plain text when the vendor cannot be read', async () => {
+  const other = '22222222-2222-4222-8222-222222222222';
+  api.listPaymentRequestsPage.mockResolvedValue({
+    items: [
+      record,
+      { ...record, id: other, number: null },
+      {
+        ...record,
+        id: id.replace('1', '3'),
+        vendorPartyId: other,
+        number: null,
+        bankLast4: '9999',
+      },
+    ],
+    total: 3,
+  });
+  reads.getVendor.mockImplementation((_s: unknown, vendorId: string) =>
+    vendorId === id
+      ? Promise.resolve({ legalName: 'Himal Supplies' })
+      : Promise.reject(new Error('403')),
+  );
+  const html = await listOf();
+  expect(reads.getVendor).toHaveBeenCalledTimes(2);
+  expect(html).toContain(`href="/vendors/${id}"`);
+  expect(html).toContain('>Himal Supplies</a>');
+  expect(html).toContain('Vendor name unavailable');
+  expect(html).not.toContain(`/vendors/${other}`);
+  expect(html).not.toContain('View vendor');
+});
+
+it('pins Status and a View action to each row, named per row, with rows per page', async () => {
+  api.listPaymentRequestsPage.mockResolvedValue({
+    items: [
+      { ...record, number: null },
+      { ...record, id: '33333333-3333-4333-8333-333333333333', number: null, bankLast4: '5678' },
+    ],
+    total: 2,
+  });
+  const html = await listOf();
+  const heads = [...html.matchAll(/<th[^>]*>([^<]*)<\/th>/g)].map((m) => m[1]);
+  expect(heads.slice(-2)).toEqual(['Status', 'Action']);
+  const names = [...html.matchAll(/aria-label="(View [^"]*)"/g)].map((m) => m[1]);
+  expect(names).toHaveLength(2);
+  expect(new Set(names).size).toBe(2);
+  expect(names[0]).toContain('ending 1234');
+  expect(html).toContain('aria-label="Rows per page"');
+});
+
+it('puts Cancel and Create draft request in the heading, submitting the form from outside it', async () => {
+  const html = renderToStaticMarkup(await NewPage());
+  const formId = /<form id="([^"]+)"/.exec(html)?.[1];
+  expect(formId).toBeTruthy();
+  expect(html).toMatch(
+    new RegExp(`<button type="submit"[^>]*form="${formId}"[^>]*>Create draft request<`),
+  );
+  expect(html.indexOf('Create draft request')).toBeLessThan(html.indexOf(`<form id="${formId}"`));
+  expect(html.match(/<h1/g)).toHaveLength(1);
+});
+
+it('shows the approval steps on a submitted request when the approval read answers', async () => {
+  api.getPaymentRequest.mockResolvedValue({
+    ...record,
+    status: 'pending_approval',
+    approvalRequestId: id,
+  });
+  reads.getApprovalRequest.mockResolvedValue({
+    status: 'pending',
+    decidedAt: null,
+    steps: [{ seq: 1, reason: 'Finance approves the payment', status: 'active' }],
+  });
+  const html = renderToStaticMarkup(await DetailPage({ params: Promise.resolve({ id }) }));
+  expect(html).toContain('Approval history');
+  expect(html).toContain('Finance approves the payment');
+  reads.getApprovalRequest.mockRejectedValue(new Error('forbidden'));
+  const refused = renderToStaticMarkup(await DetailPage({ params: Promise.resolve({ id }) }));
+  expect(refused).not.toContain('Approval history');
+  expect(refused).toContain(`/inbox/${id}`);
+});
+
+it('starts from the bill a "Request payment" link names, and ignores a bill it cannot request', async () => {
+  const amountOf = (html: string) =>
+    /<input[^>]*name="allocation:0:amount"[^>]*value="([^"]*)"/.exec(html)?.[1] ??
+    /<input[^>]*value="([^"]*)"[^>]*name="allocation:0:amount"/.exec(html)?.[1];
+  const started = renderToStaticMarkup(
+    await NewPage({ searchParams: Promise.resolve({ bill: id }) }),
+  );
+  expect(started).toMatch(/name="vendorPartyId" value="11111111-1111-4111-8111-111111111111"/);
+  expect(amountOf(started)).toBe('90.00');
+  const other = renderToStaticMarkup(
+    await NewPage({
+      searchParams: Promise.resolve({ bill: '22222222-2222-4222-8222-222222222222' }),
+    }),
+  );
+  expect(amountOf(other)).toBe('');
+  const junk = renderToStaticMarkup(
+    await NewPage({ searchParams: Promise.resolve({ bill: '../x' }) }),
+  );
+  expect(amountOf(junk)).toBe('');
+});
+
+it('reads the rows-per-page choice from the URL into the page window', async () => {
+  api.listPaymentRequestsPage.mockResolvedValue({ items: [record], total: 61 });
+  const html = await listOf({ rows: '100' });
+  expect(api.listPaymentRequestsPage).toHaveBeenCalledWith(expect.anything(), {
+    status: [],
+    limit: 100,
+    offset: 0,
+  });
+  expect(html).toMatch(/<a[^>]*aria-current="true"[^>]*>100<\/a>/);
 });

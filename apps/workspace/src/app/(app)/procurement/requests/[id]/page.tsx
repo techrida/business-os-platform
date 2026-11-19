@@ -22,15 +22,15 @@ import { getApprovalRequest } from '@/lib/api-kernel';
 import { requireStaffSession } from '@/lib/bff';
 import { getNumberSystems } from '@/lib/display-settings';
 import { money, when } from '@/lib/kernel-format';
-import { humanizeKey } from '@/lib/kernel-ui';
 
 import { ApprovalTimeline } from '../../approval-timeline';
-import { PO_STATUS_LABEL } from '../../orders/_lib/model';
+import { PO_STATUS_LABEL, qtyText } from '../../orders/_lib/model';
 import layout from '../../procurement.module.css';
 import { canStartRfq, rfqGrants } from '../../rfqs/_lib/model';
 import { CancelForm, SubmitForm } from '../_components/command-forms';
 import { prFailure } from '../_lib/failure';
 import {
+  approvalSummary,
   canCancelPr,
   isPrEditable,
   PR_STATUS_LABEL,
@@ -83,8 +83,10 @@ function ApprovalPanel({ load, retry }: { load: ApprovalLoad; retry: string }) {
       ) : (
         <>
           <p className={styles.note}>
-            Approval {humanizeKey(approval.status).toLowerCase()}
-            {approval.decidedAt !== null ? `, decided ${when(approval.decidedAt)}` : ''}.
+            {approvalSummary(
+              approval.status,
+              approval.decidedAt !== null ? when(approval.decidedAt) : null,
+            )}
           </p>
           {approval.steps.length === 0 ? (
             <p className={styles.note}>No approval steps were planned.</p>
@@ -389,7 +391,7 @@ export default async function PurchaseRequestPage({
                 </Td>
                 <Td align="end" nowrap>
                   <span className={styles.numeric}>
-                    {l.quantity} {l.uom}
+                    {qtyText(l.quantity)} {l.uom}
                   </span>
                 </Td>
                 <Td align="end" nowrap>

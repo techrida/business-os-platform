@@ -8,6 +8,7 @@ import { Alert } from '@/components/ui/alert';
 import { Button } from '@/components/ui/button';
 import { DatePicker } from '@/components/ui/date-picker';
 import { Field, Input, Select } from '@/components/ui/field';
+import { Icon } from '@/components/ui/icon';
 import { toast } from '@/components/ui/toast';
 import { guessMime } from '@/lib/kernel-ui';
 
@@ -197,18 +198,27 @@ export function BillHeaderInputs({
         error={errors['documentId']}
       >
         {(control) => (
-          <Input
-            ref={fileRef}
-            type="file"
-            accept={ALLOWED_MIME.join(',')}
-            disabled={busy}
-            onChange={(e) => {
-              setFile(e.target.files?.[0] ?? null);
-              setDocumentId('');
-              onReady(false);
-            }}
-            {...control}
-          />
+          // The native picker covers the zone, invisible, so a click, a drop or the keyboard all reach it.
+          <div className={styles.drop}>
+            <Icon name="file-text" size={24} />
+            {file !== null ? (
+              <span className={styles.fileName}>{file.name}</span>
+            ) : (
+              <span>Drop the invoice here or choose a file</span>
+            )}
+            <input
+              ref={fileRef}
+              type="file"
+              accept={ALLOWED_MIME.join(',')}
+              disabled={busy}
+              onChange={(e) => {
+                setFile(e.target.files?.[0] ?? null);
+                setDocumentId('');
+                onReady(false);
+              }}
+              {...control}
+            />
+          </div>
         )}
       </Field>
       <div>
