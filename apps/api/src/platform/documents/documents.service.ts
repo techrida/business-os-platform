@@ -53,7 +53,7 @@ import {
   UnauthorizedException,
   UnsupportedMediaTypeException,
 } from '@nestjs/common';
-import { and, asc, desc, eq, isNull, max, or } from 'drizzle-orm';
+import { and, asc, desc, eq, inArray, isNull, max, or } from 'drizzle-orm';
 import type { Queue } from 'bullmq';
 import { z } from 'zod';
 
@@ -74,6 +74,7 @@ import {
   type DocumentOwnerPolicy,
   type ScanJobData,
 } from './documents.ports';
+import { isTenantWideImageOwner, TENANT_WIDE_IMAGE_OWNERS } from './image-scope';
 import { GENERATED_ENGINE, markVersionClean } from './mark-version-clean';
 import { SCAN_JOB_OPTIONS } from './scan.processor';
 import { LinkError, SignedLinks } from './signed-link';
@@ -164,9 +165,6 @@ export function etagMatches(ifNoneMatch: string | undefined, etag: string): bool
     return tag !== '' && tag === etag;
   });
 }
-
-/** People belong to the tenant, not to one entity: a profile picture shows in every entity of its tenant. */
-const TENANT_WIDE_IMAGE_OWNER = 'user_avatar';
 
 export function toVersionDto(v: VersionRow): DocumentVersionDto {
   return {
@@ -523,12 +521,18 @@ export class DocumentsService {
     await this.assertOwner(scope, ownerType, ownerId, 'documents.upload');
   }
 
+  /**
+   * The removal itself, inside the caller's transaction. A tenant-wide image (image-scope.ts: a profile picture, a
+   * customer or vendor logo) may have been uploaded in another entity of the tenant: it is found by tenant alone, the
+   * owner policy still decides with the caller's scope, and its rows are written under the entity they carry.
+   */
   async removeInTransaction(tx: DbTransaction, scope: TxScope, documentId: string) {
-    const s = scoped(scope);
-    const doc = await this.loadDocument(tx, scope, documentId);
+    const doc = await this.loadDocument(tx, scope, documentId, false, true);
     await this.assertOwner(scope, doc.ownerType, doc.ownerId, 'documents.upload');
     await this.assertCanAttach(scope, doc.ownerType, doc.ownerId, tx, documentId);
-    await this.loadDocument(tx, scope, documentId, true);
+    await this.loadDocument(tx, scope, documentId, true, true);
+    // The document's own entity: the caller's, except for a tenant-wide image uploaded in another one.
+    const s = scoped({ tenantId: scope.tenantId, organizationId: doc.organizationId });
     const versions = await tx
       .select()
       .from(documentVersions)
@@ -949,8 +953,8 @@ export class DocumentsService {
    * Opens an image (a company logo, a profile picture, a customer or vendor logo) for `GET /v1/images/:documentId`.
    * Asks no permission: any signed-in staff principal of the tenant may see these (U12); the controller
    * authenticates and passes the request's scope. The document must be live, of an image owner type, in the scope's
-   * tenant AND entity (a `user_avatar` only in the tenant: people belong to the tenant, not one entity), and its
-   * newest version (by number, whatever its status) must be `clean` with an image type.
+   * tenant AND entity (a `user_avatar`, `customer_logo` or `vendor_logo` only in the tenant: people and parties
+   * belong to the tenant, not one entity, see image-scope.ts), and its newest version (by number, whatever its status) must be `clean` with an image type.
    * Every refusal, including a file missing from storage, is the same 404 (never a 403), so the caller learns
    * nothing about whether the document exists. `etag` is the version id, unquoted: the caller quotes it.
    * When `ifNoneMatch` (the request's `If-None-Match`) names that version, the result is `notModified` and the
@@ -958,11 +962,11 @@ export class DocumentsService {
    */
   async openImage(scope: TxScope, documentId: string, ifNoneMatch?: string): Promise<ImageHandle> {
     if (!Id.safeParse(documentId).success) throw new NotFoundException(IMAGE_NOT_FOUND);
-    // scoped() refuses an empty id; the entity filter is written here because a profile picture skips it.
+    // scoped() refuses an empty id; the entity filter is written here because a tenant-wide image skips it.
     const { tenantId, organizationId } = scoped(scope).scope;
     const sameEntityOrTenantWide = (table: typeof documents | typeof documentVersions) =>
       or(
-        eq(documents.ownerType, TENANT_WIDE_IMAGE_OWNER),
+        inArray(documents.ownerType, [...TENANT_WIDE_IMAGE_OWNERS]),
         eq(table.organizationId, organizationId),
       );
     const [row] = await this.db
@@ -992,7 +996,7 @@ export class DocumentsService {
       row === undefined ||
       row.removedAt !== null ||
       row.tenantId !== tenantId ||
-      (row.ownerType !== TENANT_WIDE_IMAGE_OWNER && row.organizationId !== organizationId) ||
+      (!isTenantWideImageOwner(row.ownerType) && row.organizationId !== organizationId) ||
       !isImageOwnerType(row.ownerType) ||
       row.version.status !== 'clean' ||
       row.version.detectedMime === null ||
@@ -1120,21 +1124,39 @@ export class DocumentsService {
     }
   }
 
-  /** A live (not removed) document of the caller's scope, optionally locked for the rest of the transaction. */
+  /**
+   * A live (not removed) document of the caller's scope, optionally locked for the rest of the transaction.
+   * `tenantWideImages` (removal only) also finds a tenant-wide image (image-scope.ts) of another entity of the
+   * same tenant; every other document still has to be in the caller's entity.
+   */
   private async loadDocument(
     tx: DbTransaction,
     scope: TxScope,
     documentId: string,
     lock = false,
-  ): Promise<{ id: string; ownerType: string; ownerId: string }> {
+    tenantWideImages = false,
+  ): Promise<{ id: string; ownerType: string; ownerId: string; organizationId: string }> {
+    const s = scoped(scope);
+    const live = and(eq(documents.id, documentId), isNull(documents.removedAt));
     const query = tx
-      .select({ id: documents.id, ownerType: documents.ownerType, ownerId: documents.ownerId })
+      .select({
+        id: documents.id,
+        ownerType: documents.ownerType,
+        ownerId: documents.ownerId,
+        organizationId: documents.organizationId,
+      })
       .from(documents)
       .where(
-        scoped(scope).where(
-          documents,
-          and(eq(documents.id, documentId), isNull(documents.removedAt)),
-        ),
+        tenantWideImages
+          ? and(
+              eq(documents.tenantId, s.scope.tenantId),
+              live,
+              or(
+                eq(documents.organizationId, s.scope.organizationId),
+                inArray(documents.ownerType, [...TENANT_WIDE_IMAGE_OWNERS]),
+              ),
+            )
+          : s.where(documents, live),
       )
       .limit(1);
     const [doc] = await (lock ? query.for('update') : query);
