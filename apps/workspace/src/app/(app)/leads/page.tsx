@@ -4,7 +4,7 @@ import Link from 'next/link';
 import type { NumberSystems } from '@bos/locale';
 
 import { Board } from '@/components/p2/crm/board';
-import { listLeadOwners, listLeads } from '@/components/p2/crm/crm-api';
+import { listLeads } from '@/components/p2/crm/crm-api';
 import { moneyOrNull, sentence } from '@/components/p2/crm/format';
 import { LoadProblem, StageBadge, ViewSwitch } from '@/components/p2/crm/server-bits';
 import { boardColumns, groupByStage, stageLabel, userMoves } from '@/components/p2/crm/stages';
@@ -22,7 +22,6 @@ import { StatCard } from '@/components/ui/stat-card';
 import { CellTitle, Table, Td, Th } from '@/components/ui/table';
 import { failureOf } from '@/lib/api-kernel';
 import { requireStaffSession } from '@/lib/bff';
-import { userNames } from '@/lib/business-labels';
 import { getNumberSystems } from '@/lib/display-settings';
 import { when } from '@/lib/kernel-format';
 
@@ -123,16 +122,6 @@ export default async function LeadsPage({ searchParams }: { searchParams: Promis
     );
   }
 
-  // Owner names: the people the caller may assign to, plus the users directory for administrators.
-  // Either failing only blanks names; the list still renders.
-  const [ownerList, directory] = await Promise.allSettled([
-    listLeadOwners(session),
-    userNames(session),
-  ]);
-  const ownerNames = new Map(directory.status === 'fulfilled' ? directory.value : []);
-  if (ownerList.status === 'fulfilled') {
-    for (const o of ownerList.value) ownerNames.set(o.userId, o.displayName || o.email);
-  }
   const now = new Date();
 
   // The API supports search and stage filters and returns a capped array. Source and pages
@@ -306,10 +295,7 @@ export default async function LeadsPage({ searchParams }: { searchParams: Promis
                         <Badge tone="neutral">{sentence(lead.source)}</Badge>
                       </Td>
                       <Td>
-                        <OwnerCell
-                          owned={lead.ownerUserId !== null}
-                          name={lead.ownerUserId ? ownerNames.get(lead.ownerUserId) : undefined}
-                        />
+                        <OwnerCell name={lead.ownerName} />
                       </Td>
                       <Td nowrap className={styles.followUpColumn}>
                         <StageBadge kind="lead" stage={lead.stage} />

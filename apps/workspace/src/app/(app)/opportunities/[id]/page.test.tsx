@@ -56,6 +56,7 @@ const opportunity = (stage = 'qualified') => ({
   contactId: null,
   leadId: null,
   ownerUserId: null,
+  ownerName: null,
   stage,
   stageReason: null,
   stageNote: null,
@@ -185,10 +186,12 @@ describe('opportunity follow-ups (migrated open tasks on the deal)', () => {
     quotationId: null,
     dueAt: '2099-01-02T04:00:00.000Z',
     assigneeUserId: ASSIGNEE,
+    assigneeName: 'Mira Thapa',
     completedAt: null,
     cancelledAt: null,
     planned: true,
     createdByUserId: null,
+    createdByName: null,
     occurredAt: WHEN,
     version: 2,
   };
@@ -213,8 +216,7 @@ describe('opportunity follow-ups (migrated open tasks on the deal)', () => {
     expect(html).not.toContain('Schedule follow-up');
   });
 
-  it('names the assignee from the users directory, never by id', async () => {
-    mocks.userNames.mockResolvedValue(new Map([[ASSIGNEE, 'Mira Thapa']]));
+  it('names the assignee from the activity itself, never by id or directory', async () => {
     const html = await render();
     expect(html).toContain('Mira Thapa');
     expect(html).not.toContain('Another teammate');
@@ -226,7 +228,8 @@ describe('opportunity follow-ups (migrated open tasks on the deal)', () => {
     const html = await render();
     expect(mocks.listLeadOwners).not.toHaveBeenCalled();
     expect(html).toContain('Chase the signed scope');
-    expect(html).toContain('Another teammate');
+    expect(html).toContain('Mira Thapa');
+    expect(html).not.toContain('Another teammate');
   });
 
   it('says the follow-ups did not load instead of showing an empty card', async () => {
