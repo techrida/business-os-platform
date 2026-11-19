@@ -15,6 +15,7 @@
   "dependencies": {
     "@bos/contracts": "workspace:*",
     "@bos/locale": "workspace:*",
+    "@bos/pdf-viewer": "workspace:*",
     "@fontsource-variable/outfit": "catalog:",
     "@internationalized/date": "catalog:",
     "@radix-ui/react-dialog": "catalog:",
