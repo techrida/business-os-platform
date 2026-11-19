@@ -31,13 +31,13 @@ describe('generatePassword', () => {
 });
 
 describe('personas', () => {
-  it('has eleven personas: nine staff, one customer, one vendor', () => {
+  it('has twelve personas: ten staff, one customer, one vendor', () => {
     expect(PERSONAS.map((p) => p.orgKind).sort()).toEqual([
       'customer',
-      ...Array.from({ length: 9 }, () => 'staff'),
+      ...Array.from({ length: 10 }, () => 'staff'),
       'vendor',
     ]);
-    expect(new Set(PERSONAS.map((p) => personaUsername(p.key))).size).toBe(11);
+    expect(new Set(PERSONAS.map((p) => personaUsername(p.key))).size).toBe(12);
   });
 
   it('adds the P4 personas: procurement, warehouse, a department head and a second management user', () => {
