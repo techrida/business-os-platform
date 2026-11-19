@@ -1,8 +1,9 @@
 // Images as documents (U12, D33): an owner policy may narrow the upload types and size (logos and avatars: PNG,
 // JPEG, WebP up to 512 KiB), `openImage` serves a clean image to any signed-in staff of the tenant and entity (a
-// profile picture: of the tenant) with one 404 for every refusal and a storage-free "not modified" for a matching
-// If-None-Match, and `createAndReceiveScanned` (the legacy-logo migrator) never skips the virus scan.
-// Unit level with fakes; the SQL scoping of openImage against Postgres is not covered here.
+// profile picture, customer or vendor logo: of the tenant) with one 404 for every refusal and a storage-free "not
+// modified" for a matching If-None-Match, `removeInTransaction` removes such a tenant-wide image in the entity it
+// was uploaded in, and `createAndReceiveScanned` (the legacy-logo migrator) never skips the virus scan.
+// Unit level with fakes: the SQL filters are checked by their rendered parameters, not against Postgres.
 import 'reflect-metadata';
 
 import { randomUUID } from 'node:crypto';
@@ -19,6 +20,8 @@ import {
   UnsupportedMediaTypeException,
 } from '@nestjs/common';
 import type { Queue } from 'bullmq';
+import type { SQL } from 'drizzle-orm';
+import { PgDialect } from 'drizzle-orm/pg-core';
 import { afterAll, describe, expect, it, vi } from 'vitest';
 
 import type { Db, DbTransaction } from '../db/tx';
@@ -33,6 +36,9 @@ const USER = randomUUID();
 const OWNER_ID = randomUUID();
 const SYSTEM = 'system:legacy-logo';
 const scope = { tenantId: TENANT, organizationId: ORG };
+
+/** The bound parameters of a drizzle condition, as Postgres would receive them. */
+const paramsOf = (condition: SQL): unknown[] => new PgDialect().sqlToQuery(condition).params;
 
 /** A 1x1 PNG: real bytes, so the real type check (file-type) recognises it. */
 const PNG = Buffer.from(
@@ -288,19 +294,63 @@ describe('DocumentsService.openImage', () => {
     }
   });
 
-  it.each(['entity_logo', 'customer_logo', 'vendor_logo'])(
-    'keeps a %s to its entity: opens in the same one, 404 from another of the same tenant',
+  it.each(['customer_logo', 'vendor_logo'])(
+    'opens a %s uploaded in another entity of the same tenant: customers and vendors belong to the tenant',
     async (ownerType) => {
-      const same = imageSetup([{ ...good, ownerType }]);
-      await expect(same.svc.openImage(scope, DOC_ID)).resolves.toMatchObject({
-        notModified: false,
-      });
+      const { svc, storage } = imageSetup([{ ...good, ownerType, organizationId: randomUUID() }]);
 
-      const other = imageSetup([{ ...good, ownerType, organizationId: randomUUID() }]);
-      await expect(other.svc.openImage(scope, DOC_ID)).rejects.toBeInstanceOf(NotFoundException);
-      expect(other.storage.openClean).not.toHaveBeenCalled();
+      await expect(svc.openImage(scope, DOC_ID)).resolves.toMatchObject({
+        notModified: false,
+        etag: VERSION_ID,
+      });
+      expect(storage.openClean).toHaveBeenCalledTimes(1);
     },
   );
+
+  it.each(['customer_logo', 'vendor_logo'])(
+    'is still a 404 for a %s of another tenant, whatever its entity',
+    async (ownerType) => {
+      for (const organizationId of [ORG, randomUUID()]) {
+        const { svc, storage } = imageSetup([
+          { ...good, ownerType, tenantId: randomUUID(), organizationId },
+        ]);
+        await expect(svc.openImage(scope, DOC_ID)).rejects.toBeInstanceOf(NotFoundException);
+        expect(storage.openClean).not.toHaveBeenCalled();
+      }
+    },
+  );
+
+  it('keeps an entity_logo to its entity: opens in the same one, 404 from another of the same tenant', async () => {
+    const same = imageSetup([{ ...good, ownerType: 'entity_logo' }]);
+    await expect(same.svc.openImage(scope, DOC_ID)).resolves.toMatchObject({
+      notModified: false,
+    });
+
+    const other = imageSetup([{ ...good, ownerType: 'entity_logo', organizationId: randomUUID() }]);
+    await expect(other.svc.openImage(scope, DOC_ID)).rejects.toBeInstanceOf(NotFoundException);
+    expect(other.storage.openClean).not.toHaveBeenCalled();
+  });
+
+  it('asks the database for the tenant always, and for the entity unless the image is tenant-wide', async () => {
+    const { svc, db } = imageSetup([good]);
+    const where = vi.fn((_condition: SQL) => chain);
+    const chain = {
+      from: () => chain,
+      innerJoin: () => chain,
+      where,
+      orderBy: () => chain,
+      limit: () => Promise.resolve([good]),
+    };
+    db.select.mockReturnValue(chain);
+
+    await svc.openImage(scope, DOC_ID);
+
+    const params = paramsOf(where.mock.calls[0]![0]);
+    expect(params).toEqual(
+      expect.arrayContaining([TENANT, ORG, DOC_ID, 'user_avatar', 'customer_logo', 'vendor_logo']),
+    );
+    expect(params).not.toContain('entity_logo');
+  });
 
   it.each([
     ['quoted', `"${VERSION_ID}"`],
@@ -396,6 +446,99 @@ describe('DocumentsService.openImage', () => {
     const { svc, db } = imageSetup([good]);
     await expect(svc.openImage(scope, "1' OR 1=1")).rejects.toBeInstanceOf(NotFoundException);
     expect(db.select).not.toHaveBeenCalled();
+  });
+});
+
+describe('DocumentsService.removeInTransaction of an image', () => {
+  const OTHER_ORG = randomUUID();
+
+  /**
+   * A transaction holding one live document: the lookups (plain and locked) return it, the versions read returns
+   * one quarantined version, and every condition of a read and of the soft-remove update is captured.
+   */
+  function removal(doc: { ownerType: string; organizationId: string }) {
+    const id = randomUUID();
+    const row = { id, ownerId: OWNER_ID, ...doc };
+    const version = { id: randomUUID(), documentId: id, version: 1, status: 'quarantined' };
+    const reads: SQL[] = [];
+    const updates: SQL[] = [];
+    const chain = {
+      from: () => chain,
+      where: (condition: SQL) => {
+        reads.push(condition);
+        return chain;
+      },
+      limit: () => chain,
+      orderBy: () => Promise.resolve([version]),
+      for: () => Promise.resolve([row]),
+      then: (resolve: (rows: unknown[]) => unknown) => Promise.resolve([row]).then(resolve),
+    };
+    const tx = {
+      select: vi.fn(() => chain),
+      update: vi.fn(() => ({
+        set: () => ({
+          where: (condition: SQL) => {
+            updates.push(condition);
+            return Promise.resolve();
+          },
+        }),
+      })),
+    } as unknown as DbTransaction;
+    const { svc, authz, audit } = service(imagePolicy({ ownerType: doc.ownerType }));
+    return { svc, authz, audit, tx, id, version, reads, updates };
+  }
+
+  it.each(['customer_logo', 'vendor_logo', 'user_avatar'])(
+    'removes a %s uploaded in another entity of the tenant, writing under that entity',
+    async (ownerType) => {
+      const r = removal({ ownerType, organizationId: OTHER_ORG });
+
+      await expect(r.svc.removeInTransaction(r.tx, scope, r.id)).resolves.toEqual([r.version]);
+
+      // The owner policy still decides, with the caller's scope.
+      expect(r.authz.assert).toHaveBeenCalledTimes(1);
+      // The lookups: the tenant, and the caller's entity OR a tenant-wide image type.
+      for (const lookup of r.reads.slice(0, 2)) {
+        expect(paramsOf(lookup)).toEqual(
+          expect.arrayContaining([TENANT, r.id, ORG, 'user_avatar', 'customer_logo', 'vendor_logo']),
+        );
+        expect(paramsOf(lookup)).not.toContain('entity_logo');
+      }
+      // The versions read and the soft-remove: the tenant and the document's own entity, never the caller's.
+      for (const condition of [r.reads[2]!, ...r.updates]) {
+        expect(paramsOf(condition)).toEqual(expect.arrayContaining([TENANT, OTHER_ORG]));
+        expect(paramsOf(condition)).not.toContain(ORG);
+      }
+      expect(r.updates).toHaveLength(1);
+      expect(paramsOf(r.updates[0]!)).toContain(r.id);
+      expect(r.audit.record).toHaveBeenCalledTimes(1);
+    },
+  );
+
+  it('removes an entity_logo of the caller entity under that entity', async () => {
+    const r = removal({ ownerType: 'entity_logo', organizationId: ORG });
+
+    await r.svc.removeInTransaction(r.tx, scope, r.id);
+
+    for (const condition of [r.reads[2]!, ...r.updates]) {
+      expect(paramsOf(condition)).toEqual(expect.arrayContaining([TENANT, ORG]));
+    }
+  });
+
+  it('keeps a new version strictly to the caller entity: no tenant-wide lookup there', async () => {
+    const r = removal({ ownerType: 'customer_logo', organizationId: ORG });
+    Object.assign(r.tx, fakeTx().tx, { select: r.tx.select });
+
+    await r.svc
+      .createVersion(r.tx, r.id, {
+        filename: 'logo.pdf',
+        declaredMime: 'application/pdf',
+        sizeBytes: 10,
+      })
+      .catch(() => undefined);
+
+    expect(paramsOf(r.reads[0]!)).toEqual(expect.arrayContaining([TENANT, ORG, r.id]));
+    expect(paramsOf(r.reads[0]!)).not.toContain('customer_logo');
   });
 });
 
