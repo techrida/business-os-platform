@@ -12,6 +12,9 @@ import { activities, leads } from '@bos/db';
 import { and, eq, inArray, isNotNull, isNull, min, sql, type SQL } from 'drizzle-orm';
 import { z } from 'zod';
 
+import type { Db, DbTransaction } from '../../platform/db/db.module';
+import { nameIn, personNameMap } from '../../platform/users/person-names';
+
 export type SubjectKey = (typeof ACTIVITY_SUBJECT_KEYS)[number];
 
 /**
@@ -87,7 +90,11 @@ export const isPlannedRow = (
   row.completedAt === null &&
   row.cancelledAt === null;
 
-export function toActivityDto(row: ActivityRow): ActivityDto {
+/**
+ * `names` holds the display names (D46) of the row's assignee and author, looked up by the caller in the row's
+ * tenant (`activityNames`); a person it does not hold reads "Unnamed user", a row without one reads null.
+ */
+export function toActivityDto(row: ActivityRow, names: ReadonlyMap<string, string>): ActivityDto {
   return {
     id: row.id,
     kind: row.kind,
@@ -100,11 +107,26 @@ export function toActivityDto(row: ActivityRow): ActivityDto {
     quotationId: row.quotationId,
     dueAt: row.dueAt === null ? null : row.dueAt.toISOString(),
     assigneeUserId: row.assigneeUserId,
+    assigneeName: nameIn(names, row.assigneeUserId),
     completedAt: row.completedAt === null ? null : row.completedAt.toISOString(),
     cancelledAt: row.cancelledAt === null ? null : row.cancelledAt.toISOString(),
     planned: isPlannedRow(row),
     createdByUserId: row.createdByUserId,
+    createdByName: nameIn(names, row.createdByUserId),
     occurredAt: row.occurredAt.toISOString(),
     version: row.version,
   };
+}
+
+/** The display names of the people on these rows (assignee and author), one query in the rows' tenant (D46). */
+export async function activityNames(
+  q: Db | DbTransaction,
+  tenantId: string,
+  rows: readonly Pick<ActivityRow, 'assigneeUserId' | 'createdByUserId'>[],
+): Promise<ReadonlyMap<string, string>> {
+  return personNameMap(
+    q,
+    tenantId,
+    rows.flatMap((r) => [r.assigneeUserId, r.createdByUserId]),
+  );
 }

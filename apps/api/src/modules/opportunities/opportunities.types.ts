@@ -19,7 +19,8 @@ export type ListOpportunitiesQuery = z.infer<typeof ListOpportunitiesQuerySchema
 
 export type OpportunityRow = typeof opportunities.$inferSelect;
 
-export function toOpportunityDto(row: OpportunityRow): OpportunityDto {
+/** `ownerName` is the owner's display name (D46), looked up by the caller; null without an owner. */
+export function toOpportunityDto(row: OpportunityRow, ownerName: string | null): OpportunityDto {
   return {
     id: row.id,
     number: row.number,
@@ -28,6 +29,7 @@ export function toOpportunityDto(row: OpportunityRow): OpportunityDto {
     contactId: row.contactId,
     leadId: row.leadId,
     ownerUserId: row.ownerUserId,
+    ownerName,
     stage: row.stage,
     stageReason: row.stageReason,
     stageNote: row.stageNote,
