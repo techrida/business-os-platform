@@ -68,7 +68,7 @@ export function checkOrigin(name, value, { allowNonLocal = false } = {}) {
 /**
  * Run labels are case-insensitive and lower-cased here: the app matches names case-insensitively,
  * so SCR1 and scr1 would otherwise find each other's records. No dashes: `-` separates the label
- * from the viewport width in the run key, so `x` and `x-1440` cannot produce overlapping keys.
+ * from the viewport width in the run key (see runKeyFor).
  */
 export function normaliseLabel(raw) {
   const label = String(raw ?? '')
@@ -84,10 +84,15 @@ export function normaliseLabel(raw) {
 export const escapeRe = (s) => String(s).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 
 /**
- * Matches this run's unique text (a name carrying the run key) anywhere in a row or name, but not
- * as the prefix of a longer run key: `SCR-ab-144` must not match `SCR-ab-1440`.
+ * `<label>-<width as 4 digits>`, e.g. `scr1-1440`, `scr1-0390`. The label holds no dash and the
+ * width always has four digits, so one run key is never the start of another, and a name carrying
+ * it can be found as plain text even where a table row runs the next cell straight on after it
+ * (`…SCR-scr1-1440Dev Sales`).
  */
-export const runMatch = (text) => new RegExp(`${escapeRe(text)}(?![\\w-])`);
+export const runKeyFor = (label, width) => `${label}-${String(width).padStart(4, '0')}`;
+
+/** This run's unique text (a name carrying the run key, a record number): literal and case-sensitive. */
+export const runMatch = (text) => new RegExp(escapeRe(text));
 
 const bool = (v, dflt) =>
   v === undefined || v === '' ? dflt : !/^(0|false|no|off)$/i.test(String(v));
@@ -124,7 +129,7 @@ export function loadConfig(args = {}) {
     label,
     // Unique values (names, PAN, references) derive from label + viewport width, so the three
     // viewport runs of one label do not collide with each other.
-    runKey: `${label}-${viewport.width}`,
+    runKey: runKeyFor(label, viewport.width),
     viewport,
     viewportText,
     outDir,

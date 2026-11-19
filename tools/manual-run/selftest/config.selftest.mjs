@@ -5,7 +5,14 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { after, beforeEach, describe, test } from 'node:test';
 
-import { checkOrigin, loadConfig, normaliseLabel, runMatch, uniqueValues } from '../lib/config.mjs';
+import {
+  checkOrigin,
+  loadConfig,
+  normaliseLabel,
+  runKeyFor,
+  runMatch,
+  uniqueValues,
+} from '../lib/config.mjs';
 
 describe('run labels', () => {
   test('are lower-cased, so SCR1 and scr1 are one label with one run key', () => {
@@ -25,21 +32,29 @@ describe('run labels', () => {
     assert.equal(normaliseLabel('a'.repeat(24)), 'a'.repeat(24));
   });
 
-  test('a run key never matches a longer run key that starts with it', () => {
-    const mine = runMatch('BOS Demo Himalayan Labs SCR-ab-144');
-    assert.ok(mine.test('BOS Demo Himalayan Labs SCR-ab-144'));
-    assert.ok(mine.test('BOS Demo Himalayan Labs SCR-ab-144\tVerified'));
-    assert.ok(mine.test('BOS Demo Himalayan Labs SCR-ab-144 (customer)'));
-    assert.ok(!mine.test('BOS Demo Himalayan Labs SCR-ab-1440'));
-    assert.ok(!mine.test('BOS Demo Himalayan Labs SCR-ab-144-820'));
-    // Labels are lower-cased, and the match is case-sensitive.
-    assert.ok(!mine.test('BOS Demo Himalayan Labs SCR-AB-144'));
+  test('run keys have a fixed form, so one is never the start of another', () => {
+    assert.equal(runKeyFor('scr1', 1440), 'scr1-1440');
+    assert.equal(runKeyFor('scr1', 390), 'scr1-0390');
+    const keys = [];
+    for (const label of ['x', 'x1', 'ax', 'x14', 'scr1'])
+      for (const width of [144, 390, 820, 1440]) keys.push(`SCR-${runKeyFor(label, width)}`);
+    for (const a of keys)
+      for (const b of keys) if (a !== b) assert.ok(!b.includes(a), `${a} is inside ${b}`);
+  });
+
+  test('a name is found in a row whose next cell follows it directly, and is case-sensitive', () => {
+    const mine = runMatch(`BOS Demo Himalayan Labs SCR-${runKeyFor('ab', 1440)}`);
+    assert.ok(mine.test('BOS Demo Himalayan Labs SCR-ab-1440'));
+    assert.ok(mine.test('RCPT-1BOS Demo Himalayan Labs SCR-ab-1440Verified'));
+    assert.ok(mine.test('BOS Demo Himalayan Labs SCR-ab-1440Dev Sales'));
+    assert.ok(!mine.test(`BOS Demo Himalayan Labs SCR-${runKeyFor('ab', 144)}`));
+    assert.ok(!mine.test('BOS Demo Himalayan Labs SCR-AB-1440'));
   });
 
   test('a label is not matched inside a longer label', () => {
-    const x = runMatch(`Labs SCR-${normaliseLabel('x')}-1440`);
-    assert.ok(!x.test(`Labs SCR-${normaliseLabel('ax')}-1440`));
-    assert.ok(!x.test(`Labs SCR-${normaliseLabel('x1')}-1440`));
+    const x = runMatch(`Labs SCR-${runKeyFor(normaliseLabel('x'), 1440)}`);
+    assert.ok(!x.test(`Labs SCR-${runKeyFor(normaliseLabel('ax'), 1440)}`));
+    assert.ok(!x.test(`Labs SCR-${runKeyFor(normaliseLabel('x1'), 1440)}`));
   });
 
   test('regular-expression characters in the text are literal', () => {
