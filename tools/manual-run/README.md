@@ -62,6 +62,14 @@ node tools/manual-run/probe.mjs --persona "Dev Sales" --url /leads/new --text --
 
 It lists every visible control with the role and accessible name that `getByRole` and `getByLabel` will match.
 
+## Self-tests
+
+```sh
+node --test 'tools/manual-run/selftest/*.selftest.mjs'   # no browser, no stack
+```
+
+They cover label normalisation and anchored matching, the origin guard, URL redaction, `--from`/`--only` planning, no-overwrite naming and results history, per-workflow state, shell-safe launcher paths, the step time limit and the payment reuse decision. Quote the glob: Node expands it itself, and `node --test <folder>` does not work on Node 24. The `.selftest.mjs` suffix keeps them out of every vitest `include` glob.
+
 ## Environment
 
 | Variable                                                 | Default                                  | Meaning                                                                                                         |
