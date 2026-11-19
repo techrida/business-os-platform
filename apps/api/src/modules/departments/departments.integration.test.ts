@@ -709,7 +709,7 @@ describe('Department people mutations, head switching, stale_access 409, and aud
     expect(addRes.status, JSON.stringify(addRes.body)).toBe(200);
     const afterAdd = UpdateDepartmentPeopleResponseSchema.parse(addRes.body);
     expect(committedVisibleDuringInvalidate).toBe(true);
-    expect(afterAdd.revision).toBe(deptAFresh.revision + 1);
+    expect(afterAdd.revision).toBe(String(Number(deptAFresh.revision) + 1));
     expect(afterAdd.members.find((m) => m.userId === dipakId)).toMatchObject({
       jobTitle: 'Senior Engineer',
       level: 'staff',
@@ -866,7 +866,7 @@ describe('Tenant and legal entity isolation', () => {
           .post(`/v1/admin/departments/${dept1A.id}/people`)
           .send({
             changes: [{ kind: 'head', departmentId: dept1A.id, userId: null }],
-            expectedRevision: 0,
+            expectedRevision: '0',
           })
       ).status,
     ).toBe(404);
