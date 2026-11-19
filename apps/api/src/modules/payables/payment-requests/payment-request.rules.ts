@@ -3,7 +3,14 @@
 // Serves the NFRs "amounts are exact" (decimal.js strings, ROUND_HALF_UP; NPR per line at its bill's rate) and "money
 // moves only after the right people agree" (a request routes Finance, plus the AD4 bands unless every bill was
 // matched against its PO; the requester, the bills' enterers and the bills' approvers never approve it).
-import { canTransitionPaymentRequest, type PaymentRequestStatus } from '@bos/contracts';
+import {
+  PaymentRequestStatusSchema,
+  canTransitionPaymentRequest,
+  limitOffset,
+  multi,
+  searchParam,
+  type PaymentRequestStatus,
+} from '@bos/contracts';
 import { parseDecimal, roundMoney } from '@bos/money-rules';
 import Decimal from 'decimal.js';
 import { z } from 'zod';
@@ -200,3 +207,11 @@ export const CancelPaymentRequestBodySchema = z.strictObject({
   reason: z.string().trim().min(1).max(500),
 });
 export type CancelPaymentRequestBody = z.infer<typeof CancelPaymentRequestBodySchema>;
+
+/** Query of GET /v1/payables/payment-requests: statuses (repeatable), a search over number and vendor, a page. */
+export const ListPaymentRequestsQuerySchema = z.strictObject({
+  status: multi(PaymentRequestStatusSchema),
+  q: searchParam,
+  ...limitOffset({ max: 100, fallback: 25 }),
+});
+export type ListPaymentRequestsQuery = z.infer<typeof ListPaymentRequestsQuerySchema>;

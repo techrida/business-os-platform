@@ -52,6 +52,7 @@ import { withIdempotency } from '../../../platform/db/idempotency';
 import { withTx, type TxScope } from '../../../platform/db/tx';
 import { CurrencyEnabledService } from '../../../platform/settings/currency-enabled';
 import { SettingsService } from '../../../platform/settings/settings.service';
+import { searchPage } from '../../../platform/list';
 import { ApprovalsService } from '../../approvals/requests.service';
 import { LedgerError, LedgerService } from '../../ledger/ledger.service';
 import { VENDOR_BILL_DOCUMENT_TYPE } from '../bills/vendor-bill.rules';
@@ -70,6 +71,7 @@ import {
   separatedUsers,
   totalOf,
   type CancelPaymentRequestBody,
+  type ListPaymentRequestsQuery,
 } from './payment-request.rules';
 import { PaymentRequestsCaller } from './payment-requests.caller';
 
@@ -269,23 +271,57 @@ export class PaymentRequestsService {
     });
   }
 
-  async list(status?: PaymentRequestStatus): Promise<Omit<PaymentRequestDto, 'lines'>[]> {
+  /**
+   * One page of the entity's payment requests, newest first, optionally of some statuses and a search over the
+   * request number and the vendor name, with the total of all matches. The id closes the order so requests created
+   * in the same instant never swap between pages.
+   */
+  async list(
+    query: ListPaymentRequestsQuery,
+  ): Promise<{ rows: Omit<PaymentRequestDto, 'lines'>[]; total: number }> {
     const { scope, actor } = this.caller.current();
     return withTx(this.db, scope, actor, async (tx) => {
-      const rows = await tx
-        .select()
-        .from(paymentRequests)
-        .where(
-          scoped(scope).where(
-            paymentRequests,
-            status === undefined ? undefined : eq(paymentRequests.status, status),
-          ),
-        )
-        .orderBy(desc(paymentRequests.createdAt));
-      return rows.map((row) => {
-        const { lines: _lines, ...rest } = toDto(row, []);
-        return rest;
+      const vendorJoin = and(
+        eq(vendors.tenantId, paymentRequests.tenantId),
+        eq(vendors.id, paymentRequests.vendorId),
+      );
+      const page = await searchPage(tx, {
+        q: query.q,
+        columns: [paymentRequests.number, vendors.legalName],
+        where: scoped(scope).where(
+          paymentRequests,
+          query.status === undefined || query.status.length === 0
+            ? undefined
+            : inArray(paymentRequests.status, query.status),
+        ),
+        orderBy: [desc(paymentRequests.createdAt), desc(paymentRequests.id)],
+        limit: query.limit,
+        offset: query.offset,
+        rows: (reader, p) =>
+          reader
+            .select({ request: paymentRequests })
+            .from(paymentRequests)
+            .innerJoin(vendors, vendorJoin)
+            .where(p.where)
+            .orderBy(...p.orderBy)
+            .limit(p.limit)
+            .offset(p.offset),
+        count: async (reader, where) => {
+          const [row] = await reader
+            .select({ n: sql<number>`count(*)::int` })
+            .from(paymentRequests)
+            .innerJoin(vendors, vendorJoin)
+            .where(where);
+          return row?.n ?? 0;
+        },
       });
+      return {
+        rows: page.rows.map(({ request }) => {
+          const { lines: _lines, ...rest } = toDto(request, []);
+          return rest;
+        }),
+        total: page.total,
+      };
     });
   }
 

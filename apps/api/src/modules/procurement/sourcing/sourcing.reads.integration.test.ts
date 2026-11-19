@@ -363,7 +363,7 @@ describe('listRfqs', () => {
   it('lists the entity RFQs newest first with request number, status, deadline and both counts', async () => {
     const first = await rfqWithQuotes(['1000.00', '1100.00']);
     const second = await openRfq(3);
-    const rows = await service.listRfqs({ limit: 200 });
+    const { rows } = await service.listRfqs({ limit: 200, offset: 0 });
     const ids = rows.map((r) => r.id);
     expect(ids.indexOf(second.rfq.id)).toBeLessThan(ids.indexOf(first.rfqId));
 
@@ -396,18 +396,42 @@ describe('listRfqs', () => {
   it('filters by status and honours the limit', async () => {
     const { rfq } = await openRfq(1);
     await exec(scopeA, sql`UPDATE app.rfqs SET status = 'closed' WHERE id = ${rfq.id}`);
-    const closed = await service.listRfqs({ status: 'closed', limit: 200 });
+    const closed = (await service.listRfqs({ status: ['closed'], limit: 200, offset: 0 })).rows;
     expect(closed.map((r) => r.id)).toContain(rfq.id);
     expect(closed.every((r) => r.status === 'closed')).toBe(true);
-    const cancelled = await service.listRfqs({ status: 'cancelled', limit: 200 });
+    const cancelled = (await service.listRfqs({ status: ['cancelled'], limit: 200, offset: 0 }))
+      .rows;
     expect(cancelled.map((r) => r.id)).not.toContain(rfq.id);
-    expect(await service.listRfqs({ limit: 1 })).toHaveLength(1);
+    const one = await service.listRfqs({ limit: 1, offset: 0 });
+    expect(one.rows).toHaveLength(1);
+    expect(one.total).toBeGreaterThan(1);
+  });
+
+  it('takes several statuses, searches by RFQ or request number and pages by offset', async () => {
+    const closedRfq = (await openRfq(1)).rfq;
+    const openOne = (await openRfq(1)).rfq;
+    await exec(scopeA, sql`UPDATE app.rfqs SET status = 'closed' WHERE id = ${closedRfq.id}`);
+    const both = await service.listRfqs({ status: ['open', 'closed'], limit: 200, offset: 0 });
+    expect(both.rows.map((r) => r.id)).toEqual(expect.arrayContaining([closedRfq.id, openOne.id]));
+
+    const byNumber = await service.listRfqs({ q: openOne.number, limit: 50, offset: 0 });
+    expect(byNumber.rows.map((r) => r.id)).toContain(openOne.id);
+    expect(byNumber.total).toBe(byNumber.rows.length);
+
+    const all = await service.listRfqs({ limit: 200, offset: 0 });
+    const second = await service.listRfqs({ limit: 1, offset: 1 });
+    expect(second.total).toBe(all.total);
+    expect(second.rows[0]?.id).toBe(all.rows[1]?.id);
   });
 
   it('another entity sees none of them', async () => {
     await openRfq(1);
     current.scope = scopeB;
-    expect(await service.listRfqs({ limit: 200 })).toEqual([]);
+    expect(await service.listRfqs({ limit: 200, offset: 0 })).toEqual({ rows: [], total: 0 });
+    expect(await service.listRfqs({ q: 'RFQ', status: ['open'], limit: 200, offset: 0 })).toEqual({
+      rows: [],
+      total: 0,
+    });
   });
 });
 

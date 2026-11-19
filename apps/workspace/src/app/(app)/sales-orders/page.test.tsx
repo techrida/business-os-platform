@@ -22,7 +22,8 @@ vi.mock('@radix-ui/react-dialog', async (importOriginal) => {
 
 const mocks = vi.hoisted(() => ({
   requireStaffSession: vi.fn(),
-  listSalesOrders: vi.fn(),
+  listSalesOrdersPage: vi.fn(),
+  getSalesOrdersSummary: vi.fn(),
   listQuotations: vi.fn(),
   listCustomers: vi.fn(),
 }));
@@ -30,13 +31,16 @@ const mocks = vi.hoisted(() => ({
 vi.mock('@/lib/bff', () => ({ requireStaffSession: mocks.requireStaffSession }));
 vi.mock('@/lib/api-billing', async (importOriginal) => ({
   ...(await importOriginal<typeof import('@/lib/api-billing')>()),
-  listSalesOrders: mocks.listSalesOrders,
+  listSalesOrdersPage: mocks.listSalesOrdersPage,
+  getSalesOrdersSummary: mocks.getSalesOrdersSummary,
 }));
 vi.mock('@/components/p2/quotations/api', () => ({ listQuotations: mocks.listQuotations }));
 vi.mock('@/components/p2/customers/api', () => ({ listCustomers: mocks.listCustomers }));
 vi.mock('next/cache', () => ({ revalidatePath: vi.fn() }));
 vi.mock('next/navigation', () => ({
-  useRouter: () => ({ refresh: vi.fn() }),
+  useRouter: () => ({ refresh: vi.fn(), push: vi.fn(), replace: vi.fn() }),
+  usePathname: () => '/sales-orders',
+  useSearchParams: () => new URLSearchParams(),
   redirect: vi.fn(),
   notFound: vi.fn(),
 }));
@@ -50,16 +54,18 @@ const QUOTATION = {
   total: '5701358.50',
 };
 
-async function render(
-  search: { status?: string | string[]; customerId?: string | string[] } = {},
-): Promise<string> {
+const SUMMARY = { total: 9, byStatus: { draft: 2, confirmed: 4, completed: 3, cancelled: 0 } };
+const page = (items = [listItem()], total = items.length) => ({ items, total });
+
+async function render(search: Record<string, string | string[]> = {}): Promise<string> {
   return renderToStaticMarkup(await SalesOrdersPage({ searchParams: Promise.resolve(search) }));
 }
 
 beforeEach(() => {
   vi.clearAllMocks();
   mocks.requireStaffSession.mockResolvedValue({ accessToken: 't', roles: ['accountant'] });
-  mocks.listSalesOrders.mockResolvedValue([listItem()]);
+  mocks.listSalesOrdersPage.mockResolvedValue(page());
+  mocks.getSalesOrdersSummary.mockResolvedValue(SUMMARY);
   mocks.listQuotations.mockResolvedValue([QUOTATION]);
   mocks.listCustomers.mockResolvedValue({
     items: [{ id: IDS.customer, legalName: 'Himal Traders Pvt. Ltd.' }],
@@ -79,51 +85,112 @@ describe('sales orders list', () => {
   });
 
   it('names an order that has no number yet instead of leaving a blank link', async () => {
-    mocks.listSalesOrders.mockResolvedValue([
-      listItem({ number: null, status: 'draft', confirmedAt: null }),
-    ]);
+    mocks.listSalesOrdersPage.mockResolvedValue(
+      page([listItem({ number: null, status: 'draft', confirmedAt: null })]),
+    );
     const html = await render();
     expect(html).toContain('Draft order');
     expect(html).toContain('Not confirmed yet');
   });
 
-  it('filters by a contract status and a customer, and ignores anything else in the URL', async () => {
-    await render({ status: 'confirmed', customerId: IDS.customer });
-    expect(mocks.listSalesOrders.mock.calls[0]?.[1]).toEqual({
-      status: 'confirmed',
-      customerId: IDS.customer,
+  it('sends repeated statuses and customers, the search and the page window to the API', async () => {
+    await render({
+      status: ['confirmed', 'draft', 'bogus'],
+      customerId: [IDS.customer, 'nope'],
+      q: ' himal ',
+      page: '2',
+      rows: '10',
     });
-    await render({ status: 'toString', customerId: 'nope' });
-    expect(mocks.listSalesOrders.mock.calls[1]?.[1]).toEqual({});
+    expect(mocks.listSalesOrdersPage.mock.calls[0]?.[1]).toEqual({
+      status: ['confirmed', 'draft'],
+      customerId: [IDS.customer],
+      q: 'himal',
+      limit: 10,
+      offset: 10,
+    });
+    mocks.listSalesOrdersPage.mockClear();
+    await render({ status: 'toString', customerId: 'nope', q: 'h' });
+    expect(mocks.listSalesOrdersPage.mock.calls[0]?.[1]).toEqual({
+      status: [],
+      customerId: [],
+      limit: 25,
+      offset: 0,
+    });
   });
 
-  it('keeps the filter in the form, as a GET form with labelled controls', async () => {
+  it('counts the cards on the server and never passes the status to the summary', async () => {
+    const html = await render({ status: 'draft', customerId: IDS.customer, q: 'himal' });
+    expect(mocks.getSalesOrdersSummary.mock.calls[0]?.[1]).toEqual({
+      customerId: [IDS.customer],
+      q: 'himal',
+    });
+    expect(html).toContain('Matching orders');
+    expect(html).toMatch(/Confirmed[\s\S]*?>4</);
+    expect(html).toMatch(/Completed[\s\S]*?>3</);
+  });
+
+  it('keeps the list when the summary fails, without the status cards', async () => {
+    mocks.getSalesOrdersSummary.mockRejectedValue(new ApiError(500, 'x'));
+    const html = await render();
+    expect(html).toContain('SO-2083/84-00001');
+    expect(html).toContain('Total orders');
+    const cards = /<section aria-label="Sales order summary"[\s\S]*?<\/section>/.exec(html)?.[0];
+    expect(cards).toBeDefined();
+    expect(cards).not.toContain('Confirmed');
+  });
+
+  it('shows the count of all matches and a pager over the server total', async () => {
+    mocks.listSalesOrdersPage.mockResolvedValue(page([listItem()], 31));
+    const html = await render({ page: '2', rows: '10', status: 'confirmed' });
+    expect(html).toContain('Showing 1 of 31 sales orders');
+    expect(html).toContain('Page 2 of 4');
+    expect(html).toContain('href="/sales-orders?rows=10&amp;status=confirmed"');
+    expect(html).toContain('href="/sales-orders?page=3&amp;rows=10&amp;status=confirmed"');
+  });
+
+  it('lands a page past the end on the last page', async () => {
+    mocks.listSalesOrdersPage
+      .mockResolvedValueOnce(page([], 31))
+      .mockResolvedValueOnce(page([listItem()], 31));
+    const html = await render({ page: '9', rows: '10' });
+    expect(mocks.listSalesOrdersPage.mock.calls[1]?.[1]).toMatchObject({ limit: 10, offset: 30 });
+    expect(html).toContain('Page 4 of 4');
+  });
+
+  it('is a GET form with instant filters and no Apply button', async () => {
     const html = await render({ status: 'completed', customerId: IDS.customer });
     expect(html).toContain('method="get"');
-    expect(html).toContain('action="/sales-orders"');
-    expect(html).toContain('<label');
-    expect(html).toMatch(/<option value="completed" selected/);
-    expect(html).toMatch(new RegExp(`<option value="${IDS.customer}" selected`));
-    expect(html).toContain('Show all sales orders');
+    expect(html).toContain('name="status" value="completed"');
+    expect(html).toContain(`name="customerId" value="${IDS.customer}"`);
+    expect(html).not.toContain('Apply');
   });
 
   it('leaves the customer filter out when the customers cannot be read', async () => {
     mocks.listCustomers.mockRejectedValue(new ApiError(403, 'x', { error: { code: 'forbidden' } }));
     const html = await render();
-    expect(html).not.toContain('name="customerId"');
-    expect(html).toContain('name="status"');
+    expect(html).not.toContain('All customers');
+    expect(html).toContain('All statuses');
   });
 
-  it('says what an empty list means, with and without a filter', async () => {
-    mocks.listSalesOrders.mockResolvedValue([]);
+  it('says what an empty list means, naming the filters and offering to clear them', async () => {
+    mocks.listSalesOrdersPage.mockResolvedValue(page([], 0));
     expect(await render()).toContain('No sales orders yet.');
-    const filtered = await render({ status: 'cancelled' });
-    expect(filtered).toContain('No sales orders are cancelled.');
-    expect(filtered).toContain('Show all sales orders');
+    const filtered = await render({
+      status: ['cancelled', 'draft'],
+      customerId: IDS.customer,
+      q: 'zzz',
+      rows: '10',
+    });
+    expect(filtered).toContain('No matching sales orders.');
+    expect(filtered).toContain('Status: Cancelled, Draft');
+    expect(filtered).toContain('Customer: Himal Traders Pvt. Ltd.');
+    expect(filtered).toContain('Search');
+    expect(filtered).toContain('Clear filters');
+    expect(filtered).toContain('href="/sales-orders?rows=10"');
   });
 
   it('shows the no-access pattern on 403, without a retry link', async () => {
-    mocks.listSalesOrders.mockRejectedValue(
+    mocks.listSalesOrdersPage.mockRejectedValue(
       new ApiError(403, 'x', { error: { code: 'forbidden', message: 'm', correlationId: 'c' } }),
     );
     const html = await render();
@@ -132,7 +199,7 @@ describe('sales orders list', () => {
   });
 
   it('shows a reloadable error when the list fails', async () => {
-    mocks.listSalesOrders.mockRejectedValue(new ApiError(500, 'x'));
+    mocks.listSalesOrdersPage.mockRejectedValue(new ApiError(500, 'x'));
     const html = await render({ status: 'confirmed' });
     expect(html).toContain('The sales orders did not load');
     expect(html).toContain('href="/sales-orders?status=confirmed"');

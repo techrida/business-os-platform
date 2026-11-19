@@ -1,0 +1,22 @@
+.footer,
+.rows {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+
+.footer {
+  padding-block: 4px;
+  border-top: var(--border-width-thin) solid var(--border-default);
+}
+
+.footer > :first-child {
+  flex: 1 1 280px;
+}
+
+.rows {
+  margin-inline-start: auto;
+  color: var(--text-secondary);
+  font-size: var(--font-size-caption);
+}

@@ -18,6 +18,8 @@ import {
   type InvoiceKind,
   type InvoiceListItem,
   type InvoiceStatus,
+  INVOICE_STATUSES,
+  type SettlementStatus,
   canTransitionInvoice,
 } from '@bos/contracts';
 import {
@@ -32,12 +34,13 @@ import {
   scoped,
 } from '@bos/db';
 import { Inject, Injectable, NotFoundException, Optional } from '@nestjs/common';
-import { and, asc, desc, eq, ne, sql } from 'drizzle-orm';
+import { and, asc, count, desc, eq, gte, inArray, lte, ne, or, sql, type SQL } from 'drizzle-orm';
 
 import { AuditService } from '../../platform/audit/audit.service';
 import { AuthzService, scopeWhereFor } from '../../platform/authz/authz.service';
 import { DB, type Db, type DbTransaction } from '../../platform/db/db.module';
 import { updateVersioned, withIdempotency } from '../../platform/db/idempotency';
+import { NO_LIMIT, searchPage } from '../../platform/list';
 import { withTx, type Actor, type TxScope } from '../../platform/db/tx';
 import { CurrencyEnabledService } from '../../platform/settings/currency-enabled';
 import { LedgerService } from '../ledger/ledger.service';
@@ -64,11 +67,30 @@ const G4_INDEX = 'invoices_one_live_tax_invoice_per_schedule_line';
 export type ManualInvoiceInput = CreateManualInvoiceBody;
 export type FromScheduleInput = { scheduleLineId: string; salesOrderId?: string | undefined };
 
+/** Every field narrows; an empty or missing list means no filter. `limit` unset returns every match. */
 export interface InvoiceListFilter {
-  kind?: InvoiceKind | undefined;
-  status?: InvoiceStatus | undefined;
-  customerId?: string | undefined;
+  kind?: readonly InvoiceKind[] | undefined;
+  status?: readonly InvoiceStatus[] | undefined;
+  /** Derived from the open item and its allocations (paid is never stored); see settlementWhere. */
+  settlement?: readonly SettlementStatus[] | undefined;
+  customerId?: readonly string[] | undefined;
+  issuedFrom?: string | undefined;
+  issuedTo?: string | undefined;
+  q?: string | undefined;
+  limit?: number | undefined;
+  offset?: number | undefined;
 }
+
+export interface InvoicesSummary {
+  total: number;
+  byStatus: Record<InvoiceStatus, number>;
+  /** Customers that have an invoice the caller may read, for the filter. Ignores every filter. */
+  customers: { id: string; name: string }[];
+}
+
+const SEARCH_COLUMNS = [invoices.number, customers.legalName] as const;
+const SETTLEMENT_KINDS = ['tax_invoice', 'debit_note'] as const;
+const CUSTOMER_OPTIONS_MAX = 500;
 
 interface TypedDraft {
   kind: 'tax_invoice' | 'proforma';
@@ -79,6 +101,41 @@ interface TypedDraft {
   salesOrderId?: string | undefined;
   discount?: Discount | undefined;
   lines: CreateManualInvoiceBody['lines'];
+}
+
+const customerJoin = () =>
+  and(eq(customers.tenantId, invoices.tenantId), eq(customers.id, invoices.customerPartyId));
+
+/**
+ * The derived settlement of an issued tax invoice or debit note as SQL, the same rules as `settlementOf` in
+ * money-rules (first match wins: credited, paid, overdue, partly paid, unpaid) over its open item. `today` is the
+ * Kathmandu day, and an invoice without a due date is due on its issue date, as in the statement.
+ */
+function settlementWhere(values: readonly SettlementStatus[], today: string): SQL {
+  const credited = sql`(SELECT COALESCE(sum(a."amount"), 0)
+      FROM "app"."open_item_allocations" a
+      JOIN "app"."open_items" c ON c."tenant_id" = a."tenant_id" AND c."id" = a."credit_item_id"
+     WHERE a."tenant_id" = b."tenant_id" AND a."organization_id" = b."organization_id"
+       AND a."debit_item_id" = b."open_item_id" AND c."source_type" = 'credit_note')`;
+  const fullyCredited = sql`(b."amount" > 0 AND ${credited} = b."amount")`;
+  const overdue = sql`(b."open_amount" > 0 AND ${today}::date > coalesce(${invoices.dueDate}, ${invoices.issueDate}))`;
+  const paidSome = sql`(b."amount" - ${credited} - b."open_amount" > 0)`;
+  const open = sql`(NOT ${fullyCredited} AND b."open_amount" > 0 AND NOT ${overdue})`;
+  const byState: Record<SettlementStatus, SQL> = {
+    credited: fullyCredited,
+    paid: sql`(NOT ${fullyCredited} AND b."open_amount" = 0)`,
+    overdue: sql`(NOT ${fullyCredited} AND ${overdue})`,
+    partly_paid: sql`(${open} AND ${paidSome})`,
+    unpaid: sql`(${open} AND NOT ${paidSome})`,
+  };
+  const any = or(...values.map((v) => byState[v])) as SQL;
+  return and(
+    eq(invoices.status, 'issued'),
+    inArray(invoices.kind, [...SETTLEMENT_KINDS]),
+    sql`EXISTS (SELECT 1 FROM "app"."open_item_balances" b
+      WHERE b."tenant_id" = ${invoices.tenantId} AND b."organization_id" = ${invoices.organizationId}
+        AND b."source_id" = ${invoices.id} AND b."source_type" = ${invoices.kind} AND ${any})`,
+  ) as SQL;
 }
 
 @Injectable()
@@ -95,35 +152,113 @@ export class InvoiceDraftingService {
 
   // -------------------------------------------------------------------------------------------------- reads
 
-  /** The invoices of the acting entity the caller may read, newest first. */
-  async list(filter: InvoiceListFilter = {}): Promise<InvoiceListItem[]> {
+  /**
+   * One page of the invoices of the acting entity the caller may read, newest first (id breaks ties), and the
+   * number of all matches. Filters only narrow `visible`, the entity and permission scope.
+   */
+  async list(filter: InvoiceListFilter = {}): Promise<{ rows: InvoiceListItem[]; total: number }> {
     const { scope, actor, principal } = this.caller.current();
     assertStaff(principal);
     const visible = scopeWhereFor(principal, invoices, 'invoice.read');
+    const today = kathmanduDay(this.clock());
     return withTx(this.db, scope, actor, async (tx) => {
-      const rows = await tx
-        .select({ invoice: invoices, customerName: customers.legalName })
-        .from(invoices)
-        .innerJoin(
-          customers,
-          and(
-            eq(customers.tenantId, invoices.tenantId),
-            eq(customers.id, invoices.customerPartyId),
-          ),
-        )
-        .where(
-          and(
-            visible,
-            filter.kind === undefined ? undefined : eq(invoices.kind, filter.kind),
-            filter.status === undefined ? undefined : eq(invoices.status, filter.status),
-            filter.customerId === undefined
-              ? undefined
-              : eq(invoices.customerPartyId, filter.customerId),
-          ),
-        )
-        .orderBy(desc(invoices.createdAt), desc(invoices.id));
-      return rows.map((r) => toInvoiceListItem(r.invoice, r.customerName));
+      const { rows, total } = await searchPage(tx, {
+        q: filter.q,
+        columns: SEARCH_COLUMNS,
+        where: and(visible, this.filterWhere(filter, today, true)),
+        orderBy: [desc(invoices.createdAt), desc(invoices.id)],
+        limit: filter.limit ?? NO_LIMIT,
+        offset: filter.offset ?? 0,
+        rows: (r, p) =>
+          r
+            .select({ invoice: invoices, customerName: customers.legalName })
+            .from(invoices)
+            .innerJoin(customers, customerJoin())
+            .where(p.where)
+            .orderBy(...p.orderBy)
+            .limit(p.limit)
+            .offset(p.offset),
+        count: async (r, where) => {
+          const [row] = await r
+            .select({ n: count() })
+            .from(invoices)
+            .innerJoin(customers, customerJoin())
+            .where(where);
+          return row?.n ?? 0;
+        },
+      });
+      return { rows: rows.map((r) => toInvoiceListItem(r.invoice, r.customerName)), total };
     });
+  }
+
+  /**
+   * Counts for the stat cards and the customer choices, in one call: `total` and `byStatus` follow every filter
+   * except `status` and `settlement` (so each card shows its own number), `customers` follows none. Same scope
+   * and search as `list`.
+   */
+  async summary(
+    filter: Omit<InvoiceListFilter, 'limit' | 'offset'> = {},
+  ): Promise<InvoicesSummary> {
+    const { scope, actor, principal } = this.caller.current();
+    assertStaff(principal);
+    const visible = scopeWhereFor(principal, invoices, 'invoice.read');
+    const today = kathmanduDay(this.clock());
+    return withTx(this.db, scope, actor, async (tx) => {
+      // searchPage settles exact vs close matches from the total; the per-status counts ride on its count
+      // callback so they describe the same match set. Its last call is the one it settled on.
+      let groups: { status: InvoiceStatus; n: number }[] = [];
+      const { total } = await searchPage(tx, {
+        q: filter.q,
+        columns: SEARCH_COLUMNS,
+        where: and(visible, this.filterWhere(filter, today, false)),
+        orderBy: [desc(invoices.id)],
+        limit: 1,
+        offset: 0,
+        rows: () => Promise.resolve([]),
+        count: async (r, where) => {
+          groups = await r
+            .select({ status: invoices.status, n: count() })
+            .from(invoices)
+            .innerJoin(customers, customerJoin())
+            .where(where)
+            .groupBy(invoices.status);
+          return groups.reduce((sum, g) => sum + g.n, 0);
+        },
+      });
+      const byStatus = Object.fromEntries(INVOICE_STATUSES.map((s) => [s, 0])) as Record<
+        InvoiceStatus,
+        number
+      >;
+      for (const g of groups) byStatus[g.status] = g.n;
+      const options = await tx
+        .selectDistinct({ id: customers.id, name: customers.legalName })
+        .from(invoices)
+        .innerJoin(customers, customerJoin())
+        .where(visible)
+        .orderBy(asc(customers.legalName), asc(customers.id))
+        .limit(CUSTOMER_OPTIONS_MAX);
+      return { total, byStatus, customers: options };
+    });
+  }
+
+  /** The filters as SQL. `withStatus` false leaves out the two status-like filters (the summary). */
+  private filterWhere(
+    filter: InvoiceListFilter,
+    today: string,
+    withStatus: boolean,
+  ): SQL | undefined {
+    const has = <T>(list: readonly T[] | undefined): list is readonly T[] =>
+      list !== undefined && list.length > 0;
+    return and(
+      has(filter.kind) ? inArray(invoices.kind, [...filter.kind]) : undefined,
+      withStatus && has(filter.status) ? inArray(invoices.status, [...filter.status]) : undefined,
+      withStatus && has(filter.settlement) ? settlementWhere(filter.settlement, today) : undefined,
+      has(filter.customerId)
+        ? inArray(invoices.customerPartyId, [...filter.customerId])
+        : undefined,
+      filter.issuedFrom === undefined ? undefined : gte(invoices.issueDate, filter.issuedFrom),
+      filter.issuedTo === undefined ? undefined : lte(invoices.issueDate, filter.issuedTo),
+    );
   }
 
   /** 200 with the detail; 404 for an invoice of another entity or outside the caller's read scope. */

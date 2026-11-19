@@ -1584,6 +1584,194 @@ describe('request eligibility before disclosure or locking', () => {
   });
 });
 
+describe('inbox filters: search and type narrow the list, never widen who may decide', () => {
+  const token = () => `INBX${randomUUID().slice(0, 8)}`;
+  const idsOf = (page: { items: { requestId: string }[] }) => page.items.map((i) => i.requestId);
+  let prDepartmentId = '';
+
+  /** Every title carries the test's own token, so a `q` filter makes the totals independent of other tests. */
+  const memo = (title: string, over: Partial<SubmitInput> = {}) =>
+    submit({ title, documentNumber: `${title}-N`, ...over });
+
+  /** Puts U.deputy at the head of a department with a purchase_request route (shared with the head test above). */
+  const ensurePurchaseRequest = async () => {
+    if (prDepartmentId !== '') return;
+    me = U.founder;
+    const { departmentId } = await createDepartment(ownerPool, scope);
+    await withTx(db, scope, systemActor('inbox-head-seed'), (tx) =>
+      tx.execute(
+        sql`UPDATE app.departments SET head_user_id = ${U.deputy} WHERE id = ${departmentId}`,
+      ),
+    );
+    // The earlier head test may already have created and published the workflow and the subject.
+    try {
+      await admin.createWorkflow({
+        key: 'purchase_request',
+        name: 'Head approval',
+        spec: {
+          documentType: 'purchase_request',
+          steps: [
+            {
+              id: 'head',
+              kind: 'department_head',
+              fallbackRole: 'operations_head',
+              reason: 'Head approves',
+            },
+          ],
+          rules: [],
+        },
+      });
+      await admin.publish('purchase_request', 1);
+    } catch {
+      /* already there */
+    }
+    try {
+      service.registerSubject({ documentType: 'purchase_request', onDecided });
+    } catch {
+      /* already registered */
+    }
+    prDepartmentId = departmentId;
+  };
+  const purchaseRequest = (title: string) =>
+    submit({
+      title,
+      documentNumber: `${title}-N`,
+      documentType: 'purchase_request',
+      facts: { departmentId: prDepartmentId },
+    });
+
+  it('still answers 403 when the filter only matches another approver’s request', async () => {
+    const t = token();
+    await memo(`${t} chairs`);
+    me = U.stranger;
+    grants = new Map();
+    await expect(service.inboxPage({ q: t })).rejects.toMatchObject({
+      status: 403,
+      response: { reason: 'out_of_scope' },
+    });
+    await expect(service.inboxPage({ q: t, documentType: ['test_memo'] })).rejects.toMatchObject({
+      status: 403,
+    });
+    // The unfiltered list gives the same answer: the filter neither causes nor hides the 403.
+    await expect(service.inboxPage({})).rejects.toMatchObject({ status: 403 });
+  });
+
+  it('gives an approver whose filter matches nothing an empty page, not a 403', async () => {
+    await ensurePurchaseRequest();
+    const t = token();
+    const pr = await purchaseRequest(`${t} head request`);
+    const nothing = `NOMATCH${randomUUID().slice(0, 8)}`;
+
+    // A department head without the generic approve grant: their only assignment is the PR above.
+    me = U.deputy;
+    grants = new Map();
+    expect(idsOf(await service.inboxPage({ q: t }))).toEqual([pr.requestId]);
+    await expect(service.inboxPage({ q: nothing })).resolves.toEqual({ items: [], total: 0 });
+    await expect(service.inboxPage({ documentType: ['test_memo'] })).resolves.toEqual({
+      items: [],
+      total: 0,
+    });
+
+    // A generic approver too.
+    me = U.acc;
+    grants = allGrants;
+    await expect(service.inboxPage({ q: nothing })).resolves.toEqual({ items: [], total: 0 });
+  });
+
+  it('counts what the caller may decide, not what the search matches', async () => {
+    const t = token();
+    const mine = [await memo(`${t} a`), await memo(`${t} b`), await memo(`${t} c`)].map(
+      (r) => r.requestId,
+    );
+    // U.acc prepared these two, so separation of duties keeps them out of U.acc's inbox although SQL matches.
+    await memo(`${t} own 1`, { requesterUserId: U.acc, sodUserIds: [U.acc] });
+    await memo(`${t} own 2`, { requesterUserId: U.acc, sodUserIds: [U.acc] });
+
+    me = U.both;
+    const everything = await service.inboxPage({ q: t });
+    expect(everything.total).toBe(5);
+
+    me = U.acc;
+    const page = await service.inboxPage({ q: t });
+    expect(page.total).toBe(3);
+    expect(idsOf(page).sort()).toEqual([...mine].sort());
+    // A one-row page still reports the eligible total, not 1 and not the 5 SQL rows.
+    const first = await service.inboxPage({ q: t, limit: 1 });
+    expect(first.items).toHaveLength(1);
+    expect(first.total).toBe(3);
+  });
+
+  it('slices after the eligibility check and pages never overlap', async () => {
+    const t = token();
+    const eligible: string[] = [];
+    for (let i = 0; i < 5; i++) {
+      eligible.push((await memo(`${t} ok ${i}`)).requestId);
+      // Interleave rows U.acc may not decide, so a slice taken in SQL would come up short.
+      await memo(`${t} own ${i}`, { requesterUserId: U.acc, sodUserIds: [U.acc] });
+    }
+    me = U.acc;
+    const all = await service.inboxPage({ q: t });
+    expect(all.total).toBe(5);
+    expect(idsOf(all).sort()).toEqual([...eligible].sort());
+    const order = idsOf(all);
+
+    const pages = [
+      await service.inboxPage({ q: t, limit: 2, offset: 0 }),
+      await service.inboxPage({ q: t, limit: 2, offset: 2 }),
+      await service.inboxPage({ q: t, limit: 2, offset: 4 }),
+    ];
+    expect(pages.map((p) => p.items.length)).toEqual([2, 2, 1]);
+    expect(pages.map((p) => p.total)).toEqual([5, 5, 5]);
+    expect(pages.flatMap(idsOf)).toEqual(order);
+    expect(new Set(pages.flatMap(idsOf)).size).toBe(5);
+    await expect(service.inboxPage({ q: t, limit: 2, offset: 10 })).resolves.toMatchObject({
+      items: [],
+      total: 5,
+    });
+    // The no-argument call keeps returning the whole list as an array (dashboard count, inbox/[id]).
+    expect(await service.inbox()).toEqual(expect.arrayContaining(all.items));
+  });
+
+  it('narrows by document type without widening who may decide', async () => {
+    await ensurePurchaseRequest();
+    const t = token();
+    const pr = await purchaseRequest(`${t} pr`);
+    const memoRequest = await memo(`${t} memo`);
+
+    // The head has no approval role: the memo matches both filters but is not theirs.
+    me = U.deputy;
+    grants = new Map();
+    expect(idsOf(await service.inboxPage({ q: t }))).toEqual([pr.requestId]);
+    expect(idsOf(await service.inboxPage({ q: t, documentType: ['purchase_request'] }))).toEqual([
+      pr.requestId,
+    ]);
+    expect(
+      idsOf(await service.inboxPage({ q: t, documentType: ['purchase_request', 'test_memo'] })),
+    ).toEqual([pr.requestId]);
+    await expect(service.inboxPage({ q: t, documentType: ['test_memo'] })).resolves.toEqual({
+      items: [],
+      total: 0,
+    });
+
+    // An accountant: the type filter keeps the memo, drops everything of another type, and an unknown
+    // well-formed type is an empty list rather than an error.
+    me = U.acc;
+    grants = allGrants;
+    expect(idsOf(await service.inboxPage({ q: t, documentType: ['test_memo'] }))).toEqual([
+      memoRequest.requestId,
+    ]);
+    await expect(service.inboxPage({ q: t, documentType: ['no_such_type'] })).resolves.toEqual({
+      items: [],
+      total: 0,
+    });
+  });
+
+  // Not covered: another tenant's request. Nothing in this file builds a workflow in a second tenant, and the
+  // only other scope (scopeB) is an entity of the same tenant with no published route. The tenant and entity
+  // predicates in eligibleInbox are asserted by the SQL where-clause, not by a fixture here.
+  it.skip('never lists another tenant’s request (needs a second-tenant workflow fixture)', () => {});
+});
+
 describe('approvals.sla_defaults setting (a spec that leaves sla out)', () => {
   // Own document types, so the test_memo versions other tests publish do not change these routes.
   let settings: SettingsService;

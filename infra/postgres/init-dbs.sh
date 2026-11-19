@@ -50,6 +50,8 @@ GRANT CONNECT ON DATABASE bos TO bos_app;
 -- The migration (packages/db) should narrow this where needed, e.g. REVOKE UPDATE, DELETE on ops tables.
 \connect bos
 REVOKE ALL ON SCHEMA public FROM PUBLIC;
+-- pg_trgm (migration 0041) lives in public; the app role calls its functions and operators for list search.
+GRANT USAGE ON SCHEMA public TO bos_app;
 ALTER DEFAULT PRIVILEGES FOR ROLE bos_owner GRANT USAGE ON SCHEMAS TO bos_app;
 ALTER DEFAULT PRIVILEGES FOR ROLE bos_owner GRANT SELECT, INSERT, UPDATE, DELETE ON TABLES TO bos_app;
 ALTER DEFAULT PRIVILEGES FOR ROLE bos_owner GRANT USAGE, SELECT ON SEQUENCES TO bos_app;

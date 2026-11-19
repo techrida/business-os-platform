@@ -390,6 +390,51 @@ describe('create', () => {
   });
 });
 
+describe('list', () => {
+  const mint = async (legalName: string, overrides: Record<string, unknown> = {}) => {
+    const res = await createVendor({ legalName, ...overrides });
+    expect(res.status, JSON.stringify(res.body)).toBe(201);
+    return VendorDtoSchema.parse(res.body);
+  };
+  type Page = { items: { id: string }[]; total: number };
+
+  it('filters by repeated status and kind, pages with the total of the filtered rows', async () => {
+    const tag = `Lst${randomUUID().slice(0, 6)}`;
+    const company = await mint(`${tag} Alpha Pvt Ltd`);
+    const sole = await mint(`${tag} Beta`, { kind: 'sole_proprietor' });
+    await mint(`${tag} Gamma`, { kind: 'individual' });
+
+    const kinds = await api()
+      .get('/v1/vendors')
+      .query({ q: tag, kind: ['company', 'sole_proprietor'], status: ['draft', 'approved'] });
+    expect(kinds.status, JSON.stringify(kinds.body)).toBe(200);
+    expect((kinds.body as Page).items.map((v) => v.id).sort()).toEqual(
+      [company.id, sole.id].sort(),
+    );
+    expect((kinds.body as Page).total).toBe(2);
+
+    const paged = await api().get('/v1/vendors').query({ q: tag, limit: 1, offset: 1 });
+    expect((paged.body as Page).items).toHaveLength(1);
+    expect((paged.body as Page).total).toBe(3);
+
+    expect((await api().get('/v1/vendors').query({ status: 'gone' })).status).toBe(400);
+    expect(
+      (
+        await api()
+          .get('/v1/vendors')
+          .query({ kind: ['company', 'x'] })
+      ).status,
+    ).toBe(400);
+  });
+
+  it('finds a misspelt name', async () => {
+    const tag = randomUUID().slice(0, 4);
+    const v = await mint(`Himalyan Supplies ${tag} Pvt Ltd`);
+    const fuzzy = await api().get('/v1/vendors').query({ q: 'Himalayan' });
+    expect((fuzzy.body as Page).items.map((x) => x.id)).toContain(v.id);
+  });
+});
+
 describe('edit', () => {
   it('uses expectedVersion (stale is 409) and locks the tax identity of an approved vendor', async () => {
     const v = await newVendor();

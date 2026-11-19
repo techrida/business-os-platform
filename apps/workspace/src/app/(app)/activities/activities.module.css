@@ -29,14 +29,6 @@
   align-items: end;
 }
 
-.typeField {
-  min-width: min(180px, 100%);
-}
-
-.typeField select:not([aria-invalid='true']) {
-  border-color: var(--button-secondary-border);
-}
-
 .results.results {
   min-width: 0;
   padding: 0;

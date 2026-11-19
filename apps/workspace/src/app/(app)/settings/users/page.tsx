@@ -1,11 +1,11 @@
 import {
-  AdminUserSearchSchema,
+  ADMIN_USERS_MAX_PAGE,
   AdminUserSortSchema,
-  AdminUsersQuerySchema,
   RoleKeySchema,
+  ROLE_KEYS,
   UserStatusSchema,
+  type AdminUsersQuery,
 } from '@bos/contracts';
-import { z } from 'zod';
 import type { Metadata } from 'next';
 
 import { Avatar } from '@/components/ui/avatar';
@@ -17,6 +17,13 @@ import { Pagination } from '@/components/ui/pagination';
 import { StatCard } from '@/components/ui/stat-card';
 import { Table, Td, Th } from '@/components/ui/table';
 import { listUsers, summarizeUsers } from '@/lib/api-admin';
+import {
+  activeFilterLabels,
+  clearFiltersHref,
+  hrefWith,
+  readList,
+  type RawParams,
+} from '@/lib/list-params';
 
 import admin from '../admin.module.css';
 import { BackToSettings } from '../_components/back-link';
@@ -33,51 +40,59 @@ import styles from './users.module.css';
 
 export const metadata: Metadata = { title: 'Users · Business OS' };
 
+const PATH = '/settings/users';
 const DEFAULT_SIZE = 50;
 const USER_PAGE_SIZES = [5, 10, 25, DEFAULT_SIZE];
-type Params = Record<string, string | string[] | undefined>;
+const GUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+// Sort is a view choice, not a filter: it stays out of the filter spec so Clear filters keeps it.
+const FILTERS = { multi: { status: UserStatusSchema.options, role: ROLE_KEYS } } as const;
+const SPEC = {
+  multi: FILTERS.multi,
+  single: { departmentId: GUID, sort: AdminUserSortSchema.options },
+  rows: { allowed: USER_PAGE_SIZES, default: DEFAULT_SIZE },
+} as const;
 
-export default async function UsersPage({ searchParams }: { searchParams: Promise<Params> }) {
+export default async function UsersPage({ searchParams }: { searchParams: Promise<RawParams> }) {
   const params = await searchParams;
-  const limit = USER_PAGE_SIZES.find((n) => String(n) === params.limit) ?? DEFAULT_SIZE;
-  const requestedSort = AdminUserSortSchema.safeParse(params.sort).data;
-  const after = requestedSort ? undefined : z.guid().safeParse(params.after).data;
-  const sort = after ? undefined : (requestedSort ?? 'name');
-  const page = after ? 1 : (AdminUsersQuerySchema.safeParse({ page: params.page }).data?.page ?? 1);
-  const q = AdminUserSearchSchema.safeParse(params.q).data || undefined;
-  const role = RoleKeySchema.safeParse(params.role).data;
-  const status = UserStatusSchema.safeParse(params.status).data;
-  const departmentId = z.guid().safeParse(params.departmentId).data;
-  const filters = { q, role, status, departmentId, sort, limit };
-  const filtered = Boolean(q || role || status || departmentId);
+  const state = readList(params, SPEC);
+  const { q, rows: limit } = state;
+  const page = Math.min(state.page, ADMIN_USERS_MAX_PAGE);
+  const statuses = UserStatusSchema.array().parse(state.multi.status);
+  const roles = RoleKeySchema.array().parse(state.multi.role);
+  const { departmentId } = state.single;
+  const sort = AdminUserSortSchema.safeParse(state.single.sort).data ?? 'name';
+  const filtered = Boolean(q || statuses.length || roles.length || departmentId);
 
-  function href(nextPage = 1, withFilters = true, cursor?: string) {
-    const query = new URLSearchParams();
-    if (cursor) query.set('after', cursor);
-    if (nextPage !== 1) query.set('page', String(nextPage));
-    if (limit !== DEFAULT_SIZE) query.set('limit', String(limit));
-    if (sort && sort !== 'name') query.set('sort', sort);
-    if (withFilters) {
-      if (q) query.set('q', q);
-      if (role) query.set('role', role);
-      if (status) query.set('status', status);
-      if (departmentId) query.set('departmentId', departmentId);
-    }
-    return query.size ? `/settings/users?${query}` : '/settings/users';
-  }
+  // A cursor from an older link would skip rows once a filter changes, so it never carries over.
+  const href = (nextPage: number) =>
+    hrefWith(PATH, params, { page: nextPage === 1 ? undefined : nextPage, after: undefined });
+  const clearHref = clearFiltersHref(PATH, params, { ...FILTERS, single: { departmentId: GUID } });
+  const query: Partial<AdminUsersQuery> = { limit, page, sort };
+  if (q) query.q = q;
+  if (statuses.length) query.status = statuses;
+  if (roles.length) query.role = roles;
+  if (departmentId) query.departmentId = departmentId;
 
-  const session = await requireSection('users', href(page, true, after));
+  const session = await requireSection('users', href(page));
   const [users, summary] = await Promise.all([
-    section('view users', () =>
-      listUsers(session, { ...filters, ...(after ? { after } : { page }) }),
-    ),
+    section('view users', () => listUsers(session, query)),
     section('view user totals', () => summarizeUsers(session)),
   ]);
   const items = users.ok ? users.data.items : [];
   const next = users.ok ? users.data.nextPage : null;
-  const nextAfter = users.ok ? users.data.nextAfter : null;
-  const clearHref = href(1, false);
-  const pastFirstPage = page > 1 || Boolean(after);
+  const departments = summary.ok ? summary.data.departments : [];
+  const activeFilters = activeFilterLabels(
+    { q, multi: { status: statuses, role: roles }, single: { departmentId } },
+    {
+      status: { label: 'Status', format: (v) => v.charAt(0).toUpperCase() + v.slice(1) },
+      role: { label: 'Role', format: roleLabel },
+      departmentId: {
+        label: 'Department',
+        format: (id) => departments.find((d) => d.id === id)?.name ?? 'Unavailable department',
+      },
+    },
+  );
+  const pastFirstPage = page > 1;
   const numberFormat = new Intl.NumberFormat();
   const count = (value: number) => numberFormat.format(value);
   const add = (
@@ -124,9 +139,12 @@ export default async function UsersPage({ searchParams }: { searchParams: Promis
             <SectionError message={summary.message} />
           )}
           <UsersFilters
-            filters={filters}
-            departments={summary.ok ? summary.data.departments : []}
-            clearHref={filtered ? clearHref : undefined}
+            rows={limit}
+            statuses={statuses}
+            roles={roles}
+            departmentId={departmentId ?? ''}
+            sort={sort}
+            departments={departments}
           />
           <div className={styles.results}>
             {items.length === 0 ? (
@@ -137,7 +155,7 @@ export default async function UsersPage({ searchParams }: { searchParams: Promis
                 }
                 action={
                   pastFirstPage ? (
-                    <LinkButton href={href()} variant="secondary">
+                    <LinkButton href={href(1)} variant="secondary">
                       Back to the first page
                     </LinkButton>
                   ) : filtered ? (
@@ -152,7 +170,7 @@ export default async function UsersPage({ searchParams }: { searchParams: Promis
                 {pastFirstPage
                   ? 'You have reached the end of the list.'
                   : filtered
-                    ? 'Try another name, email or filter.'
+                    ? `Nothing matches ${activeFilters.join(' · ')}.`
                     : 'Invite the first person to give them access.'}
               </EmptyState>
             ) : (
@@ -260,19 +278,13 @@ export default async function UsersPage({ searchParams }: { searchParams: Promis
                   <span role="status">
                     {items.length === 0
                       ? '0 users'
-                      : after
-                        ? `${count(items.length)} ${items.length === 1 ? 'user' : 'users'}`
-                        : `Showing ${count((page - 1) * limit + 1)}–${count((page - 1) * limit + items.length)}${!filtered && summary.ok ? ` of ${count(summary.data.total)}` : ''}`}
+                      : `Showing ${count((page - 1) * limit + 1)}–${count((page - 1) * limit + items.length)}${!filtered && summary.ok ? ` of ${count(summary.data.total)}` : ''}`}
                   </span>
                 }
-                {...(pastFirstPage ? { previousHref: href(after ? 1 : page - 1) } : {})}
-                {...(next
-                  ? { nextHref: href(next) }
-                  : nextAfter
-                    ? { nextHref: href(1, true, nextAfter) }
-                    : {})}
+                {...(pastFirstPage ? { previousHref: href(page - 1) } : {})}
+                {...(next ? { nextHref: href(next) } : {})}
               />
-              <PageSize sizes={USER_PAGE_SIZES} size={limit} filters={filters} />
+              <PageSize sizes={USER_PAGE_SIZES} size={limit} defaultSize={DEFAULT_SIZE} />
             </div>
           </div>
         </>

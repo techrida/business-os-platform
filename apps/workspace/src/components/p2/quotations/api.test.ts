@@ -4,7 +4,7 @@ import { ApiError } from '@/lib/api';
 import { __resetEnvForTests } from '@/lib/env';
 import type { Session } from '@/lib/session';
 
-import { getQuotation, listQuotations } from './api';
+import { getQuotation, getQuotationsSummary, listQuotations, listQuotationsPage } from './api';
 
 // `server-only` throws outside the react-server condition, which Vitest does not use.
 vi.mock('server-only', () => ({}));
@@ -48,10 +48,10 @@ const listItem = {
   canEdit: true,
 };
 
-function reply(status: number, body: unknown): Response {
+function reply(status: number, body: unknown, headers: Record<string, string> = {}): Response {
   return new Response(JSON.stringify(body), {
     status,
-    headers: { 'content-type': 'application/json' },
+    headers: { 'content-type': 'application/json', ...headers },
   });
 }
 
@@ -91,6 +91,7 @@ describe('listQuotations', () => {
     expect(items).toHaveLength(1);
     expect(items[0]?.customerName).toBe('Big Kahuna Burger Ltd.');
     expect(calledUrl().pathname).toBe('/v1/quotations');
+    // Callers of this helper want every row, so it sends no limit and the API returns every match.
     expect(calledUrl().search).toBe('');
   });
 
@@ -99,6 +100,7 @@ describe('listQuotations', () => {
     await listQuotations(session, { status: 'sent' });
     expect(calledUrl().searchParams.get('status')).toBe('sent');
     expect(calledUrl().searchParams.has('opportunityId')).toBe(false);
+    expect(calledUrl().searchParams.has('limit')).toBe(false);
   });
 
   it('passes the opportunity filter, alone or with a status', async () => {
@@ -112,6 +114,12 @@ describe('listQuotations', () => {
     await listQuotations(session, { opportunityId, status: 'draft' });
     expect(calledUrl().searchParams.get('opportunityId')).toBe(opportunityId);
     expect(calledUrl().searchParams.get('status')).toBe('draft');
+  });
+
+  it('lets a caller choose its own limit', async () => {
+    fetchMock.mockResolvedValue(reply(200, []));
+    await listQuotations(session, { limit: 20 });
+    expect(calledUrl().searchParams.getAll('limit')).toEqual(['20']);
   });
 
   it('turns a body that breaks the contract into a 502, never undefined fields', async () => {
@@ -130,6 +138,97 @@ describe('listQuotations', () => {
     fetchMock.mockResolvedValue(reply(500, { error: { code: 'internal' } }));
     const err = await listQuotations(session).catch((e: unknown) => e);
     expect((err as Error).message).not.toContain(session.accessToken);
+  });
+});
+
+describe('listQuotationsPage', () => {
+  const WINDOW = { limit: 25, offset: 0 };
+  const CUSTOMER_A = '3f1d2c3b-0d52-4d1e-9d8a-4f6c7a5e4a5f';
+  const CUSTOMER_B = '9b1d2c3b-0d52-4d1e-9d8a-4f6c7a5e4a5f';
+
+  it('repeats multi filters, sends the window and reads the total from the header', async () => {
+    fetchMock.mockResolvedValue(reply(200, [listItem], { 'x-total-count': '41' }));
+    const result = await listQuotationsPage(session, {
+      status: ['draft', 'sent'],
+      customerId: [CUSTOMER_A, CUSTOMER_B],
+      q: ' himal ',
+      limit: 10,
+      offset: 20,
+    });
+    expect(result.total).toBe(41);
+    expect(result.items).toHaveLength(1);
+    const params = calledUrl().searchParams;
+    expect(params.getAll('status')).toEqual(['draft', 'sent']);
+    expect(params.getAll('customerId')).toEqual([CUSTOMER_A, CUSTOMER_B]);
+    expect(params.get('q')).toBe('himal');
+    expect(params.get('limit')).toBe('10');
+    expect(params.get('offset')).toBe('20');
+  });
+
+  it('drops values the API would refuse, keeping the window it was given', async () => {
+    fetchMock.mockResolvedValue(reply(200, [], { 'x-total-count': '0' }));
+    await listQuotationsPage(session, {
+      limit: 25,
+      offset: 0,
+      status: ['nonsense', 'draft', 'draft'],
+      customerId: 'not-an-id',
+      opportunityId: '../x',
+      q: '  ',
+    });
+    expect(calledUrl().search).toBe('?status=draft&limit=25&offset=0');
+  });
+
+  it.each([[null], ['abc'], ['-1']])('fails with 502 when X-Total-Count is %s', async (value) => {
+    fetchMock.mockResolvedValue(
+      reply(200, [listItem], value === null ? {} : { 'x-total-count': value }),
+    );
+    await expect(listQuotationsPage(session, WINDOW)).rejects.toMatchObject({ status: 502 });
+  });
+
+  it('keeps the upstream status for a refusal', async () => {
+    fetchMock.mockResolvedValue(reply(403, { error: { code: 'forbidden' } }));
+    await expect(listQuotationsPage(session, WINDOW)).rejects.toMatchObject({ status: 403 });
+  });
+});
+
+describe('getQuotationsSummary', () => {
+  const byStatus = {
+    draft: 2,
+    submitted: 1,
+    returned: 0,
+    approved: 0,
+    sent: 3,
+    accepted: 4,
+    rejected: 0,
+    expired: 0,
+    cancelled: 0,
+    superseded: 0,
+  };
+
+  it('sends only the scope and search, never status or paging', async () => {
+    fetchMock.mockResolvedValue(reply(200, { total: 10, byStatus }));
+    // A caller that hands over its whole list filter must not make the strict summary answer 400.
+    const listFilter = {
+      customerId: [ID_A, ID_B],
+      opportunityId: ID_B,
+      q: 'himal',
+      status: 'draft',
+      limit: 5,
+      offset: 5,
+    };
+    const summary = await getQuotationsSummary(session, listFilter);
+    expect(summary.byStatus.accepted).toBe(4);
+    expect(calledUrl().pathname).toBe('/v1/quotations/summary');
+    const params = calledUrl().searchParams;
+    expect(params.getAll('customerId')).toEqual([ID_A, ID_B]);
+    expect(params.get('opportunityId')).toBe(ID_B);
+    expect(params.get('q')).toBe('himal');
+    for (const name of ['status', 'limit', 'offset']) expect(params.has(name)).toBe(false);
+  });
+
+  it('turns a body that breaks the contract into a 502', async () => {
+    fetchMock.mockResolvedValue(reply(200, { total: 1 }));
+    await expect(getQuotationsSummary(session)).rejects.toMatchObject({ status: 502 });
   });
 });
 

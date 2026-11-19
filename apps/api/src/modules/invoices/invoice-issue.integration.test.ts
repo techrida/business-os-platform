@@ -642,3 +642,33 @@ describe('issue guards', () => {
     }
   }, 300_000);
 });
+
+describe('list by derived settlement', () => {
+  it('an issued invoice with no payment is unpaid, then overdue after its due date; a draft is neither', async () => {
+    const id = await draftManual();
+    const version = await forceApproved(id);
+    const issued = await issueAs(id, version);
+    expect(issued.kind).toBe('issued');
+    const draft = await draftManual();
+
+    const idsOf = async (
+      settlement: ('unpaid' | 'overdue' | 'paid' | 'partly_paid' | 'credited')[],
+    ) => (await drafting.list({ settlement })).rows.map((r) => r.id);
+    expect(await idsOf(['unpaid'])).toContain(id);
+    expect(await idsOf(['unpaid', 'overdue'])).not.toContain(draft);
+    expect(await idsOf(['paid', 'partly_paid', 'credited', 'overdue'])).not.toContain(id);
+
+    // Same rows, a clock past the due date: unpaid turns overdue.
+    const later = new InvoiceDraftingService(
+      db,
+      authz,
+      audit,
+      caller,
+      new LedgerService(),
+      () => new Date('2027-03-01T06:00:00Z'),
+    );
+    const overdue = (await later.list({ settlement: ['overdue'] })).rows.map((r) => r.id);
+    expect(overdue).toContain(id);
+    expect((await later.list({ settlement: ['unpaid'] })).rows.map((r) => r.id)).not.toContain(id);
+  });
+});

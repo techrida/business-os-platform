@@ -9,7 +9,9 @@ import {
   ApprovalActionBodySchema,
   type ApprovalRequestDto,
   type InboxItemDto,
+  multi,
   type RoutePlan,
+  searchParam,
 } from '@bos/contracts';
 import {
   BadRequestException,
@@ -23,7 +25,9 @@ import {
   Param,
   ParseUUIDPipe,
   Post,
+  Query,
   Req,
+  Res,
 } from '@nestjs/common';
 import { z } from 'zod';
 
@@ -36,6 +40,7 @@ import {
   STEP_UP_MAX_AGE_SECONDS,
 } from '../../platform/auth/step-up';
 import { AnyAuthenticated, Can } from '../../platform/authz/decorators';
+import { type HeaderTarget, setTotalCount } from '../../platform/list';
 import { ApprovalsCaller } from './ports';
 import { ApprovalsService } from './requests.service';
 
@@ -51,6 +56,14 @@ export function parseOr400<T>(schema: z.ZodType<T>, input: unknown): T {
   }
   return parsed.data;
 }
+
+/** No default limit: the dashboard count and inbox/[id] call without params and need every item. */
+const InboxQuerySchema = z.strictObject({
+  q: searchParam,
+  documentType: multi(z.string().regex(/^[a-z][a-z0-9_]{0,63}$/)),
+  limit: z.coerce.number().int().min(1).max(100).optional(),
+  offset: z.coerce.number().int().min(0).default(0),
+});
 
 const PreviewBodySchema = z.strictObject({
   documentType: z.string().min(1).max(64),
@@ -106,8 +119,13 @@ export class ApprovalsController {
 
   @Get('inbox')
   @AnyAuthenticated()
-  inbox(): Promise<InboxItemDto[]> {
-    return this.approvals.inbox();
+  async inbox(
+    @Query() query: unknown,
+    @Res({ passthrough: true }) res: HeaderTarget,
+  ): Promise<InboxItemDto[]> {
+    const { items, total } = await this.approvals.inboxPage(parseOr400(InboxQuerySchema, query));
+    setTotalCount(res, total);
+    return items;
   }
 
   @Get('requests/:id')

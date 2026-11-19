@@ -1,37 +1,51 @@
-import type { CustomerDto } from '@bos/contracts';
+import { CUSTOMER_RELATIONSHIPS, pageWindow, type CustomerDto } from '@bos/contracts';
 import type { Metadata } from 'next';
 import Link from 'next/link';
 
-import { listCustomers } from '@/components/p2/customers/api';
-import {
-  findDuplicates,
-  parsePage,
-  type DuplicateReason,
-} from '@/components/p2/customers/duplicates';
+import { listCustomerIndustries, listCustomers } from '@/components/p2/customers/api';
+import { findDuplicates, type DuplicateReason } from '@/components/p2/customers/duplicates';
 import { hasPermission } from '@/components/p2/customers/permissions';
 import { Avatar } from '@/components/ui/avatar';
 import { Alert } from '@/components/ui/alert';
 import { Badge } from '@/components/ui/badge';
-import { Button, LinkButton } from '@/components/ui/button';
+import { LinkButton } from '@/components/ui/button';
+import { ResultCount } from '@/components/ui/filter-bar';
 import { EmptyState } from '@/components/ui/empty-state';
 import { Page, PageHeader } from '@/components/ui/page';
 import { Pagination } from '@/components/ui/pagination';
-import { SearchInput } from '@/components/ui/search-input';
 import { StatCard } from '@/components/ui/stat-card';
 import { Table, Td, Th } from '@/components/ui/table';
 import { failureOf } from '@/lib/api-kernel';
 import { requireStaffSession } from '@/lib/bff';
 import { when } from '@/lib/kernel-format';
+import {
+  activeFilterLabels,
+  clearFiltersHref,
+  hrefWith,
+  readList,
+  type RawParams,
+} from '@/lib/list-params';
 
+import { CustomerFilters, RELATIONSHIP_LABEL } from './customer-filters';
 import styles from './customers.module.css';
 
 export const metadata: Metadata = { title: 'Organizations · Business OS' };
 export const dynamic = 'force-dynamic';
 
 const DEFAULT_PAGE_SIZE = 25;
-const PAGE_SIZES = [5, 10, DEFAULT_PAGE_SIZE, 50];
-/** The longest search the page forwards: a longer one is cut, never sent whole to the API. */
-const MAX_QUERY = 100;
+const PAGE_SIZES = [10, DEFAULT_PAGE_SIZE, 50, 100];
+/** The URL is the state: repeated `relationship` and `industry`, `q`, `page` and `rows`. */
+const LIST = {
+  multi: { relationship: CUSTOMER_RELATIONSHIPS, industry: /^.{1,100}$/ },
+  rows: { allowed: PAGE_SIZES, default: DEFAULT_PAGE_SIZE },
+} as const;
+const FILTER_LABELS = {
+  relationship: {
+    label: 'Relationship',
+    format: (v: string) => RELATIONSHIP_LABEL[v as keyof typeof RELATIONSHIP_LABEL] ?? v,
+  },
+  industry: { label: 'Industry' },
+};
 
 const RELATIONSHIP: Record<
   CustomerDto['relationship'],
@@ -46,15 +60,6 @@ const DUPLICATE_TEXT: Record<DuplicateReason, string> = {
   pan_vat: 'same PAN/VAT as another customer in this list',
   name: 'same name as another customer in this list',
 };
-
-function href(q: string, page: number, pageSize: number): string {
-  const params = new URLSearchParams();
-  if (q !== '') params.set('q', q);
-  if (pageSize !== DEFAULT_PAGE_SIZE) params.set('rows', String(pageSize));
-  if (page > 1) params.set('page', String(page));
-  const text = params.toString();
-  return text === '' ? '/customers' : `/customers?${text}`;
-}
 
 function Row({
   customer: c,
@@ -123,29 +128,36 @@ function Row({
 export default async function CustomersPage({
   searchParams,
 }: {
-  searchParams: Promise<{
-    q?: string | string[];
-    page?: string | string[];
-    rows?: string | string[];
-  }>;
+  searchParams: Promise<RawParams>;
 }) {
   const session = await requireStaffSession('/customers');
   const params = await searchParams;
-  const q = (typeof params.q === 'string' ? params.q.trim() : '').slice(0, MAX_QUERY);
-  const page = parsePage(params.page);
-  const pageSize = PAGE_SIZES.find((size) => String(size) === params.rows) ?? DEFAULT_PAGE_SIZE;
+  const state = readList(params, LIST);
+  const { q, page, rows: pageSize } = state;
+  const relationship = state.multi.relationship as CustomerDto['relationship'][];
+  const industry = state.multi.industry;
+  const at = (patch: Parameters<typeof hrefWith>[2]) => hrefWith('/customers', params, patch);
 
   let customers: CustomerDto[] | null = null;
   let total: number | null = null;
+  let industries: string[] = [];
   let problem: { message: string; status: number } | null = null;
   try {
-    const result = await listCustomers(session, {
-      q,
-      limit: pageSize,
-      offset: (page - 1) * pageSize,
-    });
+    const window = pageWindow(page, pageSize);
+    const [result, known] = await Promise.all([
+      listCustomers(session, {
+        ...(q !== undefined ? { q } : {}),
+        ...(relationship.length > 0 ? { relationship } : {}),
+        ...(industry.length > 0 ? { industry } : {}),
+        limit: window.limit,
+        offset: window.offset,
+      }),
+      // The Industry options are a convenience; the list still works without them.
+      listCustomerIndustries(session).catch(() => [] as string[]),
+    ]);
     customers = result.items;
     total = result.total;
+    industries = known;
   } catch (err) {
     const f = failureOf(err);
     problem = { message: f.message, status: f.status };
@@ -167,8 +179,10 @@ export default async function CustomersPage({
     </LinkButton>
   ) : null;
   const pages = [...(page > 1 ? [page - 1] : []), page, ...(hasNext ? [page + 1] : [])].map(
-    (number) => ({ page: number, href: href(q, number, pageSize) }),
+    (number) => ({ page: number, href: at({ page: number > 1 ? number : null }) }),
   );
+  const filtersOn = activeFilterLabels(state, FILTER_LABELS, 'Search');
+  const clearHref = clearFiltersHref('/customers', params, LIST);
 
   return (
     <Page>
@@ -181,36 +195,22 @@ export default async function CustomersPage({
       {total !== null ? (
         <div className={styles.stats}>
           <StatCard
-            label={q ? 'Matching organizations' : 'Organizations'}
+            label={filtersOn.length > 0 ? 'Matching organizations' : 'Organizations'}
             value={total}
             icon="building"
           />
         </div>
       ) : null}
 
-      <form method="get" action="/customers" role="search" className={styles.search}>
-        {pageSize !== DEFAULT_PAGE_SIZE ? (
-          <input type="hidden" name="rows" value={pageSize} />
-        ) : null}
-        <SearchInput
-          aria-label="Search organizations"
-          title="Search by name, customer number or PAN/VAT"
-          placeholder="Search organizations"
-          wrapperClassName={styles.searchField}
-          name="q"
-          defaultValue={q}
-          maxLength={MAX_QUERY}
-          autoComplete="off"
-        />
-        <Button type="submit" variant="secondary">
-          Search
-        </Button>
-        {q !== '' ? (
-          <LinkButton href={href('', 1, pageSize)} variant="ghost">
-            Clear search
-          </LinkButton>
-        ) : null}
-      </form>
+      <CustomerFilters
+        relationship={relationship}
+        industry={industry}
+        industries={industries}
+        rows={pageSize !== DEFAULT_PAGE_SIZE ? pageSize : undefined}
+      />
+      {total !== null && customers !== null ? (
+        <ResultCount shown={customers.length} total={total} noun="organization" />
+      ) : null}
 
       {problem !== null ? (
         <Alert
@@ -223,7 +223,7 @@ export default async function CustomersPage({
           }
           actions={
             problem.status !== 403 ? (
-              <Link href={href(q, page, pageSize)}>Reload organizations</Link>
+              <Link href={at({ page: page > 1 ? page : null })}>Reload organizations</Link>
             ) : null
           }
         >
@@ -232,13 +232,22 @@ export default async function CustomersPage({
             : problem.message}
         </Alert>
       ) : customers !== null && customers.length === 0 ? (
-        q !== '' ? (
-          <EmptyState title={`No organizations match "${q}".`} icon="search">
-            Check the spelling, or search by the PAN/VAT number or the customer number instead.
+        filtersOn.length > 0 ? (
+          <EmptyState
+            title="No organizations match."
+            icon="search"
+            action={
+              <LinkButton href={clearHref} variant="secondary">
+                Clear filters
+              </LinkButton>
+            }
+          >
+            Hidden by {filtersOn.join('; ')}. Check the spelling, or search by the PAN/VAT number or
+            the customer number instead.
           </EmptyState>
         ) : page > 1 ? (
           <EmptyState title="There are no more organizations.">
-            <Link href={href(q, 1, pageSize)}>Back to the first page</Link>
+            <Link href={at({ page: null })}>Back to the first page</Link>
           </EmptyState>
         ) : (
           <EmptyState title="No organizations yet." icon="building" action={addButton}>
@@ -286,15 +295,17 @@ export default async function CustomersPage({
                 summary={`Showing ${first}–${first + customers.length - 1}${total !== null ? ` of ${total}` : ''}`}
                 currentPage={page}
                 pages={pages}
-                {...(page > 1 ? { previousHref: href(q, page - 1, pageSize) } : {})}
-                {...(hasNext ? { nextHref: href(q, page + 1, pageSize) } : {})}
+                {...(page > 1
+                  ? { previousHref: at({ page: page - 1 > 1 ? page - 1 : null }) }
+                  : {})}
+                {...(hasNext ? { nextHref: at({ page: page + 1 }) } : {})}
               />
               <nav aria-label="Rows per page" className={styles.rows}>
                 <span aria-hidden="true">Rows</span>
                 {PAGE_SIZES.map((size) => (
                   <LinkButton
                     key={size}
-                    href={href(q, 1, size)}
+                    href={at({ rows: size === DEFAULT_PAGE_SIZE ? null : size })}
                     variant={size === pageSize ? 'secondary' : 'tertiary'}
                     size="small"
                     aria-current={size === pageSize ? 'true' : undefined}

@@ -15,9 +15,12 @@ import {
   Patch,
   Post,
   Query,
+  Res,
 } from '@nestjs/common';
+import type { Response } from 'express';
 
 import { Can } from '../../../platform/authz/decorators';
+import { setTotalCount } from '../../../platform/list';
 import { parseOr400 } from '../../approvals/approvals.controller';
 import { requireIdempotencyKey } from '../../customers/customers.types';
 import {
@@ -42,11 +45,21 @@ function parseContentBody(raw: unknown): {
 export class PurchaseRequestsController {
   constructor(private readonly requests: PurchaseRequestsService) {}
 
-  /** The requests the caller may read, newest first. Query: `status`, `limit` (default 50, at most 200). */
+  /**
+   * The requests the caller may read, newest first. Query: `status` (repeatable), `q`, `limit` (default 50, at most
+   * 200) and `offset`; X-Total-Count is the number of all matches. Parsed before the call so a bad query throws at once.
+   */
   @Get()
   @Can('procurement.pr.read')
-  list(@Query() query: unknown): Promise<PurchaseRequestListItem[]> {
-    return this.requests.list(parseOr400(ListPurchaseRequestsQuerySchema, query));
+  list(
+    @Query() query: unknown,
+    @Res({ passthrough: true }) res: Response,
+  ): Promise<PurchaseRequestListItem[]> {
+    const parsed = parseOr400(ListPurchaseRequestsQuerySchema, query);
+    return this.requests.list(parsed).then(({ rows, total }) => {
+      setTotalCount(res, total);
+      return rows;
+    });
   }
 
   /** 201 with the draft. 400 without an Idempotency-Key, for a body that fails the contract or an unknown department. */

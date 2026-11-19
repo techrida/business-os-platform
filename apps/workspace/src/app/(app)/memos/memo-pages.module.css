@@ -4,33 +4,6 @@
   min-width: 0;
 }
 
-.filters {
-  display: flex;
-  flex-wrap: wrap;
-  justify-content: flex-end;
-  gap: 8px;
-}
-
-.filters nav {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 8px 16px;
-}
-
-.statusFilter {
-  min-width: min(100%, 10rem);
-}
-
-.statusFilter button:not(:disabled) {
-  border-color: var(--button-secondary-border);
-  background: var(--button-secondary-bg);
-  color: var(--button-secondary-text);
-}
-
-.statusFilter button:hover:not(:disabled) {
-  background: var(--button-secondary-bg-hover);
-}
-
 .tableCard {
   min-width: 0;
   border: var(--border-width-thin) solid var(--card-border);

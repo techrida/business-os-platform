@@ -22,7 +22,8 @@ const VALID_LEAD = {
 
 async function setup() {
   const service = {
-    list: vi.fn().mockResolvedValue([]),
+    list: vi.fn().mockResolvedValue({ rows: [], total: 0 }),
+    summary: vi.fn().mockResolvedValue({ total: 0, byStage: {} }),
     get: vi.fn().mockResolvedValue({}),
     create: vi.fn().mockResolvedValue({}),
     changeStage: vi.fn().mockResolvedValue({}),
@@ -47,6 +48,7 @@ describe('LeadsController', () => {
     const can = (name: keyof LeadsController) =>
       Reflect.getMetadata(CAN_KEY, LeadsController.prototype[name]) as string;
     expect(can('list')).toBe('crm.lead.read');
+    expect(can('summary')).toBe('crm.lead.read');
     expect(can('get')).toBe('crm.lead.read');
     expect(can('create')).toBe('crm.lead.write');
     expect(can('changeStage')).toBe('crm.lead.write');
@@ -88,14 +90,86 @@ describe('LeadsController', () => {
     expect(service.owners).toHaveBeenCalledWith();
   });
 
-  it('parses the list query: limit becomes a number with a default, a bad stage is a 400', async () => {
+  it('parses the list query: repeats become arrays, limit and offset numbers with defaults', async () => {
     const { service, controller } = await setup();
-    await controller.list({ q: 'acme', stage: 'contacted', limit: '20' });
-    expect(service.list).toHaveBeenCalledWith({ q: 'acme', stage: 'contacted', limit: 20 });
-    await controller.list({});
-    expect(service.list).toHaveBeenLastCalledWith({ limit: 50 });
-    expect(() => controller.list({ stage: 'nonsense' })).toThrow(BadRequestException);
-    expect(() => controller.list({ limit: '5000' })).toThrow(BadRequestException);
+    const res = { setHeader: vi.fn() };
+    await controller.list(
+      {
+        q: 'acme',
+        stage: 'contacted',
+        source: ['website', 'event', 'website'],
+        ownerUserId: ID,
+        limit: '20',
+        offset: '40',
+      },
+      res,
+    );
+    expect(service.list).toHaveBeenCalledWith({
+      q: 'acme',
+      stage: ['contacted'],
+      source: ['website', 'event'],
+      ownerUserId: [ID],
+      limit: 20,
+      offset: 40,
+    });
+    await controller.list({}, res);
+    expect(service.list).toHaveBeenLastCalledWith({ limit: 50, offset: 0 });
+    // A one-character search means no search, and an empty filter means no filter.
+    await controller.list({ q: 'a', stage: '' }, res);
+    expect(service.list).toHaveBeenLastCalledWith({ limit: 50, offset: 0, stage: [] });
+  });
+
+  it('refuses unknown params, bad values and a repeated q with 400 before the service', async () => {
+    const { service, controller } = await setup();
+    const res = { setHeader: vi.fn() };
+    for (const query of [
+      { stage: 'nonsense' },
+      { stage: ['new', 'nonsense'] },
+      { source: 'telepathy' },
+      { ownerUserId: 'not-a-uuid' },
+      { limit: '5000' },
+      { limit: '0' },
+      { offset: '-1' },
+      { q: ['a', 'b'] },
+      { status: 'new' },
+    ]) {
+      await expect(controller.list(query, res), JSON.stringify(query)).rejects.toThrow(
+        BadRequestException,
+      );
+    }
+    expect(service.list).not.toHaveBeenCalled();
+    expect(res.setHeader).not.toHaveBeenCalled();
+  });
+
+  it('sends the total in X-Total-Count and keeps the body a bare array', async () => {
+    const { service, controller } = await setup();
+    const rows = [{ id: ID }];
+    service.list.mockResolvedValue({ rows, total: 134 });
+    const res = { setHeader: vi.fn() };
+    await expect(controller.list({ limit: '1' }, res)).resolves.toBe(rows);
+    expect(res.setHeader).toHaveBeenCalledWith('X-Total-Count', '134');
+  });
+
+  it('parses the summary query without a stage or paging, and refuses both', async () => {
+    const { service, controller } = await setup();
+    await controller.summary({ q: 'acme', source: 'event', ownerUserId: [ID] });
+    expect(service.summary).toHaveBeenCalledWith({
+      q: 'acme',
+      source: ['event'],
+      ownerUserId: [ID],
+    });
+    await controller.summary({});
+    expect(service.summary).toHaveBeenLastCalledWith({});
+    service.summary.mockClear();
+    for (const query of [{ stage: 'new' }, { limit: '5' }, { offset: '0' }, { source: 'x' }]) {
+      expect(() => controller.summary(query), JSON.stringify(query)).toThrow(BadRequestException);
+    }
+    expect(service.summary).not.toHaveBeenCalled();
+  });
+
+  it('routes /summary before /:id', () => {
+    const names = Object.getOwnPropertyNames(LeadsController.prototype);
+    expect(names.indexOf('summary')).toBeLessThan(names.indexOf('get'));
   });
 
   it('creates from a valid body with the currency defaulted, and refuses a bad one before the service', async () => {

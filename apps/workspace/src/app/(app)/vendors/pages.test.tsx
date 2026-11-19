@@ -16,7 +16,9 @@ vi.mock('next/navigation', () => ({
   redirect: (to: string) => {
     throw new Error(`redirect ${to}`);
   },
-  useRouter: () => ({ refresh: vi.fn() }),
+  useRouter: () => ({ refresh: vi.fn(), push: vi.fn(), replace: vi.fn() }),
+  usePathname: () => '/vendors',
+  useSearchParams: () => new URLSearchParams(),
 }));
 vi.mock('./actions', () => ({
   addContactAction: vi.fn(),
@@ -76,7 +78,7 @@ const bank = (over: Record<string, unknown> = {}) => ({
 });
 
 const html = (el: unknown) => renderToStaticMarkup(el as React.ReactElement);
-const list = async (sp: Record<string, string> = {}) =>
+const list = async (sp: Record<string, string | string[]> = {}) =>
   html(await VendorsPage({ searchParams: Promise.resolve(sp) }));
 const detail = async () =>
   html(
@@ -119,6 +121,8 @@ describe('vendor list', () => {
     expect(out).toContain('301234567');
     expect(out).toContain('Add vendor');
     expect(out).toContain('2 vendors');
+    expect(out).toContain('type="search"');
+    expect(out).not.toContain('>Apply<');
     expect(out).toContain(`/vendors/${ID}`);
   });
 
@@ -128,14 +132,21 @@ describe('vendor list', () => {
     expect(await list()).not.toContain('Add vendor');
   });
 
-  it('forwards the search and the status filter, and ignores an unknown status', async () => {
+  it('forwards the search, repeated statuses and kinds and the page window, ignoring unknown values', async () => {
     api.listVendors.mockResolvedValue({ items: [], total: 0 });
-    await list({ q: 'Himal', status: 'draft' });
+    await list({
+      q: 'Himal',
+      status: ['draft', 'weird', 'approved'],
+      kind: 'sole_proprietor',
+      page: '3',
+      rows: '10',
+    });
     expect(api.listVendors).toHaveBeenLastCalledWith(expect.anything(), {
       q: 'Himal',
-      status: 'draft',
-      limit: 25,
-      offset: 0,
+      status: ['draft', 'approved'],
+      kind: ['sole_proprietor'],
+      limit: 10,
+      offset: 20,
     });
     await list({ status: 'weird' });
     expect(api.listVendors).toHaveBeenLastCalledWith(expect.anything(), { limit: 25, offset: 0 });
@@ -148,11 +159,18 @@ describe('vendor list', () => {
     expect(query.q).toHaveLength(100);
   });
 
-  it('has three different empty states: none yet, no match, no vendor with that status', async () => {
+  it('has three different empty states: none yet, filtered, and past the last page', async () => {
     api.listVendors.mockResolvedValue({ items: [], total: 0 });
     expect(await list()).toContain('No vendors yet.');
-    expect(await list({ q: 'zzz' })).toContain('No vendors match &quot;zzz&quot;.');
-    expect(await list({ status: 'blocked' })).toContain('No vendors have this status.');
+    const searched = await list({ q: 'zzz' });
+    expect(searched).toContain('No vendors match.');
+    expect(searched).toContain('Hidden by Search');
+    expect(searched).toContain('zzz');
+    const filtered = await list({ q: 'zzz', status: ['blocked', 'archived'], rows: '50' });
+    expect(filtered).toContain('Status: Blocked, Archived');
+    expect(filtered).toContain('Clear filters');
+    expect(filtered).toContain('href="/vendors?rows=50"');
+    expect(await list({ page: '4' })).toContain('There are no more vendors.');
   });
 
   it('a 403 is a no-access note without a retry link', async () => {
@@ -186,6 +204,7 @@ describe('vendor list', () => {
   it('shows a next link while there are more pages', async () => {
     api.listVendors.mockResolvedValue({ items: [vendor()], total: 60 });
     const out = await list();
+    expect(out).toContain('Showing 1 of 60 vendors');
     expect(out).toContain('Showing 1 to 1 of 60');
     expect(out).toContain('/vendors?page=2');
   });

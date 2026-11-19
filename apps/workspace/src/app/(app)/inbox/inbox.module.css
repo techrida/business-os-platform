@@ -11,7 +11,7 @@
   display: flex;
   flex-wrap: wrap;
   align-items: center;
-  gap: 8px;
+  gap: 8px 16px;
 }
 
 .tableCard {
@@ -27,12 +27,9 @@
   border-end-end-radius: 0;
 }
 
-.tableFooter {
-  padding: 16px 24px;
-  border-top: var(--border-width-thin) solid var(--pagination-border);
-  color: var(--pagination-text);
-  font-size: var(--font-size-caption);
-  line-height: var(--line-height-caption);
+/* The shared footer draws a full-width top border; its content is inset to the card's padding. */
+.tableFooter > * {
+  padding: 8px 24px;
 }
 
 .reason {

@@ -11,9 +11,11 @@ import { randomUUID } from 'node:crypto';
 
 import {
   DEFAULT_ROLE_PERMISSIONS,
+  type ListQuotationsQuery,
   QuotationDetailSchema,
   QuotationDtoSchema,
   QuotationListItemSchema,
+  QuotationSummarySchema,
   QuotationVersionDtoSchema,
   type Permission,
   type RoleKey,
@@ -357,6 +359,10 @@ async function asCaller<T>(
   }
 }
 
+/** The rows of one page of `service.list`; the limit is raised so earlier tests' rows never push a row off it. */
+const listRows = async (q: Partial<ListQuotationsQuery> = {}) =>
+  (await service.list({ limit: 100, ...q })).rows;
+
 /** 32 bytes for a bytea hash column, as hex for decode(). */
 const HASH_HEX = 'ab'.repeat(32);
 
@@ -401,7 +407,7 @@ describe('DraftingService reads', () => {
     const contactId = await seedCustomerContact('Asha Shrestha');
     const created = await service.create(goldenCreateBody(f), 'read-shapes');
 
-    const list = QuotationListItemSchema.array().parse(await service.list());
+    const list = QuotationListItemSchema.array().parse(await listRows());
     const item = list.find((q) => q.id === created.id);
     expect(item).toMatchObject({
       number: created.number,
@@ -413,10 +419,8 @@ describe('DraftingService reads', () => {
       ownerUserId: f.ownerUserId,
     });
     expect(typeof item!.ownerName).toBe('string');
-    expect((await service.list({ status: 'draft' })).map((q) => q.id)).toContain(created.id);
-    expect((await service.list({ status: 'submitted' })).map((q) => q.id)).not.toContain(
-      created.id,
-    );
+    expect((await listRows({ status: ['draft'] })).map((q) => q.id)).toContain(created.id);
+    expect((await listRows({ status: ['submitted'] })).map((q) => q.id)).not.toContain(created.id);
 
     const detail = QuotationDetailSchema.parse(await service.detail(created.id));
     expect(detail.quotation).toMatchObject({ id: created.id, status: 'draft' });
@@ -475,7 +479,7 @@ describe('DraftingService reads', () => {
     );
     expect(await statusOf(service.detail(other.id))).toBe(404);
     expect(await statusOf(service.getVersion(other.id, other.currentVersionId))).toBe(404);
-    expect((await service.list()).map((q) => q.id)).not.toContain(other.id);
+    expect((await listRows()).map((q) => q.id)).not.toContain(other.id);
     // Even a read-all role of entity A cannot reach it.
     await asCaller({ grants: grantsOf('management') }, async () => {
       expect(await statusOf(service.detail(other.id))).toBe(404);
@@ -496,13 +500,13 @@ describe('DraftingService reads', () => {
     expect(theirs.ownerUserId).toBe(otherUserId);
 
     // sales holds quotation.read as `own`.
-    expect((await service.list()).map((q) => q.id)).not.toContain(theirs.id);
+    expect((await listRows()).map((q) => q.id)).not.toContain(theirs.id);
     expect(await statusOf(service.detail(theirs.id))).toBe(404);
     expect(await statusOf(service.getVersion(theirs.id, theirs.currentVersionId))).toBe(404);
 
     // Positive control: management reads `all` in the entity, so the hide above is the scope, not a bad row.
     await asCaller({ grants: grantsOf('management') }, async () => {
-      expect((await service.list()).map((q) => q.id)).toContain(theirs.id);
+      expect((await listRows()).map((q) => q.id)).toContain(theirs.id);
       expect((await service.detail(theirs.id)).quotation.ownerUserId).toBe(otherUserId);
     });
   });
@@ -741,24 +745,24 @@ describe('demo feedback guards', () => {
       'filter-second-opp',
     );
 
-    const all = (await service.list()).map((q) => q.id);
+    const all = (await listRows()).map((q) => q.id);
     expect(all).toEqual(expect.arrayContaining([onFixture.id, onSecond.id]));
 
     const filtered = QuotationListItemSchema.array().parse(
-      await service.list({ opportunityId: second }),
+      await listRows({ opportunityId: second }),
     );
     expect(filtered.map((q) => q.id)).toEqual([onSecond.id]);
     expect(
-      (await service.list({ opportunityId: f.opportunityId })).every(
+      (await listRows({ opportunityId: f.opportunityId })).every(
         (q) => q.opportunityId === f.opportunityId,
       ),
     ).toBe(true);
-    expect(await service.list({ opportunityId: randomUUID() })).toEqual([]);
+    expect(await listRows({ opportunityId: randomUUID() })).toEqual([]);
     // Combined with a status filter.
-    expect(
-      (await service.list({ opportunityId: second, status: 'draft' })).map((q) => q.id),
-    ).toEqual([onSecond.id]);
-    expect(await service.list({ opportunityId: second, status: 'sent' })).toEqual([]);
+    expect((await listRows({ opportunityId: second, status: ['draft'] })).map((q) => q.id)).toEqual(
+      [onSecond.id],
+    );
+    expect(await listRows({ opportunityId: second, status: ['sent'] })).toEqual([]);
   });
 
   it("never widens the read scope: another owner's quotation stays out of a filtered list", async () => {
@@ -767,9 +771,7 @@ describe('demo feedback guards', () => {
     const theirs = await asCaller({ userId: otherUserId }, () =>
       service.create(goldenCreateBody(f, { opportunityId: second }), 'filter-other-owner'),
     );
-    expect((await service.list({ opportunityId: second })).map((q) => q.id)).not.toContain(
-      theirs.id,
-    );
+    expect((await listRows({ opportunityId: second })).map((q) => q.id)).not.toContain(theirs.id);
   });
 
   it('marks a list row canEdit only for a Draft or Returned quotation the caller may edit', async () => {
@@ -784,15 +786,13 @@ describe('demo feedback guards', () => {
     );
     await approve(approvedQ.currentVersionId);
 
-    const rows = new Map(
-      (await service.list({ opportunityId: second })).map((q) => [q.id, q.canEdit]),
-    );
+    const rows = new Map((await listRows({ opportunityId: second })).map((q) => [q.id, q.canEdit]));
     expect(rows.get(draft.id)).toBe(true);
     expect(rows.get(approvedQ.id)).toBe(false);
 
     // Management reads every quotation but drafts none: nothing is editable for it.
     await asCaller({ grants: grantsOf('management') }, async () => {
-      const seen = await service.list({ opportunityId: second });
+      const seen = await listRows({ opportunityId: second });
       expect(seen.map((q) => q.id)).toContain(draft.id);
       expect(seen.every((q) => !q.canEdit)).toBe(true);
     });
@@ -844,6 +844,230 @@ describe('demo feedback guards', () => {
         scope: 'Returned and fixed',
       }),
     ).resolves.toMatchObject({ version: current.version + 1 });
+  });
+});
+
+// ------------------------------------------------------------- list filters, search, total and summary (U13)
+
+/** A fresh customer of entity A with one opportunity, so a test's rows can be told from every other test's. */
+async function seedCustomerWithOpportunity(
+  legalName: string,
+  scope: TxScope = scopeA,
+): Promise<{ customerId: string; opportunityId: string }> {
+  const { partyId } = await createParty(appPool, { tenantId: f.tenantId, kind: 'customer' });
+  return withTx(db, scope, systemActor('test'), async (tx) => {
+    await tx.execute(
+      sql`INSERT INTO app.customers (id, tenant_id, number, legal_name, name_norm, address)
+          VALUES (${partyId}, ${f.tenantId}, ${`CUS-${partyId.slice(0, 8)}`}, ${legalName},
+                  ${legalName.toLowerCase()},
+                  ${JSON.stringify({ line1: '3 Lazimpat', city: 'Kathmandu', country: 'NP' })}::jsonb)`,
+    );
+    const [row] = await tx
+      .insert(opportunities)
+      .values({
+        ...scope,
+        number: `DEAL-${randomUUID().slice(0, 8)}`,
+        name: `${legalName} deal`,
+        customerId: partyId,
+        ownerUserId: f.ownerUserId,
+        stage: 'qualified',
+      })
+      .returning({ id: opportunities.id });
+    return { customerId: partyId, opportunityId: row!.id };
+  });
+}
+
+describe('DraftingService.list filters and total', () => {
+  it('filters by several statuses and customers, pages newest first and counts every match', async () => {
+    const c1 = await seedCustomerWithOpportunity('Filter One Pvt. Ltd.');
+    const c2 = await seedCustomerWithOpportunity('Filter Two Pvt. Ltd.');
+    const q1 = await service.create(
+      goldenCreateBody(f, { opportunityId: c1.opportunityId }),
+      'list-f-1',
+    );
+    const q2 = await service.create(
+      goldenCreateBody(f, { opportunityId: c1.opportunityId }),
+      'list-f-2',
+    );
+    const q3 = await service.create(
+      goldenCreateBody(f, { opportunityId: c2.opportunityId }),
+      'list-f-3',
+    );
+    await approve(q2.currentVersionId);
+    const both = [c1.customerId, c2.customerId];
+
+    const one = await service.list({ customerId: [c1.customerId] });
+    expect(one.rows.map((q) => q.id)).toEqual([q2.id, q1.id]);
+    expect(one.total).toBe(2);
+
+    const all = await service.list({ customerId: both });
+    expect(all.rows.map((q) => q.id)).toEqual([q3.id, q2.id, q1.id]);
+    expect(all.total).toBe(3);
+
+    const approved = await service.list({ customerId: both, status: ['approved'] });
+    expect(approved.rows.map((q) => q.id)).toEqual([q2.id]);
+    expect(approved.total).toBe(1);
+    const either = await service.list({ customerId: both, status: ['draft', 'approved'] });
+    expect(either.total).toBe(3);
+    expect((await service.list({ customerId: both, status: ['sent'] })).total).toBe(0);
+
+    // Offset paging keeps the order and the total; past the end is an empty page with the same total.
+    const first = await service.list({ customerId: both, limit: 2, offset: 0 });
+    const second = await service.list({ customerId: both, limit: 2, offset: 2 });
+    const past = await service.list({ customerId: both, limit: 2, offset: 6 });
+    expect(first.rows.map((q) => q.id)).toEqual([q3.id, q2.id]);
+    expect(second.rows.map((q) => q.id)).toEqual([q1.id]);
+    expect([first.total, second.total, past.total]).toEqual([3, 3, 3]);
+    expect(past.rows).toEqual([]);
+  });
+
+  it('returns every match when no limit is given, however many there are', async () => {
+    const c = await seedCustomerWithOpportunity('Every Row Pvt. Ltd.');
+    const created: string[] = [];
+    for (let i = 0; i < 51; i += 1) {
+      const q = await service.create(
+        goldenCreateBody(f, { opportunityId: c.opportunityId }),
+        `list-nolimit-${i}`,
+      );
+      created.push(q.id);
+    }
+    // More rows than any page default, so a hidden cap would drop the oldest one.
+    const every = await service.list({ customerId: [c.customerId] });
+    expect(every.total).toBe(51);
+    expect(every.rows.map((q) => q.id).sort()).toEqual([...created].sort());
+    const page = await service.list({ customerId: [c.customerId], limit: 50 });
+    expect([page.rows.length, page.total]).toEqual([50, 51]);
+  });
+
+  it('searches the number, the customer name and close spellings of it', async () => {
+    const himalyan = await seedCustomerWithOpportunity('Himalyan Traders Pvt Ltd');
+    const made = await service.create(
+      goldenCreateBody(f, { opportunityId: himalyan.opportunityId }),
+      'list-q-1',
+    );
+    const filter = { customerId: [himalyan.customerId] };
+
+    const byNumber = await service.list({ q: made.number });
+    expect(byNumber.rows.map((q) => q.id)).toContain(made.id);
+    expect((await service.list({ ...filter, q: 'traders' })).rows.map((q) => q.id)).toEqual([
+      made.id,
+    ]);
+    // 'Himalayan' is not a substring of 'Himalyan'; few exact hits, so close matches are added.
+    const fuzzy = await service.list({ q: 'Himalayan' });
+    expect(fuzzy.rows.map((q) => q.id)).toContain(made.id);
+    expect(fuzzy.total).toBeGreaterThanOrEqual(1);
+    // A search that matches nothing, and a one-character search that is ignored.
+    expect((await service.list({ ...filter, q: 'zzzzqqqq' })).total).toBe(0);
+    expect((await service.list({ ...filter, q: 'z' })).total).toBe(1);
+  });
+
+  it('never widens the read scope for a status, customer or search filter', async () => {
+    const c = await seedCustomerWithOpportunity('Scope Probe Himalyan Ltd');
+    const otherUserId = await seedOtherStaffUser(db, f);
+    const mine = await service.create(
+      goldenCreateBody(f, { opportunityId: c.opportunityId }),
+      'list-scope-mine',
+    );
+    const theirs = await asCaller({ userId: otherUserId }, () =>
+      service.create(goldenCreateBody(f, { opportunityId: c.opportunityId }), 'list-scope-theirs'),
+    );
+    const scopeB: TxScope = { tenantId: f.tenantId, organizationId: f.otherEntityId };
+    const cb = await seedCustomerWithOpportunity('Scope Probe Himalyan Ltd', scopeB);
+    const elsewhere = await asCaller({ scope: scopeB }, () =>
+      service.create(
+        goldenCreateBody(f, { opportunityId: cb.opportunityId }),
+        'list-scope-other-entity',
+      ),
+    );
+
+    const probes: Partial<ListQuotationsQuery>[] = [
+      { customerId: [c.customerId, cb.customerId] },
+      { customerId: [c.customerId], status: ['draft'] },
+      { q: 'Scope Probe' },
+      { q: 'Scope Probe Himalayan' },
+    ];
+    for (const probe of probes) {
+      const seen = await service.list({ limit: 100, ...probe });
+      const ids = seen.rows.map((q) => q.id);
+      expect(ids, JSON.stringify(probe)).toContain(mine.id);
+      expect(ids, JSON.stringify(probe)).not.toContain(theirs.id);
+      expect(ids, JSON.stringify(probe)).not.toContain(elsewhere.id);
+      // The count follows the same scope: it never includes a row the page cannot show.
+      expect(seen.total).toBe(seen.rows.length);
+    }
+    // Positive control: a read-all role sees the colleague's row, still not the other entity's.
+    await asCaller({ grants: grantsOf('management') }, async () => {
+      const ids = (await service.list({ limit: 100, customerId: [c.customerId] })).rows.map(
+        (q) => q.id,
+      );
+      expect(ids).toEqual(expect.arrayContaining([mine.id, theirs.id]));
+      expect(ids).not.toContain(elsewhere.id);
+    });
+  });
+});
+
+describe('DraftingService.summary', () => {
+  it('counts per current status for the list filters except status, and adds up to the list total', async () => {
+    const c1 = await seedCustomerWithOpportunity('Summary One Pvt. Ltd.');
+    const c2 = await seedCustomerWithOpportunity('Summary Two Pvt. Ltd.');
+    await service.create(goldenCreateBody(f, { opportunityId: c1.opportunityId }), 'sum-1');
+    const approvedQ = await service.create(
+      goldenCreateBody(f, { opportunityId: c1.opportunityId }),
+      'sum-2',
+    );
+    await service.create(goldenCreateBody(f, { opportunityId: c2.opportunityId }), 'sum-3');
+    await approve(approvedQ.currentVersionId);
+
+    const summary = QuotationSummarySchema.parse(
+      await service.summary({ customerId: [c1.customerId, c2.customerId] }),
+    );
+    expect(summary.total).toBe(3);
+    expect(summary.byStatus).toMatchObject({ draft: 2, approved: 1, sent: 0, accepted: 0 });
+    expect(Object.values(summary.byStatus).reduce((a, b) => a + b, 0)).toBe(summary.total);
+    expect((await service.list({ customerId: [c1.customerId, c2.customerId] })).total).toBe(
+      summary.total,
+    );
+
+    const oneCustomer = await service.summary({ customerId: [c2.customerId] });
+    expect(oneCustomer).toMatchObject({ total: 1, byStatus: { draft: 1, approved: 0 } });
+    const byOpportunity = await service.summary({ opportunityId: c1.opportunityId });
+    expect(byOpportunity.total).toBe(2);
+    expect((await service.summary({ customerId: [randomUUID()] })).total).toBe(0);
+    expect(
+      QuotationSummarySchema.parse(await service.summary({ customerId: [randomUUID()] })).byStatus
+        .draft,
+    ).toBe(0);
+  });
+
+  it('searches like the list, including close matches, and never counts outside the read scope', async () => {
+    const c = await seedCustomerWithOpportunity('Summary Himalyan Traders');
+    const otherUserId = await seedOtherStaffUser(db, f);
+    await service.create(goldenCreateBody(f, { opportunityId: c.opportunityId }), 'sum-q-mine');
+    await asCaller({ userId: otherUserId }, () =>
+      service.create(goldenCreateBody(f, { opportunityId: c.opportunityId }), 'sum-q-theirs'),
+    );
+    const scopeB: TxScope = { tenantId: f.tenantId, organizationId: f.otherEntityId };
+    const cb = await seedCustomerWithOpportunity('Summary Himalyan Traders', scopeB);
+    await asCaller({ scope: scopeB }, () =>
+      service.create(goldenCreateBody(f, { opportunityId: cb.opportunityId }), 'sum-q-entity-b'),
+    );
+
+    for (const q of ['Summary Himalyan', 'Summary Himalayan']) {
+      const summary = await service.summary({ q });
+      const list = await service.list({ q, limit: 100 });
+      expect(summary.total, q).toBe(list.total);
+      expect(
+        Object.values(summary.byStatus).reduce((a, b) => a + b, 0),
+        q,
+      ).toBe(summary.total);
+    }
+    const mineOnly = await service.summary({ q: 'Summary Himalyan', customerId: [c.customerId] });
+    expect(mineOnly.total).toBe(1);
+    await asCaller({ grants: grantsOf('management') }, async () => {
+      expect(
+        (await service.summary({ q: 'Summary Himalyan', customerId: [c.customerId] })).total,
+      ).toBe(2);
+    });
   });
 });
 

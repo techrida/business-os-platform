@@ -6,6 +6,9 @@
 import {
   PO_APPROVED_BANDS,
   PoStatusSchema,
+  limitOffset,
+  multi,
+  searchParam,
   ShortClosePurchaseOrderBodySchema,
   type PoApprovedBand,
 } from '@bos/contracts';
@@ -222,7 +225,13 @@ export function shortCloseCancelled(
 export const CancelPurchaseOrderBodySchema = ShortClosePurchaseOrderBodySchema;
 export type CancelPurchaseOrderBody = z.infer<typeof CancelPurchaseOrderBodySchema>;
 
-export const ListPurchaseOrdersQuerySchema = z.strictObject({ status: PoStatusSchema.optional() });
+/** Query of the list route: statuses (repeatable), a search over the number and the vendor, and a page window. */
+export const ListPurchaseOrdersQuerySchema = z.strictObject({
+  status: multi(PoStatusSchema),
+  q: searchParam,
+  ...limitOffset({ max: 100, fallback: 25 }),
+});
+export type ListPurchaseOrdersQuery = z.infer<typeof ListPurchaseOrdersQuerySchema>;
 
 export {
   AmendPurchaseOrderBodySchema,
