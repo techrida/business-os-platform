@@ -182,3 +182,26 @@ it('cannot save while a blocked warning applies, even with every confirm box tic
   await click(button('Save changes'));
   expect(runSave).not.toHaveBeenCalled();
 });
+
+it('closes and reports a stale save without saving again', async () => {
+  const runSave = vi.fn((_input: SaveInput) =>
+    Promise.resolve<ReviewSaveResult>({
+      ok: false,
+      kind: 'stale',
+      message: 'Access was changed by someone else. Reload to see the latest.',
+    }),
+  );
+  const onStale = vi.fn();
+  const onSaved = vi.fn();
+  await openDialog({ runSave, onStale, onSaved });
+
+  await click(button('Save changes'));
+  await flush();
+  expect(runSave).toHaveBeenCalledTimes(1);
+  expect(onStale).toHaveBeenCalledTimes(1);
+  expect(onSaved).not.toHaveBeenCalled();
+  expect(toasts.error).toHaveBeenCalledWith(
+    'Access was changed by someone else. Reload to see the latest.',
+  );
+  expect(document.querySelector('[role="dialog"]')).toBeNull();
+});
