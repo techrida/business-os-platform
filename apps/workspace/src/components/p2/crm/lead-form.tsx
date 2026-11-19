@@ -10,6 +10,7 @@ import { Field, Input, Select, Textarea } from '@/components/ui/field';
 import { PageHeader } from '@/components/ui/page';
 import { Panel } from '@/components/ui/panel';
 import { toast } from '@/components/ui/toast';
+import { currencyChoices } from '@/lib/enabled-currencies';
 
 import { ActivityTypeButtons } from './activity-type-buttons';
 import { SCHEDULE_ACTIVITY_KINDS } from './forms';
@@ -22,12 +23,6 @@ export interface OwnerOption {
   value: string;
   label: string;
 }
-
-const CURRENCIES = [
-  { value: 'NPR', label: 'NPR (Nepalese rupee)' },
-  { value: 'INR', label: 'INR (Indian rupee)' },
-  { value: 'USD', label: 'USD (US dollar)' },
-];
 
 const EMPTY: Record<string, string> = {
   title: '',
@@ -119,11 +114,14 @@ export function LeadForm({
   action,
   sources,
   owners,
+  enabledCurrencies,
   defaultOwnerId,
   idempotencyKey,
 }: {
   action: FormAction;
   sources: { value: string; label: string }[];
+  /** The company's switched-on currencies (`currency.enabled`), read once by the page. */
+  enabledCurrencies: readonly string[];
   /** Who the lead can go to. Empty when the list did not load: the API then makes it the caller's. */
   owners: readonly OwnerOption[];
   /** The signed-in user when they are in `owners`; the select starts there. */
@@ -152,6 +150,8 @@ export function LeadForm({
   const err = state.fieldErrors;
   const assignee = values['followUpAssigneeUserId'] || values['ownerUserId'] || '';
   const unplaced = defaultOwnerId === undefined;
+  // The chosen value stays listed even if it is not in the enabled list, so the select never blanks.
+  const currencies = currencyChoices(enabledCurrencies, values['currency']);
 
   useEffect(() => {
     if (state.error) summary.current?.focus();
@@ -368,7 +368,7 @@ export function LeadForm({
                   onChange={set('currency')}
                   {...c}
                 >
-                  {CURRENCIES.map((o) => (
+                  {currencies.map((o) => (
                     <option key={o.value} value={o.value}>
                       {o.label}
                     </option>
