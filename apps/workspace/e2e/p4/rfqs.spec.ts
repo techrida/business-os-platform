@@ -1,6 +1,7 @@
 import { expect, test } from '@playwright/test';
 
 import { signInAs, type Signed } from '../helpers/memo-flow';
+import { chooseOption, selectByName, selectedInput } from '../helpers/select';
 
 /**
  * The P4 RFQ screens, against the real stack. Not run by the unit that wrote it: it needs the
@@ -36,7 +37,7 @@ test('the RFQ list loads and keeps its filter in the URL', async ({ browser, bas
     await expect(
       founder.page.getByRole('heading', { level: 1, name: 'Requests for quotation' }),
     ).toBeVisible();
-    await founder.page.getByLabel('Status').selectOption('cancelled');
+    await chooseOption(selectByName(founder.page, 'status'), 'cancelled');
     await founder.page.getByRole('button', { name: 'Apply' }).click();
     await expect(founder.page).toHaveURL(/status=cancelled/);
   } finally {
@@ -55,7 +56,7 @@ test('an RFQ is opened from an approved request', async ({ browser, baseURL }) =
 
     await test.step('the form preselects the request and lists approved vendors', async () => {
       await page.goto(`/procurement/rfqs/new?pr=${PR_ID}`);
-      await expect(page.getByLabel('Purchase request')).toHaveValue(PR_ID);
+      await expect(selectedInput(selectByName(page, 'purchaseRequestId'))).toHaveValue(PR_ID);
       await page.getByLabel('Quotation deadline').fill('2030-01-15T17:00');
       await page
         .getByRole('group', { name: /Invited vendors/ })

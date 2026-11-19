@@ -1,6 +1,7 @@
 import { expect, test } from '@playwright/test';
 
 import { signInAs, type Signed } from '../helpers/memo-flow';
+import { chooseOption, selectByName, selectedInput } from '../helpers/select';
 
 /**
  * The P4 purchase order and receipt screens, against the real stack. Not run by the unit that
@@ -28,10 +29,10 @@ test('the purchase order list loads and filters', async ({ browser, baseURL }) =
     await expect(
       founder.page.getByRole('heading', { level: 1, name: 'Purchase orders' }),
     ).toBeVisible();
-    await founder.page.getByLabel('Status').selectOption('cancelled');
+    await chooseOption(selectByName(founder.page, 'status'), 'cancelled');
     await founder.page.getByRole('button', { name: 'Apply' }).click();
     await expect(founder.page).toHaveURL(/status=cancelled/);
-    await expect(founder.page.getByLabel('Status')).toHaveValue('cancelled');
+    await expect(selectedInput(selectByName(founder.page, 'status'))).toHaveValue('cancelled');
   } finally {
     await Promise.all(opened.map((s) => s.context.close()));
   }

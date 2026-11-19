@@ -2,6 +2,7 @@ import { expect, test } from '@playwright/test';
 
 import { minimalPdf } from '../helpers/pdf-fixture';
 import { signInAs, type Signed } from '../helpers/memo-flow';
+import { chooseOption, selectByName } from '../helpers/select';
 
 /**
  * The P4 vendor screens, against the real stack. Not run by the unit that wrote it: it needs the
@@ -52,7 +53,7 @@ test('a vendor goes from draft to KYB review, and its maker-checker refusals rea
     await test.step('a foreign vendor is created without a PAN', async () => {
       await page.goto('/vendors/new');
       await page.getByLabel('Legal name').fill(name);
-      await page.getByLabel('Kind').selectOption('foreign');
+      await chooseOption(selectByName(page, 'kind'), 'foreign');
       await expect(page.getByLabel('PAN')).toHaveCount(0);
       await page.getByLabel('Country code').fill('IN');
       await page.getByRole('button', { name: 'Add vendor' }).click();

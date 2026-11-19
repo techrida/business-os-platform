@@ -1,6 +1,7 @@
 import { expect, type Browser, type BrowserContext, type Page } from '@playwright/test';
 
 import { persona } from './personas';
+import { chooseOption, hasSelection, selectByLabel } from './select';
 import { signInOnZitadel } from './zitadel-login';
 
 /**
@@ -55,8 +56,9 @@ export async function createDraftMemo(
   await title.fill(input.title);
   await page.getByLabel('Body', { exact: true }).fill('Created by the Playwright exit spec.');
   await expect(title).toHaveValue(input.title);
-  const department = page.getByLabel('Department', { exact: true });
-  if (!(await department.inputValue())) await department.selectOption({ index: 1 });
+  const department = selectByLabel(page, 'Department');
+  // Department is required, so its list has no empty option: index 0 is the first department.
+  if (!(await hasSelection(department))) await chooseOption(department, { index: 0 });
   // These are real seeded directory names, never synthetic entries injected into the form.
   const signers = [...input.recommenders, input.approver];
   // A new memo starts with two blank "Recommended by" rows and an "Approved by" box; each is an editable combobox
