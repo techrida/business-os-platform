@@ -70,7 +70,7 @@ export function loadConfig(args = {}) {
     captions: bool(args.captions ?? env.CAPTIONS, true),
     dbQueryCmd: env.DB_QUERY_CMD || '',
     demoFilesDir: env.DEMO_FILES || '',
-    stepTimeout: Number(env.STEP_TIMEOUT_MS || 240_000),
+    stepTimeout: Number(env.STEP_TIMEOUT_MS || 360_000),
     actionTimeout: Number(env.ACTION_TIMEOUT_MS || 45_000),
     navTimeout: Number(env.NAV_TIMEOUT_MS || 120_000),
     only: args.only ? String(args.only).split(',') : null,

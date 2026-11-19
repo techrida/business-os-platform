@@ -272,13 +272,22 @@ export class Session {
     if (this.persona === name) return;
     await this.caption(`${this.captionText.split(' — ')[0]} — switch to ${name}`);
     const button = (p) => p.getByRole('button', { name, exact: true });
-    await this.goto('/dev/personas', button);
-    await button(this.page).click();
-    await this.page.waitForURL((u) => !u.pathname.startsWith('/dev/'), {
-      timeout: this.cfg.navTimeout,
-    });
-    await this.page.waitForLoadState('domcontentloaded');
-    const who = await this.whoami();
+    let who = null;
+    // A switch is idempotent; a dev-server restart in the middle of one is retried from the start.
+    for (let attempt = 1; attempt <= 3 && !who; attempt++) {
+      await this.goto('/dev/personas', button);
+      await this.hydrated(button(this.page));
+      await button(this.page).click();
+      const left = await this.page
+        .waitForURL((u) => !u.pathname.startsWith('/dev/'), { timeout: this.cfg.navTimeout })
+        .then(() => true)
+        .catch(() => false);
+      if (left) {
+        await this.page.waitForLoadState('domcontentloaded');
+        who = await this.whoami();
+      }
+      if (!who) this.log(`    (switch to ${name} not confirmed, attempt ${attempt}/3)`);
+    }
     this.expect(who && who.userId, `signed in as ${name}`, JSON.stringify(who));
     this.persona = name;
     this.checks.push(`persona ${name} (roles ${who.roles.join(',')})`);
@@ -322,7 +331,8 @@ export class Session {
    */
   async hydrated(locator, timeout = 30000) {
     const el = locator.first();
-    for (let attempt = 0; attempt < 3; attempt++) {
+    // Five attempts: after a dev-server restart the first compile of a route can take minutes.
+    for (let attempt = 0; attempt < 5; attempt++) {
       await el.waitFor({ state: 'visible', timeout: this.cfg.actionTimeout });
       const until = Date.now() + timeout;
       let state = 'unknown';
@@ -370,7 +380,7 @@ export class Session {
         .catch(() => {});
     }
     throw new StepFailure(
-      `The page never became interactive (React did not hydrate ${locator}) after two reloads`,
+      `The page never became interactive (React did not hydrate ${locator}) after four reloads`,
     );
   }
 
