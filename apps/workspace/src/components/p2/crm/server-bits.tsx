@@ -76,9 +76,10 @@ export const FILTER_KINDS = ALL_KINDS.filter((k) => k.value !== 'task');
 
 /** A user id to display name lookup, built from `GET /v1/leads/owners` (the users directory). */
 export function peopleById(
-  people: readonly { userId: string; displayName: string }[],
+  people: readonly { userId: string; displayName: string; email?: string }[],
 ): ReadonlyMap<string, string> {
-  return new Map(people.map((p) => [p.userId, p.displayName]));
+  // The email stands in for a blank name, as the lead list does.
+  return new Map(people.map((p) => [p.userId, p.displayName || (p.email ?? '')]));
 }
 
 /** History keeps logged and completed activities only: planned and cancelled ones never show. */
