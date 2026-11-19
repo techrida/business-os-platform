@@ -160,8 +160,13 @@ export default async function InboxDetailPage({ params }: { params: Promise<{ id
   const title = titleOf(request.snapshot);
   const documentNumber = documentNumberText(request.documentNumber);
   // History's "Submitted" names whoever pressed submit; the requester (the document's owner) may differ.
+  // The latest submit entry, when its actor is a person we can name (a system submit has no one to name).
+  const submitAction = request.actions.findLast((a) => a.action === 'submit');
   const submitterUserId =
-    request.actions.find((a) => a.action === 'submit')?.actorUserId ?? request.requesterUserId;
+    submitAction !== undefined &&
+    (request.people ?? []).some((person) => person.userId === submitAction.actorUserId)
+      ? submitAction.actorUserId
+      : request.requesterUserId;
   const snapshot = request.snapshot;
   const isMemo = request.documentType === 'test_memo';
   const attachments = isMemo ? memoAttachments(snapshot) : [];
