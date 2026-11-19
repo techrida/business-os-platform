@@ -12,7 +12,12 @@ import {
 import { describe, expect, it } from 'vitest';
 
 import { DEFAULT_LEVEL_RULES, defaultScopeFor } from './access-catalogue';
-import { type AccessSnapshot, evaluateAccessChanges, explainAreaAccess } from './access-evaluator';
+import {
+  type AccessSnapshot,
+  effectiveScopeForUser,
+  evaluateAccessChanges,
+  explainAreaAccess,
+} from './access-evaluator';
 
 const FORBIDDEN_WORDS = /\b(scopes?|grants?|rbac|seeded|permission key)\b/i;
 
@@ -330,5 +335,97 @@ describe('evaluateAccessChanges expansions, impact, and Why explanations', () =>
     for (const line of [...staffWhy, ...mgrWhy, ...headWhy]) {
       expect(line).not.toMatch(FORBIDDEN_WORDS);
     }
+  });
+});
+
+describe('effectiveScopeForUser and explainAreaAccess follow the run-time level rows', () => {
+  const snap = makeSnapshot();
+  const grantMap = new Map(snap.grants.map((g) => [`${g.role}:${g.permission}`, g.scope]));
+  const levelsWith = (managers: boolean, heads: boolean) =>
+    new Map(
+      snap.levelRules.map((l) => [
+        l.area,
+        l.area === 'leads'
+          ? { ...l, managersSeeDepartment: managers, headsSeeDepartment: heads }
+          : l,
+      ]),
+    );
+  const member = (level: 'staff' | 'manager' | 'head', roles: ('sales' | 'finance')[]) => ({
+    roles,
+    departmentId: DEPT_SALES,
+    level,
+  });
+
+  it('gives a head the department through the manager switch when the head switch is off', () => {
+    const levels = levelsWith(true, false);
+    const head = member('head', ['sales']);
+    expect(effectiveScopeForUser(head, 'crm.lead.read', grantMap, levels).scope).toBe('department');
+    expect(explainAreaAccess(head, 'leads', grantMap, levels)).toEqual([
+      'Sales role gives Their own.',
+      'Manager level adds Their department.',
+    ]);
+
+    // The head switch alone reaches heads, not managers.
+    const headsOnly = levelsWith(false, true);
+    const manager = member('manager', ['sales']);
+    expect(effectiveScopeForUser(manager, 'crm.lead.read', grantMap, headsOnly).scope).toBe('own');
+    expect(explainAreaAccess(manager, 'leads', grantMap, headsOnly)).toEqual([
+      'Sales role gives Their own.',
+    ]);
+    expect(explainAreaAccess(head, 'leads', grantMap, headsOnly)).toEqual([
+      'Sales role gives Their own.',
+      'Department head level adds Their department.',
+    ]);
+
+    // Both off: own for everyone below the Founder.
+    const off = levelsWith(false, false);
+    expect(effectiveScopeForUser(head, 'crm.lead.read', grantMap, off).scope).toBe('own');
+    expect(explainAreaAccess(head, 'leads', grantMap, off)).toEqual([
+      'Sales role gives Their own.',
+    ]);
+  });
+
+  it('widens the paired edit permission with the same switch, never for intake roles', () => {
+    const on = levelsWith(true, true);
+    const off = levelsWith(false, false);
+
+    expect(
+      effectiveScopeForUser(member('manager', ['sales']), 'crm.lead.write', grantMap, on).scope,
+    ).toBe('department');
+    expect(
+      effectiveScopeForUser(member('staff', ['sales']), 'crm.lead.write', grantMap, on).scope,
+    ).toBe('own');
+    expect(
+      effectiveScopeForUser(member('manager', ['sales']), 'crm.lead.write', grantMap, off).scope,
+    ).toBe('own');
+
+    // Finance starts leads for Sales: its manager sees the department's leads but edits none.
+    const financeManager = member('manager', ['finance']);
+    expect(effectiveScopeForUser(financeManager, 'crm.lead.read', grantMap, on).scope).toBe(
+      'department',
+    );
+    expect(effectiveScopeForUser(financeManager, 'crm.lead.write', grantMap, on).scope).toBe('own');
+
+    // Per role, then the widest: the Sales role carries the edit row for a Sales+Finance manager.
+    expect(
+      effectiveScopeForUser(member('manager', ['sales', 'finance']), 'crm.lead.write', grantMap, on)
+        .scope,
+    ).toBe('department');
+
+    // Quotations have no paired edit permission: drafting stays with the owner.
+    expect(
+      effectiveScopeForUser(member('manager', ['sales']), 'quotation.draft', grantMap, on).scope,
+    ).toBe(grantMap.get('sales:quotation.draft') ?? null);
+  });
+
+  it('widens nothing without a department, and says the level needs one', () => {
+    const on = levelsWith(true, true);
+    const noDept = { roles: ['sales'] as const, departmentId: null, level: 'manager' as const };
+    expect(effectiveScopeForUser(noDept, 'crm.lead.read', grantMap, on).scope).toBe('own');
+    expect(effectiveScopeForUser(noDept, 'crm.lead.write', grantMap, on).scope).toBe('own');
+    expect(explainAreaAccess(noDept, 'leads', grantMap, on)).toEqual([
+      'Sales role gives Their own.',
+      'Manager level requires a department to add Their department.',
+    ]);
   });
 });
