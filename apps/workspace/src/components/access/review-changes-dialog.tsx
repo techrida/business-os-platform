@@ -178,6 +178,8 @@ function OpenReview({
   }, [attempt]);
 
   const previewed = state.status === 'ready';
+  const announcement =
+    state.status === 'loading' ? 'Working out what would change…' : saving ? 'Saving…' : '';
   const saveEnabled = canSave({ previewed, saving, warnings, ticked });
   const blocked = hasBlockedWarning(warnings);
 
@@ -389,7 +391,7 @@ function OpenReview({
             </>
           ) : null}
           <span className="sr-only" role="status">
-            {state.status === 'loading' ? 'Working out what would change…' : saving ? 'Saving…' : ''}
+            {announcement}
           </span>
         </div>
       )}
