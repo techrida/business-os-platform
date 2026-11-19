@@ -39,14 +39,16 @@ export const ACCESS_ROLE_CATALOGUE: readonly RoleCatalogueEntry[] = [
   {
     key: 'finance',
     label: 'Finance',
-    description: 'Issues invoices, verifies payments and vendor bank accounts, and requests payments.',
+    description:
+      'Issues invoices, verifies payments and vendor bank accounts, and requests payments.',
     kind: 'staff',
     locked: false,
   },
   {
     key: 'accountant',
     label: 'Accountant',
-    description: 'Prepares sales orders, drafts invoices, enters vendor bills, and records payments.',
+    description:
+      'Prepares sales orders, drafts invoices, enters vendor bills, and records payments.',
     kind: 'staff',
     locked: false,
   },
@@ -254,17 +256,18 @@ export const AREA_PLURAL_NOUN: Readonly<Record<AccessSettingAreaKey, string>> = 
 };
 
 /** Default manager/head department-level switches per area (D50, D51). */
-export const DEFAULT_LEVEL_RULES: Readonly<Record<AccessSettingAreaKey, AccessLevelRuleDefaults>> = {
-  leads: { managersSeeDepartment: true, headsSeeDepartment: true },
-  opportunities: { managersSeeDepartment: true, headsSeeDepartment: true },
-  quotations: { managersSeeDepartment: true, headsSeeDepartment: true },
-  sales_orders: { managersSeeDepartment: false, headsSeeDepartment: false },
-  invoices: { managersSeeDepartment: false, headsSeeDepartment: false },
-  procurement: { managersSeeDepartment: false, headsSeeDepartment: true },
-  payables: { managersSeeDepartment: false, headsSeeDepartment: false },
-  approvals: { managersSeeDepartment: false, headsSeeDepartment: false },
-  documents: { managersSeeDepartment: false, headsSeeDepartment: false },
-};
+export const DEFAULT_LEVEL_RULES: Readonly<Record<AccessSettingAreaKey, AccessLevelRuleDefaults>> =
+  {
+    leads: { managersSeeDepartment: true, headsSeeDepartment: true },
+    opportunities: { managersSeeDepartment: true, headsSeeDepartment: true },
+    quotations: { managersSeeDepartment: true, headsSeeDepartment: true },
+    sales_orders: { managersSeeDepartment: false, headsSeeDepartment: false },
+    invoices: { managersSeeDepartment: false, headsSeeDepartment: false },
+    procurement: { managersSeeDepartment: false, headsSeeDepartment: true },
+    payables: { managersSeeDepartment: false, headsSeeDepartment: false },
+    approvals: { managersSeeDepartment: false, headsSeeDepartment: false },
+    documents: { managersSeeDepartment: false, headsSeeDepartment: false },
+  };
 
 /**
  * Every permission in PERMISSIONS grouped in display order for Access > By role.
@@ -751,7 +754,6 @@ export function isScopeAllowedForRole(
   const permInfo = PERMISSION_BY_KEY.get(permission);
   if (!roleInfo || !permInfo) return false;
   if (roleInfo.kind === 'founder') return scope === 'all';
-  const allowed =
-    roleInfo.kind === 'portal' ? permInfo.scopesFor.portal : permInfo.scopesFor.staff;
+  const allowed = roleInfo.kind === 'portal' ? permInfo.scopesFor.portal : permInfo.scopesFor.staff;
   return allowed.includes(scope);
 }

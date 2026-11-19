@@ -577,11 +577,9 @@ describe('AccessSettingsService integration (real Postgres)', () => {
     await seedLead(env.scope, env.salesStaffBId, 'LD-2026-0102', 'Beta Lead');
 
     const queryVisibleLeads = async (): Promise<string[]> => {
-      const grants = await env.roleCache.grantsFor(
-        env.scope.tenantId,
-        env.scope.organizationId,
-        ['sales'],
-      );
+      const grants = await env.roleCache.grantsFor(env.scope.tenantId, env.scope.organizationId, [
+        'sales',
+      ]);
       const p: Principal = {
         userId: env.salesStaffAId,
         zitadelUserId: `z-${env.salesStaffAId}`,

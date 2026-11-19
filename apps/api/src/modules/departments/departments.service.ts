@@ -55,10 +55,7 @@ import { DB, type Db, type DbTransaction } from '../../platform/db/db.module';
 import { type TxScope, withTx } from '../../platform/db/tx';
 import { searchPage } from '../../platform/list';
 import { ACCESS_REVISION_PORT, type AccessRevisionPort } from './access-revision.port';
-import {
-  applyDepartmentChanges,
-  type DepartmentSnapshot,
-} from './department-changes';
+import { applyDepartmentChanges, type DepartmentSnapshot } from './department-changes';
 import { DepartmentsCaller } from './departments.caller';
 
 type Queryable = Db | DbTransaction;
@@ -273,10 +270,7 @@ export class DepartmentsAdminService {
         users,
         and(eq(users.tenantId, userEntities.tenantId), eq(users.id, userEntities.userId)),
       )
-      .innerJoin(
-        idpOrgs,
-        and(eq(idpOrgs.tenantId, users.tenantId), eq(idpOrgs.id, users.idpOrgId)),
-      )
+      .innerJoin(idpOrgs, and(eq(idpOrgs.tenantId, users.tenantId), eq(idpOrgs.id, users.idpOrgId)))
       .where(
         and(
           eq(userEntities.tenantId, scope.tenantId),
@@ -368,10 +362,7 @@ export class DepartmentsAdminService {
         users,
         and(eq(users.tenantId, userEntities.tenantId), eq(users.id, userEntities.userId)),
       )
-      .innerJoin(
-        idpOrgs,
-        and(eq(idpOrgs.tenantId, users.tenantId), eq(idpOrgs.id, users.idpOrgId)),
-      )
+      .innerJoin(idpOrgs, and(eq(idpOrgs.tenantId, users.tenantId), eq(idpOrgs.id, users.idpOrgId)))
       .where(
         and(
           eq(userEntities.tenantId, scope.tenantId),
@@ -436,10 +427,7 @@ export class DepartmentsAdminService {
         users,
         and(eq(users.tenantId, userEntities.tenantId), eq(users.id, userEntities.userId)),
       )
-      .innerJoin(
-        idpOrgs,
-        and(eq(idpOrgs.tenantId, users.tenantId), eq(idpOrgs.id, users.idpOrgId)),
-      )
+      .innerJoin(idpOrgs, and(eq(idpOrgs.tenantId, users.tenantId), eq(idpOrgs.id, users.idpOrgId)))
       .where(
         and(
           eq(userEntities.tenantId, scope.tenantId),
@@ -464,9 +452,7 @@ export class DepartmentsAdminService {
     }
 
     const headIds = [
-      ...new Set(
-        deptRows.flatMap((d) => (d.headUserId === null ? [] : [d.headUserId])),
-      ),
+      ...new Set(deptRows.flatMap((d) => (d.headUserId === null ? [] : [d.headUserId]))),
     ];
     const headNames = await this.loadHeadNames(this.db, scope.tenantId, headIds);
 
@@ -868,7 +854,8 @@ export class DepartmentsAdminService {
         const memberIds = activeMembers.map((m) => m.userId);
         if (body.moveMembersTo !== null) {
           if (body.moveMembersTo === dept.id) {
-            const message = 'Destination department must be different from the department being retired.';
+            const message =
+              'Destination department must be different from the department being retired.';
             throw new UnprocessableEntityException({
               code: 'unprocessable',
               message,
@@ -881,7 +868,8 @@ export class DepartmentsAdminService {
             .where(scoped(scope).where(departments, eq(departments.id, body.moveMembersTo)))
             .limit(1);
           if (target === undefined || target.status !== 'active') {
-            const message = 'Destination department must be an active department in this legal entity.';
+            const message =
+              'Destination department must be an active department in this legal entity.';
             throw new UnprocessableEntityException({
               code: 'unprocessable',
               message,
@@ -891,9 +879,7 @@ export class DepartmentsAdminService {
 
           // Demote any moved head to manager so migration 0079's trigger does not replace the
           // destination department's head.
-          const movedHeadIds = activeMembers
-            .filter((m) => m.level === 'head')
-            .map((m) => m.userId);
+          const movedHeadIds = activeMembers.filter((m) => m.level === 'head').map((m) => m.userId);
           const movedOtherIds = activeMembers
             .filter((m) => m.level !== 'head')
             .map((m) => m.userId);
@@ -1092,7 +1078,8 @@ export class DepartmentsAdminService {
     } catch (error) {
       if (isUniqueConstraint(error, ACTIVE_NAME_INDEX)) {
         // Re-read name is unnecessary; a generic name clash message still gives 422 on `name`.
-        const message = 'Another active department already uses this name. Rename it before restoring.';
+        const message =
+          'Another active department already uses this name. Rename it before restoring.';
         throw new UnprocessableEntityException({
           code: 'unprocessable',
           message,

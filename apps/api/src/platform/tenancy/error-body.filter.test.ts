@@ -742,9 +742,11 @@ describe('access settings errors on the HTTP boundary', () => {
     );
     expect(out.status).toBe(422);
     expect(ErrorBodySchema.parse(out.body).error.code).toBe('unprocessable');
-    const err = (out.body as {
-      error: { fieldErrors?: unknown; warnings?: unknown };
-    }).error;
+    const err = (
+      out.body as {
+        error: { fieldErrors?: unknown; warnings?: unknown };
+      }
+    ).error;
     expect(err.fieldErrors).toEqual({
       'changes.0.role': 'Founder permissions cannot be changed.',
     });
@@ -758,4 +760,3 @@ describe('access settings errors on the HTTP boundary', () => {
     ]);
   });
 });
-

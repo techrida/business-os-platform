@@ -288,7 +288,12 @@ describe('applyDepartmentChanges and describeDepartmentChanges', () => {
 
   it('updates and clears job titles and skips no-op edits', () => {
     const res = applyDepartmentChanges(makeSnapshot(), [
-      { kind: 'memberJobTitle', departmentId: SALES_ID, userId: BIKASH_ID, jobTitle: '  Senior AE  ' },
+      {
+        kind: 'memberJobTitle',
+        departmentId: SALES_ID,
+        userId: BIKASH_ID,
+        jobTitle: '  Senior AE  ',
+      },
       { kind: 'memberJobTitle', departmentId: SALES_ID, userId: BIKASH_ID, jobTitle: 'Senior AE' },
       { kind: 'memberJobTitle', departmentId: SALES_ID, userId: ASHA_ID, jobTitle: '   ' },
     ]);
@@ -329,7 +334,12 @@ describe('applyDepartmentChanges and describeDepartmentChanges', () => {
     expect(alreadyMember).toMatchObject({ ok: false, error: { code: 'already_a_member' } });
 
     const sameDeptMove = applyDepartmentChanges(snapshot, [
-      { kind: 'memberMove', userId: BIKASH_ID, fromDepartmentId: SALES_ID, toDepartmentId: SALES_ID },
+      {
+        kind: 'memberMove',
+        userId: BIKASH_ID,
+        fromDepartmentId: SALES_ID,
+        toDepartmentId: SALES_ID,
+      },
     ]);
     expect(sameDeptMove).toMatchObject({ ok: false, error: { code: 'same_department_move' } });
 

@@ -127,7 +127,9 @@ export const UpdateDepartmentPeopleBodySchema = z.strictObject({
     .max(DEPARTMENT_NOTE_MAX)
     .nullable()
     .optional()
-    .transform((value) => (value === null || value === undefined || value.length === 0 ? undefined : value)),
+    .transform((value) =>
+      value === null || value === undefined || value.length === 0 ? undefined : value,
+    ),
   acknowledged: z.boolean().optional(),
 });
 export type UpdateDepartmentPeopleBody = z.infer<typeof UpdateDepartmentPeopleBodySchema>;

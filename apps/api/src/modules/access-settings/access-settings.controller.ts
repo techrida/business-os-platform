@@ -11,15 +11,7 @@ import {
   type AccessPreviewResponse,
   type CheckPersonReport,
 } from '@bos/contracts';
-import {
-  BadRequestException,
-  Body,
-  Controller,
-  Get,
-  HttpCode,
-  Post,
-  Query,
-} from '@nestjs/common';
+import { BadRequestException, Body, Controller, Get, HttpCode, Post, Query } from '@nestjs/common';
 import type { z } from 'zod';
 
 import { Can } from '../../platform/authz/decorators';

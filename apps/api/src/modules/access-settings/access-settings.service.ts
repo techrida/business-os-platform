@@ -158,9 +158,7 @@ function deriveLevelRules(
     }
     const managersSeeDepartment = rplRows.some(
       (r) =>
-        r.permission === area.seePermission &&
-        r.minLevel === 'manager' &&
-        r.scope === 'department',
+        r.permission === area.seePermission && r.minLevel === 'manager' && r.scope === 'department',
     );
     const headsSeeDepartment = rplRows.some(
       (r) =>
@@ -246,7 +244,9 @@ export class AccessSettingsService {
           afterUser,
           loaded.partyByUserId.get(afterUser.id) ?? null,
           evalResult.after,
-          beforeUser ? { user: beforeUser, grantMap: beforeGrantMap, levelMap: beforeLevelMap } : undefined,
+          beforeUser
+            ? { user: beforeUser, grantMap: beforeGrantMap, levelMap: beforeLevelMap }
+            : undefined,
         );
       }
     }
@@ -337,9 +337,7 @@ export class AccessSettingsService {
         });
       }
 
-      const hasGrantOrReset = req.changes.some(
-        (c) => c.kind === 'grant' || c.kind === 'resetRole',
-      );
+      const hasGrantOrReset = req.changes.some((c) => c.kind === 'grant' || c.kind === 'resetRole');
       const hasLevelRuleChange = req.changes.some((c) => c.kind === 'levelRule');
 
       if (hasGrantOrReset && !loaded.hasPersistedGrants) {
@@ -347,7 +345,8 @@ export class AccessSettingsService {
       }
 
       let markLevelRulesMaterialized = false;
-      let levelRulesActive = loaded.revisionRow.levelRulesMaterialized || loaded.hasPersistedLevelRows;
+      let levelRulesActive =
+        loaded.revisionRow.levelRulesMaterialized || loaded.hasPersistedLevelRows;
       if (hasLevelRuleChange && !levelRulesActive) {
         await this.materializeDefaultLevelRules(tx, scope.tenantId, evalResult.before.grants);
         markLevelRulesMaterialized = true;
@@ -494,7 +493,9 @@ export class AccessSettingsService {
     levelRulesActive: boolean,
     auditMeta: Record<string, unknown>,
   ): Promise<void> {
-    const runningGrants = new Map(before.grants.map((g) => [grantKey(g.role, g.permission), g.scope]));
+    const runningGrants = new Map(
+      before.grants.map((g) => [grantKey(g.role, g.permission), g.scope]),
+    );
     const runningLevels = new Map(
       before.levelRules.map((l) => [l.area, { ...l, defaults: { ...l.defaults } }]),
     );
@@ -504,9 +505,7 @@ export class AccessSettingsService {
         { ...a, handOvers: a.handOvers.map((h) => ({ ...h })) },
       ]),
     );
-    const runningUsers = new Map(
-      before.users.map((u) => [u.id, { ...u, roles: [...u.roles] }]),
-    );
+    const runningUsers = new Map(before.users.map((u) => [u.id, { ...u, roles: [...u.roles] }]));
     const runningDepts = new Map(before.departments.map((d) => [d.id, { ...d }]));
 
     const levelAreasToReconcile = new Set<AccessSettingAreaKey>();
@@ -774,8 +773,7 @@ export class AccessSettingsService {
           const prevLevel = user.level;
           const prevJobTitle = user.jobTitle;
           const nextLevel: AccessLevel = change.level ?? 'staff';
-          const nextJobTitle =
-            change.jobTitle !== undefined ? change.jobTitle : user.jobTitle;
+          const nextJobTitle = change.jobTitle !== undefined ? change.jobTitle : user.jobTitle;
 
           if (change.jobTitle !== undefined) {
             await tx.execute(sql`
@@ -1013,7 +1011,13 @@ export class AccessSettingsService {
       for (const areaKey of levelAreasToReconcile) {
         const afterRule = after.levelRules.find((l) => l.area === areaKey);
         if (afterRule) {
-          await this.reconcileLevelRulesForArea(tx, scope.tenantId, areaKey, afterRule, afterGrantMap);
+          await this.reconcileLevelRulesForArea(
+            tx,
+            scope.tenantId,
+            areaKey,
+            afterRule,
+            afterGrantMap,
+          );
         }
       }
     }
