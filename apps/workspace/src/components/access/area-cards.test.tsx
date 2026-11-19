@@ -217,3 +217,16 @@ it('names each undo icon after what it resets, shows none at the default and rev
     'Review changes to Opportunities',
   );
 });
+
+it('puts no permission key and no role key with an underscore on the page', async () => {
+  await render();
+  await click(byLabel('Edit Leads'));
+  // Links carry role keys as route parameters; everything else a person can read or hear is checked.
+  const html = document.body.innerHTML.replace(/href="[^"]*"/g, '');
+  for (const permission of accessCatalogue().permissions.map((p) => p.key)) {
+    expect(html).not.toContain(permission);
+  }
+  for (const role of ['operations_head', 'customer_user', 'vendor_user']) {
+    expect(html).not.toContain(role);
+  }
+});
