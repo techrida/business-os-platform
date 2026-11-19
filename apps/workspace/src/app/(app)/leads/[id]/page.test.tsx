@@ -63,6 +63,7 @@ const lead = (over: Partial<LeadDto> = {}): LeadDto => ({
   source: 'website',
   campaign: null,
   ownerUserId: OWNER,
+  ownerName: 'Anil Karki',
   companyName: 'Himalayan Agro Foods Pvt. Ltd.',
   contactName: 'Sunita Shrestha',
   email: null,
@@ -97,10 +98,12 @@ const activity = (id: string, over: Partial<ActivityDto>): ActivityDto => ({
   quotationId: null,
   dueAt: null,
   assigneeUserId: null,
+  assigneeName: null,
   completedAt: null,
   cancelledAt: null,
   planned: false,
   createdByUserId: null,
+  createdByName: null,
   occurredAt: WHEN,
   version: 1,
   ...over,
@@ -110,11 +113,13 @@ const PLANNED = activity('33333333-3333-4333-8333-333333333331', {
   subject: 'Book requirement workshop',
   dueAt: '2026-11-30T05:00:00.000Z',
   assigneeUserId: OWNER,
+  assigneeName: 'Anil Karki',
   planned: true,
 });
 const LOGGED = activity('33333333-3333-4333-8333-333333333332', {
   subject: 'Intro call with Sunita',
   createdByUserId: OWNER,
+  createdByName: 'Anil Karki',
 });
 const STAGE_CHANGE = activity('33333333-3333-4333-8333-333333333333', {
   kind: 'stage_change',
@@ -288,14 +293,15 @@ describe('lead detail page composition (U14 D39, D41)', () => {
   });
 });
 
-describe('lead detail names (owners list merged with the users directory)', () => {
-  it('names an assignee outside an own-scope owners list from the directory', async () => {
+describe('lead detail names (D46: each record carries its own names)', () => {
+  it('names an assignee outside an own-scope owners list from the activity', async () => {
     // An own-scope caller only gets themselves as an owner option.
     mocks.listLeadOwners.mockResolvedValue([OWNERS[0]]);
-    mocks.userNames.mockResolvedValue(new Map([[OTHER, 'Mira Thapa']]));
     mocks.listActivities.mockImplementation((_s: unknown, opts: { status?: string }) =>
       Promise.resolve(
-        opts.status === 'planned' ? [{ ...PLANNED, assigneeUserId: OTHER }] : [LOGGED],
+        opts.status === 'planned'
+          ? [{ ...PLANNED, assigneeUserId: OTHER, assigneeName: 'Mira Thapa' }]
+          : [LOGGED],
       ),
     );
     const followUps = card(await render(), 'Follow-ups').textContent ?? '';
@@ -303,20 +309,22 @@ describe('lead detail names (owners list merged with the users directory)', () =
     expect(followUps).not.toContain('Another teammate');
   });
 
-  it('keeps History actors named from the directory when the owners list is refused', async () => {
+  it('keeps History actors and assignees named when the owners list is refused and no directory is read', async () => {
     mocks.listLeadOwners.mockRejectedValue(new ApiError(403, 'Forbidden'));
-    mocks.userNames.mockResolvedValue(new Map([[OWNER, 'Anil Karki']]));
     const doc = await render();
+    expect(mocks.userNames).not.toHaveBeenCalled();
     expect(card(doc, 'History').textContent).toContain('Anil Karki');
     expect(card(doc, 'Follow-ups').textContent).toContain('Anil Karki');
   });
 
-  it('falls back to a plain phrase, never an id, when neither source knows the person', async () => {
+  it('shows the owner by name and never an id or a placeholder, whatever the directory does', async () => {
     mocks.listLeadOwners.mockRejectedValue(new ApiError(403, 'Forbidden'));
     mocks.userNames.mockRejectedValue(new Error('directory down'));
     const doc = await render();
-    const followUps = card(doc, 'Follow-ups').textContent ?? '';
-    expect(followUps).toContain('Another teammate');
-    expect(doc.body.textContent).not.toContain(OWNER);
+    const text = doc.body.textContent ?? '';
+    expect(text).toContain('Anil Karki');
+    expect(text).not.toContain('Another teammate');
+    expect(text).not.toContain('Name unavailable');
+    expect(text).not.toContain(OWNER);
   });
 });
