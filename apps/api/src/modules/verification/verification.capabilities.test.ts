@@ -109,6 +109,13 @@ describe('caseCapabilities', () => {
     expect(can.review).toBe(false);
     expect(can.edit).toBe(true);
     expect(can.remove).toBe(true);
+    // Uploads are checked as documents.upload on the same case ref, which procurement holds at own scope: an
+    // unowned vendor's case refuses the upload, so the control is not offered; the vendor's owner may attach.
+    expect(can.attach).toBe(false);
+    const buyer = randomUUID();
+    expect(caseCapabilities(principal('procurement', buyer), SCOPE, loaded('vendor', buyer)).attach).toBe(
+      true,
+    );
   });
 
   it('offers nothing to a customer portal user', () => {
