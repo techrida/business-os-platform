@@ -40,6 +40,10 @@ vi.mock('next/navigation', () => ({
   redirect: vi.fn(),
 }));
 vi.mock('next/cache', () => ({ revalidatePath: vi.fn() }));
+// The notice is a toast (it renders nothing on the server); a marker shows it was rendered with its words.
+vi.mock('@/components/p4/success-notice', () => ({
+  SuccessNotice: ({ message }: { message: string }) => <output data-notice>{message}</output>,
+}));
 
 const render = async (id: string = IDS.order): Promise<string> =>
   renderToStaticMarkup(await SalesOrderPage({ params: Promise.resolve({ id }) }));
@@ -236,5 +240,20 @@ describe('a held invoice the person may not open', () => {
     mocks.requireStaffSession.mockResolvedValue({ accessToken: 't', roles: ['founder'] });
     mocks.getSalesOrder.mockResolvedValue(held());
     expect(await render()).not.toContain('/invoices/');
+  });
+
+  // The draft invoice action comes back here (drafted=1) for someone who may draft but not read invoices.
+  it('says the draft was created, without a link to it, when the draft action returned here', async () => {
+    mocks.requireStaffSession.mockResolvedValue({ accessToken: 't', roles: ['accountant'] });
+    mocks.getSalesOrder.mockResolvedValue(held());
+    const html = renderToStaticMarkup(
+      await SalesOrderPage({
+        params: Promise.resolve({ id: IDS.order }),
+        searchParams: Promise.resolve({ drafted: '1' }),
+      }),
+    );
+    expect(html).toContain('The invoice draft was created.');
+    expect(html).not.toContain('/invoices/');
+    expect(await render()).not.toContain('data-notice');
   });
 });
