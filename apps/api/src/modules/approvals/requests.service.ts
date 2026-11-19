@@ -46,7 +46,7 @@ import {
   NotFoundException,
   UnprocessableEntityException,
 } from '@nestjs/common';
-import { and, asc, eq, inArray, isNotNull, isNull, sql } from 'drizzle-orm';
+import { and, asc, eq, inArray, isNotNull, isNull, or, sql } from 'drizzle-orm';
 import { z } from 'zod';
 
 import { can } from '../../platform/authz/can';
@@ -959,7 +959,10 @@ export class ApprovalsService {
     return items;
   }
 
-  /** One request for its requester, a generic reader, or its currently eligible PR department head. */
+  /**
+   * One request for its requester, a generic reader, its currently eligible PR department head or named assignee, or
+   * anyone with an action on it (a head who decided keeps reading it).
+   */
   async get(requestId: string): Promise<ApprovalRequestDto> {
     return this.readRequest(requestId);
   }
@@ -1053,6 +1056,10 @@ export class ApprovalsService {
           }).allowed
         : can(principal, 'approvals.requests.act').allowed;
     if (allowed) return;
+    // Whoever acted on this request (themselves or as a delegate), or the person a delegate acted for, keeps reading
+    // it once their step has moved on: a department head or a named assignee who reloads the request they just
+    // decided must not get a 404. A plain read only: deciding again still takes the checks below.
+    if (replay === undefined && (await this.tookPart(scope, requestId, principal.userId))) return;
     if (request.documentType === 'purchase_request') {
       const steps = await this.stepsOf(this.db, requestId);
       const current = steps.find((s) => s.seq === request.currentSeq);
@@ -1206,6 +1213,23 @@ export class ApprovalsService {
         p.userId,
       )
     );
+  }
+
+  /** True when `userId` has an action on the request, as its actor or as the person a delegate acted for. */
+  private async tookPart(scope: TxScope, requestId: string, userId: string): Promise<boolean> {
+    const [row] = await this.db
+      .select({ requestId: approvalActions.requestId })
+      .from(approvalActions)
+      .where(
+        and(
+          eq(approvalActions.tenantId, scope.tenantId),
+          eq(approvalActions.organizationId, scope.organizationId),
+          eq(approvalActions.requestId, requestId),
+          or(eq(approvalActions.actorUserId, userId), eq(approvalActions.onBehalfOfUserId, userId)),
+        ),
+      )
+      .limit(1);
+    return row !== undefined;
   }
 
   /** The caller's own earlier action on the request under `replay`'s Idempotency-Key, if any. */
