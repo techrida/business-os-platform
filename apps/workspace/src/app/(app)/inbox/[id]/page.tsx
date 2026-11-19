@@ -13,6 +13,7 @@ import { QuotationApprovalSummary } from '@/components/p2/quotations/approval-su
 import { Alert } from '@/components/ui/alert';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
+import { Disclosure } from '@/components/ui/disclosure';
 import { FilePreviewDialog } from '@/components/ui/file-preview-dialog';
 import { Breadcrumb, Page, PageHeader } from '@/components/ui/page';
 import { FactList, Panel, type Fact } from '@/components/ui/panel';
@@ -185,9 +186,9 @@ export default async function InboxDetailPage({ params }: { params: Promise<{ id
   );
   const rows = snapshotEntries(snapshot, names).filter(
     (row) =>
-      (!memoTemplate.success || row.key !== 'template') && (!isMemo || row.key !== 'attachments'),
+      (!memoTemplate.success || (row.key !== 'template' && row.key !== 'body')) &&
+      (!isMemo || row.key !== 'attachments'),
   );
-  const inboxItem = items?.find((i) => i.requestId === request.requestId);
   const [requestLabel, requestTone] = STATUS[request.status];
 
   const facts: Fact[] = rows.map((row) => ({
@@ -244,12 +245,6 @@ export default async function InboxDetailPage({ params }: { params: Promise<{ id
 
       <div className={styles.columns}>
         <Panel as="aside" title="Your decision" className={`${styles.detailPanel} ${styles.side}`}>
-          {inboxItem ? (
-            <div className={styles.assignment} role="region" aria-label="Why this is in your inbox">
-              <p className={styles.assignmentLabel}>Why this is in your inbox</p>
-              <p>{inboxItem.reason}</p>
-            </div>
-          ) : null}
           {waitingOnMe === 'no' ? (
             <p className={styles.note}>
               {request.status === 'pending'
@@ -287,7 +282,15 @@ export default async function InboxDetailPage({ params }: { params: Promise<{ id
                     body={memoBody}
                   />
                 ) : null}
-                <FactList facts={facts} />
+                {memoTemplate.success ? (
+                  facts.length > 0 ? (
+                    <Disclosure title="Details">
+                      <FactList facts={facts} />
+                    </Disclosure>
+                  ) : null
+                ) : (
+                  <FactList facts={facts} />
+                )}
               </>
             )}
           </Panel>
