@@ -228,7 +228,7 @@ export default async function BillsPage({
                   const name = `${b.number ?? 'draft bill'} for invoice ${b.vendorInvoiceNo} from ${b.vendorName}`;
                   return (
                     <tr key={b.id}>
-                      <Td>
+                      <Td nowrap>
                         <Link href={href} className={styles.name}>
                           {b.number ?? 'Draft bill'}
                         </Link>
