@@ -1,14 +1,17 @@
 'use server';
 
-import { LEAD_LOST_REASON_LABEL_MAX } from '@bos/contracts';
+import {
+  LEAD_LOST_REASON_LABEL_MAX,
+  LOST_REASONS_STALE_MESSAGE,
+  ReorderLeadLostReasonsBodySchema,
+  ResetLeadLostReasonsBodySchema,
+} from '@bos/contracts';
 import { revalidatePath } from 'next/cache';
 import { z } from 'zod';
 
-import { movedOrder } from '@/components/settings/lost-reasons/lost-reasons-model';
 import { ApiError } from '@/lib/api';
 import {
   createLeadLostReason,
-  listLeadLostReasons,
   reorderLeadLostReasons,
   resetLeadLostReasons,
   updateLeadLostReason,
@@ -18,8 +21,9 @@ import { fail, ok, type ActionState } from '../action-state';
 import { describeError } from '../admin-errors';
 import { requireSection } from '../guard';
 
-// Server Actions of the Lost reasons card (Settings > Sales, D49). Each is its own request, so the section permission
-// is asked again here, apart from the page that rendered the list; the API still enforces admin.settings.write.
+// Server Actions of the Lost reasons card (Settings > Sales, D49, D54-3, D54-4). Each is its own
+// request, so the section permission is asked again here, apart from the page that rendered the
+// list; the API still enforces admin.settings.write.
 
 const PATH = '/settings/sales';
 const Id = z.guid();
@@ -31,8 +35,9 @@ const STALE = 'Someone else changed this reason. The list is up to date now; try
 const BAD_LABEL = `Enter a name for the reason, up to ${LEAD_LOST_REASON_LABEL_MAX} characters.`;
 
 /**
- * A 404 or a 409 refreshes the list so the person sees what the server holds. A 409 for a label already on the list
- * keeps the API's own sentence (it names the clash); any other 409 is a stale version.
+ * A 404 or a 409 refreshes the list so the person sees what the server holds. A 409 for a stale
+ * list (`LOST_REASONS_STALE_MESSAGE`) or a label already on the list keeps the API's own sentence;
+ * any other 409 is a stale version on one reason.
  */
 function refused(error: unknown): ActionState {
   if (error instanceof ApiError && error.status === 404) {
@@ -42,7 +47,10 @@ function refused(error: unknown): ActionState {
   if (error instanceof ApiError && error.status === 409) {
     revalidatePath(PATH);
     const message = describeError(error, 'change lost reasons');
-    return fail(/already on the list/.test(message) ? message : STALE);
+    if (message === LOST_REASONS_STALE_MESSAGE || /already on the list/.test(message)) {
+      return fail(message);
+    }
+    return fail(STALE);
   }
   return fail(describeError(error, 'change lost reasons'));
 }
@@ -91,23 +99,21 @@ export async function setLostReasonRetiredAction(
     return refused(error);
   }
   revalidatePath(PATH);
-  return ok(retired ? 'Reason retired. Leads that used it keep it.' : 'Reason restored.');
+  return ok(
+    retired ? 'Reason retired. Leads and opportunities that used it keep it.' : 'Reason restored.',
+  );
 }
 
-/** Moves one reason a place up or down. The new order is computed from the list as the server holds it now. */
-export async function moveLostReasonAction(
-  id: string,
-  direction: 'up' | 'down',
+/** Saves the displayed list in a new order, only while it still matches `expectedOrder` (D54-4). */
+export async function reorderLostReasonsAction(
+  ids: string[],
+  expectedOrder: string,
 ): Promise<ActionState> {
   const session = await requireSection('sales');
-  if (!Id.safeParse(id).success) return fail(GONE);
+  const parsed = ReorderLeadLostReasonsBodySchema.safeParse({ ids, expectedOrder });
+  if (!parsed.success) return fail(LOST_REASONS_STALE_MESSAGE);
   try {
-    const current = await listLeadLostReasons(session);
-    if (!current.some((r) => r.id === id)) {
-      revalidatePath(PATH);
-      return fail(GONE);
-    }
-    await reorderLeadLostReasons(session, { ids: movedOrder(current, id, direction) });
+    await reorderLeadLostReasons(session, parsed.data);
   } catch (error) {
     return refused(error);
   }
@@ -115,10 +121,13 @@ export async function moveLostReasonAction(
   return ok('Order saved.');
 }
 
-export async function resetLostReasonsAction(): Promise<ActionState> {
+/** Resets the list to the defaults, only while it still matches `expectedOrder` (D54-4). */
+export async function resetLostReasonsAction(expectedOrder: string): Promise<ActionState> {
   const session = await requireSection('sales');
+  const parsed = ResetLeadLostReasonsBodySchema.safeParse({ expectedOrder });
+  if (!parsed.success) return fail(LOST_REASONS_STALE_MESSAGE);
   try {
-    await resetLeadLostReasons(session);
+    await resetLeadLostReasons(session, parsed.data);
   } catch (error) {
     return refused(error);
   }

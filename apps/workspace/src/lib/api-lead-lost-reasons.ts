@@ -5,6 +5,7 @@ import {
   type LeadLostReason,
   LeadLostReasonSchema,
   type ReorderLeadLostReasonsBody,
+  type ResetLeadLostReasonsBody,
   type UpdateLeadLostReasonBody,
 } from '@bos/contracts';
 import { z } from 'zod';
@@ -61,7 +62,7 @@ export function updateLeadLostReason(
   );
 }
 
-/** Every option id in the new order; answers the whole list. */
+/** Every option id in the new order, only while the list matches `expectedOrder` (D54-4); answers the whole list. */
 export function reorderLeadLostReasons(
   session: Session,
   body: ReorderLeadLostReasonsBody,
@@ -69,7 +70,10 @@ export function reorderLeadLostReasons(
   return call(session, '/v1/admin/lead-lost-reasons/order', List, json('PUT', body));
 }
 
-/** Back to the seven defaults (D32); answers the whole list. */
-export function resetLeadLostReasons(session: Session): Promise<LeadLostReason[]> {
-  return call(session, '/v1/admin/lead-lost-reasons/reset', List, { method: 'POST' });
+/** Back to the seven defaults (D32), only while the list matches `expectedOrder` (D54-4); answers the whole list. */
+export function resetLeadLostReasons(
+  session: Session,
+  body: ResetLeadLostReasonsBody,
+): Promise<LeadLostReason[]> {
+  return call(session, '/v1/admin/lead-lost-reasons/reset', List, json('POST', body));
 }
