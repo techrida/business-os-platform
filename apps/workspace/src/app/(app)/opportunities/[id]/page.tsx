@@ -1,4 +1,4 @@
-import { OPPORTUNITY_STAGES, type OpportunityDto } from '@bos/contracts';
+import { type LeadLostReason, OPPORTUNITY_STAGES, type OpportunityDto } from '@bos/contracts';
 import type { Metadata } from 'next';
 import Link from 'next/link';
 import { notFound } from 'next/navigation';
@@ -7,6 +7,7 @@ import type { NumberSystems } from '@bos/locale';
 import { getOpportunity, listActivities } from '@/components/p2/crm/crm-api';
 import { FollowUpsCard } from '@/components/p2/crm/follow-ups-card';
 import { moneyOrNull } from '@/components/p2/crm/format';
+import { MarkLostDialog } from '@/components/p2/crm/mark-lost-dialog';
 import { MoveForm } from '@/components/p2/crm/move-form';
 import { canAssignFollowUps, loadPeople } from '@/components/p2/crm/people';
 import { ActivityList, LoadProblem, StageBadge } from '@/components/p2/crm/server-bits';
@@ -28,6 +29,7 @@ import { FactList, Panel, type Fact } from '@/components/ui/panel';
 import { StatusTimeline } from '@/components/ui/status-timeline';
 import { Table, Td, Th } from '@/components/ui/table';
 import { failureOf } from '@/lib/api-kernel';
+import { listOpportunityLostReasonChoices } from '@/lib/api-lead-lost-reasons';
 import { requireStaffSession } from '@/lib/bff';
 import { getNumberSystems } from '@/lib/display-settings';
 import { money, when } from '@/lib/kernel-format';
@@ -132,6 +134,19 @@ export default async function OpportunityPage({ params }: { params: Promise<{ id
   const quotations = quotationsResult.status === 'fulfilled' ? quotationsResult.value : [];
   const quotesHref = opportunityQuotationsHref(opp.id);
   const open = opp.stage !== 'lost' && opp.stage !== 'won';
+  // The options Mark lost offers (D54-3). Only asked for when the stage allows it. A 403 means this
+  // person may read the opportunity but not change it, so the action is left out rather than shown and refused;
+  // any other failure leaves the dialog able to add a reason.
+  let canMarkLost = moves.some((move) => move.stage === 'lost');
+  let lostReasons: LeadLostReason[] = [];
+  if (canMarkLost) {
+    try {
+      lostReasons = await listOpportunityLostReasonChoices(session);
+    } catch (err) {
+      if (failureOf(err).status === 403) canMarkLost = false;
+    }
+  }
+  const reasonLabel = opp.lostReason?.label ?? opp.stageReason;
   // A list that did not load falls back to New:
   // the New page checks again before it shows the builder.
   const entry: QuotationEntry = quotationEntryFor(quotations);
@@ -154,40 +169,52 @@ export default async function OpportunityPage({ params }: { params: Promise<{ id
             </span>
           }
           actions={
-            entry.kind === 'resume' ? (
-              <>
-                <LinkButton href={quotesHref} variant="secondary">
-                  View quotations
-                </LinkButton>
-                <LinkButton
-                  href={editQuotationHref(entry.quotationId)}
-                  aria-label={`Edit quotation ${entry.number}`}
-                >
-                  Edit quotation
-                </LinkButton>
-              </>
-            ) : entry.kind === 'choose' ? (
-              <>
-                {open ? (
-                  <LinkButton
-                    href={newQuotationHref(opp.id, { another: true })}
-                    variant="secondary"
-                  >
-                    New quotation
+            <>
+              {entry.kind === 'resume' ? (
+                <>
+                  <LinkButton href={quotesHref} variant="secondary">
+                    View quotations
                   </LinkButton>
-                ) : null}
-                <LinkButton href={quotesHref}>Choose a draft ({entry.count})</LinkButton>
-              </>
-            ) : (
-              <>
-                <LinkButton href={quotesHref} variant="secondary">
-                  View quotations
-                </LinkButton>
-                {open ? (
-                  <LinkButton href={newQuotationHref(opp.id)}>New quotation</LinkButton>
-                ) : null}
-              </>
-            )
+                  <LinkButton
+                    href={editQuotationHref(entry.quotationId)}
+                    aria-label={`Edit quotation ${entry.number}`}
+                  >
+                    Edit quotation
+                  </LinkButton>
+                </>
+              ) : entry.kind === 'choose' ? (
+                <>
+                  {open ? (
+                    <LinkButton
+                      href={newQuotationHref(opp.id, { another: true })}
+                      variant="secondary"
+                    >
+                      New quotation
+                    </LinkButton>
+                  ) : null}
+                  <LinkButton href={quotesHref}>Choose a draft ({entry.count})</LinkButton>
+                </>
+              ) : (
+                <>
+                  <LinkButton href={quotesHref} variant="secondary">
+                    View quotations
+                  </LinkButton>
+                  {open ? (
+                    <LinkButton href={newQuotationHref(opp.id)}>New quotation</LinkButton>
+                  ) : null}
+                </>
+              )}
+              {canMarkLost ? (
+                <MarkLostDialog
+                  noun="opportunity"
+                  action={moveOpportunityStageAction}
+                  id={opp.id}
+                  number={opp.number}
+                  version={opp.version}
+                  reasons={lostReasons}
+                />
+              ) : null}
+            </>
           }
         />
       </div>
@@ -205,9 +232,14 @@ export default async function OpportunityPage({ params }: { params: Promise<{ id
         />
         {opp.stage !== 'won' ? (
           <div className={styles.stageControls}>
-            {opp.stageReason ? (
+            {reasonLabel ? (
               <div className={styles.reasonBox}>
-                <strong>{opp.stageReason}</strong>
+                <strong>{reasonLabel}</strong>
+                {opp.lostReason?.retired ? (
+                  <span className={styles.quiet}>
+                    This reason is no longer offered for new opportunities.
+                  </span>
+                ) : null}
                 {opp.stageNote ? <span>{opp.stageNote}</span> : null}
               </div>
             ) : null}
@@ -219,7 +251,12 @@ export default async function OpportunityPage({ params }: { params: Promise<{ id
               recordId={opp.id}
               version={opp.version}
               moves={moves}
-              emptyText="A manager can reopen a lost opportunity."
+              exclude={['lost']}
+              emptyText={
+                opp.stage === 'lost'
+                  ? 'No further moves from here.'
+                  : 'No further manual moves from here.'
+              }
             />
           </div>
         ) : null}

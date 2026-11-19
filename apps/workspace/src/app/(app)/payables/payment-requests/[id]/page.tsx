@@ -14,10 +14,11 @@ import { Table, Td, Th } from '@/components/ui/table';
 import {
   getPaymentRequest,
   listPaymentRequestItems,
-  type PaymentRequest,
+  type PaymentRequestDetail,
 } from '@/lib/api-payables';
 import { requireStaffSession } from '@/lib/bff';
 import { getNumberSystems } from '@/lib/display-settings';
+import { getGrants, hasGrant } from '@/lib/grants';
 
 import { poMoney } from '../../../procurement/orders/_lib/model';
 import styles from '../../payables.module.css';
@@ -33,7 +34,9 @@ export default async function PaymentRequestPage({ params }: { params: Promise<{
   if (!isGuid(id)) notFound();
   const session = await requireStaffSession(`/payables/payment-requests/${id}`);
   const numberSystems = await getNumberSystems();
-  if (!hasPermission(session.roles, 'payables.payment.request'))
+  // Live grants (GET /v1/me), as the links to a payment request are decided, not the role defaults: an
+  // approver an admin granted payables.payment.request can open the request their inbox links to.
+  if (!hasGrant(await getGrants(session), 'payables.payment.request'))
     return (
       <Page>
         <Alert tone="info" role="alert">
@@ -41,7 +44,7 @@ export default async function PaymentRequestPage({ params }: { params: Promise<{
         </Alert>
       </Page>
     );
-  let request: PaymentRequest;
+  let request: PaymentRequestDetail;
   try {
     request = await getPaymentRequest(session, id);
   } catch (err) {
@@ -127,7 +130,14 @@ export default async function PaymentRequestPage({ params }: { params: Promise<{
               {
                 key: 'vendor',
                 label: 'Vendor',
-                value: <Link href={`/vendors/${request.vendorPartyId}`}>View vendor</Link>,
+                // The link shows only when the vendor page would open for this person (their live grants).
+                value: request.can.readVendor ? (
+                  <Link href={`/vendors/${request.vendorPartyId}`}>
+                    {request.vendorName ?? 'View vendor'}
+                  </Link>
+                ) : (
+                  (request.vendorName ?? 'Vendor name unavailable')
+                ),
               },
               {
                 key: 'bank',

@@ -166,7 +166,11 @@ describe('customer detail logo', () => {
   });
 
   it('draws the logo seeded from the customer id, and lets a writer replace it', async () => {
-    detail = customer({ logoDocumentId: LOGO, people: [] });
+    detail = customer({
+      logoDocumentId: LOGO,
+      people: [],
+      can: { write: true, readVerification: false, openVerification: false },
+    });
     const group = logoGroup(await renderHtml());
     expect(group).toContain(`--avatar-fill:${avatarColour(CUSTOMER)}`);
     expect(group).toContain(`src="${imagePath(LOGO)}"`);

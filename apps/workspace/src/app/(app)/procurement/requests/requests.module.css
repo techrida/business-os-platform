@@ -126,3 +126,15 @@
     grid-template-columns: minmax(0, 1fr);
   }
 }
+
+/* Text read by screen readers only: the column head of the receive action. */
+.srOnly {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  padding: 0;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}

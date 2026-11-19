@@ -49,24 +49,46 @@ function failed(err: unknown, key: string): ActionState {
 }
 
 /**
+ * The invoice the line holds now, read from the order again, and only when the line says the caller may
+ * open it (`can.openInvoice`, invoice.read on that invoice): drafting needs invoice.draft, which does not
+ * include reading the invoice. Undefined when the order cannot be read, the line holds none, or the
+ * caller may not open it.
+ */
+async function openableInvoiceOf(
+  session: Session,
+  salesOrderId: string,
+  scheduleLineId: string,
+): Promise<string | undefined> {
+  try {
+    const detail = await getSalesOrder(session, salesOrderId);
+    const line = detail.schedule.find((l) => l.id === scheduleLineId);
+    const invoiceId = line?.invoiceId;
+    if (
+      line?.can?.openInvoice === true &&
+      invoiceId !== null &&
+      invoiceId !== undefined &&
+      isGuid(invoiceId)
+    ) {
+      return invoiceId;
+    }
+  } catch {
+    // Not readable right now: the caller goes back to the order instead.
+  }
+  return undefined;
+}
+
+/**
  * The line was taken: someone drafted its invoice after this page loaded, so the page's copy of the
- * line has no `invoiceId`. Read the order again to find it. If that is not possible, ask for a reload.
+ * line has no `invoiceId`. Read the order again to find it, and link it only when the caller may open
+ * it. Otherwise ask for a reload, which shows the line with its invoice.
  */
 async function takenBy(
   session: Session,
   salesOrderId: string,
   scheduleLineId: string,
 ): Promise<{ takenInvoiceId: string } | { reload: true }> {
-  try {
-    const detail = await getSalesOrder(session, salesOrderId);
-    const invoiceId = detail.schedule.find((line) => line.id === scheduleLineId)?.invoiceId;
-    if (invoiceId !== null && invoiceId !== undefined && isGuid(invoiceId)) {
-      return { takenInvoiceId: invoiceId };
-    }
-  } catch {
-    // Not readable right now: the reload link below is the way forward.
-  }
-  return { reload: true };
+  const invoiceId = await openableInvoiceOf(session, salesOrderId, scheduleLineId);
+  return invoiceId !== undefined ? { takenInvoiceId: invoiceId } : { reload: true };
 }
 
 /** `POST /v1/sales-orders`: confirm an accepted quotation version, then open the new order. */
@@ -104,7 +126,11 @@ export async function markBillableAction(_prev: ActionState, form: FormData): Pr
   return { key, done: true };
 }
 
-/** `POST /v1/invoices/from-schedule`: draft an invoice from a billable line, then open the invoice. */
+/**
+ * `POST /v1/invoices/from-schedule`: draft an invoice from a billable line, then open the invoice when the
+ * line says the caller may (`can.openInvoice`). Someone who may draft but not read invoices goes back to
+ * the order, which says the draft was created.
+ */
 export async function draftInvoiceAction(_prev: ActionState, form: FormData): Promise<ActionState> {
   const key = keyOf(form);
   const parsed = parseDraft(form);
@@ -112,9 +138,8 @@ export async function draftInvoiceAction(_prev: ActionState, form: FormData): Pr
 
   const { salesOrderId, scheduleLineId } = parsed.value;
   const session = await requireStaffSession(`/sales-orders/${salesOrderId}`);
-  let invoiceId: string;
   try {
-    invoiceId = (await draftInvoiceFromSchedule(session, { scheduleLineId }, key)).invoice.id;
+    await draftInvoiceFromSchedule(session, { scheduleLineId }, key);
   } catch (err) {
     const state = failed(err, key);
     return describeBillingFailure(err).kind === 'line_taken'
@@ -122,5 +147,11 @@ export async function draftInvoiceAction(_prev: ActionState, form: FormData): Pr
       : state;
   }
   revalidatePath(`/sales-orders/${salesOrderId}`);
-  redirect(`/invoices/${encodeURIComponent(invoiceId)}`);
+  const invoiceId = await openableInvoiceOf(session, salesOrderId, scheduleLineId);
+  // `redirect` throws, so it stays outside the try blocks.
+  redirect(
+    invoiceId !== undefined
+      ? `/invoices/${encodeURIComponent(invoiceId)}`
+      : `/sales-orders/${encodeURIComponent(salesOrderId)}?drafted=1`,
+  );
 }

@@ -5,6 +5,7 @@
 // V1 registers the vendor adapter through `VerificationService.registerPartyOwner` (see the registration point
 // there); until then a vendor party has no adapter and is "not found", which is the deny-by-default answer.
 import { type Permission, type VerificationPartyKind } from '@bos/contracts';
+import { type SQLWrapper } from 'drizzle-orm';
 
 import { type ResourceRef } from '../../platform/authz/can';
 import { type Db, type DbTransaction } from '../../platform/db/db.module';
@@ -16,6 +17,12 @@ export type PartyQuery = Db | DbTransaction;
 export interface PartyOwner {
   id: string;
   ownerUserId: string | null;
+}
+
+/** How a case names its party: the legal name and, for a kind that numbers its parties, the number. */
+export interface PartyLabel {
+  name: string;
+  number: string | null;
 }
 
 export interface PartyOwnerPort {
@@ -35,6 +42,20 @@ export interface PartyOwnerPort {
     tenantId: string,
     partyIds: readonly string[],
   ): Promise<ReadonlyMap<string, string | null>>;
+  /**
+   * The ids of this tenant's parties of this kind that `userId` owns, as a subquery: what the `own` scope of
+   * verification.read reaches, so a case list is scoped in SQL before its limit, never filtered after it.
+   */
+  ownedBy(q: PartyQuery, tenantId: string, userId: string): SQLWrapper;
+  /**
+   * The display name and number of each given party of this tenant (number null for a kind without one). One
+   * query for any number of ids. Only these two fields: a case reader learns the party's label, nothing else.
+   */
+  labelsOf(
+    q: PartyQuery,
+    tenantId: string,
+    partyIds: readonly string[],
+  ): Promise<ReadonlyMap<string, PartyLabel>>;
   /** The counterparty field of the authz `ResourceRef` that names this party. */
   counterparty(partyId: string): Pick<ResourceRef, 'customerPartyId' | 'vendorPartyId'>;
 }
@@ -57,5 +78,10 @@ export class PartyOwnerRegistry {
 
   find(kind: VerificationPartyKind): PartyOwnerPort | undefined {
     return this.ports.get(kind);
+  }
+
+  /** Every registered adapter. */
+  all(): PartyOwnerPort[] {
+    return [...this.ports.values()];
   }
 }

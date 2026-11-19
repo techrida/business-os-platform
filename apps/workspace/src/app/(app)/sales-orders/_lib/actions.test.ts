@@ -198,8 +198,26 @@ describe('markBillableAction', () => {
 });
 
 describe('draftInvoiceAction', () => {
+  /** The order as read again after the draft: the line holds the invoice, openable or not. */
+  const drafted = (openInvoice: boolean) =>
+    salesOrderDetail({
+      schedule: [
+        scheduleLine({
+          id: IDS.advance,
+          seq: 1,
+          status: 'drafted',
+          invoiceId: IDS.invoice,
+          can: { openInvoice },
+        }),
+      ],
+    });
+
   it('drafts from the line with the page key, then opens the invoice', async () => {
-    mocks.apiFetch.mockImplementation(() => answer(200, invoiceDetail()));
+    mocks.apiFetch.mockImplementation((_s: unknown, path: string) =>
+      path === '/v1/invoices/from-schedule'
+        ? answer(200, invoiceDetail())
+        : answer(200, drafted(true)),
+    );
     const to = await redirectTarget(draftInvoiceAction(prev, draftForm()));
     expect(to).toBe(`NEXT_REDIRECT /invoices/${IDS.invoice}`);
     const [, path, init] = call();
@@ -212,19 +230,7 @@ describe('draftInvoiceAction', () => {
     mocks.apiFetch.mockImplementation((_s: unknown, path: string) =>
       path === '/v1/invoices/from-schedule'
         ? refusal(409, 'SCHEDULE_LINE_TAKEN')
-        : answer(
-            200,
-            salesOrderDetail({
-              schedule: [
-                scheduleLine({
-                  id: IDS.advance,
-                  seq: 1,
-                  status: 'drafted',
-                  invoiceId: IDS.invoice,
-                }),
-              ],
-            }),
-          ),
+        : answer(200, drafted(true)),
     );
     const state = await draftInvoiceAction(prev, draftForm());
     expect(state.error).toMatch(/already has an invoice/i);
@@ -232,6 +238,43 @@ describe('draftInvoiceAction', () => {
     expect(state.reload).toBeUndefined();
     expect(state.key).not.toBe(KEY);
     expect(call(1)[1]).toBe(`/v1/sales-orders/${IDS.order}`);
+  });
+
+  // Someone whose live grants hold invoice.draft but not invoice.read: the API marks the line's invoice as
+  // not openable for them (can.openInvoice false).
+  describe('for someone who may draft invoices but not read them', () => {
+    it('returns to the order with the drafted notice instead of opening an invoice they cannot read', async () => {
+      mocks.apiFetch.mockImplementation((_s: unknown, path: string) =>
+        path === '/v1/invoices/from-schedule'
+          ? answer(200, invoiceDetail())
+          : answer(200, drafted(false)),
+      );
+      const to = await redirectTarget(draftInvoiceAction(prev, draftForm()));
+      expect(to).toBe(`NEXT_REDIRECT /sales-orders/${IDS.order}?drafted=1`);
+      expect(to).not.toContain(IDS.invoice);
+      expect(mocks.revalidatePath).toHaveBeenCalledWith(`/sales-orders/${IDS.order}`);
+    });
+
+    it('returns to the order when the order cannot be read again after the draft', async () => {
+      mocks.apiFetch.mockImplementation((_s: unknown, path: string) =>
+        path === '/v1/invoices/from-schedule' ? answer(200, invoiceDetail()) : answer(500, {}),
+      );
+      const to = await redirectTarget(draftInvoiceAction(prev, draftForm()));
+      expect(to).toBe(`NEXT_REDIRECT /sales-orders/${IDS.order}?drafted=1`);
+    });
+
+    it('SCHEDULE_LINE_TAKEN offers no link to the invoice, only a reload, and names no invoice id', async () => {
+      mocks.apiFetch.mockImplementation((_s: unknown, path: string) =>
+        path === '/v1/invoices/from-schedule'
+          ? refusal(409, 'SCHEDULE_LINE_TAKEN')
+          : answer(200, drafted(false)),
+      );
+      const state = await draftInvoiceAction(prev, draftForm());
+      expect(state.error).toMatch(/already has an invoice/i);
+      expect(state.takenInvoiceId).toBeUndefined();
+      expect(state.reload).toBe(true);
+      expect(JSON.stringify(state)).not.toContain(IDS.invoice);
+    });
   });
 
   it('SCHEDULE_LINE_TAKEN falls back to a reload when the line shows no invoice or the order cannot be read', async () => {

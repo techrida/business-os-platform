@@ -495,7 +495,9 @@ describe('quotation expiring-soon email', () => {
       dedupe_key: `quotation.expiring:${v.versionId}`,
     });
     expect(row.subject).toContain(v.number);
-    expect(row.body_text).toContain(`https://portal.example.com/quotations/${v.quotationId}`);
+    // The portal's `/quotations/:id` is a version id (PortalService.get): the quotation id would be "not found".
+    expect(row.body_text).toContain(`https://portal.example.com/quotations/${v.versionId}`);
+    expect(row.body_text).not.toContain(`/quotations/${v.quotationId}`);
     expect(row.body_text).toContain('Himal Traders Pvt. Ltd.');
     expect(row.body_text).toContain(formatCustomerDate(IN_TWO_DAYS));
     // The version itself is untouched: a notice is not a status change.

@@ -6,7 +6,6 @@ import Link from 'next/link';
 import type { NumberSystems } from '@bos/locale';
 
 import { listCustomers } from '@/components/p2/customers/api';
-import { hasPermission } from '@/components/p2/customers/permissions';
 import { listQuotations } from '@/components/p2/quotations/api';
 import { Alert } from '@/components/ui/alert';
 import { Badge } from '@/components/ui/badge';
@@ -18,6 +17,7 @@ import { Page, PageHeader } from '@/components/ui/page';
 import { StatCard } from '@/components/ui/stat-card';
 import { Table, Td, Th } from '@/components/ui/table';
 import { getSalesOrdersSummary, listSalesOrdersPage } from '@/lib/api-billing';
+import { getGrants, hasGrant } from '@/lib/grants';
 import { failureOf } from '@/lib/api-kernel';
 import { requireStaffSession } from '@/lib/bff';
 import { getNumberSystems } from '@/lib/display-settings';
@@ -113,7 +113,7 @@ export default async function SalesOrdersPage({
   const here = pageHref(state.page);
   const session = await requireStaffSession(here);
   const numberSystems = await getNumberSystems();
-  const canConfirm = hasPermission(session.roles, 'sales_order.confirm');
+  const canConfirm = hasGrant(await getGrants(session), 'sales_order.confirm');
   const filter = { status: statuses, customerId: customerIds, ...(q !== undefined ? { q } : {}) };
   const readOrders = (page: number) =>
     listSalesOrdersPage(session, { ...filter, limit: rows, offset: pageWindow(page, rows).offset });

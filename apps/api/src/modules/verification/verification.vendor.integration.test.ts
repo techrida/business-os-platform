@@ -165,6 +165,28 @@ const vendorPort: PartyOwnerPort = {
       );
     return new Map(rows.map((r) => [r.id, vendorOwners.get(r.id) ?? null]));
   },
+  labelsOf: async (q, tenantId, partyIds) => {
+    if (partyIds.length === 0) return new Map();
+    const rows = await q
+      .select({ id: parties.id, name: parties.name })
+      .from(parties)
+      .where(and(eq(parties.tenantId, tenantId), inArray(parties.id, [...partyIds])));
+    return new Map(rows.map((r) => [r.id, { name: r.name, number: null }]));
+  },
+  ownedBy: (q, tenantId, userId) =>
+    q
+      .select({ id: parties.id })
+      .from(parties)
+      .where(
+        and(
+          eq(parties.tenantId, tenantId),
+          eq(parties.kind, 'vendor'),
+          inArray(
+            parties.id,
+            [...vendorOwners].filter(([, owner]) => owner === userId).map(([id]) => id),
+          ),
+        ),
+      ),
   counterparty: (partyId) => ({ vendorPartyId: partyId }),
 };
 
@@ -434,6 +456,30 @@ describe('a vendor case, once the vendor adapter is registered', () => {
     expect((list.body as VerificationCaseDto[]).map((c) => c.id)).toEqual([dto.id]);
   });
 
+  it('names the vendor in the case list for pmo, who holds no vendor.read, and sends only the label (audit #8)', async () => {
+    const partyId = await newVendor();
+    const dto = await openCase(partyId);
+    const { rows } = await appPool.query<{ name: string }>(
+      'SELECT name FROM app.parties WHERE id = $1',
+      [partyId],
+    );
+
+    as(U.pmo, 'pmo');
+    const list = await api().get('/v1/verification-cases').query({ partyId });
+    expect(list.status).toBe(200);
+    const [item] = list.body as Record<string, unknown>[];
+    expect(item).toMatchObject({
+      id: dto.id,
+      partyKind: 'vendor',
+      partyName: rows[0]?.name,
+      partyNumber: null,
+    });
+    // The label only: the DTO's own keys plus the two label fields, nothing of the vendor record itself.
+    expect(Object.keys(item ?? {}).sort()).toEqual(
+      [...Object.keys(dto), 'partyName', 'partyNumber'].sort(),
+    );
+  });
+
   it('is still 404 for an unknown party', async () => {
     expect(
       (await api().post('/v1/verification-cases').send({ partyId: randomUUID() })).status,
@@ -513,6 +559,29 @@ describe('a vendor case, once the vendor adapter is registered', () => {
       status: 'approved',
       reviewedBy: U.pmo,
     });
+  });
+
+  it('tells the Founder who submitted it that they cannot review it, and offers pmo the review', async () => {
+    const filled = await fillRequired(await openCase(await newVendor()));
+    const submitted = await api().post(`/v1/verification-cases/${filled.id}/submit`);
+    expect(submitted.status, JSON.stringify(submitted.body)).toBe(200);
+
+    const mine = await api().get(`/v1/verification-cases/${filled.id}`);
+    expect(mine.status).toBe(200);
+    const asSubmitter = VerificationCaseDtoSchema.parse(mine.body);
+    expect(asSubmitter.can?.review).toBe(false);
+    expect(asSubmitter.reviewBlockedReason).toBe('The submitter cannot review this case.');
+    // The vendor case gains only the blocked reason: none of the customer review fields ride along.
+    for (const key of ['reviewerNames', 'looseEvidence', 'approvalBlockedReason']) {
+      expect(mine.body).not.toHaveProperty(key);
+    }
+
+    as(U.pmo, 'pmo');
+    const theirs = VerificationCaseDtoSchema.parse(
+      (await api().get(`/v1/verification-cases/${filled.id}`)).body,
+    );
+    expect(theirs.can?.review).toBe(true);
+    expect(theirs.reviewBlockedReason).toBeNull();
   });
   // K3b: the write routes carry no single route-level permission; the service asks for the write permission of
   // the case's party kind (customer.write or vendor.write), and refuses a caller with neither before any read.

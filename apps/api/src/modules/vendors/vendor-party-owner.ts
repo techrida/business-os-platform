@@ -5,6 +5,7 @@ import { vendors } from '@bos/db';
 import { and, eq, inArray, notInArray } from 'drizzle-orm';
 
 import {
+  type PartyLabel,
   type PartyOwner,
   type PartyOwnerPort,
   type PartyQuery,
@@ -45,6 +46,28 @@ export class VendorPartyOwner implements PartyOwnerPort {
       .from(vendors)
       .where(and(eq(vendors.tenantId, tenantId), inArray(vendors.id, [...partyIds])));
     return new Map(rows.map((r) => [r.id, r.ownerUserId]));
+  }
+
+  /** The legal name of each vendor; vendors carry no number. */
+  async labelsOf(
+    q: PartyQuery,
+    tenantId: string,
+    partyIds: readonly string[],
+  ): Promise<ReadonlyMap<string, PartyLabel>> {
+    if (partyIds.length === 0) return new Map();
+    const rows = await q
+      .select({ id: vendors.id, name: vendors.legalName })
+      .from(vendors)
+      .where(and(eq(vendors.tenantId, tenantId), inArray(vendors.id, [...partyIds])));
+    return new Map(rows.map((r) => [r.id, { name: r.name, number: null }]));
+  }
+
+  /** Every vendor the user owns, blocked or archived ones included: their old cases stay readable. */
+  ownedBy(q: PartyQuery, tenantId: string, userId: string) {
+    return q
+      .select({ id: vendors.id })
+      .from(vendors)
+      .where(and(eq(vendors.tenantId, tenantId), eq(vendors.ownerUserId, userId)));
   }
 
   counterparty(partyId: string) {

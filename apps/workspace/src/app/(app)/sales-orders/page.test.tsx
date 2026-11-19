@@ -1,3 +1,4 @@
+import { DEFAULT_ROLE_PERMISSIONS, type RoleKey } from '@bos/contracts';
 import type { ComponentProps } from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
@@ -26,6 +27,7 @@ const mocks = vi.hoisted(() => ({
   getSalesOrdersSummary: vi.fn(),
   listQuotations: vi.fn(),
   listCustomers: vi.fn(),
+  getGrants: vi.fn(),
 }));
 
 vi.mock('@/lib/bff', () => ({ requireStaffSession: mocks.requireStaffSession }));
@@ -36,6 +38,10 @@ vi.mock('@/lib/api-billing', async (importOriginal) => ({
 }));
 vi.mock('@/components/p2/quotations/api', () => ({ listQuotations: mocks.listQuotations }));
 vi.mock('@/components/p2/customers/api', () => ({ listCustomers: mocks.listCustomers }));
+vi.mock('@/lib/grants', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@/lib/grants')>()),
+  getGrants: mocks.getGrants,
+}));
 vi.mock('next/cache', () => ({ revalidatePath: vi.fn() }));
 vi.mock('next/navigation', () => ({
   useRouter: () => ({ refresh: vi.fn(), push: vi.fn(), replace: vi.fn() }),
@@ -64,6 +70,13 @@ async function render(search: Record<string, string | string[]> = {}): Promise<s
 beforeEach(() => {
   vi.clearAllMocks();
   mocks.requireStaffSession.mockResolvedValue({ accessToken: 't', roles: ['accountant'] });
+  // The live grants of the session's role, as GET /v1/me would answer them for an unedited role.
+  mocks.getGrants.mockImplementation((session: { roles: RoleKey[] }) => {
+    const role = session.roles[0];
+    return Promise.resolve(
+      new Map(role === undefined ? [] : Object.entries(DEFAULT_ROLE_PERMISSIONS[role])),
+    );
+  });
   mocks.listSalesOrdersPage.mockResolvedValue(page());
   mocks.getSalesOrdersSummary.mockResolvedValue(SUMMARY);
   mocks.listQuotations.mockResolvedValue([QUOTATION]);
@@ -259,5 +272,18 @@ describe('sales orders list', () => {
     const html = await render();
     expect(html).toContain('The accepted quotations did not load');
     expect(html).not.toContain('name="quotationVersionId"');
+  });
+});
+
+// The Confirm button follows the live grants from GET /v1/me, not the role's defaults.
+describe('confirm gate on live grants', () => {
+  it('offers Confirm to a role given sales_order.confirm, and hides it from a role that lost it', async () => {
+    mocks.requireStaffSession.mockResolvedValue({ accessToken: 't', roles: ['management'] });
+    mocks.getGrants.mockResolvedValueOnce(new Map([['sales_order.confirm', 'all']]));
+    expect(await render()).toContain('Confirm from quotation');
+
+    mocks.requireStaffSession.mockResolvedValue({ accessToken: 't', roles: ['accountant'] });
+    mocks.getGrants.mockResolvedValueOnce(new Map([['sales_order.read', 'all']]));
+    expect(await render()).not.toContain('Confirm from quotation');
   });
 });

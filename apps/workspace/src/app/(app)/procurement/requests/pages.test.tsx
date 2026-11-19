@@ -350,6 +350,52 @@ describe('the detail', () => {
     expect(out).toContain('The approval did not load');
     expect(out).toContain('Office chair');
   });
+
+  it("names the request's purchase orders and offers Receive service only where the API allows it", async () => {
+    session.roles = ['operations_officer'];
+    const ISSUED = '55555555-5555-4555-8555-555555555551';
+    const DONE = '55555555-5555-4555-8555-555555555552';
+    api.getPurchaseRequest.mockResolvedValue(
+      detail({
+        status: 'po_issued',
+        purchaseOrders: [
+          {
+            id: ISSUED,
+            number: 'PO-2083-0011',
+            status: 'issued',
+            vendorName: 'Everest Cleaners Pvt Ltd',
+            can: { receiveService: true },
+          },
+          {
+            id: DONE,
+            number: 'PO-2083-0012',
+            status: 'fully_received',
+            vendorName: 'Himal Traders Pvt Ltd',
+            can: { receiveService: false },
+          },
+        ],
+      }),
+    );
+    const out = await detailHtml();
+    expect(out).toContain('Purchase orders');
+    expect(out).toContain('PO-2083-0011');
+    expect(out).toContain('Everest Cleaners Pvt Ltd');
+    expect(out).toContain('PO-2083-0012');
+    expect(out).toContain(`href="/procurement/receipts?po=${ISSUED}"`);
+    expect(out).toContain(`href="/procurement/receipts?po=${DONE}"`);
+    expect(out).toContain(`href="/procurement/receipts/new?po=${ISSUED}"`);
+    expect(out).toContain('Receive service');
+    expect(out).not.toContain(`/procurement/receipts/new?po=${DONE}`);
+    // The requester holds no purchase order read: nothing links to the order page itself.
+    expect(out).not.toContain('/procurement/orders/');
+  });
+
+  it('shows no purchase order panel when the request has none or the response omits them', async () => {
+    api.getPurchaseRequest.mockResolvedValue(detail({ purchaseOrders: [] }));
+    expect(await detailHtml()).not.toContain('Purchase orders of this request');
+    api.getPurchaseRequest.mockResolvedValue(detail());
+    expect(await detailHtml()).not.toContain('Purchase orders of this request');
+  });
 });
 
 describe('edit and new', () => {

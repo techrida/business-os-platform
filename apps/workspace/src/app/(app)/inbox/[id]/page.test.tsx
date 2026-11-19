@@ -320,6 +320,65 @@ it('lists an unnumbered credit note by its kind, without its internal id', async
   expect(html).not.toMatch(/credit_note 7d92d5bf/);
 });
 
+describe('the current record on the approval page (U18 #2)', () => {
+  const FILE_DOC = '88888888-8888-4888-8888-888888888888';
+  const FILE_VER = '99999999-9999-4999-8999-999999999999';
+  const BILL = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa';
+  const context = (href: string | null) => ({
+    title: 'Bill BILL-0004',
+    fields: [
+      { key: 'vendor', label: 'Vendor', value: 'Himal Supplies Pvt Ltd', kind: 'text' },
+      { key: 'netTotal', label: 'Net amount', value: '125000.50', kind: 'money', currency: 'NPR' },
+      { key: 'status', label: 'Status', value: 'pending_approval', kind: 'status' },
+    ],
+    documents: [
+      {
+        documentId: FILE_DOC,
+        versionId: FILE_VER,
+        filename: 'bill-0004.pdf',
+        detectedMime: 'application/pdf',
+      },
+    ],
+    href,
+  });
+  const serve = (body: unknown) =>
+    fetchMock.mockImplementation((input) => {
+      const path = new URL(input as URL | string).pathname;
+      if (path === `/v1/approvals/requests/${RID}`) return Promise.resolve(json(200, body));
+      if (path === '/v1/approvals/inbox') return Promise.resolve(json(200, []));
+      return Promise.resolve(json(403, { error: { code: 'forbidden', message: 'Forbidden' } }));
+    });
+
+  it('shows a Management approver the bill and its file, with no link when the API gives none', async () => {
+    serve({ ...request, documentType: 'vendor_bill', context: context(null) });
+    const html = renderToStaticMarkup(
+      await InboxDetailPage({ params: Promise.resolve({ id: RID }) }),
+    );
+    expect(html).toContain('Current record');
+    expect(html).toContain('Bill BILL-0004');
+    expect(html).toContain('Himal Supplies Pvt Ltd');
+    expect(html).toContain('Pending approval');
+    expect(html).toMatch(/1,25,000\.50|125,000\.50/);
+    expect(html).toContain('bill-0004.pdf');
+    expect(html).not.toContain('/payables/bills/');
+  });
+
+  it('links the record when the API says the reader may open it', async () => {
+    serve({ ...request, documentType: 'vendor_bill', context: context(`/payables/bills/${BILL}`) });
+    const html = renderToStaticMarkup(
+      await InboxDetailPage({ params: Promise.resolve({ id: RID }) }),
+    );
+    expect(html).toContain(`href="/payables/bills/${BILL}"`);
+  });
+
+  it('leaves the panel out when the API sends no context', async () => {
+    const html = renderToStaticMarkup(
+      await InboxDetailPage({ params: Promise.resolve({ id: RID }) }),
+    );
+    expect(html).not.toContain('Current record');
+  });
+});
+
 it('renders the denial returned by the inbox endpoint', async () => {
   fetchMock.mockResolvedValueOnce(
     json(403, {

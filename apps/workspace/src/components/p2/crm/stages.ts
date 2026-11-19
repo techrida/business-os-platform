@@ -74,11 +74,21 @@ export function userMoves(kind: RecordKind, from: string): Move[] {
     }));
 }
 
+/**
+ * The moves a card offers on the board: `userMoves` without `lost`, because Lost needs a choice
+ * from the tenant's lost-reason list on the record page (D49, D54-3).
+ */
+export function boardMoves(kind: RecordKind, from: string): Move[] {
+  return userMoves(kind, from).filter((m) => m.stage !== 'lost');
+}
+
 export function boardColumns(kind: RecordKind): BoardColumn[] {
   return STAGE_CATALOGUE.filter((s) => s.recordKind === kind).map((s) => {
     const column: BoardColumn = { stage: s.code, label: s.label, needsReason: s.needsReason };
     if (isSetBySystem(kind, s.code)) {
       column.note = kind === 'lead' ? 'Set by Convert' : 'Set by the system';
+    } else if (s.code === 'lost') {
+      column.note = 'Mark lost on the record page';
     }
     return column;
   });

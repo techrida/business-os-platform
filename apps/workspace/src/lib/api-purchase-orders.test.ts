@@ -69,6 +69,7 @@ const { lines: _lines, ...listFields } = {
   rfqId: null,
   vendorQuotationId: null,
   vendorId: VENDOR,
+  vendorName: 'Himal Traders',
   currency: 'NPR',
   paymentTermsDays: 30,
   advancePercent: '0.00',

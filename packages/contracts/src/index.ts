@@ -4,6 +4,7 @@ export * from './approvals.js';
 export * from './audit.js';
 export * from './authz.js';
 export * from './crm.js';
+export * from './customer-detail.js';
 export * from './document-style.js';
 export * from './rich-text.js';
 export * from './documents.js';

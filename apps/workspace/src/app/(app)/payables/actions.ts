@@ -20,6 +20,7 @@ import {
   type VendorBill,
 } from '@/lib/api-payables';
 import { requireStaffSession } from '@/lib/bff';
+import { getGrants, hasGrant } from '@/lib/grants';
 import type { Session } from '@/lib/session';
 
 import { parseReason } from '../procurement/orders/_lib/forms';
@@ -65,18 +66,32 @@ interface Opened {
   key: string;
 }
 
-/** The id, the session and the key for a bill or submission action; refuses a person without the grant. */
+/**
+ * Whether the person may key in bills, by the live grants (GET /v1/me) the new-bill page is gated on, so
+ * the page and its writes agree for a role an admin edited.
+ */
+async function mayEnterBills(session: Session): Promise<boolean> {
+  return hasGrant(await getGrants(session), 'payables.bill.enter');
+}
+
+/**
+ * The id, the session and the key for a bill or submission action; refuses a person without the grant.
+ * `live` checks the live grants (the new-bill page's actions); otherwise the role defaults the bill
+ * screens are gated on.
+ */
 async function open(
   prev: ActionState,
   form: FormData,
   field: 'billId' | 'submissionId',
   back: (id: string) => string,
+  live = false,
 ): Promise<{ ok: true; o: Opened } | { ok: false; state: ActionState }> {
   const id = text(form, field);
   const key = keyOf(form);
   if (!isGuid(id)) return { ok: false, state: { key: prev.key, error: INCOMPLETE, reload: true } };
   const session = await requireStaffSession(back(id));
-  if (!billGrants(session.roles).enter) return { ok: false, state: { key, error: NO_ENTER } };
+  const may = live ? await mayEnterBills(session) : billGrants(session.roles).enter;
+  if (!may) return { ok: false, state: { key, error: NO_ENTER } };
   return { ok: true, o: { id, session, key } };
 }
 
@@ -205,7 +220,13 @@ export async function convertSubmissionAction(
   prev: ActionState,
   form: FormData,
 ): Promise<ActionState> {
-  const r = await open(prev, form, 'submissionId', (id) => `/payables/bills/new?submission=${id}`);
+  const r = await open(
+    prev,
+    form,
+    'submissionId',
+    (id) => `/payables/bills/new?submission=${id}`,
+    true,
+  );
   if (!r.ok) return r.state;
   const rows = rowsOf(form);
   if (rows === null) return { key: r.o.key, error: INCOMPLETE, reload: true };
@@ -227,7 +248,7 @@ export async function convertSubmissionAction(
 export async function createBillAction(_prev: ActionState, form: FormData): Promise<ActionState> {
   const key = keyOf(form);
   const session = await requireStaffSession('/payables/bills/new');
-  if (!billGrants(session.roles).enter) return { key, error: NO_ENTER };
+  if (!(await mayEnterBills(session))) return { key, error: NO_ENTER };
   const rows = rowsOf(form);
   if (rows === null) return { key, error: INCOMPLETE, reload: true };
   const lines = parseBillLines(rows);

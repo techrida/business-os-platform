@@ -8,6 +8,7 @@ import { redirect } from 'next/navigation';
 import { apiCodeOf } from '@/lib/api-code';
 import { failureOf } from '@/lib/api-kernel';
 import { requireStaffSession } from '@/lib/bff';
+import { getGrants, hasGrant } from '@/lib/grants';
 
 import { createContact, createCustomer, getCustomer, listCustomers, updateCustomer } from './api';
 import { duplicateQueries, matchDuplicates, type DuplicateMatch } from './duplicate-check';
@@ -23,7 +24,6 @@ import {
   type CustomerValues,
 } from './forms';
 import { isGuid } from './format';
-import { hasPermission } from './permissions';
 
 /**
  * Server actions for the customer create and edit forms and the add-contact form. Each one asks
@@ -78,7 +78,7 @@ export async function createCustomerAction(
 ): Promise<CustomerFormState> {
   const session = await requireStaffSession('/customers/new');
   const key = keyOf(form);
-  if (!hasPermission(session.roles, 'customer.write')) {
+  if (!hasGrant(await getGrants(session), 'customer.write')) {
     return { key, errors: {}, error: NO_WRITE };
   }
 
@@ -124,7 +124,7 @@ export async function updateCustomerAction(
   const key = randomUUID();
   if (!isGuid(id)) return { key, errors: {}, error: INCOMPLETE, reload: true };
   const session = await requireStaffSession(`/customers/${id}/edit`);
-  if (!hasPermission(session.roles, 'customer.write')) {
+  if (!hasGrant(await getGrants(session), 'customer.write')) {
     return { key, errors: {}, error: NO_WRITE };
   }
 
@@ -180,7 +180,7 @@ export async function addContactAction(
   const same = { savedCount: prev.savedCount };
   if (!isGuid(customerId)) return { key, errors: {}, error: INCOMPLETE, ...same };
   const session = await requireStaffSession(`/customers/${customerId}`);
-  if (!hasPermission(session.roles, 'customer.write')) {
+  if (!hasGrant(await getGrants(session), 'customer.write')) {
     return { key, errors: {}, error: NO_WRITE, ...same };
   }
 

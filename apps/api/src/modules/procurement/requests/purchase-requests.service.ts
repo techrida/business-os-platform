@@ -22,10 +22,15 @@ import {
 import {
   costCenters,
   departments,
+  purchaseOrderLines,
+  purchaseOrders,
   purchaseRequestLines,
   purchaseRequests,
+  receiptLines,
+  receipts,
   rfqs,
   scoped,
+  vendors,
 } from '@bos/db';
 import {
   BadRequestException,
@@ -37,10 +42,12 @@ import {
   Optional,
   UnprocessableEntityException,
 } from '@nestjs/common';
+import Decimal from 'decimal.js';
 import { and, asc, desc, eq, inArray, ne, sql, type SQL } from 'drizzle-orm';
 
 import { AuditService } from '../../../platform/audit/audit.service';
 import { AuthzService } from '../../../platform/authz/authz.service';
+import { can } from '../../../platform/authz/can';
 import type { Principal, ResourceRef } from '../../../platform/authz/principal';
 import { DB, type Db, type DbTransaction } from '../../../platform/db/db.module';
 import { updateVersioned, withIdempotency } from '../../../platform/db/idempotency';
@@ -52,6 +59,7 @@ import { NumberingService } from '../../../platform/settings/numbering.service';
 import { SettingsService } from '../../../platform/settings/settings.service';
 import { ApprovalsNotify } from '../../approvals/ports';
 import { ApprovalsService } from '../../approvals/requests.service';
+import { RECEIVING_PO_STATUSES } from '../receipts/receipt.rules';
 import {
   PURCHASE_REQUEST_AUDIT_ENTITY,
   PURCHASE_REQUEST_DOCUMENT_TYPE,
@@ -65,6 +73,7 @@ import {
   sumAmounts,
   toDto,
   toListItem,
+  type LinkedPurchaseOrderDto,
   type ListPurchaseRequestsQuery,
   type PurchaseRequestDto,
   type PurchaseRequestLineRow,
@@ -221,7 +230,127 @@ export class PurchaseRequestsService {
     return {
       ...toDto(row, await this.linesOf(this.db, row.tenantId, row.id), rfqId),
       ...names(row),
+      purchaseOrders: await this.linkedOrdersOf(scope, principal, row),
     };
+  }
+
+  /**
+   * The request's purchase orders (not drafts), read with the request it was already allowed to read: number,
+   * status and vendor legal name only, from the acting entity (scoped()). Nothing else of the order or the vendor
+   * is selected, so the request's reader gains no purchase order or vendor read (U18 #4).
+   */
+  private async linkedOrdersOf(
+    scope: TxScope,
+    principal: Principal,
+    row: PurchaseRequestRow,
+  ): Promise<LinkedPurchaseOrderDto[]> {
+    const orders = await this.db
+      .select({
+        id: purchaseOrders.id,
+        number: purchaseOrders.number,
+        status: purchaseOrders.status,
+        vendorName: vendors.legalName,
+      })
+      .from(purchaseOrders)
+      .innerJoin(
+        vendors,
+        and(eq(vendors.tenantId, purchaseOrders.tenantId), eq(vendors.id, purchaseOrders.vendorId)),
+      )
+      .where(
+        scoped(scope).where(
+          purchaseOrders,
+          and(eq(purchaseOrders.purchaseRequestId, row.id), ne(purchaseOrders.status, 'draft')),
+        ),
+      )
+      .orderBy(asc(purchaseOrders.number));
+    const serviceRoom = await this.serviceRoomOf(
+      scope,
+      orders.map((o) => o.id),
+    );
+    // Mirrors ReceiptsService.assertMayReceive for a service receipt: the requester themselves, or the receipt
+    // confirm grant on this request.
+    const mayReceive =
+      (principal.status === 'active' &&
+        principal.orgKind === 'staff' &&
+        principal.organizationId === row.organizationId &&
+        principal.userId === row.requesterUserId) ||
+      can(principal, 'procurement.receipt.confirm', {
+        tenantId: row.tenantId,
+        organizationId: row.organizationId,
+        ownerUserId: row.requesterUserId,
+        departmentId: row.departmentId,
+        sodUserIds: [],
+      }).allowed;
+    return orders.map((o) => ({
+      id: o.id,
+      number: o.number,
+      status: o.status,
+      vendorName: o.vendorName,
+      can: {
+        receiveService:
+          mayReceive && RECEIVING_PO_STATUSES.includes(o.status) && serviceRoom.has(o.id),
+      },
+    }));
+  }
+
+  /**
+   * The orders (of `orderIds`) with a service line that still has room for a receipt: ordered - cancelled - every
+   * non-discarded receipt line on it, so confirmed receipts, reversals and drafts count as the receipt routes and
+   * the new receipt page count them (ReceiptsService.quantitiesOf, a draft holds its quantity). Read for the flag
+   * only; no quantity is returned.
+   */
+  private async serviceRoomOf(scope: TxScope, orderIds: readonly string[]): Promise<Set<string>> {
+    if (orderIds.length === 0) return new Set();
+    const [lines, taken] = await Promise.all([
+      this.db
+        .select({
+          id: purchaseOrderLines.id,
+          purchaseOrderId: purchaseOrderLines.purchaseOrderId,
+          orderedQuantity: purchaseOrderLines.orderedQuantity,
+          cancelledQuantity: purchaseOrderLines.cancelledQuantity,
+        })
+        .from(purchaseOrderLines)
+        .where(
+          scoped(scope).where(
+            purchaseOrderLines,
+            and(
+              inArray(purchaseOrderLines.purchaseOrderId, [...orderIds]),
+              eq(purchaseOrderLines.kind, 'service'),
+            ),
+          ),
+        ),
+      this.db
+        .select({ poLineId: receiptLines.poLineId, quantity: receiptLines.quantity })
+        .from(receiptLines)
+        .innerJoin(
+          receipts,
+          and(
+            eq(receipts.tenantId, receiptLines.tenantId),
+            eq(receipts.id, receiptLines.receiptId),
+          ),
+        )
+        .where(
+          scoped(scope).where(
+            receiptLines,
+            and(
+              inArray(receiptLines.purchaseOrderId, [...orderIds]),
+              ne(receipts.status, 'discarded'),
+            ),
+          ),
+        ),
+    ]);
+    const takenByLine = new Map<string, Decimal>();
+    for (const t of taken) {
+      takenByLine.set(t.poLineId, (takenByLine.get(t.poLineId) ?? new Decimal(0)).plus(t.quantity));
+    }
+    const withRoom = new Set<string>();
+    for (const l of lines) {
+      const room = new Decimal(l.orderedQuantity)
+        .minus(l.cancelledQuantity)
+        .minus(takenByLine.get(l.id) ?? 0);
+      if (room.greaterThan(0)) withRoom.add(l.purchaseOrderId);
+    }
+    return withRoom;
   }
 
   /**

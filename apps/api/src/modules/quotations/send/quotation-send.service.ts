@@ -374,8 +374,9 @@ export class QuotationSendService {
         quotationNumber: quotation.number,
         customerName,
         validUntil: version.validUntil,
-        // A path, not a URL: renderEmail prefixes PORTAL_PUBLIC_URL and refuses anything else.
-        linkPath: `/quotations/${quotation.id}`,
+        // A path, not a URL: renderEmail prefixes PORTAL_PUBLIC_URL and refuses anything else. The portal's
+        // `/quotations/:id` is a version id (PortalService.get), so the link names the version just sent.
+        linkPath: `/quotations/${version.id}`,
       },
       dedupeKey: `quotation.sent:${version.id}`,
     });

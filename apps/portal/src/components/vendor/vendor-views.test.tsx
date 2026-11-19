@@ -104,7 +104,7 @@ describe('PurchaseOrderList', () => {
 
 describe('PurchaseOrderView', () => {
   it('shows the issued version, server totals, lines with received quantity, and a plain PDF anchor', () => {
-    const html = renderToStaticMarkup(<PurchaseOrderView view={samplePo()} />);
+    const html = renderToStaticMarkup(<PurchaseOrderView view={samplePo()} capability="full" />);
     const t = text(html);
     expect(t).toContain('PO-2082-0007');
     expect(t).toContain('Version 2');
@@ -128,7 +128,9 @@ describe('PurchaseOrderView', () => {
   });
 
   it('says the PDF is not ready when the file is null, and offers no link', () => {
-    const html = renderToStaticMarkup(<PurchaseOrderView view={samplePo({ file: null })} />);
+    const html = renderToStaticMarkup(
+      <PurchaseOrderView view={samplePo({ file: null })} capability="full" />,
+    );
     expect(html).not.toContain('/pdf"');
     expect(html).not.toContain('View PDF');
     expect(text(html)).toContain('The PDF is not ready yet');
@@ -136,7 +138,7 @@ describe('PurchaseOrderView', () => {
 
   it('shows a cancelled order as cancelled and keeps a very long description wrappable', () => {
     const html = renderToStaticMarkup(
-      <PurchaseOrderView view={samplePo({ status: 'cancelled' })} />,
+      <PurchaseOrderView view={samplePo({ status: 'cancelled' })} capability="full" />,
     );
     expect(text(html)).toContain('Cancelled');
     expect(text(html)).toContain('five-year onsite warranty');
@@ -202,7 +204,7 @@ describe('vendor views with the company display setting', () => {
     expect(list).toContain('NPR 1,250,000.50');
     expect(list).toContain('08/11/2026');
     expect(list).not.toContain('12,50,000.50');
-    const po = render(<PurchaseOrderView view={samplePo()} display={display} />);
+    const po = render(<PurchaseOrderView view={samplePo()} display={display} capability="full" />);
     expect(po).toContain('NPR 1,250,000.50');
     expect(po).toContain('08/11/2026');
     const bills = render(<BillList items={[sampleBill()]} display={display} />);
