@@ -35,7 +35,7 @@ beforeEach(() => {
 describe('SettingCard save toast', () => {
   it('raises the success toast once from the save action', async () => {
     saveCardAction.mockResolvedValue({ status: 'ok', message: 'Changes saved.' });
-    const mounted = await mountForm(<SettingCard title="Tax" fields={[vat]} />);
+    const mounted = await mountForm(<SettingCard section="sales" title="Tax" fields={[vat]} />);
     await fill(mounted.container.querySelector('input'), '10');
     await submit(mounted.container);
 
@@ -47,7 +47,7 @@ describe('SettingCard save toast', () => {
 
   it('keeps refusals on the inline path and raises no success toast', async () => {
     saveCardAction.mockResolvedValue({ status: 'error', message: 'Rate must be 0-100.' });
-    const mounted = await mountForm(<SettingCard title="Tax" fields={[vat]} />);
+    const mounted = await mountForm(<SettingCard section="sales" title="Tax" fields={[vat]} />);
     await fill(mounted.container.querySelector('input'), '10');
     await submit(mounted.container);
 
