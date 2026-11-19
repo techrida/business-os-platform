@@ -8,7 +8,10 @@
     "types": ["node"],
     "plugins": [{ "name": "next" }],
     "noEmit": true,
-    "paths": { "@/*": ["./src/*"] }
+    "paths": {
+      "@/*": ["./src/*"],
+      "@bos/contracts": ["../../packages/contracts/src/index.ts"]
+    }
   },
   "include": [
     "next-env.d.ts",
