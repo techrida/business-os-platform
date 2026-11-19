@@ -10,6 +10,11 @@ export interface ActionState {
    */
   fields?: Record<string, string>;
   fieldErrors?: Record<string, string>;
+  /**
+   * The save lost a race (someone else saved first) and the message says so in its own words. The
+   * card then offers a Reload without matching the wording (see `isStaleState`).
+   */
+  stale?: boolean;
 }
 
 export const IDLE: ActionState = { status: 'idle', message: '' };

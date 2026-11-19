@@ -256,7 +256,7 @@ const newWorkflowTimes = (html: string): string[] => {
 it('starts the new-workflow form from the saved default reminder times', async () => {
   const respond = vi.mocked(apiFetch).getMockImplementation()!;
   vi.mocked(apiFetch).mockImplementation((caller, path, init) =>
-    path === '/v1/admin/settings/approvals.sla_defaults'
+    path === '/v1/admin/approval-sla-defaults'
       ? Promise.resolve(
           Response.json({
             key: 'approvals.sla_defaults',
@@ -276,10 +276,37 @@ it('starts the new-workflow form from the saved default reminder times', async (
   expect(role).toBe('management');
 });
 
+it('starts a non-admin workflow editor from the saved times, which the admin settings route refuses them', async () => {
+  // The API as a Management user who may edit workflows sees it: the general settings route is
+  // admin-only (403), and the workflow-editor read answers with the saved value.
+  const respond = vi.mocked(apiFetch).getMockImplementation()!;
+  vi.mocked(apiFetch).mockImplementation((caller, path, init) => {
+    if (path.startsWith('/v1/admin/settings/'))
+      return Promise.resolve(Response.json({ code: 'forbidden' }, { status: 403 }));
+    if (path === '/v1/admin/approval-sla-defaults')
+      return Promise.resolve(
+        Response.json({
+          key: 'approvals.sla_defaults',
+          value: {
+            remindAfterHours: 8,
+            escalateAfterHours: 36,
+            escalateTo: { role: 'management' },
+          },
+          version: 3,
+        }),
+      );
+    return respond(caller, path, init);
+  });
+  const [remind, escalate, role] = newWorkflowTimes(renderToStaticMarkup(await WorkflowsPage()));
+  expect(remind).toBe('8');
+  expect(escalate).toBe('36');
+  expect(role).toBe('management');
+});
+
 it('starts the new-workflow form from the built-in times when the saved ones cannot be read', async () => {
   const respond = vi.mocked(apiFetch).getMockImplementation()!;
   vi.mocked(apiFetch).mockImplementation((caller, path, init) =>
-    path === '/v1/admin/settings/approvals.sla_defaults'
+    path === '/v1/admin/approval-sla-defaults'
       ? Promise.resolve(Response.json({}, { status: 503 }))
       : respond(caller, path, init),
   );

@@ -91,12 +91,14 @@ interface DisplayOverrides {
   numberSystems?: NumberSystemsSetting;
   dateFormat?: DateFormatSetting;
   profile?: Partial<CompanyProfile>;
+  enabledCurrencies?: string[];
 }
 
 /** An in-memory `quotation.term_presets` that records each lock, read and write, in order. */
 function fakeSettings(initial: TermPreset[] = [], display: DisplayOverrides = {}) {
   const numberSystems = display.numberSystems ?? DEFAULT_NUMBER_SYSTEMS;
   const dateFormat = display.dateFormat ?? DEFAULT_DATE_FORMAT;
+  const enabledCurrencies = display.enabledCurrencies ?? ['NPR', 'INR', 'USD'];
   const state = { list: initial, version: initial.length > 0 ? 1 : (null as number | null) };
   const calls: string[] = [];
   const service = {
@@ -107,6 +109,7 @@ function fakeSettings(initial: TermPreset[] = [], display: DisplayOverrides = {}
       }
       if (key === 'format.number_systems') return Promise.resolve(structuredClone(numberSystems));
       if (key === 'format.date') return Promise.resolve(dateFormat);
+      if (key === 'currency.enabled') return Promise.resolve(structuredClone(enabledCurrencies));
       return Promise.resolve(structuredClone(state.list));
     }),
     getLocked: vi.fn((_tx: unknown, key: string) => {
@@ -162,10 +165,16 @@ describe('GET settings/display', () => {
     };
     for (const role of ['founder', 'sales', 'accountant', 'procurement', 'warehouse'] as const) {
       currentPrincipal = principalOf(role);
-      const { documentSettings } = build([], { numberSystems, dateFormat: 'dd/MM/yyyy' });
+      const { documentSettings } = build([], {
+        numberSystems,
+        dateFormat: 'dd/MM/yyyy',
+        enabledCurrencies: ['NPR', 'USD'],
+      });
       await expect(documentSettings.display()).resolves.toEqual({
         numberSystems,
         dateFormat: 'dd/MM/yyyy',
+        enabledCurrencies: ['NPR', 'USD'],
+        sellerContact: { phones: [], email: null, signatoryName: null, signatoryTitle: null },
       });
     }
   });
@@ -175,6 +184,8 @@ describe('GET settings/display', () => {
     await expect(documentSettings.display()).resolves.toEqual({
       numberSystems: DEFAULT_NUMBER_SYSTEMS,
       dateFormat: DEFAULT_DATE_FORMAT,
+      enabledCurrencies: ['NPR', 'INR', 'USD'],
+      sellerContact: { phones: [], email: null, signatoryName: null, signatoryTitle: null },
     });
   });
 

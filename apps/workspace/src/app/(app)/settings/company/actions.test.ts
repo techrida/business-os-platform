@@ -254,6 +254,7 @@ describe('saveCompanyCardAction: the loaded version', () => {
     expect(result.message).toBe(
       'The display name was saved, but the PAN or VAT number was changed by someone else. Reload to see the latest.',
     );
+    expect(result.stale).toBe(true);
     expect(putSetting).toHaveBeenCalledTimes(2);
     expect(revalidatePath).not.toHaveBeenCalled();
   });

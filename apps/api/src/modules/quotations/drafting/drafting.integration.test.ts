@@ -54,8 +54,10 @@ import { can } from '../../../platform/authz/can';
 import type { Principal } from '../../../platform/authz/principal';
 import { RoleCache } from '../../../platform/authz/role-cache';
 import { systemActor, withTx, type TxScope } from '../../../platform/db/tx';
+import { CurrencyEnabledService } from '../../../platform/settings/currency-enabled';
 import type { MoneyService } from '../../../platform/settings/money.service';
 import { NumberingService } from '../../../platform/settings/numbering.service';
+import { SettingsService } from '../../../platform/settings/settings.service';
 import { PricingService } from '../pricing/pricing.service';
 import { DraftingService, pricingInputOf } from './drafting.service';
 import {
@@ -169,6 +171,7 @@ beforeAll(async () => {
     authz as unknown as AuthzService,
     new AuditService(db),
     caller,
+    new CurrencyEnabledService(new SettingsService(db)),
   );
 });
 

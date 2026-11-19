@@ -4,11 +4,24 @@
 // The controller's own job is routing and validation: an unknown key is a 404, a bad body is a 400, and a
 // write runs inside withTx with the caller's scope. withTx and requestTx are replaced so no request or
 // database is needed; the real behaviour against Postgres is covered in settings.integration.test.ts.
-import { SETTINGS, SETTING_KEYS } from '@bos/contracts';
+import 'reflect-metadata';
+
+import {
+  DEFAULT_ROLE_PERMISSIONS,
+  SETTINGS,
+  SETTING_KEYS,
+  type Permission,
+  type RoleKey,
+  type Scope,
+} from '@bos/contracts';
 import { BadRequestException, ConflictException, NotFoundException } from '@nestjs/common';
+import { Reflector } from '@nestjs/core';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { ZodType } from 'zod';
 
+import { can } from '../authz/can';
+import { ANY_AUTHENTICATED_KEY, CAN_KEY } from '../authz/decorators';
+import type { Principal } from '../authz/principal';
 import type { Db } from '../db/db.module';
 import type { MoneyService } from './money.service';
 import { SettingsController } from './settings.controller';
@@ -215,6 +228,85 @@ describe('SettingsController', () => {
       '2025-07-17',
       'manual',
     );
+  });
+});
+
+describe('GET approval-sla-defaults (the default approval times for workflow editors)', () => {
+  const proto = SettingsController.prototype;
+  const reflector = new Reflector();
+
+  /** A staff principal holding what `role` holds by default, plus `extra` grants. */
+  function principalOf(role: RoleKey, extra: Partial<Record<Permission, Scope>> = {}): Principal {
+    return {
+      userId: 'a0000000-0000-4000-8000-000000000001',
+      zitadelUserId: 'sub-1',
+      tenantId: scope.tenantId,
+      organizationId: scope.organizationId,
+      orgKind: 'staff',
+      partyId: null,
+      idpOrgId: 'e0000000-0000-4000-8000-000000000001',
+      roles: [role],
+      departmentId: null,
+      status: 'active',
+      grants: new Map(
+        Object.entries({ ...DEFAULT_ROLE_PERMISSIONS[role], ...extra }) as [Permission, Scope][],
+      ),
+    };
+  }
+
+  /**
+   * The tenancy interceptor's route decision, step for step: the real Reflector reads @Can from the
+   * handler then the class, the real can() decides; @AnyAuthenticated needs an active user; an
+   * unmarked route is refused. 200 when allowed, 403 when refused.
+   */
+  function status(handler: (...args: never[]) => unknown, caller: Principal): 200 | 403 {
+    const targets = [handler, SettingsController];
+    const action = reflector.getAllAndOverride<Permission | undefined>(CAN_KEY, targets);
+    if (action !== undefined) return can(caller, action).allowed ? 200 : 403;
+    const any = reflector.getAllAndOverride<boolean | undefined>(ANY_AUTHENTICATED_KEY, targets);
+    return any === true && caller.status === 'active' ? 200 : 403;
+  }
+
+  // No default role but the Founder edits workflows, so the editor is Management granted just that.
+  const editor = principalOf('management', { 'approvals.definitions.write': 'all' });
+
+  it('a non-admin who may edit workflows gets the saved value (200)', async () => {
+    expect(can(editor, 'admin.settings.write').allowed).toBe(false);
+    expect(status(proto.approvalSlaDefaults, editor)).toBe(200);
+    const saved = {
+      remindAfterHours: 8,
+      escalateAfterHours: 36,
+      escalateTo: { role: 'management' },
+    };
+    fakeSettings.getCurrent.mockResolvedValue({ value: saved, version: 3 });
+    await expect(controller.approvalSlaDefaults()).resolves.toEqual({
+      key: 'approvals.sla_defaults',
+      value: saved,
+      version: 3,
+    });
+    expect(fakeSettings.getCurrent).toHaveBeenCalledWith(scope, 'approvals.sla_defaults');
+  });
+
+  it('the same editor is still refused every other setting (403)', () => {
+    expect(status(proto.getSetting, editor)).toBe(403);
+    expect(status(proto.putSetting, editor)).toBe(403);
+  });
+
+  it('a user who may neither edit workflows nor administer settings is refused both (403)', () => {
+    const plain = principalOf('management');
+    expect(status(proto.approvalSlaDefaults, plain)).toBe(403);
+    expect(status(proto.getSetting, plain)).toBe(403);
+  });
+
+  it('the Founder reads it too; a portal user does not', () => {
+    expect(status(proto.approvalSlaDefaults, principalOf('founder'))).toBe(200);
+    expect(
+      status(proto.approvalSlaDefaults, {
+        ...principalOf('customer_user'),
+        orgKind: 'customer',
+        partyId: '20000000-0000-4000-8000-000000000001',
+      }),
+    ).toBe(403);
   });
 });
 

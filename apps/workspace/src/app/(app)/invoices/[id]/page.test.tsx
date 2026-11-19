@@ -1,4 +1,5 @@
-import { InvoiceSettlementSchema } from '@bos/contracts';
+import { InvoiceDetailSchema, InvoiceSettlementSchema, type InvoiceDetail } from '@bos/contracts';
+import { DEFAULT_NUMBER_SYSTEMS } from '@bos/locale';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
@@ -19,6 +20,8 @@ const mocks = vi.hoisted(() => ({
   notFound: vi.fn(() => {
     throw new Error('NEXT_NOT_FOUND');
   }),
+  getSession: vi.fn(),
+  apiFetch: vi.fn(),
 }));
 
 vi.mock('@/lib/bff', () => ({ requireStaffSession: mocks.requireStaffSession }));
@@ -30,6 +33,16 @@ vi.mock('@/lib/api-tax-codes', () => ({ listTaxCodes: mocks.listTaxCodes }));
 vi.mock('@/lib/api-receivables', () => ({ getCustomerStatement: mocks.getCustomerStatement }));
 vi.mock('next/navigation', () => ({ notFound: mocks.notFound, redirect: vi.fn() }));
 vi.mock('next/cache', () => ({ revalidatePath: vi.fn() }));
+// The tenant's display settings come through the real `getDisplaySettings` read; only the session and the HTTP call
+// under it are stubbed. No session (the default) means the default settings.
+vi.mock('@/lib/session', async (original) => ({
+  ...(await original<typeof import('@/lib/session')>()),
+  getSession: mocks.getSession,
+}));
+vi.mock('@/lib/api', async (original) => ({
+  ...(await original<typeof import('@/lib/api')>()),
+  apiFetch: mocks.apiFetch,
+}));
 // A marked anchor, so a test can tell the PDF link (a plain anchor) from a prefetching Link.
 vi.mock('next/link', () => ({
   default: ({ href, children }: { href: string; children: React.ReactNode }) => (
@@ -52,7 +65,29 @@ beforeEach(() => {
   mocks.listTaxCodes.mockReset().mockResolvedValue([{ id: TAX, label: 'VAT 13%' }]);
   mocks.getCustomerStatement.mockReset().mockResolvedValue([]);
   mocks.notFound.mockClear();
+  mocks.getSession.mockReset().mockResolvedValue(null);
+  mocks.apiFetch.mockReset();
 });
+
+/** The tenant's display settings as `GET /v1/settings/display` answers them. */
+function tenantDisplay(body: Record<string, unknown>) {
+  mocks.getSession.mockResolvedValue({ accessToken: 't', roles: ['finance'] });
+  mocks.apiFetch.mockImplementation(() =>
+    Response.json({
+      numberSystems: DEFAULT_NUMBER_SYSTEMS,
+      dateFormat: 'dd MMM yyyy',
+      enabledCurrencies: ['NPR', 'USD'],
+      sellerContact: null,
+      ...body,
+    }),
+  );
+}
+
+/** An invoice detail with the first print's frozen format, checked against the contract. */
+const withFormat = (detail: InvoiceDetail, format: unknown): InvoiceDetail =>
+  InvoiceDetailSchema.parse({ ...detail, format });
+
+const textOf = (html: string) => html.replace(/<[^>]*>/g, ' ').replace(/\s+/g, ' ');
 
 describe('invoice detail page', () => {
   it('shows number, issue date (AD and BS) and the buyer, all as read-only text', async () => {
@@ -373,5 +408,105 @@ describe('invoice detail page', () => {
     const html = await render();
     expect(html).toContain('This invoice did not load');
     expect(html).toContain(`href="/invoices/${ID}"`);
+  });
+});
+
+describe('invoice detail page: the document', () => {
+  it("writes numbers, dates and words in the first print's format, not today's settings", async () => {
+    // Today the tenant prints lakh grouping and `dd MMM yyyy`; the original PDF was drawn international and dd/MM/yyyy.
+    tenantDisplay({
+      numberSystems: { NPR: 'south_asian', INR: 'south_asian', USD: 'south_asian' },
+      dateFormat: 'dd MMM yyyy',
+    });
+    mocks.getInvoice.mockResolvedValue(
+      withFormat(issued(), {
+        numberSystems: { NPR: 'international', INR: 'south_asian', USD: 'international' },
+        dateFormat: 'dd/MM/yyyy',
+        capturedAt: '2026-11-08T06:00:00.000Z',
+      }),
+    );
+    const text = textOf(await render());
+    expect(text).toContain('NPR 2,018,180.00');
+    expect(text).not.toContain('20,18,180');
+    expect(text).toContain('08/11/2026');
+    expect(text).toContain('08/12/2026');
+    expect(text).not.toContain('08 Nov 2026');
+    expect(text).toContain('Two Million Eighteen Thousand One Hundred Eighty Rupees Only');
+  });
+
+  it("falls back to the tenant's current settings when the invoice has no first-print format", async () => {
+    tenantDisplay({
+      numberSystems: { NPR: 'international', INR: 'south_asian', USD: 'international' },
+      dateFormat: 'MMM dd, yyyy',
+    });
+    mocks.getInvoice.mockResolvedValue(withFormat(issued(), null));
+    const text = textOf(await render());
+    expect(text).toContain('NPR 2,018,180.00');
+    expect(text).toContain('Nov 08, 2026');
+    expect(text).toContain('Dec 08, 2026');
+  });
+
+  it('says the amount in words in lakh and crore under the default south-Asian grouping', async () => {
+    const text = textOf(await render());
+    expect(text).toContain(
+      'Amount in words: Twenty Lakh Eighteen Thousand One Hundred Eighty Rupees Only',
+    );
+    expect(text).not.toContain('Million');
+  });
+
+  it('prints the issue date with its frozen BS form and the due date with its converted BS form', async () => {
+    const text = textOf(await render());
+    expect(text).toContain('(2083-07-23 BS)');
+    expect(text).toMatch(/\(\d{2} [A-Za-z]+ 2083 BS\)/);
+    expect(text).toMatch(/Due 08 Dec 2026 · 30 days/);
+  });
+
+  it('shows a draft with no number, issue date or frozen seller and buyer, and says when they are set', async () => {
+    mocks.getInvoice.mockResolvedValue(
+      invoiceDetail({ status: 'draft' }, { customerName: 'Himalayan Agro Foods' }),
+    );
+    const text = textOf(await render());
+    expect(text).toContain('Not numbered yet');
+    expect(text).toContain('Set when the invoice is issued');
+    expect(text).toContain('The seller details are fixed when it is issued.');
+    expect(text).toContain('The billing details are fixed when it is issued.');
+    expect(text).toContain('Himalayan Agro Foods');
+    expect(text).not.toContain('INV-');
+    expect(text).not.toContain('Techrida Pvt. Ltd.');
+  });
+
+  it("shows the seller's phones, email and signatory from the display read, with the frozen address and PAN/VAT", async () => {
+    tenantDisplay({
+      sellerContact: {
+        phones: ['+977 1 4000000', '+977 9800000000'],
+        email: 'billing@techrida.example',
+        signatoryName: 'Amanda Vance',
+        signatoryTitle: 'Finance Director',
+      },
+    });
+    const html = await render();
+    const text = textOf(html);
+    for (const part of [
+      '+977 1 4000000',
+      '+977 9800000000',
+      'billing@techrida.example',
+      'Amanda Vance',
+      'Finance Director',
+      'Authorised signatory',
+      'Techrida Pvt. Ltd.',
+      '123456789',
+    ]) {
+      expect(text).toContain(part);
+    }
+    expect(html).toMatch(/<footer>.*Kathmandu.*<\/footer>/s);
+  });
+
+  it('lists the items as a table with the columns the PDF prints', async () => {
+    const html = await render();
+    for (const head of ['#', 'Description', 'Unit', 'Qty', 'Price', 'Amount']) {
+      expect(html).toMatch(new RegExp(`<th scope="col"[^>]*>${head}</th>`));
+    }
+    expect(html).toContain('data-label="Amount"');
+    expect(textOf(html)).toContain('lot');
   });
 });

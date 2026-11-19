@@ -28,12 +28,14 @@ import {
   RESET_KEY,
   type CompanyCard,
   type CompanyDrafts,
+  type CompanyKey,
   type CompanySettings,
   type CompanyVersions,
   type FieldErrors,
   type ResettableCard,
 } from './company-profile';
 import styles from './company-editor.module.css';
+import { isStaleState, StaleNotice, useStaleVersion } from './format-card-foot';
 import { LetterheadPreview } from './letterhead-preview';
 import { LogoCard } from './logo-card';
 import { ResetToDefaultButton, type ResetConfirm } from './reset-to-default';
@@ -70,6 +72,10 @@ const UNDO: Record<ResettableCard, { label: string; confirm: ResetConfirm }> = {
 
 const ADDRESS_HELP = 'Quotations and invoices cannot be made into PDFs until an address is saved.';
 
+/** One string for the loaded versions of every setting a card writes (`useStaleVersion` compares it). */
+const loadedKey = (card: CompanyCard, version: (key: CompanyKey) => string): string =>
+  CARD_WRITES[card].map(version).join('|');
+
 /**
  * One card, one decision, one Save. Dirty means "the draft differs from what is saved": Save is
  * disabled otherwise. A refused field keeps its input and shows its message at the field. When a
@@ -98,7 +104,24 @@ function CardForm({
   onSaved: () => void;
   children: (errors: FieldErrors) => ReactNode;
 }) {
-  const [state, formAction, pending] = useActionState(action, IDLE);
+  // The stale notice belongs to the versions the card's form carried; it clears itself once the
+  // page reloads with newer ones (as on the Formats cards).
+  const loaded = loadedKey(card, (key) => versionFieldValue(versions[key]));
+  const { stale, staleMessage, markStale, clearStale } = useStaleVersion(loaded);
+  const [state, formAction, pending] = useActionState(
+    async (previous: ActionState, formData: FormData): Promise<ActionState> => {
+      const result = await action(previous, formData);
+      if (isStaleState(result)) {
+        const sent = loadedKey(card, (key) => {
+          const value = formData.get(versionFieldName(key));
+          return typeof value === 'string' ? value : '';
+        });
+        markStale(sent, result.message);
+      } else if (result.status === 'ok') clearStale();
+      return result;
+    },
+    IDLE,
+  );
   const saved = useRef(onSaved);
   useEffect(() => {
     saved.current = onSaved;
@@ -121,9 +144,10 @@ function CardForm({
           />
         ))}
         {children(errors)}
+        {stale ? <StaleNotice message={staleMessage} /> : null}
         <div className={shell.foot}>
           <div className={shell.status}>
-            <FormStatus state={state} pending={pending} />
+            <FormStatus state={state} pending={pending} inline={!isStaleState(state)} />
           </div>
           <Button type="submit" disabled={!dirty || pending}>
             Save

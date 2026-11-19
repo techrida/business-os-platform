@@ -11,23 +11,30 @@ import { Button } from '@/components/ui/button';
 
 import { STALE_SETTING_MESSAGE } from './stale-setting';
 
-/** True for the action's answer to a save or reset that lost a race (see `stale-setting.ts`). */
+/**
+ * True for the action's answer to a save or reset that lost a race (see `stale-setting.ts`): the
+ * plain stale message, or any error the action flagged `stale` because it words the race itself.
+ */
 export const isStaleState = (state: ActionState): boolean =>
-  state.status === 'error' && state.message === STALE_SETTING_MESSAGE;
+  state.status === 'error' && (state.stale === true || state.message === STALE_SETTING_MESSAGE);
 
 /**
- * Remembers which loaded version a stale answer belonged to. Once the page reloads with a newer
- * version the notice goes away by itself, and the person's unsaved choice is still there to save.
+ * Remembers which loaded version a stale answer belonged to, and what it said. Once the page
+ * reloads with a newer version the notice goes away by itself, and the person's unsaved choice is
+ * still there to save. A card that writes several settings passes one string for all their versions.
  */
-export function useStaleVersion(version: number | null): {
+export function useStaleVersion(version: number | string | null): {
   stale: boolean;
-  markStale: (loaded: number | null) => void;
+  /** The stale answer's own message (the plain stale sentence unless the action worded it). */
+  staleMessage: string;
+  markStale: (loaded: number | string | null, message?: string) => void;
   clearStale: () => void;
 } {
-  const [at, setAt] = useState<{ version: number | null } | null>(null);
+  const [at, setAt] = useState<{ version: number | string | null; message: string } | null>(null);
   return {
     stale: at !== null && at.version === version,
-    markStale: (loaded) => setAt({ version: loaded }),
+    staleMessage: at?.message ?? STALE_SETTING_MESSAGE,
+    markStale: (loaded, message = STALE_SETTING_MESSAGE) => setAt({ version: loaded, message }),
     clearStale: () => setAt(null),
   };
 }
@@ -36,7 +43,7 @@ export function useStaleVersion(version: number | null): {
  * "Changed by someone else" at the card foot, with a Reload button. Reloading refreshes the page's
  * data in place; the card keeps what the person chose over the new saved values.
  */
-export function StaleNotice() {
+export function StaleNotice({ message = STALE_SETTING_MESSAGE }: { message?: string }) {
   const router = useRouter();
   const [reloading, startReload] = useTransition();
   return (
@@ -54,7 +61,7 @@ export function StaleNotice() {
         </Button>
       }
     >
-      {STALE_SETTING_MESSAGE}
+      {message}
     </Alert>
   );
 }
