@@ -48,8 +48,11 @@ export async function runWorkflow(cfg, workflow, opts = {}) {
     startedAt: now(),
     steps: [],
     videos: [],
+    resumedFrom: opts.from ?? null,
   };
   const t0 = Date.now();
+  // A resumed run records its own video segment, so the earlier segment is kept.
+  const base = opts.from ? `${workflow.name}-from-${opts.from}` : workflow.name;
 
   const browser = await launch(cfg, origins(cfg));
   const context = await newRecordedContext(browser, cfg, videoTmp);
@@ -134,7 +137,7 @@ export async function runWorkflow(cfg, workflow, opts = {}) {
       ?.path()
       .catch(() => null);
     if (v && existsSync(v)) {
-      const name = n === 0 ? `${workflow.name}.webm` : `${workflow.name}-page${n + 1}.webm`;
+      const name = n === 0 ? `${base}.webm` : `${base}-page${n + 1}.webm`;
       const dest = path.join(cfg.outDir, name);
       renameSync(v, dest);
       result.videos.push(dest);
@@ -148,7 +151,7 @@ export async function runWorkflow(cfg, workflow, opts = {}) {
         ?.path()
         .catch(() => null);
       if (v && existsSync(v)) {
-        const dest = path.join(cfg.outDir, `${workflow.name}-${c.name}.webm`);
+        const dest = path.join(cfg.outDir, `${base}-${c.name}.webm`);
         renameSync(v, dest);
         result.videos.push(dest);
       }
@@ -158,8 +161,7 @@ export async function runWorkflow(cfg, workflow, opts = {}) {
   result.finishedAt = now();
   result.wallMs = Date.now() - t0;
   if (result.steps.every((s) => s.status === 'SKIPPED')) result.status = 'SKIPPED';
-  saveResults(cfg, result);
-  return result;
+  return saveResults(cfg, result);
 }
 
 function withTimeout(promise, ms, message) {
@@ -172,6 +174,29 @@ function withTimeout(promise, ms, message) {
   ]);
 }
 
+/**
+ * `--from` skips the steps before it; keep those steps' results from the earlier run, add the new
+ * video segment, and derive the workflow status from the combined steps.
+ */
+function mergeResumed(prev, next) {
+  const before = new Map(prev.steps.map((st) => [st.id, st]));
+  const steps = next.steps.map((st) =>
+    st.status === 'SKIPPED' && before.has(st.id) && before.get(st.id).status !== 'SKIPPED'
+      ? { ...before.get(st.id), fromEarlierRun: true }
+      : st,
+  );
+  const has = (status) => steps.some((st) => st.status === status);
+  const status = has('FAIL')
+    ? 'FAIL'
+    : has('BLOCKED')
+      ? 'BLOCKED'
+      : steps.every((st) => st.status === 'PASS')
+        ? 'PASS'
+        : next.status;
+  const videos = [...new Set([...(prev.videos ?? []), ...next.videos])];
+  return { ...next, steps, status, videos, wallMs: (prev.wallMs ?? 0) + next.wallMs };
+}
+
 export function saveResults(cfg, workflowResult) {
   const file = path.join(cfg.outDir, 'results.json');
   const all = readJson(file, {
@@ -180,10 +205,13 @@ export function saveResults(cfg, workflowResult) {
     appUrl: cfg.appUrl,
     workflows: {},
   });
-  all.workflows[workflowResult.name] = workflowResult;
+  const prev = all.workflows[workflowResult.name];
+  all.workflows[workflowResult.name] =
+    workflowResult.resumedFrom && prev ? mergeResumed(prev, workflowResult) : workflowResult;
   all.updatedAt = now();
   writeJson(file, all);
   writeFileSync(path.join(cfg.outDir, 'results.md'), renderMarkdown(all));
+  return all.workflows[workflowResult.name];
 }
 
 export function renderMarkdown(all) {
@@ -206,6 +234,7 @@ export function renderMarkdown(all) {
     lines.push('', '| step | status | s | notes |', '|---|---|---|---|');
     for (const s of wf.steps) {
       const notes = [
+        s.fromEarlierRun && '(from the earlier segment)',
         s.error,
         ...s.findings.map((f) => `FINDING (${f.severity}): ${f.text}`),
         s.screenshot && `shot: ${s.screenshot}`,

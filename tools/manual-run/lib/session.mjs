@@ -149,22 +149,29 @@ export class Session {
   async recoverable(locator, timeout) {
     const broken = this.page.getByText(BROKEN_PAGE);
     for (let reloads = 0; ; reloads++) {
-      const winner = await Promise.race([
-        locator
-          .first()
-          .waitFor({ state: 'visible', timeout })
-          .then(() => 'ok'),
-        broken
-          .first()
-          .waitFor({ state: 'visible', timeout })
-          .then(() => 'broken'),
-      ]);
+      const winner = this.page.url().startsWith('chrome-error://')
+        ? 'broken'
+        : await Promise.race([
+            locator
+              .first()
+              .waitFor({ state: 'visible', timeout })
+              .then(() => 'ok'),
+            broken
+              .first()
+              .waitFor({ state: 'visible', timeout })
+              .then(() => 'broken'),
+            // A navigation answered 502 (the dev server restarting) lands on Chrome's error page.
+            this.page
+              .waitForURL(/^chrome-error:/, { timeout })
+              .then(() => 'broken')
+              .catch(() => new Promise(() => {})),
+          ]);
       if (winner === 'ok') return;
-      if (reloads >= 2) throw new Error('app error screen after two reloads');
-      this.checks.push(`note: app error panel on ${this.page.url()}, reloaded (${reloads + 1})`);
-      this.log(`    (app error panel on ${this.page.url()}, reloading)`);
-      await sleep(5000);
-      await this.page.reload({ waitUntil: 'domcontentloaded' });
+      if (reloads >= 3) throw new Error('error page after three reloads');
+      this.checks.push(`note: error page on ${this.page.url()}, reloaded (${reloads + 1})`);
+      this.log(`    (error page on ${this.page.url()}, reloading)`);
+      await sleep(reloads === 0 ? 5000 : 15000);
+      await this.page.reload({ waitUntil: 'domcontentloaded' }).catch(() => {});
     }
   }
 
@@ -318,22 +325,44 @@ export class Session {
     for (let attempt = 0; attempt < 3; attempt++) {
       await el.waitFor({ state: 'visible', timeout: this.cfg.actionTimeout });
       const until = Date.now() + timeout;
+      let state = 'unknown';
       while (Date.now() < until) {
-        const state = await el
+        state = await el
           .evaluate((node) => {
             if (node.getRootNode() !== document) return 'outside';
             if (!document.querySelector('script[src*="/_next/"]')) return 'outside';
-            return Object.keys(node).some((k) => k.startsWith('__reactProps'))
-              ? 'ready'
-              : 'waiting';
+            // A stylesheet that answered 502 leaves the page unstyled and controls overlapped.
+            // Reload then, but only while no field holds typed input.
+            const unstyled = [...document.querySelectorAll('link[rel="stylesheet"]')].some(
+              (l) => l.href.includes('/_next/') && !l.sheet,
+            );
+            const dirty = [...document.querySelectorAll('input, textarea')].some(
+              (f) =>
+                (f.type === 'checkbox' || f.type === 'radio'
+                  ? f.checked !== f.defaultChecked
+                  : f.value !== f.defaultValue) && f.type !== 'hidden',
+            );
+            if (unstyled && !dirty) return 'cold';
+            if (Object.keys(node).some((k) => k.startsWith('__reactProps'))) return 'ready';
+            // The page root hydrated but this element not yet (a Suspense boundary still
+            // streaming); versus nothing hydrated at all.
+            return Object.keys(document.body).some((k) => k.startsWith('__reactFiber'))
+              ? 'partial'
+              : 'cold';
           })
-          .catch(() => 'waiting');
-        if (state !== 'waiting') return;
+          // Detached or mid-navigation: the page moved on, so there is nothing to wait for.
+          .catch(() => 'unknown');
+        if (state === 'ready' || state === 'outside') return;
         await sleep(250);
       }
-      // Under load the dev server sometimes answers a script chunk with 502 and the page never
-      // hydrates. Nothing on an un-hydrated page can have taken input, so a reload is safe.
-      this.log(`    (not hydrated after ${timeout / 1000} s, reloading: ${locator})`);
+      // Reload only a page that never hydrated at all (a script chunk answered 502 under load), or
+      // an unstyled page with no typed input: neither can lose work. A hydrated page may hold form input, and a page
+      // that is navigating may be mid-submit, so neither is ever reloaded.
+      if (state !== 'cold') {
+        this.log(`    (element not hydrated after ${timeout / 1000} s [${state}]; continuing)`);
+        return;
+      }
+      this.log(`    (page not hydrated or unstyled, reloading: ${locator})`);
       await el.page().reload({ waitUntil: 'domcontentloaded' });
     }
     throw new StepFailure(
