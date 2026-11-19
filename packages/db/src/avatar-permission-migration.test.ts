@@ -257,10 +257,10 @@ describe('0053 profile.avatar.write, applied late on a database that already ran
     });
   });
 
-  it('marks the rows matching the code defaults seeded, and a non-default all row Founder-owned', async () => {
+  it('marks every new row seeded, the same end state as the journal-order path', async () => {
     expect(await avatarGrants(ahead, aheadTenant)).toEqual({
       founder: { scope: 'all', seeded: true },
-      user_admin: { scope: 'all', seeded: false },
+      user_admin: { scope: 'all', seeded: true },
       finance: { scope: 'own', seeded: true },
       marketing: { scope: 'own', seeded: true },
       sales: { scope: 'own', seeded: true },
