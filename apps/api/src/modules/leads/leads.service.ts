@@ -12,6 +12,7 @@ import {
   type LeadDto,
   type LeadStageChangeBody,
   type Permission,
+  type SchedulableActivityKind,
 } from '@bos/contracts';
 import { activities, leads, scoped, users } from '@bos/db';
 import {
@@ -22,7 +23,7 @@ import {
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
-import { and, desc, eq, ilike, or, type SQL } from 'drizzle-orm';
+import { and, desc, eq, getTableColumns, ilike, or, type SQL } from 'drizzle-orm';
 
 import { AuditService } from '../../platform/audit/audit.service';
 import { AuthzService, scopeWhereFor } from '../../platform/authz/authz.service';
@@ -31,6 +32,7 @@ import { DB, type Db } from '../../platform/db/db.module';
 import { updateVersioned, withIdempotency } from '../../platform/db/idempotency';
 import { withTx, type DbTransaction, type TxScope } from '../../platform/db/tx';
 import { NumberingService } from '../../platform/settings/numbering.service';
+import { nextFollowUpSql } from '../activities/activities.types';
 import { LeadsCaller } from './leads.caller';
 import { type LeadRow, type ListLeadsQuery, toLeadDto } from './leads.types';
 import { planLeadStageChange, type LeadStageCaller, type LeadStageRefusal } from './lead-stage';
@@ -39,6 +41,19 @@ const AUDIT_ENTITY = 'leads';
 
 /** The numbering series key; NumberingService formats it like LD-2082/83-00001. */
 export const LEAD_SERIES = 'LD';
+
+/** A follow-up planned on create without a subject is named after its kind. */
+const KIND_LABEL: Record<SchedulableActivityKind, string> = {
+  call: 'Call',
+  meeting: 'Meeting',
+  email: 'Email',
+};
+
+/**
+ * The lead columns plus the derived next follow-up. The derived field has its own name: `leads` already has a
+ * (no longer used) `nextFollowUpAt` column, and a same-named key would silently shadow one of the two.
+ */
+const leadWithNextFollowUp = () => ({ ...getTableColumns(leads), nextFollowUp: nextFollowUpSql() });
 
 const notFound = () => new NotFoundException({ code: 'not_found', message: 'Lead not found' });
 
@@ -96,24 +111,28 @@ export class LeadsService {
         )!,
       );
     }
+    // `nextFollowUp` is a correlated subquery on each lead row, so it can also be a sort key or a filter (U13):
+    // `.orderBy(sql`${nextFollowUpSql()} asc nulls last`, desc(leads.id))`, or `isNotNull(nextFollowUpSql())`.
+    // The planned-per-lead partial index of migration 0062 serves the subquery.
     const rows = await this.db
-      .select()
+      .select(leadWithNextFollowUp())
       .from(leads)
       .where(scoped(scope).where(leads, and(...filters)))
       .orderBy(desc(leads.createdAt), desc(leads.id))
       .limit(q.limit);
-    return rows.map(toLeadDto);
+    return rows.map(({ nextFollowUp, ...row }) => toLeadDto(row, nextFollowUp));
   }
 
   async get(id: string): Promise<LeadDto> {
     const { scope } = this.caller.current();
-    const [row] = await this.db
-      .select()
+    const [found] = await this.db
+      .select(leadWithNextFollowUp())
       .from(leads)
       .where(scoped(scope).where(leads, eq(leads.id, id)));
-    if (row === undefined) throw notFound();
+    if (found === undefined) throw notFound();
+    const { nextFollowUp, ...row } = found;
     this.assertVisible('crm.lead.read', row);
-    return toLeadDto(row);
+    return toLeadDto(row, nextFollowUp);
   }
 
   // ------------------------------------------------------------------------------------------------- create
@@ -122,15 +141,33 @@ export class LeadsService {
    * The owner defaults to the caller: a salesperson holding `own` scope could otherwise not see the lead they just
    * made. Naming another owner needs a grant that reaches that owner (an `own` scope does not), checked with the
    * same authz rule as every other write. The Idempotency-Key is optional: the workspace form does not send one.
+   *
+   * `followUp` (or the old `nextFollowUpAt`, a call named "Follow up") plans the first follow-up as a planned
+   * activity in the same transaction (D39): assigned to the owner unless named, named after its kind unless given a
+   * subject. The `leads.next_follow_up_at` column is no longer written.
    */
   async create(body: CreateLeadBody, idempotencyKey?: string): Promise<LeadDto> {
     const { scope, actor, principal } = this.caller.current();
     const ownerUserId = body.ownerUserId ?? principal.userId;
     this.authz.assert('crm.lead.write', leadRef({ ...scope, ownerUserId }));
+    const followUp =
+      body.followUp ??
+      (body.nextFollowUpAt === undefined
+        ? undefined
+        : { kind: 'call' as const, dueAt: body.nextFollowUpAt, subject: 'Follow up' });
     const now = new Date();
     return withTx(this.db, scope, actor, async (tx) => {
       const run = async (): Promise<LeadDto> => {
-        await this.assertUser(tx, scope.tenantId, ownerUserId);
+        await this.assertUser(tx, scope.tenantId, ownerUserId, 'ownerUserId');
+        const assigneeUserId = followUp?.assigneeUserId ?? ownerUserId;
+        if (followUp?.assigneeUserId !== undefined) {
+          await this.assertUser(
+            tx,
+            scope.tenantId,
+            followUp.assigneeUserId,
+            'followUp.assigneeUserId',
+          );
+        }
         const { number } = await this.numbering.issue(tx, LEAD_SERIES, now);
         const [row] = await tx
           .insert(leads)
@@ -150,8 +187,6 @@ export class LeadsService {
             currency: body.currency,
             probability: body.probability ?? null,
             expectedClose: body.expectedClose ?? null,
-            nextFollowUpAt:
-              body.nextFollowUpAt === undefined ? null : new Date(body.nextFollowUpAt),
             notes: body.notes ?? null,
             stage: 'new',
             createdAt: now,
@@ -164,7 +199,29 @@ export class LeadsService {
           entityId: row!.id,
           after: { number, stage: row!.stage, ownerUserId },
         });
-        return toLeadDto(row!);
+        if (followUp === undefined) return toLeadDto(row!, null);
+        const dueAt = new Date(followUp.dueAt);
+        const [planned] = await tx
+          .insert(activities)
+          .values({
+            ...scope,
+            kind: followUp.kind,
+            subject: followUp.subject ?? KIND_LABEL[followUp.kind],
+            body: followUp.body ?? null,
+            leadId: row!.id,
+            dueAt,
+            assigneeUserId,
+            createdByUserId: principal.userId,
+          })
+          .returning({ id: activities.id });
+        await this.audit.record(tx, {
+          action: 'activity.scheduled',
+          entityType: 'activities',
+          entityId: planned!.id,
+          after: { kind: followUp.kind, leadId: row!.id, dueAt: followUp.dueAt, assigneeUserId },
+        });
+        // The only planned activity of a new lead, so it is the next follow-up.
+        return toLeadDto(row!, dueAt);
       };
       if (idempotencyKey === undefined) return run();
       const done = await withIdempotency(
@@ -222,7 +279,7 @@ export class LeadsService {
         leadId: id,
         createdByUserId: principal.userId,
       });
-      return toLeadDto(updated);
+      return toLeadDto(updated, await this.nextFollowUpOf(tx, id));
     });
   }
 
@@ -256,8 +313,22 @@ export class LeadsService {
     return row;
   }
 
-  /** The owner must be a user of this tenant: say so as a 400 instead of a foreign-key 500. */
-  private async assertUser(tx: DbTransaction, tenantId: string, userId: string): Promise<void> {
+  /** The derived next follow-up of one lead (see toLeadDto), read inside the caller's transaction. */
+  private async nextFollowUpOf(tx: DbTransaction, id: string): Promise<Date | null> {
+    const [row] = await tx
+      .select({ nextFollowUp: nextFollowUpSql() })
+      .from(leads)
+      .where(eq(leads.id, id));
+    return row?.nextFollowUp ?? null;
+  }
+
+  /** The owner or assignee must be a user of this tenant: say so as a 400 instead of a foreign-key 500. */
+  private async assertUser(
+    tx: DbTransaction,
+    tenantId: string,
+    userId: string,
+    field: string,
+  ): Promise<void> {
     const [user] = await tx
       .select({ id: users.id })
       .from(users)
@@ -266,7 +337,7 @@ export class LeadsService {
     if (user === undefined) {
       throw new BadRequestException({
         code: 'bad_request',
-        message: 'ownerUserId is not a user of this tenant',
+        message: `${field} is not a user of this tenant`,
       });
     }
   }

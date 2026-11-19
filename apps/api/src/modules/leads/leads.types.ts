@@ -14,7 +14,12 @@ export type ListLeadsQuery = z.infer<typeof ListLeadsQuerySchema>;
 
 export type LeadRow = typeof leads.$inferSelect;
 
-export function toLeadDto(row: LeadRow): LeadDto {
+/**
+ * `nextFollowUp` is derived, never read from the row: the earliest due time of the lead's planned activities (D39,
+ * `nextFollowUpSql()` in activities.types.ts). The `leads.next_follow_up_at` column stays for rollback only and is
+ * neither written nor read. Required, so a caller that forgets the derived value does not compile.
+ */
+export function toLeadDto(row: LeadRow, nextFollowUp: Date | null): LeadDto {
   return {
     id: row.id,
     number: row.number,
@@ -33,7 +38,7 @@ export function toLeadDto(row: LeadRow): LeadDto {
     currency: row.currency as LeadDto['currency'],
     probability: row.probability,
     expectedClose: row.expectedClose,
-    nextFollowUpAt: row.nextFollowUpAt === null ? null : row.nextFollowUpAt.toISOString(),
+    nextFollowUpAt: nextFollowUp === null ? null : nextFollowUp.toISOString(),
     stage: row.stage,
     stageReason: row.stageReason,
     stageNote: row.stageNote,
