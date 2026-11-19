@@ -145,8 +145,8 @@ async function orderWithOneLine(scope: Scope) {
   const lineId = await exec(
     scope,
     `INSERT INTO app.billing_schedule_lines
-       (tenant_id, organization_id, sales_order_id, seq, label, "trigger", percent_bp, amount, amount_npr, status)
-     VALUES ($1, $2, $3, 1, 'Full payment', 'advance', 10000, $4, $4, 'planned') RETURNING id`,
+       (tenant_id, organization_id, sales_order_id, seq, label, "trigger", percent, amount, amount_npr, status)
+     VALUES ($1, $2, $3, 1, 'Full payment', 'advance', 100, $4, $4, 'planned') RETURNING id`,
     [scope.tenantId, scope.organizationId, salesOrderId, ORDER.total],
   );
   return { customerPartyId, salesOrderId, lineId };
