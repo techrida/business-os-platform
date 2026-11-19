@@ -131,3 +131,11 @@
     align-items: start;
   }
 }
+
+/* A long money amount in a bucket card shrinks to fit and wraps only at the space after the currency code. */
+.moneyValue {
+  display: block;
+  font-size: 18px;
+  line-height: 26px;
+  overflow-wrap: normal;
+}
