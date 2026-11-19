@@ -61,9 +61,9 @@ describe('saveNumberSystemAction', () => {
   });
 
   it('is refused before any read or write when the section guard redirects', async () => {
-    requireSection.mockRejectedValue(new Error('REDIRECT:/no-access'));
+    requireSection.mockRejectedValue(new Error('REDIRECT:/settings/denied'));
     await expect(saveNumberSystemAction(IDLE, form('international'))).rejects.toThrow(
-      'REDIRECT:/no-access',
+      'REDIRECT:/settings/denied',
     );
     expect(getSetting).not.toHaveBeenCalled();
     expect(putSetting).not.toHaveBeenCalled();

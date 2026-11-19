@@ -47,7 +47,7 @@ describe('requireSection', () => {
     await expect(requireSection('tax')).rejects.toThrow('REDIRECT:/staff-only');
   });
 
-  it('refuses a sales user on every section (nothing else to open, so no-access)', async () => {
+  it('refuses a sales user on every section (nothing else to open, so the denied page)', async () => {
     getSession.mockResolvedValue(session(['sales']));
     for (const id of [
       'users',
@@ -59,14 +59,14 @@ describe('requireSection', () => {
       'sales',
       'purchasing',
     ] as const) {
-      await expect(requireSection(id)).rejects.toThrow('REDIRECT:/no-access');
+      await expect(requireSection(id)).rejects.toThrow('REDIRECT:/settings/denied');
     }
   });
 
   it('refuses an unknown or role-less session', async () => {
     getSession.mockResolvedValue(session([]));
-    await expect(requireSection('users')).rejects.toThrow('REDIRECT:/no-access');
+    await expect(requireSection('users')).rejects.toThrow('REDIRECT:/settings/denied');
     getSession.mockResolvedValue(session(['not-a-role']));
-    await expect(requireSection('users')).rejects.toThrow('REDIRECT:/no-access');
+    await expect(requireSection('users')).rejects.toThrow('REDIRECT:/settings/denied');
   });
 });

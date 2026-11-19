@@ -52,7 +52,7 @@ beforeEach(() => {
 describe('the Saved terms page', () => {
   it('sends a sales user to the no-access page and calls no API', async () => {
     getSession.mockResolvedValue(session(['sales']));
-    await expect(TermsPage()).rejects.toThrow('REDIRECT:/no-access');
+    await expect(TermsPage()).rejects.toThrow('REDIRECT:/settings/denied');
     expect(api.listTermPresets).not.toHaveBeenCalled();
   });
 
@@ -111,7 +111,7 @@ describe('savePresetAction', () => {
 
   it('refuses a person without the section permission before any call', async () => {
     getSession.mockResolvedValue(session(['sales']));
-    await expect(savePresetAction(add)).rejects.toThrow('REDIRECT:/no-access');
+    await expect(savePresetAction(add)).rejects.toThrow('REDIRECT:/settings/denied');
     expect(api.createTermPreset).not.toHaveBeenCalled();
   });
 
@@ -180,7 +180,7 @@ describe('savePresetAction', () => {
 describe('removePresetAction', () => {
   it('refuses a person without the section permission', async () => {
     getSession.mockResolvedValue(session(['sales']));
-    await expect(removePresetAction(ID)).rejects.toThrow('REDIRECT:/no-access');
+    await expect(removePresetAction(ID)).rejects.toThrow('REDIRECT:/settings/denied');
     expect(api.deleteTermPreset).not.toHaveBeenCalled();
   });
 

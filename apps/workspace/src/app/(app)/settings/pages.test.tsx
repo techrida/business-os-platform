@@ -52,7 +52,7 @@ describe('settings pages deny by default', () => {
     ['the index', () => SettingsIndex()],
   ] as const)('redirects a sales user away from %s', async (_name, render) => {
     getSession.mockResolvedValue(session(['sales']));
-    await expect(render()).rejects.toThrow('REDIRECT:/no-access');
+    await expect(render()).rejects.toThrow('REDIRECT:/settings/denied');
   });
 
   it('sends a signed-out visitor from a section to sign in', async () => {
@@ -140,7 +140,7 @@ describe('saveCardAction', () => {
       ['v:quotation.validity_days', '20'],
       ['i:quotation.validity_days', '15'],
     ]);
-    await expect(saveCardAction(IDLE, data)).rejects.toThrow('REDIRECT:/no-access');
+    await expect(saveCardAction(IDLE, data)).rejects.toThrow('REDIRECT:/settings/denied');
   });
 
   it('shows a refused value at its field and writes nothing', async () => {

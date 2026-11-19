@@ -53,8 +53,8 @@ beforeEach(() => {
 describe('Company profile and Number format pages', () => {
   it('redirect a sales user to the no-access page and read nothing', async () => {
     getSession.mockResolvedValue(session(['sales']));
-    await expect(CompanyPage()).rejects.toThrow('REDIRECT:/no-access');
-    await expect(FormatsPage()).rejects.toThrow('REDIRECT:/no-access');
+    await expect(CompanyPage()).rejects.toThrow('REDIRECT:/settings/denied');
+    await expect(FormatsPage()).rejects.toThrow('REDIRECT:/settings/denied');
     expect(getSetting).not.toHaveBeenCalled();
   });
 

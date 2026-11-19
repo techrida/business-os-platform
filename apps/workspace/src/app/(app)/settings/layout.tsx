@@ -14,6 +14,7 @@ import { SettingsSidebar } from './_components/settings-sidebar';
 export default async function SettingsLayout({ children }: { children: ReactNode }) {
   const session = await getSession();
   const groups = session ? visibleSettingsGroups(permissionChecker(session.roles)) : [];
+  if (session && groups.length === 0) return <div className={styles.content}>{children}</div>;
   return (
     <div className={styles.frame}>
       <SettingsSidebar groups={groups} />
