@@ -2,12 +2,12 @@ import { expect, test } from '@playwright/test';
 
 import { signInAs } from '../helpers/memo-flow';
 import {
-  chooseOption,
-  optionLabels,
-  selectByLabel,
-  selectByName,
-  selectedInput,
-} from '../helpers/select';
+  expectParam,
+  expectSelected,
+  multiSelectByLabel,
+  toggleOptions,
+} from '../helpers/multi-select';
+import { chooseOption, optionLabels, selectByLabel } from '../helpers/select';
 
 test.skip(process.env.BOS_E2E_P4 !== '1', 'set BOS_E2E_P4=1 to run P4 payment requests');
 
@@ -19,10 +19,11 @@ test('payment requests load and filter by status', async ({ browser, baseURL }) 
     await expect(
       signed.page.getByRole('heading', { level: 1, name: 'Payment requests' }),
     ).toBeVisible();
-    await chooseOption(selectByName(signed.page, 'status'), 'draft');
-    await signed.page.getByRole('button', { name: 'Show requests' }).click();
-    await expect(signed.page).toHaveURL(/status=draft/);
-    await expect(selectedInput(selectByName(signed.page, 'status'))).toHaveValue('draft');
+    // Filters apply as they change: no Show button, the URL is the state.
+    const status = multiSelectByLabel(signed.page, 'Status');
+    await toggleOptions(status, ['draft']);
+    await expectParam(signed.page, 'status', ['draft']);
+    await expectSelected(status, ['draft']);
     await expect(signed.page.getByRole('link', { name: 'New payment request' })).toBeVisible();
   } finally {
     await signed.context.close();
