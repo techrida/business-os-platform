@@ -2,11 +2,12 @@
 import { AVATAR_PALETTE, avatarColour } from '@bos/contracts';
 import { act } from 'react';
 import { createRoot } from 'react-dom/client';
-import { afterEach, beforeEach, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { mountForm } from '@/test/form-interactions';
 
 import { announceImageReady, Avatar } from './avatar';
+import { scanPollDelays } from './scan-poll';
 
 beforeEach(() => {
   Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true });
@@ -73,52 +74,178 @@ it('renders the picture from the image route above the initials', async () => {
   await view.unmount();
 });
 
-it('falls back to the initials when the picture fails, and tries again for a new picture', async () => {
+/** A root the test re-renders by hand, for the picture's failure and retry states. */
+function mountRoot() {
   const container = document.createElement('div');
   document.body.append(container);
   const root = createRoot(container);
-  const render = (documentId: string) =>
-    act(() =>
-      Promise.resolve(root.render(<Avatar name="Ada Lovelace" imageDocumentId={documentId} fit="contain" />)),
-    );
+  return {
+    container,
+    render: (documentId: string | null = IMAGE_ID) =>
+      act(() => Promise.resolve(root.render(<Avatar name="Ada Lovelace" imageDocumentId={documentId} />))),
+    image: () => container.querySelector('img'),
+    // The picture answers 404 (still being scanned) or loads.
+    fail: () => act(() => Promise.resolve(container.querySelector('img')!.dispatchEvent(new Event('error')))),
+    wait: (ms: number) =>
+      act(async () => {
+        await vi.advanceTimersByTimeAsync(ms);
+      }),
+    unmount: () => act(() => Promise.resolve(root.unmount())),
+  };
+}
 
-  await render(IMAGE_ID);
-  const image = container.querySelector('img')!;
-  await act(() => Promise.resolve(image.dispatchEvent(new Event('error'))));
-  expect(container.querySelector('img')).toBeNull();
-  expect(avatar(container).textContent).toBe('AL');
+describe('a picture that fails', () => {
+  beforeEach(() => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+  });
+  afterEach(() => {
+    vi.useRealTimers();
+  });
 
-  // The same avatar, now pointing at a newly uploaded picture.
-  await render(OTHER_IMAGE_ID);
-  expect(container.querySelector('img')?.getAttribute('src')).toBe(`/api/images/${OTHER_IMAGE_ID}`);
-  await act(() => Promise.resolve(root.unmount()));
-});
+  it('shows the initials and asks again on the scan backoff, drawing the picture once a try succeeds', async () => {
+    const view = mountRoot();
+    await view.render();
+    const first = view.image()!;
+    await view.fail();
+    expect(view.image()).toBeNull();
+    expect(avatar(view.container).textContent).toBe('AL');
 
-it('keeps the initials when re-rendered with the same failed picture, and tries again once it is announced ready', async () => {
-  const container = document.createElement('div');
-  document.body.append(container);
-  const root = createRoot(container);
-  const render = () =>
-    act(() => Promise.resolve(root.render(<Avatar name="Ada Lovelace" imageDocumentId={IMAGE_ID} />)));
+    // A re-render mid-wait (a router refresh) does not restart the wait.
+    await view.wait(500);
+    await view.render();
+    await view.wait(499);
+    expect(view.image()).toBeNull();
+    await view.wait(1);
+    const second = view.image();
+    expect(second?.getAttribute('src')).toBe(`/api/images/${IMAGE_ID}`);
+    expect(second).not.toBe(first);
 
-  await render();
-  const image = container.querySelector('img')!;
-  // A 404 while the new picture is still being scanned.
-  await act(() => Promise.resolve(image.dispatchEvent(new Event('error'))));
-  expect(container.querySelector('img')).toBeNull();
+    // Still scanning: the next try waits twice as long.
+    await view.fail();
+    await view.wait(1_999);
+    expect(view.image()).toBeNull();
+    await view.wait(1);
+    const third = view.image();
+    expect(third).not.toBeNull();
+    expect(third).not.toBe(second);
 
-  // A page refresh hands the avatar the same picture: it stays on the initials.
-  await render();
-  expect(container.querySelector('img')).toBeNull();
+    // This try loads: the picture stays and nothing else is scheduled.
+    expect(vi.getTimerCount()).toBe(0);
+    await view.wait(120_000);
+    expect(view.image()).toBe(third);
+    await view.unmount();
+  });
 
-  // Another picture becoming ready changes nothing here.
-  await act(() => Promise.resolve(announceImageReady(OTHER_IMAGE_ID)));
-  expect(container.querySelector('img')).toBeNull();
+  it('gives up after the first request and seven retries, keeping the initials', async () => {
+    const view = mountRoot();
+    await view.render();
+    await view.fail();
+    for (const delay of scanPollDelays()) {
+      await view.wait(delay - 1);
+      expect(view.image()).toBeNull();
+      await view.wait(1);
+      expect(view.image()?.getAttribute('src')).toBe(`/api/images/${IMAGE_ID}`);
+      await view.fail();
+    }
+    expect(scanPollDelays()).toHaveLength(7);
+    expect(vi.getTimerCount()).toBe(0);
+    await view.wait(120_000);
+    expect(view.image()).toBeNull();
+    expect(avatar(view.container).textContent).toBe('AL');
 
-  // This picture passed its scan: a fresh image asks for it again.
-  await act(() => Promise.resolve(announceImageReady(IMAGE_ID)));
-  const retried = container.querySelector('img');
-  expect(retried?.getAttribute('src')).toBe(`/api/images/${IMAGE_ID}`);
-  expect(retried).not.toBe(image);
-  await act(() => Promise.resolve(root.unmount()));
+    // A page refresh with the same picture does not start over.
+    await view.render();
+    expect(view.image()).toBeNull();
+    await view.unmount();
+  });
+
+  it('tries at once when the picture is announced ready, and the waits start over', async () => {
+    const view = mountRoot();
+    await view.render();
+    const first = view.image()!;
+    await view.fail();
+
+    // Another picture becoming ready changes nothing here.
+    await act(() => Promise.resolve(announceImageReady(OTHER_IMAGE_ID)));
+    expect(view.image()).toBeNull();
+
+    // This picture passed its scan: a fresh image asks for it again now, and the pending wait is dropped.
+    await act(() => Promise.resolve(announceImageReady(IMAGE_ID)));
+    const retried = view.image();
+    expect(retried?.getAttribute('src')).toBe(`/api/images/${IMAGE_ID}`);
+    expect(retried).not.toBe(first);
+    expect(vi.getTimerCount()).toBe(0);
+    await view.unmount();
+  });
+
+  it('answers an announcement after giving up, with the next failure waiting the first delay again', async () => {
+    const view = mountRoot();
+    await view.render();
+    await view.fail();
+    for (const delay of scanPollDelays()) {
+      await view.wait(delay);
+      await view.fail();
+    }
+    expect(view.image()).toBeNull();
+    expect(vi.getTimerCount()).toBe(0);
+
+    await act(() => Promise.resolve(announceImageReady(IMAGE_ID)));
+    expect(view.image()?.getAttribute('src')).toBe(`/api/images/${IMAGE_ID}`);
+    await view.fail();
+    await view.wait(999);
+    expect(view.image()).toBeNull();
+    await view.wait(1);
+    expect(view.image()).not.toBeNull();
+    await view.unmount();
+  });
+
+  it('starts a new picture from a first try, with no wait left from the old one', async () => {
+    const view = mountRoot();
+    await view.render();
+    await view.fail();
+    await view.wait(1_000);
+    await view.fail();
+    // Two seconds are now pending for the old picture; a newly uploaded one replaces it mid-wait.
+    await view.render(OTHER_IMAGE_ID);
+    expect(view.image()?.getAttribute('src')).toBe(`/api/images/${OTHER_IMAGE_ID}`);
+    expect(vi.getTimerCount()).toBe(0);
+
+    // Its first failure waits one second, not the old picture's next delay.
+    await view.fail();
+    await view.wait(999);
+    expect(view.image()).toBeNull();
+    await view.wait(1);
+    expect(view.image()?.getAttribute('src')).toBe(`/api/images/${OTHER_IMAGE_ID}`);
+
+    // Removing the picture drops any wait too.
+    await view.fail();
+    await view.render(null);
+    expect(vi.getTimerCount()).toBe(0);
+    expect(avatar(view.container).textContent).toBe('AL');
+    await view.unmount();
+  });
+
+  it('leaves no timer behind when it unmounts mid-wait', async () => {
+    const view = mountRoot();
+    await view.render();
+    await view.fail();
+    expect(vi.getTimerCount()).toBe(1);
+    await view.unmount();
+    expect(vi.getTimerCount()).toBe(0);
+  });
+
+  it('counts two reports of the same failed try as one failure', async () => {
+    const view = mountRoot();
+    await view.render();
+    const image = view.image()!;
+    await act(() => {
+      image.dispatchEvent(new Event('error'));
+      image.dispatchEvent(new Event('error'));
+      return Promise.resolve();
+    });
+    // One failure spends the first wait only, not the first two.
+    await view.wait(1_000);
+    expect(view.image()?.getAttribute('src')).toBe(`/api/images/${IMAGE_ID}`);
+    await view.unmount();
+  });
 });
