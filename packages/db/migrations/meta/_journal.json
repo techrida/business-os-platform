@@ -309,6 +309,20 @@
       "when": 1783000000047,
       "tag": "0047_quotation_terms_conditions",
       "breakpoints": true
+    },
+    {
+      "idx": 44,
+      "version": "7",
+      "when": 1783000000050,
+      "tag": "0050_number_systems_per_currency",
+      "breakpoints": true
+    },
+    {
+      "idx": 45,
+      "version": "7",
+      "when": 1783000000051,
+      "tag": "0051_render_format_snapshot",
+      "breakpoints": true
     }
   ]
 }

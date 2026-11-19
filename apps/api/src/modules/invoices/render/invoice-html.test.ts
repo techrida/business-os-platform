@@ -52,11 +52,15 @@ describe('renderInvoiceHtml', () => {
   });
 
   it('groups digits by the number system: lakh for south_asian, million for international', () => {
-    const south = renderInvoiceHtml(sample(), { numberSystem: 'south_asian' });
+    const south = renderInvoiceHtml(sample(), {
+      numberSystems: { NPR: 'south_asian', INR: 'south_asian', USD: 'south_asian' },
+    });
     expect(south).toContain('NPR 20,18,180.00');
     expect(south).not.toContain('2,018,180');
 
-    const intl = renderInvoiceHtml(sample(), { numberSystem: 'international' });
+    const intl = renderInvoiceHtml(sample(), {
+      numberSystems: { NPR: 'international', INR: 'international', USD: 'international' },
+    });
     expect(intl).toContain('NPR 2,018,180.00');
     expect(intl).toContain('NPR 1,880,000.00');
     expect(intl).toContain('NPR 232,180.00');
@@ -66,8 +70,16 @@ describe('renderInvoiceHtml', () => {
 
   it('applies the number system to a foreign currency too', () => {
     const usd = sample({ currency: 'USD' });
-    expect(renderInvoiceHtml(usd, { numberSystem: 'south_asian' })).toContain('USD 20,18,180.00');
-    expect(renderInvoiceHtml(usd, { numberSystem: 'international' })).toContain('USD 2,018,180.00');
+    expect(
+      renderInvoiceHtml(usd, {
+        numberSystems: { NPR: 'south_asian', INR: 'south_asian', USD: 'south_asian' },
+      }),
+    ).toContain('USD 20,18,180.00');
+    expect(
+      renderInvoiceHtml(usd, {
+        numberSystems: { NPR: 'international', INR: 'international', USD: 'international' },
+      }),
+    ).toContain('USD 2,018,180.00');
     // Left out, the currency keeps its own style.
     expect(renderInvoiceHtml(usd)).toContain('USD 2,018,180.00');
   });
