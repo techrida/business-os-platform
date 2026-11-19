@@ -36,3 +36,17 @@ it('refuses a save from a person who may only view access, without calling the A
   expect(result).toEqual({ ok: false, kind: 'error', message: 'Only a Founder can change access.' });
   expect(fetch).not.toHaveBeenCalled();
 });
+
+it('rejects an empty or unreadable save as invalid without calling the API', async () => {
+  const fetch = vi.spyOn(globalThis, 'fetch');
+  const result = await saveAccessAction({
+    changes: [],
+    expectedRevision: '7',
+    note: '',
+    acknowledged: [],
+  });
+  expect(result).toMatchObject({ ok: false, kind: 'invalid' });
+  expect(await saveAccessAction('not an object')).toMatchObject({ ok: false, kind: 'invalid' });
+  expect(fetch).not.toHaveBeenCalled();
+  expect(revalidatePath).not.toHaveBeenCalled();
+});
