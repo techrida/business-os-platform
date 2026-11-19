@@ -439,6 +439,52 @@ describe('D49 / D54-3 opportunity lost reasons', () => {
     expect(sysRow?.lostReasonId).toBeNull();
   });
 
+  it('keeps the chosen option locked against a concurrent retire until the stage change commits', async () => {
+    const price = await labelOf('Price');
+    asRole('salesA', 'sales');
+    const reasons = new LeadLostReasonsService(h.db, new AuditService(h.db), caller);
+    const pgCode = (e: unknown) => {
+      const err = e as { code?: string; cause?: { code?: string } } | null;
+      return err?.code ?? err?.cause?.code;
+    };
+    // What update() and reset() need on the row; NOWAIT turns "would have to wait" into 55P03 without any sleep.
+    const tryRowLock = () =>
+      withTx(h.db, h.scopeA, systemActor('test'), (tx) =>
+        tx.execute(sql`SELECT id FROM app.lead_lost_reasons WHERE id = ${price.id} FOR UPDATE NOWAIT`),
+      );
+
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    let chosenReady!: (picked: { id: string; label: string }) => void;
+    const chosen = new Promise<{ id: string; label: string }>((resolve) => {
+      chosenReady = resolve;
+    });
+    // The stage change's transaction: choose() has run, the commit has not.
+    const stageChange = withTx(h.db, h.scopeA, systemActor('test'), async (tx) => {
+      chosenReady(await reasons.choose(tx, h.tenantId, { lostReasonId: price.id }));
+      await gate;
+    });
+    let held: unknown;
+    try {
+      // Race with stageChange so a failing choose() fails the test instead of hanging it.
+      const picked = await Promise.race([chosen, stageChange.then(() => undefined)]);
+      expect(picked).toEqual({ id: price.id, label: 'Price' });
+      held = await tryRowLock().then(
+        () => undefined,
+        (e: unknown) => e,
+      );
+    } finally {
+      release();
+      await stageChange;
+    }
+    expect(pgCode(held), 'row lock attempted while the stage change is open').toBe('55P03');
+
+    // Once the stage change has committed, a retire or reset can take the row again.
+    await expect(tryRowLock()).resolves.toBeDefined();
+  });
+
   it('serves GET /v1/opportunity-lost-reasons to a crm.opportunity.write caller without crm.lead.write', async () => {
     const reflector = new Reflector();
     expect(reflector.get(CAN_KEY, LeadLostReasonsController.prototype.opportunityChoices)).toBe(
