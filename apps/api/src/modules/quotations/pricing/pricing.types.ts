@@ -91,7 +91,7 @@ export interface PricedColumns {
   /** round(sum of quantity x unitCost, 2); null unless every line has a unit cost. */
   internalCostTotal: string | null;
   /**
-   * (taxable - unrounded cost) / taxable x 100, 4 decimals; null when the cost is unknown, taxable is 0, or the
+   * (taxable - sum of rounded line costs) / taxable x 100, 4 decimals; null when the cost is unknown, taxable is 0, or the
    * margin is beyond -999.9999 (facts.marginOutOfRange).
    */
   marginPct: string | null;

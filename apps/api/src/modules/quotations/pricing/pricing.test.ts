@@ -330,6 +330,15 @@ describe('priceQuotation: internal cost and margin', () => {
     expectDbArithmetic(pv);
   });
 
+  it('uses the sum of half-up line costs for the total and margin', () => {
+    const fractional = [
+      line(1, '0.5', '1.00', { unitCost: '0.01' }),
+      line(2, '0.5', '1.00', { unitCost: '0.01' }),
+    ];
+    const pv = priceQuotation(input(fractional), PERIODS, NPR_FX);
+    expect(pv.columns).toMatchObject({ internalCostTotal: '0.02', marginPct: '98.0000' });
+  });
+
   const { unitCost: _dropped, ...withoutCost } = lines[1]!;
   it.each([
     ['missing', withoutCost],
