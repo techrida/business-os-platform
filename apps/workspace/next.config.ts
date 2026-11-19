@@ -35,6 +35,11 @@ const nextConfig: NextConfig = {
   turbopack: { root: monorepoRoot },
   poweredByHeader: false,
 
+  // The production build type-checks the app without its test files. A test may import a file from another
+  // workspace package (the API's pure rules) that the filtered install of the image has no node_modules for.
+  // `pnpm typecheck` still checks every test with the full tsconfig.json.
+  typescript: { tsconfigPath: 'tsconfig.build.json' },
+
   // @bos/pdf-viewer ships TypeScript source and a CSS file (no dist build), so Next compiles it.
   transpilePackages: ['@bos/pdf-viewer'],
 
