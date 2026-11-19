@@ -145,6 +145,12 @@ export class VerificationController {
     );
   }
 
+  /**
+   * Customer cases only, so `customer.write` is the one permission that fits (unlike the write routes above).
+   * Only a customer document-review case holds files per checklist item; the service refuses any other case
+   * (VerificationService.detachItem), and a vendor case carries no case files at all. @AnyAuthenticated would
+   * gain nothing for vendor writers and would let a caller with no grant learn whether a case id exists.
+   */
   @Delete(':id/checklist/:key')
   @Can('customer.write')
   detachItem(
@@ -161,6 +167,7 @@ export class VerificationController {
     );
   }
 
+  /** Customer cases only, as detachItem: a vendor case has no loose files to remove. */
   @Delete(':id/loose-documents/:documentId')
   @HttpCode(204)
   @Can('customer.write')

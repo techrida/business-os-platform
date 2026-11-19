@@ -1,6 +1,6 @@
-import { hasPermission } from '@/components/p2/customers/permissions';
 import { getVatRegister, VatPeriodSchema } from '@/lib/api-payables';
 import { errorResponse, jsonResponse, routeSession } from '@/lib/bff';
+import { getGrants, hasGrant } from '@/lib/grants';
 
 import { vatCsv } from '../../_lib/vat-csv';
 
@@ -9,7 +9,8 @@ export const dynamic = 'force-dynamic';
 export async function GET(req: Request): Promise<Response> {
   const session = await routeSession();
   if (session instanceof Response) return session;
-  if (!hasPermission(session.roles, 'payables.vat_register.read'))
+  // Live grants (GET /v1/me), as the register page is gated on, not the role defaults.
+  if (!hasGrant(await getGrants(session), 'payables.vat_register.read'))
     return jsonResponse(
       { error: { message: 'Your roles do not include the purchase VAT register.' } },
       403,

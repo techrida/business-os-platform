@@ -26,6 +26,7 @@ import {
 } from '@/lib/api-purchase-orders';
 import { requireStaffSession } from '@/lib/bff';
 import { getNumberSystems } from '@/lib/display-settings';
+import { getGrants } from '@/lib/grants';
 import { when } from '@/lib/kernel-format';
 
 import layout from '../../procurement.module.css';
@@ -325,7 +326,7 @@ export default async function PurchaseOrderPage({ params }: { params: Promise<{ 
     getPoProgress(session, id),
   ]);
 
-  const grants = poGrants(session.roles);
+  const grants = poGrants(await getGrants(session));
   const can = orderActions(po.status, grants);
   const status = PO_STATUS_LABEL[po.status];
   const current =

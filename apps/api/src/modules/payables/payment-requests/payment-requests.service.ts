@@ -13,7 +13,10 @@
 //   was matched against its PO, else Finance plus the AD4 bands (AD8 for a Founder requester); sod_user_ids holds
 //   the requester, the submitter, each bill's enterer and each person who approved one of the bills (check 4);
 // - "one legal entity at a time": every read is scoped to the acting entity; a request or an open item of another
-//   entity is a 404, never a 403.
+//   entity is a 404, never a 403;
+// - "a saved reach is the reach enforced" (U20a phase 2): whoever asked for the payment owns the request and requests
+//   carry no department, so an `own` or `department` grant of payables.payment.request reaches only the caller's
+//   own requests (list, detail, submit, cancel); another person's is a 404, as outside the entity.
 // What a decision does is the subject's (payment-request.subject.ts).
 import { randomUUID } from 'node:crypto';
 
@@ -44,10 +47,13 @@ import {
   Optional,
   UnprocessableEntityException,
 } from '@nestjs/common';
-import { and, asc, desc, eq, inArray, ne, sql } from 'drizzle-orm';
+import { and, asc, desc, eq, inArray, ne, type SQL, sql } from 'drizzle-orm';
 
 import { AuditService } from '../../../platform/audit/audit.service';
+import { scopeWhereFor } from '../../../platform/authz/authz.service';
 import { can } from '../../../platform/authz/can';
+import type { Principal } from '../../../platform/authz/principal';
+import { defineRecordReach } from '../../../platform/authz/record-reach';
 import { DB, type Db, type DbTransaction } from '../../../platform/db/db.module';
 import { withIdempotency } from '../../../platform/db/idempotency';
 import { withTx, type TxScope } from '../../../platform/db/tx';
@@ -79,6 +85,17 @@ import { PaymentRequestsCaller } from './payment-requests.caller';
 
 /** Injection token for a test clock; production falls back to the system time. */
 export const PAYMENT_REQUESTS_CLOCK = Symbol('PAYMENT_REQUESTS_CLOCK');
+
+// The requester owns the request; there is no department column, so `department` reaches what `own` does (spec
+// review R2, as for invoices and bills). Described here because this service is the only reader of the table.
+defineRecordReach(paymentRequests, { id: paymentRequests.id, owner: paymentRequests.requestedBy });
+
+/**
+ * The requests `p` may see and act on: every request of the acting entity on an `all` grant, only their own on an
+ * `own` or `department` one. One permission covers reading and acting, so a request outside it is a 404 everywhere.
+ */
+const visibleTo = (p: Principal): SQL =>
+  scopeWhereFor(p, paymentRequests, 'payables.payment.request');
 
 type RequestRow = typeof paymentRequests.$inferSelect;
 type LineRow = typeof paymentRequestLines.$inferSelect;
@@ -289,7 +306,7 @@ export class PaymentRequestsService {
   async list(
     query: ListPaymentRequestsQuery,
   ): Promise<{ rows: Omit<PaymentRequestDto, 'lines'>[]; total: number }> {
-    const { scope, actor } = this.caller.current();
+    const { scope, actor, principal } = this.caller.current();
     return withTx(this.db, scope, actor, async (tx) => {
       const vendorJoin = and(
         eq(vendors.tenantId, paymentRequests.tenantId),
@@ -300,9 +317,12 @@ export class PaymentRequestsService {
         columns: [paymentRequests.number, vendors.legalName],
         where: scoped(scope).where(
           paymentRequests,
-          query.status === undefined || query.status.length === 0
-            ? undefined
-            : inArray(paymentRequests.status, query.status),
+          and(
+            visibleTo(principal),
+            query.status === undefined || query.status.length === 0
+              ? undefined
+              : inArray(paymentRequests.status, query.status),
+          ),
         ),
         orderBy: [desc(paymentRequests.createdAt), desc(paymentRequests.id)],
         limit: query.limit,
@@ -335,11 +355,11 @@ export class PaymentRequestsService {
     });
   }
 
-  /** 404 outside the acting entity. */
+  /** 404 outside the acting entity or the caller's reach. */
   async get(id: string): Promise<PaymentRequestDetailDto> {
     const { scope, actor, principal } = this.caller.current();
     return withTx(this.db, scope, actor, async (tx) => {
-      const dto = await this.dto(tx, scope, id);
+      const dto = await this.dto(tx, scope, id, visibleTo(principal));
       const [vendor] = await tx
         .select()
         .from(vendors)
@@ -500,7 +520,7 @@ export class PaymentRequestsService {
           tx,
           { command: 'payables.payment_request.submit', key: idempotencyKey, body: { id } },
           async () => {
-            const request = await this.lockRequest(tx, scope, id);
+            const request = await this.lockRequest(tx, scope, id, visibleTo(principal));
             if (request.status !== 'draft') {
               throw conflict(
                 'invalid_transition',
@@ -615,20 +635,23 @@ export class PaymentRequestsService {
 
   // ------------------------------------------------------------------------------------------------- cancel
 
-  /** Cancels a draft. 200 with the request. 404 outside the acting entity; 409 invalid_transition otherwise. */
+  /**
+   * Cancels a draft. 200 with the request. 404 outside the acting entity or the caller's reach; 409
+   * invalid_transition otherwise.
+   */
   async cancel(
     id: string,
     body: CancelPaymentRequestBody,
     idempotencyKey: string,
   ): Promise<PaymentRequestDto> {
-    const { scope, actor } = this.caller.current();
+    const { scope, actor, principal } = this.caller.current();
     const now = this.clock();
     return withTx(this.db, scope, actor, async (tx) => {
       const done = await withIdempotency(
         tx,
         { command: 'payables.payment_request.cancel', key: idempotencyKey, body: { id, ...body } },
         async () => {
-          const request = await this.lockRequest(tx, scope, id);
+          const request = await this.lockRequest(tx, scope, id, visibleTo(principal));
           if (!canCancel(request.status)) {
             throw conflict(
               'invalid_transition',
@@ -833,11 +856,17 @@ export class PaymentRequestsService {
     return row.legalName;
   }
 
-  private async lockRequest(tx: DbTransaction, scope: TxScope, id: string): Promise<RequestRow> {
+  /** Locks a request the caller may act on (`visible`); any other is a 404. */
+  private async lockRequest(
+    tx: DbTransaction,
+    scope: TxScope,
+    id: string,
+    visible: SQL,
+  ): Promise<RequestRow> {
     const [row] = await tx
       .select()
       .from(paymentRequests)
-      .where(scoped(scope).where(paymentRequests, eq(paymentRequests.id, id)))
+      .where(scoped(scope).where(paymentRequests, and(visible, eq(paymentRequests.id, id))))
       .for('update');
     if (row === undefined) throw notFound('Payment request');
     return row;
@@ -856,11 +885,17 @@ export class PaymentRequestsService {
       .orderBy(asc(paymentRequestLines.lineNo));
   }
 
-  private async dto(tx: DbTransaction, scope: TxScope, id: string): Promise<PaymentRequestDto> {
+  /** `visible` narrows the read to the caller's reach (the detail page); a command passes none, having locked it. */
+  private async dto(
+    tx: DbTransaction,
+    scope: TxScope,
+    id: string,
+    visible?: SQL,
+  ): Promise<PaymentRequestDto> {
     const [row] = await tx
       .select()
       .from(paymentRequests)
-      .where(scoped(scope).where(paymentRequests, eq(paymentRequests.id, id)));
+      .where(scoped(scope).where(paymentRequests, and(visible, eq(paymentRequests.id, id))));
     if (row === undefined) throw notFound('Payment request');
     return toDto(row, await this.linesOf(tx, scope, id));
   }

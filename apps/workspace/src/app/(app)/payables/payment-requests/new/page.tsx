@@ -3,10 +3,10 @@ import { randomUUID } from 'node:crypto';
 import type { Metadata } from 'next';
 import Link from 'next/link';
 
-import { hasPermission } from '@/components/p2/customers/permissions';
 import { Alert } from '@/components/ui/alert';
 import { Breadcrumb, Page, PageHeader } from '@/components/ui/page';
 import { requireStaffSession } from '@/lib/bff';
+import { getGrants, hasGrant } from '@/lib/grants';
 import { loadEnabledCurrencies } from '@/lib/enabled-currencies.server';
 import { listPaymentRequestItems, type PaymentRequestItem } from '@/lib/api-payables';
 import { listPaymentRequestOrders } from '@/lib/api-payables-orders';
@@ -21,7 +21,8 @@ export const dynamic = 'force-dynamic';
 
 export default async function NewPaymentRequestPage() {
   const session = await requireStaffSession('/payables/payment-requests/new');
-  const allowed = hasPermission(session.roles, 'payables.payment.request');
+  // Live grants (GET /v1/me), not the role defaults: an admin may grant payment requests to any role, at any scope.
+  const allowed = hasGrant(await getGrants(session), 'payables.payment.request');
   let items: PaymentRequestItem[] = [];
   let orders: { id: string; vendorId: string; label: string }[] = [];
   let problem: string | undefined;

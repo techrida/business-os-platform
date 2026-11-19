@@ -2,7 +2,6 @@ import { PAYMENT_REQUEST_STATUSES, PaymentRequestStatusSchema, pageWindow } from
 import type { Metadata } from 'next';
 import Link from 'next/link';
 
-import { hasPermission } from '@/components/p2/customers/permissions';
 import { Alert } from '@/components/ui/alert';
 import { Badge } from '@/components/ui/badge';
 import { LinkButton } from '@/components/ui/button';
@@ -14,6 +13,7 @@ import { Table, Td, Th } from '@/components/ui/table';
 import { listPaymentRequestsPage, type PaymentRequestListItem } from '@/lib/api-payables';
 import { requireStaffSession } from '@/lib/bff';
 import { getNumberSystems } from '@/lib/display-settings';
+import { getGrants, hasGrant } from '@/lib/grants';
 import { activeFilterLabels, clearFiltersHref, hrefWith, readList } from '@/lib/list-params';
 
 import { poMoney } from '../../procurement/orders/_lib/model';
@@ -34,7 +34,8 @@ export default async function PaymentRequestsPage({
 }) {
   const session = await requireStaffSession(PATH);
   const numberSystems = await getNumberSystems();
-  const allowed = hasPermission(session.roles, 'payables.payment.request');
+  // Live grants (GET /v1/me), not the role defaults: an admin may grant payment requests to any role, at any scope.
+  const allowed = hasGrant(await getGrants(session), 'payables.payment.request');
   const header = (
     <PageHeader
       title="Payment requests"

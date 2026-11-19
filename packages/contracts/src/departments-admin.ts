@@ -118,22 +118,6 @@ export const RestoreDepartmentBodySchema = z.strictObject({
 });
 export type RestoreDepartmentBody = z.infer<typeof RestoreDepartmentBodySchema>;
 
-export const UpdateDepartmentPeopleBodySchema = z.strictObject({
-  changes: z.array(DepartmentChangeSchema).min(1).max(DEPARTMENT_PEOPLE_MAX_CHANGES),
-  expectedRevision: z.string().min(1),
-  note: z
-    .string()
-    .trim()
-    .max(DEPARTMENT_NOTE_MAX)
-    .nullable()
-    .optional()
-    .transform((value) =>
-      value === null || value === undefined || value.length === 0 ? undefined : value,
-    ),
-  acknowledged: z.boolean().optional(),
-});
-export type UpdateDepartmentPeopleBody = z.infer<typeof UpdateDepartmentPeopleBodySchema>;
-
 // ---------------------------------------------------------------------------
 // Response DTO schemas
 // ---------------------------------------------------------------------------
@@ -204,11 +188,6 @@ export const DepartmentChangeEffectSchema = z.object({
   fromDepartmentId: z.guid().nullable().optional(),
 });
 export type DepartmentChangeEffect = z.infer<typeof DepartmentChangeEffectSchema>;
-
-export const UpdateDepartmentPeopleResponseSchema = AdminDepartmentDetailSchema.extend({
-  applied: z.array(DepartmentChangeEffectSchema),
-});
-export type UpdateDepartmentPeopleResponse = z.infer<typeof UpdateDepartmentPeopleResponseSchema>;
 
 export const UnassignedPersonSchema = z.object({
   userId: z.guid(),

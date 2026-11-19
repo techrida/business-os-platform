@@ -1,6 +1,10 @@
-// HTTP routes for documents (authenticated). Serves NFR Security: every route names its permission with
+// HTTP routes for documents (authenticated). Serves NFR Security: every upload route names its permission with
 // @Can, the upload is a raw streamed PUT with two size caps, and nothing here ever serves file bytes
-// (downloads go through the signed-link route in files.controller.ts).
+// (downloads go through the signed-link route in files.controller.ts). The two read routes carry
+// @AnyAuthenticated because no single permission fits: `documents.read` or an owner type's own read permission
+// (`verification.review` for case files, `vendor.read` for vendor files) opens a file. Their first statement is the
+// grant check (DocumentsService.assertReadRoute), before the id is parsed or any row is read, and the record check
+// on the document's owner still follows.
 import {
   CreateDocumentBodySchema,
   type DocumentVersionDto,
@@ -24,7 +28,7 @@ import {
 import type { Request } from 'express';
 import { z } from 'zod';
 
-import { Can } from '../authz/decorators';
+import { AnyAuthenticated, Can } from '../authz/decorators';
 import { DB, type Db } from '../db/db.module';
 import { requestTx, withTx } from '../db/tx';
 import { DocumentsService, type DocumentDto } from './documents.service';
@@ -134,16 +138,18 @@ export class DocumentsController {
   }
 
   @Get(':id')
-  @Can('documents.read')
+  @AnyAuthenticated()
   get(@Param('id') id: string): Promise<DocumentDto> {
+    this.docs.assertReadRoute();
     idOrBadRequest(id, 'id');
     return this.docs.get(requestTx().scope, id);
   }
 
   @Post(':id/versions/:versionId/link')
-  @Can('documents.read')
+  @AnyAuthenticated()
   @HttpCode(200)
   link(@Param('id') id: string, @Param('versionId') versionId: string): Promise<SignedLinkDto> {
+    this.docs.assertReadRoute();
     idOrBadRequest(id, 'id');
     idOrBadRequest(versionId, 'versionId');
     return this.docs.issueLink(requestTx().scope, versionId, id);

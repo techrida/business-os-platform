@@ -15,6 +15,7 @@ import { Table, Td, Th } from '@/components/ui/table';
 import { getBill, type VendorBill } from '@/lib/api-payables';
 import { requireStaffSession } from '@/lib/bff';
 import { getNumberSystems } from '@/lib/display-settings';
+import { getGrants, hasGrant } from '@/lib/grants';
 import { when } from '@/lib/kernel-format';
 
 import { poGrants, poMoney, qtyText } from '../../../procurement/orders/_lib/model';
@@ -31,9 +32,9 @@ import {
   BILL_STATUS_LABEL,
   MATCH_STATUS_LABEL,
   billActions,
-  billGrants,
   fileStatusLabel,
   matchResultLabel,
+  type BillGrants,
 } from '../../_lib/model';
 import styles from '../../payables.module.css';
 
@@ -222,7 +223,13 @@ export default async function BillPage({
   const vendorName = bill.vendorName;
   const orderNumber = bill.purchaseOrderNumber ?? undefined;
 
-  const grants = billGrants(session.roles);
+  // Live grants (GET /v1/me), not the role defaults: the actions and the order link show for whoever an admin
+  // granted them, and hide for a role whose grant was removed. The API still checks the bill itself.
+  const live = await getGrants(session);
+  const grants: BillGrants = {
+    enter: hasGrant(live, 'payables.bill.enter'),
+    read: hasGrant(live, 'payables.bill.read'),
+  };
   const can = billActions(bill, grants);
   const status = BILL_STATUS_LABEL[bill.status];
   const match = MATCH_STATUS_LABEL[bill.matchStatus];
@@ -260,7 +267,7 @@ export default async function BillPage({
       value:
         bill.purchaseOrderId === null ? (
           <span className={styles.quiet}>None</span>
-        ) : poGrants(session.roles).issue ? (
+        ) : poGrants(live).issue ? (
           <Link href={`/procurement/orders/${encodeURIComponent(bill.purchaseOrderId)}`}>
             {orderNumber ?? 'Open the order'}
           </Link>

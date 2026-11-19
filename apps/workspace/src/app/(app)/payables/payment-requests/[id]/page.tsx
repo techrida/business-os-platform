@@ -5,7 +5,6 @@ import Link from 'next/link';
 import { notFound } from 'next/navigation';
 
 import { isGuid } from '@/components/p2/customers/format';
-import { hasPermission } from '@/components/p2/customers/permissions';
 import { Alert } from '@/components/ui/alert';
 import { Badge } from '@/components/ui/badge';
 import { Breadcrumb, Page, PageHeader } from '@/components/ui/page';
@@ -36,7 +35,8 @@ export default async function PaymentRequestPage({ params }: { params: Promise<{
   const numberSystems = await getNumberSystems();
   // Live grants (GET /v1/me), as the links to a payment request are decided, not the role defaults: an
   // approver an admin granted payables.payment.request can open the request their inbox links to.
-  if (!hasGrant(await getGrants(session), 'payables.payment.request'))
+  const grants = await getGrants(session);
+  if (!hasGrant(grants, 'payables.payment.request'))
     return (
       <Page>
         <Alert tone="info" role="alert">
@@ -65,7 +65,8 @@ export default async function PaymentRequestPage({ params }: { params: Promise<{
   // The same scoped lookup used by request entry. Fully claimed or paid items may be absent.
   const items = await listPaymentRequestItems(session).catch(() => []);
   const byOpenItem = new Map(items.map((item) => [item.openItemId, item]));
-  const canReadBill = hasPermission(session.roles, 'payables.bill.read');
+  // The bill link shows only when the bill page would open for this person (their live grants).
+  const canReadBill = hasGrant(grants, 'payables.bill.read');
   const status = PAYMENT_STATUS[request.status];
   return (
     <Page>

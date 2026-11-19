@@ -1,7 +1,6 @@
 import type { Metadata } from 'next';
 import Link from 'next/link';
 
-import { hasPermission } from '@/components/p2/customers/permissions';
 import { Alert } from '@/components/ui/alert';
 import { Button, LinkButton } from '@/components/ui/button';
 import { EmptyState } from '@/components/ui/empty-state';
@@ -15,6 +14,7 @@ import { getVatRegister, VatPeriodSchema, type VatRegister } from '@/lib/api-pay
 import { failureOf } from '@/lib/api-kernel';
 import { requireStaffSession } from '@/lib/bff';
 import { getNumberSystems } from '@/lib/display-settings';
+import { getGrants, hasGrant } from '@/lib/grants';
 
 import { poMoney } from '../../procurement/orders/_lib/model';
 import styles from '../payables.module.css';
@@ -39,7 +39,8 @@ export default async function VatRegisterPage({
       description="Creditable input VAT on approved bills, by invoice date. Voided and draft bills are excluded. Dates below use the AD calendar; each result includes its BS date."
     />
   );
-  if (!hasPermission(session.roles, 'payables.vat_register.read'))
+  // Live grants (GET /v1/me), not the role defaults: an admin may grant the register to any role.
+  if (!hasGrant(await getGrants(session), 'payables.vat_register.read'))
     return (
       <Page>
         {header}
