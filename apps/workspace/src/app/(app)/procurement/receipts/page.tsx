@@ -5,20 +5,20 @@ import { notFound } from 'next/navigation';
 import { isGuid } from '@/components/p2/customers/format';
 import { Alert } from '@/components/ui/alert';
 import { Badge } from '@/components/ui/badge';
-import { Button, LinkButton } from '@/components/ui/button';
+import { LinkButton } from '@/components/ui/button';
 import { EmptyState } from '@/components/ui/empty-state';
-import { Field } from '@/components/ui/field';
 import { Breadcrumb, Page, PageHeader } from '@/components/ui/page';
 import { Panel } from '@/components/ui/panel';
-import { SearchInput } from '@/components/ui/search-input';
 import { Table, Td, Th } from '@/components/ui/table';
 import {
   getPoProgress,
   listReceipts,
   listReceivableOrders,
+  listRequestedOrders,
   type PoProgress,
   type ReceivableOrder,
   type Receipt,
+  type RequestedOrder,
 } from '@/lib/api-purchase-orders';
 import { requireStaffSession } from '@/lib/bff';
 import { when } from '@/lib/kernel-format';
@@ -45,7 +45,7 @@ type Waiting =
 
 /**
  * The receiving list is offered to the warehouse only. A 403 (grants changed since the roles were
- * read) quietly leaves the ID form alone; any other failure is shown, and the form still works.
+ * read) quietly leaves it out; any other failure is shown.
  */
 async function loadWaiting(session: Session, mayReceive: boolean): Promise<Waiting | undefined> {
   if (!mayReceive) return undefined;
@@ -56,6 +56,71 @@ async function loadWaiting(session: Session, mayReceive: boolean): Promise<Waiti
     if (f.status === 403) return undefined;
     return { state: 'failed', message: f.message };
   }
+}
+
+/** What the caller's own orders list knows: absent when the API refuses it or it is empty. */
+type Mine =
+  { state: 'list'; orders: readonly RequestedOrder[] } | { state: 'failed'; message: string };
+
+/**
+ * The orders raised from the caller's own purchase requests (U18 #4): a requester may receive a service on them
+ * but holds no purchase order read. The API decides who gets the list; a 403 leaves it out, as does an empty one.
+ */
+async function loadMine(session: Session): Promise<Mine | undefined> {
+  try {
+    const orders = await listRequestedOrders(session);
+    return orders.length === 0 ? undefined : { state: 'list', orders };
+  } catch (err) {
+    const f = receiptFailure(err, 'load');
+    if (f.status === 403) return undefined;
+    return { state: 'failed', message: f.message };
+  }
+}
+
+function MyOrders({ orders }: { orders: readonly RequestedOrder[] }) {
+  return (
+    <Panel
+      title="Your purchase orders"
+      description="Orders raised from your purchase requests, newest first. Open one to see what has arrived or to record a service you received."
+    >
+      <Table
+        className={layout.panelTable ?? ''}
+        caption="Purchase orders of your purchase requests"
+        minWidth={640}
+      >
+        <thead>
+          <tr>
+            <Th>Order</Th>
+            <Th>Vendor</Th>
+            <Th>Status</Th>
+          </tr>
+        </thead>
+        <tbody>
+          {orders.map((o) => {
+            const status = PO_STATUS_LABEL[o.status];
+            return (
+              <tr key={o.id}>
+                <Td nowrap>
+                  <Link
+                    href={`/procurement/receipts?po=${encodeURIComponent(o.id)}`}
+                    className={styles.name}
+                  >
+                    {o.number}
+                  </Link>
+                </Td>
+                <Td>
+                  <span className={styles.long}>{o.vendorName}</span>
+                </Td>
+                <Td nowrap>
+                  <Badge tone={status.tone}>{status.text}</Badge>
+                </Td>
+              </tr>
+            );
+          })}
+        </tbody>
+      </Table>
+    </Panel>
+  );
 }
 
 function WaitingOrders({ orders }: { orders: readonly ReceivableOrder[] }) {
@@ -145,58 +210,49 @@ function Picker({
   invalid,
   canOpenOrders,
   waiting,
+  mine,
 }: {
   invalid: boolean;
   canOpenOrders: boolean;
   waiting: Waiting | undefined;
+  mine: Mine | undefined;
 }) {
+  const offered = waiting !== undefined || mine !== undefined || canOpenOrders;
   return (
     <Page width={waiting?.state === 'list' ? 'full' : 'narrow'} className={layout.detail}>
       <PageHeader
         title="Receipts"
-        description={
-          waiting?.state === 'list'
-            ? 'Goods and services are received against one purchase order. Pick an order that is waiting, or paste its ID below.'
-            : "Goods and services are received against one purchase order. Open an order's receipts from the order page, or paste the order's ID here."
-        }
+        description="Goods and services are received against one purchase order. Pick the order below."
       />
       <div className={layout.stack}>
         {invalid ? (
-          <Alert tone="warning" role="alert" title="That is not a purchase order ID">
-            An ID looks like 3f2b8c1e-0d4a-4c1b-9e7a-5b6d2f1a8c90. Copy it from the link you were
-            sent.
+          <Alert tone="warning" role="alert" title="That link does not name a purchase order">
+            Pick the order below, or open it again from the page that linked here.
           </Alert>
         ) : null}
         {waiting?.state === 'failed' ? (
           <Alert tone="error" role="alert" title="The waiting orders did not load">
-            {waiting.message} You can still open an order with its ID below.
+            {waiting.message}
+          </Alert>
+        ) : null}
+        {mine?.state === 'failed' ? (
+          <Alert tone="error" role="alert" title="Your purchase orders did not load">
+            {mine.message}
           </Alert>
         ) : null}
         {waiting?.state === 'list' ? <WaitingOrders orders={waiting.orders} /> : null}
-        <Panel title="Find receipts by purchase order">
-          <form method="get" action="/procurement/receipts" role="search" className={styles.picker}>
-            <Field label="Purchase order ID" hint="Paste the ID from the order's link.">
-              {(control) => (
-                <SearchInput
-                  name="po"
-                  autoComplete="off"
-                  spellCheck={false}
-                  required
-                  {...control}
-                />
-              )}
-            </Field>
-            <Button type="submit" variant="secondary">
-              Open receipts
-            </Button>
-          </form>
-          {canOpenOrders ? (
-            <p className={styles.note}>
-              Or <Link href="/procurement/orders">pick the order from the purchase order list</Link>
-              .
-            </p>
-          ) : null}
-        </Panel>
+        {mine?.state === 'list' ? <MyOrders orders={mine.orders} /> : null}
+        {canOpenOrders ? (
+          <p className={styles.note}>
+            Open an order&apos;s receipts from{' '}
+            <Link href="/procurement/orders">the purchase order list</Link>.
+          </p>
+        ) : null}
+        {!offered ? (
+          <EmptyState title="No purchase orders to open" icon="file-text" headingLevel={2}>
+            The orders raised from your purchase requests appear here once they are issued.
+          </EmptyState>
+        ) : null}
       </div>
     </Page>
   );
@@ -346,8 +402,13 @@ export default async function ReceiptsPage({
   if (!isGuid(po)) {
     const session = await requireStaffSession('/procurement/receipts');
     const grants = receiptGrants(session.roles);
-    const waiting = await loadWaiting(session, grants.confirm);
-    return <Picker invalid={po !== ''} canOpenOrders={grants.issue} waiting={waiting} />;
+    const [waiting, mine] = await Promise.all([
+      loadWaiting(session, grants.confirm),
+      loadMine(session),
+    ]);
+    return (
+      <Picker invalid={po !== ''} canOpenOrders={grants.issue} waiting={waiting} mine={mine} />
+    );
   }
 
   const here = `/procurement/receipts?po=${po}`;

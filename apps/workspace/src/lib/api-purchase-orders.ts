@@ -182,6 +182,15 @@ export const ReceivableOrderSchema = z.strictObject({
 });
 export type ReceivableOrder = z.infer<typeof ReceivableOrderSchema>;
 
+/** One purchase order raised from the caller's own purchase requests: the receipts picker of a requester. */
+export const RequestedOrderSchema = z.strictObject({
+  id: z.guid(),
+  number: Text,
+  status: PoStatusSchema,
+  vendorName: Text,
+});
+export type RequestedOrder = z.infer<typeof RequestedOrderSchema>;
+
 async function readBody(res: Response): Promise<unknown> {
   const text = await res.text();
   if (text === '') return undefined;
@@ -335,6 +344,11 @@ export function listReceivableOrders(session: Session, limit?: number): Promise<
       ? '/v1/procurement/receivable-orders'
       : `/v1/procurement/receivable-orders?limit=${encodeURIComponent(String(limit))}`;
   return call(session, path, z.array(ReceivableOrderSchema));
+}
+
+/** The purchase orders of the caller's own purchase requests (needs procurement.pr.read), newest first. */
+export function listRequestedOrders(session: Session): Promise<RequestedOrder[]> {
+  return call(session, '/v1/procurement/requested-orders', z.array(RequestedOrderSchema));
 }
 
 export function getReceipt(session: Session, id: string): Promise<Receipt> {
