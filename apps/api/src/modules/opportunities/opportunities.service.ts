@@ -12,7 +12,7 @@ import {
   type OpportunityStageChangeBody,
   type Permission,
 } from '@bos/contracts';
-import { opportunities, scoped } from '@bos/db';
+import { customers, opportunities, scoped } from '@bos/db';
 import {
   BadRequestException,
   ConflictException,
@@ -21,7 +21,7 @@ import {
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
-import { and, desc, eq, inArray, type SQL } from 'drizzle-orm';
+import { and, desc, eq, inArray, sql, type SQL } from 'drizzle-orm';
 
 import { AuditService } from '../../platform/audit/audit.service';
 import { AuthzService, scopeWhereFor } from '../../platform/authz/authz.service';
@@ -100,24 +100,37 @@ export class OpportunitiesService {
     if (q.owner !== undefined && q.owner.length > 0) {
       filters.push(inArray(opportunities.ownerUserId, q.owner));
     }
+    // The search also matches the customer's name, so the count runs over the same join as the rows.
+    const customerOf = and(
+      eq(customers.tenantId, opportunities.tenantId),
+      eq(customers.id, opportunities.customerId),
+    );
     const { rows, total } = await searchPage(this.db, {
       q: q.q,
-      columns: [opportunities.name, opportunities.number],
+      columns: [opportunities.name, opportunities.number, customers.legalName],
       where: scoped(scope).where(opportunities, and(...filters)),
       orderBy: [desc(opportunities.createdAt), desc(opportunities.id)],
       limit: q.limit,
       offset: q.offset,
       rows: (tx, p) =>
         tx
-          .select()
+          .select({ opportunity: opportunities })
           .from(opportunities)
+          .innerJoin(customers, customerOf)
           .where(p.where)
           .orderBy(...p.orderBy)
           .limit(p.limit)
           .offset(p.offset),
-      count: (tx, where) => tx.$count(opportunities, where),
+      count: async (tx, where) => {
+        const [row] = await tx
+          .select({ n: sql<number>`count(*)::int` })
+          .from(opportunities)
+          .innerJoin(customers, customerOf)
+          .where(where);
+        return row?.n ?? 0;
+      },
     });
-    return { items: rows.map(toOpportunityDto), total };
+    return { items: rows.map((r) => toOpportunityDto(r.opportunity)), total };
   }
 
   async get(id: string): Promise<OpportunityDto> {
