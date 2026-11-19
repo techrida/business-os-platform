@@ -5,7 +5,8 @@
 // PurchaseRequestSubject, NumberingService, MoneyService (NPR needs no rate) and AuditService (the editors of the
 // SoD list are read from it). Faked: notify (it still runs the real link and template validation, as NotifyService
 // does at enqueue), the user directory (role -> users; the users themselves are real staff users of entity A), the
-// request context, and authz.assert, which still runs the real pure can() on a fake principal.
+// request context, and authz.assert, which still runs the real pure can() on a fake principal. The engine's
+// RoleCache is real (live role_permissions rows), and so are a head's level grants where a test asks for them.
 // Run: pnpm --filter @bos/api exec vitest run src/modules/procurement/requests/purchase-requests.integration.test.ts
 import 'reflect-metadata';
 
@@ -13,6 +14,8 @@ import { randomUUID } from 'node:crypto';
 
 import {
   DEFAULT_ROLE_PERMISSIONS,
+  type AccessLevel,
+  type AccessScope,
   type ApprovalRequestDto,
   type CreatePurchaseRequestBody,
   type Permission,
@@ -29,6 +32,7 @@ import {
   departments,
   purchaseRequestLines,
   purchaseRequests,
+  rolePermissions,
   runMigrations,
 } from '@bos/db';
 import { BadRequestException, ForbiddenException, HttpException } from '@nestjs/common';
@@ -42,6 +46,7 @@ import { AuditService } from '../../../platform/audit/audit.service';
 import type { AuthzService } from '../../../platform/authz/authz.service';
 import { can } from '../../../platform/authz/can';
 import type { Principal } from '../../../platform/authz/principal';
+import { RoleCache } from '../../../platform/authz/role-cache';
 import type { Db, DbTransaction } from '../../../platform/db/db.module';
 import { systemActor, withTx, type TxScope } from '../../../platform/db/tx';
 import { buildLink, renderEmail } from '../../../platform/notify/templates';
@@ -72,6 +77,8 @@ let scopeA: TxScope;
 let scopeB: TxScope;
 let approvals: ApprovalsService;
 let service: PurchaseRequestsService;
+/** The engine's live grants; a test that writes role_permissions rows calls forget() before and after. */
+let roleCache: RoleCache;
 
 /** Real staff users of entity A. `req` and `other` raise requests, `head` heads `dept.headed`. */
 const U = { req: '', other: '', head: '', ops: '', mgmt: '', proc: '', admin: '' };
@@ -88,15 +95,43 @@ const resetRoles = () => {
 
 const grantsOf = (role: RoleKey) =>
   new Map(Object.entries(DEFAULT_ROLE_PERMISSIONS[role])) as Map<Permission, Scope>;
-/** Who calls: by default the requester, an operations officer of entity A. */
-const current: { userId: string; role: RoleKey; scope: TxScope | null } = {
+/**
+ * Who calls: by default the requester, an operations officer of entity A with no department, at staff level and
+ * with the role's default grants. `member()` files the caller in a department at a level with given grants.
+ */
+const current: {
+  userId: string;
+  role: RoleKey;
+  scope: TxScope | null;
+  departmentId: string | null;
+  level: AccessLevel;
+  grants: ReadonlyMap<Permission, AccessScope> | null;
+} = {
   userId: '',
   role: 'operations_officer',
   scope: null,
+  departmentId: null,
+  level: 'staff',
+  grants: null,
 };
 const as = (userId: string, role: RoleKey) => {
   current.userId = userId;
   current.role = role;
+  current.departmentId = null;
+  current.level = 'staff';
+  current.grants = null;
+};
+const member = (
+  userId: string,
+  role: RoleKey,
+  departmentId: string,
+  level: AccessLevel,
+  grants: ReadonlyMap<Permission, AccessScope>,
+) => {
+  as(userId, role);
+  current.departmentId = departmentId;
+  current.level = level;
+  current.grants = grants;
 };
 const scopeNow = (): TxScope => current.scope ?? scopeA;
 
@@ -108,9 +143,10 @@ const principalNow = (): Principal => ({
   partyId: null,
   idpOrgId: 'unused',
   roles: [current.role],
-  departmentId: null,
+  departmentId: current.departmentId,
+  level: current.level,
   status: 'active',
-  grants: grantsOf(current.role),
+  grants: current.grants ?? grantsOf(current.role),
 });
 /** One caller for every service, so switching the user or the entity switches it everywhere. */
 const caller = {
@@ -236,7 +272,8 @@ beforeAll(async () => {
   });
   await admin.publish(PURCHASE_REQUEST_DOCUMENT_TYPE, 1);
 
-  approvals = new ApprovalsService(db, audit, notify, directory, caller, () => now);
+  roleCache = new RoleCache(db);
+  approvals = new ApprovalsService(db, audit, notify, directory, caller, () => now, roleCache);
   approvals.registerSubject(new PurchaseRequestSubject(() => now));
   service = new PurchaseRequestsService(
     db,
@@ -438,6 +475,48 @@ describe('purchase request: the department route (AD10, AD11, AD12)', () => {
     const ok = await service.submit(d.id, undefined, randomUUID());
     expect(ok.status).toBe('submitted');
     expect(ok.number).not.toBeNull();
+  });
+
+  it('tells the roles the tenant gave admin.roles.write: a Founder-made grant for Management is heard', async () => {
+    // Only the Founder holds it by default, so Management hearing about the block proves the live rows are read.
+    expect(DEFAULT_ROLE_PERMISSIONS.management['admin.roles.write']).toBeUndefined();
+    // The tenant's rows replace the defaults: every default grant plus the one the Founder added. No authz_versions
+    // row is written, so restoring zero rows gives the defaults back to the rest of the file.
+    const defaults = Object.entries(DEFAULT_ROLE_PERMISSIONS);
+    const rows: (typeof rolePermissions.$inferInsert)[] = defaults.flatMap(([role, grants]) =>
+      Object.entries(grants).map(([permission, grantScope]) => ({
+        tenantId: scopeA.tenantId,
+        roleKey: role,
+        permission,
+        scope: grantScope,
+      })),
+    );
+    rows.push({
+      tenantId: scopeA.tenantId,
+      roleKey: 'management',
+      permission: 'admin.roles.write',
+      scope: 'all',
+    });
+    const setRows = (values: typeof rows) =>
+      withTx(db, scopeA, systemActor('test'), async (tx) => {
+        await tx.delete(rolePermissions).where(eq(rolePermissions.tenantId, scopeA.tenantId));
+        if (values.length > 0) await tx.insert(rolePermissions).values(values);
+      });
+    await setRows(rows);
+    roleCache.forget(scopeA.tenantId, scopeA.organizationId);
+    try {
+      roles.operations_head = [];
+      const d = await draft({ departmentId: dept.headless });
+      const error = await httpErrorOf(service.submit(d.id, undefined, randomUUID()));
+      expect(codeOf(error)).toBe('NO_ELIGIBLE_APPROVER');
+      expect(notify.notifyRole.mock.calls.map((c) => c[1]).sort()).toEqual([
+        'founder',
+        'management',
+      ]);
+    } finally {
+      await setRows([]);
+      roleCache.forget(scopeA.tenantId, scopeA.organizationId);
+    }
   });
 
   it('a retried submit with the same Idempotency-Key opens one approval request', async () => {
@@ -847,6 +926,42 @@ describe('purchase request: scope', () => {
     expect(
       (await service.list({ status: ['cancelled'], limit: 200, offset: 0 })).rows.map((r) => r.id),
     ).not.toContain(d.id);
+  });
+
+  it('a department head lists and opens their department and their own requests, not another department (#11)', async () => {
+    // A department-mate's request in the head's department, the head's own filed under another department, and
+    // someone else's in that other department.
+    as(U.other, 'operations_officer');
+    const mate = await draft({ departmentId: dept.headed });
+    as(U.head, 'operations_officer');
+    const ownElsewhere = await draft({ departmentId: dept.headless });
+    as(U.req, 'operations_officer');
+    const foreign = await draft({ departmentId: dept.headless });
+
+    // The head's grants as a request would carry them: the real RoleCache over this tenant's (default) rows. The
+    // level row widens procurement.pr.read to the department; a staff member of the same role keeps `own`.
+    const grantsAt = (level: AccessLevel) =>
+      roleCache.grantsFor(scopeA.tenantId, scopeA.organizationId, ['operations_officer'], level);
+    expect((await grantsAt('staff')).get('procurement.pr.read')).toBe('own');
+    const headGrants = await grantsAt('head');
+    expect(headGrants.get('procurement.pr.read')).toBe('department');
+    expect(headGrants.get('procurement.pr.create')).toBe('own');
+    member(U.head, 'operations_officer', dept.headed, 'head', headGrants);
+
+    const listed = (await service.list({ limit: 200, offset: 0 })).rows.map((r) => r.id);
+    expect(listed).toEqual(expect.arrayContaining([mate.id, ownElsewhere.id]));
+    expect(listed).not.toContain(foreign.id);
+    expect((await service.get(mate.id)).id).toBe(mate.id);
+    expect((await service.get(ownElsewhere.id)).id).toBe(ownElsewhere.id);
+    expect((await httpErrorOf(service.get(foreign.id))).getStatus()).toBe(404);
+    // Reading the department is not editing it: procurement.pr.create stays `own`, so a mate's request is a 404.
+    expect(
+      (
+        await httpErrorOf(
+          service.update(mate.id, body({ departmentId: dept.headed }), undefined, randomUUID()),
+        )
+      ).getStatus(),
+    ).toBe(404);
   });
 });
 

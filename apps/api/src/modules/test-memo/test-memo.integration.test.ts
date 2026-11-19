@@ -1082,7 +1082,7 @@ describe('a memo out of scope looks like an unknown id (R23)', () => {
 });
 
 describe('internal memo template', () => {
-  it('returns a selectable signer with a blank mirrored name using only the email local part', async () => {
+  it('returns a selectable signer with a blank mirrored name as "Unnamed user", never an email fragment', async () => {
     const staff = await createStaffUser(appPool, { ...scope, idpOrgId: staffIdpOrgId });
     await withTx(db, scope, systemActor('test'), (tx) =>
       tx
@@ -1094,7 +1094,7 @@ describe('internal memo template', () => {
     const person = MemoDirectorySchema.parse(directory.body).people.find(
       (p) => p.userId === staff.userId,
     );
-    expect(person?.name).toBe('accounts.desk');
+    expect(person?.name).toBe('Unnamed user');
     expect(person?.avatarDocumentId).toBeNull();
   });
 

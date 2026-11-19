@@ -237,6 +237,12 @@ beforeAll(async () => {
   narrowFin = await staff(scope.organizationId, ['finance', 'sales']);
   await withTx(db, scope, systemActor('test-seed'), async (tx) => {
     await tx.execute(sql`UPDATE app.users SET status = 'inactive' WHERE id = ${inactiveUser}`);
+    // Names as the emails and the detail show them (D54-2): the requester has a display name; fin has an address
+    // but no display name, so fin is "Unnamed user" everywhere, never the part of the address before the @.
+    await tx.execute(
+      sql`UPDATE app.users SET display_name = 'Sita Requester' WHERE id = ${U.requester}`,
+    );
+    await tx.execute(sql`UPDATE app.users SET display_name = NULL WHERE id = ${U.fin}`);
     await tx.execute(
       sql`UPDATE app.user_entities SET role_keys = '{sales}'
           WHERE tenant_id = ${scope.tenantId} AND organization_id = ${scope.organizationId}
@@ -427,7 +433,7 @@ describe('submit', () => {
       vars: {
         documentNumber: 'MEMO-2082/83-00001',
         documentType: 'test_memo',
-        requesterName: 'requester',
+        requesterName: 'Sita Requester',
         linkPath: `/inbox/${requestId}`,
       },
     });
@@ -439,7 +445,7 @@ describe('submit', () => {
       },
     );
     expect(pending.subject).toBe('Approval needed: test_memo MEMO-2082/83-00001');
-    expect(pending.text).toContain('requester asked you to review');
+    expect(pending.text).toContain('Sita Requester asked you to review');
     expect(pending.text).toContain(`${WORKSPACE_URL}/inbox/${requestId}`);
     expect(audit.record).toHaveBeenCalledWith(
       expect.anything(),
@@ -598,12 +604,17 @@ describe('act', () => {
             documentNumber: 'MEMO-2082/83-00001',
             documentType: 'test_memo',
             decision: 'approved',
-            deciderName: 'fin',
+            deciderName: 'Unnamed user',
             linkPath: memoPath,
           },
         },
       }),
     );
+    // The detail names the deciders the same way: fin has an address and no display name.
+    const detail = await service.get(requestId);
+    const nameOf = (id: string) => detail.people?.find((person) => person.userId === id)?.name;
+    expect(nameOf(U.fin)).toBe('Unnamed user');
+    expect(nameOf(U.requester)).toBe('Sita Requester');
     // The old `outcome` key was ignored by the template, so the subject said "updated".
     const decided = renderEmail(
       'approval.decided',
@@ -611,7 +622,9 @@ describe('act', () => {
       { workspaceUrl: WORKSPACE_URL },
     );
     expect(decided.subject).toBe('test_memo MEMO-2082/83-00001: approved');
-    expect(decided.text).toContain('fin marked test_memo MEMO-2082/83-00001 as approved.');
+    expect(decided.text).toContain(
+      'Unnamed user marked test_memo MEMO-2082/83-00001 as approved.',
+    );
     expect(decided.text).toContain(`${WORKSPACE_URL}${memoPath}`);
     await expect(
       act(U.fin, requestId, { action: 'approve', expectedVersion: 3 }),
@@ -717,7 +730,7 @@ describe('versions, inbox and reading', () => {
     expect(detail.requestId).toBe(requestId);
     // A role step names no individual. Other staff and role members stay out of this response.
     expect(detail.people?.map((person) => person.userId)).toEqual([U.requester]);
-    expect(detail.people?.[0]?.name).toMatch(/^staff /);
+    expect(detail.people?.[0]?.name).toBe('Sita Requester');
     // R23: out of scope answers like an unknown id, so the id's existence does not leak.
     me = U.stranger;
     await expect(service.get(requestId)).rejects.toMatchObject({ status: 404 });
