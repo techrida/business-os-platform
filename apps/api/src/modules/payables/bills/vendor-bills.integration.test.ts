@@ -517,6 +517,63 @@ describe('match (check 6, AD6 defaults from settings)', () => {
     expect((await service.list()).find((row) => row.id === bill.id)).toMatchObject(expected);
   });
 
+  it('names the purchase order on bill list and detail for Finance, who holds no purchase order read', async () => {
+    const po = await receivedPo('1', '1000.00', '1');
+    const bill = await billFor(po, '1', '1000.00');
+    const plain = await billWithoutPo(await doc(['clean']));
+    const [stored] = await read((tx) =>
+      tx.execute<{ number: string }>(
+        sql`SELECT number FROM app.purchase_orders WHERE id = ${po.id}`,
+      ),
+    ).then((r) => r.rows);
+    as(U.fin, 'finance');
+    expect(grantsOf('finance').has('procurement.po.issue')).toBe(false);
+    expect(grantsOf('finance').has('procurement.pr.read')).toBe(false);
+    expect(await service.get(bill.id)).toMatchObject({
+      purchaseOrderId: po.id,
+      purchaseOrderNumber: stored!.number,
+    });
+    const listed = await service.list();
+    expect(listed.find((row) => row.id === bill.id)?.purchaseOrderNumber).toBe(stored!.number);
+    expect(listed.find((row) => row.id === plain.id)?.purchaseOrderNumber).toBeNull();
+    expect((await service.get(plain.id)).purchaseOrderNumber).toBeNull();
+    as(U.acct, 'accountant');
+  });
+
+  it('adds only the order number to a bill: no other purchase order field rides along', async () => {
+    const po = await receivedPo('1', '1000.00', '1');
+    const bill = await billFor(po, '1', '1000.00');
+    as(U.fin, 'finance');
+    const { lines: _lines, fileStatus: _file, ...detail } = await service.get(bill.id);
+    const row = (await service.list()).find((r) => r.id === bill.id)!;
+    as(U.acct, 'accountant');
+    const expectedKeys = [
+      'approvalRequestId',
+      'currency',
+      'documentId',
+      'enteredBy',
+      'fiscalYear',
+      'id',
+      'invoiceDate',
+      'kind',
+      'matchStatus',
+      'netTotal',
+      'number',
+      'payableTotal',
+      'purchaseOrderId',
+      'purchaseOrderNumber',
+      'status',
+      'tdsTotal',
+      'vatTotal',
+      'vendorInvoiceNo',
+      'vendorName',
+      'vendorPartyId',
+      'version',
+    ];
+    expect(Object.keys(detail).sort()).toEqual(expectedKeys);
+    expect(Object.keys(row).sort()).toEqual(expectedKeys);
+  });
+
   it('passes +2% on 10,000 and lets the bill through to Accountant -> Finance', async () => {
     const po = await receivedPo('1', '10000.00', '1');
     const bill = await billFor(po, '1', '10200.00');
