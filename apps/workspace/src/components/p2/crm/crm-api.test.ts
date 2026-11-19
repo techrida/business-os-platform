@@ -76,10 +76,12 @@ const ACTIVITY = {
   quotationId: null,
   dueAt: '2026-11-20T09:00:00+05:45',
   assigneeUserId: null,
+  assigneeName: null,
   completedAt: null,
   cancelledAt: null,
   planned: true,
   createdByUserId: null,
+  createdByName: null,
   occurredAt: '2026-11-19T09:00:00+05:45',
   version: 2,
 };

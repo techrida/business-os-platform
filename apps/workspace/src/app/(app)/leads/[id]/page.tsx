@@ -90,6 +90,7 @@ function facts(l: LeadDto, owners: readonly LeadOwnerOption[], numberSystems: Nu
           leadId={l.id}
           version={l.version}
           ownerUserId={l.ownerUserId}
+          ownerName={l.ownerName}
           owners={owners}
         />
       ),
@@ -175,10 +176,9 @@ export default async function LeadPage({ params }: { params: Promise<{ id: strin
   const logged = loggedResult.status === 'fulfilled' ? loggedResult.value : null;
   const loggedProblem =
     loggedResult.status === 'rejected' ? failureOf(loggedResult.reason).message : null;
-  // Owners feed the owner editor; names (owners plus the users directory, as on the lead list)
-  // name assignees and History actors. Without them the page still works, read-only.
-  const { owners, names } =
-    peopleResult.status === 'fulfilled' ? peopleResult.value : { owners: [], names: new Map() };
+  // Owners feed the owner editor and the follow-up choices; every name shown comes from its own record (D46).
+  // Without them the page still works, read-only.
+  const { owners } = peopleResult.status === 'fulfilled' ? peopleResult.value : { owners: [] };
   // Overdue is measured against the server's clock for this render.
   const now = new Date();
 
@@ -249,7 +249,6 @@ export default async function LeadPage({ params }: { params: Promise<{ id: strin
             ) : (
               <ActivityList
                 items={logged ?? []}
-                people={names}
                 empty="Calls, meetings and stage changes appear here."
               />
             )}
@@ -321,7 +320,6 @@ export default async function LeadPage({ params }: { params: Promise<{ id: strin
               items={planned ?? []}
               ownerUserId={lead.ownerUserId}
               owners={owners}
-              names={names}
               now={now}
               className={styles.detailPanel}
             />
