@@ -104,11 +104,13 @@ export class FakeUsersStore extends UsersStore {
     return Promise.resolve(
       this.memberships
         .filter((m) => m.tenantId === tenantId && m.userId === userId)
-        .map(({ organizationId, isDefault, roleKeys, departmentId }) => ({
+        .map(({ organizationId, isDefault, roleKeys, departmentId, level }) => ({
           organizationId,
           isDefault,
           roleKeys,
           departmentId,
+          // Only when a test set one: the SQL store always answers a level, but most fixtures predate it.
+          ...(level === undefined ? {} : { level }),
         })),
     );
   }

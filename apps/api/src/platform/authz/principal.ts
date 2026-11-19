@@ -1,7 +1,7 @@
 // The authorization vocabulary: who is asking (`Principal`), what they touch (`ResourceRef`) and
 // the answer (`Decision`). `can()` reads only these types, so authz stays pure and testable.
 // Serves the NFR "authorization is deny-by-default, < 5 ms per decision" (P1 plan §1, k-authz).
-import type { OrgKind, Permission, RoleKey, Scope } from '@bos/contracts';
+import type { AccessLevel, AccessScope, OrgKind, Permission, RoleKey } from '@bos/contracts';
 import type { ScopedTable } from '@bos/db';
 import type { AnyPgColumn } from 'drizzle-orm/pg-core';
 
@@ -29,9 +29,17 @@ export interface Principal {
   roles: readonly RoleKey[];
   /** The department of the caller's membership in the acting entity; null for portal callers. */
   departmentId: string | null;
+  /**
+   * The level of that membership (D50). Absent reads as `staff`: portal callers have no membership, and a
+   * principal built by hand (a test, a worker) without a level gets no level grant.
+   */
+  level?: AccessLevel;
   status: 'invited' | 'active' | 'inactive';
-  /** Every permission the caller's roles give, with the widest scope among those roles. */
-  grants: ReadonlyMap<Permission, Scope>;
+  /**
+   * Every permission the caller's roles give, with the widest scope among those roles, already widened by the
+   * level rows of the membership's level (RoleCache.grantsFor).
+   */
+  grants: ReadonlyMap<Permission, AccessScope>;
 }
 
 /**
@@ -50,6 +58,17 @@ export interface ResourceRef {
   vendorPartyId?: string | null;
   /** Users who prepared the record and so must not approve it (separation of duties). */
   sodUserIds?: readonly string[];
+  /**
+   * Who entered the record (`leads.created_by_user_id`). Read reach only: `own` on a read permission that lists
+   * creators in record-reach.ts also covers it. Fill it with `loadReaders`, never by hand, so the record check
+   * and the list query (`scopeWhereFor`) read the same columns.
+   */
+  creatorUserId?: string | null;
+  /**
+   * Users holding a non-cancelled activity assignment on the record. Read reach only: they reach it with `own`
+   * (and wider) on the table's read permission, and with `assigned`. Filled by `loadReaders`.
+   */
+  assigneeUserIds?: readonly string[];
 }
 
 export type DenyReason =
@@ -60,12 +79,15 @@ export type DenyReason =
   /** ADR 0027 §4: the acting entity is unknown or the caller may not act for it (answered alike). */
   | 'entity_not_permitted';
 
-export type Decision = { allowed: true; scope: Scope } | { allowed: false; reason: DenyReason };
+export type Decision =
+  | { allowed: true; scope: AccessScope }
+  | { allowed: false; reason: DenyReason };
 
 /**
  * A Drizzle table that `AuthzService.scopeWhere()` can filter. The two tenancy columns are
  * required; the others are optional because only some tables have an owner, a department or a
- * counterparty. A scope whose column the table lacks matches no rows.
+ * counterparty. A scope whose column the table lacks matches no rows. Tables whose owner column has
+ * another name, or that grant read reach to creators and assignees, are described in record-reach.ts.
  */
 export type ScopableTable = ScopedTable & {
   ownerUserId?: AnyPgColumn;

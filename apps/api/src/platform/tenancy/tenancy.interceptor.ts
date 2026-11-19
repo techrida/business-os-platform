@@ -2,7 +2,13 @@
 // the caller's `Principal` and applies the route's `@Can` / `@AnyAuthenticated` marker. Serves the
 // NFRs "authorization is deny-by-default" and "< 5 ms per decision" (P1 plan §1, k-authz; §6.2;
 // findings 3 and 4): a route with no marker is refused, and a warm request touches no database.
-import { type OrgKind, type Permission, ROLE_KEYS, type RoleKey } from '@bos/contracts';
+import {
+  type AccessLevel,
+  type OrgKind,
+  type Permission,
+  ROLE_KEYS,
+  type RoleKey,
+} from '@bos/contracts';
 import {
   BadRequestException,
   ForbiddenException,
@@ -218,8 +224,17 @@ export class TenancyInterceptor implements NestInterceptor {
     const roles = effectiveRoles(tokenRoles, membership);
     if (idp.kind === 'staff' && roles.length === 0) throw noRole();
     const departmentId = membership?.departmentId ?? null;
+    // Portal callers have no membership, so no level: they are staff for every level rule.
+    const level: AccessLevel = membership?.level ?? 'staff';
 
-    const grants = await this.roleCache.grantsFor(idp.tenantId, entityId, roles);
+    // A level widens a grant to the member's department; with no department there is nothing to widen
+    // to, so the grants are the staff ones (the same rule as Check a person in Access Settings).
+    const grants = await this.roleCache.grantsFor(
+      idp.tenantId,
+      entityId,
+      roles,
+      departmentId === null ? 'staff' : level,
+    );
     // `ctx().roles` carries the same effective list as the principal, so `/v1/me` cannot show a
     // role granted in another org, or one the membership narrowed away.
     bindIdentity({
@@ -243,6 +258,7 @@ export class TenancyInterceptor implements NestInterceptor {
       idpOrgId: idp.idpOrgId,
       roles,
       departmentId,
+      level,
       status: user.status,
       grants,
     };

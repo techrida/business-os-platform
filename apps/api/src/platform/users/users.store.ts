@@ -9,7 +9,13 @@
 //
 // ADR 0027: users and user_roles are tenant-scoped (no organization_id). A ZITADEL org maps to an
 // app.idp_orgs row; which legal entities a staff user may act for lives in app.user_entities.
-import type { AdminUser, AdminUsersQuery, AdminUsersSummary, RoleKey } from '@bos/contracts';
+import type {
+  AccessLevel,
+  AdminUser,
+  AdminUsersQuery,
+  AdminUsersSummary,
+  RoleKey,
+} from '@bos/contracts';
 import { idpOrgs, organizations } from '@bos/db';
 import { Inject, Injectable } from '@nestjs/common';
 import { type SQL, and, eq, sql } from 'drizzle-orm';
@@ -47,6 +53,8 @@ export interface MembershipRow {
   /** NULL = every role in the token. */
   roleKeys: string[] | null;
   departmentId: string | null;
+  /** `user_entities.level` (0079): staff, manager or head. The SQL store always returns it. */
+  level?: AccessLevel;
 }
 
 export interface UserFields {
@@ -289,7 +297,7 @@ export class SqlUsersStore extends UsersStore {
     return rows<MembershipRow & Record<string, unknown>>(
       q,
       sql`SELECT organization_id AS "organizationId", is_default AS "isDefault",
-                 role_keys AS "roleKeys", department_id AS "departmentId"
+                 role_keys AS "roleKeys", department_id AS "departmentId", level
           FROM app.user_entities WHERE tenant_id = ${tenantId} AND user_id = ${userId}
           ORDER BY is_default DESC, organization_id`,
     );

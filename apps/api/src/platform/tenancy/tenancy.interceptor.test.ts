@@ -5,7 +5,7 @@
 // Also covers CR-02 (P0): a staff principal must hold at least one project role in its own org.
 import 'reflect-metadata';
 
-import type { Permission, RoleKey, Scope } from '@bos/contracts';
+import type { AccessLevel, Permission, RoleKey, Scope } from '@bos/contracts';
 import { idpOrgs, organizations } from '@bos/db';
 import {
   BadRequestException,
@@ -158,7 +158,7 @@ let now = 1_000_000;
 let resolveCalls: number;
 let resolveArgs: { zitadelUserId: string; tenantId: string; idpOrgId: string }[];
 let status: Principal['status'];
-let grantRequests: { organizationId: string; roles: readonly RoleKey[] }[];
+let grantRequests: { organizationId: string; roles: readonly RoleKey[]; level: AccessLevel }[];
 /** The IdP org the token resolves to. */
 let tokenOrg: ResolvedIdpOrg;
 /** The user row the directory returns: its tenant, IdP org and memberships. */
@@ -168,8 +168,13 @@ let epoch = '0:0';
 
 const roleCache = {
   epoch: () => Promise.resolve(epoch),
-  grantsFor: (_t: string, organizationId: string, roles: readonly RoleKey[]) => {
-    grantRequests.push({ organizationId, roles });
+  grantsFor: (
+    _t: string,
+    organizationId: string,
+    roles: readonly RoleKey[],
+    level: AccessLevel = 'staff',
+  ) => {
+    grantRequests.push({ organizationId, roles, level });
     const merged = new Map<Permission, Scope>();
     for (const role of roles) for (const [p, s] of TABLE[role] ?? []) merged.set(p, s);
     return Promise.resolve(merged);
@@ -582,6 +587,43 @@ describe('TenancyInterceptor', () => {
       expect(bound).toMatchObject({ organizationId: ENTITY_B, departmentId: DEPT_B });
     });
 
+    it('asks the role cache for the membership level and binds it on the principal', async () => {
+      row.memberships = [MEMBERSHIP_A, { ...MEMBERSHIP_B, level: 'manager' }];
+      const { bound } = await run(
+        interceptor,
+        auth(financeAndSales),
+        Routes,
+        Routes.prototype.me,
+        ENTITY_B,
+      );
+      expect(grantRequests).toEqual([
+        { organizationId: ENTITY_B, roles: ['sales'], level: 'manager' },
+      ]);
+      expect(bound).toMatchObject({ departmentId: DEPT_B, level: 'manager' });
+    });
+
+    it('asks for staff grants when the member has no department, but keeps the real level', async () => {
+      // A level widens a grant to the department; with none there is nothing to widen to (Check a person agrees).
+      row.memberships = [{ ...MEMBERSHIP_A, level: 'manager' }, MEMBERSHIP_B];
+      const { bound } = await run(interceptor, auth(finance), Routes, Routes.prototype.me);
+      expect(grantRequests).toEqual([
+        { organizationId: ENTITY_A, roles: ['finance'], level: 'staff' },
+      ]);
+      expect(bound).toMatchObject({ departmentId: null, level: 'manager' });
+    });
+
+    it('reads a membership without a level as staff', async () => {
+      const { bound } = await run(
+        interceptor,
+        auth(financeAndSales),
+        Routes,
+        Routes.prototype.me,
+        ENTITY_B,
+      );
+      expect(grantRequests[0]?.level).toBe('staff');
+      expect(bound.level).toBe('staff');
+    });
+
     it('accepts the header in upper case', async () => {
       const { context } = await run(
         interceptor,
@@ -641,7 +683,9 @@ describe('TenancyInterceptor', () => {
       );
       expect(bound.roles).toEqual(['sales']);
       expect(roles).toEqual(['sales']);
-      expect(grantRequests).toEqual([{ organizationId: ENTITY_B, roles: ['sales'] }]);
+      expect(grantRequests).toEqual([
+        { organizationId: ENTITY_B, roles: ['sales'], level: 'staff' },
+      ]);
       // Narrowed away: finance's admin.users.read is not granted in entity B.
       const body = await denial(
         run(interceptor, auth(financeAndSales), Routes, Routes.prototype.readUsers, ENTITY_B),
@@ -685,7 +729,10 @@ describe('TenancyInterceptor', () => {
         partyId: CUSTOMER_PARTY,
         idpOrgId: CUSTOMER.idpOrgId,
         departmentId: null,
+        // No membership, so no level: a portal caller gets no level grant.
+        level: 'staff',
       });
+      expect(grantRequests.every((g) => g.level === 'staff')).toBe(true);
     });
 
     it('lets a portal user name another entity of the tenant, keeping its token roles', async () => {
