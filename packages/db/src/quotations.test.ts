@@ -348,6 +348,26 @@ describe('one live version per quotation', () => {
   });
 });
 
+describe('quotation discount precision', () => {
+  it('rejects fractional paisa for amount discounts and accepts four-place percentages', async () => {
+    const scope = await newScope();
+    const versionId = await insertVersion(scope, await insertQuotation(scope));
+    const updateDiscount = (mode: string, value: string) =>
+      exec(
+        scope,
+        `UPDATE app.quotation_versions SET discount_mode = $2, discount_input = $3 WHERE id = $1`,
+        [versionId, mode, value],
+      );
+
+    await expect(updateDiscount('amount', '1.005')).rejects.toMatchObject({
+      code: '23514',
+      constraint: 'quotation_versions_amount_discount_precision_check',
+    });
+    await expect(updateDiscount('amount', '1.01')).resolves.toBe('');
+    await expect(updateDiscount('pct', '1.0051')).resolves.toBe('');
+  });
+});
+
 describe('a frozen version', () => {
   it('refuses line edits once approved (23514), and allows them on a draft', async () => {
     const scope = await newScope();

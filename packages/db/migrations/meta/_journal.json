@@ -211,6 +211,20 @@
       "when": 1783000000042,
       "tag": "0042_billing_schedule_percent_precision",
       "breakpoints": true
+    },
+    {
+      "idx": 30,
+      "version": "7",
+      "when": 1783000000044,
+      "tag": "0044_sales_order_read_for_default_sales",
+      "breakpoints": true
+    },
+    {
+      "idx": 31,
+      "version": "7",
+      "when": 1783000000045,
+      "tag": "0045_quotation_discount_amount_precision",
+      "breakpoints": true
     }
   ]
 }
