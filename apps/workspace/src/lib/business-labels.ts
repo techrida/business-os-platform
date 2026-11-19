@@ -15,7 +15,7 @@ export async function userNames(session: Session): Promise<Map<string, string>> 
     do {
       const page = await listUsers(session, { limit: 200, ...(after ? { after } : {}) });
       for (const user of page.items) {
-        const name = user.displayName?.trim() || user.email?.trim();
+        const name = user.displayName?.trim() || 'Unnamed user';
         if (name) names.set(user.id, name);
       }
       after = page.nextAfter ?? undefined;

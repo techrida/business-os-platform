@@ -208,7 +208,7 @@ export default async function QuotationDetailPage({
   const earlier = view !== null && view.id !== quotation.currentVersionId;
   const contact =
     view?.contactId != null ? contacts.find((c) => c.id === view.contactId) : undefined;
-  // The deal's number and stage come from the opportunity itself; a denied or failed read leaves the plain link.
+  // The deal's number and stage come from the opportunity itself; a denied or failed read leaves the link out, since it would open a 404.
   const opportunity = await Promise.resolve()
     .then(() => getOpportunity(session, quotation.opportunityId))
     .catch(() => null);
@@ -422,17 +422,17 @@ export default async function QuotationDetailPage({
                   </Link>
                 </li>
               ) : null}
-              <li>
-                <Icon name="briefcase" size={18} />
-                <Link href={`/opportunities/${encodeURIComponent(quotation.opportunityId)}`}>
-                  {opportunity !== null ? opportunity.number : 'View opportunity'}
-                </Link>
-                {opportunity !== null ? (
+              {opportunity !== null ? (
+                <li>
+                  <Icon name="briefcase" size={18} />
+                  <Link href={`/opportunities/${encodeURIComponent(quotation.opportunityId)}`}>
+                    {opportunity.number}
+                  </Link>
                   <span className={styles.recordNote}>
                     {stageLabel('opportunity', opportunity.stage)}
                   </span>
-                ) : null}
-              </li>
+                </li>
+              ) : null}
               {order ? (
                 <li>
                   <Icon name="briefcase" size={18} />

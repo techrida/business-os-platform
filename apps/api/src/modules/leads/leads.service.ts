@@ -578,7 +578,8 @@ export class LeadsService {
         .map((c) => ({
           userId: c.userId,
           displayName: shownName(c.displayName),
-          email: c.email ?? '',
+          // Never sent: a picker has no use for an address, and the list reaches client-component props.
+          email: '',
           avatarDocumentId: c.avatarDocumentId,
         }))
         .sort(byName);

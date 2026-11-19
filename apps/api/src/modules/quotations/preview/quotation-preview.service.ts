@@ -195,8 +195,9 @@ export class QuotationPreviewService {
         );
       for (const row of rows) {
         const email = row.email?.trim() ?? '';
-        const name = row.name?.trim() || email.split('@')[0]?.trim();
-        if (name) names.set(row.id, { name, hasEmail: email !== '' });
+        // A blank name reads 'Unnamed user', never a piece of the address (D54-2).
+        const name = row.name?.trim() || 'Unnamed user';
+        names.set(row.id, { name, hasEmail: email !== '' });
       }
     } catch {
       // Names are optional. A directory lookup failure should still return pricing and route status.
