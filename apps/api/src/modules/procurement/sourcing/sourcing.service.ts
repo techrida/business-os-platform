@@ -92,11 +92,22 @@ export interface RfqDto {
   deadline: string;
   status: RfqRow['status'];
   vendorIds: string[];
+  /**
+   * The invited vendors with their legal names, read with the RFQ under its own grant (procurement.sourcing), so
+   * sourcing needs no vendor directory read to label them. Same vendors as `vendorIds`.
+   */
+  vendors: InvitedVendor[];
   recommendedQuotationId: string | null;
   fewerThanThreeReason: string | null;
   recommendationRationale: string | null;
   commitmentApprovalRequestId: string | null;
   version: number;
+}
+
+/** An invited vendor as the RFQ screens show it: its id and legal name, nothing else. */
+export interface InvitedVendor {
+  id: string;
+  name: string;
 }
 
 export interface QuotationDto {
@@ -114,6 +125,8 @@ export interface QuotationDto {
 }
 
 export interface ComparisonRow extends QuotationDto {
+  /** The quoting vendor's legal name, read with the quotation (same tenant). */
+  vendorName: string;
   /** The mean of the quotation's scores (two places), or null when nobody scored it yet. */
   averageScore: string | null;
   scores: { criterion: string; score: string; comment: string | null }[];
@@ -215,7 +228,10 @@ export class SourcingService {
             entityId: rfq!.id,
             after: { number, purchaseRequestId: pr.id, vendorIds: body.vendorIds },
           });
-          return { status: 201, response: this.toRfqDto(rfq!, body.vendorIds) };
+          return {
+            status: 201,
+            response: this.toRfqDto(rfq!, await this.invitedOf(tx, scope, rfq!.id)),
+          };
         },
       );
       return done.response;
@@ -335,7 +351,7 @@ export class SourcingService {
   async getRfq(id: string): Promise<RfqDto> {
     const { scope } = this.caller.current();
     const rfq = await this.findRfq(this.db, scope, id);
-    return this.toRfqDto(rfq, await this.vendorIdsOf(this.db, scope, id));
+    return this.toRfqDto(rfq, await this.invitedOf(this.db, scope, id));
   }
 
   // ------------------------------------------------------------------------------------------------- quotations
@@ -498,10 +514,19 @@ export class SourcingService {
   async comparison(rfqId: string): Promise<ComparisonRow[]> {
     const { scope } = this.caller.current();
     await this.findRfq(this.db, scope, rfqId);
-    const quotes = await this.db
-      .select()
+    const rows = await this.db
+      .select({ quote: vendorQuotations, vendorName: vendors.legalName })
       .from(vendorQuotations)
+      .innerJoin(
+        vendors,
+        and(
+          eq(vendors.tenantId, vendorQuotations.tenantId),
+          eq(vendors.id, vendorQuotations.vendorId),
+        ),
+      )
       .where(scoped(scope).where(vendorQuotations, eq(vendorQuotations.rfqId, rfqId)));
+    const quotes = rows.map((r) => r.quote);
+    const nameOf = new Map(rows.map((r) => [r.quote.id, r.vendorName]));
     const scores =
       quotes.length === 0
         ? []
@@ -527,6 +552,7 @@ export class SourcingService {
             : (Number(sumMoney(own.map((s) => s.score))) / own.length).toFixed(2);
         return {
           ...toQuotationDto(q),
+          vendorName: nameOf.get(q.id) ?? '',
           averageScore: avg,
           scores: own.map((s) => ({ criterion: s.criterion, score: s.score, comment: s.comment })),
         };
@@ -615,7 +641,7 @@ export class SourcingService {
           });
           return {
             status: 200,
-            response: this.toRfqDto(row!, await this.vendorIdsOf(tx, scope, rfqId)),
+            response: this.toRfqDto(row!, await this.invitedOf(tx, scope, rfqId)),
           };
         },
       );
@@ -724,7 +750,7 @@ export class SourcingService {
             });
             return {
               status: 200,
-              response: this.toRfqDto(row!, await this.vendorIdsOf(tx, scope, rfqId)),
+              response: this.toRfqDto(row!, await this.invitedOf(tx, scope, rfqId)),
             };
           },
         );
@@ -977,14 +1003,32 @@ export class SourcingService {
     return rows.map((r) => r.vendorId);
   }
 
-  private toRfqDto(r: RfqRow, vendorIds: string[]): RfqDto {
+  /** The RFQ's invited vendors with their legal names, by name. Vendors are tenant level: joined on (tenant, id). */
+  private async invitedOf(
+    q: Pick<Db, 'select'>,
+    scope: TxScope,
+    rfqId: string,
+  ): Promise<InvitedVendor[]> {
+    return q
+      .select({ id: rfqVendors.vendorId, name: vendors.legalName })
+      .from(rfqVendors)
+      .innerJoin(
+        vendors,
+        and(eq(vendors.tenantId, rfqVendors.tenantId), eq(vendors.id, rfqVendors.vendorId)),
+      )
+      .where(scoped(scope).where(rfqVendors, eq(rfqVendors.rfqId, rfqId)))
+      .orderBy(asc(vendors.legalName), asc(rfqVendors.vendorId));
+  }
+
+  private toRfqDto(r: RfqRow, invited: InvitedVendor[]): RfqDto {
     return {
       id: r.id,
       number: r.number,
       purchaseRequestId: r.purchaseRequestId,
       deadline: r.deadline.toISOString(),
       status: r.status,
-      vendorIds,
+      vendorIds: invited.map((v) => v.id),
+      vendors: invited,
       recommendedQuotationId: r.recommendedQuotationId,
       fewerThanThreeReason: r.fewerThanThreeReason,
       recommendationRationale: r.recommendationRationale,

@@ -81,6 +81,10 @@ const rfq = (over: Record<string, unknown> = {}) => ({
   deadline: '2026-12-01T10:00:00.000Z',
   status: 'open',
   vendorIds: [V1, V2],
+  vendors: [
+    { id: V1, name: 'Everest Supplies Pvt Ltd' },
+    { id: V2, name: 'Himal Traders Pvt Ltd' },
+  ],
   recommendedQuotationId: null,
   fewerThanThreeReason: null,
   recommendationRationale: null,
@@ -100,6 +104,7 @@ const quotation = {
   totalNpr: '5085000.00',
   deliveryDays: 14,
   documentId: PR,
+  vendorName: 'Everest Supplies Pvt Ltd',
   averageScore: null,
   scores: [],
 };
@@ -238,13 +243,6 @@ describe('the detail', () => {
     expect(out).toContain('14 days');
     expect(out).toContain('Not scored');
     expect(out).toContain('Enter a quotation');
-  });
-
-  it('falls back to short ids when vendor names do not load', async () => {
-    vendorApi.listVendors.mockRejectedValue(new ApiError(502, 'x'));
-    const out = await detail();
-    expect(out).toContain('Quotations');
-    expect(out).not.toContain('Everest');
   });
 
   it('only a clean scan gets a Convert button; the others say why', async () => {
@@ -446,6 +444,7 @@ describe('scoring, recommending and committing on the detail', () => {
     ...quotation,
     id: Q2,
     vendorId: V2,
+    vendorName: 'Himal Traders Pvt Ltd',
     total: '6000000.00',
     totalNpr: '6000000.00',
   };
@@ -475,7 +474,7 @@ describe('scoring, recommending and committing on the detail', () => {
   it('the recommendation lists the quotations by vendor and server total', async () => {
     rfqApi.getComparison.mockResolvedValue([scored, second]);
     const out = await detail();
-    expect(out).toMatch(/Everest, [^<]*50,85,000\.00/);
+    expect(out).toMatch(/Everest Supplies Pvt Ltd, [^<]*50,85,000\.00/);
     expect(out).toContain(`value="${Q2}"`);
   });
 

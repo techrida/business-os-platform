@@ -42,6 +42,8 @@ export const RfqDtoSchema = z.object({
   deadline: z.string(),
   status: RfqStatusSchema,
   vendorIds: z.array(z.guid()),
+  /** The invited vendors with their legal names, sent with the RFQ under its own grant (no vendor read). */
+  vendors: z.array(z.object({ id: z.guid(), name: z.string() })),
   recommendedQuotationId: z.guid().nullable(),
   fewerThanThreeReason: z.string().nullable(),
   recommendationRationale: z.string().nullable(),
@@ -66,6 +68,8 @@ export const QuotationDtoSchema = z.object({
 export type QuotationDto = z.infer<typeof QuotationDtoSchema>;
 
 export const ComparisonRowSchema = QuotationDtoSchema.extend({
+  /** The quoting vendor's legal name, sent with the quotation. */
+  vendorName: z.string(),
   /** The mean of the scores (two places), or null when nobody scored it yet. */
   averageScore: money.nullable(),
   scores: z.array(
