@@ -31,6 +31,7 @@ import type { Principal } from '../../../platform/authz/principal';
 import { DB, type Db, type DbTransaction } from '../../../platform/db/db.module';
 import { withIdempotency } from '../../../platform/db/idempotency';
 import { withTx, type TxScope } from '../../../platform/db/tx';
+import { ApprovalsNotify } from '../../approvals/ports';
 import { ApprovalsService } from '../../approvals/requests.service';
 import { BILLABLE_PO_STATUSES } from '../../payables/bills/vendor-bill.rules';
 import { PurchaseOrdersCaller } from './purchase-orders.caller';
@@ -256,6 +257,8 @@ export class PurchaseOrdersService {
     @Optional()
     @Inject(PURCHASE_ORDERS_CLOCK)
     private readonly clock: () => Date = () => new Date(),
+    /** Tells the requester their order was issued (in-app only); absent in tests that do not look. */
+    @Optional() private readonly notify?: ApprovalsNotify,
   ) {}
 
   // ------------------------------------------------------------------------------------------------- reads
@@ -419,10 +422,42 @@ export class PurchaseOrdersService {
             before: { status: 'draft' },
             after: { status: 'issued', version: 1, ...totals },
           });
+          await this.notifyRequester(tx, scope, row, principal.userId);
           return { status: 200, response: toDto(row, lines) };
         },
       );
       return done.response;
+    });
+  }
+
+  /**
+   * An in-app notice to the purchase request's requester that its order was issued (U18 #4), so they know there is
+   * an order to receive a service against. In the issue transaction; one notice per order (dedupeKey). Not sent
+   * when the requester issued it themselves.
+   */
+  private async notifyRequester(
+    tx: DbTransaction,
+    scope: TxScope,
+    po: PoRow,
+    issuedBy: string,
+  ): Promise<void> {
+    if (this.notify === undefined) return;
+    const [pr] = await tx
+      .select({
+        requesterUserId: purchaseRequests.requesterUserId,
+        number: purchaseRequests.number,
+      })
+      .from(purchaseRequests)
+      .where(scoped(scope).where(purchaseRequests, eq(purchaseRequests.id, po.purchaseRequestId)))
+      .limit(1);
+    if (pr === undefined || pr.requesterUserId === issuedBy) return;
+    const request = pr.number ?? 'your purchase request';
+    await this.notify.notifyUser(tx, {
+      userId: pr.requesterUserId,
+      title: `Purchase order ${po.number} issued`,
+      body: `Purchase order ${po.number} was issued for ${request}.`,
+      link: `/procurement/requests/${po.purchaseRequestId}`,
+      dedupeKey: `purchase_order:${po.id}:issued`,
     });
   }
 
