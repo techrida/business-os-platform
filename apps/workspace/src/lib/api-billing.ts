@@ -141,6 +141,7 @@ const guidOrUndefined = (value: string | undefined): string | undefined =>
 // ---------------------------------------------------------------------------------------------
 
 export interface SalesOrderFilter {
+  quotationVersionId?: string | undefined;
   status?: SalesOrderStatus | undefined;
   customerId?: string | undefined;
 }
@@ -151,6 +152,7 @@ export function listSalesOrders(
 ): Promise<SalesOrderListItem[]> {
   const query = queryOf([
     ['status', oneOf(SALES_ORDER_STATUSES, filter.status)],
+    ['quotationVersionId', guidOrUndefined(filter.quotationVersionId)],
     ['customerId', guidOrUndefined(filter.customerId)],
   ]);
   return get(session, `/v1/sales-orders${query}`, z.array(SalesOrderListItemSchema));

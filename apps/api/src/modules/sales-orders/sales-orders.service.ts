@@ -49,9 +49,11 @@ import {
   Optional,
   UnprocessableEntityException,
 } from '@nestjs/common';
-import { and, asc, desc, eq, inArray, isNull, ne } from 'drizzle-orm';
+import { and, asc, desc, eq, exists, inArray, isNull, ne, type SQL } from 'drizzle-orm';
 
 import { AuditService } from '../../platform/audit/audit.service';
+import { scopeWhereFor } from '../../platform/authz/authz.service';
+import { can } from '../../platform/authz/can';
 import { type Principal } from '../../platform/authz/principal';
 import { DB, type Db, type DbTransaction } from '../../platform/db/db.module';
 import { updateVersioned, withIdempotency } from '../../platform/db/idempotency';
@@ -104,14 +106,18 @@ export class SalesOrdersService {
   async list(filter: {
     status?: SalesOrderStatus | undefined;
     customerId?: string | undefined;
+    quotationVersionId?: string | undefined;
   }): Promise<SalesOrderListItem[]> {
     const { scope, actor, principal } = this.caller.current();
     this.assertStaff(principal);
     return withTx(this.db, scope, actor, async (tx) => {
-      const conditions = [];
+      const conditions = [this.readWhere(tx, scope, principal)];
       if (filter.status !== undefined) conditions.push(eq(salesOrders.status, filter.status));
       if (filter.customerId !== undefined) {
         conditions.push(eq(salesOrders.customerPartyId, filter.customerId));
+      }
+      if (filter.quotationVersionId !== undefined) {
+        conditions.push(eq(salesOrders.quotationVersionId, filter.quotationVersionId));
       }
       const rows = await tx
         .select({ order: salesOrders, customerName: customers.legalName })
@@ -142,7 +148,32 @@ export class SalesOrdersService {
   async detail(id: string): Promise<SalesOrderDetail> {
     const { scope, actor, principal } = this.caller.current();
     this.assertStaff(principal);
-    return withTx(this.db, scope, actor, (tx) => this.loadDetail(tx, scope, id));
+    return withTx(this.db, scope, actor, (tx) =>
+      this.loadDetail(tx, scope, id, this.readWhere(tx, scope, principal)),
+    );
+  }
+
+  private readWhere(tx: DbTransaction, scope: TxScope, principal: Principal): SQL {
+    const decision = can(principal, 'sales_order.read');
+    if (!decision.allowed || decision.scope !== 'own') {
+      return scopeWhereFor(principal, salesOrders, 'sales_order.read');
+    }
+
+    // Orders have no owner. Resolve the current quotation owner inside the same tenant and entity.
+    return exists(
+      tx
+        .select({ id: quotations.id })
+        .from(quotations)
+        .where(
+          scoped(scope).where(
+            quotations,
+            and(
+              eq(quotations.id, salesOrders.quotationId),
+              eq(quotations.ownerUserId, principal.userId),
+            ),
+          ),
+        ),
+    );
   }
 
   // ---------------------------------------------------------------------------------------- confirm
@@ -632,11 +663,12 @@ export class SalesOrdersService {
     tx: DbTransaction,
     scope: TxScope,
     id: string,
+    readWhere?: SQL,
   ): Promise<SalesOrderDetail> {
     const [order] = await tx
       .select()
       .from(salesOrders)
-      .where(scoped(scope).where(salesOrders, eq(salesOrders.id, id)));
+      .where(scoped(scope).where(salesOrders, and(eq(salesOrders.id, id), readWhere)));
     if (order === undefined) throw notFound();
     const [lines, schedule, evidence] = await Promise.all([
       tx
