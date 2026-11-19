@@ -21,6 +21,7 @@ const api = vi.hoisted(() => ({
   completeActivity: vi.fn(),
   rescheduleActivity: vi.fn(),
   cancelActivity: vi.fn(),
+  updateLead: vi.fn(),
 }));
 vi.mock('@/components/p2/crm/crm-api', () => api);
 
@@ -31,6 +32,7 @@ import {
   createLeadAction,
   rescheduleFollowUpAction,
   scheduleFollowUpAction,
+  updateLeadOwnerAction,
 } from './actions';
 
 const IDEM = '44444444-4444-4444-8444-444444444444';
@@ -301,5 +303,63 @@ describe('follow-up changes', () => {
     expect(res.ok).toBeUndefined();
     expect(res.error).toBeTruthy();
     expect(cache.revalidatePath).not.toHaveBeenCalled();
+  });
+});
+
+function ownerForm(extra: Record<string, string> = {}): FormData {
+  const f = new FormData();
+  for (const [k, v] of Object.entries({
+    leadId: LEAD,
+    ownerUserId: OWNER,
+    expectedVersion: '7',
+    ...extra,
+  })) {
+    f.set(k, v);
+  }
+  return f;
+}
+
+describe('updateLeadOwnerAction', () => {
+  it('sends only the new owner and the version, then refreshes the lead and the list', async () => {
+    api.updateLead.mockResolvedValue({});
+    expect(await updateLeadOwnerAction({}, ownerForm())).toEqual({ ok: true });
+    expect(api.updateLead).toHaveBeenCalledExactlyOnceWith(expect.anything(), LEAD, {
+      ownerUserId: OWNER,
+      expectedVersion: 7,
+    });
+    expect(cache.revalidatePath).toHaveBeenCalledWith(`/leads/${LEAD}`);
+    expect(cache.revalidatePath).toHaveBeenCalledWith('/leads');
+  });
+
+  it('asks for a reload when the lead changed underneath the page (409)', async () => {
+    api.updateLead.mockRejectedValue(apiError(409, 'conflict'));
+    const res = await updateLeadOwnerAction({}, ownerForm());
+    expect(res.reload).toBe(true);
+    expect(res.error).toMatch(/reload/i);
+    expect(cache.revalidatePath).not.toHaveBeenCalled();
+  });
+
+  it('says why the API refused a hand-over (403) without asking for a reload', async () => {
+    api.updateLead.mockRejectedValue(apiError(403, 'forbidden'));
+    const res = await updateLeadOwnerAction({}, ownerForm());
+    expect(res.ok).toBeUndefined();
+    expect(res.reload).toBe(false);
+    expect(res.error).toBeTruthy();
+    expect(cache.revalidatePath).not.toHaveBeenCalled();
+  });
+
+  it('puts a missing owner on the field and does not call the API', async () => {
+    const res = await updateLeadOwnerAction({}, ownerForm({ ownerUserId: '' }));
+    expect(res.fieldErrors?.['ownerUserId']).toBe('Choose who owns this lead.');
+    expect(api.updateLead).not.toHaveBeenCalled();
+  });
+
+  it('asks for a reload when the version or the lead id is missing', async () => {
+    const stale = await updateLeadOwnerAction({}, ownerForm({ expectedVersion: '' }));
+    expect(stale.reload).toBe(true);
+    expect(stale.error).toMatch(/reload/i);
+    const tampered = await updateLeadOwnerAction({}, ownerForm({ leadId: 'nope' }));
+    expect(tampered.reload).toBe(true);
+    expect(api.updateLead).not.toHaveBeenCalled();
   });
 });
