@@ -1,4 +1,4 @@
-﻿// Unit test of the image owner policies (U12, D33): who may upload each kind of image (the real can() with the
+// Unit test of the image owner policies (U12, D33): who may upload each kind of image (the real can() with the
 // default role grants against each policy's ref and upload grant), a missing owner is null (404), only the company
 // logo takes a file from the system actor, and every image owner narrows the types and size. Fake loaders: the
 // database is never reached.

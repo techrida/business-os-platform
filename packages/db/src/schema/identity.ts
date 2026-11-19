@@ -1,4 +1,4 @@
-﻿// Drizzle tables for migration 0002_identity_authz, reshaped by 0013_legal_entities (ADR 0027): people (users,
+// Drizzle tables for migration 0002_identity_authz, reshaped by 0013_legal_entities (ADR 0027): people (users,
 // departments, user_entities), what they may do (user_roles, role_permissions), the cache key for that
 // (authz_versions) and the ZITADEL sync bookkeeping (ops.zitadel_events, ops.sync_cursors).
 // Serves the authorization NFR: every decision rests on these rows.

@@ -1,4 +1,4 @@
-﻿// The default access model (D50, D51, D52): levels on a department membership, the `assigned` scope, the areas
+// The default access model (D50, D51, D52): levels on a department membership, the `assigned` scope, the areas
 // the Founder will switch, the target default reach of every role on leads, and the vocabulary of the assignment
 // rule. Pure data and types: no I/O, so the API, the pickers and the tests read one definition.
 // The rule itself is `apps/api/src/modules/leads/lead-assignment-rule.ts`; the SQL half is migrations

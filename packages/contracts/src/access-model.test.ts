@@ -1,4 +1,4 @@
-﻿// The default access model (D50, D51) as data: the target table, the default base and level grants that must
+// The default access model (D50, D51) as data: the target table, the default base and level grants that must
 // reproduce it, the copy of the level grants migration 0088 embeds, and the assignment rule's vocabulary.
 // What stays a todo here: each cell checked against the real API as a seeded user, which needs the real
 // interceptor, role cache and live rows (the API e2e matrix).
