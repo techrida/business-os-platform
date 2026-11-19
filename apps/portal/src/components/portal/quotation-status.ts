@@ -1,5 +1,5 @@
 import type { CustomerQuotationView, CustomerVisibleStatus } from '@bos/contracts';
-import { formatKathmandu } from '@bos/locale';
+import { formatCustomerDate } from '@bos/locale';
 
 type Tone = 'neutral' | 'info' | 'success' | 'warning' | 'error';
 
@@ -39,10 +39,7 @@ export function isPastValidUntil(validUntil: string, today: string): boolean {
   return validUntil < today;
 }
 
-/** `2026-11-23` as `23 Nov 2026`. Noon in Kathmandu, so no time zone can move the day. */
-export function formatDay(isoDate: string): string {
-  return formatKathmandu(new Date(`${isoDate}T12:00:00+05:45`), 'date');
-}
+export { formatCustomerDate as formatDay };
 
 export type Respondability = { open: true } | { open: false; expired: boolean; reason: string };
 
@@ -58,7 +55,7 @@ export function canRespond(view: CustomerQuotationView, today: string): Responda
     return {
       open: false,
       expired: true,
-      reason: `This quotation expired on ${formatDay(view.validUntil)}, so it can no longer be accepted. Contact the person who sent it to ask for a new one.`,
+      reason: `This quotation expired on ${formatCustomerDate(view.validUntil)}, so it can no longer be accepted. Contact the person who sent it to ask for a new one.`,
     };
   }
   if (view.status === 'sent') return { open: true };
