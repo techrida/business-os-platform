@@ -352,6 +352,10 @@ describe('vendor logo', () => {
     return out.slice(start, out.indexOf('<dl', start));
   };
 
+  it('uses ids whose seeded colours differ from each other and from the unseeded one', () => {
+    expect(new Set([avatarColour(ID), avatarColour(ACCOUNT), avatarColour(null)]).size).toBe(3);
+  });
+
   it('each list row draws its own logo, or initials seeded from its own id', async () => {
     api.listVendors.mockResolvedValue({
       items: [vendor({ logoDocumentId: LOGO }), vendor({ id: ACCOUNT, legalName: 'Foreign Ltd' })],

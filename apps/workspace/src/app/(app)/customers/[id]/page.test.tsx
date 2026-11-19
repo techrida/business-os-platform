@@ -161,6 +161,10 @@ describe('customer detail logo', () => {
     return html.slice(start, html.indexOf('id="organization-name"', start));
   };
 
+  it('uses an id whose seeded colour differs from the unseeded one, so the seed assertions bite', () => {
+    expect(avatarColour(CUSTOMER)).not.toBe(avatarColour(null));
+  });
+
   it('draws the logo seeded from the customer id, and lets a writer replace it', async () => {
     detail = customer({ logoDocumentId: LOGO, people: [] });
     const group = logoGroup(await renderHtml());
