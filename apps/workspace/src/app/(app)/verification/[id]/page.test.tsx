@@ -1,14 +1,19 @@
 import type { VerificationCaseDto } from '@bos/contracts';
 import { renderToStaticMarkup } from 'react-dom/server';
-import { beforeEach, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 
 import VerificationCasePage from './page';
 
 vi.mock('server-only', () => ({}));
+vi.mock('next/navigation', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('next/navigation')>()),
+  useRouter: () => ({ refresh: vi.fn() }),
+}));
 
 const mocks = vi.hoisted(() => ({
   getVerificationCase: vi.fn(),
   getReviewHistory: vi.fn(),
+  getDocument: vi.fn(),
 }));
 
 vi.mock('@/lib/bff', () => ({
@@ -20,6 +25,7 @@ vi.mock('@/components/p2/customers/api', () => ({
 }));
 vi.mock('@/components/p2/crm/verification-api', () => ({
   getVerificationReviewHistory: mocks.getReviewHistory,
+  getDocument: mocks.getDocument,
 }));
 
 const id = '00000000-0000-4000-8000-000000000001';
@@ -108,4 +114,80 @@ it('tells the submitter why they cannot review their own case', async () => {
   );
   expect(out).toContain('You submitted this case, so someone else must review it.');
   expect(out).not.toContain('The documents are locked while this case is under review.');
+});
+
+// The expiry rule is a calendar day in Kathmandu (UTC+05:45), not in UTC: a file must expire strictly after
+// today. At 2026-11-19T20:30Z it is already 02:15 on the 20th in Kathmandu, so a file expiring on the 20th has
+// run out, even though UTC still reads the 19th.
+async function renderProvided(expiresOn: string) {
+  const documentId = '00000000-0000-4000-8000-000000000002';
+  const versionId = '00000000-0000-4000-8000-000000000003';
+  mocks.getDocument.mockResolvedValue({
+    id: documentId,
+    ownerType: 'verification_case',
+    ownerId: id,
+    currentVersionId: versionId,
+    versions: [
+      {
+        id: versionId,
+        documentId,
+        version: 1,
+        filename: 'registration.pdf',
+        declaredMime: 'application/pdf',
+        detectedMime: 'application/pdf',
+        sizeBytes: 1024,
+        sha256: 'a'.repeat(64),
+        status: 'clean',
+        scanSignature: null,
+        scannedAt: '2026-11-18T10:00:00.000Z',
+        uploadedBy: id,
+        createdAt: '2026-11-18T09:00:00.000Z',
+      },
+    ],
+  });
+  mocks.getVerificationCase.mockResolvedValue({
+    id,
+    partyKind: 'customer',
+    partyId: id,
+    status: 'submitted',
+    reviewPolicy: 'document_review_v1',
+    checklist: [
+      {
+        key: 'registration_certificate',
+        required: true,
+        status: 'provided',
+        documentId,
+        expiresOn,
+        evidence: { documentId, documentVersionId: versionId, versionNumber: 1, expiresOn },
+      },
+    ],
+    reviewedBy: null,
+    decidedAt: null,
+    decisionNote: null,
+    version: 1,
+    can: { review: true, edit: false, attach: false, remove: false },
+  } satisfies VerificationCaseDto);
+  return renderToStaticMarkup(
+    await VerificationCasePage({
+      params: Promise.resolve({ id }),
+      searchParams: Promise.resolve({}),
+    }),
+  );
+}
+
+afterEach(() => {
+  vi.useRealTimers();
+});
+
+it('does not offer approval of a file that expires today in Kathmandu while UTC is still on the day before', async () => {
+  vi.useFakeTimers({ toFake: ['Date'] });
+  vi.setSystemTime(new Date('2026-11-19T20:30:00Z'));
+
+  const expired = await renderProvided('2026-11-20');
+  expect(expired).toMatch(/aria-label="Approve [^"]*" aria-disabled="true"/);
+  expect(expired).toContain('Approval requires a clean, unexpired file.');
+
+  const current = await renderProvided('2026-11-21');
+  expect(current).toMatch(/aria-label="Approve [^"]*" aria-disabled="false"/);
+  expect(current).not.toContain('Approval requires a clean, unexpired file.');
 });
