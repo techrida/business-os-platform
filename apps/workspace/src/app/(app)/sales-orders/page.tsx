@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto';
 
-import type { SalesOrderListItem } from '@bos/contracts';
+import { pageWindow, type SalesOrderListItem } from '@bos/contracts';
 import type { Metadata } from 'next';
 import Link from 'next/link';
 import type { NumberSystem } from '@bos/locale';
@@ -10,34 +10,34 @@ import { hasPermission } from '@/components/p2/customers/permissions';
 import { listQuotations } from '@/components/p2/quotations/api';
 import { Alert } from '@/components/ui/alert';
 import { Badge } from '@/components/ui/badge';
-import { Button } from '@/components/ui/button';
+import { LinkButton } from '@/components/ui/button';
 import { EmptyState } from '@/components/ui/empty-state';
-import { Select } from '@/components/ui/field';
+import { ResultCount } from '@/components/ui/filter-bar';
 import { Page, PageHeader } from '@/components/ui/page';
-import { SearchInput } from '@/components/ui/search-input';
 import { StatCard } from '@/components/ui/stat-card';
 import { Table, Td, Th } from '@/components/ui/table';
-import { listSalesOrders } from '@/lib/api-billing';
+import { getSalesOrdersSummary, listSalesOrdersPage } from '@/lib/api-billing';
 import { failureOf } from '@/lib/api-kernel';
 import { requireStaffSession } from '@/lib/bff';
 import { getNumberSystem } from '@/lib/display-settings';
 import { money, when } from '@/lib/kernel-format';
-
 import {
-  ListFooter,
-  listHref,
-  listQuery,
-  listWindow,
-  type ListQuery,
-} from '@/components/p3/list-view';
+  activeFilterLabels,
+  clearFiltersHref,
+  hrefWith,
+  readList,
+  type RawParams,
+} from '@/lib/list-params';
+
+import { PagedFooter } from '@/components/p3/list-view';
 import layout from '@/components/p3/list.module.css';
 
 import { ConfirmOrderDialog, type ConfirmOption } from './_components/confirm-order-dialog';
 import local from './_components/sales-orders.module.css';
+import { SalesOrderFilters } from './sales-order-filters';
 import {
-  parseCustomerFilter,
-  parseOrderStatusFilter,
   SALES_ORDER_FILTER_OPTIONS,
+  SALES_ORDER_LIST_SPEC,
   salesOrderStatusMeta,
 } from './_lib/status';
 
@@ -82,34 +82,49 @@ function OrderRow({
   );
 }
 
+const PATH = '/sales-orders';
+
 export default async function SalesOrdersPage({
   searchParams,
 }: {
   // Next 16: searchParams is a Promise.
-  searchParams: Promise<ListQuery & { status?: string | string[]; customerId?: string | string[] }>;
+  searchParams: Promise<RawParams>;
 }) {
-  const raw = await searchParams;
-  const status = parseOrderStatusFilter(raw.status);
-  const customerId = parseCustomerFilter(raw.customerId);
-  const { q, page } = listQuery(raw);
-  const filters = { status, customerId, q };
-  const here = listHref('/sales-orders', filters, page);
+  const params = await searchParams;
+  const state = readList(params, SALES_ORDER_LIST_SPEC);
+  const { q, rows } = state;
+  const statuses = state.multi.status;
+  const customerIds = state.multi.customerId;
+  const filtered = q !== undefined || statuses.length > 0 || customerIds.length > 0;
+  const pageHref = (page: number) => hrefWith(PATH, params, { page: page > 1 ? page : undefined });
+  const here = pageHref(state.page);
   const session = await requireStaffSession(here);
   const numberSystem = await getNumberSystem();
   const canConfirm = hasPermission(session.roles, 'sales_order.confirm');
+  const filter = { status: statuses, customerId: customerIds, ...(q !== undefined ? { q } : {}) };
+  const readOrders = (page: number) =>
+    listSalesOrdersPage(session, { ...filter, limit: rows, offset: pageWindow(page, rows).offset });
 
-  // The three reads do not depend on each other. Only the orders decide whether the page works:
-  // without the customers the filter drops that field, without the quotations the dialog says so.
-  const [orders, customers, accepted] = await Promise.all([
-    listSalesOrders(session, { status, customerId }).then(
-      (items) => ({ items, problem: null }),
+  // The four reads do not depend on each other. Only the orders decide whether the page works:
+  // without the customers the filter drops that field, without the summary the cards drop to the
+  // total, without the quotations the dialog says so.
+  const [orders, customers, summary, accepted] = await Promise.all([
+    readOrders(state.page).then(
+      (result) => ({ result, problem: null }),
       (err: unknown) => {
         const f = failureOf(err);
-        return { items: null, problem: { message: f.message, status: f.status } };
+        return { result: null, problem: { message: f.message, status: f.status } };
       },
     ),
     listCustomers(session, { limit: CUSTOMER_OPTIONS }).then(
       (result) => result.items,
+      () => null,
+    ),
+    getSalesOrdersSummary(session, {
+      customerId: customerIds,
+      ...(q !== undefined ? { q } : {}),
+    }).then(
+      (result) => result,
       () => null,
     ),
     canConfirm
@@ -123,26 +138,39 @@ export default async function SalesOrdersPage({
         )
       : Promise.resolve(undefined),
   ]);
-  const { items, problem } = orders;
-  const filtered = status !== undefined || customerId !== undefined || q !== '';
-  const needle = q.toLowerCase();
-  const matches = (items ?? []).filter((order) =>
-    [order.number ?? 'Draft order', order.customerName].some((text) =>
-      text.toLowerCase().includes(needle),
-    ),
-  );
-  const window = listWindow(matches, page);
+  const { problem } = orders;
+  let result = orders.result;
+  let current = pageWindow(state.page, rows, result?.total);
+  // A stale link past the last page lands on the last page instead of an empty table.
+  if (result !== null && current.page !== state.page && result.total > 0) {
+    result = await readOrders(current.page).catch(() => result);
+    current = pageWindow(current.page, rows, result?.total);
+  }
+  const items = result?.items ?? null;
+  const total = result?.total ?? 0;
 
-  // The chosen customer stays selectable even when it is not among the first customers read.
+  // The chosen customers stay selectable even when they are not among the first customers read.
   const customerOptions =
     customers === null
       ? null
       : [
-          ...customers.map((c) => ({ id: c.id, name: c.legalName })),
-          ...(customerId !== undefined && !customers.some((c) => c.id === customerId)
-            ? [{ id: customerId, name: 'Selected customer' }]
-            : []),
+          ...customers.map((c) => ({ value: c.id, label: c.legalName })),
+          ...customerIds
+            .filter((id) => !customers.some((c) => c.id === id))
+            .map((id) => ({ value: id, label: 'Selected customer' })),
         ];
+  const customerName = (id: string) =>
+    customerOptions?.find((option) => option.value === id)?.label ?? 'Selected customer';
+  const activeFilters = activeFilterLabels(
+    { q, multi: { status: statuses, customerId: customerIds }, single: {} },
+    {
+      status: {
+        label: 'Status',
+        format: (v) => SALES_ORDER_FILTER_OPTIONS.find((o) => o.value === v)?.label ?? v,
+      },
+      customerId: { label: 'Customer', format: customerName },
+    },
+  );
 
   return (
     <Page>
@@ -165,78 +193,37 @@ export default async function SalesOrdersPage({
           <StatCard
             label={filtered ? 'Matching orders' : 'Total orders'}
             icon="receipt"
-            value={matches.length}
+            value={total}
           />
-          <StatCard
-            label="Draft"
-            icon="file-text"
-            tone="neutral"
-            value={matches.filter((item) => item.status === 'draft').length}
-          />
-          <StatCard
-            label="Confirmed"
-            icon="list-checks"
-            value={matches.filter((item) => item.status === 'confirmed').length}
-          />
-          <StatCard
-            label="Completed"
-            icon="check-circle"
-            tone="success"
-            value={matches.filter((item) => item.status === 'completed').length}
-          />
+          {summary !== null && (
+            <>
+              <StatCard
+                label="Draft"
+                icon="file-text"
+                tone="neutral"
+                value={summary.byStatus.draft}
+              />
+              <StatCard label="Confirmed" icon="list-checks" value={summary.byStatus.confirmed} />
+              <StatCard
+                label="Completed"
+                icon="check-circle"
+                tone="success"
+                value={summary.byStatus.completed}
+              />
+            </>
+          )}
         </section>
       )}
 
-      <form method="get" action="/sales-orders" className={layout.toolbar}>
-        <SearchInput
-          name="q"
-          aria-label="Search sales orders"
-          placeholder="Search orders or customers"
-          defaultValue={q}
-          maxLength={100}
-          wrapperClassName={layout.search}
-        />
-        <label className="sr-only" htmlFor="order-status">
-          Status
-        </label>
-        <Select
-          id="order-status"
-          name="status"
-          className={layout.select}
-          defaultValue={status ?? ''}
-        >
-          <option value="">All statuses</option>
-          {SALES_ORDER_FILTER_OPTIONS.map((option) => (
-            <option key={option.value} value={option.value}>
-              {option.label}
-            </option>
-          ))}
-        </Select>
-        {customerOptions !== null ? (
-          <>
-            <label className="sr-only" htmlFor="order-customer">
-              Customer
-            </label>
-            <Select
-              id="order-customer"
-              name="customerId"
-              className={layout.select}
-              defaultValue={customerId ?? ''}
-            >
-              <option value="">All customers</option>
-              {customerOptions.map((option) => (
-                <option key={option.id} value={option.id}>
-                  {option.name}
-                </option>
-              ))}
-            </Select>
-          </>
-        ) : null}
-        <Button type="submit" variant="secondary">
-          Apply filter
-        </Button>
-        {filtered ? <Link href="/sales-orders">Show all sales orders</Link> : null}
-      </form>
+      <SalesOrderFilters
+        statuses={statuses}
+        customerIds={customerIds}
+        statusOptions={SALES_ORDER_FILTER_OPTIONS}
+        customerOptions={customerOptions}
+        rows={rows}
+      />
+
+      {items !== null && <ResultCount shown={items.length} total={total} noun="sales order" />}
 
       {problem !== null ? (
         <Alert
@@ -253,19 +240,21 @@ export default async function SalesOrdersPage({
             ? 'Ask an administrator if you need access to sales orders.'
             : problem.message}
         </Alert>
-      ) : items !== null && matches.length === 0 ? (
+      ) : items !== null && items.length === 0 ? (
         filtered ? (
           <EmptyState
             icon="file-text"
-            title={
-              q
-                ? 'No matching sales orders.'
-                : status !== undefined
-                  ? `No sales orders are ${salesOrderStatusMeta(status).label.toLowerCase()}.`
-                  : 'No sales orders for this customer.'
+            title="No matching sales orders."
+            action={
+              <LinkButton
+                href={clearFiltersHref(PATH, params, SALES_ORDER_LIST_SPEC)}
+                variant="secondary"
+              >
+                Clear filters
+              </LinkButton>
             }
           >
-            Choose another filter, or show all sales orders.
+            {`Nothing matches ${activeFilters.join(' · ')}.`}
           </EmptyState>
         ) : (
           <EmptyState icon="file-text" title="No sales orders yet.">
@@ -285,18 +274,12 @@ export default async function SalesOrdersPage({
               </tr>
             </thead>
             <tbody>
-              {window.rows.map((item) => (
+              {items.map((item) => (
                 <OrderRow numberSystem={numberSystem} key={item.id} item={item} />
               ))}
             </tbody>
           </Table>
-          <ListFooter
-            count={matches.length}
-            noun="sales order"
-            path="/sales-orders"
-            filters={filters}
-            window={window}
-          />
+          <PagedFooter page={current.page} pageCount={current.pageCount} href={pageHref} />
         </div>
       ) : null}
     </Page>

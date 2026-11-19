@@ -71,24 +71,19 @@ const GUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 export const isGuid = (value: string): boolean => GUID.test(value);
 
-/**
- * Reads the `status` query parameter. Anything that is not exactly one contract status (absent,
- * empty, wrong case, repeated, or an object key such as `toString`) means "no filter", so a
- * hand-edited URL never reaches the API as a filter it would refuse.
- */
-export function parseOrderStatusFilter(
-  raw: string | string[] | undefined,
-): SalesOrderStatus | undefined {
-  if (typeof raw !== 'string') return undefined;
-  return (SALES_ORDER_STATUSES as readonly string[]).includes(raw)
-    ? (raw as SalesOrderStatus)
-    : undefined;
-}
+/** Rows per page offered on the list; the first is the default. */
+export const SALES_ORDER_ROW_OPTIONS = [10, 25, 50] as const;
+export const SALES_ORDER_DEFAULT_ROWS = 25;
 
-/** The `customerId` query parameter if it is one id, else no filter. */
-export function parseCustomerFilter(raw: string | string[] | undefined): string | undefined {
-  return typeof raw === 'string' && GUID.test(raw) ? raw : undefined;
-}
+/**
+ * What the sales-orders URL may carry, for `readList`: repeated `status` and `customerId` are kept
+ * (each valid value once), anything else is dropped so a hand-edited URL never reaches the API
+ * as a filter it would refuse.
+ */
+export const SALES_ORDER_LIST_SPEC = {
+  multi: { status: SALES_ORDER_STATUSES, customerId: GUID },
+  rows: { allowed: SALES_ORDER_ROW_OPTIONS, default: SALES_ORDER_DEFAULT_ROWS },
+} as const;
 
 export type LineAction = 'mark_billable' | 'draft_invoice' | 'open_invoice' | 'none';
 
