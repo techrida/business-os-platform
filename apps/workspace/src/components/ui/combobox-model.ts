@@ -59,10 +59,13 @@ export function layoutOptions(
   query: string,
   groupThreshold: number = DEFAULT_GROUP_THRESHOLD,
   ungroupedLabel: string = UNGROUPED_LABEL,
+  keepOrder = false,
 ): OptionLayout {
-  const visible = options
-    .filter((option) => matchesQuery(option, query))
-    .sort((a, b) => collator.compare(a.label, b.label) || a.id.localeCompare(b.id));
+  const matching = options.filter((option) => matchesQuery(option, query));
+  // A list with its own meaningful order (a tenant's lost reasons) keeps it; the default is by name.
+  const visible = keepOrder
+    ? matching
+    : matching.sort((a, b) => collator.compare(a.label, b.label) || a.id.localeCompare(b.id));
   const grouped = options.length > groupThreshold;
   if (!grouped) {
     return {
@@ -82,6 +85,25 @@ export function layoutOptions(
     )
     .map(([label, members]) => ({ key: label, label, options: members }));
   return { grouped, groups, flat: groups.flatMap((g) => g.options) };
+}
+
+/** The id of the "Add ..." row a combobox with `addOption` shows when the typed text matches no option. */
+export const ADD_OPTION_ID = '__add__';
+
+/**
+ * The row that offers to add what was typed: null while the box is empty or an option already has exactly those
+ * words (trimmed, case-insensitive), so the same text is never offered as new next to the option it duplicates.
+ */
+export function addOptionFor(
+  options: readonly ComboboxOption[],
+  query: string,
+  makeLabel: (text: string) => string,
+): ComboboxOption | null {
+  const text = query.trim();
+  if (text === '') return null;
+  const wanted = fold(text);
+  if (options.some((o) => fold(o.label.trim()) === wanted)) return null;
+  return { id: ADD_OPTION_ID, label: makeLabel(text), searchText: text };
 }
 
 /** The ids the keyboard can land on: enabled options, in display order. */
