@@ -97,6 +97,7 @@ export function toVendorDto(row: VendorRow): VendorDto {
     status: row.status,
     version: row.version,
     approvedAt: null,
+    logoDocumentId: row.logoDocumentId,
   };
 }
 
