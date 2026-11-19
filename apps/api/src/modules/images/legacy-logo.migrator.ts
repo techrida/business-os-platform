@@ -3,9 +3,9 @@
 // boots, this job uploads each such logo as an `entity_logo` document and points the profile at it:
 //   1. the scan (plain pool, across tenants, ids only) finds every entity whose LATEST `entity.profile` version holds
 //      a legacy data URL and no `logoDocumentId`;
-//   2. per entity, the profile is read again with its version; the data URL must be a PNG, JPEG or WebP whose bytes
-//      start with that type's signature and fit the image cap, or the entity is skipped (logged; a doomed upload
-//      would leave a refused document behind on every boot);
+//   2. per entity, the profile is read again with its version; the rest of it must pass the setting's schema, and
+//      the data URL must be a PNG, JPEG or WebP whose bytes start with that type's signature and fit the image cap,
+//      or the entity is skipped (logged; a doomed upload would leave a refused document behind on every boot);
 //   3. DocumentsService.createAndReceiveScanned stores the bytes through the ordinary receive path under the system
 //      actor `system:legacy-logo-migrator` (type check, sha256, virus scan queued: these bytes came from a user once,
 //      so the scan is never skipped);
@@ -20,7 +20,12 @@
 // Left behind: if the receive fails, createAndReceiveScanned throws without the new document's ids, and if the profile
 // write fails after it, DocumentsService.remove refuses a system actor (it checks the request principal's grant). The
 // document then stays live but unreferenced (nothing serves or prints it); the log names it when the id is known.
-import { IMAGE_MAX_BYTES, type CompanyProfile, type ImageOwnerType } from '@bos/contracts';
+import {
+  IMAGE_MAX_BYTES,
+  SETTINGS,
+  type CompanyProfile,
+  type ImageOwnerType,
+} from '@bos/contracts';
 import {
   ConflictException,
   HttpException,
@@ -170,6 +175,12 @@ export class LegacyLogoMigrator implements OnApplicationBootstrap {
     const decoded = decodeLegacyLogo(legacy);
     if ('invalid' in decoded) {
       this.logger.warn(`legacy logo skipped: entity=${entity} kind=${decoded.invalid}`);
+      return 'skipped';
+    }
+    // The write strict-parses the profile; a stored value it would refuse must fail here, before a document exists.
+    const rest = { ...value, logoDocumentId: null, legacyLogoDataUrl: null };
+    if (!SETTINGS['entity.profile'].safeParse(rest).success) {
+      this.logger.warn(`legacy logo skipped: entity=${entity} kind=profile_invalid`);
       return 'skipped';
     }
 
