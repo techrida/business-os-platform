@@ -25,17 +25,19 @@ import {
   ForbiddenException,
   Inject,
   Injectable,
+  Logger,
   NotFoundException,
 } from '@nestjs/common';
 import { z } from 'zod';
 
+import { DocumentLogoResolverFactory } from '../../../modules/images/document-logo.resolver';
 import { renderQuotationHtml } from '../../../modules/quotations/render/quotation-html';
 import { sampleQuotationView } from '../../../modules/quotations/render/sample-view';
 
 import { AuthzService } from '../../authz/authz.service';
 import { principal } from '../../authz/principal';
 import { DB, type Db } from '../../db/db.module';
-import { requestTx, withTx } from '../../db/tx';
+import { requestTx, withTx, type TxScope } from '../../db/tx';
 import { SettingsService } from '../settings.service';
 
 const TERM_PRESETS = 'quotation.term_presets';
@@ -101,10 +103,15 @@ const PreviewBody = z.strictObject({
 
 @Injectable()
 export class DocumentSettingsService {
+  private readonly logger = new Logger(DocumentSettingsService.name);
+
   constructor(
     @Inject(DB) private readonly db: Db,
     private readonly settings: SettingsService,
     private readonly authz: AuthzService,
+    // Required, not @Optional: SettingsHttpModule imports DocumentLogoModule, and a missing wiring should fail at
+    // boot rather than quietly drop the uploaded logo from the preview.
+    private readonly logos: DocumentLogoResolverFactory,
   ) {}
 
   /** How this entity prints numbers. Any active staff user: the quotation and invoice screens all format money. */
@@ -120,7 +127,8 @@ export class DocumentSettingsService {
 
   /**
    * A sample quotation in the chosen layout and colour, drawn by the real renderer with this entity's profile and
-   * number system, so a thumbnail matches the PDF. Nothing is stored.
+   * number system, so a thumbnail matches the PDF. Nothing is stored. The logo is resolved like the issuer does
+   * (uploaded document, else the legacy data URL), except that a failure only drops the logo from the preview.
    */
   async previewDocument(rawBody: unknown): Promise<{ html: string }> {
     this.authz.assert('admin.settings.write');
@@ -131,16 +139,40 @@ export class DocumentSettingsService {
       this.settings.get(scope, 'format.number_systems'),
       this.settings.get(scope, 'format.date'),
     ]);
+    const logo = await this.previewLogo(scope, profile.logoDocumentId, profile.legacyLogoDataUrl);
     const html = renderQuotationHtml(sampleQuotationView(), {
       snapshot: {
         style: { layout: body.layout, primaryColour: body.primaryColour },
-        profile: snapshotProfileFrom(profile, profile.legacyLogoDataUrl ?? null),
+        profile: snapshotProfileFrom(profile, logo),
         numberSystems,
         dateFormat,
         capturedAt: new Date().toISOString(),
       },
     });
     return { html };
+  }
+
+  /**
+   * The logo the preview draws: the uploaded document's clean bytes, else the legacy data URL, else none. Unlike a
+   * real render (which retries), a logo not readable yet (pending scan, storage error) only leaves it out here.
+   */
+  private async previewLogo(
+    scope: TxScope,
+    logoDocumentId: string | null,
+    legacyLogoDataUrl: string | null | undefined,
+  ): Promise<string | null> {
+    const legacy = legacyLogoDataUrl ?? null;
+    if (logoDocumentId === null) return legacy;
+    try {
+      return (await this.logos.forScope(scope)(logoDocumentId)) ?? legacy;
+    } catch (error) {
+      // Fixed words only, like the resolver's own log lines.
+      const kind = error instanceof Error ? error.name : 'error';
+      this.logger.warn(
+        `document preview drawn without the logo: document=${logoDocumentId} kind=${kind}`,
+      );
+      return null;
+    }
   }
 
   /** The saved presets, optionally of one kind, by kind then name. 403 unless staff holding a reader permission. */

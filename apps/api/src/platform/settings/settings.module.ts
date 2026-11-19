@@ -4,6 +4,7 @@
 // registering HTTP routes. SettingsHttpModule adds the admin and document-settings controllers, and only AppModule imports it.
 import { Module } from '@nestjs/common';
 
+import { DocumentLogoModule } from '../../modules/images/document-logo.resolver';
 import { DocumentSettingsController } from './document-settings/document-settings.controller';
 import { DocumentSettingsService } from './document-settings/document-settings.service';
 import { MoneyService } from './money.service';
@@ -17,8 +18,9 @@ import { SettingsService } from './settings.service';
 })
 export class SettingsModule {}
 
+// DocumentLogoModule: the document-style preview draws the uploaded logo (DocumentSettingsService.previewDocument).
 @Module({
-  imports: [SettingsModule],
+  imports: [SettingsModule, DocumentLogoModule],
   controllers: [SettingsController, DocumentSettingsController],
   providers: [DocumentSettingsService],
 })
