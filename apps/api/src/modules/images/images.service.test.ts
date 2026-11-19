@@ -352,6 +352,66 @@ describe('set: entity_logo', () => {
   });
 });
 
+describe('set: lock order (owner, then the new document, then the previous one)', () => {
+  // A concurrent replacement holds the owner lock and then locks its previous document, which may be this request's
+  // new one: taking a document lock before the owner lock would deadlock against it.
+  const order = (fn: { mock: { invocationCallOrder: number[] } }, call = 0) =>
+    fn.mock.invocationCallOrder[call] ?? Number.NaN;
+
+  it.each(ROW_OWNERS)(
+    '%s: reads the pointer (owner lock) before locking either document',
+    async (ownerType) => {
+      const ownerId = randomUUID();
+      const old = addDoc(ownerType, ownerId);
+      const next = addDoc(ownerType, ownerId);
+      pointers.set(key(ownerType, ownerId), old);
+      const readPointer = vi.spyOn(store, 'readPointer');
+      const findDocument = vi.spyOn(store, 'findDocument');
+      try {
+        await service.set(staff, ownerType, ownerId, { documentId: next });
+        expect(findDocument.mock.calls.map((c) => c[2])).toEqual([next, old]);
+        expect(order(readPointer)).toBeLessThan(order(findDocument, 0));
+        expect(order(findDocument, 0)).toBeLessThan(order(findDocument, 1));
+        expect(order(findDocument, 1)).toBeLessThan(order(documents.removeInTransaction));
+      } finally {
+        readPointer.mockRestore();
+        findDocument.mockRestore();
+      }
+    },
+  );
+
+  it('entity_logo: takes the profile setting lock before locking either document', async () => {
+    const old = addDoc('entity_logo', ORG);
+    const next = addDoc('entity_logo', ORG);
+    profile.value = { ...profile.value, logoDocumentId: old };
+    const findDocument = vi.spyOn(store, 'findDocument');
+    try {
+      await service.set(staff, 'entity_logo', ORG, { documentId: next });
+      expect(findDocument.mock.calls.map((c) => c[2])).toEqual([next, old]);
+      expect(order(settings.getLocked)).toBeLessThan(order(findDocument, 0));
+    } finally {
+      findDocument.mockRestore();
+    }
+  });
+
+  it('takes the owner lock first even when the new document is then refused', async () => {
+    const ownerId = randomUUID();
+    pointers.set(key('vendor_logo', ownerId), null);
+    const doc = addDoc('vendor_logo', ownerId, { status: 'infected' });
+    const readPointer = vi.spyOn(store, 'readPointer');
+    const findDocument = vi.spyOn(store, 'findDocument');
+    try {
+      expect(await statusOf(service.set(staff, 'vendor_logo', ownerId, { documentId: doc }))).toBe(
+        409,
+      );
+      expect(order(readPointer)).toBeLessThan(order(findDocument, 0));
+    } finally {
+      readPointer.mockRestore();
+      findDocument.mockRestore();
+    }
+  });
+});
+
 describe('set: refusals', () => {
   it('is 404 for a document of another owner of the same type, writing nothing', async () => {
     const ownerId = randomUUID();

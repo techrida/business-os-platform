@@ -408,6 +408,25 @@ describe('PUT /v1/images/user_avatar/:userId', () => {
     expect(served.body.equals(PNG)).toBe(true);
   });
 
+  it('two concurrent PUTs for one owner never deadlock: the replacement is 200, the other 200 or 404, never 500', async () => {
+    // The cycle the lock order prevents: PUT{current} would lock the current picture and then wait for the owner,
+    // while PUT{next} holds the owner and then locks the current picture to remove it.
+    const me = staff(a);
+    for (let round = 0; round < 5; round += 1) {
+      const current = await uploadClean(me, 'user_avatar', a.userId);
+      await putAs(me, 'user_avatar', a.userId, { documentId: current });
+      const next = await uploadClean(me, 'user_avatar', a.userId);
+      const [again, replaced] = await Promise.all([
+        statusOf(putAs(me, 'user_avatar', a.userId, { documentId: current })),
+        statusOf(putAs(me, 'user_avatar', a.userId, { documentId: next })),
+      ]);
+      expect(replaced).toBe('resolved');
+      expect(['resolved', 404]).toContain(again);
+      expect(await avatarOf(a.userId)).toBe(next);
+      expect(await removedAt(current)).toBeInstanceOf(Date);
+    }
+  });
+
   it('null clears the pointer and removes the picture', async () => {
     const me = staff(a);
     const pic = await uploadClean(me, 'user_avatar', a.userId);

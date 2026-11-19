@@ -356,8 +356,11 @@ export class ImagesService {
     const { scope } = caller;
 
     const { result, unclean } = await withTx(this.db, scope, caller.actor, async (tx) => {
-      if (next !== null) await this.assertUsableImage(tx, scope, ownerType, ownerId, next);
+      // One lock order for every pointer move: the owner (its row, or the profile setting), then the new document,
+      // then the previous one (removePrevious). A concurrent move of the same owner waits at the owner lock, so it
+      // can never hold this request's new document (its previous one) while waiting for the owner: no deadlock.
       const current = await this.readCurrent(tx, scope, ownerType, ownerId);
+      if (next !== null) await this.assertUsableImage(tx, scope, ownerType, ownerId, next);
       if (current.documentId === next && !current.hasLegacy) {
         return { result: { documentId: next }, unclean: [] };
       }
