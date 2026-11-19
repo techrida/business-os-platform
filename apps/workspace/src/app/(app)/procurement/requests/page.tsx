@@ -49,7 +49,7 @@ function Row({ pr }: { pr: PurchaseRequestListItem }) {
         />
       </Td>
       <Td nowrap>
-        <span className={styles.numeric}>Department name unavailable</span>
+        {pr.departmentName ?? <span className={styles.numeric}>Department name unavailable</span>}
       </Td>
       <Td nowrap>{when(pr.requiredBy, 'date')}</Td>
       <Td align="end" nowrap>
