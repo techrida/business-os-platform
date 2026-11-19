@@ -69,6 +69,8 @@ export const TENANT_SCOPED: readonly string[] = [
   'app.verification_review_events',
   'app.tax_codes',
   'app.payment_terms',
+  // 0071 (D49): the tenant's list of lead lost reasons.
+  'app.lead_lost_reasons',
   // P3 (U0-A, migration 0019): withholding (TDS) codes, effective-dated like tax_codes.
   'app.withholding_codes',
   // P4 (migration 0032): the vendor master and its tenant-level children.

@@ -344,6 +344,20 @@
       "when": 1783000000063,
       "tag": "0063_follow_up_data",
       "breakpoints": true
+    },
+    {
+      "idx": 49,
+      "version": "7",
+      "when": 1783000000071,
+      "tag": "0071_lead_lost_reasons",
+      "breakpoints": true
+    },
+    {
+      "idx": 50,
+      "version": "7",
+      "when": 1783000000072,
+      "tag": "0072_lead_lost_reasons_data",
+      "breakpoints": true
     }
   ]
 }
