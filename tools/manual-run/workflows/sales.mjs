@@ -885,9 +885,11 @@ export function workflow(cfg) {
           s.expect(st === 200, 'the invoice PDF becomes available', `status ${st}`);
           if (first !== 200)
             s.finding(
-              `View PDF is offered as soon as the invoice is issued, but the PDF answered ${first} ` +
-                `("This PDF is not available.") for ${Math.round((Date.now() - waitStart) / 1000)} s ` +
-                'until the background render and scan finished; nothing tells the user it is still being prepared.',
+              `View PDF is offered as soon as the invoice is issued, but its document route answered ${first} ` +
+                `for about ${Math.round((Date.now() - waitStart) / 1000)} s (10 s polling) until the background ` +
+                'render and scan finished. Download in the preview during that window replaces the whole tab ' +
+                'with a bare text page "This PDF is not available." (SCR1 1440 sales-11 screenshot); nothing ' +
+                'says the PDF is still being prepared.',
               'low',
             );
           await s.click(view, 'View PDF');
