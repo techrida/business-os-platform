@@ -87,6 +87,7 @@ export class PaymentRequestSubject implements ApprovalSubject {
         currency: paymentRequests.currency,
         totalAmount: paymentRequests.totalAmount,
         status: paymentRequests.status,
+        requestedBy: paymentRequests.requestedBy,
         vendorName: vendors.legalName,
       })
       .from(paymentRequests)
@@ -133,7 +134,11 @@ export class PaymentRequestSubject implements ApprovalSubject {
         bills.map((b) => b.documentId),
         billFileOwners(q),
       ),
-      href: hrefFor(viewer, `/payables/payment-requests/${row.id}`, 'payables.payment.request'),
+      // The detail page reads through the caller's own scope, where the requester owns the request.
+      href: hrefFor(viewer, `/payables/payment-requests/${row.id}`, 'payables.payment.request', {
+        ...scope,
+        ownerUserId: row.requestedBy,
+      }),
     };
   }
 

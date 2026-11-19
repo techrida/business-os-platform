@@ -185,6 +185,9 @@ export async function partyHolds(
   scope: EntityScope,
   party: AssignmentParty,
   permission: Permission,
+  // An owner needs a read that reaches the records they own: `assigned` reaches only records with a follow-up on them
+  // (#21), so a lead handed to such a person would vanish from their own list.
+  asOwner = false,
 ): Promise<boolean> {
   const grants = await roleCache.grantsFor(
     scope.tenantId,
@@ -192,7 +195,14 @@ export async function partyHolds(
     party.roleKeys,
     party.level,
   );
-  return grants.has(permission);
+  const held = grants.get(permission);
+  return held !== undefined && !(asOwner && held === 'assigned');
+}
+
+/** Whether `principal` themselves holds `permission`, with the same owner rule as `partyHolds`. */
+function selfHolds(principal: Principal, permission: Permission, asOwner: boolean): boolean {
+  const held = principal.grants.get(permission);
+  return held !== undefined && !(asOwner && held === 'assigned');
 }
 
 /**
@@ -212,7 +222,7 @@ export async function assertAssignable(
   if (userId === principal.userId) {
     const decision = decideAssignment(actor, actor, check.context);
     if (!decision.allowed) throw assignmentRefused(field, decision.reason);
-    if (!principal.grants.has(check.subjectRead)) {
+    if (!selfHolds(principal, check.subjectRead, field === 'ownerUserId')) {
       throw assignmentRefused(field, 'cannot_read_subject');
     }
     return;
@@ -221,7 +231,7 @@ export async function assertAssignable(
   if (target === undefined) throw assignmentRefused(field, 'not_active_staff');
   const decision = decideAssignment(actor, target, check.context, await check.rule());
   if (!decision.allowed) throw assignmentRefused(field, decision.reason);
-  if (!(await partyHolds(check.roleCache, scope, target, check.subjectRead))) {
+  if (!(await partyHolds(check.roleCache, scope, target, check.subjectRead, field === 'ownerUserId'))) {
     throw assignmentRefused(field, 'cannot_read_subject');
   }
 }
@@ -244,14 +254,16 @@ export async function assignableParties(
     if (candidate.userId === principal.userId) {
       if (
         decideAssignment(actor, actor, check.context).allowed &&
-        principal.grants.has(check.subjectRead)
+        selfHolds(principal, check.subjectRead, true)
       ) {
         out.push(candidate);
       }
       continue;
     }
     if (!decideAssignment(actor, candidate, check.context, config).allowed) continue;
-    if (await partyHolds(check.roleCache, scope, candidate, check.subjectRead)) out.push(candidate);
+    if (await partyHolds(check.roleCache, scope, candidate, check.subjectRead, true)) {
+      out.push(candidate);
+    }
   }
   return out;
 }
