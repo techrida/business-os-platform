@@ -118,8 +118,30 @@ export const BillSubmissionSchema = z.object({
   note: Text.nullable(),
   status: z.literal('received'),
   receivedAt: Text,
+  /** What the vendor said the bill totals, and its currency; null when unknown. Older APIs leave them out. */
+  claimedTotal: Text.nullable().default(null),
+  currency: Text.nullable().default(null),
+  /**
+   * Earlier bills and other submissions of this vendor with the same invoice number (any status but rejected).
+   * A warning only: the bill can still be keyed.
+   */
+  duplicates: z
+    .array(
+      z.object({
+        kind: z.enum(['bill', 'submission']),
+        id: z.guid(),
+        number: Text.nullable(),
+        vendorInvoiceNo: Text,
+        status: Text,
+        amount: Text.nullable(),
+        currency: Text.nullable(),
+        at: Text,
+      }),
+    )
+    .default([]),
 });
 export type BillSubmission = z.infer<typeof BillSubmissionSchema>;
+export type InvoiceDuplicate = BillSubmission['duplicates'][number];
 
 export const RejectedSubmissionSchema = z.object({
   id: z.guid(),
