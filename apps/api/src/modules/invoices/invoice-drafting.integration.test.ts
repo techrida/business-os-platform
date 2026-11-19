@@ -647,6 +647,7 @@ describe('saved reach on invoices (U20a phase 2)', () => {
       });
     }
 
+    delete current.grants;
     current.role = 'founder';
     expect((await drafting.detail(theirs.invoice.id)).invoice.id).toBe(theirs.invoice.id);
     expect(ids((await drafting.list({})).rows)).toContain(theirs.invoice.id);

@@ -652,7 +652,8 @@ export const ACCESS_PERMISSION_CATALOGUE: readonly AccessPermissionInfo[] = [
   perm('documents.read', 'See documents', 'record', RECORD_NO_DEPT, []),
   perm('documents.upload', 'Upload documents', 'record', RECORD_NO_DEPT, []),
   // Customers
-  perm('customer.read', 'See customers', 'onOff', ON_OFF_STAFF, []),
+  // Marketing sees only the customers it owns (D55), so this is a reach, not just an on/off switch.
+  perm('customer.read', 'See customers', 'record', RECORD_NO_DEPT, []),
   perm('customer.write', 'Create and edit customers', 'onOff', ON_OFF_STAFF, []),
   perm(
     'customer.merge',

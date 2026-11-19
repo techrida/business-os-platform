@@ -526,7 +526,7 @@ describe("the requester's own purchase orders", () => {
     expect((await mine()).map((r) => r.id)).toContain(theirs.id);
   });
 
-  it('drops an order whose request the requester may no longer read after moving out of a department-scoped read', async () => {
+  it('keeps the requester own order after a move to another department, and drops it once the read grant is gone', async () => {
     const po = await newPo({ lines: [SERVICE1] });
     asRequester();
     current.grants = new Map([
@@ -540,10 +540,15 @@ describe("the requester's own purchase orders", () => {
       status: 'issued',
       vendorName: VENDOR_NAME,
     });
-    // The same requester, now in another department: the request's detail is a 404 for them, so the picker drops
-    // the order and nothing of it (number, status or vendor) reaches them.
+    // A department grant also covers the requester's own requests, so a move to another department changes nothing.
     current.departmentId = (await createDepartment(appPool, scopeA)).departmentId;
-    await expect(requests.get(po.prId)).rejects.toBeInstanceOf(NotFoundException);
+    expect((await requests.get(po.prId)).id).toBe(po.prId);
+    expect((await mine()).map((r) => r.id)).toContain(po.id);
+    // With no purchase request read at all, the request is out of reach: the picker drops the order and nothing of
+    // it (number, status or vendor) reaches the requester.
+    current.grants = new Map(
+      [...grantsOf('operations_officer')].filter(([permission]) => permission !== 'procurement.pr.read'),
+    );
     const rows = await mine();
     expect(rows.map((r) => r.id)).not.toContain(po.id);
     const text = JSON.stringify(rows);

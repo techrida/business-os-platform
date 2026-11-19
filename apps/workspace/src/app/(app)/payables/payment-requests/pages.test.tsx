@@ -253,6 +253,7 @@ it('links a bill only when the live grants hold payables.bill.read', async () =>
   ]);
   const withRead = renderToStaticMarkup(await DetailPage({ params: Promise.resolve({ id }) }));
   expect(withRead).toContain(`/payables/bills/${id}`);
+});
 
 it('counts each card with one limit-1 read, after the permission check', async () => {
   api.listPaymentRequestsPage.mockImplementation(

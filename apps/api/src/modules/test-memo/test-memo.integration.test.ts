@@ -1799,6 +1799,10 @@ describe('GET /v1/test-memos (the Memos list)', () => {
       template: template(otherDept.departmentId),
     });
 
+    // A department grant also covers the reader's own memos, so the other department's memo belongs to someone else.
+    await withTx(db, scope, systemActor('test'), (tx) =>
+      tx.update(testMemos).set({ ownerUserId: U.salesB }).where(eq(testMemos.id, outside.id)),
+    );
     current.grants = new Map<Permission, Scope>([['memo.read', 'department']]);
     current.departmentId = dept.departmentId;
     const page = await parsed();
@@ -1807,7 +1811,8 @@ describe('GET /v1/test-memos (the Memos list)', () => {
     expect((await request(baseUrl).get(`/v1/test-memos/${outside.id}`)).status).toBe(404);
 
     current.departmentId = null;
-    expect((await parsed()).items).toEqual([]);
+    // Without a department only the reader's own memo is left; the other department's memo stays out.
+    expect((await parsed()).items.map((m) => m.id)).toEqual([inside.id]);
   });
 
   it('shows a portal customer only the memos that name their party, like the record check', async () => {

@@ -355,6 +355,9 @@ async function acceptedQuotation(
     evidenceKinds?: EvidenceKindName[];
   } = {},
 ): Promise<QuotationDto> {
+  // Recording the outcome is Sales' work, whoever the test then acts as.
+  const held = current.grants;
+  current.grants = grantsOf('sales');
   const q = await draftQuotation(options.paymentSchedule);
   const expectedVersion = await sendQuotation(q);
   await recorder.record(
@@ -368,6 +371,7 @@ async function acceptedQuotation(
     },
     `accept-${randomUUID()}`,
   );
+  current.grants = held;
   return q;
 }
 
@@ -708,11 +712,14 @@ describe('SalesOrdersService.list and detail', () => {
     const mine = await acceptedQuotation();
     const theirs = await acceptedQuotation();
     const own = await confirm(mine);
-    const other = await confirm(theirs);
     const otherOwner = await seedOtherStaffUser(db, f);
     await withTx(db, scopeA, userActor(), (tx) =>
       tx.update(quotations).set({ ownerUserId: otherOwner }).where(eq(quotations.id, theirs.id)),
     );
+    // Confirming an order makes it the confirmer's own, so the other owner confirms theirs.
+    current.userId = otherOwner;
+    const other = await confirm(theirs);
+    current.userId = undefined;
 
     const filters = [
       { customerId: [f.customerPartyId] },
