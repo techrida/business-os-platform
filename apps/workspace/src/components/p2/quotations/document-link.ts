@@ -4,7 +4,11 @@
 // document id, and every other case falls to words (deny by default).
 import type { DocumentVersionStatus, QuotationStatus } from '@bos/contracts';
 
-export type PdfWords = 'Being prepared' | 'Being scanned' | 'Not available';
+export type PdfWords =
+  'Being prepared' | 'Being scanned' | 'PDF available after approval' | 'Not available';
+
+/** Statuses a version is in before approval: the PDF is rendered only once it is approved. */
+const BEFORE_APPROVAL: readonly QuotationStatus[] = ['draft', 'submitted', 'returned'];
 
 export type PdfLink = { kind: 'link'; href: string } | { kind: 'words'; text: PdfWords };
 
@@ -33,10 +37,17 @@ const WORDS: Record<DocumentVersionStatus, PdfWords | null> = {
   scan_failed: 'Not available',
 };
 
+function wordsWithoutDocument(status: QuotationStatus): PdfWords {
+  if (status === 'approved') return 'Being prepared';
+  if (BEFORE_APPROVAL.includes(status)) return 'PDF available after approval';
+  return 'Not available';
+}
+
 /**
  * The PDF of one version: a link, or words. The PDF is rendered by a sweeper after approval, so a
- * version that is Approved and has no document yet is "Being prepared"; a version in any other
- * status without a document will never get one and reads "Not available".
+ * version that is Approved and has no document yet is "Being prepared"; a version still before
+ * approval (draft, submitted, returned) reads "PDF available after approval"; a version in any
+ * other status without a document will never get one and reads "Not available".
  *
  * The link goes to this app's own route, never to the API. That route issues a single-use signed
  * link on every call, so nothing may call it to find out whether the file is clean: this function
@@ -44,10 +55,7 @@ const WORDS: Record<DocumentVersionStatus, PdfWords | null> = {
  */
 export function pdfLinkFor(quotationId: string, version: PdfVersion): PdfLink {
   if (version.renderedDocumentId === null) {
-    return {
-      kind: 'words',
-      text: version.status === 'approved' ? 'Being prepared' : 'Not available',
-    };
+    return { kind: 'words', text: wordsWithoutDocument(version.status) };
   }
   if (version.renderedScanStatus === null) return { kind: 'words', text: 'Not available' };
   const words = WORDS[version.renderedScanStatus];
