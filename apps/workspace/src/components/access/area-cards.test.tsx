@@ -275,3 +275,24 @@ it('asks before discarding unsaved edits when another card opens', async () => {
   expect(card('Invoices').textContent).toContain('Who can see invoices');
   expect(card('Leads').textContent).not.toContain('Who can see leads');
 });
+
+it('returns focus to the card toggle after Keep editing and after Discard', async () => {
+  await render();
+  await click(byLabel('Edit Leads'));
+  await click(checkbox(card('Leads'), 'Department heads also see their whole department'));
+  const invoices = byLabel('Edit Invoices');
+  invoices.focus();
+  await click(invoices);
+  await flush();
+  expect(document.querySelector('[role="dialog"]')?.contains(document.activeElement)).toBe(true);
+  await click(dialogButton('Keep editing'));
+  await flush();
+  expect(document.activeElement).toBe(invoices);
+
+  invoices.focus();
+  await click(invoices);
+  await flush();
+  await click(dialogButton('Discard'));
+  await flush();
+  expect(document.activeElement).toBe(byLabel('Close Invoices'));
+});
