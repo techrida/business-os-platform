@@ -660,6 +660,7 @@ describe('quotation detail page: linked records', () => {
   }
 
   it('shows the lead first, as a link to its CRM page, then the opportunity', async () => {
+    mocks.getOpportunity.mockResolvedValue({ number: 'DEAL-2026-0095', stage: 'proposal_sent' });
     mocks.getQuotation.mockResolvedValue({
       ...detail(),
       lead: { id: LEAD, name: 'Kathmandu <expo> lead' },
@@ -683,16 +684,17 @@ describe('quotation detail page: linked records', () => {
     expect(linked(html)).toContain(`/opportunities/${CUSTOMER}`);
   });
 
-  it('keeps the plain opportunity link when the opportunity cannot be read', async () => {
+  it('leaves the opportunity link out when the opportunity cannot be read, since it would open a 404', async () => {
     const html = await render();
-    expect(html).toContain('View opportunity');
-    expect(linked(html)).toContain(`/opportunities/${CUSTOMER}`);
+    expect(html).not.toContain('View opportunity');
+    expect(linked(html)).not.toContain(`/opportunities/${CUSTOMER}`);
   });
 
   it.each([['no lead, or one the viewer may not read (absent)', {}]])(
     'shows no lead row for %s',
     async (_name, over) => {
       mocks.getQuotation.mockResolvedValue(detail(over));
+      mocks.getOpportunity.mockResolvedValue({ number: 'DEAL-2026-0095', stage: 'proposal_sent' });
       const html = await render();
       expect(linked(html)).toEqual([`/customers/${CUSTOMER}`, `/opportunities/${CUSTOMER}`]);
       expect(html).not.toContain('/leads/');

@@ -7,7 +7,7 @@ vi.mock('server-only', () => ({}));
 vi.mock('./api-admin', () => ({ listUsers: vi.fn() }));
 const session = { accessToken: 'test-token', roles: ['founder'] } as Session;
 beforeEach(() => vi.resetAllMocks());
-it('resolves all directory pages as the caller and keeps unnamed references out of labels', async () => {
+it('resolves all directory pages as the caller and labels a blank name Unnamed user, never the address', async () => {
   vi.mocked(listUsers)
     .mockResolvedValueOnce({
       items: [
@@ -24,7 +24,8 @@ it('resolves all directory pages as the caller and keeps unnamed references out 
   expect(await userNames(session)).toEqual(
     new Map([
       ['a', 'Mina'],
-      ['b', 'b@example.test'],
+      ['b', 'Unnamed user'],
+      ['c', 'Unnamed user'],
       ['d', 'Dev'],
     ]),
   );
