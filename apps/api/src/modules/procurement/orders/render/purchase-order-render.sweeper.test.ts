@@ -2,8 +2,9 @@ import { BadRequestException } from '@nestjs/common';
 import { describe, expect, it, vi } from 'vitest';
 
 import type { DbTransaction } from '../../../../platform/db/db.module';
+import type { TxScope } from '../../../../platform/db/tx';
 import { GotenbergError } from '../../../quotations/render/gotenberg.client';
-import type { RunInTx } from '../../../quotations/render/quotation-render.sweeper';
+import type { RenderSettings, RunInTx } from '../../../quotations/render/quotation-render.sweeper';
 import {
   failureKind,
   FAILED_RETRY_MS,
@@ -26,7 +27,7 @@ const candidate = (n: number): RenderCandidate => ({
   versionId: `00000000-0000-4000-8000-00000000000${n}`,
 });
 
-const source = (version = 1): RenderSource => ({
+const source = (version = 1, currency: 'NPR' | 'USD' = 'NPR'): RenderSource => ({
   buyerLegalName: 'Techrida Pvt. Ltd.',
   version: {
     version,
@@ -35,7 +36,7 @@ const source = (version = 1): RenderSource => ({
     snapshot: {
       purchaseOrder: {
         number: 'PO-2083/84-00007',
-        currency: 'NPR',
+        currency,
         paymentTermsDays: 30,
         advancePercent: '0.00',
       },
@@ -64,6 +65,8 @@ function fixture(
     hasDocument?: boolean;
     candidates?: RenderCandidate[];
     pan?: unknown;
+    /** The raw `format.number_system` value; an omitted key reads as the stored default. */
+    numberSystem?: unknown;
   } = {},
 ) {
   let now = NOW;
@@ -78,7 +81,19 @@ function fixture(
     createGenerated: vi.fn().mockResolvedValue({ documentId: 'doc-1', versionId: 'ver-1' }),
     receiveGenerated: vi.fn().mockResolvedValue({}),
   };
-  const settings = { get: vi.fn().mockResolvedValue('pan' in over ? over.pan : '301234567') };
+  const settings = {
+    get: vi.fn((_scope: TxScope, key: string) =>
+      Promise.resolve(
+        key === 'format.number_system'
+          ? 'numberSystem' in over
+            ? over.numberSystem
+            : 'south_asian'
+          : 'pan' in over
+            ? over.pan
+            : '301234567',
+      ),
+    ),
+  } as unknown as RenderSettings;
   const pdf = { htmlToPdf: vi.fn().mockResolvedValue(PDF) };
   const runTx: RunInTx = (_scope, _actor, fn) => fn(TX);
   const sweeper = new PurchaseOrderRenderSweeper(store, runTx, documents, settings, pdf, () => now);
@@ -117,6 +132,37 @@ describe('PurchaseOrderRenderSweeper.renderOne', () => {
       'entity.pan_vat_no',
     );
   });
+
+  it('reads the number system for the version scope and groups by it', async () => {
+    const intl = fixture({ numberSystem: 'international' });
+    await expect(intl.sweeper.renderOne(candidate(1))).resolves.toBe('rendered');
+    expect(intl.settings.get).toHaveBeenCalledWith(
+      { tenantId: 'tenant-1', organizationId: 'org-1' },
+      'format.number_system',
+    );
+    const html = intl.pdf.htmlToPdf.mock.calls[0]?.[0] as string;
+    expect(html).toContain('NPR 2,124,400.00');
+    expect(html).not.toContain('21,24,400');
+  });
+
+  it('groups a USD purchase order by the setting, lakh under south_asian', async () => {
+    const usd = source(1, 'USD');
+    const south = fixture({ src: usd, numberSystem: 'south_asian' });
+    await south.sweeper.renderOne(candidate(1));
+    expect(south.pdf.htmlToPdf.mock.calls[0]?.[0]).toContain('USD 21,24,400.00');
+    const intl = fixture({ src: usd, numberSystem: 'international' });
+    await intl.sweeper.renderOne(candidate(1));
+    expect(intl.pdf.htmlToPdf.mock.calls[0]?.[0]).toContain('USD 2,124,400.00');
+  });
+
+  it.each([['metric'], [null], [undefined], [42]])(
+    'falls back to south_asian grouping, and still renders, when the setting is %j',
+    async (bad) => {
+      const f = fixture({ numberSystem: bad });
+      await expect(f.sweeper.renderOne(candidate(1))).resolves.toBe('rendered');
+      expect(f.pdf.htmlToPdf.mock.calls[0]?.[0]).toContain('NPR 21,24,400.00');
+    },
+  );
 
   it('names the file after the version of an amendment', async () => {
     const f = fixture({ src: source(2) });

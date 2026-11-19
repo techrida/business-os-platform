@@ -2,7 +2,8 @@
 // only by WorkerModule, so the API process never renders. Same shape as QuotationRenderWorkerModule, which explains
 // the DocumentsService wiring (generated-file path only, no download links, authz that refuses everything).
 //
-// Differences: an invoice is drawn from its frozen row alone, so there is no SettingsModule here. This instance
+// Differences: an invoice is drawn from its frozen row, so only the tenant's number system (`format.number_system`)
+// comes from settings (SettingsModule, as in the quotation worker). This instance
 // registers InvoiceOwnerPolicy as InvoicesModule does on the API's instance. Without it every render is refused
 // (no policy means no generated files).
 import { BullModule } from '@nestjs/bullmq';
@@ -21,6 +22,8 @@ import {
 import { DocumentsService } from '../../../platform/documents/documents.service';
 import { SignedLinks } from '../../../platform/documents/signed-link';
 import { DiskStorageAdapter, STORAGE_ADAPTER } from '../../../platform/documents/storage.adapter';
+import { SettingsModule } from '../../../platform/settings/settings.module';
+import { SettingsService } from '../../../platform/settings/settings.service';
 import { GotenbergClient } from '../../quotations/render/gotenberg.client';
 import type { RunInTx } from '../../quotations/render/quotation-render.sweeper';
 import { drizzleInvoiceHeadLoader, InvoiceOwnerPolicy } from '../invoice-owner.policy';
@@ -29,6 +32,7 @@ import {
   INVOICE_RENDER_CLOCK,
   INVOICE_RENDER_DOCUMENTS,
   INVOICE_RENDER_PDF,
+  INVOICE_RENDER_SETTINGS,
   INVOICE_RENDER_QUEUE,
   INVOICE_RENDER_STORE,
   INVOICE_RENDER_TX,
@@ -40,6 +44,7 @@ import {
 @Module({
   imports: [
     AuditModule,
+    SettingsModule,
     BullModule.registerQueue({ name: DOCS_SCAN_QUEUE }, { name: INVOICE_RENDER_QUEUE }),
   ],
   providers: [
@@ -66,6 +71,7 @@ import {
     { provide: AUDIT_PORT, useExisting: AuditService },
     DocumentsService,
     { provide: INVOICE_RENDER_DOCUMENTS, useExisting: DocumentsService },
+    { provide: INVOICE_RENDER_SETTINGS, useExisting: SettingsService },
     {
       provide: INVOICE_RENDER_STORE,
       inject: [DB],

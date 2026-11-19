@@ -19,6 +19,7 @@
 // The tests drive the sweeper through a RenderStore fake; the drizzle store below is checked by the integration test.
 import { InjectQueue, Processor, WorkerHost } from '@nestjs/bullmq';
 import { SETTINGS } from '@bos/contracts';
+import { DEFAULT_NUMBER_SYSTEM } from '@bos/locale';
 import {
   documents,
   documentVersions,
@@ -207,11 +208,19 @@ export class PurchaseOrderRenderSweeper {
       const pan = SETTINGS['entity.pan_vat_no'].safeParse(
         await this.settings.get(scope, 'entity.pan_vat_no'),
       );
+      // An invalid value (a hand-edited row) prints the default grouping; it never fails the render.
+      const numberSystem = SETTINGS['format.number_system'].safeParse(
+        await this.settings.get(scope, 'format.number_system'),
+      );
       const view = toPurchaseOrderRenderView({
         ...rows,
         buyer: { legalName: buyerLegalName, panVatNo: pan.success ? pan.data : null },
       });
-      const bytes = await this.pdf.htmlToPdf(renderPurchaseOrderHtml(view));
+      const bytes = await this.pdf.htmlToPdf(
+        renderPurchaseOrderHtml(view, {
+          numberSystem: numberSystem.success ? numberSystem.data : DEFAULT_NUMBER_SYSTEM,
+        }),
+      );
       const file = {
         filename: purchaseOrderPdfFilename(view.number, view.version),
         declaredMime: 'application/pdf',

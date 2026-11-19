@@ -118,6 +118,8 @@ const authz = { assert: vi.fn() };
 const audit = { record: vi.fn().mockResolvedValue(undefined) };
 const notify = { notifyUser: vi.fn().mockResolvedValue(undefined) };
 const queue = { add: vi.fn().mockResolvedValue({}) };
+// The render reads only `format.number_system`; NPR documents group the same under the default.
+const settings = { get: vi.fn().mockResolvedValue('south_asian') };
 
 const runTx: RunInTx = (scope, actor, fn) => withTx(db, scope, actor, fn);
 const seedActor = () => systemActor('invoice-render-test-seed');
@@ -246,7 +248,7 @@ beforeEach(() => {
 // ---------------------------------------------------------------------------------------- helpers
 
 function makeSweeper(pdf: GotenbergClient): InvoiceRenderSweeper {
-  return new InvoiceRenderSweeper(store, runTx, documents, pdf, () => new Date());
+  return new InvoiceRenderSweeper(store, runTx, documents, settings, pdf, () => new Date());
 }
 
 function first<T>(rows: T[]): T {
@@ -423,7 +425,14 @@ describe('invoice render', () => {
         return Promise.reject(new Error('permanent render failure'));
       }),
     };
-    const worker = new InvoiceRenderSweeper(fairStore, runTx, documents, pdf, () => clock);
+    const worker = new InvoiceRenderSweeper(
+      fairStore,
+      runTx,
+      documents,
+      settings,
+      pdf,
+      () => clock,
+    );
 
     // Every retry has expired before the next tick. The oldest-first query used to pick the same ten forever.
     for (let tick = 0; tick < 3; tick += 1) {
