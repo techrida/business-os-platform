@@ -1,5 +1,6 @@
 import type {
   PortalDisplay,
+  VendorPortalCapability,
   VendorPortalPurchaseOrderView,
   VendorVisiblePoStatus,
 } from '@bos/contracts';
@@ -25,16 +26,22 @@ const BILLABLE: ReadonlySet<VendorVisiblePoStatus> = new Set([
  * are formatted, never worked out here, and there is no per-line amount because the contract has
  * none. The PDF is a plain anchor to a route handler: a prefetch would fetch the file, and the
  * API sends it as an attachment, so an error reads as text.
+ *
+ * Submit a bill shows only to a vendor with full access (`capability`, from the onboarding read):
+ * a suspended (`read_only`) or not yet approved vendor would land on the no-access notice. Null
+ * (the read failed) hides it too.
  */
 export function PurchaseOrderView({
   view,
   display,
+  capability,
 }: {
   view: VendorPortalPurchaseOrderView;
   display?: PortalDisplay;
+  capability: VendorPortalCapability | null;
 }) {
   const { money: formatAmount, day } = displayFormat(display);
-  const canBill = BILLABLE.has(view.status);
+  const canBill = capability === 'full' && BILLABLE.has(view.status);
   const look = PO_STATUS_LOOK[view.status];
   const money = (amount: string) => formatAmount(amount, view.currency);
   return (
