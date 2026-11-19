@@ -250,6 +250,26 @@ it('keeps the dialog and the chosen reason, and offers a reload, when the lead c
   await mounted.unmount();
 });
 
+it('does not blame a typed new reason when the lead changed meanwhile', async () => {
+  mocks.changeLeadStage.mockRejectedValueOnce(
+    new ApiError(409, 'stale', {
+      error: { code: 'conflict', message: 'The lead was changed', correlationId: 'c' },
+    }),
+  );
+  const mounted = await open();
+  await pickReason('Slow to reply', 'Add "Slow to reply"');
+  await typeNote('Never answered.');
+  await click(footerButton('Mark lost'));
+  await settle();
+
+  const options = mocks.error.mock.calls[0]?.[1] as { action?: { label: string } } | undefined;
+  expect(options?.action?.label).toBe('Reload');
+  expect(dialog()?.textContent).not.toContain('That reason already exists');
+  expect(combo()?.getAttribute('aria-invalid')).not.toBe('true');
+  expect((combo() as HTMLInputElement).value).toBe('Slow to reply');
+  await mounted.unmount();
+});
+
 it('opens clean after a cancelled attempt', async () => {
   const mounted = await open();
   await pickReason('Pri', 'Price');
@@ -350,6 +370,9 @@ describe('opportunity noun (D54-3)', () => {
     const options = mocks.error.mock.calls[0]?.[1] as { action?: { label: string } } | undefined;
     expect(options?.action?.label).toBe('Reload');
     expect(dialog()).not.toBeNull();
+    // A stale record is not a duplicate reason: the Reason field stays valid.
+    expect(dialog()?.textContent).not.toContain('That reason already exists');
+    expect(combo()?.getAttribute('aria-invalid')).not.toBe('true');
     expect((combo() as HTMLInputElement).value).toBe('Scope changed');
     expect((inDialog('textarea[name="note"]') as HTMLTextAreaElement).value).toBe(
       'Client pivoted.',
