@@ -5,7 +5,7 @@ import { z } from 'zod';
 
 import { AddressSchema, PanVatNoSchema } from './crm.js';
 import { CurrencySchema, DecimalString } from './money.js';
-import { PaymentMilestoneSchema, QuantityString, type QuotationStatus } from './quotations.js';
+import { PaymentMilestoneDtoSchema, QuantityString, type QuotationStatus } from './quotations.js';
 
 const isoDate = z.iso.date();
 const sha256Hex = z.string().regex(/^[0-9a-f]{64}$/);
@@ -72,7 +72,7 @@ export const CustomerQuotationViewSchema = z.strictObject({
   termsAndConditions: z.string().nullable(),
   deliveryTimeline: z.string().nullable(),
   paymentTermName: z.string().nullable(),
-  paymentSchedule: z.array(PaymentMilestoneSchema),
+  paymentSchedule: z.array(PaymentMilestoneDtoSchema),
   lines: z.array(
     z.strictObject({
       lineNo: z.number().int().min(1),

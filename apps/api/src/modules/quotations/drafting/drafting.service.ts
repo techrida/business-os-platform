@@ -21,6 +21,7 @@ import {
   type QuotationCapabilities,
   type QuotationDetail,
   type QuotationDto,
+  type QuotationLead,
   type QuotationListItem,
   type QuotationStatus,
   QuotationVersionContentSchema,
@@ -31,6 +32,7 @@ import {
   customerContacts,
   customers,
   documentVersions,
+  leads,
   opportunities,
   paymentTerms,
   quotationLines,
@@ -167,7 +169,8 @@ function contentOf(v: QuotationVersionDto): Record<string, unknown> {
     termsAndConditions: v.termsAndConditions,
     deliveryTimeline: v.deliveryTimeline,
     paymentTermId: v.paymentTermId,
-    paymentSchedule: v.paymentSchedule,
+    // The DTO rows carry a computed `amount` (D36); the draft input contract is strict and has none.
+    paymentSchedule: v.paymentSchedule.map(({ amount: _amount, ...milestone }) => milestone),
     discount: v.discount,
     lines: v.lines.map((l) =>
       definedOnly({
@@ -511,6 +514,7 @@ export class DraftingService {
         quotation.ownerUserId,
         ...statusHistory.map((h) => h.actorId),
       ]);
+      const lead = await this.leadOf(tx, scope, principal, quotation.opportunityId);
       const answer = toQuotationDetail({
         quotation,
         versions,
@@ -523,9 +527,41 @@ export class DraftingService {
             ? { canEdit: false, canRevise: false }
             : capabilitiesOf(principal, quotation, current.status),
         people,
+        ...(lead === undefined ? {} : { lead }),
       });
       return detailVisibleTo(principal, answer);
     });
+  }
+
+  /**
+   * The lead behind a quotation (D35): its opportunity's parent lead. null when the opportunity has no lead (or is
+   * gone); undefined, so the key is left out, when the caller may not read that lead. The lead is read through
+   * scoped() and the same rule as the lead page (`crm.lead.read` with its scope on the lead's record, as
+   * scopeWhereFor), so another owner's lead under `own` scope, and any lead of another entity, never appears.
+   */
+  private async leadOf(
+    tx: DbTransaction,
+    scope: TxScope,
+    principal: Principal,
+    opportunityId: string,
+  ): Promise<QuotationLead | null | undefined> {
+    const [opportunity] = await tx
+      .select({ leadId: opportunities.leadId })
+      .from(opportunities)
+      .where(scoped(scope).where(opportunities, eq(opportunities.id, opportunityId)))
+      .limit(1);
+    if (opportunity === undefined || opportunity.leadId === null) return null;
+    const [lead] = await tx
+      .select({ id: leads.id, name: leads.title })
+      .from(leads)
+      .where(
+        scoped(scope).where(
+          leads,
+          and(eq(leads.id, opportunity.leadId), scopeWhereFor(principal, leads, 'crm.lead.read')),
+        ),
+      )
+      .limit(1);
+    return lead;
   }
 
   /** One version of a visible quotation; a version of another quotation is a 404 like a missing one. */

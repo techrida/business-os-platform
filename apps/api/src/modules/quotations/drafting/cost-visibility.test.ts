@@ -205,6 +205,7 @@ describe('detailVisibleTo', () => {
       customerName: 'Acme',
       contacts: [],
       capabilities: { canEdit: true, canRevise: false },
+      lead: { id: id(40), name: 'Website enquiry' },
     }) as unknown as QuotationDetail;
 
   it('strips every version, Superseded included, and leaves the rest of the answer alone', () => {
@@ -217,6 +218,8 @@ describe('detailVisibleTo', () => {
     }
     expect(out.customerName).toBe('Acme');
     expect(out.capabilities).toEqual({ canEdit: true, canRevise: false });
+    // The lead (D35) is not a cost figure: stripping costs keeps it.
+    expect(out.lead).toEqual({ id: id(40), name: 'Website enquiry' });
     // The schema accepts the stripped shape.
     expect(QuotationVersionDtoSchema.array().parse(out.versions)).toHaveLength(2);
   });
