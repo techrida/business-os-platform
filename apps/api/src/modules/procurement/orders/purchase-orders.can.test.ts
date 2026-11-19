@@ -69,3 +69,29 @@ describe('mayEnterBill', () => {
     expect(mayEnterBill(principalOf(['founder']), 'issued', THEIRS)).toBe(true);
   });
 });
+
+describe('mayEnterBill under a narrower payables.bill.enter', () => {
+  const accountantAt = (scope: Scope, over: Partial<Principal> = {}) => {
+    const p = principalOf(['accountant'], over);
+    (p.grants as Map<Permission, Scope>).set('payables.bill.enter', scope);
+    return p;
+  };
+
+  it('offers an accountant with own scope Enter bill only on orders raised from their own requests', () => {
+    const own = accountantAt('own');
+    expect(mayEnterBill(own, 'issued', requestOf(ME))).toBe(true);
+    expect(mayEnterBill(own, 'issued', THEIRS)).toBe(false);
+    // Another entity's request is never theirs, even with their own user id on it.
+    expect(mayEnterBill(own, 'issued', { ...requestOf(ME), organizationId: SOMEONE_ELSE })).toBe(false);
+  });
+
+  it("follows the request's department under department scope", () => {
+    expect(mayEnterBill(accountantAt('department', { departmentId: DEPT }), 'issued', THEIRS)).toBe(
+      true,
+    );
+    expect(
+      mayEnterBill(accountantAt('department', { departmentId: SOMEONE_ELSE }), 'issued', THEIRS),
+    ).toBe(false);
+    expect(mayEnterBill(accountantAt('department'), 'issued', THEIRS)).toBe(false);
+  });
+});
