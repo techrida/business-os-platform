@@ -895,6 +895,8 @@ export function workflow(cfg) {
             );
             const reqHeading = s.page.getByRole('heading', { name: 'Approval requirements' });
             await s.see(reqHeading, 'Approval requirements');
+            // The requirements load after the heading ("Checking approval requirements"): wait for the route itself.
+            await s.see(s.page.getByText(/Approver for step 1/).first(), 'Approver for step 1');
             const route = await s.text(
               s.page
                 .locator('section, aside, div')
