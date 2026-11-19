@@ -834,19 +834,23 @@ describe('the bill on its approval (U18 #2)', () => {
         expect.objectContaining({ key: 'status', value: 'pending_approval' }),
       ]),
     );
-    // Nothing beyond the bill's facts: no PAN, no bank details.
-    expect(JSON.stringify(forAccountant.context)).not.toMatch(/\b3\d{8}\b/);
+    // Nothing beyond the bill's facts: not the vendor's PAN.
+    const { rows } = await exec(scopeA, sql`SELECT pan FROM app.vendors WHERE id = ${vendorId}`);
+    expect(JSON.stringify(forAccountant.context)).not.toContain((rows[0] as { pan: string }).pan);
 
     // Management decides the larger bands. It reads approval requests and documents but not bills, so it sees the
     // same record and file with no link to a page that would refuse it.
     as(U.mgmt, 'management');
-    expect(grantsOf('management').has('payables.bill.read')).toBe(false);
-    const forManagement = await approvals.get(submitted.approvalRequestId!);
-    expect(forManagement.context).toMatchObject({
-      href: null,
-      documents: [{ documentId: bill.documentId }],
-    });
-    as(U.acct, 'accountant');
+    try {
+      expect(grantsOf('management').has('payables.bill.read')).toBe(false);
+      const forManagement = await approvals.get(submitted.approvalRequestId!);
+      expect(forManagement.context).toMatchObject({
+        href: null,
+        documents: [{ documentId: bill.documentId }],
+      });
+    } finally {
+      as(U.acct, 'accountant');
+    }
   });
 });
 
