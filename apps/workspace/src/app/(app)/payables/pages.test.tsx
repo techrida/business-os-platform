@@ -292,6 +292,17 @@ describe('bill detail', () => {
     expect(finance).not.toContain('Void bill');
   });
 
+  it('shows Finance the order number sent with the bill, with no purchase order read of its own', async () => {
+    session.roles = ['finance'];
+    api.getBill.mockResolvedValue({ ...header, status: 'pending_approval', lines: [line] });
+    api.getPoProgress.mockRejectedValue(apiError(403, 'forbidden'));
+    const out = await html(BillPage({ params: Promise.resolve({ id: BILL }) }));
+    expect(out).toContain('PO-2083-0007');
+    expect(out).not.toContain('An order');
+    expect(out).not.toContain(`/procurement/orders/${PO}`);
+    expect(api.getPoProgress).not.toHaveBeenCalled();
+  });
+
   it('still shows the bill when the vendor and the order cannot be read', async () => {
     api.getBill.mockResolvedValue({ ...header, lines: [line] });
     api.getVendor.mockRejectedValue(apiError(403));
