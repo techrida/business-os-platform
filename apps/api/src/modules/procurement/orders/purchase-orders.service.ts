@@ -26,10 +26,13 @@ import { randomUUID } from 'node:crypto';
 import { and, asc, desc, eq, inArray, sql } from 'drizzle-orm';
 
 import { AuditService } from '../../../platform/audit/audit.service';
+import { can } from '../../../platform/authz/can';
+import type { Principal } from '../../../platform/authz/principal';
 import { DB, type Db, type DbTransaction } from '../../../platform/db/db.module';
 import { withIdempotency } from '../../../platform/db/idempotency';
 import { withTx, type TxScope } from '../../../platform/db/tx';
 import { ApprovalsService } from '../../approvals/requests.service';
+import { BILLABLE_PO_STATUSES } from '../../payables/bills/vendor-bill.rules';
 import { PurchaseOrdersCaller } from './purchase-orders.caller';
 import {
   PO_AMENDMENT_DOCUMENT_TYPE,
@@ -110,6 +113,12 @@ export interface PurchaseOrderDto {
    * quotation's line ids). Read-only; absent otherwise.
    */
   proposedLines?: PurchaseOrderLineDto[];
+  /**
+   * What the caller may do from this order outside the PO routes, from the caller's live grants (detail only):
+   * `enterBill` is the bill entry route's own check (an active staff caller holding payables.bill.enter) on an
+   * order a bill can be entered against (BILLABLE_PO_STATUSES).
+   */
+  can?: { enterBill: boolean };
 }
 
 /** A row of the list: the detail without its lines, and always with the vendor's name. */
@@ -175,6 +184,15 @@ const toDto = (po: PoRow, lines: readonly PoLineRow[]): PurchaseOrderDto => ({
   version: po.version,
   lines: lines.map(toLineDto),
 });
+
+/** May `p` enter a bill against an order in `status`? Mirrors POST /v1/payables/bills: the grant alone decides. */
+export function mayEnterBill(p: Principal, status: PoStatus): boolean {
+  return (
+    p.orgKind === 'staff' &&
+    can(p, 'payables.bill.enter').allowed &&
+    (BILLABLE_PO_STATUSES as readonly string[]).includes(status)
+  );
+}
 
 /** Joins a PO to its vendor; vendors are tenant level, so the join is on (tenantId, id) only. */
 const vendorOf = (po: typeof purchaseOrders) =>
@@ -267,7 +285,7 @@ export class PurchaseOrdersService {
 
   /** 404 outside the acting entity. */
   async get(id: string): Promise<PurchaseOrderDto> {
-    const { scope, actor } = this.caller.current();
+    const { scope, actor, principal } = this.caller.current();
     return withTx(this.db, scope, actor, async (tx) => {
       const [row] = await tx
         .select({ po: purchaseOrders, vendorName: vendors.legalName })
@@ -292,6 +310,7 @@ export class PurchaseOrdersService {
         ...toDto(row.po, lines),
         vendorName: row.vendorName,
         ...(proposed !== undefined ? { proposedLines: proposed } : {}),
+        can: { enterBill: mayEnterBill(principal, row.po.status) },
       };
     });
   }
