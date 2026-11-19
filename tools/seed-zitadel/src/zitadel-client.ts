@@ -225,7 +225,7 @@ export interface ZitadelApi {
    * custom org policy when the org inherits the instance default. Returns true when it changed
    * something, false when self-registration was already off (nothing is written then).
    */
-  ensureOrgLoginPolicyNoRegister(orgId: string): Promise<boolean>;
+  ensureStaffLoginPolicy(orgId: string): Promise<boolean>;
 
   /** Returns true when a provider was created (false: already present). */
   ensureSmtp(spec: SmtpSpec): Promise<boolean>;
@@ -304,7 +304,9 @@ const MemberList = z.object({
   result: z.array(z.object({ userId: Str, roles: z.array(Str).default([]) })).default([]),
 });
 const ProviderList = z.object({
-  result: z.array(z.object({ id: Str.min(1), description: Str.default('') })).default([]),
+  result: z
+    .array(z.object({ id: Str.min(1), description: Str.default(''), state: Str.optional() }))
+    .default([]),
 });
 // Protobuf JSON: false booleans and empty lists are omitted. Everything else in `policy` is carried
 // over verbatim when the policy is rewritten (see CARRY_OVER).
@@ -312,6 +314,8 @@ const LoginPolicyResponse = z.object({
   policy: z.looseObject({
     isDefault: z.boolean().default(false),
     allowRegister: z.boolean().default(false),
+    hidePasswordReset: z.boolean().default(false),
+    ignoreUnknownUsernames: z.boolean().default(false),
     secondFactors: z.array(Str).default([]),
     multiFactors: z.array(Str).default([]),
     idps: z.array(z.unknown()).default([]),
@@ -326,8 +330,6 @@ const CARRY_OVER = [
   'allowExternalIdp',
   'forceMfa',
   'passwordlessType',
-  'hidePasswordReset',
-  'ignoreUnknownUsernames',
   'defaultRedirectUri',
   'passwordCheckLifetime',
   'externalLoginCheckLifetime',
@@ -683,7 +685,7 @@ export class ZitadelClient implements ZitadelApi {
     );
   }
 
-  async ensureOrgLoginPolicyNoRegister(orgId: string): Promise<boolean> {
+  async ensureStaffLoginPolicy(orgId: string): Promise<boolean> {
     const asOrg = { 'x-zitadel-orgid': orgId };
     const current = parse(
       LoginPolicyResponse,
@@ -691,9 +693,15 @@ export class ZitadelClient implements ZitadelApi {
       'GetLoginPolicy',
     );
     const { policy } = current;
-    if (!policy.allowRegister) return false;
+    if (!policy.allowRegister && !policy.hidePasswordReset && policy.ignoreUnknownUsernames) {
+      return false;
+    }
 
-    const body: Record<string, unknown> = { allowRegister: false };
+    const body: Record<string, unknown> = {
+      allowRegister: false,
+      hidePasswordReset: false,
+      ignoreUnknownUsernames: true,
+    };
     for (const key of CARRY_OVER) if (policy[key] !== undefined) body[key] = policy[key];
 
     if (policy.isDefault || current.isDefault) {
@@ -723,20 +731,23 @@ export class ZitadelClient implements ZitadelApi {
       await this.transport.post(ENDPOINTS.listEmailProviders, {}),
       'ListEmailProviders',
     );
-    if (list.result.some((p) => p.description === spec.description)) return false;
-    const added = parse(
-      IdOnly,
-      await this.transport.post(ENDPOINTS.addEmailProviderSmtp, {
-        senderAddress: spec.senderAddress,
-        senderName: spec.senderName,
-        tls: false,
-        host: spec.host,
-        description: spec.description,
-        none: {},
-      }),
-      'AddEmailProviderSMTP',
-    );
-    await this.transport.post(ENDPOINTS.activateEmailProvider(added.id), {});
+    const existing = list.result.find((provider) => provider.description === spec.description);
+    if (existing?.state === 'EMAIL_PROVIDER_ACTIVE') return false;
+    const provider =
+      existing ??
+      parse(
+        IdOnly,
+        await this.transport.post(ENDPOINTS.addEmailProviderSmtp, {
+          senderAddress: spec.senderAddress,
+          senderName: spec.senderName,
+          tls: false,
+          host: spec.host,
+          description: spec.description,
+          none: {},
+        }),
+        'AddEmailProviderSMTP',
+      );
+    await this.transport.post(ENDPOINTS.activateEmailProvider(provider.id), {});
     return true;
   }
 

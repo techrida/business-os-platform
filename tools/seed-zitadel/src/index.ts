@@ -110,8 +110,8 @@ export async function runSeed(deps: SeedDeps): Promise<SeedResult> {
   }
 
   // Nobody may register themselves on the staff org: staff are invited.
-  if (await api.ensureOrgLoginPolicyNoRegister(staffOrgId)) {
-    changed('disabled self-registration on the staff org');
+  if (await api.ensureStaffLoginPolicy(staffOrgId)) {
+    changed('configured staff login policy for invitations and private password reset');
   }
 
   const haveRoles = new Set(await api.listProjectRoles(projectId));
@@ -261,17 +261,16 @@ export async function runSeed(deps: SeedDeps): Promise<SeedResult> {
     changed(`made ${PROVISIONER_USER} ${PROVISIONER_ROLE} on the staff org`);
   }
 
-  // --- SMTP to Mailpit. Optional: the instance may not allow it, and login works without it. ---
-  try {
-    const created = await api.ensureSmtp({
+  // --- Activate local mail delivery for password reset and other ZITADEL notifications. ---
+  if (
+    await api.ensureSmtp({
       description: SMTP_DESCRIPTION,
       host: 'mailpit:1025',
       senderAddress: 'noreply@bos.test',
       senderName: 'Business OS (dev)',
-    });
-    if (created) changed('configured SMTP provider to Mailpit');
-  } catch (error) {
-    log(`  ! SMTP setup skipped: ${error instanceof Error ? error.message : String(error)}`);
+    })
+  ) {
+    changed('activated the Mailpit email provider');
   }
 
   // --- Env file for the API and the workspace. ---
