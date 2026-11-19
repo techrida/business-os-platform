@@ -746,4 +746,51 @@ describe("names on an amendment's approval (U18 #3)", () => {
     );
     expect(request.references).toHaveLength(3);
   });
+
+  it("shows Management the order as it stands with its current PDF, no other order's PDF, and no link (U18 #2)", async () => {
+    const vendorId = await vendor('approved', { accountIn: [scopeA, scopeB] });
+    const po = await issued({ vendorId });
+    // Another order of the same vendor: its PDF names the same vendor and must not appear on this approval.
+    const other = await issued({ vendorId });
+    const pdfOf = async (purchaseOrderId: string) => {
+      const { rows } = await exec(
+        scopeA,
+        sql`WITH v AS (SELECT id FROM app.purchase_order_versions WHERE purchase_order_id = ${purchaseOrderId}
+                       ORDER BY version DESC LIMIT 1),
+                 d AS (INSERT INTO app.documents (tenant_id, organization_id, owner_type, owner_id)
+                       SELECT ${scopeA.tenantId}, ${scopeA.organizationId}, 'purchase_order_version', v.id FROM v
+                       RETURNING id)
+            INSERT INTO app.document_versions (tenant_id, organization_id, document_id, version, filename,
+              declared_mime, size_bytes, storage_key, status)
+            SELECT ${scopeA.tenantId}, ${scopeA.organizationId}, d.id, 1, 'purchase-order.pdf', 'application/pdf',
+                   2048, ${`${scopeA.tenantId}/${randomUUID()}`}, 'clean' FROM d
+            RETURNING document_id`,
+      );
+      return (rows[0] as { document_id: string }).document_id;
+    };
+    const pdf = await pdfOf(po.id);
+    const otherPdf = await pdfOf(other.id);
+    const r = await service.amend(
+      po.id,
+      { reason, lines: [{ poLineId: po.lineId, unitPrice: '132743.36' }] },
+      randomUUID(),
+    );
+
+    // Management decides the last step; it cannot open purchase orders, so the record is shown without a link.
+    as(U.mgmt, 'management');
+    expect(grantsOf('management').has('procurement.po.issue')).toBe(false);
+    const { context } = await approvals.get(r.approvalRequestId!);
+    expect(context).toMatchObject({
+      href: null,
+      documents: [{ documentId: pdf, filename: 'purchase-order.pdf' }],
+    });
+    expect(context!.documents).toHaveLength(1);
+    expect(context!.documents.map((d) => d.documentId)).not.toContain(otherPdf);
+    expect(context!.fields).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ key: 'vendor', value: `Vendor ${vendorId.slice(0, 6)}` }),
+        expect.objectContaining({ key: 'status', value: 'amendment_pending' }),
+      ]),
+    );
+  });
 });
