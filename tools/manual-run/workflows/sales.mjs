@@ -28,6 +28,20 @@ const DOCS = [
 /** "NPR 1,35,600.00" and "135,600.00" both contain 135600.00 once separators are removed. */
 const hasAmount = (text, amount) => text.replace(/,/g, '').includes(Number(amount).toFixed(2));
 
+/**
+ * How sales-12 and sales-15 get their payment without recording a second one:
+ * - `reuse` the URL an earlier attempt recorded;
+ * - `adopt` a payment of this run's customer that is not one of the known payments (an attempt
+ *   that was interrupted after the submit, before it could record the URL);
+ * - `record` a new payment only when neither exists.
+ */
+export function paymentDecision({ recordedUrl, rowUrls, knownUrls }) {
+  if (recordedUrl) return { action: 'reuse', url: recordedUrl };
+  const others = [...new Set(rowUrls)].filter((u) => !knownUrls.includes(u));
+  if (others.length) return { action: 'adopt', urls: others };
+  return { action: 'record' };
+}
+
 export function workflow(cfg) {
   const u = uniqueValues(cfg.runKey);
   const v = {
@@ -153,27 +167,60 @@ export function workflow(cfg) {
       s.finding('Draft invoice shows "Customer details unavailable" (I-18)', 'normal');
   };
 
-  /**
-   * Retry safety: a payment this run already recorded (an earlier attempt was interrupted after
-   * the submit) shows as one more row for this run's unique customer than `before`. Open it.
-   */
-  const adoptPayment = async (s, before) => {
-    await s.goto('/payments', (p) => h1(p, 'Payments'));
-    const rows = s.page.getByRole('row').filter({ hasText: C });
+  /** The payment links in the Payments list rows of this run's unique customer (all statuses). */
+  const customerPayments = async (s) => {
+    await s.goto(`/payments?q=${encodeURIComponent(v.company)}`, (p) => h1(p, 'Payments'));
     await s.page.waitForTimeout(1500);
-    if ((await rows.count()) <= before) return null;
-    const pending = rows.filter({ hasText: 'Awaiting verification' }).first();
-    if (!(await pending.isVisible().catch(() => false))) return null;
-    s.checks.push('note: reusing the payment an earlier attempt of this run recorded');
-    await s.click(pending.getByRole('link').first(), 'the earlier payment');
-    await s.page.waitForURL(/\/payments\/[0-9a-f-]{36}$/, { timeout: cfg.navTimeout });
-    return s.page.url().replace(cfg.appUrl, '');
+    const hrefs = await s.page
+      .getByRole('row')
+      .filter({ hasText: C })
+      .locator('a[href*="/payments/"]')
+      .evaluateAll((links) => links.map((a) => a.getAttribute('href')));
+    return hrefs
+      .map((h) => new URL(h, cfg.appUrl).pathname)
+      .filter((h) => /^\/payments\/[0-9a-f-]{36}$/.test(h));
   };
 
-  const recordPayment = async (s, ref, before) => {
+  /**
+   * sales-12 and sales-15 record a payment at most once per run, whatever an earlier attempt did:
+   * the recorded URL is reused; otherwise a payment of this run's customer that is not one of the
+   * known payments is adopted after its bank reference is checked; only when there is none is a new
+   * payment recorded.
+   */
+  const findOrRecordPayment = async (s, key, ref, otherKeys) => {
     await as(s, 'Dev Accountant');
-    const earlier = await adoptPayment(s, before);
-    if (earlier) return earlier;
+    const known = otherKeys.map((k) => s.state[k]).filter(Boolean);
+    let decision = paymentDecision({ recordedUrl: s.state[key], rowUrls: [], knownUrls: known });
+    if (decision.action !== 'reuse')
+      decision = paymentDecision({
+        recordedUrl: null,
+        rowUrls: await customerPayments(s),
+        knownUrls: known,
+      });
+    if (decision.action === 'reuse') {
+      s.checks.push(`note: reusing ${key} from an earlier attempt of this run`);
+      await openUrl(s, key, (p) => p.getByRole('heading', { level: 1 }));
+      return decision.url;
+    }
+    if (decision.action === 'adopt') {
+      for (const url of decision.urls) {
+        await s.goto(url, (p) => p.getByText('Bank reference', { exact: true }));
+        if (runMatch(ref).test(await main(s))) {
+          s.checks.push(
+            `note: adopting the payment ${ref} an earlier attempt of this run recorded`,
+          );
+          return url;
+        }
+      }
+      throw new StepFailure(
+        `This run's customer already has a payment that is not ${ref} (${decision.urls.join(', ')}); ` +
+          'not recording another. Check it by hand, or use a new label.',
+      );
+    }
+    return recordPayment(s, ref);
+  };
+
+  const recordPayment = async (s, ref) => {
     await s.goto('/payments/new', (p) => h1(p, 'Record payment'));
     await s.page.waitForLoadState('networkidle', { timeout: 15000 }).catch(() => {});
     await s.choose('Customer', C);
@@ -224,29 +271,29 @@ export function workflow(cfg) {
 
   const verifyAndAllocate = async (s, paymentKey, receiptKey) => {
     await as(s, 'Dev Finance');
-    if (s.state[receiptKey]) {
-      // Retry after verification: reopen the receipt and allocate only if nothing is allocated.
-      await openUrl(s, paymentKey, (p) => p.getByRole('heading', { level: 1, name: RCPT }));
+    await s.goto('/payments', (p) => h1(p, 'Payments'));
+    // Payments list: open this run's payment row (by its id), else the payment itself.
+    const id = s.need(paymentKey).split('/').pop();
+    const link = s.page.locator(`a[href$="${id}"]`).first();
+    if (await link.isVisible().catch(() => false)) await s.click(link, 'the payment row');
+    else await openUrl(s, paymentKey, (p) => p.getByRole('heading', { level: 1 }));
+    const verify = s.button('Verify payment');
+    const receiptHeading = h1(s.page, RCPT);
+    await s.see(verify.or(receiptHeading), 'Verify payment (or the receipt of an earlier attempt)');
+    if (await receiptHeading.isVisible().catch(() => false)) {
+      // Retry after verification: keep the receipt and allocate only if nothing is allocated.
+      const receipt = RCPT.exec(await receiptHeading.first().innerText())[0];
+      if (!s.state[receiptKey]) s.record(receiptKey, receipt);
+      s.checks.push(`note: ${receipt} was verified by an earlier attempt of this run`);
       await s.see(s.page.getByText('Left on this payment'), 'the allocation panel');
       if ((await leftOnPayment(s)) > 0) await allocate(s);
       else s.checks.push('note: this payment was already allocated by an earlier attempt');
       return;
     }
-    await s.goto('/payments', (p) => h1(p, 'Payments'));
-    // Payments list: open the awaiting-verification row with this run's bank reference.
-    const id = s.need(paymentKey).split('/').pop();
-    const link = s.page.locator(`a[href$="${id}"]`).first();
-    if (await link.isVisible().catch(() => false)) await s.click(link, 'the payment row');
-    else await openUrl(s, paymentKey, (p) => p.getByRole('button', { name: 'Verify payment' }));
-    await s.see(s.button('Verify payment'), 'Verify payment');
-    await s.click(s.button('Verify payment'), 'Verify payment');
+    await s.click(verify, 'Verify payment');
     const dialog = s.page.getByRole('dialog', { name: 'Verify this payment' });
     await dialog.getByRole('button', { name: 'Verify payment', exact: true }).click();
-    await s.see(
-      s.page.getByRole('heading', { level: 1, name: RCPT }),
-      'a receipt number (RCPT-…)',
-      90000,
-    );
+    await s.see(receiptHeading, 'a receipt number (RCPT-…)', 90000);
     const receipt = RCPT.exec(await s.page.getByRole('heading', { level: 1 }).innerText())[0];
     s.record(receiptKey, receipt);
     await allocate(s);
@@ -924,8 +971,16 @@ export function workflow(cfg) {
         title: 'Record the first half-payment',
         timeoutMs: 360000,
         async run(s) {
-          const url = await recordPayment(s, v.pay1, 0);
-          s.record('payment1Url', url);
+          const url = await findOrRecordPayment(s, 'payment1Url', v.pay1, ['payment2Url']);
+          if (s.state.payment1Url !== url) s.record('payment1Url', url);
+          const heading = await s.page.getByRole('heading', { level: 1 }).first().innerText();
+          if (RCPT.test(heading)) {
+            s.checks.push(
+              'note: payment 1 was verified by sales-13 of an earlier attempt; its ' +
+                'Awaiting-verification checks cannot be repeated',
+            );
+            return;
+          }
           const text = await main(s);
           await s.see(status(s, 'Awaiting verification'), 'payment Awaiting verification');
           s.expect(!RCPT.test(text), 'no receipt number yet');
@@ -990,8 +1045,8 @@ export function workflow(cfg) {
         title: 'Collect the remaining half',
         timeoutMs: 480000,
         async run(s) {
-          const url = await recordPayment(s, v.pay2, 1);
-          s.record('payment2Url', url);
+          const url = await findOrRecordPayment(s, 'payment2Url', v.pay2, ['payment1Url']);
+          if (s.state.payment2Url !== url) s.record('payment2Url', url);
           await verifyAndAllocate(s, 'payment2Url', 'receipt2');
           const left = await s.text(
             s.page
