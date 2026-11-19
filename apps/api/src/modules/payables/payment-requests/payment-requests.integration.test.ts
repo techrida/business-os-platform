@@ -758,6 +758,48 @@ describe('names on the approval (U18 #1)', () => {
   });
 });
 
+describe('the request on its approval (U18 #2)', () => {
+  it("shows Management the request and the files of the bills it pays, no other bill's file, and no link", async () => {
+    const v = await vendor();
+    const b1 = await approvedBill(v);
+    const b2 = await approvedBill(v);
+    // A bill of the same vendor that this request does not pay: its file has the same owner and must stay hidden.
+    const unpaid = await approvedBill(v);
+    const d = await draft(v, [
+      { openItemId: b1.openItemId, amount: '56500.00' },
+      { openItemId: b2.openItemId, amount: '56500.00' },
+    ]);
+    roles.finance = [U.fin, U.fin2, U.fin3];
+    const submitted = await service.submit(d.id, randomUUID());
+    const files = await read((tx) =>
+      tx
+        .select({ id: vendorBills.id, documentId: vendorBills.documentId })
+        .from(vendorBills)
+        .where(eq(vendorBills.vendorId, v)),
+    );
+    const fileOf = (billId: string) => files.find((f) => f.id === billId)!.documentId;
+
+    as(U.mgmt, 'management');
+    expect(grantsOf('management').has('payables.payment.request')).toBe(false);
+    const { context } = await approvals.get(submitted.approvalRequestId!);
+    expect(context).toMatchObject({ href: null });
+    expect(context!.documents.map((f) => f.documentId)).toEqual([
+      fileOf(b1.billId),
+      fileOf(b2.billId),
+    ]);
+    expect(context!.documents.map((f) => f.documentId)).not.toContain(fileOf(unpaid.billId));
+    expect(context!.fields).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ key: 'vendor', value: `Vendor ${v.slice(0, 6)}` }),
+        expect.objectContaining({ key: 'totalAmount', kind: 'money', value: '113000.00' }),
+        expect.objectContaining({ key: 'status', value: 'pending_approval' }),
+      ]),
+    );
+    const { rows } = await exec(scopeA, sql`SELECT pan FROM app.vendors WHERE id = ${v}`);
+    expect(JSON.stringify(context)).not.toContain((rows[0] as { pan: string }).pan);
+  });
+});
+
 describe('the vendor on the request page (U18 #15)', () => {
   it('names the vendor for Finance and lets them open it; without vendor.read only the name, no link', async () => {
     const v = await vendor();
