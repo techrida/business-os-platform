@@ -21,7 +21,11 @@ export interface AccessRevisionPort {
    * Takes the tenant's access write lock inside `tx`, refuses with 409 `stale_access` when `expectedRevision`
    * is given and no longer current, bumps the counter and returns the new revision.
    */
-  bump(tx: DbTransaction, scope: TxScope, expectedRevision?: string): Promise<string>;
+  bump(
+    tx: DbTransaction,
+    scope: TxScope,
+    options?: { expectedRevision?: string | undefined; actorUserId?: string | null | undefined },
+  ): Promise<string>;
 }
 
 @Injectable()
@@ -30,7 +34,12 @@ export class AccessRevisionTableStore implements AccessRevisionPort {
     return (await readAccessRevision(q, scope.tenantId)).revision;
   }
 
-  async bump(tx: DbTransaction, scope: TxScope, expectedRevision?: string): Promise<string> {
+  async bump(
+    tx: DbTransaction,
+    scope: TxScope,
+    options: { expectedRevision?: string | undefined; actorUserId?: string | null | undefined } = {},
+  ): Promise<string> {
+    const { expectedRevision, actorUserId } = options;
     await lockAccessRevision(tx, scope.tenantId);
     if (expectedRevision !== undefined) {
       const current = (await readAccessRevision(tx, scope.tenantId)).revision;
@@ -41,6 +50,6 @@ export class AccessRevisionTableStore implements AccessRevisionPort {
         });
       }
     }
-    return bumpAccessRevision(tx, scope);
+    return bumpAccessRevision(tx, scope, { actorUserId: actorUserId ?? null });
   }
 }

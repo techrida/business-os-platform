@@ -24,6 +24,17 @@ ALTER TABLE "app"."departments" ADD CONSTRAINT "departments_retired_at_check" CH
 --> statement-breakpoint
 ALTER TABLE "app"."departments" ADD CONSTRAINT "departments_version_check" CHECK ("version" >= 1);
 --> statement-breakpoint
+UPDATE "app"."departments" d
+SET "name" = d."name" || ' (' || r.rn || ')'
+FROM (
+  SELECT "id", row_number() OVER (
+    PARTITION BY "tenant_id", "organization_id", lower(btrim("name")) ORDER BY "created_at", "id"
+  ) AS rn
+  FROM "app"."departments"
+  WHERE "status" = 'active'
+) r
+WHERE d."id" = r."id" AND r.rn > 1;
+--> statement-breakpoint
 CREATE UNIQUE INDEX "departments_tenant_org_active_name_unique" ON "app"."departments" ("tenant_id", "organization_id", lower(btrim("name"))) WHERE "status" = 'active';
 --> statement-breakpoint
 CREATE INDEX "departments_name_trgm_idx" ON "app"."departments" USING gin ("name" gin_trgm_ops);
