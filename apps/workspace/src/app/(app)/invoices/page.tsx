@@ -1,4 +1,5 @@
 import {
+  type ArAgingReport,
   DEFAULT_ROWS,
   INVOICE_KINDS,
   INVOICE_STATUSES,
@@ -30,6 +31,7 @@ import {
   listInvoicesPage,
 } from '@/lib/api-billing';
 import { failureOf } from '@/lib/api-kernel';
+import { getAging } from '@/lib/api-receivables';
 import { requireStaffSession } from '@/lib/bff';
 import { getNumberSystems } from '@/lib/display-settings';
 import { money, when } from '@/lib/kernel-format';
@@ -45,6 +47,7 @@ import { InvoiceFilters } from './_components/invoice-filters';
 import { InvoiceStatusBadge } from './_components/badges';
 import styles from './_components/invoice.module.css';
 import { ListPager } from './_components/list-pager';
+import { recordPaymentHref, settlementMayOwe } from './_lib/gates';
 import { kindMeta, settlementLabel, statusMeta } from './_lib/meta';
 
 export const metadata: Metadata = { title: 'Invoices · Business OS' };
@@ -53,13 +56,18 @@ export const dynamic = 'force-dynamic';
 function InvoiceRow({
   item,
   numberSystems,
+  roles,
+  mayOwe,
 }: {
   item: InvoiceListItem;
   numberSystems: NumberSystems;
+  roles: readonly string[];
+  mayOwe: boolean;
 }) {
   const kind = kindMeta(item.kind).label;
   const name = item.number ?? `${kind} (${statusMeta(item.status).label.toLowerCase()})`;
   const href = `/invoices/${encodeURIComponent(item.id)}`;
+  const pay = mayOwe ? recordPaymentHref(item, roles) : null;
   return (
     <tr>
       <Th scope="row">
@@ -94,26 +102,76 @@ function InvoiceRow({
         <InvoiceStatusBadge status={item.status} />
       </Td>
       <Td nowrap>
-        <Link href={href} className={styles.rowAction} aria-label={`View ${name}`}>
-          <Icon name="chevron-right" size={20} />
-        </Link>
+        <span className={styles.rowActions}>
+          {pay !== null ? (
+            <LinkButton
+              href={pay}
+              variant="secondary"
+              size="small"
+              aria-label={`Record payment for ${name}`}
+            >
+              Record payment
+            </LinkButton>
+          ) : null}
+          <Link href={href} className={styles.rowAction} aria-label={`View ${name}`}>
+            <Icon name="chevron-right" size={20} />
+          </Link>
+        </span>
       </Td>
     </tr>
   );
 }
 
-function InvoiceStats({ summary }: { summary: InvoicesSummary }) {
+/**
+ * The count cards follow the filters; the Outstanding cards do not: they are the receivables aging totals (every
+ * customer, as of today), one card per currency because amounts in different currencies are never added together.
+ * Every figure is a string the server totalled; this page only formats it.
+ */
+function InvoiceStats({
+  summary,
+  outstanding,
+  numberSystems,
+}: {
+  summary: InvoicesSummary | null;
+  outstanding: ArAgingReport['totals'];
+  numberSystems: NumberSystems;
+}) {
   return (
     <section aria-label="Invoice summary" className={styles.stats}>
-      <StatCard label="Total invoices" value={summary.total} icon="receipt" />
-      <StatCard label="Drafts" value={summary.byStatus.draft} icon="file-text" tone="neutral" />
-      <StatCard
-        label="Pending approval"
-        value={summary.byStatus.submitted}
-        icon="inbox"
-        tone="warning"
-      />
-      <StatCard label="Issued" value={summary.byStatus.issued} icon="check-circle" tone="success" />
+      {summary !== null ? (
+        <StatCard label="Total invoices" value={summary.total} icon="receipt" />
+      ) : null}
+      {outstanding.map((total) => (
+        <StatCard
+          key={total.currency}
+          label={outstanding.length > 1 ? `Outstanding · ${total.currency}` : 'Outstanding'}
+          value={
+            <span className={styles.moneyValue}>
+              {money(total.totalOpen, total.currency, numberSystems)}
+            </span>
+          }
+          icon="banknote"
+          tone="error"
+          detail="Not yet paid, all customers"
+        />
+      ))}
+      {summary !== null ? (
+        <>
+          <StatCard label="Drafts" value={summary.byStatus.draft} icon="file-text" tone="neutral" />
+          <StatCard
+            label="Pending approval"
+            value={summary.byStatus.submitted}
+            icon="inbox"
+            tone="warning"
+          />
+          <StatCard
+            label="Issued"
+            value={summary.byStatus.issued}
+            icon="check-circle"
+            tone="success"
+          />
+        </>
+      ) : null}
     </section>
   );
 }
@@ -155,6 +213,11 @@ export default async function InvoicesPage({ searchParams }: { searchParams: Pro
   let window = pageWindow(state.page, rows);
   let summary: InvoicesSummary | null = null;
   let problem: { message: string; status: number } | null = null;
+  // The open balances behind the Outstanding cards, for the people who may read receivables. Started with the list so
+  // it costs no extra wait; a failure (or no ar.read) only leaves the cards out.
+  const aging: Promise<ArAgingReport | null> = hasPermission(session.roles, 'ar.read')
+    ? getAging(session).catch((): null => null)
+    : Promise.resolve(null);
   try {
     // The summary is the stat cards and the customer choices; a failure there hides them, not the table.
     const counts = getInvoicesSummary(session, filter).catch(() => null);
@@ -177,6 +240,7 @@ export default async function InvoicesPage({ searchParams }: { searchParams: Pro
     const f = failureOf(err);
     problem = { message: f.message, status: f.status };
   }
+  const outstanding = problem === null ? ((await aging)?.totals ?? []) : [];
   const customers = summary?.customers ?? [];
   const customerName = new Map(customers.map((c) => [c.id, c.name]));
   const hiding = activeFilterLabels(
@@ -210,7 +274,9 @@ export default async function InvoicesPage({ searchParams }: { searchParams: Pro
         }
       />
 
-      {summary !== null ? <InvoiceStats summary={summary} /> : null}
+      {summary !== null || outstanding.length > 0 ? (
+        <InvoiceStats summary={summary} outstanding={outstanding} numberSystems={numberSystems} />
+      ) : null}
 
       <InvoiceFilters
         status={multi.status}
@@ -251,7 +317,7 @@ export default async function InvoicesPage({ searchParams }: { searchParams: Pro
         )
       ) : (
         <div className={styles.tableCard}>
-          <Table caption="Invoices" minWidth={920} className={styles.listTable ?? ''}>
+          <Table caption="Invoices" minWidth={1000} className={styles.listTable ?? ''}>
             <thead>
               <tr>
                 <Th>Invoice</Th>
@@ -266,7 +332,13 @@ export default async function InvoicesPage({ searchParams }: { searchParams: Pro
             </thead>
             <tbody>
               {items.map((item) => (
-                <InvoiceRow numberSystems={numberSystems} key={item.id} item={item} />
+                <InvoiceRow
+                  numberSystems={numberSystems}
+                  key={item.id}
+                  item={item}
+                  roles={session.roles}
+                  mayOwe={settlementMayOwe(multi.settlement)}
+                />
               ))}
             </tbody>
           </Table>

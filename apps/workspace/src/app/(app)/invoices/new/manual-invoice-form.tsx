@@ -1,12 +1,12 @@
 'use client';
 
 import type { Currency, TaxCode } from '@bos/contracts';
-import { useActionState, useEffect, useRef, useState } from 'react';
+import { type ReactNode, useActionState, useEffect, useRef, useState } from 'react';
 
 import { Alert } from '@/components/ui/alert';
 import { Button, LinkButton } from '@/components/ui/button';
 import { DatePicker } from '@/components/ui/date-picker';
-import { Field, Select, Textarea } from '@/components/ui/field';
+import { Field, Input, Select, Textarea } from '@/components/ui/field';
 import { PageHeader } from '@/components/ui/page';
 import { Panel } from '@/components/ui/panel';
 import { toast } from '@/components/ui/toast';
@@ -14,6 +14,7 @@ import { currencyChoices } from '@/lib/enabled-currencies';
 
 import { DraftSummary } from './draft-summary';
 import type { InvoiceFormState } from './form-state';
+import { DISCOUNT_MODES, type DiscountMode, parseDiscount } from './forms';
 import { LinesEditor, useLines } from './lines-editor';
 import styles from './manual-invoice.module.css';
 
@@ -22,6 +23,27 @@ export interface CustomerOption {
   label: string;
   /** The customer's usual currency: it preselects the currency when the customer is chosen. */
   currency: Currency | null;
+}
+
+const DISCOUNT_LABEL: Record<DiscountMode, string> = {
+  none: 'No discount',
+  pct: 'Percentage',
+  amount: 'Fixed amount',
+};
+
+/**
+ * Card heading with the eyebrow Figma shows above it ("01 · The basics", "02 · The story"), the same treatment as the
+ * create-lead form. The eyebrow is decoration, so screen readers hear only the heading.
+ */
+function SectionTitle({ eyebrow, children }: { eyebrow: string; children: ReactNode }) {
+  return (
+    <>
+      <span className={styles.eyebrow} aria-hidden="true">
+        {eyebrow}
+      </span>
+      {children}
+    </>
+  );
 }
 
 /** The manual form keeps its inputs after a refusal. Numbering, issue date and tax are server-owned. */
@@ -50,6 +72,8 @@ export function ManualInvoiceForm({
   const [currency, setCurrency] = useState<Currency>('NPR');
   const [manualReason, setManualReason] = useState('');
   const [dueDate, setDueDate] = useState('');
+  const [discountMode, setDiscountMode] = useState<DiscountMode>('none');
+  const [discountValue, setDiscountValue] = useState('');
   const { lines, setLine, add, remove } = useLines(1);
   const formRef = useRef<HTMLFormElement>(null);
   const summaryRef = useRef<HTMLDivElement>(null);
@@ -66,6 +90,7 @@ export function ManualInvoiceForm({
 
   const errors = state.errors;
   const customer = customers?.find((c) => c.id === customerId);
+  const discount = parseDiscount(discountMode, discountValue);
   // A new invoice offers only switched-on currencies; NPR (the default) is always among them.
   const currencies = currencyChoices(enabledCurrencies);
   const choose = (id: string): void => {
@@ -114,7 +139,7 @@ export function ManualInvoiceForm({
         </Alert>
       ) : null}
 
-      <Panel title="Customer and source">
+      <Panel title={<SectionTitle eyebrow="01 · The basics">Customer and source</SectionTitle>}>
         <div className={styles.grid}>
           <Field
             label="Organization legal name"
@@ -160,7 +185,7 @@ export function ManualInvoiceForm({
       </Panel>
 
       <Panel
-        title="Invoice details"
+        title={<SectionTitle eyebrow="01 · The basics">Invoice details</SectionTitle>}
         description="The invoice number and issue date are assigned at issue."
       >
         <div className={styles.grid}>
@@ -189,10 +214,46 @@ export function ManualInvoiceForm({
               <DatePicker name="dueDate" value={dueDate} onChange={setDueDate} {...control} />
             )}
           </Field>
+          <Field label="Discount" hint="Optional. Applies to the whole invoice, before tax.">
+            {(control) => (
+              <Select
+                name="discountMode"
+                value={discountMode}
+                onChange={(e) => setDiscountMode(e.target.value as DiscountMode)}
+                {...control}
+              >
+                {DISCOUNT_MODES.map((m) => (
+                  <option key={m} value={m}>
+                    {DISCOUNT_LABEL[m]}
+                  </option>
+                ))}
+              </Select>
+            )}
+          </Field>
+          {discountMode !== 'none' ? (
+            <Field
+              label={discountMode === 'pct' ? 'Discount (%)' : `Discount amount (${currency})`}
+              error={errors['discount']}
+            >
+              {(control) => (
+                <Input
+                  name="discountValue"
+                  inputMode="decimal"
+                  autoComplete="off"
+                  value={discountValue}
+                  onChange={(e) => setDiscountValue(e.target.value)}
+                  {...control}
+                />
+              )}
+            </Field>
+          ) : null}
         </div>
       </Panel>
 
-      <Panel title="Line Items" className={styles.lineItems}>
+      <Panel
+        title={<SectionTitle eyebrow="02 · The story">Line Items</SectionTitle>}
+        className={styles.lineItems}
+      >
         <LinesEditor
           lines={lines}
           currency={currency}
@@ -207,6 +268,7 @@ export function ManualInvoiceForm({
           customer={customer?.label}
           currency={currency}
           lines={lines}
+          discount={discount.ok ? discount.data : undefined}
           pending={pending}
         />
       </Panel>

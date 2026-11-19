@@ -1,6 +1,27 @@
 /* Layout and small pieces that belong to the receivables screens only. Everything else comes from
    components/ui. Colours are Figma tokens from styles/tokens.css. */
 
+/* The aging cards: the total and five buckets of one currency. Money strings are long, so the six
+   cards sit three to a row (two on a phone) and only spread to one row on a very wide screen. */
+.bucketCards {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+}
+
+@media (min-width: 768px) {
+  .bucketCards {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: var(--spacing-content-gap);
+  }
+}
+
+@media (min-width: 1800px) {
+  .bucketCards {
+    grid-template-columns: repeat(6, minmax(0, 1fr));
+  }
+}
+
 /* A long customer name wraps inside its column instead of widening the table. */
 .customer {
   min-width: 16ch;
@@ -109,4 +130,12 @@
     grid-template-columns: minmax(0, 2.8fr) minmax(220px, 1fr);
     align-items: start;
   }
+}
+
+/* A long money amount in a bucket card shrinks to fit and wraps only at the space after the currency code. */
+.moneyValue {
+  display: block;
+  font-size: 18px;
+  line-height: 26px;
+  overflow-wrap: normal;
 }
