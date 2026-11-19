@@ -1377,6 +1377,38 @@ it('rechecks expiry after individual approvals before making the final decision'
   ).toBe(409);
 });
 
+describe('evidence expiry uses the Kathmandu day, not the UTC day', () => {
+  // 2026-11-19T20:30Z is 02:15 on 2026-11-20 in Kathmandu; the UTC date is still 2026-11-19.
+  const KATHMANDU_EARLY_MORNING = new Date('2026-11-19T20:30:00Z');
+
+  /** A filled case whose registration certificate expires on `expiresOn`. */
+  async function caseExpiring(expiresOn: string) {
+    const c = await fillRequired(await openCase());
+    const item = c.checklist.find((i) => i.key === 'registration_certificate')!;
+    const res = await putDocument(
+      c.id,
+      'registration_certificate',
+      item.documentId!,
+      c.version,
+      expiresOn,
+    );
+    expect(res.status, JSON.stringify(res.body)).toBe(200);
+    return VerificationCaseDtoSchema.parse(res.body);
+  }
+
+  it('refuses to submit evidence that expires today in Kathmandu and accepts tomorrow', async () => {
+    clock = KATHMANDU_EARLY_MORNING;
+    const today = await caseExpiring('2026-11-20');
+    const refused = await submitCase(today.id);
+    expect(refused.status).toBe(409);
+    expect(refused.body).toMatchObject({ error: { message: 'Evidence has expired' } });
+
+    const tomorrow = await caseExpiring('2026-11-21');
+    expect((await submitCase(tomorrow.id)).status).toBe(200);
+  });
+
+});
+
 it('preserves real legacy case notes before correction and leaves legacy approved cases approved', async () => {
   const approved = await submittedCase();
   const rejected = await submittedCase();
