@@ -1,6 +1,7 @@
 import { expect, test, type Page } from '@playwright/test';
 
 import { signInAs, type Signed } from '../helpers/memo-flow';
+import { multiSelectByLabel } from '../helpers/multi-select';
 import { chooseOption, selectByLabel, selectByName } from '../helpers/select';
 
 /**
@@ -49,8 +50,8 @@ test('the list shows its filters and offers Create Invoice to the accountant', a
   await as(browser, baseURL, 'accountant', async ({ page }) => {
     await page.goto('/invoices');
     await heading(page, 'Invoices');
-    await expect(page.getByLabel('Kind')).toBeVisible();
-    await expect(page.getByLabel('Status')).toBeVisible();
+    await expect(multiSelectByLabel(page, 'Kind')).toBeVisible();
+    await expect(multiSelectByLabel(page, 'Status')).toBeVisible();
     await expect(page.getByRole('link', { name: 'Create Invoice' })).toBeVisible();
   });
 });

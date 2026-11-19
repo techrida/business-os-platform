@@ -36,7 +36,7 @@ import {
   NotFoundException,
   Optional,
 } from '@nestjs/common';
-import { and, asc, eq, ilike, like, ne, or, sql, type SQL } from 'drizzle-orm';
+import { and, asc, eq, inArray, ne, sql, type SQL } from 'drizzle-orm';
 import { randomUUID } from 'node:crypto';
 
 import { AuditService } from '../../platform/audit/audit.service';
@@ -45,7 +45,8 @@ import { type Principal, type ResourceRef } from '../../platform/authz/can';
 import { DB, type Db, type DbTransaction } from '../../platform/db/db.module';
 import { updateVersioned, withIdempotency } from '../../platform/db/idempotency';
 import { withTx } from '../../platform/db/tx';
-import { escapeLike, normalizeEmail } from '../customers/customers.normalize';
+import { searchPage } from '../../platform/list';
+import { normalizeEmail } from '../customers/customers.normalize';
 import { VerificationService } from '../verification/verification.service';
 import { VendorsCaller } from './vendors.caller';
 import { kybCaseOf, lockVendor, type VendorRow } from './vendors.queries';
@@ -61,7 +62,6 @@ import {
   type LifecycleCommand,
 } from './vendors.rules';
 import {
-  DEFAULT_LIMIT,
   type CreateVendorAccountBody,
   type ListVendorsQuery,
   type UpdateVendorBody,
@@ -192,25 +192,37 @@ export class VendorsService {
 
   async list(query: ListVendorsQuery): Promise<VendorList> {
     const { scope, principal } = this.caller.current();
-    const conditions: SQL[] = [this.visibleWhere(scope.tenantId, principal, 'vendor.read')];
-    if (query.status !== undefined) conditions.push(eq(vendors.status, query.status));
-    if (query.q !== undefined && query.q !== '') {
-      const term = `%${escapeLike(query.q)}%`;
-      conditions.push(or(ilike(vendors.legalName, term), like(vendors.pan, term)) as SQL);
-    }
-    const where = and(...conditions);
-    const rows = await this.db
-      .select()
-      .from(vendors)
-      .where(where)
-      .orderBy(asc(vendors.legalName), asc(vendors.id))
-      .limit(query.limit ?? DEFAULT_LIMIT)
-      .offset(query.offset ?? 0);
-    const [count] = await this.db
-      .select({ n: sql<number>`count(*)::int` })
-      .from(vendors)
-      .where(where);
-    return { items: rows.map(toVendorDto), total: count?.n ?? 0 };
+    // Scope and filters are one `where`; searchPage ANDs the search onto it, so a close match never widens access.
+    const where = and(
+      this.visibleWhere(scope.tenantId, principal, 'vendor.read'),
+      query.status === undefined ? undefined : inArray(vendors.status, query.status),
+      // The table says `proprietor` where the API says `sole_proprietor`.
+      query.kind === undefined ? undefined : inArray(vendors.kind, query.kind.map(kindToRow)),
+    );
+    const { rows, total } = await searchPage(this.db, {
+      q: query.q,
+      columns: [vendors.legalName, vendors.pan],
+      where,
+      orderBy: [asc(vendors.legalName), asc(vendors.id)],
+      limit: query.limit,
+      offset: query.offset,
+      rows: (tx, p) =>
+        tx
+          .select()
+          .from(vendors)
+          .where(p.where)
+          .orderBy(...p.orderBy)
+          .limit(p.limit)
+          .offset(p.offset),
+      count: async (tx, w) => {
+        const [count] = await tx
+          .select({ n: sql<number>`count(*)::int` })
+          .from(vendors)
+          .where(w);
+        return count?.n ?? 0;
+      },
+    });
+    return { items: rows.map(toVendorDto), total };
   }
 
   // --------------------------------------------------------------------------------------------------- read

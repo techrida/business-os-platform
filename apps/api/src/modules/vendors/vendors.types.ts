@@ -4,7 +4,11 @@
 import {
   CurrencySchema,
   EmailSchema,
+  limitOffset,
+  multi,
   PhoneSchema,
+  searchParam,
+  VendorKindSchema,
   VendorPanSchema,
   VendorStatusSchema,
   type VendorDto,
@@ -12,24 +16,17 @@ import {
 import { z } from 'zod';
 
 const text = (max: number) => z.string().trim().min(1).max(max);
-const digits = (max: number) =>
-  z
-    .string()
-    .regex(/^\d{1,9}$/, 'must be a whole number')
-    .transform(Number)
-    .pipe(z.number().int().max(max));
-
-/** GET /v1/vendors?q&status&limit&offset. */
+/**
+ * GET /v1/vendors?q&status&kind&limit&offset. `status` and `kind` may repeat (`?status=approved&status=draft`):
+ * values of one filter are OR-ed, filters are AND-ed. An unknown value or key is a 400.
+ */
 export const ListVendorsQuerySchema = z.strictObject({
-  q: z.string().trim().max(100).optional(),
-  status: VendorStatusSchema.optional(),
-  limit: digits(100)
-    .refine((n) => n >= 1, 'must be at least 1')
-    .optional(),
-  offset: digits(1_000_000).optional(),
+  q: searchParam,
+  status: multi(VendorStatusSchema),
+  kind: multi(VendorKindSchema),
+  ...limitOffset({ max: 100, fallback: 50 }),
 });
 export type ListVendorsQuery = z.infer<typeof ListVendorsQuerySchema>;
-export const DEFAULT_LIMIT = 50;
 
 export interface VendorList {
   items: VendorDto[];

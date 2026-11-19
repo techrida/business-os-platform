@@ -5,10 +5,12 @@
 import {
   CreateQuotationBodySchema,
   ListQuotationsQuerySchema,
+  QuotationSummaryQuerySchema,
   UpdateQuotationDraftBodySchema,
   type QuotationDetail,
   type QuotationDto,
   type QuotationListItem,
+  type QuotationSummary,
   type QuotationVersionDto,
 } from '@bos/contracts';
 import {
@@ -21,9 +23,12 @@ import {
   Post,
   Put,
   Query,
+  Res,
 } from '@nestjs/common';
+import type { Response } from 'express';
 
 import { Can } from '../../../platform/authz/decorators';
+import { setTotalCount } from '../../../platform/list';
 import { parseOr400 } from '../../approvals/approvals.controller';
 import { requireIdempotencyKey } from '../../customers/customers.types';
 import { DraftingService } from './drafting.service';
@@ -44,16 +49,29 @@ export class DraftingController {
   }
 
   /**
-   * 200 with a bare array of QuotationListItem, optionally only the given `status` and/or one
-   * `opportunityId`. 400 for an unknown status or an opportunityId that is not a UUID.
+   * 200 with a bare array of QuotationListItem (one page) and `X-Total-Count`, the number of all matches.
+   * Filters: `status` and `customerId` (repeatable), `opportunityId`, `q`, `limit` (none: every match), `offset`. 400 for an
+   * unknown status, a malformed id or an unknown parameter.
    */
   @Get()
   @Can('quotation.read')
-  list(
-    @Query('status') status?: unknown,
-    @Query('opportunityId') opportunityId?: unknown,
+  async list(
+    @Query() query: unknown,
+    @Res({ passthrough: true }) res: Response,
   ): Promise<QuotationListItem[]> {
-    return this.drafting.list(parseOr400(ListQuotationsQuerySchema, { status, opportunityId }));
+    const { rows, total } = await this.drafting.list(parseOr400(ListQuotationsQuerySchema, query));
+    setTotalCount(res, total);
+    return rows;
+  }
+
+  /**
+   * 200 with `{ total, byStatus }` for the KPI cards: `q`, `customerId` and `opportunityId` as in the list,
+   * but not `status`. Declared before `:id` so "summary" is not read as an id.
+   */
+  @Get('summary')
+  @Can('quotation.read')
+  summary(@Query() query: unknown): Promise<QuotationSummary> {
+    return this.drafting.summary(parseOr400(QuotationSummaryQuerySchema, query));
   }
 
   /** 200 with the QuotationDetail. 404 for a record of another entity or outside the caller's scope. */

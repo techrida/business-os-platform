@@ -61,6 +61,7 @@ import { MatchExceptionSubject, VendorBillSubject } from './vendor-bill.subject'
 import { BillSubmissionsController } from './bill-submissions.controller';
 import { BillSubmissionsService } from './bill-submissions.service';
 import { VendorBillsService } from './vendor-bills.service';
+import { VendorPortalInboxService } from '../../portal-vendor/inbox/portal-vendor-inbox.service';
 import { vendorIntakeOwnerPolicy } from '../../portal-vendor/inbox/vendor-intake.policy';
 
 vi.setConfig({ testTimeout: 60_000, hookTimeout: 180_000 });
@@ -429,6 +430,32 @@ const plainLines = () => [
   { accountId: randomUUID(), quantity: '2', unitPrice: '500.00', taxCodeId: vatCode },
 ];
 
+// ---------------------------------------------------------------------------------------- list
+describe('list search and paging', () => {
+  it('searches by invoice number or vendor name, pages by offset, counts all matches and stays in the entity', async () => {
+    const vendorId = await vendor();
+    const name = `Vendor ${vendorId.slice(0, 6)}`;
+    const a = await submission({ vendorId, invoiceNo: `FIND-${randomUUID().slice(0, 8)}` });
+    const b = await submission({ vendorId });
+    const orphan = await submission({ vendorId: null });
+    const foreign = await submission({ vendorId, scope: scopeB });
+    const ids = (page: { rows: { id: string }[] }) => page.rows.map((r) => r.id);
+
+    const byInvoice = await inbox.list({ offset: 0, q: a.invoiceNo });
+    expect(ids(byInvoice)).toContain(a.id);
+    const byVendor = await inbox.list({ offset: 0, q: name });
+    expect(ids(byVendor)).toEqual(expect.arrayContaining([a.id, b.id]));
+    expect(ids(byVendor)).not.toContain(foreign.id);
+
+    // No limit: every received row, the vendorless one included (left join).
+    const all = await inbox.list();
+    expect(ids(all)).toEqual(expect.arrayContaining([a.id, b.id, orphan.id]));
+    const one = await inbox.list({ limit: 1, offset: 1 });
+    expect(one.total).toBe(all.total);
+    expect(one.rows[0]?.id).toBe(all.rows[1]?.id);
+  });
+});
+
 // ---------------------------------------------------------------------------------------- convert
 
 describe('convert a bill submission', () => {
@@ -442,7 +469,7 @@ describe('convert a bill submission', () => {
     await service.discard(bill.id, key);
     await service.discard(bill.id, key);
     expect(await rowOf(sub.id)).toMatchObject({ status: 'received', convertedBillId: null });
-    expect((await inbox.list()).map((row) => row.id)).toContain(sub.id);
+    expect((await inbox.list()).rows.map((row) => row.id)).toContain(sub.id);
     expect(await policy.canAttach!(scopeA, vendorId, undefined, sub.documentId)).toBe(true);
     const replacement = await service.convertSubmission(
       sub.id,
@@ -519,7 +546,7 @@ describe('convert a bill submission', () => {
     await service.convertSubmission(done.id, { lines: plainLines() }, randomUUID());
     await inbox.reject(rejected.id, { reason: 'Not our invoice' }, randomUUID());
 
-    const rows = await inbox.list();
+    const { rows } = await inbox.list();
     const ids = rows.map((r) => r.id);
     expect(ids).toContain(open.id);
     expect(ids).not.toContain(done.id);
@@ -660,7 +687,7 @@ describe('convert a bill submission', () => {
     expect(await rowOf(sub.id)).toMatchObject({ status: 'received', convertedBillId: null });
 
     current.scope = scopeB;
-    expect((await inbox.list()).map((r) => r.id)).toContain(sub.id);
+    expect((await inbox.list()).rows.map((r) => r.id)).toContain(sub.id);
     const bill = await service.convertSubmission(sub.id, { lines: plainLines() }, randomUUID());
     expect(bill.vendorPartyId).toBe(vendorId);
   });
@@ -748,5 +775,115 @@ describe('the converted bill is a staff-entered bill (Journey 11)', () => {
     const refused = await httpErrorOf(service.submit(bill.id, randomUUID()));
     expect(refused.getStatus()).toBe(409);
     expect(codeOf(refused)).toBe('BILL_NOT_MATCHED');
+  });
+});
+
+// ---------------------------------------------------------------------------------------- I-33 duplicates
+
+describe('duplicate invoice numbers in the inbox (I-33, a warning, not a block)', () => {
+  /** A bill the vendor sends through the real portal producer (VendorPortalInboxService.submitBill). */
+  async function portalBill(vendorId: string, invoiceNo: string, claimedTotal: string) {
+    const documentId = randomUUID();
+    await exec(
+      scopeA,
+      sql`INSERT INTO app.documents (id, tenant_id, organization_id, owner_type, owner_id)
+          VALUES (${documentId}, ${scopeA.tenantId}, ${scopeA.organizationId}, 'vendor_portal_intake', ${vendorId})`,
+    );
+    await exec(
+      scopeA,
+      sql`INSERT INTO app.document_versions (tenant_id, organization_id, document_id, version, filename,
+            declared_mime, size_bytes, storage_key, status)
+          VALUES (${scopeA.tenantId}, ${scopeA.organizationId}, ${documentId}, 1, 'invoice.pdf',
+                  'application/pdf', 1024, ${`${scopeA.tenantId}/${randomUUID()}`}, 'clean')`,
+    );
+    const vendorCaller = {
+      current: () => ({
+        ...principalNow(),
+        userId: U.portal,
+        orgKind: 'vendor' as const,
+        partyId: vendorId,
+        roles: ['vendor_user'],
+        grants: new Map<Permission, Scope>([
+          ['portal.vendor.read', 'customer_org'],
+          ['portal.vendor.submit', 'customer_org'],
+        ]),
+      }),
+    };
+    const portal = new VendorPortalInboxService(
+      db,
+      {} as never,
+      new AuditService(db),
+      vendorCaller as never,
+      {} as never,
+    );
+    return portal.submitBill(
+      { scope: scopeA, actor: { kind: 'user', id: U.portal, correlationId: 'portal-corr' } },
+      {
+        vendorInvoiceNo: invoiceNo,
+        invoiceDate: '2026-11-05',
+        currency: 'NPR',
+        claimedTotal,
+        documentId,
+      },
+      randomUUID(),
+    );
+  }
+  const rowIn = async (id: string) => (await inbox.list()).rows.find((r) => r.id === id)!;
+
+  it("shows a submission's claimed amount and flags another submission of the same vendor and invoice number", async () => {
+    const vendorId = await vendor();
+    const first = await portalBill(vendorId, 'INV-0042', '112999.00');
+    const second = await portalBill(vendorId, 'inv 0042', '100.00');
+
+    const a = await rowIn(first.id);
+    expect(a).toMatchObject({ claimedTotal: '112999.00', currency: 'NPR' });
+    expect(a.duplicates).toEqual([
+      expect.objectContaining({ kind: 'submission', id: second.id, amount: '100.00' }),
+    ]);
+    const b = await rowIn(second.id);
+    expect(b.duplicates).toEqual([
+      expect.objectContaining({
+        kind: 'submission',
+        id: first.id,
+        number: null,
+        vendorInvoiceNo: 'INV-0042',
+        status: 'received',
+        amount: '112999.00',
+        currency: 'NPR',
+      }),
+    ]);
+  });
+
+  it('flags a submission whose invoice number is already on a bill of that vendor, by bill and amount', async () => {
+    const vendorId = await vendor();
+    const first = await portalBill(vendorId, 'INV-77', '1130.00');
+    const bill = await service.convertSubmission(first.id, { lines: plainLines() }, randomUUID());
+    const again = await portalBill(vendorId, 'INV-77', '1130.00');
+    const row = await rowIn(again.id);
+    expect(row.duplicates).toEqual([
+      expect.objectContaining({
+        kind: 'bill',
+        id: bill.id,
+        vendorInvoiceNo: 'INV-77',
+        amount: '1130.00',
+        currency: 'NPR',
+      }),
+    ]);
+  });
+
+  it('does not flag the same invoice number from a different vendor', async () => {
+    const one = await vendor();
+    const two = await vendor();
+    await portalBill(one, 'INV-SAME', '10.00');
+    const theirs = await portalBill(two, 'INV-SAME', '10.00');
+    expect((await rowIn(theirs.id)).duplicates).toEqual([]);
+  });
+
+  it('does not flag against an earlier submission that was rejected', async () => {
+    const vendorId = await vendor();
+    const first = await portalBill(vendorId, 'INV-R1', '10.00');
+    await inbox.reject(first.id, { reason: 'Wrong amount' }, randomUUID());
+    const second = await portalBill(vendorId, 'INV-R1', '12.00');
+    expect((await rowIn(second.id)).duplicates).toEqual([]);
   });
 });

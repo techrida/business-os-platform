@@ -5,6 +5,7 @@
 import { z } from 'zod';
 
 import { DocumentVersionStatusSchema } from './documents.js';
+import { limitOffset, multi, searchParam } from './list-query.js';
 import { CurrencySchema } from './money.js';
 import { NonNegativeDecimalString, PercentFourDecimals, QuantityString } from './quotations.js';
 import { richTextSchema } from './rich-text.js';
@@ -289,8 +290,9 @@ export type ScoreQuotationBody = z.infer<typeof ScoreQuotationBodySchema>;
 
 /** Query of `GET /v1/procurement/rfqs`: the acting entity's RFQs, newest first. */
 export const ListRfqsQuerySchema = z.strictObject({
-  status: RfqStatusSchema.optional(),
-  limit: z.coerce.number().int().min(1).max(200).default(50),
+  status: multi(RfqStatusSchema),
+  q: searchParam,
+  ...limitOffset({ max: 200, fallback: 50 }),
 });
 export type ListRfqsQuery = z.infer<typeof ListRfqsQuerySchema>;
 

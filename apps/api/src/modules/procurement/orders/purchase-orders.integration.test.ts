@@ -653,6 +653,8 @@ describe('short-close and cancel', () => {
 
 // ---------------------------------------------------------------------------------------- vendor name
 
+const PAGE = { limit: 100, offset: 0 };
+
 describe('vendor name on reads', () => {
   it('carries the vendor legal name on every list row and on get, in the entity and out of it', async () => {
     const vendorId = await vendor('approved', { accountIn: [scopeA, scopeB] });
@@ -660,16 +662,19 @@ describe('vendor name on reads', () => {
     const inA = await draftPo({ vendorId });
     const inB = await draftPo({ vendorId, scope: scopeB });
 
-    const rowsA = await service.list();
+    const rowsA = (await service.list(PAGE)).rows;
     expect(rowsA.find((p) => p.id === inA.id)).toMatchObject({ vendorId, vendorName: name });
     expect(await service.get(inA.id)).toMatchObject({ vendorId, vendorName: name });
     expect(rowsA.every((p) => typeof p.vendorName === 'string' && p.vendorName !== '')).toBe(true);
     // The status filter keeps the join.
-    expect((await service.list('draft')).find((p) => p.id === inA.id)?.vendorName).toBe(name);
+    expect(
+      (await service.list({ ...PAGE, status: ['draft'] })).rows.find((p) => p.id === inA.id)
+        ?.vendorName,
+    ).toBe(name);
 
     // Vendors are tenant level: entity B sees the same name on its own PO, and never entity A's PO.
     current.scope = scopeB;
-    const rowsB = await service.list();
+    const rowsB = (await service.list(PAGE)).rows;
     expect(rowsB.find((p) => p.id === inB.id)?.vendorName).toBe(name);
     expect(rowsB.map((p) => p.id)).not.toContain(inA.id);
     expect((await service.get(inB.id)).vendorName).toBe(name);
@@ -677,10 +682,41 @@ describe('vendor name on reads', () => {
 
   it('keeps the list rows free of lines', async () => {
     const po = await draftPo();
-    const row = (await service.list()).find((p) => p.id === po.id);
+    const row = (await service.list(PAGE)).rows.find((p) => p.id === po.id);
     expect(row).toBeDefined();
     expect(row).not.toHaveProperty('lines');
     expect(row).toHaveProperty('vendorName');
+  });
+});
+
+describe('list filters, search and paging', () => {
+  it('takes several statuses, searches by number or vendor, pages by offset and stays in the entity', async () => {
+    const vendorId = await vendor('approved', { accountIn: [scopeA, scopeB] });
+    const name = `Vendor ${vendorId.slice(0, 6)}`;
+    const inA = await draftPo({ vendorId });
+    const inB = await draftPo({ vendorId, scope: scopeB });
+
+    const byStatus = await service.list({ ...PAGE, status: ['draft', 'issued'] });
+    expect(byStatus.rows.map((p) => p.id)).toContain(inA.id);
+    const none = await service.list({ ...PAGE, status: ['cancelled'] });
+    expect(none.rows.map((p) => p.id)).not.toContain(inA.id);
+
+    const byVendor = await service.list({ ...PAGE, q: name });
+    expect(byVendor.rows.map((p) => p.id)).toContain(inA.id);
+    expect(byVendor.total).toBe(byVendor.rows.length);
+    const numberA = (await service.get(inA.id)).number;
+    const byNumber = await service.list({ ...PAGE, q: numberA });
+    expect(byNumber.rows.map((p) => p.id)).toContain(inA.id);
+
+    const all = await service.list(PAGE);
+    const second = await service.list({ limit: 1, offset: 1 });
+    expect(second.total).toBe(all.total);
+    expect(second.rows[0]?.id).toBe(all.rows[1]?.id);
+
+    current.scope = scopeB;
+    const inOther = await service.list({ ...PAGE, q: name });
+    expect(inOther.rows[0]?.id).toBe(inB.id);
+    expect(inOther.rows.map((p) => p.id)).not.toContain(inA.id);
   });
 });
 
@@ -706,6 +742,6 @@ describe('one legal entity at a time', () => {
     expect(
       (await httpErrorOf(service.cancel(po.id, { reason: 'x' }, randomUUID()))).getStatus(),
     ).toBe(404);
-    expect((await service.list()).map((p) => p.id)).not.toContain(po.id);
+    expect((await service.list(PAGE)).rows.map((p) => p.id)).not.toContain(po.id);
   });
 });

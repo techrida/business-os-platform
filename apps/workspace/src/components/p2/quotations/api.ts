@@ -1,11 +1,13 @@
 import 'server-only';
 
 import {
-  type ListQuotationsQuery,
+  QUOTATION_STATUSES,
   type QuotationDetail,
   QuotationDetailSchema,
   type QuotationListItem,
   QuotationListItemSchema,
+  type QuotationSummary,
+  QuotationSummarySchema,
 } from '@bos/contracts';
 import { z } from 'zod';
 
@@ -29,7 +31,11 @@ async function readBody(res: Response): Promise<unknown> {
   }
 }
 
-async function get<T>(session: Session, path: string, schema: z.ZodType<T>): Promise<T> {
+async function read<T>(
+  session: Session,
+  path: string,
+  schema: z.ZodType<T>,
+): Promise<{ data: T; res: Response }> {
   const res = await apiFetch(session, path, { method: 'GET' });
   const body = await readBody(res);
   const label = `GET ${path.split('?')[0] ?? path}`;
@@ -39,25 +45,136 @@ async function get<T>(session: Session, path: string, schema: z.ZodType<T>): Pro
     // 502: the upstream answered, but not with the shape the contract promises.
     throw new ApiError(502, `${label} returned an invalid body`, parsed.error.issues);
   }
-  return parsed.data;
+  return { data: parsed.data, res };
+}
+
+async function get<T>(session: Session, path: string, schema: z.ZodType<T>): Promise<T> {
+  return (await read(session, path, schema)).data;
 }
 
 /** One path segment from a caller-supplied id: encoded, so `../` can never climb out of the route. */
 const seg = (id: string): string => encodeURIComponent(id);
 
+const GUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+/** The most values one repeated filter carries; the API refuses more. */
+const MAX_FILTER_VALUES = 20;
+
+type Many<T> = T | readonly T[];
+
 /**
- * `GET /v1/quotations[?status=&opportunityId=]`: a bare array of list rows. Both filters are optional;
- * the API still limits the rows to what the caller may read.
+ * The list's query as callers write it: a filter takes one value or several. Typed here rather than
+ * with `z.input` of the contract schema, which types the repeatable fields as `unknown`.
+ */
+export interface QuotationListFilter {
+  /** Contract statuses; anything else is dropped before the call (the URL is user-editable). */
+  status?: Many<string> | undefined;
+  customerId?: Many<string> | undefined;
+  opportunityId?: string | undefined;
+  q?: string | undefined;
+  limit?: number | undefined;
+  offset?: number | undefined;
+}
+
+/** The summary takes the list's filters except status and paging. */
+export type QuotationSummaryFilter = Pick<
+  QuotationListFilter,
+  'customerId' | 'opportunityId' | 'q'
+>;
+
+/** Repeated `name=value` pairs, once each; values that are not valid are dropped, never sent. */
+function repeated(
+  name: string,
+  raw: Many<string> | undefined,
+  keep: (value: string) => boolean,
+): [string, string][] {
+  const list = raw === undefined ? [] : typeof raw === 'string' ? [raw] : [...raw];
+  return [...new Set(list.filter(keep))].slice(0, MAX_FILTER_VALUES).map((v) => [name, v]);
+}
+
+function scopePairs(filter: QuotationSummaryFilter): [string, string][] {
+  const pairs = repeated('customerId', filter.customerId, (v) => GUID.test(v));
+  if (filter.opportunityId !== undefined && GUID.test(filter.opportunityId)) {
+    pairs.push(['opportunityId', filter.opportunityId]);
+  }
+  const q = filter.q?.trim();
+  if (q) pairs.push(['q', q]);
+  return pairs;
+}
+
+function queryOf(pairs: [string, string][]): string {
+  const query = new URLSearchParams();
+  for (const [name, value] of pairs) query.append(name, value);
+  const text = query.toString();
+  return text === '' ? '' : `?${text}`;
+}
+
+function listPairs(filter: QuotationListFilter): [string, string][] {
+  const pairs = [
+    ...repeated('status', filter.status, (v) =>
+      (QUOTATION_STATUSES as readonly string[]).includes(v),
+    ),
+    ...scopePairs(filter),
+  ];
+  if (filter.limit !== undefined)
+    pairs.push(['limit', String(Math.max(1, Math.floor(filter.limit)))]);
+  if (filter.offset !== undefined) {
+    pairs.push(['offset', String(Math.max(0, Math.floor(filter.offset)))]);
+  }
+  return pairs;
+}
+
+/**
+ * `GET /v1/quotations`: a bare array of list rows. For callers that want every row of a narrow filter
+ * (a picker, one opportunity's quotations): no `limit` is sent unless the caller gives one, and the API
+ * then returns every match. The list screen uses `listQuotationsPage`. The API still limits the rows to
+ * what the caller may read.
  */
 export function listQuotations(
   session: Session,
-  filter: ListQuotationsQuery = {},
+  filter: QuotationListFilter = {},
 ): Promise<QuotationListItem[]> {
-  const params = new URLSearchParams();
-  if (filter.status !== undefined) params.set('status', filter.status);
-  if (filter.opportunityId !== undefined) params.set('opportunityId', filter.opportunityId);
-  const query = params.size === 0 ? '' : `?${params.toString()}`;
-  return get(session, `/v1/quotations${query}`, z.array(QuotationListItemSchema));
+  return get(
+    session,
+    `/v1/quotations${queryOf(listPairs(filter))}`,
+    z.array(QuotationListItemSchema),
+  );
+}
+
+/** A page's window is always explicit: the API returns every match when `limit` is absent. */
+export type QuotationPageFilter = QuotationListFilter & { limit: number; offset: number };
+
+/** One page of `GET /v1/quotations` with the number of all matches (the `X-Total-Count` header). */
+export async function listQuotationsPage(
+  session: Session,
+  filter: QuotationPageFilter,
+): Promise<{ items: QuotationListItem[]; total: number }> {
+  const { data, res } = await read(
+    session,
+    `/v1/quotations${queryOf(listPairs(filter))}`,
+    z.array(QuotationListItemSchema),
+  );
+  const header = res.headers.get('x-total-count');
+  const total = header !== null && /^\d+$/.test(header) ? Number(header) : Number.NaN;
+  // A missing or malformed count would silently render a wrong pager, so it fails like a contract drift.
+  if (!Number.isSafeInteger(total)) {
+    throw new ApiError(502, 'GET /v1/quotations returned no valid X-Total-Count', header);
+  }
+  return { items: data, total };
+}
+
+/**
+ * `GET /v1/quotations/summary`: counts per current-version status for the same search, customers and
+ * opportunity, whatever status is picked. Never sends status or paging (the API refuses them).
+ */
+export function getQuotationsSummary(
+  session: Session,
+  filter: QuotationSummaryFilter = {},
+): Promise<QuotationSummary> {
+  return get(
+    session,
+    `/v1/quotations/summary${queryOf(scopePairs(filter))}`,
+    QuotationSummarySchema,
+  );
 }
 
 /** `GET /v1/quotations/:id`: the parent, every version, the status history and the contacts. */

@@ -1,7 +1,13 @@
 import { expect, test } from '@playwright/test';
 
 import { signInAs, type Signed } from '../helpers/memo-flow';
-import { chooseOption, selectByName, selectedInput } from '../helpers/select';
+import {
+  expectParam,
+  expectSelected,
+  multiSelectByLabel,
+  toggleOptions,
+} from '../helpers/multi-select';
+import { selectByName, selectedInput } from '../helpers/select';
 
 /**
  * The P4 RFQ screens, against the real stack. Not run by the unit that wrote it: it needs the
@@ -37,9 +43,11 @@ test('the RFQ list loads and keeps its filter in the URL', async ({ browser, bas
     await expect(
       founder.page.getByRole('heading', { level: 1, name: 'Requests for quotation' }),
     ).toBeVisible();
-    await chooseOption(selectByName(founder.page, 'status'), 'cancelled');
-    await founder.page.getByRole('button', { name: 'Apply' }).click();
-    await expect(founder.page).toHaveURL(/status=cancelled/);
+    // Filters apply as they change: no Apply button, the URL is the state.
+    const status = multiSelectByLabel(founder.page, 'Status');
+    await toggleOptions(status, ['cancelled']);
+    await expectParam(founder.page, 'status', ['cancelled']);
+    await expectSelected(status, ['cancelled']);
   } finally {
     await Promise.all(opened.map((s) => s.context.close()));
   }

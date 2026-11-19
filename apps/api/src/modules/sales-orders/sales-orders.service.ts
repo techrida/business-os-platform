@@ -20,6 +20,7 @@ import {
   type MarkBillableBody,
   type SalesOrderDetail,
   type SalesOrderListItem,
+  SALES_ORDER_STATUSES,
   type SalesOrderStatus,
 } from '@bos/contracts';
 import {
@@ -49,7 +50,7 @@ import {
   Optional,
   UnprocessableEntityException,
 } from '@nestjs/common';
-import { and, asc, desc, eq, exists, inArray, isNull, ne, type SQL } from 'drizzle-orm';
+import { and, asc, count, desc, eq, exists, inArray, isNull, ne, type SQL } from 'drizzle-orm';
 
 import { AuditService } from '../../platform/audit/audit.service';
 import { scopeWhereFor } from '../../platform/authz/authz.service';
@@ -58,6 +59,7 @@ import { type Principal } from '../../platform/authz/principal';
 import { DB, type Db, type DbTransaction } from '../../platform/db/db.module';
 import { updateVersioned, withIdempotency } from '../../platform/db/idempotency';
 import { withTx, type Actor, type TxScope } from '../../platform/db/tx';
+import { searchPage, type SearchColumn } from '../../platform/list';
 import { NumberingService } from '../../platform/settings/numbering.service';
 import { SettingsService } from '../../platform/settings/settings.service';
 import { LedgerService } from '../ledger/ledger.service';
@@ -71,6 +73,40 @@ export const SALES_ORDERS_CLOCK = Symbol('SALES_ORDERS_CLOCK');
 /** The numbering series of sales orders (plan A15): SO-2083/84-00001. */
 const SO_SERIES = 'SO';
 const AUDIT_ENTITY = 'sales_orders';
+
+/** The list without `limit` returns every match (the quotation page and the confirm dialog never page). */
+const NO_LIMIT = 2_147_483_647;
+
+/** What `q` searches: the order number, the customer's name and the source quotation's number. */
+const SEARCH_COLUMNS: readonly SearchColumn[] = [
+  salesOrders.number,
+  customers.legalName,
+  quotations.number,
+];
+
+const customerOn = and(
+  eq(customers.tenantId, salesOrders.tenantId),
+  eq(customers.id, salesOrders.customerPartyId),
+);
+const quotationOn = and(
+  eq(quotations.tenantId, salesOrders.tenantId),
+  eq(quotations.id, salesOrders.quotationId),
+);
+
+/** The parsed `GET /v1/sales-orders` query (the controller's schema produces it). */
+export interface SalesOrderListFilter {
+  status?: SalesOrderStatus[] | undefined;
+  customerId?: string[] | undefined;
+  quotationVersionId?: string | undefined;
+  q?: string | undefined;
+  limit?: number | undefined;
+  offset?: number | undefined;
+}
+
+export interface SalesOrdersSummary {
+  total: number;
+  byStatus: Record<SalesOrderStatus, number>;
+}
 
 type OrderRow = typeof salesOrders.$inferSelect;
 type LineRow = typeof billingScheduleLines.$inferSelect;
@@ -102,46 +138,117 @@ export class SalesOrdersService {
 
   // ------------------------------------------------------------------------------------------- reads
 
-  /** `GET /v1/sales-orders[?status&customerId]`: the acting entity's orders, newest first. */
-  async list(filter: {
-    status?: SalesOrderStatus | undefined;
-    customerId?: string | undefined;
-    quotationVersionId?: string | undefined;
-  }): Promise<SalesOrderListItem[]> {
+  /**
+   * `GET /v1/sales-orders`: one page of the acting entity's orders, newest first (id breaks ties), and the number
+   * of all matches. No `limit` returns every match: the quotation page and the confirm dialog ask for a few rows
+   * and never page.
+   */
+  async list(filter: SalesOrderListFilter): Promise<{ rows: SalesOrderListItem[]; total: number }> {
     const { scope, actor, principal } = this.caller.current();
     this.assertStaff(principal);
     return withTx(this.db, scope, actor, async (tx) => {
-      const conditions = [this.readWhere(tx, scope, principal)];
-      if (filter.status !== undefined) conditions.push(eq(salesOrders.status, filter.status));
-      if (filter.customerId !== undefined) {
-        conditions.push(eq(salesOrders.customerPartyId, filter.customerId));
-      }
-      if (filter.quotationVersionId !== undefined) {
-        conditions.push(eq(salesOrders.quotationVersionId, filter.quotationVersionId));
-      }
-      const rows = await tx
-        .select({ order: salesOrders, customerName: customers.legalName })
-        .from(salesOrders)
-        .innerJoin(
-          customers,
-          and(
-            eq(customers.tenantId, salesOrders.tenantId),
-            eq(customers.id, salesOrders.customerPartyId),
-          ),
-        )
-        .where(scoped(scope).where(salesOrders, and(...conditions)))
-        .orderBy(desc(salesOrders.createdAt), desc(salesOrders.id));
-      return rows.map(({ order, customerName }) => ({
-        id: order.id,
-        number: order.number,
-        customerId: order.customerPartyId ?? '',
-        customerName,
-        status: order.status,
-        currency: order.currency,
-        total: order.total,
-        confirmedAt: order.confirmedAt === null ? null : iso(order.confirmedAt),
-      }));
+      const { rows, total } = await searchPage(tx, {
+        q: filter.q,
+        columns: SEARCH_COLUMNS,
+        where: this.listWhere(tx, scope, principal, filter),
+        orderBy: [desc(salesOrders.createdAt), desc(salesOrders.id)],
+        limit: filter.limit ?? NO_LIMIT,
+        offset: filter.offset ?? 0,
+        rows: (r, p) =>
+          r
+            .select({ order: salesOrders, customerName: customers.legalName })
+            .from(salesOrders)
+            .innerJoin(customers, customerOn)
+            .innerJoin(quotations, quotationOn)
+            .where(p.where)
+            .orderBy(...p.orderBy)
+            .limit(p.limit)
+            .offset(p.offset),
+        count: async (r, where) => {
+          const [row] = await r
+            .select({ n: count() })
+            .from(salesOrders)
+            .innerJoin(customers, customerOn)
+            .innerJoin(quotations, quotationOn)
+            .where(where);
+          return row?.n ?? 0;
+        },
+      });
+      return {
+        total,
+        rows: rows.map(({ order, customerName }) => ({
+          id: order.id,
+          number: order.number,
+          customerId: order.customerPartyId ?? '',
+          customerName,
+          status: order.status,
+          currency: order.currency,
+          total: order.total,
+          confirmedAt: order.confirmedAt === null ? null : iso(order.confirmedAt),
+        })),
+      };
     });
+  }
+
+  /**
+   * `GET /v1/sales-orders/summary`: how many orders match `q` and `customerId` (not `status`), in total and per
+   * status, so the stat cards stay right when the list is paged. Same scope and same search as `list`.
+   */
+  async summary(
+    filter: Pick<SalesOrderListFilter, 'q' | 'customerId'>,
+  ): Promise<SalesOrdersSummary> {
+    const { scope, actor, principal } = this.caller.current();
+    this.assertStaff(principal);
+    return withTx(this.db, scope, actor, async (tx) => {
+      // searchPage decides exact vs close matches from the total; the per-status counts ride on its count
+      // callback so they always describe the same match set. Its last call is the one it settled on.
+      let groups: { status: SalesOrderStatus; n: number }[] = [];
+      const { total } = await searchPage(tx, {
+        q: filter.q,
+        columns: SEARCH_COLUMNS,
+        where: this.listWhere(tx, scope, principal, filter),
+        orderBy: [desc(salesOrders.id)],
+        limit: 1,
+        offset: 0,
+        rows: () => Promise.resolve([]),
+        count: async (r, where) => {
+          groups = await r
+            .select({ status: salesOrders.status, n: count() })
+            .from(salesOrders)
+            .innerJoin(customers, customerOn)
+            .innerJoin(quotations, quotationOn)
+            .where(where)
+            .groupBy(salesOrders.status);
+          return groups.reduce((sum, g) => sum + g.n, 0);
+        },
+      });
+      const byStatus = Object.fromEntries(SALES_ORDER_STATUSES.map((s) => [s, 0])) as Record<
+        SalesOrderStatus,
+        number
+      >;
+      for (const g of groups) byStatus[g.status] = g.n;
+      return { total, byStatus };
+    });
+  }
+
+  /** Scope, then filters. A filter only ever narrows what `readWhere` lets through. */
+  private listWhere(
+    tx: DbTransaction,
+    scope: TxScope,
+    principal: Principal,
+    filter: SalesOrderListFilter,
+  ): SQL {
+    const conditions = [this.readWhere(tx, scope, principal)];
+    if (filter.status !== undefined && filter.status.length > 0) {
+      conditions.push(inArray(salesOrders.status, filter.status));
+    }
+    if (filter.customerId !== undefined && filter.customerId.length > 0) {
+      conditions.push(inArray(salesOrders.customerPartyId, filter.customerId));
+    }
+    if (filter.quotationVersionId !== undefined) {
+      conditions.push(eq(salesOrders.quotationVersionId, filter.quotationVersionId));
+    }
+    return scoped(scope).where(salesOrders, and(...conditions));
   }
 
   /** `GET /v1/sales-orders/:id`. 404 for an order of another entity. */

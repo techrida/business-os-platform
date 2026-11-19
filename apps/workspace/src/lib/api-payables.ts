@@ -20,6 +20,7 @@ import {
 import { z } from 'zod';
 
 import { ApiError, apiFetch } from './api';
+import { callList, listQuery } from './api-procurement';
 import type { Session } from './session';
 
 /**
@@ -118,8 +119,30 @@ export const BillSubmissionSchema = z.object({
   note: Text.nullable(),
   status: z.literal('received'),
   receivedAt: Text,
+  /** What the vendor said the bill totals, and its currency; null when unknown. Older APIs leave them out. */
+  claimedTotal: Text.nullable().default(null),
+  currency: Text.nullable().default(null),
+  /**
+   * Earlier bills and other submissions of this vendor with the same invoice number (any status but rejected).
+   * A warning only: the bill can still be keyed.
+   */
+  duplicates: z
+    .array(
+      z.object({
+        kind: z.enum(['bill', 'submission']),
+        id: z.guid(),
+        number: Text.nullable(),
+        vendorInvoiceNo: Text,
+        status: Text,
+        amount: Text.nullable(),
+        currency: Text.nullable(),
+        at: Text,
+      }),
+    )
+    .default([]),
 });
 export type BillSubmission = z.infer<typeof BillSubmissionSchema>;
+export type InvoiceDuplicate = BillSubmission['duplicates'][number];
 
 export const RejectedSubmissionSchema = z.object({
   id: z.guid(),
@@ -181,6 +204,26 @@ export function listBills(session: Session, status?: BillStatus): Promise<BillLi
       ? BILLS
       : `${BILLS}?status=${encodeURIComponent(BillStatusSchema.parse(status))}`;
   return call(session, path, z.array(BillListItemSchema));
+}
+
+/**
+ * One page of `GET .../bills` with several statuses, a search over number, vendor invoice and vendor name, and
+ * `offset`, plus the total of all matches from `X-Total-Count`. The API scopes the rows; nothing here widens that.
+ */
+export function listBillsPage(
+  session: Session,
+  query: { status?: readonly BillStatus[]; q?: string; limit: number; offset: number },
+): Promise<{ items: BillListItem[]; total: number }> {
+  return callList(
+    session,
+    listQuery(BILLS, {
+      status: query.status?.map((s) => BillStatusSchema.parse(s)),
+      q: query.q,
+      limit: query.limit,
+      offset: query.offset,
+    }),
+    BillListItemSchema,
+  );
 }
 
 export function getBill(session: Session, id: string): Promise<VendorBill> {
@@ -297,6 +340,21 @@ export function listBillSubmissions(session: Session): Promise<BillSubmission[]>
 }
 
 /**
+ * One page of the inbox with a search over the vendor invoice number and vendor name, plus the total of all
+ * matches. Only the page asks for a window; `listBillSubmissions` stays the whole list.
+ */
+export function listBillSubmissionsPage(
+  session: Session,
+  query: { q?: string; limit: number; offset: number },
+): Promise<{ items: BillSubmission[]; total: number }> {
+  return callList(
+    session,
+    listQuery(SUBMISSIONS, { q: query.q, limit: query.limit, offset: query.offset }),
+    BillSubmissionSchema,
+  );
+}
+
+/**
  * Turns a submission into a bill: the lines are the only input, the header comes from the
  * submission. 201. 409 `SUBMISSION_NOT_RECEIVED`, `SUBMISSION_FILE_NOT_CLEAN`, `DUPLICATE_BILL`.
  */
@@ -405,6 +463,26 @@ export function listPaymentRequests(
 ): Promise<PaymentRequestListItem[]> {
   const query = status === undefined ? '' : `?status=${PaymentRequestStatusSchema.parse(status)}`;
   return call(session, `${REQUESTS}${query}`, z.array(PaymentRequestListSchema));
+}
+
+/**
+ * One page of `GET .../payment-requests` with several statuses, a search over number and vendor name, and
+ * `offset`, plus the total of all matches from `X-Total-Count`.
+ */
+export function listPaymentRequestsPage(
+  session: Session,
+  query: { status?: readonly PaymentRequestStatus[]; q?: string; limit: number; offset: number },
+): Promise<{ items: PaymentRequestListItem[]; total: number }> {
+  return callList(
+    session,
+    listQuery(REQUESTS, {
+      status: query.status?.map((s) => PaymentRequestStatusSchema.parse(s)),
+      q: query.q,
+      limit: query.limit,
+      offset: query.offset,
+    }),
+    PaymentRequestListSchema,
+  );
 }
 
 export function getPaymentRequest(session: Session, id: string): Promise<PaymentRequest> {

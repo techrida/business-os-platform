@@ -4,7 +4,15 @@
 // Serves the NFRs "amounts are exact" (decimal.js, ROUND_HALF_UP, strings; VAT from the tax code's rate on the line
 // net) and "money moves only after the right people agree" (a bill reaches approval only when every line matches
 // or Finance accepted the variance; the person who entered it is never its Accountant).
-import { canTransitionBill, type BillStatus, type MatchStatus } from '@bos/contracts';
+import {
+  BillStatusSchema,
+  canTransitionBill,
+  limitOffset,
+  multi,
+  searchParam,
+  type BillStatus,
+  type MatchStatus,
+} from '@bos/contracts';
 import {
   bandFor,
   evaluateLine,
@@ -16,6 +24,7 @@ import {
   type MatchTolerance,
 } from '@bos/money-rules';
 import Decimal from 'decimal.js';
+import { z } from 'zod';
 
 /** approval_requests.document_type of a bill; the document id is the bill id. */
 export const VENDOR_BILL_DOCUMENT_TYPE = 'vendor_bill';
@@ -245,3 +254,11 @@ export function billFactsOf(input: {
 export function invoiceInstant(invoiceDate: string): Date {
   return new Date(`${invoiceDate}T00:00:00+05:45`);
 }
+
+/** Query of GET /v1/payables/bills: statuses (repeatable), a search over number, vendor invoice and vendor, a page. */
+export const ListBillsQuerySchema = z.strictObject({
+  status: multi(BillStatusSchema),
+  q: searchParam,
+  ...limitOffset({ max: 100, fallback: 25 }),
+});
+export type ListBillsQuery = z.infer<typeof ListBillsQuerySchema>;

@@ -3,6 +3,7 @@ import { randomUUID } from 'node:crypto';
 import type { Metadata } from 'next';
 import type { ReactNode } from 'react';
 
+import { todayInKathmandu } from '@/app/(app)/settings/format';
 import { isGuid } from '@/components/p2/customers/format';
 import { listTaxCodes } from '@/lib/api-tax-codes';
 import { listWithholdingCodes } from '@/lib/api-withholding-codes';
@@ -22,6 +23,7 @@ import { when } from '@/lib/kernel-format';
 
 import { qtyText } from '../../../procurement/orders/_lib/model';
 import { BillEntryForm, type OrderLine } from '../../_components/bill-entry-form';
+import { amountText, duplicateText } from '../../_lib/duplicates';
 import { billFailure } from '../../_lib/failure';
 import { billGrants, fileStatusLabel } from '../../_lib/model';
 import styles from '../../payables.module.css';
@@ -190,6 +192,8 @@ export default async function NewBillPage({
             reloadHref={here}
             entry={{
               vendors,
+              // The invoice date starts at today in Kathmandu (the tenant's calendar), and stays editable.
+              today: todayInKathmandu(),
               ...(standaloneOrder
                 ? {
                     vendorPartyId: standaloneOrder.vendorId,
@@ -292,6 +296,13 @@ export default async function NewBillPage({
         ),
     },
     {
+      key: 'claimed',
+      label: 'Amount the vendor claimed',
+      value: amountText(submission.claimedTotal, submission.currency) ?? (
+        <span className={styles.quiet}>Not given</span>
+      ),
+    },
+    {
       key: 'po',
       label: 'Purchase order',
       value:
@@ -328,6 +339,17 @@ export default async function NewBillPage({
         <Panel title="From the submission">
           <FactList facts={facts} />
         </Panel>
+        {submission.duplicates.length > 0 ? (
+          <Alert tone="warning" title="Duplicate invoice number">
+            This vendor already sent invoice {submission.vendorInvoiceNo}. Check it is not the same
+            bill before you key it in:
+            <ul>
+              {submission.duplicates.map((d) => (
+                <li key={d.id}>{duplicateText(d)}</li>
+              ))}
+            </ul>
+          </Alert>
+        ) : null}
         {blocked !== undefined ? (
           <Alert
             tone="warning"

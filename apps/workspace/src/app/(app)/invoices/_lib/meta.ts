@@ -1,13 +1,15 @@
-// How an invoice kind and status read in the workspace, and how the list filters are read from the
-// URL. Pure data and functions with no React import, so the list, the detail header and a test can
-// all use them. Serves the NFR "the UI never shows data the contract does not promise": a filter is
-// only ever a contract kind or status, and there is deliberately no "paid" here, because payment
-// state is derived from allocations and is not an invoice status.
+// How an invoice kind and status read in the workspace. Pure data and functions with no React import,
+// so the list, the detail header and a test can all use them. Serves the NFR "the UI never shows data
+// the contract does not promise": a filter is only ever a contract kind, status or settlement, and
+// there is deliberately no "paid" among the statuses, because payment state is derived from
+// allocations and is not an invoice status. The list page reads its URL with readList.
 import {
   INVOICE_KINDS,
   INVOICE_STATUSES,
   type InvoiceKind,
   type InvoiceStatus,
+  SETTLEMENT_STATUSES,
+  type SettlementStatus,
 } from '@bos/contracts';
 
 export type Tone = 'neutral' | 'info' | 'success' | 'warning' | 'error';
@@ -44,21 +46,20 @@ export const STATUS_FILTER_OPTIONS: readonly { value: InvoiceStatus; label: stri
   INVOICE_STATUSES.map((value) => ({ value, label: STATUSES[value].label }));
 
 /**
- * Reads a query parameter. Anything that is not exactly one contract value (absent, empty, wrong
- * case, repeated, or an object key such as `toString`) means "no filter", so a hand-edited URL
- * never reaches the API as a filter it would refuse.
+ * Paid and overdue are not invoice statuses: the API derives them from the open item and its allocations
+ * and takes them as the separate `settlement` filter, so the status list above never names them.
  */
-function oneOf<T extends string>(allowed: readonly T[], raw: string | string[] | undefined) {
-  return typeof raw === 'string' && (allowed as readonly string[]).includes(raw)
-    ? (raw as T)
-    : undefined;
-}
-
-export const parseKindFilter = (raw: string | string[] | undefined): InvoiceKind | undefined =>
-  oneOf(INVOICE_KINDS, raw);
-
-export const parseStatusFilter = (raw: string | string[] | undefined): InvoiceStatus | undefined =>
-  oneOf(INVOICE_STATUSES, raw);
+const SETTLEMENT: Record<SettlementStatus, string> = {
+  unpaid: 'Unpaid',
+  partly_paid: 'Partly paid',
+  paid: 'Paid',
+  overdue: 'Overdue',
+  credited: 'Credited',
+};
+export const settlementLabel = (value: string): string =>
+  Object.hasOwn(SETTLEMENT, value) ? (SETTLEMENT[value as SettlementStatus] ?? value) : value;
+export const SETTLEMENT_FILTER_OPTIONS: readonly { value: SettlementStatus; label: string }[] =
+  SETTLEMENT_STATUSES.map((value) => ({ value, label: SETTLEMENT[value] }));
 
 /** Where the approval stands, in one sentence. A proforma has no approval states at all (plan A12). */
 export function approvalWords(kind: InvoiceKind, status: InvoiceStatus): string {

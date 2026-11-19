@@ -12,6 +12,10 @@ import {
   InvoiceKindSchema,
   InvoiceStatusSchema,
   IssueInvoiceBodySchema,
+  MAX_ROWS,
+  multi,
+  searchParam,
+  SettlementStatusSchema,
   SubmitInvoiceBodySchema,
   type InvoiceDetail,
   type InvoiceListItem,
@@ -27,20 +31,52 @@ import {
   ParseUUIDPipe,
   Post,
   Query,
+  Res,
 } from '@nestjs/common';
+import type { Response } from 'express';
 import { z } from 'zod';
 
 import { Can } from '../../platform/authz/decorators';
+import { setTotalCount } from '../../platform/list';
 import { parseOr400 } from '../approvals/approvals.controller';
 import { requireIdempotencyKey } from '../customers/customers.types';
 import { InvoiceApprovalService } from './invoice-approval.service';
-import { InvoiceDraftingService } from './invoice-drafting.service';
+import { InvoiceDraftingService, type InvoicesSummary } from './invoice-drafting.service';
 import { InvoiceIssueService } from './invoice-issue.service';
 
 /** The contract body plus the order id the workspace also names (checked against the line's own order). */
 const FromScheduleBodySchema = DraftFromScheduleBodySchema.extend({
   salesOrderId: z.guid().optional(),
 });
+
+const isoDay = z.iso.date();
+const filters = {
+  kind: multi(InvoiceKindSchema),
+  customerId: multi(z.guid()),
+  issuedFrom: isoDay.optional(),
+  issuedTo: isoDay.optional(),
+  q: searchParam,
+};
+const rangeOrdered = (v: { issuedFrom?: string | undefined; issuedTo?: string | undefined }) =>
+  v.issuedFrom === undefined || v.issuedTo === undefined || v.issuedFrom <= v.issuedTo;
+const rangeIssue = { message: 'issuedFrom must not be after issuedTo', path: ['issuedFrom'] };
+
+/**
+ * `GET /v1/invoices`. `kind`, `status`, `settlement` and `customerId` may repeat; an unknown value or key or a
+ * repeated `q` is a 400. `settlement` is the derived paid/overdue state. No `limit` means every match.
+ */
+export const ListInvoicesQuerySchema = z
+  .strictObject({
+    ...filters,
+    status: multi(InvoiceStatusSchema),
+    settlement: multi(SettlementStatusSchema),
+    limit: z.coerce.number().int().min(1).max(MAX_ROWS).optional(),
+    offset: z.coerce.number().int().min(0).default(0),
+  })
+  .refine(rangeOrdered, rangeIssue);
+
+/** `GET /v1/invoices/summary`: the counts ignore `status` and `settlement`, so the cards show every status. */
+export const InvoicesSummaryQuerySchema = z.strictObject(filters).refine(rangeOrdered, rangeIssue);
 
 @Controller('v1/invoices')
 export class InvoicesController {
@@ -50,19 +86,23 @@ export class InvoicesController {
     private readonly approval: InvoiceApprovalService,
   ) {}
 
-  /** 200 with a bare array of InvoiceListItem, optionally narrowed by `kind`, `status` and `customerId`. */
+  /** 200 with a bare array of InvoiceListItem, newest first; X-Total-Count is all matches, not this page. */
   @Get()
   @Can('invoice.read')
-  list(
-    @Query('kind') kind?: unknown,
-    @Query('status') status?: unknown,
-    @Query('customerId') customerId?: unknown,
+  async list(
+    @Query() query: unknown,
+    @Res({ passthrough: true }) res: Response,
   ): Promise<InvoiceListItem[]> {
-    return this.drafting.list({
-      kind: kind === undefined ? undefined : parseOr400(InvoiceKindSchema, kind),
-      status: status === undefined ? undefined : parseOr400(InvoiceStatusSchema, status),
-      customerId: customerId === undefined ? undefined : parseOr400(z.guid(), customerId),
-    });
+    const { rows, total } = await this.drafting.list(parseOr400(ListInvoicesQuerySchema, query));
+    setTotalCount(res, total);
+    return rows;
+  }
+
+  /** 200 with `{ total, byStatus, customers }` for the same entity and visibility as the list. Before `:id`. */
+  @Get('summary')
+  @Can('invoice.read')
+  summary(@Query() query: unknown): Promise<InvoicesSummary> {
+    return this.drafting.summary(parseOr400(InvoicesSummaryQuerySchema, query));
   }
 
   /** 201 with the InvoiceDetail of a manual draft. 400 without an Idempotency-Key or without `manualReason`. */

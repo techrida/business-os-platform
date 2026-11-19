@@ -1,73 +1,42 @@
 import { describe, expect, it } from 'vitest';
 
-import { LetterheadSchema, MemoDirectorySchema, MemoTemplateSnapshotSchema } from './memo.js';
+import { MEMO_LIST_DEFAULT_LIMIT, MemoListQuerySchema } from './memo.js';
 
-const ORG = '3f0c5a52-7c2e-4d0b-9a55-0e8d1d6a3b11';
-const DEPT = '6b1e0a3c-2d4f-4a5b-8c6d-7e8f9a0b1c2d';
-const USER = '9a8b7c6d-5e4f-4a3b-9c1d-0e1f2a3b4c5d';
-const PNG = 'data:image/png;base64,iVBORw0KGgo=';
-
-const person = { userId: USER, name: 'Asha', jobTitle: null, department: null };
-const snapshot = {
-  organizationId: ORG,
-  organizationName: 'Acme Pvt. Ltd.',
-  departmentId: DEPT,
-  departmentName: 'Sales',
-  date: '2026-11-19',
-  closing: 'Regards',
-  preparedBy: person,
-  recommenders: [],
-  approvedBy: person,
-};
-const letterhead = {
-  addressLines: ['Balaju', 'Kathmandu, Bagmati', 'Nepal'],
-  logoDataUrl: PNG,
-  primaryColour: '#1D4ED8',
-};
-const directory = {
-  organizationId: ORG,
-  organizationName: 'Acme Pvt. Ltd.',
-  currentUserId: USER,
-  departmentId: null,
-  departments: [],
-  people: [],
-};
-
-describe('memo letterhead', () => {
-  it('still parses a template snapshot stored before letterheads', () => {
-    const parsed = MemoTemplateSnapshotSchema.parse(snapshot);
-    expect(parsed.letterhead).toBeUndefined();
+describe('MemoListQuerySchema', () => {
+  it('keeps the old defaults when no filter is given', () => {
+    const query = MemoListQuerySchema.parse({});
+    expect(query.limit).toBe(MEMO_LIST_DEFAULT_LIMIT);
+    expect(query.status).toBeUndefined();
+    expect(query.q).toBeUndefined();
   });
 
-  it('parses a frozen letterhead and lower-cases its colour', () => {
-    const parsed = MemoTemplateSnapshotSchema.parse({ ...snapshot, letterhead });
-    expect(parsed.letterhead).toEqual({ ...letterhead, primaryColour: '#1d4ed8' });
+  it('accepts one status and a repeated status, once each', () => {
+    expect(MemoListQuerySchema.parse({ status: 'draft' }).status).toEqual(['draft']);
+    expect(MemoListQuerySchema.parse({ status: ['draft', 'approved', 'draft'] }).status).toEqual([
+      'draft',
+      'approved',
+    ]);
   });
 
-  it('carries the live letterhead on the directory, and parses one without it', () => {
-    expect(MemoDirectorySchema.parse(directory).letterhead).toBeUndefined();
-    expect(
-      MemoDirectorySchema.parse({ ...directory, letterhead: { ...letterhead, logoDataUrl: null } })
-        .letterhead?.logoDataUrl,
-    ).toBeNull();
+  it('refuses an unknown status, in any position', () => {
+    expect(MemoListQuerySchema.safeParse({ status: 'weird' }).success).toBe(false);
+    expect(MemoListQuerySchema.safeParse({ status: ['draft', 'weird'] }).success).toBe(false);
   });
 
-  it('refuses more than four address lines, a line over 200 characters, an SVG logo and a bad colour', () => {
-    expect(
-      LetterheadSchema.safeParse({ ...letterhead, addressLines: ['a', 'b', 'c', 'd', 'e'] })
-        .success,
-    ).toBe(false);
-    expect(
-      LetterheadSchema.safeParse({ ...letterhead, addressLines: ['x'.repeat(201)] }).success,
-    ).toBe(false);
-    expect(
-      LetterheadSchema.safeParse({
-        ...letterhead,
-        logoDataUrl: 'data:image/svg+xml;base64,PHN2Zz4=',
-      }).success,
-    ).toBe(false);
-    expect(LetterheadSchema.safeParse({ ...letterhead, primaryColour: 'blue' }).success).toBe(
-      false,
-    );
+  it('refuses unknown parameters and a repeated q', () => {
+    expect(MemoListQuerySchema.safeParse({ ownerUserId: 'x' }).success).toBe(false);
+    expect(MemoListQuerySchema.safeParse({ offset: '5' }).success).toBe(false);
+    expect(MemoListQuerySchema.safeParse({ q: ['a1', 'b2'] }).success).toBe(false);
+  });
+
+  it('trims q and treats a one-character q as no search', () => {
+    expect(MemoListQuerySchema.parse({ q: '  MEMO-26  ' }).q).toBe('MEMO-26');
+    expect(MemoListQuerySchema.parse({ q: 'a' }).q).toBeUndefined();
+  });
+
+  it('keeps the cursor and the limit ceiling', () => {
+    expect(MemoListQuerySchema.parse({ cursor: 'abc_-1', limit: '50' }).limit).toBe(50);
+    expect(MemoListQuerySchema.safeParse({ limit: '51' }).success).toBe(false);
+    expect(MemoListQuerySchema.safeParse({ cursor: 'not valid!' }).success).toBe(false);
   });
 });

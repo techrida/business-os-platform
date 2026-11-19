@@ -85,7 +85,7 @@ function reqWith(authTime?: number): AuthenticatedRequest {
 function approvalsController(current: unknown = requestAt('management'), maxAge?: number) {
   const service = {
     preview: vi.fn(() => Promise.resolve({ steps: [], blocked: true })),
-    inbox: vi.fn(() => Promise.resolve([])),
+    inboxPage: vi.fn(() => Promise.resolve({ items: [], total: 0 })),
     get: vi.fn(() => Promise.resolve(current)),
     getForAction: vi.fn(() => Promise.resolve(current)),
     act: vi.fn(() => Promise.resolve({})),
@@ -102,6 +102,8 @@ function approvalsController(current: unknown = requestAt('management'), maxAge?
     controller: new ApprovalsController(service as never, caller as never, verifier, maxAge),
   };
 }
+
+const res = () => ({ setHeader: vi.fn() });
 
 describe('ApprovalsController', () => {
   it('refuses a decision without an Idempotency-Key header with 400', () => {
@@ -283,12 +285,63 @@ describe('ApprovalsController', () => {
 
   it('delegates inbox, get and reroute', async () => {
     const { controller, service } = approvalsController();
-    await controller.inbox();
+    await controller.inbox({}, res());
     await controller.get(ID);
     await controller.reroute(ID);
-    expect(service.inbox).toHaveBeenCalled();
+    expect(service.inboxPage).toHaveBeenCalled();
     expect(service.get).toHaveBeenCalledWith(ID);
     expect(service.reroute).toHaveBeenCalledWith(ID);
+  });
+
+  describe('inbox query', () => {
+    const item = { requestId: ID };
+
+    it('returns the bare array and the total in X-Total-Count; no params means no limit', async () => {
+      const { controller, service } = approvalsController();
+      service.inboxPage.mockResolvedValueOnce({ items: [item], total: 41 } as never);
+      const out = res();
+      expect(await controller.inbox({}, out)).toEqual([item]);
+      expect(out.setHeader).toHaveBeenCalledWith('X-Total-Count', '41');
+      expect(service.inboxPage).toHaveBeenCalledWith({ offset: 0 });
+    });
+
+    it('parses a single and a repeated documentType, q, limit and offset', async () => {
+      const { controller, service } = approvalsController();
+      await controller.inbox(
+        { q: ' INV-0042 ', documentType: 'tax_invoice', limit: '10', offset: '20' },
+        res(),
+      );
+      expect(service.inboxPage).toHaveBeenLastCalledWith({
+        q: 'INV-0042',
+        documentType: ['tax_invoice'],
+        limit: 10,
+        offset: 20,
+      });
+      await controller.inbox({ documentType: ['tax_invoice', 'test_memo', 'tax_invoice'] }, res());
+      expect(service.inboxPage).toHaveBeenLastCalledWith({
+        documentType: ['tax_invoice', 'test_memo'],
+        offset: 0,
+      });
+    });
+
+    it('treats an empty documentType and a one-character q as no filter', async () => {
+      const { controller, service } = approvalsController();
+      await controller.inbox({ documentType: '', q: 'a' }, res());
+      expect(service.inboxPage).toHaveBeenLastCalledWith({ documentType: [], offset: 0 });
+    });
+
+    it.each([
+      ['an unknown param', { status: 'pending' }],
+      ['an uppercase documentType', { documentType: 'Tax_Invoice' }],
+      ['a documentType with a dash', { documentType: 'tax-invoice' }],
+      ['limit 0', { limit: '0' }],
+      ['limit 101', { limit: '101' }],
+      ['a negative offset', { offset: '-1' }],
+    ])('refuses %s with 400 before the service runs', async (_name, query) => {
+      const { controller, service } = approvalsController();
+      await expect(controller.inbox(query, res())).rejects.toBeInstanceOf(BadRequestException);
+      expect(service.inboxPage).not.toHaveBeenCalled();
+    });
   });
 
   it('keeps static permissions where possible and delegates record-specific eligibility to the service', () => {

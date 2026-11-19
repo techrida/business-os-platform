@@ -1,6 +1,7 @@
 import { z } from 'zod';
 
 import { RoleKeySchema } from './authz.js';
+import { multi, searchParam } from './list-query.js';
 
 export const UserStatusSchema = z.enum(['invited', 'active', 'inactive']);
 export const AdminUserSortSchema = z.enum(['name', 'lastActive', 'createdAt']);
@@ -14,11 +15,12 @@ function positiveInteger(max: number) {
 
 export const ADMIN_USERS_MAX_PAGE = 10_000;
 
+// status and role repeat (`?status=active&status=invited`); a role filter matches users holding any of them.
 export const AdminUsersQuerySchema = z
-  .object({
-    q: AdminUserSearchSchema.optional(),
-    status: UserStatusSchema.optional(),
-    role: RoleKeySchema.optional(),
+  .strictObject({
+    q: searchParam,
+    status: multi(UserStatusSchema),
+    role: multi(RoleKeySchema),
     departmentId: z.guid().optional(),
     sort: AdminUserSortSchema.optional(),
     limit: positiveInteger(200).default(50),

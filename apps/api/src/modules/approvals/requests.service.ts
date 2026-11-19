@@ -17,6 +17,7 @@ import {
   type ApprovalActionBody,
   type ApprovalRequestDto,
   type InboxItemDto,
+  type ReferenceName,
   type RoleKey,
   type RoutePlan,
   type StepSpec,
@@ -54,6 +55,7 @@ import { UserDirectory } from '../../platform/authz/user-directory';
 import { DB, type Db, type DbTransaction } from '../../platform/db/db.module';
 import { withTx, type Actor, type TxScope } from '../../platform/db/tx';
 import { canonicalSha256 } from '../../platform/hashing/canonical-json';
+import { exactMatch } from '../../platform/list';
 import { personNames } from '../../platform/users/person-names';
 import {
   ASSIGNABLE_SEQ,
@@ -102,6 +104,12 @@ export interface ApprovalSubject {
    * links to its quotation). Undefined also falls back to the inbox.
    */
   link?(tx: DbTransaction, documentId: string): string | undefined | Promise<string | undefined>;
+  /**
+   * Optional: names for the records the frozen snapshot refers to by id (a vendor, an order), read in the request's
+   * tenant and entity when a reader who may already see this request opens it. The snapshot itself is never
+   * changed; an id the subject cannot name is left out, and the page says the name is unavailable.
+   */
+  referenceNames?(q: Db, scope: TxScope, snapshot: unknown): Promise<ReferenceName[]>;
 }
 
 export interface SubmitInput {
@@ -189,6 +197,15 @@ const addHours = (d: Date, h: number) => new Date(d.getTime() + h * HOUR_MS);
 const BLOCKED_NOTICE_ROLES = ROLE_KEYS.filter(
   (r) => DEFAULT_ROLE_PERMISSIONS[r]['admin.roles.write'] !== undefined,
 );
+
+/** What the inbox list accepts. No default limit: the dashboard count and inbox/[id] read every item. */
+export interface InboxQuery {
+  q?: string | undefined;
+  documentType?: readonly string[] | undefined;
+  limit?: number | undefined;
+  offset?: number | undefined;
+}
+
 const inboxLink = (requestId: string) => `/inbox/${requestId}`;
 const MAX_CANCEL_REASON = 2000;
 /** What a request shows as its number while its document has none yet (numbered at issue, after approval). */
@@ -840,10 +857,46 @@ export class ApprovalsService {
 
   /** Pending requests whose active step the caller may decide now. */
   async inbox(): Promise<InboxItemDto[]> {
+    return (await this.inboxPage({})).items;
+  }
+
+  /**
+   * The inbox narrowed by search and type, then paged. Loads every matching row, runs the eligibility checks and
+   * only then counts and slices: the total is what the caller may decide, never what the filters match.
+   */
+  async inboxPage(query: InboxQuery): Promise<{ items: InboxItemDto[]; total: number }> {
     const { scope, principal } = this.caller.current();
     this.requireStaff(scope, principal);
-    const now = this.clock();
     const genericApprover = can(principal, 'approvals.requests.act').allowed;
+    const types = query.documentType ?? [];
+    const filtered = query.q !== undefined || types.length > 0;
+    const eligible = await this.eligibleInbox(scope, principal, genericApprover, query);
+    // A filter that hides everything is an empty list, not a missing assignment: judge the 403 unfiltered.
+    const unfiltered =
+      eligible.length === 0 && filtered
+        ? await this.eligibleInbox(scope, principal, genericApprover, {})
+        : eligible;
+    if (
+      !genericApprover &&
+      unfiltered.length === 0 &&
+      !mayBeNamedOutsideRole(principal) &&
+      !(await this.hasPrHeadDuty(scope, principal))
+    ) {
+      throw forbidden('out_of_scope', 'You have no approval assignment');
+    }
+    const offset = query.offset ?? 0;
+    const end = query.limit === undefined ? undefined : offset + query.limit;
+    return { items: eligible.slice(offset, end), total: eligible.length };
+  }
+
+  private async eligibleInbox(
+    scope: TxScope,
+    principal: Principal,
+    genericApprover: boolean,
+    query: InboxQuery,
+  ): Promise<InboxItemDto[]> {
+    const now = this.clock();
+    const types = query.documentType ?? [];
     const rows = await this.db
       .select({ request: approvalRequests, step: approvalSteps })
       .from(approvalRequests)
@@ -860,9 +913,17 @@ export class ApprovalsService {
           eq(approvalRequests.organizationId, scope.organizationId),
           eq(approvalRequests.status, 'pending'),
           eq(approvalSteps.status, 'active'),
+          types.length > 0 ? inArray(approvalRequests.documentType, types) : undefined,
+          query.q === undefined
+            ? undefined
+            : exactMatch(query.q, [
+                approvalRequests.title,
+                approvalRequests.documentNumber,
+                approvalSteps.reason,
+              ]),
         ),
       )
-      .orderBy(asc(approvalRequests.submittedAt));
+      .orderBy(asc(approvalRequests.submittedAt), asc(approvalRequests.id));
 
     // Earlier decisions of every listed request, for the distinctApprovers check below.
     const decided = new Map<string, StepDecision[]>();
@@ -941,14 +1002,6 @@ export class ApprovalsService {
         version: request.version,
       });
     }
-    if (
-      !genericApprover &&
-      items.length === 0 &&
-      !mayBeNamedOutsideRole(principal) &&
-      !(await this.hasPrHeadDuty(scope, principal))
-    ) {
-      throw forbidden('out_of_scope', 'You have no approval assignment');
-    }
     return items;
   }
 
@@ -1000,9 +1053,13 @@ export class ApprovalsService {
           )
       : [];
     const groupNames = new Map(groups.map((group) => [group.id, group.name]));
+    const references = await this.subjects
+      .get(dto.documentType)
+      ?.referenceNames?.(this.db, scope, dto.snapshot);
     return {
       ...dto,
       people,
+      ...(references !== undefined ? { references } : {}),
       steps: dto.steps.map((step) => ({
         ...step,
         groupName: step.groupId ? (groupNames.get(step.groupId) ?? null) : null,

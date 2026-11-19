@@ -5,6 +5,9 @@
 // sees a frozen snapshot of what was asked for).
 import {
   PrStatusSchema,
+  limitOffset,
+  multi,
+  searchParam,
   type CreatePurchaseRequestBody,
   type PrRequestType,
   type PrStatus,
@@ -97,8 +100,9 @@ export const PurchaseRequestCommandBodySchema = z.strictObject({
 
 /** Query of the list route. */
 export const ListPurchaseRequestsQuerySchema = z.strictObject({
-  status: PrStatusSchema.optional(),
-  limit: z.coerce.number().int().min(1).max(200).default(50),
+  status: multi(PrStatusSchema),
+  q: searchParam,
+  ...limitOffset({ max: 200, fallback: 50 }),
 });
 export type ListPurchaseRequestsQuery = z.infer<typeof ListPurchaseRequestsQuerySchema>;
 
@@ -283,6 +287,13 @@ export interface PurchaseRequestListItem {
   version: number;
   createdAt: string;
   updatedAt: string;
+  /**
+   * The department's and cost centre's names, read with the request (same tenant and entity) so a reader who may
+   * see the request needs no department or cost-centre directory. Sent by the list and the detail; null when the
+   * name cannot be found.
+   */
+  departmentName?: string | null;
+  costCenterName?: string | null;
 }
 
 export interface PurchaseRequestDto extends PurchaseRequestListItem {

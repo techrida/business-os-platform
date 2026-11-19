@@ -151,6 +151,36 @@ export function getInbox(session: Session): Promise<InboxItemDto[]> {
   return call(session, '/v1/approvals/inbox', z.array(InboxItemDtoSchema));
 }
 
+export type InboxPage = { items: InboxItemDto[]; total: number };
+
+/**
+ * `GET /v1/approvals/inbox` with filters and a window. The body is the same bare array; `X-Total-Count` is how many
+ * the caller may decide that match, so the page count never comes from the rows shown.
+ */
+export async function getInboxPage(
+  session: Session,
+  opts: { q?: string; documentType?: readonly string[]; limit?: number; offset?: number } = {},
+): Promise<InboxPage> {
+  const query = new URLSearchParams();
+  if (opts.q) query.set('q', opts.q);
+  for (const type of opts.documentType ?? []) query.append('documentType', type);
+  if (opts.limit !== undefined) query.set('limit', String(opts.limit));
+  if (opts.offset) query.set('offset', String(opts.offset));
+  const qs = query.toString();
+  const path = `/v1/approvals/inbox${qs === '' ? '' : `?${qs}`}`;
+  const res = await apiFetch(session, path);
+  const body = await readBody(res);
+  const label = 'GET /v1/approvals/inbox';
+  if (!res.ok) throw new ApiError(res.status, `${label} failed with ${res.status}`, body);
+  const items = z.array(InboxItemDtoSchema).safeParse(body);
+  const header = res.headers.get('x-total-count');
+  const total = header !== null && /^\d+$/.test(header) ? Number(header) : undefined;
+  if (!items.success || total === undefined) {
+    throw new ApiError(502, `${label} returned an invalid body`, items.error?.issues);
+  }
+  return { items: items.data, total };
+}
+
 export function getApprovalRequest(session: Session, id: string): Promise<ApprovalRequestDto> {
   return call(session, `/v1/approvals/requests/${seg(id)}`, ApprovalRequestDtoSchema);
 }
@@ -201,16 +231,20 @@ export function createMemo(session: Session, body: CreateMemoBody): Promise<Memo
 
 /**
  * `GET /v1/test-memos`: one page of the memos the caller may open, newest first. Scope is decided by the API from
- * the caller's grants; nothing here narrows or widens it. Pass `nextCursor` back as `cursor` for the next page.
+ * the caller's grants; filters only narrow it. Pass `nextCursor` back as `cursor` for the next page. `status` may
+ * be several values (sent repeated); `q` is the search text; `total` is every match, not just this page.
  */
 export function listMemos(
   session: Session,
-  opts: { limit?: number; cursor?: string; status?: string } = {},
+  opts: { limit?: number; cursor?: string; status?: string | readonly string[]; q?: string } = {},
 ): Promise<MemoList> {
   const query = new URLSearchParams();
   if (opts.limit !== undefined) query.set('limit', String(opts.limit));
   if (opts.cursor !== undefined) query.set('cursor', opts.cursor);
-  if (opts.status !== undefined) query.set('status', opts.status);
+  for (const status of typeof opts.status === 'string' ? [opts.status] : (opts.status ?? [])) {
+    query.append('status', status);
+  }
+  if (opts.q !== undefined) query.set('q', opts.q);
   const qs = query.toString();
   return call(session, `/v1/test-memos${qs === '' ? '' : `?${qs}`}`, MemoListSchema);
 }

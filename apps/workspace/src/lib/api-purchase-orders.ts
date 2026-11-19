@@ -14,6 +14,7 @@ import {
 import { z } from 'zod';
 
 import { ApiError, apiFetch } from './api';
+import { callList, listQuery } from './api-procurement';
 import type { Session } from './session';
 
 /**
@@ -74,7 +75,12 @@ const poFields = {
 export const PoListItemSchema = z.object(poFields);
 export type PoListItem = z.infer<typeof PoListItemSchema>;
 
-export const PurchaseOrderSchema = z.object({ ...poFields, lines: z.array(PoLineSchema) });
+export const PurchaseOrderSchema = z.object({
+  ...poFields,
+  lines: z.array(PoLineSchema),
+  /** A draft with no lines yet: the approved quotation's lines that issue will copy in. Read-only. */
+  proposedLines: z.array(PoLineSchema).optional(),
+});
 export type PurchaseOrder = z.infer<typeof PurchaseOrderSchema>;
 
 export const PoVersionSchema = z.object({
@@ -224,6 +230,23 @@ export function listPurchaseOrders(session: Session, status?: PoStatus): Promise
   const path =
     status === undefined ? PO : `${PO}?status=${encodeURIComponent(PoStatusSchema.parse(status))}`;
   return call(session, path, z.array(PoListItemSchema));
+}
+
+/** One page of the purchase orders with several statuses, a search over number and vendor, and `offset`, plus the total of all matches. */
+export function listPurchaseOrdersPage(
+  session: Session,
+  query: { status?: readonly PoStatus[]; q?: string; limit: number; offset: number },
+): Promise<{ items: PoListItem[]; total: number }> {
+  return callList(
+    session,
+    listQuery(PO, {
+      status: query.status?.map((s) => PoStatusSchema.parse(s)),
+      q: query.q,
+      limit: query.limit,
+      offset: query.offset,
+    }),
+    PoListItemSchema,
+  );
 }
 
 export function getPurchaseOrder(session: Session, id: string): Promise<PurchaseOrder> {

@@ -8,11 +8,28 @@ const id = (n: number) => `00000000-0000-4000-8000-${String(n).padStart(12, '0')
 
 describe('ListRfqsQuerySchema', () => {
   it('defaults the limit to 50 and takes a status', () => {
-    expect(ListRfqsQuerySchema.parse({})).toEqual({ limit: 50 });
+    expect(ListRfqsQuerySchema.parse({})).toEqual({ limit: 50, offset: 0 });
     expect(ListRfqsQuerySchema.parse({ status: 'open', limit: '10' })).toEqual({
-      status: 'open',
+      status: ['open'],
       limit: 10,
+      offset: 0,
     });
+  });
+
+  it('takes a repeated status, a search and an offset', () => {
+    const parsed = ListRfqsQuerySchema.parse({
+      status: ['open', 'closed', 'open'],
+      q: '  chairs ',
+      offset: '100',
+    });
+    expect(parsed).toEqual({ status: ['open', 'closed'], q: 'chairs', limit: 50, offset: 100 });
+    expect(ListRfqsQuerySchema.parse({ q: 'a' }).q).toBeUndefined();
+  });
+
+  it('refuses one unknown status among valid ones, a repeated q and a negative offset', () => {
+    expect(ListRfqsQuerySchema.safeParse({ status: ['open', 'done'] }).success).toBe(false);
+    expect(ListRfqsQuerySchema.safeParse({ q: ['ab', 'cd'] }).success).toBe(false);
+    expect(ListRfqsQuerySchema.safeParse({ offset: '-1' }).success).toBe(false);
   });
 
   it('refuses an unknown status, a limit over 200 and an unknown key', () => {

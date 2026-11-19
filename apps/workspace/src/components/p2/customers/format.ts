@@ -150,15 +150,12 @@ export function canReject(c: Pick<VerificationCaseDto, 'status'>): boolean {
   return c.status === 'submitted';
 }
 
-export type StatusFilter = VerificationStatus | 'all';
-
-/** The queue's status filter from `?status=`. Anything unknown means the review queue. */
-export function parseStatusFilter(raw: string | string[] | undefined): StatusFilter {
-  if (typeof raw !== 'string') return 'submitted';
-  if (raw === 'all') return 'all';
-  return (VERIFICATION_STATUSES as readonly string[]).includes(raw)
-    ? (raw as VerificationStatus)
-    : 'submitted';
+/** The queue's status filter from `?status=` (repeatable). Unknown values are dropped; none means all cases. */
+export function parseStatusFilters(raw: string | string[] | undefined): VerificationStatus[] {
+  const values = Array.isArray(raw) ? raw : raw === undefined ? [] : [raw];
+  return [...new Set(values)].filter((v): v is VerificationStatus =>
+    (VERIFICATION_STATUSES as readonly string[]).includes(v),
+  );
 }
 
 export type DecisionParse =

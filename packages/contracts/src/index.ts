@@ -8,6 +8,7 @@ export * from './rich-text.js';
 export * from './documents.js';
 export * from './error.js';
 export * from './invoicing.js';
+export * from './list-query.js';
 export * from './me.js';
 export * from './memo.js';
 export * from './money.js';

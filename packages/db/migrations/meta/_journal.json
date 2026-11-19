@@ -325,14 +325,14 @@
       "breakpoints": true
     },
     {
-      "idx": 49,
+      "idx": 53,
       "version": "7",
       "when": 1783000000053,
       "tag": "0053_user_avatar",
       "breakpoints": true
     },
     {
-      "idx": 50,
+      "idx": 54,
       "version": "7",
       "when": 1783000000054,
       "tag": "0054_party_logos",
@@ -346,7 +346,7 @@
       "breakpoints": true
     },
     {
-      "idx": 51,
+      "idx": 58,
       "version": "7",
       "when": 1783000000058,
       "tag": "0058_legacy_company_logo",
@@ -355,12 +355,33 @@
     {
       "idx": 47,
       "version": "7",
+      "when": 1783000000059,
+      "tag": "0059_list_search_indexes",
+      "breakpoints": true
+    },
+    {
+      "idx": 48,
+      "version": "7",
+      "when": 1783000000060,
+      "tag": "0060_list_search_trgm_indexes",
+      "breakpoints": true
+    },
+    {
+      "idx": 49,
+      "version": "7",
+      "when": 1783000000061,
+      "tag": "0061_list_filter_btree_indexes",
+      "breakpoints": true
+    },
+    {
+      "idx": 50,
+      "version": "7",
       "when": 1783000000062,
       "tag": "0062_activity_follow_ups",
       "breakpoints": true
     },
     {
-      "idx": 48,
+      "idx": 51,
       "version": "7",
       "when": 1783000000063,
       "tag": "0063_follow_up_data",

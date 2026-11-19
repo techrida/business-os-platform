@@ -1,33 +1,38 @@
-import { PAYMENT_REQUEST_STATUSES, PaymentRequestStatusSchema } from '@bos/contracts';
+import { PAYMENT_REQUEST_STATUSES, PaymentRequestStatusSchema, pageWindow } from '@bos/contracts';
 import type { Metadata } from 'next';
 import Link from 'next/link';
 
 import { hasPermission } from '@/components/p2/customers/permissions';
 import { Alert } from '@/components/ui/alert';
 import { Badge } from '@/components/ui/badge';
-import { Button, LinkButton } from '@/components/ui/button';
+import { LinkButton } from '@/components/ui/button';
 import { EmptyState } from '@/components/ui/empty-state';
-import { Field, Select } from '@/components/ui/field';
+import { ResultCount } from '@/components/ui/filter-bar';
 import { Page, PageHeader } from '@/components/ui/page';
+import { Pagination } from '@/components/ui/pagination';
 import { Table, Td, Th } from '@/components/ui/table';
-import { listPaymentRequests, type PaymentRequestListItem } from '@/lib/api-payables';
+import { listPaymentRequestsPage, type PaymentRequestListItem } from '@/lib/api-payables';
 import { requireStaffSession } from '@/lib/bff';
 import { getNumberSystems } from '@/lib/display-settings';
+import { activeFilterLabels, clearFiltersHref, hrefWith, readList } from '@/lib/list-params';
 
 import { poMoney } from '../../procurement/orders/_lib/model';
-import styles from '../payables.module.css';
 import { paymentRequestFailure } from './failure';
 import { PAYMENT_STATUS } from './model';
+import { PaymentRequestsFilters } from './payment-requests-filters';
 
 export const metadata: Metadata = { title: 'Payment requests · Business OS' };
 export const dynamic = 'force-dynamic';
 
+const PATH = '/payables/payment-requests';
+const LIST = { multi: { status: PAYMENT_REQUEST_STATUSES } } as const;
+
 export default async function PaymentRequestsPage({
   searchParams,
 }: {
-  searchParams: Promise<{ status?: string | string[] }>;
+  searchParams: Promise<Record<string, string | string[] | undefined>>;
 }) {
-  const session = await requireStaffSession('/payables/payment-requests');
+  const session = await requireStaffSession(PATH);
   const numberSystems = await getNumberSystems();
   const allowed = hasPermission(session.roles, 'payables.payment.request');
   const header = (
@@ -51,12 +56,30 @@ export default async function PaymentRequestsPage({
       </Page>
     );
   const params = await searchParams;
-  const raw = typeof params.status === 'string' ? params.status : '';
-  const parsed = PaymentRequestStatusSchema.safeParse(raw);
-  const status = parsed.success ? parsed.data : undefined;
+  const list = readList(params, LIST);
+  const status = PaymentRequestStatusSchema.array().parse(list.multi.status);
   let rows: PaymentRequestListItem[];
+  let total = 0;
+  let window = pageWindow(list.page, list.rows);
   try {
-    rows = await listPaymentRequests(session, status);
+    const fetchPage = () =>
+      listPaymentRequestsPage(session, {
+        status,
+        ...(list.q !== undefined ? { q: list.q } : {}),
+        limit: window.limit,
+        offset: window.offset,
+      });
+    let result = await fetchPage();
+    // A page number past the end (a stale link) shows the last page instead of an empty table.
+    const clamped = pageWindow(list.page, list.rows, result.total);
+    if (result.items.length === 0 && result.total > 0 && clamped.page !== window.page) {
+      window = clamped;
+      result = await fetchPage();
+    } else {
+      window = clamped;
+    }
+    rows = result.items;
+    total = result.total;
   } catch (err) {
     const f = paymentRequestFailure(err);
     return (
@@ -72,73 +95,93 @@ export default async function PaymentRequestsPage({
       </Page>
     );
   }
+  const filtered = activeFilterLabels(
+    { q: list.q, multi: list.multi, single: {} },
+    {
+      status: {
+        label: 'Status',
+        format: (v) => PAYMENT_STATUS[v as keyof typeof PAYMENT_STATUS]?.text ?? v,
+      },
+    },
+  );
+  const pageHref = (page: number) => hrefWith(PATH, params, { page: page > 1 ? page : null });
+  const nearby = Array.from({ length: window.pageCount }, (_, i) => i + 1).filter(
+    (n) => Math.abs(n - window.page) <= 2,
+  );
   return (
     <Page>
       {header}
-      {raw !== '' && !parsed.success ? (
-        <Alert tone="warning" role="status">
-          That is not a request status. Every status is shown below.
-        </Alert>
-      ) : null}
-      <form
-        method="get"
-        action="/payables/payment-requests"
-        className={styles.filter}
-        role="search"
-      >
-        <Field label="Status">
-          {(control) => (
-            <Select name="status" defaultValue={status ?? ''} {...control}>
-              <option value="">Every status</option>
-              {PAYMENT_REQUEST_STATUSES.map((value) => (
-                <option key={value} value={value}>
-                  {PAYMENT_STATUS[value].text}
-                </option>
-              ))}
-            </Select>
-          )}
-        </Field>
-        <Button type="submit" variant="secondary">
-          Show requests
-        </Button>
-      </form>
+      <PaymentRequestsFilters
+        statusOptions={PAYMENT_REQUEST_STATUSES.map((value) => ({
+          value,
+          label: PAYMENT_STATUS[value].text,
+        }))}
+        status={status}
+        rows={typeof params.rows === 'string' ? params.rows : undefined}
+      />
       {rows.length === 0 ? (
-        <EmptyState title="No payment requests with this status." icon="banknote" headingLevel={2}>
-          Create a draft for approved vendor bills, or choose another status.
-        </EmptyState>
+        filtered.length > 0 ? (
+          <EmptyState
+            title="No payment requests match."
+            icon="search"
+            headingLevel={2}
+            action={
+              <LinkButton href={clearFiltersHref(PATH, params, LIST)} variant="secondary">
+                Clear filters
+              </LinkButton>
+            }
+          >
+            Nothing matches {filtered.join(' · ')}.
+          </EmptyState>
+        ) : (
+          <EmptyState title="No payment requests yet." icon="banknote" headingLevel={2}>
+            Create a draft for approved vendor bills.
+          </EmptyState>
+        )
       ) : (
-        <Table caption="Payment requests, newest first" minWidth={700}>
-          <thead>
-            <tr>
-              <Th>Request</Th>
-              <Th>Vendor</Th>
-              <Th>Status</Th>
-              <Th>Vendor bank account</Th>
-              <Th align="end">Amount</Th>
-            </tr>
-          </thead>
-          <tbody>
-            {rows.map((row) => (
-              <tr key={row.id}>
-                <Td>
-                  <Link href={`/payables/payment-requests/${row.id}`}>
-                    {row.number ?? 'Draft request'}
-                  </Link>
-                </Td>
-                <Td>
-                  <Link href={`/vendors/${row.vendorPartyId}`}>View vendor</Link>
-                </Td>
-                <Td>
-                  <Badge tone={PAYMENT_STATUS[row.status].tone}>
-                    {PAYMENT_STATUS[row.status].text}
-                  </Badge>
-                </Td>
-                <Td>Ending {row.bankLast4}</Td>
-                <Td align="end">{poMoney(row.totalAmount, row.currency, numberSystems)}</Td>
+        <>
+          <ResultCount shown={rows.length} total={total} noun="payment request" />
+          <Table caption="Payment requests, newest first" minWidth={700}>
+            <thead>
+              <tr>
+                <Th>Request</Th>
+                <Th>Vendor</Th>
+                <Th>Status</Th>
+                <Th>Vendor bank account</Th>
+                <Th align="end">Amount</Th>
               </tr>
-            ))}
-          </tbody>
-        </Table>
+            </thead>
+            <tbody>
+              {rows.map((row) => (
+                <tr key={row.id}>
+                  <Td>
+                    <Link href={`/payables/payment-requests/${row.id}`}>
+                      {row.number ?? 'Draft request'}
+                    </Link>
+                  </Td>
+                  <Td>
+                    <Link href={`/vendors/${row.vendorPartyId}`}>View vendor</Link>
+                  </Td>
+                  <Td>
+                    <Badge tone={PAYMENT_STATUS[row.status].tone}>
+                      {PAYMENT_STATUS[row.status].text}
+                    </Badge>
+                  </Td>
+                  <Td>Ending {row.bankLast4}</Td>
+                  <Td align="end">{poMoney(row.totalAmount, row.currency, numberSystems)}</Td>
+                </tr>
+              ))}
+            </tbody>
+          </Table>
+          <Pagination
+            label="Pages"
+            summary={`Showing ${window.first}-${window.last} of ${total}`}
+            {...(window.page > 1 ? { previousHref: pageHref(window.page - 1) } : {})}
+            {...(window.page < window.pageCount ? { nextHref: pageHref(window.page + 1) } : {})}
+            pages={nearby.map((n) => ({ page: n, href: pageHref(n) }))}
+            currentPage={window.page}
+          />
+        </>
       )}
     </Page>
   );
