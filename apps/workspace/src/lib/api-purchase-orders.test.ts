@@ -18,6 +18,7 @@ import {
   listPurchaseOrders,
   listReceipts,
   listReceivableOrders,
+  PurchaseOrderSchema,
   reverseReceipt,
   shortClosePurchaseOrder,
 } from './api-purchase-orders';
@@ -375,4 +376,14 @@ describe('receipts', () => {
     expect(JSON.parse(lastCall().init.body as string)).toEqual({ reason: 'Wrong goods' });
     expect(lastCall().headers.get('idempotency-key')).toBe(KEY);
   });
+});
+
+it('validates purchase order advances at four-place precision and accepts older values', () => {
+  for (const advancePercent of ['25.00', '33.3334', '100.0000']) {
+    const parsed = PurchaseOrderSchema.parse({ ...order, advancePercent });
+    expect(parsed.advancePercent).toBe(advancePercent);
+  }
+  for (const advancePercent of ['33.33334', '100.0001', '-0.1']) {
+    expect(PurchaseOrderSchema.safeParse({ ...order, advancePercent }).success).toBe(false);
+  }
 });
