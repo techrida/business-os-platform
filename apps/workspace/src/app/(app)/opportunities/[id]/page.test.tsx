@@ -1,4 +1,4 @@
-import type { QuotationListItem } from '@bos/contracts';
+import type { OpportunityDto, QuotationListItem } from '@bos/contracts';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
@@ -16,10 +16,25 @@ const mocks = vi.hoisted(() => ({
   listLeadOwners: vi.fn(),
   getCustomer: vi.fn(),
   listQuotations: vi.fn(),
+  listOpportunityLostReasonChoices: vi.fn(),
+  moveForm: vi.fn(),
   userNames: vi.fn(),
 }));
 
 vi.mock('@/lib/bff', () => ({ requireStaffSession: mocks.requireStaffSession }));
+vi.mock('@/lib/api-lead-lost-reasons', () => ({
+  listOpportunityLostReasonChoices: mocks.listOpportunityLostReasonChoices,
+}));
+vi.mock('@/components/p2/crm/move-form', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@/components/p2/crm/move-form')>();
+  return {
+    ...actual,
+    MoveForm: (props: Parameters<typeof actual.MoveForm>[0]) => {
+      mocks.moveForm(props);
+      return actual.MoveForm(props);
+    },
+  };
+});
 vi.mock('@/components/p2/crm/crm-api', () => ({
   getOpportunity: mocks.getOpportunity,
   listActivities: mocks.listActivities,
@@ -48,7 +63,10 @@ const Q1 = '55555555-5555-4555-8555-555555555551';
 const Q2 = '55555555-5555-4555-8555-555555555552';
 const WHEN = '2026-11-08T05:45:00.000Z';
 
-const opportunity = (stage = 'qualified') => ({
+const opportunity = (
+  stage: OpportunityDto['stage'] = 'qualified',
+  over: Partial<OpportunityDto> = {},
+): OpportunityDto => ({
   id: OPP,
   number: 'DEAL-0001',
   name: 'Bridge works',
@@ -59,6 +77,7 @@ const opportunity = (stage = 'qualified') => ({
   ownerName: null,
   stage,
   stageReason: null,
+  lostReason: null,
   stageNote: null,
   value: null,
   currency: 'NPR',
@@ -68,6 +87,7 @@ const opportunity = (stage = 'qualified') => ({
   version: 1,
   createdAt: WHEN,
   updatedAt: WHEN,
+  ...over,
 });
 
 const quote = (id: string, over: Partial<QuotationListItem> = {}) =>
@@ -100,6 +120,8 @@ beforeEach(() => {
   mocks.listLeadOwners.mockReset().mockResolvedValue([]);
   mocks.getCustomer.mockReset().mockResolvedValue(null);
   mocks.listQuotations.mockReset().mockResolvedValue([]);
+  mocks.listOpportunityLostReasonChoices.mockReset().mockResolvedValue([]);
+  mocks.moveForm.mockReset();
   mocks.userNames.mockReset().mockResolvedValue(new Map());
 });
 
@@ -239,5 +261,77 @@ describe('opportunity follow-ups (migrated open tasks on the deal)', () => {
     const html = await render();
     expect(html).toContain('Follow-ups did not load');
     expect(html).not.toContain('No follow-ups planned');
+  });
+});
+
+describe('opportunity Mark lost and lost reason display (D54-3)', () => {
+  const LOST_REASON = '88888888-8888-4888-8888-888888888888';
+
+  it.each([
+    ['qualified', true],
+    ['requirement_received', true],
+    ['proposal_sent', true],
+    ['quotation_sent', true],
+    ['negotiation', true],
+    ['on_hold', false],
+    ['lost', false],
+    ['won', false],
+  ] as const)(
+    'shows Mark lost and reads choices only when the %s stage allows moving to lost',
+    async (stage, allowed) => {
+      mocks.getOpportunity.mockResolvedValue(opportunity(stage));
+      const html = await render();
+      if (allowed) {
+        expect(html).toContain('>Mark lost</button>');
+        expect(mocks.listOpportunityLostReasonChoices).toHaveBeenCalledOnce();
+      } else {
+        expect(html).not.toContain('>Mark lost</button>');
+        expect(mocks.listOpportunityLostReasonChoices).not.toHaveBeenCalled();
+      }
+    },
+  );
+
+  it('still shows Mark lost when the lost-reasons list fails to load', async () => {
+    mocks.listOpportunityLostReasonChoices.mockRejectedValue(new Error('down'));
+    const html = await render();
+    expect(html).toContain('>Mark lost</button>');
+  });
+
+  it('shows lostReason.label over stageReason with the retired note when retired', async () => {
+    mocks.getOpportunity.mockResolvedValue(
+      opportunity('lost', {
+        stageReason: 'Timing',
+        lostReason: { id: LOST_REASON, label: 'Bad timing', retired: true },
+        stageNote: 'Deferred to next year.',
+      }),
+    );
+    const html = await render();
+    expect(html).toContain('<strong>Bad timing</strong>');
+    expect(html).toContain('This reason is no longer offered for new opportunities.');
+    expect(html).toContain('Deferred to next year.');
+  });
+
+  it('falls back to stageReason without the retired note when lostReason is null', async () => {
+    mocks.getOpportunity.mockResolvedValue(
+      opportunity('lost', {
+        stageReason: 'Budget freeze',
+        lostReason: null,
+        stageNote: 'Paused.',
+      }),
+    );
+    const html = await render();
+    expect(html).toContain('<strong>Budget freeze</strong>');
+    expect(html).not.toContain('no longer offered');
+  });
+
+  it('excludes lost from MoveForm so Lost is only reached through the Mark lost dialog', async () => {
+    mocks.getOpportunity.mockResolvedValue(opportunity('qualified'));
+    await render();
+    const call = mocks.moveForm.mock.calls.at(-1)?.[0] as
+      | { moves: { stage: string }[]; exclude?: readonly string[] }
+      | undefined;
+    expect(call?.exclude).toContain('lost');
+    const offered = (call?.moves ?? []).filter((m) => !(call?.exclude ?? []).includes(m.stage));
+    expect(offered.map((m) => m.stage)).not.toContain('lost');
   });
 });
