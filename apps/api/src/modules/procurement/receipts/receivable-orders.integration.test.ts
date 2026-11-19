@@ -68,7 +68,14 @@ const U = { warehouse: '', requester: '', otherRequester: '', procurement: '' };
 
 const grantsOf = (role: RoleKey) =>
   new Map(Object.entries(DEFAULT_ROLE_PERMISSIONS[role])) as Map<Permission, Scope>;
-const current: { userId: string; role: RoleKey; scope: TxScope | null } = {
+const current: {
+  userId: string;
+  role: RoleKey;
+  scope: TxScope | null;
+  /** Live grants an admin edited, instead of the role default; reset before each test. */
+  grants?: Map<Permission, Scope>;
+  departmentId?: string | null;
+} = {
   userId: '',
   role: 'warehouse',
   scope: null,
@@ -82,9 +89,9 @@ const principalNow = (): Principal => ({
   partyId: null,
   idpOrgId: 'unused',
   roles: [current.role],
-  departmentId: null,
+  departmentId: current.departmentId ?? null,
   status: 'active',
-  grants: grantsOf(current.role),
+  grants: current.grants ?? grantsOf(current.role),
 });
 const caller = {
   current: () => ({
@@ -241,6 +248,8 @@ beforeEach(() => {
   current.scope = null;
   current.userId = U.warehouse;
   current.role = 'warehouse';
+  current.grants = undefined;
+  current.departmentId = undefined;
 });
 
 // ---------------------------------------------------------------------------------------- fixtures
@@ -515,6 +524,28 @@ describe("the requester's own purchase orders", () => {
     expect((await mine()).map((r) => r.id)).not.toContain(theirs.id);
     asRequester(U.otherRequester);
     expect((await mine()).map((r) => r.id)).toContain(theirs.id);
+  });
+
+  it('drops an order whose request the requester may no longer read after moving out of a department-scoped read', async () => {
+    const po = await newPo({ lines: [SERVICE1] });
+    asRequester();
+    current.grants = new Map([...grantsOf('operations_officer'), ['procurement.pr.read', 'department']]);
+    current.departmentId = departmentA;
+    expect((await mine()).find((r) => r.id === po.id)).toEqual({
+      id: po.id,
+      number: po.number,
+      status: 'issued',
+      vendorName: VENDOR_NAME,
+    });
+    // The same requester, now in another department: the request's detail is a 404 for them, so the picker drops
+    // the order and nothing of it (number, status or vendor) reaches them.
+    current.departmentId = (await createDepartment(appPool, scopeA)).departmentId;
+    await expect(requests.get(po.prId)).rejects.toBeInstanceOf(NotFoundException);
+    const rows = await mine();
+    expect(rows.map((r) => r.id)).not.toContain(po.id);
+    const text = JSON.stringify(rows);
+    expect(text).not.toContain(po.number);
+    expect(text).not.toContain(VENDOR_NAME);
   });
 
   it("never lists another entity's orders", async () => {
