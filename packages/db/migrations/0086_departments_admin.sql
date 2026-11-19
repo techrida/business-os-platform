@@ -25,7 +25,7 @@ ALTER TABLE "app"."departments" ADD CONSTRAINT "departments_retired_at_check" CH
 ALTER TABLE "app"."departments" ADD CONSTRAINT "departments_version_check" CHECK ("version" >= 1);
 --> statement-breakpoint
 UPDATE "app"."departments" d
-SET "name" = d."name" || ' (' || r.rn || ')'
+SET "name" = btrim(d."name") || ' (' || substr(d."id"::text, 1, 8) || ')'
 FROM (
   SELECT "id", row_number() OVER (
     PARTITION BY "tenant_id", "organization_id", lower(btrim("name")) ORDER BY "created_at", "id"
