@@ -460,6 +460,75 @@ describe('inviting again after a half-finished invite', () => {
   });
 });
 
+describe('PUT /v1/admin/users/:id/roles last-Founder guard', () => {
+  const FOUNDER_ONE = '00000000-0000-4000-9000-000000000101';
+  const FOUNDER_TWO = '00000000-0000-4000-9000-000000000102';
+  const INVITED_FOUNDER = '00000000-0000-4000-9000-000000000103';
+
+  beforeEach(() => {
+    store.users.push({
+      id: FOUNDER_ONE,
+      tenantId: TENANT,
+      idpOrgId: STAFF_IDP,
+      zitadelUserId: 'z-founder-1',
+      email: 'kiran@techrida.test',
+      displayName: 'Kiran Thapa',
+      status: 'active',
+    });
+    store.roles.set(FOUNDER_ONE, ['founder']);
+  });
+
+  it('refuses removing Founder from the only active Founder and does not touch ZITADEL', async () => {
+    // An invited (not yet active) second Founder does not satisfy the guard.
+    store.users.push({
+      id: INVITED_FOUNDER,
+      tenantId: TENANT,
+      idpOrgId: STAFF_IDP,
+      zitadelUserId: 'z-founder-invited',
+      email: 'pending@techrida.test',
+      displayName: 'Pending Founder',
+      status: 'invited',
+    });
+    store.roles.set(INVITED_FOUNDER, ['founder']);
+
+    let caught: unknown;
+    try {
+      await asAdmin(['admin.roles.write'], () =>
+        controller.setRoles(FOUNDER_ONE, { roles: ['management'] }),
+      );
+    } catch (error) {
+      caught = error;
+    }
+    expect(caught).toBeInstanceOf(ConflictException);
+    expect((caught as ConflictException).getResponse()).toEqual({
+      code: 'last_founder',
+      message: 'Kiran Thapa is the only Founder. Make someone else a Founder first.',
+    });
+    expect(zitadel.grants.has('z-founder-1')).toBe(false);
+    expect(store.roles.get(FOUNDER_ONE)).toEqual(['founder']);
+  });
+
+  it('allows removing Founder once another active Founder exists', async () => {
+    store.users.push({
+      id: FOUNDER_TWO,
+      tenantId: TENANT,
+      idpOrgId: STAFF_IDP,
+      zitadelUserId: 'z-founder-2',
+      email: 'sita@techrida.test',
+      displayName: 'Sita Shrestha',
+      status: 'active',
+    });
+    store.roles.set(FOUNDER_TWO, ['founder']);
+
+    await asAdmin(['admin.roles.write'], () =>
+      controller.setRoles(FOUNDER_ONE, { roles: ['management'] }),
+    );
+    expect(zitadel.grants.get('z-founder-1')).toEqual(['management']);
+    expect(store.roles.get(FOUNDER_ONE)).toEqual(['management']);
+    expect(authz.invalidations).toBe(1);
+  });
+});
+
 describe('SqlUsersStore.emailOf', () => {
   let container: StartedPostgreSqlContainer;
   let pool: Pool;

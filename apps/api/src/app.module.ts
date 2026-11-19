@@ -1,5 +1,6 @@
 import { Module } from '@nestjs/common';
 
+import { AccessSettingsModule } from './modules/access-settings/access-settings.module';
 import { ActivitiesModule } from './modules/activities/activities.module';
 import { ApprovalsHttpModule } from './modules/approvals/approvals.module';
 import { CustomersModule } from './modules/customers/customers.module';
@@ -74,6 +75,7 @@ import { UsersModule } from './platform/users/users.module';
     DocumentsModule,
     NotifyHttpModule,
     UsersModule,
+    AccessSettingsModule,
     DepartmentsAdminModule,
     ApprovalsHttpModule,
     TestMemoModule,
