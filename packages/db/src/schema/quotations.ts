@@ -329,7 +329,7 @@ export const quotationVersions = appSchema.table(
       .notNull()
       .default(sql`'[]'::jsonb`),
     discountMode: text('discount_mode', { enum: QUOTATION_DISCOUNT_MODES }),
-    /** The discount as typed: a percentage (0 to 100) or an amount, numeric(18,4). */
+    /** The discount as typed: up to four decimal places for a percent, two for an amount. */
     discountInput: numeric('discount_input', { precision: 18, scale: 4 }),
     subtotal: money('subtotal').notNull().default('0'),
     discountAmount: money('discount_amount').notNull().default('0'),
@@ -478,6 +478,10 @@ export const quotationVersions = appSchema.table(
     check(
       'quotation_versions_discount_input_check',
       sql`(${t.discountMode} IS NULL) = (${t.discountInput} IS NULL) AND ${t.discountInput} >= 0 AND (${t.discountMode} <> 'pct' OR ${t.discountInput} <= 100)`,
+    ),
+    check(
+      'quotation_versions_amount_discount_precision_check',
+      sql`${t.discountMode} <> 'amount' OR ${t.discountInput} = round(${t.discountInput}, 2)`,
     ),
     check(
       'quotation_versions_amounts_check',
