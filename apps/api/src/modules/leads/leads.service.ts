@@ -463,7 +463,7 @@ export class LeadsService {
     if (any === undefined) {
       const defaults = new Map<string, Scope>();
       for (const [role, grants] of Object.entries(DEFAULT_ROLE_PERMISSIONS)) {
-        const s = (grants as Partial<Record<Permission, Scope>>)['crm.lead.write'];
+        const s = (grants)['crm.lead.write'];
         if (s !== undefined) defaults.set(role, s);
       }
       return defaults;
@@ -477,7 +477,7 @@ export class LeadsService {
           eq(rolePermissions.permission, 'crm.lead.write'),
         ),
       );
-    return new Map(rows.map((r) => [r.roleKey, r.scope as Scope]));
+    return new Map(rows.map((r) => [r.roleKey, r.scope]));
   }
 
   /**
