@@ -54,7 +54,7 @@ test('an issued purchase order shows its lines, versions and the right buttons',
     await expect(founder.page.getByRole('heading', { name: 'Lines' })).toBeVisible();
     await expect(founder.page.getByRole('heading', { name: 'Versions' })).toBeVisible();
     await expect(
-      founder.page.getByRole('link', { name: /Download PDF of version 1/ }),
+      founder.page.getByRole('button', { name: /View PDF of version 1/ }),
     ).toBeVisible();
     await expect(founder.page.getByRole('button', { name: 'Issue purchase order' })).toHaveCount(0);
 

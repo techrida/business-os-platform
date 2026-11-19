@@ -1,11 +1,17 @@
 'use client';
 
-import { useRef, useState, type ReactNode, type RefObject } from 'react';
+import { PdfPages } from '@bos/pdf-viewer';
+import { useEffect, useRef, useState, type ReactNode, type RefObject } from 'react';
 
 import { Button, LinkButton } from './button';
 import { Dialog, DialogClose } from './dialog';
 import { Icon } from './icon';
-import { isSameOriginUrl, normalizeMime, pdfViewerUrl, previewKind } from './file-preview-model';
+import {
+  isSameOriginUrl,
+  normalizeMime,
+  previewFetchOutcome,
+  previewKind,
+} from './file-preview-model';
 import styles from './file-preview-dialog.module.css';
 
 export interface FilePreviewDialogProps {
@@ -41,14 +47,17 @@ export interface FilePreviewDialogProps {
 }
 
 /**
- * Previews an uploaded file in a dialog (UIP-FORM-003). PDFs and images are fitted to the box and keep their aspect
- * ratio; download is a secondary action in the footer. Any other type, an unsafe URL or an image that fails to load
- * shows a short message and makes Download the main action.
+ * The shared document viewer (UIP-FORM-003). Images are fitted to the box and keep their aspect ratio. A PDF is
+ * fetched from `previewUrl` once each time the dialog opens and drawn by `PdfPages`, never in an iframe. While the
+ * file is still being prepared (HTTP 409, 404 or 425) or fails, the dialog shows a message and a Retry button; Retry
+ * makes one new request per click and nothing polls, because every call to such a route issues a single-use signed
+ * link. Download is a secondary action in the footer. Any other type or an unsafe URL shows a short message and
+ * makes Download the main action.
  *
  * Safety: HTML, SVG and unknown types are never framed, and only same-origin URLs are loaded. The route behind
- * `previewUrl` must itself answer with the stored type, `X-Content-Type-Options: nosniff` and
- * `Content-Disposition: inline`, and must allow framing by this origin (`X-Frame-Options: SAMEORIGIN`,
- * `frame-ancestors 'self'`); the app-wide `DENY` / `frame-ancestors 'none'` would show a blank frame.
+ * `previewUrl` must answer with the stored type, `X-Content-Type-Options: nosniff` and `Content-Disposition: inline`.
+ * It is requested with the user's own same-origin credentials and `cache: 'no-store'`. Nothing is requested while the
+ * dialog is closed.
  *
  * @example
  *   <FilePreviewDialog
@@ -104,13 +113,13 @@ export function FilePreviewDialog({
       }}
       title={name}
       size="full"
+      className={styles.dialog}
       locked={locked}
       closeOnOutsideClick={closeOnOutsideClick}
       bodyClassName={children || hasStageSlot ? styles.editBody : styles.body}
       initialFocusRef={actions === undefined ? closeRef : undefined}
       footer={
         <Footer
-          name={name}
           mimeType={mimeType}
           previewUrl={previewUrl}
           downloadUrl={downloadUrl}
@@ -136,7 +145,6 @@ export function FilePreviewDialog({
 
 /** Footer and Stage read `window.location.origin`. They only render inside the dialog portal, which mounts on the client. */
 function Footer({
-  name,
   mimeType,
   previewUrl,
   downloadUrl,
@@ -146,13 +154,13 @@ function Footer({
   actions,
 }: Pick<
   FilePreviewDialogProps,
-  'name' | 'mimeType' | 'previewUrl' | 'downloadUrl' | 'onDownload' | 'actions'
+  'mimeType' | 'previewUrl' | 'downloadUrl' | 'onDownload' | 'actions'
 > & {
   failed: boolean;
   closeRef: RefObject<HTMLButtonElement | null>;
 }) {
   const origin = window.location.origin;
-  const canPreview = !failed && browserCanPreview(mimeType) && isSameOriginUrl(previewUrl, origin);
+  const canPreview = !failed && canPreviewKind(mimeType) && isSameOriginUrl(previewUrl, origin);
   return (
     <>
       {actions === undefined ? (
@@ -166,7 +174,6 @@ function Footer({
         <LinkButton
           variant={canPreview || actions !== undefined ? 'secondary' : 'primary'}
           href={downloadUrl}
-          download={name}
           onClick={() => onDownload?.()}
         >
           <DownloadIcon />
@@ -194,7 +201,7 @@ function Stage({
   const kind = previewKind(mimeType);
   const safe = isSameOriginUrl(previewUrl, window.location.origin);
 
-  if (failed || !browserCanPreview(mimeType) || !safe) {
+  if (failed || !canPreviewKind(mimeType) || !safe) {
     return (
       <div className={styles.fallback} role="status">
         <Icon name="file-text" size={40} className={styles.fallbackIcon} />
@@ -208,26 +215,116 @@ function Stage({
     );
   }
 
+  if (kind === 'pdf') return <PdfStage key={previewUrl} name={name} previewUrl={previewUrl} />;
+
   return (
     <div className={styles.stage}>
-      {kind === 'pdf' ? (
-        <iframe
-          className={styles.frame}
-          src={pdfViewerUrl(previewUrl)}
-          title={`Preview of ${name}`}
-          referrerPolicy="no-referrer"
-        />
-      ) : (
-        // eslint-disable-next-line @next/next/no-img-element -- an authenticated same-origin stream; next/image cannot optimise it
-        <img className={styles.image} src={previewUrl} alt={name} onError={onFail} />
-      )}
+      {/* eslint-disable-next-line @next/next/no-img-element -- an authenticated same-origin stream; next/image cannot optimise it */}
+      <img className={styles.image} src={previewUrl} alt={name} onError={onFail} />
     </div>
   );
 }
 
-function browserCanPreview(mimeType: string): boolean {
-  const kind = previewKind(mimeType);
-  return kind === 'image' || (kind === 'pdf' && window.navigator.pdfViewerEnabled !== false);
+type PdfState =
+  | { status: 'loading' }
+  | { status: 'ready'; data: Uint8Array }
+  | { status: 'preparing' }
+  | { status: 'denied' }
+  | { status: 'error' };
+
+/**
+ * Fetches the PDF once when it mounts (it mounts when the dialog opens) and once more per Retry click. The `requested`
+ * ref makes React's development double-effect issue one request, and a microtask check on cleanup aborts the request
+ * only when the stage really unmounts.
+ */
+function PdfStage({ name, previewUrl }: { name: string; previewUrl: string }) {
+  const [attempt, setAttempt] = useState(0);
+  const [state, setState] = useState<PdfState>({ status: 'loading' });
+  const requested = useRef<number | null>(null);
+  const controller = useRef<AbortController | null>(null);
+  const mounted = useRef(false);
+
+  useEffect(() => {
+    mounted.current = true;
+    return () => {
+      mounted.current = false;
+      const pending = controller.current;
+      queueMicrotask(() => {
+        if (!mounted.current) pending?.abort();
+      });
+    };
+  }, []);
+
+  useEffect(() => {
+    if (requested.current === attempt) return;
+    requested.current = attempt;
+    const own = new AbortController();
+    controller.current = own;
+    const settle = (next: PdfState) => {
+      if (!own.signal.aborted && requested.current === attempt) setState(next);
+    };
+    fetch(previewUrl, { credentials: 'same-origin', cache: 'no-store', signal: own.signal })
+      .then(async (response) => {
+        const outcome = previewFetchOutcome(response.status);
+        if (outcome === 'ready') {
+          settle({ status: 'ready', data: new Uint8Array(await response.arrayBuffer()) });
+        } else {
+          settle({ status: outcome });
+        }
+      })
+      .catch(() => settle({ status: 'error' }));
+  }, [attempt, previewUrl]);
+
+  const retry = () => {
+    setState({ status: 'loading' });
+    setAttempt((current) => current + 1);
+  };
+
+  if (state.status === 'ready') {
+    return (
+      <div className={styles.pdfStage}>
+        <PdfPages
+          data={state.data}
+          title={`Preview of ${name}`}
+          className={styles.pdfPages}
+          onError={() => setState({ status: 'error' })}
+        />
+      </div>
+    );
+  }
+  if (state.status === 'loading') {
+    return (
+      <div className={styles.fallback} role="status" aria-busy="true">
+        <p className={styles.fallbackText}>Loading the PDF…</p>
+      </div>
+    );
+  }
+  const message =
+    state.status === 'preparing'
+      ? { title: 'Preparing…', text: 'This PDF is still being prepared.', retry: true }
+      : state.status === 'denied'
+        ? { title: 'No access', text: 'You no longer have access to this file.', retry: false }
+        : {
+            title: 'Could not load the PDF',
+            text: 'Something went wrong while loading it.',
+            retry: true,
+          };
+  return (
+    <div className={styles.fallback} role="status">
+      <Icon name="file-text" size={40} className={styles.fallbackIcon} />
+      <p className={styles.fallbackTitle}>{message.title}</p>
+      <p className={styles.fallbackText}>{message.text}</p>
+      {message.retry ? (
+        <Button variant="secondary" size="small" onClick={retry}>
+          Retry
+        </Button>
+      ) : null}
+    </div>
+  );
+}
+
+function canPreviewKind(mimeType: string): boolean {
+  return previewKind(mimeType) !== 'unsupported';
 }
 
 function typeLabel(mime: string): string {
@@ -237,7 +334,7 @@ function typeLabel(mime: string): string {
   return sub.replace(/^x-/, '').replace(/\+.*$/, '').toUpperCase();
 }
 
-function DownloadIcon() {
+export function DownloadIcon() {
   return (
     <svg
       xmlns="http://www.w3.org/2000/svg"

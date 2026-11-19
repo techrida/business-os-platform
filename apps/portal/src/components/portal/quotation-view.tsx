@@ -3,8 +3,8 @@ import { formatMoney } from '@bos/locale';
 import type { ReactNode } from 'react';
 
 import { Badge } from '@/components/ui/badge';
-import { LinkButton } from '@/components/ui/button';
 import { Card } from '@/components/ui/card';
+import { ViewDocument } from '@/components/ui/document-viewer';
 
 import styles from './quotation.module.css';
 import { displayStatus, formatDay, STATUS_LOOK } from './quotation-status';
@@ -56,11 +56,17 @@ export function QuotationView({
           </dl>
           {view.file ? (
             <div className={styles.download}>
-              {/* A plain anchor: the target is a route handler, and a prefetch would fetch the PDF. No
-                  `download` attribute: the API sends attachment, and an error must read as text. */}
-              <LinkButton variant="secondary" size="small" href={`/quotations/${view.id}/document`}>
-                Download PDF
-              </LinkButton>
+              {/* Opens the in-page viewer. The Download link beside it is a plain anchor: the target is a
+                  route handler, and a prefetch would fetch the PDF. No `download` attribute: the API sends
+                  attachment, and an error must read as text. */}
+              <ViewDocument
+                name={view.file.filename}
+                previewUrl={`/quotations/${view.id}/document/preview`}
+                downloadUrl={`/quotations/${view.id}/document`}
+                variant="secondary"
+                size="small"
+                withDownload
+              />
               <p className={styles.checksum}>
                 {view.file.filename}
                 <span className={styles.visuallyHidden}>, </span>

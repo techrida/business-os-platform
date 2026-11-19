@@ -29,6 +29,7 @@ COPY packages/contracts/package.json packages/contracts/package.json
 COPY packages/db/package.json packages/db/package.json
 COPY packages/locale/package.json packages/locale/package.json
 COPY packages/money-rules/package.json packages/money-rules/package.json
+COPY packages/pdf-viewer/package.json packages/pdf-viewer/package.json
 COPY tools/seed-zitadel/package.json tools/seed-zitadel/package.json
 # `@bos/api...` = the API and the workspace packages it depends on, nothing else (no Next.js).
 RUN --mount=type=cache,id=bos-pnpm-store,target=/pnpm-store \

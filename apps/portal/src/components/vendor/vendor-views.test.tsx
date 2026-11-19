@@ -119,6 +119,9 @@ describe('PurchaseOrderView', () => {
     expect(html).toContain(
       'href="/vendor/purchase-orders/0f8fad5b-d9cb-469f-a165-70867728950e/pdf"',
     );
+    expect(html).toContain('View PDF');
+    expect(html).not.toContain('Download PDF');
+    expect(html).not.toContain('/pdf/preview');
     // No `download` attribute and no prefetching client link: an error must read as text.
     expect(html).not.toContain('download=');
     expect(t).toContain('PO-2082-0007-v2.pdf');
@@ -127,6 +130,7 @@ describe('PurchaseOrderView', () => {
   it('says the PDF is not ready when the file is null, and offers no link', () => {
     const html = renderToStaticMarkup(<PurchaseOrderView view={samplePo({ file: null })} />);
     expect(html).not.toContain('/pdf"');
+    expect(html).not.toContain('View PDF');
     expect(text(html)).toContain('The PDF is not ready yet');
   });
 

@@ -1,6 +1,12 @@
 import { describe, expect, it } from 'vitest';
 
-import { isSameOriginUrl, normalizeMime, pdfViewerUrl, previewKind } from './file-preview-model';
+import {
+  isSameOriginUrl,
+  normalizeMime,
+  pdfViewerUrl,
+  previewFetchOutcome,
+  previewKind,
+} from './file-preview-model';
 
 const ORIGIN = 'https://app.p1.bos.test';
 
@@ -54,5 +60,20 @@ describe('pdfViewerUrl', () => {
   it('adds fit-page hints once', () => {
     expect(pdfViewerUrl('/f.pdf')).toBe('/f.pdf#view=Fit&navpanes=0');
     expect(pdfViewerUrl('/f.pdf#page=2')).toBe('/f.pdf#page=2');
+  });
+});
+
+describe('previewFetchOutcome', () => {
+  it.each([
+    [200, 'ready'],
+    [409, 'preparing'],
+    [404, 'preparing'],
+    [425, 'preparing'],
+    [401, 'denied'],
+    [403, 'denied'],
+    [500, 'error'],
+    [400, 'error'],
+  ])('maps %i to %s', (status, outcome) => {
+    expect(previewFetchOutcome(status)).toBe(outcome);
   });
 });

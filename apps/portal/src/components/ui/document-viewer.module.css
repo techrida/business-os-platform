@@ -1,0 +1,175 @@
+/* A native <dialog>: the browser traps focus, closes on Esc and paints the backdrop in the top layer.
+   Light mode only, whatever the page's colour scheme. */
+
+.viewDocument {
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  max-width: 100%;
+}
+
+.dialog {
+  box-sizing: border-box;
+  width: min(960px, calc(100vw - 32px));
+  max-width: none;
+  height: min(90dvh, 900px);
+  max-height: none;
+  margin: auto;
+  padding: 0;
+  border: var(--border-width-thin) solid var(--modal-border);
+  border-radius: var(--radius-xl);
+  background: var(--modal-bg);
+  color: var(--modal-text);
+  color-scheme: light;
+  overflow: hidden;
+}
+
+.dialog::backdrop {
+  background: var(--modal-overlay);
+}
+
+.panel {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+}
+
+.header {
+  display: flex;
+  flex: 0 0 auto;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 12px 16px;
+  border-bottom: var(--border-width-thin) solid var(--border-default);
+}
+
+.title {
+  min-width: 0;
+  margin: 0;
+  overflow-wrap: anywhere;
+  font-size: var(--font-size-body-large);
+  font-weight: var(--font-weight-semibold);
+  line-height: var(--line-height-body-large);
+}
+
+.iconClose {
+  display: inline-flex;
+  flex: 0 0 auto;
+  align-items: center;
+  justify-content: center;
+  width: 36px;
+  height: 36px;
+  padding: 0;
+  border: 0;
+  border-radius: var(--radius-lg);
+  background: transparent;
+  color: var(--modal-close-icon);
+  cursor: pointer;
+}
+
+.iconClose:hover {
+  background: var(--surface-muted);
+}
+
+.body {
+  display: flex;
+  flex: 1 1 auto;
+  min-height: 0;
+  padding: 16px;
+}
+
+/* The PDF pages scroll inside the stage; the stage keeps the dialog's size whatever the page count. */
+.pdfStage {
+  display: flex;
+  flex: 1 1 auto;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+  border: var(--border-width-thin) solid var(--border-default);
+  border-radius: var(--radius-lg);
+  background: var(--surface-muted);
+  overflow: auto;
+  overscroll-behavior: contain;
+}
+
+.pdfPages {
+  width: 100%;
+  min-width: 0;
+}
+
+.fallback {
+  display: flex;
+  flex: 1 1 auto;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  min-width: 0;
+  min-height: min-content;
+  padding: var(--spacing-section);
+  border: var(--border-width-thin) dashed var(--border-strong);
+  border-radius: var(--radius-lg);
+  background: var(--surface-subtle);
+  text-align: center;
+}
+
+.fallbackIcon {
+  box-sizing: content-box;
+  padding: 12px;
+  border-radius: var(--radius-lg);
+  background: var(--surface-brand);
+  color: var(--icon-brand);
+}
+
+.fallbackTitle {
+  margin: 8px 0 0;
+  overflow-wrap: anywhere;
+  font-size: var(--font-size-body-large);
+  font-weight: var(--font-weight-semibold);
+  line-height: var(--line-height-body-large);
+}
+
+.fallbackText {
+  margin: 0;
+  max-width: 36ch;
+  color: var(--text-secondary);
+  font-size: var(--font-size-body-small);
+  line-height: var(--line-height-body-small);
+  overflow-wrap: anywhere;
+}
+
+.footer {
+  display: flex;
+  flex: 0 0 auto;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 8px;
+  padding: 12px 16px;
+  border-top: var(--border-width-thin) solid var(--border-default);
+}
+
+/* On a phone the viewer takes the whole screen and the footer buttons stack. */
+@media (max-width: 480px) {
+  .dialog {
+    width: 100vw;
+    max-width: 100vw;
+    height: 100dvh;
+    max-height: 100dvh;
+    border: 0;
+    border-radius: 0;
+  }
+
+  .body {
+    padding: 8px;
+  }
+
+  .footer {
+    flex-direction: column-reverse;
+  }
+
+  .footer > * {
+    width: 100%;
+  }
+}

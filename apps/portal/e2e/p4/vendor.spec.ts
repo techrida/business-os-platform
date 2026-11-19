@@ -44,7 +44,7 @@ test('purchase orders list and detail, with the PDF as a plain link', async ({ p
   test.skip(!poId, 'PORTAL_E2E_VENDOR_PO_ID is not set');
   await page.goto(`/vendor/purchase-orders/${poId}`);
   await expect(page.getByRole('table', { name: /^Items on / })).toBeVisible();
-  const pdf = page.getByRole('link', { name: 'Download PDF' });
+  const pdf = page.getByRole('link', { name: 'Download', exact: true });
   if (await pdf.isVisible()) {
     const res = await page.request.get(`/vendor/purchase-orders/${poId}/pdf`);
     expect([200, 409]).toContain(res.status());

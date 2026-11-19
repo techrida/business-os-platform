@@ -19,6 +19,8 @@ const contentSecurityPolicy = [
   "img-src 'self' data:",
   "font-src 'self'",
   "connect-src 'self'",
+  // The PDF viewer's pdf.js worker is a bundled same-origin asset. No blob: and no CDN.
+  "worker-src 'self'",
   "object-src 'none'",
   "base-uri 'self'",
   "frame-ancestors 'none'",
@@ -31,6 +33,9 @@ const nextConfig: NextConfig = {
   // root so Next does not warn about two different roots.
   turbopack: { root: monorepoRoot },
   poweredByHeader: false,
+
+  // @bos/pdf-viewer ships TypeScript source and a CSS file (no dist build), so Next compiles it.
+  transpilePackages: ['@bos/pdf-viewer'],
 
   // `next build` type-checks only the app. The full tsconfig.json also covers e2e/ and the
   // test configs; the e2e specs import apps/workspace/e2e helpers, whose dependencies the

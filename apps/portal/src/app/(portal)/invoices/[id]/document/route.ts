@@ -1,74 +1,30 @@
-import { ApiError, openSignedFile } from '@/lib/api';
+import { openSignedFile } from '@/lib/api';
 import { getPortalInvoiceLink } from '@/lib/api.billing';
-import { SessionUnavailableError, SESSION_UNAVAILABLE_MESSAGE } from '@/lib/session-unavailable';
-import { getSession, type Session } from '@/lib/session';
+import { handleSignedFile } from '@/lib/signed-file-route';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-const NOT_FOUND = 'Invoice not found.';
-
-/** A download is a page navigation, so a failure is plain text a person can read, not JSON. */
-function plain(message: string, status: number): Response {
-  return new Response(message, {
-    status,
-    headers: { 'content-type': 'text/plain; charset=utf-8', 'cache-control': 'no-store' },
-  });
-}
 
 /**
- * Download the frozen PDF of one invoice. Same handling as the quotation PDF route: it checks the
- * session itself, the API hands out a short-lived signed link, and this route fetches the bytes
- * over the internal URL and streams them on, so no token or API address reaches the browser. A bad
- * id, a 404 and a 403 all answer the same "Invoice not found.".
+ * Download the frozen PDF of one invoice. Same handling as the quotation PDF route: the shared
+ * handler checks the session itself, the API hands out a short-lived signed link, and the bytes are
+ * fetched over the internal URL and streamed on, so no token or API address reaches the browser. A
+ * bad id, a 404 and a 403 all answer the same "Invoice not found.".
  */
-export async function GET(
+export function GET(
   _req: Request,
   { params }: { params: Promise<{ id: string }> },
 ): Promise<Response> {
-  let session: Session | null;
-  try {
-    session = await getSession();
-  } catch (err) {
-    if (!(err instanceof SessionUnavailableError)) throw err;
-    const response = plain(SESSION_UNAVAILABLE_MESSAGE, 503);
-    response.headers.set('retry-after', '1');
-    return response;
-  }
-  if (!session) return plain('Sign in to download this invoice.', 401);
-  if (session.orgKind !== 'customer') return plain(NOT_FOUND, 404);
-
-  const { id } = await params;
-  if (!UUID.test(id)) return plain(NOT_FOUND, 404);
-
-  try {
-    const link = await getPortalInvoiceLink(session, id);
-    const file = await openSignedFile(session, link);
-    const headers = new Headers({
-      'cache-control': 'private, no-store',
-      'x-content-type-options': 'nosniff',
-    });
-    for (const name of [
-      'content-type',
-      'content-disposition',
-      'content-length',
-      'content-security-policy',
-    ]) {
-      const value = file.headers.get(name);
-      if (value !== null) headers.set(name, value);
-    }
-    return new Response(file.body, { status: 200, headers });
-  } catch (err) {
-    const status = err instanceof ApiError ? err.status : 0;
-    if (status === 404 || status === 403) return plain(NOT_FOUND, 404);
-    if (status === 401) return plain('Sign in to download this invoice.', 401);
-    if (status === 409 || status === 410) {
-      return plain(
-        'This PDF is not available to download yet. Please try again in a few minutes.',
-        409,
-      );
-    }
-    return plain('We could not fetch the PDF just now. Please try again.', 502);
-  }
+  return handleSignedFile({
+    mode: 'download',
+    orgKind: 'customer',
+    notFound: 'Invoice not found.',
+    signIn: 'Sign in to download this invoice.',
+    isId: (id) => UUID.test(id),
+    params,
+    getLink: getPortalInvoiceLink,
+    openFile: openSignedFile,
+  });
 }

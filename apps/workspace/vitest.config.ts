@@ -11,6 +11,7 @@ export default defineConfig({
     alias: {
       '@bos/contracts': source('../../packages/contracts/src/index.ts'),
       '@bos/locale': source('../../packages/locale/src/index.ts'),
+      '@bos/pdf-viewer': source('../../packages/pdf-viewer/src/index.ts'),
       '@': source('./src'),
     },
   },

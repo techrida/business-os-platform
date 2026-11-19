@@ -13,6 +13,7 @@ import { EmptyState } from '@/components/ui/empty-state';
 import { Breadcrumb, Page, PageHeader } from '@/components/ui/page';
 import { FactList, Panel, type Fact } from '@/components/ui/panel';
 import { Table, Td, Th } from '@/components/ui/table';
+import { ViewDocument } from '@/components/ui/view-document';
 import {
   getPoProgress,
   getPurchaseOrder,
@@ -236,12 +237,15 @@ function Versions({
                   <time dateTime={v.createdAt}>{when(v.createdAt)}</time>
                 </Td>
                 <Td nowrap>
-                  <a
-                    href={`/procurement/orders/${encodeURIComponent(po.id)}/versions/${v.version}/document`}
-                    className={styles.versionLink}
-                  >
-                    Download PDF<span className="sr-only"> of version {v.version}</span>
-                  </a>
+                  <ViewDocument
+                    name={`${po.number.replaceAll('/', '-')}-v${v.version}.pdf`}
+                    previewUrl={`/procurement/orders/${encodeURIComponent(po.id)}/versions/${v.version}/document/preview`}
+                    downloadUrl={`/procurement/orders/${encodeURIComponent(po.id)}/versions/${v.version}/document`}
+                    label="View PDF"
+                    variant="link"
+                    withDownload
+                    context={`of version ${v.version}`}
+                  />
                 </Td>
               </tr>
             ))}
