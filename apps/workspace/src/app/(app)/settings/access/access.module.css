@@ -1,0 +1,8 @@
+/* Settings > Access: the frame under the tab bar and the By area page. */
+
+.tabBody {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  min-width: 0;
+}
