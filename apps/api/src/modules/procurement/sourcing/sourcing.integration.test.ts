@@ -388,6 +388,46 @@ async function approve(user: string, role: RoleKey, requestId: string) {
 // ---------------------------------------------------------------------------------------- RFQ
 
 describe('RFQ', () => {
+  it.each([
+    ['a past deadline', '2020-01-01T17:00:00+05:45'],
+    ['a deadline of exactly now', now.toISOString()],
+  ])('refuses %s with 400 deadline_in_past and opens nothing (I-28)', async (_label, deadline) => {
+    const pr = await deptApprovedPr();
+    const v = await vendor('approved');
+    const e = await httpErrorOf(
+      service.createRfq({ purchaseRequestId: pr.id, deadline, vendorIds: [v] }, randomUUID()),
+    );
+    expect(e.getStatus()).toBe(400);
+    expect(e.getResponse()).toMatchObject({
+      code: 'bad_request',
+      reason: 'deadline_in_past',
+      message: 'The quotation deadline has passed. Choose a date and time in the future.',
+    });
+    const rfqRows = await exec(
+      scopeA,
+      sql`SELECT id FROM app.rfqs WHERE purchase_request_id = ${pr.id}`,
+    );
+    expect(rfqRows.rows).toEqual([]);
+    const [row] = await read((tx) =>
+      tx.select().from(purchaseRequests).where(eq(purchaseRequests.id, pr.id)),
+    );
+    expect(row!.status).toBe('dept_approved');
+  });
+
+  it('opens an RFQ whose deadline is a minute after now (I-28)', async () => {
+    const pr = await deptApprovedPr();
+    const v = await vendor('approved');
+    const rfq = await service.createRfq(
+      {
+        purchaseRequestId: pr.id,
+        deadline: new Date(now.getTime() + 60_000).toISOString(),
+        vendorIds: [v],
+      },
+      randomUUID(),
+    );
+    expect(rfq.status).toBe('open');
+  });
+
   it('refuses an unapproved vendor with 409 VENDOR_NOT_APPROVED', async () => {
     const pr = await deptApprovedPr();
     const v = await vendor('draft');

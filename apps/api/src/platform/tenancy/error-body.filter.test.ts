@@ -501,6 +501,22 @@ describe('ErrorBodyFilter', () => {
     });
   });
 
+  it('passes deadline_in_past through on a 400: an RFQ whose quotation deadline has passed (I-28)', () => {
+    const out = filter(
+      new BadRequestException({
+        code: 'bad_request',
+        reason: 'deadline_in_past',
+        message: 'The quotation deadline has passed. Choose a date and time in the future.',
+      }),
+    );
+    expect(out.status).toBe(400);
+    expect(ErrorBodySchema.parse(out.body).error).toMatchObject({
+      code: 'bad_request',
+      reason: 'deadline_in_past',
+      message: 'The quotation deadline has passed. Choose a date and time in the future.',
+    });
+  });
+
   it('drops an unknown reason, a reason on a plain 403, and a reason on any other status', () => {
     const unknown = filter(new ForbiddenException({ reason: 'because I said so' }));
     expect(ErrorBodySchema.parse(unknown.body).error).not.toHaveProperty('reason');
