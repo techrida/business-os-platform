@@ -16,6 +16,7 @@ const mocks = vi.hoisted(() => ({
   listActivities: vi.fn(),
   listLeadOwners: vi.fn(),
   moveForm: vi.fn(),
+  userNames: vi.fn(),
 }));
 
 vi.mock('@/lib/bff', () => ({ requireStaffSession: mocks.requireStaffSession }));
@@ -31,6 +32,10 @@ vi.mock('@/components/p2/crm/move-form', () => ({
     return null;
   },
   toastMoveResult: vi.fn(),
+}));
+vi.mock('@/lib/business-labels', async (importOriginal) => ({
+  ...(await importOriginal<object>()),
+  userNames: mocks.userNames,
 }));
 vi.mock('../../activities/actions', () => ({ logActivityAction: vi.fn() }));
 vi.mock('../actions', () => ({
@@ -161,6 +166,7 @@ beforeEach(() => {
     );
   mocks.listLeadOwners.mockReset().mockResolvedValue(OWNERS);
   mocks.moveForm.mockReset();
+  mocks.userNames.mockReset().mockResolvedValue(new Map());
 });
 
 describe('lead detail page composition (U14 D39, D41)', () => {
@@ -279,5 +285,38 @@ describe('lead detail page composition (U14 D39, D41)', () => {
     const timeline = doc.querySelector('[aria-label="Lead progression"]');
     expect(timeline?.textContent).toContain('Contacted');
     expect(timeline?.textContent).not.toMatch(/Contacted\s*Not yet/);
+  });
+});
+
+describe('lead detail names (owners list merged with the users directory)', () => {
+  it('names an assignee outside an own-scope owners list from the directory', async () => {
+    // An own-scope caller only gets themselves as an owner option.
+    mocks.listLeadOwners.mockResolvedValue([OWNERS[0]]);
+    mocks.userNames.mockResolvedValue(new Map([[OTHER, 'Mira Thapa']]));
+    mocks.listActivities.mockImplementation((_s: unknown, opts: { status?: string }) =>
+      Promise.resolve(
+        opts.status === 'planned' ? [{ ...PLANNED, assigneeUserId: OTHER }] : [LOGGED],
+      ),
+    );
+    const followUps = card(await render(), 'Follow-ups').textContent ?? '';
+    expect(followUps).toContain('Mira Thapa');
+    expect(followUps).not.toContain('Another teammate');
+  });
+
+  it('keeps History actors named from the directory when the owners list is refused', async () => {
+    mocks.listLeadOwners.mockRejectedValue(new ApiError(403, 'Forbidden'));
+    mocks.userNames.mockResolvedValue(new Map([[OWNER, 'Anil Karki']]));
+    const doc = await render();
+    expect(card(doc, 'History').textContent).toContain('Anil Karki');
+    expect(card(doc, 'Follow-ups').textContent).toContain('Anil Karki');
+  });
+
+  it('falls back to a plain phrase, never an id, when neither source knows the person', async () => {
+    mocks.listLeadOwners.mockRejectedValue(new ApiError(403, 'Forbidden'));
+    mocks.userNames.mockRejectedValue(new Error('directory down'));
+    const doc = await render();
+    const followUps = card(doc, 'Follow-ups').textContent ?? '';
+    expect(followUps).toContain('Another teammate');
+    expect(doc.body.textContent).not.toContain(OWNER);
   });
 });
