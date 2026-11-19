@@ -318,7 +318,10 @@ export class PurchaseRequestsService {
         .from(receiptLines)
         .innerJoin(
           receipts,
-          and(eq(receipts.tenantId, receiptLines.tenantId), eq(receipts.id, receiptLines.receiptId)),
+          and(
+            eq(receipts.tenantId, receiptLines.tenantId),
+            eq(receipts.id, receiptLines.receiptId),
+          ),
         )
         .where(
           scoped(scope).where(

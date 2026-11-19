@@ -22,7 +22,11 @@ const PARTY = randomUUID();
 const OWNER = randomUUID();
 const SCOPE = { tenantId: TENANT, organizationId: ENTITY };
 
-function principal(role: RoleKey, userId: string, grants = DEFAULT_ROLE_PERMISSIONS[role]): Principal {
+function principal(
+  role: RoleKey,
+  userId: string,
+  grants = DEFAULT_ROLE_PERMISSIONS[role],
+): Principal {
   return {
     userId,
     zitadelUserId: `z-${userId}`,
@@ -94,7 +98,10 @@ describe('caseCapabilities', () => {
     expect(
       caseCapabilities(principal('sales', OWNER, edited), SCOPE, loaded('customer', OWNER)),
     ).toEqual(NONE);
-    const reviewing = { ...DEFAULT_ROLE_PERMISSIONS.operations_head, 'verification.review': 'all' as const };
+    const reviewing = {
+      ...DEFAULT_ROLE_PERMISSIONS.operations_head,
+      'verification.review': 'all' as const,
+    };
     expect(
       caseCapabilities(
         principal('operations_head', randomUUID(), reviewing),
@@ -117,9 +124,9 @@ describe('caseCapabilities', () => {
     // unowned vendor's case refuses the upload, so the control is not offered; the vendor's owner may attach.
     expect(can.attach).toBe(false);
     const buyer = randomUUID();
-    expect(caseCapabilities(principal('procurement', buyer), SCOPE, loaded('vendor', buyer)).attach).toBe(
-      true,
-    );
+    expect(
+      caseCapabilities(principal('procurement', buyer), SCOPE, loaded('vendor', buyer)).attach,
+    ).toBe(true);
   });
 
   it('never offers review to the person who submitted the case, a Founder included (separation of duties)', () => {

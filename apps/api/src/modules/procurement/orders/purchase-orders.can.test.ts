@@ -82,7 +82,9 @@ describe('mayEnterBill under a narrower payables.bill.enter', () => {
     expect(mayEnterBill(own, 'issued', requestOf(ME))).toBe(true);
     expect(mayEnterBill(own, 'issued', THEIRS)).toBe(false);
     // Another entity's request is never theirs, even with their own user id on it.
-    expect(mayEnterBill(own, 'issued', { ...requestOf(ME), organizationId: SOMEONE_ELSE })).toBe(false);
+    expect(mayEnterBill(own, 'issued', { ...requestOf(ME), organizationId: SOMEONE_ELSE })).toBe(
+      false,
+    );
   });
 
   it("follows the request's department under department scope", () => {
