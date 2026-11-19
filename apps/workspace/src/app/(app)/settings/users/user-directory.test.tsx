@@ -4,7 +4,9 @@ import { expect, it, vi } from 'vitest';
 import UsersPage from './page';
 
 vi.mock('server-only', () => ({}));
-vi.mock('../guard', () => ({ requireSection: () => ({ accessToken: 'test-token' }) }));
+vi.mock('../guard', () => ({
+  requireSection: () => ({ accessToken: 'test-token', roles: ['founder'] }),
+}));
 vi.mock('next/navigation', () => ({
   useRouter: () => ({ push: vi.fn(), replace: vi.fn() }),
   usePathname: () => '/settings/users',
