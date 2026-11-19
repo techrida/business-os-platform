@@ -1,5 +1,7 @@
-// Staff uploads of a bank account's call-back evidence (P4 V2b, AD9). Procurement (`vendor.bank.propose`, no
-// `documents.upload` needed) attaches the proof of the call-back to a proposed account; finance verifies with it.
+// Staff uploads of a bank account's call-back evidence (P4 V2b, AD9). Procurement (`vendor.bank.propose`) or finance
+// (`vendor.bank.verify`), no `documents.upload` needed, attaches the proof of the call-back to a proposed account;
+// finance verifies with it. A caller holding neither grant is refused (403) before anything is read, as `@Can` would.
+// That the proposer never verifies is BankService.verify's rule, unchanged.
 // Two steps, like P3's staff payment proofs: POST declares the file and returns `uploadPath`, then a raw PUT of the
 // bytes to that path, sent with the file's own Content-Type.
 // Serves the NFRs "deny by default" and "no unscanned file is ever served": every step goes through DocumentsService
@@ -21,10 +23,12 @@ import {
 import { and, eq, isNull } from 'drizzle-orm';
 import { z } from 'zod';
 
+import { can, type Principal } from '../../../platform/authz/can';
 import { DB, type Db } from '../../../platform/db/db.module';
 import { withTx, type TxScope } from '../../../platform/db/tx';
 import { DocumentsService } from '../../../platform/documents/documents.service';
 import { VendorsCaller } from '../vendors.caller';
+import { BANK_EVIDENCE_UPLOAD_PERMISSIONS } from './bank-evidence.policy';
 import { BANK_EVIDENCE_OWNER_TYPE } from './bank.rules';
 
 const Id = z.guid();
@@ -57,6 +61,12 @@ const accountNotFound = () =>
 const forbidden = () =>
   new ForbiddenException({ code: 'forbidden', message: 'Forbidden', reason: 'no_permission' });
 
+/** Staff holding either upload grant at any scope, as a route-level `@Can` would check one of them. */
+function assertAttacher(p: Principal): void {
+  if (p.orgKind !== 'staff') throw forbidden();
+  if (!BANK_EVIDENCE_UPLOAD_PERMISSIONS.some((action) => can(p, action).allowed)) throw forbidden();
+}
+
 /** Field names only: echoing values back would reflect attacker-controlled text. */
 function invalidFile(error: z.ZodError): BadRequestException {
   const fields = [...new Set(error.issues.map((i) => i.path.join('.') || 'body'))];
@@ -72,12 +82,21 @@ export class VendorBankEvidenceService {
   ) {}
 
   /**
+   * The route-level check the routes cannot declare with one `@Can`: 403 unless the caller is staff holding
+   * `vendor.bank.propose` or `vendor.bank.verify` (the grant alone; the vendor's scope is DocumentsService's check).
+   * The controller calls it before it reads the request, so a caller without either learns nothing else.
+   */
+  assertMayAttach(): void {
+    assertAttacher(this.caller.current().principal);
+  }
+
+  /**
    * Creates the evidence document (version 1, awaiting_content) on the account. DocumentsService checks
-   * `vendor.bank.propose` on the vendor (403) and that the account is still proposed (409).
+   * `vendor.bank.propose` or `vendor.bank.verify` on the vendor (403) and that the account is still proposed (409).
    */
   async create(vendorId: string, accountId: string, body: unknown): Promise<CreatedBankEvidence> {
     const { scope, actor, principal } = this.caller.current();
-    if (principal.orgKind !== 'staff') throw forbidden();
+    assertAttacher(principal);
     const parsed = BankEvidenceFileSchema.safeParse(body);
     if (!parsed.success) throw invalidFile(parsed.error);
     await this.assertAccount(scope, vendorId, accountId);
@@ -112,7 +131,7 @@ export class VendorBankEvidenceService {
     contentLength: number,
   ): Promise<DocumentVersionDto> {
     const { scope, actor, principal } = this.caller.current();
-    if (principal.orgKind !== 'staff') throw forbidden();
+    assertAttacher(principal);
     if (!Id.safeParse(documentId).success || !Id.safeParse(versionId).success) {
       throw evidenceNotFound();
     }

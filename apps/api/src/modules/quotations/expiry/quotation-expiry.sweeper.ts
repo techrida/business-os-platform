@@ -18,8 +18,8 @@
 // versions whose expiring row already exists, so the hourly runs of the two days do not keep re-reading them. Each
 // notice is its own transaction, and the version row is locked FOR SHARE and re-read inside it, so an accept that
 // commits first is not emailed.
-// The link is the portal path `/quotations/<quotationId>`; the template adds PORTAL_PUBLIC_URL, which the worker
-// must have.
+// The link is the portal path `/quotations/<versionId>` (the portal looks quotations up by version id, and this is
+// the sent version the customer was emailed); the template adds PORTAL_PUBLIC_URL, which the worker must have.
 //
 // The owner is told in the bell only. K5's `quotation.expired` template is customer-facing (it links to the portal
 // through PORTAL_PUBLIC_URL and says the customer can no longer accept), so it is not sent to staff, and K5 has no
@@ -231,8 +231,9 @@ export class QuotationExpirySweeper {
           quotationNumber: n.quotationNumber,
           customerName: n.customerName,
           validUntil: n.validUntil,
-          // A path, not a URL: renderEmail prefixes PORTAL_PUBLIC_URL and refuses anything else.
-          linkPath: `/quotations/${n.quotationId}`,
+          // A path, not a URL: renderEmail prefixes PORTAL_PUBLIC_URL and refuses anything else. The portal's
+          // `/quotations/:id` is a version id, so the link names the sent version that is about to expire.
+          linkPath: `/quotations/${c.versionId}`,
         },
         dedupeKey: `quotation.expiring:${c.versionId}`,
       });
