@@ -114,10 +114,6 @@ export function MarkLostDialog({
       else if (result.error !== undefined && REASON_REFUSED.test(result.error)) {
         // A duplicate added, or an option retired, since the list was read.
         errors['reason'] = result.error;
-      } else if (result.reload && pick?.kind === 'new') {
-        // A 409 for a typed reason is most often someone adding the same words first; the toast alone does not say so.
-        errors['reason'] =
-          'That reason already exists, or was retired. Use different words, or ask a Founder to restore it.';
       }
       setFieldErrors(errors);
       toast.error(
