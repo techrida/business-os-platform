@@ -208,4 +208,64 @@ describe('GET /v1/activities', () => {
     expect(bossSees).toEqual(expect.arrayContaining(['mine-visible', 'theirs-hidden']));
     expect(bossSees).not.toContain('entity-b-hidden');
   });
+
+  it('filters by repeated kind and by a search over subject and body, with a total header', async () => {
+    const lead = await seedLead();
+    await post({ kind: 'call', subject: 'Quokka intro', leadId: lead.id });
+    await post({
+      kind: 'note',
+      subject: 'Plain',
+      body: 'about the quokka rollout',
+      leadId: lead.id,
+    });
+    await post({ kind: 'email', subject: 'Quokka mail', leadId: lead.id });
+    await post({ kind: 'task', subject: 'Unrelated', leadId: lead.id });
+
+    const get = async (query: string) => {
+      const res = await list(query);
+      expect(res.status, JSON.stringify(res.body)).toBe(200);
+      return {
+        subjects: z
+          .array(ActivityDtoSchema)
+          .parse(res.body)
+          .map((a) => a.subject)
+          .sort(),
+        total: res.headers['x-total-count'],
+      };
+    };
+    expect(await get('?q=quokka')).toEqual({
+      subjects: ['Plain', 'Quokka intro', 'Quokka mail'],
+      total: '3',
+    });
+    expect(await get('?q=quokka&kind=call&kind=note')).toEqual({
+      subjects: ['Plain', 'Quokka intro'],
+      total: '2',
+    });
+    expect(await get(`?leadId=${lead.id}&limit=1&offset=3`)).toMatchObject({ total: '4' });
+  });
+
+  it('keeps the readable-subject scope when searching and finds a close spelling', async () => {
+    h.as('salesB', 'sales');
+    const theirs = await seedLead();
+    await post({ kind: 'note', subject: 'Himalyan secret', leadId: theirs.id });
+    h.as('salesA', 'sales');
+    const mine = await seedLead();
+    await post({ kind: 'note', subject: 'Himalyan Traders visit', leadId: mine.id });
+
+    const res = await list('?q=Himalayan');
+    expect(res.status, JSON.stringify(res.body)).toBe(200);
+    const subjects = z
+      .array(ActivityDtoSchema)
+      .parse(res.body)
+      .map((a) => a.subject);
+    expect(subjects).toContain('Himalyan Traders visit');
+    expect(subjects).not.toContain('Himalyan secret');
+    expect(res.headers['x-total-count']).toBe(String(subjects.length));
+  });
+
+  it('refuses an unknown kind, an unknown param and a negative offset with 400', async () => {
+    for (const query of ['?kind=nonsense', '?color=red', '?offset=-1', '?q=ab&q=cd']) {
+      expect((await list(query)).status, query).toBe(400);
+    }
+  });
 });

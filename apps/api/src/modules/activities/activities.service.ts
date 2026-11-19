@@ -38,6 +38,7 @@ import { type Principal, type ResourceRef } from '../../platform/authz/can';
 import { DB, type Db } from '../../platform/db/db.module';
 import { withIdempotency } from '../../platform/db/idempotency';
 import { withTx, type DbTransaction } from '../../platform/db/tx';
+import { searchPage } from '../../platform/list';
 import { customerRef } from '../customers/customers.service';
 import { leadRef } from '../leads/leads.service';
 import { opportunityRef } from '../opportunities/opportunities.service';
@@ -65,7 +66,7 @@ export class ActivitiesService {
 
   // -------------------------------------------------------------------------------------------------- read
 
-  async list(q: ListActivitiesQuery): Promise<ActivityDto[]> {
+  async list(q: ListActivitiesQuery): Promise<{ items: ActivityDto[]; total: number }> {
     const { scope, principal } = this.caller.current();
     this.assertStaff(principal);
     const filters: SQL[] = [];
@@ -77,14 +78,25 @@ export class ActivitiesService {
     } else {
       filters.push(this.readableSubjects(principal));
     }
-    if (q.kind !== undefined) filters.push(eq(activities.kind, q.kind));
-    const rows = await this.db
-      .select()
-      .from(activities)
-      .where(scoped(scope).where(activities, and(...filters)))
-      .orderBy(desc(activities.occurredAt), desc(activities.id))
-      .limit(q.limit);
-    return rows.map(toActivityDto);
+    if (q.kind !== undefined && q.kind.length > 0) filters.push(inArray(activities.kind, q.kind));
+    const { rows, total } = await searchPage(this.db, {
+      q: q.q,
+      columns: [activities.subject, activities.body],
+      where: scoped(scope).where(activities, and(...filters)),
+      orderBy: [desc(activities.occurredAt), desc(activities.id)],
+      limit: q.limit,
+      offset: q.offset,
+      rows: (tx, p) =>
+        tx
+          .select()
+          .from(activities)
+          .where(p.where)
+          .orderBy(...p.orderBy)
+          .limit(p.limit)
+          .offset(p.offset),
+      count: (tx, where) => tx.$count(activities, where),
+    });
+    return { items: rows.map(toActivityDto), total };
   }
 
   // ------------------------------------------------------------------------------------------------- create
