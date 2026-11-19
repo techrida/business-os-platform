@@ -15,8 +15,9 @@ import { Badge } from '@/components/ui/badge';
 import { LinkButton } from '@/components/ui/button';
 import { EmptyState } from '@/components/ui/empty-state';
 import { ResultCount } from '@/components/ui/filter-bar';
+import { Icon } from '@/components/ui/icon';
 import { Page, PageHeader } from '@/components/ui/page';
-import { Pagination } from '@/components/ui/pagination';
+import { StatCard } from '@/components/ui/stat-card';
 import { CellTitle, Table, Td, Th } from '@/components/ui/table';
 import { listVendors } from '@/lib/api-vendors';
 import { requireStaffSession } from '@/lib/bff';
@@ -28,7 +29,9 @@ import {
   type RawParams,
 } from '@/lib/list-params';
 import { companyLogo } from '../customers/_lib/company-logo';
+import { ListPager } from '../invoices/_components/list-pager';
 
+import { countVendorsByBucket, type VendorCounts } from './_lib/counts';
 import { vendorFailure } from './_lib/failure';
 import { VENDOR_KIND_LABEL, VENDOR_STATUS_LABEL, vendorGrants } from './_lib/model';
 import { VendorFilters } from './vendor-filters';
@@ -54,6 +57,9 @@ const FILTER_LABELS = {
 
 function Row({ v }: { v: VendorDto }) {
   const status = VENDOR_STATUS_LABEL[v.status];
+  const href = `/vendors/${encodeURIComponent(v.id)}`;
+  // Two vendors can share a legal name; the PAN tells their row actions apart.
+  const name = v.pan !== null ? `${v.legalName}, PAN ${v.pan}` : v.legalName;
   return (
     <tr>
       <Td>
@@ -61,7 +67,7 @@ function Row({ v }: { v: VendorDto }) {
           <Avatar {...companyLogo(v)} />
           <CellTitle
             title={
-              <Link href={`/vendors/${encodeURIComponent(v.id)}`} className={styles.name}>
+              <Link href={href} className={styles.name}>
                 {v.legalName}
               </Link>
             }
@@ -85,8 +91,13 @@ function Row({ v }: { v: VendorDto }) {
         )}
       </Td>
       <Td nowrap>{v.country}</Td>
-      <Td nowrap>
+      <Td nowrap className={styles.statusColumn}>
         <Badge tone={status.tone}>{status.text}</Badge>
+      </Td>
+      <Td nowrap className={styles.actionColumn}>
+        <Link href={href} className={styles.rowAction} aria-label={`View ${name}`}>
+          <Icon name="chevron-right" size={20} />
+        </Link>
       </Td>
     </tr>
   );
@@ -103,9 +114,12 @@ export default async function VendorsPage({ searchParams }: { searchParams: Prom
 
   let vendors: VendorDto[] | null = null;
   let total: number | null = null;
+  let counts: VendorCounts | null = null;
   let problem: { message: string; status: number } | null = null;
   try {
     const window = pageWindow(page, pageSize);
+    // The counts start first; the cards are a convenience and drop out on their own failure.
+    const countsLoad = countVendorsByBucket(session);
     const result = await listVendors(session, {
       ...(q !== undefined ? { q } : {}),
       ...(status.length > 0 ? { status } : {}),
@@ -115,15 +129,19 @@ export default async function VendorsPage({ searchParams }: { searchParams: Prom
     });
     vendors = result.items;
     total = result.total;
+    counts = await countsLoad;
   } catch (err) {
     const f = vendorFailure(err, 'load');
     problem = { message: f.message, status: f.status };
   }
 
-  const hasNext = vendors !== null && total !== null && page * pageSize < total;
-  const first = (page - 1) * pageSize + 1;
   const addButton = vendorGrants(session.roles).write ? (
-    <LinkButton href="/vendors/new">Add vendor</LinkButton>
+    <LinkButton href="/vendors/new" size="large">
+      <span aria-hidden="true" className={styles.plus}>
+        +
+      </span>
+      Add vendor
+    </LinkButton>
   ) : null;
   const filtersOn = activeFilterLabels(state, FILTER_LABELS, 'Search');
   const clearHref = clearFiltersHref('/vendors', params, LIST);
@@ -135,6 +153,15 @@ export default async function VendorsPage({ searchParams }: { searchParams: Prom
         description="Manage vendor profiles, verification and payment accounts."
         actions={addButton}
       />
+
+      {counts !== null ? (
+        <section className={styles.stats} aria-label="Vendors by status">
+          <StatCard label="Vendors" value={counts.total} icon="building" />
+          <StatCard label="Approved" value={counts.approved} icon="check-circle" tone="success" />
+          <StatCard label="In onboarding" value={counts.onboarding} icon="shield-check" />
+          <StatCard label="Inactive" value={counts.inactive} icon="x-circle" tone="neutral" />
+        </section>
+      ) : null}
 
       <VendorFilters
         status={status}
@@ -184,16 +211,17 @@ export default async function VendorsPage({ searchParams }: { searchParams: Prom
             Add a vendor, then start its KYB review so it can be approved for purchases.
           </EmptyState>
         )
-      ) : vendors !== null ? (
-        <>
-          <Table caption="Vendors" minWidth={720}>
+      ) : vendors !== null && total !== null ? (
+        <div className={styles.results}>
+          <Table caption="Vendors" minWidth={800} className={styles.list ?? ''}>
             <thead>
               <tr>
                 <Th>Vendor</Th>
                 <Th>Kind</Th>
                 <Th>PAN</Th>
                 <Th>Country</Th>
-                <Th>Status</Th>
+                <Th className={styles.statusColumn}>Status</Th>
+                <Th className={styles.actionColumn}>Action</Th>
               </tr>
             </thead>
             <tbody>
@@ -202,13 +230,14 @@ export default async function VendorsPage({ searchParams }: { searchParams: Prom
               ))}
             </tbody>
           </Table>
-          <Pagination
-            label="Pages"
-            summary={`Showing ${first} to ${first + vendors.length - 1}${total !== null ? ` of ${total}` : ''}`}
-            {...(page > 1 ? { previousHref: at({ page: page - 1 > 1 ? page - 1 : null }) } : {})}
-            {...(hasNext ? { nextHref: at({ page: page + 1 }) } : {})}
+          <ListPager
+            pathname="/vendors"
+            current={params}
+            window={pageWindow(page, pageSize, total)}
+            total={total}
+            label="Vendor pages"
           />
-        </>
+        </div>
       ) : null}
     </Page>
   );

@@ -6,6 +6,7 @@ import {
   type MemoTemplateSnapshot,
 } from '@bos/contracts';
 
+import { todayInKathmandu } from '@/app/(app)/settings/format';
 import type { MemoDraftValues } from '@/lib/memo-working-draft-types';
 
 import type { MemoValues } from './actions';
@@ -23,12 +24,11 @@ export interface TemplateFields {
   approvedBy: string;
 }
 
-export const todayIso = (): string => new Date().toISOString().slice(0, 10);
-
 export function initialTemplateFields(
   template: MemoTemplateSnapshot | null | undefined,
   directory: MemoDirectory | undefined,
-  today: string = todayIso(),
+  // The tenant's calendar day: a UTC date is still yesterday between 00:00 and 05:45 Nepal time.
+  today: string = todayInKathmandu(),
 ): TemplateFields {
   return {
     departmentId: template?.departmentId ?? directory?.departmentId ?? '',

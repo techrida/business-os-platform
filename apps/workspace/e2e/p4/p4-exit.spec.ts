@@ -133,7 +133,7 @@ test('the completed Journey 11 remains connected across requests, sourcing, rece
       await page.goto(`/procurement/requests/${prId}`);
       const approval = page.getByRole('region', { name: 'Approval', exact: true });
       await expect(approval.getByRole('listitem')).toHaveCount(1);
-      await expect(approval).toContainText('Approval approved');
+      await expect(approval).toContainText('Approved on');
       await page.getByRole('link', { name: 'Open RFQ', exact: true }).click();
       await expect(page).toHaveURL(new RegExp(`/procurement/rfqs/${rfqId}$`));
       await expect(page.getByText('Invited vendors (3)', { exact: true })).toBeVisible();
@@ -192,7 +192,8 @@ test('the completed Journey 11 remains connected across requests, sourcing, rece
 
     await test.step('the approved bill is matched and points to the same order and vendor', async () => {
       await page.goto(`/payables/bills/${billId}`);
-      await expect(page.getByText('Approved', { exact: true })).toBeVisible();
+      // The approval history repeats the word for each step, so take the first match: the status badge.
+      await expect(page.getByText('Approved', { exact: true }).first()).toBeVisible();
       await expect(page.getByRole('table', { name: 'Match result by bill line' })).toContainText(
         'Matched',
       );

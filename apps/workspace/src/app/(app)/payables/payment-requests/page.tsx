@@ -1,4 +1,10 @@
-import { PAYMENT_REQUEST_STATUSES, PaymentRequestStatusSchema, pageWindow } from '@bos/contracts';
+import {
+  DEFAULT_ROWS,
+  PAYMENT_REQUEST_STATUSES,
+  PaymentRequestStatusSchema,
+  ROWS_OPTIONS,
+  pageWindow,
+} from '@bos/contracts';
 import type { Metadata } from 'next';
 import Link from 'next/link';
 
@@ -7,16 +13,22 @@ import { Badge } from '@/components/ui/badge';
 import { LinkButton } from '@/components/ui/button';
 import { EmptyState } from '@/components/ui/empty-state';
 import { ResultCount } from '@/components/ui/filter-bar';
+import { Icon } from '@/components/ui/icon';
 import { Page, PageHeader } from '@/components/ui/page';
-import { Pagination } from '@/components/ui/pagination';
+import { StatCard } from '@/components/ui/stat-card';
 import { Table, Td, Th } from '@/components/ui/table';
+import layout from '@/components/p3/list.module.css';
 import { listPaymentRequestsPage, type PaymentRequestListItem } from '@/lib/api-payables';
+import { getVendor } from '@/lib/api-vendors';
 import { requireStaffSession } from '@/lib/bff';
 import { getNumberSystems } from '@/lib/display-settings';
 import { getGrants, hasGrant } from '@/lib/grants';
-import { activeFilterLabels, clearFiltersHref, hrefWith, readList } from '@/lib/list-params';
+import { activeFilterLabels, clearFiltersHref, readList } from '@/lib/list-params';
 
+import { ListPager } from '../../invoices/_components/list-pager';
 import { poMoney } from '../../procurement/orders/_lib/model';
+import { PAYMENT_REQUEST_COUNT_CARDS, countCards } from '../_lib/summary';
+import styles from '../payables.module.css';
 import { paymentRequestFailure } from './failure';
 import { PAYMENT_STATUS } from './model';
 import { PaymentRequestsFilters } from './payment-requests-filters';
@@ -25,7 +37,11 @@ export const metadata: Metadata = { title: 'Payment requests · Business OS' };
 export const dynamic = 'force-dynamic';
 
 const PATH = '/payables/payment-requests';
-const LIST = { multi: { status: PAYMENT_REQUEST_STATUSES } } as const;
+/** ListPager offers every ROWS_OPTIONS choice, so the list accepts each one. */
+const LIST = {
+  multi: { status: PAYMENT_REQUEST_STATUSES },
+  rows: { allowed: ROWS_OPTIONS, default: DEFAULT_ROWS },
+} as const;
 
 export default async function PaymentRequestsPage({
   searchParams,
@@ -59,6 +75,12 @@ export default async function PaymentRequestsPage({
   const params = await searchParams;
   const list = readList(params, LIST);
   const status = PaymentRequestStatusSchema.array().parse(list.multi.status);
+  // The count cards: every request this person may open, whatever the filters. A failed read hides them only.
+  const counts = countCards(PAYMENT_REQUEST_COUNT_CARDS, (statuses) =>
+    listPaymentRequestsPage(session, { status: statuses, limit: 1, offset: 0 }).then(
+      (r) => r.total,
+    ),
+  );
   let rows: PaymentRequestListItem[];
   let total = 0;
   let window = pageWindow(list.page, list.rows);
@@ -105,13 +127,32 @@ export default async function PaymentRequestsPage({
       },
     },
   );
-  const pageHref = (page: number) => hrefWith(PATH, params, { page: page > 1 ? page : null });
-  const nearby = Array.from({ length: window.pageCount }, (_, i) => i + 1).filter(
-    (n) => Math.abs(n - window.page) <= 2,
-  );
+  // The list row carries the vendor's id only: each vendor on the page is read once, under the person's own
+  // vendor read. A vendor that does not load (no vendor read, or an error) shows as plain text, never a dead link.
+  const vendorIds = [...new Set(rows.map((row) => row.vendorPartyId))];
+  const vendorReads = await Promise.allSettled(vendorIds.map((id) => getVendor(session, id)));
+  const vendorNames = new Map<string, string>();
+  vendorReads.forEach((read, i) => {
+    const id = vendorIds[i];
+    if (read.status === 'fulfilled' && id !== undefined) vendorNames.set(id, read.value.legalName);
+  });
+  const cards = await counts;
   return (
     <Page>
       {header}
+      {cards !== null ? (
+        <section aria-label="Payment request summary" className={styles.stats}>
+          {cards.map((card) => (
+            <StatCard
+              key={card.key}
+              label={card.label}
+              value={card.value}
+              icon={card.icon}
+              tone={card.tone}
+            />
+          ))}
+        </section>
+      ) : null}
       <PaymentRequestsFilters
         statusOptions={PAYMENT_REQUEST_STATUSES.map((value) => ({
           value,
@@ -142,46 +183,74 @@ export default async function PaymentRequestsPage({
       ) : (
         <>
           <ResultCount shown={rows.length} total={total} noun="payment request" />
-          <Table caption="Payment requests, newest first" minWidth={700}>
-            <thead>
-              <tr>
-                <Th>Request</Th>
-                <Th>Vendor</Th>
-                <Th>Status</Th>
-                <Th>Vendor bank account</Th>
-                <Th align="end">Amount</Th>
-              </tr>
-            </thead>
-            <tbody>
-              {rows.map((row) => (
-                <tr key={row.id}>
-                  <Td>
-                    <Link href={`/payables/payment-requests/${row.id}`}>
-                      {row.number ?? 'Draft request'}
-                    </Link>
-                  </Td>
-                  <Td>
-                    <Link href={`/vendors/${row.vendorPartyId}`}>View vendor</Link>
-                  </Td>
-                  <Td>
-                    <Badge tone={PAYMENT_STATUS[row.status].tone}>
-                      {PAYMENT_STATUS[row.status].text}
-                    </Badge>
-                  </Td>
-                  <Td>Ending {row.bankLast4}</Td>
-                  <Td align="end">{poMoney(row.totalAmount, row.currency, numberSystems)}</Td>
+          <div className={layout.results}>
+            <Table
+              caption="Payment requests, newest first"
+              minWidth={860}
+              className={styles.list ?? ''}
+            >
+              <thead>
+                <tr>
+                  <Th>Request</Th>
+                  <Th>Vendor</Th>
+                  <Th>Vendor bank account</Th>
+                  <Th align="end">Amount</Th>
+                  <Th className={styles.statusColumn}>Status</Th>
+                  <Th className={styles.actionColumn}>Action</Th>
                 </tr>
-              ))}
-            </tbody>
-          </Table>
-          <Pagination
-            label="Pages"
-            summary={`Showing ${window.first}-${window.last} of ${total}`}
-            {...(window.page > 1 ? { previousHref: pageHref(window.page - 1) } : {})}
-            {...(window.page < window.pageCount ? { nextHref: pageHref(window.page + 1) } : {})}
-            pages={nearby.map((n) => ({ page: n, href: pageHref(n) }))}
-            currentPage={window.page}
-          />
+              </thead>
+              <tbody>
+                {rows.map((row) => {
+                  const href = `/payables/payment-requests/${encodeURIComponent(row.id)}`;
+                  const vendorName = vendorNames.get(row.vendorPartyId);
+                  const amount = poMoney(row.totalAmount, row.currency, numberSystems);
+                  // Drafts share a name, so the action is named by the amount and the account too.
+                  const name = `${row.number ?? 'draft request'} for ${amount} to the account ending ${row.bankLast4}`;
+                  const st = PAYMENT_STATUS[row.status];
+                  return (
+                    <tr key={row.id}>
+                      <Td>
+                        <Link href={href} className={styles.name}>
+                          {row.number ?? 'Draft request'}
+                        </Link>
+                      </Td>
+                      <Td>
+                        {vendorName !== undefined ? (
+                          <Link
+                            href={`/vendors/${encodeURIComponent(row.vendorPartyId)}`}
+                            className={styles.long}
+                          >
+                            {vendorName}
+                          </Link>
+                        ) : (
+                          <span className={styles.quiet}>Vendor name unavailable</span>
+                        )}
+                      </Td>
+                      <Td nowrap>Ending {row.bankLast4}</Td>
+                      <Td align="end" nowrap>
+                        <span className={styles.numeric}>{amount}</span>
+                      </Td>
+                      <Td nowrap className={styles.statusColumn}>
+                        <Badge tone={st.tone}>{st.text}</Badge>
+                      </Td>
+                      <Td nowrap className={styles.actionColumn}>
+                        <Link href={href} className={styles.rowAction} aria-label={`View ${name}`}>
+                          <Icon name="chevron-right" size={20} />
+                        </Link>
+                      </Td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </Table>
+            <ListPager
+              pathname={PATH}
+              current={params}
+              window={window}
+              total={total}
+              label="Payment request pages"
+            />
+          </div>
         </>
       )}
     </Page>

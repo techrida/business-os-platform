@@ -1,4 +1,4 @@
-import type { PoStatus } from '@bos/contracts';
+import type { PoApprovedBand, PoStatus } from '@bos/contracts';
 import type { NumberSystems } from '@bos/locale';
 
 import type { Grants } from '@/lib/grants';
@@ -61,6 +61,37 @@ export function orderActions(status: PoStatus, can: { issue: boolean }): OrderAc
     shortClose: on && status === 'partially_received',
     cancel: on && status === 'issued',
   };
+}
+
+/**
+ * The one header action shown as the primary button: the order's next step. Issue a draft, then
+ * receive what arrives, then enter the vendor's bill. Amend, short-close and cancel change the
+ * order rather than move it on, so they are never primary.
+ */
+export function primaryOrderAction(open: {
+  issue: boolean;
+  receive: boolean;
+  enterBill: boolean;
+}): 'issue' | 'receive' | 'enterBill' | null {
+  if (open.issue) return 'issue';
+  if (open.receive) return 'receive';
+  if (open.enterBill) return 'enterBill';
+  return null;
+}
+
+/** The approval tier of an amount (base < management < founder, AD7), as words. */
+const BAND_LABEL: Record<PoApprovedBand, string> = {
+  base: 'Base',
+  management: 'Management',
+  founder: 'Founder',
+};
+
+/** The approval band as words; a band this screen does not know yet is shown capitalised. */
+export function bandText(band: string): string {
+  const known = BAND_LABEL[band as PoApprovedBand] as string | undefined;
+  if (known !== undefined) return known;
+  const words = band.replaceAll('_', ' ').trim();
+  return words === '' ? 'Not recorded' : words.charAt(0).toUpperCase() + words.slice(1);
 }
 
 /** A PO takes new receipts only while issued or partly received. */

@@ -14,6 +14,9 @@ import { createVendorAction } from '../actions';
 export const metadata: Metadata = { title: 'Add vendor · Business OS' };
 export const dynamic = 'force-dynamic';
 
+const DESCRIPTION =
+  'The vendor starts as a draft. Start its KYB review afterwards; it can be approved only once that review is approved.';
+
 export default async function NewVendorPage() {
   const session = await requireStaffSession('/vendors/new');
   const mayWrite = vendorGrants(session.roles).write;
@@ -21,12 +24,10 @@ export default async function NewVendorPage() {
   return (
     <Page>
       <Breadcrumb items={[{ label: 'Vendors', href: '/vendors' }, { label: 'Add vendor' }]} />
-      <PageHeader
-        title="Add vendor"
-        description="The vendor starts as a draft. Start its KYB review afterwards; it can be approved only once that review is approved."
-      />
       {mayWrite ? (
         <VendorForm
+          title="Add vendor"
+          description={DESCRIPTION}
           action={createVendorAction}
           mode="create"
           initial={EMPTY_VENDOR_VALUES}
@@ -36,9 +37,12 @@ export default async function NewVendorPage() {
           reloadHref="/vendors/new"
         />
       ) : (
-        <Alert tone="info" role="status" title="Your roles do not include adding vendors">
-          Ask an administrator if you need to. You can still read vendors.
-        </Alert>
+        <>
+          <PageHeader title="Add vendor" description={DESCRIPTION} />
+          <Alert tone="info" role="status" title="Your roles do not include adding vendors">
+            Ask an administrator if you need to. You can still read vendors.
+          </Alert>
+        </>
       )}
     </Page>
   );

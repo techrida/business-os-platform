@@ -1,4 +1,9 @@
-import { DEFAULT_ROLE_PERMISSIONS, type PrRequestType, type PrStatus } from '@bos/contracts';
+import {
+  DEFAULT_ROLE_PERMISSIONS,
+  type ApprovalRequestDto,
+  type PrRequestType,
+  type PrStatus,
+} from '@bos/contracts';
 
 import { hasPermission } from '@/components/p2/customers/permissions';
 
@@ -72,4 +77,36 @@ export function isPrEditable(status: PrStatus): boolean {
 /** Only a draft can be cancelled (the API answers 409 otherwise). */
 export function canCancelPr(status: PrStatus): boolean {
   return status === 'draft';
+}
+
+/** The status groups the list's count cards show, in card order. */
+export const PR_COUNT_GROUPS = {
+  awaiting: ['submitted'],
+  sourcing: ['dept_approved', 'sourcing', 'commitment_pending'],
+  approved: ['approved', 'po_issued'],
+} as const satisfies Record<string, readonly PrStatus[]>;
+
+/**
+ * The statuses to count for one card under the list's status filter: the group itself when no status is
+ * picked, else only the picked statuses inside the group. An empty answer means the card is 0 and needs
+ * no call (an empty `status` would count every status).
+ */
+export function countStatuses(group: readonly PrStatus[], picked: readonly PrStatus[]): PrStatus[] {
+  return picked.length === 0 ? [...group] : group.filter((s) => picked.includes(s));
+}
+
+type ApprovalRequestStatus = ApprovalRequestDto['status'];
+
+/** Where the approval of a request stands, as one sentence; `decided` is the formatted decision time. */
+export function approvalSummary(status: ApprovalRequestStatus, decided: string | null): string {
+  const on = decided !== null ? ` on ${decided}` : '';
+  const text: Record<ApprovalRequestStatus, string> = {
+    pending: 'Waiting for a decision.',
+    approved: `Approved${on}.`,
+    returned: `Sent back for changes${on}.`,
+    rejected: `Rejected${on}.`,
+    blocked: 'Blocked: no approver is available for a step. Ask an administrator.',
+    cancelled: `Withdrawn${on}.`,
+  };
+  return text[status];
 }

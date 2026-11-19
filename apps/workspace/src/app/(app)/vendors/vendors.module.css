@@ -34,28 +34,77 @@
   text-transform: uppercase;
 }
 
-/* ---- List: a plain GET form, so it works without scripts and the URL can be shared ---- */
+/* ---- List ---- */
 
-.filters {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: flex-end;
-  gap: 12px 16px;
+.plus {
+  font-size: 22px;
+  line-height: 1;
 }
 
-.filters > :first-child {
-  flex: 1 1 18rem;
-  max-width: 32rem;
+/* The KPI cards, as on the Organizations list: two across, four on a wide screen. */
+.stats {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: var(--grid-gutter);
 }
 
-.filters > :nth-child(2) {
-  flex: 0 1 14rem;
+@media (min-width: 1100px) {
+  .stats {
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+  }
 }
 
-.filterActions {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 8px;
+/* The table and its pager read as one card. */
+.results {
+  min-width: 0;
+}
+
+.results > [role='region'] {
+  border-end-start-radius: 0;
+  border-end-end-radius: 0;
+}
+
+/* The pager closes the card under the table, as on the payments and invoices lists. */
+.results > :last-child {
+  padding: 16px 20px;
+  border: 1px solid var(--border-default);
+  border-top: 0;
+  border-radius: 0 0 var(--radius-xl) var(--radius-xl);
+  background: var(--surface-default);
+}
+
+/* The trailing Status and Action columns sit on a shaded band behind a divider, as on the other
+   lists (Figma's pinned columns). Declared on the table wrapper so it out-ranks the shared cell
+   background; a hovered row still highlights end to end. */
+.list th.statusColumn,
+.list td.statusColumn,
+.list th.actionColumn,
+.list td.actionColumn {
+  background: var(--surface-subtle);
+}
+
+.list th.statusColumn,
+.list td.statusColumn {
+  border-inline-start: var(--border-width-thin) solid var(--border-default);
+}
+
+.list tbody tr:hover > td,
+.list tbody tr:focus-within > td {
+  background: var(--table-row-hover-bg);
+}
+
+.rowAction {
+  display: inline-grid;
+  width: 40px;
+  height: 40px;
+  place-items: center;
+  border-radius: var(--radius-lg);
+  color: var(--icon-secondary);
+}
+
+.rowAction:hover {
+  background: var(--action-primary-subtle);
+  color: var(--action-primary);
 }
 
 /* ---- Forms ---- */
@@ -65,10 +114,12 @@
   gap: 24px;
 }
 
-/* Fields flow into as many columns as fit, so a narrow screen gets one. */
+/* Fields flow into as many columns as fit, so a narrow screen gets one. Each field keeps its own height:
+   a field without a hint is not stretched to match a neighbour that has one, so paired inputs line up. */
 .grid {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(min(100%, 15rem), 1fr));
+  align-items: start;
   gap: 20px;
   min-width: 0;
 }
@@ -125,7 +176,8 @@
   font-size: var(--font-size-body-small);
 }
 
-/* ---- Detail: main column, with the KYB, lifecycle and bank cards beside it on wide screens ---- */
+/* ---- Detail: main column, with the identity card, then the status, KYB and portal cards beside it on
+   wide screens ---- */
 
 .columns {
   display: grid;
@@ -140,20 +192,31 @@
   min-width: 0;
 }
 
+/* The identity card is first in the DOM (its h1 leads the page); the grid lifts it to the top of the
+   side column, and the main column spans both rows. */
 @media (min-width: 1200px) {
   .columns {
     grid-template-columns: minmax(0, 1fr) 373px;
+    grid-template-rows: auto 1fr;
+    grid-template-areas:
+      'main profile'
+      'main side';
+  }
+
+  .main {
+    grid-area: main;
+  }
+
+  .profile {
+    grid-area: profile;
+  }
+
+  .sideStack {
+    grid-area: side;
   }
 }
 
-/* The logo sits above the profile facts, as wide as the panel, so an editor gets its drop zone (or its compact
-   row at 390px). */
-.profileLogo {
-  min-width: 0;
-  margin-bottom: 16px;
-}
-
-/* One column: the profile leads, then the records, then the status and review cards. */
+/* One column: the identity card leads, then the records, then the status and review cards. */
 @media (max-width: 1199.98px) {
   .sideStack {
     display: contents;
@@ -162,10 +225,51 @@
   .sideStack > * {
     min-width: 0;
   }
+}
 
-  .profile {
-    order: -1;
-  }
+/* Identity card (Figma 648:10415): logo, name, status, trade name and a full-width Edit Details. */
+.profile.profile {
+  display: grid;
+  gap: 24px;
+  min-width: 0;
+  padding: clamp(16px, 2vw, 28px);
+}
+
+.profileIdentity {
+  display: grid;
+  justify-items: start;
+  gap: 8px;
+  min-width: 0;
+}
+
+/* The logo row takes the card's width, so an editor gets its drop zone (or its compact row at 390px). */
+.profileLogo {
+  justify-self: stretch;
+  min-width: 0;
+  margin-bottom: 8px;
+}
+
+.profileName {
+  font-size: var(--font-size-h1);
+  font-weight: var(--font-weight-semibold);
+  line-height: var(--line-height-h1);
+  letter-spacing: var(--letter-spacing-tight);
+  overflow-wrap: anywhere;
+}
+
+.tradeName {
+  color: var(--text-secondary);
+  overflow-wrap: anywhere;
+}
+
+.editLink {
+  width: 100%;
+  margin-top: 12px;
+}
+
+/* The facts sit in a bordered box inside the identity card, without a second shadow. */
+.info.info {
+  box-shadow: none;
 }
 
 .addBlock {
@@ -244,22 +348,35 @@
   gap: 8px;
 }
 
-.form > .actions {
-  justify-content: flex-end;
+/* Figma card eyebrow ("01 · The basics") above each form card title. */
+.eyebrow {
+  display: block;
+  margin-bottom: 4px;
+  color: var(--text-secondary);
+  font-size: var(--font-size-caption);
+  font-weight: var(--font-weight-medium);
+  line-height: var(--line-height-caption);
+  letter-spacing: var(--letter-spacing-normal);
 }
 
-.form > .actions > .status:empty {
+/* Cancel and the submit button sit in the page header; a phone gets them under the form instead. */
+.bottomActions {
   display: none;
+}
+
+@media (max-width: 767.98px) {
+  .topActions {
+    display: none;
+  }
+
+  .bottomActions {
+    display: flex;
+    justify-content: end;
+  }
 }
 
 @media (max-width: 640px) {
   .form .grid {
     grid-template-columns: minmax(0, 1fr);
-  }
-
-  .filters > :first-child,
-  .filters > :nth-child(2) {
-    flex-basis: 100%;
-    max-width: none;
   }
 }
