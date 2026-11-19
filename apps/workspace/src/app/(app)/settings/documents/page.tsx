@@ -56,6 +56,8 @@ export default async function DocumentsSettingsPage() {
       <div className={`${styles.column} ${styles.narrow}`}>
         {loaded.ok ? (
           <DocumentStyleForm
+            // Keyed on the saved style, so an undo remounts the form with fresh values.
+            key={`${loaded.data.style.layout}:${loaded.data.style.primaryColour}`}
             initial={loaded.data.style}
             initialPreviews={loaded.data.previews}
             saveAction={saveDocumentStyleAction}

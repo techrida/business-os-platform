@@ -47,7 +47,9 @@ export function TermsField({
         value={value}
         maxLength={maxChars}
         onFill={onChange}
-        onAddMore={canAddTerms ? () => window.open(SAVED_TERMS_HREF, '_blank', 'noopener') : undefined}
+        onAddMore={
+          canAddTerms ? () => window.open(SAVED_TERMS_HREF, '_blank', 'noopener') : undefined
+        }
       />
       <RichTextEditor
         id={control.id}

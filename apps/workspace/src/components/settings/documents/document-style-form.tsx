@@ -15,6 +15,7 @@ import { useActionState, useEffect, useRef, useState, type ReactNode } from 'rea
 import shell from '@/app/(app)/settings/_components/settings.module.css';
 import { IDLE, type ActionState } from '@/app/(app)/settings/action-state';
 import type { DocumentPreviews } from '@/app/(app)/settings/documents/previews';
+import { toast } from '@/components/ui/toast';
 import { FormStatus } from '@/app/(app)/settings/form-status';
 import { Button } from '@/components/ui/button';
 import { Dialog } from '@/components/ui/dialog';
@@ -144,6 +145,8 @@ export function DocumentStyleForm({
     async (previous: ActionState, formData: FormData): Promise<ActionState> => {
       const result = await saveAction(previous, formData);
       if (result.status === 'ok') {
+        // The page re-renders and remounts this form on a saved change, which would drop the status toast.
+        toast.success(result.message, { id: 'document-style-saved' });
         const savedLayout = DOCUMENT_LAYOUTS.find((value) => value === formData.get('layout'));
         const savedColour = formData.get('primaryColour');
         if (savedLayout && typeof savedColour === 'string') {
@@ -154,19 +157,6 @@ export function DocumentStyleForm({
     },
     IDLE,
   );
-
-  // The saved style changed on the server without this form saving it (an undo from the header): take it over.
-  // After this form's own save `saved` already holds it, so nothing happens and the success toast stays.
-  useEffect(() => {
-    if (initial.layout === saved.layout && initial.primaryColour === saved.primaryColour) return;
-    setSaved(initial);
-    setLayout(initial.layout);
-    setColour(initial.primaryColour);
-    setPreviews(initialPreviews);
-    wanted.current = initial.primaryColour;
-    shown.current = initial.primaryColour;
-    // eslint-disable-next-line react-hooks/exhaustive-deps -- reacts to the server value only
-  }, [initial.layout, initial.primaryColour]);
 
   // Previews: one request in flight, and the latest wanted colour is remembered and sent when the
   // running one finishes (Next runs server actions one after another anyway).
