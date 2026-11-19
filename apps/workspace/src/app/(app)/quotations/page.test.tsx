@@ -96,7 +96,7 @@ describe('quotations list', () => {
   });
 
   it("shows the owner's picture over the colour seeded from their user id", async () => {
-    const owner = '77777777-7777-4777-8777-777777777777';
+    const owner = '9f1c2e4a-6b7d-4e8f-a1b2-c3d4e5f60718';
     const picture = '88888888-8888-4888-8888-888888888888';
     mocks.listQuotationsPage.mockResolvedValue(
       page([
@@ -108,6 +108,8 @@ describe('quotations list', () => {
         },
       ]),
     );
+    // The id must not land on the unseeded colour, or this check would pass without a seed.
+    expect(avatarColour(owner)).not.toBe(avatarColour(null));
     const html = await render();
     expect(html).toContain(`src="${imagePath(picture)}"`);
     expect(html).toContain(`--avatar-fill:${avatarColour(owner)}`);
