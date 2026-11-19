@@ -137,6 +137,27 @@ const prDetail = {
 };
 
 const html = (el: unknown) => renderToStaticMarkup(el as React.ReactElement);
+
+/**
+ * The server markup of one dropdown: its root (carries data-required / data-disabled), the hidden
+ * field that submits the value, and the trigger button that shows the selected label.
+ */
+function dropdown(out: string, name: string) {
+  const match = new RegExp(
+    `(<div[^>]*data-rac[^>]*>)(<input type="hidden"[^>]*name="${name}"[^>]*/>)(.*?</button>)`,
+    's',
+  ).exec(out);
+  return match ? { root: match[1]!, field: match[2]!, trigger: match[3]! } : null;
+}
+
+/** A dropdown that cannot be used: its root, its submitted field and its trigger are all disabled. */
+function expectDisabledDropdown(out: string, name: string) {
+  const control = dropdown(out, name);
+  expect(control).not.toBeNull();
+  expect(control!.root).toContain('data-disabled="true"');
+  expect(control!.field).toContain('disabled=""');
+  expect(control!.trigger).toMatch(/<button[^>]*disabled=""/);
+}
 const list = async (sp: Record<string, string> = {}) =>
   html(await ListPage({ searchParams: Promise.resolve(sp) }));
 const detail = async (sp: Record<string, string> = {}) =>
@@ -322,7 +343,8 @@ describe('the new RFQ page', () => {
     expect(out).toContain('Quotation deadline');
     expect(out).toContain('Everest');
     expect(out).toContain('Open RFQ');
-    expect(out).toMatch(new RegExp(`value="${PR}"[^>]*selected|selected[^>]*value="${PR}"`));
+    expect(dropdown(out, 'purchaseRequestId')!.field).toContain(`value="${PR}"`);
+    expect(dropdown(out, 'purchaseRequestId')!.trigger).toContain('PR-2082/83-00007');
   });
 });
 
@@ -337,9 +359,14 @@ describe('the quotation entry page', () => {
 
   it('renders a labelled tax-code select with the API ids as option values', async () => {
     const out = await quotePage();
-    expect(out).toMatch(/<select[^>]*name="lines\.0\.taxCodeId"/);
+    const taxCode = dropdown(out, 'lines\\.0\\.taxCodeId');
+    expect(taxCode).not.toBeNull();
+    // Usable, and the API id is what the form submits for the option it lists.
+    expect(taxCode!.root).not.toContain('data-disabled');
+    expect(taxCode!.field).not.toContain('disabled');
     expect(out).toContain(`<option value="${Q1}">VAT 13%</option>`);
-    expect(out).not.toMatch(/<input[^>]*name="lines\.0\.taxCodeId"/);
+    // No free-text id input: only the dropdown's hidden field carries the name.
+    expect(out).not.toMatch(/<input(?![^>]*type="hidden")[^>]*name="lines\.0\.taxCodeId"/);
   });
 
   it('explains a refused tax lookup without offering a retry', async () => {
@@ -349,7 +376,7 @@ describe('the quotation entry page', () => {
     expect(out).toContain('Ask an administrator');
     expect(out).not.toContain('Try loading tax codes again');
     expect(out).not.toContain('Try again');
-    expect(out).toMatch(/<select[^>]*name="lines\.0\.taxCodeId"[^>]*disabled/);
+    expectDisabledDropdown(out, 'lines\\.0\\.taxCodeId');
     expect(out).toMatch(/<button[^>]*type="submit"[^>]*disabled/);
   });
 
@@ -359,9 +386,10 @@ describe('the quotation entry page', () => {
     expect(out).toContain('Tax codes did not load');
     expect(out).toContain('Try loading tax codes again');
     expect(out).toContain(`/procurement/rfqs/${RFQ}/quotations/new`);
-    expect(out).toMatch(/<select[^>]*name="lines\.0\.taxCodeId"[^>]*disabled/);
+    expectDisabledDropdown(out, 'lines\\.0\\.taxCodeId');
     expect(out).toMatch(/<button[^>]*type="submit"[^>]*disabled/);
-    expect(out).not.toMatch(/<input[^>]*name="lines\.0\.taxCodeId"/);
+    // No free-text id input: only the dropdown's hidden field carries the name.
+    expect(out).not.toMatch(/<input(?![^>]*type="hidden")[^>]*name="lines\.0\.taxCodeId"/);
     expect(out).not.toContain('Enter its id');
   });
 
@@ -370,7 +398,7 @@ describe('the quotation entry page', () => {
     const out = await quotePage();
     expect(out).toContain('No tax codes are available');
     expect(out).toContain('Ask an administrator to configure tax codes');
-    expect(out).toMatch(/<select[^>]*name="lines\.0\.taxCodeId"[^>]*disabled/);
+    expectDisabledDropdown(out, 'lines\\.0\\.taxCodeId');
     expect(out).toMatch(/<button[^>]*type="submit"[^>]*disabled/);
   });
 
