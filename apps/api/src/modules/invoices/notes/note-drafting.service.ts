@@ -11,7 +11,9 @@
 // - "no double effects": every command runs inside withIdempotency;
 // - "every change is audited": all writes run in withTx() and record `invoice.drafted`;
 // - "authorization is deny-by-default": staff only, `invoice.credit_note` (debit notes share it), and the original is
-//   read through scoped(), so an invoice of another entity is a 404.
+//   read through the caller's `invoice.read` scope, so an invoice of another entity, or one outside that scope, is a
+//   404. A note acts on its original, so `invoice.credit_note` is checked on the original's drafter (`created_by`,
+//   U20a phase 2): under `own` or `department` (invoices carry no department) only on invoices the caller drafted.
 // A note copies the original's customer, currency and sales order (the trigger requires the first two; the order gives
 // the due date at issue). It has no number, issue date or NPR value until issue.
 import { type CreditNoteBody, type DebitNoteBody, type InvoiceDetail } from '@bos/contracts';
@@ -28,7 +30,8 @@ import { ConflictException, Inject, Injectable, Optional } from '@nestjs/common'
 import { and, asc, eq, isNotNull, ne, sql } from 'drizzle-orm';
 
 import { AuditService } from '../../../platform/audit/audit.service';
-import { AuthzService } from '../../../platform/authz/authz.service';
+import { AuthzService, scopeWhereFor } from '../../../platform/authz/authz.service';
+import type { Principal } from '../../../platform/authz/principal';
 import { DB, type Db, type DbTransaction } from '../../../platform/db/db.module';
 import { withIdempotency } from '../../../platform/db/idempotency';
 import { withTx, type Actor, type TxScope } from '../../../platform/db/tx';
@@ -435,15 +438,15 @@ export class NoteDraftingService {
    * quantity above the original's.
    */
   async draftCreditNote(body: CreditNoteBody, idempotencyKey: string): Promise<InvoiceDetail> {
-    return this.run('invoice.credit_note', body, idempotencyKey, (tx, scope, actor) =>
-      this.creditInTx(tx, scope, actor, body),
+    return this.run('invoice.credit_note', body, idempotencyKey, (tx, scope, actor, principal) =>
+      this.creditInTx(tx, scope, actor, principal, body),
     );
   }
 
   /** 201 with the InvoiceDetail of a debit-note draft priced from typed lines; 404 / 409 as for a credit note. */
   async draftDebitNote(body: DebitNoteBody, idempotencyKey: string): Promise<InvoiceDetail> {
-    return this.run('invoice.debit_note', body, idempotencyKey, (tx, scope, actor) =>
-      this.debitInTx(tx, scope, actor, body),
+    return this.run('invoice.debit_note', body, idempotencyKey, (tx, scope, actor, principal) =>
+      this.debitInTx(tx, scope, actor, principal, body),
     );
   }
 
@@ -451,17 +454,23 @@ export class NoteDraftingService {
     command: string,
     body: object,
     idempotencyKey: string,
-    work: (tx: DbTransaction, scope: TxScope, actor: Actor) => Promise<InvoiceDetail>,
+    work: (
+      tx: DbTransaction,
+      scope: TxScope,
+      actor: Actor,
+      principal: Principal,
+    ) => Promise<InvoiceDetail>,
   ): Promise<InvoiceDetail> {
     const { scope, actor, principal } = this.caller.current();
     assertStaff(principal);
-    this.authz.assert('invoice.credit_note', scope);
+    // The grant alone here; the record check on the original runs once it is read (lockOriginal).
+    this.authz.assert('invoice.credit_note');
     try {
       return await withTx(this.db, scope, actor, async (tx) => {
         const done = await withIdempotency(
           tx,
           { command, key: idempotencyKey, body },
-          async () => ({ status: 201, response: await work(tx, scope, actor) }),
+          async () => ({ status: 201, response: await work(tx, scope, actor, principal) }),
         );
         return done.response;
       });
@@ -482,9 +491,10 @@ export class NoteDraftingService {
     tx: DbTransaction,
     scope: TxScope,
     actor: Actor,
+    principal: Principal,
     body: CreditNoteBody,
   ): Promise<InvoiceDetail> {
-    const original = await this.lockOriginal(tx, scope, body.originalInvoiceId);
+    const original = await this.lockOriginal(tx, scope, principal, body.originalInvoiceId);
     const owned = (t: typeof invoiceLines | typeof invoiceTaxSummary) =>
       and(
         eq(t.tenantId, scope.tenantId),
@@ -538,9 +548,10 @@ export class NoteDraftingService {
     tx: DbTransaction,
     scope: TxScope,
     actor: Actor,
+    principal: Principal,
     body: DebitNoteBody,
   ): Promise<InvoiceDetail> {
-    const original = await this.lockOriginal(tx, scope, body.originalInvoiceId);
+    const original = await this.lockOriginal(tx, scope, principal, body.originalInvoiceId);
     const periods = await loadTaxCodePeriods(
       tx,
       scope.tenantId,
@@ -561,18 +572,23 @@ export class NoteDraftingService {
     return this.drafting.loadDetail(tx, scope, id);
   }
 
-  /** Reads the original in the acting entity (404 otherwise), locks it (rank invoice) and requires an issued tax invoice. */
+  /**
+   * Reads the original under the caller's `invoice.read` scope (404 otherwise, as GET answers), checks
+   * `invoice.credit_note` on its drafter (403), locks it (rank invoice) and requires an issued tax invoice.
+   */
   private async lockOriginal(
     tx: DbTransaction,
     scope: TxScope,
+    principal: Principal,
     originalId: string,
   ): Promise<InvoiceRow> {
     const [probe] = await tx
-      .select({ id: invoices.id })
+      .select({ id: invoices.id, createdBy: invoices.createdBy })
       .from(invoices)
-      .where(scoped(scope).where(invoices, eq(invoices.id, originalId)))
+      .where(and(scopeWhereFor(principal, invoices, 'invoice.read'), eq(invoices.id, originalId)))
       .limit(1);
     if (probe === undefined) throw invoiceNotFound();
+    this.authz.assert('invoice.credit_note', { ...scope, ownerUserId: probe.createdBy });
     await this.ledger.lockForMoneyCommand(tx, scope, [
       { rank: 'invoice', ids: [originalId], table: invoices },
     ]);

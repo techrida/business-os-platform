@@ -33,6 +33,8 @@ export interface BillHead {
   vatTotal: string;
   status: string;
   documentId: string;
+  /** Who entered the bill: its owner for the bill read, which decides the link. */
+  enteredBy: string;
 }
 
 /** The bills by id in the acting entity, with the vendor's legal name and the order's number. */
@@ -56,6 +58,7 @@ export async function billHeads(
       vatTotal: vendorBills.vatTotal,
       status: vendorBills.status,
       documentId: vendorBills.documentId,
+      enteredBy: vendorBills.enteredBy,
     })
     .from(vendorBills)
     .leftJoin(
@@ -104,7 +107,11 @@ export async function billContext(
     title: `Bill ${billLabel(bill)}`,
     fields: billFields(bill),
     documents: await readableDocuments(q, scope, viewer, [bill.documentId], billFileOwners(q)),
-    // The bill routes check the grant alone (every bill of the entity), so the link does too.
-    href: hrefFor(viewer, `/payables/bills/${bill.id}`, 'payables.bill.read'),
+    // The bill page reads through the caller's `payables.bill.read` scope, where whoever entered a bill owns it, so
+    // the link is offered only when that page would open. The facts and the file above stay the approver's.
+    href: hrefFor(viewer, `/payables/bills/${bill.id}`, 'payables.bill.read', {
+      ...scope,
+      ownerUserId: bill.enteredBy,
+    }),
   };
 }

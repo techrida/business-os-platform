@@ -12,6 +12,11 @@
 //   against one receipt are matched one after the other and the second sees the first's quantity;
 // - "one legal entity at a time": every read is scoped to the acting entity; a bill, PO or line of another entity
 //   is a 404 (or a 422 for a line), never a 403;
+// - "a saved reach is the reach enforced" (U20a phase 2): list and get read through the `payables.bill.read` scope
+//   (scopeWhereFor, so the count and the rows agree with the record check), and every command on a bill first needs
+//   that read (404 outside it) and then `payables.bill.enter` on the bill (403). Whoever entered a bill owns it and
+//   bills carry no department, so `own` and `department` both reach the bills the caller entered; a new bill is
+//   always the caller's own;
 // - "a void leaves a trail" (unit A1c): open items are append-only, so a void opens a vendor_debit_note payable
 //   debit for the full amount and allocates it against the bill's credit item through LedgerService; only a bill
 //   with nothing allocated yet and no live payment request on it may be voided;
@@ -52,6 +57,7 @@ import { fiscalYearOf, formatBs, kathmanduDate } from '@bos/locale';
 import { parseDecimal, type MatchTolerance } from '@bos/money-rules';
 import {
   ConflictException,
+  ForbiddenException,
   Inject,
   Injectable,
   NotFoundException,
@@ -62,6 +68,9 @@ import Decimal from 'decimal.js';
 import { and, asc, between, desc, eq, inArray, isNull, max, sql } from 'drizzle-orm';
 
 import { AuditService } from '../../../platform/audit/audit.service';
+import { scopeWhereFor } from '../../../platform/authz/authz.service';
+import { can } from '../../../platform/authz/can';
+import type { DenyReason, Principal, ResourceRef } from '../../../platform/authz/principal';
 import { DB, type Db, type DbTransaction } from '../../../platform/db/db.module';
 import { withIdempotency } from '../../../platform/db/idempotency';
 import { withTx, type TxScope } from '../../../platform/db/tx';
@@ -196,6 +205,29 @@ const VAT_REGISTER_STATUSES = ['approved', 'partially_paid', 'paid'] as const;
 const notFound = (what: string) =>
   new NotFoundException({ code: 'not_found', message: `${what} not found` });
 const conflict = (code: string, message: string) => new ConflictException({ code, message });
+const forbidden = (reason: DenyReason) =>
+  new ForbiddenException({ code: 'forbidden', message: 'Forbidden', reason });
+
+/**
+ * The record authz decides a bill on: whoever entered it owns it (record-reach.ts names the same column for the
+ * list), and a bill has no department.
+ */
+const billRef = (
+  bill: Pick<BillRow, 'tenantId' | 'organizationId' | 'enteredBy'>,
+): ResourceRef => ({
+  tenantId: bill.tenantId,
+  organizationId: bill.organizationId,
+  ownerUserId: bill.enteredBy,
+});
+
+/**
+ * A new bill belongs to the person entering it, so every `payables.bill.enter` grant that reaches a record at all
+ * (own, department, all) may create one. Checked on that record anyway, so a scope that reaches no bill is refused.
+ */
+function assertMayEnterNew(p: Principal, scope: TxScope): void {
+  const decision = can(p, 'payables.bill.enter', { ...scope, ownerUserId: p.userId });
+  if (!decision.allowed) throw forbidden(decision.reason);
+}
 const unprocessable = (code: string, message: string) =>
   new UnprocessableEntityException({ code, message });
 
@@ -267,7 +299,7 @@ export class VendorBillsService {
   async list(
     query: ListBillsQuery,
   ): Promise<{ rows: Omit<VendorBillDto, 'lines'>[]; total: number }> {
-    const { scope, actor } = this.caller.current();
+    const { scope, actor, principal } = this.caller.current();
     return withTx(this.db, scope, actor, async (tx) => {
       const vendorJoin = and(
         eq(vendors.tenantId, vendorBills.tenantId),
@@ -276,8 +308,9 @@ export class VendorBillsService {
       const page = await searchPage(tx, {
         q: query.q,
         columns: [vendorBills.number, vendorBills.vendorInvoiceNo, vendors.legalName],
-        where: scoped(scope).where(
-          vendorBills,
+        // The read scope rides in `where`, so the rows and the total both stop at it.
+        where: and(
+          scopeWhereFor(principal, vendorBills, 'payables.bill.read'),
           query.status === undefined || query.status.length === 0
             ? undefined
             : inArray(vendorBills.status, query.status),
@@ -324,10 +357,20 @@ export class VendorBillsService {
     });
   }
 
-  /** 404 outside the acting entity. */
+  /** 404 outside the acting entity and outside the caller's `payables.bill.read` scope (the list's rule). */
   async get(id: string): Promise<VendorBillDto> {
-    const { scope, actor } = this.caller.current();
-    return withTx(this.db, scope, actor, (tx) => this.dto(tx, scope, id));
+    const { scope, actor, principal } = this.caller.current();
+    return withTx(this.db, scope, actor, async (tx) => {
+      const [visible] = await tx
+        .select({ id: vendorBills.id })
+        .from(vendorBills)
+        .where(
+          and(scopeWhereFor(principal, vendorBills, 'payables.bill.read'), eq(vendorBills.id, id)),
+        )
+        .limit(1);
+      if (visible === undefined) throw notFound('Bill');
+      return this.dto(tx, scope, id);
+    });
   }
 
   // ------------------------------------------------------------------------------------------------- create
@@ -339,6 +382,7 @@ export class VendorBillsService {
    */
   async create(body: CreateVendorBillBody, idempotencyKey: string): Promise<VendorBillDto> {
     const { scope, actor, principal } = this.caller.current();
+    assertMayEnterNew(principal, scope);
     const now = this.clock();
     const tolerance = await this.tolerance(scope);
     try {
@@ -387,6 +431,7 @@ export class VendorBillsService {
     idempotencyKey: string,
   ): Promise<VendorBillDto> {
     const { scope, actor, principal } = this.caller.current();
+    assertMayEnterNew(principal, scope);
     const now = this.clock();
     const tolerance = await this.tolerance(scope);
     try {
@@ -729,6 +774,7 @@ export class VendorBillsService {
         tx,
         { command: 'payables.bill.match', key: idempotencyKey, body: { id } },
         async () => {
+          await this.lockEnterable(tx, scope, principal, id);
           await this.runMatch(tx, scope, id, principal.userId, tolerance, now);
           return { status: 200, response: await this.dto(tx, scope, id) };
         },
@@ -885,7 +931,7 @@ export class VendorBillsService {
           tx,
           { command: 'payables.bill.exception', key: idempotencyKey, body: { id, ...body } },
           async () => {
-            const bill = await this.lockBill(tx, scope, id);
+            const bill = await this.lockEnterable(tx, scope, principal, id);
             if (bill.status !== 'variance') {
               throw conflict(
                 'invalid_transition',
@@ -972,7 +1018,7 @@ export class VendorBillsService {
           tx,
           { command: 'payables.bill.submit', key: idempotencyKey, body: { id } },
           async () => {
-            const bill = await this.lockBill(tx, scope, id);
+            const bill = await this.lockEnterable(tx, scope, principal, id);
             if (!submittable(bill.status, bill.matchStatus)) {
               throw conflict(
                 'BILL_NOT_MATCHED',
@@ -1049,13 +1095,13 @@ export class VendorBillsService {
 
   /** Retains a discarded draft and its references, releasing the active invoice-number key. */
   async discard(id: string, idempotencyKey: string): Promise<VendorBillDto> {
-    const { scope, actor } = this.caller.current();
+    const { scope, actor, principal } = this.caller.current();
     return withTx(this.db, scope, actor, async (tx) => {
       const done = await withIdempotency(
         tx,
         { command: 'payables.bill.discard', key: idempotencyKey, body: { id } },
         async () => {
-          const bill = await this.lockBill(tx, scope, id);
+          const bill = await this.lockEnterable(tx, scope, principal, id);
           if (bill.status === 'discarded') {
             return { status: 200, response: await this.dto(tx, scope, id) };
           }
@@ -1147,7 +1193,7 @@ export class VendorBillsService {
         tx,
         { command: 'payables.bill.void', key: idempotencyKey, body: { id, ...body } },
         async () => {
-          const bill = await this.lockBill(tx, scope, id);
+          const bill = await this.lockEnterable(tx, scope, principal, id);
           if (bill.status !== 'approved') {
             throw conflict('invalid_transition', `A ${bill.status} bill cannot be voided`);
           }
@@ -1425,6 +1471,26 @@ export class VendorBillsService {
       throw unprocessable('TAX_CODE_NOT_FOUND', 'A tax code was not found');
     }
     return new Map(rows.map((r) => [r.id, r.rateBp]));
+  }
+
+  /**
+   * The bill a command acts on, locked: 404 unless the caller may read it (the answer GET gives), then 403 unless
+   * their `payables.bill.enter` reaches it. Only the public commands call this; the match run and the answer they
+   * build read the bill without a scope, so a bill the caller just entered is never hidden from them.
+   */
+  private async lockEnterable(
+    tx: DbTransaction,
+    scope: TxScope,
+    principal: Principal,
+    id: string,
+  ): Promise<BillRow> {
+    const bill = await this.lockBill(tx, scope, id);
+    const ref = billRef(bill);
+    // Bills have no creator or assignee reach, so this record check and scopeWhereFor() read the same column.
+    if (!can(principal, 'payables.bill.read', ref).allowed) throw notFound('Bill');
+    const decision = can(principal, 'payables.bill.enter', ref);
+    if (!decision.allowed) throw forbidden(decision.reason);
+    return bill;
   }
 
   private async lockBill(tx: DbTransaction, scope: TxScope, id: string): Promise<BillRow> {
