@@ -215,6 +215,24 @@ describe('toContent', () => {
     );
   });
 
+  it("sends the rich text editors' HTML as it is (trimmed), and nothing for an empty editor", () => {
+    const html = '<p>Net <strong>30</strong></p><ul><li>One</li></ul>';
+    const v = filled();
+    v.scope = `  ${html}\n`;
+    v.termsAndConditions = '<ol><li>First</li><li><em>Second</em></li></ol>';
+    v.deliveryTimeline = ''; // what the editor reports for a document without words
+    const create = toContent(v);
+    expect(create.scope).toBe(html);
+    expect(create.termsAndConditions).toBe('<ol><li>First</li><li><em>Second</em></li></ol>');
+    expect(create).not.toHaveProperty('deliveryTimeline');
+    const update = toContent(v, 'update');
+    expect(update.scope).toBe(html);
+    expect(update.deliveryTimeline).toBeNull();
+    expect(
+      UpdateQuotationDraftBodySchema.safeParse({ ...update, expectedVersion: 2 }).success,
+    ).toBe(true);
+  });
+
   it('in update mode still sends what was typed', () => {
     const v = filled();
     v.scope = '  Phase 1  ';

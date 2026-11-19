@@ -22,9 +22,11 @@ const presets = [standard, support, make(3, 'exclusions', 'Hardware', 'No hardwa
 function Host({
   list = presets,
   initial = '',
+  onAddMore,
 }: {
   list?: readonly TermPreset[];
   initial?: string;
+  onAddMore?: () => void;
 }) {
   const [text, setText] = useState(initial);
   return (
@@ -35,6 +37,7 @@ function Host({
         value={text}
         maxLength={10_000}
         onFill={setText}
+        onAddMore={onAddMore}
       />
       <textarea aria-label="Scope text" value={text} onChange={(e) => setText(e.target.value)} />
     </div>
@@ -146,16 +149,68 @@ describe('SavedOptionsSelect', () => {
     await view.unmount();
   });
 
-  it('renders no dropdown when the kind has no options, or none were loaded', async () => {
-    for (const list of [[presets[2]!], []] as const) {
-      const view = await mountForm(<Host list={list} />);
+  it('renders no dropdown when the presets did not load (null) or are missing', async () => {
+    for (const list of [null, undefined] as const) {
+      const view = await mountForm(
+        <SavedOptionsSelect
+          kind="scope"
+          presets={list}
+          value=""
+          maxLength={10}
+          onFill={() => {}}
+        />,
+      );
       expect(chosenValue()).toBeUndefined();
       await view.unmount();
     }
-    const view = await mountForm(
-      <SavedOptionsSelect kind="scope" presets={null} value="" maxLength={10} onFill={() => {}} />,
+  });
+
+  it('shows a disabled "No saved terms" select to a person who cannot add, when the kind has none', async () => {
+    for (const list of [[presets[2]!], []] as const) {
+      const view = await mountForm(<Host list={list} />);
+      const trigger = document
+        .querySelector(`input[type="hidden"][name="${NAME}"]`)
+        ?.parentElement?.querySelector('button');
+      expect(trigger?.disabled).toBe(true);
+      expect(trigger?.textContent).toContain('No saved terms');
+      await view.unmount();
+    }
+  });
+
+  it('ends the list with "Add more" for a person who can add terms, and runs onAddMore on it', async () => {
+    const onAddMore = vi.fn();
+    const view = await mountForm(<Host onAddMore={onAddMore} />);
+    const trigger = document
+      .querySelector(`input[type="hidden"][name="${NAME}"]`)
+      ?.parentElement?.querySelector('button');
+    await click(trigger ?? null);
+    const options = [...document.querySelectorAll('[role="option"]')].map((o) =>
+      o.textContent?.trim(),
     );
-    expect(chosenValue()).toBeUndefined();
+    expect(options).toEqual(['Saved options', 'Annual support', 'Standard build', 'Add more']);
+    await click(
+      [...document.querySelectorAll('[role="option"]')].find(
+        (o) => o.textContent?.trim() === 'Add more',
+      ) ?? null,
+    );
+    expect(onAddMore).toHaveBeenCalledTimes(1);
+    // It is an action, not a set: nothing was filled and nothing was asked.
+    expect(textarea().value).toBe('');
+    expect(chosenValue()).toBe('');
+    await view.unmount();
+  });
+
+  it('offers only "Add more" when the kind has no sets and the person can add terms', async () => {
+    const view = await mountForm(<Host list={[]} onAddMore={() => {}} />);
+    const trigger = document
+      .querySelector(`input[type="hidden"][name="${NAME}"]`)
+      ?.parentElement?.querySelector('button');
+    expect(trigger?.disabled).toBe(false);
+    await click(trigger ?? null);
+    const options = [...document.querySelectorAll('[role="option"]')].map((o) =>
+      o.textContent?.trim(),
+    );
+    expect(options).toEqual(['Saved options', 'Add more']);
     await view.unmount();
   });
 });

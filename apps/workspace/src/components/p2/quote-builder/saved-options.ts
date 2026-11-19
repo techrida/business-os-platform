@@ -1,32 +1,43 @@
-import type { TermPreset, TermPresetKind } from '@bos/contracts';
+import { richTextToPlain, type TermPreset, type TermPresetKind } from '@bos/contracts';
 
 // Rules for the "Saved options" dropdown above a quotation text field. Pure, so they are tested
-// without a browser. The quotation stores plain text: nothing here links a field to a preset.
+// without a browser. The quotation stores the text itself (D31): nothing here links a field to a
+// preset, so editing a saved set never changes a quotation. A set body is rich text (HTML) or
+// older plain text, so lengths and "was it edited" are read on the words, never on the markup.
 
-/** The kind's presets by name that fit the field. One that is longer than the field allows is not offered, so a fill never leaves the field invalid. */
+/** Settings > Saved terms, where the Founder edits the sets (the "Add more" entry opens it in the same tab). */
+export const SAVED_TERMS_HREF = '/settings/terms';
+
+/** The words of a value, trimmed: what two texts are compared on, so markup alone never counts as an edit. */
+const words = (value: string): string => richTextToPlain(value).trim();
+
+/** The kind's presets by name that fit the field (counted on words). One that is longer than the field allows is not offered, so a fill never leaves the field invalid. */
 export function offeredPresets(
   presets: readonly TermPreset[] | null | undefined,
   kind: TermPresetKind,
   maxLength: number,
 ): TermPreset[] {
   return (presets ?? [])
-    .filter((p) => p.kind === kind && p.body.length <= maxLength)
+    .filter((p) => p.kind === kind && richTextToPlain(p.body).length <= maxLength)
     .sort((a, b) => a.name.localeCompare(b.name, undefined, { sensitivity: 'base' }));
 }
 
 /**
  * True when filling over the current text loses nothing the person typed: the field is empty, still
- * holds exactly what the last fill put there, or holds the text of a saved option (so it can be had
- * again). Anything else, including text that arrived with a saved draft, counts as typed.
+ * holds the words the last fill put there, or holds the words of a saved option (so it can be had
+ * again). Words are compared, not markup, so the editor rewriting a set's HTML does not make an
+ * untouched field look edited. Anything else, including text that arrived with a saved draft,
+ * counts as typed.
  */
 export function canFillSilently(
   value: string,
   lastFilled: string | null,
   offered: readonly TermPreset[],
 ): boolean {
-  if (value.trim() === '') return true;
-  if (lastFilled !== null && value === lastFilled) return true;
-  return offered.some((p) => p.body === value);
+  const current = words(value);
+  if (current === '') return true;
+  if (lastFilled !== null && current === words(lastFilled)) return true;
+  return offered.some((p) => words(p.body) === current);
 }
 
 export type PickOutcome =

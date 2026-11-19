@@ -9,7 +9,7 @@ import { Button, LinkButton } from '@/components/ui/button';
 import { Card } from '@/components/ui/card';
 import { DatePicker } from '@/components/ui/date-picker';
 import { ConfirmDialog } from '@/components/ui/dialog';
-import { Field, Input, Select, Textarea } from '@/components/ui/field';
+import { Field, Input, Select } from '@/components/ui/field';
 import { PageHeader } from '@/components/ui/page';
 import { Panel } from '@/components/ui/panel';
 import { toast } from '@/components/ui/toast';
@@ -18,7 +18,6 @@ import { previewQuoteAction, saveDraftAction, submitQuoteAction } from './action
 import { ApprovalPanel, ApprovalSteps } from './approval-panel';
 import type { FailureKind } from './failure';
 import { LinesSection } from './lines-section';
-import { SavedOptionsSelect } from './saved-options-select';
 import {
   CURRENCY_OPTIONS,
   newMilestone,
@@ -34,6 +33,7 @@ import {
 import styles from './quote-builder.module.css';
 import { ScheduleSection, type AmountDraft } from './schedule-section';
 import type { PaymentTerm, PreviewResult, TaxCode } from './schemas';
+import { TermsField } from './terms-field';
 import { TotalsPanel, type PreviewState } from './totals-panel';
 
 export type BuilderTarget =
@@ -106,6 +106,7 @@ export function QuoteBuilder({
   taxCodes,
   paymentTerms,
   termPresets,
+  canAddTerms = false,
   idempotencyKey,
   savedNotice = false,
 }: {
@@ -122,8 +123,14 @@ export function QuoteBuilder({
   contacts: readonly ContactOption[] | null;
   taxCodes: readonly TaxCode[] | null;
   paymentTerms: readonly PaymentTerm[] | null;
-  /** Saved wording for the Terms fields; null when it could not be loaded (no dropdown is shown). */
+  /** Saved term sets for the Terms fields; null when they could not be loaded (no dropdown is shown). */
   termPresets?: readonly TermPreset[] | null;
+  /**
+   * True when the session holds `admin.settings.write` (the Founder): the saved-terms dropdowns then
+   * end with "Add more", which opens Settings > Saved terms. Decided on the server; the API still
+   * enforces who may edit a set.
+   */
+  canAddTerms?: boolean;
   /** Made once per page render on the server; the actions hand back the key the next try uses. */
   idempotencyKey: string;
   savedNotice?: boolean;
@@ -789,22 +796,17 @@ export function QuoteBuilder({
           <div className={styles.sectionBody}>
             <Field label="Scope" hint="Optional. What is included." error={errors['scope']}>
               {(control) => (
-                <>
-                  <SavedOptionsSelect
-                    kind="scope"
-                    presets={termPresets}
-                    value={values.scope}
-                    maxLength={10000}
-                    onFill={set('scope')}
-                  />
-                  <Textarea
-                    rows={4}
-                    maxLength={10000}
-                    value={values.scope}
-                    onChange={(e) => set('scope')(e.target.value)}
-                    {...control}
-                  />
-                </>
+                <TermsField
+                  kind="scope"
+                  presets={termPresets}
+                  canAddTerms={canAddTerms}
+                  value={values.scope}
+                  onChange={set('scope')}
+                  maxChars={10000}
+                  control={control}
+                  disabled={busy !== null}
+                  minHeight={160}
+                />
               )}
             </Field>
             <Field
@@ -813,22 +815,17 @@ export function QuoteBuilder({
               error={errors['assumptions']}
             >
               {(control) => (
-                <>
-                  <SavedOptionsSelect
-                    kind="assumptions"
-                    presets={termPresets}
-                    value={values.assumptions}
-                    maxLength={10000}
-                    onFill={set('assumptions')}
-                  />
-                  <Textarea
-                    rows={3}
-                    maxLength={10000}
-                    value={values.assumptions}
-                    onChange={(e) => set('assumptions')(e.target.value)}
-                    {...control}
-                  />
-                </>
+                <TermsField
+                  kind="assumptions"
+                  presets={termPresets}
+                  canAddTerms={canAddTerms}
+                  value={values.assumptions}
+                  onChange={set('assumptions')}
+                  maxChars={10000}
+                  control={control}
+                  disabled={busy !== null}
+                  minHeight={120}
+                />
               )}
             </Field>
             <Field
@@ -837,22 +834,17 @@ export function QuoteBuilder({
               error={errors['exclusions']}
             >
               {(control) => (
-                <>
-                  <SavedOptionsSelect
-                    kind="exclusions"
-                    presets={termPresets}
-                    value={values.exclusions}
-                    maxLength={10000}
-                    onFill={set('exclusions')}
-                  />
-                  <Textarea
-                    rows={3}
-                    maxLength={10000}
-                    value={values.exclusions}
-                    onChange={(e) => set('exclusions')(e.target.value)}
-                    {...control}
-                  />
-                </>
+                <TermsField
+                  kind="exclusions"
+                  presets={termPresets}
+                  canAddTerms={canAddTerms}
+                  value={values.exclusions}
+                  onChange={set('exclusions')}
+                  maxChars={10000}
+                  control={control}
+                  disabled={busy !== null}
+                  minHeight={120}
+                />
               )}
             </Field>
             <Field
@@ -861,22 +853,17 @@ export function QuoteBuilder({
               error={errors['deliveryTimeline']}
             >
               {(control) => (
-                <>
-                  <SavedOptionsSelect
-                    kind="delivery_timeline"
-                    presets={termPresets}
-                    value={values.deliveryTimeline}
-                    maxLength={2000}
-                    onFill={set('deliveryTimeline')}
-                  />
-                  <Textarea
-                    rows={2}
-                    maxLength={2000}
-                    value={values.deliveryTimeline}
-                    onChange={(e) => set('deliveryTimeline')(e.target.value)}
-                    {...control}
-                  />
-                </>
+                <TermsField
+                  kind="delivery_timeline"
+                  presets={termPresets}
+                  canAddTerms={canAddTerms}
+                  value={values.deliveryTimeline}
+                  onChange={set('deliveryTimeline')}
+                  maxChars={2000}
+                  control={control}
+                  disabled={busy !== null}
+                  minHeight={96}
+                />
               )}
             </Field>
             <Field
@@ -885,22 +872,17 @@ export function QuoteBuilder({
               error={errors['termsAndConditions']}
             >
               {(control) => (
-                <>
-                  <SavedOptionsSelect
-                    kind="terms_conditions"
-                    presets={termPresets}
-                    value={values.termsAndConditions}
-                    maxLength={10000}
-                    onFill={set('termsAndConditions')}
-                  />
-                  <Textarea
-                    rows={5}
-                    maxLength={10000}
-                    value={values.termsAndConditions}
-                    onChange={(e) => set('termsAndConditions')(e.target.value)}
-                    {...control}
-                  />
-                </>
+                <TermsField
+                  kind="terms_conditions"
+                  presets={termPresets}
+                  canAddTerms={canAddTerms}
+                  value={values.termsAndConditions}
+                  onChange={set('termsAndConditions')}
+                  maxChars={10000}
+                  control={control}
+                  disabled={busy !== null}
+                  minHeight={160}
+                />
               )}
             </Field>
           </div>

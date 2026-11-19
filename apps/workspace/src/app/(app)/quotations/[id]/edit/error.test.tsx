@@ -16,7 +16,9 @@ describe('edit quotation boundary', () => {
   });
 
   it('shows a generic retry for unrelated failures', () => {
-    const html = renderToStaticMarkup(<BuilderError error={new Error('private')} retry={vi.fn()} />);
+    const html = renderToStaticMarkup(
+      <BuilderError error={new Error('private')} retry={vi.fn()} />,
+    );
     expect(html).toContain('The quotation builder did not open');
     expect(html).not.toContain('private');
   });

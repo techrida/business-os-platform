@@ -6,7 +6,7 @@ import { Dec, formatMoney } from '@bos/locale';
 import { Button } from '@/components/ui/button';
 import { DatePicker } from '@/components/ui/date-picker';
 import { Field, Input } from '@/components/ui/field';
-import { useNumberSystem } from '@/components/ui/number-system-context';
+import { useNumberSystems } from '@/components/ui/number-system-context';
 
 import {
   milestoneAmounts,
@@ -54,7 +54,7 @@ export function ScheduleSection({
   onAdd: () => void;
   onRemove: (key: string) => void;
 }) {
-  const numberSystem = useNumberSystem();
+  const numberSystems = useNumberSystems();
   const state = scheduleState(milestones);
   const amounts = milestoneAmounts(milestones, total);
   const zeroTotal = total !== null && new Dec(total).isZero();
@@ -68,7 +68,7 @@ export function ScheduleSection({
     if (!result.ok) {
       const error =
         result.reason === 'above-total' && total !== null
-          ? `Enter an amount up to ${formatMoney(total, currency, { numberSystem })}.`
+          ? `Enter an amount up to ${formatMoney(total, currency, { numberSystems })}.`
           : result.reason === 'total-unavailable'
             ? 'Wait for the quote total before editing this amount.'
             : 'Enter a non-negative amount with up to two decimal places.';
@@ -86,7 +86,7 @@ export function ScheduleSection({
       const suggestion =
         result.amount === null
           ? ''
-          : ` Try ${formatMoney(result.amount, currency, { numberSystem })}.`;
+          : ` Try ${formatMoney(result.amount, currency, { numberSystems })}.`;
       onAmountDraft(milestone.key, {
         ...draft,
         error: `This amount needs more than four decimal places in the percentage.${suggestion}`,

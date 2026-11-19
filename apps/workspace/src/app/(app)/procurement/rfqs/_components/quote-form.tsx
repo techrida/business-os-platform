@@ -4,9 +4,10 @@ import { CURRENCIES, type TaxCode } from '@bos/contracts';
 import { useActionState, useEffect, useRef, useState } from 'react';
 
 import { Alert } from '@/components/ui/alert';
-import { Field, Input, Select, Textarea } from '@/components/ui/field';
+import { Field, Input, Select } from '@/components/ui/field';
 import { PageHeader } from '@/components/ui/page';
 import { FactList, Panel } from '@/components/ui/panel';
+import { RichTextEditor } from '@/components/ui/rich-text-editor';
 
 import { ProcurementFormActions } from '../../form-actions';
 import styles from '../../requests/requests.module.css';
@@ -297,13 +298,17 @@ export function QuoteForm({
           </Field>
           <Field label="Terms" hint="Optional." error={err.terms} className={WIDE}>
             {(control) => (
-              <Textarea
+              <RichTextEditor
                 name="terms"
+                id={control.id}
+                aria-labelledby={control['aria-labelledby']}
+                aria-describedby={control['aria-describedby']}
+                invalid={control['aria-invalid'] === true}
                 value={values.terms}
-                onChange={set('terms')}
-                rows={2}
-                maxLength={2000}
-                {...control}
+                onChange={(html) => set('terms')({ target: { value: html } })}
+                maxChars={2000}
+                minHeight={96}
+                disabled={pending}
               />
             )}
           </Field>

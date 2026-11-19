@@ -1,5 +1,5 @@
 import type { QuotationListItem } from '@bos/contracts';
-import type { NumberSystem } from '@bos/locale';
+import type { NumberSystems } from '@bos/locale';
 import type { Metadata } from 'next';
 import Link from 'next/link';
 
@@ -24,7 +24,7 @@ import { StatCard } from '@/components/ui/stat-card';
 import { Table, Td, Th } from '@/components/ui/table';
 import { failureOf } from '@/lib/api-kernel';
 import { requireStaffSession } from '@/lib/bff';
-import { getNumberSystem } from '@/lib/display-settings';
+import { getNumberSystems } from '@/lib/display-settings';
 import { money, when } from '@/lib/kernel-format';
 
 export const metadata: Metadata = { title: 'Quotations · Business OS' };
@@ -57,10 +57,10 @@ function listHref(filters: {
 
 function QuotationRow({
   item,
-  numberSystem,
+  numberSystems,
 }: {
   item: QuotationListItem;
-  numberSystem: NumberSystem;
+  numberSystems: NumberSystems;
 }) {
   const href = `/quotations/${encodeURIComponent(item.id)}`;
   return (
@@ -69,7 +69,7 @@ function QuotationRow({
         <Link href={href} className={styles.number}>
           {item.number}
         </Link>
-        <span className={styles.amount}>{money(item.total, item.currency, numberSystem)}</span>
+        <span className={styles.amount}>{money(item.total, item.currency, numberSystems)}</span>
       </Td>
       <Td className={styles.customer}>{item.customerName}</Td>
       <Td>
@@ -152,7 +152,7 @@ export default async function QuotationsPage({
   const filters = { status, opportunityId, q, rows: pageSize };
   const here = listHref({ ...filters, page: requestedPage });
   const session = await requireStaffSession(here);
-  const numberSystem = await getNumberSystem();
+  const numberSystems = await getNumberSystems();
 
   let items: QuotationListItem[] | null = null;
   let problem: { message: string; status: number } | null = null;
@@ -285,7 +285,7 @@ export default async function QuotationsPage({
             </thead>
             <tbody>
               {matches.slice(offset, offset + pageSize).map((item) => (
-                <QuotationRow key={item.id} item={item} numberSystem={numberSystem} />
+                <QuotationRow key={item.id} item={item} numberSystems={numberSystems} />
               ))}
             </tbody>
           </Table>

@@ -127,6 +127,30 @@ describe('parseQuoteValues', () => {
     });
   });
 
+  it("sends the terms editor's HTML as it is, trimmed, and nothing for an empty editor", () => {
+    const html = '<p>Pay <strong>30</strong> days</p><ul><li>Net</li></ul>';
+    const sent = parseQuoteValues(quoteValuesFromForm(quoteForm([['terms', `  ${html}\n`]])));
+    expect(sent.ok && sent.data).toMatchObject({ terms: html });
+
+    for (const empty of ['', '   ', '<p></p>']) {
+      const out = parseQuoteValues(quoteValuesFromForm(quoteForm([['terms', empty]])));
+      expect(out.ok && out.data).not.toHaveProperty('terms');
+    }
+  });
+
+  it('counts the 2000-character limit on the words of the terms, not on the markup', () => {
+    const within = `<p><strong>${'x'.repeat(2000)}</strong></p>`;
+    expect(parseQuoteValues(quoteValuesFromForm(quoteForm([['terms', within]]))).ok).toBe(true);
+
+    const over = parseQuoteValues(
+      quoteValuesFromForm(quoteForm([['terms', `<p><em>${'x'.repeat(2001)}</em></p>`]])),
+    );
+    expect(over).toEqual({
+      ok: false,
+      errors: { terms: 'The terms can be up to 2000 characters.' },
+    });
+  });
+
   it('convert mode sends the submission and never a vendor or a document', () => {
     const v = quoteValuesFromForm(quoteForm([['submissionId', SUB]]));
     const out = parseQuoteValues({ ...v, mode: 'convert' });
