@@ -33,13 +33,20 @@ const { default: InvoicePage } = await import('./page');
 
 const fetchMock = vi.fn<typeof fetch>();
 
-/** The invoice call answers with `invoice`, the settlement call with `settlement`. */
-function api(invoice: () => Response, settlement: () => Response) {
-  fetchMock.mockImplementation((url) =>
-    Promise.resolve(
-      (url as URL | string).toString().endsWith('/settlement') ? settlement() : invoice(),
-    ),
-  );
+/**
+ * The invoice call answers with `invoice`, the settlement call with `settlement`, and the display
+ * setting call with `display` (a 404 by default, so the page falls back to the defaults).
+ */
+function api(
+  invoice: () => Response,
+  settlement: () => Response,
+  display: () => Response = () => json({ error: { code: 'not_found' } }, 404),
+) {
+  fetchMock.mockImplementation((url) => {
+    const path = (url as URL | string).toString();
+    if (path.endsWith('/v1/portal/display')) return Promise.resolve(display());
+    return Promise.resolve(path.endsWith('/settlement') ? settlement() : invoice());
+  });
 }
 
 const render = (id = ID) => InvoicePage({ params: Promise.resolve({ id }) });
@@ -68,7 +75,23 @@ describe('invoice page', () => {
     expect(html).toContain('Partly paid');
     expect(html).toContain('NPR 10,00,000.00');
     expect(html).toContain(`/payments/new?invoice=${ID}`);
-    expect(callOf(fetchMock, 0).url).toContain(`/v1/portal/invoices/${ID}`);
+    const urls = fetchMock.mock.calls.map((_, i) => callOf(fetchMock, i).url);
+    expect(urls.some((u) => u.includes(`/v1/portal/invoices/${ID}`))).toBe(true);
+  });
+
+  it('draws amounts with the number system the company chose', async () => {
+    api(
+      () => json(sampleInvoice()),
+      () => json(sampleSettlement({ settlement: 'partly_paid', openAmount: '1000000.00' })),
+      () =>
+        json({
+          numberSystems: { NPR: 'international', INR: 'south_asian', USD: 'international' },
+          dateFormat: 'dd/MM/yyyy',
+        }),
+    );
+    const html = renderToStaticMarkup(await render());
+    expect(html).toContain('NPR 1,000,000.00');
+    expect(html).not.toContain('NPR 10,00,000.00');
   });
 
   it('shows the same not-found for a 404, a 403, a junk id and a draft-shaped body', async () => {

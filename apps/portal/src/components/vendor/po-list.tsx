@@ -1,9 +1,8 @@
-import { formatCustomerDate } from '@bos/locale';
-import type { VendorPortalPurchaseOrderListItem } from '@bos/contracts';
-import { formatMoney } from '@bos/locale';
+import type { PortalDisplay, VendorPortalPurchaseOrderListItem } from '@bos/contracts';
 
 import { Badge } from '@/components/ui/badge';
 import { EmptyState } from '@/components/ui/empty-state';
+import { displayFormat } from '@/lib/display';
 
 import styles from './vendor.module.css';
 import { PO_STATUS_LOOK } from './vendor-status';
@@ -14,9 +13,12 @@ import { PO_STATUS_LOOK } from './vendor-status';
  */
 export function PurchaseOrderList({
   items,
+  display,
 }: {
   items: readonly VendorPortalPurchaseOrderListItem[];
+  display?: PortalDisplay;
 }) {
+  const { money, day } = displayFormat(display);
   if (items.length === 0) {
     return (
       <EmptyState title="No purchase orders yet" icon="file-text">
@@ -52,10 +54,8 @@ export function PurchaseOrderList({
                 <td>
                   <Badge tone={look.tone}>{look.label}</Badge>
                 </td>
-                <td className={styles.nowrap}>{formatCustomerDate(po.issueDate)}</td>
-                <td className={`${styles.num} ${styles.nowrap}`}>
-                  {formatMoney(po.total, po.currency)}
-                </td>
+                <td className={styles.nowrap}>{day(po.issueDate)}</td>
+                <td className={`${styles.num} ${styles.nowrap}`}>{money(po.total, po.currency)}</td>
               </tr>
             );
           })}

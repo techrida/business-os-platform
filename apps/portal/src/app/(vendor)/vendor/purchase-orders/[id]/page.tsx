@@ -5,6 +5,7 @@ import pageStyles from '@/components/portal/page.module.css';
 import { PurchaseOrderView } from '@/components/vendor/po-view';
 import { VendorNoAccess } from '@/components/vendor/vendor-no-access';
 import { getVendorPurchaseOrder } from '@/lib/api.vendor';
+import { getPortalDisplay } from '@/lib/portal-display';
 import { getSession } from '@/lib/session';
 
 import { isUuid, loadVendor } from '../../load';
@@ -24,6 +25,7 @@ export default async function PurchaseOrderPage({ params }: { params: Promise<{ 
   const session = await getSession();
   if (!session) redirect(`/auth/login?returnTo=${encodeURIComponent(here)}`);
 
+  const display = getPortalDisplay(session);
   const result = await loadVendor(() => getVendorPurchaseOrder(session, id), here);
   if (result.kind === 'forbidden') return <VendorNoAccess />;
   if (result.kind === 'missing') notFound();
@@ -33,7 +35,7 @@ export default async function PurchaseOrderPage({ params }: { params: Promise<{ 
       <p className={pageStyles.back}>
         <Link href="/vendor/purchase-orders">← Your purchase orders</Link>
       </p>
-      <PurchaseOrderView view={result.data} />
+      <PurchaseOrderView view={result.data} display={await display} />
     </main>
   );
 }

@@ -8,6 +8,7 @@ import {
   getPortalInvoiceSettlement,
   type PortalSettlement,
 } from '@/lib/api.billing';
+import { getPortalDisplay } from '@/lib/portal-display';
 import { getSession } from '@/lib/session';
 
 import { InvoiceView } from '../_components/invoice-view';
@@ -30,6 +31,7 @@ export default async function InvoicePage({ params }: { params: Promise<{ id: st
   const session = await getSession();
   if (!session) redirect(returnTo);
 
+  const display = getPortalDisplay(session);
   const [invoice, settlement] = await Promise.allSettled([
     getPortalInvoice(session, id),
     getPortalInvoiceSettlement(session, id),
@@ -50,7 +52,7 @@ export default async function InvoicePage({ params }: { params: Promise<{ id: st
       <p className={styles.back}>
         <Link href="/invoices">← Your invoices</Link>
       </p>
-      <InvoiceView view={invoice.value} settlement={settled} />
+      <InvoiceView view={invoice.value} settlement={settled} display={await display} />
     </main>
   );
 }

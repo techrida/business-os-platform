@@ -1,6 +1,5 @@
 import { randomUUID } from 'node:crypto';
 
-import { formatMoney } from '@bos/locale';
 import Link from 'next/link';
 import { notFound, redirect } from 'next/navigation';
 
@@ -10,6 +9,7 @@ import { canRespond, todayInKathmandu } from '@/components/portal/quotation-stat
 import { QuotationView } from '@/components/portal/quotation-view';
 import { RespondPanel } from '@/components/portal/respond-panel';
 import { ApiError, getPortalQuotation } from '@/lib/api';
+import { displayFormat } from '@/lib/display';
 import { getSession } from '@/lib/session';
 
 export const dynamic = 'force-dynamic';
@@ -74,7 +74,7 @@ export default async function QuotationPage({
             respondability={canRespond(view, today)}
             acceptKey={randomUUID()}
             rejectKey={randomUUID()}
-            summary={`${view.number} Rev ${view.revisionNo} for ${formatMoney(view.totals.total, view.currency)}`}
+            summary={`${view.number} Rev ${view.revisionNo} for ${displayFormat(view.display).money(view.totals.total, view.currency)}`}
             reloadHref={`/quotations/${view.id}`}
           />
         }

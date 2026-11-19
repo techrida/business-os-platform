@@ -12,7 +12,7 @@ import { QuotationsModule } from '../quotations/quotations.module';
 import { PortalRespondController } from './portal-respond.controller';
 import { PortalRespondService } from './portal-respond.service';
 import { PortalCaller, PortalTxActor } from './portal.caller';
-import { PortalController } from './portal.controller';
+import { PortalController, PortalDisplayController } from './portal.controller';
 import { PortalService } from './portal.service';
 import {
   DrizzlePortalQuotationStore,
@@ -23,7 +23,7 @@ import {
 
 @Module({
   imports: [DocumentsModule, SettingsModule, QuotationsModule, NotifyModule],
-  controllers: [PortalController, PortalRespondController],
+  controllers: [PortalController, PortalDisplayController, PortalRespondController],
   providers: [
     PortalService,
     PortalRespondService,

@@ -6,10 +6,19 @@
 // `GET /v1/portal/quotations/:id/document` answers a short-lived signed link to the frozen PDF (the portal's
 // `getPortalQuotationLink`). It does not use DocumentsService.issueLink, which checks `documents.read` (a customer
 // does not hold it): PortalService authorizes the caller and the version, then asks for a link by owner.
-import type { CustomerQuotationView, PortalQuotationListItem, SignedLinkDto } from '@bos/contracts';
+//
+// `GET /v1/portal/display` answers how the caller's company writes numbers and dates ({ numberSystems, dateFormat }).
+// Customers and vendors hold different portal permissions, so the route is open to any active principal and
+// PortalService.display refuses everyone but a customer or vendor portal caller with a party (403).
+import type {
+  CustomerQuotationView,
+  PortalDisplay,
+  PortalQuotationListItem,
+  SignedLinkDto,
+} from '@bos/contracts';
 import { Controller, Get, Param, ParseUUIDPipe } from '@nestjs/common';
 
-import { Can } from '../../platform/authz/decorators';
+import { AnyAuthenticated, Can } from '../../platform/authz/decorators';
 import { PortalService } from './portal.service';
 
 @Controller('v1/portal/quotations')
@@ -35,5 +44,17 @@ export class PortalController {
   @Can('portal.quotation.read')
   document(@Param('id', ParseUUIDPipe) id: string): Promise<SignedLinkDto> {
     return this.portal.quotationPdfLink(id);
+  }
+}
+
+@Controller('v1/portal')
+export class PortalDisplayController {
+  constructor(private readonly portal: PortalService) {}
+
+  /** 200 with the company's live number grouping and date pattern; 403 for anyone but a portal caller. */
+  @Get('display')
+  @AnyAuthenticated()
+  display(): Promise<PortalDisplay> {
+    return this.portal.display();
   }
 }
