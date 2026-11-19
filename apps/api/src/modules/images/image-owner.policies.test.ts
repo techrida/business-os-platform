@@ -1,4 +1,4 @@
-// Unit test of the image owner policies (U12, D33): who may upload each kind of image (the real can() with the
+﻿// Unit test of the image owner policies (U12, D33): who may upload each kind of image (the real can() with the
 // default role grants against each policy's ref and upload grant), a missing owner is null (404), only the company
 // logo takes a file from the system actor, and every image owner narrows the types and size. Fake loaders: the
 // database is never reached.
@@ -97,8 +97,11 @@ async function mayUpload(
 ): Promise<'allowed' | 'not_found' | DenyReason> {
   const ref: ResourceRef | null = await policy.resource(scope, ownerId);
   if (ref === null) return 'not_found';
-  const decision = can(p, policy.uploadPermission ?? 'documents.upload', ref);
-  return decision.allowed ? 'allowed' : decision.reason;
+  // An owner policy may accept any one of several upload grants; the first refusal is the one reported.
+  const decisions = [policy.uploadPermission ?? 'documents.upload'].flat().map((perm) => can(p, perm, ref));
+  const allowedDecision = decisions.find((decision) => decision.allowed);
+  if (allowedDecision !== undefined) return 'allowed';
+  return decisions[0]?.allowed === false ? decisions[0].reason : 'no_permission';
 }
 
 describe('image owner policies', () => {

@@ -1,4 +1,4 @@
-// The default access model (D50, D51) as data: the target table, the default base and level grants that must
+﻿// The default access model (D50, D51) as data: the target table, the default base and level grants that must
 // reproduce it, the copy of the level grants migration 0088 embeds, and the assignment rule's vocabulary.
 // What stays a todo here: each cell checked against the real API as a seeded user, which needs the real
 // interceptor, role cache and live rows (the API e2e matrix).
@@ -24,16 +24,12 @@ import {
   ASSIGNMENT_ALLOW_REASONS,
   ASSIGNMENT_DENY_MESSAGES,
   ASSIGNMENT_DENY_REASONS,
-  AssignmentPolicySchema,
-  DEFAULT_ASSIGNMENT_POLICY,
   DEFAULT_ROLE_PERMISSION_LEVELS,
   LEAD_INTAKE_ROLE_KEYS,
   LEVEL_GRANT_MIN_LEVELS,
   levelAtLeast,
   MARKETING_ROLE_KEY,
   SALES_ROLE_KEY,
-  SENIOR_ASSIGNMENT_REACHES,
-  STAFF_ASSIGNMENT_REACHES,
   TARGET_LEAD_ACCESS,
 } from './access-model.js';
 import {
@@ -455,26 +451,6 @@ describe('assignment vocabulary (K6)', () => {
     ]) {
       expect(text).not.toMatch(/scope|grant|_|\./);
     }
-  });
-
-  it('defaults to the first option of each setting and hands Marketing to Sales (D50, spec 6.3)', () => {
-    expect(AssignmentPolicySchema.parse(DEFAULT_ASSIGNMENT_POLICY)).toEqual(
-      DEFAULT_ASSIGNMENT_POLICY,
-    );
-    expect(DEFAULT_ASSIGNMENT_POLICY.staff).toBe(STAFF_ASSIGNMENT_REACHES[0]);
-    expect(DEFAULT_ASSIGNMENT_POLICY.managers).toBe(SENIOR_ASSIGNMENT_REACHES[0]);
-    expect(DEFAULT_ASSIGNMENT_POLICY.handOvers).toEqual([
-      { from: MARKETING_ROLE_KEY, to: SALES_ROLE_KEY },
-    ]);
-  });
-
-  it('refuses a hand-over naming an unknown role', () => {
-    expect(
-      AssignmentPolicySchema.safeParse({
-        ...DEFAULT_ASSIGNMENT_POLICY,
-        handOvers: [{ from: 'marketing', to: 'galaxy' }],
-      }).success,
-    ).toBe(false);
   });
 });
 

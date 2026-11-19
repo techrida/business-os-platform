@@ -1,4 +1,4 @@
-// The default access model (D50, D51, D52): levels on a department membership, the `assigned` scope, the areas
+﻿// The default access model (D50, D51, D52): levels on a department membership, the `assigned` scope, the areas
 // the Founder will switch, the target default reach of every role on leads, and the vocabulary of the assignment
 // rule. Pure data and types: no I/O, so the API, the pickers and the tests read one definition.
 // The rule itself is `apps/api/src/modules/leads/lead-assignment-rule.ts`; the SQL half is migrations
@@ -188,7 +188,7 @@ function defaultLevelGrants(role: RoleKey): LevelGrant[] {
  * constant, the table (`app.role_permission_levels`) is the live truth once a tenant has rows.
  */
 export const DEFAULT_ROLE_PERMISSION_LEVELS: Readonly<Record<RoleKey, readonly LevelGrant[]>> =
-  Object.fromEntries(ROLE_KEYS.map((role) => [role, defaultLevelGrants(role)])) as Record<
+  Object.fromEntries(ROLE_KEYS.map((role) => [role, defaultLevelGrants(role)])) as unknown as Record<
     RoleKey,
     readonly LevelGrant[]
   >;
@@ -269,46 +269,6 @@ export interface AssignmentParty {
 
 /** `create`: choosing the owner of a new record. `reassign`: changing the owner or assignee of an existing one. */
 export type AssignmentContext = 'create' | 'reassign';
-
-/**
- * Whom staff may hand work to inside their department (ACCESS-SETTINGS-UX-SPEC 6.3): themselves and same-level
- * colleagues (the default), only themselves, or anyone at or below their level.
- */
-export const STAFF_ASSIGNMENT_REACHES = ['self_and_peers', 'self', 'at_or_below'] as const;
-export type StaffAssignmentReach = (typeof STAFF_ASSIGNMENT_REACHES)[number];
-
-/**
- * Whom managers and heads may hand work to inside their department: anyone at or below their level (the default),
- * or only themselves and the people below their level (never a same-level colleague).
- */
-export const SENIOR_ASSIGNMENT_REACHES = ['at_or_below', 'self_and_below'] as const;
-export type SeniorAssignmentReach = (typeof SENIOR_ASSIGNMENT_REACHES)[number];
-
-/**
- * A hand-over lets a holder of `from` give work to a holder of `to` in another department, at or below the
- * sender's level. Named by role for now (spec A3 fallback); the reverse needs its own pair.
- */
-export const AssignmentHandOverSchema = z.object({ from: RoleKeySchema, to: RoleKeySchema });
-export type AssignmentHandOver = z.infer<typeof AssignmentHandOverSchema>;
-
-/**
- * The editable half of the assignment rule. The fixed half (a Founder assigns anyone, nobody assigns upward,
- * intake roles start leads for Sales) is not configurable. `decideAssignment` takes one; U20b stores it per
- * tenant, until then every caller uses `DEFAULT_ASSIGNMENT_POLICY`.
- */
-export const AssignmentPolicySchema = z.object({
-  staff: z.enum(STAFF_ASSIGNMENT_REACHES),
-  managers: z.enum(SENIOR_ASSIGNMENT_REACHES),
-  handOvers: z.array(AssignmentHandOverSchema),
-});
-export type AssignmentPolicy = z.infer<typeof AssignmentPolicySchema>;
-
-/** D50 as decided: staff to same-level colleagues, managers and heads at or below, Marketing hands to Sales. */
-export const DEFAULT_ASSIGNMENT_POLICY: Readonly<AssignmentPolicy> = {
-  staff: 'self_and_peers',
-  managers: 'at_or_below',
-  handOvers: [{ from: MARKETING_ROLE_KEY, to: SALES_ROLE_KEY }],
-};
 
 export const ASSIGNMENT_ALLOW_REASONS = [
   'founder',
