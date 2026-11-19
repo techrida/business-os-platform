@@ -5,6 +5,14 @@ import { z } from 'zod';
 
 import { SlaSpecSchema } from './approvals.js';
 import { AddressSchema, PanVatNoSchema } from './crm.js';
+import {
+  CompanyProfileSchema,
+  DEFAULT_DOCUMENT_STYLE,
+  DocumentStyleSchema,
+  EMPTY_COMPANY_PROFILE,
+  NumberSystemSchema,
+  TermPresetListSchema,
+} from './document-style.js';
 import { CurrencySchema, DecimalString } from './money.js';
 import { EVIDENCE_KINDS, NonNegativeDecimalString } from './quotations.js';
 import { DEFAULT_SALES_SCHEDULE, ScheduleTemplateSchema } from './sales.js';
@@ -81,8 +89,28 @@ export const SETTINGS = {
   // P3 sales and invoicing.
   /** Billing split used when the accepted quotation has no payment schedule: slices that add up to 100%. */
   'sales.default_schedule': ScheduleTemplateSchema,
+  /** Company details the document footer and signature print. Per entity. */
+  'entity.profile': CompanyProfileSchema,
+  /** Layout and brand colour of customer documents. Per entity; only the Founder changes it. */
+  'document.style': DocumentStyleSchema,
+  /** South Asian (lakh, crore) or International (million, billion): drives amount grouping and amount in words. */
+  'format.number_system': NumberSystemSchema,
+  /** Saved wording the quotation form offers for payment terms, scope and the like. */
+  'quotation.term_presets': TermPresetListSchema,
   ...P4_SETTINGS,
 } as const;
+
+/** Defaults of the document and format keys. The API's SETTING_DEFAULTS spreads these in. */
+export const DOCUMENT_SETTING_DEFAULTS = {
+  'entity.profile': EMPTY_COMPANY_PROFILE,
+  'document.style': DEFAULT_DOCUMENT_STYLE,
+  'format.number_system': 'south_asian',
+  'quotation.term_presets': [],
+} as const satisfies {
+  [
+    K in 'entity.profile' | 'document.style' | 'format.number_system' | 'quotation.term_presets'
+  ]: z.infer<(typeof SETTINGS)[K]>;
+};
 
 /** Defaults of the P2 keys. The API's SETTING_DEFAULTS reuses these, so the two cannot drift apart. */
 export const P2_SETTING_DEFAULTS = {

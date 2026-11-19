@@ -5,6 +5,7 @@
 // already stamped with tenant, organization and actor. A setting nobody has written yet falls back to a
 // default kept here, because most SETTINGS schemas have no default of their own (they only validate).
 import {
+  DOCUMENT_SETTING_DEFAULTS,
   P2_SETTING_DEFAULTS,
   P3_SETTING_DEFAULTS,
   P4_SETTING_DEFAULTS,
@@ -33,6 +34,7 @@ export const SETTING_DEFAULTS: { readonly [K in SettingKey]: SettingValue<K> } =
   ...P2_SETTING_DEFAULTS,
   ...P3_SETTING_DEFAULTS,
   ...P4_SETTING_DEFAULTS,
+  ...DOCUMENT_SETTING_DEFAULTS,
 };
 
 export interface SettingVersion {
