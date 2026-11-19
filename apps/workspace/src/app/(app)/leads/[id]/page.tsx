@@ -6,11 +6,12 @@ import type { NumberSystem } from '@bos/locale';
 
 import { ActivityForm } from '@/components/p2/crm/activity-form';
 import { ConvertDialog } from '@/components/p2/crm/convert-dialog';
-import { getLead, listActivities, listLeadOwners } from '@/components/p2/crm/crm-api';
+import { getLead, listActivities } from '@/components/p2/crm/crm-api';
 import { FollowUpsCard } from '@/components/p2/crm/follow-ups-card';
 import { moneyOrNull, sentence } from '@/components/p2/crm/format';
 import { MoveForm } from '@/components/p2/crm/move-form';
-import { ActivityList, LoadProblem, StageBadge, peopleById } from '@/components/p2/crm/server-bits';
+import { loadPeople } from '@/components/p2/crm/people';
+import { ActivityList, LoadProblem, StageBadge } from '@/components/p2/crm/server-bits';
 import { stageLabel, userMoves } from '@/components/p2/crm/stages';
 import { Alert } from '@/components/ui/alert';
 import { Button, LinkButton } from '@/components/ui/button';
@@ -144,11 +145,11 @@ export default async function LeadPage({ params }: { params: Promise<{ id: strin
   const session = await requireStaffSession(`/leads/${id}`);
   const numberSystem = await getNumberSystem();
 
-  const [leadResult, plannedResult, loggedResult, ownersResult] = await Promise.allSettled([
+  const [leadResult, plannedResult, loggedResult, peopleResult] = await Promise.allSettled([
     getLead(session, id),
     listActivities(session, { leadId: id, status: 'planned', limit: 100 }),
     listActivities(session, { leadId: id, status: 'logged', limit: 100 }),
-    listLeadOwners(session),
+    loadPeople(session),
   ]);
 
   if (leadResult.status === 'rejected') {
@@ -174,10 +175,10 @@ export default async function LeadPage({ params }: { params: Promise<{ id: strin
   const logged = loggedResult.status === 'fulfilled' ? loggedResult.value : null;
   const loggedProblem =
     loggedResult.status === 'rejected' ? failureOf(loggedResult.reason).message : null;
-  // Owners only feed the owner editor, assignee names and History actors: without them the page
-  // still works, read-only and without names.
-  const owners = ownersResult.status === 'fulfilled' ? ownersResult.value : [];
-  const people = peopleById(owners);
+  // Owners feed the owner editor; names (owners plus the users directory, as on the lead list)
+  // name assignees and History actors. Without them the page still works, read-only.
+  const { owners, names } =
+    peopleResult.status === 'fulfilled' ? peopleResult.value : { owners: [], names: new Map() };
   // Overdue is measured against the server's clock for this render.
   const now = new Date();
 
@@ -248,7 +249,7 @@ export default async function LeadPage({ params }: { params: Promise<{ id: strin
             ) : (
               <ActivityList
                 items={logged ?? []}
-                people={people}
+                people={names}
                 empty="Calls, meetings and stage changes appear here."
               />
             )}
@@ -320,6 +321,7 @@ export default async function LeadPage({ params }: { params: Promise<{ id: strin
               items={planned ?? []}
               ownerUserId={lead.ownerUserId}
               owners={owners}
+              names={names}
               now={now}
               className={styles.detailPanel}
             />

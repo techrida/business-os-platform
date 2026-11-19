@@ -4,10 +4,12 @@ import Link from 'next/link';
 import { notFound } from 'next/navigation';
 import type { NumberSystem } from '@bos/locale';
 
-import { getOpportunity, listActivities, listLeadOwners } from '@/components/p2/crm/crm-api';
+import { getOpportunity, listActivities } from '@/components/p2/crm/crm-api';
+import { FollowUpsCard } from '@/components/p2/crm/follow-ups-card';
 import { moneyOrNull } from '@/components/p2/crm/format';
 import { MoveForm } from '@/components/p2/crm/move-form';
-import { ActivityList, LoadProblem, peopleById, StageBadge } from '@/components/p2/crm/server-bits';
+import { canAssignFollowUps, loadPeople } from '@/components/p2/crm/people';
+import { ActivityList, LoadProblem, StageBadge } from '@/components/p2/crm/server-bits';
 import { stageLabel, userMoves } from '@/components/p2/crm/stages';
 import { listQuotations } from '@/components/p2/quotations/api';
 import {
@@ -18,6 +20,7 @@ import {
   type QuotationEntry,
 } from '@/components/p2/quotations/resume';
 import { QuotationStatusBadge } from '@/components/p2/quotations/status-badge';
+import { Alert } from '@/components/ui/alert';
 import { LinkButton } from '@/components/ui/button';
 import { Card } from '@/components/ui/card';
 import { Breadcrumb, Page, PageHeader } from '@/components/ui/page';
@@ -85,13 +88,17 @@ export default async function OpportunityPage({ params }: { params: Promise<{ id
   const session = await requireStaffSession(`/opportunities/${id}`);
   const numberSystem = await getNumberSystem();
 
-  const [oppResult, activityResult, quotationsResult, peopleResult] = await Promise.allSettled([
-    getOpportunity(session, id),
-    listActivities(session, { opportunityId: id, status: 'logged', limit: 100 }),
-    listQuotations(session, { opportunityId: id }),
-    // Names for History's actor. Needs crm.lead.write; without it History just omits the name.
-    listLeadOwners(session),
-  ]);
+  const [oppResult, activityResult, plannedResult, quotationsResult, peopleResult] =
+    await Promise.allSettled([
+      getOpportunity(session, id),
+      listActivities(session, { opportunityId: id, status: 'logged', limit: 100 }),
+      // Planned follow-ups on the deal itself (migrated open tasks included).
+      listActivities(session, { opportunityId: id, status: 'planned', limit: 100 }),
+      listQuotations(session, { opportunityId: id }),
+      // Names for History's actor and assignees. The owners list (also the Reschedule choices)
+      // needs crm.lead.write, so it is only asked for with it; the directory fills in names.
+      loadPeople(session, { owners: canAssignFollowUps(session) }),
+    ]);
 
   if (oppResult.status === 'rejected') {
     const f = failureOf(oppResult.reason);
@@ -115,7 +122,12 @@ export default async function OpportunityPage({ params }: { params: Promise<{ id
   const moves = userMoves('opportunity', opp.stage);
   const activityProblem =
     activityResult.status === 'rejected' ? failureOf(activityResult.reason) : null;
-  const people = peopleById(peopleResult.status === 'fulfilled' ? peopleResult.value : []);
+  const { owners, names } =
+    peopleResult.status === 'fulfilled' ? peopleResult.value : { owners: [], names: new Map() };
+  const plannedProblem =
+    plannedResult.status === 'rejected' ? failureOf(plannedResult.reason).message : null;
+  // Overdue is measured against the server's clock for this render.
+  const now = new Date();
   const quotationProblem =
     quotationsResult.status === 'rejected' ? failureOf(quotationsResult.reason) : null;
   const quotations = quotationsResult.status === 'fulfilled' ? quotationsResult.value : [];
@@ -278,6 +290,29 @@ export default async function OpportunityPage({ params }: { params: Promise<{ id
         )}
       </Panel>
 
+      {plannedProblem !== null ? (
+        // An empty card would claim nothing is planned; say the list did not load instead.
+        <Panel title="Follow-ups" className={styles.records} as="aside">
+          <Alert
+            tone="error"
+            role="alert"
+            title="Follow-ups did not load"
+            actions={<Link href={`/opportunities/${id}`}>Reload</Link>}
+          >
+            {plannedProblem}
+          </Alert>
+        </Panel>
+      ) : (
+        <FollowUpsCard
+          items={plannedResult.status === 'fulfilled' ? plannedResult.value : []}
+          owners={owners}
+          names={names}
+          schedule={false}
+          now={now}
+          className={styles.records}
+        />
+      )}
+
       <OpportunityActivities opportunityId={opp.id}>
         {activityProblem ? (
           <LoadProblem
@@ -289,7 +324,7 @@ export default async function OpportunityPage({ params }: { params: Promise<{ id
         ) : (
           <ActivityList
             items={activityResult.status === 'fulfilled' ? activityResult.value : []}
-            people={people}
+            people={names}
             empty="Add a call, meeting, email or note for this opportunity."
           />
         )}
