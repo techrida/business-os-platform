@@ -6,9 +6,13 @@
 // It answers:
 // - the data URL of the newest clean version of the logo document, when the document is a live `entity_logo` of
 //   the scope's tenant AND entity, and the version's detected type is PNG, JPEG or WebP;
-// - null when there is no such document or clean version (unknown, foreign, removed, wrong owner type, not scanned
-//   clean yet, not an image) or the bytes are over the snapshot cap (logged): the snapshot then uses the legacy
-//   logo, if any;
+// - null when there is no such document or usable version (unknown, foreign, removed, wrong owner type, refused:
+//   rejected, infected or scan_failed, not an image) or the bytes are over the snapshot cap (logged): the snapshot
+//   then uses the legacy logo, if any;
+// - DocumentLogoPendingError when the document is a live `entity_logo` of the scope with no clean version yet and
+//   its newest version is still awaiting its bytes or quarantined (awaiting the scan): freezing then would print a
+//   logo-less document for good, so the caller treats it as unavailable and the render retries once it is clean.
+//   A clean older version wins over a newer pending one;
 // - a throw when the storage read fails, a missing clean file included: the issuer turns it into
 //   DocumentLogoUnavailableError and the render retries, instead of freezing a document without its logo.
 //
@@ -105,6 +109,23 @@ function dataUrlChars(bytes: number): number {
   return DATA_URL_PREFIX_CHARS + 4 * Math.ceil(bytes / 3);
 }
 
+/** Version states that may still become clean: the bytes are not in yet, or the virus scan has not finished. */
+const PENDING_STATUSES: ReadonlySet<string> = new Set(['awaiting_content', 'quarantined']);
+
+/**
+ * The profile's logo document has no clean version yet but may get one (its newest version awaits its bytes or the
+ * scan). Retryable: every caller handles it like any resolver throw, as DocumentLogoUnavailableError, so the render
+ * runs again later instead of freezing a document without its logo.
+ */
+export class DocumentLogoPendingError extends Error {
+  readonly kind = 'document_logo_pending';
+
+  constructor() {
+    super('The company logo has not been scanned yet');
+    this.name = 'DocumentLogoPendingError';
+  }
+}
+
 /** The most bytes whose data URL still fits the cap. */
 const MAX_LOGO_BYTES = Math.floor((MAX_LOGO_DATA_URL_CHARS - DATA_URL_PREFIX_CHARS) / 4) * 3;
 
@@ -144,8 +165,18 @@ export class DocumentLogoResolverFactory {
         v.status === 'clean' && (newest === undefined || v.version > newest.version) ? v : newest,
       undefined,
     );
+    if (clean === undefined) {
+      const newest = row.versions.reduce<LogoDocumentRow['versions'][number] | undefined>(
+        (top, v) => (top === undefined || v.version > top.version ? v : top),
+        undefined,
+      );
+      if (newest !== undefined && PENDING_STATUSES.has(newest.status)) {
+        this.logger.warn(`document logo not scanned yet: document=${documentId} kind=pending`);
+        throw new DocumentLogoPendingError();
+      }
+      return null;
+    }
     if (
-      clean === undefined ||
       clean.detectedMime === null ||
       !(IMAGE_MIME as readonly string[]).includes(clean.detectedMime)
     ) {
