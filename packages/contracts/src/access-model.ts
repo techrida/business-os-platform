@@ -119,8 +119,8 @@ const workOwnThenDepartment: Record<AccessLevel, AccessCell> = {
   manager: { create: true, read: 'department', write: 'department', assigned: true },
   head: { create: true, read: 'department', write: 'department', assigned: true },
 };
-/** Starts leads for Sales and sees only what they started. */
-const intakeOnly: AccessCell = { create: true, read: 'created', write: 'created', assigned: false };
+/** Starts leads for Sales and reads, but does not edit, what they started. */
+const intakeOnly: AccessCell = { create: true, read: 'created', write: 'none', assigned: false };
 
 /**
  * What each role reaches on leads by default, per membership level. Opportunities and quotations follow their
@@ -176,6 +176,8 @@ export const ASSIGNMENT_DENY_REASONS = [
   'no_department',
   /** Sales may not assign to Marketing. */
   'reverse_handoff',
+  /** Finance, Accountant and PMO start a lead for a Sales user, not for themselves or a colleague. */
+  'sales_owner_required',
 ] as const;
 export type AssignmentDenyReason = (typeof ASSIGNMENT_DENY_REASONS)[number];
 
@@ -189,4 +191,5 @@ export const ASSIGNMENT_DENY_MESSAGES: Readonly<Record<AssignmentDenyReason, str
   other_department: 'is outside your department',
   no_department: 'needs you and them to belong to a department',
   reverse_handoff: 'cannot be a Marketing user: leads are handed from Marketing to Sales, not back',
+  sales_owner_required: 'must be a Sales user',
 };
