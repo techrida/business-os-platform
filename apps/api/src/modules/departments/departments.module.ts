@@ -4,7 +4,7 @@
 import { Module } from '@nestjs/common';
 
 import { AuditModule } from '../../platform/audit/audit.module';
-import { ACCESS_REVISION_PORT, SettingsAccessRevisionStore } from './access-revision.port';
+import { ACCESS_REVISION_PORT, AccessRevisionTableStore } from './access-revision.port';
 import { DepartmentsCaller } from './departments.caller';
 import { DepartmentsAdminController } from './departments.controller';
 import { DepartmentsAdminService } from './departments.service';
@@ -15,8 +15,8 @@ import { DepartmentsAdminService } from './departments.service';
   providers: [
     DepartmentsCaller,
     DepartmentsAdminService,
-    SettingsAccessRevisionStore,
-    { provide: ACCESS_REVISION_PORT, useExisting: SettingsAccessRevisionStore },
+    AccessRevisionTableStore,
+    { provide: ACCESS_REVISION_PORT, useExisting: AccessRevisionTableStore },
   ],
   exports: [DepartmentsAdminService, ACCESS_REVISION_PORT],
 })
