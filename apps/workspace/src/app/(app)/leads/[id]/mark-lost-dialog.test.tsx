@@ -211,6 +211,8 @@ it('shows the API sentence under the Reason box, for a duplicate added in the me
 
   expect(mocks.error).toHaveBeenCalledOnce();
   expect(dialog()).not.toBeNull();
+  expect(dialog()?.textContent).toContain('This reason may already be on the list.');
+  expect(combo()?.getAttribute('aria-invalid')).toBe('true');
   expect((combo() as HTMLInputElement).value).toBe('Slow to reply');
   await mounted.unmount();
 });
