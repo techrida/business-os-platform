@@ -1,5 +1,6 @@
 import { randomUUID } from 'node:crypto';
 
+import { portalEnabledCurrencies } from '@bos/contracts';
 import Link from 'next/link';
 import { notFound, redirect } from 'next/navigation';
 
@@ -10,6 +11,7 @@ import { formatDeadline, isPastDeadline } from '@/components/vendor/rfq-list';
 import { trimQuantity } from '@/components/vendor/vendor-status';
 import { VendorNoAccess } from '@/components/vendor/vendor-no-access';
 import { getVendorOnboarding, getVendorRfq } from '@/lib/api.vendor';
+import { getPortalDisplay } from '@/lib/portal-display';
 import { getSession } from '@/lib/session';
 
 import uploadStyles from '../../../_upload/upload.module.css';
@@ -24,7 +26,8 @@ export const dynamic = 'force-dynamic';
  * 404 on the request (foreign, closed, unknown). Needs a full vendor account: any other, or a 403,
  * shows the no-access notice, and the request is not read for a vendor who cannot quote. A
  * deadline that has passed adds a warning but never blocks the form: the API decides whether a
- * late quotation is taken.
+ * late quotation is taken. The currency picker offers only the currencies the company has switched
+ * on (D44), read once from the portal display.
  */
 export default async function QuotePage({
   params,
@@ -45,6 +48,8 @@ export default async function QuotePage({
   if (onboarding.kind === 'missing') notFound();
   if (onboarding.data.capability !== 'full') return <VendorNoAccess />;
 
+  // Started before the request read so the two overlap; it never throws (defaults on failure).
+  const display = getPortalDisplay(session);
   const result = await loadVendor(() => getVendorRfq(session, id), here);
   if (result.kind === 'forbidden') return <VendorNoAccess />;
   if (result.kind === 'missing') notFound();
@@ -53,6 +58,7 @@ export default async function QuotePage({
   const { sent } = await searchParams;
   const past = isPastDeadline(rfq.deadline, new Date());
   const key = randomUUID();
+  const currencies = portalEnabledCurrencies(await display);
 
   return (
     <main className={pageStyles.main}>
@@ -102,7 +108,13 @@ export default async function QuotePage({
           </ul>
         )}
       </section>
-      <QuoteForm key={key} idempotencyKey={key} rfqId={id} today={todayInKathmandu()} />
+      <QuoteForm
+        key={key}
+        idempotencyKey={key}
+        rfqId={id}
+        today={todayInKathmandu()}
+        currencies={currencies}
+      />
     </main>
   );
 }

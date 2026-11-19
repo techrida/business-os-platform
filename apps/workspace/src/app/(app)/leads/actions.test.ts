@@ -94,6 +94,20 @@ describe('createLeadAction', () => {
     expect(res.key).toBe(IDEM);
   });
 
+  it('names a currency the company switched off (422) and rotates the key', async () => {
+    // The body the API sends today: its error filter does not pass CURRENCY_NOT_ENABLED yet.
+    const message = 'Currency INR is not enabled for this company';
+    api.createLead.mockRejectedValueOnce(
+      new ApiError(422, message, { error: { code: 'bad_request', message, correlationId: 'c' } }),
+    );
+    const res = await createLeadAction(empty, form());
+    // Fails on the old code: failureOf worded every 422 "The platform did not respond".
+    expect(res.error).toBe(
+      'INR is switched off for your company. Choose another currency, or ask an administrator to switch it on in Settings.',
+    );
+    expect(res.key).not.toBe(IDEM);
+  });
+
   it('keeps the unused key when the form is refused before any call', async () => {
     const res = await createLeadAction(empty, form({ title: '' }));
     expect(res.fieldErrors['title']).toBeTruthy();

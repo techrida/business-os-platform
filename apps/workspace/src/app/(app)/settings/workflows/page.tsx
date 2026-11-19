@@ -8,7 +8,7 @@ import { Page, PageHeader } from '@/components/ui/page';
 import { Panel } from '@/components/ui/panel';
 import { Table, Td, Th } from '@/components/ui/table';
 import {
-  getSetting,
+  getApprovalSlaDefaults,
   listApprovalGroups,
   listDelegations,
   listApprovalPeople,
@@ -49,19 +49,24 @@ const STATUS: Record<
   retired: { tone: 'neutral', label: 'Retired' },
 };
 
-/** An initials avatar, the name, and the email under it. The avatar is decoration. */
+/**
+ * An initials avatar, the name, and the email under it. The avatar is decoration; its colour is
+ * seeded from the user id so the person matches their avatar on other screens.
+ */
 function Person({
+  userId,
   name,
   email,
   unknown = false,
 }: {
+  userId: string;
   name: string;
   email: string | null;
   unknown?: boolean;
 }) {
   return (
     <div className={styles.person}>
-      <Avatar name={unknown ? '' : name} shape="circle" />
+      <Avatar name={unknown ? '' : name} seedId={userId} shape="circle" />
       <span className={styles.personText}>
         <span className={styles.personName}>{name}</span>
         {email ? <span className={styles.personEmail}>{email}</span> : null}
@@ -104,7 +109,8 @@ export default async function WorkflowsPage() {
     section('choose delegation people', () => listApprovalPeople(session, 'delegations')),
     userNames(session),
     loadFields(session, ['approvals.sla_defaults']),
-    section('view the default reminder times', () => getSetting(session, 'approvals.sla_defaults')),
+    // Its own route: workflow editors may read these times without the settings admin permission.
+    section('view the default reminder times', () => getApprovalSlaDefaults(session)),
   ]);
 
   // A new workflow starts from the saved default times. A read that failed, or a stored value this
@@ -140,8 +146,9 @@ export default async function WorkflowsPage() {
   const personOf = (id: string) => {
     const option = optionOf(id);
     return option
-      ? { name: option.name, email: option.email, unknown: false }
+      ? { userId: id, name: option.name, email: option.email, unknown: false }
       : {
+          userId: id,
           name: directoryNames.get(id) ?? 'Name unavailable',
           email: null,
           unknown: !directoryNames.has(id),

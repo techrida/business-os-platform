@@ -49,8 +49,11 @@ import type { UserDirectory } from '../../../platform/authz/user-directory';
 import type { CoreConfig } from '../../../platform/config/config';
 import { systemActor, withTx, type TxScope } from '../../../platform/db/tx';
 import { NotifyService } from '../../../platform/notify/notify.service';
+import { CurrencyEnabledService } from '../../../platform/settings/currency-enabled';
 import type { MoneyService } from '../../../platform/settings/money.service';
 import { NumberingService } from '../../../platform/settings/numbering.service';
+import { LeadLostReasonsService } from '../../leads/lost-reasons.service';
+import { SettingsService } from '../../../platform/settings/settings.service';
 import { OpportunitiesService } from '../../opportunities/opportunities.service';
 import { DraftingService } from '../drafting/drafting.service';
 import {
@@ -196,6 +199,7 @@ beforeAll(async () => {
     authz as unknown as AuthzService,
     audit,
     caller,
+    new CurrencyEnabledService(new SettingsService(db)),
   );
   const notify = new NotifyService(
     db,
@@ -203,7 +207,13 @@ beforeAll(async () => {
     {} as UserDirectory,
     queue as unknown as Queue,
   );
-  const opps = new OpportunitiesService(db, authz as unknown as AuthzService, audit, caller);
+  const opps = new OpportunitiesService(
+    db,
+    authz as unknown as AuthzService,
+    audit,
+    caller,
+    new LeadLostReasonsService(db, audit, caller),
+  );
   const make = (now: Date) =>
     new QuotationSendService(
       db,

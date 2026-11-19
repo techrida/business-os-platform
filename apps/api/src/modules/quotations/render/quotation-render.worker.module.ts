@@ -14,6 +14,7 @@
 //   call that reaches it is a bug, and it fails closed.
 // This instance registers the same QuotationOwnerPolicy as QuotationsModule does on the API's instance. Without
 // it every render is refused with 403 (no policy means no generated files).
+// DocumentLogoModule gives the sweeper the entity logo's clean bytes, so the frozen style holds the logo itself.
 import { BullModule } from '@nestjs/bullmq';
 import { ForbiddenException, Inject, Module, type OnModuleInit } from '@nestjs/common';
 
@@ -32,6 +33,10 @@ import { SignedLinks } from '../../../platform/documents/signed-link';
 import { DiskStorageAdapter, STORAGE_ADAPTER } from '../../../platform/documents/storage.adapter';
 import { SettingsModule } from '../../../platform/settings/settings.module';
 import { SettingsService } from '../../../platform/settings/settings.service';
+import {
+  DocumentLogoModule,
+  DocumentLogoResolverFactory,
+} from '../../images/document-logo.resolver';
 import { drizzleHeadLoader, QuotationOwnerPolicy } from '../quotation-owner.policy';
 import { GotenbergClient } from './gotenberg.client';
 import {
@@ -42,6 +47,7 @@ import {
   QuotationRenderSweeper,
   RENDER_CLOCK,
   RENDER_DOCUMENTS,
+  RENDER_LOGOS,
   RENDER_PDF,
   RENDER_SETTINGS,
   RENDER_STORE,
@@ -53,6 +59,7 @@ import {
   imports: [
     AuditModule,
     SettingsModule,
+    DocumentLogoModule,
     BullModule.registerQueue({ name: DOCS_SCAN_QUEUE }, { name: QUOTATION_RENDER_QUEUE }),
   ],
   providers: [
@@ -106,6 +113,7 @@ import {
       },
     },
     { provide: RENDER_CLOCK, useValue: () => new Date() },
+    { provide: RENDER_LOGOS, useExisting: DocumentLogoResolverFactory },
     QuotationRenderSweeper,
     QuotationRenderProcessor,
     QuotationRenderScheduler,

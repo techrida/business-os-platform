@@ -4,7 +4,7 @@ import type { ReactNode } from 'react';
 import { Badge } from '@/components/ui/badge';
 import { Card } from '@/components/ui/card';
 import { ViewDocument } from '@/components/ui/document-viewer';
-import { displayFormat } from '@/lib/display';
+import { displayFormat, taxLineLabel } from '@/lib/display';
 
 import styles from './quotation.module.css';
 import { RichText } from './rich-text';
@@ -31,6 +31,14 @@ export function QuotationView({
   const look = STATUS_LOOK[displayStatus(view.status, view.validUntil, today)];
   const { money: formatAmount, day: formatDay } = displayFormat(view.display);
   const money = (amount: string) => formatAmount(amount, view.currency);
+  const hasTerms = [
+    view.scope,
+    view.assumptions,
+    view.exclusions,
+    view.termsAndConditions,
+    view.deliveryTimeline,
+    view.paymentTermName,
+  ].some((value) => typeof value === 'string' && value.trim() !== '');
   const hasDiscount = !/^0+(\.0+)?$/.test(view.totals.discountAmount);
 
   return (
@@ -157,9 +165,7 @@ export function QuotationView({
             </div>
             {view.taxSummary.map((t) => (
               <div key={`${t.label}-${t.percent}`}>
-                <dt>
-                  {t.label} {t.percent}%
-                </dt>
+                <dt>{taxLineLabel(t.label, t.percent)}</dt>
                 <dd>{money(t.tax)}</dd>
               </div>
             ))}
@@ -176,39 +182,51 @@ export function QuotationView({
           </dl>
         </Card>
 
-        <Card as="section" aria-labelledby="terms-h" className={styles.section}>
-          <h2 id="terms-h" className={styles.sectionTitle}>
-            Terms
-          </h2>
-          <dl className={styles.terms}>
-            <Term label="Scope" value={view.scope} rich />
-            <Term label="Assumptions" value={view.assumptions} rich />
-            <Term label="Exclusions" value={view.exclusions} rich />
-            <Term label="Terms and conditions" value={view.termsAndConditions} rich />
-            <Term label="Delivery timeline" value={view.deliveryTimeline} rich />
-            <Term label="Payment terms" value={view.paymentTermName} />
-          </dl>
-          {view.paymentSchedule.length > 0 ? (
-            <>
-              <h3 className={styles.partyHeading}>Payment schedule</h3>
-              <ul className={styles.schedule}>
-                {view.paymentSchedule.map((m, i) => (
-                  <li key={`${m.label}-${i}`}>
-                    <span className={styles.schedulePercent}>{trimPercent(m.percent)}%</span>
-                    <span>
-                      {m.label}
-                      {m.dueDescription ? (
-                        <span className={styles.muted}> · {formatDay(m.dueDescription)}</span>
-                      ) : null}
-                    </span>
-                    {/* The amount is the server's split of the total (D36); the portal never recomputes it. */}
-                    <span className={styles.scheduleAmount}>{money(m.amount)}</span>
-                  </li>
-                ))}
-              </ul>
-            </>
-          ) : null}
-        </Card>
+        {hasTerms || view.paymentSchedule.length > 0 ? (
+          <Card
+            as="section"
+            {...(hasTerms
+              ? { 'aria-labelledby': 'terms-h' }
+              : { 'aria-label': 'Payment schedule' })}
+            className={styles.section}
+          >
+            {hasTerms ? (
+              <>
+                <h2 id="terms-h" className={styles.sectionTitle}>
+                  Terms
+                </h2>
+                <dl className={styles.terms}>
+                  <Term label="Scope" value={view.scope} rich />
+                  <Term label="Assumptions" value={view.assumptions} rich />
+                  <Term label="Exclusions" value={view.exclusions} rich />
+                  <Term label="Terms and conditions" value={view.termsAndConditions} rich />
+                  <Term label="Delivery timeline" value={view.deliveryTimeline} rich />
+                  <Term label="Payment terms" value={view.paymentTermName} />
+                </dl>
+              </>
+            ) : null}
+            {view.paymentSchedule.length > 0 ? (
+              <>
+                <h3 className={styles.partyHeading}>Payment schedule</h3>
+                <ul className={styles.schedule}>
+                  {view.paymentSchedule.map((m, i) => (
+                    <li key={`${m.label}-${i}`}>
+                      <span className={styles.schedulePercent}>{trimPercent(m.percent)}%</span>
+                      <span>
+                        {m.label}
+                        {m.dueDescription ? (
+                          <span className={styles.muted}> · {formatDay(m.dueDescription)}</span>
+                        ) : null}
+                      </span>
+                      {/* The amount is the server's split of the total (D36); the portal never recomputes it. */}
+                      <span className={styles.scheduleAmount}>{money(m.amount)}</span>
+                    </li>
+                  ))}
+                </ul>
+              </>
+            ) : null}
+          </Card>
+        ) : null}
       </div>
 
       {respond ? <aside className={styles.respond}>{respond}</aside> : null}

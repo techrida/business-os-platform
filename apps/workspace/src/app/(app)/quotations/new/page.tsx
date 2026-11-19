@@ -24,6 +24,7 @@ import { EmptyState } from '@/components/ui/empty-state';
 import { LinkButton } from '@/components/ui/button';
 import { Breadcrumb, Page, PageHeader } from '@/components/ui/page';
 import { requireStaffSession } from '@/lib/bff';
+import { loadEnabledCurrencies } from '@/lib/enabled-currencies.server';
 
 export const metadata: Metadata = { title: 'New quotation · Business OS' };
 export const dynamic = 'force-dynamic';
@@ -86,15 +87,19 @@ export default async function NewQuotationPage({
     if (entry.kind === 'choose') redirect(opportunityQuotationsHref(opportunityId));
   }
 
-  const [customerResult, lookups] = await Promise.all([
+  const [customerResult, lookups, enabledCurrencies] = await Promise.all([
     api.getCustomer(session, opportunity.customerId).then(
       (c): CustomerDto | null => c,
       (): CustomerDto | null => null,
     ),
     loadLookups(session, opportunity.customerId),
+    loadEnabledCurrencies(session),
   ]);
 
-  const currency = customerResult?.defaultCurrency ?? opportunity.currency;
+  // The customer's or opportunity's currency, unless the company has since switched it off (D44):
+  // then the books currency, which is always enabled.
+  const preferred = customerResult?.defaultCurrency ?? opportunity.currency;
+  const currency = enabledCurrencies.includes(preferred) ? preferred : 'NPR';
   const initial = emptyValues({ currency, ...defaultDates() });
   initial.contactId = opportunity.contactId ?? '';
 
@@ -137,6 +142,7 @@ export default async function NewQuotationPage({
         paymentTerms={lookups.paymentTerms}
         termPresets={lookups.termPresets}
         canAddTerms={lookups.canAddTerms}
+        enabledCurrencies={enabledCurrencies}
         idempotencyKey={randomUUID()}
       />
     </Page>

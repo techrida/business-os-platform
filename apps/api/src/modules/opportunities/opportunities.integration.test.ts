@@ -45,6 +45,7 @@ import type { Principal } from '../../platform/authz/principal';
 import type { Db } from '../../platform/db/db.module';
 import { systemActor, withTx, type DbTransaction } from '../../platform/db/tx';
 import { ErrorBodyFilter } from '../../platform/tenancy/error-body.filter';
+import { LeadLostReasonsService } from '../leads/lost-reasons.service';
 import { OpportunitiesController } from './opportunities.controller';
 import { OpportunitiesService } from './opportunities.service';
 
@@ -125,8 +126,22 @@ const urlFor = (user: string, password: string, database: string) => {
   return url.toString();
 };
 
-const newService = () =>
-  new OpportunitiesService(db, authz as unknown as AuthzService, new AuditService(db), caller);
+const newReasons = () => new LeadLostReasonsService(db, new AuditService(db), caller);
+const newService = () => {
+  const audit = new AuditService(db);
+  return new OpportunitiesService(
+    db,
+    authz as unknown as AuthzService,
+    audit,
+    caller,
+    new LeadLostReasonsService(db, audit, caller),
+  );
+};
+const lostReasonIdOf = async (label: string): Promise<string> => {
+  const found = (await newReasons().choices()).find((o) => o.label === label);
+  expect(found, `option ${label}`).toBeDefined();
+  return found!.id;
+};
 
 beforeAll(async () => {
   container = await new PostgreSqlContainer('postgres:16-alpine').start();
@@ -387,6 +402,25 @@ describe('GET /v1/opportunities', () => {
     expect(typo).toContain(deal);
   });
 
+  it("does not search the customer's name for a caller who may not read customers", async () => {
+    as(U.boss, 'founder');
+    const vanta = await seedCustomer(scopeA, 'Vantablack Fabrication Co');
+    const deal = await seed({ name: 'Press brake order', customerId: vanta });
+
+    const allowed = z
+      .array(OpportunityDtoSchema)
+      .parse((await request(baseUrl).get('/v1/opportunities?q=Vantablack&limit=200')).body)
+      .map((o) => o.id);
+    expect(allowed).toContain(deal);
+
+    current.grants.delete('customer.read');
+    const denied = z
+      .array(OpportunityDtoSchema)
+      .parse((await request(baseUrl).get('/v1/opportunities?q=Vantablack&limit=200')).body)
+      .map((o) => o.id);
+    expect(denied).not.toContain(deal);
+  });
+
   it('filters repeated stages together with search and scope before sorting and limiting', async () => {
     const name = 'North & West launch';
     const newest = new Date('2026-11-09T12:00:00Z');
@@ -624,11 +658,12 @@ describe('PATCH /v1/opportunities/:id/stage', () => {
 
   it('lets exactly one of two writers with the same version win', async () => {
     const id = await seed();
+    const noBudget = await lostReasonIdOf('No budget');
     const [a, b] = await Promise.all([
       patchStage(id, { stage: 'requirement_received', expectedVersion: 1 }),
       patchStage(id, {
         stage: 'lost',
-        reason: 'no budget',
+        lostReasonId: noBudget,
         note: 'client went quiet',
         expectedVersion: 1,
       }),
@@ -803,10 +838,11 @@ describe('onLost port', () => {
       svc.registerLostHandler({ name: 'quotations.cancel', onLost: () => Promise.resolve() }),
     ).toThrow(/already registered/);
 
+    const price = await lostReasonIdOf('Price');
     const id = await seed({ stage: 'negotiation' });
     const lost = await svc.changeStage(id, {
       stage: 'lost',
-      reason: 'price',
+      lostReasonId: price,
       note: 'went with a cheaper vendor',
       expectedVersion: 1,
     });
@@ -814,7 +850,7 @@ describe('onLost port', () => {
     expect(seen).toEqual([
       expect.objectContaining({
         opportunityId: id,
-        reason: 'price',
+        reason: 'Price',
         note: 'went with a cheaper vendor',
       }),
     ]);
@@ -836,7 +872,12 @@ describe('onLost port', () => {
     });
     const open = await seed({ stage: 'negotiation' });
     await expect(
-      failing.changeStage(open, { stage: 'lost', reason: 'r', note: 'n', expectedVersion: 1 }),
+      failing.changeStage(open, {
+        stage: 'lost',
+        lostReasonId: price,
+        note: 'n',
+        expectedVersion: 1,
+      }),
     ).rejects.toThrow('cannot cancel the open quotation');
     expect(await rowOf(open)).toMatchObject({ stage: 'negotiation', version: 1 });
   });

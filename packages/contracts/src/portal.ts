@@ -10,8 +10,9 @@ import {
   DateFormatSchema,
   NumberSystemsSchema,
 } from './document-style.js';
-import { CurrencySchema, DecimalString } from './money.js';
+import { CurrencySchema, DecimalString, type Currency } from './money.js';
 import { PaymentMilestoneDtoSchema, QuantityString, type QuotationStatus } from './quotations.js';
+import { SETTINGS, SETTING_DEFAULTS } from './settings.js';
 
 const isoDate = z.iso.date();
 const sha256Hex = z.string().regex(/^[0-9a-f]{64}$/);
@@ -57,8 +58,21 @@ const PartyBlock = z.strictObject({
 export const PortalDisplaySchema = z.strictObject({
   numberSystems: NumberSystemsSchema,
   dateFormat: DateFormatSchema,
+  /**
+   * The currencies the company has switched on (D44), NPR always among them: a portal form offers only these, and the
+   * API refuses any other with 422 CURRENCY_NOT_ENABLED. `GET /v1/portal/display` always fills it; a quotation's
+   * frozen display leaves it out. Read it through `portalEnabledCurrencies`, which applies the default when absent.
+   */
+  enabledCurrencies: SETTINGS['currency.enabled'].optional(),
 });
 export type PortalDisplay = z.infer<typeof PortalDisplaySchema>;
+
+/** The currencies a portal form may offer: the display's list, or the settings default when it carries none. */
+export function portalEnabledCurrencies(
+  display: Pick<PortalDisplay, 'enabledCurrencies'>,
+): Currency[] {
+  return [...(display.enabledCurrencies ?? SETTING_DEFAULTS['currency.enabled'])];
+}
 
 /** The display a company that never changed its settings gets. A fresh object each call, so no caller can edit it. */
 export function defaultPortalDisplay(): PortalDisplay {

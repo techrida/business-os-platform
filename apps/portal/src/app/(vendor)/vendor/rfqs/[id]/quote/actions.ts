@@ -7,6 +7,7 @@ import { redirect } from 'next/navigation';
 
 import { ApiError } from '@/lib/api';
 import { submitVendorQuotation } from '@/lib/api.vendor-writes';
+import { currencyNotEnabledText } from '@/lib/enabled-currencies';
 
 import {
   failed,
@@ -107,6 +108,13 @@ export async function submitQuoteAction(
         error:
           'This request or your uploaded file is no longer available. Go back to your requests to check that it is still open.',
       };
+    }
+    // A 422 CURRENCY_NOT_ENABLED: the company switched the chosen currency off after the page loaded
+    // (D44). Shown on the currency field, like the form's other blocking errors. A definite refusal
+    // (the API replays it for the same key), so the key rotates.
+    const notEnabled = currencyNotEnabledText(err);
+    if (notEnabled !== undefined) {
+      return { key: randomUUID(), fieldErrors: { currency: notEnabled } };
     }
     return failed<QuoteField>(err, key, here, {
       noun: 'quotation',

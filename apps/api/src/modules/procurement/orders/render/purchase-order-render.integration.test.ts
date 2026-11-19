@@ -70,7 +70,12 @@ import { SignedLinks, type LinkStore } from '../../../../platform/documents/sign
 import { DiskStorageAdapter } from '../../../../platform/documents/storage.adapter';
 import type { ApprovalsService } from '../../../approvals/requests.service';
 import { GotenbergClient } from '../../../quotations/render/gotenberg.client';
-import type { RenderSettings, RunInTx } from '../../../quotations/render/quotation-render.sweeper';
+import { NO_DOCUMENT_LOGO_RESOLVER } from '../../../quotations/render/issuer';
+import type {
+  RenderLogos,
+  RenderSettings,
+  RunInTx,
+} from '../../../quotations/render/quotation-render.sweeper';
 import { quotationLineAmounts } from '../../sourcing/sourcing.rules';
 import { PurchaseOrdersService } from '../purchase-orders.service';
 import { PurchaseOrderDocumentService } from './purchase-order-document.service';
@@ -138,6 +143,8 @@ const authz = { assert: vi.fn() };
 const audit = { record: vi.fn().mockResolvedValue(undefined) };
 const notify = { notifyUser: vi.fn().mockResolvedValue(undefined) };
 const queue = { add: vi.fn().mockResolvedValue({}) };
+/** No logo document resolves here: the logo freeze is covered by the sweeper's unit tests. */
+const NO_LOGOS: RenderLogos = { forScope: () => NO_DOCUMENT_LOGO_RESOLVER };
 const settings = {
   get: vi.fn((_scope: TxScope, key: string) =>
     Promise.resolve(key === 'entity.pan_vat_no' ? ENTITY_PAN : null),
@@ -321,7 +328,15 @@ beforeEach(() => {
 // ---------------------------------------------------------------------------------------- helpers
 
 function makeSweeper(pdf: GotenbergClient): PurchaseOrderRenderSweeper {
-  return new PurchaseOrderRenderSweeper(store, runTx, documents, settings, pdf, () => new Date());
+  return new PurchaseOrderRenderSweeper(
+    store,
+    runTx,
+    documents,
+    settings,
+    pdf,
+    () => new Date(),
+    NO_LOGOS,
+  );
 }
 
 function first<T>(rows: T[]): T {
@@ -540,6 +555,7 @@ describe('purchase order render', () => {
       settings,
       pdf,
       () => clock,
+      NO_LOGOS,
     );
 
     // Every retry has expired before the next tick. The oldest-first query used to pick the same ten forever.

@@ -13,13 +13,15 @@ import { Field, Input, Select } from '@/components/ui/field';
 import { PageHeader } from '@/components/ui/page';
 import { Panel } from '@/components/ui/panel';
 import { toast } from '@/components/ui/toast';
+import { currencyChoices } from '@/lib/enabled-currencies';
 
 import { previewQuoteAction, saveDraftAction, submitQuoteAction } from './actions';
 import { ApprovalPanel, ApprovalSteps } from './approval-panel';
 import type { FailureKind } from './failure';
 import { LinesSection } from './lines-section';
 import {
-  CURRENCY_OPTIONS,
+  currencyChoiceText,
+  currencyProblem,
   newMilestone,
   scheduleMessage,
   scheduleState,
@@ -68,17 +70,19 @@ const FIELD_TEXT: Record<string, string> = {
   taxCodeId: 'Choose a tax code.',
   issueDate: 'Choose the issue date.',
   validUntil: 'Valid until must be a date on or after the issue date.',
-  currency: 'Choose NPR, INR or USD.',
   value: 'Enter a valid discount: a percentage up to 100, or an amount of zero or more.',
   label: 'Name the milestone.',
   percent: 'Enter a percentage such as 40 or 33.33.',
 };
 
-function friendlyErrors(raw: Record<string, string> | undefined): Record<string, string> {
+function friendlyErrors(
+  raw: Record<string, string> | undefined,
+  text: Record<string, string>,
+): Record<string, string> {
   const out: Record<string, string> = {};
   for (const [path, message] of Object.entries(raw ?? {})) {
     const last = path.split('.').at(-1) ?? '';
-    out[path] = FIELD_TEXT[last] ?? message;
+    out[path] = text[last] ?? FIELD_TEXT[last] ?? message;
   }
   return out;
 }
@@ -107,6 +111,7 @@ export function QuoteBuilder({
   paymentTerms,
   termPresets,
   canAddTerms = false,
+  enabledCurrencies,
   idempotencyKey,
   savedNotice = false,
 }: {
@@ -131,6 +136,11 @@ export function QuoteBuilder({
    * enforces who may edit a set.
    */
   canAddTerms?: boolean;
+  /**
+   * The currencies the company has switched on (`currency.enabled`, D44), read once on the server.
+   * The picker offers only these, plus a saved quotation's own currency if it was switched off since.
+   */
+  enabledCurrencies: readonly Currency[];
   /** Made once per page render on the server; the actions hand back the key the next try uses. */
   idempotencyKey: string;
   savedNotice?: boolean;
@@ -151,6 +161,18 @@ export function QuoteBuilder({
   const [scheduleAttempted, setScheduleAttempted] = useState(false);
   const [errors, setErrors] = useState<Record<string, string>>({});
   const [lastView, setLastView] = useState<PreviewView>({ state: 'loading', preview: null });
+
+  // A saved quotation keeps its own currency even after it is switched off; the API accepts it unchanged.
+  const keptCurrency = useMemo(
+    () => (target.mode === 'edit' ? (JSON.parse(saved) as BuilderValues).currency : undefined),
+    [target.mode, saved],
+  );
+  // A currency that is neither (a create prefilled with one) is listed too, so the picker shows the
+  // real value, and saving is stopped with the reason until another is chosen.
+  const currencyOptions = currencyChoices(enabledCurrencies, keptCurrency ?? values.currency);
+  const onCurrencies = currencyOptions.filter((c) => c.enabled).map((c) => c.value);
+  const currencyText = currencyChoiceText(onCurrencies);
+  const currencyOff = !onCurrencies.includes(values.currency);
 
   useEffect(() => {
     if (savedNotice) toast.success('Draft saved.', { id: 'quotation-draft-saved' });
@@ -328,10 +350,18 @@ export function QuoteBuilder({
   // ---- Actions -----------------------------------------------------------------------------
 
   const fail = (kind: FailureKind, message: string, fields?: Record<string, string>) => {
-    setErrors(friendlyErrors(fields));
+    setErrors(friendlyErrors(fields, { currency: currencyText }));
     setStale(kind === 'stale');
     toast.error(message, { id: 'quotation-action-error' });
   };
+
+  function checkCurrency() {
+    const problem = currencyProblem(values.currency, onCurrencies, keptCurrency);
+    if (problem === null) return true;
+    setErrors({ currency: problem });
+    toast.error(problem, { id: 'quotation-action-error' });
+    return false;
+  }
 
   function checkSchedule() {
     const problem = scheduleMessage(scheduleState(values.schedule));
@@ -350,7 +380,7 @@ export function QuoteBuilder({
   }
 
   async function save() {
-    if (busy || !checkSchedule()) return;
+    if (busy || !checkCurrency() || !checkSchedule()) return;
     setBusy('save');
     setErrors({});
     setStale(false);
@@ -420,7 +450,7 @@ export function QuoteBuilder({
       setConfirming(false);
       return;
     }
-    if (busy || !checkSchedule()) return;
+    if (busy || !checkCurrency() || !checkSchedule()) return;
     const blocker = submitBlocker(values, { dirty });
     if (blocker) {
       toast.error(blocker, { id: 'quotation-action-error' });
@@ -592,9 +622,13 @@ export function QuoteBuilder({
             <Field
               label="Currency"
               hint={
-                values.currency === 'NPR'
-                  ? 'Nepalese rupee is the default.'
-                  : 'The platform converts to NPR with the latest rate Finance entered. If that rate is older than 7 days, saving or submitting is refused until it is refreshed.'
+                currencyOff
+                  ? values.currency === keptCurrency
+                    ? `${values.currency} has been switched off for your company. This quotation keeps it until you choose another.`
+                    : `${values.currency} is not enabled for your company. ${currencyText}`
+                  : values.currency === 'NPR'
+                    ? 'Nepalese rupee is the default.'
+                    : 'The platform converts to NPR with the latest rate Finance entered. If that rate is older than 7 days, saving or submitting is refused until it is refreshed.'
               }
               error={errors['currency']}
             >
@@ -604,9 +638,9 @@ export function QuoteBuilder({
                   onChange={(e) => set('currency')(e.target.value as Currency)}
                   {...control}
                 >
-                  {CURRENCY_OPTIONS.map((c) => (
-                    <option key={c} value={c}>
-                      {c}
+                  {currencyOptions.map((c) => (
+                    <option key={c.value} value={c.value}>
+                      {c.enabled ? c.value : `${c.value} (not enabled)`}
                     </option>
                   ))}
                 </Select>

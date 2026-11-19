@@ -10,6 +10,8 @@ const api = vi.hoisted(() => ({
 }));
 vi.mock('@/lib/bff', () => ({ requireStaffSession: () => Promise.resolve(session) }));
 vi.mock('@/lib/api-payables', () => api);
+const currencies = vi.hoisted(() => ({ loadEnabledCurrencies: vi.fn() }));
+vi.mock('@/lib/enabled-currencies.server', () => currencies);
 vi.mock('next/navigation', () => ({
   notFound: () => {
     throw new Error('NOT_FOUND');
@@ -50,6 +52,7 @@ const record = {
 beforeEach(() => {
   vi.clearAllMocks();
   session.roles = ['finance'];
+  currencies.loadEnabledCurrencies.mockResolvedValue(['NPR', 'INR', 'USD']);
   api.listPaymentRequestsPage.mockResolvedValue({ items: [record], total: 1 });
   api.getPaymentRequest.mockResolvedValue(record);
   api.listPaymentRequestItems.mockResolvedValue([
@@ -99,6 +102,8 @@ it('shows controlled entry fields for the vendor, source account and bill items'
   expect(html).toContain('name="allocation:0:amount"');
   expect(html).toContain('Himal Supplies');
   expect(html).not.toContain('Vendor ID');
+  // The entry form gets the enabled currencies (D44), read once on the server.
+  expect(currencies.loadEnabledCurrencies).toHaveBeenCalledOnce();
 });
 
 it('shows an empty state when all approved bill balances are claimed', async () => {

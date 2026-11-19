@@ -3,6 +3,7 @@ import { createHash } from 'node:crypto';
 import {
   CreateDocumentBodySchema,
   DOCUMENT_SETTING_DEFAULTS,
+  EMPTY_SNAPSHOT_COMPANY_PROFILE,
   type DocumentStyleSnapshot,
 } from '@bos/contracts';
 import { BadRequestException } from '@nestjs/common';
@@ -12,6 +13,7 @@ import type { Actor, TxScope } from '../../../platform/db/tx';
 import { describe, expect, it, vi } from 'vitest';
 
 import { GotenbergError } from './gotenberg.client';
+import type { DocumentLogoResolver } from './issuer';
 import { renderQuotationHtml } from './quotation-html';
 import {
   failureKind,
@@ -121,6 +123,8 @@ function setup(
     number?: string;
     /** The `document_style` the version row already holds, by version id: set by an earlier render. */
     styles?: Record<string, unknown>;
+    /** What the logo resolver answers for the profile's logo document; default: no bytes (null). */
+    logo?: DocumentLogoResolver;
   } = {},
 ) {
   const calls: string[] = [];
@@ -211,6 +215,9 @@ function setup(
   const settings = {
     get: vi.fn((_scope: TxScope, key: string) => Promise.resolve(settingValues[key])),
   };
+  // A watched resolver per scope, standing in for DocumentLogoResolverFactory.
+  const resolveLogo = vi.fn<DocumentLogoResolver>(opts.logo ?? (() => Promise.resolve(null)));
+  const logos = { forScope: vi.fn((_scope: TxScope) => resolveLogo) };
   const sweeper = new QuotationRenderSweeper(
     store,
     runTx,
@@ -218,8 +225,20 @@ function setup(
     settings as never,
     { htmlToPdf },
     () => NOW,
+    logos,
   );
-  return { sweeper, store, documents, htmlToPdf, calls, txs, settingValues, styles };
+  return {
+    sweeper,
+    store,
+    documents,
+    htmlToPdf,
+    calls,
+    txs,
+    settingValues,
+    styles,
+    logos,
+    resolveLogo,
+  };
 }
 
 describe('QuotationRenderSweeper', () => {
@@ -394,7 +413,7 @@ describe('QuotationRenderSweeper', () => {
         style: { layout: 'tinted', primaryColour: '#b45309' },
         // The profile has no number of its own, so the entity's PAN/VAT setting fills it.
         profile: {
-          ...DOCUMENT_SETTING_DEFAULTS['entity.profile'],
+          ...EMPTY_SNAPSHOT_COMPANY_PROFILE,
           displayName: 'Techrida Nepal',
           panVatNo: '301234567',
         },
@@ -503,6 +522,100 @@ describe('QuotationRenderSweeper', () => {
       expect(calls).toContain(`failed:${c.versionId}`);
       expect(htmlToPdf).not.toHaveBeenCalled();
       expect(store.saveDocumentStyle).not.toHaveBeenCalled();
+    });
+
+    describe('the logo, frozen as bytes', () => {
+      const LOGO_DOC = '11111111-1111-4111-8111-111111111111';
+      const LOGO_A = 'data:image/png;base64,QUFBQQ==';
+      const LOGO_B = 'data:image/jpeg;base64,QkJCQg==';
+      const withLogo = (settingValues: Record<string, unknown>) => {
+        settingValues['entity.profile'] = {
+          ...DOCUMENT_SETTING_DEFAULTS['entity.profile'],
+          logoDocumentId: LOGO_DOC,
+        };
+      };
+
+      it('never asks for a logo when the profile references none (no change for an entity without a logo)', async () => {
+        const c = candidate(1);
+        const { sweeper, styles, resolveLogo } = setup({ candidates: [c] });
+        await expect(sweeper.sweep()).resolves.toMatchObject({ rendered: 1 });
+        expect(resolveLogo).not.toHaveBeenCalled();
+        expect(styles.get(c.versionId)).toMatchObject({ profile: { logoDataUrl: null } });
+      });
+
+      it("freezes the logo document's bytes, read in the version's own scope, and renders them", async () => {
+        vi.mocked(renderQuotationHtml).mockClear();
+        const c = candidate(1);
+        const { sweeper, settingValues, styles, logos, resolveLogo, htmlToPdf } = setup({
+          candidates: [c],
+          logo: () => Promise.resolve(LOGO_A),
+        });
+        withLogo(settingValues);
+        await expect(sweeper.sweep()).resolves.toMatchObject({ rendered: 1 });
+        expect(logos.forScope).toHaveBeenCalledWith({
+          tenantId: c.tenantId,
+          organizationId: c.organizationId,
+        });
+        expect(resolveLogo).toHaveBeenCalledWith(LOGO_DOC);
+        expect(styles.get(c.versionId)).toMatchObject({ profile: { logoDataUrl: LOGO_A } });
+        expect(htmlToPdf.mock.calls[0]?.[0]).toContain(LOGO_A);
+      });
+
+      it('keeps the bytes a sent version froze when the logo changes afterwards', async () => {
+        const v1 = candidate(1);
+        const v2 = candidate(2);
+        let current = LOGO_A;
+        const { sweeper, settingValues, styles } = setup({
+          logo: () => Promise.resolve(current),
+        });
+        withLogo(settingValues);
+        await expect(sweeper.renderOne(v1)).resolves.toBe('rendered');
+        const first = styles.get(v1.versionId);
+        const firstCopy = structuredClone(first);
+
+        // The admin uploads a new logo; the next version freezes the new bytes.
+        current = LOGO_B;
+        await expect(sweeper.renderOne(v2)).resolves.toBe('rendered');
+
+        expect(styles.get(v1.versionId)).toBe(first);
+        expect(first).toEqual(firstCopy);
+        expect(first).toMatchObject({ profile: { logoDataUrl: LOGO_A } });
+        expect(styles.get(v2.versionId)).toMatchObject({ profile: { logoDataUrl: LOGO_B } });
+      });
+
+      it('renders an older snapshot that carries its logo as a data URL, without asking for a logo', async () => {
+        const c = candidate(1);
+        const held = storedStyle();
+        const old = { ...held, profile: { ...held.profile, logoDataUrl: LOGO_A } };
+        const { sweeper, settingValues, resolveLogo, htmlToPdf, store } = setup({
+          candidates: [c],
+          styles: { [c.versionId]: old },
+          logo: () => Promise.resolve(LOGO_B),
+        });
+        withLogo(settingValues);
+        await expect(sweeper.sweep()).resolves.toMatchObject({ rendered: 1 });
+        expect(resolveLogo).not.toHaveBeenCalled();
+        expect(store.saveDocumentStyle).not.toHaveBeenCalled();
+        const html = htmlToPdf.mock.calls[0]?.[0] ?? '';
+        expect(html).toContain(LOGO_A);
+        expect(html).not.toContain(LOGO_B);
+      });
+
+      it('fails the version, and stores no style, when the referenced logo cannot be read (a retry reads it again)', async () => {
+        const c = candidate(1);
+        const { sweeper, settingValues, styles, store, htmlToPdf } = setup({
+          candidates: [c],
+          logo: () => Promise.reject(new Error('EIO')),
+        });
+        withLogo(settingValues);
+        await expect(sweeper.sweep()).resolves.toMatchObject({
+          failed: 1,
+          failures: [{ versionId: c.versionId, kind: 'document_logo_unavailable' }],
+        });
+        expect(store.saveDocumentStyle).not.toHaveBeenCalled();
+        expect(styles.has(c.versionId)).toBe(false);
+        expect(htmlToPdf).not.toHaveBeenCalled();
+      });
     });
 
     it('fails, and stores nothing, when the settings hold a value that does not validate', async () => {

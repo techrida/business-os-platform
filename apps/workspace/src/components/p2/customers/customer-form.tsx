@@ -1,6 +1,6 @@
 'use client';
 
-import { CURRENCIES, CUSTOMER_RELATIONSHIPS } from '@bos/contracts';
+import { CUSTOMER_RELATIONSHIPS, type Currency } from '@bos/contracts';
 import { useActionState, useEffect, useRef, useState, type ReactNode } from 'react';
 
 import { Alert } from '@/components/ui/alert';
@@ -8,6 +8,7 @@ import { Button, LinkButton } from '@/components/ui/button';
 import { Field, Input, Select } from '@/components/ui/field';
 import { PageHeader } from '@/components/ui/page';
 import { Panel } from '@/components/ui/panel';
+import { currencyChoices } from '@/lib/enabled-currencies';
 
 import type { CustomerFormState } from './form-state';
 import type { CustomerField, CustomerValues } from './forms';
@@ -17,12 +18,6 @@ const RELATIONSHIP_LABEL: Record<(typeof CUSTOMER_RELATIONSHIPS)[number], string
   prospect: 'Prospect',
   active: 'Active',
   inactive: 'Inactive',
-};
-
-const CURRENCY_LABEL: Record<(typeof CURRENCIES)[number], string> = {
-  NPR: 'NPR (Nepalese rupee)',
-  INR: 'INR (Indian rupee)',
-  USD: 'USD (US dollar)',
 };
 
 /** Card heading with its Figma eyebrow ("01 · The basics"). The eyebrow is decoration. */
@@ -71,6 +66,7 @@ export function CustomerForm({
   cancelHref,
   reloadHref,
   description,
+  enabledCurrencies,
 }: {
   action: (prev: CustomerFormState, form: FormData) => Promise<CustomerFormState>;
   initial: CustomerValues;
@@ -83,6 +79,12 @@ export function CustomerForm({
   cancelHref: string;
   reloadHref: string;
   description?: string;
+  /**
+   * The tenant's enabled currencies (`loadEnabledCurrencies`). The default currency seeds new
+   * documents, so only these are offered; on edit the organization's own saved currency stays
+   * listed even after it was switched off, so the form never silently changes it.
+   */
+  enabledCurrencies: readonly Currency[];
 }) {
   const [state, formAction, pending] = useActionState<CustomerFormState, FormData>(action, {
     key: idempotencyKey ?? '',
@@ -104,6 +106,8 @@ export function CustomerForm({
   }, [state]);
 
   const err = state.errors;
+  const currencies = currencyChoices(enabledCurrencies, initial.defaultCurrency);
+  const offCurrency = currencies.find((c) => !c.enabled && c.value === values.defaultCurrency);
   // A duplicate warning only counts for the name and number it was searched with.
   const acknowledged =
     state.duplicates !== undefined &&
@@ -434,7 +438,11 @@ export function CustomerForm({
         <div className={styles.grid}>
           <Field
             label="Default currency"
-            hint="Used when a quotation does not say otherwise."
+            hint={
+              offCurrency
+                ? `${offCurrency.label} is switched off in Settings. It stays until you pick another currency.`
+                : 'Used when a quotation does not say otherwise.'
+            }
             error={err.defaultCurrency}
           >
             {(control) => (
@@ -445,9 +453,9 @@ export function CustomerForm({
                 {...control}
               >
                 <option value="">Not set</option>
-                {CURRENCIES.map((c) => (
-                  <option key={c} value={c}>
-                    {CURRENCY_LABEL[c]}
+                {currencies.map((c) => (
+                  <option key={c.value} value={c.value} disabled={!c.enabled}>
+                    {c.label}
                   </option>
                 ))}
               </Select>

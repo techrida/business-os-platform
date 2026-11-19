@@ -12,6 +12,7 @@ import {
   DEFAULT_DATE_FORMAT,
   DEFAULT_NUMBER_SYSTEMS,
   DEFAULT_ROLE_PERMISSIONS,
+  type CompanyProfile,
   type DateFormatSetting,
   type NumberSystemsSetting,
   type OrgKind,
@@ -27,6 +28,7 @@ import {
   ForbiddenException,
   NotFoundException,
 } from '@nestjs/common';
+import { Logger } from '@nestjs/common';
 import { Test } from '@nestjs/testing';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
@@ -37,6 +39,7 @@ import type { Principal } from '../../authz/principal';
 import type { RoleCache } from '../../authz/role-cache';
 import { findUnmarkedRoutes } from '../../authz/route-policy.check';
 import type { Db } from '../../db/db.module';
+import type { DocumentLogoResolverFactory } from '../../../modules/images/document-logo.resolver';
 import type { SettingsService } from '../settings.service';
 import { DocumentSettingsController } from './document-settings.controller';
 import { DocumentSettingsService } from './document-settings.service';
@@ -87,20 +90,26 @@ const preset = (over: Partial<TermPreset> = {}): TermPreset => ({
 interface DisplayOverrides {
   numberSystems?: NumberSystemsSetting;
   dateFormat?: DateFormatSetting;
+  profile?: Partial<CompanyProfile>;
+  enabledCurrencies?: string[];
 }
 
 /** An in-memory `quotation.term_presets` that records each lock, read and write, in order. */
 function fakeSettings(initial: TermPreset[] = [], display: DisplayOverrides = {}) {
   const numberSystems = display.numberSystems ?? DEFAULT_NUMBER_SYSTEMS;
   const dateFormat = display.dateFormat ?? DEFAULT_DATE_FORMAT;
+  const enabledCurrencies = display.enabledCurrencies ?? ['NPR', 'INR', 'USD'];
   const state = { list: initial, version: initial.length > 0 ? 1 : (null as number | null) };
   const calls: string[] = [];
   const service = {
     get: vi.fn((_scope: unknown, key: string) => {
       calls.push(`get:${key}`);
-      if (key === 'entity.profile') return Promise.resolve(structuredClone(EMPTY_COMPANY_PROFILE));
+      if (key === 'entity.profile') {
+        return Promise.resolve(structuredClone({ ...EMPTY_COMPANY_PROFILE, ...display.profile }));
+      }
       if (key === 'format.number_systems') return Promise.resolve(structuredClone(numberSystems));
       if (key === 'format.date') return Promise.resolve(dateFormat);
+      if (key === 'currency.enabled') return Promise.resolve(structuredClone(enabledCurrencies));
       return Promise.resolve(structuredClone(state.list));
     }),
     getLocked: vi.fn((_tx: unknown, key: string) => {
@@ -117,7 +126,20 @@ function fakeSettings(initial: TermPreset[] = [], display: DisplayOverrides = {}
   return { state, calls, service };
 }
 
-function build(initial: TermPreset[] = [], display?: DisplayOverrides) {
+/** The logo resolver the preview reads through: answers `logo` (or throws it, when it is an Error). */
+function fakeLogos(logo: string | null | Error = null) {
+  const resolve = vi.fn((_documentId: string) =>
+    logo instanceof Error ? Promise.reject(logo) : Promise.resolve(logo),
+  );
+  const forScope = vi.fn((_scope: unknown) => resolve);
+  return { forScope, resolve };
+}
+
+function build(
+  initial: TermPreset[] = [],
+  display?: DisplayOverrides,
+  logos: ReturnType<typeof fakeLogos> = fakeLogos(),
+) {
   const settings = fakeSettings(initial, display);
   // Real AuthzService: assert() reads principal() (mocked above) and runs the real can().
   const authz = new AuthzService({} as Db, {} as RoleCache);
@@ -125,8 +147,9 @@ function build(initial: TermPreset[] = [], display?: DisplayOverrides) {
     {} as Db,
     settings.service as unknown as SettingsService,
     authz,
+    { forScope: logos.forScope } as unknown as DocumentLogoResolverFactory,
   );
-  return { ...settings, documentSettings: service };
+  return { ...settings, documentSettings: service, logos };
 }
 
 beforeEach(() => {
@@ -142,10 +165,16 @@ describe('GET settings/display', () => {
     };
     for (const role of ['founder', 'sales', 'accountant', 'procurement', 'warehouse'] as const) {
       currentPrincipal = principalOf(role);
-      const { documentSettings } = build([], { numberSystems, dateFormat: 'dd/MM/yyyy' });
+      const { documentSettings } = build([], {
+        numberSystems,
+        dateFormat: 'dd/MM/yyyy',
+        enabledCurrencies: ['NPR', 'USD'],
+      });
       await expect(documentSettings.display()).resolves.toEqual({
         numberSystems,
         dateFormat: 'dd/MM/yyyy',
+        enabledCurrencies: ['NPR', 'USD'],
+        sellerContact: { phones: [], email: null, signatoryName: null, signatoryTitle: null },
       });
     }
   });
@@ -155,6 +184,8 @@ describe('GET settings/display', () => {
     await expect(documentSettings.display()).resolves.toEqual({
       numberSystems: DEFAULT_NUMBER_SYSTEMS,
       dateFormat: DEFAULT_DATE_FORMAT,
+      enabledCurrencies: ['NPR', 'INR', 'USD'],
+      sellerContact: { phones: [], email: null, signatoryName: null, signatoryTitle: null },
     });
   });
 
@@ -640,6 +671,78 @@ describe('POST admin/settings/documents/preview', () => {
     });
     expect(html).not.toContain('Million');
     expect(html).toContain('19 Nov 2026');
+  });
+
+  describe('the logo', () => {
+    const LOGO_DOC = '7f6c7a5e-0d52-4d1e-9d8a-3f1d2c3b4a5f';
+    const png = (n: number) =>
+      `data:image/png;base64,${Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, n]).toString('base64')}`;
+    const UPLOADED = png(1);
+    const LEGACY = png(2);
+    const preview = (documentSettings: DocumentSettingsService) =>
+      documentSettings.previewDocument({ layout: 'banded', primaryColour: '#1d4ed8' });
+
+    it('draws the uploaded logo, read through the resolver of the request scope', async () => {
+      const logos = fakeLogos(UPLOADED);
+      const { documentSettings } = build(
+        [],
+        { profile: { logoDocumentId: LOGO_DOC, legacyLogoDataUrl: LEGACY } },
+        logos,
+      );
+      const { html } = await preview(documentSettings);
+      expect(html).toContain(UPLOADED);
+      expect(html).not.toContain(LEGACY);
+      expect(logos.forScope).toHaveBeenCalledWith(scope);
+      expect(logos.resolve).toHaveBeenCalledWith(LOGO_DOC);
+    });
+
+    it('falls back to the legacy logo when the document gives none', async () => {
+      const { documentSettings } = build(
+        [],
+        { profile: { logoDocumentId: LOGO_DOC, legacyLogoDataUrl: LEGACY } },
+        fakeLogos(null),
+      );
+      expect((await preview(documentSettings)).html).toContain(LEGACY);
+    });
+
+    it('draws the legacy logo without asking the resolver when no document is set', async () => {
+      const logos = fakeLogos(UPLOADED);
+      const { documentSettings } = build([], { profile: { legacyLogoDataUrl: LEGACY } }, logos);
+      expect((await preview(documentSettings)).html).toContain(LEGACY);
+      expect(logos.resolve).not.toHaveBeenCalled();
+    });
+
+    it('draws the legacy logo of a profile saved before logoDocumentId existed', async () => {
+      // SettingsService.get returns the stored JSON as saved, without the schema's defaults.
+      const logos = fakeLogos(new Error('no document id'));
+      const { documentSettings } = build(
+        [],
+        // Cast: the type says the field is always there; the old stored row does not have it.
+        {
+          profile: {
+            logoDocumentId: undefined,
+            legacyLogoDataUrl: LEGACY,
+          } as unknown as Partial<CompanyProfile>,
+        },
+        logos,
+      );
+      expect((await preview(documentSettings)).html).toContain(LEGACY);
+      expect(logos.resolve).not.toHaveBeenCalled();
+    });
+
+    it('still draws the preview, without a logo and with a warning, when the resolver fails', async () => {
+      const warn = vi.spyOn(Logger.prototype, 'warn').mockImplementation(() => undefined);
+      const { documentSettings } = build(
+        [],
+        { profile: { logoDocumentId: LOGO_DOC, legacyLogoDataUrl: LEGACY } },
+        fakeLogos(new Error('EIO')),
+      );
+      const { html } = await preview(documentSettings);
+      expect(html).toContain('Quotation');
+      expect(html).not.toContain('data:image/');
+      expect(warn).toHaveBeenCalled();
+      warn.mockRestore();
+    });
   });
 
   it('refuses anyone without admin.settings.write', async () => {

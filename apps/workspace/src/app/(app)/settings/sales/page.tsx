@@ -39,7 +39,7 @@ export default async function SalesSettingsPage() {
       <BackToSettings />
       <PageHeader
         title="Sales"
-        description="Defaults for quotations and the deals they win, and the reasons a lead can be lost. Every change is recorded in the audit trail."
+        description="Defaults for quotations and the deals they win, and the reasons a lead or opportunity can be lost. Every change is recorded in the audit trail."
       />
       <div className={`${styles.column} ${styles.narrow}`}>
         {cards.map(({ title, description, result }) =>
@@ -56,7 +56,10 @@ export default async function SalesSettingsPage() {
           ),
         )}
         {lostReasons.ok ? (
-          <Panel title="Lost reasons" description="The reasons offered when a lead is marked lost.">
+          <Panel
+            title="Lost reasons"
+            description="The reasons offered when a lead or opportunity is marked lost."
+          >
             <LostReasonsCard reasons={lostReasons.data} />
           </Panel>
         ) : (

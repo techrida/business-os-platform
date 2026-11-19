@@ -6,6 +6,7 @@ import { redirect } from 'next/navigation';
 import { hasPermission } from '@/components/p2/customers/permissions';
 import { createManualInvoice } from '@/lib/api-billing';
 import { requireStaffSession } from '@/lib/bff';
+import { loadEnabledCurrencies } from '@/lib/enabled-currencies.server';
 
 import { failureState, INCOMPLETE, keyOf, refusal, textOf } from './action-helpers';
 import type { InvoiceFormState } from './form-state';
@@ -19,7 +20,7 @@ import { parseLinesJson } from './lines';
  * with, to read its totals. Nothing here computes an amount, a number or a date.
  *
  * Asks `requireStaffSession` first and checks `invoice.draft` (deny by default: the API still decides
- * every call). Validation never reaches the API, so the same key is still unused afterwards.
+ * every call). A form refused by validation is never posted, so the same key is still unused afterwards.
  * This file exports only async functions: a Server Actions file cannot export values.
  */
 export async function createManualInvoiceAction(
@@ -37,13 +38,18 @@ export async function createManualInvoiceAction(
 
   const lines = parseLinesJson(textOf(form, 'lines'));
   if (lines === null) return { key, errors: { form: INCOMPLETE } };
-  const parsed = parseManualInvoice({
-    customerId: textOf(form, 'customerId'),
-    currency: textOf(form, 'currency') as 'NPR',
-    manualReason: textOf(form, 'manualReason'),
-    dueDate: textOf(form, 'dueDate'),
-    lines,
-  });
+  // The page's list again (D44): a currency switched off since the page loaded is refused here,
+  // before the API. `loadEnabledCurrencies` never throws; a failed read gives the default list.
+  const parsed = parseManualInvoice(
+    {
+      customerId: textOf(form, 'customerId'),
+      currency: textOf(form, 'currency') as 'NPR',
+      manualReason: textOf(form, 'manualReason'),
+      dueDate: textOf(form, 'dueDate'),
+      lines,
+    },
+    await loadEnabledCurrencies(session),
+  );
   if (!parsed.ok) return { key, errors: parsed.errors };
 
   let id: string;

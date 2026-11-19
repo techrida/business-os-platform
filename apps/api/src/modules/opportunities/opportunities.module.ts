@@ -5,12 +5,13 @@
 import { Module } from '@nestjs/common';
 
 import { AuditModule } from '../../platform/audit/audit.module';
+import { LeadsModule } from '../leads/leads.module';
 import { OpportunitiesCaller } from './opportunities.caller';
 import { OpportunitiesController } from './opportunities.controller';
 import { OpportunitiesService } from './opportunities.service';
 
 @Module({
-  imports: [AuditModule],
+  imports: [AuditModule, LeadsModule],
   controllers: [OpportunitiesController],
   providers: [OpportunitiesService, OpportunitiesCaller],
   exports: [OpportunitiesService],

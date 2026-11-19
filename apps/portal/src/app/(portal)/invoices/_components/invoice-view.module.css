@@ -1,0 +1,538 @@
+/* The customer's invoice, laid out like its printed copy: a status bar with the live balance and
+   actions, then the document itself. Class names never use an internal word (cost, margin, rate,
+   npr, markup): they appear in the markup, and a test scans it. Light mode only. */
+
+.visuallyHidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+
+.muted {
+  color: var(--text-secondary);
+}
+
+.wrap {
+  display: grid;
+  gap: 24px;
+  width: 100%;
+  max-width: 960px;
+  min-width: 0;
+}
+
+/* ---- Status bar (live, not part of the printed copy) ------------------------------------ */
+
+.status {
+  display: grid;
+  gap: 12px;
+  min-width: 0;
+}
+
+.statusRow {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px 24px;
+}
+
+.statusLead {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 16px;
+  min-width: 0;
+}
+
+.balance {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 8px 12px;
+}
+
+.balance dt {
+  color: var(--text-secondary);
+  font-size: var(--font-size-body-small);
+  line-height: var(--line-height-body-small);
+}
+
+.balance dd {
+  font-size: 18px;
+  font-weight: var(--font-weight-semibold);
+  line-height: 28px;
+  font-variant-numeric: tabular-nums;
+  overflow-wrap: anywhere;
+}
+
+.actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 12px;
+}
+
+.checksum {
+  display: grid;
+  min-width: 0;
+  color: var(--text-secondary);
+  font-size: var(--font-size-caption);
+  line-height: var(--line-height-caption);
+  overflow-wrap: anywhere;
+}
+
+.hash {
+  font-family: ui-monospace, 'Cascadia Mono', Consolas, monospace;
+  word-break: break-all;
+}
+
+/* ---- The document ----------------------------------------------------------------------- */
+
+.paper {
+  display: grid;
+  min-width: 0;
+  container-type: inline-size;
+  overflow: hidden;
+  border: var(--border-width-thin) solid var(--border-default);
+  border-radius: var(--radius-lg);
+  background: var(--surface-default);
+  box-shadow: var(--shadow-section);
+  color: var(--text-primary);
+}
+
+/* The brand strip along the bottom edge, as on the printed copy. */
+.paper::after {
+  height: 8px;
+  background: var(--action-primary);
+  content: '';
+}
+
+.sheet {
+  display: grid;
+  gap: 40px;
+  min-width: 0;
+  padding: 48px 48px 40px;
+}
+
+.head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px 32px;
+}
+
+/* Room for the company logo once the profile carries one; today the legal name stands alone. */
+.brand {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-width: 0;
+  max-width: 28ch;
+}
+
+.brandName {
+  font-size: var(--font-size-h3);
+  font-weight: var(--font-weight-semibold);
+  letter-spacing: var(--letter-spacing-tight);
+  line-height: var(--line-height-h3);
+  overflow-wrap: anywhere;
+}
+
+.title {
+  color: var(--action-primary);
+  font-size: 32px;
+  font-weight: var(--font-weight-bold);
+  letter-spacing: 0.04em;
+  line-height: 40px;
+  text-align: right;
+  text-transform: uppercase;
+}
+
+.billing {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, auto);
+  gap: 24px 48px;
+}
+
+.billTo {
+  display: grid;
+  align-content: start;
+  gap: 4px;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.label {
+  margin-bottom: 4px;
+  font-size: var(--font-size-caption);
+  font-weight: var(--font-weight-semibold);
+  letter-spacing: var(--letter-spacing-wide);
+  line-height: var(--line-height-caption);
+  text-transform: uppercase;
+}
+
+.buyerName {
+  font-size: 20px;
+  font-weight: var(--font-weight-semibold);
+  letter-spacing: var(--letter-spacing-tight);
+  line-height: 28px;
+  text-wrap: balance;
+}
+
+.address {
+  font-style: normal;
+  white-space: pre-line;
+}
+
+.small {
+  color: var(--text-secondary);
+  font-size: var(--font-size-body-small);
+  line-height: var(--line-height-body-small);
+}
+
+.details {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: 8px 24px;
+  align-content: start;
+  font-size: var(--font-size-body-small);
+  line-height: var(--line-height-body-small);
+}
+
+.details > div {
+  display: contents;
+}
+
+.details dt {
+  color: var(--text-secondary);
+  white-space: nowrap;
+}
+
+.details dd {
+  min-width: 0;
+  font-weight: var(--font-weight-medium);
+  font-variant-numeric: tabular-nums;
+  overflow-wrap: anywhere;
+}
+
+.bs {
+  display: block;
+  color: var(--text-secondary);
+  font-weight: var(--font-weight-regular);
+}
+
+/* ---- Items ------------------------------------------------------------------------------ */
+
+.items {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: var(--font-size-body-small);
+  line-height: var(--line-height-body-small);
+}
+
+.items th,
+.items td {
+  padding: 14px 16px;
+  text-align: left;
+  vertical-align: top;
+}
+
+.items thead th {
+  background: var(--action-primary);
+  color: var(--neutral-0);
+  font-size: var(--font-size-caption);
+  font-weight: var(--font-weight-semibold);
+  letter-spacing: var(--letter-spacing-wide);
+  line-height: var(--line-height-caption);
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+
+.items tbody tr:nth-child(even) {
+  background: var(--surface-subtle);
+}
+
+.items tbody tr:last-child {
+  border-bottom: var(--border-width-thin) solid var(--border-subtle);
+}
+
+.items .num {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.items .lineNo {
+  width: 3ch;
+  color: var(--text-secondary);
+}
+
+.description {
+  min-width: 16ch;
+  overflow-wrap: anywhere;
+}
+
+.unit {
+  color: var(--text-secondary);
+}
+
+/* Shown only when a row stacks on a narrow screen; the column header names it otherwise. */
+.cellLabel {
+  display: none;
+}
+
+/* ---- Balance and totals ----------------------------------------------------------------- */
+
+.summary {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 360px);
+  gap: 32px 48px;
+  align-items: start;
+}
+
+.due {
+  display: grid;
+  justify-items: start;
+  gap: 4px;
+  min-width: 0;
+}
+
+.dueLabel {
+  color: var(--text-secondary);
+  font-size: var(--font-size-body-small);
+  line-height: var(--line-height-body-small);
+}
+
+.dueAmount {
+  max-width: 100%;
+  padding-bottom: 8px;
+  border-bottom: var(--border-width-medium) solid var(--text-primary);
+  font-size: clamp(24px, 3vw + 12px, 32px);
+  font-weight: var(--font-weight-bold);
+  letter-spacing: var(--letter-spacing-tight);
+  line-height: 1.25;
+  font-variant-numeric: tabular-nums;
+  overflow-wrap: anywhere;
+}
+
+.dueWhen {
+  margin-top: 4px;
+  color: var(--text-secondary);
+  font-size: var(--font-size-caption);
+  line-height: var(--line-height-caption);
+}
+
+.totals {
+  display: grid;
+  min-width: 0;
+  font-size: var(--font-size-body-small);
+  line-height: var(--line-height-body-small);
+  font-variant-numeric: tabular-nums;
+}
+
+.totals > div {
+  display: flex;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 10px 0;
+  border-bottom: var(--border-width-thin) solid var(--border-subtle);
+}
+
+.totals dt {
+  min-width: 0;
+  color: var(--text-secondary);
+  overflow-wrap: anywhere;
+}
+
+.totals dd {
+  text-align: right;
+  white-space: nowrap;
+}
+
+.totals > .grandTotal {
+  margin-top: 12px;
+  padding: 12px 16px;
+  border-bottom: 0;
+  border-radius: var(--radius-xs);
+  background: var(--action-primary);
+  color: var(--neutral-0);
+  font-size: var(--font-size-body);
+  font-weight: var(--font-weight-semibold);
+  line-height: var(--line-height-body);
+}
+
+.totals > .grandTotal dt {
+  color: inherit;
+  letter-spacing: var(--letter-spacing-wide);
+  text-transform: uppercase;
+}
+
+.words {
+  max-width: 75ch;
+  color: var(--text-secondary);
+  font-size: var(--font-size-body-small);
+  line-height: var(--line-height-body-small);
+  overflow-wrap: anywhere;
+}
+
+.words span {
+  color: var(--text-primary);
+}
+
+/* ---- Signatory and seller footer -------------------------------------------------------- */
+
+.signatory {
+  display: grid;
+  justify-self: end;
+  gap: 2px;
+  min-width: min(220px, 100%);
+  padding-top: 10px;
+  border-top: var(--border-width-thin) solid var(--border-strong);
+  text-align: center;
+  overflow-wrap: anywhere;
+}
+
+.signatoryName {
+  font-weight: var(--font-weight-semibold);
+}
+
+.footer {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  gap: 16px 32px;
+  padding: 20px 48px;
+  border-top: var(--border-width-thin) solid var(--border-subtle);
+  background: var(--surface-subtle);
+  font-size: var(--font-size-caption);
+  line-height: var(--line-height-caption);
+}
+
+.footer > div {
+  display: grid;
+  align-content: start;
+  justify-items: start;
+  gap: 2px;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.footer a {
+  color: var(--text-primary);
+  text-decoration: underline;
+  text-decoration-color: var(--border-strong);
+  text-underline-offset: 3px;
+}
+
+.footer a:hover {
+  text-decoration-color: currentColor;
+}
+
+.footer a:focus-visible {
+  border-radius: var(--radius-xs);
+  outline: 2px solid var(--focus-ring);
+  outline-offset: 2px;
+}
+
+/* A safety net: a table that still does not fit scrolls inside the sheet, never the page. */
+.itemsFrame {
+  min-width: 0;
+  overflow-x: auto;
+}
+
+/* ---- Narrow documents ------------------------------------------------------------------- */
+
+/* Keyed to the document's own width, so the items stack before the five columns get cramped. */
+@container (max-width: 760px) {
+  .sheet {
+    gap: 32px;
+    padding: 24px 20px;
+  }
+
+  .footer {
+    padding: 20px;
+  }
+
+  .head {
+    flex-direction: column;
+  }
+
+  .title {
+    font-size: 26px;
+    line-height: 32px;
+    text-align: left;
+  }
+
+  .billing,
+  .summary {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .signatory {
+    justify-self: stretch;
+  }
+
+  /* Each item becomes a small block: description on top, then the figures with their labels. */
+  .items thead {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip-path: inset(50%);
+    white-space: nowrap;
+  }
+
+  .items,
+  .items tbody,
+  .items tr {
+    display: block;
+  }
+
+  .items tbody tr {
+    display: grid;
+    grid-template-columns: auto minmax(0, 1fr);
+    gap: 4px 12px;
+    padding: 14px 12px;
+    border-top: var(--border-width-thin) solid var(--border-subtle);
+  }
+
+  .items tbody tr:last-child {
+    border-bottom: var(--border-width-thin) solid var(--border-subtle);
+  }
+
+  .items td {
+    display: flex;
+    justify-content: space-between;
+    gap: 12px;
+    padding: 0;
+    grid-column: 2;
+  }
+
+  .items .lineNo {
+    grid-row: 1;
+    grid-column: 1;
+    width: auto;
+  }
+
+  .items .description {
+    grid-row: 1;
+    min-width: 0;
+    padding-bottom: 4px;
+    font-weight: var(--font-weight-medium);
+  }
+
+  .items .num {
+    white-space: normal;
+    overflow-wrap: anywhere;
+  }
+
+  .cellLabel {
+    display: inline;
+    flex: none;
+    color: var(--text-secondary);
+    text-align: left;
+  }
+}

@@ -280,6 +280,7 @@ describe('create a customer and read it back', () => {
       relationship: 'prospect',
       version: 1,
       mergedIntoId: null,
+      logoDocumentId: null,
     });
     // The first number of the tenant's CUS series in this fiscal year.
     expect(created.number).toBe(`CUS-${fiscalYearOf(now)}-00001`);

@@ -1,3 +1,4 @@
+import { avatarColour } from '@bos/contracts';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { beforeEach, expect, it, vi } from 'vitest';
 
@@ -103,6 +104,21 @@ it('enables named group and delegation assignments without general directory acc
     fromUserId: first,
     toUserId: second,
   });
+});
+
+it("seeds a group member's avatar colour from their user id", async () => {
+  const respond = vi.mocked(apiFetch).getMockImplementation()!;
+  vi.mocked(apiFetch).mockImplementation((caller, path, init) =>
+    path === '/v1/admin/approval-groups' && init?.method !== 'POST'
+      ? Promise.resolve(
+          Response.json([{ id: group, key: 'review', name: 'Reviewers', memberUserIds: [second] }]),
+        )
+      : respond(caller, path, init),
+  );
+  // The id must not land on the unseeded colour, or this check would pass without a seed.
+  expect(avatarColour(second)).not.toBe(avatarColour(null));
+  const html = renderToStaticMarkup(await WorkflowsPage());
+  expect(html).toContain(`--avatar-fill:${avatarColour(second)}`);
 });
 
 it('offers and saves a new approver from the second API page through the normal editor', async () => {
@@ -240,7 +256,7 @@ const newWorkflowTimes = (html: string): string[] => {
 it('starts the new-workflow form from the saved default reminder times', async () => {
   const respond = vi.mocked(apiFetch).getMockImplementation()!;
   vi.mocked(apiFetch).mockImplementation((caller, path, init) =>
-    path === '/v1/admin/settings/approvals.sla_defaults'
+    path === '/v1/admin/approval-sla-defaults'
       ? Promise.resolve(
           Response.json({
             key: 'approvals.sla_defaults',
@@ -260,10 +276,37 @@ it('starts the new-workflow form from the saved default reminder times', async (
   expect(role).toBe('management');
 });
 
+it('starts a non-admin workflow editor from the saved times, which the admin settings route refuses them', async () => {
+  // The API as a Management user who may edit workflows sees it: the general settings route is
+  // admin-only (403), and the workflow-editor read answers with the saved value.
+  const respond = vi.mocked(apiFetch).getMockImplementation()!;
+  vi.mocked(apiFetch).mockImplementation((caller, path, init) => {
+    if (path.startsWith('/v1/admin/settings/'))
+      return Promise.resolve(Response.json({ code: 'forbidden' }, { status: 403 }));
+    if (path === '/v1/admin/approval-sla-defaults')
+      return Promise.resolve(
+        Response.json({
+          key: 'approvals.sla_defaults',
+          value: {
+            remindAfterHours: 8,
+            escalateAfterHours: 36,
+            escalateTo: { role: 'management' },
+          },
+          version: 3,
+        }),
+      );
+    return respond(caller, path, init);
+  });
+  const [remind, escalate, role] = newWorkflowTimes(renderToStaticMarkup(await WorkflowsPage()));
+  expect(remind).toBe('8');
+  expect(escalate).toBe('36');
+  expect(role).toBe('management');
+});
+
 it('starts the new-workflow form from the built-in times when the saved ones cannot be read', async () => {
   const respond = vi.mocked(apiFetch).getMockImplementation()!;
   vi.mocked(apiFetch).mockImplementation((caller, path, init) =>
-    path === '/v1/admin/settings/approvals.sla_defaults'
+    path === '/v1/admin/approval-sla-defaults'
       ? Promise.resolve(Response.json({}, { status: 503 }))
       : respond(caller, path, init),
   );

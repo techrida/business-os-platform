@@ -1,6 +1,6 @@
 'use client';
 
-import { CURRENCIES, PR_REQUEST_TYPES, type CostCenter } from '@bos/contracts';
+import { PR_REQUEST_TYPES, type CostCenter, type Currency } from '@bos/contracts';
 import { useActionState, useEffect, useRef, useState } from 'react';
 
 import { Alert } from '@/components/ui/alert';
@@ -8,6 +8,7 @@ import { Button } from '@/components/ui/button';
 import { Field, Input, Select, Textarea } from '@/components/ui/field';
 import { PageHeader } from '@/components/ui/page';
 import { Panel } from '@/components/ui/panel';
+import { currencyChoices } from '@/lib/enabled-currencies';
 
 import { emptyLine, type LineValues, type PrValues } from '../_lib/forms';
 import { REQUEST_TYPE_LABEL } from '../_lib/model';
@@ -44,6 +45,7 @@ export function PrForm({
   cancelHref,
   reloadHref,
   costCenters,
+  enabledCurrencies,
 }: {
   action: (prev: PrFormState, form: FormData) => Promise<PrFormState>;
   departments: { id: string; name: string }[];
@@ -58,12 +60,21 @@ export function PrForm({
   cancelHref: string;
   reloadHref: string;
   costCenters: CostCenter[];
+  /**
+   * The currencies the company has switched on (`currency.enabled`, D44), read once on the server. An
+   * edited request keeps its own currency in the list even after it was switched off.
+   */
+  enabledCurrencies: readonly Currency[];
 }) {
   const [state, formAction, pending] = useActionState<PrFormState, FormData>(action, {
     key: idempotencyKey,
     errors: {},
   });
   const [values, setValues] = useState<PrValues>(initial);
+  const currencyOptions = currencyChoices(
+    enabledCurrencies,
+    mode === 'edit' ? initial.currency : undefined,
+  );
   const nextUid = useRef(initial.lines.length);
   const [rows, setRows] = useState<Row[]>(() => initial.lines.map((line, uid) => ({ uid, line })));
   const formRef = useRef<HTMLFormElement>(null);
@@ -247,9 +258,9 @@ export function PrForm({
                 onChange={set('currency')}
                 {...control}
               >
-                {CURRENCIES.map((c) => (
-                  <option key={c} value={c}>
-                    {c}
+                {currencyOptions.map((c) => (
+                  <option key={c.value} value={c.value}>
+                    {c.enabled ? c.value : `${c.value} (not enabled)`}
                   </option>
                 ))}
               </Select>

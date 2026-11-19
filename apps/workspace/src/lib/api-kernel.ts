@@ -113,6 +113,17 @@ function json(method: string, body: unknown, headers: Record<string, string> = {
 }
 
 /**
+ * The API's own sentence for a refusal, or undefined when the body is not the standard error shape.
+ * `failureOf` leaves this out for a 409, so a caller that must tell two 409s apart reads it here.
+ * Match it against known wording; do not show it as it is.
+ */
+export function apiMessageOf(err: unknown): string | undefined {
+  if (!(err instanceof ApiError)) return undefined;
+  const parsed = ErrorBodySchema.safeParse(err.body);
+  return parsed.success ? parsed.data.error.message : undefined;
+}
+
+/**
  * Turns any thrown value into something a screen can show. A thrown non-`ApiError` (the fetch
  * itself failed: API down, DNS, timeout) becomes status 0, which `describeFailure` words as
  * "the platform did not respond" and marks as not definite.

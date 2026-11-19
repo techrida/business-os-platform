@@ -14,7 +14,10 @@ import {
   LEAD_LOST_REASON_LABEL_MAX,
   type LeadLostReason,
   type LeadLostReasonRef,
+  LOST_REASONS_STALE_MESSAGE,
+  lostReasonsToken,
   type ReorderLeadLostReasonsBody,
+  type ResetLeadLostReasonsBody,
   type UpdateLeadLostReasonBody,
 } from '@bos/contracts';
 import { leadLostReasons } from '@bos/db';
@@ -77,6 +80,19 @@ const duplicate = (label: string) =>
 
 const notFound = () =>
   new NotFoundException({ code: 'not_found', message: 'Lost reason not found' });
+
+const staleList = () =>
+  new ConflictException({ code: 'conflict', message: LOST_REASONS_STALE_MESSAGE });
+
+const tokenOf = (rows: readonly ReasonRow[]): string =>
+  lostReasonsToken(
+    rows.map((r) => ({
+      id: r.id,
+      position: r.position,
+      version: r.version,
+      retired: r.retiredAt !== null,
+    })),
+  );
 
 @Injectable()
 export class LeadLostReasonsService {
@@ -181,6 +197,8 @@ export class LeadLostReasonsService {
         .from(leadLostReasons)
         .where(eq(leadLostReasons.tenantId, scope.tenantId))
         .for('update');
+      // Stale-view guard (D54-4): checked before the id list so an outdated screen sees 409, not 400.
+      if (tokenOf(rows) !== body.expectedOrder) throw staleList();
       const known = new Set(rows.map((r) => r.id));
       const sent = new Set(body.ids);
       if (
@@ -218,7 +236,7 @@ export class LeadLostReasonsService {
    * the tenant added is retired and listed after them (leads keep it), and renamed "<label> (custom)" when its words
    * are now a default's. Nothing is deleted, so no lead loses its reason.
    */
-  async reset(): Promise<LeadLostReason[]> {
+  async reset(body: ResetLeadLostReasonsBody): Promise<LeadLostReason[]> {
     const { scope, actor } = this.caller.current();
     return withTx(this.db, scope, actor, async (tx) => {
       await this.lockTenant(tx, scope.tenantId);
@@ -229,6 +247,7 @@ export class LeadLostReasonsService {
         .where(eq(leadLostReasons.tenantId, scope.tenantId))
         .orderBy(asc(leadLostReasons.position), asc(leadLostReasons.label))
         .for('update');
+      if (tokenOf(rows) !== body.expectedOrder) throw staleList();
       const defaultNorms = new Set(
         DEFAULT_LEAD_LOST_REASONS.map((d) => normalizeReasonLabel(d.label)),
       );
@@ -308,12 +327,16 @@ export class LeadLostReasonsService {
   ): Promise<{ id: string; label: string }> {
     await this.seedDefaults(tx, tenantId);
     if (pick.lostReasonId !== undefined) {
+      // FOR SHARE: update() and reset() change a row under FOR UPDATE, so a retire that commits first is read here as
+      // retired (the 400 below), and one that arrives later waits until this stage change commits. Without the lock a
+      // lead or deal could be saved Lost with an option retired in between.
       const [row] = await tx
         .select()
         .from(leadLostReasons)
         .where(
           and(eq(leadLostReasons.tenantId, tenantId), eq(leadLostReasons.id, pick.lostReasonId)),
-        );
+        )
+        .for('share');
       if (row === undefined) {
         throw new BadRequestException({ code: 'bad_request', message: 'Unknown lost reason' });
       }

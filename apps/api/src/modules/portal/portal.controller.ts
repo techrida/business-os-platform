@@ -7,7 +7,8 @@
 // `getPortalQuotationLink`). It does not use DocumentsService.issueLink, which checks `documents.read` (a customer
 // does not hold it): PortalService authorizes the caller and the version, then asks for a link by owner.
 //
-// `GET /v1/portal/display` answers how the caller's company writes numbers and dates ({ numberSystems, dateFormat }).
+// `GET /v1/portal/display` answers how the caller's company writes numbers and dates ({ numberSystems, dateFormat })
+// and which currencies it has switched on ({ enabledCurrencies }, NPR first; D44).
 // Customers and vendors hold different portal permissions, so the route is open to any active principal and
 // PortalService.display refuses everyone but a customer or vendor portal caller with a party (403).
 import type {
@@ -51,7 +52,7 @@ export class PortalController {
 export class PortalDisplayController {
   constructor(private readonly portal: PortalService) {}
 
-  /** 200 with the company's live number grouping and date pattern; 403 for anyone but a portal caller. */
+  /** 200 with the company's live number grouping, date pattern and enabled currencies; 403 for anyone but a portal caller. */
   @Get('display')
   @AnyAuthenticated()
   display(): Promise<PortalDisplay> {
