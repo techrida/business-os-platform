@@ -183,7 +183,7 @@ function FounderRow({ role, area }: { role: AccessRoleInfo; area: AccessAreaInfo
     <li className={styles.roleRow}>
       <div className={styles.roleHead}>
         <span className={styles.roleName}>
-          <LockIcon className={styles.lock} />
+          <LockIcon className={styles.lock ?? ''} />
           {role.label}
         </span>
         <span className={styles.count}>{peopleLabel(role.peopleCount)}</span>
@@ -354,7 +354,7 @@ function AssignBlock(props: AreaCardProps) {
         undo={undoFor(props, { type: 'handOvers' }, 'hand-overs', 'the default hand-overs')}
       />
       <p className={styles.fixedLine}>
-        <LockIcon className={styles.lock} />
+        <LockIcon className={styles.lock ?? ''} />
         Founders can assign to anyone. Nobody can assign to someone above their own level.
       </p>
       {area.key === 'leads' ? (
