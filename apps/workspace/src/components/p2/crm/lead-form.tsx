@@ -1,6 +1,6 @@
 'use client';
 
-import { useActionState, useEffect, useId, useRef, useState } from 'react';
+import { useActionState, useEffect, useId, useRef, useState, type ReactNode } from 'react';
 
 import styles from '@/app/(app)/leads/leads.module.css';
 import { Alert } from '@/components/ui/alert';
@@ -11,7 +11,17 @@ import { PageHeader } from '@/components/ui/page';
 import { Panel } from '@/components/ui/panel';
 import { toast } from '@/components/ui/toast';
 
+import { ActivityTypeButtons } from './activity-type-buttons';
+import { SCHEDULE_ACTIVITY_KINDS } from './forms';
 import type { FormAction, FormState } from './types';
+
+type FollowUpKind = (typeof SCHEDULE_ACTIVITY_KINDS)[number];
+
+/** A person who may own the lead (or do its follow-up), from `GET /v1/leads/owners`. */
+export interface OwnerOption {
+  value: string;
+  label: string;
+}
 
 const CURRENCIES = [
   { value: 'NPR', label: 'NPR (Nepalese rupee)' },
@@ -32,18 +42,88 @@ const EMPTY: Record<string, string> = {
   currency: 'NPR',
   probability: '',
   expectedClose: '',
-  nextFollowUpAt: '',
   notes: '',
+  ownerUserId: '',
+  followUpAt: '',
+  followUpSubject: '',
+  // Empty means "the lead owner": the assignee follows the owner until someone picks another.
+  followUpAssigneeUserId: '',
 };
+
+/** Card heading with its Figma eyebrow ("01 · The basics"). The eyebrow is decoration. */
+function SectionTitle({ eyebrow, children }: { eyebrow: string; children: ReactNode }) {
+  return (
+    <>
+      <span className={styles.eyebrow} aria-hidden="true">
+        {eyebrow}
+      </span>
+      {children}
+    </>
+  );
+}
+
+/**
+ * The people picker for the owner and the follow-up assignee. With one option (a caller who may
+ * only assign to themselves) it is shown read-only and a hidden input posts the value, since a
+ * disabled field is not submitted. With none (the list did not load) nothing is posted and the
+ * API applies its default.
+ */
+function PersonSelect({
+  name,
+  label,
+  hint,
+  error,
+  options,
+  value,
+  onChange,
+}: {
+  name: string;
+  label: string;
+  hint?: string | undefined;
+  error?: string | undefined;
+  options: readonly OwnerOption[];
+  value: string;
+  onChange: (value: string) => void;
+}) {
+  const only = options.length === 1 ? options[0] : undefined;
+  return (
+    <Field label={label} hint={hint} error={error}>
+      {(c) =>
+        only ? (
+          <>
+            <Select value={only.value} disabled {...c}>
+              <option value={only.value}>{only.label}</option>
+            </Select>
+            <input type="hidden" name={name} value={only.value} />
+          </>
+        ) : (
+          <Select name={name} value={value} onChange={(e) => onChange(e.target.value)} {...c}>
+            {options.map((o) => (
+              <option key={o.value} value={o.value}>
+                {o.label}
+              </option>
+            ))}
+          </Select>
+        )
+      }
+    </Field>
+  );
+}
 
 /** The new-lead form. Inputs are controlled so a refusal does not wipe what was typed. */
 export function LeadForm({
   action,
   sources,
+  owners,
+  defaultOwnerId,
   idempotencyKey,
 }: {
   action: FormAction;
   sources: { value: string; label: string }[];
+  /** Who the lead can go to. Empty when the list did not load: the API then makes it the caller's. */
+  owners: readonly OwnerOption[];
+  /** The signed-in user when they are in `owners`; the select starts there. */
+  defaultOwnerId?: string | undefined;
   /** Made once per page render on the server; the action hands back the key the next try uses. */
   idempotencyKey: string;
 }) {
@@ -51,7 +131,11 @@ export function LeadForm({
     values: EMPTY,
     fieldErrors: {},
   });
-  const [values, setValues] = useState<Record<string, string>>(EMPTY);
+  const [values, setValues] = useState<Record<string, string>>(() => ({
+    ...EMPTY,
+    ownerUserId: defaultOwnerId ?? owners[0]?.value ?? '',
+  }));
+  const [followUpKind, setFollowUpKind] = useState<FollowUpKind>('call');
   const summary = useRef<HTMLDivElement>(null);
   const form = useRef<HTMLFormElement>(null);
   function update(name: string, value: string) {
@@ -60,6 +144,7 @@ export function LeadForm({
   const set = (name: string) => (e: { target: { value: string } }) => update(name, e.target.value);
   const formId = useId();
   const err = state.fieldErrors;
+  const assignee = values['followUpAssigneeUserId'] || values['ownerUserId'] || '';
 
   useEffect(() => {
     if (state.error) summary.current?.focus();
@@ -85,7 +170,7 @@ export function LeadForm({
               Cancel
             </LinkButton>
             <Button type="submit" form={formId} disabled={pending} aria-busy={pending || undefined}>
-              {pending ? 'Saving' : 'Save lead'}
+              {pending ? 'Creating' : 'Create lead'}
             </Button>
           </>
         }
@@ -106,7 +191,7 @@ export function LeadForm({
           </Alert>
         ) : null}
 
-        <Panel title="Lead overview">
+        <Panel title={<SectionTitle eyebrow="01 · The basics">Lead overview</SectionTitle>}>
           <Field label="Lead title" error={err['title']}>
             {(c) => (
               <Input
@@ -151,10 +236,31 @@ export function LeadForm({
                 />
               )}
             </Field>
+            {owners.length > 0 ? (
+              <PersonSelect
+                name="ownerUserId"
+                label="Lead owner"
+                hint={owners.length === 1 ? 'You can create leads for yourself only.' : undefined}
+                error={err['ownerUserId']}
+                options={owners}
+                value={values['ownerUserId'] ?? ''}
+                onChange={(value) => update('ownerUserId', value)}
+              />
+            ) : (
+              <Field
+                label="Lead owner"
+                hint="The list of owners did not load, so the lead will be yours."
+                error={err['ownerUserId']}
+              >
+                {(c) => <Input value="You" readOnly {...c} />}
+              </Field>
+            )}
           </div>
         </Panel>
 
-        <Panel title="Prospect and company">
+        <Panel
+          title={<SectionTitle eyebrow="02 · The prospect">Prospect and company</SectionTitle>}
+        >
           <div className={styles.formGrid}>
             <Field label="Company or organization" error={err['companyName']}>
               {(c) => (
@@ -228,7 +334,7 @@ export function LeadForm({
           </Field>
         </Panel>
 
-        <Panel title="Commercial details">
+        <Panel title={<SectionTitle eyebrow="03 · The deal">Commercial details</SectionTitle>}>
           <div className={styles.formGrid}>
             <Field
               label="Expected value"
@@ -287,21 +393,6 @@ export function LeadForm({
                 />
               )}
             </Field>
-            <Field
-              label="Next follow-up"
-              hint="Optional. Kathmandu time."
-              error={err['nextFollowUpAt']}
-            >
-              {(c) => (
-                <Input
-                  name="nextFollowUpAt"
-                  type="datetime-local"
-                  value={values['nextFollowUpAt']}
-                  onChange={set('nextFollowUpAt')}
-                  {...c}
-                />
-              )}
-            </Field>
           </div>
 
           <Field label="Notes" hint="Optional." error={err['notes']}>
@@ -312,6 +403,60 @@ export function LeadForm({
                 value={values['notes']}
                 onChange={set('notes')}
                 maxLength={5000}
+                {...c}
+              />
+            )}
+          </Field>
+        </Panel>
+
+        <Panel
+          title={<SectionTitle eyebrow="04 · Next step">Schedule a follow-up</SectionTitle>}
+          description="Optional. Leave the time empty to skip it; you can plan one from the lead later."
+        >
+          <ActivityTypeButtons
+            kinds={SCHEDULE_ACTIVITY_KINDS}
+            value={followUpKind}
+            onChange={setFollowUpKind}
+            name="followUpKind"
+            label="Type"
+            {...(err['followUpKind'] ? { error: err['followUpKind'] } : {})}
+          />
+          <div className={styles.formGrid}>
+            <Field label="When" hint="Kathmandu time." error={err['followUpAt']}>
+              {(c) => (
+                <Input
+                  name="followUpAt"
+                  type="datetime-local"
+                  value={values['followUpAt']}
+                  onChange={set('followUpAt')}
+                  {...c}
+                />
+              )}
+            </Field>
+            {owners.length > 0 ? (
+              <PersonSelect
+                name="followUpAssigneeUserId"
+                label="Assignee"
+                hint="Starts as the lead owner."
+                error={err['followUpAssigneeUserId']}
+                options={owners}
+                value={assignee}
+                onChange={(value) => update('followUpAssigneeUserId', value)}
+              />
+            ) : null}
+          </div>
+          <Field
+            label="Subject"
+            hint="Optional. Without one it is named after the type, for example “Call”."
+            error={err['followUpSubject']}
+          >
+            {(c) => (
+              <Input
+                name="followUpSubject"
+                placeholder="e.g. Walk through the proposal"
+                value={values['followUpSubject']}
+                onChange={set('followUpSubject')}
+                maxLength={200}
                 {...c}
               />
             )}
