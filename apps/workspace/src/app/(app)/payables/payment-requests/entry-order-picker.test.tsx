@@ -57,8 +57,7 @@ describe('the purchase order picker of a payment request', () => {
       />,
     );
     const { container } = mounted;
-    const field = () =>
-      container.querySelector<HTMLInputElement>('input[name="purchaseOrderId"]');
+    const field = () => container.querySelector<HTMLInputElement>('input[name="purchaseOrderId"]');
     expect(container.textContent).not.toContain('Purchase order ID');
     expect(field()?.type).toBe('hidden');
 
