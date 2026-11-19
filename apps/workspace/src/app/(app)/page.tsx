@@ -69,7 +69,14 @@ export default async function OverviewPage() {
     me.status === 'fulfilled' && people.status === 'fulfilled'
       ? people.value.owners.find((o) => o.userId === me.value.userId)?.displayName
       : undefined;
-  const tiles = quickActions(permissionChecker(session.roles));
+  // The live grants win over the role defaults, so a revoked permission removes its tile.
+  const granted =
+    me.status === 'fulfilled' && me.value.permissions !== undefined
+      ? new Set<string>(me.value.permissions.map((g) => g.permission))
+      : null;
+  const tiles = quickActions(
+    granted === null ? permissionChecker(session.roles) : (permission) => granted.has(permission),
+  );
   const customerCount =
     customers.status === 'fulfilled' && customers.value.total !== null
       ? customers.value.total

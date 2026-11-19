@@ -23,9 +23,13 @@ function DueDay({
   const { setParam } = useFilterNavigation();
   const [day, setDay] = useState(value);
   const [seen, setSeen] = useState(value);
+  // The last day sent to the URL: a change back to the server's value must still navigate while an
+  // earlier request is in flight.
+  const [requested, setRequested] = useState(value);
   if (seen !== value) {
     setSeen(value);
     setDay(value);
+    setRequested(value);
   }
   return (
     <DatePicker
@@ -37,7 +41,10 @@ function DueDay({
       onChange={(next) => {
         setDay(next);
         // '' is a cleared date; a half-typed one never reaches here.
-        if (next !== value) setParam(name, next || undefined);
+        if (next !== requested) {
+          setRequested(next);
+          setParam(name, next || undefined);
+        }
       }}
     />
   );
