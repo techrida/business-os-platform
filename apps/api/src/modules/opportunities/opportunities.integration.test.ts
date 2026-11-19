@@ -42,12 +42,14 @@ import { AuditService } from '../../platform/audit/audit.service';
 import type { AuthzService } from '../../platform/authz/authz.service';
 import { can } from '../../platform/authz/can';
 import type { Principal } from '../../platform/authz/principal';
+import { RoleCache } from '../../platform/authz/role-cache';
 import type { Db } from '../../platform/db/db.module';
 import { systemActor, withTx, type DbTransaction } from '../../platform/db/tx';
 import { ErrorBodyFilter } from '../../platform/tenancy/error-body.filter';
 import { LeadLostReasonsService } from '../leads/lost-reasons.service';
 import { OpportunitiesController } from './opportunities.controller';
 import { OpportunitiesService } from './opportunities.service';
+import { OpportunityOwnersService } from './opportunity-owners.service';
 
 vi.setConfig({ testTimeout: 60_000, hookTimeout: 180_000 });
 
@@ -190,7 +192,13 @@ beforeAll(async () => {
   service = newService();
   const moduleRef = await Test.createTestingModule({
     controllers: [OpportunitiesController],
-    providers: [{ provide: OpportunitiesService, useValue: service }],
+    providers: [
+      { provide: OpportunitiesService, useValue: service },
+      {
+        provide: OpportunityOwnersService,
+        useValue: new OpportunityOwnersService(db, caller, new RoleCache(db)),
+      },
+    ],
   }).compile();
   app = moduleRef.createNestApplication({ rawBody: true, logger: false });
   configureApp(app);
