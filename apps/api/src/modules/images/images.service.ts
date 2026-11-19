@@ -206,8 +206,13 @@ export function readCapped(stream: Readable, cap: number): Promise<Buffer> {
   });
 }
 
+/**
+ * The only version states a picture may be set from: the bytes were received and passed the type check (the scan
+ * then runs, or ran clean). Anything else, including a document still waiting for bytes, is a 409.
+ */
+const USABLE_STATUSES: ReadonlySet<string> = new Set(['quarantined', 'clean']);
 /** Version states that can never become a picture: the bytes were refused or carry a virus. */
-const UNUSABLE_STATUSES: ReadonlySet<string> = new Set(['rejected', 'infected']);
+const REFUSED_STATUSES: ReadonlySet<string> = new Set(['rejected', 'infected']);
 const Guid = z.guid();
 const OWNER_NOT_FOUND = 'Not found';
 const IMAGE_NOT_FOUND = 'Image not found';
@@ -331,7 +336,9 @@ export class ImagesService {
   /**
    * Makes `body.documentId` the owner's current image, or removes it when null. Returns the pointer after the call.
    * 404: unknown owner type, malformed or unknown owner, or a document that is not a live image of exactly this owner.
-   * 403: not staff, or no upload grant on the owner. 409: the image was rejected or is infected. 400: a bad body.
+   * 403: not staff, or no upload grant on the owner. 409: the image's newest version is not `quarantined` or `clean`
+   * (refused, infected, still waiting for its bytes, or its scan failed), checked even when it is already the current
+   * one. 400: a bad body.
    */
   async set(
     caller: ImageCaller,
@@ -453,11 +460,18 @@ export class ImagesService {
     ) {
       throw new NotFoundException(IMAGE_NOT_FOUND);
     }
-    if (doc.status === null || UNUSABLE_STATUSES.has(doc.status)) {
+    if (doc.status !== null && REFUSED_STATUSES.has(doc.status)) {
       throw new ConflictException({
         code: 'conflict',
         message:
           'This image was refused (wrong type or failed the virus scan). Upload another one.',
+      });
+    }
+    if (doc.status === null || !USABLE_STATUSES.has(doc.status)) {
+      // Waiting for bytes (an abandoned upload is never scanned) or a scan that failed: never a current picture.
+      throw new ConflictException({
+        code: 'conflict',
+        message: 'This image was not received completely. Upload it again.',
       });
     }
   }

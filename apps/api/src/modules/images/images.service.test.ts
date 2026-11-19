@@ -466,6 +466,44 @@ describe('set: refusals', () => {
     expect(pointers.get(key('user_avatar', ownerId))).toBeNull();
   });
 
+  it.each(['awaiting_content', 'scan_failed'])(
+    'is 409 for a document whose newest version is %s, keeping and removing nothing',
+    async (status) => {
+      // A generic create left without bytes is never scanned: it must never replace the current picture.
+      const ownerId = randomUUID();
+      const old = addDoc('customer_logo', ownerId);
+      pointers.set(key('customer_logo', ownerId), old);
+      const doc = addDoc('customer_logo', ownerId, { status });
+      const error: unknown = await service
+        .set(staff, 'customer_logo', ownerId, { documentId: doc })
+        .catch((e: unknown) => e);
+      expect(error).toBeInstanceOf(ConflictException);
+      expect((error as ConflictException).getResponse()).toEqual({
+        code: 'conflict',
+        message: 'This image was not received completely. Upload it again.',
+      });
+      expect(pointers.get(key('customer_logo', ownerId))).toBe(old);
+      expect(documents.removeInTransaction).not.toHaveBeenCalled();
+      expect(audit.record).not.toHaveBeenCalled();
+    },
+  );
+
+  it('is 409 for an awaiting_content entity logo too, leaving entity.profile alone', async () => {
+    const doc = addDoc('entity_logo', ORG, { status: 'awaiting_content' });
+    expect(await statusOf(service.set(staff, 'entity_logo', ORG, { documentId: doc }))).toBe(409);
+    expect(settings.set).not.toHaveBeenCalled();
+  });
+
+  it('takes a quarantined (received, scan pending) or clean image', async () => {
+    for (const status of ['quarantined', 'clean']) {
+      const ownerId = randomUUID();
+      pointers.set(key('vendor_logo', ownerId), null);
+      const doc = addDoc('vendor_logo', ownerId, { status });
+      await service.set(staff, 'vendor_logo', ownerId, { documentId: doc });
+      expect(pointers.get(key('vendor_logo', ownerId))).toBe(doc);
+    }
+  });
+
   it('is 404 when the owner row is gone by the time the transaction reads it', async () => {
     expect(
       await statusOf(service.set(staff, 'customer_logo', randomUUID(), { documentId: null })),
