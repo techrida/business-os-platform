@@ -697,6 +697,62 @@ describe('entity wall', () => {
   });
 });
 
+describe('names on the approval (U18 #1)', () => {
+  it('shows Management the vendor, the bills, the items and the bank account by name, and nothing else of them', async () => {
+    const v = await vendor();
+    const b1 = await approvedBill(v);
+    const b2 = await approvedBill(v);
+    const d = await draft(v, [
+      { openItemId: b1.openItemId, amount: '56500.00' },
+      { openItemId: b2.openItemId, amount: '56500.00' },
+    ]);
+    roles.finance = [U.fin, U.fin2, U.fin3];
+    const submitted = await service.submit(d.id, randomUUID());
+    const stored = await read((tx) =>
+      tx
+        .select({
+          id: vendorBills.id,
+          number: vendorBills.number,
+          inv: vendorBills.vendorInvoiceNo,
+        })
+        .from(vendorBills)
+        .where(eq(vendorBills.vendorId, v)),
+    );
+    const billName = (id: string) => {
+      const row = stored.find((b) => b.id === id)!;
+      return row.number ?? row.inv;
+    };
+    const vendorName = `Vendor ${v.slice(0, 6)}`;
+
+    // Management decides the second step; it holds no vendor.read and no payables grant.
+    as(U.mgmt, 'management');
+    expect(grantsOf('management').has('vendor.read')).toBe(false);
+    const request = await approvals.get(submitted.approvalRequestId!);
+    expect(request.snapshot).toMatchObject({
+      vendorName,
+      lines: [
+        { vendorBillId: b1.billId, billNumber: stored.find((b) => b.id === b1.billId)!.number },
+        { vendorBillId: b2.billId, billNumber: stored.find((b) => b.id === b2.billId)!.number },
+      ],
+    });
+    const { vendorBankAccountId } = request.snapshot as { vendorBankAccountId: string };
+    expect(request.references).toEqual(
+      expect.arrayContaining([
+        { id: v, name: vendorName },
+        { id: b1.billId, name: billName(b1.billId) },
+        { id: b2.billId, name: billName(b2.billId) },
+        { id: b1.openItemId, name: billName(b1.billId) },
+        { id: b2.openItemId, name: billName(b2.billId) },
+        { id: vendorBankAccountId, name: 'Account ending 1234' },
+      ]),
+    );
+    // Only the records the snapshot names, by name: no PAN, no other vendor's or bill's row.
+    expect(request.references).toHaveLength(6);
+    const { rows } = await exec(scopeA, sql`SELECT pan FROM app.vendors WHERE id = ${v}`);
+    expect(JSON.stringify(request)).not.toContain((rows[0] as { pan: string }).pan);
+  });
+});
+
 describe('the vendor on the request page (U18 #15)', () => {
   it('names the vendor for Finance and lets them open it; without vendor.read only the name, no link', async () => {
     const v = await vendor();
