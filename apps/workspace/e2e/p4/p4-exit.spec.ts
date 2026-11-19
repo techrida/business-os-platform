@@ -166,7 +166,7 @@ test('the completed Journey 11 remains connected across requests, sourcing, rece
       await expect(page.getByRole('heading', { level: 1 })).toBeVisible();
       await expect(page.getByRole('region', { name: 'Profile', exact: true })).toBeVisible();
       await page.goto(`/procurement/orders/${poId}`);
-      const pdf = page.getByRole('link', { name: 'Download PDF of version 1', exact: true });
+      const pdf = page.getByRole('link', { name: 'Download of version 1', exact: true });
       await expect(pdf).toBeVisible();
       const href = await pdf.getAttribute('href');
       expect(href).toBeTruthy();
