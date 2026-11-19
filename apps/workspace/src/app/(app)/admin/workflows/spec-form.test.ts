@@ -55,7 +55,7 @@ describe('specToForm and formToSpec', () => {
     expect(built).toEqual({ ok: true, spec: seedSpec });
   });
 
-  it('keeps a numeric threshold value a number', () => {
+  it('writes an existing numeric threshold as exact decimal text', () => {
     const spec = WorkflowSpecSchema.parse({
       ...seedSpec,
       rules: [
@@ -73,7 +73,23 @@ describe('specToForm and formToSpec', () => {
     expect(built.ok && built.spec.rules[0]?.when).toEqual({
       field: 'amountNpr',
       op: 'gte',
-      value: 500,
+      value: '500',
+    });
+  });
+
+  it('rejects a fractional paisa and keeps a valid amount as text', () => {
+    const converted = specToForm(seedSpec);
+    if (!converted.ok) throw new Error('should convert');
+    const rule = converted.form.rules[0]!;
+    rule.value = '1.005';
+    expect(formToSpec(converted.form)).toMatchObject({
+      ok: false,
+      issues: ['rules[1].when.value: Enter an amount with up to two decimal places.'],
+    });
+    rule.value = '1.01';
+    expect(formToSpec(converted.form)).toMatchObject({
+      ok: true,
+      spec: { rules: [{ when: { value: '1.01' } }, {}] },
     });
   });
 

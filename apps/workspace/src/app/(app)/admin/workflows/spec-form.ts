@@ -1,11 +1,11 @@
 // Converts between the workflow editor's form state and a WorkflowSpec. Serves the NFR "approvals are
-// auditable": whatever the form builds is validated with WorkflowSpecSchema before it is sent, and a
+// auditable": whatever the form builds is validated with WorkflowWriteSpecSchema before it is sent, and a
 // spec the form cannot show faithfully (nested all/any, a field other than amountNpr) is never
 // flattened: the editor falls back to raw JSON for it, so saving a draft never drops a rule.
 import {
   DEFAULT_DEPARTMENT_HEAD_FALLBACK_ROLE,
   ROLE_KEYS,
-  WorkflowSpecSchema,
+  WorkflowWriteSpecSchema,
   type Condition,
   type RoleKey,
   type StepKind,
@@ -39,8 +39,6 @@ export interface RuleForm {
   id: string;
   op: ThresholdOp;
   value: string;
-  /** The stored value was a JSON number, so it goes back as one (a string would change the spec). */
-  valueIsNumber: boolean;
   step: StepForm;
   /** Id of the step this one goes after; '' means at the end. */
   afterStepId: string;
@@ -83,7 +81,6 @@ export function emptyRule(taken: readonly string[], ruleCount: number): RuleForm
     id,
     op: 'gt',
     value: '',
-    valueIsNumber: false,
     step: { id: stepId, kind: 'role', target: 'management', reason: '' },
     afterStepId: '',
     reason: '',
@@ -117,13 +114,11 @@ function stepToForm(step: StepSpec): StepForm | string {
 }
 
 /** Null when `when` is not a single amountNpr comparison the form can show. */
-function thresholdOf(
-  when: Condition,
-): { op: ThresholdOp; value: string; isNumber: boolean } | null {
+function thresholdOf(when: Condition): { op: ThresholdOp; value: string } | null {
   if (!('field' in when) || when.field !== THRESHOLD_FIELD) return null;
   if (when.op === 'in') return null;
   if (typeof when.value !== 'string' && typeof when.value !== 'number') return null;
-  return { op: when.op, value: String(when.value), isNumber: typeof when.value === 'number' };
+  return { op: when.op, value: String(when.value) };
 }
 
 /** Whether the spec fits the form without loss. If not, `reasons` says why (shown above the JSON). */
@@ -154,7 +149,6 @@ export function specToForm(spec: WorkflowSpec): FormConversion {
       id: r.id,
       op: threshold.op,
       value: threshold.value,
-      valueIsNumber: threshold.isNumber,
       step,
       afterStepId: r.position === 'end' ? '' : r.position.after,
       reason: r.reason,
@@ -198,22 +192,13 @@ export function formToSpec(form: SpecForm): SpecBuild {
   const draft = {
     documentType: form.documentType.trim(),
     steps: form.steps.map(stepFromForm),
-    rules: form.rules.map((r) => {
-      const trimmed = r.value.trim();
-      const asNumber = Number(trimmed);
-      return {
-        id: r.id.trim(),
-        when: {
-          field: THRESHOLD_FIELD,
-          op: r.op,
-          value:
-            r.valueIsNumber && trimmed !== '' && Number.isFinite(asNumber) ? asNumber : trimmed,
-        },
-        add: stepFromForm(r.step),
-        position: r.afterStepId.trim() === '' ? 'end' : { after: r.afterStepId.trim() },
-        reason: r.reason.trim(),
-      };
-    }),
+    rules: form.rules.map((r) => ({
+      id: r.id.trim(),
+      when: { field: THRESHOLD_FIELD, op: r.op, value: r.value.trim() },
+      add: stepFromForm(r.step),
+      position: r.afterStepId.trim() === '' ? 'end' : { after: r.afterStepId.trim() },
+      reason: r.reason.trim(),
+    })),
     distinctApprovers: form.distinctApprovers,
     sla: {
       remindAfterHours: Number(form.remindAfterHours),
@@ -221,7 +206,7 @@ export function formToSpec(form: SpecForm): SpecBuild {
       escalateTo: { role: form.escalateRole },
     },
   };
-  const parsed = WorkflowSpecSchema.safeParse(draft);
+  const parsed = WorkflowWriteSpecSchema.safeParse(draft);
   return parsed.success
     ? { ok: true, spec: parsed.data }
     : { ok: false, issues: formatIssues(parsed.error.issues) };
@@ -235,7 +220,7 @@ export function parseSpecJson(text: string): SpecBuild {
   } catch {
     return { ok: false, issues: ['The text is not valid JSON.'] };
   }
-  const parsed = WorkflowSpecSchema.safeParse(json);
+  const parsed = WorkflowWriteSpecSchema.safeParse(json);
   return parsed.success
     ? { ok: true, spec: parsed.data }
     : { ok: false, issues: formatIssues(parsed.error.issues) };
