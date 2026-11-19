@@ -622,9 +622,7 @@ describe('act', () => {
       { workspaceUrl: WORKSPACE_URL },
     );
     expect(decided.subject).toBe('test_memo MEMO-2082/83-00001: approved');
-    expect(decided.text).toContain(
-      'Unnamed user marked test_memo MEMO-2082/83-00001 as approved.',
-    );
+    expect(decided.text).toContain('Unnamed user marked test_memo MEMO-2082/83-00001 as approved.');
     expect(decided.text).toContain(`${WORKSPACE_URL}${memoPath}`);
     await expect(
       act(U.fin, requestId, { action: 'approve', expectedVersion: 3 }),

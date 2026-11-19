@@ -438,7 +438,12 @@ const DEV_VENDOR_TERM = 'NET30';
 
 /** The personas the dev people step needs, in a fixed order; a missing one is an error, not a skip. */
 function devPeople(personas: readonly DevPersona[]): (DevPersona & { role: string })[] {
-  const keys = [VENDOR_CREATOR_KEY, VENDOR_APPROVER_KEY, DEPARTMENT_HEAD_KEY, RECEIPT_CONFIRMER_KEY];
+  const keys = [
+    VENDOR_CREATOR_KEY,
+    VENDOR_APPROVER_KEY,
+    DEPARTMENT_HEAD_KEY,
+    RECEIPT_CONFIRMER_KEY,
+  ];
   for (const department of DEV_DEPARTMENTS) {
     for (const member of department.members) if (!keys.includes(member.key)) keys.push(member.key);
   }

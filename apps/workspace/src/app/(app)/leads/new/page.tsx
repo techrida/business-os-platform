@@ -21,7 +21,10 @@ export default async function NewLeadPage() {
   // Either failing leaves the form usable: no owner list means the API makes the lead the caller's.
   // The currency read never throws: a failed read gives the default list.
   const enabledRead = loadEnabledCurrencies(session);
-  const [ownerList, me] = await Promise.allSettled([listLeadOwners(session, 'create'), getMe(session)]);
+  const [ownerList, me] = await Promise.allSettled([
+    listLeadOwners(session, 'create'),
+    getMe(session),
+  ]);
   const enabledCurrencies = await enabledRead;
   const owners =
     ownerList.status === 'fulfilled'

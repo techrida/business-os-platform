@@ -80,8 +80,7 @@ export type DenyReason =
   | 'entity_not_permitted';
 
 export type Decision =
-  | { allowed: true; scope: AccessScope }
-  | { allowed: false; reason: DenyReason };
+  { allowed: true; scope: AccessScope } | { allowed: false; reason: DenyReason };
 
 /**
  * A Drizzle table that `AuthzService.scopeWhere()` can filter. The two tenancy columns are

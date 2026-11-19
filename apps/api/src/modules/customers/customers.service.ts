@@ -298,9 +298,7 @@ export class CustomersService {
     const [row] = await this.db
       .select({ id: verificationCases.id })
       .from(verificationCases)
-      .where(
-        and(eq(verificationCases.tenantId, tenantId), eq(verificationCases.partyId, partyId)),
-      )
+      .where(and(eq(verificationCases.tenantId, tenantId), eq(verificationCases.partyId, partyId)))
       .limit(1);
     return row !== undefined;
   }

@@ -196,9 +196,7 @@ describe('PATCH /v1/leads/:id', () => {
     const lead = await seed();
     const res = await patch(lead.id, { ownerUserId: h.users.salesB, expectedVersion: 1 });
     expect(res.status, JSON.stringify(res.body)).toBe(400);
-    expect(errorOf(res.body).message).toBe(
-      `ownerUserId ${ASSIGNMENT_DENY_MESSAGES.no_department}`,
-    );
+    expect(errorOf(res.body).message).toBe(`ownerUserId ${ASSIGNMENT_DENY_MESSAGES.no_department}`);
     expect(await rowOf(lead.id)).toMatchObject({ ownerUserId: h.users.salesA, version: 1 });
     expect(await actionsOf(lead.id)).not.toContain('lead.updated');
   });
@@ -573,9 +571,7 @@ describe('D50: who a lead may be handed to, under the entity rule and live grant
 
     const upward = await patch(lead.id, { ownerUserId: salesManager, expectedVersion: 1 });
     expect(upward.status, JSON.stringify(upward.body)).toBe(400);
-    expect(errorOf(upward.body).message).toBe(
-      `ownerUserId ${ASSIGNMENT_DENY_MESSAGES.upward}`,
-    );
+    expect(errorOf(upward.body).message).toBe(`ownerUserId ${ASSIGNMENT_DENY_MESSAGES.upward}`);
     expect(await reassign(lead.id, salesManager)).toBe('upward');
     expect(await reassign(lead.id, salesHead)).toBe('upward');
 
@@ -704,7 +700,10 @@ describe('D50: who a lead may be handed to, under the entity rule and live grant
     expect(me.grants.get('crm.lead.read')).toBe('department');
 
     expect((await request(baseUrl).get(`/v1/leads/${staffLead.id}`)).status).toBe(200);
-    const edited = await patch(staffLead.id, { title: 'Checked by the manager', expectedVersion: 1 });
+    const edited = await patch(staffLead.id, {
+      title: 'Checked by the manager',
+      expectedVersion: 1,
+    });
     expect(edited.status, JSON.stringify(edited.body)).toBe(200);
     const moved = await patch(staffLead.id, { ownerUserId: salesPeer, expectedVersion: 2 });
     expect(moved.status, JSON.stringify(moved.body)).toBe(200);
@@ -752,7 +751,9 @@ describe('D50: who a lead may be handed to, under the entity rule and live grant
 
     // Handed back: one more notice, to the new owner only.
     await h.actAs(salesPeer);
-    expect((await patch(lead.id, { ownerUserId: salesStaff, expectedVersion: 2 })).status).toBe(200);
+    expect((await patch(lead.id, { ownerUserId: salesStaff, expectedVersion: 2 })).status).toBe(
+      200,
+    );
     expect((await assignedNotices(lead.id)).map((n) => n.to_user_id).sort()).toEqual(
       [salesPeer, salesStaff].sort(),
     );

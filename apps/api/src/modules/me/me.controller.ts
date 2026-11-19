@@ -23,7 +23,9 @@ export function effectivePermissions(p: Principal): EffectivePermission[] {
     if (!KNOWN_PERMISSIONS.has(permission) || !can(p, permission).allowed) continue;
     out.push({ permission, scope });
   }
-  return out.sort((a, b) => (a.permission < b.permission ? -1 : a.permission > b.permission ? 1 : 0));
+  return out.sort((a, b) =>
+    a.permission < b.permission ? -1 : a.permission > b.permission ? 1 : 0,
+  );
 }
 
 // Any signed-in user may ask who they are; the tenancy interceptor refuses unmarked routes.

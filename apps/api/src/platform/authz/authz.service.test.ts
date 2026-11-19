@@ -577,9 +577,7 @@ describe('AuthzService.scopeWhere on a table described in record-reach.ts', () =
       ]),
     });
     const want = FIXTURE.rows
-      .filter(
-        (r) => r.tenantId === TENANT && r.organizationId === ENTITY && followUpOf(r) === 'me',
-      )
+      .filter((r) => r.tenantId === TENANT && r.organizationId === ENTITY && followUpOf(r) === 'me')
       .map((r) => r.id);
     expect(want.length).toBeGreaterThan(0);
     expect(await listedIds(reachTable, p, READ)).toEqual(want);

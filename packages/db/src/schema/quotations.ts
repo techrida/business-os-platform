@@ -301,11 +301,7 @@ export const quotations = appSchema.table(
       t.organizationId,
       t.opportunityId,
     ),
-    index('quotations_tenant_org_department_idx').on(
-      t.tenantId,
-      t.organizationId,
-      t.departmentId,
-    ),
+    index('quotations_tenant_org_department_idx').on(t.tenantId, t.organizationId, t.departmentId),
     check('quotations_legacy_source_check', sql`${t.legacySource} in ('estimate')`),
     check('quotations_version_check', sql`${t.version} >= 1`),
   ],

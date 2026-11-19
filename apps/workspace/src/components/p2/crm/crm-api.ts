@@ -138,7 +138,11 @@ export async function ownerFilterNames(
 ): Promise<Map<string, string>> {
   const names = new Map<string, string>();
   try {
-    for (const o of await call(session, `/v1/${area}/owner-filter`, listOf(LeadOwnerOptionSchema))) {
+    for (const o of await call(
+      session,
+      `/v1/${area}/owner-filter`,
+      listOf(LeadOwnerOptionSchema),
+    )) {
       names.set(o.userId, o.displayName.trim() || 'Unnamed user');
     }
   } catch {

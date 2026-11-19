@@ -87,8 +87,7 @@ function inScope(
       // not a match; a record (or table) with no department is reached as `own` (review R2).
       return (
         sameId(r.organizationId, p.organizationId) &&
-        (isMine(p, r, reach) ||
-          (p.departmentId !== null && sameId(r.departmentId, p.departmentId)))
+        (isMine(p, r, reach) || (p.departmentId !== null && sameId(r.departmentId, p.departmentId)))
       );
     case 'customer_org':
       // A customer matches only the customer column and a vendor only the vendor column; staff

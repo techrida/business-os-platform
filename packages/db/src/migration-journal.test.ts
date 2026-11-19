@@ -16,14 +16,15 @@ interface JournalEntry {
   tag: string;
 }
 
-const journal = JSON.parse(
-  readFileSync(join(MIGRATIONS_FOLDER, 'meta/_journal.json'), 'utf8'),
-) as { entries: JournalEntry[] };
+const journal = JSON.parse(readFileSync(join(MIGRATIONS_FOLDER, 'meta/_journal.json'), 'utf8')) as {
+  entries: JournalEntry[];
+};
 const entries = journal.entries;
 
 /** Values that occur more than once, each named once. */
-const repeated = <T>(values: readonly T[]): T[] =>
-  [...new Set(values.filter((value, i) => values.indexOf(value) !== i))];
+const repeated = <T>(values: readonly T[]): T[] => [
+  ...new Set(values.filter((value, i) => values.indexOf(value) !== i)),
+];
 
 describe('migrations/meta/_journal.json', () => {
   it('gives every entry its own idx', () => {

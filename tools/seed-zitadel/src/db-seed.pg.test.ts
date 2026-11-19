@@ -12,7 +12,12 @@ import { Pool, type PoolClient } from 'pg';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 
 import { createParty, createTenantWithEntity } from '../../../packages/db/src/testing/fixtures.js';
-import { DEV_VENDOR_PARTY_CODE, type DevPersona, type SeedScope, seedKernelRows } from './db-seed.js';
+import {
+  DEV_VENDOR_PARTY_CODE,
+  type DevPersona,
+  type SeedScope,
+  seedKernelRows,
+} from './db-seed.js';
 
 const OWNER_PW = 'owner-test-pw';
 /** Container start plus every migration. */
@@ -46,7 +51,11 @@ afterAll(async () => {
 /** A tenant with its TR-like entity, staff IdP org and the VEND-DEV party the tenancy step would create. */
 async function devTenant(): Promise<SeedScope & { idpOrgId: string }> {
   const tenant = await createTenantWithEntity(owner);
-  await createParty(owner, { tenantId: tenant.tenantId, kind: 'vendor', code: DEV_VENDOR_PARTY_CODE });
+  await createParty(owner, {
+    tenantId: tenant.tenantId,
+    kind: 'vendor',
+    code: DEV_VENDOR_PARTY_CODE,
+  });
   return { ...tenant, correlationId: `pg-test-${randomUUID()}` };
 }
 
@@ -186,7 +195,10 @@ describe('dev people step on Postgres', () => {
         [scope.tenantId],
       );
       const filed = Object.fromEntries(
-        members.rows.map((m) => [m.zitadel_user_id.slice(prefix.length + 1), [m.department, m.level]]),
+        members.rows.map((m) => [
+          m.zitadel_user_id.slice(prefix.length + 1),
+          [m.department, m.level],
+        ]),
       );
       expect(filed).toEqual({
         procurement: ['Operations', 'staff'],
@@ -284,9 +296,9 @@ describe('reseed keeps Founder grants', () => {
         .map((g) => `${g.role_key}|${g.permission}|${g.scope}`)
         .sort();
       expect(founderRows).toEqual(['sales|crm.lead.read|all', 'warehouse|crm.lead.read|own']);
-      expect(grants.rows.some((g) => g.role_key === 'warehouse' && g.permission === 'crm.lead.write')).toBe(
-        false,
-      );
+      expect(
+        grants.rows.some((g) => g.role_key === 'warehouse' && g.permission === 'crm.lead.write'),
+      ).toBe(false);
 
       // The seeded rows are exactly the current defaults, less the one the Founder now owns.
       const expected: string[] = [];
@@ -304,7 +316,12 @@ describe('reseed keeps Founder grants', () => {
       ).toEqual(expected.sort());
 
       // The seed never writes level rows: only the Founder's is there.
-      const levels = await owner.query<{ role_key: string; min_level: string; scope: string; seeded: boolean }>(
+      const levels = await owner.query<{
+        role_key: string;
+        min_level: string;
+        scope: string;
+        seeded: boolean;
+      }>(
         'SELECT role_key, min_level, scope, seeded FROM app.role_permission_levels WHERE tenant_id = $1',
         [scope.tenantId],
       );

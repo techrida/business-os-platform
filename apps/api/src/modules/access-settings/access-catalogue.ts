@@ -720,13 +720,7 @@ export const ACCESS_PERMISSION_CATALOGUE: readonly AccessPermissionInfo[] = [
     [],
     'Invites new people into the company.',
   ),
-  perm(
-    'profile.avatar.write',
-    'Set profile pictures',
-    'record',
-    RECORD_NO_DEPT,
-    [],
-  ),
+  perm('profile.avatar.write', 'Set profile pictures', 'record', RECORD_NO_DEPT, []),
   perm('admin.roles.read', 'See access settings', 'onOff', ON_OFF_STAFF, []),
   perm(
     'admin.roles.write',

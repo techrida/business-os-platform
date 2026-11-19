@@ -435,9 +435,10 @@ describe('default level grants (U20b materialisation)', () => {
       'approvals.requests.read',
       'documents.read',
     ] as const) {
-      expect(allRows.filter((row) => row.permission === permission).map(rowKey), permission).toEqual(
-        [],
-      );
+      expect(
+        allRows.filter((row) => row.permission === permission).map(rowKey),
+        permission,
+      ).toEqual([]);
     }
   });
 

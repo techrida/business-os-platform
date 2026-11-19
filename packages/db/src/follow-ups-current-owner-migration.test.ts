@@ -133,7 +133,9 @@ async function insertActivity(
 
 /** An owner change as the code made it before D45: the UPDATE alone. */
 async function changeOwnerBeforeD45(leadId: string, to: string | null): Promise<void> {
-  await writeAs((c) => c.query('UPDATE app.leads SET owner_user_id = $2 WHERE id = $1', [leadId, to]));
+  await writeAs((c) =>
+    c.query('UPDATE app.leads SET owner_user_id = $2 WHERE id = $1', [leadId, to]),
+  );
 }
 
 /** An owner change as D45 makes it: the UPDATE and a lead.owner_changed event, in one transaction. */

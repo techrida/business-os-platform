@@ -547,7 +547,9 @@ describe("the requester's own purchase orders", () => {
     // With no purchase request read at all, the request is out of reach: the picker drops the order and nothing of
     // it (number, status or vendor) reaches the requester.
     current.grants = new Map(
-      [...grantsOf('operations_officer')].filter(([permission]) => permission !== 'procurement.pr.read'),
+      [...grantsOf('operations_officer')].filter(
+        ([permission]) => permission !== 'procurement.pr.read',
+      ),
     );
     const rows = await mine();
     expect(rows.map((r) => r.id)).not.toContain(po.id);
