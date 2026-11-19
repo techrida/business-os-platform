@@ -2,6 +2,8 @@
 // Real: migrations as bos_owner, queries as bos_app, ReceivableOrdersService, and ReceiptsService (drafts, confirms and
 // reversals are made through it, so the quantities are the ones the receipt routes leave). Faked: the request context
 // and authz.assert (the real pure can() on a fake principal). POs are inserted directly as bos_owner.
+// Also covers the requester's side of U18 #4: RequestedOrdersService (the receipts picker of a requester) and the
+// purchase orders PurchaseRequestsService.get returns with a request.
 // Run: pnpm --filter @bos/api exec vitest run src/modules/procurement/receipts/receivable-orders.integration.test.ts
 import 'reflect-metadata';
 
@@ -21,7 +23,7 @@ import {
   createTenantWithEntity,
   runMigrations,
 } from '@bos/db';
-import { ForbiddenException } from '@nestjs/common';
+import { ForbiddenException, NotFoundException } from '@nestjs/common';
 import { PostgreSqlContainer, type StartedPostgreSqlContainer } from '@testcontainers/postgresql';
 import { sql } from 'drizzle-orm';
 import { drizzle } from 'drizzle-orm/node-postgres';
@@ -38,6 +40,7 @@ import { NumberingService } from '../../../platform/settings/numbering.service';
 import { ReceivableOrdersService } from './receivable-orders.service';
 import { ReceiptsService } from './receipts.service';
 import { RequestedOrdersService } from './requested-orders.service';
+import { PurchaseRequestsService } from '../requests/purchase-requests.service';
 
 vi.setConfig({ testTimeout: 60_000, hookTimeout: 180_000 });
 
@@ -55,6 +58,7 @@ let scopeB: TxScope;
 let receipts: ReceiptsService;
 let orders: ReceivableOrdersService;
 let requested: RequestedOrdersService;
+let requests: PurchaseRequestsService;
 let taxCodeId = '';
 let vendorId = '';
 let departmentA = '';
@@ -214,6 +218,17 @@ beforeAll(async () => {
   );
   orders = new ReceivableOrdersService(db, caller);
   requested = new RequestedOrdersService(db, caller);
+  // get() reads only the database and the caller; the write collaborators are never reached.
+  requests = new PurchaseRequestsService(
+    db,
+    authz as unknown as AuthzService,
+    {} as never,
+    {} as never,
+    new AuditService(db),
+    new NumberingService(),
+    {} as never,
+    caller,
+  );
 });
 
 afterAll(async () => {
@@ -508,5 +523,76 @@ describe("the requester's own purchase orders", () => {
     expect((await mine()).map((r) => r.id)).not.toContain(inB.id);
     current.scope = scopeB;
     expect((await mine()).map((r) => r.id)).toEqual([inB.id]);
+  });
+});
+
+// A purchase request's detail names its orders (U18 #4) under the request's own read, with can.receiveService
+// mirroring ReceiptsService.assertMayReceive for a service receipt.
+describe('the purchase orders on a purchase request', () => {
+  it('shows the requester each order with Receive service only on an open order with a service line', async () => {
+    const service = await newPo({ lines: [SERVICE1] });
+    current.userId = U.requester;
+    current.role = 'operations_officer';
+    const pr = await requests.get(service.prId);
+    expect(pr.purchaseOrders).toEqual([
+      {
+        id: service.id,
+        number: service.number,
+        status: 'issued',
+        vendorName: VENDOR_NAME,
+        can: { receiveService: true },
+      },
+    ]);
+    // The flag holds: the requester can record the service receipt it promises.
+    await expect(
+      receipts.create(
+        {
+          purchaseOrderId: service.id,
+          kind: 'service',
+          receivedAt: '2026-11-09',
+          lines: [{ poLineId: service.lineIds[0]!, quantity: '1' }],
+        },
+        randomUUID(),
+      ),
+    ).resolves.toMatchObject({ purchaseOrderId: service.id });
+  });
+
+  it('offers no Receive service on a goods order, a received order, or to procurement', async () => {
+    const goods = await newPo({ lines: [GOODS5] });
+    const done = await newPo({ lines: [SERVICE1], status: 'fully_received' });
+    current.userId = U.requester;
+    current.role = 'operations_officer';
+    expect((await requests.get(goods.prId)).purchaseOrders?.[0]?.can.receiveService).toBe(false);
+    expect((await requests.get(done.prId)).purchaseOrders?.[0]?.can.receiveService).toBe(false);
+    const service = await newPo({ lines: [SERVICE1] });
+    current.userId = U.procurement;
+    current.role = 'procurement';
+    const seen = (await requests.get(service.prId)).purchaseOrders ?? [];
+    expect(seen.map((o) => o.id)).toEqual([service.id]);
+    expect(seen[0]?.can.receiveService).toBe(false);
+  });
+
+  it('adds only number, status, vendor name and the flag: no amount or vendor id rides along', async () => {
+    const po = await newPo({ lines: [SERVICE1, GOODS3] });
+    current.userId = U.requester;
+    current.role = 'operations_officer';
+    const [order] = (await requests.get(po.prId)).purchaseOrders ?? [];
+    expect(Object.keys(order ?? {}).sort()).toEqual([
+      'can',
+      'id',
+      'number',
+      'status',
+      'vendorName',
+    ]);
+    expect(Object.keys(order?.can ?? {})).toEqual(['receiveService']);
+  });
+
+  it('leaves out a draft order, and another requester cannot read the request at all', async () => {
+    const draft = await newPo({ status: 'draft' });
+    current.userId = U.requester;
+    current.role = 'operations_officer';
+    expect((await requests.get(draft.prId)).purchaseOrders).toEqual([]);
+    current.userId = U.otherRequester;
+    await expect(requests.get(draft.prId)).rejects.toBeInstanceOf(NotFoundException);
   });
 });
