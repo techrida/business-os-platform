@@ -216,4 +216,31 @@ describe('free text sections', () => {
     expect(html).toContain('Show more');
     expect(html).toContain('aria-expanded="false"');
   });
+
+  it('draws rich wording as lists and paragraphs and never lets a script through', () => {
+    const html = render(
+      version({
+        scope: '<p>Includes:</p><ul><li>Survey</li><li>Install</li></ul><script>alert(1)</script>',
+        termsAndConditions: '<ol><li>Pay in 30 days</li></ol>',
+      }),
+    );
+    expect(html).toContain('<ul><li>Survey</li><li>Install</li></ul>');
+    expect(html).toContain('<ol><li>Pay in 30 days</li></ol>');
+    expect(html).not.toContain('<script');
+    expect(html).not.toContain('alert(1)');
+    expect(html).not.toContain('&lt;ul&gt;');
+  });
+
+  it('still shows wording saved as plain text, and skips rich wording with no words', () => {
+    const html = render(version({ scope: 'Survey and install.', exclusions: '<p></p>' }));
+    expect(html).toContain('<p>Survey and install.</p>');
+    expect(html).not.toContain('>Exclusions<');
+  });
+
+  it('judges long on the words, not the markup', () => {
+    const shortRich = '<p><strong>Net</strong> 30</p>'.repeat(3);
+    expect(render(version({ scope: shortRich }))).not.toContain('Show more');
+    const longRich = `<p>${'Install and test the cabling. '.repeat(10)}</p>`;
+    expect(render(version({ scope: longRich }))).toContain('Show more');
+  });
 });
