@@ -2,8 +2,10 @@
 // `vendor_bank_account`, owner id = the account id. Serves the NFRs:
 // - "a payment goes only to a verified account": the evidence is attached with `vendor.bank.propose` (procurement,
 //   who proposes accounts) or `vendor.bank.verify` (finance, who makes the call-back, also for an account the vendor
-//   proposed from the portal) (`uploadPermission`, any one of them), not the generic `documents.upload`, and read
-//   by finance with `documents.read`. The maker-checker rule (the proposer never verifies) stays in BankService;
+//   proposed from the portal) (`uploadPermission`, any one of them), not the generic `documents.upload`. It is
+//   read with `vendor.read` on the vendor, the grant that shows the bank accounts themselves (`readPermission`), or
+//   `documents.read`, so procurement can open evidence on a vendor it does not own without a wider
+//   `documents.read`. The maker-checker rule (the proposer never verifies) stays in BankService;
 // - "deny by default": evidence is attached only while the account is proposed (once decided it is part of what
 //   was approved), no job adds files and no portal caller uploads here.
 // VendorBankModule registers it through BankEvidenceOwnerRegistrar.
@@ -54,6 +56,7 @@ export function bankEvidenceOwnerPolicy(db: Db): DocumentOwnerPolicy {
   return {
     ownerType: BANK_EVIDENCE_OWNER_TYPE,
     uploadPermission: BANK_EVIDENCE_UPLOAD_PERMISSIONS,
+    readPermission: 'vendor.read',
     resource: async (scope, accountId) => {
       const row = await load(scope, accountId);
       if (row === undefined) return null;
