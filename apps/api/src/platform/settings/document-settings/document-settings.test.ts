@@ -9,12 +9,17 @@
 import 'reflect-metadata';
 
 import {
+  DEFAULT_DATE_FORMAT,
+  DEFAULT_NUMBER_SYSTEMS,
   DEFAULT_ROLE_PERMISSIONS,
+  type DateFormatSetting,
+  type NumberSystemsSetting,
   type OrgKind,
   type Permission,
   type RoleKey,
   type TermPreset,
   EMPTY_COMPANY_PROFILE,
+  sanitizeRichText,
 } from '@bos/contracts';
 import {
   BadRequestException,
@@ -79,20 +84,24 @@ const preset = (over: Partial<TermPreset> = {}): TermPreset => ({
   ...over,
 });
 
+interface DisplayOverrides {
+  numberSystems?: NumberSystemsSetting;
+  dateFormat?: DateFormatSetting;
+}
+
 /** An in-memory `quotation.term_presets` that records each lock, read and write, in order. */
-function fakeSettings(
-  initial: TermPreset[] = [],
-  numberSystem: 'south_asian' | 'international' = 'south_asian',
-) {
+function fakeSettings(initial: TermPreset[] = [], display: DisplayOverrides = {}) {
+  const numberSystems = display.numberSystems ?? DEFAULT_NUMBER_SYSTEMS;
+  const dateFormat = display.dateFormat ?? DEFAULT_DATE_FORMAT;
   const state = { list: initial, version: initial.length > 0 ? 1 : (null as number | null) };
   const calls: string[] = [];
   const service = {
     get: vi.fn((_scope: unknown, key: string) => {
       calls.push(`get:${key}`);
       if (key === 'entity.profile') return Promise.resolve(structuredClone(EMPTY_COMPANY_PROFILE));
-      return Promise.resolve(
-        key === 'format.number_system' ? numberSystem : structuredClone(state.list),
-      );
+      if (key === 'format.number_systems') return Promise.resolve(structuredClone(numberSystems));
+      if (key === 'format.date') return Promise.resolve(dateFormat);
+      return Promise.resolve(structuredClone(state.list));
     }),
     getLocked: vi.fn((_tx: unknown, key: string) => {
       calls.push(`getLocked:${key}`);
@@ -108,8 +117,8 @@ function fakeSettings(
   return { state, calls, service };
 }
 
-function build(initial: TermPreset[] = [], numberSystem?: 'south_asian' | 'international') {
-  const settings = fakeSettings(initial, numberSystem);
+function build(initial: TermPreset[] = [], display?: DisplayOverrides) {
+  const settings = fakeSettings(initial, display);
   // Real AuthzService: assert() reads principal() (mocked above) and runs the real can().
   const authz = new AuthzService({} as Db, {} as RoleCache);
   const service = new DocumentSettingsService(
@@ -125,19 +134,37 @@ beforeEach(() => {
 });
 
 describe('GET settings/display', () => {
-  it('returns the number system of the acting entity for any active staff user', async () => {
+  it('returns the number systems and the date format of the acting entity for any active staff user', async () => {
+    const numberSystems: NumberSystemsSetting = {
+      NPR: 'international',
+      INR: 'international',
+      USD: 'south_asian',
+    };
     for (const role of ['founder', 'sales', 'accountant', 'procurement', 'warehouse'] as const) {
       currentPrincipal = principalOf(role);
-      const { documentSettings } = build([], 'international');
-      await expect(documentSettings.display()).resolves.toEqual({ numberSystem: 'international' });
+      const { documentSettings } = build([], { numberSystems, dateFormat: 'dd/MM/yyyy' });
+      await expect(documentSettings.display()).resolves.toEqual({
+        numberSystems,
+        dateFormat: 'dd/MM/yyyy',
+      });
     }
   });
 
-  it('reads format.number_system in the caller entity scope', async () => {
+  it('answers the defaults when the entity saved nothing', async () => {
+    const { documentSettings } = build();
+    await expect(documentSettings.display()).resolves.toEqual({
+      numberSystems: DEFAULT_NUMBER_SYSTEMS,
+      dateFormat: DEFAULT_DATE_FORMAT,
+    });
+  });
+
+  it('reads format.number_systems and format.date in the caller entity scope', async () => {
     currentPrincipal = principalOf('sales');
     const { documentSettings, service } = build();
     await documentSettings.display();
-    expect(service.get).toHaveBeenCalledWith(scope, 'format.number_system');
+    expect(service.get).toHaveBeenCalledWith(scope, 'format.number_systems');
+    expect(service.get).toHaveBeenCalledWith(scope, 'format.date');
+    expect(service.get).not.toHaveBeenCalledWith(scope, 'format.number_system');
   });
 
   it.each(['customer_user', 'vendor_user'] as const)(
@@ -400,6 +427,91 @@ describe('POST / PATCH / DELETE term presets', () => {
   );
 });
 
+describe('term set bodies and who may change them (real write path, fake settings)', () => {
+  const dirty = '<p>ok</p><script>alert(1)</script><a href="javascript:x">l</a>';
+
+  it('create: stores the sanitised body, not the markup that was sent', async () => {
+    const { documentSettings, state } = build();
+    const created = await documentSettings.create({ kind: 'scope', name: 'Dirty', body: dirty });
+    // The script is dropped with its content, the link loses its tag and href, its text becomes a paragraph.
+    expect(sanitizeRichText(dirty)).toBe('<p>ok</p><p>l</p>');
+    expect(created.body).toBe('<p>ok</p><p>l</p>');
+    expect(state.list).toEqual([created]);
+    expect(JSON.stringify(state.list)).not.toMatch(/script|javascript|href|alert/);
+  });
+
+  it('patch: sanitises the new body the same way', async () => {
+    const { documentSettings, state } = build([preset()]);
+    const updated = await documentSettings.update(ID_A, { body: dirty });
+    expect(updated.body).toBe('<p>ok</p><p>l</p>');
+    expect(state.list[0]?.body).toBe('<p>ok</p><p>l</p>');
+  });
+
+  it('create: a plain-text legacy body is stored unchanged', async () => {
+    const { documentSettings, state } = build();
+    const body = 'Net 30 days.\n\nLate fees apply: 2% & interest < 5%.';
+    const created = await documentSettings.create({ kind: 'payment_terms', name: 'Legacy', body });
+    expect(created.body).toBe(body);
+    expect(state.list[0]?.body).toBe(body);
+  });
+
+  it('create: a rich body whose words pass the 10,000 character cap is a 400, and nothing is written', async () => {
+    const { documentSettings, service } = build();
+    const over = `<p>${'x'.repeat(10_001)}</p>`;
+    const attempt = documentSettings.create({ kind: 'scope', name: 'Long', body: over });
+    await expect(attempt).rejects.toBeInstanceOf(BadRequestException);
+    await expect(attempt).rejects.toThrow(/at most 10000 characters/);
+    await expect(documentSettings.update(ID_A, { body: over })).rejects.toBeInstanceOf(
+      BadRequestException,
+    );
+    expect(service.set).not.toHaveBeenCalled();
+  });
+
+  it('create: the cap counts the words, not the markup around them', async () => {
+    const { documentSettings } = build();
+    // 70,000 characters of markup around 7,000 of words: under the cap by words, far over it by length.
+    const bold = `<p>${'<em>x</em>'.repeat(7_000)}</p>`;
+    await expect(
+      documentSettings.create({ kind: 'scope', name: 'Marked up', body: bold }),
+    ).resolves.toBeDefined();
+    await expect(
+      documentSettings.create({
+        kind: 'scope',
+        name: 'Exactly the cap',
+        body: `<p>${'x'.repeat(10_000)}</p>`,
+      }),
+    ).resolves.toBeDefined();
+  });
+
+  it('a user holding only quotation.draft can list but gets 403 on create, patch and delete', async () => {
+    currentPrincipal = principalOf('sales', {
+      grants: new Map<Permission, never>([['quotation.draft', 'all' as never]]),
+    });
+    expect(currentPrincipal.grants.has('admin.settings.write')).toBe(false);
+    const { documentSettings, service } = build([preset()]);
+    await expect(documentSettings.list({})).resolves.toHaveLength(1);
+    const body = { kind: 'scope', name: 'n', body: 'b' };
+    await expect(documentSettings.create(body)).rejects.toBeInstanceOf(ForbiddenException);
+    await expect(documentSettings.update(ID_A, { name: 'n' })).rejects.toBeInstanceOf(
+      ForbiddenException,
+    );
+    await expect(documentSettings.remove(ID_A)).rejects.toBeInstanceOf(ForbiddenException);
+    expect(service.getLocked).not.toHaveBeenCalled();
+    expect(service.set).not.toHaveBeenCalled();
+  });
+
+  it('a founder without admin.settings.write (grant removed) is refused like anyone else', async () => {
+    const grants = new Map(currentPrincipal.grants);
+    grants.delete('admin.settings.write');
+    currentPrincipal = principalOf('founder', { grants });
+    const { documentSettings, service } = build([preset()]);
+    await expect(
+      documentSettings.create({ kind: 'scope', name: 'n', body: 'b' }),
+    ).rejects.toBeInstanceOf(ForbiddenException);
+    expect(service.set).not.toHaveBeenCalled();
+  });
+});
+
 describe('route guards (what the tenancy interceptor enforces before a handler runs)', () => {
   const proto = DocumentSettingsController.prototype;
 
@@ -477,7 +589,10 @@ describe('route guards (what the tenancy interceptor enforces before a handler r
 
   it('the controller passes its input to the service unchanged', async () => {
     const service = {
-      display: vi.fn().mockResolvedValue({ numberSystem: 'south_asian' }),
+      display: vi.fn().mockResolvedValue({
+        numberSystems: DEFAULT_NUMBER_SYSTEMS,
+        dateFormat: DEFAULT_DATE_FORMAT,
+      }),
       list: vi.fn().mockResolvedValue([]),
       create: vi.fn().mockResolvedValue(preset()),
       update: vi.fn().mockResolvedValue(preset()),
@@ -499,7 +614,11 @@ describe('route guards (what the tenancy interceptor enforces before a handler r
 
 describe('POST admin/settings/documents/preview', () => {
   it('draws the sample quotation in the chosen layout and colour for the founder', async () => {
-    const { documentSettings } = build([], 'international');
+    // The sample quotation is in NPR, so the NPR entry of the setting decides the grouping.
+    const { documentSettings, service } = build([], {
+      numberSystems: { NPR: 'international', INR: 'south_asian', USD: 'south_asian' },
+      dateFormat: 'dd/MM/yyyy',
+    });
     const { html } = await documentSettings.previewDocument({
       layout: 'ledger',
       primaryColour: '#BE123C',
@@ -507,6 +626,20 @@ describe('POST admin/settings/documents/preview', () => {
     expect(html).toContain('#be123c');
     expect(html).toContain('Quotation');
     expect(html).toContain('Million');
+    // The sample's issue date (2026-11-19) is drawn in the saved date format.
+    expect(html).toContain('19/11/2026');
+    expect(service.get).toHaveBeenCalledWith(scope, 'format.number_systems');
+    expect(service.get).toHaveBeenCalledWith(scope, 'format.date');
+  });
+
+  it('draws the lakh system and the default date format when the entity saved nothing', async () => {
+    const { documentSettings } = build();
+    const { html } = await documentSettings.previewDocument({
+      layout: 'banded',
+      primaryColour: '#1d4ed8',
+    });
+    expect(html).not.toContain('Million');
+    expect(html).toContain('19 Nov 2026');
   });
 
   it('refuses anyone without admin.settings.write', async () => {

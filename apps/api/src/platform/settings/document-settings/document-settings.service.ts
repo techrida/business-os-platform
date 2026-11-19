@@ -10,7 +10,8 @@ import { randomUUID } from 'node:crypto';
 import {
   DocumentLayoutSchema,
   HexColourSchema,
-  type NumberSystemSetting,
+  type DateFormatSetting,
+  type NumberSystemsSetting,
   type Permission,
   type TermPreset,
   TermPresetKindSchema,
@@ -51,7 +52,8 @@ const PatchBody = TermPresetSchema.pick({ name: true, body: true })
 const ListQuery = z.object({ kind: TermPresetKindSchema.optional() });
 
 export interface DisplaySettings {
-  numberSystem: NumberSystemSetting;
+  numberSystems: NumberSystemsSetting;
+  dateFormat: DateFormatSetting;
 }
 
 function parse<S extends z.ZodType>(schema: S, value: unknown, what: string): z.infer<S> {
@@ -108,7 +110,11 @@ export class DocumentSettingsService {
   async display(): Promise<DisplaySettings> {
     this.assertActiveStaff();
     const { scope } = requestTx();
-    return { numberSystem: await this.settings.get(scope, 'format.number_system') };
+    const [numberSystems, dateFormat] = await Promise.all([
+      this.settings.get(scope, 'format.number_systems'),
+      this.settings.get(scope, 'format.date'),
+    ]);
+    return { numberSystems, dateFormat };
   }
 
   /**
@@ -119,15 +125,17 @@ export class DocumentSettingsService {
     this.authz.assert('admin.settings.write');
     const body = parse(PreviewBody, rawBody, 'preview');
     const { scope } = requestTx();
-    const [profile, numberSystem] = await Promise.all([
+    const [profile, numberSystems, dateFormat] = await Promise.all([
       this.settings.get(scope, 'entity.profile'),
-      this.settings.get(scope, 'format.number_system'),
+      this.settings.get(scope, 'format.number_systems'),
+      this.settings.get(scope, 'format.date'),
     ]);
     const html = renderQuotationHtml(sampleQuotationView(), {
       snapshot: {
         style: { layout: body.layout, primaryColour: body.primaryColour },
         profile,
-        numberSystem,
+        numberSystems,
+        dateFormat,
         capturedAt: new Date().toISOString(),
       },
     });
