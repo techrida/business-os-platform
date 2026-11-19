@@ -4,13 +4,12 @@ import {
   NEUTRALS as N,
   addressLines,
   brandMark,
-  closing,
   detailRows,
   esc,
   itemsTable,
   kvTable,
   statusBadge,
-  summary,
+  tail,
   title,
   type LayoutRenderer,
   type RenderContext,
@@ -65,8 +64,7 @@ export const sideLabels: LayoutRenderer = (ctx) => {
     </section>
     ${cards(ctx)}
     ${itemsTable(ctx)}
-    ${summary(ctx)}
-    ${closing(ctx)}
+    ${tail(ctx)}
   </div>`;
   return { css, body };
 };
