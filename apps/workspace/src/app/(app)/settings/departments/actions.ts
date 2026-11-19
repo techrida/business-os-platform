@@ -1,6 +1,7 @@
 'use server';
 
 import {
+  AccessWarningCodeSchema,
   DEPARTMENT_NAME_MAX,
   DEPARTMENT_NAME_MIN,
   DEPARTMENT_NOTE_MAX,
@@ -10,7 +11,12 @@ import {
 import { revalidatePath } from 'next/cache';
 import { z } from 'zod';
 
-import { mapAccessPreviewError, previewAccessChanges } from '@/lib/api-access';
+import {
+  mapAccessPreviewError,
+  mapAccessSaveError,
+  previewAccessChanges,
+  saveAccessChanges,
+} from '@/lib/api-access';
 import {
   createDepartment,
   getDepartment,
@@ -18,7 +24,6 @@ import {
   renameDepartment,
   restoreDepartment,
   retireDepartment,
-  saveDepartmentPeople,
 } from '@/lib/api-departments';
 
 import { requireSection } from '../guard';
@@ -180,25 +185,29 @@ export async function saveDepartmentPeopleAction(
   const session = await requireSection('departments');
   const id = Id.safeParse(departmentId);
   const changes = Changes.safeParse(input.changes);
-  const revision = z.string().min(1).safeParse(input.expectedRevision);
-  if (!id.success || !changes.success || !revision.success) {
+  const rest = z
+    .object({
+      expectedRevision: z.string().min(1),
+      note: z.string(),
+      acknowledged: z.array(AccessWarningCodeSchema).max(20),
+    })
+    .safeParse(input);
+  if (!id.success || !changes.success || !rest.success) {
     return { ok: false, kind: 'invalid', message: UNREADABLE };
   }
-  const note = input.note.trim().slice(0, DEPARTMENT_NOTE_MAX);
+  const note = rest.data.note.trim().slice(0, DEPARTMENT_NOTE_MAX);
 
+  // People changes go through the one access save, so the server re-checks every warning and
+  // the review dialog's dry run and the save agree (spec 7.4: no other endpoint).
   try {
-    await saveDepartmentPeople(session, id.data, {
+    await saveAccessChanges(session, {
       changes: changes.data,
-      expectedRevision: revision.data,
+      expectedRevision: rest.data.expectedRevision,
+      acknowledged: rest.data.acknowledged,
       ...(note !== '' ? { note } : {}),
-      ...(input.acknowledged.length > 0 ? { acknowledged: true } : {}),
     });
   } catch (error) {
-    const failure = mapDepartmentWriteError(error);
-    if (failure.kind === 'notFound') {
-      return { ok: false, kind: 'error', message: failure.message };
-    }
-    return { ok: false, ...failure };
+    return { ok: false, ...mapAccessSaveError(error) };
   }
   revalidate(id.data);
   for (const change of changes.data) {

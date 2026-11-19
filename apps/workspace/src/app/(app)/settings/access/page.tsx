@@ -63,7 +63,12 @@ async function loadPeople(session: Session): Promise<ReviewPerson[]> {
 }
 
 /** Access > By area (spec 4). The frame (heading and tabs) comes from layout.tsx. */
-export default async function AccessByAreaPage() {
+export default async function AccessByAreaPage({
+  searchParams,
+}: {
+  searchParams: Promise<{ area?: string | string[] }>;
+}) {
+  const { area } = await searchParams;
   const session = await requireSection('roles');
   const canEdit = permissionChecker(session.roles)('admin.roles.write');
   const [loaded, departments, people] = await Promise.all([
@@ -103,6 +108,7 @@ export default async function AccessByAreaPage() {
         key={catalogue.revision}
         catalogue={catalogue}
         canEdit={canEdit}
+        initialAreaKey={typeof area === 'string' ? area : undefined}
         departments={departments}
         people={people}
         actions={{
