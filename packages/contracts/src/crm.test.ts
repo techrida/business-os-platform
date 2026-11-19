@@ -322,9 +322,9 @@ describe('stage change bodies', () => {
         expectedVersion: 1,
       }).success,
     ).toBe(false);
-    expect(
-      OpportunityStageChangeBodySchema.safeParse({ ...lost, stage: 'on_hold' }).success,
-    ).toBe(true);
+    expect(OpportunityStageChangeBodySchema.safeParse({ ...lost, stage: 'on_hold' }).success).toBe(
+      true,
+    );
     expect(
       OpportunityStageChangeBodySchema.safeParse({
         ...lost,

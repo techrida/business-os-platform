@@ -452,9 +452,9 @@ describe('D54-4 lost reasons: stale-view guard', () => {
     const afterRename = await adminList();
 
     // Missing expectedOrder is a 400.
-    expect(
-      (await request(baseUrl).post('/v1/admin/lead-lost-reasons/reset').send({})).status,
-    ).toBe(400);
+    expect((await request(baseUrl).post('/v1/admin/lead-lost-reasons/reset').send({})).status).toBe(
+      400,
+    );
 
     const stale = await request(baseUrl)
       .post('/v1/admin/lead-lost-reasons/reset')
@@ -467,9 +467,12 @@ describe('D54-4 lost reasons: stale-view guard', () => {
       .post('/v1/admin/lead-lost-reasons/reset')
       .send({ expectedOrder: lostReasonsToken(afterRename) });
     expect(ok.status, JSON.stringify(ok.body)).toBe(200);
-    expect(options.parse(ok.body).slice(0, 7).map((o) => o.label)).toEqual(
-      DEFAULT_LEAD_LOST_REASONS.map((d) => d.label),
-    );
+    expect(
+      options
+        .parse(ok.body)
+        .slice(0, 7)
+        .map((o) => o.label),
+    ).toEqual(DEFAULT_LEAD_LOST_REASONS.map((d) => d.label));
   });
 
   it('lets exactly one of two concurrent reorders with the same token win', async () => {

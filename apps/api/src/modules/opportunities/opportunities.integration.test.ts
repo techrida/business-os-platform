@@ -853,7 +853,12 @@ describe('onLost port', () => {
     });
     const open = await seed({ stage: 'negotiation' });
     await expect(
-      failing.changeStage(open, { stage: 'lost', lostReasonId: price, note: 'n', expectedVersion: 1 }),
+      failing.changeStage(open, {
+        stage: 'lost',
+        lostReasonId: price,
+        note: 'n',
+        expectedVersion: 1,
+      }),
     ).rejects.toThrow('cannot cancel the open quotation');
     expect(await rowOf(open)).toMatchObject({ stage: 'negotiation', version: 1 });
   });
