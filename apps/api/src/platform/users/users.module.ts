@@ -4,6 +4,7 @@
 // Imported by AppModule only; the worker uses UsersWorkerModule.
 import { Global, Module } from '@nestjs/common';
 
+import { AuditModule } from '../audit/audit.module';
 import { UserDirectory } from '../authz/user-directory';
 import { AdminUsersController } from './admin-users.controller';
 import { HooksController } from './hooks.controller';
@@ -12,7 +13,7 @@ import { UsersService } from './users.service';
 
 @Global()
 @Module({
-  imports: [UsersCoreModule],
+  imports: [UsersCoreModule, AuditModule],
   controllers: [HooksController, AdminUsersController],
   providers: [UsersService, { provide: UserDirectory, useExisting: UsersService }],
   exports: [UsersService, UserDirectory],
