@@ -52,6 +52,7 @@ import {
   PORTAL_LOGIN_POLICY,
   ZitadelClient,
   createFetchTransport,
+  type AppInfo,
   type MachineSpec,
   type ZitadelApi,
   type ZitadelInstanceApi,
@@ -107,6 +108,13 @@ export const LOADTEST_APPROVER_USER = 'bos-loadtest-approver';
 export const TOTP_METHOD = 'AUTHENTICATION_METHOD_TYPE_TOTP';
 /** NFR security: a role revoked in ZITADEL reaches the API within one token lifetime. */
 export const ACCESS_TOKEN_LIFETIME = '900s';
+/**
+ * The customer portal's own OIDC app (apps/portal), in the same project as the workspace app. Created only
+ * when the seed is given PORTAL_PUBLIC_URL; its client id goes to `.dev/zitadel-portal.env`, which compose's
+ * `portal` service reads after `zitadel.env` so it overrides the workspace's OIDC_CLIENT_ID.
+ */
+export const PORTAL_APP_NAME = 'Business OS portal';
+export const PORTAL_ENV_FILE = 'zitadel-portal.env';
 
 /** Everything the seed calls on ZITADEL: the P0 surface plus the P1 and K8 additions. */
 export type SeedApi = ZitadelApi & ZitadelP1Api & ZitadelInstanceApi;
@@ -190,6 +198,11 @@ export interface SeedDeps {
   log: (line: string) => void;
   issuer: string;
   workspaceUrl: string;
+  /**
+   * Public origin of the customer portal (PORTAL_PUBLIC_URL), without a trailing slash. Unset: no portal
+   * app and no `.dev/zitadel-portal.env`, exactly as before the portal app existed.
+   */
+  portalUrl?: string;
   /** Clock for TOTP codes and the PAT expiry; tests pin it. Defaults to the real time. */
   now?: () => Date;
   /** Where ZITADEL posts user events. Defaults to DEFAULT_WEBHOOK_URL. */
@@ -298,6 +311,45 @@ export async function runSeed(deps: SeedDeps): Promise<SeedResult> {
         'Switch it in the console (Token Settings), or delete the app there and run `pnpm seed` again (it recreates it). ' +
         'Last resort only: `BOS_CONFIRM_NUKE=yes pnpm stack:nuke` deletes the whole stack, including the database AND its backups.',
     );
+  }
+
+  // --- The customer portal's OIDC app: a public PKCE client like the workspace one (createOidcApp), so
+  // apps/portal/src/lib/oidc.ts can sign in with client.None(). Same project, so OIDC_AUDIENCE, the role
+  // claims and the customer persona's authorization and project grant apply unchanged. ---
+  let portalApp: AppInfo | undefined;
+  if (deps.portalUrl) {
+    const redirectUri = `${deps.portalUrl}/auth/callback`;
+    const postLogoutUri = `${deps.portalUrl}/`;
+    portalApp = await api.findOidcApp(projectId, PORTAL_APP_NAME);
+    if (!portalApp) {
+      portalApp = await api.createOidcApp(projectId, {
+        name: PORTAL_APP_NAME,
+        redirectUris: [redirectUri],
+        postLogoutRedirectUris: [postLogoutUri],
+      });
+      changed(`created OIDC app "${PORTAL_APP_NAME}"`);
+    } else if (portalApp.accessTokenType !== 'OIDC_TOKEN_TYPE_JWT') {
+      throw new Error(
+        `OIDC app "${PORTAL_APP_NAME}" exists with access token type ${portalApp.accessTokenType}, expected JWT. ` +
+          'Switch it in the console (Token Settings), or delete the app there and run `pnpm seed` again (it recreates it).',
+      );
+    } else if (
+      !portalApp.redirectUris.includes(redirectUri) ||
+      !portalApp.postLogoutRedirectUris.includes(postLogoutUri)
+    ) {
+      // Another stack's portal origin (a different PORTAL_HOST) stays allowed: add, never replace.
+      const redirectUris = portalApp.redirectUris.includes(redirectUri)
+        ? portalApp.redirectUris
+        : [...portalApp.redirectUris, redirectUri];
+      const postLogoutRedirectUris = portalApp.postLogoutRedirectUris.includes(postLogoutUri)
+        ? portalApp.postLogoutRedirectUris
+        : [...portalApp.postLogoutRedirectUris, postLogoutUri];
+      await api.setOidcAppRedirects(projectId, portalApp.id, {
+        redirectUris,
+        postLogoutRedirectUris,
+      });
+      changed(`added ${deps.portalUrl} to the redirect URIs of OIDC app "${PORTAL_APP_NAME}"`);
+    }
   }
 
   // --- Project grants: customer and vendor orgs may only use their own role. ---
@@ -581,7 +633,13 @@ export async function runSeed(deps: SeedDeps): Promise<SeedResult> {
   // K6_CLIENT_ID, the machine user's username, as the client-credentials client id, so that is
   // the client its tokens carry. R7 below checks it against a real token.
   // P1's approvals gate also signs in as the approver machine user, under its own client id.
-  const allowedAzp = [app.clientId, LOADTEST_USER, LOADTEST_APPROVER_USER];
+  // The portal forwards its users' access tokens to the API, and they carry the portal's client id.
+  const allowedAzp = [
+    app.clientId,
+    ...(portalApp ? [portalApp.clientId] : []),
+    LOADTEST_USER,
+    LOADTEST_APPROVER_USER,
+  ];
   const zitadelEnv: Record<string, string> = {
     OIDC_ISSUER: deps.issuer,
     OIDC_AUDIENCE: projectId,
@@ -596,6 +654,14 @@ export async function runSeed(deps: SeedDeps): Promise<SeedResult> {
   if (signingKey) zitadelEnv['ZITADEL_ACTIONS_SIGNING_KEY'] = signingKey;
   if (await files.write('zitadel.env', renderEnv(zitadelEnv))) {
     changed('wrote .dev/zitadel.env');
+  }
+  // Only the portal's own client id: issuer, audience and the org ids come from zitadel.env, which the
+  // portal reads first. Without PORTAL_PUBLIC_URL an existing file is left alone.
+  if (
+    portalApp &&
+    (await files.write(PORTAL_ENV_FILE, renderEnv({ OIDC_CLIENT_ID: portalApp.clientId })))
+  ) {
+    changed(`wrote .dev/${PORTAL_ENV_FILE}`);
   }
 
   // --- Our own tenancy tables (ADR 0027): the TR entity, the parties, ZITADEL org id -> idp_orgs. ---
@@ -998,6 +1064,8 @@ export async function main(): Promise<void> {
     /\/+$/,
     '',
   );
+  // No default: without PORTAL_PUBLIC_URL the seed creates no portal app (see PORTAL_APP_NAME).
+  const portalUrl = process.env['PORTAL_PUBLIC_URL']?.replace(/\/+$/, '') || undefined;
 
   const pat = (await readFile(patFile, 'utf8')).trim();
   if (!pat) throw new Error(`Admin PAT file ${patFile} is empty`);
@@ -1010,6 +1078,7 @@ export async function main(): Promise<void> {
     log: (line) => console.log(line),
     issuer,
     workspaceUrl,
+    ...(portalUrl ? { portalUrl } : {}),
     webhookUrl: process.env['ZITADEL_WEBHOOK_URL'] ?? DEFAULT_WEBHOOK_URL,
     adminUsername: process.env['ZITADEL_ADMIN_USERNAME'] ?? DEFAULT_ADMIN_USERNAME,
     configureDevMailpit: process.env['BOS_SEED_DEV_MAILPIT'] === 'true',
