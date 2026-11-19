@@ -33,7 +33,7 @@ function pdfAvailability(invoice: InvoiceDetail['invoice']) {
   return 'The PDF is made when the invoice is issued.';
 }
 
-function facts(invoice: InvoiceDetail['invoice']): Fact[] {
+function facts(invoice: InvoiceDetail['invoice'], customerName: string | undefined): Fact[] {
   const out: Fact[] = [
     {
       key: 'number',
@@ -73,7 +73,7 @@ function facts(invoice: InvoiceDetail['invoice']): Fact[] {
       label: 'Customer',
       value: (
         <Link href={`/customers/${encodeURIComponent(invoice.customerId)}`} className={styles.wrap}>
-          {invoice.buyer?.legalName ?? 'Customer details unavailable'}
+          {customerName ?? 'Customer details unavailable'}
         </Link>
       ),
     },
@@ -186,6 +186,8 @@ export default async function InvoiceDetailPage({ params }: { params: Promise<{ 
   }
 
   const { invoice } = detail;
+  // Issued: the buyer as frozen at issue. A draft has no snapshot yet, so the API sends the customer's current name.
+  const customerName = invoice.buyer?.legalName ?? detail.customerName;
   const gates = invoiceGates(invoice, session.roles);
   const pdfNumber =
     invoice.kind !== 'proforma' && invoice.status === 'issued' ? invoice.number : null;
@@ -209,7 +211,7 @@ export default async function InvoiceDetailPage({ params }: { params: Promise<{ 
             <InvoiceStatusBadge status={invoice.status} />
           </>
         }
-        description={invoice.buyer?.legalName ?? undefined}
+        description={customerName}
         actions={
           pdfNumber || gates.submit || gates.issue || gates.discard ? (
             <>
@@ -233,7 +235,7 @@ export default async function InvoiceDetailPage({ params }: { params: Promise<{ 
       <div className={styles.columns}>
         <div className={styles.detailMain}>
           <Panel title="Invoice details" description={`Last changed ${when(invoice.updatedAt)}`}>
-            <FactList facts={facts(invoice)} />
+            <FactList facts={facts(invoice, customerName)} />
           </Panel>
           <Lines detail={detail} />
         </div>

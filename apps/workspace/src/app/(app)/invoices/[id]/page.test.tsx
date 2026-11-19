@@ -59,6 +59,33 @@ describe('invoice detail page', () => {
     expect(html).not.toMatch(/<input[^>]*(number|issueDate)/i);
   });
 
+  it('names the customer of a draft, which has no buyer snapshot yet, from the name the API sends', async () => {
+    // An accountant reads invoices; the page asks no customer route, so it needs no customer.read.
+    mocks.requireStaffSession.mockResolvedValue({ accessToken: 't', roles: ['accountant'] });
+    mocks.getInvoice.mockResolvedValue(
+      invoiceDetail({ status: 'draft', buyer: null }, { customerName: 'Himalayan Agro Foods' }),
+    );
+    const text = (await render()).replace(/<[^>]*>/g, ' ');
+    expect(text).toContain('Himalayan Agro Foods');
+    expect(text).not.toContain('Customer details unavailable');
+  });
+
+  it('keeps the name frozen at issue on an issued invoice, even after the customer is renamed', async () => {
+    mocks.getInvoice.mockResolvedValue(
+      invoiceDetail(
+        {
+          status: 'issued',
+          approvalRequestId: APPROVAL,
+          buyer: { legalName: 'Old Name Pvt. Ltd.', panVatNo: null, address: null },
+        },
+        { customerName: 'New Name Pvt. Ltd.' },
+      ),
+    );
+    const text = (await render()).replace(/<[^>]*>/g, ' ');
+    expect(text).toContain('Old Name Pvt. Ltd.');
+    expect(text).not.toContain('New Name Pvt. Ltd.');
+  });
+
   it('uses readable relationship labels without exposing database IDs', async () => {
     mocks.getInvoice.mockResolvedValue(
       invoiceDetail({

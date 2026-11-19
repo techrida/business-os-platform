@@ -207,6 +207,12 @@ export type InvoicePrintDto = z.infer<typeof InvoicePrintDtoSchema>;
 
 export const InvoiceDetailSchema = z.object({
   invoice: InvoiceDtoSchema,
+  /**
+   * The customer's current legal name, read with the invoice in its tenant, so a draft (no `buyer` snapshot yet)
+   * can name its customer without a customer read. `invoice.buyer` stays the name frozen at issue. Optional so an
+   * older API answer still parses.
+   */
+  customerName: z.string().min(1).optional(),
   lines: z.array(InvoiceLineDtoSchema),
   taxSummary: z.array(InvoiceTaxSummaryItemSchema),
   prints: z.array(InvoicePrintDtoSchema),
