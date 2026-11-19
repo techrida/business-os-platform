@@ -49,11 +49,11 @@ export function invoiceGates(
 const PAYABLE: ReadonlySet<SettlementStatus> = new Set(['unpaid', 'partly_paid', 'overdue']);
 
 /**
- * False when the Payment filter selects only settled states (paid, credited), so the rows cannot owe anything and the
- * list offers no Record payment button. No filter, or any owing state in it, keeps the buttons.
+ * True only when the Payment filter selects owing states alone (unpaid, partly paid, overdue). The list rows carry no
+ * paid state, so without that filter a row could be settled and the list offers no Record payment button.
  */
 export function settlementMayOwe(selected: readonly string[]): boolean {
-  return selected.length === 0 || selected.some((s) => PAYABLE.has(s as SettlementStatus));
+  return selected.length > 0 && selected.every((s) => PAYABLE.has(s as SettlementStatus));
 }
 
 /**

@@ -60,7 +60,8 @@ function PaymentRow({
   const href = `/payments/${encodeURIComponent(item.id)}`;
   // An unnumbered payment is named by who paid and when, so each row's action reads differently.
   const name =
-    item.number ?? `payment from ${item.customerName} received ${when(item.receivedOn, 'date')}`;
+    item.number ??
+    `payment of ${money(item.amount, item.currency, numberSystems)} from ${item.customerName} received ${when(item.receivedOn, 'date')}`;
   return (
     <tr>
       <Td nowrap>

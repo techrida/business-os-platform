@@ -203,7 +203,6 @@ describe('parseDiscount', () => {
     ['', '', undefined],
     ['none', '12', undefined],
     ['pct', '0', { mode: 'pct', value: '0' }],
-    ['pct', '100', { mode: 'pct', value: '100' }],
     ['pct', '33.3333', { mode: 'pct', value: '33.3333' }],
     ['amount', ' 1,00,000.50 ', { mode: 'amount', value: '100000.50' }],
   ])('%s %j sends %j', (mode, value, data) => {
@@ -211,6 +210,8 @@ describe('parseDiscount', () => {
   });
 
   it.each([
+    ['pct', '100'],
+    ['pct', '1,5'],
     ['pct', '100.5'],
     ['pct', '-1'],
     ['pct', '1.23456'],
