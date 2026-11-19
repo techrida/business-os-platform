@@ -57,10 +57,11 @@ export function nextFollowUpSql(): SQL<Date | null> {
 }
 
 /**
- * `GET /v1/activities?leadId&opportunityId&customerId&contactId&quotationId&kind&status&q&limit&offset`. At most
- * one subject filter: with none, the list is every activity whose subject the caller may read (the workspace's
- * activity page). `kind` may repeat. `status` picks planned or logged; without it, every activity that is not
- * cancelled. `limit` arrives as text in a query string, so it is coerced.
+ * `GET /v1/activities?leadId&opportunityId&customerId&contactId&quotationId&kind&status&dueFrom&dueTo&q&limit&offset`.
+ * At most one subject filter: with none, the list is every activity whose subject the caller may read (the
+ * workspace's activity page). `kind` may repeat. `status` picks planned or logged; without it, every activity that
+ * is not cancelled. `dueFrom` and `dueTo` are calendar days in Asia/Kathmandu, both inclusive; either one keeps
+ * only activities with a due time. `limit` arrives as text in a query string, so it is coerced.
  */
 export const ListActivitiesQuerySchema = z
   .strictObject({
@@ -71,14 +72,41 @@ export const ListActivitiesQuerySchema = z
     quotationId: z.guid().optional(),
     kind: multi(ActivityKindSchema),
     status: ActivityStatusSchema.optional(),
+    dueFrom: z.iso.date().optional(),
+    dueTo: z.iso.date().optional(),
     q: searchParam,
     ...limitOffset({ max: 200, fallback: 50 }),
   })
   .refine((q) => ACTIVITY_SUBJECT_KEYS.filter((k) => q[k] !== undefined).length <= 1, {
     path: ['leadId'],
     message: 'at most one of leadId, opportunityId, customerId, contactId or quotationId',
+  })
+  .refine((q) => q.dueFrom === undefined || q.dueTo === undefined || q.dueFrom <= q.dueTo, {
+    path: ['dueFrom'],
+    message: 'dueFrom must not be after dueTo',
   });
 export type ListActivitiesQuery = z.infer<typeof ListActivitiesQuerySchema>;
+
+/** Asia/Kathmandu is UTC+5:45 all year (no daylight saving), the zone the workspace shows due times in. */
+const KATHMANDU_OFFSET = '+05:45';
+const DAY_MS = 24 * 60 * 60 * 1000;
+
+/**
+ * The instants a due-day range covers: from the start of `dueFrom` to before the start of the day after `dueTo`,
+ * both in Asia/Kathmandu. Half-open at the top, so a follow-up due at 23:59 on `dueTo` is in.
+ */
+export function dueRangeBounds(range: { dueFrom?: string | undefined; dueTo?: string | undefined }): {
+  from?: Date;
+  before?: Date;
+} {
+  const dayStart = (day: string) => new Date(`${day}T00:00:00${KATHMANDU_OFFSET}`);
+  return {
+    ...(range.dueFrom !== undefined ? { from: dayStart(range.dueFrom) } : {}),
+    ...(range.dueTo !== undefined
+      ? { before: new Date(dayStart(range.dueTo).getTime() + DAY_MS) }
+      : {}),
+  };
+}
 
 export type ActivityRow = typeof activities.$inferSelect;
 
