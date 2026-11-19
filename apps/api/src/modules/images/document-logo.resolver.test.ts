@@ -1,6 +1,7 @@
 // Unit test of DocumentLogoResolverFactory (U12, "Snapshots freeze BYTES"): the newest clean version of a live
 // entity_logo in the scope's tenant and entity becomes a data URL; a logo whose newest version still awaits its bytes
-// or the scan (and has no clean version) throws DocumentLogoPendingError; anything else is null; an oversize file is
+// or the scan (and has no clean version), or a removed logo of this entity (replaced mid-render), throws
+// DocumentLogoPendingError; anything else is null; an oversize file is
 // null with a warning; a storage failure throws (so the issuer raises DocumentLogoUnavailableError). Fakes: the lookup
 // (the database read) and the storage adapter.
 // Run: apps/api/node_modules/.bin/vitest run src/modules/images/document-logo.resolver.test.ts (from apps/api)
@@ -95,7 +96,15 @@ describe('DocumentLogoResolverFactory', () => {
 
   it.each([
     ['an unknown document', undefined],
-    ['a removed document', row({ removedAt: new Date() })],
+    [
+      'a removed logo of another entity',
+      row({ removedAt: new Date(), organizationId: randomUUID() }),
+    ],
+    [
+      'a removed image of another owner type',
+      row({ removedAt: new Date(), ownerType: 'customer_logo' }),
+    ],
+    ['a removed logo of another tenant', row({ removedAt: new Date(), tenantId: randomUUID() })],
     ['another owner type (a customer logo)', row({ ownerType: 'customer_logo' })],
     ['a profile picture', row({ ownerType: 'user_avatar' })],
     ['another entity', row({ organizationId: randomUUID() })],
@@ -124,10 +133,6 @@ describe('DocumentLogoResolverFactory', () => {
           version({ version: 2, status: 'rejected' }),
         ],
       }),
-    ],
-    [
-      'a removed document still pending',
-      row({ removedAt: new Date(), versions: [version({ status: 'quarantined' })] }),
     ],
     [
       'a pending logo of another entity',
@@ -184,6 +189,27 @@ describe('DocumentLogoResolverFactory', () => {
     );
     await expect(resolve(DOC)).rejects.toBeInstanceOf(DocumentLogoPendingError);
   });
+
+  it.each([
+    ['with a clean version', row({ removedAt: new Date() })],
+    [
+      'still pending',
+      row({ removedAt: new Date(), versions: [version({ status: 'quarantined' })] }),
+    ],
+    [
+      'with only refused versions',
+      row({ removedAt: new Date(), versions: [version({ status: 'rejected' })] }),
+    ],
+  ])(
+    'throws DocumentLogoPendingError, without opening storage, for a removed logo of this entity %s',
+    async (_name, found) => {
+      // The logo was replaced while a render read the old pointer: the retry reads the new one.
+      vi.spyOn(Logger.prototype, 'warn').mockImplementation(() => undefined);
+      const { resolve, storage } = setup(found);
+      await expect(resolve(DOC)).rejects.toBeInstanceOf(DocumentLogoPendingError);
+      expect(storage.openClean).not.toHaveBeenCalled();
+    },
+  );
 
   it('throws DocumentLogoPendingError when the newest version is pending after a refused one', async () => {
     vi.spyOn(Logger.prototype, 'warn').mockImplementation(() => undefined);

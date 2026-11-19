@@ -6,14 +6,16 @@
 // It answers:
 // - the data URL of the newest clean version of the logo document, when the document is a live `entity_logo` of
 //   the scope's tenant AND entity, and the version's detected type is PNG, JPEG or WebP;
-// - null when there is no such document or usable version (unknown, foreign, removed, wrong owner type, refused:
+// - null when there is no such document or usable version (unknown, foreign, wrong owner type, refused:
 //   rejected, infected or scan_failed for any other reason, not an image) or the bytes are over the snapshot cap (logged): the snapshot
 //   then uses the legacy logo, if any;
 // - DocumentLogoPendingError when the document is a live `entity_logo` of the scope with no clean version yet and
 //   its newest version is still awaiting its bytes, quarantined (awaiting the scan) or scan_failed only because the
 //   scanner was unreachable (SCAN_FAILED_INFRA: the scan sweeper re-queues it): freezing then would print a
 //   logo-less document for good, so the caller treats it as unavailable and the render retries once it is clean.
-//   A clean older version wins over a newer pending one;
+//   A clean older version wins over a newer pending one. A removed `entity_logo` of the scope throws it too: the
+//   logo was replaced (pointer moved, old document removed) while the render read the old pointer, so the retry
+//   reads the new one;
 // - a throw when the storage read fails, a missing clean file included: the issuer turns it into
 //   DocumentLogoUnavailableError and the render retries, instead of freezing a document without its logo.
 //
@@ -172,12 +174,17 @@ export class DocumentLogoResolverFactory {
     // The query already scopes; the same rules again here, so a query change cannot widen what is frozen.
     if (
       row === undefined ||
-      row.removedAt !== null ||
       row.tenantId !== scope.tenantId ||
       row.organizationId !== scope.organizationId ||
       row.ownerType !== ENTITY_LOGO
     ) {
       return null;
+    }
+    if (row.removedAt !== null) {
+      // Replacing the logo moves the pointer and removes the old document in one transaction, so a render that read
+      // the old pointer just before finds it removed. Retry: the next attempt reads the new pointer.
+      this.logger.warn(`document logo removed under a render: document=${documentId} kind=removed`);
+      throw new DocumentLogoPendingError();
     }
     const clean = row.versions.reduce<LogoDocumentRow['versions'][number] | undefined>(
       (newest, v) =>
