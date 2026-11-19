@@ -325,10 +325,31 @@
       "breakpoints": true
     },
     {
+      "idx": 59,
+      "version": "7",
+      "when": 1783000000053,
+      "tag": "0053_user_avatar",
+      "breakpoints": true
+    },
+    {
+      "idx": 60,
+      "version": "7",
+      "when": 1783000000054,
+      "tag": "0054_party_logos",
+      "breakpoints": true
+    },
+    {
       "idx": 46,
       "version": "7",
       "when": 1783000000055,
       "tag": "0055_quotation_cost_read_permission",
+      "breakpoints": true
+    },
+    {
+      "idx": 61,
+      "version": "7",
+      "when": 1783000000058,
+      "tag": "0058_legacy_company_logo",
       "breakpoints": true
     },
     {

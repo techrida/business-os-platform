@@ -158,7 +158,11 @@ describe('SettingsService.lock and set', () => {
 });
 
 describe('SettingsService.set with entity.profile (the generic PUT /v1/admin/settings/:key path)', () => {
-  const profileWith = (logoDataUrl: string | null) => ({ ...EMPTY_COMPANY_PROFILE, logoDataUrl });
+  // The setting holds a logo as bytes only as the legacy value migration 0058 leaves; the same schema guards it.
+  const profileWith = (legacyLogoDataUrl: string | null) => ({
+    ...EMPTY_COMPANY_PROFILE,
+    legacyLogoDataUrl,
+  });
   const b64 = (svg: string) => Buffer.from(svg).toString('base64');
   const SCRIPT_SVG = '<svg xmlns="http://www.w3.org/2000/svg"><script>alert(1)</script></svg>';
 
@@ -196,6 +200,30 @@ describe('SettingsService.set with entity.profile (the generic PUT /v1/admin/set
   ] as const)('refuses a bad value for %s with 400', async (key, value) => {
     const { tx, statements } = fakeTx();
     await expect(service.set(tx, key, value)).rejects.toBeInstanceOf(BadRequestException);
+    expect(statements).toEqual([]);
+  });
+
+  it('accepts a logo document id', async () => {
+    const { tx } = fakeTx();
+    await expect(
+      service.set(tx, 'entity.profile', {
+        ...EMPTY_COMPANY_PROFILE,
+        logoDocumentId: '0b8f7c1e-3d2a-4f5b-9c6d-7e8f9a0b1c2d',
+      }),
+    ).resolves.toEqual({ version: 4 });
+  });
+
+  it.each([
+    [
+      'a data URL as the logo document id',
+      { logoDocumentId: 'data:image/png;base64,iVBORw0KGgo=' },
+    ],
+    ['the pre-U12 logoDataUrl field', { logoDataUrl: 'data:image/png;base64,iVBORw0KGgo=' }],
+  ])('refuses %s with 400, before any statement runs', async (_label, over) => {
+    const { tx, statements } = fakeTx();
+    await expect(
+      service.set(tx, 'entity.profile', { ...EMPTY_COMPANY_PROFILE, ...over }),
+    ).rejects.toBeInstanceOf(BadRequestException);
     expect(statements).toEqual([]);
   });
 

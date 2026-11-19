@@ -38,6 +38,7 @@ vi.mock('../db/tx', () => ({
 
 const fakeSettings = {
   getCurrent: vi.fn(),
+  getLocked: vi.fn(),
   set: vi.fn(),
   listNumberSeries: vi.fn(),
 };
@@ -115,6 +116,102 @@ describe('SettingsController', () => {
     await expect(controller.putSetting('tax.vat_rate', { value: '500' })).rejects.toBeInstanceOf(
       BadRequestException,
     );
+  });
+
+  describe('PUT entity.profile keeps the stored logo', () => {
+    const DOC_STORED = '6f1c2a3b-4d5e-4f60-8a7b-9c0d1e2f3a4b';
+    const DOC_ATTACKER = '0b1c2d3e-4f50-4617-8a9b-0c1d2e3f4a5b';
+    const LEGACY_STORED =
+      'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAAAA==';
+    const LEGACY_ATTACKER = 'data:image/png;base64,PHNjcmlwdD5hbGVydCgxKTwvc2NyaXB0Pg==';
+    const stored = {
+      ...SETTING_DEFAULTS['entity.profile'],
+      displayName: 'Old Name',
+      logoDocumentId: DOC_STORED,
+    };
+
+    it('ignores a logoDocumentId and legacyLogoDataUrl in the request and saves the other fields', async () => {
+      fakeSettings.getLocked.mockResolvedValue({ value: stored, version: 3 });
+      fakeSettings.set.mockResolvedValue({ version: 4 });
+      await expect(
+        controller.putSetting('entity.profile', {
+          value: {
+            ...stored,
+            displayName: 'New Name',
+            logoDocumentId: DOC_ATTACKER,
+            legacyLogoDataUrl: LEGACY_ATTACKER,
+          },
+          expectedVersion: 3,
+        }),
+      ).resolves.toEqual({ version: 4 });
+      // Read under the setting lock, on the write transaction.
+      expect(fakeSettings.getLocked).toHaveBeenCalledWith({ fake: 'tx' }, 'entity.profile');
+      expect(fakeSettings.set).toHaveBeenCalledWith(
+        { fake: 'tx' },
+        'entity.profile',
+        { ...stored, displayName: 'New Name', logoDocumentId: DOC_STORED },
+        { expectedVersion: 3 },
+      );
+    });
+
+    it('keeps a stored legacy logo, and cannot clear the stored document id', async () => {
+      const legacy = { ...stored, logoDocumentId: null, legacyLogoDataUrl: LEGACY_STORED };
+      fakeSettings.getLocked.mockResolvedValue({ value: legacy, version: 5 });
+      fakeSettings.set.mockResolvedValue({ version: 6 });
+      await controller.putSetting('entity.profile', {
+        value: {
+          ...stored,
+          displayName: 'New Name',
+          logoDocumentId: null,
+          legacyLogoDataUrl: null,
+        },
+      });
+      expect(fakeSettings.set).toHaveBeenCalledWith({ fake: 'tx' }, 'entity.profile', {
+        ...stored,
+        displayName: 'New Name',
+        logoDocumentId: null,
+        legacyLogoDataUrl: LEGACY_STORED,
+      });
+
+      fakeSettings.getLocked.mockResolvedValue({ value: stored, version: 6 });
+      await controller.putSetting('entity.profile', {
+        value: { ...stored, logoDocumentId: null },
+      });
+      expect(fakeSettings.set).toHaveBeenLastCalledWith({ fake: 'tx' }, 'entity.profile', stored);
+    });
+
+    it('cannot add a legacy logo where none is stored', async () => {
+      fakeSettings.getLocked.mockResolvedValue({ value: stored, version: 2 });
+      fakeSettings.set.mockResolvedValue({ version: 3 });
+      await controller.putSetting('entity.profile', {
+        value: { ...stored, legacyLogoDataUrl: LEGACY_ATTACKER },
+      });
+      const saved = fakeSettings.set.mock.calls[0]?.[2] as Record<string, unknown>;
+      expect(saved).not.toHaveProperty('legacyLogoDataUrl');
+      expect(saved['logoDocumentId']).toBe(DOC_STORED);
+    });
+
+    it('passes a value that is not an object on for the service to refuse', async () => {
+      fakeSettings.getLocked.mockResolvedValue({ value: stored, version: 2 });
+      fakeSettings.set.mockRejectedValue(
+        new BadRequestException('Invalid value for entity.profile'),
+      );
+      await expect(
+        controller.putSetting('entity.profile', { value: 'not a profile' }),
+      ).rejects.toBeInstanceOf(BadRequestException);
+      expect(fakeSettings.set).toHaveBeenCalledWith(
+        { fake: 'tx' },
+        'entity.profile',
+        'not a profile',
+      );
+    });
+
+    it('leaves other keys alone: no profile read, the value passed through as sent', async () => {
+      fakeSettings.set.mockResolvedValue({ version: 2 });
+      await controller.putSetting('tax.vat_rate', { value: '15' });
+      expect(fakeSettings.getLocked).not.toHaveBeenCalled();
+      expect(fakeSettings.set).toHaveBeenCalledWith({ fake: 'tx' }, 'tax.vat_rate', '15');
+    });
   });
 
   it('POST fx-rates rejects a zero rate, an unknown currency and a malformed date with 400', async () => {

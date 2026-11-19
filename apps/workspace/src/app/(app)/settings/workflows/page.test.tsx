@@ -1,3 +1,4 @@
+import { avatarColour } from '@bos/contracts';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { beforeEach, expect, it, vi } from 'vitest';
 
@@ -103,6 +104,21 @@ it('enables named group and delegation assignments without general directory acc
     fromUserId: first,
     toUserId: second,
   });
+});
+
+it("seeds a group member's avatar colour from their user id", async () => {
+  const respond = vi.mocked(apiFetch).getMockImplementation()!;
+  vi.mocked(apiFetch).mockImplementation((caller, path, init) =>
+    path === '/v1/admin/approval-groups' && init?.method !== 'POST'
+      ? Promise.resolve(
+          Response.json([{ id: group, key: 'review', name: 'Reviewers', memberUserIds: [second] }]),
+        )
+      : respond(caller, path, init),
+  );
+  // The id must not land on the unseeded colour, or this check would pass without a seed.
+  expect(avatarColour(second)).not.toBe(avatarColour(null));
+  const html = renderToStaticMarkup(await WorkflowsPage());
+  expect(html).toContain(`--avatar-fill:${avatarColour(second)}`);
 });
 
 it('offers and saves a new approver from the second API page through the normal editor', async () => {

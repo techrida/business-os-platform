@@ -170,4 +170,41 @@ describe('renderInvoiceHtml', () => {
     expect(html).toContain("default-src 'none'");
     expect(html).not.toMatch(/https?:\/\//);
   });
+
+  describe('the company logo', () => {
+    const PNG = 'data:image/png;base64,iVBORw0KGgo=';
+    const CSP_NO_IMAGES = `content="default-src 'none'; style-src 'unsafe-inline'"`;
+
+    it('draws the frozen logo top-left of the header, named after the seller, and allows only data images', () => {
+      const html = renderInvoiceHtml(sample(), { logoDataUrl: PNG });
+      expect(html).toContain(
+        `<header class="head">\n    <div class="identity"><img class="logo" src="${PNG}" alt="Techrida Pvt. Ltd."><div class="brand legal">Techrida Pvt. Ltd.</div></div>`,
+      );
+      expect(html).toContain(
+        `content="default-src 'none'; style-src 'unsafe-inline'; img-src data:"`,
+      );
+      expect(html).toMatch(/\.logo \{[^}]*max-height: 56px/);
+      expect(html.match(/<img /g)).toHaveLength(1);
+    });
+
+    it('keeps the text header and the no-image CSP when there is no logo', () => {
+      const plain = renderInvoiceHtml(sample());
+      expect(renderInvoiceHtml(sample(), { logoDataUrl: null })).toBe(plain);
+      expect(plain).not.toContain('<img');
+      expect(plain).toContain(CSP_NO_IMAGES);
+      expect(plain).toContain(
+        '<header class="head">\n    <div class="brand legal">Techrida Pvt. Ltd.</div>\n    <div class="doc">',
+      );
+    });
+
+    it.each([
+      ['an SVG', 'data:image/svg+xml;base64,PHN2Zz4='],
+      ['a URL', 'https://example.com/logo.png'],
+      ['markup', 'data:image/png;base64,AAAA" onerror="alert(1)'],
+    ])('never inlines %s: it prints as if there were no logo', (_name, logoDataUrl) => {
+      const html = renderInvoiceHtml(sample(), { logoDataUrl });
+      expect(html).toBe(renderInvoiceHtml(sample()));
+      expect(html).not.toContain('<img');
+    });
+  });
 });

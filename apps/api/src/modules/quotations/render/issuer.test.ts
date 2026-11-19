@@ -1,9 +1,10 @@
-import { DOCUMENT_SETTING_DEFAULTS } from '@bos/contracts';
-import { describe, expect, it } from 'vitest';
+import { DOCUMENT_SETTING_DEFAULTS, EMPTY_SNAPSHOT_COMPANY_PROFILE } from '@bos/contracts';
+import { describe, expect, it, vi } from 'vitest';
 
 import {
   buildDocumentStyleSnapshot,
   buildIssuer,
+  DocumentLogoUnavailableError,
   DocumentStyleInvalidError,
   IssuerIncompleteError,
   parseStoredDocumentStyle,
@@ -70,7 +71,7 @@ describe('buildDocumentStyleSnapshot', () => {
     });
     await expect(buildDocumentStyleSnapshot(settings, scope, at)).resolves.toEqual({
       style: { layout: 'ledger', primaryColour: '#0f766e' },
-      profile: { ...DOCUMENT_SETTING_DEFAULTS['entity.profile'], panVatNo: '301234567' },
+      profile: { ...EMPTY_SNAPSHOT_COMPANY_PROFILE, panVatNo: '301234567' },
       numberSystems: { NPR: 'international', INR: 'south_asian', USD: 'south_asian' },
       dateFormat: 'dd/MM/yyyy',
       capturedAt: '2026-11-09T06:00:00.000Z',
@@ -119,17 +120,94 @@ describe('buildDocumentStyleSnapshot', () => {
     expect(error).toBeInstanceOf(DocumentStyleInvalidError);
     expect(error).toMatchObject({ kind: 'document_style_invalid' });
   });
+
+  describe('freezes the logo as bytes (U12)', () => {
+    const DOC_ID = '0b8f7c1e-3d2a-4f5b-9c6d-7e8f9a0b1c2d';
+    const RESOLVED = 'data:image/png;base64,UkVTT0xWRUQ=';
+    const LEGACY = 'data:image/jpeg;base64,TEVHQUNZ';
+    const profileWith = (over: Record<string, unknown>) =>
+      settingsOf({ 'entity.profile': { ...DOCUMENT_SETTING_DEFAULTS['entity.profile'], ...over } });
+
+    it('freezes the bytes the resolver returns for the referenced document', async () => {
+      const { settings } = profileWith({ logoDocumentId: DOC_ID, legacyLogoDataUrl: LEGACY });
+      const resolveLogo = vi.fn(() => Promise.resolve(RESOLVED));
+      const snapshot = await buildDocumentStyleSnapshot(settings, scope, at, resolveLogo);
+      expect(resolveLogo).toHaveBeenCalledWith(DOC_ID);
+      expect(snapshot.profile.logoDataUrl).toBe(RESOLVED);
+      expect(snapshot.profile).not.toHaveProperty('logoDocumentId');
+      expect(snapshot.profile).not.toHaveProperty('legacyLogoDataUrl');
+    });
+
+    it('falls back to the legacy logo when the resolver finds nothing', async () => {
+      const { settings } = profileWith({ logoDocumentId: DOC_ID, legacyLogoDataUrl: LEGACY });
+      const snapshot = await buildDocumentStyleSnapshot(settings, scope, at, () =>
+        Promise.resolve(null),
+      );
+      expect(snapshot.profile.logoDataUrl).toBe(LEGACY);
+    });
+
+    it('freezes no logo when neither the document nor a legacy logo has bytes', async () => {
+      const { settings } = profileWith({ logoDocumentId: DOC_ID });
+      const snapshot = await buildDocumentStyleSnapshot(settings, scope, at, () =>
+        Promise.resolve(null),
+      );
+      expect(snapshot.profile.logoDataUrl).toBeNull();
+    });
+
+    it('uses the legacy logo without calling the resolver when no document is referenced', async () => {
+      const { settings } = profileWith({ legacyLogoDataUrl: LEGACY });
+      const resolveLogo = vi.fn(() => Promise.reject(new Error('must not be called')));
+      const snapshot = await buildDocumentStyleSnapshot(settings, scope, at, resolveLogo);
+      expect(resolveLogo).not.toHaveBeenCalled();
+      expect(snapshot.profile.logoDataUrl).toBe(LEGACY);
+    });
+
+    it('uses the legacy logo with the default resolver (nothing wired yet)', async () => {
+      const { settings } = profileWith({ logoDocumentId: DOC_ID, legacyLogoDataUrl: LEGACY });
+      const snapshot = await buildDocumentStyleSnapshot(settings, scope, at);
+      expect(snapshot.profile.logoDataUrl).toBe(LEGACY);
+    });
+
+    it('refuses with a typed error, carrying nothing of the cause, when the resolver throws for a referenced logo', async () => {
+      const { settings } = profileWith({ logoDocumentId: DOC_ID, legacyLogoDataUrl: LEGACY });
+      const error = await buildDocumentStyleSnapshot(settings, scope, at, () =>
+        Promise.reject(new Error('s3://secret-bucket/key denied')),
+      ).catch((e: unknown) => e);
+      expect(error).toBeInstanceOf(DocumentLogoUnavailableError);
+      expect(error).toMatchObject({ kind: 'document_logo_unavailable' });
+      expect(String((error as Error).message)).not.toContain('secret');
+      expect((error as Error).cause).toBeUndefined();
+    });
+
+    it('refuses a resolved value that is not a logo data URL rather than freezing it', async () => {
+      const { settings } = profileWith({ logoDocumentId: DOC_ID });
+      const error = await buildDocumentStyleSnapshot(settings, scope, at, () =>
+        Promise.resolve('https://example.com/logo.png'),
+      ).catch((e: unknown) => e);
+      expect(error).toBeInstanceOf(DocumentStyleInvalidError);
+    });
+  });
 });
 
 describe('parseStoredDocumentStyle', () => {
   it('returns a valid snapshot and refuses anything else with the typed error', () => {
     const ok = {
       style: { layout: 'banded', primaryColour: '#1d4ed8' },
-      profile: DOCUMENT_SETTING_DEFAULTS['entity.profile'],
+      profile: EMPTY_SNAPSHOT_COMPANY_PROFILE,
       numberSystem: 'south_asian',
       capturedAt: '2026-11-09T06:00:00.000Z',
     };
     expect(parseStoredDocumentStyle(ok)).toEqual(ok);
+    // A snapshot stored before U12 holds its logo bytes and still reads back unchanged.
+    const withLogo = {
+      ...ok,
+      profile: { ...ok.profile, logoDataUrl: 'data:image/png;base64,iVBORw0KGgo=' },
+    };
+    expect(parseStoredDocumentStyle(withLogo)).toEqual(withLogo);
+    // The setting shape (a document reference) is not a frozen profile.
+    expect(() =>
+      parseStoredDocumentStyle({ ...ok, profile: DOCUMENT_SETTING_DEFAULTS['entity.profile'] }),
+    ).toThrow(DocumentStyleInvalidError);
     for (const bad of [null, 'x', {}, { ...ok, extra: 1 }, { ...ok, capturedAt: 'yesterday' }]) {
       expect(() => parseStoredDocumentStyle(bad)).toThrow(DocumentStyleInvalidError);
     }

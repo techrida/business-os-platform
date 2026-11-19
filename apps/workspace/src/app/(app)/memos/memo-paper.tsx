@@ -1,7 +1,28 @@
-import type { MemoTemplateSnapshot } from '@bos/contracts';
+import {
+  DEFAULT_BRAND_COLOUR,
+  deriveBrandPalette,
+  HexColourSchema,
+  LogoDataUrlSchema,
+  type MemoTemplateSnapshot,
+} from '@bos/contracts';
 import { NOT_SELECTED } from '@/lib/memo-pdf-input';
 
 import styles from './memo-template.module.css';
+
+/**
+ * The letterhead band's values. A memo stored before letterheads has none: it still gets the band, with the
+ * default brand colour, no address and no logo. A colour or logo that fails its contract is dropped, never drawn.
+ */
+function bandOf(template: MemoTemplateSnapshot) {
+  const letterhead = template.letterhead;
+  const colour = HexColourSchema.safeParse(letterhead?.primaryColour);
+  const logo = LogoDataUrlSchema.safeParse(letterhead?.logoDataUrl);
+  return {
+    palette: deriveBrandPalette(colour.success ? colour.data : DEFAULT_BRAND_COLOUR),
+    addressLines: (letterhead?.addressLines ?? []).filter((line) => line.trim() !== ''),
+    logo: logo.success ? logo.data : null,
+  };
+}
 
 export function MemoPaper({
   template,
@@ -20,12 +41,33 @@ export function MemoPaper({
     ...template.recommenders.map((person, i) => ({ label: `Recommended by ${i + 1}`, person })),
     { label: 'Approved by', person: template.approvedBy },
   ];
+  const band = bandOf(template);
   return (
     <article id={id} data-memo-paper="" className={styles.paper} aria-label="Memo preview">
-      <header>
-        <strong>{template.organizationName}</strong>
-        <div>{template.departmentName}</div>
-        <div>(MEMO)</div>
+      {/* Colours are inline: the print frame's `[data-memo-paper] * { color: inherit }` would beat a class. */}
+      <header className={styles.band} style={{ backgroundColor: band.palette.tint }}>
+        <p className={styles.bandTitle} style={{ color: band.palette.accentText }}>
+          Memo
+        </p>
+        <div className={styles.bandCompany}>
+          <div className={styles.bandText}>
+            {/* Name, department, then the address: the order the PDF prints (memo-pdf.ts). */}
+            <strong className={styles.bandName}>{template.organizationName}</strong>
+            {template.departmentName ? (
+              <span className={styles.bandDepartment}>{template.departmentName}</span>
+            ) : null}
+            {band.addressLines.map((line, i) => (
+              <span key={`${i}:${line}`} className={styles.bandLine}>
+                {line}
+              </span>
+            ))}
+          </div>
+          {band.logo ? (
+            // A data URL that passed LogoDataUrlSchema (PNG, JPEG or WebP): drawn through <img> only, never inlined.
+            // eslint-disable-next-line @next/next/no-img-element
+            <img className={styles.bandLogo} src={band.logo} alt={template.organizationName} />
+          ) : null}
+        </div>
       </header>
       <p className={styles.date}>Date: {template.date || 'Not set'}</p>
       <h2 className={styles.subject}>Subject: {title || 'Untitled memo'}</h2>

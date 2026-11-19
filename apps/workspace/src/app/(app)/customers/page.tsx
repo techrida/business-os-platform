@@ -32,6 +32,7 @@ import {
   type RawParams,
 } from '@/lib/list-params';
 
+import { companyLogo } from './_lib/company-logo';
 import { CustomerFilters, RELATIONSHIP_LABEL } from './customer-filters';
 import styles from './customers.module.css';
 
@@ -83,7 +84,7 @@ function Row({
     <tr>
       <Td>
         <div className={styles.identity}>
-          <Avatar name={c.legalName} shape="circle" />
+          <Avatar {...companyLogo(c)} />
           <div className={styles.identityText}>
             <Link href={details} className={styles.name}>
               {c.legalName}

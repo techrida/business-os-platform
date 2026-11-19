@@ -3,6 +3,7 @@
 // design/memos/DELIVERY.md, "P2 removal"). Fields follow app.test_memos in section 4.
 import { z } from 'zod';
 
+import { HexColourSchema, LogoDataUrlSchema } from './document-style.js';
 import { multi, searchParam } from './list-query.js';
 import { CurrencySchema, DecimalString, RateString } from './money.js';
 
@@ -32,9 +33,24 @@ export const MemoTemplateInputSchema = z
     if (new Set(ids).size !== ids.length)
       ctx.addIssue({ code: 'custom', message: 'Choose different people for each role' });
   });
+/**
+ * The memo letterhead: the entity's address (as the quotation footer prints it, one part per line), its logo as bytes
+ * and its brand colour. The directory carries the live values for a draft; submit freezes them onto the memo, so a
+ * later logo or address change never alters a memo that was sent for approval. A memo stored before letterheads has
+ * none, and still reads. A line joins address parts (city and district: up to 100 + 2 + 100 characters), so the
+ * per-line cap sits above any line the address settings can produce; the line count keeps the whole bounded.
+ */
+export const LetterheadSchema = z.object({
+  addressLines: z.array(z.string().max(400)).max(4),
+  logoDataUrl: LogoDataUrlSchema.nullable(),
+  primaryColour: HexColourSchema,
+});
+export type Letterhead = z.infer<typeof LetterheadSchema>;
 export const MemoTemplateSnapshotSchema = z.object({
   organizationId: z.guid(),
   organizationName: z.string(),
+  /** Frozen at submit; absent on a draft and on a memo stored before letterheads. */
+  letterhead: LetterheadSchema.optional(),
   departmentId: z.guid(),
   departmentName: z.string(),
   date: z.iso.date(),
@@ -49,11 +65,17 @@ export type MemoTemplateSnapshot = z.infer<typeof MemoTemplateSnapshotSchema>;
  * (the role_permissions rows, as the approval routes check them): only such people can decide a memo, so only they
  * may be named as a recommender or approver. It is a directory fact, never stored on a memo.
  */
-export const MemoDirectoryPersonSchema = MemoPersonSchema.extend({ canApprove: z.boolean() });
+export const MemoDirectoryPersonSchema = MemoPersonSchema.extend({
+  canApprove: z.boolean(),
+  /** The person's picture (`app.users.avatar_document_id`); null or absent shows initials. */
+  avatarDocumentId: z.guid().nullable().optional(),
+});
 export type MemoDirectoryPerson = z.infer<typeof MemoDirectoryPersonSchema>;
 export const MemoDirectorySchema = z.object({
   organizationId: z.guid(),
   organizationName: z.string(),
+  /** The live letterhead a draft shows; absent when the entity's settings do not form a valid one. */
+  letterhead: LetterheadSchema.optional(),
   currentUserId: z.guid(),
   departmentId: z.guid().nullable(),
   departments: z.array(z.object({ id: z.guid(), name: z.string() })),
@@ -156,6 +178,8 @@ export const MemoListItemSchema = z.object({
   ownerUserId: z.guid(),
   /** Display name of the creator; null when the directory has none. */
   ownerName: z.string().nullable(),
+  /** The creator's picture (`app.users.avatar_document_id`); null or absent shows initials. */
+  ownerAvatarDocumentId: z.guid().nullable().optional(),
   departmentName: z.string().nullable(),
   createdAt: z.iso.datetime({ offset: true }),
   updatedAt: z.iso.datetime({ offset: true }),

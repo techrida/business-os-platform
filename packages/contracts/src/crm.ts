@@ -110,6 +110,8 @@ export const CustomerDtoSchema = z.object({
   ownerUserId: z.guid().nullable(),
   defaultCurrency: CurrencySchema.nullable(),
   address: AddressSchema,
+  /** The customer's logo (`app.customers.logo_document_id`); null or absent shows initials. */
+  logoDocumentId: z.guid().nullable().optional(),
   /** Set when this record was merged into another; the target is the live one. */
   mergedIntoId: z.guid().nullable(),
   version: z.number().int().min(1),
@@ -583,6 +585,8 @@ export const LeadOwnerOptionSchema = z.object({
   userId: z.guid(),
   displayName: z.string(),
   email: z.string(),
+  /** The person's picture (`app.users.avatar_document_id`); null or absent shows initials. */
+  avatarDocumentId: z.guid().nullable().optional(),
 });
 export type LeadOwnerOption = z.infer<typeof LeadOwnerOptionSchema>;
 
@@ -887,6 +891,8 @@ export const VerificationReviewHistorySchema = z.object({
   items: z.array(
     VerificationReviewSchema.extend({
       reviewerName: z.string().nullable().optional(),
+      /** The reviewer's picture (`app.users.avatar_document_id`); null or absent shows initials. */
+      reviewerAvatarDocumentId: z.guid().nullable().optional(),
       itemKey: ChecklistItemKeySchema.nullable(),
       kind: z.enum(['item_decided', 'case_decided', 'legacy_case_decided']),
     }),
