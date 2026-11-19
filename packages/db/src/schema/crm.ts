@@ -27,7 +27,7 @@ import {
 } from 'drizzle-orm/pg-core';
 
 import { documents } from './documents.js';
-import { users } from './identity.js';
+import { departments, users } from './identity.js';
 import { appSchema, organizations, PARTY_KINDS, parties, tenants } from './platform.js';
 
 // These mirror the catalogues in @bos/contracts crm.ts (the db package does not depend on contracts).
@@ -336,6 +336,10 @@ export const leads = appSchema.table(
     source: text('source', { enum: LEAD_SOURCES }).notNull(),
     campaign: text('campaign'),
     ownerUserId: uuid('owner_user_id'),
+    /** The owner's department, stamped by a trigger when the owner is set or changes (migration 0080). */
+    departmentId: uuid('department_id'),
+    /** Who entered the lead (migration 0080); NULL for rows that predate it. */
+    createdByUserId: uuid('created_by_user_id'),
     companyName: text('company_name').notNull(),
     contactName: text('contact_name').notNull(),
     emailNorm: text('email_norm'),
@@ -373,6 +377,18 @@ export const leads = appSchema.table(
       columns: [t.tenantId, t.ownerUserId],
       foreignColumns: [users.tenantId, users.id],
     }),
+    foreignKey({
+      name: 'leads_department_fk',
+      columns: [t.tenantId, t.organizationId, t.departmentId],
+      foreignColumns: [departments.tenantId, departments.organizationId, departments.id],
+    }),
+    foreignKey({
+      name: 'leads_created_by_user_fk',
+      columns: [t.tenantId, t.createdByUserId],
+      foreignColumns: [users.tenantId, users.id],
+    }),
+    index('leads_tenant_org_department_idx').on(t.tenantId, t.organizationId, t.departmentId),
+    index('leads_tenant_created_by_idx').on(t.tenantId, t.organizationId, t.createdByUserId),
     foreignKey({
       name: 'leads_customer_fk',
       columns: [t.tenantId, t.customerId],
@@ -446,6 +462,8 @@ export const opportunities = appSchema.table(
     contactId: uuid('contact_id'),
     leadId: uuid('lead_id'),
     ownerUserId: uuid('owner_user_id'),
+    /** The owner's department, stamped by a trigger when the owner is set or changes (migration 0080). */
+    departmentId: uuid('department_id'),
     stage: text('stage', { enum: OPPORTUNITY_STAGES }).notNull().default('qualified'),
     stageReason: text('stage_reason'),
     stageNote: text('stage_note'),
@@ -488,6 +506,16 @@ export const opportunities = appSchema.table(
       columns: [t.tenantId, t.ownerUserId],
       foreignColumns: [users.tenantId, users.id],
     }),
+    foreignKey({
+      name: 'opportunities_department_fk',
+      columns: [t.tenantId, t.organizationId, t.departmentId],
+      foreignColumns: [departments.tenantId, departments.organizationId, departments.id],
+    }),
+    index('opportunities_tenant_org_department_idx').on(
+      t.tenantId,
+      t.organizationId,
+      t.departmentId,
+    ),
     index('opportunities_tenant_org_stage_idx').on(t.tenantId, t.organizationId, t.stage),
     index('opportunities_tenant_customer_idx').on(t.tenantId, t.customerId),
     index('opportunities_tenant_org_lead_idx').on(t.tenantId, t.organizationId, t.leadId),
@@ -660,9 +688,7 @@ export const activities = appSchema.table(
     /** 0062: the planned rows (follow-ups) of a lead, earliest first. */
     index('activities_tenant_org_lead_planned_idx')
       .on(t.tenantId, t.organizationId, t.leadId, t.dueAt)
-      .where(
-        sql`${t.dueAt} IS NOT NULL AND ${t.completedAt} IS NULL AND ${t.cancelledAt} IS NULL`,
-      ),
+      .where(sql`${t.dueAt} IS NOT NULL AND ${t.completedAt} IS NULL AND ${t.cancelledAt} IS NULL`),
     index('activities_tenant_org_opportunity_idx').on(
       t.tenantId,
       t.organizationId,
