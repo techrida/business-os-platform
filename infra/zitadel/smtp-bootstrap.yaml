@@ -1,0 +1,8 @@
+# v4.20.1 uses nested PlainAuth fields. Declare those keys for Viper so their
+# corresponding ZITADEL_DEFAULTINSTANCE_* environment variables are read.
+DefaultInstance:
+  SMTPConfiguration:
+    SMTP:
+      PlainAuth:
+        User:
+        Password:
