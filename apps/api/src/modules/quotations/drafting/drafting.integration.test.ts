@@ -27,6 +27,7 @@ import {
   quotationStatusHistory,
   quotationTaxSummary,
   quotationVersions,
+  rolePermissions,
   runMigrations,
   verificationCases,
 } from '@bos/db';
@@ -43,9 +44,10 @@ import { Pool } from 'pg';
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { AuditService } from '../../../platform/audit/audit.service';
-import type { AuthzService } from '../../../platform/authz/authz.service';
+import { AuthzService } from '../../../platform/authz/authz.service';
 import { can } from '../../../platform/authz/can';
 import type { Principal } from '../../../platform/authz/principal';
+import { RoleCache } from '../../../platform/authz/role-cache';
 import { systemActor, withTx, type TxScope } from '../../../platform/db/tx';
 import type { MoneyService } from '../../../platform/settings/money.service';
 import { NumberingService } from '../../../platform/settings/numbering.service';
@@ -53,7 +55,10 @@ import { PricingService } from '../pricing/pricing.service';
 import { DraftingService, pricingInputOf } from './drafting.service';
 import {
   GOLDEN_DISCOUNT,
+  GOLDEN_INTERNAL_COST,
   GOLDEN_TOTALS,
+  GOLDEN_UNIT_COSTS,
+  goldenCostedLines,
   goldenCreateBody,
   goldenLines,
   seedOtherStaffUser,
@@ -834,5 +839,232 @@ describe('demo feedback guards', () => {
         scope: 'Returned and fixed',
       }),
     ).resolves.toMatchObject({ version: current.version + 1 });
+  });
+});
+
+// ------------------------------------------------------------------------------------------ cost figures
+
+// D29b: unitCost, internalCostTotal and marginPct leave the API only for a caller whose LIVE grants hold
+// quotation.cost.read. The grants here come from the real RoleCache over real app.role_permissions rows, and a
+// change is published with AuthzService.invalidate (the authz_versions bump), as an admin's role edit does.
+describe('quotation cost figures follow the live role grants (D29b)', () => {
+  let roleCache: RoleCache;
+  let liveAuthz: AuthzService;
+
+  beforeAll(() => {
+    roleCache = new RoleCache(db);
+    liveAuthz = new AuthzService(db, roleCache);
+  });
+  afterAll(async () => {
+    await withTx(db, scopeA, systemActor('test'), async (tx) => {
+      await tx.delete(rolePermissions).where(eq(rolePermissions.tenantId, f.tenantId));
+    });
+    await liveAuthz.invalidate(f.tenantId, f.entityId);
+  });
+
+  /** The tenant's rows: `sales` as customised (with or without the cost grant), `operations_head` as shipped. */
+  async function customiseRoles(salesMayReadCost: boolean): Promise<void> {
+    const rows = (['sales', 'operations_head'] as const).flatMap((roleKey) =>
+      [...grantsOf(roleKey)]
+        .filter(
+          ([permission]) =>
+            !(roleKey === 'sales' && !salesMayReadCost && permission === 'quotation.cost.read'),
+        )
+        .map(([permission, scope]) => ({ tenantId: f.tenantId, roleKey, permission, scope })),
+    );
+    await withTx(db, scopeA, systemActor('test'), async (tx) => {
+      await tx.delete(rolePermissions).where(eq(rolePermissions.tenantId, f.tenantId));
+      await tx.insert(rolePermissions).values(rows);
+    });
+    await liveAuthz.invalidate(f.tenantId, f.entityId);
+  }
+  /** The caller's grants as the request would read them now: the real cache over the real rows. */
+  const live = async (role: RoleKey): Promise<Map<Permission, Scope>> =>
+    new Map(await roleCache.grantsFor(f.tenantId, f.entityId, [role]));
+
+  const costedBody = () => goldenCreateBody(f, { lines: goldenCostedLines(f) });
+  const storedLines = (versionId: string) =>
+    db
+      .select()
+      .from(quotationLines)
+      .where(eq(quotationLines.versionId, versionId))
+      .orderBy(asc(quotationLines.lineNo));
+  const storedVersion = async (versionId: string) => {
+    const [row] = await db
+      .select()
+      .from(quotationVersions)
+      .where(eq(quotationVersions.id, versionId));
+    return row!;
+  };
+  const expectNoCostKeys = (v: { lines: readonly object[] }) => {
+    expect('internalCostTotal' in v).toBe(false);
+    expect('marginPct' in v).toBe(false);
+    for (const line of v.lines) expect('unitCost' in line).toBe(false);
+  };
+
+  it('shows the figures to a role that holds quotation.cost.read and drops them for the same role once it is removed', async () => {
+    await customiseRoles(true);
+    current.grants = await live('sales');
+    expect(current.grants.has('quotation.cost.read')).toBe(true);
+    const created = await service.create(costedBody(), 'cost-read-1');
+
+    const shown = QuotationVersionDtoSchema.parse(
+      await service.getVersion(created.id, created.currentVersionId),
+    );
+    expect(shown.internalCostTotal).toBe(GOLDEN_INTERNAL_COST);
+    expect(shown.marginPct).toMatch(/^-?\d+\.\d{4}$/);
+    expect(shown.lines.map((l) => l.unitCost)).toEqual([...GOLDEN_UNIT_COSTS]);
+    const shownDetail = QuotationDetailSchema.parse(await service.detail(created.id));
+    expect(shownDetail.versions[0]).toEqual(shown);
+
+    // The admin removes the permission from the role; the bump makes the next request see it at once.
+    await customiseRoles(false);
+    current.grants = await live('sales');
+    expect(current.grants.has('quotation.cost.read')).toBe(false);
+    expect(current.grants.has('quotation.draft')).toBe(true);
+
+    const hidden = QuotationVersionDtoSchema.parse(
+      await service.getVersion(created.id, created.currentVersionId),
+    );
+    expectNoCostKeys(hidden);
+    // Everything else is untouched.
+    expect(hidden.totals).toEqual(shown.totals);
+    expect(hidden.lines.map((l) => l.unitPrice)).toEqual(shown.lines.map((l) => l.unitPrice));
+    const hiddenDetail = QuotationDetailSchema.parse(await service.detail(created.id));
+    expect(hiddenDetail.versions.length).toBeGreaterThan(0);
+    hiddenDetail.versions.forEach(expectNoCostKeys);
+
+    // Granted back: the figures return, and the stored costs were never touched.
+    await customiseRoles(true);
+    current.grants = await live('sales');
+    expect((await service.getVersion(created.id, created.currentVersionId)).internalCostTotal).toBe(
+      GOLDEN_INTERNAL_COST,
+    );
+  });
+
+  it('shows no figures to a reader whose role never had the permission (operations_head)', async () => {
+    await customiseRoles(true);
+    current.grants = await live('sales');
+    const created = await service.create(costedBody(), 'cost-read-2');
+
+    current.grants = await live('operations_head');
+    expect(current.grants.has('quotation.read')).toBe(true);
+    expect(current.grants.has('quotation.cost.read')).toBe(false);
+    const dto = QuotationVersionDtoSchema.parse(
+      await service.getVersion(created.id, created.currentVersionId),
+    );
+    expectNoCostKeys(dto);
+    QuotationDetailSchema.parse(await service.detail(created.id)).versions.forEach(
+      expectNoCostKeys,
+    );
+  });
+
+  it('keeps the stored costs when a drafter without the permission saves lines that omit them, and recomputes the totals from them', async () => {
+    await customiseRoles(true);
+    current.grants = await live('sales');
+    const created = await service.create(costedBody(), 'cost-save-1');
+    const before = await storedVersion(created.currentVersionId);
+    expect(before.internalCostTotal).toBe(GOLDEN_INTERNAL_COST);
+
+    await customiseRoles(false);
+    current.grants = await live('sales');
+    // The workspace sends the lines it was shown: no unitCost anywhere. Line 1 now sells two; line 2 tries to
+    // set a cost, which a drafter without the permission cannot do.
+    const lines = goldenLines(f).map((l, i) => ({
+      ...l,
+      ...(i === 0 ? { quantity: '2' } : {}),
+      ...(i === 1 ? { unitCost: '1.00' } : {}),
+    }));
+    await service.updateDraft(created.id, created.currentVersionId, {
+      expectedVersion: before.version,
+      lines,
+    });
+
+    const stored = await storedLines(created.currentVersionId);
+    expect(stored.map((l) => l.unitCost)).toEqual([...GOLDEN_UNIT_COSTS]);
+    expect(stored[0]!.quantity).toMatch(/^2(\.0+)?$/);
+    // 2 x 1,000,000 + 1 x 400,000 + 3 x 20,000: the preserved costs, not the attempted 1.00.
+    const after = await storedVersion(created.currentVersionId);
+    expect(after.internalCostTotal).toBe('2460000.00');
+    expect(after.marginPct).not.toBeNull();
+
+    // A text-only save keeps them too.
+    await service.updateDraft(created.id, created.currentVersionId, {
+      expectedVersion: after.version,
+      scope: 'Phase 1 only',
+    });
+    expect((await storedLines(created.currentVersionId)).map((l) => l.unitCost)).toEqual([
+      ...GOLDEN_UNIT_COSTS,
+    ]);
+    expect((await storedVersion(created.currentVersionId)).internalCostTotal).toBe('2460000.00');
+
+    // The permitted viewer reads the preserved figures.
+    await customiseRoles(true);
+    current.grants = await live('sales');
+    const seen = await service.getVersion(created.id, created.currentVersionId);
+    expect(seen.internalCostTotal).toBe('2460000.00');
+  });
+
+  it('gives a line number that did not exist before no cost, so the total cost is unknown again', async () => {
+    await customiseRoles(true);
+    current.grants = await live('sales');
+    const created = await service.create(costedBody(), 'cost-save-2');
+    const before = await storedVersion(created.currentVersionId);
+
+    await customiseRoles(false);
+    current.grants = await live('sales');
+    await service.updateDraft(created.id, created.currentVersionId, {
+      expectedVersion: before.version,
+      lines: [...goldenLines(f), { ...goldenLines(f)[0]!, description: 'Extra', unitCost: '5.00' }],
+    });
+
+    const stored = await storedLines(created.currentVersionId);
+    expect(stored.map((l) => l.unitCost)).toEqual([...GOLDEN_UNIT_COSTS, null]);
+    const after = await storedVersion(created.currentVersionId);
+    expect(after.internalCostTotal).toBeNull();
+    expect(after.marginPct).toBeNull();
+  });
+
+  it('stores no cost for a quotation created by a drafter without the permission', async () => {
+    await customiseRoles(false);
+    current.grants = await live('sales');
+    const created = await service.create(costedBody(), 'cost-create-1');
+    expect((await storedLines(created.currentVersionId)).map((l) => l.unitCost)).toEqual([
+      null,
+      null,
+      null,
+    ]);
+    const stored = await storedVersion(created.currentVersionId);
+    expect(stored.internalCostTotal).toBeNull();
+    expect(stored.marginPct).toBeNull();
+  });
+
+  it('still lets a drafter who holds the permission clear or change a cost, as before', async () => {
+    await customiseRoles(true);
+    current.grants = await live('sales');
+    const created = await service.create(costedBody(), 'cost-save-3');
+    const before = await storedVersion(created.currentVersionId);
+
+    await service.updateDraft(created.id, created.currentVersionId, {
+      expectedVersion: before.version,
+      lines: goldenCostedLines(f).map((l, i) => (i === 2 ? { ...l, unitCost: '30000.00' } : l)),
+    });
+    expect((await storedLines(created.currentVersionId)).map((l) => l.unitCost)).toEqual([
+      '1000000.00',
+      '400000.00',
+      '30000.00',
+    ]);
+    expect((await storedVersion(created.currentVersionId)).internalCostTotal).toBe('1490000.00');
+
+    const mid = await storedVersion(created.currentVersionId);
+    await service.updateDraft(created.id, created.currentVersionId, {
+      expectedVersion: mid.version,
+      lines: goldenLines(f),
+    });
+    expect((await storedLines(created.currentVersionId)).map((l) => l.unitCost)).toEqual([
+      null,
+      null,
+      null,
+    ]);
   });
 });
