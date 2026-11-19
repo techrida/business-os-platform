@@ -195,7 +195,9 @@ describe('MeController', () => {
     ];
     const cache = cacheOver(rows);
 
-    const sales = await meAs(principalOf(['sales'], await cache.grantsFor(TENANT, ENTITY, ['sales'])));
+    const sales = await meAs(
+      principalOf(['sales'], await cache.grantsFor(TENANT, ENTITY, ['sales'])),
+    );
     const scopes = new Map(sales.permissions?.map((g) => [g.permission, g.scope]));
     expect(scopes.get('verification.read')).toBe('own');
     expect(scopes.get('quotation.read')).toBe('own');

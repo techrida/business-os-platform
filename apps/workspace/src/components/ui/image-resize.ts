@@ -36,7 +36,11 @@ export function sniffImageType(bytes: Uint8Array): ImageMime | null {
 }
 
 /** The size to draw at: longest side at most `maxSide`, same aspect, never larger than the source, at least 1 px. */
-export function targetSize(width: number, height: number, maxSide: number): { width: number; height: number } {
+export function targetSize(
+  width: number,
+  height: number,
+  maxSide: number,
+): { width: number; height: number } {
   const longest = Math.max(width, height);
   const scale = longest > 0 ? Math.min(1, maxSide / longest) : 1;
   return {
@@ -61,7 +65,8 @@ function isAllowedMime(value: string): value is ImageMime {
   return (IMAGE_MIME as readonly string[]).includes(value);
 }
 
-const NOT_A_PICTURE = 'Choose a PNG, JPEG or WebP picture. Other files, including SVG, cannot be used.';
+const NOT_A_PICTURE =
+  'Choose a PNG, JPEG or WebP picture. Other files, including SVG, cannot be used.';
 
 type DrawSurface = {
   context: OffscreenCanvasRenderingContext2D | CanvasRenderingContext2D;
@@ -72,7 +77,8 @@ function createSurface(width: number, height: number): DrawSurface {
   if (typeof OffscreenCanvas !== 'undefined') {
     const canvas = new OffscreenCanvas(width, height);
     const context = canvas.getContext('2d');
-    if (!context) throw new ImageRefusal('This browser cannot shrink pictures. Try another browser.');
+    if (!context)
+      throw new ImageRefusal('This browser cannot shrink pictures. Try another browser.');
     return {
       context,
       encode: (type) =>
@@ -89,7 +95,8 @@ function createSurface(width: number, height: number): DrawSurface {
     encode: (type) =>
       new Promise<Blob>((resolve, reject) => {
         canvas.toBlob(
-          (blob) => (blob ? resolve(blob) : reject(new ImageRefusal('This picture could not be shrunk.'))),
+          (blob) =>
+            blob ? resolve(blob) : reject(new ImageRefusal('This picture could not be shrunk.')),
           type,
           type === 'image/jpeg' ? JPEG_QUALITY : undefined,
         );
@@ -97,7 +104,11 @@ function createSurface(width: number, height: number): DrawSurface {
   };
 }
 
-async function render(bitmap: ImageBitmap, size: { width: number; height: number }, type: OutputMime): Promise<Blob> {
+async function render(
+  bitmap: ImageBitmap,
+  size: { width: number; height: number },
+  type: OutputMime,
+): Promise<Blob> {
   const { context, encode } = createSurface(size.width, size.height);
   if (type === 'image/jpeg') {
     // JPEG has no transparency: flatten onto white instead of the encoder's black.
@@ -125,7 +136,9 @@ export async function shrinkImage(file: File): Promise<File> {
   try {
     bitmap = await createImageBitmap(file);
   } catch {
-    throw new ImageRefusal('This picture could not be read. It may be damaged; try saving it again.');
+    throw new ImageRefusal(
+      'This picture could not be read. It may be damaged; try saving it again.',
+    );
   }
 
   try {
@@ -135,7 +148,8 @@ export async function shrinkImage(file: File): Promise<File> {
     if (blob.size > IMAGE_MAX_BYTES) {
       const half = Math.max(1, Math.floor(Math.max(first.width, first.height) / 2));
       blob = await render(bitmap, targetSize(bitmap.width, bitmap.height, half), type);
-      if (blob.size > IMAGE_MAX_BYTES) throw new ImageRefusal('This picture is too large even after shrinking');
+      if (blob.size > IMAGE_MAX_BYTES)
+        throw new ImageRefusal('This picture is too large even after shrinking');
     }
     return new File([blob], outputFileName(file.name, type), { type, lastModified: Date.now() });
   } finally {

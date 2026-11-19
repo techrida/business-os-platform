@@ -39,14 +39,19 @@ it('gives the same record the same background on every render', async () => {
   const first = await mountForm(<Avatar name="Ravi Shah" seedId={id} />);
   const firstFill = fill(first.container);
   await first.unmount();
-  const second = await mountForm(<Avatar name="Someone Renamed" seedId={id} size="large" shape="circle" />);
+  const second = await mountForm(
+    <Avatar name="Someone Renamed" seedId={id} size="large" shape="circle" />,
+  );
   expect(fill(second.container)).toBe(firstFill);
   expect(firstFill).toBe(avatarColour(id));
   await second.unmount();
 });
 
 it('spreads different records across the palette', async () => {
-  const ids = Array.from({ length: 12 }, (_, i) => `00000000-0000-4000-8000-${String(i).padStart(12, '0')}`);
+  const ids = Array.from(
+    { length: 12 },
+    (_, i) => `00000000-0000-4000-8000-${String(i).padStart(12, '0')}`,
+  );
   const fills = new Set<string>();
   for (const id of ids) {
     const view = await mountForm(<Avatar name="Customer" seedId={id} />);
@@ -64,7 +69,9 @@ it('uses the neutral colour when there is no record id yet', async () => {
 });
 
 it('renders the picture from the image route above the initials', async () => {
-  const view = await mountForm(<Avatar name="Ada Lovelace" seedId="u-1" imageDocumentId={IMAGE_ID} />);
+  const view = await mountForm(
+    <Avatar name="Ada Lovelace" seedId="u-1" imageDocumentId={IMAGE_ID} />,
+  );
   const image = view.container.querySelector('img');
   expect(image?.getAttribute('src')).toBe(`/api/images/${IMAGE_ID}`);
   expect(image?.getAttribute('alt')).toBe('');
@@ -82,10 +89,13 @@ function mountRoot() {
   return {
     container,
     render: (documentId: string | null = IMAGE_ID) =>
-      act(() => Promise.resolve(root.render(<Avatar name="Ada Lovelace" imageDocumentId={documentId} />))),
+      act(() =>
+        Promise.resolve(root.render(<Avatar name="Ada Lovelace" imageDocumentId={documentId} />)),
+      ),
     image: () => container.querySelector('img'),
     // The picture answers 404 (still being scanned) or loads.
-    fail: () => act(() => Promise.resolve(container.querySelector('img')!.dispatchEvent(new Event('error')))),
+    fail: () =>
+      act(() => Promise.resolve(container.querySelector('img')!.dispatchEvent(new Event('error')))),
     wait: (ms: number) =>
       act(async () => {
         await vi.advanceTimersByTimeAsync(ms);

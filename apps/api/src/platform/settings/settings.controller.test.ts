@@ -121,7 +121,8 @@ describe('SettingsController', () => {
   describe('PUT entity.profile keeps the stored logo', () => {
     const DOC_STORED = '6f1c2a3b-4d5e-4f60-8a7b-9c0d1e2f3a4b';
     const DOC_ATTACKER = '0b1c2d3e-4f50-4617-8a9b-0c1d2e3f4a5b';
-    const LEGACY_STORED = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAAAA==';
+    const LEGACY_STORED =
+      'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAAAA==';
     const LEGACY_ATTACKER = 'data:image/png;base64,PHNjcmlwdD5hbGVydCgxKTwvc2NyaXB0Pg==';
     const stored = {
       ...SETTING_DEFAULTS['entity.profile'],
@@ -158,7 +159,12 @@ describe('SettingsController', () => {
       fakeSettings.getLocked.mockResolvedValue({ value: legacy, version: 5 });
       fakeSettings.set.mockResolvedValue({ version: 6 });
       await controller.putSetting('entity.profile', {
-        value: { ...stored, displayName: 'New Name', logoDocumentId: null, legacyLogoDataUrl: null },
+        value: {
+          ...stored,
+          displayName: 'New Name',
+          logoDocumentId: null,
+          legacyLogoDataUrl: null,
+        },
       });
       expect(fakeSettings.set).toHaveBeenCalledWith({ fake: 'tx' }, 'entity.profile', {
         ...stored,
@@ -187,11 +193,17 @@ describe('SettingsController', () => {
 
     it('passes a value that is not an object on for the service to refuse', async () => {
       fakeSettings.getLocked.mockResolvedValue({ value: stored, version: 2 });
-      fakeSettings.set.mockRejectedValue(new BadRequestException('Invalid value for entity.profile'));
+      fakeSettings.set.mockRejectedValue(
+        new BadRequestException('Invalid value for entity.profile'),
+      );
       await expect(
         controller.putSetting('entity.profile', { value: 'not a profile' }),
       ).rejects.toBeInstanceOf(BadRequestException);
-      expect(fakeSettings.set).toHaveBeenCalledWith({ fake: 'tx' }, 'entity.profile', 'not a profile');
+      expect(fakeSettings.set).toHaveBeenCalledWith(
+        { fake: 'tx' },
+        'entity.profile',
+        'not a profile',
+      );
     });
 
     it('leaves other keys alone: no profile read, the value passed through as sent', async () => {

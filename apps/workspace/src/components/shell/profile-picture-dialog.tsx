@@ -37,12 +37,7 @@ export function ProfilePictureDialog({ userId, imageDocumentId, name }: ProfileP
       }}
       trigger={
         <button type="button" className={shellStyles.iconButton} aria-label="Profile picture">
-          <Avatar
-            key={revision}
-            name={name}
-            seedId={userId}
-            imageDocumentId={imageDocumentId}
-          />
+          <Avatar key={revision} name={name} seedId={userId} imageDocumentId={imageDocumentId} />
         </button>
       }
       footer={
