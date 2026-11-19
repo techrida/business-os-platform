@@ -8,6 +8,7 @@ import { Sidebar } from '@/components/shell/sidebar';
 import { NumberSystemProvider } from '@/components/ui/number-system-context';
 import { WebVitals } from '@/components/web-vitals';
 import { getMe } from '@/lib/api';
+import { getInboxPage } from '@/lib/api-kernel';
 import { getNumberSystems } from '@/lib/display-settings';
 import { getSession, type Session } from '@/lib/session';
 
@@ -40,8 +41,16 @@ export default async function AppLayout({ children }: { children: ReactNode }) {
   if (session.roles.length === 0) redirect('/no-access');
 
   const roles = accountLabel(session.roles);
-  // Neither throws: a failed read falls back to the default grouping and to initials.
-  const [numberSystems, own] = await Promise.all([getNumberSystems(), ownAvatar(session)]);
+  // None throws: a failed read falls back to the default grouping and to initials.
+  // A failed or refused inbox read leaves the badge out; it never shows a zero in its place.
+  const [numberSystems, own, approvalsWaiting] = await Promise.all([
+    getNumberSystems(),
+    ownAvatar(session),
+    getInboxPage(session, { limit: 1 }).then(
+      (page) => page.total,
+      () => undefined,
+    ),
+  ]);
 
   return (
     <ShellFrame>
@@ -55,9 +64,10 @@ export default async function AppLayout({ children }: { children: ReactNode }) {
           ...(own.id ? { id: own.id } : {}),
         }}
         roles={session.roles}
+        counts={approvalsWaiting === undefined ? {} : { '/inbox': approvalsWaiting }}
       />
       <ShellMain>
-        <Header orgKind={session.orgKind} roles={session.roles} />
+        <Header roles={session.roles} />
         <NumberSystemProvider value={numberSystems}>{children}</NumberSystemProvider>
       </ShellMain>
     </ShellFrame>

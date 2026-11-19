@@ -201,21 +201,26 @@ describe('GET /v1/admin/users validation', () => {
     { q: ['a', 'b'] },
     { unknown: 'x' },
   ])('rejects invalid directory parameters %#', async (query) => {
-    await expect(controller.list(query)).rejects.toBeInstanceOf(BadRequestException);
+    await expect(controller.list(query, { setHeader: vi.fn() })).rejects.toBeInstanceOf(
+      BadRequestException,
+    );
   });
 
   it('trims search and passes validated filters and pagination to the store', async () => {
     const list = vi.spyOn(store, 'list');
     await asAdmin(['admin.users.read'], () =>
-      controller.list({
-        q: '  aB  ',
-        status: 'active',
-        role: 'sales',
-        departmentId: ADMIN,
-        sort: 'lastActive',
-        page: '3',
-        limit: '10',
-      }),
+      controller.list(
+        {
+          q: '  aB  ',
+          status: 'active',
+          role: 'sales',
+          departmentId: ADMIN,
+          sort: 'lastActive',
+          page: '3',
+          limit: '10',
+        },
+        { setHeader: vi.fn() },
+      ),
     );
     expect(list).toHaveBeenCalledWith(
       { tenantId: TENANT, organizationId: STAFF_ORG },
@@ -234,16 +239,55 @@ describe('GET /v1/admin/users validation', () => {
   it('accepts repeated status and role params, drops empties and duplicates, and ignores a one-letter search', async () => {
     const list = vi.spyOn(store, 'list');
     await asAdmin(['admin.users.read'], () =>
-      controller.list({
-        q: 'a',
-        status: ['active', 'invited', 'active', ''],
-        role: ['sales', 'finance'],
-      }),
+      controller.list(
+        {
+          q: 'a',
+          status: ['active', 'invited', 'active', ''],
+          role: ['sales', 'finance'],
+        },
+        { setHeader: vi.fn() },
+      ),
     );
     expect(list).toHaveBeenCalledWith(
       { tenantId: TENANT, organizationId: STAFF_ORG },
       { status: ['active', 'invited'], role: ['sales', 'finance'], limit: 50 },
     );
+  });
+});
+
+describe('GET /v1/admin/users total', () => {
+  const listed = (n: number) =>
+    Array.from({ length: n }, (_, i) => ({
+      id: `00000000-0000-4000-9000-${String(i + 1).padStart(12, '0')}`,
+      tenantId: TENANT,
+      idpOrgId: STAFF_IDP,
+      zitadelUserId: `z-${i}`,
+      email: null,
+      displayName: `Person ${i + 1}`,
+      status: 'active' as const,
+      roles: [],
+      department: null,
+      createdAt: '2026-01-01T00:00:00.000Z',
+      lastActiveAt: null,
+    }));
+
+  it('sends the store total as X-Total-Count, not the size of this page', async () => {
+    vi.spyOn(store, 'list').mockResolvedValue({ rows: listed(3), total: 7 });
+    const res = { setHeader: vi.fn() };
+    const page = await asAdmin(['admin.users.read'], () =>
+      controller.list({ status: 'active', sort: 'name', limit: '2' }, res),
+    );
+    expect(res.setHeader).toHaveBeenCalledWith('X-Total-Count', '7');
+    expect(page.items).toHaveLength(2);
+    expect(page.nextPage).toBe(2);
+  });
+
+  it('reports zero on an empty page', async () => {
+    vi.spyOn(store, 'list').mockResolvedValue({ rows: [], total: 0 });
+    const res = { setHeader: vi.fn() };
+    const page = await asAdmin(['admin.users.read'], () => controller.list({}, res));
+    expect(res.setHeader).toHaveBeenCalledWith('X-Total-Count', '0');
+    expect(page).toEqual({ items: [], nextAfter: null, nextPage: null });
   });
 });
 
@@ -595,11 +639,17 @@ describe('SqlUsersStore against migration 0013 (ADR 0027: tenant-scoped users)',
     expect((await sqlStore.notInactiveInIdpOrg(db, org)).map((u) => u.id).sort()).toEqual(
       [ids.full, ids.salesOnly].sort(),
     );
-    const listed = await sqlStore.list(scope, { limit: 10 });
+    const { rows: listed, total } = await sqlStore.list(scope, { limit: 10 });
     expect(listed).toHaveLength(3);
+    expect(total).toBe(3);
     expect(listed[0]).not.toHaveProperty('organizationId');
     expect(listed[0]).not.toHaveProperty('departmentId');
   }, 60_000);
+  const listRows = async (...args: Parameters<SqlUsersStore['list']>) =>
+    (await sqlStore.list(...args)).rows;
+  const totalOf = async (...args: Parameters<SqlUsersStore['list']>) =>
+    (await sqlStore.list(...args)).total;
+
   async function directoryFixture(label: string) {
     const tenantId = randomUUID();
     const organizationId = randomUUID();
@@ -677,12 +727,12 @@ describe('SqlUsersStore against migration 0013 (ADR 0027: tenant-scoped users)',
     });
     expect(await sqlStore.summary(second.scope)).toMatchObject({ total: 4 });
     const sorted = [alpha, duplicate].sort();
-    const pageOne = await sqlStore.list(scope, { limit: 1, sort: 'name', page: 1 });
-    const pageTwo = await sqlStore.list(scope, { limit: 1, sort: 'name', page: 2 });
+    const pageOne = await listRows(scope, { limit: 1, sort: 'name', page: 1 });
+    const pageTwo = await listRows(scope, { limit: 1, sort: 'name', page: 2 });
     expect(pageOne[0]?.id).toBe(sorted[0]);
     expect(pageTwo[0]?.id).toBe(sorted[1]);
 
-    const matches = await sqlStore.list(scope, {
+    const matches = await listRows(scope, {
       limit: 1,
       q: '%USER',
       status: ['active'],
@@ -700,26 +750,39 @@ describe('SqlUsersStore against migration 0013 (ADR 0027: tenant-scoped users)',
     ]);
     expect(AdminUserSchema.safeParse(matches[0]).success).toBe(true);
     // A search with few exact hits may add close matches after them, so only the first is pinned.
-    expect((await sqlStore.list(scope, { limit: 10, q: 'zEnIth' }))[0]?.id).toBe(target);
-    expect(await sqlStore.list(scope, { limit: 10, departmentId: second.departmentId })).toEqual(
-      [],
-    );
-    expect(await sqlStore.list(scope, { limit: 10, status: ['inactive'] })).toEqual([
+    expect((await listRows(scope, { limit: 10, q: 'zEnIth' }))[0]?.id).toBe(target);
+    expect(await listRows(scope, { limit: 10, departmentId: second.departmentId })).toEqual([]);
+    expect(await listRows(scope, { limit: 10, status: ['inactive'] })).toEqual([
       expect.objectContaining({ id: inactive, department: null }),
     ]);
     // Repeated values are any-of: two statuses, two roles.
-    const byStatus = await sqlStore.list(scope, { limit: 10, status: ['inactive', 'invited'] });
+    const byStatus = await listRows(scope, { limit: 10, status: ['inactive', 'invited'] });
     expect(byStatus.map(({ id }) => id).sort()).toEqual([duplicate, inactive].sort());
-    const byRole = await sqlStore.list(scope, { limit: 10, role: ['finance', 'founder'] });
+    const byRole = await listRows(scope, { limit: 10, role: ['finance', 'founder'] });
     expect(byRole.map(({ id }) => id)).toEqual([target]);
     // A typo finds the user, ranked after exact hits; the other tenant's user never appears.
-    const typo = await sqlStore.list(scope, { limit: 10, q: 'Zenithh' });
+    const typo = await listRows(scope, { limit: 10, q: 'Zenithh' });
     expect(typo[0]?.id).toBe(target);
     expect(typo.map(({ id }) => id)).not.toContain(second.target);
     // A filter narrows the fuzzy result too: the target is active, so inactive-only hides it.
-    expect(await sqlStore.list(scope, { limit: 10, q: 'Zenithh', status: ['inactive'] })).toEqual(
-      [],
-    );
+    expect(await listRows(scope, { limit: 10, q: 'Zenithh', status: ['inactive'] })).toEqual([]);
+
+    // The total counts the same scope, filters and search as the rows: the portal user and the other tenant's
+    // four are never in it, and neither the page nor the id cursor changes it.
+    expect(await totalOf(scope, { limit: 1 })).toBe(4);
+    expect(await totalOf(scope, { limit: 1, sort: 'name', page: 9 })).toBe(4);
+    expect(await listRows(scope, { limit: 1, sort: 'name', page: 9 })).toEqual([]);
+    expect(await totalOf(scope, { limit: 1, after: alpha })).toBe(4);
+    expect(await totalOf(scope, { limit: 1, status: ['active'] })).toBe(2);
+    expect(await totalOf(scope, { limit: 1, status: ['inactive', 'invited'] })).toBe(2);
+    expect(await totalOf(scope, { limit: 1, role: ['finance', 'founder'] })).toBe(1);
+    expect(await totalOf(scope, { limit: 1, departmentId: second.departmentId })).toBe(0);
+    // With a cursor the search is an exact substring match, so only the target's email matches.
+    expect(await totalOf(scope, { limit: 1, q: '%USER', after: alpha })).toBe(1);
+    // A fuzzy search counts the close matches it returns, too.
+    const fuzzy = await sqlStore.list(scope, { limit: 10, q: 'Zenithh' });
+    expect(fuzzy.total).toBe(fuzzy.rows.length);
+    expect(await totalOf(scope, { limit: 1, q: 'Zenithh', status: ['inactive'] })).toBe(0);
   }, 60_000);
 
   it('throttles concurrent activity and excludes it from the audit without loosening scope', async () => {
@@ -733,22 +796,22 @@ describe('SqlUsersStore against migration 0013 (ADR 0027: tenant-scoped users)',
       sqlStore.recordActivity(first.scope, actor),
       sqlStore.recordActivity(first.scope, actor),
     ]);
-    const [seen] = await sqlStore.list(first.scope, { limit: 1, sort: 'lastActive' });
+    const [seen] = await listRows(first.scope, { limit: 1, sort: 'lastActive' });
     expect(seen?.id).toBe(first.target);
     expect(seen?.lastActiveAt).toMatch(/^\d{4}-\d{2}-\d{2}T/);
     await new Promise((resolve) => setTimeout(resolve, 10));
     await sqlStore.recordActivity(first.scope, actor);
-    expect(
-      (await sqlStore.list(first.scope, { limit: 1, sort: 'lastActive' }))[0]?.lastActiveAt,
-    ).toBe(seen?.lastActiveAt);
+    expect((await listRows(first.scope, { limit: 1, sort: 'lastActive' }))[0]?.lastActiveAt).toBe(
+      seen?.lastActiveAt,
+    );
 
     await sqlStore.recordActivity(first.scope, { ...actor, id: second.target });
     await sqlStore.recordActivity(first.scope, { ...actor, id: first.inactive });
     expect(
-      (await sqlStore.list(first.scope, { limit: 4, status: ['inactive'] }))[0]?.lastActiveAt,
+      (await listRows(first.scope, { limit: 4, status: ['inactive'] }))[0]?.lastActiveAt,
     ).toBeNull();
     expect(
-      (await sqlStore.list(second.scope, { limit: 4 })).every(
+      (await listRows(second.scope, { limit: 4 })).every(
         ({ lastActiveAt }) => lastActiveAt === null,
       ),
     ).toBe(true);

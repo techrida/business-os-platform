@@ -262,3 +262,27 @@ describe('upload header helpers', () => {
     ).toEqual({ id: 'a', documentId: 'b', filename: 'c', sizeBytes: 1, status: 'clean' });
   });
 });
+
+describe('auditEventLabel', () => {
+  it('turns the raw event names of a memo into plain language', async () => {
+    const { auditEventLabel } = await import('./kernel-ui');
+    expect(auditEventLabel('test_memos.update')).toBe('Memo updated');
+    expect(auditEventLabel('test_memos.insert')).toBe('Memo created');
+    expect(auditEventLabel('approval_requests.insert')).toBe('Approval requested');
+    expect(auditEventLabel('approval_requests.update')).toBe('Approval request updated');
+    expect(auditEventLabel('approvals.submit')).toBe('Submitted for approval');
+    expect(auditEventLabel('approvals.reject')).toBe('Rejected');
+  });
+
+  it('matches regardless of case and surrounding space', async () => {
+    const { auditEventLabel } = await import('./kernel-ui');
+    expect(auditEventLabel(' Test_Memos.Update ')).toBe('Memo updated');
+  });
+
+  it('falls back to a humanised form for an unknown name, never an empty label', async () => {
+    const { auditEventLabel } = await import('./kernel-ui');
+    expect(auditEventLabel('approval_steps.skip')).toBe('Approval steps skip');
+    expect(auditEventLabel('test_memo.submitted')).toBe('Memo submitted');
+    expect(auditEventLabel('')).toBe('Event');
+  });
+});

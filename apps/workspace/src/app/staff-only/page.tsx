@@ -3,6 +3,7 @@ import { redirect } from 'next/navigation';
 import { NoticeCard } from '@/components/shell/notice-card';
 import { Button } from '@/components/ui/button';
 import { CenteredPage } from '@/components/ui/centered-page';
+import { getFooterLinks } from '@/lib/env';
 import { getSession } from '@/lib/session';
 
 export default async function StaffOnlyPage() {
@@ -12,8 +13,9 @@ export default async function StaffOnlyPage() {
   if (session.orgKind === 'staff') redirect('/');
 
   return (
-    <CenteredPage>
+    <CenteredPage width="split">
       <NoticeCard
+        footerLinks={getFooterLinks()}
         title="This is the staff workspace"
         actions={
           <form method="post" action="/auth/logout">

@@ -12,11 +12,13 @@ import { LeadConvertService } from './convert/lead-convert.service';
 import { LeadsCaller } from './leads.caller';
 import { LeadsController } from './leads.controller';
 import { LeadsService } from './leads.service';
+import { LeadLostReasonsController } from './lost-reasons.controller';
+import { LeadLostReasonsService } from './lost-reasons.service';
 
 @Module({
   imports: [AuditModule, SettingsModule, CustomersModule],
-  controllers: [LeadsController, LeadConvertController],
-  providers: [LeadsService, LeadConvertService, LeadsCaller],
-  exports: [LeadsService],
+  controllers: [LeadsController, LeadLostReasonsController, LeadConvertController],
+  providers: [LeadsService, LeadLostReasonsService, LeadConvertService, LeadsCaller],
+  exports: [LeadsService, LeadLostReasonsService],
 })
 export class LeadsModule {}

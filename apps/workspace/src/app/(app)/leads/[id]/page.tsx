@@ -20,6 +20,7 @@ import { Icon } from '@/components/ui/icon';
 import { Breadcrumb, Page, PageHeader } from '@/components/ui/page';
 import { FactList, Panel, type Fact } from '@/components/ui/panel';
 import { StatusTimeline, type TimelineStep } from '@/components/ui/status-timeline';
+import { listLeadLostReasonChoices } from '@/lib/api-lead-lost-reasons';
 import { failureOf } from '@/lib/api-kernel';
 import { requireStaffSession } from '@/lib/bff';
 import { getNumberSystems } from '@/lib/display-settings';
@@ -38,7 +39,11 @@ export const dynamic = 'force-dynamic';
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
-function facts(l: LeadDto, owners: readonly LeadOwnerOption[], numberSystems: NumberSystems): Fact[] {
+function facts(
+  l: LeadDto,
+  owners: readonly LeadOwnerOption[],
+  numberSystems: NumberSystems,
+): Fact[] {
   const dash = <span className={styles.quiet}>Not set</span>;
   return [
     {
@@ -90,6 +95,7 @@ function facts(l: LeadDto, owners: readonly LeadOwnerOption[], numberSystems: Nu
           leadId={l.id}
           version={l.version}
           ownerUserId={l.ownerUserId}
+          ownerName={l.ownerName}
           owners={owners}
         />
       ),
@@ -175,15 +181,16 @@ export default async function LeadPage({ params }: { params: Promise<{ id: strin
   const logged = loggedResult.status === 'fulfilled' ? loggedResult.value : null;
   const loggedProblem =
     loggedResult.status === 'rejected' ? failureOf(loggedResult.reason).message : null;
-  // Owners feed the owner editor; names (owners plus the users directory, as on the lead list)
-  // name assignees and History actors. Without them the page still works, read-only.
-  const { owners, names } =
-    peopleResult.status === 'fulfilled' ? peopleResult.value : { owners: [], names: new Map() };
+  // Owners feed the owner editor and the follow-up choices; every name shown comes from its own record (D46).
+  // Without them the page still works, read-only.
+  const { owners } = peopleResult.status === 'fulfilled' ? peopleResult.value : { owners: [] };
   // Overdue is measured against the server's clock for this render.
   const now = new Date();
 
   const canQualify = moves.some((move) => move.stage === 'qualified');
   const canMarkLost = moves.some((move) => move.stage === 'lost');
+  // The options Mark lost offers (D49). Only asked for when the action is shown; a failure leaves the dialog able to add one.
+  const lostReasons = canMarkLost ? await listLeadLostReasonChoices(session).catch(() => []) : [];
 
   return (
     <Page className={styles.detail}>
@@ -205,7 +212,12 @@ export default async function LeadPage({ params }: { params: Promise<{ id: strin
                 <QualifyLead id={lead.id} number={lead.number} version={lead.version} />
               ) : null}
               {canMarkLost ? (
-                <MarkLostDialog id={lead.id} number={lead.number} version={lead.version} />
+                <MarkLostDialog
+                  id={lead.id}
+                  number={lead.number}
+                  version={lead.version}
+                  reasons={lostReasons}
+                />
               ) : null}
             </>
           ) : null
@@ -249,7 +261,6 @@ export default async function LeadPage({ params }: { params: Promise<{ id: strin
             ) : (
               <ActivityList
                 items={logged ?? []}
-                people={names}
                 empty="Calls, meetings and stage changes appear here."
               />
             )}
@@ -321,7 +332,6 @@ export default async function LeadPage({ params }: { params: Promise<{ id: strin
               items={planned ?? []}
               ownerUserId={lead.ownerUserId}
               owners={owners}
-              names={names}
               now={now}
               className={styles.detailPanel}
             />
@@ -332,7 +342,15 @@ export default async function LeadPage({ params }: { params: Promise<{ id: strin
               <StageBadge kind="lead" stage={lead.stage} />
             </div>
             {lead.stageReason ? (
-              <Alert tone={lead.stage === 'lost' ? 'error' : 'warning'} title={lead.stageReason}>
+              <Alert
+                tone={lead.stage === 'lost' ? 'error' : 'warning'}
+                title={lead.lostReason?.label ?? lead.stageReason}
+              >
+                {lead.lostReason?.retired ? (
+                  <span className={styles.longText}>
+                    This reason is no longer offered for new leads.
+                  </span>
+                ) : null}
                 {lead.stageNote ? <span className={styles.longText}>{lead.stageNote}</span> : null}
               </Alert>
             ) : null}

@@ -18,6 +18,7 @@ import {
   isQuotationEditable,
   type ListQuotationsQuery,
   type Permission,
+  type QuotationAmount,
   type QuotationCapabilities,
   type QuotationDetail,
   type QuotationDto,
@@ -507,21 +508,38 @@ export class DraftingService {
         offset: 0,
         rows: (r, p) =>
           r
-            .select({ status: quotationVersions.status, n: sql<number>`count(*)::int` })
+            .select({
+              status: quotationVersions.status,
+              currency: quotationVersions.currency,
+              n: sql<number>`count(*)::int`,
+              // numeric(18,2) summed in the database and read as text: exact, never a float.
+              worth: sql<string>`sum(${quotationVersions.total})::text`,
+            })
             .from(quotations)
             .innerJoin(quotationVersions, onCurrentVersion)
             .innerJoin(customers, onCustomer)
             .leftJoin(users, onOwner)
             .where(p.where)
-            .groupBy(quotationVersions.status),
+            .groupBy(quotationVersions.status, quotationVersions.currency),
         count: countMatching,
       });
       const byStatus = Object.fromEntries(QUOTATION_STATUSES.map((st) => [st, 0])) as Record<
         QuotationStatus,
         number
       >;
-      for (const r of rows) byStatus[r.status] = r.n;
-      return { total, byStatus };
+      const amounts = Object.fromEntries(
+        QUOTATION_STATUSES.map((st) => [st, []]),
+      ) as unknown as Record<QuotationStatus, QuotationAmount[]>;
+      for (const r of rows) {
+        byStatus[r.status] += r.n;
+        amounts[r.status].push({
+          currency: r.currency as QuotationAmount['currency'],
+          total: r.worth,
+        });
+      }
+      for (const st of QUOTATION_STATUSES)
+        amounts[st].sort((a, b) => a.currency.localeCompare(b.currency));
+      return { total, byStatus, amounts };
     });
   }
 

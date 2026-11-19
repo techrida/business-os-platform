@@ -9,8 +9,10 @@ import { Badge } from '@/components/ui/badge';
 import { Breadcrumb, Page, PageHeader } from '@/components/ui/page';
 import { Disclosure } from '@/components/ui/disclosure';
 import { FactList, Panel, type Fact } from '@/components/ui/panel';
+import { StatusTimeline } from '@/components/ui/status-timeline';
 import {
   failureOf,
+  getApprovalRequest,
   getMemoDirectory,
   getMemo,
   getMemoRoute,
@@ -20,8 +22,7 @@ import {
 import { requireStaffSession } from '@/lib/bff';
 import { getNumberSystems } from '@/lib/display-settings';
 import { money, when } from '@/lib/kernel-format';
-import { userNames } from '@/lib/business-labels';
-import { humanizeKey, toAttachmentView } from '@/lib/kernel-ui';
+import { auditEventLabel, toAttachmentView } from '@/lib/kernel-ui';
 import { memoDraftAccount } from '@/lib/memo-working-draft';
 
 import styles from '../../kit.module.css';
@@ -31,7 +32,7 @@ import pageStyles from '../memo-pages.module.css';
 import { MemoPreview } from '../memo-preview';
 import { MemoReviewGate } from '../memo-review-gate';
 import { MemoStatus } from '../memo-status';
-import { submitMissing } from './detail-model';
+import { approvalStages, submitMissing } from './detail-model';
 import { HistoricalAttachments } from './historical-attachments';
 import { MemoFeedback } from './memo-feedback';
 import { SubmitForm } from './submit-form';
@@ -44,10 +45,6 @@ type SearchParams = Promise<{
   submitted?: string | string[];
 }>;
 
-/** Present the historical test-memo action namespace using the product document name. */
-const auditLabel = (action: string): string =>
-  humanizeKey(action.replace(/^test_memos[.]/, 'memo.'));
-
 const MEMO_CONTEXT = {
   draft: 'This memo is a draft.',
   submitted: 'This memo is waiting for approval. It can be edited if it is returned.',
@@ -56,17 +53,15 @@ const MEMO_CONTEXT = {
   rejected: 'This memo was rejected.',
 };
 
-function Timeline({ events, people }: { events: AuditEventDto[]; people: Map<string, string> }) {
+function Timeline({ events }: { events: AuditEventDto[] }) {
   return (
     <ol className={styles.history}>
       {events.map((e) => (
         <li key={e.id} className={styles.event}>
           <div className={styles.eventHead}>
-            <span className={styles.eventName}>{auditLabel(e.action)}</span>
+            <span className={styles.eventName}>{auditEventLabel(e.action)}</span>
             <span className={styles.eventMeta}>
-              {e.actorKind === 'user'
-                ? (e.actorDisplayName ?? people.get(e.actorId) ?? 'Person name unavailable')
-                : e.actorKind}
+              {e.actorKind === 'user' ? (e.actorDisplayName ?? 'Unnamed user') : e.actorKind}
             </span>
             <time className={styles.eventMeta} dateTime={e.occurredAt}>
               {when(e.occurredAt)}
@@ -90,7 +85,6 @@ export default async function MemoPage({
   const session = await requireStaffSession(path);
   const numberSystems = await getNumberSystems();
   const query = await searchParams;
-  const people = await userNames(session);
   const saved = query.saved === '1';
   const submitted =
     query.submitted === 'pending' || query.submitted === 'blocked' ? query.submitted : null;
@@ -127,16 +121,30 @@ export default async function MemoPage({
 
   // The API builds this route with the same people and the same separation-of-duties list as submit, so
   // it shows what submit will create: for an internal memo, the people the author selected, in order.
-  // `GET /v1/audit` needs `audit.read`. Without it the page asks nothing (as `userNames` does for the
-  // directory), so the API logs no 403 per view; a 403 from a grant revoked later still reads as hidden.
+  // `GET /v1/audit` needs `audit.read`. Without it the page asks nothing (as the directory
+  // lookup once did), so the API logs no 403 per view; a 403 from a grant revoked later still reads as hidden.
   const mayReadAudit = hasPermission(session.roles, 'audit.read');
   const entityIds = mayReadAudit
     ? [memo.id, ...(memo.approval ? [memo.approval.requestId] : [])]
     : [];
+  // The submitted route, for the stage tracker. It is the same read the inbox detail makes; a failure only
+  // leaves the tracker out and the memo page unaffected.
+  const requestRead = memo.approval
+    ? getApprovalRequest(session, memo.approval.requestId).catch(() => null)
+    : Promise.resolve(null);
   const [previewResult, ...auditResults] = await Promise.allSettled([
     editable ? getMemoRoute(session, memo.id) : Promise.resolve(null as RoutePlan | null),
     ...entityIds.map((entityId) => listAudit(session, { entityId, limit: 50 })),
   ]);
+
+  const request = await requestRead;
+  const stages = request
+    ? approvalStages(
+        request.steps,
+        new Map(request.people?.map((p) => [p.userId, p.name]) ?? []),
+        memo.template ? [...memo.template.recommenders, memo.template.approvedBy] : [],
+      )
+    : [];
 
   const plan = previewResult?.status === 'fulfilled' ? previewResult.value : null;
   const previewFailure =
@@ -262,6 +270,12 @@ export default async function MemoPage({
             No approver is available for a step of the route. An administrator can update the route
             and reroute the memo.
           </Alert>
+        ) : null}
+
+        {stages.length > 0 ? (
+          <section className={pageStyles.tracker}>
+            <StatusTimeline label="Approval route steps" steps={stages} />
+          </section>
         ) : null}
 
         {showEditor && memo.template ? editor : null}
@@ -392,7 +406,7 @@ export default async function MemoPage({
             ) : events.length === 0 ? (
               <p className={styles.note}>No events recorded yet.</p>
             ) : (
-              <Timeline events={events} people={people} />
+              <Timeline events={events} />
             )}
           </Panel>
         </div>

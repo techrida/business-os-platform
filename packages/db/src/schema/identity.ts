@@ -25,8 +25,16 @@ import { appSchema, idpOrgs, opsSchema, organizations, tenants } from './platfor
 /** Lifecycle of a user row. `invited` = created in ZITADEL, never logged in; `inactive` = may not act. */
 export const USER_STATUSES = ['invited', 'active', 'inactive'] as const;
 
-/** How far a role's permission reaches: the user's own records, their department, rows naming the caller's party, everything. */
+/**
+ * How far a role's permission reaches in code: the user's own records, their department, rows naming the caller's
+ * party, everything. The database also accepts `assigned` (migrations 0082, read-only access to records the caller
+ * was assigned work on); it joins this list, and `Scope`, when the access services honour it, because the API's
+ * grant loader and `can()` are typed on these four.
+ */
 export const ROLE_PERMISSION_SCOPES = ['own', 'department', 'customer_org', 'all'] as const;
+
+/** A department membership's rank (migration 0079). A head leads the department; a manager leads staff. */
+export const MEMBERSHIP_LEVELS = ['staff', 'manager', 'head'] as const;
 
 export const departments = appSchema.table(
   'departments',
@@ -149,6 +157,8 @@ export const rolePermissions = appSchema.table(
     roleKey: text('role_key').notNull(),
     permission: text('permission').notNull(),
     scope: text('scope', { enum: ROLE_PERMISSION_SCOPES }).notNull(),
+    /** True on a row the seed wrote from the code defaults; false on a row a Founder made (migration 0081). */
+    seeded: boolean('seeded').notNull().default(false),
     createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
   },
   (t) => [
@@ -159,7 +169,40 @@ export const rolePermissions = appSchema.table(
     ),
     check(
       'role_permissions_scope_check',
-      sql`${t.scope} in ('own', 'department', 'customer_org', 'all')`,
+      sql`${t.scope} in ('own', 'department', 'customer_org', 'all', 'assigned')`,
+    ),
+  ],
+);
+
+/**
+ * The grant a role gives a member of `minLevel` or above, in place of the role's base grant (migration 0082): the
+ * most senior row at or below the member's level wins. Tenant-scoped, audited, `seeded` as in role_permissions.
+ */
+export const rolePermissionLevels = appSchema.table(
+  'role_permission_levels',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    tenantId: uuid('tenant_id')
+      .notNull()
+      .references(() => tenants.id),
+    roleKey: text('role_key').notNull(),
+    permission: text('permission').notNull(),
+    minLevel: text('min_level', { enum: ['manager', 'head'] as const }).notNull(),
+    scope: text('scope', { enum: ROLE_PERMISSION_SCOPES }).notNull(),
+    seeded: boolean('seeded').notNull().default(false),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    unique('role_permission_levels_tenant_role_permission_level_unique').on(
+      t.tenantId,
+      t.roleKey,
+      t.permission,
+      t.minLevel,
+    ),
+    check('role_permission_levels_min_level_check', sql`${t.minLevel} in ('manager', 'head')`),
+    check(
+      'role_permission_levels_scope_check',
+      sql`${t.scope} in ('own', 'department', 'customer_org', 'all', 'assigned')`,
     ),
   ],
 );
@@ -197,6 +240,8 @@ export const userEntities = appSchema.table(
     /** The roles this membership allows; NULL = every role in the token. */
     roleKeys: text('role_keys').array(),
     departmentId: uuid('department_id'),
+    /** Rank in the department (migration 0079); departments.head_user_id follows level `head`. */
+    level: text('level', { enum: MEMBERSHIP_LEVELS }).notNull().default('staff'),
     jobTitle: text('job_title'),
     createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
   },
@@ -223,6 +268,17 @@ export const userEntities = appSchema.table(
       foreignColumns: [departments.tenantId, departments.organizationId, departments.id],
     }),
     index('user_entities_tenant_user_idx').on(t.tenantId, t.userId),
+    check('user_entities_level_check', sql`${t.level} in ('staff', 'manager', 'head')`),
+    check(
+      'user_entities_head_department_check',
+      sql`${t.level} <> 'head' OR ${t.departmentId} IS NOT NULL`,
+    ),
+    index('user_entities_tenant_org_department_level_idx').on(
+      t.tenantId,
+      t.organizationId,
+      t.departmentId,
+      t.level,
+    ),
   ],
 );
 

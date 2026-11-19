@@ -21,10 +21,11 @@ import {
 import { memoRowNote, MEMO_PAGE_SIZE } from '@/lib/memo-list-view';
 
 import styles from '../kit.module.css';
-import { PlusIcon } from './memo-icons';
+import { EyeIcon, PlusIcon } from './memo-icons';
 import pageStyles from './memo-pages.module.css';
 import { cursorOf, MEMO_LIST_SPEC, statusLabel } from './memo-list-params';
 import { MemoStatus } from './memo-status';
+import { RowActionLink, RowActions } from './row-action-link';
 
 /** The page's list: loads one page of the memos this person may open. Rendered inside Suspense by page.tsx. */
 export async function MemoList({ params }: { params: RawParams }) {
@@ -104,12 +105,15 @@ export async function MemoList({ params }: { params: RawParams }) {
 
   return (
     <div className={pageStyles.tableCard}>
-      <Table caption="Memos, newest first" minWidth={520} className={pageStyles.table ?? ''}>
+      <Table caption="Memos, newest first" minWidth={600} className={pageStyles.table ?? ''}>
         <thead>
           <tr>
             <Th>Memo</Th>
             <Th>Status</Th>
             <Th>Created</Th>
+            <Th align="end">
+              <span className="sr-only">Actions</span>
+            </Th>
           </tr>
         </thead>
         <tbody>
@@ -169,6 +173,17 @@ function MemoRow({ memo }: { memo: MemoListItem }) {
       </Td>
       <Td nowrap>
         <time dateTime={memo.createdAt}>{when(memo.createdAt)}</time>
+      </Td>
+      <Td align="end">
+        <RowActions>
+          <RowActionLink
+            href={`/memos/${encodeURIComponent(memo.id)}`}
+            label={`View ${memo.title}`}
+            tooltip="View memo"
+          >
+            <EyeIcon size={18} />
+          </RowActionLink>
+        </RowActions>
       </Td>
     </tr>
   );

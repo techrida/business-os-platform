@@ -26,6 +26,7 @@ import { systemActor, withTx } from '../../platform/db/tx';
 import { NumberingService } from '../../platform/settings/numbering.service';
 import { ErrorBodyFilter } from '../../platform/tenancy/error-body.filter';
 import { LeadsService } from '../leads/leads.service';
+import { LeadLostReasonsService } from '../leads/lost-reasons.service';
 import { startHarness, type Harness } from '../leads/test/harness';
 import { ActivitiesController } from './activities.controller';
 import { ActivitiesService } from './activities.service';
@@ -47,6 +48,7 @@ beforeAll(async () => {
     new AuditService(h.db),
     new NumberingService(),
     h.caller,
+    new LeadLostReasonsService(h.db, new AuditService(h.db), h.caller),
   );
   const service = new ActivitiesService(h.db, authz, new AuditService(h.db), h.caller);
   const moduleRef = await Test.createTestingModule({
@@ -436,6 +438,38 @@ describe('planned and logged activities', () => {
     expect((await list(`?leadId=${lead.id}&status=planned`)).status).toBe(404);
   });
 
+  it('filters by an inclusive due-day range in Asia/Kathmandu and drops rows without a due time', async () => {
+    const lead = await seedLead();
+    const make = (subject: string, dueAt?: string) =>
+      post({
+        leadId: lead.id,
+        kind: dueAt ? 'call' : 'note',
+        subject,
+        ...(dueAt ? { dueAt } : {}),
+      });
+    // 18:15 UTC is midnight in Kathmandu (UTC+5:45).
+    await make('before', '2029-12-31T18:14:00.000Z');
+    await make('first', '2029-12-31T18:15:00.000Z');
+    await make('middle', DUE_1);
+    await make('last', '2030-01-02T18:14:00.000Z');
+    await make('after', '2030-01-02T18:15:00.000Z');
+    await make('no due time');
+
+    const range = `?leadId=${lead.id}&dueFrom=2030-01-01&dueTo=2030-01-02`;
+    const planned = await listed(`${range}&status=planned`);
+    expect(planned.map((a) => a.subject)).toEqual(['first', 'middle', 'last']);
+    expect((await listed(range)).map((a) => a.subject).sort()).toEqual(['first', 'last', 'middle']);
+    const from = await listed(`?leadId=${lead.id}&dueFrom=2030-01-02&status=planned`);
+    expect(from.map((a) => a.subject)).toEqual(['last', 'after']);
+    const to = await listed(`?leadId=${lead.id}&dueTo=2029-12-31&status=planned`);
+    expect(to.map((a) => a.subject)).toEqual(['before']);
+
+    expect((await list(`?leadId=${lead.id}&dueFrom=2030-01-03&dueTo=2030-01-02`)).status).toBe(400);
+    expect((await list(`?leadId=${lead.id}&dueFrom=tomorrow`)).status).toBe(400);
+    h.as('salesB', 'sales');
+    expect((await list(`${range}&status=planned`)).status).toBe(404);
+  });
+
   it('records who changed a lead stage on its stage_change activity', async () => {
     const lead = await seedLead();
     await leadsService.changeStage(lead.id, { stage: 'contacted', expectedVersion: lead.version });
@@ -502,7 +536,9 @@ describe('planned and logged activities', () => {
 
 describe('PATCH /v1/activities/:id/complete|reschedule|cancel', () => {
   const patch = (id: string, action: 'complete' | 'reschedule' | 'cancel', body: unknown) =>
-    request(baseUrl).patch(`/v1/activities/${id}/${action}`).send(body as object);
+    request(baseUrl)
+      .patch(`/v1/activities/${id}/${action}`)
+      .send(body as object);
   const plan = async (leadId: string, subject: string, dueAt: string, body?: string) => {
     const res = await post({ kind: 'call', subject, dueAt, leadId, ...(body ? { body } : {}) });
     expect(res.status, JSON.stringify(res.body)).toBe(201);
@@ -528,7 +564,9 @@ describe('PATCH /v1/activities/:id/complete|reschedule|cancel', () => {
     // Without an occurredAt it happened when it was completed.
     expect(done.occurredAt).toBe(done.completedAt);
 
-    expect((await listed(`?leadId=${lead.id}&status=planned`)).map((a) => a.id)).not.toContain(p.id);
+    expect((await listed(`?leadId=${lead.id}&status=planned`)).map((a) => a.id)).not.toContain(
+      p.id,
+    );
     const logged = await listed(`?leadId=${lead.id}&status=logged`);
     expect(logged.find((a) => a.id === p.id)).toMatchObject({ occurredAt: done.completedAt });
     expect((await h.auditOf(p.id)).map((e) => e.action)).toContain('activity.completed');
@@ -552,7 +590,9 @@ describe('PATCH /v1/activities/:id/complete|reschedule|cancel', () => {
   it('answers 409 for a stale expectedVersion on a row that is still planned', async () => {
     const lead = await seedLead();
     const p = await plan(lead.id, 'Chase', DUE_1);
-    expect((await patch(p.id, 'reschedule', { expectedVersion: 1, dueAt: DUE_2 })).status).toBe(200);
+    expect((await patch(p.id, 'reschedule', { expectedVersion: 1, dueAt: DUE_2 })).status).toBe(
+      200,
+    );
     for (const [action, body] of [
       ['complete', { expectedVersion: 1 }],
       ['reschedule', { expectedVersion: 1, dueAt: DUE_3 }],
@@ -586,7 +626,11 @@ describe('PATCH /v1/activities/:id/complete|reschedule|cancel', () => {
     const { inactive, portal } = await outsiders();
     h.as('boss', 'founder');
     for (const assigneeUserId of [inactive, portal]) {
-      const res = await patch(first.id, 'reschedule', { expectedVersion: 1, dueAt: DUE_3, assigneeUserId });
+      const res = await patch(first.id, 'reschedule', {
+        expectedVersion: 1,
+        dueAt: DUE_3,
+        assigneeUserId,
+      });
       expect(res.status, JSON.stringify(res.body)).toBe(400);
       expect(errorOf(res.body).message).toBe(
         'assigneeUserId is not an active staff member of this entity',
@@ -627,7 +671,10 @@ describe('PATCH /v1/activities/:id/complete|reschedule|cancel', () => {
     expect(cancelled).toMatchObject({ planned: false, completedAt: null, version: 2 });
     expect(cancelled.cancelledAt).not.toBeNull();
     for (const query of [`?leadId=${lead.id}&status=planned`, `?leadId=${lead.id}&status=logged`]) {
-      expect((await listed(query)).map((a) => a.id), query).not.toContain(p.id);
+      expect(
+        (await listed(query)).map((a) => a.id),
+        query,
+      ).not.toContain(p.id);
     }
     expect((await h.auditOf(p.id)).map((e) => e.action)).toContain('activity.cancelled');
     expect((await patch(p.id, 'cancel', { expectedVersion: 2 })).status).toBe(409);
@@ -641,7 +688,13 @@ describe('PATCH /v1/activities/:id/complete|reschedule|cancel', () => {
     const [system] = await withTx(h.db, h.scopeA, systemActor('test'), (tx) =>
       tx
         .insert(activities)
-        .values({ ...h.scopeA, kind: 'system', subject: 'x', leadId: lead.id, dueAt: new Date(DUE_1) })
+        .values({
+          ...h.scopeA,
+          kind: 'system',
+          subject: 'x',
+          leadId: lead.id,
+          dueAt: new Date(DUE_1),
+        })
         .returning(),
     );
     for (const action of ['complete', 'cancel'] as const) {
@@ -686,5 +739,62 @@ describe('PATCH /v1/activities/:id/complete|reschedule|cancel', () => {
     expect((await patch(p.id, 'complete', { expectedVersion: 1, extra: true })).status).toBe(400);
     const [untouched] = await listed(`?leadId=${lead.id}&status=planned`);
     expect(untouched).toMatchObject({ id: p.id, version: 1 });
+  });
+});
+
+describe("D46: an activity carries its assignee's and author's display names and no address", () => {
+  it('shows Sales the names of a follow-up assigned to the Founder, on list, create and complete, with no address', async () => {
+    for (const [key, name, email] of [
+      ['salesA', 'Sita Sales', 'sita.private@crestia.example'],
+      ['boss', 'Fiona Founder', 'fiona.private@crestia.example'],
+    ] as const) {
+      await withTx(h.db, h.scopeA, systemActor('test'), (tx) =>
+        tx.update(users).set({ displayName: name, email }).where(eq(users.id, h.users[key])),
+      );
+    }
+    const lead = await seedLead();
+    // A Sales (own scope) caller cannot assign to the Founder over HTTP, so the Founder's follow-up is written
+    // directly: what matters is what Sales then reads back.
+    const [row] = await withTx(h.db, h.scopeA, systemActor('test'), (tx) =>
+      tx
+        .insert(activities)
+        .values({
+          ...h.scopeA,
+          kind: 'call',
+          subject: 'Check the brief',
+          leadId: lead.id,
+          dueAt: new Date(Date.now() + 86_400_000),
+          assigneeUserId: h.users.boss,
+          createdByUserId: h.users.boss,
+        })
+        .returning(),
+    );
+    const seen = (await listed(`?leadId=${lead.id}&status=planned`)).find((a) => a.id === row!.id);
+    expect(seen).toMatchObject({
+      assigneeName: 'Fiona Founder',
+      createdByName: 'Fiona Founder',
+    });
+
+    const created = await post({
+      kind: 'call',
+      subject: 'My own follow-up',
+      leadId: lead.id,
+      dueAt: new Date(Date.now() + 2 * 86_400_000).toISOString(),
+    });
+    expect(created.status, JSON.stringify(created.body)).toBe(201);
+    expect(dto(created.body)).toMatchObject({
+      assigneeName: 'Sita Sales',
+      createdByName: 'Sita Sales',
+    });
+
+    const text = JSON.stringify([seen, created.body, await listed(`?leadId=${lead.id}`)]);
+    expect(text).not.toMatch(/@crestia\.example/);
+  });
+
+  it('has null names on an activity that names no one', async () => {
+    const lead = await seedLead();
+    const logged = await post({ kind: 'note', subject: 'Met at the fair', leadId: lead.id });
+    expect(logged.status, JSON.stringify(logged.body)).toBe(201);
+    expect(dto(logged.body)).toMatchObject({ assigneeUserId: null, assigneeName: null });
   });
 });

@@ -49,10 +49,12 @@ function activity(n: number, over: Partial<ActivityDto>): ActivityDto {
     quotationId: null,
     dueAt: '2026-11-25T04:15:00.000Z',
     assigneeUserId: OWNER,
+    assigneeName: 'Sita Rai',
     completedAt: null,
     cancelledAt: null,
     planned: true,
     createdByUserId: OWNER,
+    createdByName: 'Sita Rai',
     occurredAt: '2026-11-19T04:15:00.000Z',
     version: 2,
     ...over,
@@ -66,6 +68,7 @@ const soon = activity(3, {
   kind: 'meeting',
   dueAt: '2026-11-20T04:15:00.000Z',
   assigneeUserId: STRANGER,
+  assigneeName: 'Mira Thapa',
 });
 const done = activity(4, {
   subject: 'Already done',
@@ -126,10 +129,11 @@ it('sorts a row without a due time last', () => {
   ]);
 });
 
-it('shows the assignee with initials, and a plain fallback for someone outside the list', async () => {
+it("shows the assignee by the record's own name with initials, whoever the owners list holds", async () => {
   const mounted = await mount([soon, later]);
   const [first, second] = rows(mounted.container);
-  expect(first?.textContent).toContain('Another teammate');
+  expect(first?.textContent).toContain('Mira Thapa');
+  expect(first?.textContent).not.toContain('Another teammate');
   expect(second?.textContent).toContain('Sita Rai');
   expect(second?.querySelector('[aria-hidden="true"]')?.textContent).toBe('SR');
   await mounted.unmount();

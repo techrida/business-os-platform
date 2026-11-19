@@ -43,10 +43,12 @@ function activity(id: string, over: Partial<ActivityDto> = {}): ActivityDto {
     quotationId: null,
     dueAt: null,
     assigneeUserId: null,
+    assigneeName: null,
     completedAt: null,
     cancelledAt: null,
     planned: false,
     createdByUserId: null,
+    createdByName: null,
     occurredAt: '2026-11-18T04:00:00.000Z',
     version: 1,
     ...over,
@@ -162,4 +164,22 @@ it('shows one empty state when there is nothing at all', async () => {
   const html = await render();
   expect(html).toContain('No activity yet');
   expect(html).not.toContain('No follow-ups planned');
+});
+
+it('sends the due-day range to both lists, in order, and clears it with the other filters', async () => {
+  const html = await render(undefined, { dueFrom: '2030-01-05', dueTo: '2030-01-01', rows: '50' });
+  for (const [, opts] of mocks.listActivitiesPage.mock.calls)
+    expect(opts).toMatchObject({ dueFrom: '2030-01-01', dueTo: '2030-01-05' });
+  expect(html).toContain('No activities match');
+  expect(html).toContain('Due from: ');
+  expect(html).toContain('Due to: ');
+  expect(html).toContain('href="/activities?rows=50"');
+});
+
+it('drops a malformed due day instead of sending it', async () => {
+  await render(undefined, { dueFrom: '2030-02-30', dueTo: 'soon' });
+  for (const [, opts] of mocks.listActivitiesPage.mock.calls) {
+    expect(opts).not.toHaveProperty('dueFrom');
+    expect(opts).not.toHaveProperty('dueTo');
+  }
 });

@@ -1,4 +1,4 @@
-import type { QuotationStatusHistoryDto } from '@bos/contracts';
+import type { QuotationStatus, QuotationStatusHistoryDto, RejectionSource } from '@bos/contracts';
 
 import { Panel } from '@/components/ui/panel';
 import { when } from '@/lib/kernel-format';
@@ -18,16 +18,46 @@ export interface HistoryRow {
 }
 
 /**
- * Turns the status history into rows for display, newest first. A change with no earlier status
- * is the creation; every other change names both ends in the same labels the badges use. The API
- * does not include names; directory lookups may supply them when the caller has access.
+ * The event as a sentence, from the two statuses. Only what the history stores is said: the customer's
+ * name or the approving team are not in it, so they are not guessed. A pair with no phrase of its own
+ * falls back to naming both ends in the badge labels.
+ */
+export function historyTitle(
+  from: QuotationStatus | null,
+  to: QuotationStatus,
+  rejectionSource: RejectionSource | null = null,
+): string {
+  if (from === null)
+    return to === 'draft' ? 'Draft created' : `Created as ${quotationStatusMeta(to).label}`;
+  if (to === 'submitted')
+    return from === 'returned' ? 'Resubmitted for approval' : 'Submitted for approval';
+  if (to === 'returned') return 'Returned for changes';
+  if (to === 'approved') return 'Approved';
+  if (to === 'sent') return 'Sent to the customer';
+  if (to === 'accepted') return 'Accepted by the customer';
+  if (to === 'rejected') {
+    if (rejectionSource === 'customer') return 'Rejected by the customer';
+    if (rejectionSource === 'internal') return 'Rejected internally';
+    return 'Rejected';
+  }
+  if (to === 'expired') return 'Expired';
+  if (to === 'cancelled') return 'Cancelled';
+  if (to === 'superseded') return 'Replaced by a newer revision';
+  return `Changed from ${quotationStatusMeta(from).label} to ${quotationStatusMeta(to).label}`;
+}
+
+/**
+ * Turns the status history into rows for display, newest first. The API does not include names;
+ * directory lookups may supply them when the caller has access. `rejectionSource` on a version
+ * tells who rejected it.
  */
 export function historyRows(
   history: readonly QuotationStatusHistoryDto[],
-  versions: readonly { id: string; revisionNo: number }[],
+  versions: readonly { id: string; revisionNo: number; rejectionSource?: RejectionSource | null }[],
   people: ReadonlyMap<string, string> = new Map(),
 ): HistoryRow[] {
   const revisionOf = new Map(versions.map((v) => [v.id, `Rev ${v.revisionNo}`]));
+  const rejectedBy = new Map(versions.map((v) => [v.id, v.rejectionSource ?? null]));
   return history
     .map((entry, index) => ({ entry, index }))
     .sort((a, b) => {
@@ -38,10 +68,11 @@ export function historyRows(
     .map(({ entry, index }) => ({
       key: `${index}-${entry.versionId}-${entry.toStatus}`,
       revision: revisionOf.get(entry.versionId) ?? null,
-      title:
-        entry.fromStatus === null
-          ? `Created as ${quotationStatusMeta(entry.toStatus).label}`
-          : `Changed from ${quotationStatusMeta(entry.fromStatus).label} to ${quotationStatusMeta(entry.toStatus).label}`,
+      title: historyTitle(
+        entry.fromStatus,
+        entry.toStatus,
+        rejectedBy.get(entry.versionId) ?? null,
+      ),
       actor:
         entry.actorId === null
           ? 'System'
@@ -58,7 +89,7 @@ export function StatusHistory({
   people,
 }: {
   history: readonly QuotationStatusHistoryDto[];
-  versions: readonly { id: string; revisionNo: number }[];
+  versions: readonly { id: string; revisionNo: number; rejectionSource?: RejectionSource | null }[];
   people?: ReadonlyMap<string, string>;
 }) {
   const rows = historyRows(history, versions, people);
