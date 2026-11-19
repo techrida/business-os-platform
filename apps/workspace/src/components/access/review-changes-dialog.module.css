@@ -1,0 +1,171 @@
+/* The access review dialog (spec 7.3). The dialog's own layout (fixed header and footer, scrolling
+   body) comes from components/ui/dialog; this file adds the body's blocks and the phone sheet. */
+
+.stack {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.block {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-width: 0;
+}
+
+.heading {
+  margin: 0;
+  color: var(--text-primary);
+  font-size: var(--font-size-body);
+  font-weight: var(--font-weight-semibold);
+  line-height: var(--line-height-body);
+}
+
+.list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.change {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 4px 8px;
+  padding: 8px 12px;
+  border: var(--border-width-thin) solid var(--border-subtle);
+  border-radius: var(--radius-lg);
+  font-size: var(--font-size-body-small);
+  line-height: var(--line-height-body-small);
+  overflow-wrap: anywhere;
+}
+
+.also {
+  color: var(--text-secondary);
+  font-size: var(--font-size-caption);
+  font-style: italic;
+  line-height: var(--line-height-caption);
+}
+
+.impact {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 4px;
+}
+
+.line {
+  margin: 0;
+  font-size: var(--font-size-body-small);
+  line-height: var(--line-height-body-small);
+  overflow-wrap: anywhere;
+}
+
+.muted {
+  margin: 0;
+  color: var(--text-secondary);
+  font-size: var(--font-size-body-small);
+  line-height: var(--line-height-body-small);
+}
+
+.names {
+  margin: 0;
+  padding-inline-start: 20px;
+  font-size: var(--font-size-body-small);
+  line-height: var(--line-height-body-small);
+}
+
+.inlineAction {
+  align-self: flex-start;
+}
+
+.warning {
+  padding: 10px 12px;
+  border: var(--border-width-thin) solid var(--border-default);
+  border-radius: var(--radius-lg);
+  background: var(--alert-warning-bg);
+  color: var(--text-primary);
+}
+
+.confirm {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  font-size: var(--font-size-body-small);
+  line-height: var(--line-height-body-small);
+  cursor: pointer;
+}
+
+.confirm input {
+  flex: none;
+  width: 18px;
+  height: 18px;
+  margin: 1px 0 0;
+}
+
+.noteLabel {
+  color: var(--text-primary);
+  font-size: var(--font-size-body-small);
+  font-weight: var(--font-weight-medium);
+  line-height: var(--line-height-body-small);
+}
+
+.count {
+  color: var(--text-secondary);
+  font-size: var(--font-size-caption);
+  line-height: var(--line-height-caption);
+}
+
+.preLine {
+  white-space: pre-line;
+}
+
+.checkRow {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 10px 12px;
+  border: var(--border-width-thin) solid var(--border-subtle);
+  border-radius: var(--radius-lg);
+}
+
+.checkArea {
+  margin: 0;
+  font-size: var(--font-size-body-small);
+  font-weight: var(--font-weight-semibold);
+  line-height: var(--line-height-body-small);
+}
+
+.was {
+  color: var(--text-secondary);
+  font-style: italic;
+}
+
+/* On a phone the dialog is a full-screen sheet; the footer stays fixed at the bottom. The doubled
+   class beats the dialog's own sizing whatever order the stylesheets load in. */
+@media (max-width: 479px) {
+  .sheet.sheet {
+    top: 0;
+    left: 0;
+    width: 100vw;
+    max-width: none;
+    height: 100dvh;
+    max-height: none;
+    translate: none;
+    border: 0;
+    border-radius: 0;
+  }
+
+  .sheet.sheet > footer {
+    border-radius: 0;
+  }
+
+  .confirm input {
+    width: 22px;
+    height: 22px;
+  }
+}
