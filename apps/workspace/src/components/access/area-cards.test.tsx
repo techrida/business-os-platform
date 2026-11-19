@@ -197,3 +197,23 @@ it('sends nothing that writes until Save changes in the review dialog', async ()
   });
   expect(router.refresh).toHaveBeenCalled();
 });
+
+it('names each undo icon after what it resets, shows none at the default and reviews it', async () => {
+  await render();
+  await click(byLabel('Edit Leads'));
+  expect(card('Leads').querySelector('button[aria-label^="Reset "]')).toBeNull();
+
+  await click(byLabel('Edit Opportunities'));
+  const opportunities = card('Opportunities');
+  const undo = byLabel('Reset Sales on Opportunities to the default: Their own');
+  expect(opportunities.querySelector('button[aria-label^="Reset Management"]')).toBeNull();
+
+  await click(undo);
+  await flush();
+  expect(actions.preview).toHaveBeenCalledWith({
+    changes: [{ kind: 'grant', role: 'sales', permission: 'crm.opportunity.read', scope: 'own' }],
+  });
+  expect(document.querySelector('[role="dialog"]')?.textContent).toContain(
+    'Review changes to Opportunities',
+  );
+});
