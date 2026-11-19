@@ -10,12 +10,28 @@ import path from 'node:path';
 
 function has(cmd) {
   try {
-    execFileSync('sh', ['-c', `command -v ${cmd}`], { stdio: 'ignore' });
+    execFileSync('sh', ['-c', 'command -v "$1"', 'sh', cmd], { stdio: 'ignore' });
     return true;
   } catch {
     return false;
   }
 }
+
+// Paths written into the launcher scripts and socat addresses. Letters, digits and `/._-` only:
+// no spaces, quotes, `$`, `,` or `:` (socat's address separators), so nothing in VIDEO_DIR or
+// CHROMIUM_PATH can turn into shell syntax. The scripts also single-quote every path.
+const SAFE_PATH = /^\/[A-Za-z0-9/._-]+$/;
+
+export function assertShellSafePath(p, what) {
+  if (typeof p !== 'string' || !SAFE_PATH.test(p))
+    throw new Error(
+      `${what} must be an absolute path of letters, digits and / . _ - only (got ${JSON.stringify(p)})`,
+    );
+  return p;
+}
+
+/** POSIX single quoting; paths are validated first, so this is a second line of defence. */
+export const shq = (p) => `'${String(p).replace(/'/g, `'\\''`)}'`;
 
 const loopback = (host) =>
   host === 'localhost' || host.endsWith('.localhost') || host === '127.0.0.1';
@@ -38,6 +54,8 @@ export function netnsWanted(origins) {
  * Playwright talks to the browser over inherited pipes, which pass through unshare unchanged.
  */
 export function prepareNetns(dir, origins, realExecutable) {
+  assertShellSafePath(dir, 'The network launcher folder (from VIDEO_DIR)');
+  assertShellSafePath(realExecutable, "CHROMIUM_PATH (or Playwright's Chromium path)");
   mkdirSync(dir, { recursive: true });
   const ports = [
     ...new Set(
@@ -58,7 +76,7 @@ export function prepareNetns(dir, origins, realExecutable) {
     });
     forwarders.push(fwd);
     inner.push(
-      `socat TCP-LISTEN:${port},bind=127.0.0.1,fork,reuseaddr UNIX-CONNECT:${sock} & PIDS="$PIDS $!"`,
+      `socat TCP-LISTEN:${port},bind=127.0.0.1,fork,reuseaddr ${shq(`UNIX-CONNECT:${sock}`)} & PIDS="$PIDS $!"`,
     );
   }
   const innerScript = path.join(dir, 'inner.sh');
@@ -71,7 +89,7 @@ export function prepareNetns(dir, origins, realExecutable) {
       'ip link add dummy0 type dummy 2>/dev/null; ip addr add 10.99.0.2/24 dev dummy0; ip link set dummy0 up; ip route add default via 10.99.0.1 dev dummy0',
       'PIDS=""',
       ...inner,
-      `"${realExecutable}" "$@"`,
+      `${shq(realExecutable)} "$@"`,
       'rc=$?',
       'kill $PIDS 2>/dev/null',
       'exit $rc',
@@ -79,7 +97,7 @@ export function prepareNetns(dir, origins, realExecutable) {
     ].join('\n'),
   );
   const launcher = path.join(dir, 'chromium-netns');
-  writeFileSync(launcher, `#!/bin/bash\nexec unshare -Urn "${innerScript}" "$@"\n`);
+  writeFileSync(launcher, `#!/bin/bash\nexec unshare -Urn ${shq(innerScript)} "$@"\n`);
   chmodSync(innerScript, 0o755);
   chmodSync(launcher, 0o755);
   // A script that crashes never closes its browser; take the forwarders down with the process.
