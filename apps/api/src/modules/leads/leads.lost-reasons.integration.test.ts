@@ -339,5 +339,32 @@ describe('D49 lost reasons: order and reset', () => {
     expect((await choices()).map((o) => o.label)).toEqual(DEFAULT_LEAD_LOST_REASONS.map((d) => d.label));
     const events = await h.auditOf(h.tenantId);
     expect(events.map((e) => e.action)).toContain('lead_lost_reasons.reset');
+
+    // A second round of the same clash finds "Price (custom)" taken and picks the next free label, not a 500.
+    const price2 = await labelOf('Price');
+    expect(
+      (
+        await request(baseUrl)
+          .patch(`/v1/admin/lead-lost-reasons/${price2.id}`)
+          .send({ label: 'Cost', expectedVersion: price2.version })
+      ).status,
+    ).toBe(200);
+    expect((await request(baseUrl).post('/v1/admin/lead-lost-reasons').send({ label: 'Price' })).status).toBe(201);
+    const again = await request(baseUrl).post('/v1/admin/lead-lost-reasons/reset').send({});
+    expect(again.status, JSON.stringify(again.body)).toBe(200);
+    const labels = options.parse(again.body).map((o) => o.label);
+    expect(labels).toEqual(expect.arrayContaining(['Price (custom)', 'Price (custom 2)']));
+    expect(new Set(labels.map((l) => l.toLowerCase())).size).toBe(labels.length);
+  });
+
+  it('gives two options added at the same moment two different positions', async () => {
+    const sends = await Promise.all(
+      ['Parallel add one', 'Parallel add two'].map((label) =>
+        request(baseUrl).post('/v1/admin/lead-lost-reasons').send({ label }),
+      ),
+    );
+    expect(sends.map((r) => r.status)).toEqual([201, 201]);
+    const positions = (await adminList()).map((o) => o.position);
+    expect(new Set(positions).size).toBe(positions.length);
   });
 });
