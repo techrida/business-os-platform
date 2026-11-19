@@ -73,7 +73,7 @@ export function readList<const S extends ListSpec>(searchParams: RawParams, spec
   const parsedPage = /^\d{1,6}$/.test(pageText) ? Number(pageText) : 1;
   const page = Math.min(Math.max(parsedPage, 1), MAX_PAGE);
 
-  const rowsSpec = spec.rows ?? DEFAULT_ROWS;
+  const rowsSpec: { allowed: readonly number[]; default: number } = spec.rows ?? DEFAULT_ROWS;
   const rowsText = valuesOf(searchParams.rows)[0] ?? '';
   const parsedRows = /^\d{1,4}$/.test(rowsText) ? Number(rowsText) : undefined;
   const rows =
