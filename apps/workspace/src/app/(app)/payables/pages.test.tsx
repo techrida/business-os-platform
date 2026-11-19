@@ -79,6 +79,7 @@ const header = {
   fiscalYear: '2083/84',
   currency: 'NPR',
   purchaseOrderId: PO,
+  purchaseOrderNumber: 'PO-2083-0007',
   documentId: DOC,
   status: 'variance',
   matchStatus: 'variance',
