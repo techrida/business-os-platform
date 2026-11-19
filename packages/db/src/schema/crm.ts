@@ -120,6 +120,11 @@ export const customers = appSchema.table(
     address: jsonb('address').notNull(),
     /** Set when this record was merged into another; the target is the live one. */
     mergedIntoId: uuid('merged_into_id'),
+    /**
+     * The logo, an `app.documents.id` (migration 0054). No foreign key: documents are owned per tenant and
+     * entity. NULL shows the initials avatar.
+     */
+    logoDocumentId: uuid('logo_document_id'),
     version: integer('version').notNull().default(1),
     ...timestamps,
   },

@@ -183,6 +183,11 @@ describe('0015_crm and src/schema/crm.ts', () => {
     parsed,
     readFileSync(new URL('../migrations/0062_activity_follow_ups.sql', import.meta.url), 'utf8'),
   );
+  // 0054 adds customers.logo_document_id (no FK, no index).
+  applyAlters(
+    parsed,
+    readFileSync(new URL('../migrations/0054_party_logos.sql', import.meta.url), 'utf8'),
+  );
 
   it('create the same nine tables', () => {
     expect([...parsed.keys()].sort()).toEqual(Object.keys(DRIZZLE).sort());
