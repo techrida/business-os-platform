@@ -12,7 +12,7 @@ describe('planSchedule', () => {
   it('splits the golden 5,045,450.00 as 60/20/20, the advance line billable at once', () => {
     const lines = planSchedule(DEFAULT_SALES_SCHEDULE, TOTAL, TOTAL);
     expect(lines.map((l) => l.amount)).toEqual(['3027270.00', '1009090.00', '1009090.00']);
-    expect(lines.map((l) => l.percentBp)).toEqual([6000, 2000, 2000]);
+    expect(lines.map((l) => l.percent)).toEqual(['60', '20', '20']);
     expect(lines.map((l) => l.trigger)).toEqual(['advance', 'milestone', 'uat']);
     expect(lines.map((l) => l.status)).toEqual(['billable', 'planned', 'planned']);
     expect(lines.map((l) => l.seq)).toEqual([1, 2, 3]);
@@ -30,18 +30,19 @@ describe('planSchedule', () => {
     expect(lines.map((l) => l.amount)).toEqual(['2018180.00', '3027270.00']);
   });
 
-  it('adds up to the total to the paisa when the split has a remainder', () => {
-    const lines = planSchedule(
+  it('copies four-decimal quotation shares and allocates each total to the minor unit', () => {
+    const template = scheduleTemplateOf(
       [
-        { label: 'A', percent: '33.33', trigger: 'advance' },
-        { label: 'B', percent: '33.33', trigger: 'milestone' },
-        { label: 'C', percent: '33.34', trigger: 'uat' },
+        { label: 'A', percent: '33.3333' },
+        { label: 'B', percent: '33.3333' },
+        { label: 'C', percent: '33.3334' },
       ],
-      '100.01',
-      '100.01',
+      DEFAULT_SALES_SCHEDULE,
     );
-    const sum = lines.reduce((s, l) => s + Math.round(Number(l.amount) * 100), 0);
-    expect(sum).toBe(10001);
+    const lines = planSchedule(template, '100.01', '100.00');
+    expect(lines.map((l) => l.percent)).toEqual(['33.3333', '33.3333', '33.3334']);
+    expect(lines.map((l) => l.amount)).toEqual(['33.34', '33.34', '33.33']);
+    expect(lines.map((l) => l.amountNpr)).toEqual(['33.33', '33.33', '33.34']);
   });
 
   it('splits the NPR value on its own, so a foreign order adds up in NPR too', () => {
