@@ -1,7 +1,7 @@
 // The port authz uses to look up users without depending on the users module (P1 plan §6.2).
 // U6's `UsersModule` is global and provides it with `{ provide: UserDirectory, useExisting: UsersService }`.
 // An abstract class, not an interface, so Nest can use it as the injection token.
-import type { RoleKey } from '@bos/contracts';
+import type { AccessLevel, RoleKey } from '@bos/contracts';
 
 import type { Actor, TxScope } from '../db/tx';
 
@@ -15,6 +15,8 @@ export interface EntityMembership {
   /** Narrows the token's roles in this entity; null means every token role counts. */
   roleKeys: string[] | null;
   departmentId: string | null;
+  /** The member's level in this entity (D50, migration 0079). Absent reads as `staff`. */
+  level?: AccessLevel;
 }
 
 /**
