@@ -52,6 +52,7 @@ export function sampleView(over: Partial<CustomerQuotationView> = {}): CustomerQ
     scope: 'Supply and install office network.\nTwo floors, forty seats.',
     assumptions: 'Site access between 9am and 6pm.',
     exclusions: 'Civil works and painting.',
+    termsAndConditions: 'Goods remain ours until paid in full.',
     deliveryTimeline: 'Three weeks from the purchase order.',
     paymentTermName: 'Net 30',
     paymentSchedule: [
