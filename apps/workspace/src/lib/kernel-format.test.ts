@@ -1,7 +1,7 @@
 import { DEFAULT_NUMBER_SYSTEMS, type NumberSystems } from '@bos/locale';
 import { describe, expect, it } from 'vitest';
 
-import { money, snapshotEntries } from './kernel-format';
+import { money, snapshotEntries, when } from './kernel-format';
 
 const INTL: NumberSystems = { NPR: 'international', INR: 'international', USD: 'international' };
 const SA: NumberSystems = { NPR: 'south_asian', INR: 'south_asian', USD: 'south_asian' };
@@ -55,5 +55,32 @@ describe('snapshotEntries terms wording', () => {
     expect(snapshotEntries({ terms: '<p></p>', note: 'x' }).map((row) => row.key)).toEqual([
       'note',
     ]);
+  });
+});
+
+describe('when() date pattern', () => {
+  it('keeps the default Kathmandu wording when no pattern is given', () => {
+    expect(when('2026-03-05', 'date')).toBe('05 Mar 2026');
+    expect(when('2025-07-16T23:59:00Z')).toBe('17 Jul 2025, 05:44');
+    expect(when('2025-07-16T23:59:00Z', 'date')).toBe('17 Jul 2025');
+  });
+
+  it('writes a calendar date in the pattern, as it is', () => {
+    expect(when('2026-03-05', 'date', 'dd/MM/yyyy')).toBe('05/03/2026');
+    expect(when('2026-03-05', 'date', 'yyyy-MM-dd')).toBe('2026-03-05');
+    expect(when('2026-03-05', 'date', 'MMM dd, yyyy')).toBe('Mar 05, 2026');
+    expect(when('2026-03-05', 'datetime', 'dd MMM yyyy')).toBe('05 Mar 2026');
+  });
+
+  it('writes an instant as its Kathmandu day in the pattern and keeps its time', () => {
+    // 23:59 UTC on the 16th is 05:44 on the 17th in Kathmandu.
+    expect(when('2025-07-16T23:59:00Z', 'datetime', 'dd/MM/yyyy')).toBe('17/07/2025, 05:44');
+    expect(when('2025-07-16T23:59:00Z', 'date', 'dd/MM/yyyy')).toBe('17/07/2025');
+    expect(when('2025-07-16T18:15:00Z', 'datetime', 'yyyy-MM-dd')).toBe('2025-07-17, 00:00');
+  });
+
+  it('passes text that is not a date through, with or without a pattern', () => {
+    expect(when('On delivery', 'date', 'dd/MM/yyyy')).toBe('On delivery');
+    expect(when('soon', 'datetime')).toBe('soon');
   });
 });

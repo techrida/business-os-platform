@@ -2,7 +2,14 @@
 // kernel-ui.ts so Client Components do not pull in decimal.js and the Nepali calendar).
 // Serves the NFR "amounts are exact and dates are Kathmandu time" for every kernel screen.
 import { DEFAULT_ROLE_PERMISSIONS, richTextToPlain } from '@bos/contracts';
-import { formatKathmandu, formatMoney, type NumberSystems } from '@bos/locale';
+import {
+  formatCustomerDate,
+  formatKathmandu,
+  formatMoney,
+  kathmanduDate,
+  type CustomerDateFormat,
+  type NumberSystems,
+} from '@bos/locale';
 
 import { humanizeKey } from './kernel-ui';
 
@@ -33,10 +40,37 @@ export function money(
     : amount;
 }
 
-/** `17 Jul 2025, 05:45` in Kathmandu time, or the raw text when it is not a date. */
-export function when(iso: string, style: 'date' | 'datetime' = 'datetime'): string {
+const CALENDAR_DATE = /^\d{4}-\d{2}-\d{2}$/;
+
+const kathmanduClock = new Intl.DateTimeFormat('en-GB', {
+  timeZone: 'Asia/Kathmandu',
+  hour: '2-digit',
+  minute: '2-digit',
+  hourCycle: 'h23',
+});
+
+/**
+ * `17 Jul 2025, 05:45` in Kathmandu time, or the raw text when it is not a date.
+ *
+ * `pattern` is the tenant's `format.date` (`getDateFormat()` on the server). With it, a YYYY-MM-DD
+ * calendar date is written in that pattern as it is (no time, whatever the style), and an instant
+ * is written as its Kathmandu calendar day in that pattern, plus `, HH:mm` for 'datetime'.
+ */
+export function when(
+  iso: string,
+  style: 'date' | 'datetime' = 'datetime',
+  pattern?: CustomerDateFormat,
+): string {
+  if (pattern !== undefined && CALENDAR_DATE.test(iso)) return formatCustomerDate(iso, pattern);
   const d = new Date(iso);
-  return Number.isNaN(d.getTime()) ? iso : formatKathmandu(d, style);
+  if (Number.isNaN(d.getTime())) return iso;
+  if (pattern === undefined) return formatKathmandu(d, style);
+  const { y, m, d: day } = kathmanduDate(d);
+  const date = formatCustomerDate(
+    `${String(y).padStart(4, '0')}-${String(m).padStart(2, '0')}-${String(day).padStart(2, '0')}`,
+    pattern,
+  );
+  return style === 'date' ? date : `${date}, ${kathmanduClock.format(d)}`;
 }
 
 export interface SnapshotEntry {
