@@ -200,7 +200,7 @@ export default async function ActivitiesPage({
               Nothing of this type yet. <Link href="/activities">Show all types</Link>.
             </>
           ) : (
-            'Log an activity or schedule a follow-up from a lead or an opportunity to see it here.'
+            'Log an activity from a lead or an opportunity to see it here.'
           )}
         </EmptyState>
       ) : (
