@@ -8,6 +8,8 @@ import {
   type CustomerQuotationView,
   CustomerQuotationViewSchema,
   MeResponseSchema,
+  type PortalDisplay,
+  PortalDisplaySchema,
   type PortalQuotationListItem,
   PortalQuotationListItemSchema,
   type RejectQuotationBody,
@@ -135,6 +137,11 @@ async function call<T>(
     throw new ApiError(502, `${label} returned an invalid body`, parsed.error.issues);
   }
   return parsed.data;
+}
+
+/** `GET /v1/portal/display`: how the company writes numbers and dates. Any portal caller may read it. */
+export function fetchPortalDisplay(session: Pick<Session, 'accessToken'>): Promise<PortalDisplay> {
+  return call(session, '/v1/portal/display', PortalDisplaySchema);
 }
 
 /** `GET /v1/portal/quotations`: the customer's own quotations, customer-visible states only. */

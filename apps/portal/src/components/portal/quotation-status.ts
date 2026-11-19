@@ -55,7 +55,7 @@ export function canRespond(view: CustomerQuotationView, today: string): Responda
     return {
       open: false,
       expired: true,
-      reason: `This quotation expired on ${formatCustomerDate(view.validUntil)}, so it can no longer be accepted. Contact the person who sent it to ask for a new one.`,
+      reason: `This quotation expired on ${formatCustomerDate(view.validUntil, view.display.dateFormat)}, so it can no longer be accepted. Contact the person who sent it to ask for a new one.`,
     };
   }
   if (view.status === 'sent') return { open: true };

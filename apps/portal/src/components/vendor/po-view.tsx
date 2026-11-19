@@ -1,10 +1,13 @@
-import { formatCustomerDate } from '@bos/locale';
-import type { VendorPortalPurchaseOrderView, VendorVisiblePoStatus } from '@bos/contracts';
-import { formatMoney } from '@bos/locale';
+import type {
+  PortalDisplay,
+  VendorPortalPurchaseOrderView,
+  VendorVisiblePoStatus,
+} from '@bos/contracts';
 
 import { Badge } from '@/components/ui/badge';
 import { LinkButton } from '@/components/ui/button';
 import { ViewDocument } from '@/components/ui/document-viewer';
+import { displayFormat } from '@/lib/display';
 
 import styles from './vendor.module.css';
 import { PO_STATUS_LOOK, trimQuantity } from './vendor-status';
@@ -23,10 +26,17 @@ const BILLABLE: ReadonlySet<VendorVisiblePoStatus> = new Set([
  * none. The PDF is a plain anchor to a route handler: a prefetch would fetch the file, and the
  * API sends it as an attachment, so an error reads as text.
  */
-export function PurchaseOrderView({ view }: { view: VendorPortalPurchaseOrderView }) {
+export function PurchaseOrderView({
+  view,
+  display,
+}: {
+  view: VendorPortalPurchaseOrderView;
+  display?: PortalDisplay;
+}) {
+  const { money: formatAmount, day } = displayFormat(display);
   const canBill = BILLABLE.has(view.status);
   const look = PO_STATUS_LOOK[view.status];
-  const money = (amount: string) => formatMoney(amount, view.currency);
+  const money = (amount: string) => formatAmount(amount, view.currency);
   return (
     <div className={styles.document}>
       <header className={styles.docHead}>
@@ -39,7 +49,7 @@ export function PurchaseOrderView({ view }: { view: VendorPortalPurchaseOrderVie
         <dl className={styles.facts}>
           <div>
             <dt>Issued</dt>
-            <dd>{formatCustomerDate(view.issueDate)}</dd>
+            <dd>{day(view.issueDate)}</dd>
           </div>
           <div>
             <dt>Payment terms</dt>

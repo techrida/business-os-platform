@@ -1,15 +1,21 @@
-import { formatCustomerDate } from '@bos/locale';
-import type { VendorPortalBillView } from '@bos/contracts';
-import { formatMoney } from '@bos/locale';
+import type { PortalDisplay, VendorPortalBillView } from '@bos/contracts';
 
 import { Badge } from '@/components/ui/badge';
 import { EmptyState } from '@/components/ui/empty-state';
+import { displayFormat } from '@/lib/display';
 
 import styles from './vendor.module.css';
 import { BILL_STATUS_LOOK } from './vendor-status';
 
 /** The vendor's bills: our number, their invoice number, date, coarse status and the payable total. */
-export function BillList({ items }: { items: readonly VendorPortalBillView[] }) {
+export function BillList({
+  items,
+  display,
+}: {
+  items: readonly VendorPortalBillView[];
+  display?: PortalDisplay;
+}) {
+  const { money, day } = displayFormat(display);
   if (items.length === 0) {
     return (
       <EmptyState title="No bills yet" icon="receipt">
@@ -43,12 +49,12 @@ export function BillList({ items }: { items: readonly VendorPortalBillView[] }) 
                   </a>
                 </th>
                 <td className={styles.description}>{bill.vendorInvoiceNo}</td>
-                <td className={styles.nowrap}>{formatCustomerDate(bill.invoiceDate)}</td>
+                <td className={styles.nowrap}>{day(bill.invoiceDate)}</td>
                 <td>
                   <Badge tone={look.tone}>{look.label}</Badge>
                 </td>
                 <td className={`${styles.num} ${styles.nowrap}`}>
-                  {formatMoney(bill.payableTotal, bill.currency)}
+                  {money(bill.payableTotal, bill.currency)}
                 </td>
               </tr>
             );

@@ -6,6 +6,7 @@ import { BillList } from '@/components/vendor/bill-list';
 import vendorStyles from '@/components/vendor/vendor.module.css';
 import { VendorNoAccess } from '@/components/vendor/vendor-no-access';
 import { getVendorOnboarding, listVendorBills } from '@/lib/api.vendor';
+import { getPortalDisplay } from '@/lib/portal-display';
 import { getSession } from '@/lib/session';
 
 import { loadVendor } from '../load';
@@ -23,6 +24,7 @@ export default async function BillsPage() {
   const session = await getSession();
   if (!session) redirect(`/auth/login?returnTo=${encodeURIComponent(HERE)}`);
 
+  const display = getPortalDisplay(session);
   const [result, capability] = await Promise.all([
     loadVendor(() => listVendorBills(session), HERE),
     getVendorOnboarding(session).then(
@@ -47,7 +49,7 @@ export default async function BillsPage() {
             <LinkButton href="/vendor/bills/new">Submit a bill</LinkButton>
           </div>
         ) : null}
-        <BillList items={result.data} />
+        <BillList items={result.data} display={await display} />
       </div>
     </main>
   );

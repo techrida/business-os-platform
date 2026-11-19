@@ -6,6 +6,7 @@ import { LinkButton } from '@/components/ui/button';
 import { EmptyState } from '@/components/ui/empty-state';
 import { ApiError } from '@/lib/api';
 import { listPortalPayments } from '@/lib/api.billing';
+import { getPortalDisplay } from '@/lib/portal-display';
 import { getSession } from '@/lib/session';
 
 import { PaymentList } from './_components/payment-list';
@@ -26,6 +27,7 @@ export default async function PaymentsPage({
   const session = await getSession();
   if (!session) redirect(LOGIN);
 
+  const display = getPortalDisplay(session);
   let items;
   try {
     items = await listPortalPayments(session);
@@ -64,7 +66,7 @@ export default async function PaymentsPage({
           When you send us a payment, upload your bank slip here so we can match it to your invoice.
         </EmptyState>
       ) : (
-        <PaymentList items={items} />
+        <PaymentList items={items} display={await display} />
       )}
     </main>
   );

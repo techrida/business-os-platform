@@ -32,9 +32,17 @@ export type PortalVersionHead = Pick<
   'revisionNo' | 'status' | 'rejectionSource' | 'issueDate' | 'validUntil' | 'currency' | 'total'
 > & { versionId: string; quotationId: string; number: string };
 
-/** Everything the customer view is built from, except the issuer block (read from settings) and the scan flag. */
-export type PortalViewSource = Omit<CustomerViewInput, 'issuer' | 'renderedScanClean'> & {
+/**
+ * Everything the customer view is built from, except the issuer block (read from settings), the scan flag and the
+ * display (built by the service from `documentStyle`, else from settings).
+ */
+export type PortalViewSource = Omit<
+  CustomerViewInput,
+  'issuer' | 'renderedScanClean' | 'display'
+> & {
   issuerLegalName: string;
+  /** The version's stored `document_style` as read (unchecked); null until its first render froze it. */
+  documentStyle: unknown;
 };
 
 /**
@@ -177,6 +185,7 @@ export class DrizzlePortalQuotationStore implements PortalQuotationStore {
           renderedDocumentId: quotationVersions.renderedDocumentId,
           renderedSha256: quotationVersions.renderedSha256,
         },
+        documentStyle: quotationVersions.documentStyle,
         contactId: quotationVersions.contactId,
         paymentTermId: quotationVersions.paymentTermId,
         tenantId: quotationVersions.tenantId,
@@ -271,6 +280,7 @@ export class DrizzlePortalQuotationStore implements PortalQuotationStore {
       lines,
       taxSummary,
       issuerLegalName: issuer.legalName,
+      documentStyle: head.documentStyle,
     };
   }
 }

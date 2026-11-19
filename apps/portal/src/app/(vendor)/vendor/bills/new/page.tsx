@@ -1,6 +1,5 @@
 import { randomUUID } from 'node:crypto';
 
-import { formatMoney } from '@bos/locale';
 import Link from 'next/link';
 import { notFound, redirect } from 'next/navigation';
 
@@ -9,6 +8,8 @@ import pageStyles from '@/components/portal/page.module.css';
 import { todayInKathmandu } from '@/components/portal/quotation-status';
 import { VendorNoAccess } from '@/components/vendor/vendor-no-access';
 import { getVendorOnboarding, listVendorPurchaseOrders } from '@/lib/api.vendor';
+import { displayFormat } from '@/lib/display';
+import { getPortalDisplay } from '@/lib/portal-display';
 import { getSession } from '@/lib/session';
 
 import { isUuid, loadVendor } from '../../load';
@@ -41,14 +42,16 @@ export default async function NewBillPage({
   if (onboarding.kind === 'missing') notFound();
   if (onboarding.data.capability !== 'full') return <VendorNoAccess />;
 
+  const display = getPortalDisplay(session);
   const orders = await loadVendor(() => listVendorPurchaseOrders(session), HERE);
   if (orders.kind === 'forbidden') return <VendorNoAccess />;
   if (orders.kind === 'missing') notFound();
 
   const { po, sent } = await searchParams;
+  const { money } = displayFormat(await display);
   const choices = orders.data
     .filter((o) => BILLABLE.includes(o.status))
-    .map((o) => ({ id: o.id, label: `${o.number} (${formatMoney(o.total, o.currency)})` }));
+    .map((o) => ({ id: o.id, label: `${o.number} (${money(o.total, o.currency)})` }));
   const initialOrderId =
     typeof po === 'string' && isUuid(po) && choices.some((c) => c.id === po) ? po : '';
   const key = randomUUID();

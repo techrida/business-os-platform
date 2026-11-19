@@ -1,4 +1,5 @@
 import type { CustomerQuotationView, PortalQuotationListItem } from '@bos/contracts';
+import { DEFAULT_NUMBER_SYSTEMS } from '@bos/locale';
 
 /**
  * Test fixtures for the portal quotation screens. Every nullable field is filled, so a test that
@@ -85,6 +86,7 @@ export function sampleView(over: Partial<CustomerQuotationView> = {}): CustomerQ
       total: '3390.00',
     },
     taxSummary: [{ label: 'VAT', percent: '13', base: '3000.00', tax: '390.00' }],
+    display: { numberSystems: DEFAULT_NUMBER_SYSTEMS, dateFormat: 'dd MMM yyyy' },
     file: {
       documentId: '6ba7b810-9dad-41d1-80b4-00c04fd430c8',
       filename: 'QT-2082-0042-rev2.pdf',

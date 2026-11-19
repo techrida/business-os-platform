@@ -1,10 +1,10 @@
-import type { PortalQuotationListItem } from '@bos/contracts';
-import { formatMoney } from '@bos/locale';
+import type { PortalDisplay, PortalQuotationListItem } from '@bos/contracts';
 
 import { Badge } from '@/components/ui/badge';
+import { displayFormat } from '@/lib/display';
 
 import styles from './quotation.module.css';
-import { displayStatus, formatDay, STATUS_LOOK } from './quotation-status';
+import { displayStatus, STATUS_LOOK } from './quotation-status';
 
 /**
  * The customer's quotations as a table: number, status, total and valid-until. Only the fields of
@@ -14,10 +14,13 @@ import { displayStatus, formatDay, STATUS_LOOK } from './quotation-status';
 export function QuotationList({
   items,
   today,
+  display,
 }: {
   items: readonly PortalQuotationListItem[];
   today: string;
+  display?: PortalDisplay;
 }) {
+  const { money, day: formatDay } = displayFormat(display);
   return (
     <div className={styles.tableFrame}>
       <table className={styles.table}>
@@ -49,9 +52,7 @@ export function QuotationList({
                 </td>
                 <td className={styles.nowrap}>{formatDay(q.issueDate)}</td>
                 <td className={styles.nowrap}>{formatDay(q.validUntil)}</td>
-                <td className={`${styles.num} ${styles.nowrap}`}>
-                  {formatMoney(q.total, q.currency)}
-                </td>
+                <td className={`${styles.num} ${styles.nowrap}`}>{money(q.total, q.currency)}</td>
               </tr>
             );
           })}
