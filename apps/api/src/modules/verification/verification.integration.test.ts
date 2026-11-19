@@ -583,7 +583,10 @@ describe('POST /v1/verification-cases/:id/checklist/remove', () => {
     });
     const list = await api().get('/v1/verification-cases').query({ partyId, status: 'draft' });
     expect(list.status).toBe(200);
-    expect(list.body).toEqual([dto]);
+    // The list also names the party (audit #8); the case itself is the same.
+    expect(list.body).toEqual([
+      { ...dto, partyName: 'Acme Pvt. Ltd.', partyNumber: expect.stringMatching(/^CUS-/) },
+    ]);
     expect(await documents.get(scope, next.documentId)).toEqual(documentBefore);
     expect((await removeDocument(draft.id, key, dto.version)).status).toBe(409);
     expect(await domainEvents(draft.id)).toEqual([
