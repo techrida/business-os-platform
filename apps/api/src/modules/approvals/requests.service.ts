@@ -15,6 +15,7 @@ import {
   ROLE_KEYS,
   WorkflowSpecSchema,
   type ApprovalActionBody,
+  type ApprovalContext,
   type ApprovalRequestDto,
   type InboxItemDto,
   type ReferenceName,
@@ -43,6 +44,7 @@ import {
   ForbiddenException,
   Inject,
   Injectable,
+  Logger,
   NotFoundException,
   UnprocessableEntityException,
 } from '@nestjs/common';
@@ -109,6 +111,17 @@ export interface ApprovalSubject {
    * changed; an id the subject cannot name is left out, and the page says the name is unavailable.
    */
   referenceNames?(q: Db, scope: TxScope, snapshot: unknown): Promise<ReferenceName[]>;
+  /**
+   * Optional: the record as it stands now, for `viewer`, who may already read this request (an approver needs no read
+   * grant on the record). Main fields and the record's own files only; files and the link to the record's page are
+   * gated on `viewer`'s grants (context.ts). Null when the record is gone. Only the plain read (get) asks for it.
+   */
+  context?(
+    q: Db,
+    scope: TxScope,
+    request: { documentId: string; snapshot: unknown },
+    viewer: Principal,
+  ): Promise<ApprovalContext | null>;
 }
 
 export interface SubmitInput {
@@ -218,6 +231,7 @@ const forbidden = (reason: 'out_of_scope' | 'separation_of_duties', message: str
 @Injectable()
 export class ApprovalsService {
   private readonly subjects = new Map<string, ApprovalSubject>();
+  private readonly log = new Logger(ApprovalsService.name);
 
   constructor(
     @Inject(DB) private readonly db: Db,
@@ -1010,13 +1024,14 @@ export class ApprovalsService {
           )
       : [];
     const groupNames = new Map(groups.map((group) => [group.id, group.name]));
-    const references = await this.subjects
-      .get(dto.documentType)
-      ?.referenceNames?.(this.db, scope, dto.snapshot);
+    const subject = this.subjects.get(dto.documentType);
+    const references = await subject?.referenceNames?.(this.db, scope, dto.snapshot);
+    const context = replay === undefined ? await this.contextOf(subject, dto, principal) : null;
     return {
       ...dto,
       people,
       ...(references !== undefined ? { references } : {}),
+      ...(context !== null ? { context } : {}),
       steps: dto.steps.map((step) => ({
         ...step,
         groupName: step.groupId ? (groupNames.get(step.groupId) ?? null) : null,
@@ -1213,6 +1228,32 @@ export class ApprovalsService {
         p.userId,
       )
     );
+  }
+
+  /**
+   * The subject's view of its record for this reader, or null. A record that cannot be described (gone, or a read
+   * that fails) never stops the approver reading and deciding the request: the page simply shows no context.
+   */
+  private async contextOf(
+    subject: ApprovalSubject | undefined,
+    dto: ApprovalRequestDto,
+    viewer: Principal,
+  ): Promise<ApprovalContext | null> {
+    if (subject?.context === undefined) return null;
+    const { scope } = this.caller.current();
+    try {
+      return await subject.context(
+        this.db,
+        scope,
+        { documentId: dto.documentId, snapshot: dto.snapshot },
+        viewer,
+      );
+    } catch (error) {
+      this.log.warn(
+        `no context for ${dto.documentType} ${dto.documentId}: ${error instanceof Error ? error.message : String(error)}`,
+      );
+      return null;
+    }
   }
 
   /** True when `userId` has an action on the request, as its actor or as the person a delegate acted for. */
