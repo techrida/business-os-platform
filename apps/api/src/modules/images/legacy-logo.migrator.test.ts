@@ -248,6 +248,17 @@ describe('LegacyLogoMigrator', () => {
     noDataUrlLogged();
   });
 
+  it('skips a stored profile the setting schema would refuse, before any document is created', async () => {
+    save(scopeA, { ...profile(), unexpected: true } as unknown as CompanyProfile);
+
+    await expect(migrator().run()).resolves.toEqual({ migrated: 0, skipped: 1, failed: 0 });
+    expect(documents.createAndReceiveScanned).not.toHaveBeenCalled();
+    expect(settings.set).not.toHaveBeenCalled();
+    expect(
+      logs.some((l) => l.includes(`entity=${ORG}`) && l.includes('kind=profile_invalid')),
+    ).toBe(true);
+  });
+
   it('skips with a log when the profile changed between its read and the write (stale version)', async () => {
     save(scopeA, profile());
     documents.createAndReceiveScanned.mockImplementationOnce(((
