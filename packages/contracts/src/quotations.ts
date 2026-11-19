@@ -615,11 +615,23 @@ export const QuotationSummaryQuerySchema = z.strictObject({
 });
 export type QuotationSummaryQuery = z.infer<typeof QuotationSummaryQuerySchema>;
 
+/** The sum of the current versions' totals in one currency. */
+export const QuotationAmountSchema = z.object({
+  currency: CurrencySchema,
+  total: NonNegativeDecimalString,
+});
+export type QuotationAmount = z.infer<typeof QuotationAmountSchema>;
+
 /** `GET /v1/quotations/summary`: how many quotations match, in total and per current-version status. */
 export const QuotationSummarySchema = z.object({
   total: z.number().int().min(0),
   /** Every status is present, zero when none match. */
   byStatus: z.record(QuotationStatusSchema, z.number().int().min(0)),
+  /**
+   * What those quotations are worth per status: one entry per currency in use, never converted or mixed.
+   * Every status is present, an empty list when none match. Left out by an API that predates it.
+   */
+  amounts: z.record(QuotationStatusSchema, z.array(QuotationAmountSchema)).optional(),
 });
 export type QuotationSummary = z.infer<typeof QuotationSummarySchema>;
 

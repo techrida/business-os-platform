@@ -11,6 +11,7 @@ import type { AddressInfo } from 'node:net';
 
 import { ErrorBodySchema, LeadDtoSchema, LeadOwnerOptionSchema } from '@bos/contracts';
 import {
+  activities,
   createParty,
   createPortalUser,
   createStaffUser,
@@ -37,6 +38,7 @@ import { NumberingService } from '../../platform/settings/numbering.service';
 import { ErrorBodyFilter } from '../../platform/tenancy/error-body.filter';
 import { LeadsController } from './leads.controller';
 import { LeadsService } from './leads.service';
+import { LeadLostReasonsService } from './lost-reasons.service';
 import { startHarness, type Harness } from './test/harness';
 
 vi.setConfig({ testTimeout: 60_000, hookTimeout: 180_000 });
@@ -63,6 +65,7 @@ beforeAll(async () => {
     new AuditService(h.db),
     new NumberingService(),
     h.caller,
+    new LeadLostReasonsService(h.db, new AuditService(h.db), h.caller),
   );
   const moduleRef = await Test.createTestingModule({
     controllers: [LeadsController],
@@ -318,5 +321,174 @@ describe('GET /v1/leads/owners', () => {
           .where(eq(userEntities.userId, h.users.salesB)),
       );
     }
+  });
+});
+
+/** A planned call (or the given kind) on `leadId`, assigned to `assigneeUserId`; `done` marks it completed or cancelled. */
+async function plan(
+  leadId: string,
+  assigneeUserId: string | null,
+  extra: { kind?: 'call' | 'meeting' | 'email'; done?: 'completed' | 'cancelled' } = {},
+) {
+  const now = new Date();
+  const [row] = await withTx(h.db, h.scopeA, sys(), (tx) =>
+    tx
+      .insert(activities)
+      .values({
+        ...h.scopeA,
+        kind: extra.kind ?? 'call',
+        subject: 'Follow up',
+        leadId,
+        dueAt: new Date(Date.now() + 86_400_000),
+        assigneeUserId,
+        createdByUserId: h.users.salesA,
+        completedAt: extra.done === 'completed' ? now : null,
+        cancelledAt: extra.done === 'cancelled' ? now : null,
+      })
+      .returning(),
+  );
+  return row!;
+}
+const activityRow = async (id: string) => {
+  const [row] = await h.db.select().from(activities).where(eq(activities.id, id));
+  return row!;
+};
+
+describe('D45: follow-ups follow the owner (PATCH /v1/leads/:id)', () => {
+  it('moves the open follow-ups of the old owner to the new owner, audited, and leaves everything else', async () => {
+    const lead = await seed();
+    const mine = await plan(lead.id, h.users.salesA);
+    const myMeeting = await plan(lead.id, h.users.salesA, { kind: 'meeting' });
+    const theirs = await plan(lead.id, h.users.boss);
+    const unassigned = await plan(lead.id, null);
+    const completed = await plan(lead.id, h.users.salesA, { done: 'completed' });
+    const cancelled = await plan(lead.id, h.users.salesA, { done: 'cancelled' });
+    const otherLead = await seed();
+    const onOtherLead = await plan(otherLead.id, h.users.salesA);
+
+    h.as('boss', 'founder');
+    const res = await patch(lead.id, { ownerUserId: h.users.salesB, expectedVersion: 1 });
+    expect(res.status, JSON.stringify(res.body)).toBe(200);
+
+    expect(await activityRow(mine.id)).toMatchObject({
+      assigneeUserId: h.users.salesB,
+      version: 2,
+    });
+    expect(await activityRow(myMeeting.id)).toMatchObject({ assigneeUserId: h.users.salesB });
+    for (const row of [theirs, unassigned, completed, cancelled, onOtherLead]) {
+      const after = await activityRow(row.id);
+      expect(after.assigneeUserId, row.id).toBe(row.assigneeUserId);
+      expect(after.version, row.id).toBe(row.version);
+    }
+    expect(dto(res.body).nextFollowUpAt).not.toBeNull();
+    const { rows } = await h.ownerPool.query(
+      `SELECT entity_id, before, after, meta FROM audit.audit_events
+        WHERE tenant_id = $1 AND action = 'activity.reassigned' ORDER BY entity_id`,
+      [h.tenantId],
+    );
+    expect((rows as { entity_id: string }[]).map((r) => r.entity_id).sort()).toEqual(
+      [mine.id, myMeeting.id].sort(),
+    );
+    for (const r of rows as { before: unknown; after: unknown; meta: unknown }[]) {
+      expect(r.before).toEqual({ assigneeUserId: h.users.salesA });
+      expect(r.after).toEqual({ assigneeUserId: h.users.salesB });
+      expect(r.meta).toEqual({ reason: 'lead_owner_changed', leadId: lead.id });
+    }
+  });
+
+  it('an own-scope old owner cannot hand the lead on, so nothing moves', async () => {
+    const lead = await seed();
+    const mine = await plan(lead.id, h.users.salesA);
+    const res = await patch(lead.id, { ownerUserId: h.users.salesB, expectedVersion: 1 });
+    expect(res.status, JSON.stringify(res.body)).toBe(403);
+    expect(await activityRow(mine.id)).toMatchObject({
+      assigneeUserId: h.users.salesA,
+      version: 1,
+    });
+  });
+
+  it('an edit that does not change the owner moves nothing', async () => {
+    const lead = await seed();
+    const mine = await plan(lead.id, h.users.salesA);
+    h.as('boss', 'founder');
+    const res = await patch(lead.id, { title: 'Renamed', expectedVersion: 1 });
+    expect(res.status, JSON.stringify(res.body)).toBe(200);
+    expect(await activityRow(mine.id)).toMatchObject({
+      assigneeUserId: h.users.salesA,
+      version: 1,
+    });
+  });
+
+  it('a lead without an owner leaves its unassigned follow-ups unassigned when it gets one', async () => {
+    const lead = await seed();
+    await withTx(h.db, h.scopeA, sys(), (tx) =>
+      tx.update(leads).set({ ownerUserId: null }).where(eq(leads.id, lead.id)),
+    );
+    const unassigned = await plan(lead.id, null);
+    h.as('boss', 'founder');
+    const row = await rowOf(lead.id);
+    const res = await patch(lead.id, { ownerUserId: h.users.salesB, expectedVersion: row.version });
+    expect(res.status, JSON.stringify(res.body)).toBe(200);
+    expect((await activityRow(unassigned.id)).assigneeUserId).toBeNull();
+  });
+});
+
+describe("D46: the lead carries its owner's display name and nothing more of the directory", () => {
+  const NAMES = {
+    salesA: { name: 'Sita Sales', email: 'sita.private@crestia.example' },
+    boss: { name: 'Fiona Founder', email: 'fiona.private@crestia.example' },
+  } as const;
+  beforeAll(async () => {
+    for (const key of ['salesA', 'boss'] as const) {
+      await withTx(h.db, h.scopeA, sys(), (tx) =>
+        tx
+          .update(users)
+          .set({ displayName: NAMES[key].name, email: NAMES[key].email })
+          .where(eq(users.id, h.users[key])),
+      );
+    }
+  });
+
+  it('shows the owner by name on create, detail and list, and Sales never reaches a Founder-owned lead', async () => {
+    const lead = await seed();
+    expect(lead.ownerName).toBe('Sita Sales');
+    const got = await request(baseUrl).get(`/v1/leads/${lead.id}`);
+    expect(got.status, JSON.stringify(got.body)).toBe(200);
+    expect(dto(got.body).ownerName).toBe('Sita Sales');
+    const all = LeadDtoSchema.array().parse((await request(baseUrl).get('/v1/leads')).body);
+    expect(all.find((l) => l.id === lead.id)?.ownerName).toBe('Sita Sales');
+    h.as('boss', 'founder');
+    const founderLead = await seed();
+    expect(founderLead.ownerName).toBe('Fiona Founder');
+    h.as('salesA', 'sales');
+    expect((await request(baseUrl).get(`/v1/leads/${founderLead.id}`)).status).toBe(404);
+  });
+
+  it('puts no address in the payload of any route that returns the lead', async () => {
+    const lead = await seed();
+    h.as('boss', 'founder');
+    const edited = await patch(lead.id, { ownerUserId: h.users.boss, expectedVersion: 1 });
+    const bodies = [
+      JSON.stringify(edited.body),
+      JSON.stringify((await request(baseUrl).get('/v1/leads')).body),
+      JSON.stringify((await request(baseUrl).get(`/v1/leads/${lead.id}`)).body),
+    ];
+    for (const text of bodies) expect(text).not.toMatch(/@crestia\.example/);
+    expect(dto(edited.body).ownerName).toBe('Fiona Founder');
+  });
+
+  it('reads "Unnamed user" for an owner with neither name nor address, and null for no owner', async () => {
+    const lead = await seed();
+    await withTx(h.db, h.scopeA, sys(), (tx) =>
+      tx.update(users).set({ displayName: null, email: null }).where(eq(users.id, h.users.salesB)),
+    );
+    h.as('boss', 'founder');
+    const handed = await patch(lead.id, { ownerUserId: h.users.salesB, expectedVersion: 1 });
+    expect(dto(handed.body).ownerName).toBe('Unnamed user');
+    await withTx(h.db, h.scopeA, sys(), (tx) =>
+      tx.update(leads).set({ ownerUserId: null }).where(eq(leads.id, lead.id)),
+    );
+    const got = await request(baseUrl).get(`/v1/leads/${lead.id}`);
+    expect(dto(got.body)).toMatchObject({ ownerUserId: null, ownerName: null });
   });
 });

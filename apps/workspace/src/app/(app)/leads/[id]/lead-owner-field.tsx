@@ -16,7 +16,9 @@ export interface LeadOwnerFieldProps {
   /** The lead's version as the page showed it; sent so a stale page gets a 409, not an overwrite. */
   version: number;
   ownerUserId: string | null;
-  /** People the caller may hand the lead to (`GET /v1/leads/owners`); also resolves the name. */
+  /** The owner's display name from the lead (D46); null without an owner. */
+  ownerName: string | null;
+  /** People the caller may hand the lead to (`GET /v1/leads/owners`). */
   owners: readonly LeadOwnerOption[];
 }
 
@@ -28,17 +30,23 @@ const nameOf = (o: LeadOwnerOption) => o.displayName || o.email;
  * holds only themselves (own scope) cannot reassign, so they see the owner alone. Mount it as
  * `{ label: 'Lead owner', value: <LeadOwnerField ... /> }` in the overview facts.
  */
-export function LeadOwnerField({ leadId, version, ownerUserId, owners }: LeadOwnerFieldProps) {
+export function LeadOwnerField({
+  leadId,
+  version,
+  ownerUserId,
+  ownerName,
+  owners,
+}: LeadOwnerFieldProps) {
   const owner = owners.find((o) => o.userId === ownerUserId);
   const display = (
     <OwnerCell
-      owned={ownerUserId !== null}
-      name={owner ? nameOf(owner) : undefined}
+      name={ownerName}
       seedId={ownerUserId}
       imageDocumentId={owner?.avatarDocumentId ?? null}
     />
   );
   if (owners.length <= 1) return display;
+  const listed = owner !== undefined;
   return (
     <Stack gap="small">
       {display}
@@ -48,8 +56,9 @@ export function LeadOwnerField({ leadId, version, ownerUserId, owners }: LeadOwn
         leadId={leadId}
         version={version}
         ownerUserId={ownerUserId}
+        ownerName={ownerName}
         owners={owners}
-        listed={owner !== undefined}
+        listed={listed}
       />
     </Stack>
   );

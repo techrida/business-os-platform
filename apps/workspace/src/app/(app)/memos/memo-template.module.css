@@ -389,3 +389,13 @@ p.signerHint {
   align-items: center;
   gap: 8px 12px;
 }
+
+.eyebrow {
+  display: block;
+  margin-bottom: 4px;
+  color: var(--text-secondary);
+  font-size: var(--font-size-caption);
+  font-weight: var(--font-weight-medium);
+  line-height: var(--line-height-caption);
+  letter-spacing: var(--letter-spacing-normal);
+}

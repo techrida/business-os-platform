@@ -21,6 +21,7 @@ import {
   type RoleKey,
   type Scope,
 } from '@bos/contracts';
+import Decimal from 'decimal.js';
 import {
   createParty,
   leads,
@@ -1022,6 +1023,19 @@ describe('DraftingService.summary', () => {
     expect(summary.total).toBe(3);
     expect(summary.byStatus).toMatchObject({ draft: 2, approved: 1, sent: 0, accepted: 0 });
     expect(Object.values(summary.byStatus).reduce((a, b) => a + b, 0)).toBe(summary.total);
+    // The worth per status adds up the same current-version totals the list shows, per currency.
+    const listed = (await service.list({ customerId: [c1.customerId, c2.customerId] })).rows;
+    for (const status of ['draft', 'approved'] as const) {
+      const expected = new Map<string, Decimal>();
+      for (const row of listed.filter((r) => r.status === status)) {
+        expected.set(row.currency, (expected.get(row.currency) ?? new Decimal(0)).plus(row.total));
+      }
+      const got = new Map((summary.amounts?.[status] ?? []).map((a) => [a.currency, a.total]));
+      expect([...got.keys()].sort()).toEqual([...expected.keys()].sort());
+      for (const [currency, sum] of expected)
+        expect(new Decimal(got.get(currency as never)!).eq(sum)).toBe(true);
+    }
+    expect(summary.amounts?.sent).toEqual([]);
     expect((await service.list({ customerId: [c1.customerId, c2.customerId] })).total).toBe(
       summary.total,
     );

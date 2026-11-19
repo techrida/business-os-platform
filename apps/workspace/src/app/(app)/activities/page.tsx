@@ -41,6 +41,7 @@ import {
 } from '@/lib/list-params';
 
 import styles from './activities.module.css';
+import { dueRange } from './due-range';
 import { ActivityFilters } from './filters';
 
 export const metadata: Metadata = { title: 'Activities · Business OS' };
@@ -50,6 +51,7 @@ const PATH = '/activities';
 const SPEC = {
   // `task` is not offered (D39); an old `?kind=task` link is dropped and falls back to every type.
   multi: { kind: FILTER_KINDS.map((k) => k.value) },
+  single: { dueFrom: /^\d{4}-\d{2}-\d{2}$/, dueTo: /^\d{4}-\d{2}-\d{2}$/ },
   rows: { allowed: ROWS_OPTIONS, default: DEFAULT_ROWS },
 } as const;
 const KIND_LABELS = new Map(ALL_KINDS.map(({ value, label }) => [value, label]));
@@ -176,8 +178,10 @@ export default async function ActivitiesPage({
   const state = readList(sp, SPEC);
   const kinds = state.multi.kind as ActivityKind[];
   const { q } = state;
-  const filtered = q !== undefined || kinds.length > 0;
-  const filters = { ...(q !== undefined ? { q } : {}), kind: kinds };
+  const due = dueRange(state.single.dueFrom, state.single.dueTo);
+  const filtered =
+    q !== undefined || kinds.length > 0 || due.dueFrom !== undefined || due.dueTo !== undefined;
+  const filters = { ...(q !== undefined ? { q } : {}), kind: kinds, ...due };
   const reloadHref = hrefWith(PATH, sp, { page: state.page > 1 ? state.page : null });
 
   const loadPlanned = async (): Promise<Loaded> => {
@@ -216,7 +220,7 @@ export default async function ActivitiesPage({
     }
   };
   // The owners list (Reschedule's choices) needs crm.lead.write; without it Reschedule keeps the
-  // current assignee. Names are not shown in this table, so only the owners half matters here.
+  // current assignee. Names on the rows come from the activities themselves (D46).
   const [planned, logged, people] = await Promise.all([
     loadPlanned(),
     loadLogged(),
@@ -229,8 +233,12 @@ export default async function ActivitiesPage({
   const total = planned.total + logged.total;
   const nothing = problem === null && total === 0;
   const hiding = activeFilterLabels(
-    { q, multi: { kind: kinds }, single: {} },
-    { kind: { label: 'Type', format: (v) => KIND_LABELS.get(v as ActivityKind) ?? v } },
+    { q, multi: { kind: kinds }, single: { dueFrom: due.dueFrom, dueTo: due.dueTo } },
+    {
+      kind: { label: 'Type', format: (v) => KIND_LABELS.get(v as ActivityKind) ?? v },
+      dueFrom: { label: 'Due from', format: (v) => when(v, 'date') },
+      dueTo: { label: 'Due to', format: (v) => when(v, 'date') },
+    },
   );
 
   return (
@@ -242,7 +250,13 @@ export default async function ActivitiesPage({
 
       <div className={styles.toolbar}>
         <div className={styles.filters}>
-          <ActivityFilters rows={state.rows} kinds={kinds} kindOptions={FILTER_KINDS} />
+          <ActivityFilters
+            rows={state.rows}
+            kinds={kinds}
+            kindOptions={FILTER_KINDS}
+            dueFrom={due.dueFrom ?? ''}
+            dueTo={due.dueTo ?? ''}
+          />
           {problem === null ? (
             <ResultCount shown={shown} total={total} noun="activity" plural="activities" />
           ) : null}

@@ -34,7 +34,7 @@ describe('NextFollowUpCell', () => {
 
 describe('OwnerCell', () => {
   it('shows initials and the owner name', () => {
-    const html = renderToStaticMarkup(<OwnerCell owned name="Asha Gurung" />);
+    const html = renderToStaticMarkup(<OwnerCell name="Asha Gurung" />);
     expect(html).toContain('>AG<');
     expect(html).toContain('Asha Gurung');
   });
@@ -43,7 +43,7 @@ describe('OwnerCell', () => {
     const owner = '9f1c2e4a-6b7d-4e8f-a1b2-c3d4e5f60718';
     const picture = '66666666-6666-4666-8666-666666666666';
     const html = renderToStaticMarkup(
-      <OwnerCell owned name="Asha Gurung" seedId={owner} imageDocumentId={picture} />,
+      <OwnerCell name="Asha Gurung" seedId={owner} imageDocumentId={picture} />,
     );
     // The id must not land on the unseeded colour, or this check would pass without a seed.
     expect(avatarColour(owner)).not.toBe(avatarColour(null));
@@ -51,12 +51,8 @@ describe('OwnerCell', () => {
     expect(html).toContain(`src="${imagePath(picture)}"`);
   });
 
-  it('never shows an id when the name is unknown', () => {
-    expect(renderToStaticMarkup(<OwnerCell owned name={undefined} />)).toContain(
-      'Name unavailable',
-    );
-    expect(renderToStaticMarkup(<OwnerCell owned={false} name={undefined} />)).toContain(
-      'No owner',
-    );
+  it('says no owner only when the lead has none, and has no unavailable state', () => {
+    expect(renderToStaticMarkup(<OwnerCell name={null} />)).toContain('No owner');
+    expect(renderToStaticMarkup(<OwnerCell name="Unnamed user" />)).not.toContain('unavailable');
   });
 });

@@ -34,7 +34,7 @@ import {
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
-import { and, asc, desc, eq, inArray, isNull, not, or, type SQL } from 'drizzle-orm';
+import { and, asc, desc, eq, gte, inArray, isNull, lt, not, or, type SQL } from 'drizzle-orm';
 
 import { AuditService } from '../../platform/audit/audit.service';
 import { AuthzService, scopeWhereFor } from '../../platform/authz/authz.service';
@@ -49,6 +49,8 @@ import { leadRef } from '../leads/leads.service';
 import { opportunityRef } from '../opportunities/opportunities.service';
 import { ActivitiesCaller } from './activities.caller';
 import {
+  dueRangeBounds,
+  activityNames,
   isPlannedRow,
   isPlannedSql,
   SUBJECT_PERMISSION,
@@ -98,6 +100,10 @@ export class ActivitiesService {
     filters.push(isNull(activities.cancelledAt));
     if (q.status === 'planned') filters.push(isPlannedSql);
     if (q.status === 'logged') filters.push(not(isPlannedSql));
+    // A due-day range keeps only activities with a due time inside it (a NULL due time never compares).
+    const due = dueRangeBounds(q);
+    if (due.from !== undefined) filters.push(gte(activities.dueAt, due.from));
+    if (due.before !== undefined) filters.push(lt(activities.dueAt, due.before));
     const order =
       q.status === 'planned'
         ? [asc(activities.dueAt), asc(activities.id)]
@@ -119,7 +125,8 @@ export class ActivitiesService {
           .offset(p.offset),
       count: (tx, where) => tx.$count(activities, where),
     });
-    return { items: rows.map(toActivityDto), total };
+    const names = await activityNames(this.db, scope.tenantId, rows);
+    return { items: rows.map((r) => toActivityDto(r, names)), total };
   }
 
   // ------------------------------------------------------------------------------------------------- create
@@ -179,7 +186,7 @@ export class ActivitiesService {
             ...(planned ? { dueAt: body.dueAt, assigneeUserId } : {}),
           },
         });
-        return toActivityDto(row!);
+        return toActivityDto(row!, await activityNames(tx, scope.tenantId, [row!]));
       };
       if (idempotencyKey === undefined) return run();
       const done = await withIdempotency(
@@ -318,7 +325,8 @@ export class ActivitiesService {
           message: 'Only a planned activity can be changed; this one is already done or cancelled',
         });
       }
-      return toActivityDto(await change(tx, row, scope));
+      const changed = await change(tx, row, scope);
+      return toActivityDto(changed, await activityNames(tx, scope.tenantId, [changed]));
     });
   }
 

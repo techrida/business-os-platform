@@ -6,24 +6,20 @@ import { when } from '@/lib/kernel-format';
 import styles from './leads.module.css';
 
 /**
- * The lead's owner with their avatar. Names come from the owners list and, for administrators, the
- * users directory; when neither knows the person the cell says so instead of showing an id.
- * `seedId` (the owner's user id) picks the initials colour and `imageDocumentId` their picture, so
- * the owner looks the same here as on every other screen.
+ * The lead's owner with initials. The name is the display name the API joins onto the lead (D46), so every
+ * role that can read the lead sees it; null means the lead has no owner. `seedId` (the owner's user id) picks the
+ * initials colour and `imageDocumentId` their picture, so the owner looks the same here as on every other screen.
  */
 export function OwnerCell({
-  owned,
   name,
   seedId,
   imageDocumentId,
 }: {
-  owned: boolean;
-  name: string | undefined;
+  name: string | null;
   seedId?: string | null;
   imageDocumentId?: string | null;
 }) {
-  if (!owned) return <span className={styles.quiet}>No owner</span>;
-  if (!name) return <span className={styles.quiet}>Name unavailable</span>;
+  if (name === null) return <span className={styles.quiet}>No owner</span>;
   return (
     <div className={styles.contact}>
       <Avatar

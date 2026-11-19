@@ -176,6 +176,7 @@ describe('tenancy wiring (in-process)', () => {
     expect(res.headers['x-request-id']).toBe('trace-abcdef12');
     expect(MeResponseSchema.parse(res.body)).toEqual({
       userId: 'user-1',
+      id: APP_USER_ID,
       tenantId: TENANT,
       organizationId: STAFF_ORG,
       orgKind: 'staff',
@@ -183,6 +184,8 @@ describe('tenancy wiring (in-process)', () => {
       roles: ['founder'],
       correlationId: 'trace-abcdef12',
       avatarDocumentId: null,
+      // The stub RoleCache grants nothing, so the effective grants are empty.
+      permissions: [],
     });
   });
 

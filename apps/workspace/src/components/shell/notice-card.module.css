@@ -1,21 +1,273 @@
+/*
+ * Split card, mirroring the sign-in screen: form column on the left, decorative panel on the
+ * right. The card is a size container so the panel appears when the card is wide, wherever the
+ * card sits (the narrow centred page used by error boundaries gets a single column).
+ */
 .notice {
-  padding: 32px;
+  --notice-line: var(--brand-100);
+  --notice-cell: var(--brand-100);
+  --notice-shadow: 0 3px 6px color-mix(in srgb, var(--overlay-scrim) 6%, transparent);
+
+  padding: 0;
+  overflow: hidden;
+  container-type: inline-size;
+}
+
+.split {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+}
+
+/* ===== Form column ===== */
+
+.column {
+  display: flex;
+  flex-direction: column;
+  gap: 32px;
+  min-width: 0;
+  padding: 32px 24px;
+  overflow-wrap: anywhere;
+}
+
+.content {
+  display: flex;
+  flex: 1 1 auto;
+  flex-direction: column;
+  justify-content: center;
+  gap: 16px;
+  width: 100%;
+  max-width: 451px;
+  margin-inline: auto;
 }
 
 .title {
-  font-size: var(--font-size-h2);
-  line-height: var(--line-height-h2);
-  overflow-wrap: anywhere;
+  font-size: var(--font-size-h1);
+  font-weight: var(--font-weight-semibold);
+  letter-spacing: var(--letter-spacing-tight);
+  line-height: var(--line-height-h1);
+  text-wrap: balance;
 }
 
 .body {
   display: grid;
   gap: 12px;
   color: var(--text-secondary);
+  font-size: var(--font-size-body-large);
+  line-height: var(--line-height-body-large);
 }
 
+/* The primary action spans the column; a sign-out form wraps its button. */
 .actions {
   display: flex;
-  flex-wrap: wrap;
+  flex-direction: column;
   gap: 12px;
+  padding-block-start: 8px;
+}
+
+.actions form {
+  display: grid;
+}
+
+.actions a,
+.actions button {
+  width: 100%;
+}
+
+.footer {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px 18px;
+  color: var(--text-secondary);
+  font-size: var(--font-size-caption);
+  line-height: var(--line-height-caption);
+}
+
+.footer small {
+  font-size: inherit;
+}
+
+.links {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 18px;
+}
+
+.links a {
+  color: inherit;
+  text-decoration: none;
+}
+
+@media (hover: hover) {
+  .links a:hover {
+    color: var(--text-primary);
+    text-decoration: underline;
+  }
+}
+
+/* ===== Decorative panel (hidden until the card is wide) ===== */
+
+.aside {
+  display: none;
+}
+
+.stage {
+  position: relative;
+  flex: none;
+  width: 320px;
+  max-width: 100%;
+  height: 250px;
+  margin-block-end: 24px;
+}
+
+.miniCard {
+  position: absolute;
+  display: grid;
+  gap: 8px;
+  padding: 14px;
+  border: var(--border-width-thin) solid var(--border-default);
+  border-radius: var(--radius-lg);
+  background: var(--surface-default);
+  box-shadow: var(--notice-shadow);
+}
+
+.cardA {
+  inset-block-start: 0;
+  inset-inline-start: 0;
+  width: 200px;
+}
+
+.cardB {
+  inset-block-start: 56px;
+  inset-inline-end: 0;
+  width: 150px;
+}
+
+.cardC {
+  inset-block-start: 140px;
+  inset-inline-start: 24px;
+  width: 270px;
+}
+
+.bar {
+  display: block;
+  width: 100%;
+  height: 6px;
+  border-radius: var(--radius-full);
+  background: var(--neutral-200);
+}
+
+.barAccent {
+  width: 60%;
+  background: var(--brand-300);
+}
+
+.barShort {
+  width: 40%;
+}
+
+.asideCopy {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 15px;
+  max-width: 420px;
+  text-align: center;
+}
+
+.monogram {
+  display: grid;
+  place-items: center;
+  width: 48px;
+  height: 46px;
+  border-radius: var(--radius-lg);
+  background: var(--surface-inverse);
+  color: var(--text-inverse);
+}
+
+.monogram svg {
+  fill: currentColor;
+}
+
+.asideTitle {
+  margin: 0;
+  padding-block-start: 8px;
+  color: var(--text-primary);
+  font-size: 20px;
+  font-weight: var(--font-weight-semibold);
+  letter-spacing: var(--letter-spacing-tight);
+  line-height: 30px;
+}
+
+.asideBody {
+  margin: 0;
+  color: var(--text-tertiary);
+  font-size: var(--font-size-body);
+  line-height: var(--line-height-body);
+}
+
+.pills {
+  display: flex;
+  gap: 6px;
+  padding-block-start: 16px;
+}
+
+.pill,
+.pillActive {
+  width: 28px;
+  height: 4px;
+  border-radius: var(--radius-full);
+  background: var(--neutral-300);
+}
+
+.pillActive {
+  background: var(--brand-700);
+}
+
+@container (min-width: 880px) {
+  .title {
+    font-size: 36px;
+    line-height: 44px;
+  }
+
+  .split {
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+    min-height: 640px;
+  }
+
+  .column {
+    padding: 56px;
+  }
+
+  .aside {
+    position: relative;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 15px;
+    min-width: 0;
+    padding: 24px 34px;
+    border-inline-start: var(--border-width-thin) solid var(--border-default);
+    background-color: var(--surface-brand);
+    /* Grid lines, then two highlighted cells on the same 72px grid. */
+    background-image:
+      linear-gradient(var(--notice-cell), var(--notice-cell)),
+      linear-gradient(var(--notice-cell), var(--notice-cell)),
+      linear-gradient(var(--notice-line) 1px, transparent 1px),
+      linear-gradient(90deg, var(--notice-line) 1px, transparent 1px);
+    background-position:
+      72px 144px,
+      216px 0,
+      0 0,
+      0 0;
+    background-repeat: no-repeat, no-repeat, repeat, repeat;
+    background-size:
+      72px 72px,
+      72px 72px,
+      72px 72px,
+      72px 72px;
+    user-select: none;
+  }
 }

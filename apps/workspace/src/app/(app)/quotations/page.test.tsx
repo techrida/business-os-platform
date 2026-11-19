@@ -223,6 +223,27 @@ describe('quotations list', () => {
     expect(await render()).toContain('Total quotations');
   });
 
+  it('adds what each status is worth only when it is one currency', async () => {
+    const empty = Object.fromEntries(Object.keys(SUMMARY.byStatus).map((k) => [k, []]));
+    mocks.getQuotationsSummary.mockResolvedValue({
+      ...SUMMARY,
+      amounts: {
+        ...empty,
+        submitted: [{ currency: 'NPR', total: '245000.00' }],
+        sent: [
+          { currency: 'NPR', total: '610000.00' },
+          { currency: 'USD', total: '90.00' },
+        ],
+      },
+    });
+    const html = await render();
+    expect(html).toMatch(/2,?45,000\.00/);
+    expect(html).toContain('requiring approval');
+    // Mixed currencies and an empty status keep the count and drop the amount.
+    expect(html).not.toContain('outstanding');
+    expect(html).not.toContain('contracted');
+  });
+
   it('still lists the quotations when the summary or the customers cannot be read', async () => {
     mocks.getQuotationsSummary.mockRejectedValue(new Error('down'));
     mocks.listCustomers.mockRejectedValue(new Error('down'));

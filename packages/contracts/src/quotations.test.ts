@@ -722,6 +722,25 @@ describe('QuotationSummaryQuerySchema and QuotationSummarySchema', () => {
       QuotationSummarySchema.safeParse({ total: 1, byStatus: { ...byStatus, draft: -1 } }).success,
     ).toBe(false);
   });
+
+  it('carries the worth per status and currency, and still accepts an API that sends none', () => {
+    const byStatus = Object.fromEntries(QUOTATION_STATUSES.map((s) => [s, 0]));
+    const amounts = Object.fromEntries(QUOTATION_STATUSES.map((s) => [s, []]));
+    const worth = { ...amounts, submitted: [{ currency: 'NPR', total: '245000.00' }] };
+    expect(QuotationSummarySchema.safeParse({ total: 1, byStatus, amounts: worth }).success).toBe(
+      true,
+    );
+    expect(QuotationSummarySchema.safeParse({ total: 0, byStatus }).success).toBe(true);
+    const bad = { ...amounts, sent: [{ currency: 'NPR', total: '1.234' }] };
+    expect(QuotationSummarySchema.safeParse({ total: 0, byStatus, amounts: bad }).success).toBe(
+      false,
+    );
+    const noStatus = { ...amounts } as Record<string, unknown>;
+    delete noStatus['draft'];
+    expect(
+      QuotationSummarySchema.safeParse({ total: 0, byStatus, amounts: noStatus }).success,
+    ).toBe(false);
+  });
 });
 
 describe('QuotationDetailSchema', () => {

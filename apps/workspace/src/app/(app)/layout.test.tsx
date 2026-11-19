@@ -12,13 +12,17 @@ vi.mock('next/navigation', () => ({
   },
 }));
 vi.mock('@/components/web-vitals', () => ({ WebVitals: () => <i data-testid="web-vitals" /> }));
-const sidebarProps = vi.hoisted(() => [] as Array<{ user: Record<string, unknown> }>);
+type SidebarProps = { user: Record<string, unknown>; counts?: Record<string, number> };
+const sidebarProps = vi.fn<(props: SidebarProps) => void>();
 vi.mock('@/components/shell/sidebar', () => ({
-  Sidebar: (props: { user: Record<string, unknown> }) => {
-    sidebarProps.push(props);
+  Sidebar: (props: SidebarProps) => {
+    sidebarProps(props);
     return null;
   },
 }));
+const lastSidebarUser = () => sidebarProps.mock.calls.at(-1)?.[0].user;
+const getInboxPage = vi.fn<() => Promise<{ items: never[]; total: number }>>();
+vi.mock('@/lib/api-kernel', () => ({ getInboxPage: () => getInboxPage() }));
 vi.mock('@/components/shell/header', () => ({ Header: () => null }));
 vi.mock('@/components/shell/shell-state', () => ({
   ShellFrame: ({ children }: { children: ReactNode }) => <div>{children}</div>,
@@ -55,7 +59,9 @@ beforeEach(() => {
   getSession.mockReset();
   getMe.mockReset();
   getMe.mockResolvedValue({ avatarDocumentId: null });
-  sidebarProps.length = 0;
+  sidebarProps.mockReset();
+  getInboxPage.mockReset();
+  getInboxPage.mockResolvedValue({ items: [], total: 0 });
 });
 
 describe('web vitals reporter placement', () => {
@@ -81,7 +87,7 @@ describe('the account picture in the sidebar', () => {
     getSession.mockResolvedValue(staff);
     getMe.mockResolvedValue({ avatarDocumentId: PICTURE });
     renderToStaticMarkup((await AppLayout({ children: <p>page</p> })) as ReactElement);
-    expect(sidebarProps.at(-1)?.user).toEqual({
+    expect(lastSidebarUser()).toEqual({
       name: 'Finance',
       detail: 'staff',
       imageDocumentId: PICTURE,
@@ -95,12 +101,30 @@ describe('the account picture in the sidebar', () => {
       (await AppLayout({ children: <p>page</p> })) as ReactElement,
     );
     expect(html).toContain('<p>page</p>');
-    expect(sidebarProps.at(-1)?.user).toMatchObject({ imageDocumentId: null });
+    expect(lastSidebarUser()).toMatchObject({ imageDocumentId: null });
   });
 
   it('still redirects a signed-out visitor before asking /v1/me', async () => {
     getSession.mockResolvedValue(null);
     await expect(AppLayout({ children: <p>page</p> })).rejects.toThrow('REDIRECT:/auth/login');
     expect(getMe).not.toHaveBeenCalled();
+  });
+});
+
+describe('approvals badge in the sidebar', () => {
+  it('passes the waiting count for the inbox link', async () => {
+    getSession.mockResolvedValue(staff);
+    getInboxPage.mockResolvedValue({ items: [], total: 4 });
+    renderToStaticMarkup((await AppLayout({ children: <p>page</p> })) as ReactElement);
+    expect(sidebarProps).toHaveBeenCalledWith(
+      expect.objectContaining({ counts: { '/inbox': 4 } }),
+    );
+  });
+
+  it('shows no badge, not a zero, when the read is refused', async () => {
+    getSession.mockResolvedValue(staff);
+    getInboxPage.mockRejectedValue(new Error('403'));
+    renderToStaticMarkup((await AppLayout({ children: <p>page</p> })) as ReactElement);
+    expect(sidebarProps).toHaveBeenCalledWith(expect.objectContaining({ counts: {} }));
   });
 });

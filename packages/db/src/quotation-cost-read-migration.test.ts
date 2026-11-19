@@ -6,7 +6,7 @@
 //
 // The database is first migrated with the real SQL up to 0047 (the migration before 0055), seeded with
 // role_permissions rows like a tenant that has been running, and then migrated with the real runner, which
-// applies 0055 (and any later migration). Writes set the bos.* audit settings the triggers demand.
+// applies 0055 (and nothing later). Writes set the bos.* audit settings the triggers demand.
 import { randomUUID } from 'node:crypto';
 import { copyFile, mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
@@ -34,6 +34,7 @@ let admin: Pool;
 let owner: Pool;
 let ownerUrl: string;
 let before0055Folder: string;
+let through0055Folder: string;
 let sql0055: string[];
 
 let tenantA: TenantWithEntity;
@@ -151,6 +152,21 @@ beforeAll(async () => {
       join(before0055Folder, `${entry.tag}.sql`),
     );
   }
+  // The runner below stops at 0055: a later migration that adds grants (0083 does) would otherwise move the
+  // authz versions this test pins.
+  through0055Folder = await mkdtemp(join(tmpdir(), 'bos-through-0055-'));
+  await mkdir(join(through0055Folder, 'meta'));
+  const throughEntries = journal.entries.slice(0, index + 1);
+  await writeFile(
+    join(through0055Folder, 'meta/_journal.json'),
+    JSON.stringify({ ...journal, entries: throughEntries }),
+  );
+  for (const entry of throughEntries) {
+    await copyFile(
+      join(MIGRATIONS_FOLDER, `${entry.tag}.sql`),
+      join(through0055Folder, `${entry.tag}.sql`),
+    );
+  }
   sql0055 = (await readFile(join(MIGRATIONS_FOLDER, `${TAG}.sql`), 'utf8')).split(
     '--> statement-breakpoint',
   );
@@ -190,7 +206,7 @@ beforeAll(async () => {
   await grant(tenantC, 'pmo', 'quotation.draft');
 
   // The real runner now applies only 0055.
-  await runMigrations(ownerUrl);
+  await runMigrations(ownerUrl, through0055Folder);
 }, 120_000);
 
 afterAll(async () => {
@@ -198,6 +214,7 @@ afterAll(async () => {
   await admin?.end();
   await container?.stop();
   if (before0055Folder) await rm(before0055Folder, { recursive: true, force: true });
+  if (through0055Folder) await rm(through0055Folder, { recursive: true, force: true });
 });
 
 describe('0055 quotation.cost.read for existing roles', () => {
@@ -255,7 +272,7 @@ describe('0055 quotation.cost.read for existing roles', () => {
 
   it('is not re-applied by the runner', async () => {
     const rowsBefore = await rowCount();
-    await runMigrations(ownerUrl);
+    await runMigrations(ownerUrl, through0055Folder);
     expect(await rowCount()).toBe(rowsBefore);
   });
 });

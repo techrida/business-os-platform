@@ -15,11 +15,15 @@ const mocks = vi.hoisted(() => ({
   getLead: vi.fn(),
   listActivities: vi.fn(),
   listLeadOwners: vi.fn(),
+  listLeadLostReasonChoices: vi.fn(),
   moveForm: vi.fn(),
   userNames: vi.fn(),
 }));
 
 vi.mock('@/lib/bff', () => ({ requireStaffSession: mocks.requireStaffSession }));
+vi.mock('@/lib/api-lead-lost-reasons', () => ({
+  listLeadLostReasonChoices: mocks.listLeadLostReasonChoices,
+}));
 vi.mock('@/components/p2/crm/crm-api', () => ({
   getLead: mocks.getLead,
   listActivities: mocks.listActivities,
@@ -55,6 +59,7 @@ const LEAD = '11111111-1111-4111-8111-111111111111';
 const OWNER = '22222222-2222-4222-8222-222222222222';
 const OTHER = '22222222-2222-4222-8222-222222222223';
 const WHEN = '2026-11-08T05:45:00.000Z';
+const LOST_REASON = '7b0e6c1a-2f4d-4c55-8a39-6d1f5e2c9b10';
 
 const lead = (over: Partial<LeadDto> = {}): LeadDto => ({
   id: LEAD,
@@ -63,6 +68,7 @@ const lead = (over: Partial<LeadDto> = {}): LeadDto => ({
   source: 'website',
   campaign: null,
   ownerUserId: OWNER,
+  ownerName: 'Anil Karki',
   companyName: 'Himalayan Agro Foods Pvt. Ltd.',
   contactName: 'Sunita Shrestha',
   email: null,
@@ -77,6 +83,7 @@ const lead = (over: Partial<LeadDto> = {}): LeadDto => ({
   nextFollowUpAt: null,
   stage: 'new',
   stageReason: null,
+  lostReason: null,
   stageNote: null,
   convertedOpportunityId: null,
   version: 3,
@@ -97,10 +104,12 @@ const activity = (id: string, over: Partial<ActivityDto>): ActivityDto => ({
   quotationId: null,
   dueAt: null,
   assigneeUserId: null,
+  assigneeName: null,
   completedAt: null,
   cancelledAt: null,
   planned: false,
   createdByUserId: null,
+  createdByName: null,
   occurredAt: WHEN,
   version: 1,
   ...over,
@@ -110,11 +119,13 @@ const PLANNED = activity('33333333-3333-4333-8333-333333333331', {
   subject: 'Book requirement workshop',
   dueAt: '2026-11-30T05:00:00.000Z',
   assigneeUserId: OWNER,
+  assigneeName: 'Anil Karki',
   planned: true,
 });
 const LOGGED = activity('33333333-3333-4333-8333-333333333332', {
   subject: 'Intro call with Sunita',
   createdByUserId: OWNER,
+  createdByName: 'Anil Karki',
 });
 const STAGE_CHANGE = activity('33333333-3333-4333-8333-333333333333', {
   kind: 'stage_change',
@@ -167,6 +178,7 @@ beforeEach(() => {
   mocks.listLeadOwners.mockReset().mockResolvedValue(OWNERS);
   mocks.moveForm.mockReset();
   mocks.userNames.mockReset().mockResolvedValue(new Map());
+  mocks.listLeadLostReasonChoices.mockReset().mockResolvedValue([]);
 });
 
 describe('lead detail page composition (U14 D39, D41)', () => {
@@ -246,7 +258,13 @@ describe('lead detail page composition (U14 D39, D41)', () => {
     mocks.getLead.mockResolvedValue(
       lead({
         stage,
-        ...(stage === 'lost' ? { stageReason: 'Budget', stageNote: 'No budget this year.' } : {}),
+        ...(stage === 'lost'
+          ? {
+              stageReason: 'No budget',
+              lostReason: { id: LOST_REASON, label: 'No budget', retired: false },
+              stageNote: 'No budget this year.',
+            }
+          : {}),
         ...(stage === 'converted'
           ? { convertedOpportunityId: '44444444-4444-4444-8444-444444444444' }
           : {}),
@@ -257,6 +275,53 @@ describe('lead detail page composition (U14 D39, D41)', () => {
     // Without actions the header draws no empty actions slot: head text is its only child.
     const header = doc.querySelector('h1')?.parentElement?.parentElement?.parentElement;
     expect(header?.children.length).toBe(expected.length ? 2 : 1);
+  });
+
+  it('reads the lost reasons only when Mark lost is offered, and shows the reason by its option label (D49)', async () => {
+    mocks.listLeadLostReasonChoices.mockResolvedValue([
+      {
+        id: LOST_REASON,
+        label: 'No budget',
+        position: 2,
+        isDefault: true,
+        retired: false,
+        version: 1,
+      },
+    ]);
+    await render();
+    expect(mocks.listLeadLostReasonChoices).toHaveBeenCalledOnce();
+
+    mocks.listLeadLostReasonChoices.mockClear();
+    mocks.getLead.mockResolvedValue(
+      lead({
+        stage: 'lost',
+        stageReason: 'Timing',
+        lostReason: { id: LOST_REASON, label: 'Bad timing', retired: true },
+        stageNote: 'Next year.',
+      }),
+    );
+    const doc = await render();
+    expect(mocks.listLeadLostReasonChoices).not.toHaveBeenCalled();
+    // The option's current label wins over the words saved when the lead was lost, and a retired option still shows.
+    const text = doc.body.textContent ?? '';
+    expect(text).toContain('Bad timing');
+    expect(text).toContain('This reason is no longer offered for new leads.');
+    expect(text).toContain('Next year.');
+  });
+
+  it('still shows the saved words for a lead lost before the list existed', async () => {
+    mocks.getLead.mockResolvedValue(
+      lead({ stage: 'lost', stageReason: 'Budget', lostReason: null, stageNote: 'Gone quiet.' }),
+    );
+    const text = (await render()).body.textContent ?? '';
+    expect(text).toContain('Budget');
+    expect(text).not.toContain('no longer offered');
+  });
+
+  it('opens the page without the reasons when the list cannot be read', async () => {
+    mocks.listLeadLostReasonChoices.mockRejectedValue(new Error('down'));
+    const doc = await render();
+    expect(headerButtons(doc)).toContain('Mark lost');
   });
 
   it('has no Log activity header button or link; the form sits in the main column', async () => {
@@ -288,14 +353,15 @@ describe('lead detail page composition (U14 D39, D41)', () => {
   });
 });
 
-describe('lead detail names (owners list merged with the users directory)', () => {
-  it('names an assignee outside an own-scope owners list from the directory', async () => {
+describe('lead detail names (D46: each record carries its own names)', () => {
+  it('names an assignee outside an own-scope owners list from the activity', async () => {
     // An own-scope caller only gets themselves as an owner option.
     mocks.listLeadOwners.mockResolvedValue([OWNERS[0]]);
-    mocks.userNames.mockResolvedValue(new Map([[OTHER, 'Mira Thapa']]));
     mocks.listActivities.mockImplementation((_s: unknown, opts: { status?: string }) =>
       Promise.resolve(
-        opts.status === 'planned' ? [{ ...PLANNED, assigneeUserId: OTHER }] : [LOGGED],
+        opts.status === 'planned'
+          ? [{ ...PLANNED, assigneeUserId: OTHER, assigneeName: 'Mira Thapa' }]
+          : [LOGGED],
       ),
     );
     const followUps = card(await render(), 'Follow-ups').textContent ?? '';
@@ -303,20 +369,22 @@ describe('lead detail names (owners list merged with the users directory)', () =
     expect(followUps).not.toContain('Another teammate');
   });
 
-  it('keeps History actors named from the directory when the owners list is refused', async () => {
+  it('keeps History actors and assignees named when the owners list is refused and no directory is read', async () => {
     mocks.listLeadOwners.mockRejectedValue(new ApiError(403, 'Forbidden'));
-    mocks.userNames.mockResolvedValue(new Map([[OWNER, 'Anil Karki']]));
     const doc = await render();
+    expect(mocks.userNames).not.toHaveBeenCalled();
     expect(card(doc, 'History').textContent).toContain('Anil Karki');
     expect(card(doc, 'Follow-ups').textContent).toContain('Anil Karki');
   });
 
-  it('falls back to a plain phrase, never an id, when neither source knows the person', async () => {
+  it('shows the owner by name and never an id or a placeholder, whatever the directory does', async () => {
     mocks.listLeadOwners.mockRejectedValue(new ApiError(403, 'Forbidden'));
     mocks.userNames.mockRejectedValue(new Error('directory down'));
     const doc = await render();
-    const followUps = card(doc, 'Follow-ups').textContent ?? '';
-    expect(followUps).toContain('Another teammate');
-    expect(doc.body.textContent).not.toContain(OWNER);
+    const text = doc.body.textContent ?? '';
+    expect(text).toContain('Anil Karki');
+    expect(text).not.toContain('Another teammate');
+    expect(text).not.toContain('Name unavailable');
+    expect(text).not.toContain(OWNER);
   });
 });

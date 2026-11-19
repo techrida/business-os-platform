@@ -9,7 +9,6 @@ import {
   historyItems,
   historyMeta,
   LOGGABLE_KINDS,
-  peopleById,
 } from './server-bits';
 
 const ASHA = '11111111-1111-4111-8111-111111111111';
@@ -29,10 +28,12 @@ function activity(over: Partial<ActivityDto> = {}): ActivityDto {
     quotationId: null,
     dueAt: null,
     assigneeUserId: null,
+    assigneeName: null,
     completedAt: null,
     cancelledAt: null,
     planned: false,
     createdByUserId: ASHA,
+    createdByName: 'Asha Rai',
     occurredAt: '2026-11-18T04:00:00.000Z',
     version: 1,
     ...over,
@@ -41,7 +42,6 @@ function activity(over: Partial<ActivityDto> = {}): ActivityDto {
 
 const planned = (dueAt: string) =>
   activity({ id: '44444444-4444-4444-8444-444444444444', dueAt, planned: true });
-const people = peopleById([{ userId: ASHA, displayName: 'Asha Rai' }]);
 
 describe('kind lists', () => {
   it('logs only call, meeting, email and note', () => {
@@ -103,23 +103,23 @@ describe('historyMeta', () => {
       completedAt: '2026-11-18T09:30:00.000Z',
       occurredAt: '2026-11-18T09:00:00.000Z',
     });
-    expect(historyMeta(done, people)).toEqual({
+    expect(historyMeta(done)).toEqual({
       at: '2026-11-18T09:30:00.000Z',
       actor: 'Scheduled by Asha Rai',
     });
   });
 
   it('shows when a logged activity happened and who logged it', () => {
-    expect(historyMeta(activity(), people)).toEqual({
+    expect(historyMeta(activity())).toEqual({
       at: '2026-11-18T04:00:00.000Z',
       actor: 'Logged by Asha Rai',
     });
   });
 
-  it('leaves the actor out for older rows and people outside the directory', () => {
-    expect(historyMeta(activity({ createdByUserId: null }), people).actor).toBeNull();
-    expect(historyMeta(activity({ createdByUserId: GONE }), people).actor).toBeNull();
-    expect(historyMeta(activity()).actor).toBeNull();
+  it('leaves the actor out for older rows that name no author', () => {
+    expect(
+      historyMeta(activity({ createdByUserId: null, createdByName: null })).actor,
+    ).toBeNull();
   });
 });
 
@@ -128,7 +128,6 @@ describe('ActivityList', () => {
     const html = renderToStaticMarkup(
       <ActivityList
         items={[activity(), { ...planned('2026-11-20T04:00:00.000Z'), subject: 'Call back' }]}
-        people={people}
         empty="Nothing yet"
       />,
     );
