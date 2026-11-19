@@ -31,7 +31,7 @@ import {
 import { approvalRequests } from './approvals.js';
 import { customerContacts, customers, opportunities } from './crm.js';
 import { documents } from './documents.js';
-import { users } from './identity.js';
+import { departments, users } from './identity.js';
 import { appSchema, organizations, parties, tenants } from './platform.js';
 
 /** Postgres bytea as a Node Buffer (drizzle-orm 0.45 has no built-in bytea column). */
@@ -240,6 +240,11 @@ export const quotations = appSchema.table(
     /** Null only between inserting the parent and its first version. Must be one of this quotation's versions. */
     currentVersionId: uuid('current_version_id'),
     ownerUserId: uuid('owner_user_id'),
+    /**
+     * The opportunity's department, stamped by a trigger on insert and kept in step when the opportunity's
+     * department changes (migration 0088), so a `department` grant reaches the quotation.
+     */
+    departmentId: uuid('department_id'),
     /** 'estimate' for a D3 import only. */
     legacySource: text('legacy_source', { enum: ['estimate'] }),
     version: integer('version').notNull().default(1),
@@ -274,6 +279,11 @@ export const quotations = appSchema.table(
       columns: [t.tenantId, t.ownerUserId],
       foreignColumns: [users.tenantId, users.id],
     }),
+    foreignKey({
+      name: 'quotations_department_fk',
+      columns: [t.tenantId, t.organizationId, t.departmentId],
+      foreignColumns: [departments.tenantId, departments.organizationId, departments.id],
+    }),
     // Added after quotation_versions in the SQL (the two tables reference each other).
     foreignKey({
       name: 'quotations_current_version_fk',
@@ -290,6 +300,11 @@ export const quotations = appSchema.table(
       t.tenantId,
       t.organizationId,
       t.opportunityId,
+    ),
+    index('quotations_tenant_org_department_idx').on(
+      t.tenantId,
+      t.organizationId,
+      t.departmentId,
     ),
     check('quotations_legacy_source_check', sql`${t.legacySource} in ('estimate')`),
     check('quotations_version_check', sql`${t.version} >= 1`),

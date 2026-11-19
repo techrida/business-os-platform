@@ -1,4 +1,4 @@
-// Drizzle tables for migration 0002_identity_authz, reshaped by 0013_legal_entities (ADR 0027): people (users,
+﻿// Drizzle tables for migration 0002_identity_authz, reshaped by 0013_legal_entities (ADR 0027): people (users,
 // departments, user_entities), what they may do (user_roles, role_permissions), the cache key for that
 // (authz_versions) and the ZITADEL sync bookkeeping (ops.zitadel_events, ops.sync_cursors).
 // Serves the authorization NFR: every decision rests on these rows.
@@ -175,7 +175,7 @@ export const rolePermissions = appSchema.table(
 );
 
 /**
- * The grant a role gives a member of `minLevel` or above, in place of the role's base grant (migration 0082): the
+ * The grant a role gives a member of `minLevel` or above, widening the role's base grant (migration 0082): the
  * most senior row at or below the member's level wins. Tenant-scoped, audited, `seeded` as in role_permissions.
  */
 export const rolePermissionLevels = appSchema.table(
