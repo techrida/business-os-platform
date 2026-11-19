@@ -19,6 +19,8 @@ const contentSecurityDirectives = [
   "img-src 'self' data:",
   "font-src 'self'",
   "connect-src 'self'",
+  // The PDF viewer's pdf.js worker is a bundled same-origin asset. No blob: and no CDN.
+  "worker-src 'self'",
   "object-src 'none'",
   "base-uri 'self'",
 ];
@@ -32,6 +34,9 @@ const nextConfig: NextConfig = {
   // root so Next does not warn about two different roots.
   turbopack: { root: monorepoRoot },
   poweredByHeader: false,
+
+  // @bos/pdf-viewer ships TypeScript source and a CSS file (no dist build), so Next compiles it.
+  transpilePackages: ['@bos/pdf-viewer'],
 
   // The memo PDF (src/lib/memo-pdf.ts) uses pdfkit, which reads its own data files at runtime, so it stays an
   // external package instead of being bundled. The fonts it embeds are read from assets/fonts at request time,
@@ -70,6 +75,22 @@ const nextConfig: NextConfig = {
       {
         // Invoice previews stream only the authenticated, scan-approved original PDF.
         source: '/invoices/:id/document/preview',
+        headers: [
+          { key: 'X-Frame-Options', value: 'SAMEORIGIN' },
+          { key: 'Content-Security-Policy', value: filePreviewPolicy },
+        ],
+      },
+      {
+        // Quotation version previews stream only the authenticated, scan-approved customer PDF.
+        source: '/quotations/:id/versions/:vid/document/preview',
+        headers: [
+          { key: 'X-Frame-Options', value: 'SAMEORIGIN' },
+          { key: 'Content-Security-Policy', value: filePreviewPolicy },
+        ],
+      },
+      {
+        // Purchase order version previews stream only the authenticated, scan-approved PDF.
+        source: '/procurement/orders/:id/versions/:version/document/preview',
         headers: [
           { key: 'X-Frame-Options', value: 'SAMEORIGIN' },
           { key: 'Content-Security-Policy', value: filePreviewPolicy },
