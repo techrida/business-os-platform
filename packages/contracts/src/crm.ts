@@ -412,7 +412,7 @@ const LeadFieldsSchema = z.strictObject({
   phone: PhoneSchema.optional(),
   requirement: text(5000).optional(),
   expectedValue: NonNegativeDecimal.optional(),
-  currency: CurrencySchema.default('NPR'),
+  currency: CurrencySchema.optional(),
   probability: ProbabilitySchema.optional(),
   expectedClose: isoDate.optional(),
   notes: text(5000).optional(),
@@ -423,6 +423,7 @@ const LeadFieldsSchema = z.strictObject({
  * callers still work: it plans a call named "Follow up". Send one or the other.
  */
 export const CreateLeadBodySchema = LeadFieldsSchema.extend({
+  currency: CurrencySchema.default('NPR'),
   followUp: LeadFollowUpSchema.optional(),
   nextFollowUpAt: isoDateTime.optional(),
 }).refine((b) => b.followUp === undefined || b.nextFollowUpAt === undefined, {
