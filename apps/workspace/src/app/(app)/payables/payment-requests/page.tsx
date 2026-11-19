@@ -12,7 +12,7 @@ import { Page, PageHeader } from '@/components/ui/page';
 import { Table, Td, Th } from '@/components/ui/table';
 import { listPaymentRequests, type PaymentRequestListItem } from '@/lib/api-payables';
 import { requireStaffSession } from '@/lib/bff';
-import { getNumberSystem } from '@/lib/display-settings';
+import { getNumberSystems } from '@/lib/display-settings';
 
 import { poMoney } from '../../procurement/orders/_lib/model';
 import styles from '../payables.module.css';
@@ -28,7 +28,7 @@ export default async function PaymentRequestsPage({
   searchParams: Promise<{ status?: string | string[] }>;
 }) {
   const session = await requireStaffSession('/payables/payment-requests');
-  const numberSystem = await getNumberSystem();
+  const numberSystems = await getNumberSystems();
   const allowed = hasPermission(session.roles, 'payables.payment.request');
   const header = (
     <PageHeader
@@ -134,7 +134,7 @@ export default async function PaymentRequestsPage({
                   </Badge>
                 </Td>
                 <Td>Ending {row.bankLast4}</Td>
-                <Td align="end">{poMoney(row.totalAmount, row.currency, numberSystem)}</Td>
+                <Td align="end">{poMoney(row.totalAmount, row.currency, numberSystems)}</Td>
               </tr>
             ))}
           </tbody>

@@ -17,7 +17,7 @@ import {
   type MemoDetail,
 } from '@/lib/api-kernel';
 import { requireStaffSession } from '@/lib/bff';
-import { getNumberSystem } from '@/lib/display-settings';
+import { getNumberSystems } from '@/lib/display-settings';
 import { money, when } from '@/lib/kernel-format';
 import { userNames } from '@/lib/business-labels';
 import { humanizeKey, toAttachmentView } from '@/lib/kernel-ui';
@@ -87,7 +87,7 @@ export default async function MemoPage({
   const { id } = await params;
   const path = `/memos/${encodeURIComponent(id)}`;
   const session = await requireStaffSession(path);
-  const numberSystem = await getNumberSystem();
+  const numberSystems = await getNumberSystems();
   const query = await searchParams;
   const people = await userNames(session);
   const saved = query.saved === '1';
@@ -174,11 +174,11 @@ export default async function MemoPage({
             value: (
               <>
                 <span className={styles.amount}>
-                  {money(memo.amount, memo.currency, numberSystem)}
+                  {money(memo.amount, memo.currency, numberSystems)}
                 </span>
                 {memo.currency !== 'NPR' ? (
                   <span className={styles.caption}>
-                    {money(memo.amountNpr, 'NPR', numberSystem)} at {memo.fxRate} ({memo.fxSource},{' '}
+                    {money(memo.amountNpr, 'NPR', numberSystems)} at {memo.fxRate} ({memo.fxSource},{' '}
                     {when(memo.fxDate, 'date')})
                   </span>
                 ) : null}

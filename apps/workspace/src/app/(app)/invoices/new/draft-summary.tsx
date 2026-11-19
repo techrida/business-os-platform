@@ -6,7 +6,7 @@ import { Dec, formatMoney } from '@bos/locale';
 import { Button } from '@/components/ui/button';
 import { Dialog, DialogClose } from '@/components/ui/dialog';
 import { Icon } from '@/components/ui/icon';
-import { useNumberSystem } from '@/components/ui/number-system-context';
+import { useNumberSystems } from '@/components/ui/number-system-context';
 import { Table, Td, Th } from '@/components/ui/table';
 
 import { parseLines, type LineValues } from './lines';
@@ -23,7 +23,7 @@ export function DraftSummary({
   lines: readonly LineValues[];
   pending: boolean;
 }) {
-  const numberSystem = useNumberSystem();
+  const numberSystems = useNumberSystems();
   const parsed = parseLines(lines);
   const details = parsed.ok
     ? parsed.data.map((line) => ({
@@ -32,7 +32,7 @@ export function DraftSummary({
       }))
     : null;
   const subtotal = details?.reduce((total, line) => total.plus(line.gross), new Dec(0));
-  const amount = (value: Dec) => formatMoney(value.toFixed(2), currency, { numberSystem });
+  const amount = (value: Dec) => formatMoney(value.toFixed(2), currency, { numberSystems });
 
   return (
     <div className={styles.summaryArea}>
@@ -95,7 +95,7 @@ export function DraftSummary({
                     {line.quantity} {line.uom}
                   </Td>
                   <Td align="end" nowrap>
-                    {formatMoney(line.unitPrice, currency, { numberSystem })}
+                    {formatMoney(line.unitPrice, currency, { numberSystems })}
                   </Td>
                   <Td align="end" nowrap>
                     {amount(line.gross)}

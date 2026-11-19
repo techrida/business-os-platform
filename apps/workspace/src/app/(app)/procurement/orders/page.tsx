@@ -1,7 +1,7 @@
 import { PO_STATUSES, PoStatusSchema, type PoStatus } from '@bos/contracts';
 import type { Metadata } from 'next';
 import Link from 'next/link';
-import type { NumberSystem } from '@bos/locale';
+import type { NumberSystems } from '@bos/locale';
 
 import { parsePage } from '@/components/p2/customers/duplicates';
 import { Alert } from '@/components/ui/alert';
@@ -16,7 +16,7 @@ import { CellTitle, Table, Td, Th } from '@/components/ui/table';
 import { getVendor } from '@/lib/api-vendors';
 import { listPurchaseOrders, type PoListItem } from '@/lib/api-purchase-orders';
 import { requireStaffSession } from '@/lib/bff';
-import { getNumberSystem } from '@/lib/display-settings';
+import { getNumberSystems } from '@/lib/display-settings';
 import { when } from '@/lib/kernel-format';
 import type { Session } from '@/lib/session';
 
@@ -53,11 +53,11 @@ async function vendorNames(session: Session, ids: readonly string[]): Promise<Ma
 function Row({
   po,
   vendor,
-  numberSystem,
+  numberSystems,
 }: {
   po: PoListItem;
   vendor: string | undefined;
-  numberSystem: NumberSystem;
+  numberSystems: NumberSystems;
 }) {
   const status = PO_STATUS_LABEL[po.status];
   return (
@@ -83,7 +83,7 @@ function Row({
       </Td>
       <Td align="end" nowrap>
         <span className={styles.numeric}>
-          {poMoney(po.approvedTotal, po.currency, numberSystem)}
+          {poMoney(po.approvedTotal, po.currency, numberSystems)}
         </span>
       </Td>
       <Td align="end" nowrap>
@@ -106,7 +106,7 @@ export default async function PurchaseOrdersPage({
   searchParams: Promise<{ status?: string | string[]; page?: string | string[] }>;
 }) {
   const session = await requireStaffSession('/procurement/orders');
-  const numberSystem = await getNumberSystem();
+  const numberSystems = await getNumberSystems();
   const params = await searchParams;
   const parsedStatus = PoStatusSchema.safeParse(
     typeof params.status === 'string' ? params.status : undefined,
@@ -226,7 +226,7 @@ export default async function PurchaseOrdersPage({
             <tbody>
               {shown.map((po) => (
                 <Row
-                  numberSystem={numberSystem}
+                  numberSystems={numberSystems}
                   key={po.id}
                   po={po}
                   vendor={names.get(po.vendorId)}

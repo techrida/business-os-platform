@@ -3,7 +3,7 @@ import { randomUUID } from 'node:crypto';
 import type { AllocationDto, PaymentDto } from '@bos/contracts';
 import type { Metadata } from 'next';
 import Link from 'next/link';
-import type { NumberSystem } from '@bos/locale';
+import type { NumberSystems } from '@bos/locale';
 
 import { getCustomer } from '@/components/p2/customers/api';
 import { getDocument } from '@/components/p2/crm/verification-api';
@@ -30,7 +30,7 @@ import {
   listPaymentAllocations,
 } from '@/lib/api-receivables';
 import { requireStaffSession } from '@/lib/bff';
-import { getNumberSystem } from '@/lib/display-settings';
+import { getNumberSystems } from '@/lib/display-settings';
 import { money, when } from '@/lib/kernel-format';
 import { formatBytes, scanLabel } from '@/lib/kernel-ui';
 
@@ -134,14 +134,14 @@ function AllocationsTable({
   currency,
   labels,
   deallocate,
-  numberSystem,
+  numberSystems,
 }: {
   rows: AllocationDto[];
   currency: PaymentDto['currency'];
   /** Invoice id to invoice number, from the customer statement when it could be read. */
   labels: ReadonlyMap<string, string>;
   deallocate: DeallocateAccess | null;
-  numberSystem: NumberSystem;
+  numberSystems: NumberSystems;
 }) {
   if (rows.length === 0) {
     return <p className={styles.note}>This payment has not been allocated to any invoice yet.</p>;
@@ -170,7 +170,7 @@ function AllocationsTable({
               </Td>
               <Td align="end" nowrap>
                 <span className={reversal ? styles.negative : styles.amount}>
-                  {money(row.amount, currency, numberSystem)}
+                  {money(row.amount, currency, numberSystems)}
                 </span>
               </Td>
               <Td nowrap>{when(row.createdAt, 'date')}</Td>
@@ -200,7 +200,7 @@ function AllocationsTable({
   );
 }
 
-function facts(p: PaymentDto, customerName: string, numberSystem: NumberSystem): Fact[] {
+function facts(p: PaymentDto, customerName: string, numberSystems: NumberSystems): Fact[] {
   const out: Fact[] = [
     {
       key: 'customer',
@@ -213,24 +213,24 @@ function facts(p: PaymentDto, customerName: string, numberSystem: NumberSystem):
     },
     { key: 'method', label: 'Method', value: methodLabel(p.method) },
     { key: 'received', label: 'Received on', value: when(p.receivedOn, 'date') },
-    { key: 'amount', label: 'Cash received', value: money(p.amount, p.currency, numberSystem) },
+    { key: 'amount', label: 'Cash received', value: money(p.amount, p.currency, numberSystems) },
     {
       key: 'tds',
       label: 'Tax withheld (TDS)',
       value:
         Number(p.tdsWithheld) > 0
-          ? `${money(p.tdsWithheld, p.currency, numberSystem)}${p.withholdingCode ? ` · ${p.withholdingCode}` : ''}`
+          ? `${money(p.tdsWithheld, p.currency, numberSystems)}${p.withholdingCode ? ` · ${p.withholdingCode}` : ''}`
           : 'None',
     },
     {
       key: 'settles',
       label: 'Settles',
-      value: <strong>{money(p.settles, p.currency, numberSystem)}</strong>,
+      value: <strong>{money(p.settles, p.currency, numberSystems)}</strong>,
     },
     {
       key: 'advance',
       label: 'Left to allocate',
-      value: money(p.unallocatedAmount, p.currency, numberSystem),
+      value: money(p.unallocatedAmount, p.currency, numberSystems),
     },
     {
       key: 'reference',
@@ -275,7 +275,7 @@ export default async function PaymentDetailPage({ params }: { params: Promise<{ 
   const { id } = await params;
   const here = `/payments/${id}`;
   const session = await requireStaffSession(here);
-  const numberSystem = await getNumberSystem();
+  const numberSystems = await getNumberSystems();
 
   if (!UUID.test(id)) {
     return (
@@ -367,7 +367,7 @@ export default async function PaymentDetailPage({ params }: { params: Promise<{ 
       <PageHeader
         title={payment.number ?? 'Payment awaiting verification'}
         status={<Badge tone={meta.tone}>{meta.label}</Badge>}
-        description={`${money(payment.amount, payment.currency, numberSystem)} from ${customerName}`}
+        description={`${money(payment.amount, payment.currency, numberSystems)} from ${customerName}`}
         actions={
           <div className={styles.actions}>
             <ReviewDialogs
@@ -384,7 +384,7 @@ export default async function PaymentDetailPage({ params }: { params: Promise<{ 
 
       <div className={styles.stack}>
         <Panel title="Payment overview">
-          <FactList facts={facts(payment, customerName, numberSystem)} />
+          <FactList facts={facts(payment, customerName, numberSystems)} />
         </Panel>
 
         <Panel as="aside" title="Proof of payment" description="Scanned bank slips and receipts.">
@@ -398,7 +398,7 @@ export default async function PaymentDetailPage({ params }: { params: Promise<{ 
               {
                 key: 'npr',
                 label: 'Amount in NPR',
-                value: money(payment.npr.amountNpr, 'NPR', numberSystem),
+                value: money(payment.npr.amountNpr, 'NPR', numberSystems),
               },
               { key: 'rate', label: 'Rate', value: payment.npr.rate },
               { key: 'source', label: 'Rate source', value: payment.npr.rateSource },
@@ -430,7 +430,7 @@ export default async function PaymentDetailPage({ params }: { params: Promise<{ 
           </Alert>
         ) : (
           <AllocationsTable
-            numberSystem={numberSystem}
+            numberSystems={numberSystems}
             rows={allocations}
             currency={payment.currency}
             labels={labels}
