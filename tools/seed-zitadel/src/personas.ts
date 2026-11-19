@@ -24,6 +24,8 @@ export const PROJECT_ROLES = [
   // P4 (Kuu D03): receipts go to warehouse, and receiver is gone.
   'warehouse',
   'operations_officer',
+  // D50: Marketing creates and hands off leads. The role only; its dev users come with the access-model seed.
+  'marketing',
 ] as const;
 export type RoleKey = (typeof PROJECT_ROLES)[number];
 
@@ -96,6 +98,15 @@ export const PERSONAS: readonly PersonaSpec[] = [
     familyName: 'Management Two',
     orgKind: 'staff',
     role: 'management',
+  },
+  // The second Finance user: a credit or debit note a Finance user raised needs an independent Finance
+  // approver (separation of duties). Appended last, so earlier orders and logins do not change.
+  {
+    key: 'finance2',
+    givenName: 'Dev',
+    familyName: 'Finance Two',
+    orgKind: 'staff',
+    role: 'finance',
   },
 ];
 

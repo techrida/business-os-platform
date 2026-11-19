@@ -87,6 +87,7 @@ export class QuotationDocumentStore {
     p: Principal,
     quotationId: string,
     versionId: string,
+    action: 'quotation.read' | 'quotation.send' = 'quotation.read',
   ): Promise<QuotationDocumentHead | undefined> {
     const [row] = await tx
       .select({
@@ -107,7 +108,7 @@ export class QuotationDocumentStore {
       )
       .where(
         and(
-          scopeWhereFor(p, quotations, 'quotation.read'),
+          scopeWhereFor(p, quotations, action),
           eq(quotations.id, quotationId),
           eq(quotationVersions.id, versionId),
         ),
@@ -205,7 +206,8 @@ export class QuotationDocumentService {
     const { scope, actor, principal } = this.caller.current();
     assertStaff(principal);
     await withTx(this.db, scope, actor, async (tx) => {
-      const head = await this.store.head(tx, principal, quotationId, versionId);
+      // A retry writes: the quotation must be inside the caller's quotation.send scope, not only quotation.read.
+      const head = await this.store.head(tx, principal, quotationId, versionId, 'quotation.send');
       if (head === undefined) throw versionNotFound();
       if (head.renderState !== 'failed' || head.status !== 'approved') throw retryNotNeeded();
       if (!(await this.store.requeueFailed(tx, head, versionId, new Date()))) {

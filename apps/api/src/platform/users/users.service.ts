@@ -17,7 +17,7 @@ import { AuditService } from '../audit/audit.service';
 import { DB, type Db, type DbTransaction } from '../db/db.module';
 import { type Actor, type TxScope, withTx } from '../db/tx';
 import { type ResolvedUser, UserMirror } from './user-mirror';
-import { type ListedUser, UsersStore } from './users.store';
+import { type ListedUsers, UsersStore } from './users.store';
 import { ZitadelAdminClient, type ZitadelUser } from './zitadel-admin.client';
 
 @Injectable()
@@ -56,7 +56,7 @@ export class UsersService extends UserDirectory {
     return this.mirror.reconcile();
   }
 
-  list(scope: TxScope, q: AdminUsersQuery): Promise<ListedUser[]> {
+  list(scope: TxScope, q: AdminUsersQuery): Promise<ListedUsers> {
     return this.mirror.list(scope, q);
   }
 

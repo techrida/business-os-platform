@@ -50,8 +50,10 @@ import { startFakeClamd, type FakeClamd } from '../../../platform/documents/fake
 import { ScanProcessor } from '../../../platform/documents/scan.processor';
 import { SignedLinks, type LinkStore } from '../../../platform/documents/signed-link';
 import { DiskStorageAdapter } from '../../../platform/documents/storage.adapter';
+import { CurrencyEnabledService } from '../../../platform/settings/currency-enabled';
 import type { MoneyService } from '../../../platform/settings/money.service';
 import { NumberingService } from '../../../platform/settings/numbering.service';
+import { SettingsService } from '../../../platform/settings/settings.service';
 import { DraftingService } from '../drafting/drafting.service';
 import {
   goldenCreateBody,
@@ -210,6 +212,7 @@ beforeAll(async () => {
     authz as unknown as AuthzService,
     new AuditService(db),
     caller,
+    new CurrencyEnabledService(new SettingsService(db)),
   );
   audit = new AuditService(db);
   service = new QuotationDocumentService(
@@ -638,6 +641,23 @@ describe('QuotationDocumentService.retry', () => {
     current.userId = f.ownerUserId;
     await expect(service.retry(q.id, randomUUID())).rejects.toBeInstanceOf(NotFoundException);
     expect(await renderStateOf(q.currentVersionId)).toBe('failed');
+  });
+
+  it('is a 404 for a caller who may read the quotation but may send only their own, and the failed state stays', async () => {
+    const q = await createQuotation();
+    await approveVersion(q.currentVersionId);
+    await setRenderState(q.currentVersionId, 'failed');
+
+    current.grants = new Map<Permission, Scope>([
+      ['quotation.read', 'all'],
+      ['quotation.send', 'own'],
+    ]);
+    current.userId = randomUUID();
+    await expect(service.retry(q.id, q.currentVersionId)).rejects.toBeInstanceOf(NotFoundException);
+    expect(await renderStateOf(q.currentVersionId)).toBe('failed');
+
+    current.userId = f.ownerUserId;
+    await expect(service.retry(q.id, q.currentVersionId)).resolves.toEqual({ state: 'queued' });
   });
 
   it('is a 403 for a portal caller, and the failed state stays', async () => {

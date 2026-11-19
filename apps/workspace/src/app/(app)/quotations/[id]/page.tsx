@@ -1,11 +1,12 @@
 import type { QuotationDetail, QuotationVersionDto } from '@bos/contracts';
-import type { NumberSystems } from '@bos/locale';
+import type { CustomerDateFormat, NumberSystems } from '@bos/locale';
 import type { Metadata } from 'next';
 import Link from 'next/link';
 import { notFound } from 'next/navigation';
 
 import { hasPermission } from '@/components/p2/customers/permissions';
-import { listPaymentTerms } from '@/components/p2/quote-builder/api';
+import { stageLabel } from '@/components/p2/crm/stages';
+import { getOpportunity, listPaymentTerms } from '@/components/p2/quote-builder/api';
 import { getQuotation } from '@/components/p2/quotations/api';
 import { QuotationContents } from '@/components/p2/quotations/contents';
 import styles from '@/components/p2/quotations/detail.module.css';
@@ -23,7 +24,7 @@ import { ViewDocument } from '@/components/ui/view-document';
 import { listSalesOrders } from '@/lib/api-billing';
 import { failureOf } from '@/lib/api-kernel';
 import { requireStaffSession } from '@/lib/bff';
-import { getNumberSystems } from '@/lib/display-settings';
+import { getDateFormat, getNumberSystems } from '@/lib/display-settings';
 import { money, when } from '@/lib/kernel-format';
 
 export const metadata: Metadata = { title: 'Quotation · Business OS' };
@@ -42,9 +43,12 @@ const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 function Pdf({
   quotation,
   version,
+  retry,
 }: {
   quotation: QuotationDetail['quotation'];
   version: QuotationVersionDto;
+  /** Offer Retry on a failed render: only to a viewer who may send, as the retry route requires `quotation.send`. */
+  retry: boolean;
 }) {
   const pdf = pdfLinkFor(quotation.id, version);
   return pdf.kind === 'link' ? (
@@ -55,7 +59,7 @@ function Pdf({
       label="View PDF"
       variant="link"
       withDownload
-      retryUrl={`${pdf.href}/retry`}
+      retryUrl={retry ? `${pdf.href}/retry` : undefined}
       context={`of revision ${version.revisionNo}`}
     />
   ) : (
@@ -123,6 +127,8 @@ function revisionRows(
   detail: QuotationDetail,
   path: string,
   numberSystems: NumberSystems,
+  mayRetryPdf: boolean,
+  dateFormat?: CustomerDateFormat,
 ): RevisionRow[] {
   const { quotation, versions } = detail;
   return [...versions]
@@ -134,9 +140,9 @@ function revisionRows(
       current: v.id === quotation.currentVersionId,
       status: <QuotationStatusBadge status={v.status} rejectionSource={v.rejectionSource} />,
       total: money(v.totals.total, v.currency, numberSystems),
-      validUntil: when(v.validUntil, 'date'),
+      validUntil: when(v.validUntil, 'date', dateFormat),
       note: v.revisionReason,
-      pdf: <Pdf quotation={quotation} version={v} />,
+      pdf: <Pdf quotation={quotation} version={v} retry={mayRetryPdf} />,
     }));
 }
 
@@ -154,6 +160,7 @@ export default async function QuotationDetailPage({
   const session = await requireStaffSession(path);
 
   const numberSystems = await getNumberSystems();
+  const dateFormat = await getDateFormat();
   // Unit cost, cost total and margin (D29) arrive only when the viewer's live grants include
   // `quotation.cost.read`: the API leaves them out otherwise, and the components show what is present.
   let detail: QuotationDetail;
@@ -192,6 +199,7 @@ export default async function QuotationDetailPage({
       ? await listSalesOrders(session, { quotationVersionId: current.id }).catch(() => [])
       : [];
   const order = orders.find((item) => item.status !== 'cancelled');
+  const mayRetryPdf = hasPermission(session.roles, 'quotation.send');
 
   // The revision on screen: the one `?rev=` names, else the current one. Actions and the client
   // decision always act on the current revision.
@@ -200,6 +208,10 @@ export default async function QuotationDetailPage({
   const earlier = view !== null && view.id !== quotation.currentVersionId;
   const contact =
     view?.contactId != null ? contacts.find((c) => c.id === view.contactId) : undefined;
+  // The deal's number and stage come from the opportunity itself; a denied or failed read leaves the plain link.
+  const opportunity = await Promise.resolve()
+    .then(() => getOpportunity(session, quotation.opportunityId))
+    .catch(() => null);
   // The version carries only the payment term's id. A failed lookup drops the name, not the page.
   const paymentTermId = view?.paymentTermId ?? null;
   const paymentTermsName =
@@ -224,12 +236,16 @@ export default async function QuotationDetailPage({
           {
             key: 'valid',
             label: 'Valid until',
-            value: <time dateTime={view.validUntil}>{when(view.validUntil, 'date')}</time>,
+            value: (
+              <time dateTime={view.validUntil}>{when(view.validUntil, 'date', dateFormat)}</time>
+            ),
           },
           {
             key: 'issued',
             label: 'Issued',
-            value: <time dateTime={view.issueDate}>{when(view.issueDate, 'date')}</time>,
+            value: (
+              <time dateTime={view.issueDate}>{when(view.issueDate, 'date', dateFormat)}</time>
+            ),
           },
           {
             key: 'owner',
@@ -253,7 +269,7 @@ export default async function QuotationDetailPage({
           {
             key: 'pdf',
             label: 'Customer PDF',
-            value: <Pdf quotation={quotation} version={view} />,
+            value: <Pdf quotation={quotation} version={view} retry={mayRetryPdf} />,
           },
           ...(view.revisionReason !== null
             ? [
@@ -338,11 +354,11 @@ export default async function QuotationDetailPage({
               <Panel
                 className={styles.detailPanel}
                 title={earlier ? `Revision ${view.revisionNo}` : 'Current revision'}
-                description={`Last changed ${when(view.updatedAt)}`}
+                description={`Last changed ${when(view.updatedAt, 'datetime', dateFormat)}`}
                 actions={
                   <VersionDrawer
                     number={quotation.number}
-                    rows={revisionRows(detail, path, numberSystems)}
+                    rows={revisionRows(detail, path, numberSystems, mayRetryPdf, dateFormat)}
                   />
                 }
               >
@@ -363,6 +379,7 @@ export default async function QuotationDetailPage({
                 version={view}
                 paymentTermsName={paymentTermsName}
                 numberSystems={numberSystems}
+                dateFormat={dateFormat}
               />
             </>
           ) : versions.length > 0 ? (
@@ -372,7 +389,7 @@ export default async function QuotationDetailPage({
               actions={
                 <VersionDrawer
                   number={quotation.number}
-                  rows={revisionRows(detail, path, numberSystems)}
+                  rows={revisionRows(detail, path, numberSystems, mayRetryPdf, dateFormat)}
                 />
               }
             >
@@ -382,7 +399,12 @@ export default async function QuotationDetailPage({
         </div>
 
         <div className={`${styles.stack} ${styles.historyStack}`}>
-          <StatusHistory history={detail.statusHistory} versions={versions} people={people} />
+          <StatusHistory
+            history={detail.statusHistory}
+            versions={versions}
+            people={people}
+            dateFormat={dateFormat}
+          />
 
           <Panel title="Linked records" className={styles.detailPanel}>
             <ul className={styles.records}>
@@ -403,8 +425,13 @@ export default async function QuotationDetailPage({
               <li>
                 <Icon name="briefcase" size={18} />
                 <Link href={`/opportunities/${encodeURIComponent(quotation.opportunityId)}`}>
-                  View opportunity
+                  {opportunity !== null ? opportunity.number : 'View opportunity'}
                 </Link>
+                {opportunity !== null ? (
+                  <span className={styles.recordNote}>
+                    {stageLabel('opportunity', opportunity.stage)}
+                  </span>
+                ) : null}
               </li>
               {order ? (
                 <li>

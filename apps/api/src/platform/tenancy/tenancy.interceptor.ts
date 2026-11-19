@@ -61,6 +61,7 @@ const ROLE_ORG_KIND: Readonly<Record<RoleKey, OrgKind>> = {
   finance: 'staff',
   accountant: 'staff',
   sales: 'staff',
+  marketing: 'staff',
   customer_user: 'customer',
   vendor_user: 'vendor',
   pmo: 'staff',

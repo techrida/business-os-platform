@@ -166,4 +166,33 @@ describe('submitQuoteAction', () => {
     expect(state.error).toMatch(/cannot send quotations/);
     expect(state.fieldErrors).toBeUndefined();
   });
+
+  it('names a currency the company switched off (422 CURRENCY_NOT_ENABLED) and rotates the key', async () => {
+    fetchMock.mockResolvedValueOnce(
+      json(
+        {
+          error: {
+            code: 'CURRENCY_NOT_ENABLED',
+            message: 'Currency INR is not enabled for this company',
+            correlationId: 'req-12345678',
+            details: { currency: 'INR' },
+          },
+        },
+        422,
+      ),
+    );
+    const state = await send({ currency: 'INR' });
+    expect(callOf(fetchMock, 0).body).toMatchObject({ currency: 'INR' });
+    expect(state.fieldErrors).toEqual({
+      currency: 'INR is switched off for the company. Choose another currency.',
+    });
+    expect(state.error).toBeUndefined();
+    expect(state.key).not.toBe(IDEM);
+  });
+
+  it('keeps the generic words for any other 422', async () => {
+    fetchMock.mockResolvedValueOnce(json({ error: { code: 'validation_failed' } }, 422));
+    const state = await send();
+    expect(state.error).toMatch(/Check the details/);
+  });
 });

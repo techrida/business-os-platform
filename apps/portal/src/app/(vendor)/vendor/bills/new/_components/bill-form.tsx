@@ -1,6 +1,6 @@
 'use client';
 
-import { CURRENCIES } from '@bos/contracts';
+import type { Currency } from '@bos/contracts';
 import Link from 'next/link';
 import { useActionState, useEffect, useRef, useState } from 'react';
 
@@ -9,6 +9,7 @@ import { Field, Input } from '@/components/portal/field';
 import quotation from '@/components/portal/quotation.module.css';
 import { Button } from '@/components/ui/button';
 import { Select } from '@/components/ui/select';
+import { currencyOptions } from '@/lib/enabled-currencies';
 
 import { FileUpload } from '../../../_upload/file-upload';
 import styles from '../../../_upload/upload.module.css';
@@ -31,6 +32,7 @@ export function BillForm({
   today,
   orders,
   initialOrderId,
+  currencies,
   initialState,
 }: {
   /** A UUID the server generated for this render. */
@@ -39,6 +41,8 @@ export function BillForm({
   today: string;
   orders: readonly PoChoice[];
   initialOrderId: string;
+  /** The currencies the company has switched on (`currency.enabled`, D44); the picker offers only these. */
+  currencies: readonly Currency[];
   /** Overridable for tests: the state `useActionState` starts from. */
   initialState?: BillFormState | undefined;
 }) {
@@ -51,7 +55,9 @@ export function BillForm({
   // Controlled: React 19 resets uncontrolled fields after every action.
   const [invoiceNo, setInvoiceNo] = useState('');
   const [invoiceDate, setInvoiceDate] = useState('');
-  const [currency, setCurrency] = useState<string>('NPR');
+  const [currency, setCurrency] = useState<string>(
+    () => currencyOptions(currencies)[0]?.code ?? 'NPR',
+  );
   const [total, setTotal] = useState('');
   const [orderId, setOrderId] = useState(initialOrderId);
   const [documentId, setDocumentId] = useState<string | null>(null);
@@ -63,6 +69,7 @@ export function BillForm({
   }, [state]);
 
   const busy = pending || uploading;
+  const currencyChoices = currencyOptions(currencies, currency);
 
   return (
     <form action={formAction} className={`${quotation.form} ${styles.formFrame}`}>
@@ -127,9 +134,9 @@ export function BillForm({
               onChange={(e) => setCurrency(e.target.value)}
               {...control}
             >
-              {CURRENCIES.map((c) => (
-                <option key={c} value={c}>
-                  {c}
+              {currencyChoices.map((c) => (
+                <option key={c.code} value={c.code} disabled={c.disabled}>
+                  {c.code}
                 </option>
               ))}
             </Select>

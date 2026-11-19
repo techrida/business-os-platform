@@ -101,6 +101,40 @@ export function describeFailure(input: FailureInput, context: FailureContext = '
   return { message, reload, definite };
 }
 
+/** The API's text for D44 (`currencyNotEnabled` in the API). Anchored, so no other 422 matches. */
+const NOT_ENABLED_TEXT = /^Currency ([A-Z]{3}) is not enabled for this company$/;
+const CURRENCY_CODE = /^[A-Z]{3}$/;
+
+/**
+ * The words for the API's 422 "currency not enabled" refusal (D44: the company switched the currency
+ * off, perhaps after the page loaded), or undefined for any other failure. Reads the `ApiError` shape
+ * (`status`, `body`) without importing it, so this file stays free of server-only code. The API names
+ * the refusal `CURRENCY_NOT_ENABLED` with `details.currency`, but its error filter passes that code
+ * only once it is on its 422 list; until then the body says `bad_request` and the currency is only in
+ * the message, so both shapes are read. Only a three-letter code is echoed.
+ */
+export function currencyNotEnabledText(err: unknown): string | undefined {
+  if (typeof err !== 'object' || err === null) return undefined;
+  const { status, body } = err as { status?: unknown; body?: unknown };
+  if (status !== 422 || typeof body !== 'object' || body === null) return undefined;
+  const error = (body as { error?: unknown }).error;
+  if (typeof error !== 'object' || error === null) return undefined;
+  const { code, message, details } = error as {
+    code?: unknown;
+    message?: unknown;
+    details?: unknown;
+  };
+  const fromText = typeof message === 'string' ? NOT_ENABLED_TEXT.exec(message)?.[1] : undefined;
+  if (code !== 'CURRENCY_NOT_ENABLED' && fromText === undefined) return undefined;
+  const fromDetails =
+    typeof details === 'object' && details !== null
+      ? (details as { currency?: unknown }).currency
+      : undefined;
+  const currency =
+    typeof fromDetails === 'string' && CURRENCY_CODE.test(fromDetails) ? fromDetails : fromText;
+  return `${currency ?? 'This currency'} is switched off for your company. Choose another currency, or ask an administrator to switch it on in Settings.`;
+}
+
 /**
  * Returns `raw` only when it is a same-origin path: one leading `/`, no second `/`, no backslash
  * and no control characters. A notification link comes from the database, but it ends up in an
@@ -237,4 +271,41 @@ export function decodeFileName(header: string | null): string | null {
 /** `text/csv; charset=utf-8` becomes `text/csv`. */
 export function baseMime(contentType: string | null): string {
   return (contentType ?? '').split(';')[0]?.trim().toLowerCase() ?? '';
+}
+
+const AUDIT_EVENT_LABELS: Record<string, string> = {
+  'test_memos.insert': 'Memo created',
+  'test_memos.update': 'Memo updated',
+  'test_memos.delete': 'Memo deleted',
+  'memo.submitted': 'Memo submitted',
+  'approvals.submit': 'Submitted for approval',
+  'approval_requests.insert': 'Approval requested',
+  'approval_requests.update': 'Approval request updated',
+  'approval_steps.insert': 'Approval step added',
+  'approval_steps.update': 'Approval step updated',
+  'approval_actions.insert': 'Approval decision recorded',
+  'approvals.approve': 'Approved',
+  'approvals.return': 'Returned for changes',
+  'approvals.reject': 'Rejected',
+  'approvals.cancel': 'Approval cancelled',
+  'approvals.escalate': 'Escalated after the deadline',
+  'approvals.remind': 'Reminder sent',
+  'approvals.reroute': 'Route recalculated',
+  'approvals.block': 'Approval blocked',
+  'documents.insert': 'Attachment added',
+  'document_versions.insert': 'Attachment version added',
+  'document.scanned': 'Attachment scanned',
+  'document.removed': 'Attachment removed',
+};
+
+/**
+ * An audit event name in plain language: `test_memos.update` becomes `Memo updated`. A name this table does
+ * not know falls back to its humanised form (`approval_steps.skip` becomes `Approval steps skip`), so a new
+ * event is still readable and is never hidden.
+ */
+export function auditEventLabel(action: string): string {
+  const known = AUDIT_EVENT_LABELS[action.trim().toLowerCase()];
+  if (known !== undefined) return known;
+  const humanised = humanizeKey(action.replace(/^test_memos?[.]/, 'memo.'));
+  return humanised === '' ? 'Event' : humanised;
 }

@@ -5,6 +5,7 @@ import { __resetEnvForTests } from '@/lib/env';
 import type { Session } from '@/lib/session';
 
 import {
+  countCustomersByRelationship,
   decideVerification,
   getCustomer,
   getVerificationCase,
@@ -118,6 +119,29 @@ describe('customers', () => {
     const wrapped = await listCustomers(session, {});
     expect(wrapped.total).toBe(41);
     expect(lastCall().url).toBe('http://api:3001/v1/customers');
+  });
+
+  it('counts each relationship with one single-row read, from the list totals', async () => {
+    const totals: Record<string, number> = { prospect: 7, active: 30, inactive: 2 };
+    fetchMock.mockImplementation((input) => {
+      const href = input instanceof Request ? input.url : String(input);
+      const relationship = new URL(href).searchParams.get('relationship') ?? '';
+      return Promise.resolve(reply({ items: [customer], total: totals[relationship] }));
+    });
+    expect(await countCustomersByRelationship(session)).toEqual({
+      prospect: 7,
+      active: 30,
+      inactive: 2,
+    });
+    expect(fetchMock).toHaveBeenCalledTimes(3);
+    expect(lastCall().url).toContain('limit=1');
+  });
+
+  it('gives no counts, rather than a guess, when a read fails or sends no total', async () => {
+    fetchMock.mockResolvedValue(reply([customer]));
+    expect(await countCustomersByRelationship(session)).toBeNull();
+    fetchMock.mockRejectedValue(new Error('down'));
+    expect(await countCustomersByRelationship(session)).toBeNull();
   });
 
   it('sends a repeated relationship and industry as one key per value', async () => {

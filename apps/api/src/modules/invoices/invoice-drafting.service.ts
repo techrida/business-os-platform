@@ -42,6 +42,7 @@ import { DB, type Db, type DbTransaction } from '../../platform/db/db.module';
 import { updateVersioned, withIdempotency } from '../../platform/db/idempotency';
 import { NO_LIMIT, searchPage } from '../../platform/list';
 import { withTx, type Actor, type TxScope } from '../../platform/db/tx';
+import { CurrencyEnabledService } from '../../platform/settings/currency-enabled';
 import { LedgerService } from '../ledger/ledger.service';
 import { loadTaxCodePeriods } from '../quotations/pricing/tax-codes.resolver';
 import { toInvoiceDetail, toInvoiceListItem } from './invoice-mapping';
@@ -145,6 +146,7 @@ export class InvoiceDraftingService {
     private readonly audit: AuditService,
     private readonly caller: InvoiceCaller,
     private readonly ledger: LedgerService,
+    private readonly currencies: CurrencyEnabledService,
     @Optional() @Inject(INVOICE_CLOCK) private readonly clock: () => Date = () => new Date(),
   ) {}
 
@@ -297,12 +299,25 @@ export class InvoiceDraftingService {
     const { scope, actor, principal } = this.caller.current();
     assertStaff(principal);
     this.authz.assert('invoice.draft', scope);
+    // 422 CURRENCY_NOT_ENABLED for a currency the company switched off (D44). The check is a pool read, so it runs
+    // before the transaction opens, but the refusal is thrown inside the idempotency callback: a retry of a create
+    // that already succeeded replays its stored answer even after the currency was switched off. A draft cut from a
+    // sales order copies the order's currency and is not checked again.
+    let refusal: unknown;
+    try {
+      await this.currencies.assertEnabled(scope, typed.currency);
+    } catch (error) {
+      refusal = error;
+    }
     const now = this.clock();
     return withTx(this.db, scope, actor, async (tx) => {
-      const done = await withIdempotency(tx, { command, key: idempotencyKey, body }, async () => ({
-        status: 201,
-        response: await this.createTypedInTx(tx, scope, actor, { ...typed, kind }, now),
-      }));
+      const done = await withIdempotency(tx, { command, key: idempotencyKey, body }, async () => {
+        if (refusal instanceof Error) throw refusal;
+        return {
+          status: 201,
+          response: await this.createTypedInTx(tx, scope, actor, { ...typed, kind }, now),
+        };
+      });
       return done.response;
     });
   }

@@ -362,7 +362,97 @@ function stageChangeBody<S extends string>(stages: [S, ...S[]]) {
     });
 }
 
-export const LeadStageChangeBodySchema = stageChangeBody(LEAD_USER_STAGES);
+/**
+ * Lost reasons (D49): the tenant's list a lead is marked Lost with. A lead stores a reference to the option, never
+ * the words, so renaming an option renames it on every lead; a retired option stays on the leads that use it and
+ * is only hidden from the choices. The defaults are what a tenant has until it changes the list (D32).
+ */
+export const DEFAULT_LEAD_LOST_REASONS = [
+  { key: 'price', label: 'Price' },
+  { key: 'competitor', label: 'Chose a competitor' },
+  { key: 'no_budget', label: 'No budget' },
+  { key: 'no_response', label: 'No response' },
+  { key: 'not_a_fit', label: 'Not a fit' },
+  { key: 'timing', label: 'Timing' },
+  { key: 'other', label: 'Other' },
+] as const;
+
+export const LEAD_LOST_REASON_LABEL_MAX = 60;
+const LostReasonLabelSchema = text(LEAD_LOST_REASON_LABEL_MAX);
+
+/** One option of the list. `isDefault` marks the seven the app ships (reset restores them). */
+export const LeadLostReasonSchema = z.object({
+  id: z.guid(),
+  label: z.string(),
+  position: z.number().int().min(0),
+  isDefault: z.boolean(),
+  retired: z.boolean(),
+  version: z.number().int().min(1),
+});
+export type LeadLostReason = z.infer<typeof LeadLostReasonSchema>;
+
+/** The reason on a lead: the option's current label, and whether it has since been retired. */
+export const LeadLostReasonRefSchema = z.object({
+  id: z.guid(),
+  label: z.string(),
+  retired: z.boolean(),
+});
+export type LeadLostReasonRef = z.infer<typeof LeadLostReasonRefSchema>;
+
+/** `POST /v1/admin/lead-lost-reasons`: add an option at the end of the list. */
+export const CreateLeadLostReasonBodySchema = z.strictObject({ label: LostReasonLabelSchema });
+export type CreateLeadLostReasonBody = z.infer<typeof CreateLeadLostReasonBodySchema>;
+
+/** `PATCH /v1/admin/lead-lost-reasons/:id`: rename and/or retire or restore. */
+export const UpdateLeadLostReasonBodySchema = z
+  .strictObject({
+    label: LostReasonLabelSchema.optional(),
+    retired: z.boolean().optional(),
+    expectedVersion: z.number().int().min(1),
+  })
+  .refine((b) => b.label !== undefined || b.retired !== undefined, 'nothing to change');
+export type UpdateLeadLostReasonBody = z.infer<typeof UpdateLeadLostReasonBodySchema>;
+
+/** `PUT /v1/admin/lead-lost-reasons/order`: every option id, in the new order. */
+export const ReorderLeadLostReasonsBodySchema = z.strictObject({
+  ids: z.array(z.guid()).min(1).max(200),
+});
+export type ReorderLeadLostReasonsBody = z.infer<typeof ReorderLeadLostReasonsBodySchema>;
+
+/**
+ * A lead's stage change. Lost carries a reference to an option (`lostReasonId`) or a new option to add in the same
+ * step (`newLostReason`), plus the required note; On Hold keeps its free-text `reason` and note. The server derives
+ * the lead's stored reason text from the option.
+ */
+export const LeadStageChangeBodySchema = z
+  .strictObject({
+    stage: z.enum(LEAD_USER_STAGES),
+    reason: text(200).optional(),
+    lostReasonId: z.guid().optional(),
+    newLostReason: LostReasonLabelSchema.optional(),
+    note: text(2000).optional(),
+    /** The row version the client saw; a different current version means 409. */
+    expectedVersion: z.number().int().min(1),
+  })
+  .superRefine((body, ctx) => {
+    const issue = (path: string, message: string) =>
+      ctx.addIssue({ code: 'custom', path: [path], message });
+    if (body.stage === 'lost') {
+      if ((body.lostReasonId === undefined) === (body.newLostReason === undefined)) {
+        issue('lostReasonId', 'choose a lost reason, or add a new one');
+      }
+      if (body.reason !== undefined) issue('reason', 'a lost reason is chosen from the list');
+      if (body.note === undefined) issue('note', 'a note is required to move to lost');
+      return;
+    }
+    if (body.lostReasonId !== undefined) issue('lostReasonId', 'only for a move to lost');
+    if (body.newLostReason !== undefined) issue('newLostReason', 'only for a move to lost');
+    if (body.stage === 'on_hold') {
+      for (const field of ['reason', 'note'] as const) {
+        if (body[field] === undefined) issue(field, `a ${field} is required to move to on_hold`);
+      }
+    }
+  });
 export type LeadStageChangeBody = z.infer<typeof LeadStageChangeBodySchema>;
 
 export const OpportunityStageChangeBodySchema = stageChangeBody(OPPORTUNITY_USER_STAGES);
@@ -480,6 +570,8 @@ export const LeadDtoSchema = z.object({
   nextFollowUpAt: isoDateTime.nullable(),
   stage: LeadStageSchema,
   stageReason: z.string().nullable(),
+  /** The option a lost lead was closed with (D49), by its current label; null unless lost with an option. */
+  lostReason: LeadLostReasonRefSchema.nullable(),
   stageNote: z.string().nullable(),
   convertedOpportunityId: z.guid().nullable(),
   version: z.number().int().min(1),

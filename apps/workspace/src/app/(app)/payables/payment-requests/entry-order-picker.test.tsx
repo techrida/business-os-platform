@@ -54,6 +54,7 @@ describe('the purchase order picker of a payment request', () => {
           { id: PO_HIMAL, vendorId: HIMAL, label: 'PO-2083-0007 · Issued' },
           { id: PO_EVEREST, vendorId: EVEREST, label: 'PO-2083-0009 · Closed' },
         ]}
+        enabledCurrencies={['NPR']}
       />,
     );
     const { container } = mounted;
@@ -83,6 +84,7 @@ describe('the purchase order picker of a payment request', () => {
         idempotencyKey="key"
         items={[item(HIMAL, 'Himal Traders', 1)]}
         orders={[]}
+        enabledCurrencies={['NPR']}
       />,
     );
     const { container } = mounted;

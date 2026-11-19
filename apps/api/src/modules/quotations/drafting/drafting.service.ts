@@ -18,6 +18,7 @@ import {
   isQuotationEditable,
   type ListQuotationsQuery,
   type Permission,
+  type QuotationAmount,
   type QuotationCapabilities,
   type QuotationDetail,
   type QuotationDto,
@@ -64,6 +65,7 @@ import { DB, type Db, type DbTransaction } from '../../../platform/db/db.module'
 import { updateVersioned, withIdempotency } from '../../../platform/db/idempotency';
 import { NO_LIMIT, type Reader, searchPage } from '../../../platform/list';
 import { withTx, type Actor, type TxScope } from '../../../platform/db/tx';
+import { CurrencyEnabledService } from '../../../platform/settings/currency-enabled';
 import { NumberingService } from '../../../platform/settings/numbering.service';
 import { quotationRef } from '../preview/quotation-preview.service';
 import { personNames } from '../../../platform/users/person-names';
@@ -278,6 +280,7 @@ export class DraftingService {
     private readonly authz: AuthzService,
     private readonly audit: AuditService,
     private readonly caller: DraftingCaller,
+    private readonly currencies: CurrencyEnabledService,
     @Optional() @Inject(DRAFTING_CLOCK) private readonly clock: () => Date = () => new Date(),
   ) {}
 
@@ -330,6 +333,8 @@ export class DraftingService {
       // Refused rather than silently dropped until attachments are stored.
       throw badRequest('attachmentDocumentIds are not supported yet');
     }
+    // D44: only a currency the company switched on (422 CURRENCY_NOT_ENABLED), checked before any write.
+    await this.currencies.assertEnabled(scope, body.currency);
 
     // A drafter who may not read costs cannot set them either: a new quotation has no stored cost to keep.
     const priced = await this.pricing.priceVersion(
@@ -505,21 +510,38 @@ export class DraftingService {
         offset: 0,
         rows: (r, p) =>
           r
-            .select({ status: quotationVersions.status, n: sql<number>`count(*)::int` })
+            .select({
+              status: quotationVersions.status,
+              currency: quotationVersions.currency,
+              n: sql<number>`count(*)::int`,
+              // numeric(18,2) summed in the database and read as text: exact, never a float.
+              worth: sql<string>`sum(${quotationVersions.total})::text`,
+            })
             .from(quotations)
             .innerJoin(quotationVersions, onCurrentVersion)
             .innerJoin(customers, onCustomer)
             .leftJoin(users, onOwner)
             .where(p.where)
-            .groupBy(quotationVersions.status),
+            .groupBy(quotationVersions.status, quotationVersions.currency),
         count: countMatching,
       });
       const byStatus = Object.fromEntries(QUOTATION_STATUSES.map((st) => [st, 0])) as Record<
         QuotationStatus,
         number
       >;
-      for (const r of rows) byStatus[r.status] = r.n;
-      return { total, byStatus };
+      const amounts = Object.fromEntries(
+        QUOTATION_STATUSES.map((st) => [st, []]),
+      ) as unknown as Record<QuotationStatus, QuotationAmount[]>;
+      for (const r of rows) {
+        byStatus[r.status] += r.n;
+        amounts[r.status].push({
+          currency: r.currency as QuotationAmount['currency'],
+          total: r.worth,
+        });
+      }
+      for (const st of QUOTATION_STATUSES)
+        amounts[st].sort((a, b) => a.currency.localeCompare(b.currency));
+      return { total, byStatus, amounts };
     });
   }
 
@@ -711,6 +733,10 @@ export class DraftingService {
     if (version.status !== 'draft' && version.status !== 'returned') throw notEditable();
 
     const { expectedVersion, ...patch } = body;
+    // D44: a changed currency must be switched on; the saved one stays editable even if since switched off.
+    if (patch.currency !== undefined && patch.currency !== version.currency) {
+      await this.currencies.assertEnabled(scope, patch.currency);
+    }
     if (patch.attachmentDocumentIds !== undefined && patch.attachmentDocumentIds.length > 0) {
       throw badRequest('attachmentDocumentIds are not supported yet');
     }

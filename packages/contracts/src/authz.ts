@@ -93,6 +93,8 @@ export const ROLE_KEYS = [
   'finance',
   'accountant',
   'sales',
+  // Created by migration 0083 (D50): creates, reads (own), qualifies and hands off leads; no quotations.
+  'marketing',
   'customer_user',
   'vendor_user',
   'pmo',
@@ -279,6 +281,13 @@ export const DEFAULT_ROLE_PERMISSIONS: Record<RoleKey, RoleGrants> = {
     ...salesCostReadGrants,
     'sales_order.read': 'own',
     'verification.read': 'own',
+  },
+  // Marketing starts and works its own leads (create, read, qualify, hand off) and nothing else in sales: no
+  // opportunity, customer or quotation grant. Migration 0083 inserts exactly these rows.
+  marketing: {
+    ...staffBaseGrants,
+    'crm.lead.read': 'own',
+    'crm.lead.write': 'own',
   },
   // Portal users see and answer only quotations naming their own party (`customer_org`). Staff roles
   // get no portal grant; founder holds every permission at `all` by construction.

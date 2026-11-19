@@ -7,14 +7,17 @@
 //   submitted, returned, approved or discarded invoice, a proforma, another party's invoice and an unknown id all
 //   answer the same 404, on every `:id` route, so existence never leaks;
 // - the views are built field by field and parsed with the strict contract schemas: no staff field (status, NPR
-//   value, FX rate, approval, editor, content hash) can ride along.
+//   value, FX rate, approval, editor, content hash) can ride along. The seller contact is four named keys of the
+//   saved company profile, never the whole profile (no logo, display name or website).
 // Money is derived on read (plan A8): the open amount comes from open_item_balances and allocations, never from a
 // stored field. "Today" is the Kathmandu calendar day of the server clock (A10), as in ReceivablesService.
 import {
+  CompanyProfileSchema,
   CustomerInvoiceViewSchema,
   PartySnapshotSchema,
   PortalInvoiceListItemSchema,
   type CustomerInvoiceView,
+  type DocumentFormatSnapshot,
   type DocumentVersionDto,
   type InvoiceSettlement,
   type PortalInvoiceListItem,
@@ -22,6 +25,7 @@ import {
 } from '@bos/contracts';
 import {
   invoiceLines,
+  invoicePrintLog,
   invoices,
   invoiceTaxSummary,
   openItemBalances,
@@ -35,6 +39,8 @@ import type { Principal } from '../../platform/authz/principal';
 import { DB, type Db } from '../../platform/db/db.module';
 import type { TxScope } from '../../platform/db/tx';
 import { DocumentsService } from '../../platform/documents/documents.service';
+import { SettingsService } from '../../platform/settings/settings.service';
+import { firstPrintFormat } from '../invoices/invoice-mapping';
 import { INVOICE_OWNER_TYPE } from '../invoices/invoice-owner.policy';
 import { assertCustomerCaller, PortalCaller } from '../portal/portal.caller';
 import { kathmanduDay, settlementRow } from '../receivables/receivables.rules';
@@ -151,6 +157,29 @@ const trimZeros = (value: string): string =>
 type InvoiceRow = typeof invoices.$inferSelect;
 type LineRow = typeof invoiceLines.$inferSelect;
 type TaxRow = typeof invoiceTaxSummary.$inferSelect;
+type SellerContact = NonNullable<CustomerInvoiceView['sellerContact']>;
+
+/**
+ * The customer-safe part of the saved company profile (`entity.profile`): phones, email and the signatory. Named key
+ * by key, so the logo, display name, website or a key added later never reach a customer. Null when the stored value
+ * does not validate (a row edited by hand): the page then shows no contact block rather than failing.
+ */
+export function toSellerContact(rawProfile: unknown): SellerContact | null {
+  const profile = CompanyProfileSchema.safeParse(rawProfile);
+  if (!profile.success) return null;
+  return {
+    phones: [...profile.data.phones],
+    email: profile.data.email,
+    signatoryName: profile.data.signatoryName,
+    signatoryTitle: profile.data.signatoryTitle,
+  };
+}
+
+/** What the view adds beyond the invoice rows: the original print's format and the seller's contact. */
+export interface CustomerInvoiceExtras {
+  format: DocumentFormatSnapshot | null;
+  sellerContact: SellerContact | null;
+}
 
 /** The strict customer view, field by field. Throws on a row that is not an issued portal kind (a bug, never data). */
 export function toCustomerInvoiceView(
@@ -158,6 +187,7 @@ export function toCustomerInvoiceView(
   lines: readonly LineRow[],
   taxSummary: readonly TaxRow[],
   file: CustomerInvoiceView['file'],
+  extras: CustomerInvoiceExtras,
 ): CustomerInvoiceView {
   return CustomerInvoiceViewSchema.parse({
     id: invoice.id,
@@ -183,6 +213,8 @@ export function toCustomerInvoiceView(
       subtotal: invoice.subtotal,
       discountAmount: invoice.discountAmount,
       taxableAmount: invoice.taxableVatAmount,
+      exemptAmount: invoice.exemptAmount,
+      zeroRatedAmount: invoice.zeroRatedAmount,
       taxAmount: invoice.taxAmount,
       total: invoice.total,
     },
@@ -193,6 +225,8 @@ export function toCustomerInvoiceView(
       tax: t.tax,
     })),
     file,
+    format: extras.format,
+    sellerContact: extras.sellerContact,
   });
 }
 
@@ -202,6 +236,7 @@ export class PortalBillingService {
     private readonly caller: PortalCaller,
     @Inject(DB) private readonly db: Db,
     private readonly documents: DocumentsService,
+    private readonly settings: SettingsService,
     @Optional()
     @Inject(PORTAL_BILLING_CLOCK)
     private readonly clock: () => Date = () => new Date(),
@@ -247,7 +282,22 @@ export class PortalBillingService {
       .where(s.where(invoiceTaxSummary, eq(invoiceTaxSummary.invoiceId, invoice.id)))
       .orderBy(asc(invoiceTaxSummary.label));
     const file = toCustomerFile(await this.invoiceFile(p, invoice.id));
-    return toCustomerInvoiceView(invoice, lines, taxSummary, file);
+    // Print 1 is the original: its stored format is the one every copy of the PDF is drawn with.
+    const original = await this.db
+      .select({ printNo: invoicePrintLog.printNo, renderFormat: invoicePrintLog.renderFormat })
+      .from(invoicePrintLog)
+      .where(
+        s.where(
+          invoicePrintLog,
+          and(eq(invoicePrintLog.invoiceId, invoice.id), eq(invoicePrintLog.printNo, 1)),
+        ),
+      )
+      .limit(1);
+    const sellerContact = toSellerContact(await this.settings.get(scopeOf(p), 'entity.profile'));
+    return toCustomerInvoiceView(invoice, lines, taxSummary, file, {
+      format: firstPrintFormat(original),
+      sellerContact,
+    });
   }
 
   /** The derived money position of one issued invoice. 404 unless it is the caller's and visible. */

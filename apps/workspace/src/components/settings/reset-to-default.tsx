@@ -20,7 +20,6 @@ export interface ResetConfirm {
 
 interface ResetToDefaultBase {
   section: SettingsSectionId;
-  settingKey: SettingKey;
   /** The setting's name as the person reads it: "Default VAT rate (%)". */
   label: string;
   /** True when the saved value already equals the default. Nothing is drawn then. */
@@ -43,6 +42,7 @@ export type ResetToDefaultButtonProps = ResetToDefaultBase &
   (
     | {
         action?: undefined;
+        settingKey: SettingKey;
         /**
          * The version the page loaded for this setting, or null when it loaded the default. The reset
          * sends it as the expected version, so a stale page is refused instead of overwriting a newer save.
@@ -51,6 +51,8 @@ export type ResetToDefaultButtonProps = ResetToDefaultBase &
       }
     | {
         action: () => Promise<ActionState>;
+        /** Only names the toast (a screen's own list, not a setting, may pass its own word). */
+        settingKey: string;
         /** Ignored: a custom action carries its own version. */
         loadedVersion?: number | null | undefined;
       }

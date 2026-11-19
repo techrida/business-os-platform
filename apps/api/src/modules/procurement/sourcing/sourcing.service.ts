@@ -44,6 +44,7 @@ import { AuditService } from '../../../platform/audit/audit.service';
 import { DB, type Db, type DbTransaction } from '../../../platform/db/db.module';
 import { withIdempotency } from '../../../platform/db/idempotency';
 import { withTx, type TxScope } from '../../../platform/db/tx';
+import { CurrencyEnabledService } from '../../../platform/settings/currency-enabled';
 import { searchPage } from '../../../platform/list';
 import { MoneyService } from '../../../platform/settings/money.service';
 import { NumberingService } from '../../../platform/settings/numbering.service';
@@ -160,6 +161,8 @@ export class SourcingService {
     @Optional()
     @Inject(SOURCING_CLOCK)
     private readonly clock: () => Date = () => new Date(),
+    // Last and defaulted like the clock, so a hand-built service still checks currencies (D44); Nest injects it.
+    private readonly currencies: CurrencyEnabledService = new CurrencyEnabledService(settings),
   ) {}
 
   // ------------------------------------------------------------------------------------------------- RFQ
@@ -800,6 +803,8 @@ export class SourcingService {
   ): Promise<QuotationDto> {
     const { principal } = this.caller.current();
     const now = this.clock();
+    // Before any read or write: 422 CURRENCY_NOT_ENABLED for a currency the company has not switched on (D44).
+    await this.currencies.assertEnabled(scope, body.currency);
     const rfq = await this.findRfq(tx, scope, rfqId, true);
     if (rfq.status !== 'open') throw conflict(`A ${rfq.status} RFQ takes no quotation`);
     const invited = await this.vendorIdsOf(tx, scope, rfqId);

@@ -45,6 +45,7 @@ import { can } from '../../../platform/authz/can';
 import type { Principal } from '../../../platform/authz/principal';
 import type { UserDirectory } from '../../../platform/authz/user-directory';
 import { systemActor, withTx, type TxScope } from '../../../platform/db/tx';
+import { CurrencyEnabledService } from '../../../platform/settings/currency-enabled';
 import type { MoneyService } from '../../../platform/settings/money.service';
 import { NumberingService } from '../../../platform/settings/numbering.service';
 import { SettingsService } from '../../../platform/settings/settings.service';
@@ -168,6 +169,7 @@ beforeAll(async () => {
     authz as unknown as AuthzService,
     audit,
     caller,
+    new CurrencyEnabledService(new SettingsService(db)),
   );
   approvals = new ApprovalsService(
     db,

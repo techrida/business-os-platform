@@ -17,7 +17,14 @@ const mocks = vi.hoisted(() => ({
 }));
 
 vi.mock('@/lib/bff', () => ({ requireStaffSession: mocks.requireStaffSession }));
-vi.mock('next/navigation', () => ({ notFound: mocks.notFound, redirect: vi.fn() }));
+vi.mock('next/navigation', () => ({
+  notFound: mocks.notFound,
+  redirect: vi.fn(),
+  // The inbox list's filter bar reads the URL on render.
+  useRouter: () => ({ push: vi.fn(), replace: vi.fn(), refresh: vi.fn() }),
+  usePathname: () => '/inbox',
+  useSearchParams: () => new URLSearchParams(),
+}));
 vi.mock('next/cache', () => ({ revalidatePath: vi.fn() }));
 
 const RID = '11111111-1111-4111-8111-111111111111';
@@ -197,6 +204,120 @@ describe('inbox detail page', () => {
     expect(html).toContain('Treasury desk');
     expect(html).not.toContain('name unavailable');
   });
+
+  it('titles an unnumbered debit note in words and names its submitter as History does', async () => {
+    const SUBMITTER = '77777777-7777-4777-8777-777777777777';
+    // The frozen shape invoice-approval.service.ts submits: no title, a draft reference and a content hash.
+    const debitNote = {
+      ...request,
+      documentType: 'debit_note',
+      documentNumber: 'Draft debit_note 7d92d5bf',
+      snapshot: {
+        kind: 'debit_note',
+        reference: 'Draft debit_note 7d92d5bf',
+        customerName: 'Acme Traders',
+        currency: 'NPR',
+        total: '1130.00',
+        noteReason: 'Short billed',
+        contentSha256: 'a'.repeat(64),
+      },
+      // The note's creator is the requester; someone else pressed submit.
+      actions: [{ ...request.actions[0], actorUserId: SUBMITTER }],
+      people: [
+        { userId: REQUESTER, name: 'Dev Finance Two' },
+        { userId: SUBMITTER, name: 'Dev Founder' },
+        { userId: NAMED, name: 'Mina Rai' },
+      ],
+    };
+    fetchMock.mockImplementation((input) => {
+      const path = new URL(input as URL | string).pathname;
+      if (path === `/v1/approvals/requests/${RID}`) return Promise.resolve(json(200, debitNote));
+      if (path === '/v1/approvals/inbox') return Promise.resolve(json(200, []));
+      return Promise.resolve(json(403, { error: { code: 'forbidden', message: 'Forbidden' } }));
+    });
+    const html = renderToStaticMarkup(
+      await InboxDetailPage({ params: Promise.resolve({ id: RID }) }),
+    );
+    expect(html).toMatch(/<h1[^>]*>Draft debit note<\/h1>/);
+    expect(html).not.toMatch(/debit_note|7d92d5bf|a{64}/);
+    expect(html).not.toContain('Content sha256');
+    expect(html).toMatch(
+      /Submitted <time[^>]*>[^<]*<\/time> by <span>Dev Founder<\/span> for <span>Dev Finance Two<\/span>/,
+    );
+  });
+
+  it('names the requester when the submit was done by the system', async () => {
+    const system = {
+      ...request,
+      actions: [{ ...request.actions[0], actorUserId: 'system' }],
+      people: [{ userId: REQUESTER, name: 'Dev Finance Two' }],
+    };
+    fetchMock.mockImplementation((input) => {
+      const path = new URL(input as URL | string).pathname;
+      if (path === `/v1/approvals/requests/${RID}`) return Promise.resolve(json(200, system));
+      if (path === '/v1/approvals/inbox') return Promise.resolve(json(200, []));
+      return Promise.resolve(json(403, { error: { code: 'forbidden', message: 'Forbidden' } }));
+    });
+    const html = renderToStaticMarkup(
+      await InboxDetailPage({ params: Promise.resolve({ id: RID }) }),
+    );
+    expect(html).toMatch(/Submitted <time[^>]*>[^<]*<\/time> by <span>Dev Finance Two<\/span>/);
+    expect(html).not.toMatch(/by <span>Person name unavailable<\/span>/);
+  });
+
+  it('does not add "for" when the requester submitted it themselves', async () => {
+    const own = {
+      ...request,
+      people: [
+        { userId: REQUESTER, name: 'Dev Finance Two' },
+        { userId: NAMED, name: 'Mina Rai' },
+      ],
+    };
+    fetchMock.mockImplementation((input) => {
+      const path = new URL(input as URL | string).pathname;
+      if (path === `/v1/approvals/requests/${RID}`) return Promise.resolve(json(200, own));
+      if (path === '/v1/approvals/inbox') return Promise.resolve(json(200, []));
+      return Promise.resolve(json(403, { error: { code: 'forbidden', message: 'Forbidden' } }));
+    });
+    const html = renderToStaticMarkup(
+      await InboxDetailPage({ params: Promise.resolve({ id: RID }) }),
+    );
+    const header =
+      /Submitted <time[^>]*>[^<]*<\/time> by <span>[^<]*<\/span>(?: for <span>[^<]*<\/span>)?/.exec(
+        html,
+      );
+    expect(header?.[0]).toBeDefined();
+    expect(header?.[0]).not.toContain(' for ');
+  });
+});
+
+it('lists an unnumbered credit note by its kind, without its internal id', async () => {
+  fetchMock.mockImplementation((input) => {
+    const path = new URL(input as URL | string).pathname;
+    if (path === '/v1/approvals/inbox') {
+      const listed = json(200, [
+        {
+          requestId: RID,
+          documentType: 'credit_note',
+          documentId: DOC,
+          documentNumber: 'Draft credit_note 7d92d5bf',
+          title: 'Credit note for Acme Traders (NPR 1130.00)',
+          amountNpr: '1130.00',
+          reason: 'Accountant checks it',
+          activeStep: request.steps[0],
+          submittedAt: WHEN,
+          version: 1,
+        },
+      ]);
+      listed.headers.set('x-total-count', '1');
+      return Promise.resolve(listed);
+    }
+    return Promise.resolve(json(403, { error: { code: 'forbidden', message: 'Forbidden' } }));
+  });
+  const html = renderToStaticMarkup(await InboxPage({ searchParams: Promise.resolve({}) }));
+  expect(html).toContain('Credit note for Acme Traders');
+  expect(html).toContain('Draft credit note');
+  expect(html).not.toMatch(/credit_note 7d92d5bf/);
 });
 
 describe('the current record on the approval page (U18 #2)', () => {

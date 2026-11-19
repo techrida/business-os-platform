@@ -1,6 +1,14 @@
-import { failureWith } from '../../procurement/orders/_lib/failure-core';
+import { currencyNotEnabledText } from '@/lib/kernel-ui';
 
-export function paymentRequestFailure(err: unknown) {
+import { failureWith, type ProcFailure } from '../../procurement/orders/_lib/failure-core';
+
+export function paymentRequestFailure(err: unknown): ProcFailure {
+  // A currency switched off for the company (D44). Read before the code map: until the API passes
+  // CURRENCY_NOT_ENABLED, its 422 says `bad_request` and only the message names the currency.
+  const switchedOff = currencyNotEnabledText(err);
+  if (switchedOff !== undefined) {
+    return { message: switchedOff, reload: false, definite: true, status: 422 };
+  }
   return failureWith(err, {
     notFound: 'This payment request, vendor or payable item was not found in this legal entity.',
     noPermission:

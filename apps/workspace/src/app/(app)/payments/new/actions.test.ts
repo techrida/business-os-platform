@@ -196,6 +196,19 @@ describe('recordPaymentAction', () => {
     expect(mocks.revalidatePath).not.toHaveBeenCalled();
   });
 
+  it('names a currency the company switched off (422), with a new key', async () => {
+    // The body the API sends today: its error filter does not pass CURRENCY_NOT_ENABLED yet.
+    mocks.apiFetch.mockImplementation(() =>
+      refusal(422, 'bad_request', 'Currency INR is not enabled for this company'),
+    );
+    const out = await run(form({ currency: 'INR' }));
+    // Fails on the old code: it showed the payment failure's generic words.
+    expect(out.state?.error).toBe(
+      'INR is switched off for your company. Choose another currency, or ask an administrator to switch it on in Settings.',
+    );
+    expect(out.state?.key).not.toBe(KEY);
+  });
+
   it('reuses the key after a timeout, a 5xx, a dropped connection and the in-progress 409', async () => {
     const cases: (() => Promise<Response>)[] = [
       () => answer(503, {}),

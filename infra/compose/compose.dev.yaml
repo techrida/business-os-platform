@@ -78,6 +78,11 @@ services:
   seed-zitadel:
     environment:
       BOS_SEED_DEV_MAILPIT: 'true'
+      # Dev only: the seed registers the customer portal's own OIDC app with <origin>/auth/callback and writes its
+      # client id to .dev/zitadel-portal.env (read by the portal service). Not set in compose.yaml, so a seed run
+      # from the base file or production config creates no portal app (the production portal client is set up
+      # by the operator).
+      PORTAL_PUBLIC_URL: https://${PORTAL_HOST:-portal.localhost}
 
   workspace:
     environment:
