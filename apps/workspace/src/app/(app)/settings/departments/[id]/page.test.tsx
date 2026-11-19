@@ -103,3 +103,14 @@ it('renders the not-found page for an unknown or malformed department id', async
   );
   expect(seen).toHaveLength(0);
 });
+
+it('shows a retired department as read only with Restore', async () => {
+  stubApi({ ...detail, status: 'retired', retiredAt: '2026-11-01T00:00:00.000Z' });
+  const html = renderToStaticMarkup(await DepartmentPage({ params: Promise.resolve({ id: SALES }) }));
+  expect(html).toContain('Sales is retired. Its past records stay under Sales.');
+  expect(html).toContain('aria-label="Restore Sales"');
+  expect(html).toContain('Department head: ');
+  expect(html).not.toContain('Review changes');
+  expect(html).not.toContain('Add people');
+  expect(html).not.toContain('Rename Sales');
+});
