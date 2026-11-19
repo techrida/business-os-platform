@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 
 import { runSeed, SEED_TOOL, type OrgRow, type SeedDeps, type TenancyStore } from './index.js';
 import { type DevFiles, parseEnv } from './outputs.js';
@@ -267,6 +267,7 @@ function setup(): {
     log: (line) => logs.push(line),
     issuer: 'https://auth.localhost',
     workspaceUrl: 'https://app.localhost',
+    configureDevMailpit: true,
   };
   return { api, files, store, deps, logs };
 }
@@ -294,6 +295,16 @@ describe('@bos/seed-zitadel', () => {
     const personas = JSON.parse(files.data.get('personas.json') ?? '[]') as unknown[];
     expect(personas).toHaveLength(PERSONAS.length);
     expect(api.secretsIssued).toBe(1);
+  });
+
+  it('configures Mailpit only for an opted-in development seed', async () => {
+    const { api, deps } = setup();
+    const configureMail = vi.spyOn(api, 'ensureSmtp');
+    await runSeed({ ...deps, configureDevMailpit: false });
+    expect(configureMail).not.toHaveBeenCalled();
+
+    await runSeed(deps);
+    expect(configureMail).toHaveBeenCalledWith(expect.objectContaining({ host: 'mailpit:1025' }));
   });
 
   it('second run makes no mutating call and reports no changes', async () => {
@@ -334,7 +345,9 @@ describe('@bos/seed-zitadel', () => {
     const result = await runSeed(deps);
 
     expect(api.noRegisterCalls).toEqual([api.staffOrgId]);
-    expect(result.changes).toContain('configured staff login policy for invitations and private password reset');
+    expect(result.changes).toContain(
+      'configured staff login policy for invitations and private password reset',
+    );
   });
 
   it('is idempotent for authorization and self-registration (CR-02)', async () => {

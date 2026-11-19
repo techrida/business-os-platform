@@ -264,6 +264,19 @@ describe('ensureSmtp', () => {
     expect(calls.map(({ path }) => path)).toEqual([ENDPOINTS.listEmailProviders, activation]);
   });
 
+  it('does not displace another active provider', async () => {
+    const { transport, calls } = recording({
+      [ENDPOINTS.listEmailProviders]: {
+        result: [
+          { ...provider, state: 'EMAIL_PROVIDER_INACTIVE' },
+          { id: 'production', description: 'production mail', state: 'EMAIL_PROVIDER_ACTIVE' },
+        ],
+      },
+    });
+    expect(await client(transport).ensureSmtp(mailpit)).toBe(false);
+    expect(calls.map(({ path }) => path)).toEqual([ENDPOINTS.listEmailProviders]);
+  });
+
   it('leaves an active provider alone', async () => {
     const { transport, calls } = recording({
       [ENDPOINTS.listEmailProviders]: {
