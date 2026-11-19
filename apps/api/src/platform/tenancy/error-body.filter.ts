@@ -13,6 +13,7 @@ import {
   type ExceptionFilter,
 } from '@nestjs/common';
 import type { Response } from 'express';
+import { PinoLogger } from 'nestjs-pino';
 import { z } from 'zod';
 
 import { STEP_UP_REQUIRED } from '../auth/step-up';
@@ -287,6 +288,49 @@ function duplicatesOf(exception: HttpException): DuplicateCandidate[] | undefine
   return parsed.success ? parsed.data : undefined;
 }
 
+/** What `routeOf` returns when Express matched no route (a middleware refused the request first). */
+export const UNMATCHED_ROUTE = 'unmatched';
+
+/**
+ * The matched route pattern (`/v1/approvals/requests/:id`), else `UNMATCHED_ROUTE`. Never the request path:
+ * a path carries record ids, and the query string can carry a searched name. Nest mounts controller routes on
+ * the root router, so their `baseUrl` is empty. A non-empty `baseUrl` is the concrete path a middleware was
+ * mounted at (`/v1/blocked/<id>`), and `req.route` is then left over from an earlier layer, so neither is used.
+ */
+export function routeOf(req: { route?: unknown; baseUrl?: string }): string {
+  const route = req.route as { path?: unknown } | undefined;
+  if (typeof route?.path !== 'string' || (req.baseUrl ?? '') !== '') return UNMATCHED_ROUTE;
+  return route.path;
+}
+
+/** The fields of one `http.forbidden` line. Every value is a fixed vocabulary or the response's request id. */
+interface ForbiddenEvent {
+  event: 'http.forbidden';
+  status: 403;
+  method: string;
+  route: string;
+  code: ErrorCode;
+  reason: ErrorReason | null;
+  correlationId: string;
+}
+
+/**
+ * Writes the `http.forbidden` line with the root pino logger, not the per-request one. nestjs-pino's request
+ * logger is bound to the serialized request (url with query string, params, client address, headers), and every
+ * line written through it carries those bindings. The root logger has only the base fields and the redaction of
+ * `buildLoggerParams`. Without nestjs-pino (unit tests, a bare Nest app) the Nest logger has no request bindings
+ * either, so it is the fallback.
+ */
+function logForbidden(fallback: Logger, event: ForbiddenEvent): void {
+  // Unset until nestjs-pino's LoggerModule builds its middleware, although the type says otherwise.
+  const root: PinoLogger['logger'] | undefined = PinoLogger.root;
+  if (root === undefined) {
+    fallback.warn({ msg: 'request forbidden', ...event });
+    return;
+  }
+  root.warn({ context: 'ErrorBodyFilter', ...event }, 'request forbidden');
+}
+
 /** body-parser and other Express middleware throw plain errors that carry an HTTP status. */
 function statusOfPlainError(exception: unknown): number | undefined {
   if (typeof exception !== 'object' || exception === null) return undefined;
@@ -352,6 +396,21 @@ export class ErrorBodyFilter implements ExceptionFilter {
         `${req.method} ${req.path} failed with ${status} (correlationId=${correlationId})`,
         stack,
       );
+    }
+
+    if (status === 403) {
+      // One structured line per denial, so a 403 the client shows can be traced to the check that made it
+      // (role, entity, scope, separation of duties ...). Only the fields listed here: no url, query, ids, user,
+      // token or body. The correlation id (also in the response header) links it to the request log.
+      logForbidden(this.logger, {
+        event: 'http.forbidden',
+        status: 403,
+        method: req.method,
+        route: routeOf(req),
+        code,
+        reason: reason ?? null,
+        correlationId,
+      });
     }
 
     if (res.headersSent) {
