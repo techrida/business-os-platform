@@ -54,6 +54,10 @@ const rfq = {
   deadline: '2026-12-01T10:00:00.000Z',
   status: 'open',
   vendorIds: [ID_B, ID_C],
+  vendors: [
+    { id: ID_B, name: 'Himal Traders' },
+    { id: ID_C, name: 'Everest Supplies' },
+  ],
   recommendedQuotationId: null,
   fewerThanThreeReason: null,
   recommendationRationale: null,
@@ -72,6 +76,7 @@ const quotation = {
   totalNpr: '5085000.00',
   deliveryDays: null,
   documentId: ID_A,
+  vendorName: 'Himal Traders',
   averageScore: null,
   scores: [],
 };
