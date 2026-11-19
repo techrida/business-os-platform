@@ -13,6 +13,7 @@ import { Badge } from '@/components/ui/badge';
 import { LinkButton } from '@/components/ui/button';
 import { EmptyState } from '@/components/ui/empty-state';
 import { ResultCount } from '@/components/ui/filter-bar';
+import { Icon } from '@/components/ui/icon';
 import { Page, PageHeader } from '@/components/ui/page';
 import { StatCard } from '@/components/ui/stat-card';
 import { Table, Td, Th } from '@/components/ui/table';
@@ -55,19 +56,19 @@ function OrderRow({
   numberSystems: NumberSystems;
 }) {
   const { label, tone } = salesOrderStatusMeta(item.status);
+  const name = item.number ?? 'Draft order';
+  const href = `/sales-orders/${encodeURIComponent(item.id)}`;
   return (
     <tr>
-      <Td nowrap>
-        <Link href={`/sales-orders/${encodeURIComponent(item.id)}`} className={layout.number}>
-          {item.number ?? 'Draft order'}
+      <Th scope="row">
+        <Link href={href} className={layout.number}>
+          {name}
         </Link>
-      </Td>
+      </Th>
       <Td>
         <span className={layout.customer}>{item.customerName}</span>
       </Td>
-      <Td nowrap>
-        <Badge tone={tone}>{label}</Badge>
-      </Td>
+      <Td nowrap>{item.quotationNumber}</Td>
       <Td align="end" nowrap>
         <span className={layout.amount}>{money(item.total, item.currency, numberSystems)}</span>
       </Td>
@@ -77,6 +78,14 @@ function OrderRow({
         ) : (
           <span className={local.quiet}>Not confirmed yet</span>
         )}
+      </Td>
+      <Td nowrap className={`${local.pinned} ${local.pinnedStart}`}>
+        <Badge tone={tone}>{label}</Badge>
+      </Td>
+      <Td nowrap className={local.pinned}>
+        <Link href={href} className={local.rowAction} aria-label={`View ${name}`}>
+          <Icon name="chevron-right" size={20} />
+        </Link>
       </Td>
     </tr>
   );
@@ -263,14 +272,16 @@ export default async function SalesOrdersPage({
         )
       ) : items !== null ? (
         <div className={layout.results}>
-          <Table caption="Sales orders" minWidth={720}>
+          <Table caption="Sales orders" minWidth={940} className={local.orders ?? ''}>
             <thead>
               <tr>
                 <Th>Order</Th>
                 <Th>Customer</Th>
-                <Th>Status</Th>
+                <Th>Quotation</Th>
                 <Th align="end">Total</Th>
                 <Th>Confirmed on</Th>
+                <Th className={`${local.pinned} ${local.pinnedStart}`}>Status</Th>
+                <Th className={local.pinned}>Action</Th>
               </tr>
             </thead>
             <tbody>

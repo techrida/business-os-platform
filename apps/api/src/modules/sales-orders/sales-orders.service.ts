@@ -156,7 +156,11 @@ export class SalesOrdersService {
         offset: filter.offset ?? 0,
         rows: (r, p) =>
           r
-            .select({ order: salesOrders, customerName: customers.legalName })
+            .select({
+              order: salesOrders,
+              customerName: customers.legalName,
+              quotationNumber: quotations.number,
+            })
             .from(salesOrders)
             .innerJoin(customers, customerOn)
             .innerJoin(quotations, quotationOn)
@@ -176,11 +180,12 @@ export class SalesOrdersService {
       });
       return {
         total,
-        rows: rows.map(({ order, customerName }) => ({
+        rows: rows.map(({ order, customerName, quotationNumber }) => ({
           id: order.id,
           number: order.number,
           customerId: order.customerPartyId ?? '',
           customerName,
+          quotationNumber,
           status: order.status,
           currency: order.currency,
           total: order.total,
