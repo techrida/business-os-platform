@@ -93,6 +93,18 @@ const detail = (over: Record<string, unknown> = {}) => ({
 });
 
 const html = (el: unknown) => renderToStaticMarkup(el as React.ReactElement);
+
+/**
+ * The server markup of one dropdown: its root (carries data-required / data-disabled), the hidden
+ * field that submits the value, and the trigger button that shows the selected label.
+ */
+function dropdown(out: string, name: string) {
+  const match = new RegExp(
+    `(<div[^>]*data-rac[^>]*>)(<input type="hidden"[^>]*name="${name}"[^>]*/>)(.*?</button>)`,
+    's',
+  ).exec(out);
+  return match ? { root: match[1]!, field: match[2]!, trigger: match[3]! } : null;
+}
 const list = async (sp: Record<string, string> = {}) =>
   html(await ListPage({ searchParams: Promise.resolve(sp) }));
 const detailHtml = async (sp: Record<string, string> = {}) =>
@@ -360,14 +372,22 @@ it('uses named departments and allows editing cost centre and project references
   api.getPurchaseRequest.mockResolvedValue(detail({ projectId: DEPT }));
   const out = await editHtml();
   expect(out).toContain('Operations');
-  expect(out).toMatch(/<select[^>]*name="departmentId"/);
-  expect(out).toMatch(/<select(?=[^>]*name="costCenterId")(?=[^>]*required="")[^>]*>/);
-  expect(out).not.toContain('type="hidden" name="costCenterId"');
+  const department = dropdown(out, 'departmentId');
+  expect(department).not.toBeNull();
+  expect(department!.trigger).toContain('Operations');
+  const costCentre = dropdown(out, 'costCenterId');
+  expect(costCentre).not.toBeNull();
+  expect(costCentre!.root).toContain('data-required="true"');
+  // Editable, not a locked or read-only value.
+  expect(costCentre!.root).not.toContain('data-disabled');
+  expect(costCentre!.field).not.toContain('disabled');
+  expect(costCentre!.trigger).not.toMatch(/<button[^>]*disabled/);
   expect(out).toContain(`name="projectId"`);
   expect(out).not.toContain('type="hidden" name="projectId"');
   expect(out).not.toContain('Cost centre name unavailable');
   expect(out).toContain('Optional. Enter the project reference, or leave blank.');
-  expect(out).not.toMatch(/<input[^>]+name="departmentId"/);
+  // The department is chosen by name; no raw-ID text input is offered.
+  expect(out).not.toMatch(/<input(?![^>]*type="hidden")[^>]+name="departmentId"/);
   expect(out).not.toContain(`>${DEPT}<`);
 });
 
@@ -391,7 +411,11 @@ describe('cost centre picker', () => {
   it('loads the entity catalogue on new requests and renders a labelled select', async () => {
     const out = html(await NewPage());
     expect(api.listCostCenters).toHaveBeenCalledOnce();
-    expect(out).toMatch(/<select[^>]*name="costCenterId"/);
+    const costCentre = dropdown(out, 'costCenterId');
+    expect(costCentre).not.toBeNull();
+    // Nothing is chosen yet: the required dropdown shows its placeholder and submits an empty value.
+    expect(costCentre!.field).toContain('value=""');
+    expect(costCentre!.trigger).toContain('Choose a cost centre');
     expect(out).toContain('GENERAL \u00b7 General');
     expect(out).not.toContain('The cost centre&#x27;s id.');
   });
@@ -400,6 +424,7 @@ describe('cost centre picker', () => {
     api.getPurchaseRequest.mockResolvedValue(detail());
     const out = await editHtml();
     expect(api.listCostCenters).toHaveBeenCalledOnce();
+    expect(dropdown(out, 'costCenterId')!.field).toContain(`value="${DEPT}"`);
     expect(out).toContain(`value="${DEPT}" selected=""`);
   });
 
@@ -421,6 +446,9 @@ describe('cost centre catalogue states', () => {
     const out = await editHtml();
     expect(out).toContain('Legacy (inactive)');
     expect(out).not.toContain('Other closed centre');
+    const costCentre = dropdown(out, 'costCenterId')!;
+    expect(costCentre.field).toContain(`value="${DEPT}"`);
+    expect(costCentre.trigger).toContain('Legacy (inactive)');
     expect(out).toContain(`value="${DEPT}" selected=""`);
   });
 

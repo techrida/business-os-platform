@@ -5,6 +5,7 @@ import { useEffect, useRef, useState, type ReactNode, type RefObject } from 'rea
 
 import { Button } from './button';
 import { Icon } from './icon';
+import { PopoverContainerContext } from './popover-container';
 import styles from './dialog.module.css';
 
 export type DialogSize = 'small' | 'medium' | 'large' | 'full';
@@ -85,6 +86,7 @@ export function Dialog({
   bodyClassName,
 }: DialogProps) {
   const [body, setBody] = useState<HTMLDivElement | null>(null);
+  const [contentEl, setContentEl] = useState<HTMLDivElement | null>(null);
   const scrolls = useOverflow(body);
   const root: RadixDialog.DialogProps = {
     ...(open !== undefined ? { open } : {}),
@@ -97,6 +99,7 @@ export function Dialog({
       <RadixDialog.Portal>
         <RadixDialog.Overlay className={styles.overlay} />
         <RadixDialog.Content
+          ref={setContentEl}
           className={[styles.content, styles[size], className].filter(Boolean).join(' ')}
           {...(description ? {} : { 'aria-describedby': undefined })}
           onOpenAutoFocus={(event) => {
@@ -107,6 +110,9 @@ export function Dialog({
             }
           }}
           onEscapeKeyDown={(event) => {
+            // Escape first closes an open dropdown list; only a second press closes the dialog.
+            const target = event.target instanceof Element ? event.target : null;
+            if (target?.closest('[role="listbox"], [aria-expanded="true"]')) event.preventDefault();
             if (locked) event.preventDefault();
           }}
           onPointerDownOutside={(event) => {
@@ -117,41 +123,43 @@ export function Dialog({
             if (locked || !closeOnOutsideClick) event.preventDefault();
           }}
         >
-          <header className={styles.header}>
-            {tone === 'destructive' ? (
-              <span className={styles.titleIcon}>
-                <Icon name="alert-triangle" size={20} />
-              </span>
-            ) : null}
-            <div className={styles.headerText}>
-              <RadixDialog.Title className={styles.title}>{title}</RadixDialog.Title>
-              {description ? (
-                <RadixDialog.Description className={styles.description}>
-                  {description}
-                </RadixDialog.Description>
+          <PopoverContainerContext value={contentEl ?? undefined}>
+            <header className={styles.header}>
+              {tone === 'destructive' ? (
+                <span className={styles.titleIcon}>
+                  <Icon name="alert-triangle" size={20} />
+                </span>
               ) : null}
-            </div>
-          </header>
-          <div
-            ref={setBody}
-            className={[styles.body, bodyClassName].filter(Boolean).join(' ')}
-            // A scrolling region must be reachable by keyboard; only add the stop when there is something to scroll.
-            {...(scrolls ? { tabIndex: 0 } : {})}
-          >
-            {children}
-          </div>
-          {footer ? <footer className={styles.footer}>{footer}</footer> : null}
-          {/* After the body in the DOM so the first Tab stop is the content, positioned top-right by CSS. */}
-          <RadixDialog.Close asChild>
-            <button
-              type="button"
-              className={styles.close}
-              aria-label={closeLabel}
-              disabled={locked}
+              <div className={styles.headerText}>
+                <RadixDialog.Title className={styles.title}>{title}</RadixDialog.Title>
+                {description ? (
+                  <RadixDialog.Description className={styles.description}>
+                    {description}
+                  </RadixDialog.Description>
+                ) : null}
+              </div>
+            </header>
+            <div
+              ref={setBody}
+              className={[styles.body, bodyClassName].filter(Boolean).join(' ')}
+              // A scrolling region must be reachable by keyboard; only add the stop when there is something to scroll.
+              {...(scrolls ? { tabIndex: 0 } : {})}
             >
-              <Icon name="x" size={20} />
-            </button>
-          </RadixDialog.Close>
+              {children}
+            </div>
+            {footer ? <footer className={styles.footer}>{footer}</footer> : null}
+            {/* After the body in the DOM so the first Tab stop is the content, positioned top-right by CSS. */}
+            <RadixDialog.Close asChild>
+              <button
+                type="button"
+                className={styles.close}
+                aria-label={closeLabel}
+                disabled={locked}
+              >
+                <Icon name="x" size={20} />
+              </button>
+            </RadixDialog.Close>
+          </PopoverContainerContext>
         </RadixDialog.Content>
       </RadixDialog.Portal>
     </RadixDialog.Root>

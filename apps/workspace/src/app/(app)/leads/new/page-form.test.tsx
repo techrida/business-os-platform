@@ -4,7 +4,7 @@ import { beforeEach, expect, it, vi } from 'vitest';
 import { LeadForm } from '@/components/p2/crm/lead-form';
 import { parseLead } from '@/components/p2/crm/forms';
 import type { FormAction } from '@/components/p2/crm/types';
-import { click, fill, mountForm } from '@/test/form-interactions';
+import { choose, click, fill, mountForm } from '@/test/form-interactions';
 
 beforeEach(() => {
   Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true });
@@ -24,7 +24,7 @@ it('submits the lead form from the page header with the action’s original fiel
   try {
     const { container } = mounted;
     await fill(container.querySelector('[name="title"]'), 'Dispatch automation');
-    await fill(container.querySelector('[name="source"]'), 'referral');
+    await choose(container, 'source', 'Referral');
     await fill(container.querySelector('[name="companyName"]'), 'Binford Ltd.');
     await fill(container.querySelector('[name="contactName"]'), 'Sunita Shrestha');
     await fill(container.querySelector('[name="probability"]'), '40');

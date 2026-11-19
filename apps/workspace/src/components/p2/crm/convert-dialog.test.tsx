@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 
-import { click, fill, mountForm, submit } from '@/test/form-interactions';
+import { choose, click, fill, mountForm, submit } from '@/test/form-interactions';
 import { ApiError } from '@/lib/api';
 
 vi.mock('server-only', () => ({}));
@@ -40,6 +40,7 @@ beforeEach(() => {
     'ResizeObserver',
     class {
       observe = vi.fn();
+      unobserve = vi.fn();
       disconnect = vi.fn();
     },
   );
@@ -130,12 +131,16 @@ it("offers the existing customer's contacts, a contact without an email disabled
   });
   expect(api.listContacts).toHaveBeenCalledWith(expect.anything(), CUSTOMER);
   await click(dialog().querySelector('input[name="contactMode"][value="existing"]'));
-  const select = dialog().querySelector('select[name="contactId"]');
-  expect(select?.textContent).toContain('Mina');
-  const ravi = dialog().querySelector<HTMLOptionElement>(`option[value="${NO_MAIL}"]`);
-  expect(ravi?.textContent).toBe('Ravi (no email address)');
-  expect(ravi?.disabled).toBe(true);
-  await fill(select, CONTACT);
+  const field = dialog().querySelector<HTMLInputElement>('input[name="contactId"]');
+  await click(field?.parentElement?.querySelector('button') ?? null);
+  const options = Array.from(document.querySelectorAll('[role="option"]'));
+  const mina = options.find((o) => o.textContent?.includes('Mina'));
+  expect(mina).toBeDefined();
+  const ravi = options.find((o) => o.textContent?.includes('Ravi'));
+  expect(ravi?.textContent?.trim()).toBe('Ravi (no email address)');
+  expect(ravi?.getAttribute('aria-disabled')).toBe('true');
+  await click(mina ?? null);
+  expect(field?.value).toBe(CONTACT);
   await submit(dialog());
   expect(submitted[1]?.get('contactId')).toBe(CONTACT);
   expect(api.convertLead).toHaveBeenLastCalledWith(
@@ -154,7 +159,7 @@ it("offers the existing customer's contacts, a contact without an email disabled
 it('searches a different legal name and links the selected customer without duplicate detection', async () => {
   api.convertLead.mockRejectedValue(new ApiError(503, 'offline'));
   api.listCustomers.mockResolvedValue({
-    items: [{ id: CUSTOMER, legalName: 'Mountain Legal Ltd' }],
+    items: [{ id: CUSTOMER, legalName: 'Mountain Legal Ltd', number: 'CUS-0001' }],
   });
   api.listContacts.mockResolvedValue({
     items: [{ id: CONTACT, fullName: 'Mina', email: 'mina@himal.example' }],
@@ -187,12 +192,14 @@ it('searches a different legal name and links the selected customer without dupl
     q: 'Mountain',
     limit: 20,
   });
-  const customers = dialog().querySelector('select[name="customerId"]');
-  expect(customers?.textContent).toContain('Mountain Legal Ltd');
-  await fill(customers, CUSTOMER);
+  await choose(dialog(), 'customerId', 'Mountain Legal Ltd · CUS-0001');
+  expect(dialog().querySelector<HTMLInputElement>('input[name="customerId"]')?.value).toBe(
+    CUSTOMER,
+  );
   expect(api.listContacts).toHaveBeenCalledWith(expect.anything(), CUSTOMER);
   await click(dialog().querySelector('input[name="contactMode"][value="existing"]'));
-  await fill(dialog().querySelector('select[name="contactId"]'), CONTACT);
+  await choose(dialog(), 'contactId', 'Mina');
+  expect(dialog().querySelector<HTMLInputElement>('input[name="contactId"]')?.value).toBe(CONTACT);
   await submit(dialog());
   expect(submitted[0]?.get('customerId')).toBe(CUSTOMER);
   expect(submitted[0]?.getAll('customerMode')).toEqual(['existing']);

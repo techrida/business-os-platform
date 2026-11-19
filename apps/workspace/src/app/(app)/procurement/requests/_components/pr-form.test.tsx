@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 
-import { fill, mountForm, submit } from '@/test/form-interactions';
+import { choose, fill, mountForm, submit } from '@/test/form-interactions';
 import { EMPTY_PR_VALUES, valuesFromForm } from '../_lib/forms';
 import { PrForm } from './pr-form';
 
@@ -96,11 +96,15 @@ it('edit submits a corrected cost centre through the real form', async () => {
       reloadHref="/"
     />,
   );
-  const input = mounted.container.querySelector('select[name="costCenterId"]');
-  expect(input).not.toHaveProperty('readOnly', true);
-  expect(input).not.toHaveProperty('type', 'hidden');
-  expect(input).toHaveProperty('required', true);
-  await fill(input, NEXT_PROJECT);
+  // The dropdown submits through a hidden field; its trigger and list stay interactive and required.
+  const input = mounted.container.querySelector<HTMLInputElement>('input[name="costCenterId"]')!;
+  const trigger = input.parentElement!.querySelector('button')!;
+  expect(input.value).toBe(PROJECT);
+  expect(trigger.disabled).toBe(false);
+  expect(trigger.textContent).toContain('OPS · Operations');
+  expect(input.parentElement!.querySelector('select')).toHaveProperty('required', true);
+  await choose(mounted.container, 'costCenterId', 'ADMIN · Administration');
+  expect(input.value).toBe(NEXT_PROJECT);
   await submit(mounted.container);
   expect(action).toHaveBeenCalledTimes(1);
 });
