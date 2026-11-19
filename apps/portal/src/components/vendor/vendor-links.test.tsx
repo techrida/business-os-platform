@@ -14,6 +14,7 @@ import { VendorNav } from './vendor-nav';
 const m = vi.hoisted(() => ({
   getSession: vi.fn(),
   getVendorOnboarding: vi.fn(),
+  getVendorPurchaseOrder: vi.fn(),
   listVendorBills: vi.fn(),
 }));
 
@@ -30,10 +31,14 @@ vi.mock('next/navigation', () => ({
 vi.mock('@/lib/session', () => ({ getSession: m.getSession }));
 vi.mock('@/lib/api.vendor', () => ({
   getVendorOnboarding: m.getVendorOnboarding,
+  getVendorPurchaseOrder: m.getVendorPurchaseOrder,
   listVendorBills: m.listVendorBills,
 }));
 
 const { default: BillsPage } = await import('../../app/(vendor)/vendor/bills/page');
+const { default: PurchaseOrderPage } = await import(
+  '../../app/(vendor)/vendor/purchase-orders/[id]/page'
+);
 
 const text = (html: string) => html.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ');
 const hrefs = (html: string) => [...html.matchAll(/href="([^"]*)"/g)].map((x) => x[1]);
@@ -147,6 +152,64 @@ describe('PurchaseOrderView submit-a-bill link', () => {
       <PurchaseOrderView view={samplePo({ file: null })} capability="full" />,
     );
     expect(text(html)).toContain('Submit a bill');
+  });
+
+  it.each(['onboarding_only', 'read_only', 'none', null] as const)(
+    'offers no bill link to a %s vendor on a billable order, and still shows the order',
+    (capability) => {
+      const html = renderToStaticMarkup(
+        <PurchaseOrderView view={samplePo({ status: 'issued' })} capability={capability} />,
+      );
+      expect(hrefs(html).filter((h) => h?.startsWith('/vendor/bills'))).toEqual([]);
+      expect(text(html)).not.toContain('Submit a bill');
+      expect(text(html)).toContain('PO-2082-0007');
+    },
+  );
+});
+
+describe('Purchase order page submit-a-bill link', () => {
+  const PO_ID = '0f8fad5b-d9cb-469f-a165-70867728950e';
+  const render = async () =>
+    renderToStaticMarkup(
+      (await PurchaseOrderPage({ params: Promise.resolve({ id: PO_ID }) })) as ReactElement,
+    );
+
+  beforeEach(() => {
+    for (const f of Object.values(m)) f.mockReset();
+    m.getSession.mockResolvedValue(vendorSession());
+    m.getVendorPurchaseOrder.mockResolvedValue(samplePo({ status: 'issued' }));
+    m.getVendorOnboarding.mockResolvedValue(
+      sampleOnboarding({ status: 'approved', capability: 'full' }),
+    );
+  });
+
+  it('offers a full vendor the bill link for the order', async () => {
+    const html = await render();
+    expect(hrefs(html)).toContain(`/vendor/bills/new?po=${PO_ID}`);
+  });
+
+  it('shows a suspended (read-only) vendor the order without the bill link', async () => {
+    m.getVendorOnboarding.mockResolvedValue(
+      sampleOnboarding({ status: 'suspended', capability: 'read_only' }),
+    );
+    const html = await render();
+    expect(text(html)).toContain('PO-2082-0007');
+    expect(text(html)).not.toContain('Submit a bill');
+    expect(hrefs(html).filter((h) => h?.startsWith('/vendor/bills'))).toEqual([]);
+  });
+
+  it('hides the bill link, and keeps the order, when the onboarding read fails', async () => {
+    m.getVendorOnboarding.mockRejectedValue(new ApiError(500, 'boom'));
+    const html = await render();
+    expect(text(html)).toContain('PO-2082-0007');
+    expect(text(html)).not.toContain('Submit a bill');
+  });
+
+  it('still answers 403 and 404 from the order read as before', async () => {
+    m.getVendorPurchaseOrder.mockRejectedValue(new ApiError(403, 'no'));
+    expect(text(await render())).toContain('cannot use this page');
+    m.getVendorPurchaseOrder.mockRejectedValue(new ApiError(404, 'gone'));
+    await expect(render()).rejects.toThrow('NEXT_NOT_FOUND');
   });
 });
 
