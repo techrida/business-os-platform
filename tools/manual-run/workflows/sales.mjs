@@ -4,6 +4,7 @@
 // per-document Approve then Approve customer (reason + confirm); one 100% Advance milestone
 // (total NPR 135,600); payments are 67,800.00 twice; Dev Founder confirms the order.
 // Unique values (names, PAN, e-mail, bank references) carry the run key so runs never collide.
+/* global document -- referenced inside page.evaluate callbacks, which run in the browser */
 import { escapeRe, runMatch, uniqueValues } from '../lib/config.mjs';
 import { StepFailure } from '../lib/session.mjs';
 import { demoFile, findMail, isPdf, mailMessage, pdfText } from '../lib/support.mjs';
@@ -29,16 +30,52 @@ const DOCS = [
 const hasAmount = (text, amount) => text.replace(/,/g, '').includes(Number(amount).toFixed(2));
 
 /**
- * How sales-12 and sales-15 get their payment without recording a second one:
+ * How sales-12 and sales-15 get their payment without recording a second one.
+ * @param {{ recordedUrl?: string | null, ref: string, knownUrls: string[],
+ *   lookup?: { ok: boolean, rows: { url: string, ref: string | null }[] } | null }} input
+ *   `lookup` lists every payment of this run's customer, with the bank reference read from each
+ *   payment's own page (null when it could not be read); `ok` is false when the list did not load.
+ * @returns {{ action: 'reuse' | 'adopt', url: string } | { action: 'record' } |
+ *   { action: 'fail', reason: string }}
  * - `reuse` the URL an earlier attempt recorded;
- * - `adopt` a payment of this run's customer that is not one of the known payments (an attempt
- *   that was interrupted after the submit, before it could record the URL);
- * - `record` a new payment only when neither exists.
+ * - `adopt` the one payment whose bank reference is exactly this run's (an attempt interrupted
+ *   after the submit, before it could record the URL);
+ * - `record` only after a successful lookup that shows no such payment;
+ * - `fail` whenever a payment with this reference may exist but cannot be singled out: a failed
+ *   lookup, a known payment missing from the list, an unreadable reference, two matches, or a
+ *   payment of this customer with another reference.
  */
-export function paymentDecision({ recordedUrl, rowUrls, knownUrls }) {
+export function paymentDecision({ recordedUrl, lookup, ref, knownUrls }) {
   if (recordedUrl) return { action: 'reuse', url: recordedUrl };
-  const others = [...new Set(rowUrls)].filter((u) => !knownUrls.includes(u));
-  if (others.length) return { action: 'adopt', urls: others };
+  if (!lookup?.ok)
+    return { action: 'fail', reason: 'the payments list did not load, so a payment may exist' };
+  const listed = new Set(lookup.rows.map((r) => r.url));
+  const missing = knownUrls.filter((u) => !listed.has(u));
+  if (missing.length)
+    return {
+      action: 'fail',
+      reason: `the list does not show this run's known payment ${missing.join(', ')}, so it may be incomplete`,
+    };
+  const others = lookup.rows.filter((r) => !knownUrls.includes(r.url));
+  const unread = others.filter((r) => r.ref === null || r.ref === undefined);
+  if (unread.length)
+    return {
+      action: 'fail',
+      reason: `the bank reference of ${unread.map((r) => r.url).join(', ')} could not be read`,
+    };
+  const matches = others.filter((r) => r.ref.trim() === ref);
+  if (matches.length > 1)
+    return {
+      action: 'fail',
+      reason: `${matches.length} payments carry the bank reference ${ref} (${matches.map((r) => r.url).join(', ')}): possible duplicate`,
+    };
+  const strangers = others.filter((r) => r.ref.trim() !== ref);
+  if (strangers.length)
+    return {
+      action: 'fail',
+      reason: `this run's customer has a payment with another bank reference (${strangers.map((r) => r.url).join(', ')})`,
+    };
+  if (matches.length === 1) return { action: 'adopt', url: matches[0].url };
   return { action: 'record' };
 }
 
@@ -240,56 +277,81 @@ export function workflow(cfg) {
       s.finding('Draft invoice shows "Customer details unavailable" (I-18)', 'normal');
   };
 
-  /** The payment links in the Payments list rows of this run's unique customer (all statuses). */
-  const customerPayments = async (s) => {
-    await s.goto(`/payments?q=${encodeURIComponent(v.company)}`, (p) => h1(p, 'Payments'));
-    await s.page.waitForTimeout(1500);
-    const hrefs = await s.page
-      .getByRole('row')
-      .filter({ hasText: C })
-      .locator('a[href*="/payments/"]')
-      .evaluateAll((links) => links.map((a) => a.getAttribute('href')));
-    return hrefs
-      .map((h) => new URL(h, cfg.appUrl).pathname)
-      .filter((h) => /^\/payments\/[0-9a-f-]{36}$/.test(h));
+  /**
+   * Every payment of this run's unique customer (any status), each with the bank reference read
+   * from its own page. The Payments list rows carry no reference. Throws (fails the step) when the
+   * list does not load; a page whose reference cannot be read gives `ref: null`.
+   */
+  const customerPayments = async (s, skipUrls) => {
+    const table = await s.loadList(`/payments?q=${encodeURIComponent(v.company)}`, {
+      heading: 'Payments',
+      table: 'Payments',
+      empty: 'No payments match these filters.',
+    });
+    const found = table
+      ? await table.locator('tbody tr').evaluateAll((trs) =>
+          trs.map((tr) => ({
+            cells: [...tr.querySelectorAll('td')].map((td) =>
+              td.textContent.replace(/\s+/g, ' ').trim(),
+            ),
+            hrefs: [...tr.querySelectorAll('a[href]')].map((a) => a.getAttribute('href')),
+          })),
+        )
+      : [];
+    const urls = [
+      ...new Set(
+        found
+          .filter((row) => row.cells.includes(v.company))
+          .flatMap((row) => row.hrefs)
+          .map((h) => new URL(h, cfg.appUrl).pathname)
+          .filter((h) => /^\/payments\/[0-9a-f-]{36}$/.test(h)),
+      ),
+    ];
+    const rows = [];
+    for (const url of urls) {
+      if (skipUrls.includes(url)) {
+        rows.push({ url, ref: 'known' });
+        continue;
+      }
+      await s.goto(url, (p) => p.getByText('Bank reference', { exact: true }));
+      const ref = await s.page.evaluate(() => {
+        const dts = [...document.querySelectorAll('dt')].filter(
+          (d) => d.textContent.trim() === 'Bank reference',
+        );
+        return dts.length === 1 ? (dts[0].nextElementSibling?.textContent.trim() ?? null) : null;
+      });
+      rows.push({ url, ref });
+    }
+    return { ok: true, rows };
   };
 
   /**
    * sales-12 and sales-15 record a payment at most once per run, whatever an earlier attempt did:
-   * the recorded URL is reused; otherwise a payment of this run's customer that is not one of the
-   * known payments is adopted after its bank reference is checked; only when there is none is a new
-   * payment recorded.
+   * the recorded URL is reused; otherwise, after a lookup that loaded, the one payment of this
+   * run's customer whose bank reference is exactly `ref` is adopted; only when the lookup shows
+   * none is a new payment recorded. Anything uncertain fails the step without recording.
    */
   const findOrRecordPayment = async (s, key, ref, otherKeys) => {
     await as(s, 'Dev Accountant');
     const known = otherKeys.map((k) => s.state[k]).filter(Boolean);
-    let decision = paymentDecision({ recordedUrl: s.state[key], rowUrls: [], knownUrls: known });
-    if (decision.action !== 'reuse')
-      decision = paymentDecision({
-        recordedUrl: null,
-        rowUrls: await customerPayments(s),
-        knownUrls: known,
-      });
+    const decision = s.state[key]
+      ? paymentDecision({ recordedUrl: s.state[key], ref, knownUrls: known })
+      : paymentDecision({ lookup: await customerPayments(s, known), ref, knownUrls: known });
     if (decision.action === 'reuse') {
       s.checks.push(`note: reusing ${key} from an earlier attempt of this run`);
       await openUrl(s, key, (p) => p.getByRole('heading', { level: 1 }));
       return decision.url;
     }
     if (decision.action === 'adopt') {
-      for (const url of decision.urls) {
-        await s.goto(url, (p) => p.getByText('Bank reference', { exact: true }));
-        if (runMatch(ref).test(await main(s))) {
-          s.checks.push(
-            `note: adopting the payment ${ref} an earlier attempt of this run recorded`,
-          );
-          return url;
-        }
-      }
-      throw new StepFailure(
-        `This run's customer already has a payment that is not ${ref} (${decision.urls.join(', ')}); ` +
-          'not recording another. Check it by hand, or use a new label.',
-      );
+      s.checks.push(`note: adopting the payment ${ref} an earlier attempt of this run recorded`);
+      await s.goto(decision.url, (p) => p.getByRole('heading', { level: 1 }));
+      return decision.url;
     }
+    if (decision.action === 'fail')
+      throw new StepFailure(
+        `Not recording payment ${ref}: ${decision.reason}. Check the payments by hand, or use a new label.`,
+      );
+    s.checks.push(`the payments lookup shows no payment ${ref} yet`);
     return recordPayment(s, ref);
   };
 
@@ -416,6 +478,28 @@ export function workflow(cfg) {
                 'Resume from sales-2 if the lead reached Qualified, otherwise use a new label.',
             );
           await as(s, 'Dev Sales');
+          // A lead an earlier attempt created but did not record (stopped right after Create lead)
+          // is found by its exact title. It is recorded, and the step stops as above.
+          const listed = await s.exactLinks(
+            await s.loadList(`/leads?q=${encodeURIComponent(v.leadTitle)}`, {
+              heading: 'Leads',
+              table: 'Leads',
+              empty: 'No leads match',
+            }),
+            v.leadTitle,
+          );
+          if (listed.length > 1)
+            throw new StepFailure(
+              `${listed.length} leads carry this run's title (${listed.join(', ')}); use a new label.`,
+            );
+          if (listed.length === 1) {
+            s.record('leadUrl', listed[0]);
+            throw new StepFailure(
+              `This run's lead ${listed[0]} exists already (an earlier attempt stopped before ` +
+                'recording it); it is recorded now and not created twice. Resume from sales-2 if it ' +
+                'reached Qualified, otherwise use a new label.',
+            );
+          }
           await s.goto('/leads/new', (p) =>
             p.getByRole('textbox', { name: 'Lead title', exact: true }),
           );
@@ -886,9 +970,9 @@ export function workflow(cfg) {
 
           await s.caption('sales-8 — Test mail: portal link, no attachment');
           const to = contactEmailFor(s.state, v);
-          const mail = await findMail(cfg, `to:"${to}"`, 90000);
+          const mail = await findMail(cfg, `to:"${to}"`, 90000, { signal: s.signal });
           s.expect(mail, `a Mailpit message to ${to}`);
-          const full = await mailMessage(cfg, mail.ID);
+          const full = await mailMessage(cfg, mail.ID, { signal: s.signal });
           s.expect(
             (full.Attachments ?? []).length === 0,
             'the e-mail has no attachment',

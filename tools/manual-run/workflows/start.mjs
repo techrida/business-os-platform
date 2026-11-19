@@ -3,7 +3,7 @@
 // the new-memo button is Next (autosave), draft buttons are "Download preview as PDF" / "Print preview".
 /* global window, document, MutationObserver -- referenced inside page.evaluate callbacks, which run in the browser */
 import { runMatch } from '../lib/config.mjs';
-import { realLogin } from '../lib/session.mjs';
+import { realLogin, StepFailure } from '../lib/session.mjs';
 import { isPdf, pdfText, findMail } from '../lib/support.mjs';
 
 const ROLE = { 'Dev Sales': 'sales', 'Dev Accountant': 'accountant', 'Dev Finance': 'finance' };
@@ -158,8 +158,31 @@ export function workflow(cfg) {
         async run(s) {
           await asPersona(s, 'Dev Sales');
           // Retry-safe: a memo an earlier attempt saved is not created again; the checks still run.
+          // One saved but not yet recorded (the run stopped right after Next) is found in the list
+          // by its exact subject and adopted.
+          const listed = s.state.memoUrl
+            ? []
+            : await s.exactLinks(
+                await s.loadList(`/memos?q=${encodeURIComponent(subject)}`, {
+                  heading: 'Memos',
+                  table: 'Memos, newest first',
+                  empty: 'No memos match',
+                }),
+                subject,
+              );
+          if (listed.length > 1)
+            throw new StepFailure(
+              `${listed.length} memos carry this run's subject (${listed.join(', ')}); not creating ` +
+                'another. Use a new label.',
+            );
           if (s.state.memoUrl) {
             s.checks.push('note: the memo was saved by an earlier attempt of this run');
+          } else if (listed.length === 1) {
+            s.record('memoUrl', listed[0]);
+            s.checks.push('note: adopted the memo an earlier attempt of this run saved');
+            await openMemo(s);
+            const number = /MEMO-[\w/-]*\d{5}/.exec(await s.text())?.[0];
+            if (number) s.record('memoNumber', number);
           } else {
             await s.goto('/memos/new', (p) =>
               p.getByRole('combobox', { name: 'Approved by', exact: true }),
@@ -436,7 +459,9 @@ export function workflow(cfg) {
           s.checks.push(`notification opened ${s.page.url()}`);
 
           await s.caption('start-5 — Test mail: the message for this memo');
-          const mail = await findMail(cfg, `subject:"${s.state.memoNumber ?? subject}"`, 90000);
+          const mail = await findMail(cfg, `subject:"${s.state.memoNumber ?? subject}"`, 90000, {
+            signal: s.signal,
+          });
           s.expect(mail, `a Mailpit message about ${s.state.memoNumber ?? subject}`);
           s.record('memoMailSubject', mail.Subject);
           if (/(^|\s)[a-z]+_[a-z_]+\s/.test(mail.Subject))

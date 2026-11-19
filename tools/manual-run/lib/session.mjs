@@ -641,6 +641,64 @@ export class Session {
     return { path, bytes, name: d.suggestedFilename() };
   }
 
+  /**
+   * Opens a (filtered) list page and waits for positive evidence that it finished loading: its
+   * table (found by caption) or its empty-state text, and no "… did not load" alert. A failed load
+   * is retried; when the list never loads the step fails, because "not found" must never be
+   * guessed from a list that did not load. Returns the table, or null for an empty list.
+   */
+  async loadList(path, { heading, table, empty, attempts = 4 }) {
+    const failure = () =>
+      this.page.getByRole('alert').filter({ hasText: /did not load|did not open/ });
+    for (let i = 1; i <= attempts; i++) {
+      await this.goto(path, (p) =>
+        p.getByRole('heading', { level: 1, name: heading, exact: true }),
+      );
+      const t = this.page.getByRole('table', { name: table, exact: true });
+      const e = this.page.getByText(empty, { exact: true });
+      const wait = (loc, outcome) =>
+        loc
+          .first()
+          .waitFor({ state: 'visible', timeout: this.cfg.navTimeout })
+          .then(() => outcome);
+      const outcome = await Promise.any([
+        wait(t, 'table'),
+        wait(e, 'empty'),
+        wait(failure(), 'failed'),
+      ]).catch(() => 'timeout');
+      if (outcome !== 'failed' && outcome !== 'timeout' && (await failure().count()) === 0) {
+        this.checks.push(`the ${heading} list loaded (${outcome})`);
+        return outcome === 'table' ? t : null;
+      }
+      this.checks.push(`note: the ${heading} list did not load (${outcome}), attempt ${i}`);
+      this.log(`    (the ${heading} list did not load: ${outcome}; attempt ${i}/${attempts})`);
+      if (i < attempts) await abortableSleep(i === 1 ? 5000 : 15000, this.signal);
+    }
+    throw new StepFailure(
+      `The ${heading} list did not load after ${attempts} attempts, so it cannot tell whether ` +
+        "this run's record already exists; nothing was created. Re-run the step later.",
+    );
+  }
+
+  /**
+   * The distinct paths of links in `table` whose own text is exactly `text` (whitespace collapsed),
+   * never a longer text that contains it.
+   */
+  async exactLinks(table, text) {
+    if (!table) return [];
+    const found = await table.locator('a[href]').evaluateAll((links) =>
+      links.map((a) => ({
+        text: a.textContent.replace(/\s+/g, ' ').trim(),
+        href: a.getAttribute('href'),
+      })),
+    );
+    return [
+      ...new Set(
+        found.filter((l) => l.text === text).map((l) => new URL(l.href, this.cfg.appUrl).pathname),
+      ),
+    ];
+  }
+
   async text(locator = this.page.locator('main').or(this.page.locator('body'))) {
     return (
       await locator
