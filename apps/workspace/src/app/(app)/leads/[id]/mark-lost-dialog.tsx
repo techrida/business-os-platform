@@ -15,6 +15,8 @@ import { moveLeadStageAction } from '../actions';
 
 /** The same wording the stage-move parser uses, so the client and the server never disagree. */
 const REASON_REQUIRED = 'Choose a reason from the list, or add a new one.';
+const REASON_REFUSED =
+  /already on the list of lost reasons|no longer offered as a lost reason|Unknown lost reason/;
 const REASON_TOO_LONG = `Keep a new reason to ${LEAD_LOST_REASON_LABEL_MAX} characters or fewer.`;
 const NOTE_REQUIRED = 'Add a note for the record, up to 2,000 characters.';
 
@@ -99,6 +101,13 @@ export function MarkLostDialog({ id, number, version, reasons }: MarkLostDialogP
       const errors = { ...(result.fieldErrors ?? {}) };
       const reasonError = errors['lostReasonId'] ?? errors['newLostReason'];
       if (reasonError !== undefined) errors['reason'] = reasonError;
+      else if (result.error !== undefined && REASON_REFUSED.test(result.error)) {
+        // A duplicate added, or an option retired, since the list was read.
+        errors['reason'] = result.error;
+      } else if (result.reload && pick?.kind === 'new') {
+        // A 409 for a typed reason is most often someone adding the same words first; the toast alone does not say so.
+        errors['reason'] = 'This reason may already be on the list. Reload to see the latest reasons.';
+      }
       setFieldErrors(errors);
       toast.error(
         result.error ??
