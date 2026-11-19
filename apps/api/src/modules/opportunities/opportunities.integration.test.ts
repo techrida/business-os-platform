@@ -387,6 +387,25 @@ describe('GET /v1/opportunities', () => {
     expect(typo).toContain(deal);
   });
 
+  it("does not search the customer's name for a caller who may not read customers", async () => {
+    as(U.boss, 'founder');
+    const vanta = await seedCustomer(scopeA, 'Vantablack Fabrication Co');
+    const deal = await seed({ name: 'Press brake order', customerId: vanta });
+
+    const allowed = z
+      .array(OpportunityDtoSchema)
+      .parse((await request(baseUrl).get('/v1/opportunities?q=Vantablack&limit=200')).body)
+      .map((o) => o.id);
+    expect(allowed).toContain(deal);
+
+    current.grants.delete('customer.read');
+    const denied = z
+      .array(OpportunityDtoSchema)
+      .parse((await request(baseUrl).get('/v1/opportunities?q=Vantablack&limit=200')).body)
+      .map((o) => o.id);
+    expect(denied).not.toContain(deal);
+  });
+
   it('filters repeated stages together with search and scope before sorting and limiting', async () => {
     const name = 'North & West launch';
     const newest = new Date('2026-11-09T12:00:00Z');
