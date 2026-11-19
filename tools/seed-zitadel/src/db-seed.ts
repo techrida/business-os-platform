@@ -190,6 +190,7 @@ async function seedRolePermissions(client: pg.ClientBase, scope: SeedScope): Pro
          ON CONFLICT (tenant_id, role_key, permission) DO UPDATE
            SET scope = EXCLUDED.scope
            WHERE role_permissions.scope IS DISTINCT FROM EXCLUDED.scope
+             AND role_permissions.seeded
          RETURNING id`,
         [scope.tenantId, roleKey, permission, permissionScope],
       );
@@ -198,10 +199,11 @@ async function seedRolePermissions(client: pg.ClientBase, scope: SeedScope): Pro
   }
   // Review R25: a grant dropped from the defaults must also leave the table, or it keeps granting
   // forever. P1 has no roles editor, so every row in this tenant came from an earlier seed run. The
-  // keep-list goes in as two parallel arrays; once the stale rows are gone a re-run deletes nothing.
+  // keep-list goes in as two parallel arrays (rows a Founder made, seeded = false, are never touched); once the stale rows are gone a re-run deletes nothing.
   const stale = await client.query(
     `DELETE FROM app.role_permissions
      WHERE tenant_id = $1
+       AND seeded
        AND (role_key, permission) NOT IN (SELECT * FROM unnest($2::text[], $3::text[]))
      RETURNING id`,
     [scope.tenantId, keptRoles, keptPermissions],
