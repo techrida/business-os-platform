@@ -358,6 +358,28 @@ describe('bill entry', () => {
     expect(api.getPoProgress).not.toHaveBeenCalled();
   });
 
+  it('points a malformed PO link at a fresh bill, naming no button that does not exist', async () => {
+    const out = await html(NewBillPage({ searchParams: Promise.resolve({ po: '../wrong' }) }));
+    expect(out).toContain('That link does not name a valid purchase order');
+    expect(out).toContain('href="/payables/bills/new"');
+    expect(out).toContain('Start a new bill');
+    expect(out).not.toContain('choose Enter bill');
+  });
+
+  it('loads the billable orders for the standalone picker, and enters without one if they fail', async () => {
+    await html(NewBillPage({ searchParams: search() }));
+    expect(api.listBillableOrders).toHaveBeenCalledOnce();
+    api.listBillableOrders.mockClear();
+    await html(NewBillPage({ searchParams: Promise.resolve({ po: PO }) }));
+    expect(api.listBillableOrders).not.toHaveBeenCalled();
+
+    api.listBillableOrders.mockRejectedValue(apiError(500));
+    const out = await html(NewBillPage({ searchParams: search() }));
+    expect(out).toContain('purchase orders did not load');
+    expect(out).toContain('name="vendorPartyId"');
+    expect(out).toContain('Upload invoice');
+  });
+
   it('says a submission that is not in the inbox any more is gone', async () => {
     api.listBillSubmissions.mockResolvedValue([]);
     const out = await html(NewBillPage({ searchParams: search(SUB) }));
