@@ -1,4 +1,5 @@
 import type { QuotationListItem } from '@bos/contracts';
+import type { NumberSystem } from '@bos/locale';
 import type { Metadata } from 'next';
 import Link from 'next/link';
 
@@ -23,6 +24,7 @@ import { StatCard } from '@/components/ui/stat-card';
 import { Table, Td, Th } from '@/components/ui/table';
 import { failureOf } from '@/lib/api-kernel';
 import { requireStaffSession } from '@/lib/bff';
+import { getNumberSystem } from '@/lib/display-settings';
 import { money, when } from '@/lib/kernel-format';
 
 export const metadata: Metadata = { title: 'Quotations · Business OS' };
@@ -53,7 +55,13 @@ function listHref(filters: {
   return params.size === 0 ? '/quotations' : `/quotations?${params.toString()}`;
 }
 
-function QuotationRow({ item }: { item: QuotationListItem }) {
+function QuotationRow({
+  item,
+  numberSystem,
+}: {
+  item: QuotationListItem;
+  numberSystem: NumberSystem;
+}) {
   const href = `/quotations/${encodeURIComponent(item.id)}`;
   return (
     <tr>
@@ -61,7 +69,7 @@ function QuotationRow({ item }: { item: QuotationListItem }) {
         <Link href={href} className={styles.number}>
           {item.number}
         </Link>
-        <span className={styles.amount}>{money(item.total, item.currency)}</span>
+        <span className={styles.amount}>{money(item.total, item.currency, numberSystem)}</span>
       </Td>
       <Td className={styles.customer}>{item.customerName}</Td>
       <Td>
@@ -144,6 +152,7 @@ export default async function QuotationsPage({
   const filters = { status, opportunityId, q, rows: pageSize };
   const here = listHref({ ...filters, page: requestedPage });
   const session = await requireStaffSession(here);
+  const numberSystem = await getNumberSystem();
 
   let items: QuotationListItem[] | null = null;
   let problem: { message: string; status: number } | null = null;
@@ -276,7 +285,7 @@ export default async function QuotationsPage({
             </thead>
             <tbody>
               {matches.slice(offset, offset + pageSize).map((item) => (
-                <QuotationRow key={item.id} item={item} />
+                <QuotationRow key={item.id} item={item} numberSystem={numberSystem} />
               ))}
             </tbody>
           </Table>

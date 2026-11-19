@@ -1,6 +1,7 @@
-import { formatMoney } from '@bos/locale';
+import { formatMoney, type NumberSystem } from '@bos/locale';
 
 import { Alert } from '@/components/ui/alert';
+import { useNumberSystem } from '@/components/ui/number-system-context';
 import { Panel } from '@/components/ui/panel';
 
 import type { Currency } from './model';
@@ -21,7 +22,10 @@ export interface TotalsPanelProps {
   message?: string | undefined;
 }
 
-const fmt = (amount: string, currency: Currency): string => formatMoney(amount, currency);
+const money =
+  (numberSystem: NumberSystem) =>
+  (amount: string, currency: Currency): string =>
+    formatMoney(amount, currency, { numberSystem });
 
 /**
  * Section 7: totals and tax summary. Presentation only. Every figure is a string the preview
@@ -30,6 +34,7 @@ const fmt = (amount: string, currency: Currency): string => formatMoney(amount, 
  * server figures stay visible, marked as updating, so the panel does not flash empty on each key.
  */
 export function TotalsPanel({ currency, state, preview, message }: TotalsPanelProps) {
+  const fmt = money(useNumberSystem());
   const shown = (state === 'ready' || state === 'loading') && preview ? preview : null;
   const t = shown?.totals;
 

@@ -773,7 +773,7 @@ describe('quotation approval: terms and conditions', () => {
     };
     const view = toCustomerQuotationView(
       {
-        version: row,
+        version: { ...row, status: 'approved' },
         quotation: { number: 'QT-2082-0001' },
         customer: { legalName: 'Himal Traders Pvt. Ltd.', panVatNo: null, address },
         contact: null,
