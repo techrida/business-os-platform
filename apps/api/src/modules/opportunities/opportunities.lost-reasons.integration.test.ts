@@ -43,6 +43,8 @@ import { CAN_KEY } from '../../platform/authz/decorators';
 import { systemActor, withTx } from '../../platform/db/tx';
 import { ErrorBodyFilter } from '../../platform/tenancy/error-body.filter';
 import { NumberingService } from '../../platform/settings/numbering.service';
+import { CurrencyEnabledService } from '../../platform/settings/currency-enabled';
+import { SettingsService } from '../../platform/settings/settings.service';
 import { LeadsController } from '../leads/leads.controller';
 import { LeadsService } from '../leads/leads.service';
 import { LeadLostReasonsController } from '../leads/lost-reasons.controller';
@@ -118,6 +120,7 @@ beforeAll(async () => {
     audit,
     new NumberingService(),
     caller,
+    new CurrencyEnabledService(new SettingsService(h.db)),
     reasons,
   );
   opportunitiesService = new OpportunitiesService(
@@ -450,7 +453,9 @@ describe('D49 / D54-3 opportunity lost reasons', () => {
     // What update() and reset() need on the row; NOWAIT turns "would have to wait" into 55P03 without any sleep.
     const tryRowLock = () =>
       withTx(h.db, h.scopeA, systemActor('test'), (tx) =>
-        tx.execute(sql`SELECT id FROM app.lead_lost_reasons WHERE id = ${price.id} FOR UPDATE NOWAIT`),
+        tx.execute(
+          sql`SELECT id FROM app.lead_lost_reasons WHERE id = ${price.id} FOR UPDATE NOWAIT`,
+        ),
       );
 
     let release!: () => void;
