@@ -22,6 +22,7 @@ import {
 import { Alert } from '@/components/ui/alert';
 import { Button } from '@/components/ui/button';
 import { Field, Input, Select, Textarea } from '@/components/ui/field';
+import { SuggestInput } from '@/components/ui/suggest-input';
 
 import { IDLE, type ActionState } from '../action-state';
 import adminStyles from '../admin.module.css';
@@ -318,21 +319,14 @@ export function WorkflowEditor({
               ))}
             </Select>
           ) : (
-            <>
-              <Input
-                {...control}
-                value={step.target}
-                list={`${control.id}-list`}
-                autoComplete="off"
-                placeholder="Group key"
-                onChange={(e) => change({ target: e.target.value })}
-              />
-              <datalist id={`${control.id}-list`}>
-                {groupKeys.map((g) => (
-                  <option key={g} value={g} />
-                ))}
-              </datalist>
-            </>
+            <SuggestInput
+              {...control}
+              value={step.target}
+              suggestions={groupKeys}
+              autoComplete="off"
+              placeholder="Group key"
+              onChange={(target) => change({ target })}
+            />
           )
         }
       </Field>
