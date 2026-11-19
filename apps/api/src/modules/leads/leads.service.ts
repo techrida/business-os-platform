@@ -29,7 +29,7 @@ import {
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
-import { and, count, desc, eq, getTableColumns, inArray, type SQL } from 'drizzle-orm';
+import { and, count, desc, eq, getTableColumns, inArray, type SQL, sql } from 'drizzle-orm';
 
 import { AuditService } from '../../platform/audit/audit.service';
 import { AuthzService, scopeWhereFor } from '../../platform/authz/authz.service';
