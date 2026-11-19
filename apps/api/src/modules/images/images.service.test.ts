@@ -548,6 +548,18 @@ describe('upload', () => {
     expect(documents.createAndReceiveUpload).not.toHaveBeenCalled();
   });
 
+  it('is 400, not a hung request, when the client goes away mid-body (closed or errored)', async () => {
+    for (const cause of [undefined, new Error('reset')]) {
+      const stream = new Readable({ read: () => undefined });
+      stream.push(PNG_BYTES);
+      const req = { ...request(), stream };
+      const result = statusOf(service.upload('customer_logo', randomUUID(), req, staff));
+      setImmediate(() => stream.destroy(cause));
+      expect(await result).toBe(400);
+    }
+    expect(documents.createAndReceiveUpload).not.toHaveBeenCalled();
+  });
+
   it("passes the owner check's 403 and 404 through before the headers or the body are looked at", async () => {
     for (const refusal of [
       new ForbiddenException({ code: 'forbidden', reason: 'no_permission' }),
