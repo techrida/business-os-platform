@@ -12,7 +12,7 @@ import { z } from 'zod';
 import { call, seg } from './api-procurement';
 import type { Session } from './session';
 
-// The tenant's list of lost reasons (D49). The Mark lost dialog reads the choices (crm.lead.write); the Settings card
+// The tenant's list of lost reasons (D49, D54-3). The Mark lost dialog reads the choices (crm.lead.write / crm.opportunity.write); the Settings card
 // reads and changes the whole list (admin.settings.write, the Founder). Every call carries the staff session and every
 // answer is parsed with the contracts' schemas.
 
@@ -27,6 +27,11 @@ const json = (method: 'POST' | 'PATCH' | 'PUT', body: unknown): RequestInit => (
 /** The options a person marking a lead lost can pick, in the list's order, without retired ones. */
 export function listLeadLostReasonChoices(session: Session): Promise<LeadLostReason[]> {
   return call(session, '/v1/lead-lost-reasons', List);
+}
+
+/** The options a person marking an opportunity lost can pick, in the list's order, without retired ones. */
+export function listOpportunityLostReasonChoices(session: Session): Promise<LeadLostReason[]> {
+  return call(session, '/v1/opportunity-lost-reasons', List);
 }
 
 /** Every option, retired ones included, for the Settings card. */

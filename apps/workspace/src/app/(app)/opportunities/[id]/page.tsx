@@ -7,6 +7,7 @@ import type { NumberSystems } from '@bos/locale';
 import { getOpportunity, listActivities } from '@/components/p2/crm/crm-api';
 import { FollowUpsCard } from '@/components/p2/crm/follow-ups-card';
 import { moneyOrNull } from '@/components/p2/crm/format';
+import { MarkLostDialog } from '@/components/p2/crm/mark-lost-dialog';
 import { MoveForm } from '@/components/p2/crm/move-form';
 import { canAssignFollowUps, loadPeople } from '@/components/p2/crm/people';
 import { ActivityList, LoadProblem, StageBadge } from '@/components/p2/crm/server-bits';
@@ -28,6 +29,7 @@ import { FactList, Panel, type Fact } from '@/components/ui/panel';
 import { StatusTimeline } from '@/components/ui/status-timeline';
 import { Table, Td, Th } from '@/components/ui/table';
 import { failureOf } from '@/lib/api-kernel';
+import { listOpportunityLostReasonChoices } from '@/lib/api-lead-lost-reasons';
 import { requireStaffSession } from '@/lib/bff';
 import { getNumberSystems } from '@/lib/display-settings';
 import { money, when } from '@/lib/kernel-format';
@@ -132,6 +134,12 @@ export default async function OpportunityPage({ params }: { params: Promise<{ id
   const quotations = quotationsResult.status === 'fulfilled' ? quotationsResult.value : [];
   const quotesHref = opportunityQuotationsHref(opp.id);
   const open = opp.stage !== 'lost' && opp.stage !== 'won';
+  const canMarkLost = moves.some((move) => move.stage === 'lost');
+  // The options Mark lost offers (D54-3). Only asked for when the action is shown; a failure leaves the dialog able to add one.
+  const lostReasons = canMarkLost
+    ? await listOpportunityLostReasonChoices(session).catch(() => [])
+    : [];
+  const reasonLabel = opp.lostReason?.label ?? opp.stageReason;
   // A list that did not load falls back to New:
   // the New page checks again before it shows the builder.
   const entry: QuotationEntry = quotationEntryFor(quotations);
@@ -154,40 +162,52 @@ export default async function OpportunityPage({ params }: { params: Promise<{ id
             </span>
           }
           actions={
-            entry.kind === 'resume' ? (
-              <>
-                <LinkButton href={quotesHref} variant="secondary">
-                  View quotations
-                </LinkButton>
-                <LinkButton
-                  href={editQuotationHref(entry.quotationId)}
-                  aria-label={`Edit quotation ${entry.number}`}
-                >
-                  Edit quotation
-                </LinkButton>
-              </>
-            ) : entry.kind === 'choose' ? (
-              <>
-                {open ? (
-                  <LinkButton
-                    href={newQuotationHref(opp.id, { another: true })}
-                    variant="secondary"
-                  >
-                    New quotation
+            <>
+              {entry.kind === 'resume' ? (
+                <>
+                  <LinkButton href={quotesHref} variant="secondary">
+                    View quotations
                   </LinkButton>
-                ) : null}
-                <LinkButton href={quotesHref}>Choose a draft ({entry.count})</LinkButton>
-              </>
-            ) : (
-              <>
-                <LinkButton href={quotesHref} variant="secondary">
-                  View quotations
-                </LinkButton>
-                {open ? (
-                  <LinkButton href={newQuotationHref(opp.id)}>New quotation</LinkButton>
-                ) : null}
-              </>
-            )
+                  <LinkButton
+                    href={editQuotationHref(entry.quotationId)}
+                    aria-label={`Edit quotation ${entry.number}`}
+                  >
+                    Edit quotation
+                  </LinkButton>
+                </>
+              ) : entry.kind === 'choose' ? (
+                <>
+                  {open ? (
+                    <LinkButton
+                      href={newQuotationHref(opp.id, { another: true })}
+                      variant="secondary"
+                    >
+                      New quotation
+                    </LinkButton>
+                  ) : null}
+                  <LinkButton href={quotesHref}>Choose a draft ({entry.count})</LinkButton>
+                </>
+              ) : (
+                <>
+                  <LinkButton href={quotesHref} variant="secondary">
+                    View quotations
+                  </LinkButton>
+                  {open ? (
+                    <LinkButton href={newQuotationHref(opp.id)}>New quotation</LinkButton>
+                  ) : null}
+                </>
+              )}
+              {canMarkLost ? (
+                <MarkLostDialog
+                  noun="opportunity"
+                  action={moveOpportunityStageAction}
+                  id={opp.id}
+                  number={opp.number}
+                  version={opp.version}
+                  reasons={lostReasons}
+                />
+              ) : null}
+            </>
           }
         />
       </div>
@@ -205,9 +225,14 @@ export default async function OpportunityPage({ params }: { params: Promise<{ id
         />
         {opp.stage !== 'won' ? (
           <div className={styles.stageControls}>
-            {opp.stageReason ? (
+            {reasonLabel ? (
               <div className={styles.reasonBox}>
-                <strong>{opp.stageReason}</strong>
+                <strong>{reasonLabel}</strong>
+                {opp.lostReason?.retired ? (
+                  <span className={styles.quiet}>
+                    This reason is no longer offered for new opportunities.
+                  </span>
+                ) : null}
                 {opp.stageNote ? <span>{opp.stageNote}</span> : null}
               </div>
             ) : null}
@@ -219,7 +244,12 @@ export default async function OpportunityPage({ params }: { params: Promise<{ id
               recordId={opp.id}
               version={opp.version}
               moves={moves}
-              emptyText="A manager can reopen a lost opportunity."
+              exclude={['lost']}
+              emptyText={
+                opp.stage === 'lost'
+                  ? 'A manager can reopen a lost opportunity.'
+                  : 'No further manual moves from here.'
+              }
             />
           </div>
         ) : null}
