@@ -381,6 +381,9 @@ importers:
       react:
         specifier: 'catalog:'
         version: 19.3.1
+      react-aria-components:
+        specifier: 'catalog:'
+        version: 1.22.1(react-dom@19.3.1(react@19.3.1))(react@19.3.1)
       react-dom:
         specifier: 'catalog:'
         version: 19.3.1(react@19.3.1)

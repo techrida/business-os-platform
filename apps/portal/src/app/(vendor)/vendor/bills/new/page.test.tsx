@@ -85,9 +85,12 @@ describe('submit a bill page', () => {
   });
 
   it('preselects an order from ?po= only when it is the vendor’s own, and says what happens after sending', async () => {
-    expect(await render({ po: PO })).toMatch(new RegExp(`<option value="${PO}" selected`));
+    // The Select submits through its hidden field; its trigger shows the chosen label.
+    const own = await render({ po: PO });
+    expect(own).toContain(`<input type="hidden" name="purchaseOrderId" value="${PO}"/>`);
     const foreign = await render({ po: '22222222-2222-4222-8222-222222222222' });
-    expect(foreign).toMatch(/<option value="" selected="">Not linked to an order/);
+    expect(foreign).toContain('<input type="hidden" name="purchaseOrderId" value=""/>');
+    expect(foreign).toContain('Not linked to an order</span>');
     expect(foreign).not.toContain('22222222-2222');
     const sent = text(await render({ sent: '1' }));
     expect(sent).toContain('We received your bill');

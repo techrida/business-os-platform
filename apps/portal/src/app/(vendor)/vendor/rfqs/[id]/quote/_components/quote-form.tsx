@@ -6,9 +6,9 @@ import { useActionState, useEffect, useRef, useState } from 'react';
 
 import { Alert } from '@/components/portal/alert';
 import { Field, Input } from '@/components/portal/field';
-import fieldStyles from '@/components/portal/field.module.css';
 import quotation from '@/components/portal/quotation.module.css';
 import { Button } from '@/components/ui/button';
+import { Select } from '@/components/ui/select';
 
 import { FileUpload } from '../../../../_upload/file-upload';
 import styles from '../../../../_upload/upload.module.css';
@@ -81,12 +81,11 @@ export function QuoteForm({
       <div className={styles.grid}>
         <Field label="Currency" error={fe.currency}>
           {(control) => (
-            <select
+            <Select
               name="currency"
               required
               value={currency}
               onChange={(e) => setCurrency(e.target.value)}
-              className={`${styles.select} ${fieldStyles.control}`}
               {...control}
             >
               {CURRENCIES.map((c) => (
@@ -94,7 +93,7 @@ export function QuoteForm({
                   {c}
                 </option>
               ))}
-            </select>
+            </Select>
           )}
         </Field>
         <Field

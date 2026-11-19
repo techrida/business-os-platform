@@ -19,6 +19,7 @@
     "next": "catalog:",
     "openid-client": "catalog:",
     "react": "catalog:",
+    "react-aria-components": "catalog:",
     "react-dom": "catalog:",
     "server-only": "catalog:",
     "zod": "catalog:"

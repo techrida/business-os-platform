@@ -6,9 +6,9 @@ import { useActionState, useEffect, useRef, useState } from 'react';
 
 import { Alert } from '@/components/portal/alert';
 import { Field, Input } from '@/components/portal/field';
-import fieldStyles from '@/components/portal/field.module.css';
 import quotation from '@/components/portal/quotation.module.css';
 import { Button } from '@/components/ui/button';
+import { Select } from '@/components/ui/select';
 
 import { FileUpload } from '../../../_upload/file-upload';
 import styles from '../../../_upload/upload.module.css';
@@ -120,12 +120,11 @@ export function BillForm({
       <div className={styles.grid}>
         <Field label="Currency" error={fe.currency}>
           {(control) => (
-            <select
+            <Select
               name="currency"
               required
               value={currency}
               onChange={(e) => setCurrency(e.target.value)}
-              className={`${styles.select} ${fieldStyles.control}`}
               {...control}
             >
               {CURRENCIES.map((c) => (
@@ -133,7 +132,7 @@ export function BillForm({
                   {c}
                 </option>
               ))}
-            </select>
+            </Select>
           )}
         </Field>
         <Field
@@ -165,11 +164,10 @@ export function BillForm({
         error={fe.purchaseOrderId}
       >
         {(control) => (
-          <select
+          <Select
             name="purchaseOrderId"
             value={orderId}
             onChange={(e) => setOrderId(e.target.value)}
-            className={`${styles.select} ${fieldStyles.control}`}
             {...control}
           >
             <option value="">Not linked to an order</option>
@@ -178,7 +176,7 @@ export function BillForm({
                 {o.label}
               </option>
             ))}
-          </select>
+          </Select>
         )}
       </Field>
 
