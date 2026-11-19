@@ -155,8 +155,17 @@ it('includes second-page users in workflow page selectors when the general direc
           );
       return Promise.resolve(
         Response.json({
-          items: items.map((u) => ({ ...u, status: 'active', idpOrgId: group, roles: [] })),
+          items: items.map((u) => ({
+            ...u,
+            status: 'active',
+            idpOrgId: group,
+            roles: [],
+            department: null,
+            createdAt: '2026-11-19T00:00:00.000Z',
+            lastActiveAt: null,
+          })),
           nextAfter: after ? null : first,
+          nextPage: null,
         }),
       );
     }
