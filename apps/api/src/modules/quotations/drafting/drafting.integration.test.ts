@@ -10,6 +10,7 @@ import 'reflect-metadata';
 import { randomUUID } from 'node:crypto';
 
 import {
+  type AccessScope,
   DEFAULT_ROLE_PERMISSIONS,
   type ListQuotationsQuery,
   QuotationDetailSchema,
@@ -23,6 +24,8 @@ import {
 } from '@bos/contracts';
 import Decimal from 'decimal.js';
 import {
+  activities,
+  createDepartment,
   createParty,
   leads,
   opportunities,
@@ -91,7 +94,13 @@ let service: DraftingService;
 const grantsOf = (role: RoleKey) =>
   new Map(Object.entries(DEFAULT_ROLE_PERMISSIONS[role])) as Map<Permission, Scope>;
 /** Who calls: by default the fixture's owner in entity A with the sales grants; a test may switch any part. */
-const current: { grants: Map<Permission, Scope>; userId: string | null; scope: TxScope | null } = {
+const current: {
+  grants: Map<Permission, Scope>;
+  userId: string | null;
+  scope: TxScope | null;
+  /** The caller's membership department; null (no department) unless a test sets one. */
+  departmentId?: string | null;
+} = {
   grants: grantsOf('sales'),
   userId: null,
   scope: null,
@@ -107,7 +116,7 @@ const principalNow = (): Principal => ({
   partyId: null,
   idpOrgId: 'unused',
   roles: [],
-  departmentId: null,
+  departmentId: current.departmentId ?? null,
   status: 'active',
   grants: current.grants,
 });
@@ -185,6 +194,7 @@ beforeEach(() => {
   current.grants = grantsOf('sales');
   current.userId = null;
   current.scope = null;
+  current.departmentId = null;
 });
 
 // ---------------------------------------------------------------------------------------- helpers
@@ -1124,7 +1134,7 @@ describe('quotation cost figures follow the live role grants (D29b)', () => {
   }
   /** The caller's grants as the request would read them now: the real cache over the real rows. */
   const live = async (role: RoleKey): Promise<Map<Permission, Scope>> =>
-    new Map(await roleCache.grantsFor(f.tenantId, f.entityId, [role]));
+    new Map(await roleCache.grantsFor(f.tenantId, f.entityId, [role])) as Map<Permission, Scope>;
 
   const costedBody = () => goldenCreateBody(f, { lines: goldenCostedLines(f) });
   const storedLines = (versionId: string) =>
@@ -1559,5 +1569,133 @@ describe('DraftingService payment schedule amounts (D36)', () => {
     expect(
       (await service.getVersion(created.id, created.currentVersionId)).paymentSchedule,
     ).toEqual(version.paymentSchedule);
+  });
+});
+
+describe('saved reach on quotations (U20a phase 2)', () => {
+  /**
+   * A quotation owned by a colleague filed in a new department: their membership names it (department row first,
+   * then the membership, D55-8), so the opportunity they own is stamped with it (0080) and the quotation copies the
+   * opportunity's (0088).
+   */
+  async function colleagueQuotation(): Promise<{
+    id: string;
+    versionId: string;
+    departmentId: string;
+  }> {
+    const colleague = await seedOtherStaffUser(db, f);
+    const { departmentId } = await createDepartment(appPool, scopeA);
+    await withTx(db, scopeA, systemActor('test'), (tx) =>
+      tx.execute(
+        sql`UPDATE app.user_entities SET department_id = ${departmentId}
+            WHERE tenant_id = ${scopeA.tenantId} AND organization_id = ${scopeA.organizationId}
+              AND user_id = ${colleague}`,
+      ),
+    );
+    const [opportunity] = await withTx(db, scopeA, systemActor('test'), (tx) =>
+      tx
+        .insert(opportunities)
+        .values({
+          ...scopeA,
+          number: `DEAL-${randomUUID().slice(0, 8)}`,
+          name: 'Department deal',
+          customerId: f.customerPartyId,
+          ownerUserId: colleague,
+          stage: 'qualified',
+        })
+        .returning({ id: opportunities.id }),
+    );
+    const created = await asCaller({ userId: colleague }, () =>
+      service.create(
+        goldenCreateBody(f, { opportunityId: opportunity!.id }),
+        `dept-${randomUUID()}`,
+      ),
+    );
+    const [row] = await db
+      .select({ departmentId: quotations.departmentId })
+      .from(quotations)
+      .where(eq(quotations.id, created.id));
+    expect(row!.departmentId).toBe(departmentId);
+    return { id: created.id, versionId: created.currentVersionId, departmentId };
+  }
+
+  const ids = async () => (await listRows()).map((q) => q.id);
+  const edit = async (q: { id: string; versionId: string }) =>
+    service.updateDraft(q.id, q.versionId, {
+      expectedVersion: await rowVersionOf(q.id, q.versionId),
+      discount: GOLDEN_DISCOUNT,
+    });
+
+  it('department reads and edits the department quotations; own stays out; list, detail and capability agree', async () => {
+    const theirs = await colleagueQuotation();
+    current.departmentId = theirs.departmentId;
+
+    // Sales' own reach (the default): out of view everywhere.
+    expect(await ids()).not.toContain(theirs.id);
+    expect(await statusOf(service.detail(theirs.id))).toBe(404);
+
+    // Department read only: visible, still not editable (quotation.draft stays own).
+    current.grants = new Map([...grantsOf('sales'), ['quotation.read', 'department']]);
+    expect(await ids()).toContain(theirs.id);
+    expect((await service.detail(theirs.id)).capabilities.canEdit).toBe(false);
+    expect(await statusOf(edit(theirs))).toBe(403);
+
+    // Department drafting too: the capability and the command both pass on the stored department.
+    current.grants = new Map([
+      ...grantsOf('sales'),
+      ['quotation.read', 'department'],
+      ['quotation.draft', 'department'],
+    ]);
+    expect((await service.detail(theirs.id)).capabilities.canEdit).toBe(true);
+    await expect(edit(theirs)).resolves.toMatchObject({ version: expect.any(Number) });
+
+    // Another department reaches nothing of it.
+    current.departmentId = (await createDepartment(appPool, scopeA)).departmentId;
+    expect(await ids()).not.toContain(theirs.id);
+    expect(await statusOf(service.detail(theirs.id))).toBe(404);
+
+    // Founder-style `all` reads it whatever the department.
+    current.grants = grantsOf('founder');
+    expect(await ids()).toContain(theirs.id);
+  });
+
+  it('assigned reads only the quotation the caller holds a live follow-up on, read only', async () => {
+    const theirs = await colleagueQuotation();
+    const other = await colleagueQuotation();
+    const [followUp] = await withTx(db, scopeA, systemActor('test'), (tx) =>
+      tx
+        .insert(activities)
+        .values({
+          ...scopeA,
+          kind: 'call',
+          subject: 'Walk the client through the quotation',
+          quotationId: theirs.id,
+          assigneeUserId: f.ownerUserId,
+          dueAt: new Date('2026-12-01T05:00:00Z'),
+        })
+        .returning({ id: activities.id }),
+    );
+    // `assigned` is not in the `Scope` union the role constant uses; the principal holds AccessScope.
+    const assigned = 'assigned' as AccessScope as Scope;
+    current.grants = new Map([...grantsOf('sales'), ['quotation.read', assigned]]);
+    const listed = await ids();
+    expect(listed).toContain(theirs.id);
+    expect(listed).not.toContain(other.id);
+    expect((await service.detail(theirs.id)).capabilities).toEqual({
+      canEdit: false,
+      canRevise: false,
+    });
+    expect(await statusOf(service.detail(other.id))).toBe(404);
+    expect(await statusOf(edit(theirs))).toBe(403);
+
+    // A cancelled follow-up hands nothing over.
+    await withTx(db, scopeA, systemActor('test'), (tx) =>
+      tx
+        .update(activities)
+        .set({ cancelledAt: new Date('2026-11-20T05:00:00Z') })
+        .where(eq(activities.id, followUp!.id)),
+    );
+    expect(await ids()).not.toContain(theirs.id);
+    expect(await statusOf(service.detail(theirs.id))).toBe(404);
   });
 });

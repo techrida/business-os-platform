@@ -500,11 +500,21 @@ describe('separation of duties (done check 10)', () => {
   it('422 NO_ELIGIBLE_APPROVER when the only accountant is the drafter; nothing is submitted', async () => {
     const id = await draftManual();
     roles.accountant = [U.acc];
+    // The notice goes to the tenant's live admin.roles.write holders, as the engine reads them (here a Founder-made
+    // grant for management too), not to a list fixed in code.
+    const holders = vi
+      .spyOn(approvals, 'blockedNoticeRoles')
+      .mockResolvedValue(['founder', 'management']);
+    const notifyRole = vi.mocked(notify.notifyRole);
+    notifyRole.mockClear();
     try {
       const err = await submit(id).catch((e: unknown) => e);
       expect(statusOf(err)).toBe(422);
       expect(responseOf(err)).toMatchObject({ code: 'NO_ELIGIBLE_APPROVER' });
+      expect(holders).toHaveBeenCalledWith(scopeA.tenantId);
+      expect(notifyRole.mock.calls.map((c) => c[1])).toEqual(['founder', 'management']);
     } finally {
+      holders.mockRestore();
       resetRoles();
     }
     const row = await invoiceRow(id);

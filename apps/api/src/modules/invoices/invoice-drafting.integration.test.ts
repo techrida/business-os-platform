@@ -43,6 +43,7 @@ import type { CurrencyEnabledService } from '../../platform/settings/currency-en
 import type { SettingsService } from '../../platform/settings/settings.service';
 import { LedgerService } from '../ledger/ledger.service';
 import {
+  seedOtherStaffUser,
   seedQuotationFixture,
   type QuotationFixture,
   type QuotationFixtureDb,
@@ -70,28 +71,36 @@ let issuing: InvoiceIssueService;
 
 const grantsOf = (role: RoleKey) =>
   new Map(Object.entries(DEFAULT_ROLE_PERMISSIONS[role])) as Map<Permission, Scope>;
-const current: { role: RoleKey; scope: TxScope | null; grants?: Map<Permission, Scope> } = {
+const current: {
+  role: RoleKey;
+  scope: TxScope | null;
+  grants?: Map<Permission, Scope>;
+  /** Who calls: the fixture's user unless a test switches to someone else. */
+  userId?: string | undefined;
+  departmentId?: string | null;
+} = {
   role: 'accountant',
   scope: null,
 };
+const callerId = () => current.userId ?? f.ownerUserId;
 const scopeNow = (): TxScope => current.scope ?? scopeA;
 
 const principalNow = (): Principal => ({
-  userId: f.ownerUserId,
-  zitadelUserId: `z-${f.ownerUserId}`,
+  userId: callerId(),
+  zitadelUserId: `z-${callerId()}`,
   ...scopeNow(),
   orgKind: 'staff',
   partyId: null,
   idpOrgId: 'unused',
   roles: [],
-  departmentId: null,
+  departmentId: current.departmentId ?? null,
   status: 'active',
   grants: current.grants ?? grantsOf(current.role),
 });
 const caller = {
   current: () => ({
     scope: scopeNow(),
-    actor: { kind: 'user' as const, id: f.ownerUserId, correlationId: 'test-corr' },
+    actor: { kind: 'user' as const, id: callerId(), correlationId: 'test-corr' },
     principal: principalNow(),
   }),
 } as unknown as InvoiceCaller;
@@ -269,6 +278,8 @@ beforeEach(() => {
   current.role = 'accountant';
   current.scope = null;
   delete current.grants;
+  current.userId = undefined;
+  current.departmentId = null;
 });
 
 describe('manual invoice (done check 1, golden case)', () => {
@@ -605,5 +616,64 @@ describe('list and cross-entity isolation', () => {
     await expect(
       drafting.draftFromSchedule({ scheduleLineId: so.finalId }, key()),
     ).rejects.toBeInstanceOf(NotFoundException);
+  });
+});
+
+describe('saved reach on invoices (U20a phase 2)', () => {
+  const ids = (rows: readonly { id: string }[]) => rows.map((r) => r.id);
+  const narrowed = (edits: readonly [Permission, Scope][]) =>
+    new Map<Permission, Scope>([...grantsOf('accountant'), ...edits]);
+
+  it('own and department read only the invoices the caller drafted: list, summary and detail agree', async () => {
+    const other = await seedOtherStaffUser(db, f);
+    const mine = await drafting.draftManual(manualBody(), key());
+    current.userId = other;
+    const theirs = await drafting.draftManual(manualBody(), key());
+    current.userId = undefined;
+
+    // Invoices carry no department, so `department` reaches exactly what `own` reaches.
+    for (const reach of ['own', 'department'] as const) {
+      current.grants = narrowed([['invoice.read', reach]]);
+      // A department of the caller's own, which no invoice carries.
+      current.departmentId = randomUUID();
+      const page = await drafting.list({});
+      expect(ids(page.rows), reach).toContain(mine.invoice.id);
+      expect(ids(page.rows), reach).not.toContain(theirs.invoice.id);
+      expect(page.total, reach).toBe(page.rows.length);
+      expect((await drafting.summary({})).total, reach).toBe(page.total);
+      expect((await drafting.detail(mine.invoice.id)).invoice.id).toBe(mine.invoice.id);
+      await expect(drafting.detail(theirs.invoice.id), reach).rejects.toMatchObject({
+        status: 404,
+      });
+    }
+
+    current.role = 'founder';
+    expect((await drafting.detail(theirs.invoice.id)).invoice.id).toBe(theirs.invoice.id);
+    expect(ids((await drafting.list({})).rows)).toContain(theirs.invoice.id);
+  });
+
+  it('own drafting starts drafts and discards only the caller own; another readable draft is 403, an unreadable one 404', async () => {
+    const other = await seedOtherStaffUser(db, f);
+    current.userId = other;
+    const theirs = await drafting.draftManual(manualBody(), key());
+    current.userId = undefined;
+    const discard = (d: typeof theirs) =>
+      drafting.discard(
+        d.invoice.id,
+        { expectedVersion: d.invoice.version, reason: 'Drafted twice' },
+        key(),
+      );
+
+    // A new draft is the caller's own, so an `own` drafting grant may start one.
+    current.grants = narrowed([['invoice.draft', 'own']]);
+    const mine = await drafting.draftManual(manualBody(), key());
+    await expect(discard(theirs)).rejects.toBeInstanceOf(ForbiddenException);
+    expect((await drafting.detail(theirs.invoice.id)).invoice.status).toBe('draft');
+    expect((await discard(mine)).invoice.status).toBe('discarded');
+
+    current.grants = narrowed([['invoice.read', 'own']]);
+    await expect(discard(theirs)).rejects.toMatchObject({ status: 404 });
+    delete current.grants;
+    expect((await drafting.detail(theirs.invoice.id)).invoice.status).toBe('draft');
   });
 });

@@ -103,6 +103,8 @@ const current: {
   scope: TxScope | null;
   /** Live grants an admin edited, instead of the role default (`as` clears it). */
   grants?: Map<Permission, Scope> | undefined;
+  /** The caller's membership department (`as` clears it). */
+  departmentId?: string | null;
 } = {
   userId: '',
   role: 'accountant',
@@ -112,6 +114,7 @@ const as = (userId: string, role: RoleKey) => {
   current.userId = userId;
   current.role = role;
   current.grants = undefined;
+  current.departmentId = null;
 };
 const scopeNow = (): TxScope => current.scope ?? scopeA;
 const principalNow = (): Principal => ({
@@ -122,7 +125,7 @@ const principalNow = (): Principal => ({
   partyId: null,
   idpOrgId: 'unused',
   roles: [current.role],
-  departmentId: null,
+  departmentId: current.departmentId ?? null,
   status: 'active',
   grants: current.grants ?? grantsOf(current.role),
 });
@@ -1244,5 +1247,84 @@ describe('purchase order pickers', () => {
     expect(await pickers.billable({ vendorId: po.vendorId, limit: 200 })).toEqual([]);
     as(U.fin, 'finance');
     expect(await pickers.forPaymentRequest({ vendorId: po.vendorId, limit: 200 })).toEqual([]);
+  });
+});
+
+describe('saved reach on bills (U20a phase 2)', () => {
+  const ids = (rows: readonly { id: string }[]) => rows.map((r) => r.id);
+  /** The accountant's role with some grants narrowed, the way Settings > Access saves them. */
+  const narrowed = (edits: readonly [Permission, Scope][]) =>
+    new Map<Permission, Scope>([...grantsOf('accountant'), ...edits]);
+  const enteredBy = async (userId: string) => {
+    const { rows } = await exec(
+      scopeA,
+      sql`SELECT count(*)::int AS n FROM app.vendor_bills
+          WHERE tenant_id = ${scopeA.tenantId} AND organization_id = ${scopeA.organizationId}
+            AND entered_by = ${userId}`,
+    );
+    return (rows[0] as { n: number }).n;
+  };
+
+  it('own and department read only the bills the caller entered: the list, its total and get agree', async () => {
+    as(U.acct, 'accountant');
+    const mine = await billWithoutPo(await doc());
+    as(U.acct2, 'accountant');
+    const theirs = await billWithoutPo(await doc());
+
+    // Bills carry no department, so `department` reaches what `own` reaches, whatever the caller's department.
+    for (const reach of ['own', 'department'] as const) {
+      as(U.acct, 'accountant');
+      current.grants = narrowed([['payables.bill.read', reach]]);
+      current.departmentId = deptA;
+      const page = await service.list({ ...PAGE });
+      expect(ids(page.rows), reach).toContain(mine.id);
+      expect(ids(page.rows), reach).not.toContain(theirs.id);
+      expect(page.total, reach).toBe(await enteredBy(U.acct));
+      expect((await service.get(mine.id)).id).toBe(mine.id);
+      expect((await httpErrorOf(service.get(theirs.id))).getStatus(), reach).toBe(404);
+    }
+  });
+
+  it('a Founder-style `all` reads every bill of the entity', async () => {
+    as(U.acct, 'accountant');
+    const mine = await billWithoutPo(await doc());
+    as(U.acct2, 'accountant');
+    const theirs = await billWithoutPo(await doc());
+    as(U.founder, 'founder');
+    const page = await service.list({ ...PAGE });
+    expect(ids(page.rows)).toEqual(expect.arrayContaining([mine.id, theirs.id]));
+    expect((await service.get(theirs.id)).id).toBe(theirs.id);
+  });
+
+  it('own bill entry creates and changes only the bills the caller entered; a readable bill of another is 403', async () => {
+    as(U.acct2, 'accountant');
+    const theirs = await billWithoutPo(await doc());
+    as(U.acct, 'accountant');
+    current.grants = narrowed([['payables.bill.enter', 'own']]);
+
+    // A new bill is the caller's own, so `own` may create it.
+    const mine = await billWithoutPo(await doc());
+    expect(mine.enteredBy).toBe(U.acct);
+    for (const write of [
+      () => service.discard(theirs.id, randomUUID()),
+      () => service.submit(theirs.id, randomUUID()),
+      () => service.match(theirs.id, randomUUID()),
+    ]) {
+      const e = await httpErrorOf(write());
+      expect(e).toBeInstanceOf(ForbiddenException);
+    }
+    expect((await service.get(theirs.id)).status).toBe('draft');
+    expect((await service.discard(mine.id, randomUUID())).status).toBe('discarded');
+  });
+
+  it('a command on a bill outside the read scope is a 404, as on get', async () => {
+    as(U.acct2, 'accountant');
+    const theirs = await billWithoutPo(await doc());
+    as(U.acct, 'accountant');
+    current.grants = narrowed([['payables.bill.read', 'own']]);
+    expect((await httpErrorOf(service.discard(theirs.id, randomUUID()))).getStatus()).toBe(404);
+    expect((await httpErrorOf(service.submit(theirs.id, randomUUID()))).getStatus()).toBe(404);
+    as(U.acct2, 'accountant');
+    expect((await service.get(theirs.id)).status).toBe('draft');
   });
 });
