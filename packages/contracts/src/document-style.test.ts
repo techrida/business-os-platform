@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest';
 import {
   contrastRatio,
   DEFAULT_DOCUMENT_STYLE,
+  DocumentFormatSnapshotSchema,
   deriveBrandPalette,
   DOCUMENT_LAYOUTS,
   DocumentStyleSnapshotSchema,
@@ -210,5 +211,37 @@ describe('snapshot readers (D30)', () => {
 
   it('refuses a snapshot with neither shape', () => {
     expect(DocumentStyleSnapshotSchema.safeParse(base).success).toBe(false);
+  });
+});
+
+describe('DocumentFormatSnapshotSchema', () => {
+  const printed = {
+    numberSystems: { NPR: 'south_asian', INR: 'south_asian', USD: 'international' },
+    dateFormat: 'dd MMM yyyy',
+    capturedAt: '2026-11-09T06:00:00.000Z',
+  };
+  const PNG = 'data:image/png;base64,iVBORw0KGgo=';
+
+  it('parses a format stored before logos were frozen, unchanged and without a logo', () => {
+    const parsed = DocumentFormatSnapshotSchema.parse(printed);
+    expect(parsed).toEqual(printed);
+    expect(parsed.logoDataUrl).toBeUndefined();
+  });
+
+  it('keeps a frozen logo, or an explicit null for none', () => {
+    expect(DocumentFormatSnapshotSchema.parse({ ...printed, logoDataUrl: PNG }).logoDataUrl).toBe(
+      PNG,
+    );
+    expect(
+      DocumentFormatSnapshotSchema.parse({ ...printed, logoDataUrl: null }).logoDataUrl,
+    ).toBeNull();
+  });
+
+  it.each([
+    ['an SVG', 'data:image/svg+xml;base64,PHN2Zz4='],
+    ['a URL', 'https://example.com/logo.png'],
+    ['an oversize image', `data:image/png;base64,${'A'.repeat(720_000)}`],
+  ])('refuses %s as the logo', (_name, logoDataUrl) => {
+    expect(DocumentFormatSnapshotSchema.safeParse({ ...printed, logoDataUrl }).success).toBe(false);
   });
 });

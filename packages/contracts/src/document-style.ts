@@ -306,12 +306,18 @@ export const DocumentStyleSnapshotSchema = z
 export type DocumentStyleSnapshot = z.infer<typeof DocumentStyleSnapshotSchema>;
 
 /**
- * The number grouping and date pattern a document was printed with. Invoices keep it on their first print so a copy
- * printed later looks the same; purchase orders print once and use the settings in force at that moment.
+ * The number grouping, date pattern and company logo a document was printed with. Invoices keep it on their first
+ * print so a copy printed later looks the same; purchase orders print once and use the settings in force at that
+ * moment.
  */
 export const DocumentFormatSnapshotSchema = z.strictObject({
   numberSystems: NumberSystemsSchema,
   dateFormat: DateFormatSchema,
+  /**
+   * The entity logo's bytes at the first print (U12), so changing or removing the logo never alters a copy. Null: no
+   * logo. Absent on documents printed before logos were frozen: they stay logo-less.
+   */
+  logoDataUrl: LogoDataUrlSchema.nullable().optional(),
   capturedAt: z.iso.datetime(),
 });
 export type DocumentFormatSnapshot = z.infer<typeof DocumentFormatSnapshotSchema>;
