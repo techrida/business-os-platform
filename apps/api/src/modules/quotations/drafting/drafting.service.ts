@@ -308,7 +308,7 @@ export class DraftingService {
     const priced = await this.pricing.priceVersion(
       tx,
       scope,
-      pricingWithAllowedCosts(pricingInputOf(body), mayCost, new Map()),
+      pricingWithAllowedCosts(pricingInputOf(body), mayCost, []),
     );
     const { number } = await this.numbering.issue(tx, QUOTATION_SERIES, now);
     const owned = { tenantId: scope.tenantId, organizationId: scope.organizationId };
@@ -534,8 +534,9 @@ export class DraftingService {
   }
 
   /**
-   * The lead behind a quotation (D35): its opportunity's parent lead. null when the opportunity has no lead (or is
-   * gone); undefined, so the key is left out, when the caller may not read that lead. The lead is read through
+   * The lead behind a quotation (D35): its opportunity's parent lead, only when the caller may read it. undefined,
+   * so the key is left out, when there is no lead (or the opportunity is gone) AND when the caller may not read it:
+   * "none" and "hidden" must look the same, or the difference would disclose a hidden lead. The lead is read through
    * scoped() and the same rule as the lead page (`crm.lead.read` with its scope on the lead's record, as
    * scopeWhereFor), so another owner's lead under `own` scope, and any lead of another entity, never appears.
    */
@@ -544,13 +545,13 @@ export class DraftingService {
     scope: TxScope,
     principal: Principal,
     opportunityId: string,
-  ): Promise<QuotationLead | null | undefined> {
+  ): Promise<QuotationLead | undefined> {
     const [opportunity] = await tx
       .select({ leadId: opportunities.leadId })
       .from(opportunities)
       .where(scoped(scope).where(opportunities, eq(opportunities.id, opportunityId)))
       .limit(1);
-    if (opportunity === undefined || opportunity.leadId === null) return null;
+    if (opportunity === undefined || opportunity.leadId === null) return undefined;
     const [lead] = await tx
       .select({ id: leads.id, name: leads.title })
       .from(leads)
@@ -646,14 +647,14 @@ export class DraftingService {
       await this.assertPaymentTerm(tx, scope.tenantId, patch.paymentTermId);
     }
 
-    // A drafter who may not read costs keeps the stored cost of each line number (the DTO the content was merged
-    // from is full, so a body that omits a line's cost must not wipe it) and cannot set one; the margin and the
-    // internal cost total are recomputed from those costs.
-    const storedCosts = new Map(saved.lines.map((l) => [l.lineNo, l.unitCost ?? null] as const));
+    // A drafter who may not read costs keeps the stored cost of each line (the DTO the content was merged from is
+    // full, so a body that omits a line's cost must not wipe it) and cannot set one, but only while the lines are
+    // structurally the stored ones: any add, remove, reorder or identity edit is refused (409) before a write. The
+    // margin and the internal cost total are recomputed from those costs. `saved.lines` is in line order.
     const priced = await this.pricing.priceVersion(
       tx,
       scope,
-      pricingWithAllowedCosts(pricingInputOf(content), canReadCost(principal), storedCosts),
+      pricingWithAllowedCosts(pricingInputOf(content), canReadCost(principal), saved.lines),
     );
     const owned = { tenantId: quotation.tenantId, organizationId: quotation.organizationId };
     await tx

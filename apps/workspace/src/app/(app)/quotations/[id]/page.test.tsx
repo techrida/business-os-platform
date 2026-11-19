@@ -655,13 +655,13 @@ describe('quotation detail page: linked records', () => {
     expect(html).toContain('Kathmandu &lt;expo&gt; lead');
   });
 
-  it.each([
-    ['no lead (null)', { lead: null }],
-    ['a lead the viewer may not read (absent)', {}],
-  ])('shows no lead row for %s', async (_name, over) => {
-    mocks.getQuotation.mockResolvedValue(detail(over));
-    const html = await render();
-    expect(linked(html)).toEqual([`/customers/${CUSTOMER}`, `/opportunities/${CUSTOMER}`]);
-    expect(html).not.toContain('/leads/');
-  });
+  it.each([['no lead, or one the viewer may not read (absent)', {}]])(
+    'shows no lead row for %s',
+    async (_name, over) => {
+      mocks.getQuotation.mockResolvedValue(detail(over));
+      const html = await render();
+      expect(linked(html)).toEqual([`/customers/${CUSTOMER}`, `/opportunities/${CUSTOMER}`]);
+      expect(html).not.toContain('/leads/');
+    },
+  );
 });

@@ -726,11 +726,11 @@ describe('QuotationDetailSchema', () => {
     ).toBe(false);
   });
 
-  it('tells a lead, no lead (null) and a lead the viewer may not read (absent) apart (D35)', () => {
+  it('carries a lead only when the viewer may read one; no lead and a hidden lead are both absent, never null (D35)', () => {
     const lead = { id: id(), name: 'Website redesign enquiry' };
     const withLead = QuotationDetailSchema.parse({ ...detail(), lead });
     expect(withLead.lead).toEqual(lead);
-    expect(QuotationDetailSchema.parse({ ...detail(), lead: null }).lead).toBeNull();
+    expect(QuotationDetailSchema.safeParse({ ...detail(), lead: null }).success).toBe(false);
     const hidden = QuotationDetailSchema.parse(detail());
     expect('lead' in hidden).toBe(false);
   });

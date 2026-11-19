@@ -462,10 +462,9 @@ describe('toQuotationDetail', () => {
     expect(dto.capabilities).toEqual({ canEdit: false, canRevise: true });
   });
 
-  it('carries the lead (D35): an object, null for none, and no key when the caller may not read it', () => {
+  it('carries the lead (D35): an object when readable, and no key otherwise (never null)', () => {
     const lead = { id: id(90), name: 'Website enquiry' };
     expect(toQuotationDetail({ ...detailParts(), lead }).lead).toEqual(lead);
-    expect(toQuotationDetail({ ...detailParts(), lead: null }).lead).toBeNull();
     expect('lead' in toQuotationDetail(detailParts())).toBe(false);
     expect(
       QuotationDetailSchema.safeParse(toQuotationDetail({ ...detailParts(), lead })).success,
