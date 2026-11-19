@@ -1,5 +1,6 @@
 import type { CustomerDto, OpportunityDto } from '@bos/contracts';
 
+import { companyLogo } from '@/app/(app)/customers/_lib/company-logo';
 import { Alert } from '@/components/ui/alert';
 import { Avatar } from '@/components/ui/avatar';
 import { FactList, type Fact } from '@/components/ui/panel';
@@ -39,9 +40,10 @@ export function ContextCard({
       ) : null}
       <div className={styles.identity}>
         <Avatar
-          name={customer?.legalName ?? ''}
+          {...(customer
+            ? companyLogo(customer)
+            : { name: '', shape: 'square' as const, fit: 'contain' as const })}
           size="large"
-          shape="circle"
           className={styles.customerAvatar}
         />
         <div>
