@@ -51,6 +51,7 @@ import {
   QuotationOwnerPolicy,
 } from '../quotation-owner.policy';
 import { GotenbergClient } from './gotenberg.client';
+import { NO_DOCUMENT_LOGO_RESOLVER } from './issuer';
 import {
   drizzleRenderStore,
   FAILED_RETRY_MS,
@@ -234,7 +235,10 @@ afterEach(async () => {
 // ---------------------------------------------------------------------------------------- helpers
 
 function makeSweeper(pdf: PdfRenderer): QuotationRenderSweeper {
-  return new QuotationRenderSweeper(store, runTx, documents, settings, pdf, () => new Date());
+  // No entity logo is set in these tests, so the logo resolver is never asked; the unit tests cover it.
+  return new QuotationRenderSweeper(store, runTx, documents, settings, pdf, () => new Date(), {
+    forScope: () => NO_DOCUMENT_LOGO_RESOLVER,
+  });
 }
 
 /** A tenant with its default entity, a tax code, a customer and (unless told not to) the issuing entity's settings. */
