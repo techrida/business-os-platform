@@ -6,9 +6,11 @@ import {
   discountAboveThreshold,
   emptyValues,
   milestoneAmount,
+  milestoneAmounts,
   milestoneDue,
   newLine,
   reconcileMilestone,
+  scheduleProgress,
   scheduleState,
   setMilestoneDueDate,
   submitBlocker,
@@ -41,19 +43,20 @@ describe('scheduleState', () => {
   it('is empty with no milestones (the payment term applies)', () => {
     expect(scheduleState([])).toEqual({ kind: 'empty' });
   });
-  it('is ok at exactly 100, using integer hundredths (33.33 + 33.33 + 33.34)', () => {
-    expect(scheduleState([m('a', '33.33'), m('b', '33.33'), m('c', '33.34')])).toEqual({
-      kind: 'ok',
-    });
+  it('is ok at exactly 100, using integer ten-thousandths', () => {
+    const rows = [m('a', '33.3333'), m('b', '33.3333'), m('c', '33.3334')];
+    expect(scheduleState(rows)).toEqual({ kind: 'ok' });
+    expect(scheduleProgress(rows)).toBe('100');
+    expect(scheduleState(rows.slice(0, 2))).toEqual({ kind: 'short', by: '33.3334' });
   });
   it('reports what is missing when short, and what is over when above', () => {
-    expect(scheduleState([m('a', '60'), m('b', '30')])).toEqual({ kind: 'short', by: '10.00' });
-    expect(scheduleState([m('a', '60'), m('b', '50')])).toEqual({ kind: 'over', by: '10.00' });
+    expect(scheduleState([m('a', '60'), m('b', '30')])).toEqual({ kind: 'short', by: '10' });
+    expect(scheduleState([m('a', '60'), m('b', '50')])).toEqual({ kind: 'over', by: '10' });
   });
   it('is invalid when a percent is not a number', () => {
     expect(scheduleState([m('a', '60'), m('b', 'abc')])).toEqual({ kind: 'invalid' });
   });
-  it.each(['-0.01', '100.01', '33.333', '000', '1e2'])(
+  it.each(['-0.01', '100.01', '33.33335', '000', '1e2'])(
     'rejects %s at the row boundary before checking the sum',
     (percent) => {
       expect(scheduleState([m('a', percent)])).toEqual({ kind: 'invalid' });
@@ -66,6 +69,17 @@ describe('scheduleState', () => {
 });
 
 describe('milestone reconciliation', () => {
+  it('puts the rounding remainder on the last milestone in a complete schedule', () => {
+    const rows = [m('a', '33.3333'), m('b', '33.3333'), m('c', '33.3334')];
+    expect(milestoneAmounts(rows, '100.00')).toEqual(['33.33', '33.33', '33.34']);
+    expect(milestoneAmounts(rows, '100.01')).toEqual(['33.34', '33.34', '33.33']);
+  });
+
+  it('keeps all shares non-negative when rounding exhausts a tiny total', () => {
+    const rows = ['a', 'b', 'c', 'd'].map((key) => m(key, '25'));
+    expect(milestoneAmounts(rows, '0.02')).toEqual(['0.01', '0.01', '0.00', '0.00']);
+  });
+
   it('derives an amount with half-up rounding and keeps both endpoints exact', () => {
     expect(reconcileMilestone('', { field: 'percent', value: '.50' }, '101.00')).toEqual({
       ok: true,
@@ -77,11 +91,11 @@ describe('milestone reconciliation', () => {
     expect(milestoneAmount('0', '9999999999999999.99')).toBe('0.00');
   });
 
-  it('rounds an amount edit to hundredths of a percent and derives the persisted amount', () => {
+  it('rounds an amount edit to four decimal places of a percent and derives the persisted amount', () => {
     const edit = (value: string) => reconcileMilestone('25', { field: 'amount', value }, '200.00');
-    expect(edit('0.01')).toEqual({ ok: true, percent: '0.01', amount: '0.02' });
-    expect(edit('200.00')).toEqual({ ok: true, percent: '100.00', amount: '200.00' });
-    expect(edit('0')).toEqual({ ok: true, percent: '0.00', amount: '0.00' });
+    expect(edit('0.01')).toEqual({ ok: true, percent: '0.005', amount: '0.01' });
+    expect(edit('200.00')).toEqual({ ok: true, percent: '100', amount: '200.00' });
+    expect(edit('0')).toEqual({ ok: true, percent: '0', amount: '0.00' });
     expect(edit('200.01')).toEqual({ ok: false, reason: 'above-total' });
   });
 
@@ -297,7 +311,7 @@ describe('editing a saved quotation', () => {
       ],
     });
     const amount = reconcileMilestone('30', { field: 'amount', value: '333.34' }, '1000.00');
-    const percent = reconcileMilestone('70', { field: 'percent', value: '66.67' }, '1000.00');
+    const percent = reconcileMilestone('70', { field: 'percent', value: '66.666' }, '1000.00');
     const date = setMilestoneDueDate('', '2028-02-29');
     if (!amount.ok || !percent.ok || !date.ok) throw new Error('Expected valid milestone edits');
     v.schedule = v.schedule.map((milestone, index) =>
@@ -312,8 +326,8 @@ describe('editing a saved quotation', () => {
       expectedVersion: 2,
     });
     expect(saved.paymentSchedule).toEqual([
-      { label: 'Advance', percent: '33.33', dueDescription: 'On order' },
-      { label: 'Delivery', percent: '66.67', dueDescription: '2028-02-29' },
+      { label: 'Advance', percent: '33.334', dueDescription: 'On order' },
+      { label: 'Delivery', percent: '66.666', dueDescription: '2028-02-29' },
     ]);
     const reopened = valuesFromVersion({
       ...version(),
@@ -323,14 +337,14 @@ describe('editing a saved quotation', () => {
       { kind: 'legacy', description: 'On order' },
       { kind: 'date', date: '2028-02-29' },
     ]);
-    expect(amount.amount).toBe('333.30');
+    expect(amount.amount).toBe('333.34');
     expect(reopened.schedule.map((row) => milestoneAmount(row.percent, '1000.00'))).toEqual([
-      '333.30',
-      '666.70',
+      '333.34',
+      '666.66',
     ]);
     expect(reopened.schedule.map((row) => milestoneAmount(row.percent, '2000.00'))).toEqual([
-      '666.60',
-      '1333.40',
+      '666.68',
+      '1333.32',
     ]);
   });
 });
