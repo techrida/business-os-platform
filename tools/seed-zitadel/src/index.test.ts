@@ -41,6 +41,7 @@ class FakeZitadel implements ZitadelApi {
   private readonly auths = new Map<string, { id: string; roles: string[] }>(); // user id -> auth
   private readonly members = new Map<string, string[]>(); // `${org}:${user}` -> roles
   private smtp = false;
+  private instancePasswordReset = false;
   /** Every call, changing or not, so a test can see what the seed asked for. */
   readonly authRequiredCalls: string[] = [];
   readonly noRegisterCalls: string[] = [];
@@ -94,6 +95,12 @@ class FakeZitadel implements ZitadelApi {
     this.mutate();
     for (const p of this.projects.values()) if (p.id === projectId) p.authRequired = true;
     return Promise.resolve();
+  }
+  ensureInstancePasswordReset(): Promise<boolean> {
+    if (this.instancePasswordReset) return Promise.resolve(false);
+    this.mutate();
+    this.instancePasswordReset = true;
+    return Promise.resolve(true);
   }
   ensureStaffLoginPolicy(orgId: string): Promise<boolean> {
     this.noRegisterCalls.push(orgId);

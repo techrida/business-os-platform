@@ -231,6 +231,33 @@ describe('ensureStaffLoginPolicy (management v1 login policy, CR-02)', () => {
   });
 });
 
+describe('ensureInstancePasswordReset', () => {
+  it('enables reset and hides unknown users without changing registration or MFA', async () => {
+    const policy = {
+      allowUsernamePassword: true,
+      allowRegister: true,
+      forceMfa: true,
+      hidePasswordReset: true,
+    };
+    const { transport, calls } = recording({ [ENDPOINTS.instanceLoginPolicy]: { policy } });
+    expect(await client(transport).ensureInstancePasswordReset()).toBe(true);
+    expect(calls.map(({ method }) => method)).toEqual(['GET', 'PUT']);
+    expect(calls[1]?.body).toEqual({
+      ...policy,
+      hidePasswordReset: false,
+      ignoreUnknownUsernames: true,
+    });
+  });
+
+  it('keeps a correctly configured policy as-is', async () => {
+    const { transport, calls } = recording({
+      [ENDPOINTS.instanceLoginPolicy]: { policy: { ignoreUnknownUsernames: true } },
+    });
+    expect(await client(transport).ensureInstancePasswordReset()).toBe(false);
+    expect(calls.map(({ method }) => method)).toEqual(['GET']);
+  });
+});
+
 describe('ensureSmtp', () => {
   const mailpit = {
     description: 'bos-dev-mailpit',
