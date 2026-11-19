@@ -29,7 +29,7 @@ import {
   type NotifyPort,
   type ScanJobData,
 } from './documents.ports';
-import { markVersionClean, stillQuarantined } from './mark-version-clean';
+import { GENERATED_ENGINE, markVersionClean, stillQuarantined } from './mark-version-clean';
 import { STORAGE_ADAPTER, type StorageAdapter } from './storage.adapter';
 
 /**
@@ -120,7 +120,12 @@ export class ScanProcessor extends WorkerHost {
         return applied ? 'scan_failed' : 'skipped';
       }
       // Outside the try: a database error here must fail the job, not turn into "file missing".
-      return (await this.markClean(scope, v, await this.engine())) ? 'clean' : 'skipped';
+      // Nothing was scanned on this run. A system-rendered file (D28) whose clean mark failed after its promote
+      // is finished as such, with the generated label, never with the scanner's name.
+      const applied = (await this.isGenerated(s, v))
+        ? await this.markClean(scope, v, { result: GENERATED_ENGINE, engine: GENERATED_ENGINE })
+        : await this.markClean(scope, v, { result: 'clean', engine: await this.engine() });
+      return applied ? 'clean' : 'skipped';
     }
 
     const stream = createReadStream(path);
@@ -128,7 +133,9 @@ export class ScanProcessor extends WorkerHost {
 
     if (result.verdict === 'clean') {
       await this.storage.promote(v.storageKey);
-      return (await this.markClean(scope, v, await this.engine())) ? 'clean' : 'skipped';
+      return (await this.markClean(scope, v, { result: 'clean', engine: await this.engine() }))
+        ? 'clean'
+        : 'skipped';
     }
 
     if (result.verdict === 'infected') {
@@ -221,6 +228,27 @@ export class ScanProcessor extends WorkerHost {
   }
 
   /**
+   * Was this version made by the system's generated path (createGenerated writes actorUuid(system) = null into both
+   * `documents.created_by` and `document_versions.uploaded_by`)? A user upload always records its user, and no
+   * request can set either column, so the pair is not client-controlled. Used only where nothing was scanned
+   * (the quarantine file is already promoted) to label the version honestly. Limit: a non-user actor that used the
+   * ordinary create + receiveContent path would carry the same null pair and be labelled generated here; only the
+   * label would differ (the bytes are in clean storage either way).
+   */
+  private async isGenerated(
+    s: ReturnType<typeof scoped>,
+    v: typeof documentVersions.$inferSelect,
+  ): Promise<boolean> {
+    if (v.uploadedBy !== null) return false;
+    const [doc] = await this.db
+      .select({ createdBy: documents.createdBy })
+      .from(documents)
+      .where(s.where(documents, eq(documents.id, v.documentId)))
+      .limit(1);
+    return doc !== undefined && doc.createdBy === null;
+  }
+
+  /**
    * Where the "file blocked" notice points. Emails may only link under /inbox/ or /memos/ (buildLink), so a
    * known memo gets its own page and anything else the inbox. A bad path here would make notifyUser throw
    * and roll back the whole infected transaction.
@@ -246,7 +274,7 @@ export class ScanProcessor extends WorkerHost {
   private async markClean(
     scope: { tenantId: string; organizationId: string },
     v: typeof documentVersions.$inferSelect,
-    engine: string,
+    how: { result: string; engine: string },
   ): Promise<boolean> {
     // Errors propagate on purpose: the job fails and BullMQ retries; swallowing one here once turned a
     // database blip into a permanent scan_failed.
@@ -254,8 +282,7 @@ export class ScanProcessor extends WorkerHost {
       this.db,
       scope,
       systemActor('docs.scan'),
-      async (tx) =>
-        (await markVersionClean(tx, this.audit, scope, v, { result: 'clean', engine })) !== null,
+      async (tx) => (await markVersionClean(tx, this.audit, scope, v, how)) !== null,
     );
     if (!applied) this.noOp(v.id, 'clean verdict');
     return applied;

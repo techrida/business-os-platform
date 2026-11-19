@@ -441,6 +441,42 @@ describe('generated documents', () => {
     expect(scannedEvents()).toHaveLength(1);
   });
 
+  it('promote succeeds but the clean mark fails: the fallback scan job finishes it as generated, not as a clamd scan, audited once', async () => {
+    const file = pdf();
+    const { created, who } = await generate(randomUUID(), file);
+    // The clean mark (its audit write) fails once: the transaction rolls back after the promote moved the bytes.
+    audit.record.mockRejectedValueOnce(new Error('database blip'));
+
+    await expect(service.receiveGenerated(created, file, who)).rejects.toThrow('database blip');
+
+    const mid = await versionRow(created.versionId);
+    expect(mid.status).toBe('quarantined');
+    expect(mid.scan_engine).toBeNull();
+    // The promote had already happened: the quarantine copy is gone, so the scan job has nothing to scan.
+    expect(existsSync(storage.quarantinePath(mid.storage_key))).toBe(false);
+    expect(queue.add).toHaveBeenCalledWith(
+      DOCS_SCAN_JOB,
+      scanJob(created.versionId),
+      expect.objectContaining({ jobId: created.versionId }),
+    );
+    const scansBefore = fakeClamd.scans.length;
+
+    expect(await processor.scanVersion(scanJob(created.versionId), true)).toBe('clean');
+
+    const r = await versionRow(created.versionId);
+    expect(r.status).toBe('clean');
+    expect(r.scan_engine).toBe('generated');
+    expect(r.current_version_id).toBe(created.versionId);
+    expect(fakeClamd.scans).toHaveLength(scansBefore);
+    // The rolled-back attempt wrote no audit row; the finishing run wrote one, labelled generated.
+    const committed = scannedEvents().slice(1);
+    expect(committed).toHaveLength(1);
+    expect(committed[0]).toMatchObject({
+      entityId: created.versionId,
+      meta: { result: 'generated', engine: 'generated' },
+    });
+  });
+
   it('an owner policy that refuses the system actor gives no document row', async () => {
     systemAllowed = false;
     const ownerId = randomUUID();
