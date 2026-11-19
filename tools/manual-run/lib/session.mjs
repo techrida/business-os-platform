@@ -102,6 +102,7 @@ export class Session {
   async abort(reason) {
     if (this.abortReason) return;
     this.abortReason = reason;
+    this.controller.abort(new StepFailure(reason));
     for (const c of [this.context, ...(this.windows ?? [])])
       await c.route('**/*', (route) => route.abort('aborted')).catch(() => {});
   }
@@ -301,8 +302,15 @@ export class Session {
     this.log(`  ! finding (${severity}): ${text}`);
   }
 
+  /**
+   * Keeps a value for later steps and writes state.json at once, so a stop right after a
+   * server-side change still leaves its record. Refused after the step timed out: a body that
+   * finishes late must not change the run's records.
+   */
   record(key, value) {
+    this.guard();
     this.state[key] = value;
+    this.persist?.();
     this.log(`  = ${key}: ${typeof value === 'string' ? value : JSON.stringify(value)}`);
   }
 

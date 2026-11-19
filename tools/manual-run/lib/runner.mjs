@@ -1,16 +1,18 @@
 // Runs one workflow's steps in order in one recorded browser context and writes the results.
 // A failed step gets a screenshot; the steps after it are BLOCKED; the next workflow still runs.
-import { existsSync, mkdirSync, renameSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, renameSync, rmSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 
 import { launch, newRecordedContext } from './browser.mjs';
-import { redactText, redactUrl } from './redact.mjs';
+import { onCleanup } from './cleanup.mjs';
+import { configuredOrigins } from './origins.mjs';
+import { redactDeep, redactText, redactUrl } from './redact.mjs';
 import { Session, StepFailure } from './session.mjs';
 import {
+  claimPath,
   placeResult,
   readJson,
   readState,
-  uniquePath,
   videoBase,
   writeJson,
   writeState,
@@ -51,6 +53,8 @@ export async function runWorkflow(cfg, workflow, opts = {}) {
   // starts empty (run.mjs refuses a full run over an earlier one unless --fresh).
   const partial = Boolean(opts.from || opts.only);
   const state = partial ? readState(stateFile, workflow.name) : {};
+  const meta = { appUrl: cfg.appUrl, runKey: cfg.runKey };
+  const persist = () => writeState(stateFile, workflow.name, state, meta);
   const log = (line) => console.log(`[${cfg.viewportText} ${workflow.name}] ${redactText(line)}`);
   const startedAt = now();
   const result = {
@@ -78,6 +82,29 @@ export async function runWorkflow(cfg, workflow, opts = {}) {
   const fromIndex = opts.from ? workflow.steps.findIndex((s) => s.id === opts.from) : 0;
   if (fromIndex < 0) throw new Error(`--from ${opts.from}: no such step in ${workflow.name}`);
 
+  // Ctrl-C or a kill: save the steps finished so far (saveResults is synchronous, so it completes
+  // before the process exits) and the records, then the browser closes.
+  let finalSaved = false;
+  let inFlight = null; // the step entry whose body is running
+  const unregister = onCleanup(() => {
+    if (finalSaved) return;
+    try {
+      persist();
+    } catch {
+      // the results below still record what ran
+    }
+    const steps = result.steps.map((st) =>
+      st === inFlight
+        ? { ...st, status: 'INTERRUPTED', error: 'The run was stopped while this step ran' }
+        : st,
+    );
+    saveResults(
+      cfg,
+      { ...result, steps, status: 'RUNNING', interrupted: true, wallMs: Date.now() - t0 },
+      earlier,
+    );
+  });
+
   let browser = null;
   let context = null;
   let session = null;
@@ -85,6 +112,7 @@ export async function runWorkflow(cfg, workflow, opts = {}) {
     browser = await launch(cfg, workflowOrigins(cfg, workflow), origins(cfg));
     context = await newRecordedContext(browser, cfg, videoTmp);
     session = await Session.open({ context, cfg, state, log });
+    session.persist = persist;
     session.dirs = { shots: shotsDir, files: filesDir, video: videoTmp };
     session.browser = browser;
   } catch (error) {
@@ -96,6 +124,8 @@ export async function runWorkflow(cfg, workflow, opts = {}) {
     await browser?.close().catch(() => {});
     result.finishedAt = now();
     result.wallMs = Date.now() - t0;
+    finalSaved = true;
+    unregister();
     return saveResults(cfg, result, earlier);
   }
 
@@ -130,11 +160,12 @@ export async function runWorkflow(cfg, workflow, opts = {}) {
       session.consoleErrors = [];
       const s0 = Date.now();
       log(`${step.id} — ${step.title}`);
+      inFlight = entry;
       try {
         await session.caption(`${step.id} — ${step.title}`);
         const limit = step.timeoutMs ?? cfg.stepTimeout;
         const message = `${step.id} did not finish within ${limit / 1000} s`;
-        const body = step.run(session);
+        const body = Promise.resolve().then(() => step.run(session));
         await withTimeout(body, limit, message, async () => {
           // Cancel the step, then give its current action a moment to fail before the screenshot.
           await session.abort(message);
@@ -150,12 +181,12 @@ export async function runWorkflow(cfg, workflow, opts = {}) {
             error.message.split('\n').slice(0, 6).join(' | '),
         );
         entry.url = redactUrl(session.page.url());
-        const shot = uniquePath(shotsDir, `${step.id}-FAIL`, '.png');
+        const shot = claimPath(shotsDir, `${step.id}-FAIL`, '.png');
         await session.page.screenshot({ path: shot, fullPage: true }).catch(() => {});
         entry.screenshot = shot;
         log(`FAIL ${step.id}: ${entry.error}`);
         await session.caption(`${step.id} FAILED — ${entry.error.slice(0, 160)}`);
-        await session.pause(2500);
+        await sleep(2500); // not session.pause: it refuses to wait once the step is cancelled
         blocked = step.id;
         result.status = 'FAIL';
       }
@@ -168,74 +199,118 @@ export async function runWorkflow(cfg, workflow, opts = {}) {
       for (const [k, v] of Object.entries(state))
         if (JSON.stringify(before[k]) !== JSON.stringify(v))
           entry.records[k] = typeof v === 'string' ? redactText(v) : v;
-      writeState(stateFile, workflow.name, state);
+      inFlight = null;
+      persist();
       log(`${entry.status} ${step.id} (${(entry.durationMs / 1000).toFixed(1)} s)`);
+      // Saved again as soon as the step ends, so a stop between steps loses nothing.
+      saveResults(cfg, { ...result, status: 'RUNNING', wallMs: Date.now() - t0 }, earlier);
     }
   } catch (error) {
     // A driver error outside a step (e.g. saving results): keep what ran and report it.
     result.status = 'FAIL';
     result.error = redactText(`Driver error: ${error.message.split('\n')[0]}`);
     log(result.error);
-  } finally {
-    // Videos are written when their page's context closes; always close, even after an error.
-    const pages = context.pages();
-    const extra = session.extraContexts ?? [];
-    await context.close().catch(() => {});
-    for (const c of extra) await c.context.close().catch(() => {});
-    await browser.close().catch(() => {});
-    // One suffix for the run's main video (sales.webm, then sales-2.webm …); extra pages and
-    // windows take it too and are themselves never overwritten.
-    const stem = path.basename(uniquePath(cfg.outDir, base, '.webm'), '.webm');
-    let n = 0;
-    for (const p of pages) {
-      const v = await p
-        .video()
-        ?.path()
-        .catch(() => null);
-      if (v && existsSync(v)) {
-        const dest =
-          n === 0
-            ? path.join(cfg.outDir, `${stem}.webm`)
-            : uniquePath(cfg.outDir, `${stem}-page${n + 1}`, '.webm');
-        renameSync(v, dest);
-        result.videos.push(dest);
-        n++;
-      }
-    }
-    for (const c of extra) {
-      for (const p of c.pages) {
-        const v = await p
-          .video()
-          ?.path()
-          .catch(() => null);
-        if (v && existsSync(v)) {
-          const dest = uniquePath(cfg.outDir, `${stem}-${c.name}`, '.webm');
-          renameSync(v, dest);
-          result.videos.push(dest);
-        }
-      }
-    }
   }
+  // The steps' results are saved before the browser closes and the videos are named: closing and
+  // renaming can fail or be interrupted, and must never cost the steps.
   result.finishedAt = now();
   result.wallMs = Date.now() - t0;
   if (result.status !== 'FAIL' && result.steps.every((s) => s.status === 'SKIPPED'))
     result.status = 'SKIPPED';
+  saveResults(cfg, result, earlier);
+  finalSaved = true;
+  unregister();
+  try {
+    await finishVideos(cfg, result, context, session, browser, base);
+  } catch (error) {
+    result.videoError = redactText(`Videos not finalised: ${error.message.split('\n')[0]}`);
+    log(result.videoError);
+  }
   return saveResults(cfg, result, earlier);
 }
 
-export function withTimeout(promise, ms, message, onTimeout = () => {}) {
-  let timer;
-  return Promise.race([
-    promise.finally(() => clearTimeout(timer)),
-    new Promise((_, reject) => {
-      timer = setTimeout(() => {
-        Promise.resolve()
-          .then(onTimeout)
-          .catch(() => {})
-          .finally(() => reject(new StepFailure(message)));
-      }, ms);
-    }),
-  ]);
+/**
+ * Videos are written when their page's context closes; always close, even after an error. One
+ * claimed name for the run's main video (sales.webm, then sales-2.webm …); extra pages and windows
+ * take its stem too, and no file is ever replaced.
+ */
+async function finishVideos(cfg, result, context, session, browser, base) {
+  const pages = context.pages();
+  const extra = session.extraContexts ?? [];
+  await context.close().catch(() => {});
+  for (const c of extra) await c.context.close().catch(() => {});
+  await browser.close().catch(() => {});
+  const failures = [];
+  // The main name is claimed when the first video arrives, so a run without one leaves no file.
+  let main = null;
+  const stem = () => {
+    main ??= claimPath(cfg.outDir, base, '.webm');
+    return path.basename(main, '.webm');
+  };
+  const place = async (page, claim) => {
+    const v = await page
+      .video()
+      ?.path()
+      .catch(() => null);
+    if (!v || !existsSync(v)) return false;
+    const dest = claim();
+    try {
+      renameSync(v, dest);
+      result.videos.push(dest);
+    } catch (error) {
+      failures.push(`${path.basename(v)}: ${error.message.split('\n')[0]}`);
+      rmSync(dest, { force: true }); // the empty claimed name
+    }
+    return true;
+  };
+  let n = 0;
+  for (const p of pages) {
+    const placed = await place(p, () =>
+      n === 0 ? (stem(), main) : claimPath(cfg.outDir, `${stem()}-page${n + 1}`, '.webm'),
+    );
+    if (placed) n++;
+  }
+  for (const c of extra)
+    for (const p of c.pages)
+      await place(p, () => claimPath(cfg.outDir, `${stem()}-${c.name}`, '.webm'));
+  // Only extra windows recorded: the main name was claimed for its stem but holds nothing.
+  if (main && !result.videos.includes(main)) rmSync(main, { force: true });
+  if (failures.length) throw new Error(`could not move ${failures.join('; ')} out of .video-tmp`);
+}
+
+/**
+ * Resolves or rejects like `body` if it settles within `ms`. Otherwise the step has FAILED at that
+ * moment, whatever the body does later: `onTimeout` runs (cancel the step, let its current action
+ * fail before the screenshot) and the promise rejects with the time-limit message, even if the body
+ * resolves meanwhile.
+ */
+export function withTimeout(body, ms, message, onTimeout = () => {}) {
+  return new Promise((resolve, reject) => {
+    let decided = false;
+    const timer = setTimeout(() => {
+      if (decided) return;
+      decided = true;
+      const failure = new StepFailure(message);
+      Promise.resolve()
+        .then(onTimeout)
+        .catch(() => {})
+        .finally(() => reject(failure));
+    }, ms);
+    body.then(
+      (value) => {
+        if (decided) return;
+        decided = true;
+        clearTimeout(timer);
+        resolve(value);
+      },
+      (error) => {
+        if (decided) return;
+        decided = true;
+        clearTimeout(timer);
+        reject(error);
+      },
+    );
+  });
 }
 
 /**
@@ -273,7 +348,8 @@ export function saveResults(cfg, workflowResult, earlier = null) {
     appUrl: cfg.appUrl,
     workflows: {},
   });
-  const merged = earlier ? mergeResumed(earlier, workflowResult) : workflowResult;
+  // Every string that reaches the files passes the redactor (secrets, URL queries); numbers stay.
+  const merged = redactDeep(earlier ? mergeResumed(earlier, workflowResult) : workflowResult);
   // An unfinished run stays RUNNING; if no later save replaces it, the run was interrupted.
   if (workflowResult.status === 'RUNNING') merged.status = 'RUNNING';
   placeResult(all, workflowResult.name, merged);
@@ -281,6 +357,31 @@ export function saveResults(cfg, workflowResult, earlier = null) {
   writeJson(file, all);
   writeFileSync(path.join(cfg.outDir, 'results.md'), renderMarkdown(all));
   return all.workflows[workflowResult.name];
+}
+
+/**
+ * The last resort when runWorkflow itself throws: the workflow is saved as FAIL with `message`.
+ * If this process already saved a result for it since `since` (ISO time), that entry keeps its
+ * steps and only gets the status and the error; otherwise a FAIL entry without steps is written.
+ */
+export function saveDriverError(cfg, name, message, since) {
+  const all = readJson(path.join(cfg.outDir, 'results.json'), { workflows: {} });
+  const mine = all.workflows?.[name];
+  const ours =
+    mine && String(mine.runId ?? '').endsWith(`-${process.pid}`) && (mine.startedAt ?? '') >= since;
+  const entry = ours
+    ? { ...mine, status: 'FAIL', error: message }
+    : {
+        name,
+        title: '',
+        status: 'FAIL',
+        steps: [],
+        videos: [],
+        wallMs: 0,
+        error: message,
+        runId: `${new Date().toISOString()}-${process.pid}`,
+      };
+  return saveResults(cfg, entry);
 }
 
 export function renderMarkdown(all) {

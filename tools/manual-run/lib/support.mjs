@@ -5,7 +5,7 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import https from 'node:https';
 import path from 'node:path';
 
-const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+import { abortableSleep } from './session.mjs';
 
 // ---- demo files ------------------------------------------------------------------------------
 // The demo kit (DEMO_FILES) is used when present; otherwise small, valid one-page PDFs are written
@@ -59,11 +59,22 @@ export function isPdf(bytes) {
 }
 
 // ---- Mailpit ---------------------------------------------------------------------------------
-function getJson(cfg, url) {
+/**
+ * GET JSON from Mailpit, verified against the stack CA only. `rejectUnauthorized` is explicit, so an
+ * inherited NODE_TLS_REJECT_UNAUTHORIZED cannot turn the check off. `signal` (the step's) ends it.
+ */
+export function getJson(cfg, url, signal) {
   return new Promise((resolve, reject) => {
+    if (signal?.aborted) return reject(signal.reason);
     const req = https.request(
       url,
-      { ca: readFileSync(cfg.caFile), agent: false, headers: { accept: 'application/json' } },
+      {
+        ca: readFileSync(cfg.caFile),
+        rejectUnauthorized: true,
+        agent: false,
+        headers: { accept: 'application/json' },
+        signal,
+      },
       (res) => {
         const chunks = [];
         res.on('data', (c) => chunks.push(c));
@@ -80,25 +91,29 @@ function getJson(cfg, url) {
       },
     );
     req.setTimeout(15000, () => req.destroy(new Error(`GET ${url} timed out`)));
-    req.on('error', reject);
+    req.on('error', (error) => reject(signal?.aborted ? signal.reason : error));
     req.end();
   });
 }
 
-/** Newest Mailpit message matching a search (Mailpit query syntax), waiting up to `timeoutMs`. */
-export async function findMail(cfg, query, timeoutMs = 60000) {
+/**
+ * Newest Mailpit message matching a search (Mailpit query syntax), waiting up to `timeoutMs`.
+ * Pass the step's `signal` (`s.signal`): a step that runs out of time stops polling at once.
+ */
+export async function findMail(cfg, query, timeoutMs = 60000, { signal } = {}) {
   const until = Date.now() + timeoutMs;
   for (;;) {
     const r = await getJson(
       cfg,
       `${cfg.mailUrl}/api/v1/search?query=${encodeURIComponent(query)}&limit=5`,
+      signal,
     );
     if (r.messages?.length) return r.messages[0];
     if (Date.now() > until) return null;
-    await sleep(3000);
+    await abortableSleep(3000, signal);
   }
 }
 
-export async function mailMessage(cfg, id) {
-  return getJson(cfg, `${cfg.mailUrl}/api/v1/message/${id}`);
+export async function mailMessage(cfg, id, { signal } = {}) {
+  return getJson(cfg, `${cfg.mailUrl}/api/v1/message/${id}`, signal);
 }

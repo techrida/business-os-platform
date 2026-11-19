@@ -120,6 +120,7 @@ for (const cfg of configs) {
       continue;
     }
     let r;
+    const since = new Date().toISOString();
     try {
       r = await runWorkflow(cfg, modules[name].workflow(cfg), {
         from: item.from,
@@ -127,21 +128,22 @@ for (const cfg of configs) {
       });
     } catch (error) {
       // runWorkflow saves its own failures; this is the last resort, so one workflow's crash
-      // never stops the others.
-      console.error(`[${viewport} ${name}] driver error: ${error.message.split('\n')[0]}`);
-      r = { name, title: '', status: 'FAIL', wallMs: 0, videos: [], steps: [] };
-      r.error = `Driver error: ${error.message.split('\n')[0]}`;
-      r.runId = `${new Date().toISOString()}-${process.pid}`;
+      // never stops the others. The steps it already saved are kept.
+      const message = redactText(`Driver error: ${error.message.split('\n')[0]}`);
+      console.error(`[${viewport} ${name}] ${message}`);
       try {
-        saveResults(cfg, r);
+        r = saveDriverError(cfg, name, message, since);
       } catch (saveError) {
-        console.error(`[${viewport} ${name}] results not saved: ${saveError.message}`);
+        console.error(`[${viewport} ${name}] results not saved: ${redactText(saveError.message)}`);
+        r = { name, title: '', status: 'FAIL', wallMs: 0, videos: [], steps: [], error: message };
       }
     }
     const counts = r.steps.reduce((m, s) => ({ ...m, [s.status]: (m[s.status] ?? 0) + 1 }), {});
     summary.push({ viewport, name, status: r.status, wallMs: r.wallMs, videos: r.videos, counts });
     console.log(
-      `[${viewport} ${name}] ${r.status} in ${(r.wallMs / 1000).toFixed(0)} s ${JSON.stringify(counts)} → ${r.videos.join(', ')}`,
+      redactText(
+        `[${viewport} ${name}] ${r.status} in ${(r.wallMs / 1000).toFixed(0)} s ${JSON.stringify(counts)} → ${r.videos.join(', ')}`,
+      ),
     );
   }
 }
