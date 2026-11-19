@@ -518,11 +518,17 @@ describe("the requester's own purchase orders", () => {
   });
 
   it("never lists another entity's orders", async () => {
+    const inA = await newPo();
     const inB = await newPo({ scope: scopeB });
     asRequester();
-    expect((await mine()).map((r) => r.id)).not.toContain(inB.id);
+    const idsA = (await mine()).map((r) => r.id);
+    expect(idsA).toContain(inA.id);
+    expect(idsA).not.toContain(inB.id);
+    // The file shares one database: entity B may hold this requester's orders from earlier tests too.
     current.scope = scopeB;
-    expect((await mine()).map((r) => r.id)).toEqual([inB.id]);
+    const idsB = (await mine()).map((r) => r.id);
+    expect(idsB).toContain(inB.id);
+    expect(idsB).not.toContain(inA.id);
   });
 });
 
