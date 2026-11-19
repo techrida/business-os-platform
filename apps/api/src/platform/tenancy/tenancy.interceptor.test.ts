@@ -163,8 +163,11 @@ let grantRequests: { organizationId: string; roles: readonly RoleKey[] }[];
 let tokenOrg: ResolvedIdpOrg;
 /** The user row the directory returns: its tenant, IdP org and memberships. */
 let row: { tenantId: string; idpOrgId: string; memberships: EntityMembership[] };
+/** The role cache epoch; a test moves it to model `AuthzService.invalidate`. */
+let epoch = '0:0';
 
 const roleCache = {
+  epoch: () => Promise.resolve(epoch),
   grantsFor: (_t: string, organizationId: string, roles: readonly RoleKey[]) => {
     grantRequests.push({ organizationId, roles });
     const merged = new Map<Permission, Scope>();
@@ -284,6 +287,7 @@ describe('TenancyInterceptor', () => {
 
   beforeEach(() => {
     now = 1_000_000;
+    epoch = '0:0';
     resolveCalls = 0;
     resolveArgs = [];
     status = 'active';
@@ -481,6 +485,13 @@ describe('TenancyInterceptor', () => {
     expect(resolveCalls).toBe(1);
 
     now += 1;
+    await run(interceptor, auth(finance), Routes, Routes.prototype.me);
+    expect(resolveCalls).toBe(2);
+  });
+
+  it('asks the directory again at once when access was changed (the role cache epoch moved)', async () => {
+    await run(interceptor, auth(finance), Routes, Routes.prototype.me);
+    epoch = '1:0';
     await run(interceptor, auth(finance), Routes, Routes.prototype.me);
     expect(resolveCalls).toBe(2);
   });

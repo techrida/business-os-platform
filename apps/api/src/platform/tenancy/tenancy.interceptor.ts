@@ -45,6 +45,8 @@ export const USER_CACHE_MAX = 10_000;
 interface UserCacheEntry {
   user: ResolvedUser;
   expiresAt: number;
+  /** The role cache epoch the user was read under; a different epoch means access was changed since. */
+  epoch: string;
 }
 
 const KNOWN_ROLES: ReadonlySet<string> = new Set(ROLE_KEYS);
@@ -292,8 +294,9 @@ export class TenancyInterceptor implements NestInterceptor {
     idpOrgId: string,
   ): Promise<ResolvedUser> {
     const key = `${tenantId}:${zitadelUserId}`;
+    const epoch = await this.roleCache.epoch(tenantId);
     const cached = this.users.get(key);
-    if (cached !== undefined && cached.expiresAt > this.now()) {
+    if (cached !== undefined && cached.expiresAt > this.now() && cached.epoch === epoch) {
       return cached.user;
     }
 
@@ -305,7 +308,7 @@ export class TenancyInterceptor implements NestInterceptor {
       if (oldest.done !== true) this.users.delete(oldest.value);
     }
     // Expiry counts from when the lookup finished, as in IdpOrgResolver.
-    this.users.set(key, { user, expiresAt: this.now() + USER_CACHE_TTL_MS });
+    this.users.set(key, { user, expiresAt: this.now() + USER_CACHE_TTL_MS, epoch });
     return user;
   }
 }
