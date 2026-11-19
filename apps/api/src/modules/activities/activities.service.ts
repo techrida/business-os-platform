@@ -1,5 +1,6 @@
-// ActivitiesService: the calls, meetings, emails, notes and tasks logged against a lead, opportunity, customer,
-// contact or quotation. Serves the NFRs:
+// ActivitiesService: the calls, meetings, emails and notes logged or planned against a lead, opportunity, customer,
+// contact or quotation. A planned one (a follow-up, D39) has a due time and is neither completed nor cancelled
+// (isPlannedSql); everything else that is not cancelled is logged. Serves the NFRs:
 // - "authorization is deny-by-default": an activity takes the permission of its subject (crm.lead.* for a lead, and
 //   so on). The route carries only @AnyAuthenticated because one static @Can cannot name "the subject's
 //   permission"; every read and write here asserts that permission on the subject row (404 for another entity or
@@ -30,7 +31,7 @@ import {
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
-import { and, desc, eq, inArray, or, type SQL } from 'drizzle-orm';
+import { and, asc, desc, eq, inArray, isNull, not, or, type SQL } from 'drizzle-orm';
 
 import { AuditService } from '../../platform/audit/audit.service';
 import { AuthzService, scopeWhereFor } from '../../platform/authz/authz.service';
@@ -43,6 +44,7 @@ import { leadRef } from '../leads/leads.service';
 import { opportunityRef } from '../opportunities/opportunities.service';
 import { ActivitiesCaller } from './activities.caller';
 import {
+  isPlannedSql,
   SUBJECT_PERMISSION,
   toActivityDto,
   type ListActivitiesQuery,
@@ -78,18 +80,31 @@ export class ActivitiesService {
       filters.push(this.readableSubjects(principal));
     }
     if (q.kind !== undefined) filters.push(eq(activities.kind, q.kind));
+    // A cancelled activity never lists. Planned ones are due earliest first; logged ones newest first.
+    filters.push(isNull(activities.cancelledAt));
+    if (q.status === 'planned') filters.push(isPlannedSql);
+    if (q.status === 'logged') filters.push(not(isPlannedSql));
+    const order =
+      q.status === 'planned'
+        ? [asc(activities.dueAt), asc(activities.id)]
+        : [desc(activities.occurredAt), desc(activities.id)];
     const rows = await this.db
       .select()
       .from(activities)
       .where(scoped(scope).where(activities, and(...filters)))
-      .orderBy(desc(activities.occurredAt), desc(activities.id))
+      .orderBy(...order)
       .limit(q.limit);
     return rows.map(toActivityDto);
   }
 
   // ------------------------------------------------------------------------------------------------- create
 
-  /** The Idempotency-Key is optional: the workspace form does not send one. */
+  /**
+   * A `dueAt` plans the activity (a follow-up, audited `activity.scheduled`); without one it is logged
+   * (`activity.created`). The caller is recorded as its creator. A planned activity without an assignee goes to
+   * the lead's owner when its subject is a lead, otherwise to the caller. The Idempotency-Key is optional: the
+   * workspace form does not send one.
+   */
   async create(body: CreateActivityBody, idempotencyKey?: string): Promise<ActivityDto> {
     const { scope, actor, principal } = this.caller.current();
     this.assertStaff(principal);
@@ -105,10 +120,15 @@ export class ActivitiesService {
     const subjectId = body[key]!;
     return withTx(this.db, scope, actor, async (tx) => {
       const run = async (): Promise<ActivityDto> => {
-        await this.assertSubject(tx, key, subjectId, 'write');
+        const ref = await this.assertSubject(tx, key, subjectId, 'write');
         if (body.assigneeUserId !== undefined) {
           await this.assertUser(tx, scope.tenantId, body.assigneeUserId);
         }
+        const planned = body.dueAt !== undefined;
+        // A lead without an owner falls back to the caller, so a follow-up always has someone to do it.
+        const defaultAssignee =
+          key === 'leadId' ? (ref.ownerUserId ?? principal.userId) : principal.userId;
+        const assigneeUserId = body.assigneeUserId ?? (planned ? defaultAssignee : null);
         const [row] = await tx
           .insert(activities)
           .values({
@@ -118,15 +138,20 @@ export class ActivitiesService {
             body: body.body ?? null,
             [key]: subjectId,
             dueAt: body.dueAt === undefined ? null : new Date(body.dueAt),
-            assigneeUserId: body.assigneeUserId ?? null,
+            assigneeUserId,
+            createdByUserId: principal.userId,
             ...(body.occurredAt === undefined ? {} : { occurredAt: new Date(body.occurredAt) }),
           })
           .returning();
         await this.audit.record(tx, {
-          action: 'activity.created',
+          action: planned ? 'activity.scheduled' : 'activity.created',
           entityType: 'activities',
           entityId: row!.id,
-          after: { kind: body.kind, [key]: subjectId },
+          after: {
+            kind: body.kind,
+            [key]: subjectId,
+            ...(planned ? { dueAt: body.dueAt, assigneeUserId } : {}),
+          },
         });
         return toActivityDto(row!);
       };
@@ -156,19 +181,21 @@ export class ActivitiesService {
   /**
    * The subject row must exist in this entity (tenant, for a customer or contact) and the caller must hold the
    * subject's read or write permission on it. Out of scope is a 404, never a 403, so a guessed id learns nothing.
+   * Returns the subject's ref (a lead's carries its owner).
    */
   private async assertSubject(
     q: Q,
     key: SubjectKey,
     id: string,
     mode: 'read' | 'write',
-  ): Promise<void> {
+  ): Promise<ResourceRef> {
     const { scope, principal } = this.caller.current();
     const ref = await this.refOf(q, key, id, scope, principal);
     if (ref === undefined) throw subjectNotFound();
     const action: Permission = SUBJECT_PERMISSION[key][mode];
     try {
       this.authz.assert(action, ref);
+      return ref;
     } catch (error) {
       const reason =
         error instanceof ForbiddenException
