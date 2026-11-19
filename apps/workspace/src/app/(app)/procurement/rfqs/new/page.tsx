@@ -2,7 +2,7 @@ import { randomUUID } from 'node:crypto';
 
 import type { Metadata } from 'next';
 import Link from 'next/link';
-import type { NumberSystem } from '@bos/locale';
+import type { NumberSystems } from '@bos/locale';
 
 import { isGuid } from '@/components/p2/customers/format';
 import { Alert } from '@/components/ui/alert';
@@ -10,7 +10,7 @@ import { LinkButton } from '@/components/ui/button';
 import { Breadcrumb, Page, PageHeader } from '@/components/ui/page';
 import { listPurchaseRequests, type PurchaseRequestListItem } from '@/lib/api-procurement';
 import { requireStaffSession } from '@/lib/bff';
-import { getNumberSystem } from '@/lib/display-settings';
+import { getNumberSystems } from '@/lib/display-settings';
 import { money, when } from '@/lib/kernel-format';
 
 import layout from '../../procurement.module.css';
@@ -25,10 +25,10 @@ export const dynamic = 'force-dynamic';
 
 const here = '/procurement/rfqs/new';
 
-function label(pr: PurchaseRequestListItem, numberSystem: NumberSystem): string {
+function label(pr: PurchaseRequestListItem, numberSystems: NumberSystems): string {
   const text =
     pr.justification.length > 60 ? `${pr.justification.slice(0, 60)}…` : pr.justification;
-  return `${pr.number ?? 'Not numbered'} · ${money(pr.estimatedTotal, pr.currency, numberSystem)} · needed ${when(pr.requiredBy, 'date')} · ${text}`;
+  return `${pr.number ?? 'Not numbered'} · ${money(pr.estimatedTotal, pr.currency, numberSystems)} · needed ${when(pr.requiredBy, 'date')} · ${text}`;
 }
 
 export default async function NewRfqPage({
@@ -37,7 +37,7 @@ export default async function NewRfqPage({
   searchParams: Promise<{ pr?: string | string[] }>;
 }) {
   const session = await requireStaffSession(here);
-  const numberSystem = await getNumberSystem();
+  const numberSystems = await getNumberSystems();
   const sp = await searchParams;
   const allowed = rfqGrants(session.roles).sourcing;
   const wanted = typeof sp.pr === 'string' && isGuid(sp.pr) ? sp.pr : '';
@@ -145,7 +145,7 @@ export default async function NewRfqPage({
       <RfqForm
         action={createRfqAction}
         idempotencyKey={randomUUID()}
-        requests={rows.map((pr) => ({ id: pr.id, label: label(pr, numberSystem) }))}
+        requests={rows.map((pr) => ({ id: pr.id, label: label(pr, numberSystems) }))}
         vendors={vendors.map((v) => ({ id: v.id, name: vendorName(v) }))}
         initialRequestId={rows.some((r) => r.id === wanted) ? wanted : ''}
         cancelHref="/procurement/rfqs"

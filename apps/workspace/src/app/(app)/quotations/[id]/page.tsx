@@ -1,5 +1,5 @@
 import type { QuotationDetail, QuotationVersionDto } from '@bos/contracts';
-import type { NumberSystem } from '@bos/locale';
+import type { NumberSystems } from '@bos/locale';
 import type { Metadata } from 'next';
 import Link from 'next/link';
 import { notFound } from 'next/navigation';
@@ -27,7 +27,7 @@ import { ViewDocument } from '@/components/ui/view-document';
 import { listSalesOrders } from '@/lib/api-billing';
 import { failureOf } from '@/lib/api-kernel';
 import { requireStaffSession } from '@/lib/bff';
-import { getNumberSystem } from '@/lib/display-settings';
+import { getNumberSystems } from '@/lib/display-settings';
 import { money, when } from '@/lib/kernel-format';
 
 export const metadata: Metadata = { title: 'Quotation · Business OS' };
@@ -85,10 +85,10 @@ function requestedRevision(
 
 function Totals({
   version,
-  numberSystem,
+  numberSystems,
 }: {
   version: QuotationVersionDto;
-  numberSystem: NumberSystem;
+  numberSystems: NumberSystems;
 }) {
   const { totals, currency } = version;
   const rows: { key: string; label: string; value: string; grand?: boolean }[] = [
@@ -114,7 +114,7 @@ function Totals({
             className={row.grand ? `${styles.totalRow} ${styles.grandTotal}` : styles.totalRow}
           >
             <dt className={styles.totalTerm}>{row.label}</dt>
-            <dd className={styles.totalValue}>{money(row.value, currency, numberSystem)}</dd>
+            <dd className={styles.totalValue}>{money(row.value, currency, numberSystems)}</dd>
           </div>
         ))}
       </dl>
@@ -125,7 +125,7 @@ function Totals({
 function revisionRows(
   detail: QuotationDetail,
   path: string,
-  numberSystem: NumberSystem,
+  numberSystems: NumberSystems,
 ): RevisionRow[] {
   const { quotation, versions } = detail;
   return [...versions]
@@ -136,7 +136,7 @@ function revisionRows(
       href: v.id === quotation.currentVersionId ? path : `${path}?rev=${encodeURIComponent(v.id)}`,
       current: v.id === quotation.currentVersionId,
       status: <QuotationStatusBadge status={v.status} rejectionSource={v.rejectionSource} />,
-      total: money(v.totals.total, v.currency, numberSystem),
+      total: money(v.totals.total, v.currency, numberSystems),
       validUntil: when(v.validUntil, 'date'),
       note: v.revisionReason,
       pdf: <Pdf quotation={quotation} version={v} />,
@@ -156,7 +156,7 @@ export default async function QuotationDetailPage({
   const path = `/quotations/${encodeURIComponent(id)}`;
   const session = await requireStaffSession(path);
 
-  const numberSystem = await getNumberSystem();
+  const numberSystems = await getNumberSystems();
   // Internal figures (unit cost, cost total, margin) are removed here, before the data reaches any
   // component: the rest of this function only ever sees `detail`, so they cannot leak into a client prop.
   const internalVisible = canSeeInternalFigures(session.roles);
@@ -286,7 +286,7 @@ export default async function QuotationDetailPage({
               <>
                 <span className={styles.headerFact}>Revision {current.revisionNo}</span>
                 <span className={styles.headerFact}>
-                  {money(current.totals.total, current.currency, numberSystem)}
+                  {money(current.totals.total, current.currency, numberSystems)}
                 </span>
               </>
             ) : null}
@@ -347,13 +347,13 @@ export default async function QuotationDetailPage({
                 actions={
                   <VersionDrawer
                     number={quotation.number}
-                    rows={revisionRows(detail, path, numberSystem)}
+                    rows={revisionRows(detail, path, numberSystems)}
                   />
                 }
               >
                 <FactList facts={facts} className={styles.facts ?? ''} />
               </Panel>
-              <Totals version={view} numberSystem={numberSystem} />
+              <Totals version={view} numberSystems={numberSystems} />
               {earlier ? (
                 <div className={styles.revisionBar}>
                   <span>Revision {view.revisionNo} contents</span>
@@ -368,7 +368,7 @@ export default async function QuotationDetailPage({
                 version={view}
                 internalVisible={internalVisible}
                 paymentTermsName={paymentTermsName}
-                numberSystem={numberSystem}
+                numberSystems={numberSystems}
               />
             </>
           ) : versions.length > 0 ? (
@@ -378,7 +378,7 @@ export default async function QuotationDetailPage({
               actions={
                 <VersionDrawer
                   number={quotation.number}
-                  rows={revisionRows(detail, path, numberSystem)}
+                  rows={revisionRows(detail, path, numberSystems)}
                 />
               }
             >

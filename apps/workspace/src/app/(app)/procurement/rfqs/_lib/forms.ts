@@ -3,6 +3,7 @@ import {
   CreateRfqBodySchema,
   RecommendQuotationBodySchema,
   RecordQuotationBodySchema,
+  richTextToPlain,
   ScoreQuotationBodySchema,
   type ConvertSubmissionBody,
   type CreateRfqBody,
@@ -184,6 +185,7 @@ const QUOTE_WORDS: Record<string, string> = {
   currency: 'Choose NPR, INR or USD.',
   deliveryDays: 'Enter the delivery time as a whole number of days, 0 to 3650.',
   warranty: 'The warranty can be up to 500 characters.',
+  // The schema counts the words of the terms (richTextToPlain), not their markup.
   terms: 'The terms can be up to 2000 characters.',
   quantity: 'Enter a quantity with up to 4 decimal places.',
   unitPrice: 'Enter a unit price of 0 or more, with up to 2 decimal places.',
@@ -222,7 +224,9 @@ export function parseQuoteValues(input: QuoteValues): ParsedQuote {
     currency: trim(input.currency),
     ...(days !== '' && errors.deliveryDays === undefined ? { deliveryDays: Number(days) } : {}),
     ...(trim(input.warranty) !== '' ? { warranty: trim(input.warranty) } : {}),
-    ...(trim(input.terms) !== '' ? { terms: trim(input.terms) } : {}),
+    // The terms are the editor's HTML (or older plain text): trimmed and sent as is, the API sanitises.
+    // A value without words (an empty paragraph) is the same as nothing typed.
+    ...(richTextToPlain(input.terms).trim() !== '' ? { terms: trim(input.terms) } : {}),
     lines,
   };
   const result =

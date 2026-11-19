@@ -8,7 +8,7 @@ import { Alert } from '@/components/ui/alert';
 import { Button } from '@/components/ui/button';
 import { ConfirmDialog, Dialog, DialogClose } from '@/components/ui/dialog';
 import { Field, Input, Select, Textarea } from '@/components/ui/field';
-import { useNumberSystem } from '@/components/ui/number-system-context';
+import { useNumberSystems } from '@/components/ui/number-system-context';
 import { Table, Td, Th } from '@/components/ui/table';
 
 import { newLine, type Currency, type LineValues } from './model';
@@ -208,7 +208,7 @@ export function LinesSection({
   onRemove: (key: string) => void;
   totals: ReactNode;
 }) {
-  const numberSystem = useNumberSystem();
+  const numberSystems = useNumberSystems();
   const addRef = useRef<HTMLButtonElement>(null);
   const atLimit = lines.length >= MAX_LINES;
   const codes = taxCodes ?? [];
@@ -279,13 +279,13 @@ export function LinesSection({
                   <Td align="end">
                     {line.quantity} {line.uom}
                   </Td>
-                  <Td align="end">{formatMoney(line.unitPrice, currency, { numberSystem })}</Td>
+                  <Td align="end">{formatMoney(line.unitPrice, currency, { numberSystems })}</Td>
                   <Td>{tax?.label ?? 'Current tax code'}</Td>
                   <Td align="end">
                     {amount === undefined ? (
                       <span aria-label="Amount unavailable">—</span>
                     ) : (
-                      formatMoney(amount, currency, { numberSystem })
+                      formatMoney(amount, currency, { numberSystems })
                     )}
                   </Td>
                   <Td>
