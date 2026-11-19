@@ -1,16 +1,26 @@
-import { OPPORTUNITY_STAGES, type OpportunityDto, type OpportunityStage } from '@bos/contracts';
+import {
+  DEFAULT_ROWS,
+  OPPORTUNITY_STAGES,
+  type OpportunityDto,
+  pageWindow,
+  ROWS_OPTIONS,
+} from '@bos/contracts';
 import type { Metadata } from 'next';
 import Link from 'next/link';
 import type { NumberSystem } from '@bos/locale';
 
 import { Board } from '@/components/p2/crm/board';
-import { listOpportunities } from '@/components/p2/crm/crm-api';
+import { ListFooter } from '@/components/p2/crm/list-footer';
+import {
+  listOpportunitiesPage,
+  type OpportunitiesPage,
+} from '@/components/p2/crm/opportunities-api';
 import { moneyOrNull } from '@/components/p2/crm/format';
 import { LoadProblem, StageBadge } from '@/components/p2/crm/server-bits';
-import { OpportunityFilters } from '@/components/p2/crm/stage-filter';
 import { boardColumns, groupByStage, stageLabel, userMoves } from '@/components/p2/crm/stages';
 import type { BoardColumnData } from '@/components/p2/crm/types';
 import { EmptyState } from '@/components/ui/empty-state';
+import { ResultCount } from '@/components/ui/filter-bar';
 import { Icon } from '@/components/ui/icon';
 import { Page, PageHeader } from '@/components/ui/page';
 import { StatCard } from '@/components/ui/stat-card';
@@ -18,35 +28,28 @@ import { CellTitle, Table, Td, Th } from '@/components/ui/table';
 import { failureOf } from '@/lib/api-kernel';
 import { requireStaffSession } from '@/lib/bff';
 import { getNumberSystem } from '@/lib/display-settings';
+import { userNames } from '@/lib/business-labels';
 import { when } from '@/lib/kernel-format';
+import {
+  activeFilterLabels,
+  clearFiltersHref,
+  hrefWith,
+  readList,
+  type RawParams,
+} from '@/lib/list-params';
+import type { Session } from '@/lib/session';
 
 import { moveOpportunityStageAction } from './actions';
+import { OpportunityFilters } from './filters';
 import styles from './opportunities.module.css';
 
 export const metadata: Metadata = { title: 'Opportunities · Business OS' };
 export const dynamic = 'force-dynamic';
 
-const LIMIT = 200;
-type Search = { view?: string | string[]; q?: string | string[]; stage?: string | string[] };
-
-const one = (v: string | string[] | undefined): string | undefined =>
-  typeof v === 'string' ? v : undefined;
-
-function href({
-  view,
-  q,
-  stages = [],
-}: {
-  view?: 'table' | 'board';
-  q?: string | undefined;
-  stages?: readonly OpportunityStage[];
-}) {
-  const params = new URLSearchParams();
-  if (view === 'board') params.set('view', view);
-  if (q) params.set('q', q);
-  for (const stage of stages) params.append('stage', stage);
-  return params.size > 0 ? `/opportunities?${params.toString()}` : '/opportunities';
-}
+const BOARD_LIMIT = 200;
+const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+const PATH = '/opportunities';
+const ROWS = { allowed: ROWS_OPTIONS, default: DEFAULT_ROWS };
 
 const stageOptions = OPPORTUNITY_STAGES.map((value) => ({
   value,
@@ -72,20 +75,38 @@ function columnsFor(items: OpportunityDto[], numberSystem: NumberSystem): BoardC
   }));
 }
 
-function PipelineSummary({ items }: { items: readonly OpportunityDto[] }) {
-  const counts = { active: 0, qualified: 0, negotiation: 0, on_hold: 0, won: 0 };
-  for (const { stage } of items) {
-    if (stage !== 'lost' && stage !== 'won' && stage !== 'on_hold') counts.active++;
-    if (
-      stage === 'qualified' ||
-      stage === 'negotiation' ||
-      stage === 'on_hold' ||
-      stage === 'won'
-    ) {
-      counts[stage]++;
-    }
-  }
+type Counts = {
+  active: number;
+  qualified: number;
+  negotiation: number;
+  on_hold: number;
+  won: number;
+};
 
+const ACTIVE_STAGES = OPPORTUNITY_STAGES.filter(
+  (stage) => stage !== 'lost' && stage !== 'won' && stage !== 'on_hold',
+);
+
+/** Counts come from the API's total (one cheap request per card), not from the rows on this page. */
+async function loadCounts(session: Session): Promise<Counts | null> {
+  const count = async (stage: readonly string[]) =>
+    (await listOpportunitiesPage(session, { stage, limit: 1 })).total;
+  try {
+    const [active, qualified, negotiation, on_hold, won] = await Promise.all([
+      count(ACTIVE_STAGES),
+      count(['qualified']),
+      count(['negotiation']),
+      count(['on_hold']),
+      count(['won']),
+    ]);
+    return { active, qualified, negotiation, on_hold, won };
+  } catch {
+    // The cards are a courtesy; the list below reports its own failure.
+    return null;
+  }
+}
+
+function PipelineSummary({ counts }: { counts: Counts }) {
   return (
     <section className={styles.metrics} aria-label="Pipeline summary">
       <StatCard label="Active pipeline" value={counts.active} icon="briefcase" />
@@ -100,30 +121,65 @@ function PipelineSummary({ items }: { items: readonly OpportunityDto[] }) {
 export default async function OpportunitiesPage({
   searchParams,
 }: {
-  searchParams: Promise<Search>;
+  searchParams: Promise<RawParams>;
 }) {
-  const session = await requireStaffSession('/opportunities');
+  const session = await requireStaffSession(PATH);
   const numberSystem = await getNumberSystem();
   const sp = await searchParams;
-  const view = one(sp.view) === 'board' ? 'board' : 'table';
-  const q = one(sp.q)?.trim().slice(0, 100) || undefined;
-  const requestedStages = new Set(Array.isArray(sp.stage) ? sp.stage : [sp.stage]);
-  const stages = OPPORTUNITY_STAGES.filter((stage) => requestedStages.has(stage));
-  const hasStageFilter = view === 'table' && stages.length > 0;
-  const filtered = q !== undefined || hasStageFilter;
+  const names = await userNames(session);
+  const ownerOptions = [...names]
+    .map(([value, label]) => ({ value, label }))
+    .sort((a, b) => a.label.localeCompare(b.label));
 
-  let items: OpportunityDto[] | null = null;
+  const view = readList(sp, { search: false, single: { view: ['table', 'board'] } }).single.view;
+  const board = view === 'board';
+  // Without the user directory there is no owner control, so an owner param is not applied either.
+  const spec = {
+    multi: { stage: OPPORTUNITY_STAGES, owner: ownerOptions.length > 0 ? UUID : [] },
+    rows: ROWS,
+  } as const;
+  const state = readList(sp, spec);
+  // The board has no stage filter: its columns are the stages.
+  const stages = board ? [] : state.multi.stage;
+  const owners = state.multi.owner;
+  const { q } = state;
+  const filtered = q !== undefined || stages.length > 0 || owners.length > 0;
+  const filters = { ...(q !== undefined ? { q } : {}), stage: stages, owner: owners };
+
+  let result: OpportunitiesPage | null = null;
+  let pageInfo = pageWindow(board ? 1 : state.page, board ? BOARD_LIMIT : state.rows);
   let problem: { message: string; status: number } | null = null;
   try {
-    items = await listOpportunities(session, {
-      ...(q !== undefined ? { q } : {}),
-      ...(hasStageFilter ? { stage: stages } : {}),
-      limit: LIMIT,
+    result = await listOpportunitiesPage(session, {
+      ...filters,
+      limit: pageInfo.limit,
+      offset: pageInfo.offset,
     });
+    pageInfo = pageWindow(pageInfo.page, pageInfo.limit, result.total);
+    if (result.items.length === 0 && result.total > 0) {
+      // The URL named a page past the end: show the last one instead of an empty table.
+      result = await listOpportunitiesPage(session, {
+        ...filters,
+        limit: pageInfo.limit,
+        offset: pageInfo.offset,
+      });
+    }
   } catch (err) {
     const f = failureOf(err);
     problem = { message: f.message, status: f.status };
   }
+  const items = result?.items ?? null;
+  const total = result?.total ?? 0;
+  const counts = !filtered && problem === null ? await loadCounts(session) : null;
+  const viewHref = (next: 'table' | 'board') =>
+    hrefWith(PATH, sp, { view: next === 'board' ? 'board' : null, page: null });
+  const hiding = activeFilterLabels(
+    { q, multi: { stage: stages, owner: owners }, single: {} },
+    {
+      stage: { label: 'Stage', format: (v) => stageLabel('opportunity', v) },
+      owner: { label: 'Owner', format: (v) => names.get(v) ?? 'Selected owner' },
+    },
+  );
 
   return (
     <Page>
@@ -132,25 +188,35 @@ export default async function OpportunitiesPage({
         description="Track qualified deals from discovery through quotation and close."
       />
 
-      {items !== null && items.length < LIMIT && !filtered ? (
-        <PipelineSummary items={items} />
-      ) : null}
+      {counts !== null ? <PipelineSummary counts={counts} /> : null}
 
       <div className={styles.toolbar}>
-        <OpportunityFilters view={view} query={q ?? ''} selection={stages} options={stageOptions} />
+        <OpportunityFilters
+          view={board ? 'board' : 'table'}
+          rows={state.rows}
+          stages={stages}
+          owners={owners}
+          stageOptions={stageOptions}
+          ownerOptions={ownerOptions}
+        />
         <nav aria-label="View" className={styles.views}>
-          <Link href={href({ q, stages })} aria-current={view === 'table' ? 'page' : undefined}>
+          <Link href={viewHref('table')} aria-current={board ? undefined : 'page'}>
             <Icon name="list-checks" size={16} />
             Table
           </Link>
-          <Link
-            href={href({ view: 'board', q, stages })}
-            aria-current={view === 'board' ? 'page' : undefined}
-          >
+          <Link href={viewHref('board')} aria-current={board ? 'page' : undefined}>
             <Icon name="kanban" size={16} />
             Board
           </Link>
         </nav>
+        {items !== null ? (
+          <ResultCount
+            shown={items.length}
+            total={total}
+            noun="opportunity"
+            plural="opportunities"
+          />
+        ) : null}
       </div>
 
       {problem !== null ? (
@@ -158,28 +224,22 @@ export default async function OpportunitiesPage({
           status={problem.status}
           message={problem.message}
           what="opportunities"
-          reloadHref={href({ view, q, stages })}
+          reloadHref={hrefWith(PATH, sp, { page: state.page > 1 ? state.page : null })}
         />
       ) : items !== null && items.length === 0 ? (
         filtered ? (
           <EmptyState
             title="No opportunities match"
-            action={
-              hasStageFilter ? (
-                <Link href={href({ q })}>Clear stages</Link>
-              ) : (
-                <Link href={href({ view, stages })}>Clear search</Link>
-              )
-            }
+            action={<Link href={clearFiltersHref(PATH, sp, spec)}>Clear filters</Link>}
           >
-            {hasStageFilter ? 'Try fewer words or another stage.' : 'Try fewer or different words.'}
+            Nothing matches {hiding.join(', ')}.
           </EmptyState>
         ) : (
           <EmptyState title="No opportunities yet">
             Convert a Qualified lead and its opportunity appears here.
           </EmptyState>
         )
-      ) : items !== null && view === 'board' ? (
+      ) : items !== null && board ? (
         <Board
           columns={columnsFor(items, numberSystem)}
           action={moveOpportunityStageAction}
@@ -243,20 +303,25 @@ export default async function OpportunitiesPage({
               </tr>
             ))}
           </tbody>
-          <tfoot>
-            <tr>
-              <Td colSpan={6} className={styles.tableSummary}>
-                {items.length >= LIMIT ? `Showing the first ${LIMIT}` : `Showing ${items.length}`}{' '}
-                {items.length === 1 ? 'opportunity' : 'opportunities'}
-              </Td>
-            </tr>
-          </tfoot>
         </Table>
       ) : null}
 
-      {items !== null && view === 'board' && items.length >= LIMIT ? (
+      {items !== null && items.length > 0 && !board ? (
+        <ListFooter
+          label="Opportunity pages"
+          pathname={PATH}
+          params={sp}
+          pageInfo={pageInfo}
+          total={total}
+          noun="opportunity"
+          plural="opportunities"
+          rowsOptions={ROWS_OPTIONS}
+        />
+      ) : null}
+
+      {items !== null && board && total > BOARD_LIMIT ? (
         <p className={styles.quiet}>
-          Showing the first {LIMIT} opportunities. Search to narrow the board.
+          Showing the first {BOARD_LIMIT} of {total} opportunities. Search to narrow the board.
         </p>
       ) : null}
     </Page>

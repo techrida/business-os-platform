@@ -1,26 +1,45 @@
-import { ACTIVITY_KINDS, type ActivityDto, type ActivityKind } from '@bos/contracts';
+import {
+  ACTIVITY_KINDS,
+  type ActivityDto,
+  type ActivityKind,
+  DEFAULT_ROWS,
+  pageWindow,
+  ROWS_OPTIONS,
+} from '@bos/contracts';
 import type { Metadata } from 'next';
 import Link from 'next/link';
 
-import { listActivities } from '@/components/p2/crm/crm-api';
+import { type ActivitiesPage, listActivitiesPage } from '@/components/p2/crm/activities-api';
+import { ListFooter } from '@/components/p2/crm/list-footer';
 import { ALL_KINDS, LoadProblem } from '@/components/p2/crm/server-bits';
 import { Badge } from '@/components/ui/badge';
-import { Button } from '@/components/ui/button';
 import { Card } from '@/components/ui/card';
 import { EmptyState } from '@/components/ui/empty-state';
-import { Field, Select } from '@/components/ui/field';
+import { ResultCount } from '@/components/ui/filter-bar';
 import { Page, PageHeader } from '@/components/ui/page';
 import { CellTitle, Table, Td, Th } from '@/components/ui/table';
 import { failureOf } from '@/lib/api-kernel';
 import { requireStaffSession } from '@/lib/bff';
 import { when } from '@/lib/kernel-format';
+import {
+  activeFilterLabels,
+  clearFiltersHref,
+  hrefWith,
+  readList,
+  type RawParams,
+} from '@/lib/list-params';
 
 import styles from './activities.module.css';
+import { ActivityFilters } from './filters';
 
 export const metadata: Metadata = { title: 'Activities · Business OS' };
 export const dynamic = 'force-dynamic';
 
-const LIMIT = 100;
+const PATH = '/activities';
+const SPEC = {
+  multi: { kind: ACTIVITY_KINDS },
+  rows: { allowed: ROWS_OPTIONS, default: DEFAULT_ROWS },
+} as const;
 const KIND_LABELS = new Map(ALL_KINDS.map(({ value, label }) => [value, label]));
 
 function ActivityRow({ activity }: { activity: ActivityDto }) {
@@ -66,23 +85,44 @@ function ActivityRow({ activity }: { activity: ActivityDto }) {
 export default async function ActivitiesPage({
   searchParams,
 }: {
-  searchParams: Promise<{ kind?: string | string[] }>;
+  searchParams: Promise<RawParams>;
 }) {
-  const session = await requireStaffSession('/activities');
-  const { kind: kindParam } = await searchParams;
-  const kindValue = typeof kindParam === 'string' ? kindParam : undefined;
-  const kind = (ACTIVITY_KINDS as readonly string[]).includes(kindValue ?? '')
-    ? (kindValue as ActivityKind)
-    : undefined;
+  const session = await requireStaffSession(PATH);
+  const sp = await searchParams;
+  const state = readList(sp, SPEC);
+  const kinds = state.multi.kind as ActivityKind[];
+  const { q } = state;
+  const filtered = q !== undefined || kinds.length > 0;
+  const filters = { ...(q !== undefined ? { q } : {}), kind: kinds };
 
-  let items: ActivityDto[] = [];
+  let result: ActivitiesPage | null = null;
+  let pageInfo = pageWindow(state.page, state.rows);
   let problem: { message: string; status: number } | null = null;
   try {
-    items = await listActivities(session, { ...(kind ? { kind } : {}), limit: LIMIT });
+    result = await listActivitiesPage(session, {
+      ...filters,
+      limit: pageInfo.limit,
+      offset: pageInfo.offset,
+    });
+    pageInfo = pageWindow(pageInfo.page, pageInfo.limit, result.total);
+    if (result.items.length === 0 && result.total > 0) {
+      // The URL named a page past the end: show the last one instead of an empty table.
+      result = await listActivitiesPage(session, {
+        ...filters,
+        limit: pageInfo.limit,
+        offset: pageInfo.offset,
+      });
+    }
   } catch (err) {
     const f = failureOf(err);
     problem = { message: f.message, status: f.status };
   }
+  const items = result?.items ?? [];
+  const total = result?.total ?? 0;
+  const hiding = activeFilterLabels(
+    { q, multi: { kind: kinds }, single: {} },
+    { kind: { label: 'Type', format: (v) => KIND_LABELS.get(v as ActivityKind) ?? v } },
+  );
 
   return (
     <Page>
@@ -94,47 +134,35 @@ export default async function ActivitiesPage({
       <section aria-labelledby="activity-list" className={styles.list}>
         <div className={styles.toolbar}>
           <h2 id="activity-list">Recent activity</h2>
-          <form
-            method="get"
-            action="/activities"
-            className={styles.filters}
-            role="search"
-            aria-label="Filter activities"
-          >
-            <Field label="Type" className={styles.typeField ?? ''}>
-              {(c) => (
-                <Select name="kind" defaultValue={kind ?? ''} {...c}>
-                  <option value="">All types</option>
-                  {ALL_KINDS.map((k) => (
-                    <option key={k.value} value={k.value}>
-                      {k.label}
-                    </option>
-                  ))}
-                </Select>
-              )}
-            </Field>
-            <Button type="submit" variant="secondary">
-              Apply
-            </Button>
-          </form>
+          <div className={styles.filters}>
+            <ActivityFilters rows={state.rows} kinds={kinds} kindOptions={ALL_KINDS} />
+            {problem === null ? (
+              <ResultCount shown={items.length} total={total} noun="activity" plural="activities" />
+            ) : null}
+          </div>
         </div>
         {problem !== null ? (
           <LoadProblem
             status={problem.status}
             message={problem.message}
             what="activities"
-            reloadHref={kind ? `/activities?kind=${kind}` : '/activities'}
+            reloadHref={hrefWith(PATH, sp, { page: state.page > 1 ? state.page : null })}
           />
         ) : items.length === 0 ? (
-          <EmptyState title="No activity yet" headingLevel={3} icon="inbox">
-            {kind ? (
-              <>
-                Nothing of this type yet. <Link href="/activities">Show all types</Link>.
-              </>
-            ) : (
-              'Log an activity from a lead or an opportunity to see it here.'
-            )}
-          </EmptyState>
+          filtered ? (
+            <EmptyState
+              title="No activities match"
+              headingLevel={3}
+              icon="inbox"
+              action={<Link href={clearFiltersHref(PATH, sp, SPEC)}>Clear filters</Link>}
+            >
+              Nothing matches {hiding.join(', ')}.
+            </EmptyState>
+          ) : (
+            <EmptyState title="No activity yet" headingLevel={3} icon="inbox">
+              Log an activity from a lead or an opportunity to see it here.
+            </EmptyState>
+          )
         ) : (
           <Card className={styles.results}>
             <Table caption="Recent activities" minWidth={560} className={styles.table ?? ''}>
@@ -152,11 +180,16 @@ export default async function ActivitiesPage({
                 ))}
               </tbody>
             </Table>
-            <p className={styles.footer}>
-              {items.length >= LIMIT
-                ? `Showing the latest ${LIMIT} activities. Filter by type to narrow the list.`
-                : `Showing ${items.length} ${items.length === 1 ? 'activity' : 'activities'}`}
-            </p>
+            <ListFooter
+              label="Activity pages"
+              pathname={PATH}
+              params={sp}
+              pageInfo={pageInfo}
+              total={total}
+              noun="activity"
+              plural="activities"
+              rowsOptions={ROWS_OPTIONS}
+            />
           </Card>
         )}
       </section>

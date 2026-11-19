@@ -21,7 +21,7 @@ import {
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
-import { and, desc, eq, ilike, inArray, or, type SQL } from 'drizzle-orm';
+import { and, desc, eq, inArray, type SQL } from 'drizzle-orm';
 
 import { AuditService } from '../../platform/audit/audit.service';
 import { AuthzService, scopeWhereFor } from '../../platform/authz/authz.service';
@@ -30,6 +30,7 @@ import { DB, type Db } from '../../platform/db/db.module';
 import { updateVersioned } from '../../platform/db/idempotency';
 import { withTx, type DbTransaction, type TxScope } from '../../platform/db/tx';
 import { readTxContext } from '../../platform/documents/tx-context';
+import { searchPage } from '../../platform/list';
 import { OpportunitiesCaller } from './opportunities.caller';
 import type { OpportunityLostHandler } from './opportunities.ports';
 import {
@@ -52,9 +53,6 @@ export function opportunityRef(row: OpportunityRow): ResourceRef {
     ownerUserId: row.ownerUserId,
   };
 }
-
-/** `%` and `_` are wildcards in LIKE; a search for "50%" must match the text, not everything. */
-const escapeLike = (s: string): string => s.replace(/[\\%_]/g, (c) => `\\${c}`);
 
 function refusalToException(kind: StageChangeRefusal, message: string): Error {
   switch (kind) {
@@ -92,24 +90,34 @@ export class OpportunitiesService {
 
   // -------------------------------------------------------------------------------------------------- read
 
-  async list(q: ListOpportunitiesQuery): Promise<OpportunityDto[]> {
+  async list(q: ListOpportunitiesQuery): Promise<{ items: OpportunityDto[]; total: number }> {
     const { scope, principal } = this.caller.current();
+    // Scope first; every filter only narrows it.
     const filters: SQL[] = [scopeWhereFor(principal, opportunities, 'crm.opportunity.read')];
-    if (q.stage !== undefined) {
-      const stages = Array.isArray(q.stage) ? q.stage : [q.stage];
-      filters.push(inArray(opportunities.stage, stages));
+    if (q.stage !== undefined && q.stage.length > 0) {
+      filters.push(inArray(opportunities.stage, q.stage));
     }
-    if (q.q !== undefined) {
-      const pattern = `%${escapeLike(q.q)}%`;
-      filters.push(or(ilike(opportunities.name, pattern), ilike(opportunities.number, pattern))!);
+    if (q.owner !== undefined && q.owner.length > 0) {
+      filters.push(inArray(opportunities.ownerUserId, q.owner));
     }
-    const rows = await this.db
-      .select()
-      .from(opportunities)
-      .where(scoped(scope).where(opportunities, and(...filters)))
-      .orderBy(desc(opportunities.createdAt), desc(opportunities.id))
-      .limit(q.limit);
-    return rows.map(toOpportunityDto);
+    const { rows, total } = await searchPage(this.db, {
+      q: q.q,
+      columns: [opportunities.name, opportunities.number],
+      where: scoped(scope).where(opportunities, and(...filters)),
+      orderBy: [desc(opportunities.createdAt), desc(opportunities.id)],
+      limit: q.limit,
+      offset: q.offset,
+      rows: (tx, p) =>
+        tx
+          .select()
+          .from(opportunities)
+          .where(p.where)
+          .orderBy(...p.orderBy)
+          .limit(p.limit)
+          .offset(p.offset),
+      count: (tx, where) => tx.$count(opportunities, where),
+    });
+    return { items: rows.map(toOpportunityDto), total };
   }
 
   async get(id: string): Promise<OpportunityDto> {
