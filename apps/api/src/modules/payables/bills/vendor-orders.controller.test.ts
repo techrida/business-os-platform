@@ -1,6 +1,6 @@
 // Unit tests of the payables purchase order pickers (U18 #12, #13): the one grant each route needs, that the class
 // carries no any-signed-in-user marker, the query each parses, and that nothing but the parsed query reaches the
-// service. The service is a fake; its query runs on Postgres in vendor-orders.integration.test.ts.
+// service. The service is a fake; its query runs on Postgres in vendor-bills.integration.test.ts.
 import 'reflect-metadata';
 
 import { DEFAULT_ROLE_PERMISSIONS } from '@bos/contracts';
