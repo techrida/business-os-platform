@@ -30,6 +30,8 @@ import { Readable } from 'node:stream';
 import {
   ALLOWED_MIME,
   CreateDocumentBodySchema,
+  IMAGE_MIME,
+  isImageOwnerType,
   MAX_UPLOAD_BYTES,
   type CreateDocumentBody,
   type DocumentVersionDto,
@@ -89,6 +91,8 @@ type VersionRow = typeof documentVersions.$inferSelect;
 const Id = z.guid();
 /** The one refusal of issueLinkForOwner: the same body whether the document is missing, foreign or unclean. */
 const OWNER_LINK_NOT_FOUND = 'File not found';
+/** The one refusal of openImage: the same body whether the image is missing, foreign, removed or not clean yet. */
+const IMAGE_NOT_FOUND = 'Image not found';
 /** Anything that can run a SELECT: the pool-backed Db or an open transaction. */
 type Reader = Pick<Db, 'select'>;
 
@@ -200,7 +204,7 @@ export class DocumentsService {
     );
     // Before anything is written: a record that stopped taking attachments gets no row and no file.
     await this.assertCanAttach(who.scope, b.ownerType, b.ownerId, tx);
-    assertUploadAllowed(b);
+    assertUploadAllowed(b, this.owners.get(b.ownerType));
 
     const s = scoped(who.scope);
     const actor = actorUuid(who);
@@ -275,7 +279,7 @@ export class DocumentsService {
       { kind: 'system', id: who.actorId },
       tx,
     );
-    assertUploadAllowed(b);
+    assertUploadAllowed(b, this.owners.get(b.ownerType));
 
     const s = scoped(who.scope);
     const documentId = randomUUID();
@@ -335,6 +339,41 @@ export class DocumentsService {
   }
 
   /**
+   * Creates a document from bytes a background job holds but did NOT render itself (U12: the legacy-logo migrator
+   * moving a stored data URL into an `entity_logo` document), then receives them through the ordinary pipeline:
+   * quarantine, type check, sha256 and a queued docs.scan job. The scan is never skipped: these bytes came from a
+   * user once, so they are an upload, not a generated file (D28 does not apply).
+   *
+   * `who` must be a system actor (anything else is a 403 before anything is written). The create runs in its own
+   * `withTx` under that actor and asks the owner's `allowsSystemActor`, exactly like `createGenerated`, including
+   * the owner's type and size rules; it commits before the receive, which opens its own transactions.
+   * Returns the ids; the version is `quarantined` until the scan worker marks it clean.
+   *
+   * If the receive fails after the create committed (wrong type: the version ends `rejected`; queue down: it is
+   * back to `awaiting_content`), the live document stays behind and the error is thrown without its ids.
+   */
+  async createAndReceiveScanned(
+    owner: { ownerType: string; ownerId: string },
+    file: GeneratedFile,
+    who: { scope: TxScope; actor: Actor },
+  ): Promise<{ documentId: string; versionId: string }> {
+    if (who.actor.kind !== 'system') {
+      throw new ForbiddenException({ code: 'forbidden', reason: 'no_permission' });
+    }
+    const created = await withTx(this.db, who.scope, who.actor, (tx) =>
+      this.createGenerated(tx, owner, file),
+    );
+    await this.receiveInternal(
+      created.versionId,
+      Readable.from(file.bytes),
+      file.bytes.length,
+      { documentId: created.documentId, who },
+      { skipScan: false },
+    );
+    return created;
+  }
+
+  /**
    * Adds version N+1 to an existing document (status awaiting_content). Runs in the caller's transaction.
    * Allowed on top of any earlier version, in particular an infected or scan_failed one: that is the way out
    * of a bad attachment. `allClean` only looks at the newest version that was not rejected.
@@ -352,7 +391,8 @@ export class DocumentsService {
     await this.assertOwner(who.scope, doc.ownerType, doc.ownerId, 'documents.upload');
     await this.assertCanAttach(who.scope, doc.ownerType, doc.ownerId, tx, documentId);
     await this.loadDocument(tx, who.scope, documentId, true);
-    assertUploadAllowed(b);
+    // The owner's narrower rules too: an image document never takes a PDF as its version 2.
+    assertUploadAllowed(b, this.owners.get(doc.ownerType));
 
     const [top] = await tx
       .select({ latest: max(documentVersions.version) })
@@ -820,6 +860,65 @@ export class DocumentsService {
     }
   }
 
+  /**
+   * Opens an image (a company logo, a profile picture, a customer or vendor logo) for `GET /v1/images/:documentId`.
+   * Asks no permission: any signed-in staff principal of the tenant may see these (U12); the controller
+   * authenticates and passes the request's scope. The document must be live, of an image owner type, in the scope's
+   * tenant AND entity, and its newest version (by number, whatever its status) must be `clean` with an image type.
+   * Every refusal, including a file missing from storage, is the same 404 (never a 403), so the caller learns
+   * nothing about whether the document exists. `etag` is the version id, unquoted: the caller quotes it.
+   */
+  async openImage(
+    scope: TxScope,
+    documentId: string,
+  ): Promise<{ stream: Readable; mime: string; size: number; etag: string }> {
+    if (!Id.safeParse(documentId).success) throw new NotFoundException(IMAGE_NOT_FOUND);
+    const s = scoped(scope);
+    const [row] = await this.db
+      .select({
+        ownerType: documents.ownerType,
+        tenantId: documents.tenantId,
+        organizationId: documents.organizationId,
+        removedAt: documents.removedAt,
+        version: documentVersions,
+      })
+      .from(documents)
+      .innerJoin(documentVersions, eq(documentVersions.documentId, documents.id))
+      .where(
+        and(
+          s.where(documents, and(eq(documents.id, documentId), isNull(documents.removedAt))),
+          s.where(documentVersions),
+        ),
+      )
+      .orderBy(desc(documentVersions.version))
+      .limit(1);
+    // The query already scopes and filters; the same rules again here, so a query change cannot widen what is served.
+    if (
+      row === undefined ||
+      row.removedAt !== null ||
+      row.tenantId !== scope.tenantId ||
+      row.organizationId !== scope.organizationId ||
+      !isImageOwnerType(row.ownerType) ||
+      row.version.status !== 'clean' ||
+      row.version.detectedMime === null ||
+      !(IMAGE_MIME as readonly string[]).includes(row.version.detectedMime)
+    ) {
+      throw new NotFoundException(IMAGE_NOT_FOUND);
+    }
+    try {
+      const stream = await this.storage.openClean(row.version.storageKey);
+      return {
+        stream,
+        mime: row.version.detectedMime,
+        size: row.version.sizeBytes,
+        etag: row.version.id,
+      };
+    } catch (error) {
+      if (error instanceof StoredFileNotFoundError) throw new NotFoundException(IMAGE_NOT_FOUND);
+      throw error;
+    }
+  }
+
   // ------------------------------------------------------------------------------------ internals
 
   /** Signs a link to one version. Fails closed: no secret means no links, never an unsigned one. */
@@ -1055,15 +1154,24 @@ function uploadPermissionOf(policy: DocumentOwnerPolicy): Permission {
   return policy.uploadPermission ?? 'documents.upload';
 }
 
-/** The type and size rules for a declared upload, the same for a new document and a new version. */
-function assertUploadAllowed(b: { declaredMime: string; sizeBytes: number }): void {
-  if (!isAllowedMime(b.declaredMime)) {
+/**
+ * The type and size rules for a declared upload, the same for a new document and a new version. An owner's
+ * `allowedMime` and `maxBytes` only narrow the generic rules (images: PNG, JPEG, WebP up to 512 KiB).
+ */
+function assertUploadAllowed(
+  b: { declaredMime: string; sizeBytes: number },
+  policy?: Pick<DocumentOwnerPolicy, 'allowedMime' | 'maxBytes'>,
+): void {
+  const ownerMime = policy?.allowedMime;
+  if (!isAllowedMime(b.declaredMime) || (ownerMime && !ownerMime.includes(b.declaredMime))) {
+    const allowed = ownerMime ?? ALLOWED_MIME;
     throw new UnsupportedMediaTypeException(
-      `File type ${b.declaredMime} is not allowed. Allowed: ${ALLOWED_MIME.join(', ')}`,
+      `File type ${b.declaredMime} is not allowed. Allowed: ${allowed.join(', ')}`,
     );
   }
-  if (b.sizeBytes > MAX_UPLOAD_BYTES) {
-    throw new PayloadTooLargeException(`File is larger than ${MAX_UPLOAD_BYTES} bytes`);
+  const limit = Math.min(policy?.maxBytes ?? MAX_UPLOAD_BYTES, MAX_UPLOAD_BYTES);
+  if (b.sizeBytes > limit) {
+    throw new PayloadTooLargeException(`File is larger than ${limit} bytes`);
   }
 }
 
