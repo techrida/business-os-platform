@@ -28,6 +28,7 @@ export type ErrorCode =
   | 'forbidden'
   | 'not_found'
   | 'conflict'
+  | 'stale_access'
   | 'fx_rate_stale'
   | 'duplicate_pan_vat'
   | 'duplicate_found'
@@ -149,6 +150,7 @@ const GENERIC_MESSAGE: Record<ErrorCode, string> = {
   forbidden: 'Forbidden',
   not_found: 'Not found',
   conflict: 'Conflict',
+  stale_access: 'Access settings were changed by someone else. Reload to see the latest state.',
   fx_rate_stale: 'The exchange rate is too old',
   duplicate_pan_vat: 'Another customer already has this PAN/VAT number',
   duplicate_found: 'This looks like a record that already exists',
@@ -285,6 +287,7 @@ function isStepUp(exception: HttpException): boolean {
  * object carries still reads as plain `conflict`, so the body stays within what clients know.
  */
 const CONFLICT_CODES: readonly ErrorCode[] = [
+  'stale_access',
   'fx_rate_stale',
   'duplicate_pan_vat',
   'duplicate_found',
