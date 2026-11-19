@@ -551,13 +551,16 @@ describe('SalesOrdersService.confirmFromQuotation', () => {
 
 describe('SalesOrdersService.list and detail', () => {
   it('lists the order with its customer name, filters by status and customer, and parses as the UI does', async () => {
-    const detail = await confirm(await acceptedQuotation());
+    const quote = await acceptedQuotation();
+    const detail = await confirm(quote);
+    const [quoteRow] = await db.select().from(quotations).where(eq(quotations.id, quote.id));
     const all = (await service.list({})).rows.map((i) => SalesOrderListItemSchema.parse(i));
     expect(all.find((i) => i.id === detail.order.id)).toEqual({
       id: detail.order.id,
       number: detail.order.number,
       customerId: f.customerPartyId,
       customerName: 'Acme Pvt. Ltd.',
+      quotationNumber: quoteRow?.number,
       status: 'confirmed',
       currency: 'NPR',
       total: GOLDEN_TOTAL,

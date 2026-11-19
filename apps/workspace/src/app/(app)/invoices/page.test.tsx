@@ -13,12 +13,14 @@ const mocks = vi.hoisted(() => ({
   requireStaffSession: vi.fn(),
   listInvoicesPage: vi.fn(),
   getInvoicesSummary: vi.fn(),
+  getAging: vi.fn(),
 }));
 vi.mock('@/lib/bff', () => ({ requireStaffSession: mocks.requireStaffSession }));
 vi.mock('@/lib/api-billing', () => ({
   listInvoicesPage: mocks.listInvoicesPage,
   getInvoicesSummary: mocks.getInvoicesSummary,
 }));
+vi.mock('@/lib/api-receivables', () => ({ getAging: mocks.getAging }));
 // The filter toolbar is a client component that reads the router.
 vi.mock('next/navigation', () => ({
   useRouter: () => ({ push: vi.fn(), replace: vi.fn() }),
@@ -59,11 +61,26 @@ const SUMMARY = {
   ],
 };
 const page = (items: InvoiceListItem[], total = items.length) => ({ items, total });
+const BUCKETS = {
+  current: '0.00',
+  d1_30: '0.00',
+  d31_60: '0.00',
+  d61_90: '0.00',
+  d91_plus: '0.00',
+};
+const aging = (totals: { currency: 'NPR' | 'USD'; totalOpen: string }[]) => ({
+  asOf: '2026-11-20',
+  rows: [],
+  totals: totals.map((t) => ({ ...t, buckets: BUCKETS })),
+});
 
 beforeEach(() => {
   mocks.requireStaffSession.mockReset().mockResolvedValue({ accessToken: 't', roles: ['finance'] });
   mocks.listInvoicesPage.mockReset().mockResolvedValue(page([item()]));
   mocks.getInvoicesSummary.mockReset().mockResolvedValue(SUMMARY);
+  mocks.getAging
+    .mockReset()
+    .mockResolvedValue(aging([{ currency: 'NPR', totalOpen: '5295180.00' }]));
 });
 
 describe('invoice list', () => {
@@ -215,6 +232,7 @@ describe('invoice list', () => {
 
   it('still shows the table when only the counts fail', async () => {
     mocks.getInvoicesSummary.mockRejectedValue(new ApiError(500, 'boom'));
+    mocks.getAging.mockRejectedValue(new ApiError(500, 'boom'));
     const html = await render();
     expect(html).toContain('INV-2083/84-00001');
     expect(html).not.toContain('Invoice summary');
@@ -238,5 +256,90 @@ describe('invoice list', () => {
     const name = 'Long '.repeat(60).trim();
     mocks.listInvoicesPage.mockResolvedValue(page([item({ customerName: name })]));
     expect(await render()).toContain(name);
+  });
+});
+
+describe('outstanding balance card', () => {
+  it('shows the server-totalled open balance from the receivables aging, with the counts', async () => {
+    const html = await render();
+    expect(mocks.getAging).toHaveBeenCalledTimes(1);
+    expect(html).toContain('Outstanding');
+    expect(html).toContain('52,95,180');
+    expect(html).toContain('Not yet paid, all customers');
+    expect(html).toContain('Total invoices');
+  });
+
+  it('shows one card per currency and never adds currencies together', async () => {
+    mocks.getAging.mockResolvedValue(
+      aging([
+        { currency: 'NPR', totalOpen: '1000.00' },
+        { currency: 'USD', totalOpen: '250.50' },
+      ]),
+    );
+    const html = await render();
+    expect(html).toContain('Outstanding · NPR');
+    expect(html).toContain('Outstanding · USD');
+    expect(html).toContain('250.50');
+    expect(html).not.toContain('1,250.50');
+  });
+
+  it('is left out, without asking, for a role that cannot read receivables', async () => {
+    mocks.requireStaffSession.mockResolvedValue({ accessToken: 't', roles: ['sales'] });
+    const html = await render();
+    expect(mocks.getAging).not.toHaveBeenCalled();
+    expect(html).not.toContain('Outstanding');
+  });
+
+  it('is left out when the aging fails or has nothing open; the rest of the page stands', async () => {
+    mocks.getAging.mockRejectedValue(new ApiError(500, 'boom'));
+    let html = await render();
+    expect(html).not.toContain('Outstanding');
+    expect(html).toContain('Total invoices');
+    expect(html).toContain('INV-2083/84-00001');
+    mocks.getAging.mockResolvedValue(aging([]));
+    html = await render();
+    expect(html).not.toContain('Outstanding');
+  });
+
+  it('still shows when only the counts fail', async () => {
+    mocks.getInvoicesSummary.mockRejectedValue(new ApiError(500, 'boom'));
+    const html = await render();
+    expect(html).toContain('Outstanding');
+    expect(html).not.toContain('Total invoices');
+  });
+});
+
+describe('record payment row action', () => {
+  const RECORD = `href="/payments/new?customerId=${CUSTOMER}"`;
+
+  it('offers Record payment on an issued tax invoice when the filter selects owing states only', async () => {
+    mocks.requireStaffSession.mockResolvedValue({ accessToken: 't', roles: ['accountant'] });
+    const html = await render({ settlement: ['unpaid', 'overdue'] });
+    expect(html).toContain(RECORD);
+    expect(html).toContain('Record payment for INV-2083/84-00001');
+  });
+
+  it('offers nothing with no Payment filter, or one that includes settled invoices', async () => {
+    mocks.requireStaffSession.mockResolvedValue({ accessToken: 't', roles: ['accountant'] });
+    expect(await render()).not.toContain('Record payment');
+    expect(await render({ settlement: ['paid', 'overdue'] })).not.toContain('Record payment');
+  });
+
+  it('hides it from a role without payment.record', async () => {
+    mocks.requireStaffSession.mockResolvedValue({ accessToken: 't', roles: ['management'] });
+    const html = await render({ settlement: ['unpaid'] });
+    expect(html).toContain('INV-2083/84-00001');
+    expect(html).not.toContain('Record payment');
+  });
+
+  it('hides it on rows that open nothing to pay: drafts, proformas and credit notes', async () => {
+    mocks.listInvoicesPage.mockResolvedValue(
+      page([
+        item({ status: 'draft', number: null, issueDate: null }),
+        item({ id: OTHER, kind: 'proforma' }),
+        item({ id: '55555555-5555-4555-8555-555555555555', kind: 'credit_note' }),
+      ]),
+    );
+    expect(await render({ settlement: ['unpaid'] })).not.toContain('Record payment');
   });
 });

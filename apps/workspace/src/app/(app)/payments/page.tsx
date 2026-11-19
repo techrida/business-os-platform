@@ -17,6 +17,7 @@ import { Badge } from '@/components/ui/badge';
 import { LinkButton } from '@/components/ui/button';
 import { EmptyState } from '@/components/ui/empty-state';
 import { ResultCount } from '@/components/ui/filter-bar';
+import { Icon } from '@/components/ui/icon';
 import { Page, PageHeader } from '@/components/ui/page';
 import { StatCard } from '@/components/ui/stat-card';
 import { Table, Td, Th } from '@/components/ui/table';
@@ -56,18 +57,20 @@ function PaymentRow({
   numberSystems: NumberSystems;
 }) {
   const meta = paymentStatusMeta(item.status);
+  const href = `/payments/${encodeURIComponent(item.id)}`;
+  // An unnumbered payment is named by who paid and when, so each row's action reads differently.
+  const name =
+    item.number ??
+    `payment of ${money(item.amount, item.currency, numberSystems)} from ${item.customerName} received ${when(item.receivedOn, 'date')}`;
   return (
     <tr>
       <Td nowrap>
-        <Link href={`/payments/${encodeURIComponent(item.id)}`} className={styles.number}>
+        <Link href={href} className={styles.number}>
           {item.number ?? 'Not yet numbered'}
         </Link>
       </Td>
       <Td>
         <span className={styles.customer}>{item.customerName}</span>
-      </Td>
-      <Td nowrap>
-        <Badge tone={meta.tone}>{meta.label}</Badge>
       </Td>
       <Td>{methodLabel(item.method)}</Td>
       <Td align="end" nowrap>
@@ -82,6 +85,14 @@ function PaymentRow({
       </Td>
       <Td nowrap>
         <time dateTime={item.receivedOn}>{when(item.receivedOn, 'date')}</time>
+      </Td>
+      <Td nowrap className={styles.statusColumn}>
+        <Badge tone={meta.tone}>{meta.label}</Badge>
+      </Td>
+      <Td nowrap className={styles.actionColumn}>
+        <Link href={href} className={styles.rowAction} aria-label={`View ${name}`}>
+          <Icon name="chevron-right" size={20} />
+        </Link>
       </Td>
     </tr>
   );
@@ -221,16 +232,17 @@ export default async function PaymentsPage({
         )
       ) : items !== null ? (
         <div className={layout.results}>
-          <Table caption="Payments" minWidth={860}>
+          <Table caption="Payments" minWidth={960} className={styles.list ?? ''}>
             <thead>
               <tr>
                 <Th>Receipt</Th>
                 <Th>Customer</Th>
-                <Th>Status</Th>
                 <Th>Method</Th>
                 <Th align="end">Amount received</Th>
                 <Th align="end">Not yet allocated</Th>
                 <Th>Received on</Th>
+                <Th className={styles.statusColumn}>Status</Th>
+                <Th className={styles.actionColumn}>Action</Th>
               </tr>
             </thead>
             <tbody>

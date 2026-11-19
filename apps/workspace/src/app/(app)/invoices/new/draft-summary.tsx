@@ -1,6 +1,6 @@
 'use client';
 
-import type { Currency } from '@bos/contracts';
+import type { Currency, Discount } from '@bos/contracts';
 import { Dec, formatMoney } from '@bos/locale';
 
 import { Button } from '@/components/ui/button';
@@ -16,11 +16,14 @@ export function DraftSummary({
   customer,
   currency,
   lines,
+  discount,
   pending,
 }: {
   customer: string | undefined;
   currency: Currency;
   lines: readonly LineValues[];
+  /** The document discount as entered. Shown as typed; the server works out its amount when the draft is saved. */
+  discount?: Discount | undefined;
   pending: boolean;
 }) {
   const numberSystems = useNumberSystems();
@@ -33,6 +36,12 @@ export function DraftSummary({
     : null;
   const subtotal = details?.reduce((total, line) => total.plus(line.gross), new Dec(0));
   const amount = (value: Dec) => formatMoney(value.toFixed(2), currency, { numberSystems });
+  const discountText =
+    discount === undefined
+      ? null
+      : discount.mode === 'pct'
+        ? `${discount.value}%`
+        : formatMoney(discount.value, currency, { numberSystems });
 
   return (
     <div className={styles.summaryArea}>
@@ -41,7 +50,17 @@ export function DraftSummary({
           <dt>Subtotal before tax</dt>
           <dd>{subtotal ? amount(subtotal) : '—'}</dd>
         </dl>
-        <p>Tax and final totals are calculated when the draft is saved.</p>
+        {discountText !== null ? (
+          <dl className={styles.minor}>
+            <dt>Discount</dt>
+            <dd>{discountText}</dd>
+          </dl>
+        ) : null}
+        <p>
+          {discountText !== null
+            ? 'The discount, tax and final totals are calculated when the draft is saved.'
+            : 'Tax and final totals are calculated when the draft is saved.'}
+        </p>
       </div>
       <Dialog
         size="large"
@@ -107,6 +126,11 @@ export function DraftSummary({
           <p className={styles.previewTotal}>
             Subtotal before tax <strong>{subtotal ? amount(subtotal) : '—'}</strong>
           </p>
+          {discountText !== null ? (
+            <p className={styles.previewTotal}>
+              Discount <strong>{discountText}</strong>
+            </p>
+          ) : null}
         </div>
       </Dialog>
     </div>

@@ -421,6 +421,11 @@ export class InvoiceDraftingService {
         periods,
       ),
     );
+    if (!(Number(priced.columns.total) > 0)) {
+      throw badRequest(
+        'The invoice total must be above zero: a discount cannot take the whole amount',
+      );
+    }
     const id = await this.insertInvoice(tx, scope, actor, priced, {
       kind: draft.kind,
       customerPartyId: draft.customerId,
