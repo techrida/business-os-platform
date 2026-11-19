@@ -7,7 +7,7 @@
 import {
   CUSTOMER_VIEW_FORBIDDEN_WORDS,
   DEFAULT_DOCUMENT_STYLE,
-  EMPTY_COMPANY_PROFILE,
+  EMPTY_SNAPSHOT_COMPANY_PROFILE,
   PortalDisplaySchema,
   type PortalDisplay,
 } from '@bos/contracts';
@@ -123,7 +123,7 @@ const LIVE_CURRENCIES = ['NPR', 'USD'];
 /** A stored document_style as the render job freezes it, with the given number and date fields. */
 const snapshotWith = (fields: Record<string, unknown>) => ({
   style: DEFAULT_DOCUMENT_STYLE,
-  profile: EMPTY_COMPANY_PROFILE,
+  profile: EMPTY_SNAPSHOT_COMPANY_PROFILE,
   capturedAt: '2026-11-08T10:00:00.000Z',
   ...fields,
 });

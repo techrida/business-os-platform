@@ -45,11 +45,9 @@
 }
 
 .identity .customerAvatar {
+  --avatar-size: 60px;
+
   flex: none;
-  width: 60px;
-  height: 60px;
-  background: var(--button-primary-bg);
-  color: var(--button-primary-text);
   font-size: var(--font-size-body-large);
 }
 

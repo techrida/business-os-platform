@@ -740,13 +740,15 @@ describe('0013 data move on a database that already has rows (K1-U1b)', () => {
     );
     expect(rp.rows).toEqual([
       { role_key: 'finance', permission: 'memo.read', scope: 'all' },
+      { role_key: 'finance', permission: 'profile.avatar.write', scope: 'own' },
       { role_key: 'portal', permission: 'memo.read', scope: 'customer_org' },
     ]);
     const av = await pool.query('SELECT version FROM app.authz_versions WHERE tenant_id = $1', [
       tenantId,
     ]);
-    // 5 after the 0013 dedupe, plus one when 0083 gives the tenant its Marketing rows.
-    expect(av.rows).toEqual([{ version: '6' }]);
+    // 5 after the 0013 dedupe, plus one when 0053 grants profile.avatar.write to the finance role in the seeded
+    // tenant, plus one when 0083 gives the tenant its Marketing rows.
+    expect(av.rows).toEqual([{ version: '7' }]);
     const ur = await pool.query(
       'SELECT user_id, role_key FROM app.user_roles WHERE tenant_id = $1 ORDER BY role_key',
       [tenantId],

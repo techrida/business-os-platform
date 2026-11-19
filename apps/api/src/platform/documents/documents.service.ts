@@ -5,6 +5,9 @@
 //
 // Removal is soft: documents.removed_at is set, nothing is deleted, and a removed document is invisible to every
 // read here. Only the owner's `canAttach` decides whether someone may add to or remove from its attachments.
+// One exception (U12): a picture (an image owner type: a company logo, a profile picture, a customer or vendor
+// logo) is never removed through `remove`, the HTTP path, because a pointer may still name it. The images module
+// moves the pointer and removes the previous picture itself (removeInTransaction, removeManagedImage).
 //
 // Lifecycle of one version (status):
 //   create()          -> awaiting_content   a row exists, no bytes yet
@@ -31,6 +34,8 @@ import { Readable } from 'node:stream';
 import {
   ALLOWED_MIME,
   CreateDocumentBodySchema,
+  IMAGE_MIME,
+  isImageOwnerType,
   MAX_UPLOAD_BYTES,
   type CreateDocumentBody,
   type DocumentVersionDto,
@@ -52,7 +57,7 @@ import {
   UnauthorizedException,
   UnsupportedMediaTypeException,
 } from '@nestjs/common';
-import { and, asc, desc, eq, isNull, max } from 'drizzle-orm';
+import { and, asc, desc, eq, inArray, isNull, max, or } from 'drizzle-orm';
 import type { Queue } from 'bullmq';
 import { z } from 'zod';
 
@@ -73,6 +78,7 @@ import {
   type DocumentOwnerPolicy,
   type ScanJobData,
 } from './documents.ports';
+import { isTenantWideImageOwner, TENANT_WIDE_IMAGE_OWNERS } from './image-scope';
 import { GENERATED_ENGINE, markVersionClean } from './mark-version-clean';
 import { SCAN_JOB_OPTIONS } from './scan.processor';
 import { LinkError, SignedLinks } from './signed-link';
@@ -90,6 +96,17 @@ type VersionRow = typeof documentVersions.$inferSelect;
 const Id = z.guid();
 /** The one refusal of issueLinkForOwner: the same body whether the document is missing, foreign or unclean. */
 const OWNER_LINK_NOT_FOUND = 'File not found';
+/** The one refusal of openImage: the same body whether the image is missing, foreign, removed or not clean yet. */
+const IMAGE_NOT_FOUND = 'Image not found';
+
+/** The refusal of a generic create or new version for a picture: only the images API uploads one. */
+function picturesUploadedElsewhere(): ConflictException {
+  return new ConflictException({
+    code: 'conflict',
+    message: 'Pictures are uploaded from their own settings.',
+  });
+}
+
 /** Anything that can run a SELECT: the pool-backed Db or an open transaction. */
 type Reader = Pick<Db, 'select'>;
 
@@ -140,6 +157,28 @@ export interface DownloadHandle {
   size: number;
 }
 
+/**
+ * What openImage gives back: the bytes, or (when the caller already holds this version) only the ETag, so the
+ * controller answers 304 without the storage ever being opened. `etag` is the version id, unquoted.
+ */
+export type ImageHandle =
+  | { notModified: true; etag: string }
+  | { notModified: false; stream: Readable; mime: string; size: number; etag: string };
+
+/**
+ * Whether an `If-None-Match` header names this ETag: a single tag, quoted (`"id"`) or not, weak (`W/"id"`) or
+ * strong (weak comparison, as RFC 9110 asks for If-None-Match), or a comma list of them.
+ */
+export function etagMatches(ifNoneMatch: string | undefined, etag: string): boolean {
+  if (ifNoneMatch === undefined) return false;
+  return ifNoneMatch.split(',').some((part) => {
+    let tag = part.trim();
+    if (tag.startsWith('W/')) tag = tag.slice(2);
+    if (tag.length >= 2 && tag.startsWith('"') && tag.endsWith('"')) tag = tag.slice(1, -1);
+    return tag !== '' && tag === etag;
+  });
+}
+
 export function toVersionDto(v: VersionRow): DocumentVersionDto {
   return {
     id: v.id,
@@ -182,10 +221,35 @@ export class DocumentsService {
 
   // ------------------------------------------------------------------------------------------ create
 
-  /** Creates the document and its version 1 (status awaiting_content). Runs in the caller's transaction. */
+  /**
+   * Creates the document and its version 1 (status awaiting_content). Runs in the caller's transaction. Takes a
+   * picture (an image owner type) too: `createAndReceiveUpload` (the images module) creates one this way. The generic
+   * HTTP route uses `createFromRequest`, which refuses a picture.
+   */
   async create(
     tx: DbTransaction,
     b: CreateDocumentBody,
+  ): Promise<{ documentId: string; versionId: string; uploadPath: string }> {
+    return this.createDocument(tx, b, false);
+  }
+
+  /**
+   * `create` for the generic `POST /v1/documents` (the controller only). A picture (an image owner type) is a 409,
+   * after the permission check and before anything is written: a document created here would wait for bytes that
+   * may never come and could still be set as the current picture, so pictures are uploaded only through the images
+   * API (POST /v1/images/:ownerType/:ownerId), which creates, receives and scans in one request.
+   */
+  async createFromRequest(
+    tx: DbTransaction,
+    b: CreateDocumentBody,
+  ): Promise<{ documentId: string; versionId: string; uploadPath: string }> {
+    return this.createDocument(tx, b, true);
+  }
+
+  private async createDocument(
+    tx: DbTransaction,
+    b: CreateDocumentBody,
+    refuseImages: boolean,
   ): Promise<{ documentId: string; versionId: string; uploadPath: string }> {
     const who = await readTxContext(tx);
     if (!this.owners.has(b.ownerType)) {
@@ -199,9 +263,10 @@ export class DocumentsService {
       { kind: who.actorKind, id: who.actorId },
       tx,
     );
+    if (refuseImages && isImageOwnerType(b.ownerType)) throw picturesUploadedElsewhere();
     // Before anything is written: a record that stopped taking attachments gets no row and no file.
     await this.assertCanAttach(who.scope, b.ownerType, b.ownerId, tx);
-    assertUploadAllowed(b);
+    assertUploadAllowed(b, this.owners.get(b.ownerType));
 
     const s = scoped(who.scope);
     const actor = actorUuid(who);
@@ -276,7 +341,7 @@ export class DocumentsService {
       { kind: 'system', id: who.actorId },
       tx,
     );
-    assertUploadAllowed(b);
+    assertUploadAllowed(b, this.owners.get(b.ownerType));
 
     const s = scoped(who.scope);
     const documentId = randomUUID();
@@ -336,9 +401,98 @@ export class DocumentsService {
   }
 
   /**
+   * Creates a document from bytes a background job holds but did NOT render itself (U12: the legacy-logo migrator
+   * moving a stored data URL into an `entity_logo` document), then receives them through the ordinary pipeline:
+   * quarantine, type check, sha256 and a queued docs.scan job. The scan is never skipped: these bytes came from a
+   * user once, so they are an upload, not a generated file (D28 does not apply).
+   *
+   * `who` must be a system actor (anything else is a 403 before anything is written). The create runs in its own
+   * `withTx` under that actor and asks the owner's `allowsSystemActor`, exactly like `createGenerated`, including
+   * the owner's type and size rules; it commits before the receive, which opens its own transactions.
+   * Returns the ids; the version is `quarantined` until the scan worker marks it clean.
+   *
+   * If the receive fails after the create committed (wrong type: the version ends `rejected`; queue down: it is
+   * back to `awaiting_content`), the live document stays behind and the error is thrown without its ids.
+   */
+  async createAndReceiveScanned(
+    owner: { ownerType: string; ownerId: string },
+    file: GeneratedFile,
+    who: { scope: TxScope; actor: Actor },
+  ): Promise<{ documentId: string; versionId: string }> {
+    if (who.actor.kind !== 'system') {
+      throw new ForbiddenException({ code: 'forbidden', reason: 'no_permission' });
+    }
+    const created = await withTx(this.db, who.scope, who.actor, (tx) =>
+      this.createGenerated(tx, owner, file),
+    );
+    await this.receiveInternal(
+      created.versionId,
+      Readable.from(file.bytes),
+      file.bytes.length,
+      { documentId: created.documentId, who },
+      { skipScan: false },
+    );
+    return created;
+  }
+
+  /**
+   * Creates a document from bytes a signed-in user sent in one request (U12: `POST /v1/images/:ownerType/:ownerId`,
+   * the image route, whose callers may hold the owner's grant but not `documents.upload`), then receives them through
+   * the ordinary pipeline: quarantine, type check, sha256 and a queued docs.scan job. The scan is never skipped.
+   *
+   * `who` must be a user actor (a system actor is a 403 before anything is written; jobs use createAndReceiveScanned
+   * or createGenerated). The create runs in its own `withTx`, so the owner's upload grant, `canAttach` and its type
+   * and size rules are checked before any row exists; a bad file name or empty file is a 400.
+   *
+   * If the receive fails after the create committed (wrong type: 415; queue down: 503), the new document is removed
+   * (best effort, logged when that fails too) and the receive's error is thrown.
+   */
+  async createAndReceiveUpload(
+    owner: { ownerType: string; ownerId: string },
+    file: GeneratedFile,
+    who: { scope: TxScope; actor: Actor },
+  ): Promise<{ documentId: string; versionId: string }> {
+    if (who.actor.kind === 'system') {
+      throw new ForbiddenException({ code: 'forbidden', reason: 'no_permission' });
+    }
+    const parsed = CreateDocumentBodySchema.safeParse({
+      ownerType: owner.ownerType,
+      ownerId: owner.ownerId,
+      filename: file.filename,
+      declaredMime: file.declaredMime,
+      // A zero-byte file fails `positive()`.
+      sizeBytes: file.bytes.length,
+    });
+    if (!parsed.success) {
+      throw new BadRequestException(`Invalid upload: ${parsed.error.message}`);
+    }
+    const body = parsed.data;
+    const created = await withTx(this.db, who.scope, who.actor, (tx) => this.create(tx, body));
+    try {
+      await this.receiveContent(created.versionId, Readable.from(file.bytes), file.bytes.length, {
+        documentId: created.documentId,
+        who,
+      });
+    } catch (error) {
+      try {
+        await this.removeManagedImage(created.documentId, { who });
+      } catch (cleanup) {
+        this.logger.warn(
+          `upload of document ${created.documentId} failed and it could not be removed: ${describe(cleanup)}`,
+        );
+      }
+      throw error;
+    }
+    return { documentId: created.documentId, versionId: created.versionId };
+  }
+
+  /**
    * Adds version N+1 to an existing document (status awaiting_content). Runs in the caller's transaction.
    * Allowed on top of any earlier version, in particular an infected or scan_failed one: that is the way out
    * of a bad attachment. `allClean` only looks at the newest version that was not rejected.
+   * A picture (an image owner type) is a 409, after the permission check and before the lock and any write: its
+   * newest version is what the images API serves, so an unfinished version 2 would hide a clean picture. No images
+   * path adds versions; a new picture is a new document.
    */
   async createVersion(
     tx: DbTransaction,
@@ -352,8 +506,10 @@ export class DocumentsService {
     const doc = await this.loadDocument(tx, who.scope, documentId);
     await this.assertOwner(who.scope, doc.ownerType, doc.ownerId, 'documents.upload');
     await this.assertCanAttach(who.scope, doc.ownerType, doc.ownerId, tx, documentId);
+    if (isImageOwnerType(doc.ownerType)) throw picturesUploadedElsewhere();
     await this.loadDocument(tx, who.scope, documentId, true);
-    assertUploadAllowed(b);
+    // The owner's narrower rules too.
+    assertUploadAllowed(b, this.owners.get(doc.ownerType));
 
     const [top] = await tx
       .select({ latest: max(documentVersions.version) })
@@ -386,25 +542,77 @@ export class DocumentsService {
    * and never scanned) and a clean file on a draft. There is no age limit for a quarantined version: the
    * owner's canAttach is the gate, and a scan finishing on a removed document changes nothing anyone can see.
    * Rows are kept (audit); only the not-yet-clean bytes are deleted.
+   * A picture (an image owner type) is a 409 here, after the permission check and before anything is written: a
+   * pointer may still name it, so only the images API (PUT /v1/images/:ownerType/:ownerId) removes one.
    * `opts.who` is the request's scope and actor (default: requestTx(), HTTP only); tests pass their own.
    */
   async remove(
     documentId: string,
     opts: { who?: { scope: TxScope; actor: Actor } } = {},
   ): Promise<void> {
-    const who = opts.who ?? requestTx();
+    await this.removeAndCleanUp(documentId, opts.who ?? requestTx(), true);
+  }
+
+  /**
+   * `remove` without the picture refusal, for the images module only (no controller calls it): it removes an image
+   * document that no pointer names yet, after its upload or pointer move failed. Same checks and cleanup otherwise.
+   */
+  async removeManagedImage(
+    documentId: string,
+    opts: { who: { scope: TxScope; actor: Actor } },
+  ): Promise<void> {
+    await this.removeAndCleanUp(documentId, opts.who, false);
+  }
+
+  private async removeAndCleanUp(
+    documentId: string,
+    who: { scope: TxScope; actor: Actor },
+    refuseImages: boolean,
+  ): Promise<void> {
     const unclean = await withTx(this.db, who.scope, who.actor, (tx) =>
-      this.removeInTransaction(tx, who.scope, documentId),
+      this.removeDocument(tx, who.scope, documentId, refuseImages),
     );
     await this.cleanupRemoved(unclean);
   }
 
+  /**
+   * The staff upload check of an owner, for a caller that changes which of its documents is current (U12: the image
+   * pointer routes): the owner must exist in the scope (404) and the request principal must hold the policy's upload
+   * grant against its ref (403). The same check `create` and `remove` make; an unregistered owner type is a 403.
+   */
+  async assertCanManage(scope: TxScope, ownerType: string, ownerId: string): Promise<void> {
+    await this.assertOwner(scope, ownerType, ownerId, 'documents.upload');
+  }
+
+  /**
+   * The removal itself, inside the caller's transaction. A tenant-wide image (image-scope.ts: a profile picture, a
+   * customer or vendor logo) may have been uploaded in another entity of the tenant: it is found by tenant alone, the
+   * owner policy still decides with the caller's scope, and its rows are written under the entity they carry.
+   * Removes a picture too: the images module calls this while it moves the pointer in the same transaction.
+   */
   async removeInTransaction(tx: DbTransaction, scope: TxScope, documentId: string) {
-    const s = scoped(scope);
-    const doc = await this.loadDocument(tx, scope, documentId);
+    return this.removeDocument(tx, scope, documentId, false);
+  }
+
+  private async removeDocument(
+    tx: DbTransaction,
+    scope: TxScope,
+    documentId: string,
+    refuseImages: boolean,
+  ) {
+    const doc = await this.loadDocument(tx, scope, documentId, false, true);
     await this.assertOwner(scope, doc.ownerType, doc.ownerId, 'documents.upload');
     await this.assertCanAttach(scope, doc.ownerType, doc.ownerId, tx, documentId);
-    await this.loadDocument(tx, scope, documentId, true);
+    // After the permission check (someone who may not remove learns nothing), before the lock and any write.
+    if (refuseImages && isImageOwnerType(doc.ownerType)) {
+      throw new ConflictException({
+        code: 'conflict',
+        message: 'This picture is managed from its own settings: replace or remove it there.',
+      });
+    }
+    await this.loadDocument(tx, scope, documentId, true, true);
+    // The document's own entity: the caller's, except for a tenant-wide image uploaded in another one.
+    const s = scoped({ tenantId: scope.tenantId, organizationId: doc.organizationId });
     const versions = await tx
       .select()
       .from(documentVersions)
@@ -821,6 +1029,78 @@ export class DocumentsService {
     }
   }
 
+  /**
+   * Opens an image (a company logo, a profile picture, a customer or vendor logo) for `GET /v1/images/:documentId`.
+   * Asks no permission: any signed-in staff principal of the tenant may see these (U12); the controller
+   * authenticates and passes the request's scope. The document must be live, of an image owner type, in the scope's
+   * tenant AND entity (a `user_avatar`, `customer_logo` or `vendor_logo` only in the tenant: people and parties
+   * belong to the tenant, not one entity, see image-scope.ts), and its newest version (by number, whatever its status) must be `clean` with an image type.
+   * Every refusal, including a file missing from storage, is the same 404 (never a 403), so the caller learns
+   * nothing about whether the document exists. `etag` is the version id, unquoted: the caller quotes it.
+   * When `ifNoneMatch` (the request's `If-None-Match`) names that version, the result is `notModified` and the
+   * storage is never opened; every check above still runs first, so a 304 never answers for a refused image.
+   */
+  async openImage(scope: TxScope, documentId: string, ifNoneMatch?: string): Promise<ImageHandle> {
+    if (!Id.safeParse(documentId).success) throw new NotFoundException(IMAGE_NOT_FOUND);
+    // scoped() refuses an empty id; the entity filter is written here because a tenant-wide image skips it.
+    const { tenantId, organizationId } = scoped(scope).scope;
+    const sameEntityOrTenantWide = (table: typeof documents | typeof documentVersions) =>
+      or(
+        inArray(documents.ownerType, [...TENANT_WIDE_IMAGE_OWNERS]),
+        eq(table.organizationId, organizationId),
+      );
+    const [row] = await this.db
+      .select({
+        ownerType: documents.ownerType,
+        tenantId: documents.tenantId,
+        organizationId: documents.organizationId,
+        removedAt: documents.removedAt,
+        version: documentVersions,
+      })
+      .from(documents)
+      .innerJoin(documentVersions, eq(documentVersions.documentId, documents.id))
+      .where(
+        and(
+          eq(documents.tenantId, tenantId),
+          eq(documentVersions.tenantId, tenantId),
+          sameEntityOrTenantWide(documents),
+          sameEntityOrTenantWide(documentVersions),
+          eq(documents.id, documentId),
+          isNull(documents.removedAt),
+        ),
+      )
+      .orderBy(desc(documentVersions.version))
+      .limit(1);
+    // The query already scopes and filters; the same rules again here, so a query change cannot widen what is served.
+    if (
+      row === undefined ||
+      row.removedAt !== null ||
+      row.tenantId !== tenantId ||
+      (!isTenantWideImageOwner(row.ownerType) && row.organizationId !== organizationId) ||
+      !isImageOwnerType(row.ownerType) ||
+      row.version.status !== 'clean' ||
+      row.version.detectedMime === null ||
+      !(IMAGE_MIME as readonly string[]).includes(row.version.detectedMime)
+    ) {
+      throw new NotFoundException(IMAGE_NOT_FOUND);
+    }
+    if (etagMatches(ifNoneMatch, row.version.id))
+      return { notModified: true, etag: row.version.id };
+    try {
+      const stream = await this.storage.openClean(row.version.storageKey);
+      return {
+        notModified: false,
+        stream,
+        mime: row.version.detectedMime,
+        size: row.version.sizeBytes,
+        etag: row.version.id,
+      };
+    } catch (error) {
+      if (error instanceof StoredFileNotFoundError) throw new NotFoundException(IMAGE_NOT_FOUND);
+      throw error;
+    }
+  }
+
   // ------------------------------------------------------------------------------------ internals
 
   /** Signs a link to one version. Fails closed: no secret means no links, never an unsigned one. */
@@ -945,21 +1225,39 @@ export class DocumentsService {
     }
   }
 
-  /** A live (not removed) document of the caller's scope, optionally locked for the rest of the transaction. */
+  /**
+   * A live (not removed) document of the caller's scope, optionally locked for the rest of the transaction.
+   * `tenantWideImages` (removal only) also finds a tenant-wide image (image-scope.ts) of another entity of the
+   * same tenant; every other document still has to be in the caller's entity.
+   */
   private async loadDocument(
     tx: DbTransaction,
     scope: TxScope,
     documentId: string,
     lock = false,
-  ): Promise<{ id: string; ownerType: string; ownerId: string }> {
+    tenantWideImages = false,
+  ): Promise<{ id: string; ownerType: string; ownerId: string; organizationId: string }> {
+    const s = scoped(scope);
+    const live = and(eq(documents.id, documentId), isNull(documents.removedAt));
     const query = tx
-      .select({ id: documents.id, ownerType: documents.ownerType, ownerId: documents.ownerId })
+      .select({
+        id: documents.id,
+        ownerType: documents.ownerType,
+        ownerId: documents.ownerId,
+        organizationId: documents.organizationId,
+      })
       .from(documents)
       .where(
-        scoped(scope).where(
-          documents,
-          and(eq(documents.id, documentId), isNull(documents.removedAt)),
-        ),
+        tenantWideImages
+          ? and(
+              eq(documents.tenantId, s.scope.tenantId),
+              live,
+              or(
+                eq(documents.organizationId, s.scope.organizationId),
+                inArray(documents.ownerType, [...TENANT_WIDE_IMAGE_OWNERS]),
+              ),
+            )
+          : s.where(documents, live),
       )
       .limit(1);
     const [doc] = await (lock ? query.for('update') : query);
@@ -1086,15 +1384,24 @@ function readPermissionsOf(policy: DocumentOwnerPolicy): readonly Permission[] {
     : ['documents.read', policy.readPermission];
 }
 
-/** The type and size rules for a declared upload, the same for a new document and a new version. */
-function assertUploadAllowed(b: { declaredMime: string; sizeBytes: number }): void {
-  if (!isAllowedMime(b.declaredMime)) {
+/**
+ * The type and size rules for a declared upload, the same for a new document and a new version. An owner's
+ * `allowedMime` and `maxBytes` only narrow the generic rules (images: PNG, JPEG, WebP up to 512 KiB).
+ */
+function assertUploadAllowed(
+  b: { declaredMime: string; sizeBytes: number },
+  policy?: Pick<DocumentOwnerPolicy, 'allowedMime' | 'maxBytes'>,
+): void {
+  const ownerMime = policy?.allowedMime;
+  if (!isAllowedMime(b.declaredMime) || (ownerMime && !ownerMime.includes(b.declaredMime))) {
+    const allowed = ownerMime ?? ALLOWED_MIME;
     throw new UnsupportedMediaTypeException(
-      `File type ${b.declaredMime} is not allowed. Allowed: ${ALLOWED_MIME.join(', ')}`,
+      `File type ${b.declaredMime} is not allowed. Allowed: ${allowed.join(', ')}`,
     );
   }
-  if (b.sizeBytes > MAX_UPLOAD_BYTES) {
-    throw new PayloadTooLargeException(`File is larger than ${MAX_UPLOAD_BYTES} bytes`);
+  const limit = Math.min(policy?.maxBytes ?? MAX_UPLOAD_BYTES, MAX_UPLOAD_BYTES);
+  if (b.sizeBytes > limit) {
+    throw new PayloadTooLargeException(`File is larger than ${limit} bytes`);
   }
 }
 

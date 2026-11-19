@@ -6,7 +6,7 @@
 import {
   DEFAULT_DOCUMENT_STYLE,
   DEFAULT_NUMBER_SYSTEMS,
-  EMPTY_COMPANY_PROFILE,
+  EMPTY_SNAPSHOT_COMPANY_PROFILE,
   LogoDataUrlSchema,
   deriveBrandPalette,
   snapshotNumberSystems,
@@ -48,7 +48,7 @@ export function renderQuotationHtml(
   opts: RenderQuotationOptions = {},
 ): string {
   const style = opts.snapshot?.style ?? DEFAULT_DOCUMENT_STYLE;
-  const profile = opts.snapshot?.profile ?? EMPTY_COMPANY_PROFILE;
+  const profile = opts.snapshot?.profile ?? EMPTY_SNAPSHOT_COMPANY_PROFILE;
   const logo = profile.logoDataUrl ? LogoDataUrlSchema.safeParse(profile.logoDataUrl) : null;
   // An unknown layout in an old snapshot falls back to the default rather than failing the render.
   const layout: DocumentLayout = Object.hasOwn(QUOTATION_LAYOUTS, style.layout)

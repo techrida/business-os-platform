@@ -1,13 +1,14 @@
 import { readFile } from 'node:fs/promises';
-import { inflateSync } from 'node:zlib';
+import { crc32, deflateSync, inflateSync } from 'node:zlib';
 import { fileURLToPath } from 'node:url';
 
-import { describe, expect, it, vi } from 'vitest';
+import { deriveBrandPalette, hexToRgb } from '@bos/contracts';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 
 // `server-only` throws outside the react-server condition, which Vitest does not use.
 vi.mock('server-only', () => ({}));
 
-import { memoPdfFileName, renderMemoPdf, segmentRuns } from './memo-pdf';
+import { decodeMemoLogo, memoPdfFileName, renderMemoPdf, segmentRuns } from './memo-pdf';
 import { loadMemoFonts } from './memo-pdf-fonts';
 import { MemoPdfInputSchema, memoPdfInputOf, type MemoPdfInput } from './memo-pdf-input';
 
@@ -254,6 +255,180 @@ describe('renderMemoPdf', () => {
     const longBody = 'Paragraph text. '.repeat(900);
     const multi = await renderMemoPdf(input({ body: longBody }), await fonts());
     expect(multi.pages).toBeGreaterThan(1);
+  });
+});
+
+/** A real RGBA PNG (transparency makes pdfkit decode its pixels), built here so the test needs no fixture file. */
+function png(width: number, height: number, filter = 0, cutDeflate = false): Buffer {
+  const chunk = (type: string, data: Buffer) => {
+    const len = Buffer.alloc(4);
+    len.writeUInt32BE(data.length);
+    const body = Buffer.concat([Buffer.from(type, 'latin1'), data]);
+    const crc = Buffer.alloc(4);
+    crc.writeUInt32BE(crc32(body));
+    return Buffer.concat([len, body, crc]);
+  };
+  const ihdr = Buffer.alloc(13);
+  ihdr.writeUInt32BE(width, 0);
+  ihdr.writeUInt32BE(height, 4);
+  ihdr.set([8, 6, 0, 0, 0], 8);
+  const rows: Buffer[] = [];
+  for (let r = 0; r < height; r += 1) {
+    const row = Buffer.alloc(1 + width * 4, 0x80);
+    row[0] = filter;
+    rows.push(row);
+  }
+  return Buffer.concat([
+    Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]),
+    chunk('IHDR', ihdr),
+    chunk(
+      'IDAT',
+      ((z) => (cutDeflate ? z.subarray(0, z.length >> 1) : z))(deflateSync(Buffer.concat(rows))),
+    ),
+    chunk('IEND', Buffer.alloc(0)),
+  ]);
+}
+const dataUrl = (type: string, bytes: Buffer) =>
+  `data:image/${type};base64,${bytes.toString('base64')}`;
+const WEBP = Buffer.concat([
+  Buffer.from(
+    'RIFF\x1a\x00\x00\x00WEBPVP8L\x0d\x00\x00\x00/\x00\x00\x00\x10\x07\x10\x11\x11\x88\x88\xfe\x07\x00',
+    'latin1',
+  ),
+]);
+const letterhead = (over: Partial<NonNullable<MemoPdfInput['letterhead']>> = {}) => ({
+  addressLines: ['QXK Road', 'JWZ'],
+  logoDataUrl: null,
+  primaryColour: '#0f766e',
+  ...over,
+});
+const IMAGE = '/Subtype /Image';
+
+/** Every `r g b scn` / `r g b rg` fill colour set in the page content, as 0-255 triples. */
+function fills(text: string): number[][] {
+  return [...text.matchAll(/(?:^|\s)([\d.]+) ([\d.]+) ([\d.]+) (?:scn|rg)\b/g)].map((m) =>
+    [m[1], m[2], m[3]].map((v) => Math.round(Number(v) * 255)),
+  );
+}
+const sameColour = (a: readonly number[], b: readonly number[]) =>
+  a.every((v, i) => Math.abs(v - b[i]!) <= 1);
+
+describe('renderMemoPdf letterhead band', () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it('embeds a real PNG logo as an image', async () => {
+    const { bytes } = await renderMemoPdf(
+      input({ letterhead: letterhead({ logoDataUrl: dataUrl('png', png(64, 32)) }) }),
+      await fonts(),
+    );
+    expect(Buffer.from(bytes).toString('latin1')).toContain(IMAGE);
+  });
+
+  it('has no image without a logo', async () => {
+    const plain = Buffer.from((await renderMemoPdf(input(), await fonts())).bytes);
+    expect(plain.toString('latin1')).not.toContain(IMAGE);
+    const noLogo = await renderMemoPdf(input({ letterhead: letterhead() }), await fonts());
+    expect(Buffer.from(noLogo.bytes).toString('latin1')).not.toContain(IMAGE);
+  });
+
+  it('leaves a WebP logo out, warns once and still makes the PDF', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const { bytes } = await renderMemoPdf(
+      input({ letterhead: letterhead({ logoDataUrl: dataUrl('webp', WEBP) }) }),
+      await fonts(),
+    );
+    const text = Buffer.from(bytes).toString('latin1');
+    expect(text.startsWith('%PDF-')).toBe(true);
+    expect(text).not.toContain(IMAGE);
+    expect(warn).toHaveBeenCalledTimes(1);
+  });
+
+  it('never fails for broken logo bytes: garbage, a truncated PNG, a bad row filter, a lying type', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const good = png(40, 40);
+    const truncated = Buffer.concat([good.subarray(0, good.length - 30), good.subarray(-12)]);
+    const cases = [
+      'data:image/png;base64,Z2FyYmFnZSBnYXJiYWdlIGdhcmJhZ2U=',
+      dataUrl('png', good.subarray(0, 60)),
+      dataUrl('png', truncated),
+      dataUrl('png', png(40, 40, 0, true)),
+      dataUrl('png', png(8, 8, 9)),
+      dataUrl('jpeg', WEBP),
+      dataUrl('png', png(5000, 1)),
+    ];
+    for (const logoDataUrl of cases) {
+      expect(decodeMemoLogo(logoDataUrl), logoDataUrl.slice(0, 60)).toBeNull();
+      const { bytes } = await renderMemoPdf(
+        input({ letterhead: letterhead({ logoDataUrl }) }),
+        await fonts(),
+      );
+      const text = Buffer.from(bytes).toString('latin1');
+      expect(text.trimEnd().endsWith('%%EOF')).toBe(true);
+      expect(text).not.toContain(IMAGE);
+    }
+    expect(warn).toHaveBeenCalledTimes(cases.length);
+  });
+
+  it('prints the address lines', async () => {
+    const plain = {
+      organizationName: 'AAA',
+      departmentName: 'AAA',
+      title: 'AAA',
+      body: 'AAA',
+      closing: 'AAA',
+    };
+    const withAddress = drawnCodePoints(
+      inspect(
+        (await renderMemoPdf(input({ ...plain, letterhead: letterhead() }), await fonts())).bytes,
+      ),
+    );
+    const without = drawnCodePoints(
+      inspect((await renderMemoPdf(input(plain), await fonts())).bytes),
+    );
+    for (const ch of 'QXKJWZ') {
+      expect(withAddress.has(ch.codePointAt(0)!), ch).toBe(true);
+      expect(without.has(ch.codePointAt(0)!), ch).toBe(false);
+    }
+  });
+
+  it('fills the band in the tint of the brand colour, on page 1 only', async () => {
+    const tint = hexToRgb(deriveBrandPalette('#0f766e').tint);
+    const one = fills(
+      inspect((await renderMemoPdf(input({ letterhead: letterhead() }), await fonts())).bytes),
+    );
+    expect(one.filter((c) => sameColour(c, tint))).toHaveLength(1);
+
+    const multi = await renderMemoPdf(
+      input({ letterhead: letterhead(), body: 'Paragraph text. '.repeat(900) }),
+      await fonts(),
+    );
+    expect(multi.pages).toBeGreaterThan(1);
+    expect(fills(inspect(multi.bytes)).filter((c) => sameColour(c, tint))).toHaveLength(1);
+  });
+
+  it('draws the band in the default colour for a memo stored before letterheads', async () => {
+    const { DEFAULT_BRAND_COLOUR } = await import('@bos/contracts');
+    const tint = hexToRgb(deriveBrandPalette(DEFAULT_BRAND_COLOUR).tint);
+    const drawn = fills(inspect((await renderMemoPdf(input(), await fonts())).bytes));
+    expect(drawn.filter((c) => sameColour(c, tint))).toHaveLength(1);
+  });
+
+  it('grows the band instead of overflowing it for the longest company block', async () => {
+    const { bytes, pages } = await renderMemoPdf(
+      input({
+        organizationName: 'Long company name '.repeat(16),
+        letterhead: letterhead({
+          addressLines: Array.from({ length: 4 }, () => 'Street '.repeat(28)),
+          logoDataUrl: dataUrl('png', png(300, 300)),
+        }),
+      }),
+      await fonts(),
+    );
+    expect(pages).toBe(1);
+    const band = /0 0 595\.28 ([\d.]+) re/.exec(inspect(bytes));
+    expect(Number(band?.[1])).toBeGreaterThan(110);
   });
 });
 

@@ -528,6 +528,7 @@ export class LeadsService {
           userId: c.userId,
           displayName: c.displayName ?? c.email ?? 'Unnamed user',
           email: c.email ?? '',
+          avatarDocumentId: c.avatarDocumentId,
         }))
         .sort(
           (a, b) => a.displayName.localeCompare(b.displayName) || a.userId.localeCompare(b.userId),

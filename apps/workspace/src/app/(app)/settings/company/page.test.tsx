@@ -1,4 +1,4 @@
-import { EMPTY_COMPANY_PROFILE } from '@bos/contracts';
+import { EMPTY_COMPANY_PROFILE, IMAGE_HINT } from '@bos/contracts';
 import type { ReactElement } from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
@@ -11,6 +11,7 @@ vi.mock('next/navigation', () => ({
     throw new Error(`REDIRECT:${url}`);
   },
   usePathname: () => '/settings/company',
+  useRouter: () => ({ refresh: vi.fn() }),
 }));
 vi.mock('next/cache', () => ({ revalidatePath: vi.fn() }));
 const getSession = vi.fn<() => Promise<Session | null>>();
@@ -30,8 +31,19 @@ vi.mock('@/lib/api-admin', () => ({
 const { default: CompanyPage } = await import('./page');
 const { default: FormatsPage } = await import('../formats/page');
 
+const ORG_ID = '0190a1b2-0000-7000-8000-00000000a001';
+const DOC_ID = '0190a1b2-c3d4-7e5f-8a9b-0c1d2e3f4a5b';
+const PNG = 'data:image/png;base64,iVBORw0KGgo=';
 const session = (roles: string[]): Session =>
-  ({ accessToken: 't', orgKind: 'staff', roles }) as Session;
+  ({ accessToken: 't', orgId: ORG_ID, orgKind: 'staff', roles }) as Session;
+const withProfile = (profile: object) =>
+  getSetting.mockImplementation((_s, key) =>
+    Promise.resolve({
+      key,
+      version: 4,
+      value: key === 'entity.profile' ? { ...EMPTY_COMPANY_PROFILE, ...profile } : null,
+    }),
+  );
 const render = (el: unknown) => renderToStaticMarkup(el as ReactElement);
 
 beforeEach(() => {
@@ -79,12 +91,49 @@ describe('Company profile and Number format pages', () => {
     expect(html).toContain(
       'Quotations and invoices cannot be made into PDFs until an address is saved.',
     );
-    expect(html).toContain('PNG, JPEG or WebP, up to 200 KB');
+    // The logo card is the shared upload box for the organisation: no Save, no logo form.
+    expect(html).toContain(IMAGE_HINT);
+    expect(html).toContain('aria-label="Company logo"');
+    expect(html).toContain(
+      'Printed at the top of your quotations, invoices, purchase orders and memos.',
+    );
+    expect(html).not.toContain('name="logo"');
+    expect(html).not.toContain('value="logo"');
     expect(html).toContain('Address not set');
     // Setting keys travel in hidden fields, never as text a person reads.
     expect(html).not.toMatch(/>[^<]*entity\./);
     // every card but the logo has a Save, disabled while nothing changed
     expect((html.match(/<button[^>]*disabled=""[^>]*>Save<\/button>/g) ?? []).length).toBe(4);
+  });
+
+  it('shows an uploaded logo through the image route, in the card and on the letterhead', async () => {
+    getSession.mockResolvedValue(session(['founder']));
+    withProfile({ displayName: 'Acme', logoDocumentId: DOC_ID, legacyLogoDataUrl: PNG });
+    const html = render(await CompanyPage());
+    expect(html).toContain(`src="/api/images/${DOC_ID}"`);
+    expect(html).toContain('aria-label="Remove Acme picture"');
+    // The document wins: the old data URL is neither drawn nor mentioned.
+    expect(html).not.toContain(PNG);
+    expect(html).not.toContain('still prints');
+  });
+
+  it('shows a logo not yet moved as a preview-only picture, with a note in the card description', async () => {
+    getSession.mockResolvedValue(session(['founder']));
+    withProfile({ displayName: 'Acme', legacyLogoDataUrl: PNG });
+    const html = render(await CompanyPage());
+    expect(html).toContain('aria-label="View Acme logo"');
+    expect(html).toContain(`src="${PNG}"`);
+    expect(html).toContain('Your current logo still prints while it is moved');
+    // Nothing to remove until it is an uploaded image; the upload box replaces it.
+    expect(html).not.toContain('aria-label="Remove Acme picture"');
+    expect(html).toContain('Upload picture');
+  });
+
+  it('names the logo controls after the company, or "your company" with no display name', async () => {
+    getSession.mockResolvedValue(session(['founder']));
+    withProfile({ logoDocumentId: DOC_ID });
+    const html = render(await CompanyPage());
+    expect(html).toContain('aria-label="Remove your company picture"');
   });
 
   it('draws no undo icon while the address, contact and signatory are empty', async () => {

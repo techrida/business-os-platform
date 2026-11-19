@@ -99,6 +99,7 @@ export function toCustomerDto(row: CustomerRow): CustomerDto {
     ownerUserId: row.ownerUserId,
     defaultCurrency: row.defaultCurrency as CustomerDto['defaultCurrency'],
     address: row.address as Address,
+    logoDocumentId: row.logoDocumentId,
     mergedIntoId: row.mergedIntoId,
     version: row.version,
     createdAt: iso(row.createdAt),
