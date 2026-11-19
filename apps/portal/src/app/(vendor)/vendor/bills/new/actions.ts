@@ -8,6 +8,7 @@ import { redirect } from 'next/navigation';
 
 import { ApiError } from '@/lib/api';
 import { submitVendorBill } from '@/lib/api.vendor-writes';
+import { currencyNotEnabledText } from '@/lib/enabled-currencies';
 
 import {
   failed,
@@ -94,6 +95,11 @@ export async function submitBillAction(
                 'We could not find that purchase order. Choose it again, or leave it empty.',
             },
           };
+    }
+    // A 422 CURRENCY_NOT_ENABLED is a currency the company switched off since the page loaded (D44).
+    const switchedOff = currencyNotEnabledText(err);
+    if (switchedOff !== undefined) {
+      return { key: randomUUID(), fieldErrors: { currency: switchedOff } };
     }
     return failed<BillField>(err, key, HERE, {
       noun: 'bill',
