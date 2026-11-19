@@ -91,3 +91,21 @@ it('hides New department and every row action when the viewer may only read', as
   expect(html).not.toContain('More actions for Sales');
   expect(seen.some((url) => url.pathname === '/v1/admin/users')).toBe(false);
 });
+
+it('says no department matches a search and links back without the search', async () => {
+  stubApi([]);
+  const html = renderToStaticMarkup(
+    await DepartmentsPage({ searchParams: Promise.resolve({ q: 'slaes', status: 'retired' }) }),
+  );
+  expect(html).toContain('No department matches &#x27;slaes&#x27;.');
+  const clear = html.match(/<a[^>]*href="([^"]+)"[^>]*>Clear search<\/a>/)?.[1];
+  expect(clear?.replaceAll('&amp;', '&')).toBe('/settings/departments?status=retired');
+});
+
+it('offers New department in the empty state when there are no departments', async () => {
+  stubApi([]);
+  const html = renderToStaticMarkup(await DepartmentsPage({ searchParams: Promise.resolve({}) }));
+  expect(html).toContain('No departments yet.');
+  expect(html).toContain('Add your first department, then add its people.');
+  expect(html.match(/New department/g)).toHaveLength(1);
+});
