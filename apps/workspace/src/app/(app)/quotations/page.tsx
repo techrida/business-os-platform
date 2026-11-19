@@ -70,7 +70,13 @@ function QuotationRow({
       <Td>
         {item.ownerName !== null ? (
           <span className={styles.owner}>
-            <Avatar name={item.ownerName} shape="circle" size="small" />
+            <Avatar
+              name={item.ownerName}
+              seedId={item.ownerUserId}
+              imageDocumentId={item.ownerAvatarDocumentId}
+              shape="circle"
+              size="small"
+            />
             {item.ownerName}
           </span>
         ) : (
