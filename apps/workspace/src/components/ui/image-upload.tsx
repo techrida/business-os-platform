@@ -4,11 +4,12 @@
 // replace it by dropping or choosing a file (the upload starts at once, UIP-FORM-001), and remove it with a
 // confirmation (UIP-FORM-002, UIP-FEED-002). Feedback goes through toasts (UIP-FEED-001). After an upload the picture
 // is virus-scanned and `GET /api/images/:id` answers 404 until it is clean, so the component shows "Scanning" and
-// polls with a backoff until the picture can be served.
+// polls with a backoff until the picture can be served. Once it is, the other avatars of the record on the page are
+// told to try again and the caller refreshes a second time.
 import { IMAGE_ACCEPT, IMAGE_HINT, imagePath, type ImageOwnerType } from '@bos/contracts';
 import { useEffect, useId, useRef, useState, type ReactNode } from 'react';
 
-import { Avatar } from './avatar';
+import { announceImageReady, Avatar } from './avatar';
 import { Button } from './button';
 import { ConfirmDialog, Dialog, DialogClose } from './dialog';
 import { Icon } from './icon';
@@ -85,9 +86,11 @@ export interface ImageUploadProps {
   /** What the picture is, for example "Company logo" or "Profile picture": the group name and the preview title. */
   label: string;
   /**
-   * Called once with the new document id right after an upload (the picture may still be scanning), or with null
-   * after a removal. The caller refreshes its data; do not key this component on `imageDocumentId`, or the scanning
-   * state is lost when the new id arrives.
+   * Called with the new document id right after an upload (the picture is still being scanned, so other avatars of
+   * the record still show initials), and once more with the same id when the scan watch sees the picture served; or
+   * with null after a removal. The second call only comes while this component is mounted and that upload is still
+   * the current one (no newer upload or removal since). The caller refreshes its data each time; do not key this
+   * component on `imageDocumentId`, or the scanning state is lost when the new id arrives.
    */
   onChange: (documentId: string | null) => void;
   /** Shows the picture and its preview, but nothing can be uploaded or removed. */
@@ -163,7 +166,11 @@ export function ImageUpload({
       stopped = true;
       stopWatchRef.current = null;
       setScanningId(null);
-      if (ready) setRevision((value) => value + 1);
+      if (!ready) return;
+      setRevision((value) => value + 1);
+      // Avatars elsewhere on the page that asked during the scan got a 404 and kept their initials.
+      announceImageReady(documentId);
+      onChangeRef.current(documentId);
     };
     const check = async (): Promise<'ready' | 'wait' | 'stop'> => {
       try {

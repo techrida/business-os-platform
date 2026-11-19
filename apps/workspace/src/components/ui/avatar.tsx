@@ -19,6 +19,18 @@ type AvatarProps = HTMLAttributes<HTMLSpanElement> & {
   fit?: 'cover' | 'contain';
 };
 
+const IMAGE_READY_EVENT = 'bos:image-ready';
+
+/**
+ * Tells every avatar on the page that this picture can now be served. A new picture answers 404 until its virus scan
+ * is done, and an avatar that asked during the scan keeps its initials (a refresh with the same id does not retry);
+ * this gives those avatars a fresh try. ImageUpload calls it when its scan watch sees the picture served.
+ */
+export function announceImageReady(documentId: string): void {
+  if (typeof window === 'undefined') return;
+  window.dispatchEvent(new CustomEvent<string>(IMAGE_READY_EVENT, { detail: imagePath(documentId) }));
+}
+
 /** A picture or initials avatar for use alongside the person's or company's name. Decorative: the name is beside it. */
 export function Avatar({
   name,
@@ -55,7 +67,18 @@ function AvatarImage({ src, fit }: { src: string; fit: 'cover' | 'contain' }) {
     if (image?.complete && image.naturalWidth === 0) setFailedSrc(src);
   }, [src]);
 
-  if (failedSrc === src) return null;
+  // A failed picture waits for word that it passed its scan, then mounts a fresh image that asks again.
+  const failed = failedSrc === src;
+  useEffect(() => {
+    if (!failed) return;
+    const retry = (event: Event) => {
+      if (event instanceof CustomEvent && event.detail === src) setFailedSrc(null);
+    };
+    window.addEventListener(IMAGE_READY_EVENT, retry);
+    return () => window.removeEventListener(IMAGE_READY_EVENT, retry);
+  }, [failed, src]);
+
+  if (failed) return null;
   return (
     // eslint-disable-next-line @next/next/no-img-element -- a same-origin, authenticated picture route: drawn through <img> only
     <img

@@ -6,7 +6,7 @@ import { afterEach, beforeEach, expect, it } from 'vitest';
 
 import { mountForm } from '@/test/form-interactions';
 
-import { Avatar } from './avatar';
+import { announceImageReady, Avatar } from './avatar';
 
 beforeEach(() => {
   Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true });
@@ -91,5 +91,34 @@ it('falls back to the initials when the picture fails, and tries again for a new
   // The same avatar, now pointing at a newly uploaded picture.
   await render(OTHER_IMAGE_ID);
   expect(container.querySelector('img')?.getAttribute('src')).toBe(`/api/images/${OTHER_IMAGE_ID}`);
+  await act(() => Promise.resolve(root.unmount()));
+});
+
+it('keeps the initials when re-rendered with the same failed picture, and tries again once it is announced ready', async () => {
+  const container = document.createElement('div');
+  document.body.append(container);
+  const root = createRoot(container);
+  const render = () =>
+    act(() => Promise.resolve(root.render(<Avatar name="Ada Lovelace" imageDocumentId={IMAGE_ID} />)));
+
+  await render();
+  const image = container.querySelector('img')!;
+  // A 404 while the new picture is still being scanned.
+  await act(() => Promise.resolve(image.dispatchEvent(new Event('error'))));
+  expect(container.querySelector('img')).toBeNull();
+
+  // A page refresh hands the avatar the same picture: it stays on the initials.
+  await render();
+  expect(container.querySelector('img')).toBeNull();
+
+  // Another picture becoming ready changes nothing here.
+  await act(() => Promise.resolve(announceImageReady(OTHER_IMAGE_ID)));
+  expect(container.querySelector('img')).toBeNull();
+
+  // This picture passed its scan: a fresh image asks for it again.
+  await act(() => Promise.resolve(announceImageReady(IMAGE_ID)));
+  const retried = container.querySelector('img');
+  expect(retried?.getAttribute('src')).toBe(`/api/images/${IMAGE_ID}`);
+  expect(retried).not.toBe(image);
   await act(() => Promise.resolve(root.unmount()));
 });
