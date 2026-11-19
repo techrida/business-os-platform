@@ -584,7 +584,14 @@ export function WorkflowEditor({
                           </Select>
                         )}
                       </Field>
-                      <Field label="Amount (NPR)">
+                      <Field
+                        label="Amount (NPR)"
+                        error={
+                          issues.length > 0 && !DecimalString.safeParse(rule.value.trim()).success
+                            ? WORKFLOW_AMOUNT_ERROR
+                            : undefined
+                        }
+                      >
                         {(control) => (
                           <Input
                             {...control}
