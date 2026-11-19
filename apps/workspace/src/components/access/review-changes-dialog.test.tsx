@@ -230,3 +230,21 @@ it('returns focus to the opener after Escape and after Back, and Escape saves no
   expect(document.querySelector('[role="dialog"]')).toBeNull();
   expect(document.activeElement).toBe(opener);
 });
+
+it('shows a failed dry run with Try again, which runs it again', async () => {
+  const runPreview = vi
+    .fn((_changes: AccessChange[]) =>
+      Promise.resolve<ReviewPreviewResult>({ ok: true, preview: preview() }),
+    )
+    .mockResolvedValueOnce({ ok: false, message: 'Could not preview these changes.' });
+  await openDialog({ runPreview });
+
+  expect(document.querySelector('[role="dialog"] [role="alert"]')?.textContent).toContain(
+    'Could not preview these changes.',
+  );
+  expect(button('Save changes').disabled).toBe(true);
+  await click(button('Try again'));
+  await flush();
+  expect(runPreview).toHaveBeenCalledTimes(2);
+  expect(button('Save changes').disabled).toBe(false);
+});
