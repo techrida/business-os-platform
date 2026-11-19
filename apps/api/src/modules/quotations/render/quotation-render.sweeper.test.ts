@@ -1,6 +1,10 @@
 import { createHash } from 'node:crypto';
 
-import { CreateDocumentBodySchema } from '@bos/contracts';
+import {
+  CreateDocumentBodySchema,
+  DOCUMENT_SETTING_DEFAULTS,
+  type DocumentStyleSnapshot,
+} from '@bos/contracts';
 import { BadRequestException } from '@nestjs/common';
 
 import type { DbTransaction } from '../../../platform/db/db.module';
@@ -8,6 +12,7 @@ import type { Actor, TxScope } from '../../../platform/db/tx';
 import { describe, expect, it, vi } from 'vitest';
 
 import { GotenbergError } from './gotenberg.client';
+import { renderQuotationHtml } from './quotation-html';
 import {
   failureKind,
   FAILED_RETRY_MS,
@@ -23,6 +28,12 @@ import {
   type RenderStore,
   type RunInTx,
 } from './quotation-render.sweeper';
+
+// The real renderer, watched: the snapshot it is handed is what these tests assert on.
+vi.mock('./quotation-html', async (importActual) => {
+  const actual = await importActual<typeof import('./quotation-html')>();
+  return { ...actual, renderQuotationHtml: vi.fn(actual.renderQuotationHtml) };
+});
 
 const address = { line1: '1 Durbar Marg', city: 'Kathmandu', country: 'NP' };
 const NOW = new Date('2026-11-09T06:00:00.000Z');
@@ -74,6 +85,25 @@ const source = (versionId: string, number = 'QT-2082-0042'): RenderSource => ({
   ],
   taxSummary: [{ label: 'VAT', rate: '13.0000', base: '1000.00', tax: '130.00' }],
   issuerLegalName: 'Techrida Pvt. Ltd.',
+  documentStyle: null,
+});
+
+/** A snapshot as the version row would hold it. */
+const storedStyle = (over: Partial<DocumentStyleSnapshot> = {}): DocumentStyleSnapshot => ({
+  style: { layout: 'ledger', primaryColour: '#0f766e' },
+  profile: {
+    displayName: 'Techrida',
+    logoDataUrl: null,
+    phones: ['+977 1 5551234'],
+    email: 'sales@techrida.example',
+    website: null,
+    panVatNo: '301234567',
+    signatoryName: null,
+    signatoryTitle: null,
+  },
+  numberSystem: 'international',
+  capturedAt: '2026-11-01T05:00:00.000Z',
+  ...over,
 });
 
 const PDF = Buffer.from('%PDF-1.7 fake');
@@ -88,9 +118,13 @@ function setup(
     missing?: boolean;
     /** The quotation number `load` returns; default QT-2082-0042. */
     number?: string;
+    /** The `document_style` the version row already holds, by version id: set by an earlier render. */
+    styles?: Record<string, unknown>;
   } = {},
 ) {
   const calls: string[] = [];
+  // The version rows' document_style: a stateful stand-in for the column, written once like the real store.
+  const styles = new Map<string, unknown>(Object.entries(opts.styles ?? {}));
   const claimed = opts.claims ?? {};
   const store: RenderStore = {
     candidates: vi.fn((now: Date, limit: number) => {
@@ -103,8 +137,19 @@ function setup(
     }),
     load: vi.fn((_tx: DbTransaction, c: RenderCandidate) => {
       calls.push(`load:${c.versionId}`);
-      return Promise.resolve(opts.missing === true ? undefined : source(c.versionId, opts.number));
+      if (opts.missing === true) return Promise.resolve(undefined);
+      return Promise.resolve({
+        ...source(c.versionId, opts.number),
+        documentStyle: styles.get(c.versionId) ?? null,
+      });
     }),
+    saveDocumentStyle: vi.fn(
+      (_tx: DbTransaction, c: RenderCandidate, style: DocumentStyleSnapshot) => {
+        calls.push(`style:${c.versionId}`);
+        if (!styles.has(c.versionId)) styles.set(c.versionId, style);
+        return Promise.resolve(styles.get(c.versionId));
+      },
+    ),
     markRendered: vi.fn((_tx: DbTransaction, c: RenderCandidate) => {
       calls.push(`rendered:${c.versionId}`);
       return Promise.resolve();
@@ -155,7 +200,9 @@ function setup(
     calls.push(`pdf:${html.includes('QT-2082-0042') ? 'html' : 'empty'}`);
     return (opts.pdf ?? (() => Promise.resolve(PDF)))();
   });
+  // What the real SettingsService answers for a key nobody wrote: the default.
   const settingValues = {
+    ...DOCUMENT_SETTING_DEFAULTS,
     'entity.pan_vat_no': '301234567',
     'entity.address': address,
     ...opts.settings,
@@ -171,7 +218,7 @@ function setup(
     { htmlToPdf },
     () => NOW,
   );
-  return { sweeper, store, documents, htmlToPdf, calls, txs };
+  return { sweeper, store, documents, htmlToPdf, calls, txs, settingValues, styles };
 }
 
 describe('QuotationRenderSweeper', () => {
@@ -188,6 +235,7 @@ describe('QuotationRenderSweeper', () => {
     expect(calls.filter((x) => !x.startsWith('candidates'))).toEqual([
       `claim:${c.versionId}`,
       `load:${c.versionId}`,
+      `style:${c.versionId}`,
       'pdf:html',
       `create:${c.versionId}`,
       'receive',
@@ -318,6 +366,145 @@ describe('QuotationRenderSweeper', () => {
     expect(calls).not.toContain('receive');
     expect(calls).not.toContain(`rendered:${c.versionId}`);
     expect(calls).toContain(`failed:${c.versionId}`);
+  });
+
+  describe('the document style frozen with the version', () => {
+    const htmlOptions = () =>
+      vi.mocked(renderQuotationHtml).mock.calls.map((call) => call[1] as { snapshot: unknown });
+
+    it('captures the style from settings at the first render, stores it, and renders with it', async () => {
+      vi.mocked(renderQuotationHtml).mockClear();
+      const c = candidate(1);
+      const { sweeper, settingValues, styles, store } = setup({ candidates: [c] });
+      settingValues['document.style'] = { layout: 'tinted', primaryColour: '#B45309' };
+      settingValues['entity.profile'] = {
+        ...DOCUMENT_SETTING_DEFAULTS['entity.profile'],
+        displayName: 'Techrida Nepal',
+        panVatNo: null,
+      };
+      settingValues['format.number_system'] = 'international';
+      await expect(sweeper.sweep()).resolves.toMatchObject({ rendered: 1, failed: 0 });
+      const expected = {
+        style: { layout: 'tinted', primaryColour: '#b45309' },
+        // The profile has no number of its own, so the entity's PAN/VAT setting fills it.
+        profile: {
+          ...DOCUMENT_SETTING_DEFAULTS['entity.profile'],
+          displayName: 'Techrida Nepal',
+          panVatNo: '301234567',
+        },
+        numberSystem: 'international',
+        capturedAt: NOW.toISOString(),
+      };
+      expect(styles.get(c.versionId)).toEqual(expected);
+      expect(store.saveDocumentStyle).toHaveBeenCalledTimes(1);
+      expect(htmlOptions()).toEqual([{ snapshot: expected }]);
+    });
+
+    it('keeps a PAN/VAT number the profile carries itself over the entity setting', async () => {
+      const c = candidate(1);
+      const { sweeper, settingValues, styles } = setup({ candidates: [c] });
+      settingValues['entity.profile'] = {
+        ...DOCUMENT_SETTING_DEFAULTS['entity.profile'],
+        panVatNo: '999999999',
+      };
+      await sweeper.sweep();
+      expect(styles.get(c.versionId)).toMatchObject({ profile: { panVatNo: '999999999' } });
+    });
+
+    it('renders a retry with the stored style although settings changed since (a sent document never drifts)', async () => {
+      vi.mocked(renderQuotationHtml).mockClear();
+      const c = candidate(1);
+      let n = 0;
+      const { sweeper, settingValues, styles, store } = setup({
+        candidates: [c],
+        pdf: () => {
+          n += 1;
+          return n === 1
+            ? Promise.reject(new GotenbergError('down', 'timeout'))
+            : Promise.resolve(PDF);
+        },
+      });
+      settingValues['document.style'] = { layout: 'ledger', primaryColour: '#0f766e' };
+      await expect(sweeper.renderOne(c)).resolves.toBe('failed');
+      const first = styles.get(c.versionId);
+      expect(first).toMatchObject({ style: { layout: 'ledger', primaryColour: '#0f766e' } });
+
+      // The admin changes the look between the failed attempt and the retry.
+      settingValues['document.style'] = { layout: 'banded', primaryColour: '#be123c' };
+      settingValues['format.number_system'] = 'international';
+      settingValues['entity.profile'] = {
+        ...DOCUMENT_SETTING_DEFAULTS['entity.profile'],
+        displayName: 'Renamed Co',
+      };
+      await expect(sweeper.renderOne(c)).resolves.toBe('rendered');
+
+      expect(styles.get(c.versionId)).toBe(first);
+      // Nothing was captured or stored the second time: the stored value was used as it is.
+      expect(store.saveDocumentStyle).toHaveBeenCalledTimes(1);
+      const [a, b] = htmlOptions();
+      expect(a?.snapshot).toEqual(first);
+      expect(b?.snapshot).toEqual(first);
+    });
+
+    it('uses the style a version already holds without reading or storing anything', async () => {
+      vi.mocked(renderQuotationHtml).mockClear();
+      const c = candidate(1);
+      const held = storedStyle();
+      const { sweeper, store, settingValues } = setup({
+        candidates: [c],
+        styles: { [c.versionId]: held },
+      });
+      settingValues['document.style'] = { layout: 'banded', primaryColour: '#be123c' };
+      await expect(sweeper.sweep()).resolves.toMatchObject({ rendered: 1 });
+      expect(store.saveDocumentStyle).not.toHaveBeenCalled();
+      expect(htmlOptions()).toEqual([{ snapshot: held }]);
+    });
+
+    it('renders with the style the version holds when another worker stored one first', async () => {
+      vi.mocked(renderQuotationHtml).mockClear();
+      const c = candidate(1);
+      const winner = storedStyle({ numberSystem: 'south_asian' });
+      const { sweeper, store } = setup({ candidates: [c] });
+      // The version had none when this worker loaded it, but the racing worker's write landed before ours.
+      vi.mocked(store.saveDocumentStyle).mockResolvedValueOnce(winner);
+      await expect(sweeper.sweep()).resolves.toMatchObject({ rendered: 1 });
+      expect(htmlOptions()).toEqual([{ snapshot: winner }]);
+    });
+
+    it.each([
+      ['a stored style that is not a snapshot', { style: 'banded' }],
+      [
+        'a stored style with a colour that is not a hex colour',
+        storedStyle({ style: { layout: 'ledger', primaryColour: 'blue' } as never }),
+      ],
+      ['a stored style of the wrong type', 'ledger'],
+    ])('fails the version with a fixed kind for %s, and renders nothing', async (_name, bad) => {
+      const c = candidate(1);
+      const { sweeper, calls, htmlToPdf, store } = setup({
+        candidates: [c],
+        styles: { [c.versionId]: bad },
+      });
+      await expect(sweeper.sweep()).resolves.toMatchObject({
+        failed: 1,
+        rendered: 0,
+        failures: [{ versionId: c.versionId, kind: 'document_style_invalid' }],
+      });
+      expect(calls).toContain(`failed:${c.versionId}`);
+      expect(htmlToPdf).not.toHaveBeenCalled();
+      expect(store.saveDocumentStyle).not.toHaveBeenCalled();
+    });
+
+    it('fails, and stores nothing, when the settings hold a value that does not validate', async () => {
+      const c = candidate(1);
+      const { sweeper, settingValues, styles, htmlToPdf } = setup({ candidates: [c] });
+      settingValues['document.style'] = { layout: 'banded', primaryColour: 'red' };
+      await expect(sweeper.sweep()).resolves.toMatchObject({
+        failed: 1,
+        failures: [{ versionId: c.versionId, kind: 'document_style_invalid' }],
+      });
+      expect(styles.has(c.versionId)).toBe(false);
+      expect(htmlToPdf).not.toHaveBeenCalled();
+    });
   });
 
   it('removes orphan generated documents, and one failing removal does not stop the others', async () => {

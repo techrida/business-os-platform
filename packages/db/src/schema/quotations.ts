@@ -128,6 +128,7 @@ export const QUOTATION_VERSION_UPDATABLE_COLUMNS = [
   'rendered_document_id',
   'rendered_sha256',
   'render_state',
+  'document_style',
   'superseded_by_version_id',
   'cancel_reason',
   'submitted_at',
@@ -358,6 +359,11 @@ export const quotationVersions = appSchema.table(
     renderedDocumentId: uuid('rendered_document_id'),
     renderedSha256: bytea('rendered_sha256'),
     renderState: text('render_state', { enum: QUOTATION_RENDER_STATES }).notNull().default('none'),
+    /**
+     * The DocumentStyleSnapshot of @bos/contracts (layout, colour, company profile, number system), captured by the
+     * render job at the first render and never changed after (quotation_versions_document_style_guard, 0046).
+     */
+    documentStyle: jsonb('document_style'),
     supersedesVersionId: uuid('supersedes_version_id'),
     supersededByVersionId: uuid('superseded_by_version_id'),
     revisionReason: text('revision_reason'),
@@ -525,6 +531,10 @@ export const quotationVersions = appSchema.table(
     check(
       'quotation_versions_rendered_check',
       sql`${t.renderState} <> 'rendered' OR (${t.renderedDocumentId} IS NOT NULL AND ${t.renderedSha256} IS NOT NULL)`,
+    ),
+    check(
+      'quotation_versions_document_style_check',
+      sql`${t.documentStyle} IS NULL OR jsonb_typeof(${t.documentStyle}) = 'object'`,
     ),
     check('quotation_versions_version_check', sql`${t.version} >= 1`),
   ],

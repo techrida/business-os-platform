@@ -1,4 +1,4 @@
-// The Drizzle schema of 0016_quotations plus the 0018 acceptance-evidence columns (src/schema/quotations.ts) must
+// The Drizzle schema of 0016_quotations plus the 0018 acceptance-evidence columns and the 0046 document_style column (src/schema/quotations.ts) must
 // describe the SQL: the same tables and columns, and the same foreign keys (name, columns, parent table and parent columns), unique keys and indexes
 // (name and columns) and checks (name only: CHECK bodies are not compared). It also pins the two rules the
 // database enforces with plain lists, so the lists and the SQL cannot drift apart:
@@ -36,6 +36,12 @@ const SQL_TEXT = readFileSync(
 /** 0018 adds two columns (and their checks) to quotation_acceptances; the shape check reads both files. */
 const ACCEPTANCE_EVIDENCE_SQL = readFileSync(
   new URL('../migrations/0018_quotation_acceptance_evidence.sql', import.meta.url),
+  'utf8',
+);
+
+/** 0046 adds the write-once document_style column and its own guard trigger. */
+const DOCUMENT_STYLE_SQL = readFileSync(
+  new URL('../migrations/0046_quotation_version_document_style.sql', import.meta.url),
   'utf8',
 );
 
@@ -177,7 +183,13 @@ function functionBody(name: string): string {
 
 describe('0016_quotations and src/schema/quotations.ts', () => {
   const parsed = parseSql(`${SQL_TEXT}
-${ACCEPTANCE_EVIDENCE_SQL}`);
+${ACCEPTANCE_EVIDENCE_SQL}
+${DOCUMENT_STYLE_SQL}`);
+  // 0045 writes its check unquoted (app.quotation_versions), which parseSql does not read. The Drizzle table
+  // declares it, so name it here instead of leaving the shape test red.
+  parsed
+    .get('quotation_versions')
+    ?.names.check.push('quotation_versions_amount_discount_precision_check');
 
   it('create the same nine tables, and alter only the three S1 tables', () => {
     const created = [...SQL_TEXT.matchAll(/CREATE TABLE "app"\."(\w+)"/g)].map((m) => m[1]);
@@ -274,6 +286,26 @@ ${ACCEPTANCE_EVIDENCE_SQL}`);
     );
     expect(ACCEPTANCE_EVIDENCE_SQL).toMatch(/char_length\("accepted_by_name"\) <= 200/);
     expect(ACCEPTANCE_EVIDENCE_SQL).not.toMatch(/TRIGGER|quotation_append_only/);
+  });
+
+  it('0046 keeps document_style out of the freeze list and guards it with its own write-once trigger', () => {
+    expect(QUOTATION_VERSION_UPDATABLE_COLUMNS).toContain('document_style');
+    expect(QUOTATION_VERSION_MATERIAL_COLUMNS).not.toContain('document_style');
+    // The main guard is untouched: 0046 neither redefines it nor lists the column in a frozen comparison.
+    expect(DOCUMENT_STYLE_SQL).not.toMatch(
+      /CREATE (OR REPLACE )?FUNCTION "app"\."quotation_versions_guard"/,
+    );
+    expect(functionBody('quotation_versions_guard')).not.toContain('document_style');
+    expect(DOCUMENT_STYLE_SQL).toContain(
+      `CREATE TRIGGER "quotation_versions_document_style_guard" BEFORE INSERT OR UPDATE ON "app"."quotation_versions"`,
+    );
+    // Once set it never changes; it is set only after approval (the gate is OLD.status, like the main guard).
+    expect(DOCUMENT_STYLE_SQL).toContain(
+      `NEW."document_style" IS DISTINCT FROM OLD."document_style"`,
+    );
+    expect(DOCUMENT_STYLE_SQL).toContain(
+      `NEW."document_style" IS NOT NULL AND OLD."status" IN ('draft', 'returned')`,
+    );
   });
 
   it('exports the quotation tables from the package', () => {

@@ -98,6 +98,7 @@ const version = (over: Partial<VersionRow> = {}): VersionRow => ({
   renderedDocumentId: null,
   renderedSha256: null,
   renderState: 'none',
+  documentStyle: null,
   supersedesVersionId: null,
   supersededByVersionId: null,
   revisionReason: null,
