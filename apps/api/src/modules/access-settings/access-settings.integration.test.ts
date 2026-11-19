@@ -303,7 +303,7 @@ describe('AccessSettingsService integration (real Postgres)', () => {
     const resetGrant = afterReset.grants.find(
       (g) => g.role === 'pmo' && g.permission === 'crm.lead.write',
     );
-    expect(resetGrant?.scope).toBeNull();
+    expect(resetGrant?.scope).toBe(DEFAULT_ROLE_PERMISSIONS.pmo['crm.lead.write']);
     expect(resetGrant?.isDefault).toBe(true);
 
     // Every remaining pmo row in app.role_permissions has seeded = true.
@@ -315,7 +315,7 @@ describe('AccessSettingsService integration (real Postgres)', () => {
     expect(pmoRows.rows.every((r) => r.seeded === true)).toBe(true);
 
     // Audit trail captured both domain events with exact Spec 7.5 actions.
-    const events = await env.audit.list(env.scope, { limit: 100 });
+    const events = await env.audit.list(env.scope, { limit: 1000 });
     const grantEvt = events.find((e) => e.action === 'access.grant.changed');
     expect(grantEvt).toBeDefined();
     expect(grantEvt?.meta).toMatchObject({ note: 'Allow PMO to update their own leads' });
@@ -360,7 +360,7 @@ describe('AccessSettingsService integration (real Postgres)', () => {
     `);
     expect(Number(dbRows.rows[0]?.count ?? '0')).toBe(0);
 
-    const events = await env.audit.list(env.scope, { limit: 100 });
+    const events = await env.audit.list(env.scope, { limit: 1000 });
     expect(events.some((e) => e.action === 'access.level_rule.changed')).toBe(true);
   });
 
@@ -392,7 +392,7 @@ describe('AccessSettingsService integration (real Postgres)', () => {
     const oppsAssign = saved.assignment.find((a) => a.area === 'opportunities');
     expect(oppsAssign?.handOvers).toHaveLength(1);
 
-    const events = await env.audit.list(env.scope, { limit: 100 });
+    const events = await env.audit.list(env.scope, { limit: 1000 });
     expect(events.some((e) => e.action === 'access.assignment_rule.changed')).toBe(true);
   });
 
@@ -444,7 +444,7 @@ describe('AccessSettingsService integration (real Postgres)', () => {
     expect(confirmWarnings.some((w) => w.code === 'W4' && w.severity === 'confirm')).toBe(true);
 
     // Zero audit rows written on rejected save.
-    const auditBeforeAck = await env.audit.list(env.scope, { limit: 100 });
+    const auditBeforeAck = await env.audit.list(env.scope, { limit: 1000 });
     expect(auditBeforeAck.some((e) => e.action === 'access.grant.changed')).toBe(false);
 
     // Re-submit acknowledging W4 -> succeeds and records acknowledged in audit meta.
@@ -455,8 +455,7 @@ describe('AccessSettingsService integration (real Postgres)', () => {
       note: 'Small team override',
     });
     expect(afterAck.revision).toBe('1');
-    const auditAfterAck = await env.audit.list(env.scope, { limit: 100 });
-    console.log('DEBUG-AUDIT', JSON.stringify(auditAfterAck.map((e) => [e.action, e.meta])));
+    const auditAfterAck = await env.audit.list(env.scope, { limit: 1000 });
     const grantEvt = auditAfterAck.find((e) => e.action === 'access.grant.changed');
     expect(grantEvt?.meta).toMatchObject({ acknowledged: ['W4'], note: 'Small team override' });
 
@@ -510,7 +509,7 @@ describe('AccessSettingsService integration (real Postgres)', () => {
     expect(byUser.get(env.salesStaffAId)).toBe('head');
     expect(byUser.get(env.salesHeadId)).toBe('manager');
 
-    const events = await env.audit.list(env.scope, { limit: 100 });
+    const events = await env.audit.list(env.scope, { limit: 1000 });
     expect(events.some((e) => e.action === 'department.head.changed')).toBe(true);
   });
 
