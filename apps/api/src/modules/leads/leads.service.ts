@@ -18,16 +18,7 @@ import {
   type Scope,
   type UpdateLeadBody,
 } from '@bos/contracts';
-import {
-  activities,
-  idpOrgs,
-  leads,
-  rolePermissions,
-  scoped,
-  userEntities,
-  userRoles,
-  users,
-} from '@bos/db';
+import { activities, leads, rolePermissions, scoped, userRoles } from '@bos/db';
 import {
   BadRequestException,
   ConflictException,
@@ -40,12 +31,13 @@ import { and, desc, eq, getTableColumns, ilike, or, type SQL } from 'drizzle-orm
 
 import { AuditService } from '../../platform/audit/audit.service';
 import { AuthzService, scopeWhereFor } from '../../platform/authz/authz.service';
-import { can, type ResourceRef } from '../../platform/authz/can';
+import { type ResourceRef } from '../../platform/authz/can';
 import { DB, type Db } from '../../platform/db/db.module';
 import { updateVersioned, withIdempotency } from '../../platform/db/idempotency';
 import { withTx, type DbTransaction, type TxScope } from '../../platform/db/tx';
 import { NumberingService } from '../../platform/settings/numbering.service';
 import { nextFollowUpSql } from '../activities/activities.types';
+import { activeStaffOfEntity, assertLeadAssignee, mayAssignLead } from './lead-assignee';
 import { LeadsCaller } from './leads.caller';
 import { changedLeadFields, type LeadRow, type ListLeadsQuery, toLeadDto } from './leads.types';
 import { planLeadStageChange, type LeadStageCaller, type LeadStageRefusal } from './lead-stage';
@@ -160,8 +152,9 @@ export class LeadsService {
 
   /**
    * The owner defaults to the caller: a salesperson holding `own` scope could otherwise not see the lead they just
-   * made. Naming another owner needs a grant that reaches that owner (an `own` scope does not), checked with the
-   * same authz rule as every other write. The Idempotency-Key is optional: the workspace form does not send one.
+   * made. Naming another owner needs a grant that reaches that owner (an `own` scope does not, 403), checked with
+   * the same authz rule as every other write; a named owner or follow-up assignee must also be someone the owner
+   * select offers (assertLeadAssignee, 400). The Idempotency-Key is optional: the workspace form does not send one.
    *
    * `followUp` (or the old `nextFollowUpAt`, a call named "Follow up") plans the first follow-up as a planned
    * activity in the same transaction (D39): assigned to the owner unless named, named after its kind unless given a
@@ -179,12 +172,16 @@ export class LeadsService {
     const now = new Date();
     return withTx(this.db, scope, actor, async (tx) => {
       const run = async (): Promise<LeadDto> => {
-        await this.assertUser(tx, scope.tenantId, ownerUserId, 'ownerUserId');
+        // Only a named person is checked: the defaults (the caller, then the owner) keep working as before.
+        if (body.ownerUserId !== undefined) {
+          await assertLeadAssignee(tx, principal, scope, body.ownerUserId, 'ownerUserId');
+        }
         const assigneeUserId = followUp?.assigneeUserId ?? ownerUserId;
         if (followUp?.assigneeUserId !== undefined) {
-          await this.assertUser(
+          await assertLeadAssignee(
             tx,
-            scope.tenantId,
+            principal,
+            scope,
             followUp.assigneeUserId,
             'followUp.assigneeUserId',
           );
@@ -309,11 +306,12 @@ export class LeadsService {
   /**
    * An edit of the lead's own fields; only the fields sent change. Checks run in this order, the first failure is
    * the answer: out of scope 404, stale version 409, converted 400, nothing changed 400, then a new owner (the same
-   * rule as create: an `own` grant cannot hand the lead to someone else, 403; not a user of the tenant, 400).
+   * rule as create: an `own` grant cannot hand the lead to someone else, 403; not an active staff member of the
+   * entity, 400).
    * Currency has no default here, so an owner-only edit keeps the lead's currency.
    */
   async update(id: string, body: UpdateLeadBody): Promise<LeadDto> {
-    const { scope, actor } = this.caller.current();
+    const { scope, actor, principal } = this.caller.current();
     const { expectedVersion, ...fields } = body;
     return withTx(this.db, scope, actor, async (tx) => {
       const row = await this.lock(tx, scope, id);
@@ -341,7 +339,7 @@ export class LeadsService {
       if (typeof newOwner === 'string') {
         // assert, not assertVisible: refusing a new owner is a 403, the lead itself is already in scope.
         this.authz.assert('crm.lead.write', leadRef({ ...row, ownerUserId: newOwner }));
-        await this.assertUser(tx, scope.tenantId, newOwner, 'ownerUserId');
+        await assertLeadAssignee(tx, principal, scope, newOwner, 'ownerUserId');
       }
 
       const updated = await updateVersioned(tx, leads, id, expectedVersion, {
@@ -380,34 +378,8 @@ export class LeadsService {
    */
   async owners(): Promise<LeadOwnerOption[]> {
     const { scope, actor, principal } = this.caller.current();
-    const mayAssign = (userId: string) =>
-      can(principal, 'crm.lead.write', leadRef({ ...scope, ownerUserId: userId })).allowed;
     return withTx(this.db, scope, actor, async (tx) => {
-      const candidates = await tx
-        .select({
-          userId: users.id,
-          displayName: users.displayName,
-          email: users.email,
-          roleKeys: userEntities.roleKeys,
-        })
-        .from(users)
-        .innerJoin(
-          idpOrgs,
-          and(
-            eq(idpOrgs.tenantId, users.tenantId),
-            eq(idpOrgs.id, users.idpOrgId),
-            eq(idpOrgs.kind, 'staff'),
-          ),
-        )
-        .innerJoin(
-          userEntities,
-          and(
-            eq(userEntities.tenantId, users.tenantId),
-            eq(userEntities.userId, users.id),
-            eq(userEntities.organizationId, scope.organizationId),
-          ),
-        )
-        .where(and(eq(users.tenantId, scope.tenantId), eq(users.status, 'active')));
+      const candidates = await activeStaffOfEntity(tx, scope);
       const roleRows = await tx
         .select({ userId: userRoles.userId, roleKey: userRoles.roleKey })
         .from(userRoles)
@@ -433,7 +405,7 @@ export class LeadsService {
       return candidates
         .filter(
           (c) =>
-            mayAssign(c.userId) &&
+            mayAssignLead(principal, scope, c.userId) &&
             (c.userId === principal.userId || ownsLeads(c.userId, c.roleKeys)),
         )
         .map((c) => ({
@@ -515,25 +487,5 @@ export class LeadsService {
       .from(leads)
       .where(eq(leads.id, id));
     return row?.nextFollowUp ?? null;
-  }
-
-  /** The owner or assignee must be a user of this tenant: say so as a 400 instead of a foreign-key 500. */
-  private async assertUser(
-    tx: DbTransaction,
-    tenantId: string,
-    userId: string,
-    field: string,
-  ): Promise<void> {
-    const [user] = await tx
-      .select({ id: users.id })
-      .from(users)
-      .where(and(eq(users.tenantId, tenantId), eq(users.id, userId)))
-      .limit(1);
-    if (user === undefined) {
-      throw new BadRequestException({
-        code: 'bad_request',
-        message: `${field} is not a user of this tenant`,
-      });
-    }
   }
 }

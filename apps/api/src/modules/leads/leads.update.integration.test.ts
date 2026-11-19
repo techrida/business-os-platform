@@ -12,6 +12,7 @@ import type { AddressInfo } from 'node:net';
 import { ErrorBodySchema, LeadDtoSchema, LeadOwnerOptionSchema } from '@bos/contracts';
 import {
   createParty,
+  createPortalUser,
   createStaffUser,
   createTenantWithEntity,
   leads,
@@ -49,6 +50,8 @@ let baseUrl: string;
 let inactiveSales: string;
 /** A user of another tenant. */
 let foreignUser: string;
+/** A customer's portal user of this tenant. */
+let portalUser: string;
 
 const sys = () => systemActor('test');
 
@@ -89,6 +92,10 @@ beforeAll(async () => {
   await withTx(h.db, h.scopeA, sys(), (tx) =>
     tx.update(users).set({ status: 'inactive' }).where(eq(users.id, inactiveSales)),
   );
+  const customerParty = await createParty(pool, { tenantId: h.tenantId, kind: 'customer' });
+  portalUser = (
+    await createPortalUser(pool, { tenantId: h.tenantId, idpOrgId: customerParty.idpOrgId })
+  ).userId;
   const other = await createTenantWithEntity(pool);
   foreignUser = (
     await createStaffUser(pool, {
@@ -208,13 +215,15 @@ describe('PATCH /v1/leads/:id', () => {
     ]);
   });
 
-  it('refuses an owner who is not a user of this tenant with 400', async () => {
+  it('refuses an owner who is not an active staff member of this entity with 400', async () => {
     const lead = await seed();
     h.as('boss', 'founder');
-    for (const ownerUserId of [randomUUID(), foreignUser]) {
+    for (const ownerUserId of [randomUUID(), foreignUser, inactiveSales, portalUser]) {
       const res = await patch(lead.id, { ownerUserId, expectedVersion: 1 });
       expect(res.status, JSON.stringify(res.body)).toBe(400);
-      expect(errorOf(res.body).message).toMatch(/ownerUserId/);
+      expect(errorOf(res.body).message).toBe(
+        'ownerUserId is not an active staff member of this entity',
+      );
     }
     expect(await rowOf(lead.id)).toMatchObject({ ownerUserId: h.users.salesA, version: 1 });
   });

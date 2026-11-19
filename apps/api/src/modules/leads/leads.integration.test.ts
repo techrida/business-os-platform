@@ -170,6 +170,7 @@ describe('POST /v1/leads with a follow-up (D39)', () => {
   });
 
   it('keeps a named assignee and subject', async () => {
+    h.as('boss', 'founder');
     const lead = await seed({
       followUp: {
         kind: 'email',
@@ -183,8 +184,24 @@ describe('POST /v1/leads with a follow-up (D39)', () => {
       kind: 'email',
       subject: 'Send the quote',
       assigneeUserId: h.users.salesB,
-      createdByUserId: h.users.salesA,
+      createdByUserId: h.users.boss,
     });
+  });
+
+  it('refuses a follow-up an own-scope caller hands to a colleague with 400, and creates nothing', async () => {
+    const title = `Handed ${randomUUID()}`;
+    const res = await post({
+      ...BODY,
+      title,
+      followUp: { kind: 'call', dueAt: '2030-01-01T00:00:00Z', assigneeUserId: h.users.salesB },
+    });
+    expect(res.status, JSON.stringify(res.body)).toBe(400);
+    expect(errorOf(res.body)).toMatchObject({
+      code: 'bad_request',
+      message:
+        'followUp.assigneeUserId cannot be someone else: your access covers only your own leads',
+    });
+    expect(await h.db.select().from(leads).where(eq(leads.title, title))).toHaveLength(0);
   });
 
   it('maps the old nextFollowUpAt to a planned call named "Follow up" for the owner', async () => {
