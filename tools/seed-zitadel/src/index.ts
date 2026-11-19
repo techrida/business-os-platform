@@ -317,7 +317,11 @@ export async function runSeed(deps: SeedDeps): Promise<SeedResult> {
   // apps/portal/src/lib/oidc.ts can sign in with client.None(). Same project, so OIDC_AUDIENCE, the role
   // claims and the customer persona's authorization and project grant apply unchanged. ---
   let portalApp: AppInfo | undefined;
-  if (deps.portalUrl) {
+  if (!deps.portalUrl) {
+    // Without a portal URL nothing is created or changed, but an app a previous run created stays in
+    // OIDC_ALLOWED_AZP: dropping it would make the API refuse every portal token while the portal keeps signing in.
+    portalApp = (await api.findOidcApp(projectId, PORTAL_APP_NAME)) ?? undefined;
+  } else {
     const redirectUri = `${deps.portalUrl}/auth/callback`;
     const postLogoutUri = `${deps.portalUrl}/`;
     portalApp = await api.findOidcApp(projectId, PORTAL_APP_NAME);
