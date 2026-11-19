@@ -8,6 +8,8 @@
 import { randomUUID } from 'node:crypto';
 
 import {
+  DocumentLayoutSchema,
+  HexColourSchema,
   type NumberSystemSetting,
   type Permission,
   type TermPreset,
@@ -24,6 +26,9 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import { z } from 'zod';
+
+import { renderQuotationHtml } from '../../../modules/quotations/render/quotation-html';
+import { sampleQuotationView } from '../../../modules/quotations/render/sample-view';
 
 import { AuthzService } from '../../authz/authz.service';
 import { principal } from '../../authz/principal';
@@ -86,6 +91,11 @@ function assertNameFree(
   }
 }
 
+const PreviewBody = z.strictObject({
+  layout: DocumentLayoutSchema,
+  primaryColour: HexColourSchema,
+});
+
 @Injectable()
 export class DocumentSettingsService {
   constructor(
@@ -99,6 +109,29 @@ export class DocumentSettingsService {
     this.assertActiveStaff();
     const { scope } = requestTx();
     return { numberSystem: await this.settings.get(scope, 'format.number_system') };
+  }
+
+  /**
+   * A sample quotation in the chosen layout and colour, drawn by the real renderer with this entity's profile and
+   * number system, so a thumbnail matches the PDF. Nothing is stored.
+   */
+  async previewDocument(rawBody: unknown): Promise<{ html: string }> {
+    this.authz.assert('admin.settings.write');
+    const body = parse(PreviewBody, rawBody, 'preview');
+    const { scope } = requestTx();
+    const [profile, numberSystem] = await Promise.all([
+      this.settings.get(scope, 'entity.profile'),
+      this.settings.get(scope, 'format.number_system'),
+    ]);
+    const html = renderQuotationHtml(sampleQuotationView(), {
+      snapshot: {
+        style: { layout: body.layout, primaryColour: body.primaryColour },
+        profile,
+        numberSystem,
+        capturedAt: new Date().toISOString(),
+      },
+    });
+    return { html };
   }
 
   /** The saved presets, optionally of one kind, by kind then name. 403 unless staff holding a reader permission. */
