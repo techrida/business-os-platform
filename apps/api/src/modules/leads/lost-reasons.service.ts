@@ -327,12 +327,16 @@ export class LeadLostReasonsService {
   ): Promise<{ id: string; label: string }> {
     await this.seedDefaults(tx, tenantId);
     if (pick.lostReasonId !== undefined) {
+      // FOR SHARE: update() and reset() change a row under FOR UPDATE, so a retire that commits first is read here as
+      // retired (the 400 below), and one that arrives later waits until this stage change commits. Without the lock a
+      // lead or deal could be saved Lost with an option retired in between.
       const [row] = await tx
         .select()
         .from(leadLostReasons)
         .where(
           and(eq(leadLostReasons.tenantId, tenantId), eq(leadLostReasons.id, pick.lostReasonId)),
-        );
+        )
+        .for('share');
       if (row === undefined) {
         throw new BadRequestException({ code: 'bad_request', message: 'Unknown lost reason' });
       }
