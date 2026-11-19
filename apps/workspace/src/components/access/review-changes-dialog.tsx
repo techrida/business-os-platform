@@ -8,7 +8,7 @@ import type {
   AccessWarningCode,
   CheckPersonReport,
 } from '@bos/contracts';
-import { useEffect, useId, useRef, useState } from 'react';
+import { useEffect, useId, useLayoutEffect, useRef, useState } from 'react';
 
 import { Alert } from '@/components/ui/alert';
 import { Button } from '@/components/ui/button';
@@ -89,11 +89,28 @@ export interface ReviewChangesDialogProps {
  * The one review step before any access save (spec 7.3): what changes, who is affected and the
  * warnings, all from the server's dry run; an optional note; Back and Save changes in the fixed
  * footer. Save stays disabled until the dry run succeeded, no warning blocks it and every
- * confirm warning is ticked. A full-screen sheet on a phone. Radix traps focus, closes on Escape
- * without saving, and returns focus to whatever opened the dialog.
+ * confirm warning is ticked. A full-screen sheet on a phone. Radix traps focus and closes on
+ * Escape without saving. The dialog has no trigger element (callers open it through `open`), so
+ * this component returns focus itself to whatever had it when the dialog opened.
  */
 export function ReviewChangesDialog(props: ReviewChangesDialogProps) {
-  if (!props.open) return null;
+  const { open } = props;
+  const opener = useRef<HTMLElement | null>(null);
+  // A layout effect runs before the dialog's own focus move (a passive effect), so the element
+  // read here is still the one that opened it.
+  useLayoutEffect(() => {
+    if (!open) return;
+    const active = document.activeElement;
+    opener.current = active instanceof HTMLElement && active !== document.body ? active : null;
+  }, [open]);
+  useEffect(() => {
+    if (open) return;
+    const target = opener.current;
+    opener.current = null;
+    if (target?.isConnected) target.focus();
+  }, [open]);
+
+  if (!open) return null;
   // A new set of changes or a new revision starts a fresh review (and a fresh dry run).
   const key = `${props.expectedRevision}:${JSON.stringify(props.changes)}`;
   return <OpenReview key={key} {...props} />;
@@ -525,6 +542,9 @@ function CheckRows({ report }: { report: CheckPersonReport }) {
                 Can assign to {row.assignableCount}{' '}
                 {row.assignableCount === 1 ? 'person' : 'people'}
               </p>
+            ) : null}
+            {row.why.length > 0 ? (
+              <p className={styles.muted}>Why: {row.why.join(' ')}</p>
             ) : null}
           </li>
         );
