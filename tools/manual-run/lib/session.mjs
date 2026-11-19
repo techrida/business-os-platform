@@ -5,6 +5,9 @@
 import { createHmac } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 
+// The app's route error panel ("This page/sales order/… did not open") or a raw server error.
+const BROKEN_PAGE = /\bdid not open\b|Application error|Internal Server Error/;
+
 export class StepFailure extends Error {}
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
@@ -65,7 +68,15 @@ export class Session {
       );
     };
     page.on('pageerror', (e) => add('pageerror', e.message));
-    page.on('console', (m) => m.type() === 'error' && add('console', m.text()));
+    page.on(
+      'console',
+      (m) =>
+        m.type() === 'error' &&
+        !/Failed to load resource/.test(m.text()) &&
+        add('console', m.text()),
+    );
+    page.on('response', (r) => r.status() >= 500 && add(`http ${r.status()}`, r.url()));
+    page.on('requestfailed', (r) => add('request failed', `${r.failure()?.errorText} ${r.url()}`));
     return page;
   }
 
@@ -122,13 +133,39 @@ export class Session {
   /** Wait until the locator is visible; fail the step with a sentence a person can act on. */
   async see(locator, message, timeout = this.cfg.actionTimeout) {
     try {
-      await locator.first().waitFor({ state: 'visible', timeout });
+      await this.recoverable(locator, timeout);
     } catch {
       throw new StepFailure(
         `Expected to see: ${message} (not visible after ${Math.round(timeout / 1000)} s on ${this.page.url()})`,
       );
     }
     this.checks.push(`saw: ${message}`);
+  }
+
+  /**
+   * Wait for a locator. When the dev server drops a route chunk (502 → ChunkLoadError) the app
+   * shows its "… did not open" panel instead; reload (a plain GET) up to twice and note it.
+   */
+  async recoverable(locator, timeout) {
+    const broken = this.page.getByText(BROKEN_PAGE);
+    for (let reloads = 0; ; reloads++) {
+      const winner = await Promise.race([
+        locator
+          .first()
+          .waitFor({ state: 'visible', timeout })
+          .then(() => 'ok'),
+        broken
+          .first()
+          .waitFor({ state: 'visible', timeout })
+          .then(() => 'broken'),
+      ]);
+      if (winner === 'ok') return;
+      if (reloads >= 2) throw new Error('app error screen after two reloads');
+      this.checks.push(`note: app error panel on ${this.page.url()}, reloaded (${reloads + 1})`);
+      this.log(`    (app error panel on ${this.page.url()}, reloading)`);
+      await sleep(5000);
+      await this.page.reload({ waitUntil: 'domcontentloaded' });
+    }
   }
 
   async seeText(text, message = `"${text}"`, timeout) {
@@ -208,7 +245,7 @@ export class Session {
     if (page.url().startsWith('chrome-error://')) throw new Error('browser error page');
     if (!ready) return;
     const target = typeof ready === 'function' ? ready(page) : ready;
-    const broken = page.getByText(/This page did not open|Application error|Internal Server Error/);
+    const broken = page.getByText(BROKEN_PAGE);
     const winner = await Promise.race([
       target
         .first()
@@ -276,22 +313,32 @@ export class Session {
    * before hydration does nothing. React attaches `__reactProps$…` to a DOM node when it hydrates
    * it, so wait for that key (elements outside React, e.g. the shadow-DOM Dev menu, are skipped).
    */
-  async hydrated(locator, timeout = 45000) {
+  async hydrated(locator, timeout = 20000) {
     const el = locator.first();
-    await el.waitFor({ state: 'visible', timeout: this.cfg.actionTimeout });
-    const until = Date.now() + timeout;
-    while (Date.now() < until) {
-      const state = await el
-        .evaluate((node) => {
-          if (node.getRootNode() !== document) return 'outside';
-          if (!document.querySelector('script[src*="/_next/"]')) return 'outside';
-          return Object.keys(node).some((k) => k.startsWith('__reactProps')) ? 'ready' : 'waiting';
-        })
-        .catch(() => 'waiting');
-      if (state !== 'waiting') return;
-      await sleep(250);
+    for (let attempt = 0; attempt < 3; attempt++) {
+      await el.waitFor({ state: 'visible', timeout: this.cfg.actionTimeout });
+      const until = Date.now() + timeout;
+      while (Date.now() < until) {
+        const state = await el
+          .evaluate((node) => {
+            if (node.getRootNode() !== document) return 'outside';
+            if (!document.querySelector('script[src*="/_next/"]')) return 'outside';
+            return Object.keys(node).some((k) => k.startsWith('__reactProps'))
+              ? 'ready'
+              : 'waiting';
+          })
+          .catch(() => 'waiting');
+        if (state !== 'waiting') return;
+        await sleep(250);
+      }
+      // Under load the dev server sometimes answers a script chunk with 502 and the page never
+      // hydrates. Nothing on an un-hydrated page can have taken input, so a reload is safe.
+      this.log(`    (not hydrated after ${timeout / 1000} s, reloading: ${locator})`);
+      await el.page().reload({ waitUntil: 'domcontentloaded' });
     }
-    this.log('    (element never hydrated; continuing)');
+    throw new StepFailure(
+      `The page never became interactive (React did not hydrate ${locator}) after two reloads`,
+    );
   }
 
   async click(locator, what) {
@@ -327,6 +374,19 @@ export class Session {
    * selects; `selectOption` would only touch a hidden input.
    */
   async choose(trigger, option, { scope = this.page, exact = true } = {}) {
+    if (typeof trigger === 'string' && (await this.select(trigger, { scope }).count()) === 0) {
+      // A native <select>: pick the option whose text matches.
+      const native = scope.getByLabel(trigger, { exact }).first();
+      await this.hydrated(native);
+      const labels = await native.locator('option').allInnerTexts();
+      const want = labels.find((l) =>
+        option instanceof RegExp ? option.test(l) : l.trim() === option,
+      );
+      if (want === undefined)
+        throw new Error(`No option ${option} in "${trigger}" (have: ${labels.join(' | ')})`);
+      await native.selectOption({ label: want });
+      return;
+    }
     const t = (typeof trigger === 'string' ? this.select(trigger, { scope }) : trigger).first();
     await t.scrollIntoViewIfNeeded().catch(() => {});
     await this.hydrated(t);
@@ -335,9 +395,11 @@ export class Session {
     const page = t.page();
     const list = id ? page.locator(`[id="${id}"]`) : page.getByRole('listbox');
     const opt =
-      typeof option === 'object'
-        ? list.locator(`[role="option"][data-key="${option.key}"]`)
-        : list.getByRole('option', { name: option, exact });
+      option instanceof RegExp
+        ? list.getByRole('option', { name: option })
+        : typeof option === 'object'
+          ? list.locator(`[role="option"][data-key="${option.key}"]`)
+          : list.getByRole('option', { name: option, exact });
     await opt.first().waitFor({ state: 'visible', timeout: 20000 });
     await opt.first().click();
     await list
