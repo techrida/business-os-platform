@@ -3,7 +3,7 @@
 // (`entity.pan_vat_no`, `entity.address`), read through SettingsService for the entity's scope. An entity with no
 // address is not ready to issue a quotation: that is a typed error, so the render job logs a fixed kind and the
 // admin sees a clear reason, instead of a schema error that carries data.
-import { SETTINGS } from '@bos/contracts';
+import { DocumentStyleSnapshotSchema, SETTINGS, type DocumentStyleSnapshot } from '@bos/contracts';
 
 import type { TxScope } from '../../../platform/db/tx';
 import type { SettingsService } from '../../../platform/settings/settings.service';
@@ -42,4 +42,55 @@ export async function buildIssuer(
     panVatNo: pan.success ? pan.data : null,
     address: address.data,
   };
+}
+
+/** A document style that does not validate, whether built from settings or read back from the version row. */
+export class DocumentStyleInvalidError extends Error {
+  readonly kind = 'document_style_invalid';
+
+  constructor() {
+    super('The document style is not valid');
+    this.name = 'DocumentStyleInvalidError';
+  }
+}
+
+/**
+ * The look of the document, as it stands in settings now: layout and colour, the company profile, the number
+ * system. The first render of a version stores the result on the version (quotation_versions.document_style),
+ * so a later settings change never alters a document that was already issued. The profile's PAN/VAT number
+ * falls back to the entity's own setting. An invalid value is an error, not a default: the result is stored
+ * for good, so a hand-edited bad row must not freeze a wrong look onto an approved quotation.
+ */
+export async function buildDocumentStyleSnapshot(
+  settings: IssuerSettings,
+  scope: TxScope,
+  capturedAt: Date,
+): Promise<DocumentStyleSnapshot> {
+  const [style, profile, numberSystem, entityPan] = await Promise.all([
+    settings.get(scope, 'document.style'),
+    settings.get(scope, 'entity.profile'),
+    settings.get(scope, 'format.number_system'),
+    settings.get(scope, 'entity.pan_vat_no'),
+  ]);
+  const pan = SETTINGS['entity.pan_vat_no'].safeParse(entityPan);
+  const rawProfile = SETTINGS['entity.profile'].safeParse(profile);
+  if (!rawProfile.success) throw new DocumentStyleInvalidError();
+  const parsed = DocumentStyleSnapshotSchema.safeParse({
+    style,
+    profile: {
+      ...rawProfile.data,
+      panVatNo: rawProfile.data.panVatNo ?? (pan.success ? pan.data : null),
+    },
+    numberSystem,
+    capturedAt: capturedAt.toISOString(),
+  });
+  if (!parsed.success) throw new DocumentStyleInvalidError();
+  return parsed.data;
+}
+
+/** A snapshot read back from the version row, checked again: a row edited by hand is an error kind, not a crash. */
+export function parseStoredDocumentStyle(stored: unknown): DocumentStyleSnapshot {
+  const parsed = DocumentStyleSnapshotSchema.safeParse(stored);
+  if (!parsed.success) throw new DocumentStyleInvalidError();
+  return parsed.data;
 }

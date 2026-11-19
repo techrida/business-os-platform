@@ -295,6 +295,13 @@
       "when": 1783000000045,
       "tag": "0045_quotation_discount_amount_precision",
       "breakpoints": true
+    },
+    {
+      "idx": 42,
+      "version": "7",
+      "when": 1783000000046,
+      "tag": "0046_quotation_version_document_style",
+      "breakpoints": true
     }
   ]
 }

@@ -9,10 +9,16 @@
 // the documents module's generated-file path under the actor `system:quotation-render`, which the owner policy
 // allows only for an approved version, so the PDF is of exactly the content that was approved.
 //
+// How the document looks (layout, colour, company profile, number system) is frozen with the version too: the
+// first attempt captures it from settings and stores it on the version before rendering, and every later attempt
+// (a retry after a failure) renders from the stored value, so a settings change never alters a document that was
+// already issued and a retry never drifts.
+//
 // The tests drive the sweeper through a RenderStore fake; the drizzle store below is checked by the R3
 // integration test against a real database.
 import { createHash } from 'node:crypto';
 
+import type { DocumentStyleSnapshot } from '@bos/contracts';
 import { InjectQueue, Processor, WorkerHost } from '@nestjs/bullmq';
 import {
   customerContacts,
@@ -47,7 +53,13 @@ import {
   type CustomerViewInput,
 } from './customer-view';
 import { GotenbergError } from './gotenberg.client';
-import { buildIssuer, IssuerIncompleteError } from './issuer';
+import {
+  buildDocumentStyleSnapshot,
+  buildIssuer,
+  DocumentStyleInvalidError,
+  IssuerIncompleteError,
+  parseStoredDocumentStyle,
+} from './issuer';
 import { renderQuotationHtml } from './quotation-html';
 
 export const QUOTATION_RENDER_QUEUE = 'quotation.render';
@@ -79,6 +91,8 @@ export interface RenderCandidate {
 /** What the mapper needs of a version's rows, plus the issuing entity's legal name. */
 export type RenderSource = Omit<CustomerViewInput, 'issuer' | 'renderedScanClean'> & {
   issuerLegalName: string;
+  /** The version's stored `document_style` as read (unchecked); null until its first render captured it. */
+  documentStyle: unknown;
 };
 
 export interface OrphanDocument {
@@ -94,6 +108,15 @@ export interface RenderStore {
   /** One conditional UPDATE: true only for the caller that moved the version to `pending`. */
   claim(tx: DbTransaction, c: RenderCandidate, now: Date): Promise<boolean>;
   load(tx: DbTransaction, c: RenderCandidate): Promise<RenderSource | undefined>;
+  /**
+   * Stores the style on a version that has none yet and returns the one the version holds afterwards: the given
+   * one, or, when another worker stored one first, that one. A stored style is never overwritten.
+   */
+  saveDocumentStyle(
+    tx: DbTransaction,
+    c: RenderCandidate,
+    style: DocumentStyleSnapshot,
+  ): Promise<unknown>;
   markRendered(
     tx: DbTransaction,
     c: RenderCandidate,
@@ -145,7 +168,11 @@ export class RenderSourceMissingError extends Error {
 /** A fixed word for the log: a kind, never a message (messages can carry URLs or customer data). */
 export function failureKind(error: unknown): string {
   if (error instanceof GotenbergError) return `gotenberg_${error.kind}`;
-  if (error instanceof IssuerIncompleteError || error instanceof RenderSourceMissingError) {
+  if (
+    error instanceof IssuerIncompleteError ||
+    error instanceof RenderSourceMissingError ||
+    error instanceof DocumentStyleInvalidError
+  ) {
     return error.kind;
   }
   // A Nest service on the way refused (the documents module answers 400, 403 or 404): its status, not its text.
@@ -202,15 +229,16 @@ export class QuotationRenderSweeper {
     try {
       const source = await this.runTx(scope, actor, (tx) => this.store.load(tx, c));
       if (source === undefined) throw new RenderSourceMissingError();
-      const { issuerLegalName, ...rows } = source;
+      const { issuerLegalName, documentStyle: storedStyle, ...rows } = source;
       const issuer = await buildIssuer(this.settings, scope, issuerLegalName);
+      const snapshot = await this.documentStyleOf(c, scope, actor, storedStyle);
       // The `render` purpose lets the mapper draw an approved version (a customer cannot see one) as the
       // document that will be sent. The file field stays null: this PDF is not its own attachment.
       const view = toCustomerQuotationView(
         { ...rows, issuer, renderedScanClean: false },
         { purpose: 'render' },
       );
-      const bytes = await this.pdf.htmlToPdf(renderQuotationHtml(view));
+      const bytes = await this.pdf.htmlToPdf(renderQuotationHtml(view, { snapshot }));
       const file = {
         filename: quotationPdfFilename(rows.quotation.number, rows.version.revisionNo),
         declaredMime: 'application/pdf',
@@ -244,6 +272,26 @@ export class QuotationRenderSweeper {
       }
       return { outcome: 'failed', kind };
     }
+  }
+
+  /**
+   * The style this version renders with. One already stored is used as it is (checked again, so a bad row fails
+   * with a kind); otherwise it is built from settings now and stored, in its own transaction, before the render:
+   * a render that fails afterwards is retried with this same style. The store returns what the version holds, so
+   * two workers that raced both render with the one that won.
+   */
+  private async documentStyleOf(
+    c: RenderCandidate,
+    scope: TxScope,
+    actor: Actor,
+    stored: unknown,
+  ): Promise<DocumentStyleSnapshot> {
+    if (stored !== null && stored !== undefined) return parseStoredDocumentStyle(stored);
+    const built = await buildDocumentStyleSnapshot(this.settings, scope, this.clock());
+    const held = await this.runTx(scope, actor, (tx) => this.store.saveDocumentStyle(tx, c, built));
+    // Nothing stored and nothing written: the claim was lost to another worker, like markRendered says.
+    if (held === null || held === undefined) throw new Error('render claim was lost');
+    return parseStoredDocumentStyle(held);
   }
 
   /** Generated documents that never got their bytes (the render crashed between the two steps) are soft-removed. */
@@ -317,8 +365,9 @@ export function drizzleRenderStore(db: Db): RenderStore {
     },
 
     async load(tx, c) {
-      const [version] = await tx
+      const [found] = await tx
         .select({
+          documentStyle: quotationVersions.documentStyle,
           id: quotationVersions.id,
           quotationId: quotationVersions.quotationId,
           revisionNo: quotationVersions.revisionNo,
@@ -346,7 +395,8 @@ export function drizzleRenderStore(db: Db): RenderStore {
         .from(quotationVersions)
         .where(ownVersion(c))
         .limit(1);
-      if (version === undefined) return undefined;
+      if (found === undefined) return undefined;
+      const { documentStyle, ...version } = found;
 
       const [quotation] = await tx
         .select({ number: quotations.number, customerPartyId: quotations.customerPartyId })
@@ -446,7 +496,29 @@ export function drizzleRenderStore(db: Db): RenderStore {
         lines,
         taxSummary,
         issuerLegalName: issuer.legalName,
+        documentStyle,
       };
+    },
+
+    async saveDocumentStyle(tx, c, style) {
+      // Written once: only a version with no style takes this one, and only while this worker holds the claim.
+      // The database refuses any later change as well (quotation_versions_document_style_guard, 0046).
+      await tx
+        .update(quotationVersions)
+        .set({ documentStyle: style })
+        .where(
+          and(
+            ownVersion(c),
+            eq(quotationVersions.renderState, 'pending'),
+            isNull(quotationVersions.documentStyle),
+          ),
+        );
+      const [row] = await tx
+        .select({ documentStyle: quotationVersions.documentStyle })
+        .from(quotationVersions)
+        .where(ownVersion(c))
+        .limit(1);
+      return row?.documentStyle ?? null;
     },
 
     async markRendered(tx, c, rendered, now) {

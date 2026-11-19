@@ -94,6 +94,7 @@ const versionRow = (over: Partial<QuotationVersionRow> = {}): QuotationVersionRo
   renderedDocumentId: null,
   renderedSha256: null,
   renderState: 'none',
+  documentStyle: null,
   supersedesVersionId: null,
   supersededByVersionId: null,
   revisionReason: null,

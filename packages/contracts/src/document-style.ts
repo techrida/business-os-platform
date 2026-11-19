@@ -154,13 +154,13 @@ export const NUMBER_SYSTEM_LABELS: Record<NumberSystemSetting, { name: string; e
 // Company profile and the settings values
 // ---------------------------------------------------------------------------------------------
 
-/** A logo small enough to live in a settings row: PNG, JPEG or SVG as a data URL, at most ~200 KB. */
+/** A logo small enough to live in a settings row: PNG, JPEG or WebP as a data URL (no SVG: script risk), at most ~200 KB. */
 export const LogoDataUrlSchema = z
   .string()
   .max(280_000)
   .regex(
-    /^data:image\/(?:png|jpeg|svg\+xml);base64,[A-Za-z0-9+/=]+$/,
-    'must be a PNG, JPEG or SVG image',
+    /^data:image\/(?:png|jpeg|webp);base64,[A-Za-z0-9+/=]+$/,
+    'must be a PNG, JPEG or WebP image',
   );
 
 /** What the document footer and signature block print about the selling company. */
