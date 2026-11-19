@@ -27,7 +27,7 @@ import {
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
-import { and, desc, eq, getTableColumns, ilike, or, type SQL } from 'drizzle-orm';
+import { and, desc, eq, getTableColumns, ilike, or, type SQL, sql } from 'drizzle-orm';
 
 import { AuditService } from '../../platform/audit/audit.service';
 import { AuthzService, scopeWhereFor } from '../../platform/authz/authz.service';
@@ -36,7 +36,8 @@ import { DB, type Db } from '../../platform/db/db.module';
 import { updateVersioned, withIdempotency } from '../../platform/db/idempotency';
 import { withTx, type DbTransaction, type TxScope } from '../../platform/db/tx';
 import { NumberingService } from '../../platform/settings/numbering.service';
-import { nextFollowUpSql } from '../activities/activities.types';
+import { nameIn, personNameMap } from '../../platform/users/person-names';
+import { isPlannedSql, nextFollowUpSql } from '../activities/activities.types';
 import { activeStaffOfEntity, assertLeadAssignee, mayAssignLead } from './lead-assignee';
 import { LeadsCaller } from './leads.caller';
 import { changedLeadFields, type LeadRow, type ListLeadsQuery, toLeadDto } from './leads.types';
@@ -133,7 +134,14 @@ export class LeadsService {
       .where(scoped(scope).where(leads, and(...filters)))
       .orderBy(desc(leads.createdAt), desc(leads.id))
       .limit(q.limit);
-    return rows.map(({ nextFollowUp, ...row }) => toLeadDto(row, nextFollowUp));
+    const names = await personNameMap(
+      this.db,
+      scope.tenantId,
+      rows.map((r) => r.ownerUserId),
+    );
+    return rows.map(({ nextFollowUp, ...row }) =>
+      toLeadDto(row, nextFollowUp, nameIn(names, row.ownerUserId)),
+    );
   }
 
   async get(id: string): Promise<LeadDto> {
@@ -145,7 +153,7 @@ export class LeadsService {
     if (found === undefined) throw notFound();
     const { nextFollowUp, ...row } = found;
     this.assertVisible('crm.lead.read', row);
-    return toLeadDto(row, nextFollowUp);
+    return toLeadDto(row, nextFollowUp, await this.ownerNameOf(this.db, row));
   }
 
   // ------------------------------------------------------------------------------------------------- create
@@ -217,7 +225,8 @@ export class LeadsService {
           entityId: row!.id,
           after: { number, stage: row!.stage, ownerUserId },
         });
-        if (followUp === undefined) return toLeadDto(row!, null);
+        const ownerName = await this.ownerNameOf(tx, row!);
+        if (followUp === undefined) return toLeadDto(row!, null, ownerName);
         const dueAt = new Date(followUp.dueAt);
         const [planned] = await tx
           .insert(activities)
@@ -239,7 +248,7 @@ export class LeadsService {
           after: { kind: followUp.kind, leadId: row!.id, dueAt: followUp.dueAt, assigneeUserId },
         });
         // The only planned activity of a new lead, so it is the next follow-up.
-        return toLeadDto(row!, dueAt);
+        return toLeadDto(row!, dueAt, ownerName);
       };
       if (idempotencyKey === undefined) return run();
       const done = await withIdempotency(
@@ -297,7 +306,7 @@ export class LeadsService {
         leadId: id,
         createdByUserId: principal.userId,
       });
-      return toLeadDto(updated, await this.nextFollowUpOf(tx, id));
+      return toLeadDto(updated, await this.nextFollowUpOf(tx, id), await this.ownerNameOf(tx, updated));
     });
   }
 
@@ -361,8 +370,9 @@ export class LeadsService {
           before: { ownerUserId: row.ownerUserId },
           after: { ownerUserId: newOwner },
         });
+        await this.moveFollowUps(tx, scope, id, row.ownerUserId, newOwner);
       }
-      return toLeadDto(updated, await this.nextFollowUpOf(tx, id));
+      return toLeadDto(updated, await this.nextFollowUpOf(tx, id), await this.ownerNameOf(tx, updated));
     });
   }
 
@@ -478,6 +488,50 @@ export class LeadsService {
       .for('update');
     if (row === undefined) throw notFound();
     return row;
+  }
+
+  /**
+   * D45: follow-ups follow the owner. The lead's open planned activities assigned to the old owner move to the new
+   * one, in the owner change's own transaction; one by one so each gets its own audit row. Follow-ups assigned to
+   * anyone else (or to no one), and completed or cancelled ones, stay as they are. The version moves with the
+   * assignee, so a form open on the old assignee gets a 409 instead of silently putting it back.
+   */
+  private async moveFollowUps(
+    tx: DbTransaction,
+    scope: TxScope,
+    leadId: string,
+    from: string | null,
+    to: string,
+  ): Promise<void> {
+    if (from === null || from === to) return;
+    const moved = await tx
+      .update(activities)
+      .set({ assigneeUserId: to, updatedAt: new Date(), version: sql`${activities.version} + 1` })
+      .where(
+        scoped(scope).where(
+          activities,
+          and(eq(activities.leadId, leadId), eq(activities.assigneeUserId, from), isPlannedSql),
+        ),
+      )
+      .returning({ id: activities.id });
+    for (const { id } of moved) {
+      await this.audit.record(tx, {
+        action: 'activity.reassigned',
+        entityType: 'activities',
+        entityId: id,
+        before: { assigneeUserId: from },
+        after: { assigneeUserId: to },
+        meta: { reason: 'lead_owner_changed', leadId },
+      });
+    }
+  }
+
+  /** The owner's display name (D46), read in the lead's tenant. */
+  private async ownerNameOf(
+    q: Db | DbTransaction,
+    row: Pick<LeadRow, 'tenantId' | 'ownerUserId'>,
+  ): Promise<string | null> {
+    return nameIn(await personNameMap(q, row.tenantId, [row.ownerUserId]), row.ownerUserId);
   }
 
   /** The derived next follow-up of one lead (see toLeadDto), read inside the caller's transaction. */
