@@ -91,6 +91,11 @@ export const users = appSchema.table(
     status: text('status', { enum: USER_STATUSES }).notNull(),
     lastActiveAt: timestamp('last_active_at', { withTimezone: true }),
     lastSyncedAt: timestamp('last_synced_at', { withTimezone: true }),
+    /**
+     * The avatar image, an `app.documents.id` (migration 0053). No foreign key: documents are owned per tenant
+     * and entity, and a user works in several entities. NULL shows the initials avatar.
+     */
+    avatarDocumentId: uuid('avatar_document_id'),
     createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
   },

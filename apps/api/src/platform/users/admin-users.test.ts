@@ -744,6 +744,7 @@ describe('SqlUsersStore against migration 0013 (ADR 0027: tenant-scoped users)',
         id: target,
         roles: ['finance', 'sales'],
         department: { id: departmentId, name: 'Sales' },
+        avatarDocumentId: null,
         lastActiveAt: null,
       }),
     ]);

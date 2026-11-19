@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import type { ActivityDto, LeadOwnerOption } from '@bos/contracts';
+import { avatarColour, imagePath, type ActivityDto, type LeadOwnerOption } from '@bos/contracts';
 import { act } from 'react';
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 
@@ -25,7 +25,7 @@ vi.mock('@/components/p2/crm/crm-api', () => ({
 }));
 vi.mock('@/components/ui/toast', () => ({ toast: { success: mocks.success, error: mocks.error } }));
 
-import { FollowUpsCard, sortFollowUps } from './follow-ups-card';
+import { assigneeAvatar, FollowUpsCard, sortFollowUps } from './follow-ups-card';
 
 const LEAD = '11111111-1111-4111-8111-111111111111';
 const OWNER = '33333333-3333-4333-8333-333333333333';
@@ -137,6 +137,50 @@ it("shows the assignee by the record's own name with initials, whoever the owner
   expect(second?.textContent).toContain('Sita Rai');
   expect(second?.querySelector('[aria-hidden="true"]')?.textContent).toBe('SR');
   await mounted.unmount();
+});
+
+it("shows the assignee's picture over the colour seeded from their user id", async () => {
+  const assignee = '9f1c2e4a-6b7d-4e8f-a1b2-c3d4e5f60718';
+  const picture = '66666666-6666-4666-8666-666666666666';
+  // The id must not land on the unseeded colour, or this check would pass without a seed.
+  expect(avatarColour(assignee)).not.toBe(avatarColour(null));
+  const mounted = await mountForm(
+    <FollowUpsCard
+      leadId={LEAD}
+      items={[activity(5, { assigneeUserId: assignee })]}
+      ownerUserId={OWNER}
+      owners={[
+        {
+          userId: assignee,
+          displayName: 'Asha Gurung',
+          email: 'asha@example.com',
+          avatarDocumentId: picture,
+        },
+      ]}
+      now={NOW}
+    />,
+  );
+  const avatar = rows(mounted.container)[0]?.querySelector<HTMLElement>('[aria-hidden="true"]');
+  expect(avatar?.style.getPropertyValue('--avatar-fill')).toBe(avatarColour(assignee));
+  expect(avatar?.querySelector('img')?.getAttribute('src')).toBe(imagePath(picture));
+  await mounted.unmount();
+});
+
+it('seeds the assignee avatar from their user id, with the picture the owners list carries', () => {
+  const picture = '66666666-6666-4666-8666-666666666666';
+  const withPicture = [{ ...owners[0]!, avatarDocumentId: picture }];
+  expect(assigneeAvatar({ assigneeUserId: OWNER }, withPicture)).toEqual({
+    seedId: OWNER,
+    imageDocumentId: picture,
+  });
+  expect(assigneeAvatar({ assigneeUserId: STRANGER }, withPicture)).toEqual({
+    seedId: STRANGER,
+    imageDocumentId: null,
+  });
+  expect(assigneeAvatar({ assigneeUserId: null }, withPicture)).toEqual({
+    seedId: null,
+    imageDocumentId: null,
+  });
 });
 
 it('shows an empty state and still offers Schedule follow-up', async () => {

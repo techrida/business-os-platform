@@ -136,4 +136,40 @@ describe('renderPurchaseOrderHtml', () => {
     expect(html).toContain("default-src 'none'");
     expect(html).not.toMatch(/https?:\/\//);
   });
+
+  describe('the company logo', () => {
+    const PNG = 'data:image/png;base64,iVBORw0KGgo=';
+
+    it('draws the frozen logo top-left of the header, named after the buyer, and allows only data images', () => {
+      const html = renderPurchaseOrderHtml(sample(), { logoDataUrl: PNG });
+      expect(html).toContain(
+        `<div class="head">\n    <div>\n      <img class="logo" src="${PNG}" alt="Techrida Pvt. Ltd.">\n      <div class="legal">Techrida Pvt. Ltd.</div>`,
+      );
+      expect(html).toContain(
+        `content="default-src 'none'; style-src 'unsafe-inline'; img-src data:"`,
+      );
+      expect(html).toMatch(/\.logo \{[^}]*max-height: 56px/);
+      expect(html.match(/<img /g)).toHaveLength(1);
+    });
+
+    it('keeps the text header and the no-image CSP when there is no logo', () => {
+      const plain = renderPurchaseOrderHtml(sample());
+      expect(renderPurchaseOrderHtml(sample(), { logoDataUrl: null })).toBe(plain);
+      expect(plain).not.toContain('<img');
+      expect(plain).toContain(`content="default-src 'none'; style-src 'unsafe-inline'"`);
+      expect(plain).toContain(
+        '<div class="head">\n    <div>\n      <div class="legal">Techrida Pvt. Ltd.</div>',
+      );
+    });
+
+    it.each([
+      ['an SVG', 'data:image/svg+xml;base64,PHN2Zz4='],
+      ['a URL', 'https://example.com/logo.png'],
+      ['markup', 'data:image/png;base64,AAAA" onerror="alert(1)'],
+    ])('never inlines %s: it prints as if there were no logo', (_name, logoDataUrl) => {
+      const html = renderPurchaseOrderHtml(sample(), { logoDataUrl });
+      expect(html).toBe(renderPurchaseOrderHtml(sample()));
+      expect(html).not.toContain('<img');
+    });
+  });
 });

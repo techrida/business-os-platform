@@ -7,9 +7,24 @@ import { ShellFrame, ShellMain } from '@/components/shell/shell-state';
 import { Sidebar } from '@/components/shell/sidebar';
 import { NumberSystemProvider } from '@/components/ui/number-system-context';
 import { WebVitals } from '@/components/web-vitals';
+import { getMe } from '@/lib/api';
 import { getInboxPage } from '@/lib/api-kernel';
 import { getNumberSystems } from '@/lib/display-settings';
-import { getSession } from '@/lib/session';
+import { getSession, type Session } from '@/lib/session';
+
+/**
+ * The signed-in person's picture from `/v1/me`. Never throws: a failed read shows initials, it never breaks the shell.
+ */
+async function ownAvatar(
+  session: Session,
+): Promise<{ id: string | null; avatarDocumentId: string | null }> {
+  try {
+    const me = await getMe(session);
+    return { id: me.id ?? null, avatarDocumentId: me.avatarDocumentId ?? null };
+  } catch {
+    return { id: null, avatarDocumentId: null };
+  }
+}
 
 export default async function AppLayout({ children }: { children: ReactNode }) {
   const session = await getSession();
@@ -26,10 +41,11 @@ export default async function AppLayout({ children }: { children: ReactNode }) {
   if (session.roles.length === 0) redirect('/no-access');
 
   const roles = accountLabel(session.roles);
-  // Never throws: a failed read falls back to the default grouping.
+  // None throws: a failed read falls back to the default grouping and to initials.
   // A failed or refused inbox read leaves the badge out; it never shows a zero in its place.
-  const [numberSystems, approvalsWaiting] = await Promise.all([
+  const [numberSystems, own, approvalsWaiting] = await Promise.all([
     getNumberSystems(),
+    ownAvatar(session),
     getInboxPage(session, { limit: 1 }).then(
       (page) => page.total,
       () => undefined,
@@ -41,7 +57,12 @@ export default async function AppLayout({ children }: { children: ReactNode }) {
       {/* Only signed-in staff report vitals: /telemetry/vitals needs a session. */}
       <WebVitals />
       <Sidebar
-        user={{ name: roles, detail: session.orgKind }}
+        user={{
+          name: roles,
+          detail: session.orgKind,
+          imageDocumentId: own.avatarDocumentId,
+          ...(own.id ? { id: own.id } : {}),
+        }}
         roles={session.roles}
         counts={approvalsWaiting === undefined ? {} : { '/inbox': approvalsWaiting }}
       />

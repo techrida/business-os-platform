@@ -3,76 +3,61 @@ import { describe, expect, it } from 'vitest';
 
 import {
   CARD_WRITES,
-  LOGO_MAX_BYTES,
   MAX_PHONES,
   addPhone,
   addressLines,
   canAddPhone,
+  companyLogo,
   draftsFromSettings,
   emptyProfilePatch,
   isCardEmpty,
-  isLogoDataUrl,
+  isCompanyCard,
   isResettableCard,
-  logoFormData,
+  logoSource,
   mergeProfile,
   parseAddress,
   parseCompanySettings,
   parseContact,
   parseIdentity,
-  parseLogo,
   parseSignatory,
   planCard,
   readExpectedVersion,
   removePhone,
   sameDraft,
   setPhone,
-  validateLogoFile,
   versionFieldName,
   versionFieldValue,
   type AddressDraft,
 } from './company-profile';
 
 const anyString = expect.any(String) as string;
-const stringWith = (text: string) => expect.stringContaining(text) as string;
 const PNG = 'data:image/png;base64,iVBORw0KGgo=';
 
-describe('validateLogoFile', () => {
-  it('accepts PNG, JPEG and WebP within the limit', () => {
-    for (const type of ['image/png', 'image/jpeg', 'image/webp']) {
-      expect(validateLogoFile({ type, size: 1000 })).toEqual({ ok: true });
-    }
-    expect(validateLogoFile({ type: 'image/png', size: LOGO_MAX_BYTES })).toEqual({ ok: true });
-  });
+const DOC_ID = '0190a1b2-c3d4-7e5f-8a9b-0c1d2e3f4a5b';
 
-  it('refuses SVG by type and by file name, with its own message', () => {
-    const byType = validateLogoFile({ type: 'image/svg+xml', size: 100 });
-    const byName = validateLogoFile({ type: '', size: 100, name: 'logo.SVG' });
-    for (const result of [byType, byName]) {
-      expect(result).toEqual({
-        ok: false,
-        message: 'SVG logos are not accepted. Use a PNG, JPEG or WebP image.',
-      });
-    }
-  });
-
-  it('refuses other types, an empty file and anything over 200 KB', () => {
-    expect(validateLogoFile({ type: 'image/gif', size: 100 })).toMatchObject({ ok: false });
-    expect(validateLogoFile({ type: 'application/pdf', size: 100 })).toMatchObject({ ok: false });
-    expect(validateLogoFile({ type: 'image/png', size: 0 })).toEqual({
-      ok: false,
-      message: 'That file is empty.',
+describe('logo', () => {
+  it('shows the uploaded image through the image route, ahead of a logo not yet moved', () => {
+    const logo = companyLogo({
+      ...EMPTY_COMPANY_PROFILE,
+      logoDocumentId: DOC_ID,
+      legacyLogoDataUrl: PNG,
     });
-    expect(validateLogoFile({ type: 'image/png', size: LOGO_MAX_BYTES + 1 })).toEqual({
-      ok: false,
-      message: 'That image is 201 KB. The limit is 200 KB.',
-    });
+    expect(logo).toEqual({ documentId: DOC_ID, legacyDataUrl: null });
+    expect(logoSource(logo)).toBe(`/api/images/${DOC_ID}`);
   });
 
-  it('keeps a 200 KB file inside what the profile can store', () => {
-    const base64Length = Math.ceil(LOGO_MAX_BYTES / 3) * 4;
-    const url = `data:image/png;base64,${'A'.repeat(base64Length)}`;
-    expect(isLogoDataUrl(url)).toBe(true);
-    expect(isLogoDataUrl('data:image/svg+xml;base64,PHN2Zz4=')).toBe(false);
+  it('shows a logo saved before uploads while it has not been moved, and nothing when there is none', () => {
+    const legacy = companyLogo({ ...EMPTY_COMPANY_PROFILE, legacyLogoDataUrl: PNG });
+    expect(legacy).toEqual({ documentId: null, legacyDataUrl: PNG });
+    expect(logoSource(legacy)).toBe(PNG);
+    const none = companyLogo(EMPTY_COMPANY_PROFILE);
+    expect(none).toEqual({ documentId: null, legacyDataUrl: null });
+    expect(logoSource(none)).toBeNull();
+  });
+
+  it('has no card that saves the logo through a form', () => {
+    expect(isCompanyCard('logo')).toBe(false);
+    expect(Object.keys(CARD_WRITES)).not.toContain('logo');
   });
 });
 
@@ -105,7 +90,7 @@ describe('profile merge', () => {
   const stored: CompanyProfile = {
     ...EMPTY_COMPANY_PROFILE,
     displayName: 'Acme',
-    logoDataUrl: PNG,
+    legacyLogoDataUrl: PNG,
     phones: ['01-4000000'],
     email: 'a@acme.test',
     signatoryName: 'Sita',
@@ -134,7 +119,7 @@ describe('profile merge', () => {
   it('keeps the logo and phones when the signatory card saves', () => {
     const signatory = parseSignatoryForTest();
     const merged = mergeProfile(stored, signatory);
-    expect(merged.logoDataUrl).toBe(PNG);
+    expect(merged.legacyLogoDataUrl).toBe(PNG);
     expect(merged.phones).toEqual(['01-4000000']);
     expect(merged.signatoryName).toBe('Ram');
   });
@@ -172,7 +157,7 @@ describe('parsers', () => {
     });
   });
 
-  it('checks PAN or VAT, email and logo at the field', () => {
+  it('checks PAN or VAT and email at the field', () => {
     expect(parseIdentity({ displayName: '', panVatNo: 'ab' })).toMatchObject({
       ok: false,
       errors: { panVatNo: anyString },
@@ -181,12 +166,6 @@ describe('parsers', () => {
       ok: false,
       errors: { email: anyString },
     });
-    expect(parseLogo('data:image/svg+xml;base64,PHN2Zz4=')).toMatchObject({
-      ok: false,
-      errors: { logo: stringWith('SVG') },
-    });
-    expect(parseLogo('')).toEqual({ ok: true, value: { logoDataUrl: null } });
-    expect(parseLogo(PNG)).toEqual({ ok: true, value: { logoDataUrl: PNG } });
   });
 
   it('plans the writes each card asks for', () => {
@@ -213,7 +192,7 @@ describe('parsers', () => {
   it('lists the keys each card may write', () => {
     expect(CARD_WRITES.address).toEqual(['entity.address']);
     expect(CARD_WRITES.identity).toEqual(['entity.profile', 'entity.pan_vat_no']);
-    for (const card of ['contact', 'logo', 'signatory'] as const) {
+    for (const card of ['contact', 'signatory'] as const) {
       expect(CARD_WRITES[card]).toEqual(['entity.profile']);
     }
   });
@@ -228,7 +207,7 @@ describe('drafts', () => {
     });
     expect(drafts.address.country).toBe('NP');
     expect(drafts.contact.phones).toEqual([]);
-    expect(drafts.logo).toBeNull();
+    expect(Object.keys(drafts)).toEqual(['identity', 'address', 'contact', 'signatory']);
   });
 
   it('does not call trimming or a blank phone row a change', () => {
@@ -296,22 +275,6 @@ describe('loaded versions', () => {
     }
     expect(readExpectedVersion(new FormData(), 'entity.address')).toBeUndefined();
   });
-
-  it('puts the loaded profile version into the logo card form, for a new logo and for a removal', () => {
-    const save = logoFormData(PNG, 4);
-    expect(save.get('card')).toBe('logo');
-    expect(save.get('logo')).toBe(PNG);
-    expect(save.get('expectedVersion:entity.profile')).toBe('4');
-    const remove = logoFormData(null, null);
-    expect(remove.get('logo')).toBe('');
-    expect(remove.get('expectedVersion:entity.profile')).toBe('');
-  });
-
-  it('reads the logo card form back as the version the page loaded', () => {
-    const data = logoFormData(PNG, 4);
-    expect(readExpectedVersion(data, 'entity.profile')).toBe(4);
-    expect(planCard('logo', data)).toEqual({ ok: true, value: { profile: { logoDataUrl: PNG } } });
-  });
 });
 
 describe('undo icons (D32)', () => {
@@ -319,7 +282,7 @@ describe('undo icons (D32)', () => {
     profile: {
       ...EMPTY_COMPANY_PROFILE,
       displayName: 'Acme',
-      logoDataUrl: PNG,
+      legacyLogoDataUrl: PNG,
       phones: ['01-4000000'],
       signatoryTitle: 'Director',
     },
@@ -338,7 +301,7 @@ describe('undo icons (D32)', () => {
     expect(emptyProfilePatch('contact')).toEqual({ phones: [], email: null, website: null });
     expect(emptyProfilePatch('signatory')).toEqual({ signatoryName: null, signatoryTitle: null });
     const merged = mergeProfile(settings.profile, emptyProfilePatch('contact'));
-    expect(merged.logoDataUrl).toBe(PNG);
+    expect(merged.legacyLogoDataUrl).toBe(PNG);
     expect(merged.displayName).toBe('Acme');
     expect(merged.signatoryTitle).toBe('Director');
   });
@@ -354,7 +317,7 @@ describe('undo icons (D32)', () => {
     // A logo or display name alone does not make Contact or Signatory look changed.
     const onlyLogo = {
       ...empty,
-      profile: { ...EMPTY_COMPANY_PROFILE, logoDataUrl: PNG, displayName: 'Acme' },
+      profile: { ...EMPTY_COMPANY_PROFILE, legacyLogoDataUrl: PNG, displayName: 'Acme' },
     };
     expect(isCardEmpty('contact', onlyLogo)).toBe(true);
     expect(isCardEmpty('signatory', onlyLogo)).toBe(true);

@@ -1,3 +1,4 @@
+import { avatarColour, imagePath } from '@bos/contracts';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
@@ -26,6 +27,7 @@ vi.mock('next/cache', () => ({ revalidatePath: vi.fn() }));
 const CUSTOMER = '11111111-1111-4111-8111-111111111111';
 const SALES = '33333333-3333-4333-8333-333333333333';
 const MATE = '55555555-5555-4555-8555-555555555555';
+const LOGO = '77777777-7777-4777-8777-777777777777';
 
 const customer = (over: Record<string, unknown> = {}) => ({
   id: CUSTOMER,
@@ -78,14 +80,17 @@ const fetchMock = vi.fn<typeof fetch>((input) => {
   );
 });
 
-async function render(): Promise<string> {
-  const html = renderToStaticMarkup(
+async function renderHtml(): Promise<string> {
+  return renderToStaticMarkup(
     await CustomerPage({
       params: Promise.resolve({ id: CUSTOMER }),
       searchParams: Promise.resolve({}),
     }),
   );
-  return html.replace(/<[^>]*>/g, ' ');
+}
+
+async function render(): Promise<string> {
+  return (await renderHtml()).replace(/<[^>]*>/g, ' ');
 }
 
 beforeEach(() => {
@@ -145,5 +150,50 @@ describe('customer detail dates', () => {
     } finally {
       process.env.TZ = before;
     }
+  });
+});
+
+describe('customer detail logo', () => {
+  /** The markup of the "Customer logo" group: from its opening tag to the organization name after it. */
+  const logoGroup = (html: string) => {
+    const start = html.indexOf('aria-label="Customer logo"');
+    expect(start).toBeGreaterThan(-1);
+    return html.slice(start, html.indexOf('id="organization-name"', start));
+  };
+
+  it('uses an id whose seeded colour differs from the unseeded one, so the seed assertions bite', () => {
+    expect(avatarColour(CUSTOMER)).not.toBe(avatarColour(null));
+  });
+
+  it('draws the logo seeded from the customer id, and lets a writer replace it', async () => {
+    detail = customer({ logoDocumentId: LOGO, people: [] });
+    const group = logoGroup(await renderHtml());
+    expect(group).toContain(`--avatar-fill:${avatarColour(CUSTOMER)}`);
+    expect(group).toContain(`src="${imagePath(LOGO)}"`);
+    expect(group).toContain('type="file"');
+  });
+
+  it('shows the initials, still seeded from the id, when the customer has no logo', async () => {
+    detail = customer({ people: [] });
+    const group = logoGroup(await renderHtml());
+    expect(group).toContain(`--avatar-fill:${avatarColour(CUSTOMER)}`);
+    expect(group).not.toContain('<img');
+  });
+
+  it('is the picture only when the page offers no editing: a merged record', async () => {
+    detail = customer({ logoDocumentId: LOGO, mergedIntoId: MATE, people: [] });
+    const html = await renderHtml();
+    const group = logoGroup(html);
+    expect(group).toContain(`src="${imagePath(LOGO)}"`);
+    expect(group).not.toContain('type="file"');
+    expect(html).not.toContain('Edit Details');
+  });
+
+  it('is the picture only for roles without customer.write', async () => {
+    mocks.requireStaffSession.mockResolvedValue({ accessToken: 'tok', roles: [], userId: SALES });
+    detail = customer({ logoDocumentId: LOGO, people: [] });
+    const html = await renderHtml();
+    expect(logoGroup(html)).not.toContain('type="file"');
+    expect(html).not.toContain('Edit Details');
   });
 });

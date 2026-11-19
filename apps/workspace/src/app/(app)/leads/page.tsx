@@ -4,6 +4,7 @@ import Link from 'next/link';
 import type { NumberSystems } from '@bos/locale';
 
 import { Board } from '@/components/p2/crm/board';
+import { listLeadOwners } from '@/components/p2/crm/crm-api';
 import {
   getLeadSummary,
   type LeadSummary,
@@ -151,6 +152,16 @@ export default async function LeadsPage({ searchParams }: { searchParams: Promis
   const currentPage = pageInfo.page;
   const pageHref = (page: number) => hrefWith(PATH, sp, { page: page > 1 ? page : null });
 
+  // Owner pictures from the people the caller may assign to; a failure only leaves initials.
+  const ownerPictures = new Map<string, string>();
+  try {
+    for (const o of await listLeadOwners(session)) {
+      if (o.avatarDocumentId) ownerPictures.set(o.userId, o.avatarDocumentId);
+    }
+  } catch {
+    // Initials stay.
+  }
+
   const now = new Date();
   const pageLinks = Array.from({ length: pageCount }, (_, index) => index + 1)
     .filter((page) => Math.abs(page - currentPage) <= 2)
@@ -281,7 +292,13 @@ export default async function LeadsPage({ searchParams }: { searchParams: Promis
                         <Badge tone="neutral">{sentence(lead.source)}</Badge>
                       </Td>
                       <Td>
-                        <OwnerCell name={lead.ownerName} />
+                        <OwnerCell
+                          name={lead.ownerName}
+                          seedId={lead.ownerUserId}
+                          imageDocumentId={
+                            lead.ownerUserId ? (ownerPictures.get(lead.ownerUserId) ?? null) : null
+                          }
+                        />
                       </Td>
                       <Td nowrap className={styles.followUpColumn}>
                         <StageBadge kind="lead" stage={lead.stage} />

@@ -1,3 +1,4 @@
+import { avatarColour, imagePath } from '@bos/contracts';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { describe, expect, it } from 'vitest';
 
@@ -36,6 +37,18 @@ describe('OwnerCell', () => {
     const html = renderToStaticMarkup(<OwnerCell name="Asha Gurung" />);
     expect(html).toContain('>AG<');
     expect(html).toContain('Asha Gurung');
+  });
+
+  it("seeds the colour from the owner's user id and shows their picture", () => {
+    const owner = '9f1c2e4a-6b7d-4e8f-a1b2-c3d4e5f60718';
+    const picture = '66666666-6666-4666-8666-666666666666';
+    const html = renderToStaticMarkup(
+      <OwnerCell name="Asha Gurung" seedId={owner} imageDocumentId={picture} />,
+    );
+    // The id must not land on the unseeded colour, or this check would pass without a seed.
+    expect(avatarColour(owner)).not.toBe(avatarColour(null));
+    expect(html).toContain(`--avatar-fill:${avatarColour(owner)}`);
+    expect(html).toContain(`src="${imagePath(picture)}"`);
   });
 
   it('says no owner only when the lead has none, and has no unavailable state', () => {

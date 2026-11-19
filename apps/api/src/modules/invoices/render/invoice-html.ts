@@ -6,6 +6,9 @@
 //
 // A tax invoice says "Tax Invoice". A proforma says "Proforma Invoice" and that it is not a tax invoice. A reprint
 // says "Copy of original (n)" beside the title.
+//
+// The one image allowed is the company logo frozen at print 1 (U12), and only as a data URL that passes the logo schema
+// here; the CSP then allows `img-src data:` and nothing more. With no logo the page is exactly as before.
 import {
   DEFAULT_CUSTOMER_DATE_FORMAT,
   DEFAULT_NUMBER_SYSTEMS,
@@ -17,6 +20,7 @@ import {
   type NumberSystems,
 } from '@bos/locale';
 
+import { documentCsp, printableLogo } from './frozen-logo';
 import type { InvoiceRenderView } from './invoice-view';
 
 const escapeHtml = (text: string): string =>
@@ -76,6 +80,9 @@ const CSS = `
   .head { display: flex; justify-content: space-between; align-items: flex-start; gap: 18pt; }
   .doc { text-align: right; }
   .brand { max-width: 42%; padding: 14pt 16pt; background: var(--brand); color: #fff; }
+  .identity { max-width: 42%; }
+  .identity .brand { max-width: none; margin-top: 6pt; }
+  .logo { display: block; max-height: 56px; max-width: 100%; }
   .badge { display: inline-block; margin-top: 4pt; padding: 1pt 8pt; border: 1pt solid var(--line); font-weight: 600; }
   .legal { font-weight: 700; font-size: 11pt; }
   .muted { color: var(--muted); }
@@ -129,6 +136,8 @@ export interface RenderInvoiceOptions {
   numberSystems?: NumberSystems;
   /** The company's `format.date`. Left out, the default `19 Nov 2026`. */
   dateFormat?: CustomerDateFormat;
+  /** The logo frozen at print 1. Printed only when it is a valid logo data URL; otherwise the text header alone. */
+  logoDataUrl?: string | null;
 }
 
 /** Returns the full HTML document for an issued invoice. Every text is escaped. */
@@ -147,6 +156,12 @@ export function renderInvoiceHtml(
   const title = TITLES[view.kind];
   const copy = view.copyNo === null ? '' : `Copy of original (${view.copyNo})`;
   const nonZero = (amount: string): boolean => !new Dec(amount).isZero();
+  const logo = printableLogo(opts.logoDataUrl);
+  const seller = `<div class="brand legal">${text(view.seller.legalName)}</div>`;
+  // The logo sits top-left above the seller's name; the alt text is the seller's name frozen on the invoice.
+  const identity = logo
+    ? `<div class="identity"><img class="logo" src="${escapeHtml(logo)}" alt="${text(view.seller.legalName)}">${seller}</div>`
+    : seller;
 
   const meta: [string, string][] = [
     ['Invoice no.', text(view.number)],
@@ -181,13 +196,13 @@ export function renderInvoiceHtml(
 <html lang="en">
 <head>
 <meta charset="utf-8">
-<meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'">
+<meta http-equiv="Content-Security-Policy" content="${documentCsp(logo)}">
 <title>${title} ${text(view.number)}${copy ? ` - ${copy}` : ''}</title>
 <style>${CSS}</style>
 </head>
 <body>
   <header class="head">
-    <div class="brand legal">${text(view.seller.legalName)}</div>
+    ${identity}
     <div class="doc">
       <h1>${title}</h1>
       ${copy ? `<div class="badge">${copy}</div>` : ''}
