@@ -8,6 +8,7 @@
 // - "Won is set by the system alone": the HTTP route cannot name won or quotation_sent, and the service
 //   refuses them too, so a caller that skips the controller's parsing still cannot.
 import {
+  type LeadLostReasonRef,
   type OpportunityDto,
   type OpportunityStageChangeBody,
   type Permission,
@@ -32,6 +33,7 @@ import { withTx, type DbTransaction, type TxScope } from '../../platform/db/tx';
 import { readTxContext } from '../../platform/documents/tx-context';
 import { nameIn, personNameMap } from '../../platform/users/person-names';
 import { searchPage } from '../../platform/list';
+import { LeadLostReasonsService, lostReasonRefs } from '../leads/lost-reasons.service';
 import { OpportunitiesCaller } from './opportunities.caller';
 import type { OpportunityLostHandler } from './opportunities.ports';
 import {
@@ -76,6 +78,7 @@ export class OpportunitiesService {
     private readonly authz: AuthzService,
     private readonly audit: AuditService,
     private readonly caller: OpportunitiesCaller,
+    private readonly lostReasons: LeadLostReasonsService,
   ) {}
 
   /**
@@ -136,9 +139,18 @@ export class OpportunitiesService {
       scope.tenantId,
       rows.map((r) => r.opportunity.ownerUserId),
     );
+    const refs = await lostReasonRefs(
+      this.db,
+      scope.tenantId,
+      rows.map((r) => r.opportunity.lostReasonId),
+    );
     return {
       items: rows.map((r) =>
-        toOpportunityDto(r.opportunity, nameIn(names, r.opportunity.ownerUserId)),
+        toOpportunityDto(
+          r.opportunity,
+          nameIn(names, r.opportunity.ownerUserId),
+          refs.get(r.opportunity.lostReasonId ?? '') ?? null,
+        ),
       ),
       total,
     };
@@ -152,35 +164,64 @@ export class OpportunitiesService {
       .where(scoped(scope).where(opportunities, eq(opportunities.id, id)));
     if (row === undefined) throw notFound();
     this.assertVisible('crm.opportunity.read', row);
-    return toOpportunityDto(row, await this.ownerNameOf(this.db, row));
+    return toOpportunityDto(
+      row,
+      await this.ownerNameOf(this.db, row),
+      await this.lostReasonOf(this.db, row),
+    );
   }
 
   // ------------------------------------------------------------------------------------------ stage change
 
-  /** A user's move. Only edges marked `user` are open: won, quotation_sent and the manager reopen are refused. */
-  async changeStage(id: string, body: OpportunityStageChangeBody): Promise<OpportunityDto> {
+  /**
+   * A user's move. Over HTTP `by` is always `'user'`, so won, quotation_sent and the manager reopen are refused.
+   * Lost carries an option of the shared tenant list (D49, D54-3), or a new one added in the same step.
+   */
+  async changeStage(
+    id: string,
+    body: OpportunityStageChangeBody,
+    by: StageCaller = 'user',
+  ): Promise<OpportunityDto> {
     const { scope, actor } = this.caller.current();
-    // Every HTTP caller is a plain user: only edges the table marks `user` are open. The manager edge (reopening a
-    // lost opportunity) stays closed until the product names who a manager is; the planner already supports it.
-    const by: StageCaller = 'user';
     return withTx(this.db, scope, actor, async (tx) => {
       const row = await this.lock(tx, scope, id);
       // Scope first (404), then state (409): someone who may not edit learns nothing about the stage.
       this.assertVisible('crm.opportunity.write', row);
 
+      // Probe the planner first with a placeholder reason so scope/stale/edge errors win before choosing or
+      // inserting a lost-reason option.
+      let reason = body.reason;
+      let lostReasonId: string | null = null;
+      const planProbe = planStageChange({
+        current: row.stage,
+        currentVersion: row.version,
+        to: body.stage,
+        by,
+        reason: body.stage === 'lost' ? 'probe' : body.reason,
+        note: body.note,
+        expectedVersion: body.expectedVersion,
+      });
+      if (!planProbe.ok) throw refusalToException(planProbe.kind, planProbe.message);
+      if (body.stage === 'lost') {
+        const chosen = await this.lostReasons.choose(tx, scope.tenantId, body);
+        reason = chosen.label;
+        lostReasonId = chosen.id;
+      }
       const plan = planStageChange({
         current: row.stage,
         currentVersion: row.version,
         to: body.stage,
         by,
-        reason: body.reason,
+        reason,
         note: body.note,
         expectedVersion: body.expectedVersion,
       });
       if (!plan.ok) throw refusalToException(plan.kind, plan.message);
 
+      // Leaving lost (or any move that is not to lost) clears the reference with the text.
       const updated = await updateVersioned(tx, opportunities, id, body.expectedVersion, {
         ...plan.set,
+        lostReasonId,
         updatedAt: new Date(),
       });
       await this.audit.record(tx, {
@@ -189,7 +230,7 @@ export class OpportunitiesService {
         entityId: id,
         before: { stage: row.stage, version: row.version },
         after: { stage: updated.stage, version: updated.version },
-        meta: { reason: plan.set.stageReason, note: plan.set.stageNote },
+        meta: { reason: plan.set.stageReason, note: plan.set.stageNote, lostReasonId },
       });
       if (updated.stage === 'lost') {
         // Same transaction: a handler that throws rolls the loss back.
@@ -202,7 +243,11 @@ export class OpportunitiesService {
           });
         }
       }
-      return toOpportunityDto(updated, await this.ownerNameOf(tx, updated));
+      return toOpportunityDto(
+        updated,
+        await this.ownerNameOf(tx, updated),
+        await this.lostReasonOf(tx, updated),
+      );
     });
   }
 
@@ -218,7 +263,11 @@ export class OpportunitiesService {
     const { scope } = await readTxContext(tx);
     const row = await this.lock(tx, scope, opportunityId);
     if (row.stage === 'quotation_sent' || row.stage === 'negotiation') {
-      return toOpportunityDto(row, await this.ownerNameOf(tx, row));
+      return toOpportunityDto(
+        row,
+        await this.ownerNameOf(tx, row),
+        await this.lostReasonOf(tx, row),
+      );
     }
     return this.systemMove(tx, row, 'quotation_sent', {});
   }
@@ -236,7 +285,11 @@ export class OpportunitiesService {
     const { scope } = await readTxContext(tx);
     const row = await this.lock(tx, scope, opportunityId);
     if (row.stage === 'won' && row.wonQuotationVersionId === quotationVersionId) {
-      return toOpportunityDto(row, await this.ownerNameOf(tx, row));
+      return toOpportunityDto(
+        row,
+        await this.ownerNameOf(tx, row),
+        await this.lostReasonOf(tx, row),
+      );
     }
     return this.systemMove(tx, row, 'won', { wonQuotationVersionId: quotationVersionId });
   }
@@ -256,6 +309,7 @@ export class OpportunitiesService {
     if (!plan.ok) throw refusalToException(plan.kind, plan.message);
     const updated = await updateVersioned(tx, opportunities, row.id, row.version, {
       ...plan.set,
+      lostReasonId: null,
       ...extra,
       updatedAt: new Date(),
     });
@@ -269,7 +323,18 @@ export class OpportunitiesService {
         ? { wonQuotationVersionId: extra.wonQuotationVersionId }
         : {},
     });
-    return toOpportunityDto(updated, await this.ownerNameOf(tx, updated));
+    return toOpportunityDto(updated, await this.ownerNameOf(tx, updated), null);
+  }
+
+  /** The lost reason option of an opportunity, by its current label (D49, D54-3); null without one. */
+  private async lostReasonOf(
+    q: Db | DbTransaction,
+    row: Pick<OpportunityRow, 'tenantId' | 'lostReasonId'>,
+  ): Promise<LeadLostReasonRef | null> {
+    if (row.lostReasonId === null) return null;
+    return (
+      (await lostReasonRefs(q, row.tenantId, [row.lostReasonId])).get(row.lostReasonId) ?? null
+    );
   }
 
   /** The owner's display name (D46), read in the opportunity's tenant. */

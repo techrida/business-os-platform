@@ -53,6 +53,7 @@ import type { MoneyService } from '../../platform/settings/money.service';
 import { NumberingService } from '../../platform/settings/numbering.service';
 import { SettingsService } from '../../platform/settings/settings.service';
 import { LedgerService } from '../ledger/ledger.service';
+import { LeadLostReasonsService } from '../leads/lost-reasons.service';
 import { OpportunitiesService } from '../opportunities/opportunities.service';
 import { DraftingService } from '../quotations/drafting/drafting.service';
 import {
@@ -183,6 +184,7 @@ beforeAll(async () => {
     authz as unknown as AuthzService,
     audit,
     caller,
+    new LeadLostReasonsService(db, audit, caller),
   );
   const outcomes = new QuotationOutcomeService(
     settings,

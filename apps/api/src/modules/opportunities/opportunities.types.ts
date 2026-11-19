@@ -1,6 +1,7 @@
 // Query and mapping types of the opportunities module. The body of a stage change is a contract
 // (OpportunityStageChangeBodySchema); only the list query and the row-to-DTO mapping live here.
 import {
+  type LeadLostReasonRef,
   limitOffset,
   multi,
   type OpportunityDto,
@@ -24,8 +25,15 @@ export type ListOpportunitiesQuery = z.infer<typeof ListOpportunitiesQuerySchema
 
 export type OpportunityRow = typeof opportunities.$inferSelect;
 
-/** `ownerName` is the owner's display name (D46), looked up by the caller; null without an owner. */
-export function toOpportunityDto(row: OpportunityRow, ownerName: string | null): OpportunityDto {
+/**
+ * `ownerName` is the owner's display name (D46), looked up by the caller; null without an owner.
+ * `lostReason` is the tenant option by its current label (D49, D54-3), looked up by the caller; null unless lost.
+ */
+export function toOpportunityDto(
+  row: OpportunityRow,
+  ownerName: string | null,
+  lostReason: LeadLostReasonRef | null,
+): OpportunityDto {
   return {
     id: row.id,
     number: row.number,
@@ -37,6 +45,7 @@ export function toOpportunityDto(row: OpportunityRow, ownerName: string | null):
     ownerName,
     stage: row.stage,
     stageReason: row.stageReason,
+    lostReason,
     stageNote: row.stageNote,
     value: row.value,
     currency: row.currency as OpportunityDto['currency'],
