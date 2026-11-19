@@ -12,7 +12,7 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 
 import { createDb } from './client.js';
 import { MIGRATIONS_FOLDER, runMigrations } from './migrate.js';
-import { createStaffUser, createTenantWithEntity } from './testing/fixtures.js';
+import { createParty, createStaffUser, createTenantWithEntity } from './testing/fixtures.js';
 
 const OWNER_PW = 'owner-test-pw';
 const ACTOR = 'system:migration-0063';
@@ -128,6 +128,8 @@ describe('0062-0063 follow-ups on seeded old-shape rows', () => {
         idpOrgId,
       });
       const scope = { tenantId, organizationId };
+      // A converted lead needs a customer and an opportunity to point at (leads_converted_check).
+      const { partyId: customerId } = await createParty(pool, { tenantId, kind: 'customer' });
       const dueOwned = '2026-12-01T09:00:00.000Z';
       const dueUnowned = '2026-12-02T09:00:00.000Z';
       const occurred = '2026-11-01T08:00:00.000Z';
@@ -135,15 +137,42 @@ describe('0062-0063 follow-ups on seeded old-shape rows', () => {
       const taskDue = '2026-11-20T10:00:00.000Z';
 
       const seed = await inTx(pool, scope, async (c) => {
-        const lead = async (number: string, owner: string | null, followUp: string | null) => {
+        const lead = async (
+          number: string,
+          owner: string | null,
+          followUp: string | null,
+          closed: { stage: string; stage_reason?: string; stage_note?: string; customer_id?: string; converted_opportunity_id?: string } = { stage: 'new' },
+        ) => {
           const { rows } = await c.query<{ id: string }>(
             `INSERT INTO app.leads (tenant_id, organization_id, number, title, source, owner_user_id,
-                                    company_name, contact_name, next_follow_up_at)
-             VALUES ($1, $2, $3, 'Lead', 'website', $4, 'Acme', 'Asha', $5) RETURNING id`,
-            [tenantId, organizationId, number, owner, followUp],
+                                    company_name, contact_name, next_follow_up_at, stage, stage_reason,
+                                    stage_note, customer_id, converted_opportunity_id)
+             VALUES ($1, $2, $3, 'Lead', 'website', $4, 'Acme', 'Asha', $5, $6, $7, $8, $9, $10) RETURNING id`,
+            [
+              tenantId,
+              organizationId,
+              number,
+              owner,
+              followUp,
+              closed.stage,
+              closed.stage_reason ?? null,
+              closed.stage_note ?? null,
+              closed.customer_id ?? null,
+              closed.converted_opportunity_id ?? null,
+            ],
           );
           return rows[0]!.id;
         };
+        await c.query(
+          `INSERT INTO app.customers (id, tenant_id, number, legal_name, name_norm, address)
+           VALUES ($1, $2, 'CUS-1', 'Acme Pvt. Ltd.', 'acme', $3::jsonb)`,
+          [customerId, tenantId, JSON.stringify({ line1: '1 Durbar Marg', city: 'Kathmandu', country: 'NP' })],
+        );
+        const { rows: deal } = await c.query<{ id: string }>(
+          `INSERT INTO app.opportunities (tenant_id, organization_id, number, name, customer_id)
+           VALUES ($1, $2, 'DEAL-1', 'Acme deal', $3) RETURNING id`,
+          [tenantId, organizationId, customerId],
+        );
         const activity = async (
           kind: string,
           leadId: string,
@@ -170,10 +199,23 @@ describe('0062-0063 follow-ups on seeded old-shape rows', () => {
         const owned = await lead('LD-1', ownerId, dueOwned);
         const unowned = await lead('LD-2', null, dueUnowned);
         const plain = await lead('LD-3', ownerId, null);
+        // Closed leads with a stale follow-up: the column is cleared, but no call is planned for them.
+        const lost = await lead('LD-4', ownerId, dueOwned, {
+          stage: 'lost',
+          stage_reason: 'no_budget',
+          stage_note: 'Went quiet',
+        });
+        const converted = await lead('LD-5', ownerId, dueOwned, {
+          stage: 'converted',
+          customer_id: customerId,
+          converted_opportunity_id: deal[0]!.id,
+        });
         return {
           owned,
           unowned,
           plain,
+          lost,
+          converted,
           taskCompleted: await activity('task', plain, { dueAt: taskDue, completedAt: completed }),
           taskOpenDue: await activity('task', plain, { dueAt: taskDue }),
           taskOpenNoDue: await activity('task', plain, {}),
@@ -183,7 +225,7 @@ describe('0062-0063 follow-ups on seeded old-shape rows', () => {
       });
 
       expect(await counts(pool, tenantId)).toEqual({
-        lead_follow_ups: 2,
+        lead_follow_ups: 4,
         tasks: 3,
         tasks_completed: 1,
         tasks_open: 2,
@@ -198,7 +240,8 @@ describe('0062-0063 follow-ups on seeded old-shape rows', () => {
 
       await runMigrations(url);
 
-      // Two calls inserted from the leads; all three tasks are calls; 2 + 2 open tasks + the open call planned.
+      // Two calls inserted from the open leads (none for the lost and converted ones, whose column is still
+      // cleared); all three tasks are calls; 2 + 2 open tasks + the open call planned.
       expect(await counts(pool, tenantId)).toEqual({
         lead_follow_ups: 0,
         tasks: 0,
@@ -289,7 +332,14 @@ describe('0062-0063 follow-ups on seeded old-shape rows', () => {
         })),
       );
 
-      // Audit: every converted or inserted row and both cleared leads, as the migration; nothing else.
+      // The lost and converted leads got no activity at all.
+      const closedActivities = await pool.query(
+        'SELECT id FROM app.activities WHERE lead_id = ANY($1)',
+        [[seed.lost, seed.converted]],
+      );
+      expect(closedActivities.rows).toEqual([]);
+
+      // Audit: every converted or inserted row and all four cleared leads, as the migration; nothing else.
       const audited = await pool.query<{ entity_id: string }>(
         'SELECT DISTINCT entity_id FROM audit.audit_events WHERE tenant_id = $1 AND actor_id = $2',
         [tenantId, ACTOR],
@@ -302,6 +352,8 @@ describe('0062-0063 follow-ups on seeded old-shape rows', () => {
         [
           seed.owned,
           seed.unowned,
+          seed.lost,
+          seed.converted,
           seed.taskCompleted,
           seed.taskOpenDue,
           seed.taskOpenNoDue,
