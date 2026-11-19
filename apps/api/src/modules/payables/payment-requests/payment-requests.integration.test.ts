@@ -103,7 +103,12 @@ const roles: Partial<Record<RoleKey, string[]>> = {};
 
 const grantsOf = (role: RoleKey) =>
   new Map(Object.entries(DEFAULT_ROLE_PERMISSIONS[role])) as Map<Permission, Scope>;
-const current: { userId: string; role: RoleKey; inB: boolean; grants?: Map<Permission, Scope> } = {
+const current: {
+  userId: string;
+  role: RoleKey;
+  inB: boolean;
+  grants?: Map<Permission, Scope> | undefined;
+} = {
   userId: '',
   role: 'accountant',
   inB: false,
