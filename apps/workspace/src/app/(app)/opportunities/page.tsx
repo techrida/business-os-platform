@@ -17,7 +17,7 @@ import {
 } from '@/components/p2/crm/opportunities-api';
 import { moneyOrNull } from '@/components/p2/crm/format';
 import { LoadProblem, StageBadge } from '@/components/p2/crm/server-bits';
-import { boardColumns, groupByStage, stageLabel, userMoves } from '@/components/p2/crm/stages';
+import { boardColumns, boardMoves, groupByStage, stageLabel } from '@/components/p2/crm/stages';
 import type { BoardColumnData } from '@/components/p2/crm/types';
 import { EmptyState } from '@/components/ui/empty-state';
 import { ResultCount } from '@/components/ui/filter-bar';
@@ -70,7 +70,7 @@ function columnsFor(items: OpportunityDto[], numberSystems: NumberSystems): Boar
       subtitle: o.expectedClose ? `Expected close ${when(o.expectedClose, 'date')}` : '',
       value: moneyOrNull(o.value, o.currency, numberSystems),
       version: o.version,
-      moves: userMoves('opportunity', o.stage),
+      moves: boardMoves('opportunity', o.stage),
     })),
   }));
 }

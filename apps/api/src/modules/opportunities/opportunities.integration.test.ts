@@ -45,6 +45,7 @@ import type { Principal } from '../../platform/authz/principal';
 import type { Db } from '../../platform/db/db.module';
 import { systemActor, withTx, type DbTransaction } from '../../platform/db/tx';
 import { ErrorBodyFilter } from '../../platform/tenancy/error-body.filter';
+import { LeadLostReasonsService } from '../leads/lost-reasons.service';
 import { OpportunitiesController } from './opportunities.controller';
 import { OpportunitiesService } from './opportunities.service';
 
@@ -125,8 +126,22 @@ const urlFor = (user: string, password: string, database: string) => {
   return url.toString();
 };
 
-const newService = () =>
-  new OpportunitiesService(db, authz as unknown as AuthzService, new AuditService(db), caller);
+const newReasons = () => new LeadLostReasonsService(db, new AuditService(db), caller);
+const newService = () => {
+  const audit = new AuditService(db);
+  return new OpportunitiesService(
+    db,
+    authz as unknown as AuthzService,
+    audit,
+    caller,
+    new LeadLostReasonsService(db, audit, caller),
+  );
+};
+const lostReasonIdOf = async (label: string): Promise<string> => {
+  const found = (await newReasons().choices()).find((o) => o.label === label);
+  expect(found, `option ${label}`).toBeDefined();
+  return found!.id;
+};
 
 beforeAll(async () => {
   container = await new PostgreSqlContainer('postgres:16-alpine').start();
@@ -643,11 +658,12 @@ describe('PATCH /v1/opportunities/:id/stage', () => {
 
   it('lets exactly one of two writers with the same version win', async () => {
     const id = await seed();
+    const noBudget = await lostReasonIdOf('No budget');
     const [a, b] = await Promise.all([
       patchStage(id, { stage: 'requirement_received', expectedVersion: 1 }),
       patchStage(id, {
         stage: 'lost',
-        reason: 'no budget',
+        lostReasonId: noBudget,
         note: 'client went quiet',
         expectedVersion: 1,
       }),
@@ -822,10 +838,11 @@ describe('onLost port', () => {
       svc.registerLostHandler({ name: 'quotations.cancel', onLost: () => Promise.resolve() }),
     ).toThrow(/already registered/);
 
+    const price = await lostReasonIdOf('Price');
     const id = await seed({ stage: 'negotiation' });
     const lost = await svc.changeStage(id, {
       stage: 'lost',
-      reason: 'price',
+      lostReasonId: price,
       note: 'went with a cheaper vendor',
       expectedVersion: 1,
     });
@@ -833,7 +850,7 @@ describe('onLost port', () => {
     expect(seen).toEqual([
       expect.objectContaining({
         opportunityId: id,
-        reason: 'price',
+        reason: 'Price',
         note: 'went with a cheaper vendor',
       }),
     ]);
@@ -855,7 +872,12 @@ describe('onLost port', () => {
     });
     const open = await seed({ stage: 'negotiation' });
     await expect(
-      failing.changeStage(open, { stage: 'lost', reason: 'r', note: 'n', expectedVersion: 1 }),
+      failing.changeStage(open, {
+        stage: 'lost',
+        lostReasonId: price,
+        note: 'n',
+        expectedVersion: 1,
+      }),
     ).rejects.toThrow('cannot cancel the open quotation');
     expect(await rowOf(open)).toMatchObject({ stage: 'negotiation', version: 1 });
   });

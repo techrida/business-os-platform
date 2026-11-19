@@ -14,6 +14,8 @@ import {
   ErrorBodySchema,
   LeadDtoSchema,
   LeadLostReasonSchema,
+  LOST_REASONS_STALE_MESSAGE,
+  lostReasonsToken,
 } from '@bos/contracts';
 import { leadLostReasons, leads } from '@bos/db';
 import { type INestApplication } from '@nestjs/common';
@@ -137,6 +139,7 @@ describe('D49 lost reasons: the list', () => {
     const reflector = new Reflector();
     const proto = LeadLostReasonsController.prototype;
     expect(reflector.get(CAN_KEY, proto.choices)).toBe('crm.lead.write');
+    expect(reflector.get(CAN_KEY, proto.opportunityChoices)).toBe('crm.opportunity.write');
     for (const route of [proto.listAll, proto.create, proto.reorder, proto.reset, proto.update]) {
       expect(reflector.get(CAN_KEY, route)).toBe('admin.settings.write');
     }
@@ -314,15 +317,16 @@ describe('D49 lost reasons: order and reset', () => {
     const reversed = [...before].reverse().map((o) => o.id);
     const res = await request(baseUrl)
       .put('/v1/admin/lead-lost-reasons/order')
-      .send({ ids: reversed });
+      .send({ ids: reversed, expectedOrder: lostReasonsToken(before) });
     expect(res.status, JSON.stringify(res.body)).toBe(200);
-    expect(options.parse(res.body).map((o) => o.id)).toEqual(reversed);
+    const after = options.parse(res.body);
+    expect(after.map((o) => o.id)).toEqual(reversed);
     expect((await choices()).map((o) => o.id)).toEqual(
       reversed.filter((id) => before.find((o) => o.id === id && !o.retired)),
     );
     const partial = await request(baseUrl)
       .put('/v1/admin/lead-lost-reasons/order')
-      .send({ ids: reversed.slice(1) });
+      .send({ ids: reversed.slice(1), expectedOrder: lostReasonsToken(after) });
     expect(partial.status).toBe(400);
   });
 
@@ -348,7 +352,9 @@ describe('D49 lost reasons: order and reset', () => {
       .send({ label: 'Price' });
     expect(taken.status).toBe(201);
 
-    const reset = await request(baseUrl).post('/v1/admin/lead-lost-reasons/reset').send({});
+    const reset = await request(baseUrl)
+      .post('/v1/admin/lead-lost-reasons/reset')
+      .send({ expectedOrder: lostReasonsToken(await adminList()) });
     expect(reset.status, JSON.stringify(reset.body)).toBe(200);
     const list = options.parse(reset.body);
     expect(list.slice(0, 7).map((o) => o.label)).toEqual(
@@ -379,7 +385,9 @@ describe('D49 lost reasons: order and reset', () => {
     expect(
       (await request(baseUrl).post('/v1/admin/lead-lost-reasons').send({ label: 'Price' })).status,
     ).toBe(201);
-    const again = await request(baseUrl).post('/v1/admin/lead-lost-reasons/reset').send({});
+    const again = await request(baseUrl)
+      .post('/v1/admin/lead-lost-reasons/reset')
+      .send({ expectedOrder: lostReasonsToken(await adminList()) });
     expect(again.status, JSON.stringify(again.body)).toBe(200);
     const labels = options.parse(again.body).map((o) => o.label);
     expect(labels).toEqual(expect.arrayContaining(['Price (custom)', 'Price (custom 2)']));
@@ -395,5 +403,101 @@ describe('D49 lost reasons: order and reset', () => {
     expect(sends.map((r) => r.status)).toEqual([201, 201]);
     const positions = (await adminList()).map((o) => o.position);
     expect(new Set(positions).size).toBe(positions.length);
+  });
+});
+
+describe('D54-4 lost reasons: stale-view guard', () => {
+  it('refuses reorder with a stale token (409) leaving the list unchanged, and accepts the current token', async () => {
+    const initial = await adminList();
+    const staleToken = lostReasonsToken(initial);
+
+    // Another admin adds an option after the first screen loaded.
+    const added = await request(baseUrl)
+      .post('/v1/admin/lead-lost-reasons')
+      .send({ label: 'Stale guard option' });
+    expect(added.status, JSON.stringify(added.body)).toBe(201);
+    const current = await adminList();
+
+    // Even with the now-incomplete old id list, the stale token check runs first and returns 409 (not 400).
+    const stale = await request(baseUrl)
+      .put('/v1/admin/lead-lost-reasons/order')
+      .send({ ids: [...initial].reverse().map((o) => o.id), expectedOrder: staleToken });
+    expect(stale.status, JSON.stringify(stale.body)).toBe(409);
+    expect(errorOf(stale.body).message).toBe(LOST_REASONS_STALE_MESSAGE);
+    expect((await adminList()).map((o) => o.id)).toEqual(current.map((o) => o.id));
+
+    // Missing expectedOrder is a 400.
+    expect(
+      (
+        await request(baseUrl)
+          .put('/v1/admin/lead-lost-reasons/order')
+          .send({ ids: current.map((o) => o.id) })
+      ).status,
+    ).toBe(400);
+
+    // With the current token, reorder succeeds.
+    const reversed = [...current].reverse().map((o) => o.id);
+    const ok = await request(baseUrl)
+      .put('/v1/admin/lead-lost-reasons/order')
+      .send({ ids: reversed, expectedOrder: lostReasonsToken(current) });
+    expect(ok.status, JSON.stringify(ok.body)).toBe(200);
+    expect(options.parse(ok.body).map((o) => o.id)).toEqual(reversed);
+  });
+
+  it('refuses reset with a stale token (409) leaving the list unchanged, and accepts the current token', async () => {
+    const before = await adminList();
+    const staleToken = lostReasonsToken(before);
+    const first = before[0]!;
+    const renamed = await request(baseUrl)
+      .patch(`/v1/admin/lead-lost-reasons/${first.id}`)
+      .send({ label: `${first.label} edited`, expectedVersion: first.version });
+    expect(renamed.status, JSON.stringify(renamed.body)).toBe(200);
+    const afterRename = await adminList();
+
+    // Missing expectedOrder is a 400.
+    expect((await request(baseUrl).post('/v1/admin/lead-lost-reasons/reset').send({})).status).toBe(
+      400,
+    );
+
+    const stale = await request(baseUrl)
+      .post('/v1/admin/lead-lost-reasons/reset')
+      .send({ expectedOrder: staleToken });
+    expect(stale.status, JSON.stringify(stale.body)).toBe(409);
+    expect(errorOf(stale.body).message).toBe(LOST_REASONS_STALE_MESSAGE);
+    expect((await adminList()).map((o) => o.label)).toEqual(afterRename.map((o) => o.label));
+
+    const ok = await request(baseUrl)
+      .post('/v1/admin/lead-lost-reasons/reset')
+      .send({ expectedOrder: lostReasonsToken(afterRename) });
+    expect(ok.status, JSON.stringify(ok.body)).toBe(200);
+    expect(
+      options
+        .parse(ok.body)
+        .slice(0, 7)
+        .map((o) => o.label),
+    ).toEqual(DEFAULT_LEAD_LOST_REASONS.map((d) => d.label));
+  });
+
+  it('lets exactly one of two concurrent reorders with the same token win', async () => {
+    const before = await adminList();
+    const token = lostReasonsToken(before);
+    const ids = before.map((o) => o.id);
+    const orderA = [...ids].reverse();
+    const orderB = [...ids.slice(1), ids[0]!];
+
+    const [a, b] = await Promise.all([
+      request(baseUrl)
+        .put('/v1/admin/lead-lost-reasons/order')
+        .send({ ids: orderA, expectedOrder: token }),
+      request(baseUrl)
+        .put('/v1/admin/lead-lost-reasons/order')
+        .send({ ids: orderB, expectedOrder: token }),
+    ]);
+
+    expect([a.status, b.status].sort()).toEqual([200, 409]);
+    const winner = a.status === 200 ? orderA : orderB;
+    const loser = a.status === 409 ? a : b;
+    expect(errorOf(loser.body).message).toBe(LOST_REASONS_STALE_MESSAGE);
+    expect((await adminList()).map((o) => o.id)).toEqual(winner);
   });
 });

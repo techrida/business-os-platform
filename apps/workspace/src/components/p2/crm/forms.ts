@@ -115,10 +115,9 @@ export function parseStageMove(
   const input = defined({
     stage: field(form, 'stage'),
     reason: field(form, 'reason'),
-    // A lead moved to Lost carries an option of the tenant's list, or a new one to add (D49).
-    ...(kind === 'lead'
-      ? { lostReasonId: field(form, 'lostReasonId'), newLostReason: field(form, 'newLostReason') }
-      : {}),
+    // A lead or opportunity moved to Lost carries an option of the tenant's list, or a new one to add (D49, D54-3).
+    lostReasonId: field(form, 'lostReasonId'),
+    newLostReason: field(form, 'newLostReason'),
     note: field(form, 'note'),
     expectedVersion: numberField(form, 'expectedVersion') ?? Number.NaN,
   });
