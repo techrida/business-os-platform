@@ -471,7 +471,7 @@ export class ImagesService {
       // Waiting for bytes (an abandoned upload is never scanned) or a scan that failed: never a current picture.
       throw new ConflictException({
         code: 'conflict',
-        message: 'This image was not received completely. Upload it again.',
+        message: 'This image is not ready: its upload or virus scan did not finish. Upload it again.',
       });
     }
   }
