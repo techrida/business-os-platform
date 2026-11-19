@@ -30,6 +30,7 @@ import { ErrorBodyFilter } from '../../../platform/tenancy/error-body.filter';
 import { CustomersService } from '../../customers/customers.service';
 import { LeadsController } from '../leads.controller';
 import { LeadsService } from '../leads.service';
+import { LeadLostReasonsService } from '../lost-reasons.service';
 import { startHarness, type Harness } from '../test/harness';
 import { LeadConvertController } from './lead-convert.controller';
 import { LeadConvertService } from './lead-convert.service';
@@ -45,7 +46,14 @@ beforeAll(async () => {
   const authz = h.authz as unknown as AuthzService;
   const numbering = new NumberingService();
   const audit = new AuditService(h.db);
-  const leadsService = new LeadsService(h.db, authz, audit, numbering, h.caller);
+  const leadsService = new LeadsService(
+    h.db,
+    authz,
+    audit,
+    numbering,
+    h.caller,
+    new LeadLostReasonsService(h.db, audit, h.caller),
+  );
   const customersService = new CustomersService(h.db, numbering, authz, h.caller);
   const convertService = new LeadConvertService(
     h.db,
