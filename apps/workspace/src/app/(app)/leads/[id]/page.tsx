@@ -197,14 +197,17 @@ export default async function LeadPage({ params }: { params: Promise<{ id: strin
           </span>
         }
         actions={
-          <>
-            {canQualify ? (
-              <QualifyLead id={lead.id} number={lead.number} version={lead.version} />
-            ) : null}
-            {canMarkLost ? (
-              <MarkLostDialog id={lead.id} number={lead.number} version={lead.version} />
-            ) : null}
-          </>
+          // No wrapper at all for a lost or converted lead, so the header keeps no empty slot.
+          canQualify || canMarkLost ? (
+            <>
+              {canQualify ? (
+                <QualifyLead id={lead.id} number={lead.number} version={lead.version} />
+              ) : null}
+              {canMarkLost ? (
+                <MarkLostDialog id={lead.id} number={lead.number} version={lead.version} />
+              ) : null}
+            </>
+          ) : null
         }
       />
 

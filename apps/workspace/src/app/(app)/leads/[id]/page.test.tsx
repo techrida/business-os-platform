@@ -248,6 +248,9 @@ describe('lead detail page composition (U14 D39, D41)', () => {
     );
     const doc = await render();
     expect(headerButtons(doc)).toEqual(expected);
+    // Without actions the header draws no empty actions slot: head text is its only child.
+    const header = doc.querySelector('h1')?.parentElement?.parentElement?.parentElement;
+    expect(header?.children.length).toBe(expected.length ? 2 : 1);
   });
 
   it('has no Log activity header button or link; the form sits in the main column', async () => {
