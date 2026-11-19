@@ -63,7 +63,7 @@ function fnv1a(input: string): number {
 
 /** The colour for a record id. Same id, same colour, always; no id (an unsaved record) gets the neutral slate. */
 export function avatarColour(seedId: string | null | undefined): string {
-  if (!seedId) return AVATAR_PALETTE[AVATAR_PALETTE.length - 1];
+  if (!seedId) return AVATAR_PALETTE[AVATAR_PALETTE.length - 1]!;
   return AVATAR_PALETTE[fnv1a(seedId.toLowerCase()) % AVATAR_PALETTE.length]!;
 }
 
