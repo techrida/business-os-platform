@@ -1,8 +1,10 @@
 import { Module } from '@nestjs/common';
 
+import { AccessSettingsModule } from './modules/access-settings/access-settings.module';
 import { ActivitiesModule } from './modules/activities/activities.module';
 import { ApprovalsHttpModule } from './modules/approvals/approvals.module';
 import { CustomersModule } from './modules/customers/customers.module';
+import { DepartmentsAdminModule } from './modules/departments/departments.module';
 import { ImagesModule } from './modules/images/images.module';
 import { InvoicesModule } from './modules/invoices/invoices.module';
 import { InvoiceRenderModule } from './modules/invoices/render/invoice-render.module';
@@ -74,6 +76,8 @@ import { UsersModule } from './platform/users/users.module';
     DocumentsModule,
     NotifyHttpModule,
     UsersModule,
+    AccessSettingsModule,
+    DepartmentsAdminModule,
     ApprovalsHttpModule,
     TestMemoModule,
     // P3: the AR/AP subledger writer.

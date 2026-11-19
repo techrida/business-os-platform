@@ -30,9 +30,9 @@ Paths are under `apps/workspace/src/app/(app)/` unless noted.
 - `verification/[id]/page.tsx:56,217` document and reviewer
 - `inbox/[id]/page.tsx:44,45,67` groups and people
 - `quotations/[id]/page.tsx:154,219` owner and revision
-- `procurement/orders/page.tsx:64`, `procurement/orders/[id]/page.tsx:325` vendor fallback
+- Purchase order vendor names (`procurement/orders/[id]/page.tsx`): fixed in U18 (the order carries `vendorName`); the list page row at `procurement/orders/page.tsx:64` was not re-checked
 - `procurement/requests/page.tsx:51`, `procurement/requests/[id]/page.tsx:115,120,134` department, cost centre, project
-- `procurement/rfqs/[id]/page.tsx:162,185,209`, `procurement/rfqs/[id]/quotations/new/page.tsx:170`, `procurement/rfqs/[id]/quotations/_components/quote-form.tsx:366` vendor, request, quotation and tax-code fallbacks
+- `procurement/rfqs/[id]/page.tsx` vendor names: fixed in U18 (`vendorLabel` from the RFQ vendor names); the request, quotation and tax-code fallbacks at `rfqs/[id]/quotations/new/page.tsx:170` and `quote-form.tsx:366` remain
 - `payables/_components/bill-header-inputs.tsx:98` vendor fallback
 - `admin/workflows/page.tsx:110-121` user fallbacks
 

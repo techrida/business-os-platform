@@ -35,6 +35,11 @@ const nextConfig: NextConfig = {
   turbopack: { root: monorepoRoot },
   poweredByHeader: false,
 
+  // The production build type-checks the app without its test files. A test may import a file from another
+  // workspace package (the API's pure rules) that the filtered install of the image has no node_modules for.
+  // `pnpm typecheck` still checks every test with the full tsconfig.json.
+  typescript: { tsconfigPath: 'tsconfig.build.json' },
+
   // @bos/pdf-viewer ships TypeScript source and a CSS file (no dist build), so Next compiles it.
   transpilePackages: ['@bos/pdf-viewer'],
 
@@ -52,6 +57,14 @@ const nextConfig: NextConfig = {
   // effect on the App Router in Next 16. Do not rely on it: the real protection is the
   // `notFound()` guard in the dev page (wall 2) and the post-build checker (wall 3).
   pageExtensions: isDev ? ['dev.tsx', 'dev.ts', 'tsx', 'ts'] : ['tsx', 'ts'],
+
+  // Roles and permissions became Settings > Access (By role tab). Temporary (307), so browsers do
+  // not cache it for good.
+  redirects() {
+    return Promise.resolve([
+      { source: '/settings/roles', destination: '/settings/access/roles', permanent: false },
+    ]);
+  },
 
   headers() {
     return Promise.resolve([

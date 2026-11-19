@@ -236,6 +236,23 @@ describe('RoleCache.grantsFor', () => {
     expect(await memoRead(local)).toBe('department');
   });
 
+  it('changes the epoch at once on its own invalidate, and after the window on another instance', async () => {
+    const org = await newOrg();
+    const cache = new RoleCache(db, clock);
+    const authz = new AuthzService(db, cache);
+    const first = await cache.epoch(org.tenantId);
+    expect(await cache.epoch(org.tenantId)).toBe(first); // nothing changed: same epoch
+
+    await authz.invalidate(org.tenantId, org.organizationId);
+    const second = await cache.epoch(org.tenantId);
+    expect(second).not.toBe(first); // own invalidate: the next request sees a new epoch
+
+    await otherInstance().invalidate(org.tenantId, org.organizationId);
+    expect(await cache.epoch(org.tenantId)).toBe(second); // inside the 5 s window
+    now += VERSION_CHECK_TTL_MS + 1;
+    expect(await cache.epoch(org.tenantId)).not.toBe(second);
+  });
+
   it('does not let a load that started before forget() cache its rows', async () => {
     const org = await newOrg();
     await setRows(org, [['sales', 'memo.read', 'own']]);

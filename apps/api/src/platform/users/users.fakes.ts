@@ -155,6 +155,18 @@ export class FakeUsersStore extends UsersStore {
         .map((u) => u.id),
     );
   }
+  activeRoleHolderIds(_q: Queryable, tenantId: string, role: RoleKey) {
+    return Promise.resolve(
+      this.users
+        .filter(
+          (u) =>
+            u.tenantId === tenantId &&
+            u.status === 'active' &&
+            (this.roles.get(u.id) ?? []).includes(role),
+        )
+        .map((u) => u.id),
+    );
+  }
   emailOf(id: string) {
     return Promise.resolve(this.users.find((u) => u.id === id)?.email ?? null);
   }

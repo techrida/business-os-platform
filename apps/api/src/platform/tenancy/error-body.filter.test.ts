@@ -681,3 +681,83 @@ describe('ledger errors on the HTTP boundary', () => {
     expect(ErrorBodySchema.parse(wrong.body).error.code).toBe(codeForStatus(wrongStatus));
   });
 });
+
+describe('access settings errors on the HTTP boundary', () => {
+  it.each(['stale_access', 'confirmation_required', 'last_founder'])(
+    'keeps %s on a 409, and only on a 409',
+    (code) => {
+      const out = filter(new ConflictException({ code, message: 'Refused' }));
+      expect(out.status).toBe(409);
+      expect(ErrorBodySchema.parse(out.body).error.code).toBe(code);
+      const wrongStatus = filter(new UnprocessableEntityException({ code, message: 'm' }));
+      expect(wrongStatus.status).toBe(422);
+      expect(ErrorBodySchema.parse(wrongStatus.body).error.code).toBe('bad_request');
+    },
+  );
+
+  it('passes validated warnings through on 409 confirmation_required and drops malformed ones', () => {
+    const warnings = [
+      {
+        code: 'W3',
+        severity: 'confirm',
+        message: 'Two people hold roles that allow both entering and approving bills.',
+        people: 2,
+      },
+    ];
+    const out = filter(
+      new ConflictException({
+        code: 'confirmation_required',
+        message: 'Confirm before saving.',
+        warnings,
+      }),
+    );
+    expect(out.status).toBe(409);
+    expect(ErrorBodySchema.parse(out.body).error.code).toBe('confirmation_required');
+    expect((out.body as { error: { warnings?: unknown } }).error.warnings).toEqual(warnings);
+
+    const malformed = filter(
+      new ConflictException({
+        code: 'confirmation_required',
+        message: 'Confirm before saving.',
+        warnings: [{ code: 'W99', severity: 'confirm', message: 'bad' }],
+      }),
+    );
+    expect((malformed.body as { error: { warnings?: unknown } }).error.warnings).toBeUndefined();
+  });
+
+  it('passes validated fieldErrors and warnings through on 422 unprocessable', () => {
+    const out = filter(
+      new UnprocessableEntityException({
+        code: 'unprocessable',
+        message: 'Access change blocked.',
+        fieldErrors: { 'changes.0.role': 'Founder permissions cannot be changed.' },
+        warnings: [
+          {
+            code: 'W1',
+            severity: 'blocked',
+            message: 'Founder permissions cannot be changed.',
+            changeIndex: 0,
+          },
+        ],
+      }),
+    );
+    expect(out.status).toBe(422);
+    expect(ErrorBodySchema.parse(out.body).error.code).toBe('unprocessable');
+    const err = (
+      out.body as {
+        error: { fieldErrors?: unknown; warnings?: unknown };
+      }
+    ).error;
+    expect(err.fieldErrors).toEqual({
+      'changes.0.role': 'Founder permissions cannot be changed.',
+    });
+    expect(err.warnings).toEqual([
+      {
+        code: 'W1',
+        severity: 'blocked',
+        message: 'Founder permissions cannot be changed.',
+        changeIndex: 0,
+      },
+    ]);
+  });
+});
