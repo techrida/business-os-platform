@@ -15,11 +15,15 @@ const mocks = vi.hoisted(() => ({
   getLead: vi.fn(),
   listActivities: vi.fn(),
   listLeadOwners: vi.fn(),
+  listLeadLostReasonChoices: vi.fn(),
   moveForm: vi.fn(),
   userNames: vi.fn(),
 }));
 
 vi.mock('@/lib/bff', () => ({ requireStaffSession: mocks.requireStaffSession }));
+vi.mock('@/lib/api-lead-lost-reasons', () => ({
+  listLeadLostReasonChoices: mocks.listLeadLostReasonChoices,
+}));
 vi.mock('@/components/p2/crm/crm-api', () => ({
   getLead: mocks.getLead,
   listActivities: mocks.listActivities,
@@ -55,6 +59,7 @@ const LEAD = '11111111-1111-4111-8111-111111111111';
 const OWNER = '22222222-2222-4222-8222-222222222222';
 const OTHER = '22222222-2222-4222-8222-222222222223';
 const WHEN = '2026-11-08T05:45:00.000Z';
+const LOST_REASON = '7b0e6c1a-2f4d-4c55-8a39-6d1f5e2c9b10';
 
 const lead = (over: Partial<LeadDto> = {}): LeadDto => ({
   id: LEAD,
@@ -78,6 +83,7 @@ const lead = (over: Partial<LeadDto> = {}): LeadDto => ({
   nextFollowUpAt: null,
   stage: 'new',
   stageReason: null,
+  lostReason: null,
   stageNote: null,
   convertedOpportunityId: null,
   version: 3,
@@ -172,6 +178,7 @@ beforeEach(() => {
   mocks.listLeadOwners.mockReset().mockResolvedValue(OWNERS);
   mocks.moveForm.mockReset();
   mocks.userNames.mockReset().mockResolvedValue(new Map());
+  mocks.listLeadLostReasonChoices.mockReset().mockResolvedValue([]);
 });
 
 describe('lead detail page composition (U14 D39, D41)', () => {
@@ -251,7 +258,13 @@ describe('lead detail page composition (U14 D39, D41)', () => {
     mocks.getLead.mockResolvedValue(
       lead({
         stage,
-        ...(stage === 'lost' ? { stageReason: 'Budget', stageNote: 'No budget this year.' } : {}),
+        ...(stage === 'lost'
+          ? {
+              stageReason: 'No budget',
+              lostReason: { id: LOST_REASON, label: 'No budget', retired: false },
+              stageNote: 'No budget this year.',
+            }
+          : {}),
         ...(stage === 'converted'
           ? { convertedOpportunityId: '44444444-4444-4444-8444-444444444444' }
           : {}),
@@ -262,6 +275,46 @@ describe('lead detail page composition (U14 D39, D41)', () => {
     // Without actions the header draws no empty actions slot: head text is its only child.
     const header = doc.querySelector('h1')?.parentElement?.parentElement?.parentElement;
     expect(header?.children.length).toBe(expected.length ? 2 : 1);
+  });
+
+  it('reads the lost reasons only when Mark lost is offered, and shows the reason by its option label (D49)', async () => {
+    mocks.listLeadLostReasonChoices.mockResolvedValue([
+      { id: LOST_REASON, label: 'No budget', position: 2, isDefault: true, retired: false, version: 1 },
+    ]);
+    await render();
+    expect(mocks.listLeadLostReasonChoices).toHaveBeenCalledOnce();
+
+    mocks.listLeadLostReasonChoices.mockClear();
+    mocks.getLead.mockResolvedValue(
+      lead({
+        stage: 'lost',
+        stageReason: 'Timing',
+        lostReason: { id: LOST_REASON, label: 'Bad timing', retired: true },
+        stageNote: 'Next year.',
+      }),
+    );
+    const doc = await render();
+    expect(mocks.listLeadLostReasonChoices).not.toHaveBeenCalled();
+    // The option's current label wins over the words saved when the lead was lost, and a retired option still shows.
+    const text = doc.body.textContent ?? '';
+    expect(text).toContain('Bad timing');
+    expect(text).toContain('This reason is no longer offered for new leads.');
+    expect(text).toContain('Next year.');
+  });
+
+  it('still shows the saved words for a lead lost before the list existed', async () => {
+    mocks.getLead.mockResolvedValue(
+      lead({ stage: 'lost', stageReason: 'Budget', lostReason: null, stageNote: 'Gone quiet.' }),
+    );
+    const text = (await render()).body.textContent ?? '';
+    expect(text).toContain('Budget');
+    expect(text).not.toContain('no longer offered');
+  });
+
+  it('opens the page without the reasons when the list cannot be read', async () => {
+    mocks.listLeadLostReasonChoices.mockRejectedValue(new Error('down'));
+    const doc = await render();
+    expect(headerButtons(doc)).toContain('Mark lost');
   });
 
   it('has no Log activity header button or link; the form sits in the main column', async () => {

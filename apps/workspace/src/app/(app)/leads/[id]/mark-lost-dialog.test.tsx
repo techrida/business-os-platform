@@ -1,4 +1,5 @@
 // @vitest-environment jsdom
+import type { LeadLostReason } from '@bos/contracts';
 import { act } from 'react';
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 
@@ -21,6 +22,16 @@ vi.mock('@/components/ui/toast', () => ({ toast: { success: mocks.success, error
 import { MarkLostDialog } from './mark-lost-dialog';
 
 const LEAD = '11111111-1111-4111-8111-111111111111';
+const reason = (n: number, label: string): LeadLostReason => ({
+  id: `00000000-0000-4000-8000-00000000000${n}`,
+  label,
+  position: n,
+  isDefault: true,
+  retired: false,
+  version: 1,
+});
+// The tenant's order, which is not alphabetical: Price comes before Chose a competitor.
+const REASONS = [reason(0, 'Price'), reason(1, 'Chose a competitor'), reason(2, 'No budget')];
 
 beforeEach(() => {
   Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true });
@@ -33,6 +44,7 @@ beforeEach(() => {
       disconnect = vi.fn();
     },
   );
+  Element.prototype.scrollIntoView = vi.fn();
 });
 afterEach(() => {
   vi.unstubAllGlobals();
@@ -44,6 +56,9 @@ const inDialog = (selector: string) => dialog()?.querySelector(selector) ?? null
 const footerButton = (label: string) =>
   [...(dialog()?.querySelectorAll('footer button') ?? [])].find((b) => b.textContent === label) ??
   null;
+const combo = () => inDialog('input[role="combobox"]');
+const optionTexts = () =>
+  [...(dialog()?.querySelectorAll('[role="option"]') ?? [])].map((o) => o.textContent?.trim());
 
 /** Let the transition, the mocked call and the state updates finish. */
 async function settle() {
@@ -57,43 +72,66 @@ async function typeNote(value: string) {
   await act(() => Promise.resolve(note.dispatchEvent(new Event('input', { bubbles: true }))));
 }
 
-async function open() {
-  const mounted = await mountForm(<MarkLostDialog id={LEAD} number="LEAD-1" version={4} />);
+/** Types into the Reason box and clicks the option whose text starts with `label`. */
+async function pickReason(typed: string, label: string) {
+  await fill(combo(), typed);
+  const option = [...(dialog()?.querySelectorAll('[role="option"]') ?? [])].find((o) =>
+    o.textContent?.trim().startsWith(label),
+  );
+  if (!option) throw new Error(`No option "${label}"; have ${JSON.stringify(optionTexts())}`);
+  await click(option);
+}
+
+async function open(reasons: readonly LeadLostReason[] = REASONS) {
+  const mounted = await mountForm(
+    <MarkLostDialog id={LEAD} number="LEAD-1" version={4} reasons={reasons} />,
+  );
   const trigger = mounted.container.querySelector('button');
   expect(trigger?.textContent).toBe('Mark lost');
   await click(trigger);
   return mounted;
 }
 
-it('refuses an empty reason and note with field errors and sends nothing', async () => {
+it('refuses a missing reason and note with field errors and sends nothing', async () => {
   const mounted = await open();
-  await fill(inDialog('input[name="reason"]'), '   ');
   await click(footerButton('Mark lost'));
   await settle();
 
   expect(mocks.changeLeadStage).not.toHaveBeenCalled();
-  expect(dialog()?.textContent).toContain('Give a reason, up to 200 characters.');
+  expect(dialog()?.textContent).toContain('Choose a reason from the list, or add a new one.');
   expect(dialog()?.textContent).toContain('Add a note for the record, up to 2,000 characters.');
-  expect(inDialog('input[name="reason"]')?.getAttribute('aria-invalid')).toBe('true');
+  expect(combo()?.getAttribute('aria-invalid')).toBe('true');
   await mounted.unmount();
 });
 
 it('refuses a reason without a note', async () => {
   const mounted = await open();
-  await fill(inDialog('input[name="reason"]'), 'Chose another vendor');
+  await pickReason('Pri', 'Price');
   await click(footerButton('Mark lost'));
   await settle();
 
   expect(mocks.changeLeadStage).not.toHaveBeenCalled();
-  expect(dialog()?.textContent).not.toContain('Give a reason');
+  expect(dialog()?.textContent).not.toContain('Choose a reason');
   expect(dialog()?.textContent).toContain('Add a note for the record, up to 2,000 characters.');
   await mounted.unmount();
 });
 
-it('moves the lead to Lost with the trimmed reason and note and the visible version', async () => {
+it('lists the reasons in the tenant order and filters them as the person types', async () => {
+  const mounted = await open();
+  await click(combo());
+  expect(optionTexts()).toEqual(['Price', 'Chose a competitor', 'No budget']);
+
+  await fill(combo(), 'bud');
+  // The one match, then the offer to add the typed words.
+  expect(optionTexts()).toEqual(['No budget', 'Add "bud"']);
+  await mounted.unmount();
+});
+
+it('moves the lead to Lost with the chosen option, the trimmed note and the visible version', async () => {
   mocks.changeLeadStage.mockResolvedValue({});
   const mounted = await open();
-  await fill(inDialog('input[name="reason"]'), '  Chose another vendor ');
+  await pickReason('compet', 'Chose a competitor');
+  expect((combo() as HTMLInputElement).value).toBe('Chose a competitor');
   await typeNote(' Went with a cheaper local supplier. ');
   await click(footerButton('Mark lost'));
   await settle();
@@ -101,7 +139,7 @@ it('moves the lead to Lost with the trimmed reason and note and the visible vers
   expect(mocks.changeLeadStage).toHaveBeenCalledExactlyOnceWith(expect.anything(), LEAD, {
     expectedVersion: 4,
     stage: 'lost',
-    reason: 'Chose another vendor',
+    lostReasonId: REASONS[1]!.id,
     note: 'Went with a cheaper local supplier.',
   });
   expect(mocks.success).toHaveBeenCalledWith('Moved to Lost.');
@@ -109,12 +147,80 @@ it('moves the lead to Lost with the trimmed reason and note and the visible vers
   await mounted.unmount();
 });
 
-it('keeps the dialog and the typed text, and offers a reload, when the lead changed meanwhile', async () => {
+it('adds a typed reason that matches nothing, sending it trimmed as a new option', async () => {
+  mocks.changeLeadStage.mockResolvedValue({});
+  const mounted = await open();
+  await pickReason('  Slow to reply ', 'Add "Slow to reply"');
+  expect((combo() as HTMLInputElement).value).toBe('Slow to reply');
+  await typeNote('Never answered the follow-ups.');
+  await click(footerButton('Mark lost'));
+  await settle();
+
+  expect(mocks.changeLeadStage).toHaveBeenCalledExactlyOnceWith(expect.anything(), LEAD, {
+    expectedVersion: 4,
+    stage: 'lost',
+    newLostReason: 'Slow to reply',
+    note: 'Never answered the follow-ups.',
+  });
+  await mounted.unmount();
+});
+
+it('does not offer to add words an option already has, whatever the case', async () => {
+  const mounted = await open();
+  await fill(combo(), ' PRICE ');
+  expect(optionTexts()).toEqual(['Price']);
+  await mounted.unmount();
+});
+
+it('offers only the add row when there are no options yet', async () => {
+  const mounted = await open([]);
+  await click(combo());
+  expect(dialog()?.textContent).toContain('No reasons yet. Type one to add it.');
+  await fill(combo(), 'Price');
+  expect(optionTexts()).toEqual(['Add "Price"']);
+  await mounted.unmount();
+});
+
+it('refuses a new reason over 60 characters before any request', async () => {
+  const mounted = await open();
+  await pickReason('x'.repeat(61), 'Add "');
+  await typeNote('Too long a reason.');
+  await click(footerButton('Mark lost'));
+  await settle();
+
+  expect(mocks.changeLeadStage).not.toHaveBeenCalled();
+  expect(dialog()?.textContent).toContain('Keep a new reason to 60 characters or fewer.');
+  await mounted.unmount();
+});
+
+it('shows the API sentence under the Reason box, for a duplicate added in the meantime', async () => {
+  mocks.changeLeadStage.mockRejectedValueOnce(
+    new ApiError(409, 'dup', {
+      error: {
+        code: 'conflict',
+        message: '"Slow to reply" is already on the list of lost reasons',
+        correlationId: 'c',
+      },
+    }),
+  );
+  const mounted = await open();
+  await pickReason('Slow to reply', 'Add "Slow to reply"');
+  await typeNote('Never answered.');
+  await click(footerButton('Mark lost'));
+  await settle();
+
+  expect(mocks.error).toHaveBeenCalledOnce();
+  expect(dialog()).not.toBeNull();
+  expect((combo() as HTMLInputElement).value).toBe('Slow to reply');
+  await mounted.unmount();
+});
+
+it('keeps the dialog and the chosen reason, and offers a reload, when the lead changed meanwhile', async () => {
   mocks.changeLeadStage.mockRejectedValueOnce(
     new ApiError(409, 'stale', { error: { code: 'conflict', message: 'x', correlationId: 'c' } }),
   );
   const mounted = await open();
-  await fill(inDialog('input[name="reason"]'), 'Chose another vendor');
+  await pickReason('Pri', 'Price');
   await typeNote('Went elsewhere.');
   await click(footerButton('Mark lost'));
   await settle();
@@ -124,19 +230,20 @@ it('keeps the dialog and the typed text, and offers a reload, when the lead chan
   const options = mocks.error.mock.calls[0]?.[1] as { action?: { label: string } } | undefined;
   expect(options?.action?.label).toBe('Reload');
   expect(dialog()).not.toBeNull();
-  expect((inDialog('input[name="reason"]') as HTMLInputElement).value).toBe('Chose another vendor');
+  expect((combo() as HTMLInputElement).value).toBe('Price');
   await mounted.unmount();
 });
 
 it('opens clean after a cancelled attempt', async () => {
   const mounted = await open();
+  await pickReason('Pri', 'Price');
   await click(footerButton('Mark lost'));
   await settle();
-  expect(dialog()?.textContent).toContain('Give a reason');
+  expect(dialog()?.textContent).toContain('Add a note');
 
   await click(footerButton('Cancel'));
   await click(mounted.container.querySelector('button'));
-  expect(dialog()?.textContent).not.toContain('Give a reason');
-  expect((inDialog('input[name="reason"]') as HTMLInputElement).value).toBe('');
+  expect(dialog()?.textContent).not.toContain('Add a note');
+  expect((combo() as HTMLInputElement).value).toBe('');
   await mounted.unmount();
 });

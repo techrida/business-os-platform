@@ -33,7 +33,7 @@ describe('parseStageMove', () => {
   it('refuses lost and on_hold without both a reason and a note', () => {
     const r = parseStageMove('lead', form({ stage: 'lost', expectedVersion: '1' }));
     expect(r.ok).toBe(false);
-    if (!r.ok) expect(Object.keys(r.fieldErrors).sort()).toEqual(['note', 'reason']);
+    if (!r.ok) expect(Object.keys(r.fieldErrors).sort()).toEqual(['lostReasonId', 'note']);
 
     const half = parseStageMove(
       'opportunity',
@@ -43,9 +43,49 @@ describe('parseStageMove', () => {
     if (!half.ok) expect(Object.keys(half.fieldErrors)).toEqual(['note']);
   });
 
-  it('accepts lost with a reason and a note', () => {
+  it('accepts a lead lost with a chosen reason and a note (D49)', () => {
+    const id = '7b0e6c1a-2f4d-4c55-8a39-6d1f5e2c9b10';
     const r = parseStageMove(
       'lead',
+      form({ stage: 'lost', lostReasonId: id, note: 'Called twice', expectedVersion: '2' }),
+    );
+    expect(r).toEqual({
+      ok: true,
+      data: { stage: 'lost', lostReasonId: id, note: 'Called twice', expectedVersion: 2 },
+    });
+  });
+
+  it('accepts a lead lost with a new reason typed in the dialog, trimmed', () => {
+    const r = parseStageMove(
+      'lead',
+      form({ stage: 'lost', newLostReason: '  Slow to reply ', note: 'n', expectedVersion: '2' }),
+    );
+    expect(r).toMatchObject({ ok: true, data: { newLostReason: 'Slow to reply' } });
+  });
+
+  it('refuses a lead lost with the old free-text reason, with both choices, or with a reason over 60 characters', () => {
+    const id = '7b0e6c1a-2f4d-4c55-8a39-6d1f5e2c9b10';
+    const old = parseStageMove(
+      'lead',
+      form({ stage: 'lost', reason: 'No budget', note: 'n', expectedVersion: '2' }),
+    );
+    expect(old.ok).toBe(false);
+    const both = parseStageMove(
+      'lead',
+      form({ stage: 'lost', lostReasonId: id, newLostReason: 'x', note: 'n', expectedVersion: '2' }),
+    );
+    expect(both.ok).toBe(false);
+    const long = parseStageMove(
+      'lead',
+      form({ stage: 'lost', newLostReason: 'x'.repeat(61), note: 'n', expectedVersion: '2' }),
+    );
+    expect(long.ok).toBe(false);
+    if (!long.ok) expect(long.fieldErrors['newLostReason']).toMatch(/60 characters/);
+  });
+
+  it('keeps an opportunity lost on its free-text reason', () => {
+    const r = parseStageMove(
+      'opportunity',
       form({ stage: 'lost', reason: 'No budget', note: 'Called twice', expectedVersion: '2' }),
     );
     expect(r.ok).toBe(true);
