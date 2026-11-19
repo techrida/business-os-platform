@@ -3,7 +3,8 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { ApiError } from '@/lib/api';
 
 vi.mock('server-only', () => ({}));
-vi.mock('next/cache', () => ({ revalidatePath: vi.fn() }));
+const cache = vi.hoisted(() => ({ revalidatePath: vi.fn() }));
+vi.mock('next/cache', () => cache);
 vi.mock('next/navigation', () => ({
   redirect: vi.fn((to: string) => {
     throw new Error(`NEXT_REDIRECT ${to}`);
@@ -13,10 +14,24 @@ vi.mock('@/lib/bff', () => ({
   requireStaffSession: vi.fn(() => Promise.resolve({ accessToken: 't', roles: ['sales'] })),
 }));
 
-const api = vi.hoisted(() => ({ createLead: vi.fn(), convertLead: vi.fn() }));
+const api = vi.hoisted(() => ({
+  createLead: vi.fn(),
+  convertLead: vi.fn(),
+  createActivity: vi.fn(),
+  completeActivity: vi.fn(),
+  rescheduleActivity: vi.fn(),
+  cancelActivity: vi.fn(),
+}));
 vi.mock('@/components/p2/crm/crm-api', () => api);
 
-import { convertLeadAction, createLeadAction } from './actions';
+import {
+  cancelFollowUpAction,
+  completeFollowUpAction,
+  convertLeadAction,
+  createLeadAction,
+  rescheduleFollowUpAction,
+  scheduleFollowUpAction,
+} from './actions';
 
 const IDEM = '44444444-4444-4444-8444-444444444444';
 const LEAD = '11111111-1111-4111-8111-111111111111';
@@ -148,5 +163,143 @@ describe('convertLeadAction', () => {
     const res = await convertLeadAction(empty, f);
     expect(res.fieldErrors.contactMode).toMatch(/choose a contact/i);
     expect(api.convertLead).not.toHaveBeenCalled();
+  });
+});
+
+const ACTIVITY = '22222222-2222-4222-8222-222222222222';
+const OWNER = '33333333-3333-4333-8333-333333333333';
+
+function scheduleForm(extra: Record<string, string> = {}): FormData {
+  const f = new FormData();
+  for (const [k, v] of Object.entries({
+    subjectKind: 'leadId',
+    subjectId: LEAD,
+    kind: 'meeting',
+    subject: '',
+    dueAt: '2026-11-20T10:30',
+    assigneeUserId: OWNER,
+    body: 'Bring the revised scope.',
+    idempotencyKey: IDEM,
+    ...extra,
+  })) {
+    f.set(k, v);
+  }
+  return f;
+}
+
+describe('scheduleFollowUpAction', () => {
+  it('sends a planned activity on the lead, subject defaulting to the kind, in Kathmandu time', async () => {
+    api.createActivity.mockResolvedValue({ id: ACTIVITY });
+    const res = await scheduleFollowUpAction(empty, scheduleForm());
+    expect(api.createActivity).toHaveBeenCalledExactlyOnceWith(
+      expect.anything(),
+      {
+        kind: 'meeting',
+        subject: 'Meeting',
+        body: 'Bring the revised scope.',
+        dueAt: '2026-11-20T10:30:00+05:45',
+        assigneeUserId: OWNER,
+        leadId: LEAD,
+      },
+      IDEM,
+    );
+    expect(res.ok).toBe(true);
+    expect(res.key).toMatch(GUID_SHAPE);
+    expect(res.key).not.toBe(IDEM);
+    expect(cache.revalidatePath).toHaveBeenCalledWith(`/leads/${LEAD}`);
+    expect(cache.revalidatePath).toHaveBeenCalledWith('/activities');
+  });
+
+  it('refuses a note or a missing time next to the fields, without calling the API', async () => {
+    const res = await scheduleFollowUpAction(empty, scheduleForm({ kind: 'note', dueAt: '' }));
+    expect(res.fieldErrors['kind']).toMatch(/note records/i);
+    expect(res.fieldErrors['dueAt']).toMatch(/when the follow-up is due/i);
+    expect(res.values['body']).toBe('Bring the revised scope.');
+    expect(res.key).toBe(IDEM);
+    expect(api.createActivity).not.toHaveBeenCalled();
+  });
+
+  it('refuses any subject other than a lead', async () => {
+    const res = await scheduleFollowUpAction(empty, scheduleForm({ subjectKind: 'opportunityId' }));
+    expect(res.error).toMatch(/incomplete/i);
+    expect(api.createActivity).not.toHaveBeenCalled();
+  });
+
+  it('keeps the key after an unknown outcome, so the retry cannot plan it twice', async () => {
+    api.createActivity.mockRejectedValueOnce(new ApiError(503, 'down'));
+    const res = await scheduleFollowUpAction(empty, scheduleForm());
+    expect(res.error).toBeTruthy();
+    expect(res.key).toBe(IDEM);
+  });
+});
+
+function changeForm(extra: Record<string, string> = {}): FormData {
+  const f = new FormData();
+  for (const [k, v] of Object.entries({
+    leadId: LEAD,
+    activityId: ACTIVITY,
+    expectedVersion: '4',
+    ...extra,
+  })) {
+    f.set(k, v);
+  }
+  return f;
+}
+
+describe('follow-up changes', () => {
+  it('completes with only the version, and refreshes the lead so it moves to History', async () => {
+    api.completeActivity.mockResolvedValue({});
+    const res = await completeFollowUpAction({}, changeForm());
+    expect(res).toEqual({ ok: true });
+    expect(api.completeActivity).toHaveBeenCalledExactlyOnceWith(expect.anything(), ACTIVITY, {
+      expectedVersion: 4,
+    });
+    expect(cache.revalidatePath).toHaveBeenCalledWith(`/leads/${LEAD}`);
+  });
+
+  it('reschedules to the new Kathmandu time and assignee', async () => {
+    api.rescheduleActivity.mockResolvedValue({});
+    const res = await rescheduleFollowUpAction(
+      {},
+      changeForm({ dueAt: '2026-12-01T09:00', assigneeUserId: OWNER }),
+    );
+    expect(res.ok).toBe(true);
+    expect(api.rescheduleActivity).toHaveBeenCalledExactlyOnceWith(expect.anything(), ACTIVITY, {
+      expectedVersion: 4,
+      dueAt: '2026-12-01T09:00:00+05:45',
+      assigneeUserId: OWNER,
+    });
+  });
+
+  it('puts a missing new time on the field', async () => {
+    const res = await rescheduleFollowUpAction({}, changeForm({ dueAt: '' }));
+    expect(res.fieldErrors?.['dueAt']).toBe('Choose the new due time.');
+    expect(api.rescheduleActivity).not.toHaveBeenCalled();
+  });
+
+  it('cancels with the version', async () => {
+    api.cancelActivity.mockResolvedValue({});
+    expect(await cancelFollowUpAction({}, changeForm())).toEqual({ ok: true });
+    expect(api.cancelActivity).toHaveBeenCalledExactlyOnceWith(expect.anything(), ACTIVITY, {
+      expectedVersion: 4,
+    });
+  });
+
+  it('asks for a reload when the version is missing or the ids are not ids', async () => {
+    const stale = await cancelFollowUpAction({}, changeForm({ expectedVersion: '' }));
+    expect(stale.reload).toBe(true);
+    expect(stale.error).toMatch(/reload/i);
+    const tampered = await completeFollowUpAction({}, changeForm({ activityId: 'nope' }));
+    expect(tampered.reload).toBe(true);
+    expect(api.cancelActivity).not.toHaveBeenCalled();
+    expect(api.completeActivity).not.toHaveBeenCalled();
+  });
+
+  it('says what the API refused and does not revalidate', async () => {
+    api.completeActivity.mockRejectedValue(apiError(409, 'conflict'));
+    const res = await completeFollowUpAction({}, changeForm());
+    expect(res.ok).toBeUndefined();
+    expect(res.error).toBeTruthy();
+    expect(cache.revalidatePath).not.toHaveBeenCalled();
   });
 });
