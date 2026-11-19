@@ -47,6 +47,7 @@ import {
 import { and, asc, desc, eq, inArray, ne, sql } from 'drizzle-orm';
 
 import { AuditService } from '../../../platform/audit/audit.service';
+import { can } from '../../../platform/authz/can';
 import { DB, type Db, type DbTransaction } from '../../../platform/db/db.module';
 import { withIdempotency } from '../../../platform/db/idempotency';
 import { withTx, type TxScope } from '../../../platform/db/tx';
@@ -55,6 +56,7 @@ import { ApprovalsService } from '../../approvals/requests.service';
 import { LedgerError, LedgerService } from '../../ledger/ledger.service';
 import { VENDOR_BILL_DOCUMENT_TYPE } from '../bills/vendor-bill.rules';
 import { VendorBankService } from '../../vendors/bank/bank.service';
+import { vendorRef } from '../../vendors/vendors.service';
 import {
   CLAIMING_REQUEST_STATUSES,
   PAYABLE_BILL_STATUSES,
@@ -104,6 +106,14 @@ export interface PaymentRequestDto {
   cancelReason: string | null;
   version: number;
   lines: PaymentRequestLineDto[];
+}
+
+/** One request as its page reads it: the vendor named under the request's own read, and what the caller may open. */
+export interface PaymentRequestDetailDto extends PaymentRequestDto {
+  /** The vendor's legal name, and nothing else of the vendor record. */
+  vendorName: string | null;
+  /** From the caller's live grants: `readVendor` is false when the vendor page would refuse them. */
+  can: { readVendor: boolean };
 }
 
 export interface PaymentRequestItemDto {
@@ -318,9 +328,25 @@ export class PaymentRequestsService {
   }
 
   /** 404 outside the acting entity. */
-  async get(id: string): Promise<PaymentRequestDto> {
-    const { scope, actor } = this.caller.current();
-    return withTx(this.db, scope, actor, (tx) => this.dto(tx, scope, id));
+  async get(id: string): Promise<PaymentRequestDetailDto> {
+    const { scope, actor, principal } = this.caller.current();
+    return withTx(this.db, scope, actor, async (tx) => {
+      const dto = await this.dto(tx, scope, id);
+      const [vendor] = await tx
+        .select()
+        .from(vendors)
+        .where(and(eq(vendors.tenantId, scope.tenantId), eq(vendors.id, dto.vendorPartyId)));
+      return {
+        ...dto,
+        vendorName: vendor?.legalName ?? null,
+        can: {
+          readVendor:
+            vendor !== undefined &&
+            principal.orgKind === 'staff' &&
+            can(principal, 'vendor.read', vendorRef(vendor, principal)).allowed,
+        },
+      };
+    });
   }
 
   // ------------------------------------------------------------------------------------------------- create
@@ -471,7 +497,7 @@ export class PaymentRequestsService {
                 `A ${request.status} payment request cannot be submitted`,
               );
             }
-            await this.lockVendor(tx, scope, request.vendorId);
+            const vendorName = await this.lockVendor(tx, scope, request.vendorId);
             const snapshot = await this.bank.activeVerifiedAccount(scope, request.vendorId, tx);
             const lines = await this.linesOf(tx, scope, request.id);
             await this.ledger.lockForMoneyCommand(tx, scope, [
@@ -508,8 +534,11 @@ export class PaymentRequestsService {
               documentId: request.id,
               ...(request.number === null ? {} : { documentNumber: request.number }),
               title: `Payment request ${request.currency} ${request.totalAmount}`,
+              // The vendor's name and each bill's number are frozen with the ids, so the approver reads
+              // them without a vendor or bill read of their own.
               snapshot: {
                 vendorPartyId: request.vendorId,
+                vendorName,
                 currency: request.currency,
                 totalAmount: request.totalAmount,
                 vendorBankAccountId: snapshot.id,
@@ -517,6 +546,8 @@ export class PaymentRequestsService {
                 lines: checked.map((c) => ({
                   openItemId: c.openItemId,
                   vendorBillId: c.bill.id,
+                  billNumber: c.bill.number,
+                  vendorInvoiceNo: c.bill.vendorInvoiceNo,
                   amount: c.amount,
                 })),
               },
@@ -778,14 +809,18 @@ export class PaymentRequestsService {
     return (data.roleMembers.get('founder') ?? []).includes(userId);
   }
 
-  /** The vendor row (tenant-level) FOR UPDATE, before its bank account is read (VendorBankService's order). */
-  private async lockVendor(tx: DbTransaction, scope: TxScope, vendorId: string): Promise<void> {
+  /**
+   * The vendor row (tenant-level) FOR UPDATE, before its bank account is read (VendorBankService's order). Returns its
+   * legal name.
+   */
+  private async lockVendor(tx: DbTransaction, scope: TxScope, vendorId: string): Promise<string> {
     const [row] = await tx
-      .select({ id: vendors.id })
+      .select({ id: vendors.id, legalName: vendors.legalName })
       .from(vendors)
       .where(and(eq(vendors.tenantId, scope.tenantId), eq(vendors.id, vendorId)))
       .for('update');
     if (row === undefined) throw notFound('Vendor');
+    return row.legalName;
   }
 
   private async lockRequest(tx: DbTransaction, scope: TxScope, id: string): Promise<RequestRow> {
