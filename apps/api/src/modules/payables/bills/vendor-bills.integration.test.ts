@@ -808,6 +808,48 @@ describe('invoice documents', () => {
   });
 });
 
+describe('the bill on its approval (U18 #2)', () => {
+  it('shows the approver the bill and its own file only, and links the bill only for a bill reader', async () => {
+    const vendorId = await vendor();
+    const bill = await billWithoutPo(await doc(['clean'], vendorId), vendorId);
+    // A second bill of the same vendor: its file has the same owner and must not appear on the first bill's approval.
+    const other = await billWithoutPo(await doc(['clean'], vendorId), vendorId);
+    const submitted = await service.submit(bill.id, randomUUID());
+
+    // The first step's approver is another accountant, who may read bills.
+    as(U.acct2, 'accountant');
+    const forAccountant = await approvals.get(submitted.approvalRequestId!);
+    expect(forAccountant.context).toMatchObject({
+      href: `/payables/bills/${bill.id}`,
+      documents: [{ documentId: bill.documentId, filename: 'invoice.pdf' }],
+    });
+    expect(forAccountant.context!.documents).toHaveLength(1);
+    expect(forAccountant.context!.documents.map((d) => d.documentId)).not.toContain(
+      other.documentId,
+    );
+    expect(forAccountant.context!.fields).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ key: 'vendor', value: `Vendor ${vendorId.slice(0, 6)}` }),
+        expect.objectContaining({ key: 'netTotal', kind: 'money', value: '1000.00' }),
+        expect.objectContaining({ key: 'status', value: 'pending_approval' }),
+      ]),
+    );
+    // Nothing beyond the bill's facts: no PAN, no bank details.
+    expect(JSON.stringify(forAccountant.context)).not.toMatch(/\b3\d{8}\b/);
+
+    // Management decides the larger bands. It reads approval requests and documents but not bills, so it sees the
+    // same record and file with no link to a page that would refuse it.
+    as(U.mgmt, 'management');
+    expect(grantsOf('management').has('payables.bill.read')).toBe(false);
+    const forManagement = await approvals.get(submitted.approvalRequestId!);
+    expect(forManagement.context).toMatchObject({
+      href: null,
+      documents: [{ documentId: bill.documentId }],
+    });
+    as(U.acct, 'accountant');
+  });
+});
+
 // ---------------------------------------------------------------------------------------- check 8, idempotency
 
 describe('duplicates (check 8) and replays', () => {
