@@ -55,6 +55,7 @@ let embeddedLevels: LevelRow[];
 let tenantA: TenantWithEntity;
 /** Marketing already holds a Founder-made profile picture grant. */
 let tenantB: TenantWithEntity;
+let tenantMaterialized: TenantWithEntity;
 /** No role_permissions rows: still on the code defaults. */
 let tenantC: TenantWithEntity;
 
@@ -318,6 +319,24 @@ beforeAll(async () => {
 
   tenantC = await createTenantWithEntity(owner);
 
+  // A tenant whose Founder already saved Settings > Access with every department switch off: the level rows are
+  // materialised and empty, so 0088 must not write any back.
+  tenantMaterialized = await createTenantWithEntity(owner);
+  await insertGrants(tenantMaterialized, [
+    ['sales', 'crm.lead.read', 'own', true],
+    ['sales', 'crm.lead.write', 'own', true],
+    ['marketing', 'crm.lead.read', 'own', true],
+  ]);
+  await writeAs(tenantMaterialized, async (c) => {
+    await c.query(
+      'INSERT INTO app.access_revisions (tenant_id, revision, level_rules_materialized) VALUES ($1, 1, true)',
+      [tenantMaterialized.tenantId],
+    );
+    await c.query('INSERT INTO app.authz_versions (tenant_id, version) VALUES ($1, 1)', [
+      tenantMaterialized.tenantId,
+    ]);
+  });
+
   // Quotations before 0088: one on an opportunity whose owner is in the Sales department, one on an opportunity
   // without an owner.
   salesDept = (await createDepartment(owner, tenantA)).departmentId;
@@ -458,6 +477,10 @@ describe('0088 level rows', () => {
     expect(rows.map((row) => `${levelKey(row)} ${row.seeded}`).sort()).toEqual(
       [...seeded.map((key) => `${key} true`), 'sales crm.lead.read manager all false'].sort(),
     );
+  });
+
+  it('writes no level row for a tenant whose Founder already saved Settings > Access with the switches off', async () => {
+    expect(await levelRowsOf(tenantMaterialized.tenantId)).toEqual([]);
   });
 
   it('writes no level row for a tenant whose roles hold none of those reads', async () => {

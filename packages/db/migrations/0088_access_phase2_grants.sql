@@ -124,7 +124,13 @@ BEGIN
       {"role": "pmo", "permission": "crm.opportunity.read", "min_level": "head", "scope": "department"},
       {"role": "operations_officer", "permission": "procurement.pr.read", "min_level": "head", "scope": "department"}
     ]'::jsonb) AS level_grant(role text, permission text, min_level text, scope text)
-    WHERE EXISTS (
+    WHERE NOT EXISTS (
+      -- A tenant Settings > Access already materialised holds its Founder's choices: a missing row there is a switch
+      -- turned off, so nothing is written back over it.
+      SELECT 1 FROM app.access_revisions revision
+      WHERE revision.tenant_id = target.tenant_id AND revision.level_rules_materialized
+    )
+    AND EXISTS (
       SELECT 1
       FROM app.role_permissions base
       WHERE base.tenant_id = target.tenant_id
