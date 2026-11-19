@@ -35,11 +35,7 @@ export const ASSIGNMENT_AREA_KEYS = ['leads', 'opportunities'] as const;
 export const AssignmentAreaKeySchema = z.enum(ASSIGNMENT_AREA_KEYS);
 export type AssignmentAreaKey = z.infer<typeof AssignmentAreaKeySchema>;
 
-export const STAFF_ASSIGNMENT_RULES = [
-  'self_and_peers',
-  'self_only',
-  'any_at_or_below',
-] as const;
+export const STAFF_ASSIGNMENT_RULES = ['self_and_peers', 'self_only', 'any_at_or_below'] as const;
 export const StaffAssignmentRuleSchema = z.enum(STAFF_ASSIGNMENT_RULES);
 export type StaffAssignmentRule = z.infer<typeof StaffAssignmentRuleSchema>;
 
@@ -47,17 +43,7 @@ export const MANAGER_ASSIGNMENT_RULES = ['any_at_or_below', 'self_and_staff'] as
 export const ManagerAssignmentRuleSchema = z.enum(MANAGER_ASSIGNMENT_RULES);
 export type ManagerAssignmentRule = z.infer<typeof ManagerAssignmentRuleSchema>;
 
-export const ACCESS_WARNING_CODES = [
-  'W1',
-  'W2',
-  'W3',
-  'W4',
-  'W5',
-  'W6',
-  'W7',
-  'W8',
-  'W9',
-] as const;
+export const ACCESS_WARNING_CODES = ['W1', 'W2', 'W3', 'W4', 'W5', 'W6', 'W7', 'W8', 'W9'] as const;
 export const AccessWarningCodeSchema = z.enum(ACCESS_WARNING_CODES);
 export type AccessWarningCode = z.infer<typeof AccessWarningCodeSchema>;
 
@@ -375,9 +361,7 @@ export const AccessConfirmationRequiredErrorSchema = z.object({
   message: z.string(),
   warnings: z.array(AccessWarningSchema),
 });
-export type AccessConfirmationRequiredError = z.infer<
-  typeof AccessConfirmationRequiredErrorSchema
->;
+export type AccessConfirmationRequiredError = z.infer<typeof AccessConfirmationRequiredErrorSchema>;
 
 /** Structured error payload on 422 validation or blocked warning refusal. */
 export const AccessValidationErrorSchema = z.object({

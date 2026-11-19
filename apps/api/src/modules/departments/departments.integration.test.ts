@@ -95,9 +95,9 @@ const callerState: CallerState = {
   grants: new Map(),
 };
 
-const invalidateSpy = vi.fn<
-  (tenantId: string, organizationId: string) => Promise<void>
->(() => Promise.resolve());
+const invalidateSpy = vi.fn<(tenantId: string, organizationId: string) => Promise<void>>(() =>
+  Promise.resolve(),
+);
 
 function currentPrincipal(): Principal {
   return {
@@ -232,34 +232,22 @@ beforeAll(async () => {
   scope2A = { tenantId: tenant2.tenantId, organizationId: tenant2.organizationId };
 
   // Staff users in Entity 1A.
-  founderUserId = (
-    await createStaffUser(appPool, { ...tenant1, roleKeys: ['founder'] })
-  ).userId;
+  founderUserId = (await createStaffUser(appPool, { ...tenant1, roleKeys: ['founder'] })).userId;
   await setDisplayName(scope1A, founderUserId, 'Founder One', 'founder@acme.test');
 
-  ashaId = (
-    await createStaffUser(appPool, { ...tenant1, roleKeys: ['sales'] })
-  ).userId;
+  ashaId = (await createStaffUser(appPool, { ...tenant1, roleKeys: ['sales'] })).userId;
   await setDisplayName(scope1A, ashaId, 'Asha Thapa', 'asha@acme.test');
 
-  bikashId = (
-    await createStaffUser(appPool, { ...tenant1, roleKeys: ['sales'] })
-  ).userId;
+  bikashId = (await createStaffUser(appPool, { ...tenant1, roleKeys: ['sales'] })).userId;
   await setDisplayName(scope1A, bikashId, 'Bikash Rai', 'bikash@acme.test');
 
-  nishaId = (
-    await createStaffUser(appPool, { ...tenant1, roleKeys: ['marketing'] })
-  ).userId;
+  nishaId = (await createStaffUser(appPool, { ...tenant1, roleKeys: ['marketing'] })).userId;
   await setDisplayName(scope1A, nishaId, 'Nisha Gurung', 'nisha@acme.test');
 
-  dipakId = (
-    await createStaffUser(appPool, { ...tenant1, roleKeys: ['finance', 'sales'] })
-  ).userId;
+  dipakId = (await createStaffUser(appPool, { ...tenant1, roleKeys: ['finance', 'sales'] })).userId;
   await setDisplayName(scope1A, dipakId, 'Dipak Shrestha', 'dipak@acme.test');
 
-  inactiveUserId = (
-    await createStaffUser(appPool, { ...tenant1, roleKeys: ['sales'] })
-  ).userId;
+  inactiveUserId = (await createStaffUser(appPool, { ...tenant1, roleKeys: ['sales'] })).userId;
   await withTx(db, scope1A, systemActor('test-seed'), (tx) =>
     tx.execute(
       sql`UPDATE app.users SET status = 'inactive', display_name = 'Former Staff'
@@ -279,9 +267,7 @@ beforeAll(async () => {
   await setDisplayName(scope1B, entity1BUserId, 'Entity B Staff', 'entityb@acme.test');
 
   // Staff user in Tenant 2.
-  tenant2UserId = (
-    await createStaffUser(appPool, { ...tenant2, roleKeys: ['founder'] })
-  ).userId;
+  tenant2UserId = (await createStaffUser(appPool, { ...tenant2, roleKeys: ['founder'] })).userId;
 
   const fakeCaller: DepartmentsCaller = {
     tx: () => ({
@@ -454,9 +440,7 @@ describe('Department lifecycle: create, duplicate name, list, search, rename, re
     );
 
     // Duplicate name in different letter case / spaces -> 422 on `name`.
-    const dup = await request(baseUrl)
-      .post('/v1/admin/departments')
-      .send({ name: '  sAlEs  ' });
+    const dup = await request(baseUrl).post('/v1/admin/departments').send({ name: '  sAlEs  ' });
     expect(dup.status).toBe(422);
     const dupErr = errorOf(dup.body);
     expect(dupErr.code).toBe('unprocessable');
@@ -736,9 +720,7 @@ describe('Department people mutations, head switching, stale_access 409, and aud
     const switchHeadRes = await request(baseUrl)
       .post(`/v1/admin/departments/${deptA.id}/people`)
       .send({
-        changes: [
-          { kind: 'memberLevel', departmentId: deptA.id, userId: dipakId, level: 'head' },
-        ],
+        changes: [{ kind: 'memberLevel', departmentId: deptA.id, userId: dipakId, level: 'head' }],
         expectedRevision: afterAdd.revision,
       });
     expect(switchHeadRes.status, JSON.stringify(switchHeadRes.body)).toBe(200);
@@ -758,7 +740,12 @@ describe('Department people mutations, head switching, stale_access 409, and aud
       .send({
         changes: [
           { kind: 'head', departmentId: deptA.id, userId: bikashId },
-          { kind: 'memberJobTitle', departmentId: deptA.id, userId: dipakId, jobTitle: 'Staff Eng' },
+          {
+            kind: 'memberJobTitle',
+            departmentId: deptA.id,
+            userId: dipakId,
+            jobTitle: 'Staff Eng',
+          },
         ],
         expectedRevision: afterSwitch.revision,
       });

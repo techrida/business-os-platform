@@ -880,7 +880,8 @@ export function evaluateAccessChanges(
       if (ownedOpen <= 0) continue;
 
       // Narrowed so they can no longer open their own records (e.g. own/department/all -> null or assigned).
-      const lostSeeOwn = reachRank(prevSee) >= reachRank('own') && reachRank(nextSee) < reachRank('own');
+      const lostSeeOwn =
+        reachRank(prevSee) >= reachRank('own') && reachRank(nextSee) < reachRank('own');
       // Or lost write access on their own records in leads/opportunities/quotations.
       const primaryAction = area.actionPermissions[0];
       const lostWriteOwn =
@@ -888,9 +889,8 @@ export function evaluateAccessChanges(
         reachRank(
           effectiveScopeForUser(userBefore, primaryAction, beforeGrants, beforeLevels).scope,
         ) >= reachRank('own') &&
-        reachRank(
-          effectiveScopeForUser(userAfter, primaryAction, afterGrants, afterLevels).scope,
-        ) < reachRank('own');
+        reachRank(effectiveScopeForUser(userAfter, primaryAction, afterGrants, afterLevels).scope) <
+          reachRank('own');
 
       if (lostSeeOwn || lostWriteOwn) {
         affectedPeople += 1;
@@ -976,7 +976,12 @@ export function evaluateAccessChanges(
     }
 
     // Also count department-level changes that affect assignment reach when assignment config changed.
-    if (!userWidened && !userNarrowed && assignmentChangedAreas.size > 0 && !userBefore.roles.includes('founder')) {
+    if (
+      !userWidened &&
+      !userNarrowed &&
+      assignmentChangedAreas.size > 0 &&
+      !userBefore.roles.includes('founder')
+    ) {
       for (const areaKey of assignmentChangedAreas) {
         const bRule = before.assignment.find((a) => a.area === areaKey);
         const aRule = after.assignment.find((a) => a.area === areaKey);
@@ -990,8 +995,12 @@ export function evaluateAccessChanges(
           else userWidened = true;
         }
         if (userAfter.departmentId !== null) {
-          const hadFrom = bRule.handOvers.filter((h) => h.fromDepartmentId === userAfter.departmentId).length;
-          const hasFrom = aRule.handOvers.filter((h) => h.fromDepartmentId === userAfter.departmentId).length;
+          const hadFrom = bRule.handOvers.filter(
+            (h) => h.fromDepartmentId === userAfter.departmentId,
+          ).length;
+          const hasFrom = aRule.handOvers.filter(
+            (h) => h.fromDepartmentId === userAfter.departmentId,
+          ).length;
           if (hasFrom > hadFrom) userWidened = true;
           if (hasFrom < hadFrom) userNarrowed = true;
         }

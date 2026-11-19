@@ -384,9 +384,10 @@ describe('decideAssignment with AssignmentRuleConfig', () => {
 
   it('allows explicit department hand-over pairs and blocks pairs removed from the list', () => {
     // Explicit empty hand-over list removes the default Marketing -> Sales hand-off.
-    expect(
-      decideAssignment(marketingStaff, salesStaff, 'reassign', { handOvers: [] }),
-    ).toEqual({ allowed: false, reason: 'other_department' });
+    expect(decideAssignment(marketingStaff, salesStaff, 'reassign', { handOvers: [] })).toEqual({
+      allowed: false,
+      reason: 'other_department',
+    });
 
     // Explicit pair Sales -> Marketing allows Sales to hand off to Marketing at or below level.
     const reversePair = {
@@ -479,4 +480,3 @@ describe('decideAssignment with AssignmentRuleConfig', () => {
     }
   });
 });
-

@@ -119,12 +119,9 @@ beforeAll(async () => {
       [secondEntityId, tenantA.tenantId],
     ),
   );
-  existingDeptId = (
-    await createDepartment(owner, { ...tenantA, name: 'Sales' })
-  ).departmentId;
-  assignedUserId = (
-    await createStaffUser(owner, { ...tenantA, departmentId: existingDeptId })
-  ).userId;
+  existingDeptId = (await createDepartment(owner, { ...tenantA, name: 'Sales' })).departmentId;
+  assignedUserId = (await createStaffUser(owner, { ...tenantA, departmentId: existingDeptId }))
+    .userId;
   unassignedUserId = (await createStaffUser(owner, tenantA)).userId;
 
   // Apply 0086 via the real migration runner.
@@ -201,9 +198,9 @@ describe('0086 department lifecycle constraints and active name uniqueness', () 
 
   it('prevents case-insensitive duplicate active names in the same entity, while allowing retired duplicates and other entities', async () => {
     // Duplicate active name in different case + whitespace in the same entity is rejected.
-    await expect(
-      createDepartment(owner, { ...tenantA, name: '  sAlEs  ' }),
-    ).rejects.toThrow(/departments_tenant_org_active_name_unique/);
+    await expect(createDepartment(owner, { ...tenantA, name: '  sAlEs  ' })).rejects.toThrow(
+      /departments_tenant_org_active_name_unique/,
+    );
 
     // Same name in another legal entity of the same tenant is allowed.
     const otherEntityDept = await createDepartment(owner, {
@@ -269,7 +266,7 @@ describe('0086 department_since trigger', () => {
 
     // Moving to deptB refreshes department_since.
     await writeAs(tenantA, (c) =>
-      c.query("UPDATE app.user_entities SET department_since = $2 WHERE user_id = $1", [
+      c.query('UPDATE app.user_entities SET department_since = $2 WHERE user_id = $1', [
         joined,
         new Date('2020-01-01T00:00:00.000Z'),
       ]),
@@ -291,9 +288,10 @@ describe('0086 department_since trigger', () => {
 
     // Removing from department clears department_since to NULL.
     await writeAs(tenantA, (c) =>
-      c.query("UPDATE app.user_entities SET department_id = NULL, level = 'staff' WHERE user_id = $1", [
-        joined,
-      ]),
+      c.query(
+        "UPDATE app.user_entities SET department_id = NULL, level = 'staff' WHERE user_id = $1",
+        [joined],
+      ),
     );
     const afterRemove = await one<{ department_since: Date | null }>(
       'SELECT department_since FROM app.user_entities WHERE user_id = $1',

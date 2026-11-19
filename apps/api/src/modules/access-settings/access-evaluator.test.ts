@@ -12,11 +12,7 @@ import {
 import { describe, expect, it } from 'vitest';
 
 import { DEFAULT_LEVEL_RULES, defaultScopeFor } from './access-catalogue';
-import {
-  type AccessSnapshot,
-  evaluateAccessChanges,
-  explainAreaAccess,
-} from './access-evaluator';
+import { type AccessSnapshot, evaluateAccessChanges, explainAreaAccess } from './access-evaluator';
 
 const FORBIDDEN_WORDS = /\b(scopes?|grants?|rbac|seeded|permission key)\b/i;
 
@@ -323,10 +319,7 @@ describe('evaluateAccessChanges expansions, impact, and Why explanations', () =>
     expect(staffWhy).toEqual(['Sales role gives Their own.']);
 
     const mgrWhy = explainAreaAccess(snap.users[3]!, 'leads', grantMap, levelMap);
-    expect(mgrWhy).toEqual([
-      'Sales role gives Their own.',
-      'Manager level adds Their department.',
-    ]);
+    expect(mgrWhy).toEqual(['Sales role gives Their own.', 'Manager level adds Their department.']);
 
     const headWhy = explainAreaAccess(snap.users[2]!, 'leads', grantMap, levelMap);
     expect(headWhy).toEqual([

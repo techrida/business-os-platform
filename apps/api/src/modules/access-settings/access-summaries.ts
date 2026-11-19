@@ -139,9 +139,7 @@ export function buildAssignmentSummaries(
     }
 
     if (rule.managers === 'self_and_staff') {
-      parts.push(
-        'Managers and heads can assign only to themselves and people below their level.',
-      );
+      parts.push('Managers and heads can assign only to themselves and people below their level.');
     } else {
       parts.push(
         'Managers and heads can assign to anyone in their department at or below their level.',

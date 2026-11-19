@@ -9,5 +9,9 @@ export {
   type BumpAccessRevisionOptions,
 } from './access-revision';
 export { loadAssignmentConfig, toAssignmentRuleConfig } from './assignment-config';
-export { evaluateAccessChanges, effectiveScopeForUser, explainAreaAccess } from './access-evaluator';
+export {
+  evaluateAccessChanges,
+  effectiveScopeForUser,
+  explainAreaAccess,
+} from './access-evaluator';
 export { buildAreaSummaries, buildAssignmentSummaries } from './access-summaries';
