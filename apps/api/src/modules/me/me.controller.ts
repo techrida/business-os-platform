@@ -1,16 +1,21 @@
 import type { MeResponse } from '@bos/contracts';
-import { Controller, Get } from '@nestjs/common';
+import { users } from '@bos/db';
+import { Controller, Get, Inject } from '@nestjs/common';
+import { and, eq } from 'drizzle-orm';
 
 import { AnyAuthenticated } from '../../platform/authz/decorators';
-import { ctx } from '../../platform/tenancy/request-context';
+import { DB, type Db } from '../../platform/db/db.module';
+import { ctx, currentPrincipal } from '../../platform/tenancy/request-context';
 
 // Any signed-in user may ask who they are; the tenancy interceptor refuses unmarked routes.
 @AnyAuthenticated()
 @Controller('v1/me')
 export class MeController {
-  /** Who the caller is, straight from the request context (no database read of its own). */
+  constructor(@Inject(DB) private readonly db: Db) {}
+
+  /** Who the caller is, from the request context, plus their own picture pointer. */
   @Get()
-  me(): MeResponse {
+  async me(): Promise<MeResponse> {
     const c = ctx();
     return {
       userId: c.userId,
@@ -21,6 +26,19 @@ export class MeController {
       // Copy: the context's array is shared for the whole request, and a response body must not alias it.
       roles: [...c.roles],
       correlationId: c.correlationId,
+      avatarDocumentId: await this.avatarOf(c.tenantId),
     };
+  }
+
+  /** The caller's own row only (`app.users.id` from the principal, in the context's tenant). */
+  private async avatarOf(tenantId: string): Promise<string | null> {
+    const appUserId = currentPrincipal()?.userId;
+    if (!appUserId) return null;
+    const [row] = await this.db
+      .select({ avatarDocumentId: users.avatarDocumentId })
+      .from(users)
+      .where(and(eq(users.tenantId, tenantId), eq(users.id, appUserId)))
+      .limit(1);
+    return row?.avatarDocumentId ?? null;
   }
 }
