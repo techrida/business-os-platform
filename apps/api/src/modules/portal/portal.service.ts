@@ -8,6 +8,7 @@
 // accept and reject. The list shows, per quotation, the newest customer-visible version, so a revision that is
 // still a draft never shows; the version sent before it stays listed (as `superseded`).
 import {
+  CurrencySchema,
   DateFormatSchema,
   DEFAULT_DATE_FORMAT,
   DEFAULT_NUMBER_SYSTEMS,
@@ -16,6 +17,7 @@ import {
   snapshotNumberSystems,
   type SignedLinkDto,
   PortalQuotationListItemSchema,
+  type Currency,
   type CustomerQuotationView,
   type PortalDisplay,
   type PortalQuotationListItem,
@@ -81,6 +83,23 @@ export async function liveDisplay(
     numberSystems: systems.success ? systems.data : { ...DEFAULT_NUMBER_SYSTEMS },
     dateFormat: date.success ? date.data : DEFAULT_DATE_FORMAT,
   };
+}
+
+/**
+ * The currencies the company has switched on now (D44), as CurrencyEnabledService enforces them: NPR first and always,
+ * then each known code of the saved `currency.enabled` list (the contract default when nothing is saved). A stored
+ * value that is not a list (a row edited by hand) offers NPR only, so a portal form never offers a currency the API
+ * might refuse with 422 CURRENCY_NOT_ENABLED.
+ */
+export async function liveEnabledCurrencies(
+  settings: DisplaySettings,
+  scope: TxScope,
+): Promise<Currency[]> {
+  const stored: unknown = await settings.get(scope, 'currency.enabled');
+  const known = Array.isArray(stored)
+    ? stored.filter((c): c is Currency => CurrencySchema.safeParse(c).success)
+    : [];
+  return [...new Set<Currency>(['NPR', ...known])];
 }
 
 /**
@@ -201,13 +220,19 @@ export class PortalService {
   }
 
   /**
-   * How the caller's company writes numbers and dates now, for lists and anything without a frozen snapshot. Any
-   * active customer or vendor portal caller; the scope is the caller's acting (selling) entity.
+   * How the caller's company writes numbers and dates now, for lists and anything without a frozen snapshot, and the
+   * currencies it has switched on, for the portal's payment and quotation forms. Any active customer or vendor portal
+   * caller; the scope is the caller's acting (selling) entity.
    */
   async display(): Promise<PortalDisplay> {
     const p = this.caller.current();
     assertPortalCaller(p);
-    return liveDisplay(this.settings, scopeOf(p));
+    const scope = scopeOf(p);
+    const [display, enabledCurrencies] = await Promise.all([
+      liveDisplay(this.settings, scope),
+      liveEnabledCurrencies(this.settings, scope),
+    ]);
+    return { ...display, enabledCurrencies };
   }
 
   /**

@@ -47,7 +47,13 @@ async function setup(caller: Principal) {
   const documents = { listForOwner: vi.fn(), issueLinkForOwner: vi.fn() };
   const settings = {
     get: vi.fn((_scope: unknown, key: string) =>
-      Promise.resolve(key === 'format.date' ? 'dd/MM/yyyy' : DISPLAY.numberSystems),
+      Promise.resolve(
+        key === 'format.date'
+          ? 'dd/MM/yyyy'
+          : key === 'currency.enabled'
+            ? DISPLAY.enabledCurrencies
+            : DISPLAY.numberSystems,
+      ),
     ),
   };
   const moduleRef = await Test.createTestingModule({
@@ -73,7 +79,8 @@ async function setup(caller: Principal) {
 const DISPLAY = {
   numberSystems: { NPR: 'international', INR: 'south_asian', USD: 'international' },
   dateFormat: 'dd/MM/yyyy',
-} as const;
+  enabledCurrencies: ['NPR', 'INR'],
+};
 
 const CUSTOMER = principalOf({});
 const FOUNDER = principalOf({ orgKind: 'staff', partyId: null, roles: ['founder'] });
