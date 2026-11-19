@@ -5,6 +5,7 @@
 // Run: pnpm --filter @bos/api exec vitest run src/modules/leads
 import 'reflect-metadata';
 
+import { randomUUID } from 'node:crypto';
 import type { Server } from 'node:http';
 import type { AddressInfo } from 'node:net';
 
@@ -22,6 +23,7 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vites
 import { configureApp } from '../../app.setup';
 import { AuditService } from '../../platform/audit/audit.service';
 import type { AuthzService } from '../../platform/authz/authz.service';
+import { systemActor, withTx } from '../../platform/db/tx';
 import { NumberingService } from '../../platform/settings/numbering.service';
 import { ErrorBodyFilter } from '../../platform/tenancy/error-body.filter';
 import { LeadsController } from './leads.controller';
@@ -133,6 +135,152 @@ describe('POST /v1/leads', () => {
   it('refuses a caller without crm.lead.write on the record at all', async () => {
     h.as('viewer', 'management');
     expect((await post()).status).toBe(403);
+  });
+});
+
+describe('POST /v1/leads with a follow-up (D39)', () => {
+  const plannedOf = (leadId: string) =>
+    h.db.select().from(activities).where(eq(activities.leadId, leadId));
+  const iso = (s: string) => new Date(s).toISOString();
+
+  it('plans the followUp as an activity assigned to the owner, named after its kind, and derives nextFollowUpAt', async () => {
+    h.as('boss', 'founder');
+    const dueAt = '2030-01-02T03:04:05Z';
+    const lead = await seed({
+      ownerUserId: h.users.salesB,
+      followUp: { kind: 'meeting', dueAt, body: 'Bring the brochure' },
+    });
+    expect(lead.nextFollowUpAt).toBe(iso(dueAt));
+    const rows = await plannedOf(lead.id);
+    expect(rows).toHaveLength(1);
+    expect(rows[0]).toMatchObject({
+      kind: 'meeting',
+      subject: 'Meeting',
+      body: 'Bring the brochure',
+      assigneeUserId: h.users.salesB,
+      createdByUserId: h.users.boss,
+      completedAt: null,
+      cancelledAt: null,
+    });
+    expect(rows[0]!.dueAt!.toISOString()).toBe(iso(dueAt));
+    expect((await h.auditOf(rows[0]!.id)).map((e) => e.action)).toContain('activity.scheduled');
+    // The rollback-only column is no longer written.
+    const [row] = await h.db.select().from(leads).where(eq(leads.id, lead.id));
+    expect(row!.nextFollowUpAt).toBeNull();
+  });
+
+  it('keeps a named assignee and subject', async () => {
+    const lead = await seed({
+      followUp: {
+        kind: 'email',
+        dueAt: '2030-02-01T09:00:00Z',
+        assigneeUserId: h.users.salesB,
+        subject: 'Send the quote',
+      },
+    });
+    const [row] = await plannedOf(lead.id);
+    expect(row).toMatchObject({
+      kind: 'email',
+      subject: 'Send the quote',
+      assigneeUserId: h.users.salesB,
+      createdByUserId: h.users.salesA,
+    });
+  });
+
+  it('maps the old nextFollowUpAt to a planned call named "Follow up" for the owner', async () => {
+    const dueAt = '2030-03-04T05:06:07.000Z';
+    const lead = await seed({ nextFollowUpAt: dueAt });
+    expect(lead.nextFollowUpAt).toBe(iso(dueAt));
+    const rows = await plannedOf(lead.id);
+    expect(rows).toHaveLength(1);
+    expect(rows[0]).toMatchObject({
+      kind: 'call',
+      subject: 'Follow up',
+      assigneeUserId: h.users.salesA,
+      createdByUserId: h.users.salesA,
+    });
+    const [row] = await h.db.select().from(leads).where(eq(leads.id, lead.id));
+    expect(row!.nextFollowUpAt).toBeNull();
+  });
+
+  it('refuses followUp and nextFollowUpAt together with 400', async () => {
+    const dueAt = '2030-01-01T00:00:00Z';
+    const res = await post({ ...BODY, nextFollowUpAt: dueAt, followUp: { kind: 'call', dueAt } });
+    expect(res.status).toBe(400);
+  });
+
+  it('refuses an assignee who is not a user of the tenant with 400, and creates nothing', async () => {
+    const title = `Atomic ${randomUUID()}`;
+    const subject = `Ghost ${randomUUID()}`;
+    const res = await post({
+      ...BODY,
+      title,
+      followUp: {
+        kind: 'call',
+        dueAt: '2030-01-01T00:00:00Z',
+        assigneeUserId: randomUUID(),
+        subject,
+      },
+    });
+    expect(res.status, JSON.stringify(res.body)).toBe(400);
+    expect(errorOf(res.body).message).toContain('assigneeUserId');
+    expect(await h.db.select().from(leads).where(eq(leads.title, title))).toHaveLength(0);
+    expect(
+      await h.db.select().from(activities).where(eq(activities.subject, subject)),
+    ).toHaveLength(0);
+  });
+
+  it('derives nextFollowUpAt as the earliest planned due time, ignoring completed, cancelled and logged rows, the same in list, get and a stage change', async () => {
+    const title = `Derived ${randomUUID()}`;
+    const lead = await seed({ title, followUp: { kind: 'call', dueAt: '2031-01-01T00:00:00Z' } });
+    await withTx(h.db, h.scopeA, systemActor('test'), (tx) =>
+      tx.insert(activities).values([
+        {
+          ...h.scopeA,
+          kind: 'call',
+          subject: 'Done early',
+          leadId: lead.id,
+          dueAt: new Date('2028-01-01T00:00:00Z'),
+          completedAt: new Date('2028-01-01T00:00:00Z'),
+        },
+        {
+          ...h.scopeA,
+          kind: 'meeting',
+          subject: 'Cancelled earlier',
+          leadId: lead.id,
+          dueAt: new Date('2027-01-01T00:00:00Z'),
+          cancelledAt: new Date('2027-01-01T00:00:00Z'),
+        },
+        { ...h.scopeA, kind: 'note', subject: 'Logged', leadId: lead.id },
+        {
+          ...h.scopeA,
+          kind: 'email',
+          subject: 'Next',
+          leadId: lead.id,
+          dueAt: new Date('2030-06-01T00:00:00Z'),
+        },
+      ]),
+    );
+    const expected = '2030-06-01T00:00:00.000Z';
+    const got = dto((await request(baseUrl).get(`/v1/leads/${lead.id}`)).body);
+    expect(got.nextFollowUpAt).toBe(expected);
+    const listed = z
+      .array(LeadDtoSchema)
+      .parse((await request(baseUrl).get(`/v1/leads?q=${encodeURIComponent(title)}`)).body);
+    expect(listed.map((l) => [l.id, l.nextFollowUpAt])).toEqual([[lead.id, expected]]);
+    const moved = await patchStage(lead.id, { stage: 'contacted', expectedVersion: 1 });
+    expect(dto(moved.body).nextFollowUpAt).toBe(expected);
+
+    const bareTitle = `Bare ${randomUUID()}`;
+    const bare = await seed({ title: bareTitle });
+    expect(bare.nextFollowUpAt).toBeNull();
+    expect(dto((await request(baseUrl).get(`/v1/leads/${bare.id}`)).body).nextFollowUpAt).toBe(
+      null,
+    );
+    const bareListed = z
+      .array(LeadDtoSchema)
+      .parse((await request(baseUrl).get(`/v1/leads?q=${encodeURIComponent(bareTitle)}`)).body);
+    expect(bareListed.map((l) => l.nextFollowUpAt)).toEqual([null]);
   });
 });
 
