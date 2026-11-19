@@ -24,3 +24,4 @@ export * from './vendors.js';
 export * from './vitals.js';
 export * from './cost-centers.js';
 export * from './withholding.js';
+export * from './images.js';
