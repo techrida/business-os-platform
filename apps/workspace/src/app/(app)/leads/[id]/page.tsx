@@ -20,6 +20,7 @@ import { Icon } from '@/components/ui/icon';
 import { Breadcrumb, Page, PageHeader } from '@/components/ui/page';
 import { FactList, Panel, type Fact } from '@/components/ui/panel';
 import { StatusTimeline, type TimelineStep } from '@/components/ui/status-timeline';
+import { listLeadLostReasonChoices } from '@/lib/api-lead-lost-reasons';
 import { failureOf } from '@/lib/api-kernel';
 import { requireStaffSession } from '@/lib/bff';
 import { getNumberSystems } from '@/lib/display-settings';
@@ -184,6 +185,8 @@ export default async function LeadPage({ params }: { params: Promise<{ id: strin
 
   const canQualify = moves.some((move) => move.stage === 'qualified');
   const canMarkLost = moves.some((move) => move.stage === 'lost');
+  // The options Mark lost offers (D49). Only asked for when the action is shown; a failure leaves the dialog able to add one.
+  const lostReasons = canMarkLost ? await listLeadLostReasonChoices(session).catch(() => []) : [];
 
   return (
     <Page className={styles.detail}>
@@ -205,7 +208,12 @@ export default async function LeadPage({ params }: { params: Promise<{ id: strin
                 <QualifyLead id={lead.id} number={lead.number} version={lead.version} />
               ) : null}
               {canMarkLost ? (
-                <MarkLostDialog id={lead.id} number={lead.number} version={lead.version} />
+                <MarkLostDialog
+                  id={lead.id}
+                  number={lead.number}
+                  version={lead.version}
+                  reasons={lostReasons}
+                />
               ) : null}
             </>
           ) : null
@@ -330,7 +338,15 @@ export default async function LeadPage({ params }: { params: Promise<{ id: strin
               <StageBadge kind="lead" stage={lead.stage} />
             </div>
             {lead.stageReason ? (
-              <Alert tone={lead.stage === 'lost' ? 'error' : 'warning'} title={lead.stageReason}>
+              <Alert
+                tone={lead.stage === 'lost' ? 'error' : 'warning'}
+                title={lead.lostReason?.label ?? lead.stageReason}
+              >
+                {lead.lostReason?.retired ? (
+                  <span className={styles.longText}>
+                    This reason is no longer offered for new leads.
+                  </span>
+                ) : null}
                 {lead.stageNote ? <span className={styles.longText}>{lead.stageNote}</span> : null}
               </Alert>
             ) : null}
