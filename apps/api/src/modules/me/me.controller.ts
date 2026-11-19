@@ -1,31 +1,26 @@
-import {
-  type EffectivePermission,
-  type MeResponse,
-  PERMISSIONS,
-  SCOPES,
-} from '@bos/contracts';
+import { type EffectivePermission, type MeResponse, PERMISSIONS } from '@bos/contracts';
 import { users } from '@bos/db';
 import { Controller, Get, Inject } from '@nestjs/common';
 import { and, eq } from 'drizzle-orm';
 
+import { can } from '../../platform/authz/can';
 import { AnyAuthenticated } from '../../platform/authz/decorators';
 import { type Principal, principal } from '../../platform/authz/principal';
 import { DB, type Db } from '../../platform/db/db.module';
 import { ctx, currentPrincipal } from '../../platform/tenancy/request-context';
 
 const KNOWN_PERMISSIONS: ReadonlySet<string> = new Set(PERMISSIONS);
-const KNOWN_SCOPES: ReadonlySet<string> = new Set(SCOPES);
 
 /**
- * The principal's grants as the workspace may gate on them: the same answer `can()` gives without a record.
- * An inactive user gets none (can() refuses every action), and a row this build does not know (a permission or
- * scope string from `role_permissions` that is not in the contracts) is dropped, as can() treats it as no grant.
+ * The principal's grants as the workspace may gate on them: exactly the grants `can()` allows without a record.
+ * So an inactive user gets none, a row this build does not know (a permission or scope string from
+ * `role_permissions` that is not in the contracts) is dropped, and so is `assigned` on a permission no assignment
+ * can hand over (a write): can() treats each of those as no grant.
  */
 export function effectivePermissions(p: Principal): EffectivePermission[] {
-  if (p.status !== 'active') return [];
   const out: EffectivePermission[] = [];
   for (const [permission, scope] of p.grants) {
-    if (!KNOWN_PERMISSIONS.has(permission) || !KNOWN_SCOPES.has(scope)) continue;
+    if (!KNOWN_PERMISSIONS.has(permission) || !can(p, permission).allowed) continue;
     out.push({ permission, scope });
   }
   return out.sort((a, b) => (a.permission < b.permission ? -1 : a.permission > b.permission ? 1 : 0));
@@ -39,12 +34,14 @@ export class MeController {
 
   /**
    * Who the caller is, straight from the request context, and what the caller may do: the effective grants of the
-   * principal, which the interceptor built from the live role rows. The only database read of its own is one small
-   * lookup of the caller's picture pointer on their own users row.
+   * principal, which the interceptor built from the live role and level rows, with the membership's level and
+   * department they were built for. The only database read of its own is one small lookup of the caller's picture
+   * pointer on their own users row.
    */
   @Get()
   async me(): Promise<MeResponse> {
     const c = ctx();
+    const p = principal();
     return {
       userId: c.userId,
       tenantId: c.tenantId,
@@ -54,9 +51,12 @@ export class MeController {
       // Copy: the context's array is shared for the whole request, and a response body must not alias it.
       roles: [...c.roles],
       correlationId: c.correlationId,
-      id: currentPrincipal()?.userId ?? null,
+      id: p.userId,
       avatarDocumentId: await this.avatarOf(c.tenantId),
-      permissions: effectivePermissions(principal()),
+      permissions: effectivePermissions(p),
+      // The level and department the grants above were built for; a portal caller has neither (staff, null).
+      level: p.level ?? 'staff',
+      departmentId: p.departmentId,
     };
   }
 

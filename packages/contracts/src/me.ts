@@ -1,7 +1,7 @@
 import { z } from 'zod';
 
-import { AccessLevelSchema } from './access-model.js';
-import { PermissionSchema, ScopeSchema } from './authz.js';
+import { AccessLevelSchema, AccessScopeSchema } from './access-model.js';
+import { PermissionSchema } from './authz.js';
 
 /** Same shape the API accepts for `x-request-id` (see the API correlation middleware). */
 export const CorrelationIdSchema = z.string().regex(/^[A-Za-z0-9-]{8,64}$/);
@@ -11,13 +11,14 @@ export type OrgKind = z.infer<typeof OrgKindSchema>;
 
 /**
  * One effective grant of the caller in the acting entity: a permission and the widest scope the caller's roles
- * give it, read from the live `role_permissions` rows (not the defaults). The scope says how far it reaches (own
- * records, the department, the caller's party, or the whole entity). It answers page-level questions such as
- * "may this person create a customer"; a decision on one record comes from that record's own `can` flags.
+ * give it at the caller's level, read from the live `role_permissions` and `role_permission_levels` rows (not the
+ * defaults). The scope says how far it reaches (only work given to them, own records, the department, the
+ * caller's party, or the whole entity). It answers page-level questions such as "may this person create a
+ * customer"; a decision on one record comes from that record's own `can` flags.
  */
 export const EffectivePermissionSchema = z.object({
   permission: PermissionSchema,
-  scope: ScopeSchema,
+  scope: AccessScopeSchema,
 });
 export type EffectivePermission = z.infer<typeof EffectivePermissionSchema>;
 
