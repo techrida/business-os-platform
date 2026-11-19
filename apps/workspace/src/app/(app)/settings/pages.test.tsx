@@ -30,8 +30,9 @@ const { default: SalesPage } = await import('./sales/page');
 const { default: PurchasingPage } = await import('./purchasing/page');
 const { default: NumberingPage } = await import('./numbering/page');
 const { default: UsersPage } = await import('./users/page');
-const { default: RolesPage } = await import('./roles/page');
+const { default: RolesPage } = await import('./access/roles/page');
 const { default: WorkflowsPage } = await import('./workflows/page');
+const { default: AccessPage } = await import('./access/page');
 const { saveCardAction } = await import('./_components/actions');
 const { IDLE } = await import('./action-state');
 
@@ -46,8 +47,9 @@ describe('settings pages deny by default', () => {
     ['sales', () => SalesPage()],
     ['purchasing', () => PurchasingPage()],
     ['numbering', () => NumberingPage()],
-    ['roles', () => RolesPage()],
+    ['access roles', () => RolesPage()],
     ['workflows', () => WorkflowsPage()],
+    ['access', () => AccessPage({ searchParams: Promise.resolve({}) })],
     ['users', () => UsersPage({ searchParams: Promise.resolve({}) })],
     ['the index', () => SettingsIndex()],
   ] as const)('redirects a sales user away from %s', async (_name, render) => {
@@ -67,7 +69,7 @@ describe('the founder', () => {
     const html = renderToStaticMarkup((await SettingsIndex()) as ReactElement);
     for (const href of [
       '/settings/users',
-      '/settings/roles',
+      '/settings/access',
       '/settings/workflows',
       '/settings/currencies',
       '/settings/tax',
@@ -101,7 +103,8 @@ describe('the settings layout', () => {
     expect(html).toContain('<nav aria-label="Settings"');
     expect(html.match(/aria-current="page"/g)).toHaveLength(1);
     expect(html).toMatch(/aria-current="page" href="\/settings\/tax"/);
-    expect(html).toContain('Roles and permissions');
+    expect(html).toContain('href="/settings/access"');
+    expect(html).not.toContain('Roles and permissions');
   });
 
   it('renders no menu for a sales user or a signed-out visitor, but still the page', async () => {

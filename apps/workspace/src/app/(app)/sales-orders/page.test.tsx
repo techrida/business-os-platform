@@ -106,6 +106,33 @@ describe('sales orders list', () => {
     expect(html).toContain('Not confirmed yet');
   });
 
+  it('ends each row with the Status and a View action, both pinned at the end', async () => {
+    const html = await render();
+    const headers = [...html.matchAll(/<th scope="col"[^>]*>([^<]*)<\/th>/g)].map((m) => m[1]);
+    expect(headers).toEqual([
+      'Order',
+      'Customer',
+      'Quotation',
+      'Total',
+      'Confirmed on',
+      'Status',
+      'Action',
+    ]);
+    expect(html).toContain('<th scope="row"');
+    expect(html).toMatch(
+      new RegExp(
+        `<a(?=[^>]*href="/sales-orders/${IDS.order}")(?=[^>]*aria-label="View SO-2083/84-00001")`,
+      ),
+    );
+  });
+
+  it('names the View action of an order without a number after the draft', async () => {
+    mocks.listSalesOrdersPage.mockResolvedValue(
+      page([listItem({ number: null, status: 'draft', confirmedAt: null })]),
+    );
+    expect(await render()).toContain('aria-label="View Draft order from QT-2082-0042"');
+  });
+
   it('sends repeated statuses and customers, the search and the page window to the API', async () => {
     await render({
       status: ['confirmed', 'draft', 'bogus'],

@@ -1,4 +1,4 @@
-{
+﻿{
   "version": "7",
   "dialect": "postgresql",
   "entries": [
@@ -444,7 +444,28 @@
       "breakpoints": true
     },
     {
-      "idx": 65,
+      "idx": 67,
+      "version": "7",
+      "when": 1783000000084,
+      "tag": "0084_access_revisions",
+      "breakpoints": true
+    },
+    {
+      "idx": 68,
+      "version": "7",
+      "when": 1783000000085,
+      "tag": "0085_assignment_rules",
+      "breakpoints": true
+    },
+    {
+      "idx": 69,
+      "version": "7",
+      "when": 1783000000086,
+      "tag": "0086_departments_admin",
+      "breakpoints": true
+    },
+    {
+     "idx": 65,
       "version": "7",
       "when": 1783000000088,
       "tag": "0088_access_phase2_grants",
