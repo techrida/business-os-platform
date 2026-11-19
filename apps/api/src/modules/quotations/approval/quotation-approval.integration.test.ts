@@ -966,7 +966,11 @@ describe('quotation approval: the author names the first-step approver', () => {
     as(X.acc2, 'accountant');
     try {
       const read2 = await approvals.get(request!.id);
-      expect(read2.people).toContainEqual({ userId: X.acc2, name: 'Mina Rai' });
+      expect(read2.people).toContainEqual({
+        userId: X.acc2,
+        name: 'Mina Rai',
+        avatarDocumentId: null,
+      });
     } finally {
       as(f.ownerUserId, 'sales');
     }
@@ -1007,7 +1011,9 @@ describe('quotation approval: the author names the first-step approver', () => {
           .where(inArray(users.id, [...ids])),
       );
       expect(rows).toHaveLength(ids.length);
-      return rows.sort((a, b) => a.userId.localeCompare(b.userId));
+      return rows
+        .map((r) => ({ ...r, avatarDocumentId: null }))
+        .sort((a, b) => a.userId.localeCompare(b.userId));
     };
     const sorted = (people: readonly { userId: string; name: string }[] | undefined) =>
       [...(people ?? [])].sort((a, b) => a.userId.localeCompare(b.userId));

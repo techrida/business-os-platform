@@ -855,12 +855,15 @@ describe('detail accounts', () => {
   it('names the legal entity on each terms row, as Sales, and adds nothing else (audit #16)', async () => {
     const customer = await createCustomer();
     await withTx(db, a, systemActor('test'), async (tx) => {
-      await tx.insert(userEntities).values({
-        tenantId: a.tenantId,
-        organizationId: entityA2,
-        userId: a.userId,
-        isDefault: false,
-      }).onConflictDoNothing();
+      await tx
+        .insert(userEntities)
+        .values({
+          tenantId: a.tenantId,
+          organizationId: entityA2,
+          userId: a.userId,
+          isDefault: false,
+        })
+        .onConflictDoNothing();
       await tx.insert(partyAccounts).values({
         tenantId: a.tenantId,
         organizationId: entityA2,
@@ -905,7 +908,7 @@ describe('detail people (the account owner by name)', () => {
     const customer = await createCustomer({ ownerUserId: a.userId });
     asStaff(a);
     expect(await readPeople(customer.id)).toEqual([
-      { userId: a.userId, name: await nameOf(a.userId) },
+      { userId: a.userId, name: await nameOf(a.userId), avatarDocumentId: null },
     ]);
   });
 
@@ -913,7 +916,9 @@ describe('detail people (the account owner by name)', () => {
     const { userId: mate } = await createStaffUser(appPool, { ...a, roleKeys: ['sales'] });
     const customer = await createCustomer({ ownerUserId: mate });
     asStaff(a);
-    expect(await readPeople(customer.id)).toEqual([{ userId: mate, name: await nameOf(mate) }]);
+    expect(await readPeople(customer.id)).toEqual([
+      { userId: mate, name: await nameOf(mate), avatarDocumentId: null },
+    ]);
   });
 
   it('names nobody when the customer has no owner', async () => {
@@ -931,7 +936,9 @@ describe('detail people (the account owner by name)', () => {
     asStaff(b);
     const theirs = await createCustomer({ ownerUserId: b.userId });
     const theirName = await nameOf(b.userId);
-    expect(await readPeople(theirs.id)).toEqual([{ userId: b.userId, name: theirName }]);
+    expect(await readPeople(theirs.id)).toEqual([
+      { userId: b.userId, name: theirName, avatarDocumentId: null },
+    ]);
 
     asStaff(a);
     const res = await request(baseUrl).get(`/v1/customers/${theirs.id}`);
