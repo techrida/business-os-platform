@@ -4,6 +4,7 @@
 // by the server at issue and are read-only here: no body carries them (plan A10, A15).
 import { z } from 'zod';
 
+import { DocumentFormatSnapshotSchema } from './document-style.js';
 import { CurrencySchema, DecimalString, NprSnapshotSchema } from './money.js';
 import { DiscountSchema, NonNegativeDecimalString, QuantityString } from './quotations.js';
 
@@ -216,6 +217,12 @@ export const InvoiceDetailSchema = z.object({
   lines: z.array(InvoiceLineDtoSchema),
   taxSummary: z.array(InvoiceTaxSummaryItemSchema),
   prints: z.array(InvoicePrintDtoSchema),
+  /**
+   * The number grouping and date pattern the original PDF (print 1) was drawn with; every copy reuses it. Null when
+   * the invoice was never printed or its first print predates the stored format. Optional so an older API answer
+   * still parses.
+   */
+  format: DocumentFormatSnapshotSchema.nullable().optional(),
 });
 export type InvoiceDetail = z.infer<typeof InvoiceDetailSchema>;
 
@@ -344,6 +351,9 @@ export const CustomerInvoiceViewSchema = z.strictObject({
     subtotal: DecimalString,
     discountAmount: DecimalString,
     taxableAmount: DecimalString,
+    /** Printed on the PDF when not zero. Optional so an older API answer still parses; the API always sends them. */
+    exemptAmount: DecimalString.optional(),
+    zeroRatedAmount: DecimalString.optional(),
     taxAmount: DecimalString,
     total: DecimalString,
   }),
@@ -360,6 +370,25 @@ export const CustomerInvoiceViewSchema = z.strictObject({
   file: z
     .strictObject({ documentId: z.guid(), filename: z.string(), sha256: sha256Hex })
     .nullable(),
+  /**
+   * The number grouping and date pattern the original PDF was drawn with (print 1). Null when it was never printed
+   * or printed before the format was stored: then draw with `GET /v1/portal/display`. Optional for older answers.
+   */
+  format: DocumentFormatSnapshotSchema.nullable().optional(),
+  /**
+   * How to reach the selling company: the saved company profile as it is NOW (not frozen at issue, unlike `seller`).
+   * Only these four keys; the address and PAN/VAT number come from the frozen `seller`. Null when the profile cannot
+   * be read. Optional for older answers.
+   */
+  sellerContact: z
+    .strictObject({
+      phones: z.array(z.string()),
+      email: z.string().nullable(),
+      signatoryName: z.string().nullable(),
+      signatoryTitle: z.string().nullable(),
+    })
+    .nullable()
+    .optional(),
 });
 export type CustomerInvoiceView = z.infer<typeof CustomerInvoiceViewSchema>;
 
