@@ -102,7 +102,7 @@ const current: {
   role: RoleKey;
   scope: TxScope | null;
   /** Live grants an admin edited, instead of the role default (`as` clears it). */
-  grants?: Map<Permission, Scope>;
+  grants?: Map<Permission, Scope> | undefined;
 } = {
   userId: '',
   role: 'accountant',
@@ -1228,7 +1228,9 @@ describe('purchase order pickers', () => {
       expect(Object.keys(row).sort()).toEqual(['id', 'number', 'status', 'vendorId']);
     }
     // The picker, the bill form's progress read and the order's Enter bill agree on both orders.
-    await expect(receiptsService.progress(mine.id)).resolves.toMatchObject({ purchaseOrderId: mine.id });
+    await expect(receiptsService.progress(mine.id)).resolves.toMatchObject({
+      purchaseOrderId: mine.id,
+    });
     await expect(receiptsService.progress(theirs.id)).rejects.toBeInstanceOf(NotFoundException);
     expect((await orders.get(mine.id)).can).toEqual({ enterBill: true });
     expect((await orders.get(theirs.id)).can).toEqual({ enterBill: false });

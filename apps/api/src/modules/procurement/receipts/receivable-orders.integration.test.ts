@@ -73,8 +73,8 @@ const current: {
   role: RoleKey;
   scope: TxScope | null;
   /** Live grants an admin edited, instead of the role default; reset before each test. */
-  grants?: Map<Permission, Scope>;
-  departmentId?: string | null;
+  grants?: Map<Permission, Scope> | undefined;
+  departmentId?: string | null | undefined;
 } = {
   userId: '',
   role: 'warehouse',
@@ -529,7 +529,10 @@ describe("the requester's own purchase orders", () => {
   it('drops an order whose request the requester may no longer read after moving out of a department-scoped read', async () => {
     const po = await newPo({ lines: [SERVICE1] });
     asRequester();
-    current.grants = new Map([...grantsOf('operations_officer'), ['procurement.pr.read', 'department']]);
+    current.grants = new Map([
+      ...grantsOf('operations_officer'),
+      ['procurement.pr.read', 'department'],
+    ]);
     current.departmentId = departmentA;
     expect((await mine()).find((r) => r.id === po.id)).toEqual({
       id: po.id,

@@ -136,11 +136,7 @@ function labelOf(
  * duties); edit needs the kind's write permission (and verification read, as every write here does);
  * attach adds documents.upload and remove adds verification.read, each on the case's ref.
  */
-export function caseCapabilities(
-  p: Principal,
-  scope: TxScope,
-  l: Loaded,
-): VerificationCaseCan {
+export function caseCapabilities(p: Principal, scope: TxScope, l: Loaded): VerificationCaseCan {
   const ref = caseRef(scope, l);
   const allowed = (action: Permission) => decide(p, action, ref).allowed;
   const staff = p.orgKind === 'staff';
