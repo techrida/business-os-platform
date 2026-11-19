@@ -397,9 +397,11 @@ describe('QuotationSendService.send', () => {
       organizationId: f.entityId,
       status: 'pending',
     });
-    const link = `${PORTAL}/quotations/${quotationId}`;
+    // The portal's `/quotations/:id` is a version id (PortalService.get): the parent quotation id is "not found".
+    const link = `${PORTAL}/quotations/${versionId}`;
     expect(email.bodyText).toContain(link);
     expect(email.bodyHtml).toContain(link);
+    expect(email.bodyText).not.toContain(`/quotations/${quotationId}`);
     // A portal link, never a file: no document, download or PDF reference anywhere in the email.
     for (const body of [email.bodyText, email.bodyHtml ?? '']) {
       expect(body).not.toMatch(/\.pdf|\/documents\/|download|attachment/i);
