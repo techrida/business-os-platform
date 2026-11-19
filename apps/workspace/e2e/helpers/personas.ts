@@ -28,7 +28,7 @@ const PersonaSchema = z.object({
 });
 export type Persona = z.infer<typeof PersonaSchema>;
 
-/** The eleven personas `pnpm seed` creates (PERSONAS in tools/seed-zitadel/src/personas.ts). */
+/** The twelve personas `pnpm seed` creates (PERSONAS in tools/seed-zitadel/src/personas.ts). */
 export const PERSONA_KEYS = [
   'founder',
   'management',
@@ -41,6 +41,7 @@ export const PERSONA_KEYS = [
   'warehouse',
   'depthead',
   'management2',
+  'finance2',
 ] as const;
 
 /** Playwright runs with `apps/workspace` as the working directory. */
