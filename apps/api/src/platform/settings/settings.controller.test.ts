@@ -5,7 +5,7 @@
 // write runs inside withTx with the caller's scope. withTx and requestTx are replaced so no request or
 // database is needed; the real behaviour against Postgres is covered in settings.integration.test.ts.
 import { SETTINGS, SETTING_KEYS } from '@bos/contracts';
-import { BadRequestException, NotFoundException } from '@nestjs/common';
+import { BadRequestException, ConflictException, NotFoundException } from '@nestjs/common';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { ZodType } from 'zod';
 
@@ -67,6 +67,34 @@ describe('SettingsController', () => {
       version: 4,
     });
     expect(fakeSettings.set).toHaveBeenCalledWith({ fake: 'tx' }, 'tax.vat_rate', '15');
+  });
+
+  it('PUT passes expectedVersion (a number or null) on to the service as an option', async () => {
+    fakeSettings.set.mockResolvedValue({ version: 4 });
+    await controller.putSetting('tax.vat_rate', { value: '15', expectedVersion: 3 });
+    expect(fakeSettings.set).toHaveBeenLastCalledWith({ fake: 'tx' }, 'tax.vat_rate', '15', {
+      expectedVersion: 3,
+    });
+    await controller.putSetting('tax.vat_rate', { value: '15', expectedVersion: null });
+    expect(fakeSettings.set).toHaveBeenLastCalledWith({ fake: 'tx' }, 'tax.vat_rate', '15', {
+      expectedVersion: null,
+    });
+  });
+
+  it('PUT lets the service answer 409 stale_setting through unchanged', async () => {
+    fakeSettings.set.mockRejectedValue(
+      new ConflictException({ code: 'stale_setting', message: 'changed' }),
+    );
+    await expect(
+      controller.putSetting('tax.vat_rate', { value: '15', expectedVersion: 1 }),
+    ).rejects.toBeInstanceOf(ConflictException);
+  });
+
+  it.each([0, -1, 1.5, '3', 'x'])('PUT refuses expectedVersion %j with 400', async (bad) => {
+    await expect(
+      controller.putSetting('tax.vat_rate', { value: '15', expectedVersion: bad }),
+    ).rejects.toBeInstanceOf(BadRequestException);
+    expect(fakeSettings.set).not.toHaveBeenCalled();
   });
 
   it('PUT passes a bad value on to the service, which rejects it with 400', async () => {
