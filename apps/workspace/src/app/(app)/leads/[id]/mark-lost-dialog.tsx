@@ -106,7 +106,7 @@ export function MarkLostDialog({ id, number, version, reasons }: MarkLostDialogP
         errors['reason'] = result.error;
       } else if (result.reload && pick?.kind === 'new') {
         // A 409 for a typed reason is most often someone adding the same words first; the toast alone does not say so.
-        errors['reason'] = 'This reason may already be on the list. Reload to see the latest reasons.';
+        errors['reason'] = 'That reason already exists, or was retired. Use different words, or ask a Founder to restore it.';
       }
       setFieldErrors(errors);
       toast.error(
@@ -159,6 +159,7 @@ export function MarkLostDialog({ id, number, version, reasons }: MarkLostDialogP
               invalid={control['aria-invalid'] === true}
               required
               keepOrder
+              groupThreshold={Number.POSITIVE_INFINITY}
               options={options}
               value={pick === null ? '' : pick.kind === 'id' ? pick.id : NEW_ID}
               onChange={(next) => {
