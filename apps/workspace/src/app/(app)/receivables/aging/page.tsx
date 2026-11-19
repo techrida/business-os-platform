@@ -88,7 +88,11 @@ function BalanceCards({
           <StatCard
             label="Total open"
             icon="banknote"
-            value={money(total.totalOpen, total.currency, numberSystems)}
+            value={
+              <span className={styles.moneyValue}>
+                {money(total.totalOpen, total.currency, numberSystems)}
+              </span>
+            }
           />
           {AGING_BUCKETS.map((bucket) => (
             <StatCard
@@ -96,7 +100,11 @@ function BalanceCards({
               label={BUCKET_LABEL[bucket]}
               icon={BUCKET_CARD[bucket].icon}
               tone={BUCKET_CARD[bucket].tone}
-              value={money(total.buckets[bucket], total.currency, numberSystems)}
+              value={
+                <span className={styles.moneyValue}>
+                  {money(total.buckets[bucket], total.currency, numberSystems)}
+                </span>
+              }
             />
           ))}
         </section>

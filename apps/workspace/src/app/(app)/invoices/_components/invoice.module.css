@@ -235,3 +235,11 @@
   font-weight: var(--font-weight-semibold);
   line-height: var(--line-height-body-small);
 }
+
+/* A long money amount in a stat card shrinks to fit and wraps only at the space after the currency code. */
+.moneyValue {
+  display: block;
+  font-size: 18px;
+  line-height: 26px;
+  overflow-wrap: normal;
+}

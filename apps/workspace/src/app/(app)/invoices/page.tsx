@@ -111,7 +111,6 @@ function InvoiceRow({
               aria-label={`Record payment for ${name}`}
             >
               Record payment
-              <Icon name="chevron-right" size={16} />
             </LinkButton>
           ) : null}
           <Link href={href} className={styles.rowAction} aria-label={`View ${name}`}>
@@ -146,7 +145,11 @@ function InvoiceStats({
         <StatCard
           key={total.currency}
           label={outstanding.length > 1 ? `Outstanding · ${total.currency}` : 'Outstanding'}
-          value={money(total.totalOpen, total.currency, numberSystems)}
+          value={
+            <span className={styles.moneyValue}>
+              {money(total.totalOpen, total.currency, numberSystems)}
+            </span>
+          }
           icon="banknote"
           tone="error"
           detail="Not yet paid, all customers"
@@ -314,7 +317,7 @@ export default async function InvoicesPage({ searchParams }: { searchParams: Pro
         )
       ) : (
         <div className={styles.tableCard}>
-          <Table caption="Invoices" minWidth={1080} className={styles.listTable ?? ''}>
+          <Table caption="Invoices" minWidth={1000} className={styles.listTable ?? ''}>
             <thead>
               <tr>
                 <Th>Invoice</Th>

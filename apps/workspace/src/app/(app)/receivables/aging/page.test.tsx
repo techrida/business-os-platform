@@ -80,7 +80,7 @@ describe('receivables aging', () => {
     );
     const html = await render();
     const card = (label: string, value: string) =>
-      new RegExp(`${label}</dt><dd[^>]*>${value.replace(/[.]/g, '\\.')}<`);
+      new RegExp(`${label}</dt><dd[^>]*><span[^>]*>${value.replace(/[.]/g, '\\.')}<`);
     const npr = /aria-label="Open balances in NPR".*?<\/section>/s.exec(html)?.[0] ?? '';
     const usd = /aria-label="Open balances in USD".*?<\/section>/s.exec(html)?.[0] ?? '';
     expect(npr).toMatch(card('Total open', 'NPR 8,88,888.88'));
