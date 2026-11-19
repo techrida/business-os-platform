@@ -1,8 +1,10 @@
 'use client';
 
 import {
+  DecimalString,
   DEFAULT_DEPARTMENT_HEAD_FALLBACK_ROLE,
   ROLE_KEYS,
+  WORKFLOW_AMOUNT_ERROR,
   WorkflowSpecSchema,
   type RoleKey,
   type StepKind,
