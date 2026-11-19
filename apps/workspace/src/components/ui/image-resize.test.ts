@@ -109,7 +109,7 @@ describe('shrinkImage', () => {
         async convertToBlob(options: { type?: string; quality?: number }) {
           ops.encodes.push(options);
           const size = blobSizes[ops.encodes.length - 1] ?? 10;
-          return new Blob([new Uint8Array(size)], { type: options.type });
+          return new Blob([new Uint8Array(size)], { type: options.type ?? '' });
         }
       },
     );
