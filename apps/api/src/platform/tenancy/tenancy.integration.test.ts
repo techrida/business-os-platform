@@ -94,7 +94,10 @@ class FakeDbModule {}
           }),
       },
     },
-    { provide: RoleCache, useValue: { grantsFor: () => Promise.resolve(new Map()) } },
+    {
+      provide: RoleCache,
+      useValue: { grantsFor: () => Promise.resolve(new Map()), epoch: () => Promise.resolve('0:0') },
+    },
   ],
   exports: [UserDirectory, RoleCache],
 })
