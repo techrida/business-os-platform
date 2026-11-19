@@ -11,6 +11,7 @@
 import {
   type CreateLeadLostReasonBody,
   DEFAULT_LEAD_LOST_REASONS,
+  LEAD_LOST_REASON_LABEL_MAX,
   type LeadLostReason,
   type LeadLostReasonRef,
   type ReorderLeadLostReasonsBody,
@@ -223,8 +224,23 @@ export class LeadLostReasonsService {
         if (row !== undefined) target.set(row.id, { label: d.label, position, retired: false });
       });
       let next = DEFAULT_LEAD_LOST_REASONS.length;
-      for (const row of rows.filter((r) => r.defaultKey === null)) {
-        const label = defaultNorms.has(row.labelNorm) ? `${row.label} (custom)` : row.label;
+      const customs = rows.filter((r) => r.defaultKey === null);
+      // Every final label must stay unique and within the limit: a colliding custom option gets a free
+      // "(custom)" or "(custom 2)" suffix, never a label another option already holds or ends up with.
+      const taken = new Set([
+        ...defaultNorms,
+        ...customs.filter((r) => !defaultNorms.has(r.labelNorm)).map((r) => r.labelNorm),
+      ]);
+      for (const row of customs) {
+        let label = row.label;
+        if (defaultNorms.has(row.labelNorm)) {
+          for (let n = 1; ; n += 1) {
+            const suffix = n === 1 ? ' (custom)' : ` (custom ${n})`;
+            label = `${row.label.slice(0, LEAD_LOST_REASON_LABEL_MAX - suffix.length)}${suffix}`;
+            if (!taken.has(normalizeReasonLabel(label))) break;
+          }
+          taken.add(normalizeReasonLabel(label));
+        }
         target.set(row.id, { label, position: next++, retired: true });
       }
       const changed = rows.filter((r) => {
@@ -307,6 +323,8 @@ export class LeadLostReasonsService {
     via: 'settings' | 'mark_lost',
   ): Promise<ReasonRow> {
     const label = rawLabel.trim();
+    // One writer per tenant picks the next position, so two adds at once never share a slot.
+    await tx.execute(sql`select pg_advisory_xact_lock(hashtext(${`lead_lost_reasons:${tenantId}`}))`);
     const [last] = await tx
       .select({ position: sql<number>`coalesce(max(${leadLostReasons.position}), -1)::int` })
       .from(leadLostReasons)
