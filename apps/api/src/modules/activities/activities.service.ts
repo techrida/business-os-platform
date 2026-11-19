@@ -11,8 +11,11 @@
 import {
   ACTIVITY_SUBJECT_KEYS,
   type ActivityDto,
+  type CancelActivityBody,
+  type CompleteActivityBody,
   type CreateActivityBody,
   type Permission,
+  type RescheduleActivityBody,
 } from '@bos/contracts';
 import {
   activities,
@@ -26,6 +29,7 @@ import {
 } from '@bos/db';
 import {
   BadRequestException,
+  ConflictException,
   ForbiddenException,
   Inject,
   Injectable,
@@ -37,24 +41,33 @@ import { AuditService } from '../../platform/audit/audit.service';
 import { AuthzService, scopeWhereFor } from '../../platform/authz/authz.service';
 import { type Principal, type ResourceRef } from '../../platform/authz/can';
 import { DB, type Db } from '../../platform/db/db.module';
-import { withIdempotency } from '../../platform/db/idempotency';
-import { withTx, type DbTransaction } from '../../platform/db/tx';
+import { updateVersioned, withIdempotency } from '../../platform/db/idempotency';
+import { withTx, type DbTransaction, type TxScope } from '../../platform/db/tx';
 import { customerRef } from '../customers/customers.service';
 import { leadRef } from '../leads/leads.service';
 import { opportunityRef } from '../opportunities/opportunities.service';
 import { ActivitiesCaller } from './activities.caller';
 import {
+  isPlannedRow,
   isPlannedSql,
   SUBJECT_PERMISSION,
   toActivityDto,
+  type ActivityRow,
   type ListActivitiesQuery,
   type SubjectKey,
 } from './activities.types';
 
 type Q = Db | DbTransaction;
 
+const AUDIT_ENTITY = 'activities';
+
 const subjectNotFound = () =>
   new NotFoundException({ code: 'not_found', message: 'Subject not found' });
+const activityNotFound = () =>
+  new NotFoundException({ code: 'not_found', message: 'Activity not found' });
+
+/** Kinds only the server writes: they record what happened and are never planned, done or called off by hand. */
+const SYSTEM_KINDS: ReadonlySet<ActivityRow['kind']> = new Set(['system', 'stage_change']);
 
 @Injectable()
 export class ActivitiesService {
@@ -162,6 +175,135 @@ export class ActivitiesService {
         async () => ({ status: 201, response: await run() }),
       );
       return done.response;
+    });
+  }
+
+  // ------------------------------------------------------------------------------ planned: complete, reschedule, cancel
+
+  /**
+   * Marks a planned activity done: it becomes logged (History) with `occurredAt` = when it actually happened
+   * (default now). A note is appended to its details after a blank line.
+   */
+  async complete(id: string, body: CompleteActivityBody): Promise<ActivityDto> {
+    return this.changePlanned(id, async (tx, row) => {
+      const now = new Date();
+      const note = body.note?.trim();
+      const details =
+        note === undefined || note === ''
+          ? row.body
+          : row.body === null || row.body.trim() === ''
+            ? note
+            : `${row.body}\n\n${note}`;
+      const updated = await updateVersioned(tx, activities, id, body.expectedVersion, {
+        completedAt: now,
+        occurredAt: body.occurredAt === undefined ? now : new Date(body.occurredAt),
+        body: details,
+        updatedAt: now,
+      });
+      await this.audit.record(tx, {
+        action: 'activity.completed',
+        entityType: AUDIT_ENTITY,
+        entityId: id,
+        before: {
+          completedAt: null,
+          occurredAt: row.occurredAt.toISOString(),
+          version: row.version,
+        },
+        after: {
+          completedAt: now.toISOString(),
+          occurredAt: updated.occurredAt.toISOString(),
+          version: updated.version,
+        },
+        ...(details === row.body ? {} : { meta: { noteAppended: true } }),
+      });
+      return updated;
+    });
+  }
+
+  /** Moves a planned activity to another due time, and optionally to another assignee of this tenant. */
+  async reschedule(id: string, body: RescheduleActivityBody): Promise<ActivityDto> {
+    return this.changePlanned(id, async (tx, row, scope) => {
+      if (body.assigneeUserId !== undefined) {
+        await this.assertUser(tx, scope.tenantId, body.assigneeUserId);
+      }
+      const updated = await updateVersioned(tx, activities, id, body.expectedVersion, {
+        dueAt: new Date(body.dueAt),
+        ...(body.assigneeUserId === undefined ? {} : { assigneeUserId: body.assigneeUserId }),
+        updatedAt: new Date(),
+      });
+      await this.audit.record(tx, {
+        action: 'activity.rescheduled',
+        entityType: AUDIT_ENTITY,
+        entityId: id,
+        before: {
+          dueAt: row.dueAt?.toISOString() ?? null,
+          assigneeUserId: row.assigneeUserId,
+          version: row.version,
+        },
+        after: {
+          dueAt: updated.dueAt?.toISOString() ?? null,
+          assigneeUserId: updated.assigneeUserId,
+          version: updated.version,
+        },
+      });
+      return updated;
+    });
+  }
+
+  /** Calls off a planned activity: it never lists again (neither planned nor logged). */
+  async cancel(id: string, body: CancelActivityBody): Promise<ActivityDto> {
+    return this.changePlanned(id, async (tx, row) => {
+      const now = new Date();
+      const updated = await updateVersioned(tx, activities, id, body.expectedVersion, {
+        cancelledAt: now,
+        updatedAt: now,
+      });
+      await this.audit.record(tx, {
+        action: 'activity.cancelled',
+        entityType: AUDIT_ENTITY,
+        entityId: id,
+        before: { cancelledAt: null, version: row.version },
+        after: { cancelledAt: now.toISOString(), version: updated.version },
+      });
+      return updated;
+    });
+  }
+
+  /**
+   * The shared frame of the three planned-activity changes: staff only; the row is locked in this entity (404
+   * otherwise); the caller must hold the write permission of its subject (404 out of scope, before anything
+   * that would reveal the row's state); then 409 for a server-written kind or a row that is no longer planned.
+   * `change` writes through updateVersioned, so a stale `expectedVersion` is a 409 too.
+   */
+  private async changePlanned(
+    id: string,
+    change: (tx: DbTransaction, row: ActivityRow, scope: TxScope) => Promise<ActivityRow>,
+  ): Promise<ActivityDto> {
+    const { scope, actor, principal } = this.caller.current();
+    this.assertStaff(principal);
+    return withTx(this.db, scope, actor, async (tx) => {
+      const [row] = await tx
+        .select()
+        .from(activities)
+        .where(scoped(scope).where(activities, eq(activities.id, id)))
+        .for('update');
+      if (row === undefined) throw activityNotFound();
+      const key = ACTIVITY_SUBJECT_KEYS.find((k) => row[k] !== null);
+      if (key === undefined) throw activityNotFound();
+      await this.assertSubject(tx, key, row[key]!, 'write');
+      if (SYSTEM_KINDS.has(row.kind)) {
+        throw new ConflictException({
+          code: 'conflict',
+          message: 'This activity was written by the system and cannot be changed',
+        });
+      }
+      if (!isPlannedRow(row)) {
+        throw new ConflictException({
+          code: 'conflict',
+          message: 'Only a planned activity can be changed; this one is already done or cancelled',
+        });
+      }
+      return toActivityDto(await change(tx, row, scope));
     });
   }
 
