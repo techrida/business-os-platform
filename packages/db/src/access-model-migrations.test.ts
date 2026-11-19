@@ -6,7 +6,8 @@
 //   pnpm --filter @bos/db exec vitest run src/access-model-migrations.test.ts
 //
 // The database is migrated with the real SQL up to 0078's slot (everything before 0079), seeded like a tenant
-// that has been running, then migrated with the real runner, which applies 0079 to 0083 and anything later.
+// that has been running, then migrated with the real runner through 0083 and no further, so these tests see what
+// 0079 to 0083 did. 0088 changes some of it (Marketing rows, the stamp triggers): access-phase2-migrations.test.ts.
 import { randomUUID } from 'node:crypto';
 import { copyFile, mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
@@ -27,6 +28,7 @@ import {
 
 const OWNER_PW = 'owner-test-pw';
 const FIRST_TAG = '0079_access_levels';
+const LAST_TAG = '0083_marketing_role';
 
 /** The grants migration 0083 inserts: `DEFAULT_ROLE_PERMISSIONS.marketing` in packages/contracts, by value. */
 const MARKETING_GRANTS: Record<string, string> = {
@@ -50,6 +52,7 @@ let container: StartedPostgreSqlContainer;
 let admin: Pool;
 let owner: Pool;
 let beforeFolder: string;
+let throughFolder: string;
 let sqlOfMarketing: string[];
 
 let tenantA: TenantWithEntity;
@@ -191,19 +194,23 @@ beforeAll(async () => {
   ) as { entries: JournalEntry[] };
   const index = journal.entries.findIndex((entry) => entry.tag === FIRST_TAG);
   expect(index, `${FIRST_TAG} is in the journal`).toBeGreaterThan(0);
-  beforeFolder = await mkdtemp(join(tmpdir(), 'bos-before-0079-'));
-  await mkdir(join(beforeFolder, 'meta'));
-  const entries = journal.entries.slice(0, index);
-  await writeFile(
-    join(beforeFolder, 'meta/_journal.json'),
-    JSON.stringify({ ...journal, entries }),
-  );
-  for (const entry of entries) {
-    await copyFile(
-      join(MIGRATIONS_FOLDER, `${entry.tag}.sql`),
-      join(beforeFolder, `${entry.tag}.sql`),
-    );
-  }
+  const last = journal.entries.findIndex((entry) => entry.tag === LAST_TAG);
+  expect(last, `${LAST_TAG} comes after ${FIRST_TAG}`).toBeGreaterThan(index);
+  /** A migrations folder holding the real SQL of the given journal entries, in journal order. */
+  const folderOf = async (entries: JournalEntry[], name: string): Promise<string> => {
+    const folder = await mkdtemp(join(tmpdir(), `bos-${name}-`));
+    await mkdir(join(folder, 'meta'));
+    await writeFile(join(folder, 'meta/_journal.json'), JSON.stringify({ ...journal, entries }));
+    for (const entry of entries) {
+      await copyFile(
+        join(MIGRATIONS_FOLDER, `${entry.tag}.sql`),
+        join(folder, `${entry.tag}.sql`),
+      );
+    }
+    return folder;
+  };
+  beforeFolder = await folderOf(journal.entries.slice(0, index), 'before-0079');
+  throughFolder = await folderOf(journal.entries.slice(0, last + 1), 'through-0083');
   sqlOfMarketing = (
     await readFile(join(MIGRATIONS_FOLDER, '0083_marketing_role.sql'), 'utf8')
   ).split('--> statement-breakpoint');
@@ -248,14 +255,16 @@ beforeAll(async () => {
   tenantB = await createTenantWithEntity(owner);
 
   // The real runner now applies 0079 to 0083.
-  await runMigrations(ownerUrl);
+  await runMigrations(ownerUrl, throughFolder);
 }, 180_000);
 
 afterAll(async () => {
   await owner?.end();
   await admin?.end();
   await container?.stop();
-  if (beforeFolder) await rm(beforeFolder, { recursive: true, force: true });
+  for (const folder of [beforeFolder, throughFolder]) {
+    if (folder) await rm(folder, { recursive: true, force: true });
+  }
 });
 
 describe('0079 levels', () => {
