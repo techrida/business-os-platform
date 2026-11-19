@@ -2,8 +2,8 @@
 // A4 PDF. Self-contained on purpose: inline CSS only, no external URL, script, image or font file, and a CSP
 // that forbids anything else, so a render never reaches the network. Gotenberg's container supplies the
 // Noto fonts. The function takes the whitelist view and nothing else, so it cannot print a cost or a rate.
-import type { CustomerQuotationView } from '@bos/contracts';
-import { Dec, formatKathmandu, formatMoney, toBs } from '@bos/locale';
+import { trimPercent, type CustomerQuotationView } from '@bos/contracts';
+import { Dec, formatCustomerDate, formatMoney, toBs } from '@bos/locale';
 
 export interface RenderQuotationOptions {
   /** Print the Bikram Sambat date beside each date. Default true. */
@@ -29,7 +29,7 @@ const STATUS_LABELS: Partial<Record<CustomerQuotationView['status'], string>> = 
 const kathmanduNoon = (isoDate: string): Date => new Date(`${isoDate}T12:00:00+05:45`);
 
 function dateCell(isoDate: string, showBs: boolean): string {
-  const gregorian = escapeHtml(formatKathmandu(kathmanduNoon(isoDate), 'date'));
+  const gregorian = escapeHtml(formatCustomerDate(isoDate));
   if (!showBs) return gregorian;
   try {
     const bs = toBs(kathmanduNoon(isoDate));
@@ -144,7 +144,7 @@ export function renderQuotationHtml(
     ? `<div class="block"><h2>Payment schedule</h2><table class="schedule">${view.paymentSchedule
         .map(
           (m) =>
-            `<tr><td>${text(m.label)}</td><td>${text(m.percent)}%</td><td class="muted">${text(m.dueDescription)}</td></tr>`,
+            `<tr><td>${text(m.label)}</td><td>${text(trimPercent(m.percent))}%</td><td class="muted">${text(m.dueDescription && formatCustomerDate(m.dueDescription))}</td></tr>`,
         )
         .join('')}</table></div>`
     : '';
