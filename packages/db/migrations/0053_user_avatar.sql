@@ -7,7 +7,7 @@
 --   * Adding a nullable column with no default rewrites nothing; the users audit trigger is unchanged.
 --   * Who may set a picture is `profile.avatar.write`: scope own for every staff role (their own picture), scope
 --     all for founder and any role holding `admin.users.invite` (anyone's), the same rule as the code defaults.
---     Portal roles (customer_user, vendor_user) get nothing. A role that already holds it is left alone, and the
+--     Only the named staff roles get it (a custom role or a portal role gets nothing until someone grants it). A role that already holds it is left alone, and the
 --     authz cache version is bumped only for a tenant that gained a row.
 --
 -- Runs as bos_owner, in the migrator's one transaction, split at the breakpoint comments (same rule as 0000).
@@ -63,7 +63,8 @@ BEGIN
     SELECT DISTINCT grant_row.tenant_id, grant_row.role_key, 'profile.avatar.write'::text, 'own'::text
     FROM app.role_permissions grant_row
     WHERE grant_row.tenant_id = target.tenant_id
-      AND grant_row.role_key NOT IN ('customer_user', 'vendor_user')
+      AND grant_row.role_key IN ('sales', 'pmo', 'operations_head', 'procurement', 'warehouse',
+                                 'operations_officer', 'management', 'finance', 'accountant')
       AND NOT EXISTS (
         SELECT 1
         FROM app.role_permissions existing
