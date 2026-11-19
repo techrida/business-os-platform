@@ -205,3 +205,28 @@ it('closes and reports a stale save without saving again', async () => {
   );
   expect(document.querySelector('[role="dialog"]')).toBeNull();
 });
+
+it('returns focus to the opener after Escape and after Back, and Escape saves nothing', async () => {
+  const runSave = vi.fn((_input: SaveInput) => Promise.resolve<ReviewSaveResult>({ ok: true }));
+  const opener = await openDialog({ runSave });
+  expect(document.querySelector('[role="dialog"]')?.contains(document.activeElement)).toBe(true);
+
+  await act(async () => {
+    document.activeElement?.dispatchEvent(
+      new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }),
+    );
+    await Promise.resolve();
+  });
+  await flush();
+  expect(document.querySelector('[role="dialog"]')).toBeNull();
+  expect(document.activeElement).toBe(opener);
+  expect(runSave).not.toHaveBeenCalled();
+
+  opener.focus();
+  await click(opener);
+  await flush();
+  await click(button('Back'));
+  await flush();
+  expect(document.querySelector('[role="dialog"]')).toBeNull();
+  expect(document.activeElement).toBe(opener);
+});
