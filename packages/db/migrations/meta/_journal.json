@@ -325,6 +325,20 @@
       "breakpoints": true
     },
     {
+      "idx": 49,
+      "version": "7",
+      "when": 1783000000053,
+      "tag": "0053_user_avatar",
+      "breakpoints": true
+    },
+    {
+      "idx": 50,
+      "version": "7",
+      "when": 1783000000054,
+      "tag": "0054_party_logos",
+      "breakpoints": true
+    },
+    {
       "idx": 46,
       "version": "7",
       "when": 1783000000055,
