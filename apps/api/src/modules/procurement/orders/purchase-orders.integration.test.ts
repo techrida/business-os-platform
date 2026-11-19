@@ -709,3 +709,41 @@ describe('one legal entity at a time', () => {
     expect((await service.list()).map((p) => p.id)).not.toContain(po.id);
   });
 });
+
+// ---------------------------------------------------------------------------------------- approval names
+
+describe("names on an amendment's approval (U18 #3)", () => {
+  it('shows Management the order number, the vendor and the amended line by name, and nothing else', async () => {
+    const vendorId = await vendor('approved', { accountIn: [scopeA, scopeB] });
+    const po = await issued({ vendorId });
+    const r = await service.amend(
+      po.id,
+      { reason, lines: [{ poLineId: po.lineId, unitPrice: '132743.36' }] },
+      randomUUID(),
+    );
+    const [stored] = await read((tx) =>
+      tx.execute<{ number: string }>(
+        sql`SELECT number FROM app.purchase_orders WHERE id = ${po.id}`,
+      ),
+    ).then((q) => q.rows);
+    const vendorName = `Vendor ${vendorId.slice(0, 6)}`;
+
+    // Management decides the last step; it holds no vendor.read and no procurement read.
+    as(U.mgmt, 'management');
+    expect(grantsOf('management').has('vendor.read')).toBe(false);
+    const request = await approvals.get(r.approvalRequestId!);
+    expect(request.snapshot).toMatchObject({
+      purchaseOrderNumber: stored!.number,
+      vendorPartyId: vendorId,
+      vendorName,
+    });
+    expect(request.references).toEqual(
+      expect.arrayContaining([
+        { id: po.id, name: stored!.number },
+        { id: vendorId, name: vendorName },
+        { id: po.lineId, name: 'Line 1: Laptop' },
+      ]),
+    );
+    expect(request.references).toHaveLength(3);
+  });
+});
