@@ -6,15 +6,33 @@ import { when } from '@/lib/kernel-format';
 import styles from './leads.module.css';
 
 /**
- * The lead's owner with initials. Names come from the owners list and, for administrators, the
+ * The lead's owner with their avatar. Names come from the owners list and, for administrators, the
  * users directory; when neither knows the person the cell says so instead of showing an id.
+ * `seedId` (the owner's user id) picks the initials colour and `imageDocumentId` their picture, so
+ * the owner looks the same here as on every other screen.
  */
-export function OwnerCell({ owned, name }: { owned: boolean; name: string | undefined }) {
+export function OwnerCell({
+  owned,
+  name,
+  seedId,
+  imageDocumentId,
+}: {
+  owned: boolean;
+  name: string | undefined;
+  seedId?: string | null;
+  imageDocumentId?: string | null;
+}) {
   if (!owned) return <span className={styles.quiet}>No owner</span>;
   if (!name) return <span className={styles.quiet}>Name unavailable</span>;
   return (
     <div className={styles.contact}>
-      <Avatar name={name} shape="circle" aria-hidden="true" />
+      <Avatar
+        name={name}
+        seedId={seedId}
+        imageDocumentId={imageDocumentId}
+        shape="circle"
+        aria-hidden="true"
+      />
       <span>{name}</span>
     </div>
   );

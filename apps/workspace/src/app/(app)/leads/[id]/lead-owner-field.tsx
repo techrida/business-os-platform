@@ -31,7 +31,12 @@ const nameOf = (o: LeadOwnerOption) => o.displayName || o.email;
 export function LeadOwnerField({ leadId, version, ownerUserId, owners }: LeadOwnerFieldProps) {
   const owner = owners.find((o) => o.userId === ownerUserId);
   const display = (
-    <OwnerCell owned={ownerUserId !== null} name={owner ? nameOf(owner) : undefined} />
+    <OwnerCell
+      owned={ownerUserId !== null}
+      name={owner ? nameOf(owner) : undefined}
+      seedId={ownerUserId}
+      imageDocumentId={owner?.avatarDocumentId}
+    />
   );
   if (owners.length <= 1) return display;
   return (
