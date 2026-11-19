@@ -444,6 +444,27 @@
       "breakpoints": true
     },
     {
+      "idx": 59,
+      "version": "7",
+      "when": 1783000000084,
+      "tag": "0084_access_revisions",
+      "breakpoints": true
+    },
+    {
+      "idx": 60,
+      "version": "7",
+      "when": 1783000000085,
+      "tag": "0085_assignment_rules",
+      "breakpoints": true
+    },
+    {
+      "idx": 61,
+      "version": "7",
+      "when": 1783000000086,
+      "tag": "0086_departments_admin",
+      "breakpoints": true
+    },
+    {
       "idx": 62,
       "version": "7",
       "when": 1783000000090,

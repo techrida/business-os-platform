@@ -1,0 +1,320 @@
+/* Access > By area: the nine area cards (spec 4). Light-only product screens; tokens only. */
+
+.cards {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  max-width: 850px;
+  min-width: 0;
+}
+
+.card {
+  min-width: 0;
+}
+
+.cardActions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.summary {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  color: var(--text-primary);
+  font-size: var(--font-size-body-small);
+  line-height: var(--line-height-body-small);
+}
+
+.body {
+  display: flex;
+  flex-direction: column;
+  gap: 24px;
+  margin-top: 16px;
+  padding-top: 16px;
+  border-top: var(--border-width-thin) solid var(--border-subtle);
+}
+
+.block {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  min-width: 0;
+}
+
+.blockTitle {
+  margin: 0;
+  color: var(--text-primary);
+  font-size: var(--font-size-body);
+  font-weight: var(--font-weight-semibold);
+  line-height: var(--line-height-body);
+}
+
+.roles {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+/* Wide screens: name and count on the left, the reach select on the right. */
+.roleRow {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 280px);
+  column-gap: 16px;
+  row-gap: 4px;
+  align-items: center;
+  padding-bottom: 12px;
+  border-bottom: var(--border-width-thin) solid var(--border-subtle);
+}
+
+.roleRow:last-child {
+  padding-bottom: 0;
+  border-bottom: 0;
+}
+
+.roleHead {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 12px;
+  min-width: 0;
+}
+
+.roleName {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--text-primary);
+  font-size: var(--font-size-body-small);
+  font-weight: var(--font-weight-medium);
+  line-height: var(--line-height-body-small);
+  overflow-wrap: anywhere;
+}
+
+.count {
+  color: var(--text-secondary);
+  font-size: var(--font-size-caption);
+  line-height: var(--line-height-caption);
+}
+
+a.count {
+  color: var(--text-link);
+}
+
+.hint {
+  grid-column: 2;
+  margin: 0;
+  color: var(--text-secondary);
+  font-size: var(--font-size-caption);
+  line-height: var(--line-height-caption);
+}
+
+.alsoLine {
+  grid-column: 1 / -1;
+  margin: 0;
+  color: var(--text-secondary);
+  font-size: var(--font-size-caption);
+  line-height: var(--line-height-caption);
+}
+
+.alsoLine a {
+  color: var(--text-link);
+}
+
+.lock {
+  flex: none;
+  color: var(--text-secondary);
+}
+
+.levels {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.levelRow,
+.lineHead {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.check {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  min-height: 44px;
+  color: var(--text-primary);
+  font-size: var(--font-size-body-small);
+  line-height: var(--line-height-body-small);
+  cursor: pointer;
+}
+
+.check input {
+  flex: none;
+  width: 18px;
+  height: 18px;
+  margin: 0;
+}
+
+.check input:disabled,
+.check:has(input:disabled) {
+  cursor: not-allowed;
+}
+
+.ruleLine {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  max-width: 520px;
+}
+
+.lineLabel,
+.smallLabel {
+  color: var(--text-primary);
+  font-size: var(--font-size-body-small);
+  font-weight: var(--font-weight-medium);
+  line-height: var(--line-height-body-small);
+}
+
+.handOvers {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-width: 0;
+  margin: 0;
+  padding: 0;
+  border: 0;
+}
+
+.pairs {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.pair {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  min-height: 44px;
+  padding: 0 4px 0 12px;
+  border: var(--border-width-thin) solid var(--border-subtle);
+  border-radius: var(--radius-lg);
+  font-size: var(--font-size-body-small);
+  line-height: var(--line-height-body-small);
+}
+
+.retired {
+  color: var(--text-secondary);
+  text-decoration: line-through;
+}
+
+.iconButton {
+  display: inline-grid;
+  place-items: center;
+  flex: none;
+  width: 40px;
+  height: 40px;
+  padding: 0;
+  border: 0;
+  border-radius: var(--radius-lg);
+  background: transparent;
+  color: var(--text-secondary);
+  cursor: pointer;
+}
+
+.iconButton:hover {
+  background: var(--interactive-hover);
+  color: var(--text-primary);
+}
+
+.iconButton:focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: 2px;
+}
+
+.addPair {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) auto;
+  gap: 8px;
+  align-items: end;
+}
+
+.pairField {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+}
+
+.fixedLine {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  margin: 0;
+  color: var(--text-secondary);
+  font-size: var(--font-size-body-small);
+  line-height: var(--line-height-body-small);
+}
+
+.foot {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  padding-top: 16px;
+  border-top: var(--border-width-thin) solid var(--border-subtle);
+}
+
+.footStatus {
+  flex: 1 1 260px;
+  min-width: 0;
+}
+
+.footButtons {
+  display: flex;
+  gap: 8px;
+}
+
+/* Phone (390 px): each role row stacks, the select takes the full width, the foot buttons are
+   two equal full-width buttons with the primary first. */
+@media (max-width: 599px) {
+  .roleRow {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .hint {
+    grid-column: 1;
+  }
+
+  .addPair {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .ruleLine {
+    max-width: none;
+  }
+
+  .footButtons {
+    flex-direction: column-reverse;
+    width: 100%;
+  }
+
+  .footButtons > * {
+    width: 100%;
+  }
+}

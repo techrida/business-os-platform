@@ -35,9 +35,9 @@ const STALE = 'Someone else changed this reason. The list is up to date now; try
 const BAD_LABEL = `Enter a name for the reason, up to ${LEAD_LOST_REASON_LABEL_MAX} characters.`;
 
 /**
- * A 404 or a 409 refreshes the list so the person sees what the server holds. A 409 for a stale
- * list (`LOST_REASONS_STALE_MESSAGE`) or a label already on the list keeps the API's own sentence;
- * any other 409 is a stale version on one reason.
+ * A 404 or a 409 refreshes the list so the person sees what the server holds, except a stale list
+ * (`LOST_REASONS_STALE_MESSAGE`), which keeps the page as it is. A label already on the list keeps
+ * the API's own sentence; any other 409 is a stale version on one reason.
  */
 function refused(error: unknown): ActionState {
   if (error instanceof ApiError && error.status === 404) {
@@ -45,11 +45,12 @@ function refused(error: unknown): ActionState {
     return fail(GONE);
   }
   if (error instanceof ApiError && error.status === 409) {
-    revalidatePath(PATH);
     const message = describeError(error, 'change lost reasons');
-    if (message === LOST_REASONS_STALE_MESSAGE || /already on the list/.test(message)) {
-      return fail(message);
-    }
+    // A stale list is not revalidated: a fresh token behind an open dialog would let a second
+    // click pass the guard and overwrite the change the person has not seen. They reload instead.
+    if (message === LOST_REASONS_STALE_MESSAGE) return fail(message);
+    revalidatePath(PATH);
+    if (/already on the list/.test(message)) return fail(message);
     return fail(STALE);
   }
   return fail(describeError(error, 'change lost reasons'));

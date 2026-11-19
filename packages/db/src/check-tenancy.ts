@@ -60,6 +60,7 @@ export const TENANT_SCOPED: readonly string[] = [
   'app.parties',
   'app.role_permissions',
   'app.role_permission_levels',
+  'app.access_revisions',
   'app.authz_versions',
   'app.fx_rates',
   // P2 (customers and tax): tenant-level tables that P2's migrations create. Listing a table that does not

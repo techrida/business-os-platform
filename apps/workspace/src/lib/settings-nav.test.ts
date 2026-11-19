@@ -21,7 +21,7 @@ const labels = (can: ((p: string) => boolean) | undefined) =>
   visibleSettingsGroups(can).flatMap((g) => g.sections.map((s) => s.label));
 
 describe('SETTINGS_GROUPS', () => {
-  it('lists the twelve sections of the plan in four groups, in order', () => {
+  it('lists the thirteen sections of the plan in four groups, in order', () => {
     expect(SETTINGS_GROUPS.map((g) => g.label)).toEqual([
       'Company',
       'People and access',
@@ -34,7 +34,8 @@ describe('SETTINGS_GROUPS', () => {
       '/settings/formats',
       '/settings/terms',
       '/settings/users',
-      '/settings/roles',
+      '/settings/departments',
+      '/settings/access',
       '/settings/workflows',
       '/settings/currencies',
       '/settings/tax',
@@ -103,6 +104,20 @@ describe('sections and paths', () => {
     expect(firstAllowedSection((p) => p === 'admin.settings.write')?.href).toBe(
       '/settings/company',
     );
+  });
+
+  it('names the Access section and its By role and Check a person pages as one section', () => {
+    expect(settingsSection('roles')).toMatchObject({ label: 'Access', href: '/settings/access' });
+    expect(sectionForPath('/settings/access/roles/sales')?.id).toBe('roles');
+    expect(sectionForPath('/settings/access/check')?.id).toBe('roles');
+    expect(sectionForPath('/settings/departments/abc')?.id).toBe('departments');
+  });
+
+  it('opens Departments with either users or roles read access', () => {
+    const departments = settingsSection('departments');
+    expect(canOpenSection(departments, (p) => p === 'admin.users.read')).toBe(true);
+    expect(canOpenSection(departments, (p) => p === 'admin.roles.read')).toBe(true);
+    expect(canOpenSection(departments, (p) => p === 'admin.settings.write')).toBe(false);
   });
 
   it('maps a nested path to its section and ignores lookalikes', () => {
