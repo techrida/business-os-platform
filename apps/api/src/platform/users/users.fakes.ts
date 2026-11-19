@@ -165,8 +165,27 @@ export class FakeUsersStore extends UsersStore {
             u.tenantId === s.tenantId &&
             this.orgs.some((o) => o.idpOrgId === u.idpOrgId && o.kind === 'staff'),
         )
-        .map((u) => ({ ...u, roles: this.roles.get(u.id) ?? [] })),
+        .map((u) => ({
+          ...u,
+          roles: this.roles.get(u.id) ?? [],
+          department: null,
+          lastActiveAt: null,
+          createdAt: '2026-01-01T00:00:00.000Z',
+        })),
     );
+  }
+  async summary(scope: TxScope) {
+    const users = await this.list(scope);
+    return {
+      total: users.length,
+      active: users.filter(({ status }) => status === 'active').length,
+      invited: users.filter(({ status }) => status === 'invited').length,
+      deactivated: users.filter(({ status }) => status === 'inactive').length,
+      departments: [],
+    };
+  }
+  recordActivity() {
+    return Promise.resolve();
   }
   recordEvent(e: ZitadelEventKey) {
     const key = `${e.instanceId}|${e.aggregateId}|${e.sequence}`;

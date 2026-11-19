@@ -7,6 +7,7 @@
 // role. UsersService has only type imports from platform/authz, so this pulls in no AuthzModule.
 import { Global, Module } from '@nestjs/common';
 
+import { AuditModule } from '../audit/audit.module';
 import { UserDirectory } from '../authz/user-directory';
 import { UsersCoreModule } from './users.core.module';
 import { UsersProcessor, UsersReconcileScheduler } from './users.processor';
@@ -14,7 +15,7 @@ import { UsersService } from './users.service';
 
 @Global()
 @Module({
-  imports: [UsersCoreModule],
+  imports: [UsersCoreModule, AuditModule],
   providers: [
     UsersProcessor,
     UsersReconcileScheduler,

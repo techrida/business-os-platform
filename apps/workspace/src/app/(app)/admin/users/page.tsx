@@ -1,23 +1,30 @@
-import { ROLE_KEYS, RoleKeySchema } from '@bos/contracts';
+import {
+  AdminUserSearchSchema,
+  AdminUserSortSchema,
+  AdminUsersQuerySchema,
+  RoleKeySchema,
+  UserStatusSchema,
+} from '@bos/contracts';
+import { z } from 'zod';
 import type { Metadata } from 'next';
-import Link from 'next/link';
 
 import { Avatar } from '@/components/ui/avatar';
 import { Badge } from '@/components/ui/badge';
-import { Button, LinkButton } from '@/components/ui/button';
+import { LinkButton } from '@/components/ui/button';
 import { EmptyState } from '@/components/ui/empty-state';
-import { Select } from '@/components/ui/field';
 import { Page, PageHeader } from '@/components/ui/page';
 import { Pagination } from '@/components/ui/pagination';
-import { SearchInput } from '@/components/ui/search-input';
 import { StatCard } from '@/components/ui/stat-card';
 import { Table, Td, Th } from '@/components/ui/table';
-import { listUsers } from '@/lib/api-admin';
+import { listUsers, summarizeUsers } from '@/lib/api-admin';
 
 import admin from '../admin.module.css';
+import { formatInstant } from '../format';
 import { requireSession } from '../guard';
 import { section } from '../section';
 import { SectionError } from '../ui';
+import { UsersFilters } from './filters';
+import { PasswordReset } from './password-reset';
 import { PageSize } from './page-size';
 import { roleLabel } from './role-checkboxes';
 import { RolesEditor } from './roles-editor';
@@ -27,45 +34,51 @@ export const metadata: Metadata = { title: 'Users · Business OS' };
 
 const DEFAULT_SIZE = 50;
 const USER_PAGE_SIZES = [5, 10, 25, DEFAULT_SIZE];
-const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 type Params = Record<string, string | string[] | undefined>;
 
 export default async function UsersPage({ searchParams }: { searchParams: Promise<Params> }) {
   const params = await searchParams;
   const limit = USER_PAGE_SIZES.find((n) => String(n) === params.limit) ?? DEFAULT_SIZE;
-  const after = typeof params.after === 'string' && UUID.test(params.after) ? params.after : '';
-  const q = typeof params.q === 'string' ? params.q.trim() : '';
-  const role = RoleKeySchema.safeParse(params.role);
-  const status =
-    typeof params.status === 'string' && ['active', 'invited', 'inactive'].includes(params.status)
-      ? params.status
-      : '';
-  function href(cursor: string, withFilters = true) {
+  const requestedSort = AdminUserSortSchema.safeParse(params.sort).data;
+  const after = requestedSort ? undefined : z.guid().safeParse(params.after).data;
+  const sort = after ? undefined : (requestedSort ?? 'name');
+  const page = after ? 1 : (AdminUsersQuerySchema.safeParse({ page: params.page }).data?.page ?? 1);
+  const q = AdminUserSearchSchema.safeParse(params.q).data || undefined;
+  const role = RoleKeySchema.safeParse(params.role).data;
+  const status = UserStatusSchema.safeParse(params.status).data;
+  const departmentId = z.guid().safeParse(params.departmentId).data;
+  const filters = { q, role, status, departmentId, sort, limit };
+  const filtered = Boolean(q || role || status || departmentId);
+
+  function href(nextPage = 1, withFilters = true, cursor?: string) {
     const query = new URLSearchParams();
     if (cursor) query.set('after', cursor);
+    if (nextPage !== 1) query.set('page', String(nextPage));
     if (limit !== DEFAULT_SIZE) query.set('limit', String(limit));
-    if (withFilters && q) query.set('q', q);
-    if (withFilters && role.success) query.set('role', role.data);
-    if (withFilters && status) query.set('status', status);
+    if (sort && sort !== 'name') query.set('sort', sort);
+    if (withFilters) {
+      if (q) query.set('q', q);
+      if (role) query.set('role', role);
+      if (status) query.set('status', status);
+      if (departmentId) query.set('departmentId', departmentId);
+    }
     return query.size ? `/admin/users?${query}` : '/admin/users';
   }
 
-  const session = await requireSession(href(after));
-  // Fetch one extra row so a full final page never advertises an empty next page.
-  const users = await section('view users', () =>
-    listUsers(session, { limit: limit + 1, ...(after ? { after } : {}) }),
-  );
-  const items = users.ok ? users.data.items.slice(0, limit) : [];
-  const next = users.ok && users.data.items.length > limit ? items.at(-1)?.id : undefined;
-  const paged = Boolean(after || next);
-  const filtered = Boolean(q || role.success || status);
-  const needle = q.toLowerCase();
-  const visible = items.filter(
-    (user) =>
-      (!role.success || user.roles.includes(role.data)) &&
-      (!status || user.status === status) &&
-      (!q || [user.displayName, user.email].some((text) => text?.toLowerCase().includes(needle))),
-  );
+  const session = await requireSession(href(page, true, after));
+  const [users, summary] = await Promise.all([
+    section('view users', () =>
+      listUsers(session, { ...filters, ...(after ? { after } : { page }) }),
+    ),
+    section('view user totals', () => summarizeUsers(session)),
+  ]);
+  const items = users.ok ? users.data.items : [];
+  const next = users.ok ? users.data.nextPage : null;
+  const nextAfter = users.ok ? users.data.nextAfter : null;
+  const clearHref = href(1, false);
+  const pastFirstPage = page > 1 || Boolean(after);
+  const numberFormat = new Intl.NumberFormat();
+  const count = (value: number) => numberFormat.format(value);
   const add = (
     <LinkButton href="/admin/users/new" size="large">
       <span aria-hidden="true">＋</span>Add user
@@ -83,109 +96,84 @@ export default async function UsersPage({ searchParams }: { searchParams: Promis
         <SectionError message={users.message} />
       ) : (
         <>
-          {!paged && (
+          {summary.ok ? (
             <div className={styles.stats}>
-              <StatCard label="Total users" value={items.length} icon="users" />
+              <StatCard label="Total users" value={count(summary.data.total)} icon="users" />
               <StatCard
                 label="Active users"
-                value={items.filter((u) => u.status === 'active').length}
+                value={count(summary.data.active)}
                 icon="check-circle"
                 tone="success"
               />
               <StatCard
                 label="Invited users"
-                value={items.filter((u) => u.status === 'invited').length}
+                value={count(summary.data.invited)}
                 icon="inbox"
                 tone="warning"
               />
               <StatCard
                 label="Inactive users"
-                value={items.filter((u) => u.status === 'inactive').length}
+                value={count(summary.data.deactivated)}
                 icon="user"
                 tone="neutral"
               />
             </div>
+          ) : (
+            <SectionError message={summary.message} />
           )}
-          {items.length > 0 && (
-            <form className={styles.filters} role="search" action="/admin/users">
-              {limit !== DEFAULT_SIZE && <input type="hidden" name="limit" value={limit} />}
-              {after && <input type="hidden" name="after" value={after} />}
-              <SearchInput
-                name="q"
-                defaultValue={q}
-                aria-label={paged ? 'Search users on this page' : 'Search users'}
-                placeholder={paged ? 'Search users on this page' : 'Search users'}
-                wrapperClassName={styles.search}
-              />
-              <div className={styles.filterActions}>
-                <Select name="status" aria-label="Filter by status" defaultValue={status}>
-                  <option value="">All statuses</option>
-                  <option value="active">Active</option>
-                  <option value="invited">Invited</option>
-                  <option value="inactive">Inactive</option>
-                </Select>
-                <Select
-                  name="role"
-                  aria-label="Filter by role"
-                  defaultValue={role.success ? role.data : ''}
-                >
-                  <option value="">All roles</option>
-                  {ROLE_KEYS.map((key) => (
-                    <option key={key} value={key}>
-                      {roleLabel(key)}
-                    </option>
-                  ))}
-                </Select>
-                <Button variant="secondary" size="small" type="submit">
-                  Apply
-                </Button>
-                {filtered && <Link href={href(after, false)}>Clear</Link>}
-              </div>
-            </form>
-          )}
+          <UsersFilters
+            filters={filters}
+            departments={summary.ok ? summary.data.departments : []}
+            clearHref={filtered ? clearHref : undefined}
+          />
           <div className={styles.results}>
-            {visible.length === 0 ? (
+            {items.length === 0 ? (
               <EmptyState
                 icon="users"
                 title={
-                  items.length ? 'No matching users' : after ? 'No more users' : 'No users yet'
+                  pastFirstPage ? 'No more users' : filtered ? 'No matching users' : 'No users yet'
                 }
                 action={
-                  items.length ? (
-                    <LinkButton href={href(after, false)} variant="secondary">
-                      Clear filters
-                    </LinkButton>
-                  ) : after ? (
-                    <LinkButton href={href('')} variant="secondary">
+                  pastFirstPage ? (
+                    <LinkButton href={href()} variant="secondary">
                       Back to the first page
+                    </LinkButton>
+                  ) : filtered ? (
+                    <LinkButton href={clearHref} variant="secondary">
+                      Clear filters
                     </LinkButton>
                   ) : (
                     add
                   )
                 }
               >
-                {items.length
-                  ? 'Try another name, email or filter.'
-                  : after
-                    ? 'You have reached the end of the list.'
+                {pastFirstPage
+                  ? 'You have reached the end of the list.'
+                  : filtered
+                    ? 'Try another name, email or filter.'
                     : 'Invite the first person to give them access.'}
               </EmptyState>
             ) : (
               <Table
                 caption="Users and their roles"
-                minWidth={610}
+                minWidth={800}
+                stickyFirstColumn
                 className={`${admin.local} ${styles.directory}`}
               >
                 <thead>
                   <tr>
-                    <Th>User</Th>
+                    <Th aria-sort={sort === 'name' ? 'ascending' : undefined}>User</Th>
+                    <Th>Department</Th>
                     <Th>Roles</Th>
+                    <Th aria-sort={sort === 'lastActive' ? 'descending' : undefined}>
+                      Last active
+                    </Th>
                     <Th>Status</Th>
-                    <Th align="end">Action</Th>
+                    <Th align="end">Actions</Th>
                   </tr>
                 </thead>
                 <tbody>
-                  {visible.map((user, index) => {
+                  {items.map((user, index) => {
                     const label =
                       [user.displayName, user.email].filter(Boolean).join(' · ') ||
                       `unnamed user ${index + 1}`;
@@ -202,6 +190,14 @@ export default async function UsersPage({ searchParams }: { searchParams: Promis
                             </span>
                           </div>
                         </Th>
+                        <Td className={styles.department}>
+                          {user.department?.name ?? (
+                            <>
+                              <span aria-hidden="true">—</span>
+                              <span className="sr-only">No department</span>
+                            </>
+                          )}
+                        </Td>
                         <Td>
                           {user.roles.length ? (
                             <ul className={styles.roles}>
@@ -213,6 +209,15 @@ export default async function UsersPage({ searchParams }: { searchParams: Promis
                             </ul>
                           ) : (
                             <span className={styles.muted}>No roles</span>
+                          )}
+                        </Td>
+                        <Td nowrap>
+                          {user.lastActiveAt ? (
+                            <time dateTime={user.lastActiveAt}>
+                              {formatInstant(user.lastActiveAt)}
+                            </time>
+                          ) : (
+                            <span className={styles.muted}>Never</span>
                           )}
                         </Td>
                         <Td>
@@ -230,7 +235,15 @@ export default async function UsersPage({ searchParams }: { searchParams: Promis
                           </Badge>
                         </Td>
                         <Td align="end">
-                          <RolesEditor userId={user.id} label={label} roles={user.roles} />
+                          <div className={styles.rowActions}>
+                            <RolesEditor userId={user.id} label={label} roles={user.roles} />
+                            {summary.ok &&
+                              summary.data.canSendPasswordReset &&
+                              user.email &&
+                              user.status !== 'inactive' && (
+                                <PasswordReset userId={user.id} label={label} email={user.email} />
+                              )}
+                          </div>
                         </Td>
                       </tr>
                     );
@@ -242,27 +255,22 @@ export default async function UsersPage({ searchParams }: { searchParams: Promis
               <Pagination
                 label="Users pages"
                 summary={
-                  <>
-                    Showing {visible.length} of {items.length}{' '}
-                    {items.length === 1 ? 'user' : 'users'}
-                    {paged ? ' on this page' : ''}
-                    {after && (
-                      <>
-                        {' '}
-                        · <Link href={href('')}>Back to the first page</Link>
-                      </>
-                    )}
-                  </>
+                  <span role="status">
+                    {items.length === 0
+                      ? '0 users'
+                      : after
+                        ? `${count(items.length)} ${items.length === 1 ? 'user' : 'users'}`
+                        : `Showing ${count((page - 1) * limit + 1)}–${count((page - 1) * limit + items.length)}${!filtered && summary.ok ? ` of ${count(summary.data.total)}` : ''}`}
+                  </span>
                 }
-                {...(next ? { nextHref: href(next) } : {})}
+                {...(pastFirstPage ? { previousHref: href(after ? 1 : page - 1) } : {})}
+                {...(next
+                  ? { nextHref: href(next) }
+                  : nextAfter
+                    ? { nextHref: href(1, true, nextAfter) }
+                    : {})}
               />
-              <PageSize
-                sizes={USER_PAGE_SIZES}
-                size={limit}
-                q={q}
-                role={role.success ? role.data : ''}
-                status={status}
-              />
+              <PageSize sizes={USER_PAGE_SIZES} size={limit} filters={filters} />
             </div>
           </div>
         </>

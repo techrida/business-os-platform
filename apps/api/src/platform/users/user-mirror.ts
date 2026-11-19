@@ -11,7 +11,7 @@
 // legal entities listed in app.user_entities, and a new staff user gets one membership in the
 // tenant's default entity (the bootstrap rule). Writes run with the default entity as the withTx
 // scope, because the audit fallback for tenant-scoped rows reads bos.organization_id.
-import type { RoleKey } from '@bos/contracts';
+import type { AdminUsersQuery, RoleKey } from '@bos/contracts';
 import { InjectQueue } from '@nestjs/bullmq';
 import { ConflictException, Inject, Injectable, Logger, NotFoundException } from '@nestjs/common';
 import { Queue } from 'bullmq';
@@ -240,7 +240,7 @@ export class UserMirror {
     return this.store.emailOf(userId);
   }
 
-  list(scope: TxScope, q: { limit: number; after?: string | undefined }): Promise<ListedUser[]> {
+  list(scope: TxScope, q: AdminUsersQuery): Promise<ListedUser[]> {
     return this.store.list(scope, q);
   }
 
