@@ -11,13 +11,20 @@
 export function planRuns(workflows, { from, only } = {}) {
   if (from !== undefined && typeof from !== 'string') throw new Error('--from needs a step id');
   if (only !== undefined && typeof only !== 'string') throw new Error('--only needs step ids');
-  if (from && only) throw new Error('Use either --from or --only, not both.');
+  // An empty value (`--from=`, `--only "$UNSET"`) must never turn a partial run into a full,
+  // record-creating one.
+  if (from !== undefined && !from.trim())
+    throw new Error('--from is empty; give the step to resume from, e.g. --from sales-7');
+  if (only !== undefined && !only.split(',').some((id) => id.trim()))
+    throw new Error('--only is empty; give the steps to run, e.g. --only sales-3,sales-4');
+  if (from !== undefined && only !== undefined)
+    throw new Error('Use either --from or --only, not both.');
   const known = workflows
     .filter((w) => w.stepIds)
     .map((w) => `${w.name}: ${w.stepIds.join(', ')}`)
     .join('; ');
 
-  if (from) {
+  if (from !== undefined) {
     const owner = workflows.findIndex((w) => w.stepIds?.includes(from));
     if (owner < 0)
       throw new Error(`--from ${from} is not a step of the selected workflows (${known}).`);
@@ -32,7 +39,7 @@ export function planRuns(workflows, { from, only } = {}) {
     );
   }
 
-  if (only) {
+  if (only !== undefined) {
     const ids = only
       .split(',')
       .map((s) => s.trim())

@@ -80,8 +80,17 @@ describe('--from and --only planning', () => {
       ],
     );
     assert.throws(() => planRuns(WF, { only: 'sales-8,nope' }), /--only nope/);
-    assert.throws(() => planRuns(WF, { only: ',' }), /at least one/);
+    assert.throws(() => planRuns(WF, { only: ',' }), /--only is empty/);
     assert.throws(() => planRuns(WF, { from: 'sales-7', only: 'sales-8' }), /either/);
+  });
+});
+
+describe('an empty --from or --only never becomes a full run', () => {
+  test('is refused with a clear message', () => {
+    for (const from of ['', '  '])
+      assert.throws(() => planRuns(WF, { from }), /--from is empty/, JSON.stringify(from));
+    for (const only of ['', ' ', ',', ' , '])
+      assert.throws(() => planRuns(WF, { only }), /--only is empty/, JSON.stringify(only));
   });
 });
 
