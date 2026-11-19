@@ -1457,6 +1457,34 @@ describe('evidence expiry uses the Kathmandu day, not the UTC day', () => {
     );
     expect(await blocked(tomorrow)).toBeNull();
   });
+
+  it('reopens an expired case emptying evidence that expires today in Kathmandu and keeping tomorrow', async () => {
+    clock = KATHMANDU_EARLY_MORNING;
+    const filled = await caseExpiring('2026-11-20');
+    const pan = filled.checklist.find((i) => i.key === 'pan_vat_certificate')!;
+    const res = await putDocument(
+      filled.id,
+      'pan_vat_certificate',
+      pan.documentId!,
+      filled.version,
+      '2026-11-21',
+    );
+    expect(res.status, JSON.stringify(res.body)).toBe(200);
+    await withTx(db, scope, systemActor('test'), (tx) =>
+      tx.execute(sql`UPDATE app.verification_cases SET status = 'expired' WHERE id = ${filled.id}`),
+    );
+    const reopened = await api().post('/v1/verification-cases').send({ partyId: filled.partyId });
+    expect(reopened.status, JSON.stringify(reopened.body)).toBe(200);
+    const dto = VerificationCaseDtoSchema.parse(reopened.body);
+    expect(dto.checklist.find((i) => i.key === 'registration_certificate')).toMatchObject({
+      status: 'missing',
+      documentId: null,
+    });
+    expect(dto.checklist.find((i) => i.key === 'pan_vat_certificate')).toMatchObject({
+      status: 'provided',
+      expiresOn: '2026-11-21',
+    });
+  });
 });
 
 it('preserves real legacy case notes before correction and leaves legacy approved cases approved', async () => {
