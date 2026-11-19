@@ -300,8 +300,9 @@ describe('QuotationExpirySweeper expiring-soon notice', () => {
         quotationNumber: 'QT-2083-0001',
         customerName: 'Himal Traders Pvt. Ltd.',
         validUntil: '2026-11-10',
-        // A path under the portal's quotations area, never a URL: the template prefixes PORTAL_PUBLIC_URL.
-        linkPath: '/quotations/quotation-1',
+        // A path under the portal's quotations area, never a URL: the template prefixes PORTAL_PUBLIC_URL. The
+        // portal looks quotations up by version id, so the path names the expiring version, not its quotation.
+        linkPath: `/quotations/${c.versionId}`,
       },
       dedupeKey: `quotation.expiring:${c.versionId}`,
     });

@@ -15,8 +15,8 @@ describe('bankEvidenceOwnerPolicy', () => {
     expect(BANK_EVIDENCE_OWNER_TYPE).toBe('vendor_bank_account');
   });
 
-  it('authorises staff uploads with vendor.bank.propose instead of documents.upload', () => {
-    expect(policy.uploadPermission).toBe('vendor.bank.propose');
+  it('authorises staff uploads with vendor.bank.propose or vendor.bank.verify instead of documents.upload', () => {
+    expect(policy.uploadPermission).toEqual(['vendor.bank.propose', 'vendor.bank.verify']);
   });
 
   it('takes no generated files and no portal uploads (deny by default)', () => {
