@@ -24,10 +24,17 @@ import {
   type RoleKey,
   type Scope,
 } from '@bos/contracts';
-import { createStaffUser, createTenantWithEntity, organizations, runMigrations } from '@bos/db';
+import {
+  createParty,
+  createStaffUser,
+  createTenantWithEntity,
+  organizations,
+  runMigrations,
+} from '@bos/db';
 import { HttpException } from '@nestjs/common';
 import { PostgreSqlContainer, type StartedPostgreSqlContainer } from '@testcontainers/postgresql';
 import type { Queue } from 'bullmq';
+import { sql } from 'drizzle-orm';
 import { drizzle } from 'drizzle-orm/node-postgres';
 import type { Request, Response } from 'express';
 import { Pool } from 'pg';
@@ -262,6 +269,39 @@ async function avatarOf(userId: string): Promise<string | null | undefined> {
   return rows[0]?.avatar_document_id;
 }
 
+/** The logo pointer of a customer or vendor row. */
+async function logoOf(
+  ownerType: 'customer_logo' | 'vendor_logo',
+  id: string,
+): Promise<string | null | undefined> {
+  const table = ownerType === 'customer_logo' ? 'app.customers' : 'app.vendors';
+  const { rows } = await pool.query<{ logo_document_id: string | null }>(
+    `SELECT logo_document_id FROM ${table} WHERE id = $1`,
+    [id],
+  );
+  return rows[0]?.logo_document_id;
+}
+
+let panSeq = 0;
+
+/** A tenant-level customer or vendor of tenant A (no entity of its own), for the logo cases. */
+async function partyOfA(ownerType: 'customer_logo' | 'vendor_logo'): Promise<string> {
+  const kind = ownerType === 'customer_logo' ? 'customer' : 'vendor';
+  const { partyId } = await createParty(pool, { tenantId: a.tenantId, kind });
+  await withTx(db, a, systemActor('test'), (tx) =>
+    kind === 'customer'
+      ? tx.execute(sql`
+          INSERT INTO app.customers (id, tenant_id, number, legal_name, name_norm, address)
+          VALUES (${partyId}::uuid, ${a.tenantId}::uuid, ${`CUS-${partyId.slice(0, 8)}`},
+                  'Himal Traders Pvt. Ltd.', 'himal traders', '{"line1":"Thamel 4","country":"NP"}'::jsonb)`)
+      : tx.execute(sql`
+          INSERT INTO app.vendors (id, tenant_id, legal_name, pan, status, created_by)
+          VALUES (${partyId}::uuid, ${a.tenantId}::uuid, ${`Vendor ${partyId.slice(0, 6)}`},
+                  ${String(600_000_000 + (panSeq += 1))}, 'draft', ${a.userId}::uuid)`),
+  );
+  return partyId;
+}
+
 beforeAll(async () => {
   container = await new PostgreSqlContainer('postgres:16-alpine').start();
   const admin = new Pool({ connectionString: container.getConnectionUri(), max: 1 });
@@ -397,6 +437,73 @@ describe('GET /v1/images/:documentId', () => {
     expect(await statusOf(putAs(staff(b), 'user_avatar', a.userId, { documentId: null }))).toBe(
       404,
     );
+  });
+});
+
+// Customers and vendors are tenant-level records (ADR 0027): their logo is the same in every entity of the tenant,
+// whichever entity it was uploaded in, and never visible to another tenant.
+describe.each(['customer_logo', 'vendor_logo'] as const)(
+  '%s across the entities of a tenant',
+  (ownerType) => {
+    it('is served to staff of another entity of the same tenant, and 404 to another tenant', async () => {
+      const owner = await partyOfA(ownerType);
+      const logo = await uploadClean(staff(a), ownerType, owner);
+      await putAs(staff(a), ownerType, owner, { documentId: logo });
+      expect(await logoOf(ownerType, owner)).toBe(logo);
+
+      const fromOtherEntity = await getAs(staff(a, 'sales', entityA2), logo);
+      expect(fromOtherEntity.status).toBe(200);
+      expect(fromOtherEntity.body.equals(PNG)).toBe(true);
+      expect((await getAs(staff(b), logo)).status).toBe(404);
+    });
+
+    it('replaced from another entity: the pointer moves and the first entity logo document is removed', async () => {
+      const owner = await partyOfA(ownerType);
+      const first = await uploadClean(staff(a), ownerType, owner);
+      await putAs(staff(a), ownerType, owner, { documentId: first });
+
+      const inA2 = staff(a, 'founder', entityA2);
+      const second = await uploadClean(inA2, ownerType, owner);
+      await expect(putAs(inA2, ownerType, owner, { documentId: second })).resolves.toEqual({
+        documentId: second,
+      });
+      expect(await logoOf(ownerType, owner)).toBe(second);
+      expect(await removedAt(first)).toBeInstanceOf(Date);
+      expect(await removedAt(second)).toBeNull();
+      // Both entities see the new logo and neither sees the removed one.
+      for (const viewer of [staff(a), inA2]) {
+        expect((await getAs(viewer, second)).status).toBe(200);
+        expect((await getAs(viewer, first)).status).toBe(404);
+      }
+    });
+
+    it('cleared from another entity: the pointer is null and the logo document is removed', async () => {
+      const owner = await partyOfA(ownerType);
+      const logo = await uploadClean(staff(a), ownerType, owner);
+      await putAs(staff(a), ownerType, owner, { documentId: logo });
+
+      await expect(
+        putAs(staff(a, 'founder', entityA2), ownerType, owner, { documentId: null }),
+      ).resolves.toEqual({ documentId: null });
+      expect(await logoOf(ownerType, owner)).toBeNull();
+      expect(await removedAt(logo)).toBeInstanceOf(Date);
+    });
+
+    it('another tenant can neither point at the logo nor reach the record', async () => {
+      const owner = await partyOfA(ownerType);
+      const logo = await uploadClean(staff(a), ownerType, owner);
+      expect(await statusOf(putAs(staff(b), ownerType, owner, { documentId: logo }))).toBe(404);
+      expect(await statusOf(putAs(staff(b), ownerType, owner, { documentId: null }))).toBe(404);
+      expect(await removedAt(logo)).toBeNull();
+    });
+  },
+);
+
+describe('entity_logo stays with its entity', () => {
+  it('is 404 to staff acting for another entity of the same tenant', async () => {
+    const logo = await uploadClean(staff(a), 'entity_logo', a.organizationId);
+    expect((await getAs(staff(a), logo)).status).toBe(200);
+    expect((await getAs(staff(a, 'founder', entityA2), logo)).status).toBe(404);
   });
 });
 
