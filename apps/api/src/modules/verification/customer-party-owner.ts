@@ -41,6 +41,14 @@ export class CustomerPartyOwner implements PartyOwnerPort {
     return new Map(rows.map((r) => [r.id, r.ownerUserId]));
   }
 
+  ownedBy(q: PartyQuery, tenantId: string, userId: string) {
+    // A merged-away customer keeps its case, and its owner still reads it (ownersOf does not filter either).
+    return q
+      .select({ id: customers.id })
+      .from(customers)
+      .where(and(eq(customers.tenantId, tenantId), eq(customers.ownerUserId, userId)));
+  }
+
   counterparty(partyId: string) {
     return { customerPartyId: partyId };
   }
