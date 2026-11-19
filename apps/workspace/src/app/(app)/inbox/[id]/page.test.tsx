@@ -245,6 +245,31 @@ describe('inbox detail page', () => {
       /Submitted <time[^>]*>[^<]*<\/time> by <span>Dev Founder<\/span> for <span>Dev Finance Two<\/span>/,
     );
   });
+
+  it('does not add "for" when the requester submitted it themselves', async () => {
+    const own = {
+      ...request,
+      people: [
+        { userId: REQUESTER, name: 'Dev Finance Two' },
+        { userId: NAMED, name: 'Mina Rai' },
+      ],
+    };
+    fetchMock.mockImplementation((input) => {
+      const path = new URL(input as URL | string).pathname;
+      if (path === `/v1/approvals/requests/${RID}`) return Promise.resolve(json(200, own));
+      if (path === '/v1/approvals/inbox') return Promise.resolve(json(200, []));
+      return Promise.resolve(json(403, { error: { code: 'forbidden', message: 'Forbidden' } }));
+    });
+    const html = renderToStaticMarkup(
+      await InboxDetailPage({ params: Promise.resolve({ id: RID }) }),
+    );
+    const header =
+      /Submitted <time[^>]*>[^<]*<\/time> by <span>[^<]*<\/span>(?: for <span>[^<]*<\/span>)?/.exec(
+        html,
+      );
+    expect(header?.[0]).toBeDefined();
+    expect(header?.[0]).not.toContain(' for ');
+  });
 });
 
 it('lists an unnumbered credit note by its kind, without its internal id', async () => {
