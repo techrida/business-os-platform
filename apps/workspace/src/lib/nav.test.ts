@@ -87,9 +87,6 @@ describe('NAV_GROUPS', () => {
       ['Overview', '/'],
       ['Inbox', '/inbox'],
       ['Memos', '/memos'],
-      ['Users', '/admin/users'],
-      ['Roles & Permissions', '/admin/roles'],
-      ['Approval Workflows', '/admin/workflows'],
       ['Customers', '/customers'],
       ['Leads', '/leads'],
       ['Opportunities', '/opportunities'],
@@ -109,7 +106,7 @@ describe('NAV_GROUPS', () => {
       ['Bills', '/payables/bills'],
       ['Payment requests', '/payables/payment-requests'],
       ['Purchase VAT register', '/payables/vat-register'],
-      ['Settings', '/admin/settings'],
+      ['Settings', '/settings'],
     ]);
   });
 
@@ -240,11 +237,21 @@ describe('NAV_GROUPS', () => {
     },
   );
 
-  it('marks every /admin page as admin-only, and nothing else', () => {
+  it('marks every /settings page as admin-only, and nothing else', () => {
     for (const item of items) {
-      const isAdminPage = item.href?.startsWith('/admin') ?? false;
+      const isAdminPage = item.href?.startsWith('/settings') ?? false;
       expect(item.audience === 'admin', item.label).toBe(isAdminPage);
     }
+  });
+
+  it('moved Users, Roles & Permissions and Approval Workflows under Settings', () => {
+    const labels = items.map((i) => i.label);
+    for (const moved of ['Users', 'Roles & Permissions', 'Approval Workflows']) {
+      expect(labels).not.toContain(moved);
+    }
+    expect(items.some((i) => i.href?.startsWith('/admin'))).toBe(false);
+    const organization = NAV_GROUPS.find((g) => g.label === 'Organization');
+    expect(organization?.items.filter(isBuilt)).toEqual([]);
   });
 
   it('does not list Approvals or User twice (Inbox and Users replace them)', () => {
@@ -322,18 +329,20 @@ describe('visibleGroups', () => {
   const labelsFor = (showAdmin: boolean) =>
     visibleGroups(showAdmin).flatMap((g) => g.items.map((i) => i.label));
 
-  it('hides the admin screens and the empty Organization group from non-admins', () => {
+  it('hides Settings and the empty Organization group from non-admins', () => {
     expect(visibleGroups(false).map((g) => g.label)).not.toContain('Organization');
-    expect(labelsFor(false)).not.toContain('Users');
     expect(labelsFor(false)).not.toContain('Settings');
     expect(labelsFor(false)).toContain('Inbox');
     expect(labelsFor(false)).not.toContain('Help');
     expect(labelsFor(true)).not.toContain('Department');
   });
 
-  it('shows them to admins', () => {
-    expect(visibleGroups(true).map((g) => g.label)).toContain('Organization');
-    expect(labelsFor(true)).toEqual(expect.arrayContaining(['Users', 'Settings']));
+  it('shows Settings to admins, and the Organization group stays empty without its moved items', () => {
+    expect(visibleGroups(true).map((g) => g.label)).not.toContain('Organization');
+    expect(labelsFor(true)).toContain('Settings');
+    expect(visibleGroups(true).find((g) => g.label === 'System')?.items).toEqual([
+      expect.objectContaining({ label: 'Settings', href: '/settings' }),
+    ]);
   });
 });
 
@@ -416,7 +425,7 @@ describe('titleForPath', () => {
   it('names a page under a built page by its owner', () => {
     expect(titleForPath('/inbox/0f3a')).toBe('Inbox');
     expect(titleForPath('/memos/new')).toBe('Memos');
-    expect(titleForPath('/admin/users/invite')).toBe('Users');
+    expect(titleForPath('/settings/users/new')).toBe('Settings');
   });
 
   it('names the P2 pages and the pages under them', () => {
@@ -451,9 +460,10 @@ describe('searchNavGroups', () => {
       { label: 'Work', items: [expect.objectContaining({ href: '/inbox' })] },
     ]);
     expect(searchNavGroups(visibleGroups(false), 'organization')).toEqual([]);
+    expect(searchNavGroups(visibleGroups(true), 'organization')).toEqual([]);
     expect(
-      searchNavGroups(visibleGroups(true), 'organization')[0]?.items.map((item) => item.label),
-    ).toEqual(['Users', 'Roles & Permissions', 'Approval Workflows']);
+      searchNavGroups(visibleGroups(true), 'settings')[0]?.items.map((item) => item.label),
+    ).toEqual(['Settings']);
     expect(searchNavGroups(NAV_GROUPS, 'department')).toEqual([]);
   });
 });

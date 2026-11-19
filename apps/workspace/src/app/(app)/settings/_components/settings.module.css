@@ -1,0 +1,181 @@
+/* Settings cards on the shared tokens only. One card is one decision with one Save. Forms stay at
+   760px; tables use the full width. Phone: fields stack, Save is full width. */
+
+.column {
+  display: grid;
+  gap: var(--spacing-section);
+  min-width: 0;
+}
+
+.narrow {
+  max-width: 760px;
+}
+
+/* ---- card body --------------------------------------------------------------------------------- */
+
+.form {
+  display: grid;
+  gap: 16px;
+}
+
+.fields {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 220px), 1fr));
+  gap: 16px;
+  align-items: start;
+}
+
+.wide {
+  grid-column: 1 / -1;
+}
+
+.formRow {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 180px), 1fr));
+  gap: 16px;
+  align-items: end; /* the rate field has a hint line above its control; keep the controls level */
+}
+
+/* Save sits at the end of the card. Under 640px it takes the full width. */
+.foot {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 12px;
+}
+
+.foot > .status {
+  flex: 1 1 200px;
+  min-width: 0;
+}
+
+.actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 12px;
+}
+
+.status {
+  flex: 1 1 240px;
+  min-width: 0;
+}
+
+.status:empty {
+  display: none;
+}
+
+@media (max-width: 639.98px) {
+  .foot > button {
+    flex: 1 1 100%;
+  }
+}
+
+.sub {
+  font-size: var(--font-size-body);
+  line-height: var(--line-height-body);
+}
+
+.mono {
+  font-family: var(--font-family-mono);
+  font-size: var(--font-size-caption);
+  overflow-wrap: anywhere;
+}
+
+.muted {
+  color: var(--text-secondary);
+}
+
+/* ---- typed controls ---------------------------------------------------------------------------- */
+
+.fieldset {
+  display: grid;
+  gap: 8px;
+  min-width: 0;
+  margin: 0;
+  padding: 0;
+  border: 0;
+}
+
+.legend {
+  padding: 0;
+  color: var(--text-primary);
+  font-size: var(--font-size-body-small);
+  font-weight: var(--font-weight-medium);
+  line-height: var(--line-height-body-small);
+}
+
+.help {
+  color: var(--text-secondary);
+  font-size: var(--font-size-caption);
+  line-height: var(--line-height-caption);
+}
+
+.checkGrid {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 24px;
+}
+
+.checkLabel {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 24px;
+  color: var(--text-primary);
+  font-size: var(--font-size-body);
+  line-height: var(--line-height-body);
+}
+
+.checkbox {
+  width: 16px;
+  height: 16px;
+  margin: 0;
+  accent-color: var(--action-primary);
+}
+
+.fieldError {
+  color: var(--error-700);
+  font-size: var(--font-size-caption);
+}
+
+/* ---- billing schedule rows --------------------------------------------------------------------- */
+
+.scheduleRows {
+  display: grid;
+  gap: 12px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.scheduleRow {
+  display: grid;
+  grid-template-columns: minmax(0, 3fr) minmax(0, 1fr) minmax(0, 2fr) auto;
+  gap: 12px;
+  align-items: end;
+}
+
+.scheduleTotal {
+  color: var(--text-secondary);
+  font-size: var(--font-size-body-small);
+  font-variant-numeric: tabular-nums;
+}
+
+.scheduleTotal[data-off='true'] {
+  color: var(--error-700);
+}
+
+@media (max-width: 639.98px) {
+  .scheduleRow {
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+    padding: 12px;
+    border: var(--border-width-thin) solid var(--border-default);
+    border-radius: var(--radius-lg);
+  }
+
+  .scheduleRow > :first-child {
+    grid-column: 1 / -1;
+  }
+}

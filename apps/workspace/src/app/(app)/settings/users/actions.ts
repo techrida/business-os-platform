@@ -8,13 +8,13 @@ import { inviteUser, sendPasswordReset, setUserRoles } from '@/lib/api-admin';
 
 import { describeError } from '../admin-errors';
 import { fail, ok, type ActionState } from '../action-state';
-import { requireSession } from '../guard';
+import { requireSection } from '../guard';
 
 // Server Actions for the users page. The browser never sees the access token: the action runs on the
 // server with the session and calls the API itself. Each action re-checks the session because it is
 // its own HTTP request, separate from the page that rendered the form.
 
-const PATH = '/admin/users';
+const PATH = '/settings/users';
 
 const InviteSchema = z.object({
   email: z.email('Enter a valid email address.').max(320),
@@ -40,7 +40,7 @@ export async function inviteUserAction(
   _previous: ActionState,
   formData: FormData,
 ): Promise<ActionState> {
-  const session = await requireSession(PATH);
+  const session = await requireSection('users');
   const roles = rolesFrom(formData);
   const fields = {
     email: text(formData, 'email').trim(),
@@ -72,7 +72,7 @@ export async function setRolesAction(
   _previous: ActionState,
   formData: FormData,
 ): Promise<ActionState> {
-  const session = await requireSession(PATH);
+  const session = await requireSection('users');
   const userId = text(formData, 'userId');
   const roles = rolesFrom(formData);
   if (userId === '') return fail('Missing user.');
@@ -87,7 +87,7 @@ export async function setRolesAction(
 }
 
 export async function sendPasswordResetAction(userId: string): Promise<ActionState> {
-  const session = await requireSession(PATH);
+  const session = await requireSection('users');
   const parsed = z.uuid().safeParse(userId);
   if (!parsed.success) return fail('Missing user.');
 

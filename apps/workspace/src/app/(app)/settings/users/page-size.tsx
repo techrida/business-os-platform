@@ -15,7 +15,7 @@ export function PageSize({
   filters: Omit<AdminUsersQuery, 'page' | 'after'>;
 }) {
   return (
-    <form action="/admin/users" className={styles.pageSize}>
+    <form action="/settings/users" className={styles.pageSize}>
       {Object.entries(filters).map(([key, value]) =>
         key !== 'limit' && value ? (
           <input key={key} type="hidden" name={key} value={value} />

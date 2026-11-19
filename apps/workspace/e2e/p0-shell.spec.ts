@@ -87,9 +87,9 @@ test('P0 shell keeps its fixed edges and exposes real session facts without hydr
     const search = page.getByRole('searchbox', { name: 'Search menu' });
     await search.fill('Department');
     await expect(nav.getByText('No matching pages')).toBeVisible();
-    await search.fill('Users');
+    await search.fill('Settings');
     await expect(nav.getByRole('link')).toHaveCount(1);
-    await expect(nav.getByRole('link', { name: 'Users' })).toHaveAttribute('href', '/admin/users');
+    await expect(nav.getByRole('link', { name: 'Settings' })).toHaveAttribute('href', '/settings');
     await search.clear();
     await expect(nav.getByRole('link', { name: 'Inbox' })).toBeVisible();
   });

@@ -13,7 +13,7 @@
  * this file stays free of server code because the header title (a client component) imports it.
  *
  * "Estimates" is left out on purpose: decision D3 merged it into Quotations. "Approvals" and
- * "User" are not listed: they are Work > Inbox and Organization > Users.
+ * "User" are not listed: they are Work > Inbox and Settings > Users.
  */
 
 export type Phase = 'P0' | 'P1' | 'P2' | 'P3' | 'P4' | 'later';
@@ -87,21 +87,7 @@ export const NAV_GROUPS: readonly NavGroup[] = [
   {
     label: 'Organization',
     items: [
-      { label: 'Users', href: '/admin/users', icon: 'users', phase: 'P1', audience: 'admin' },
-      {
-        label: 'Roles & Permissions',
-        href: '/admin/roles',
-        icon: 'shield-check',
-        phase: 'P1',
-        audience: 'admin',
-      },
-      {
-        label: 'Approval Workflows',
-        href: '/admin/workflows',
-        icon: 'git-branch',
-        phase: 'P1',
-        audience: 'admin',
-      },
+      // Users, Roles & Permissions and Approval Workflows live under Settings (settings-nav.ts).
       { label: 'Department', icon: 'layers', phase: 'P1' },
       { label: 'Projects', icon: 'briefcase', phase: 'later' },
     ],
@@ -286,7 +272,7 @@ export const NAV_GROUPS: readonly NavGroup[] = [
     items: [
       {
         label: 'Settings',
-        href: '/admin/settings',
+        href: '/settings',
         icon: 'settings',
         phase: 'P1',
         audience: 'admin',

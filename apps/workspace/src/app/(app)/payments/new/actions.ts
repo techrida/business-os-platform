@@ -6,7 +6,7 @@ import { SubmitPaymentBodySchema } from '@bos/contracts';
 import { revalidatePath } from 'next/cache';
 import { redirect } from 'next/navigation';
 
-import { todayInKathmandu } from '@/app/(app)/admin/format';
+import { todayInKathmandu } from '@/app/(app)/settings/format';
 import { hasPermission } from '@/components/p2/customers/permissions';
 import { submitPayment } from '@/lib/api-receivables';
 import { requireStaffSession } from '@/lib/bff';

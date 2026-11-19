@@ -18,14 +18,14 @@ import {
 import { describeError } from '../admin-errors';
 import { fail, ok, type ActionState } from '../action-state';
 import { kathmanduLocalToIso } from '../format';
-import { requireSession } from '../guard';
+import { requireSection } from '../guard';
 import { parseSpecJson } from './spec-form';
 
 // Server Actions for the workflows page: definitions and versions, approval groups, delegations.
 // Each one re-checks the session (it is its own request) and maps API errors to plain sentences.
 // Writes use the `approvals.*` permissions, so a 403 here names the thing the user tried to do.
 
-const PATH = '/admin/workflows';
+const PATH = '/settings/workflows';
 const KEY = z
   .string()
   .regex(
@@ -49,7 +49,7 @@ export async function createWorkflowAction(
   _previous: ActionState,
   formData: FormData,
 ): Promise<ActionState> {
-  const session = await requireSession(PATH);
+  const session = await requireSection('workflows');
   const head = z.object({ key: KEY, name: NAME }).safeParse({
     key: text(formData, 'key').trim(),
     name: text(formData, 'name'),
@@ -72,7 +72,7 @@ export async function saveDraftAction(
   _previous: ActionState,
   formData: FormData,
 ): Promise<ActionState> {
-  const session = await requireSession(PATH);
+  const session = await requireSection('workflows');
   const key = KEY.safeParse(text(formData, 'key'));
   if (!key.success) return fail('Missing workflow key.');
   const spec = parseSpecJson(text(formData, 'spec'));
@@ -91,7 +91,7 @@ export async function publishVersionAction(
   _previous: ActionState,
   formData: FormData,
 ): Promise<ActionState> {
-  const session = await requireSession(PATH);
+  const session = await requireSection('workflows');
   const key = KEY.safeParse(text(formData, 'key'));
   const version = z.coerce.number().int().positive().safeParse(text(formData, 'version'));
   if (!key.success || !version.success) return fail('Missing workflow version.');
@@ -111,7 +111,7 @@ export async function createGroupAction(
   _previous: ActionState,
   formData: FormData,
 ): Promise<ActionState> {
-  const session = await requireSession(PATH);
+  const session = await requireSection('workflows');
   const fields = { key: text(formData, 'key').trim(), name: text(formData, 'name') };
   const parsed = z.object({ key: KEY, name: NAME }).safeParse(fields);
   if (!parsed.success) return fail(parsed.error.issues[0]?.message ?? 'Check the form.', fields);
@@ -129,7 +129,7 @@ export async function deleteGroupAction(
   _previous: ActionState,
   formData: FormData,
 ): Promise<ActionState> {
-  const session = await requireSession(PATH);
+  const session = await requireSection('workflows');
   const id = text(formData, 'id');
   if (id === '') return fail('Missing group.');
   try {
@@ -145,7 +145,7 @@ export async function addMemberAction(
   _previous: ActionState,
   formData: FormData,
 ): Promise<ActionState> {
-  const session = await requireSession(PATH);
+  const session = await requireSection('workflows');
   const groupId = text(formData, 'groupId');
   const userId = text(formData, 'userId').trim();
   if (groupId === '' || userId === '') return fail('Choose a person to add.');
@@ -162,7 +162,7 @@ export async function removeMemberAction(
   _previous: ActionState,
   formData: FormData,
 ): Promise<ActionState> {
-  const session = await requireSession(PATH);
+  const session = await requireSection('workflows');
   const groupId = text(formData, 'groupId');
   const userId = text(formData, 'userId');
   if (groupId === '' || userId === '') return fail('Missing member.');
@@ -181,7 +181,7 @@ export async function createDelegationAction(
   _previous: ActionState,
   formData: FormData,
 ): Promise<ActionState> {
-  const session = await requireSession(PATH);
+  const session = await requireSection('workflows');
   const fields = {
     fromUserId: text(formData, 'fromUserId').trim(),
     toUserId: text(formData, 'toUserId').trim(),
@@ -222,7 +222,7 @@ export async function revokeDelegationAction(
   _previous: ActionState,
   formData: FormData,
 ): Promise<ActionState> {
-  const session = await requireSession(PATH);
+  const session = await requireSection('workflows');
   const id = text(formData, 'id');
   if (id === '') return fail('Missing delegation.');
   try {

@@ -9,7 +9,7 @@ import { Field, Input, Select } from '@/components/ui/field';
 import { IDLE } from '../action-state';
 import { FormStatus } from '../ui';
 import { addFxRateAction } from './actions';
-import styles from './settings.module.css';
+import styles from '../_components/settings.module.css';
 
 export function FxForm({ today }: { today: string }) {
   const [state, formAction, pending] = useActionState(addFxRateAction, IDLE);
