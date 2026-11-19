@@ -25,6 +25,18 @@ describe('MeResponseSchema', () => {
     }
   });
 
+  it('accepts effective grants and rejects an unknown permission or scope in them', () => {
+    const permissions = [{ permission: 'customer.read', scope: 'own' }];
+    expect(MeResponseSchema.parse({ ...validMe, permissions }).permissions).toEqual(permissions);
+    expect(MeResponseSchema.parse(validMe).permissions).toBeUndefined();
+    for (const bad of [
+      { permission: 'made.up', scope: 'all' },
+      { permission: 'customer.read', scope: 'galaxy' },
+    ]) {
+      expect(MeResponseSchema.safeParse({ ...validMe, permissions: [bad] }).success).toBe(false);
+    }
+  });
+
   it('rejects an unknown org kind', () => {
     expect(MeResponseSchema.safeParse({ ...validMe, orgKind: 'admin' }).success).toBe(false);
   });

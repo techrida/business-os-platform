@@ -12,7 +12,15 @@ vi.mock('next/navigation', () => ({
   },
 }));
 vi.mock('@/components/web-vitals', () => ({ WebVitals: () => <i data-testid="web-vitals" /> }));
-vi.mock('@/components/shell/sidebar', () => ({ Sidebar: () => null }));
+const sidebarProps = vi.fn();
+vi.mock('@/components/shell/sidebar', () => ({
+  Sidebar: (props: unknown) => {
+    sidebarProps(props);
+    return null;
+  },
+}));
+const getInboxPage = vi.fn<() => Promise<{ items: never[]; total: number }>>();
+vi.mock('@/lib/api-kernel', () => ({ getInboxPage: () => getInboxPage() }));
 vi.mock('@/components/shell/header', () => ({ Header: () => null }));
 vi.mock('@/components/shell/shell-state', () => ({
   ShellFrame: ({ children }: { children: ReactNode }) => <div>{children}</div>,
@@ -37,7 +45,12 @@ const staff: Session = {
   lastSeenAt: 1,
 };
 
-beforeEach(() => getSession.mockReset());
+beforeEach(() => {
+  getSession.mockReset();
+  sidebarProps.mockReset();
+  getInboxPage.mockReset();
+  getInboxPage.mockResolvedValue({ items: [], total: 0 });
+});
 
 describe('web vitals reporter placement', () => {
   it('is not in the root layout, so signed-out pages send no beacons', () => {
@@ -54,5 +67,23 @@ describe('web vitals reporter placement', () => {
   it('is never reached without a session', async () => {
     getSession.mockResolvedValue(null);
     await expect(AppLayout({ children: <p>page</p> })).rejects.toThrow('REDIRECT:/auth/login');
+  });
+});
+
+describe('approvals badge in the sidebar', () => {
+  it('passes the waiting count for the inbox link', async () => {
+    getSession.mockResolvedValue(staff);
+    getInboxPage.mockResolvedValue({ items: [], total: 4 });
+    renderToStaticMarkup((await AppLayout({ children: <p>page</p> })) as ReactElement);
+    expect(sidebarProps).toHaveBeenCalledWith(
+      expect.objectContaining({ counts: { '/inbox': 4 } }),
+    );
+  });
+
+  it('shows no badge, not a zero, when the read is refused', async () => {
+    getSession.mockResolvedValue(staff);
+    getInboxPage.mockRejectedValue(new Error('403'));
+    renderToStaticMarkup((await AppLayout({ children: <p>page</p> })) as ReactElement);
+    expect(sidebarProps).toHaveBeenCalledWith(expect.objectContaining({ counts: {} }));
   });
 });

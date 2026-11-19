@@ -20,7 +20,7 @@ import type { EntityMembership, ResolvedUser } from '../authz/user-directory';
 import { DB, type Db, type DbTransaction } from '../db/db.module';
 import { type TxScope, systemActor, withTx } from '../db/tx';
 import { USERS_QUEUE, USERS_SYNC_JOB, type UsersSyncData } from './users.constants';
-import { type IdpOrgRow, type ListedUser, type UserRow, UsersStore } from './users.store';
+import { type IdpOrgRow, type ListedUsers, type UserRow, UsersStore } from './users.store';
 import {
   ZitadelAdminClient,
   ZitadelHttpError,
@@ -240,7 +240,7 @@ export class UserMirror {
     return this.store.emailOf(userId);
   }
 
-  list(scope: TxScope, q: AdminUsersQuery): Promise<ListedUser[]> {
+  list(scope: TxScope, q: AdminUsersQuery): Promise<ListedUsers> {
     return this.store.list(scope, q);
   }
 

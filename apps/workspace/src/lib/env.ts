@@ -113,6 +113,27 @@ const EnvSchema = z
     }
   });
 
+/** Optional links shown in the footer of the sign-in and notice pages. A link is omitted when unset. */
+export interface FooterLinks {
+  helpUrl: string | undefined;
+  privacyUrl: string | undefined;
+}
+
+/**
+ * Reads BOS_HELP_URL and BOS_PRIVACY_URL on their own, outside the main schema: these pages must
+ * still render when an unrelated variable is wrong. Blank or invalid values (anything that is not
+ * an absolute http(s) URL, which also rules out `javascript:`) count as unset.
+ */
+export function getFooterLinks(
+  source: Record<string, string | undefined> = process.env,
+): FooterLinks {
+  const read = (name: string): string | undefined => {
+    const parsed = httpUrl.safeParse(source[name]);
+    return parsed.success ? parsed.data : undefined;
+  };
+  return { helpUrl: read('BOS_HELP_URL'), privacyUrl: read('BOS_PRIVACY_URL') };
+}
+
 let cached: WorkspaceEnv | undefined;
 
 /**

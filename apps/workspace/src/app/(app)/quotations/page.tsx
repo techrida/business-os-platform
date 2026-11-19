@@ -1,4 +1,9 @@
-import { pageWindow, type QuotationListItem, type QuotationSummary } from '@bos/contracts';
+import {
+  pageWindow,
+  type QuotationListItem,
+  type QuotationStatus,
+  type QuotationSummary,
+} from '@bos/contracts';
 import type { NumberSystems } from '@bos/locale';
 import type { Metadata } from 'next';
 import Link from 'next/link';
@@ -19,6 +24,7 @@ import {
 } from '@/components/p2/quotations/status';
 import { editQuotationHref, newQuotationHref } from '@/components/p2/quotations/resume';
 import { QuotationStatusBadge } from '@/components/p2/quotations/status-badge';
+import { statusWorth } from '@/components/p2/quotations/summary-amount';
 import { Alert } from '@/components/ui/alert';
 import { Avatar } from '@/components/ui/avatar';
 import { LinkButton } from '@/components/ui/button';
@@ -108,8 +114,23 @@ function QuotationRow({
   );
 }
 
-function QuotationStats({ summary, filtered }: { summary: QuotationSummary; filtered: boolean }) {
+function QuotationStats({
+  summary,
+  filtered,
+  numberSystems,
+}: {
+  summary: QuotationSummary;
+  filtered: boolean;
+  numberSystems: NumberSystems;
+}) {
   const { byStatus } = summary;
+  // The worth appears only as one real figure in one currency; mixed currencies leave the count alone.
+  const worth = (status: QuotationStatus, caption: string) => {
+    const amount = statusWorth(summary, status);
+    return amount === null
+      ? undefined
+      : `${money(amount.total, amount.currency, numberSystems)} ${caption}`;
+  };
   return (
     <section className={styles.stats} aria-label="Quotation totals by status">
       <StatCard
@@ -122,9 +143,21 @@ function QuotationStats({ summary, filtered }: { summary: QuotationSummary; filt
         value={byStatus.submitted}
         icon="shield-check"
         tone="warning"
+        detail={worth('submitted', 'requiring approval')}
       />
-      <StatCard label="In customer review" value={byStatus.sent} icon="users" />
-      <StatCard label="Accepted" value={byStatus.accepted} icon="check-circle" tone="success" />
+      <StatCard
+        label="In customer review"
+        value={byStatus.sent}
+        icon="users"
+        detail={worth('sent', 'outstanding')}
+      />
+      <StatCard
+        label="Accepted"
+        value={byStatus.accepted}
+        icon="check-circle"
+        tone="success"
+        detail={worth('accepted', 'contracted')}
+      />
     </section>
   );
 }
@@ -226,7 +259,7 @@ export default async function QuotationsPage({
       />
 
       {items !== null && summary !== null ? (
-        <QuotationStats summary={summary} filtered={filtered} />
+        <QuotationStats summary={summary} filtered={filtered} numberSystems={numberSystems} />
       ) : null}
 
       <QuotationFilters

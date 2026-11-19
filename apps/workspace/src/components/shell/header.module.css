@@ -50,16 +50,8 @@
   min-width: 0;
 }
 
-.kind {
-  text-transform: capitalize;
-}
-
 @media (max-width: 767.98px) {
   .header .search {
-    display: none;
-  }
-
-  .who .kind {
     display: none;
   }
 }
