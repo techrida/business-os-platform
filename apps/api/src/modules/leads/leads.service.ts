@@ -184,7 +184,7 @@ export class LeadsService {
    * closed over HTTP until the product names who a manager is, as for opportunities.
    */
   async changeStage(id: string, body: LeadStageChangeBody): Promise<LeadDto> {
-    const { scope, actor } = this.caller.current();
+    const { scope, actor, principal } = this.caller.current();
     const by: LeadStageCaller = 'user';
     return withTx(this.db, scope, actor, async (tx) => {
       const row = await this.lock(tx, scope, id);
@@ -220,6 +220,7 @@ export class LeadsService {
         subject: `Stage changed from ${row.stage} to ${updated.stage}`,
         body: plan.set.stageNote,
         leadId: id,
+        createdByUserId: principal.userId,
       });
       return toLeadDto(updated);
     });
