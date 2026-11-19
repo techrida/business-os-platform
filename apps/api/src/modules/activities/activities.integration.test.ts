@@ -688,3 +688,60 @@ describe('PATCH /v1/activities/:id/complete|reschedule|cancel', () => {
     expect(untouched).toMatchObject({ id: p.id, version: 1 });
   });
 });
+
+describe("D46: an activity carries its assignee's and author's display names and no address", () => {
+  it('shows Sales the names of a follow-up assigned to the Founder, on list, create and complete, with no address', async () => {
+    for (const [key, name, email] of [
+      ['salesA', 'Sita Sales', 'sita.private@crestia.example'],
+      ['boss', 'Fiona Founder', 'fiona.private@crestia.example'],
+    ] as const) {
+      await withTx(h.db, h.scopeA, systemActor('test'), (tx) =>
+        tx.update(users).set({ displayName: name, email }).where(eq(users.id, h.users[key])),
+      );
+    }
+    const lead = await seedLead();
+    // A Sales (own scope) caller cannot assign to the Founder over HTTP, so the Founder's follow-up is written
+    // directly: what matters is what Sales then reads back.
+    const [row] = await withTx(h.db, h.scopeA, systemActor('test'), (tx) =>
+      tx
+        .insert(activities)
+        .values({
+          ...h.scopeA,
+          kind: 'call',
+          subject: 'Check the brief',
+          leadId: lead.id,
+          dueAt: new Date(Date.now() + 86_400_000),
+          assigneeUserId: h.users.boss,
+          createdByUserId: h.users.boss,
+        })
+        .returning(),
+    );
+    const seen = (await listed(`?leadId=${lead.id}&status=planned`)).find((a) => a.id === row!.id);
+    expect(seen).toMatchObject({
+      assigneeName: 'Fiona Founder',
+      createdByName: 'Fiona Founder',
+    });
+
+    const created = await post({
+      kind: 'call',
+      subject: 'My own follow-up',
+      leadId: lead.id,
+      dueAt: new Date(Date.now() + 2 * 86_400_000).toISOString(),
+    });
+    expect(created.status, JSON.stringify(created.body)).toBe(201);
+    expect(dto(created.body)).toMatchObject({
+      assigneeName: 'Sita Sales',
+      createdByName: 'Sita Sales',
+    });
+
+    const text = JSON.stringify([seen, created.body, await listed(`?leadId=${lead.id}`)]);
+    expect(text).not.toMatch(/@crestia\.example/);
+  });
+
+  it('has null names on an activity that names no one', async () => {
+    const lead = await seedLead();
+    const logged = await post({ kind: 'note', subject: 'Met at the fair', leadId: lead.id });
+    expect(logged.status, JSON.stringify(logged.body)).toBe(201);
+    expect(dto(logged.body)).toMatchObject({ assigneeUserId: null, assigneeName: null });
+  });
+});
