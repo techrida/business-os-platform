@@ -155,9 +155,12 @@ export default async function LeadsPage({ searchParams }: { searchParams: Promis
   // Owner names: the people the caller may assign to, plus the users directory for administrators.
   // Either failing only blanks names; the list still renders.
   const ownerNames = new Map(names);
+  const ownerPictures = new Map<string, string>();
   try {
-    for (const o of await listLeadOwners(session))
+    for (const o of await listLeadOwners(session)) {
       ownerNames.set(o.userId, o.displayName || o.email);
+      if (o.avatarDocumentId) ownerPictures.set(o.userId, o.avatarDocumentId);
+    }
   } catch {
     // Names stay as the directory gave them.
   }
@@ -294,6 +297,10 @@ export default async function LeadsPage({ searchParams }: { searchParams: Promis
                         <OwnerCell
                           owned={lead.ownerUserId !== null}
                           name={lead.ownerUserId ? ownerNames.get(lead.ownerUserId) : undefined}
+                          seedId={lead.ownerUserId}
+                          imageDocumentId={
+                            lead.ownerUserId ? (ownerPictures.get(lead.ownerUserId) ?? null) : null
+                          }
                         />
                       </Td>
                       <Td nowrap className={styles.followUpColumn}>
