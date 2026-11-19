@@ -1,16 +1,20 @@
-import type { InvoiceDetail, TaxCode } from '@bos/contracts';
+import type { InvoiceDetail, InvoiceSettlement } from '@bos/contracts';
 import type { Metadata } from 'next';
 import Link from 'next/link';
 import { notFound } from 'next/navigation';
 
+import { hasPermission } from '@/components/p2/customers/permissions';
 import { Alert } from '@/components/ui/alert';
+import { Badge } from '@/components/ui/badge';
 import { Breadcrumb, Page, PageHeader } from '@/components/ui/page';
 import { FactList, Panel, type Fact } from '@/components/ui/panel';
 import { getInvoice } from '@/lib/api-billing';
 import { failureOf } from '@/lib/api-kernel';
+import { getCustomerStatement } from '@/lib/api-receivables';
 import { listTaxCodes } from '@/lib/api-tax-codes';
 import { requireStaffSession } from '@/lib/bff';
-import { when } from '@/lib/kernel-format';
+import { money, when } from '@/lib/kernel-format';
+import type { Session } from '@/lib/session';
 
 import { InvoiceKindBadge, InvoiceStatusBadge } from '../_components/badges';
 import { DayValue, Lines, NprSnapshot, Totals } from '../_components/detail-parts';
@@ -21,6 +25,7 @@ import styles from '../_components/invoice.module.css';
 import { InvoiceNoteActions } from '../_components/notes/note-actions';
 import { invoiceGates } from '../_lib/gates';
 import { approvalWords, kindMeta } from '../_lib/meta';
+import { settlementMeta } from '../../receivables/_lib/settlement';
 
 export const metadata: Metadata = { title: 'Invoice · Business OS' };
 export const dynamic = 'force-dynamic';
@@ -33,7 +38,29 @@ function pdfAvailability(invoice: InvoiceDetail['invoice']) {
   return 'The PDF is made when the invoice is issued.';
 }
 
-function facts(invoice: InvoiceDetail['invoice'], customerName: string | undefined): Fact[] {
+/**
+ * The issued invoice's payment position, derived by the server from its allocations and credit notes (plan A8), read
+ * from the customer statement this invoice appears on. Null for a draft, a proforma or a credit note (they have no
+ * open item), for a role without `ar.read`, or when the statement does not load: the rest of the page stands.
+ */
+async function settlementOf(
+  session: Session,
+  invoice: InvoiceDetail['invoice'],
+): Promise<InvoiceSettlement | null> {
+  if (invoice.status !== 'issued') return null;
+  if (invoice.kind !== 'tax_invoice' && invoice.kind !== 'debit_note') return null;
+  if (!hasPermission(session.roles, 'ar.read')) return null;
+  const rows = await getCustomerStatement(session, invoice.customerId, {
+    currency: invoice.currency,
+  }).catch((): null => null);
+  return rows?.find((r) => r.invoiceId === invoice.id) ?? null;
+}
+
+function facts(
+  invoice: InvoiceDetail['invoice'],
+  customerName: string | undefined,
+  settlement: InvoiceSettlement | null,
+): Fact[] {
   const out: Fact[] = [
     {
       key: 'number',
@@ -68,6 +95,15 @@ function facts(invoice: InvoiceDetail['invoice'], customerName: string | undefin
           <span className={styles.quiet}>None</span>
         ),
     },
+    ...(settlement !== null
+      ? [
+          {
+            key: 'open',
+            label: 'Open amount',
+            value: money(settlement.openAmount, settlement.currency),
+          },
+        ]
+      : []),
     {
       key: 'customer',
       label: 'Customer',
@@ -194,9 +230,11 @@ export default async function InvoiceDetailPage({ params }: { params: Promise<{ 
   const kind = kindMeta(invoice.kind).label;
   // Only a debit note needs the tax codes, and only the people who may write one are shown the button.
   // A list that fails to load degrades the dialog (it says so); it never fails the page.
-  const taxCodes: TaxCode[] | null = gates.notes
-    ? await listTaxCodes(session).catch((): null => null)
-    : null;
+  const [taxCodes, settlement] = await Promise.all([
+    gates.notes ? listTaxCodes(session).catch((): null => null) : Promise.resolve(null),
+    settlementOf(session, invoice),
+  ]);
+  const payment = settlement === null ? null : settlementMeta(settlement.settlement);
 
   return (
     <Page>
@@ -209,6 +247,7 @@ export default async function InvoiceDetailPage({ params }: { params: Promise<{ 
           <>
             {invoice.number ? <InvoiceKindBadge kind={invoice.kind} /> : null}
             <InvoiceStatusBadge status={invoice.status} />
+            {payment !== null ? <Badge tone={payment.tone}>{payment.label}</Badge> : null}
           </>
         }
         description={customerName}
@@ -235,7 +274,7 @@ export default async function InvoiceDetailPage({ params }: { params: Promise<{ 
       <div className={styles.columns}>
         <div className={styles.detailMain}>
           <Panel title="Invoice details" description={`Last changed ${when(invoice.updatedAt)}`}>
-            <FactList facts={facts(invoice, customerName)} />
+            <FactList facts={facts(invoice, customerName, settlement)} />
           </Panel>
           <Lines detail={detail} />
         </div>
