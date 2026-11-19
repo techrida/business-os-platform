@@ -4,6 +4,7 @@ import { describe, expect, it } from 'vitest';
 import { IDS, scheduleLine } from './fixtures';
 import {
   evidenceKindLabel,
+  heldInvoiceLabel,
   lineAction,
   parseCustomerFilter,
   parseOrderStatusFilter,
@@ -53,7 +54,12 @@ describe('lineAction (what a schedule line offers)', () => {
   });
 
   it('links to the invoice of a drafted or invoiced line, whatever the order status', () => {
-    const drafted = { ...planned, status: 'drafted' as const, invoiceId: IDS.invoice };
+    const drafted = {
+      ...planned,
+      status: 'drafted' as const,
+      invoiceId: IDS.invoice,
+      can: { openInvoice: true },
+    };
     expect(lineAction('confirmed', drafted, can)).toBe('open_invoice');
     expect(lineAction('completed', { ...drafted, status: 'invoiced' }, can)).toBe('open_invoice');
   });
