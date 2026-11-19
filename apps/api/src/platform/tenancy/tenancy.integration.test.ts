@@ -182,6 +182,7 @@ describe('tenancy wiring (in-process)', () => {
       partyId: null,
       roles: ['founder'],
       correlationId: 'trace-abcdef12',
+      avatarDocumentId: null,
     });
   });
 

@@ -17,5 +17,7 @@ export const MeResponseSchema = z.object({
   partyId: z.guid().nullable(),
   roles: z.array(z.string()),
   correlationId: CorrelationIdSchema,
+  /** The caller's picture (`app.users.avatar_document_id`); null or absent shows initials. */
+  avatarDocumentId: z.guid().nullable().optional(),
 });
 export type MeResponse = z.infer<typeof MeResponseSchema>;
