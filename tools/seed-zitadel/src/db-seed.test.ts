@@ -10,6 +10,7 @@ import {
   TAX_INVOICE_WORKFLOW_SPEC,
   QUOTATION_VERSION_WORKFLOW_SPEC,
   TEST_MEMO_WORKFLOW_SPEC,
+  DEV_DEPARTMENTS,
   DEV_VENDOR_PARTY_CODE,
   type DevPersona,
   seedKernelRows,
@@ -541,12 +542,26 @@ describe('seedKernelRows: dev vendor and department (SEED-2)', () => {
       email: 'warehouse@dev.bos.test',
       displayName: 'Dev Warehouse',
     },
+    // U20a phase 2: the Sales and Marketing department people.
+    ...['sales', 'sales2', 'salesmgr', 'saleshead', 'marketing', 'marketingmgr', 'marketinghead'].map(
+      (key) => ({
+        personaKey: key,
+        zitadelUserId: `z-${key}`,
+        email: `${key}@dev.bos.test`,
+        displayName: `Dev ${key}`,
+      }),
+    ),
   ];
-  const userIds = {
+  const userIds: Record<string, string> = {
     'z-proc': 'u-proc',
     'z-mgmt': 'u-mgmt',
     'z-head': 'u-head',
     'z-warehouse': 'u-warehouse',
+    ...Object.fromEntries(
+      ['sales', 'sales2', 'salesmgr', 'saleshead', 'marketing', 'marketingmgr', 'marketinghead'].map(
+        (key) => [`z-${key}`, `u-${key}`],
+      ),
+    ),
   };
 
   /** The lookups the dev step reads back; every write is scripted by `writes`. */
@@ -561,7 +576,10 @@ describe('seedKernelRows: dev vendor and department (SEED-2)', () => {
         };
       }
       if (text.startsWith('SELECT id FROM app.parties')) return { rows: [{ id: 'party-vend' }] };
-      if (text.startsWith('SELECT id FROM app.departments')) return { rows: [{ id: 'dept-1' }] };
+      // Keyed by name, so a member filed into the wrong department shows up as the wrong id.
+      if (text.startsWith('SELECT id FROM app.departments')) {
+        return { rows: [{ id: `dept-${String(call.values[2])}` }] };
+      }
       return writes(call);
     };
   const writesTo = (calls: Call[], table: string) =>
@@ -581,7 +599,7 @@ describe('seedKernelRows: dev vendor and department (SEED-2)', () => {
     }
   });
 
-  it('upserts procurement, management, the department head and warehouse in the staff IdP org', async () => {
+  it('upserts procurement, management, the department head, warehouse and the Sales and Marketing people in the staff IdP org', async () => {
     const { client, calls } = fakeClient(withLookups(firstRun));
     await seedKernelRows(client, scope, personas);
     const users = writesTo(calls, 'users');
@@ -590,6 +608,9 @@ describe('seedKernelRows: dev vendor and department (SEED-2)', () => {
       ['tenant-1', 'idp-staff', 'z-mgmt', 'management@dev.bos.test', 'Dev Management'],
       ['tenant-1', 'idp-staff', 'z-head', 'depthead@dev.bos.test', 'Dev Department Head'],
       ['tenant-1', 'idp-staff', 'z-warehouse', 'warehouse@dev.bos.test', 'Dev Warehouse'],
+      ...['sales', 'sales2', 'salesmgr', 'saleshead', 'marketing', 'marketingmgr', 'marketinghead'].map(
+        (key) => ['tenant-1', 'idp-staff', `z-${key}`, `${key}@dev.bos.test`, `Dev ${key}`],
+      ),
     ]);
     for (const c of users) expect(c.text).toContain('ON CONFLICT (zitadel_user_id) DO NOTHING');
   });
@@ -603,6 +624,13 @@ describe('seedKernelRows: dev vendor and department (SEED-2)', () => {
       ['tenant-1', 'org-1', 'u-mgmt', ['management']],
       ['tenant-1', 'org-1', 'u-head', ['operations_officer']],
       ['tenant-1', 'org-1', 'u-warehouse', ['warehouse']],
+      ['tenant-1', 'org-1', 'u-sales', ['sales']],
+      ['tenant-1', 'org-1', 'u-sales2', ['sales']],
+      ['tenant-1', 'org-1', 'u-salesmgr', ['sales']],
+      ['tenant-1', 'org-1', 'u-saleshead', ['sales']],
+      ['tenant-1', 'org-1', 'u-marketing', ['marketing']],
+      ['tenant-1', 'org-1', 'u-marketingmgr', ['marketing']],
+      ['tenant-1', 'org-1', 'u-marketinghead', ['marketing']],
     ]);
     for (const c of memberships) {
       expect(c.text).toContain('WHERE NOT EXISTS');
@@ -610,18 +638,89 @@ describe('seedKernelRows: dev vendor and department (SEED-2)', () => {
     }
   });
 
-  it('creates the Operations department headed by the department head and files procurement in it', async () => {
+  it('creates Operations, Sales and Marketing, each headed by its head persona', async () => {
     const { client, calls } = fakeClient(withLookups(firstRun));
     await seedKernelRows(client, scope, personas);
-    const insert = calls.find((c) => c.text.includes('INTO app.departments'));
-    expect(insert?.values).toEqual(['tenant-1', 'org-1', 'Operations', 'u-head']);
-    expect(insert?.text).toContain('WHERE NOT EXISTS');
-    const head = calls.find((c) => c.text.startsWith('UPDATE app.departments'));
-    expect(head?.values).toEqual(['tenant-1', 'org-1', 'Operations', 'u-head']);
-    expect(head?.text).toContain('head_user_id IS DISTINCT FROM');
+    const inserts = calls.filter((c) => c.text.includes('INTO app.departments'));
+    expect(inserts.map((c) => c.values)).toEqual([
+      ['tenant-1', 'org-1', 'Operations', 'u-head'],
+      ['tenant-1', 'org-1', 'Sales', 'u-saleshead'],
+      ['tenant-1', 'org-1', 'Marketing', 'u-marketinghead'],
+    ]);
+    for (const c of inserts) expect(c.text).toContain('WHERE NOT EXISTS');
+    const heads = calls.filter((c) => c.text.startsWith('UPDATE app.departments'));
+    expect(heads.map((c) => c.values)).toEqual(inserts.map((c) => c.values));
+    for (const c of heads) expect(c.text).toContain('head_user_id IS DISTINCT FROM');
+  });
+
+  it('files each member in its own department at its level: depthead heads Operations, sales is Sales staff', async () => {
+    const { client, calls } = fakeClient(withLookups(firstRun));
+    await seedKernelRows(client, scope, personas);
     const filed = calls.filter((c) => c.text.startsWith('UPDATE app.user_entities'));
-    expect(filed.map((c) => c.values)).toEqual([['tenant-1', 'org-1', 'u-proc', 'dept-1']]);
-    expect(filed[0]?.text).toContain('department_id IS DISTINCT FROM');
+    expect(filed.map((c) => c.values)).toEqual([
+      ['tenant-1', 'org-1', 'u-proc', 'dept-Operations', 'staff'],
+      ['tenant-1', 'org-1', 'u-head', 'dept-Operations', 'head'],
+      ['tenant-1', 'org-1', 'u-sales', 'dept-Sales', 'staff'],
+      ['tenant-1', 'org-1', 'u-sales2', 'dept-Sales', 'staff'],
+      ['tenant-1', 'org-1', 'u-salesmgr', 'dept-Sales', 'manager'],
+      ['tenant-1', 'org-1', 'u-saleshead', 'dept-Sales', 'head'],
+      ['tenant-1', 'org-1', 'u-marketing', 'dept-Marketing', 'staff'],
+      ['tenant-1', 'org-1', 'u-marketingmgr', 'dept-Marketing', 'manager'],
+      ['tenant-1', 'org-1', 'u-marketinghead', 'dept-Marketing', 'head'],
+    ]);
+    for (const c of filed) {
+      expect(c.text).toContain('department_id IS DISTINCT FROM');
+      expect(c.text).toContain('level IS DISTINCT FROM');
+    }
+    // Every DEV_DEPARTMENTS head is also filed there at level head, so the 0079 triggers have nothing to fix up.
+    for (const d of DEV_DEPARTMENTS) {
+      expect(d.members).toContainEqual({ key: d.headKey, level: 'head' });
+    }
+  });
+
+  it('writes and locks each department before filing its members (D55-8 lock order)', async () => {
+    const { client, calls } = fakeClient(withLookups(firstRun));
+    await seedKernelRows(client, scope, personas);
+    for (const name of ['Operations', 'Sales', 'Marketing']) {
+      const own = (c: Call) => c.values[2] === name;
+      const insert = calls.findIndex((c) => c.text.includes('INTO app.departments') && own(c));
+      const head = calls.findIndex((c) => c.text.startsWith('UPDATE app.departments') && own(c));
+      const lock = calls.findIndex((c) => c.text.startsWith('SELECT id FROM app.departments') && own(c));
+      expect(calls[lock]?.text).toContain('FOR UPDATE');
+      const members = calls
+        .map((c, i) => ({ c, i }))
+        .filter(({ c }) => c.text.startsWith('UPDATE app.user_entities') && c.values[3] === `dept-${name}`)
+        .map(({ i }) => i);
+      expect(members.length, name).toBeGreaterThan(0);
+      expect(insert, name).toBeLessThan(head);
+      expect(head, name).toBeLessThan(lock);
+      expect(lock, name).toBeLessThan(Math.min(...members));
+    }
+  });
+
+  it('bumps authz_versions after filing people, so cached memberships drop; not when nothing moved', async () => {
+    // Grants unchanged (nothingChanged), people filed (every UPDATE app.user_entities changes a row).
+    const filedOnly: Script = (call) =>
+      call.text.startsWith('UPDATE app.user_entities') ? { rowCount: 1 } : nothingChanged(call);
+    const { client, calls } = fakeClient(withLookups(filedOnly));
+    await seedKernelRows(client, scope, personas);
+    const bumps = calls
+      .map((c, i) => ({ c, i }))
+      .filter(({ c }) => c.text.includes('INTO app.authz_versions'));
+    expect(bumps).toHaveLength(1);
+    const lastFiled = calls.findLastIndex((c) => c.text.startsWith('UPDATE app.user_entities'));
+    expect(bumps[0]?.i).toBeGreaterThan(lastFiled);
+    expect(bumps[0]?.c.values).toEqual(['tenant-1']);
+
+    const rerun = fakeClient(withLookups(nothingChanged));
+    expect(await seedKernelRows(rerun.client, scope, personas)).toBe(0);
+    expect(rerun.calls.some((c) => c.text.includes('INTO app.authz_versions'))).toBe(false);
+  });
+
+  it('never writes role_permission_levels: the engine derives default level grants until Settings saves', async () => {
+    const { client, calls } = fakeClient(withLookups(firstRun));
+    await seedKernelRows(client, scope, personas);
+    expect(calls.some((c) => c.text.includes('role_permission_levels'))).toBe(false);
   });
 
   it('seeds VEND-DEV as an approved NP company vendor made by procurement and approved by management', async () => {
@@ -679,6 +778,20 @@ describe('seedKernelRows: dev vendor and department (SEED-2)', () => {
       ),
     ).rejects.toThrow(/depthead/);
     expect(calls).toEqual([]);
+  });
+
+  it('requires the Sales and Marketing department people before BEGIN', async () => {
+    for (const key of ['sales', 'saleshead', 'marketingmgr']) {
+      const { client, calls } = fakeClient(withLookups(firstRun));
+      await expect(
+        seedKernelRows(
+          client,
+          scope,
+          personas.filter((p) => p.personaKey !== key),
+        ),
+      ).rejects.toThrow(new RegExp(`"${key}"`));
+      expect(calls).toEqual([]);
+    }
   });
 
   it('requires the warehouse persona before BEGIN so receipts have an entity member', async () => {
@@ -761,6 +874,18 @@ describe('seedKernelRows: stale role grants (R25)', () => {
     // Only the deleted row counts: this fake answers the authz bump with rowCount 0.
     expect(changed).toBe(1);
     expect(calls.at(-1)?.text).toBe('COMMIT');
+  });
+
+  it('only ever updates or deletes seeded rows, so a Founder-made grant (seeded = false) is left alone', async () => {
+    const { client, calls } = fakeClient(nothingChanged);
+    await seedKernelRows(client, scope);
+    const upserts = calls.filter((c) => c.text.includes('INTO app.role_permissions'));
+    for (const c of upserts) {
+      expect(c.text).toContain('VALUES ($1, $2, $3, $4, true)');
+      expect(c.text.split('DO UPDATE')[1]).toContain('AND role_permissions.seeded');
+    }
+    const del = calls.find((c) => c.text.startsWith('DELETE FROM app.role_permissions'));
+    expect(del?.text).toContain('AND seeded');
   });
 
   it('deletes nothing and bumps nothing on a second run', async () => {
@@ -986,6 +1111,15 @@ describe('PgTenancyStore (R5, ADR 0027 section 11)', () => {
   });
 
   it('hands the dev personas on to the kernel seed, so VEND-DEV and the department get written', async () => {
+    const departmentPeople = [
+      'sales',
+      'sales2',
+      'salesmgr',
+      'saleshead',
+      'marketing',
+      'marketingmgr',
+      'marketinghead',
+    ];
     const lookup = (call: Call): Reply | undefined => {
       if (call.text.startsWith('SELECT o.id, o.tenant_id FROM app.idp_orgs i JOIN'))
         return { rows: [{ id: 'org-uuid', tenant_id: 'tenant-uuid' }] };
@@ -997,10 +1131,13 @@ describe('PgTenancyStore (R5, ADR 0027 section 11)', () => {
             { id: 'u-2', zitadel_user_id: 'z-2' },
             { id: 'u-3', zitadel_user_id: 'z-3' },
             { id: 'u-4', zitadel_user_id: 'z-4' },
+            ...departmentPeople.map((key) => ({ id: `u-${key}`, zitadel_user_id: `z-${key}` })),
           ],
         };
       if (call.text.startsWith('SELECT id FROM app.parties')) return { rows: [{ id: 'party-1' }] };
-      if (call.text.startsWith('SELECT id FROM app.departments')) return { rows: [{ id: 'd-1' }] };
+      if (call.text.startsWith('SELECT id FROM app.departments')) {
+        return { rows: [{ id: `d-${String(call.values[2])}` }] };
+      }
       return undefined;
     };
     const person = (personaKey: string, zitadelUserId: string): DevPersona => ({
@@ -1015,6 +1152,7 @@ describe('PgTenancyStore (R5, ADR 0027 section 11)', () => {
       person('management', 'z-2'),
       person('depthead', 'z-3'),
       person('warehouse', 'z-4'),
+      ...departmentPeople.map((key) => person(key, `z-${key}`)),
     ]);
     const vendor = calls.find((c) => c.text.includes('INTO app.vendors'));
     expect(vendor?.values[0]).toBe('tenant-uuid');
