@@ -547,7 +547,7 @@ describe('SalesOrdersService.confirmFromQuotation', () => {
 describe('SalesOrdersService.list and detail', () => {
   it('lists the order with its customer name, filters by status and customer, and parses as the UI does', async () => {
     const detail = await confirm(await acceptedQuotation());
-    const all = (await service.list({})).map((i) => SalesOrderListItemSchema.parse(i));
+    const all = (await service.list({})).rows.map((i) => SalesOrderListItemSchema.parse(i));
     expect(all.find((i) => i.id === detail.order.id)).toEqual({
       id: detail.order.id,
       number: detail.order.number,
@@ -558,10 +558,10 @@ describe('SalesOrdersService.list and detail', () => {
       total: GOLDEN_TOTAL,
       confirmedAt: NOW.toISOString(),
     });
-    expect(await service.list({ status: 'cancelled' })).toEqual([]);
-    const byCustomer = await service.list({ customerId: f.customerPartyId });
-    expect(byCustomer.map((i) => i.id)).toContain(detail.order.id);
-    expect(await service.list({ customerId: randomUUID() })).toEqual([]);
+    expect((await service.list({ status: ['cancelled'] })).rows).toEqual([]);
+    const byCustomer = await service.list({ customerId: [f.customerPartyId] });
+    expect(byCustomer.rows.map((i) => i.id)).toContain(detail.order.id);
+    expect((await service.list({ customerId: [randomUUID()] })).rows).toEqual([]);
   });
 
   it('uses the source quotation owner for Sales reads and hides other, unassigned and cross-tenant orders', async () => {
@@ -584,14 +584,16 @@ describe('SalesOrdersService.list and detail', () => {
         .where(eq(quotations.id, unassignedQuote.id));
     });
 
-    const listed = (await service.list({})).map((item) => item.id);
+    const listed = (await service.list({})).rows.map((item) => item.id);
     expect(listed).toContain(own.order.id);
     expect(listed).not.toContain(other.order.id);
     expect(listed).not.toContain(unassigned.order.id);
-    expect(await service.list({ quotationVersionId: otherQuote.currentVersionId })).toEqual([]);
-    expect(await service.list({ quotationVersionId: ownQuote.currentVersionId })).toMatchObject([
-      { id: own.order.id },
-    ]);
+    expect((await service.list({ quotationVersionId: otherQuote.currentVersionId })).rows).toEqual(
+      [],
+    );
+    expect(
+      (await service.list({ quotationVersionId: ownQuote.currentVersionId })).rows,
+    ).toMatchObject([{ id: own.order.id }]);
     expect((await service.detail(own.order.id)).order.id).toBe(own.order.id);
     for (const { order } of [other, unassigned]) {
       expect(await statusOf(service.detail(order.id))).toEqual({ status: 404, code: 'not_found' });
@@ -603,7 +605,7 @@ describe('SalesOrdersService.list and detail', () => {
       status: 404,
       code: 'not_found',
     });
-    expect(await service.list({})).toEqual([]);
+    expect(await service.list({})).toEqual({ rows: [], total: 0 });
 
     current.scope = scopeA;
     current.grants = grantsOf('finance');
@@ -617,9 +619,138 @@ describe('SalesOrdersService.list and detail', () => {
       status: 404,
       code: 'not_found',
     });
-    expect(await service.list({})).toEqual([]);
+    expect(await service.list({})).toEqual({ rows: [], total: 0 });
     current.scope = scopeA;
     expect((await service.detail(detail.order.id)).order.id).toBe(detail.order.id);
+  });
+
+  it('pages in a stable order with the total of all matches, and no limit returns every match', async () => {
+    const made = [
+      await confirm(await acceptedQuotation()),
+      await confirm(await acceptedQuotation()),
+    ];
+    made.push(await confirm(await acceptedQuotation()));
+    const everything = await service.list({});
+    expect(everything.total).toBe(everything.rows.length);
+    expect(everything.total).toBeGreaterThanOrEqual(3);
+    const ids = everything.rows.map((r) => r.id);
+
+    const first = await service.list({ limit: 2, offset: 0 });
+    const second = await service.list({ limit: 2, offset: 2 });
+    expect(first.rows).toHaveLength(2);
+    expect(first.total).toBe(everything.total);
+    expect(second.total).toBe(everything.total);
+    expect([...first.rows, ...second.rows].map((r) => r.id)).toEqual(
+      ids.slice(0, 2 + second.rows.length),
+    );
+    // Past the last row there is nothing, and the total is still right.
+    const past = await service.list({ limit: 2, offset: everything.total + 10 });
+    expect(past).toEqual({ rows: [], total: everything.total });
+    for (const { order } of made) expect(ids).toContain(order.id);
+  });
+
+  it('filters by several statuses and several customers at once, and a filter matching nothing totals 0', async () => {
+    const detail = await confirm(await acceptedQuotation());
+    const byStatus = await service.list({ status: ['cancelled', 'confirmed'] });
+    expect(byStatus.rows.map((r) => r.id)).toContain(detail.order.id);
+    expect(byStatus.rows.every((r) => r.status === 'confirmed')).toBe(true);
+    const byCustomers = await service.list({ customerId: [randomUUID(), f.customerPartyId] });
+    expect(byCustomers.rows.map((r) => r.id)).toContain(detail.order.id);
+    const none = await service.list({ status: ['cancelled'], customerId: [f.customerPartyId] });
+    expect(none).toEqual({ rows: [], total: 0 });
+  });
+
+  it('searches the order number, the customer name and the quotation number', async () => {
+    const q = await acceptedQuotation();
+    const detail = await confirm(q);
+    const idsFor = async (text: string) => (await service.list({ q: text })).rows.map((r) => r.id);
+    expect(await idsFor(detail.order.number!)).toContain(detail.order.id);
+    expect(await idsFor('acme pvt')).toContain(detail.order.id);
+    // A number search can also bring close numbers; the exact hit is first.
+    expect((await idsFor(q.number))[0]).toBe(detail.order.id);
+    const paged = await service.list({ q: q.number, limit: 1 });
+    expect(paged.rows).toHaveLength(1);
+    expect(paged.total).toBe((await service.list({ q: q.number })).total);
+  });
+
+  it("finds a close match for a typo ('Acmee') inside the entity only", async () => {
+    const detail = await confirm(await acceptedQuotation());
+    const typo = await service.list({ q: 'Acmee' });
+    expect(typo.rows.map((r) => r.id)).toContain(detail.order.id);
+    expect(typo.total).toBe(typo.rows.length);
+    // The fuzzy step carries the same scope: entity B sees none of entity A's orders.
+    current.scope = scopeB;
+    expect(await service.list({ q: 'Acmee' })).toEqual({ rows: [], total: 0 });
+  });
+
+  it("never widens the Sales own-scope: a matching filter, search or page does not reveal another owner's order", async () => {
+    const mine = await acceptedQuotation();
+    const theirs = await acceptedQuotation();
+    const own = await confirm(mine);
+    const other = await confirm(theirs);
+    const otherOwner = await seedOtherStaffUser(db, f);
+    await withTx(db, scopeA, userActor(), (tx) =>
+      tx.update(quotations).set({ ownerUserId: otherOwner }).where(eq(quotations.id, theirs.id)),
+    );
+
+    const filters = [
+      { customerId: [f.customerPartyId] },
+      { status: ['confirmed' as const] },
+      { q: theirs.number },
+      { q: 'Acme' },
+      { q: 'Acmee' },
+    ];
+    for (const filter of filters) {
+      const { rows, total } = await service.list(filter);
+      expect(
+        rows.map((r) => r.id),
+        JSON.stringify(filter),
+      ).not.toContain(other.order.id);
+      expect(total, JSON.stringify(filter)).toBe(rows.length);
+    }
+    // Close numbers may show up in fuzzy mode, but never an order the owner may not read.
+    expect((await service.list({ q: mine.number })).rows[0]?.id).toBe(own.order.id);
+    const summary = await service.summary({ q: theirs.number });
+    const visible = await service.list({ q: theirs.number });
+    expect(summary.total).toBe(visible.total);
+
+    // Finance reads every order of the entity, so the same search finds it.
+    current.grants = grantsOf('finance');
+    expect((await service.list({ q: theirs.number })).rows[0]?.id).toBe(other.order.id);
+  });
+
+  it('summarises per status for the same visibility, ignoring status and honouring q and customer', async () => {
+    const q = await acceptedQuotation();
+    const detail = await confirm(q);
+    const all = await service.summary({});
+    const list = await service.list({});
+    expect(all.total).toBe(list.total);
+    expect(Object.keys(all.byStatus).sort()).toEqual([
+      'cancelled',
+      'completed',
+      'confirmed',
+      'draft',
+    ]);
+    expect(Object.values(all.byStatus).reduce((a, b) => a + b, 0)).toBe(all.total);
+    expect(all.byStatus.confirmed).toBe(list.rows.filter((r) => r.status === 'confirmed').length);
+
+    // The same q gives the same match set as the list, close matches included.
+    for (const text of [q.number, 'Acme', 'Acmee']) {
+      const counted = await service.summary({ q: text, customerId: [f.customerPartyId] });
+      const listed = await service.list({ q: text, customerId: [f.customerPartyId] });
+      expect(counted.total, text).toBe(listed.total);
+      expect(
+        Object.values(counted.byStatus).reduce((a, b) => a + b, 0),
+        text,
+      ).toBe(counted.total);
+    }
+    expect(await service.summary({ customerId: [randomUUID()] })).toEqual({
+      total: 0,
+      byStatus: { draft: 0, confirmed: 0, completed: 0, cancelled: 0 },
+    });
+    // Another entity counts none of A's orders.
+    current.scope = scopeB;
+    expect((await service.summary({ q: detail.order.number! })).total).toBe(0);
   });
 
   it('answers 404 to confirming a version of another entity', async () => {

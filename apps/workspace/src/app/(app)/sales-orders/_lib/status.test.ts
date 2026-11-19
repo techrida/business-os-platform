@@ -1,12 +1,13 @@
 import { SALES_ORDER_STATUSES, SCHEDULE_LINE_STATUSES, SCHEDULE_TRIGGERS } from '@bos/contracts';
 import { describe, expect, it } from 'vitest';
 
+import { readList } from '@/lib/list-params';
+
 import { IDS, scheduleLine } from './fixtures';
 import {
   evidenceKindLabel,
   lineAction,
-  parseCustomerFilter,
-  parseOrderStatusFilter,
+  SALES_ORDER_LIST_SPEC,
   salesOrderStatusMeta,
   SALES_ORDER_FILTER_OPTIONS,
   scheduleLineStatusMeta,
@@ -24,18 +25,31 @@ describe('status words', () => {
 });
 
 describe('filters read from the URL', () => {
-  it('accepts exactly one contract status and nothing else', () => {
-    expect(parseOrderStatusFilter('confirmed')).toBe('confirmed');
-    for (const bad of [undefined, '', 'Confirmed', 'toString', ['confirmed'], 'paid']) {
-      expect(parseOrderStatusFilter(bad as never)).toBeUndefined();
-    }
+  const read = (params: Record<string, string | string[]>) =>
+    readList(params, SALES_ORDER_LIST_SPEC);
+
+  it('keeps every repeated contract status once, and drops anything else', () => {
+    expect(read({ status: ['confirmed', 'draft', 'confirmed'] }).multi.status).toEqual([
+      'confirmed',
+      'draft',
+    ]);
+    expect(read({ status: 'confirmed' }).multi.status).toEqual(['confirmed']);
+    expect(
+      read({ status: ['', 'Confirmed', 'toString', 'paid', 'completed'] }).multi.status,
+    ).toEqual(['completed']);
+    expect(read({}).multi.status).toEqual([]);
   });
 
-  it('accepts only a customer id that looks like one', () => {
-    expect(parseCustomerFilter(IDS.customer)).toBe(IDS.customer);
-    for (const bad of [undefined, '', 'x', [IDS.customer], `${IDS.customer}/../x`]) {
-      expect(parseCustomerFilter(bad as never)).toBeUndefined();
-    }
+  it('keeps repeated customer ids that look like ids, and drops the rest', () => {
+    expect(
+      read({ customerId: [IDS.customer, 'x', `${IDS.customer}/../x`] }).multi.customerId,
+    ).toEqual([IDS.customer]);
+  });
+
+  it('reads rows from the allowed sizes, else the default', () => {
+    expect(read({ rows: '50' }).rows).toBe(50);
+    expect(read({ rows: '7' }).rows).toBe(25);
+    expect(read({}).rows).toBe(25);
   });
 });
 
