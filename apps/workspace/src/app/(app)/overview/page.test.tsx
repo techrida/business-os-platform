@@ -76,7 +76,7 @@ const quotation = {
   canEdit: true,
 } satisfies QuotationListItem;
 
-const activity = (createdByUserId: string | null) => ({
+const activity = (createdByUserId: string | null, createdByName: string | null = null) => ({
   id: '66666666-6666-4666-8666-666666666666',
   kind: 'call',
   subject: 'Pricing follow-up',
@@ -92,6 +92,7 @@ const activity = (createdByUserId: string | null) => ({
   cancelledAt: null,
   planned: false,
   createdByUserId,
+  createdByName,
   occurredAt: '2026-11-18T05:45:00.000Z',
   version: 1,
 });
@@ -121,11 +122,7 @@ beforeEach(() => {
     },
   ]);
   mocks.loadPeople.mockReset().mockResolvedValue({
-    owners: [],
-    names: new Map([
-      [ME, 'Amanda Vance'],
-      [OTHER, 'Mina Rai'],
-    ]),
+    owners: [{ userId: ME, displayName: 'Amanda Vance', email: 'amanda@x.test' }],
   });
   mocks.listCustomers.mockReset().mockResolvedValue({ items: [], total: 24 });
   mocks.getLeadSummary.mockReset().mockResolvedValue({
@@ -138,7 +135,9 @@ beforeEach(() => {
     byStatus: { submitted: 3 },
   });
   mocks.listQuotationsPage.mockReset().mockResolvedValue({ items: [quotation], total: 1 });
-  mocks.listActivitiesPage.mockReset().mockResolvedValue({ items: [activity(OTHER)], total: 1 });
+  mocks.listActivitiesPage
+    .mockReset()
+    .mockResolvedValue({ items: [activity(OTHER, 'Mina Rai')], total: 1 });
 });
 
 describe('overview page', () => {
@@ -159,9 +158,11 @@ describe('overview page', () => {
   });
 
   it('keeps Welcome back when the name cannot be resolved or is an email', async () => {
-    mocks.loadPeople.mockResolvedValue({ owners: [], names: new Map() });
+    mocks.loadPeople.mockResolvedValue({ owners: [] });
     expect(await render()).toContain('Welcome back');
-    mocks.loadPeople.mockResolvedValue({ owners: [], names: new Map([[ME, 'amanda@x.test']]) });
+    mocks.loadPeople.mockResolvedValue({
+      owners: [{ userId: ME, displayName: 'amanda@x.test', email: 'amanda@x.test' }],
+    });
     expect(await render()).toContain('Welcome back');
   });
 

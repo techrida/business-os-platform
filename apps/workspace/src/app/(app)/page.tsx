@@ -65,8 +65,10 @@ export default async function OverviewPage() {
   ]);
 
   const approvals = inbox.status === 'fulfilled' ? inbox.value : null;
-  const names = people.status === 'fulfilled' ? people.value.names : new Map<string, string>();
-  const myName = me.status === 'fulfilled' ? names.get(me.value.userId) : undefined;
+  const myName =
+    me.status === 'fulfilled' && people.status === 'fulfilled'
+      ? people.value.owners.find((o) => o.userId === me.value.userId)?.displayName
+      : undefined;
   const tiles = quickActions(permissionChecker(session.roles));
   const customerCount =
     customers.status === 'fulfilled' && customers.value.total !== null
@@ -243,8 +245,7 @@ export default async function OverviewPage() {
               <ul className={styles.activity}>
                 {activities.value.items.map((item) => {
                   const href = activityHref(item);
-                  const actor =
-                    item.createdByUserId !== null ? names.get(item.createdByUserId) : undefined;
+                  const actor = item.createdByName ?? undefined;
                   return (
                     <li key={item.id}>
                       <span className={styles.activityDot} aria-hidden="true" />

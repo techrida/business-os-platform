@@ -220,7 +220,7 @@ export default async function ActivitiesPage({
     }
   };
   // The owners list (Reschedule's choices) needs crm.lead.write; without it Reschedule keeps the
-  // current assignee. Names are not shown in this table, so only the owners half matters here.
+  // current assignee. Names on the rows come from the activities themselves (D46).
   const [planned, logged, people] = await Promise.all([
     loadPlanned(),
     loadLogged(),

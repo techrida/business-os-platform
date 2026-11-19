@@ -129,7 +129,11 @@ describe('GET /v1/me with a valid token', () => {
       partyId: null,
       roles: ['founder'],
       correlationId: 'e2e-correlation-0001',
+      permissions: expect.any(Array),
     });
+    // Founder holds every permission at scope all, read from the seeded role rows.
+    expect(me.permissions).toContainEqual({ permission: 'customer.write', scope: 'all' });
+    expect(me.permissions?.every((g) => g.scope === 'all')).toBe(true);
     expect(res.headers['x-request-id']).toBe('e2e-correlation-0001');
   });
 

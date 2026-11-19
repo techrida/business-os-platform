@@ -4,7 +4,6 @@ import Link from 'next/link';
 import type { NumberSystems } from '@bos/locale';
 
 import { Board } from '@/components/p2/crm/board';
-import { listLeadOwners } from '@/components/p2/crm/crm-api';
 import {
   getLeadSummary,
   type LeadSummary,
@@ -152,15 +151,6 @@ export default async function LeadsPage({ searchParams }: { searchParams: Promis
   const currentPage = pageInfo.page;
   const pageHref = (page: number) => hrefWith(PATH, sp, { page: page > 1 ? page : null });
 
-  // Owner names: the people the caller may assign to, plus the users directory for administrators.
-  // Either failing only blanks names; the list still renders.
-  const ownerNames = new Map(names);
-  try {
-    for (const o of await listLeadOwners(session))
-      ownerNames.set(o.userId, o.displayName || o.email);
-  } catch {
-    // Names stay as the directory gave them.
-  }
   const now = new Date();
   const pageLinks = Array.from({ length: pageCount }, (_, index) => index + 1)
     .filter((page) => Math.abs(page - currentPage) <= 2)
@@ -291,10 +281,7 @@ export default async function LeadsPage({ searchParams }: { searchParams: Promis
                         <Badge tone="neutral">{sentence(lead.source)}</Badge>
                       </Td>
                       <Td>
-                        <OwnerCell
-                          owned={lead.ownerUserId !== null}
-                          name={lead.ownerUserId ? ownerNames.get(lead.ownerUserId) : undefined}
-                        />
+                        <OwnerCell name={lead.ownerName} />
                       </Td>
                       <Td nowrap className={styles.followUpColumn}>
                         <StageBadge kind="lead" stage={lead.stage} />
