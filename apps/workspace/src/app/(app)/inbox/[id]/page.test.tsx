@@ -246,6 +246,25 @@ describe('inbox detail page', () => {
     );
   });
 
+  it('names the requester when the submit was done by the system', async () => {
+    const system = {
+      ...request,
+      actions: [{ ...request.actions[0], actorUserId: 'system' }],
+      people: [{ userId: REQUESTER, name: 'Dev Finance Two' }],
+    };
+    fetchMock.mockImplementation((input) => {
+      const path = new URL(input as URL | string).pathname;
+      if (path === `/v1/approvals/requests/${RID}`) return Promise.resolve(json(200, system));
+      if (path === '/v1/approvals/inbox') return Promise.resolve(json(200, []));
+      return Promise.resolve(json(403, { error: { code: 'forbidden', message: 'Forbidden' } }));
+    });
+    const html = renderToStaticMarkup(
+      await InboxDetailPage({ params: Promise.resolve({ id: RID }) }),
+    );
+    expect(html).toMatch(/Submitted <time[^>]*>[^<]*<\/time> by <span>Dev Finance Two<\/span>/);
+    expect(html).not.toMatch(/by <span>Person name unavailable<\/span>/);
+  });
+
   it('does not add "for" when the requester submitted it themselves', async () => {
     const own = {
       ...request,
