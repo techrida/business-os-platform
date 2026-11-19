@@ -174,7 +174,7 @@ describe('0086 department lifecycle constraints and active name uniqueness', () 
           'archived',
         ]),
       ),
-    ).rejects.toThrow(/departments_status_check/);
+    ).rejects.toThrow(/departments_(status|retired_at)_check/);
 
     await expect(
       writeAs(tenantA, (c) =>

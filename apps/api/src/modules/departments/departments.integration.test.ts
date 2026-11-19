@@ -494,10 +494,11 @@ describe('Department lifecycle: create, duplicate name, list, search, rename, re
     );
     expect(exactSearch.items.map((d) => d.name)).toContain('Sales');
 
-    const fuzzySearch = AdminDepartmentListSchema.parse(
+    // A misspelling matches nothing: the screen shows "No department matches" with a way to clear the search.
+    const misspelt = AdminDepartmentListSchema.parse(
       (await request(baseUrl).get('/v1/admin/departments?q=Slaes')).body,
     );
-    expect(fuzzySearch.items.map((d) => d.name)).toContain('Sales');
+    expect(misspelt.items).toEqual([]);
 
     const unassignedRes = await request(baseUrl).get('/v1/admin/departments/unassigned');
     expect(unassignedRes.status).toBe(200);
