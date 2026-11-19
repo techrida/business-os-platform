@@ -4,6 +4,8 @@ import {
   ContactDtoSchema,
   CustomerDtoSchema,
   PartyAccountDtoSchema,
+  type PersonName,
+  PersonNameSchema,
   VerificationCaseDtoSchema,
   type ContactDto,
   type CreateContactBody,
@@ -116,8 +118,13 @@ export function getCustomer(session: Session, id: string): Promise<CustomerDto> 
  */
 const CustomerDetailSchema = CustomerDtoSchema.extend({
   accounts: z.array(PartyAccountDtoSchema).optional(),
+  /** The account owner by name, sent with the record (staff only); older APIs leave it out. */
+  people: z.array(PersonNameSchema).optional(),
 });
-export type CustomerDetail = CustomerDto & { accounts?: PartyAccountDto[] | undefined };
+export type CustomerDetail = CustomerDto & {
+  accounts?: PartyAccountDto[] | undefined;
+  people?: PersonName[] | undefined;
+};
 
 /** `GET /v1/customers/:id` with the optional `accounts` kept. */
 export function getCustomerDetail(session: Session, id: string): Promise<CustomerDetail> {

@@ -17,6 +17,7 @@ import {
   type ApprovalActionBody,
   type ApprovalRequestDto,
   type InboxItemDto,
+  type ReferenceName,
   type RoleKey,
   type RoutePlan,
   type StepSpec,
@@ -102,6 +103,12 @@ export interface ApprovalSubject {
    * links to its quotation). Undefined also falls back to the inbox.
    */
   link?(tx: DbTransaction, documentId: string): string | undefined | Promise<string | undefined>;
+  /**
+   * Optional: names for the records the frozen snapshot refers to by id (a vendor, an order), read in the request's
+   * tenant and entity when a reader who may already see this request opens it. The snapshot itself is never
+   * changed; an id the subject cannot name is left out, and the page says the name is unavailable.
+   */
+  referenceNames?(q: Db, scope: TxScope, snapshot: unknown): Promise<ReferenceName[]>;
 }
 
 export interface SubmitInput {
@@ -1000,9 +1007,13 @@ export class ApprovalsService {
           )
       : [];
     const groupNames = new Map(groups.map((group) => [group.id, group.name]));
+    const references = await this.subjects
+      .get(dto.documentType)
+      ?.referenceNames?.(this.db, scope, dto.snapshot);
     return {
       ...dto,
       people,
+      ...(references !== undefined ? { references } : {}),
       steps: dto.steps.map((step) => ({
         ...step,
         groupName: step.groupId ? (groupNames.get(step.groupId) ?? null) : null,

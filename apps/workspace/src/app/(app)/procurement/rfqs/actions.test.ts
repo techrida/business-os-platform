@@ -57,7 +57,7 @@ const start = { key: KEY, errors: {} };
 const rfqEntries: [string, string][] = [
   ['idempotencyKey', KEY],
   ['purchaseRequestId', PR],
-  ['deadline', '2026-12-01T17:30'],
+  ['deadline', '2030-12-01T17:30'],
   ['vendorIds', V1],
   ['vendorIds', V2],
 ];
@@ -88,7 +88,7 @@ describe('createRfqAction', () => {
     );
     expect(api.createRfq).toHaveBeenCalledWith(
       expect.anything(),
-      { purchaseRequestId: PR, deadline: '2026-12-01T17:30:00+05:45', vendorIds: [V1, V2] },
+      { purchaseRequestId: PR, deadline: '2030-12-01T17:30:00+05:45', vendorIds: [V1, V2] },
       KEY,
     );
   });
@@ -106,6 +106,37 @@ describe('createRfqAction', () => {
     expect(api.createRfq).not.toHaveBeenCalled();
     expect(r.errors.vendorIds).toBeDefined();
     expect(r.key).toBe(KEY);
+  });
+
+  it('refuses a past deadline next to the field without calling the API (I-28)', async () => {
+    const entries = rfqEntries.map(([k, v]): [string, string] =>
+      k === 'deadline' ? [k, '2020-01-01T17:00'] : [k, v],
+    );
+    const r = await createRfqAction(start, form(entries));
+    expect(api.createRfq).not.toHaveBeenCalled();
+    expect(r.errors.deadline).toBe(
+      'The quotation deadline has passed. Choose a date and time in the future.',
+    );
+    expect(r.key).toBe(KEY);
+  });
+
+  it("puts the API's 400 deadline_in_past next to the deadline field (I-28)", async () => {
+    api.createRfq.mockRejectedValue(
+      new ApiError(400, 'x', {
+        error: {
+          code: 'bad_request',
+          reason: 'deadline_in_past',
+          message: 'The quotation deadline has passed. Choose a date and time in the future.',
+          correlationId: 'corr-12345678',
+        },
+      }),
+    );
+    const r = await createRfqAction(start, form(rfqEntries));
+    expect(r.errors.deadline).toBe(
+      'The quotation deadline has passed. Choose a date and time in the future.',
+    );
+    expect(r.error).toBeUndefined();
+    expect(r.key).not.toBe(KEY);
   });
 
   it('refuses a person without the sourcing grant before any call', async () => {

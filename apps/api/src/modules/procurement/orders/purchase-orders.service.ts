@@ -105,6 +105,11 @@ export interface PurchaseOrderDto {
   closedReason: string | null;
   version: number;
   lines: PurchaseOrderLineDto[];
+  /**
+   * Detail of a draft with no lines yet: the lines issue will copy from the approved quotation (ids are the
+   * quotation's line ids). Read-only; absent otherwise.
+   */
+  proposedLines?: PurchaseOrderLineDto[];
 }
 
 /** A row of the list: the detail without its lines, and always with the vendor's name. */
@@ -175,6 +180,54 @@ const toDto = (po: PoRow, lines: readonly PoLineRow[]): PurchaseOrderDto => ({
 const vendorOf = (po: typeof purchaseOrders) =>
   and(eq(vendors.tenantId, po.tenantId), eq(vendors.id, po.vendorId));
 
+/**
+ * The lines a draft PO from the commitment route gets at issue: one per line of its recommended quotation, with the
+ * request line's description, unit and serial rule. Read-only; issue() writes them, and the detail of a draft that
+ * has none yet shows them as the lines it will be issued with.
+ */
+async function quotationLinesOf(q: Db | DbTransaction, scope: TxScope, po: PoRow) {
+  if (po.vendorQuotationId === null) return [];
+  const [pr] = await q
+    .select({ requestType: purchaseRequests.requestType })
+    .from(purchaseRequests)
+    .where(scoped(scope).where(purchaseRequests, eq(purchaseRequests.id, po.purchaseRequestId)));
+  const rows = await q
+    .select({ q: vendorQuotationLines, pr: purchaseRequestLines })
+    .from(vendorQuotationLines)
+    .innerJoin(
+      purchaseRequestLines,
+      and(
+        eq(purchaseRequestLines.tenantId, vendorQuotationLines.tenantId),
+        eq(purchaseRequestLines.organizationId, vendorQuotationLines.organizationId),
+        eq(purchaseRequestLines.id, vendorQuotationLines.prLineId),
+      ),
+    )
+    .where(
+      scoped(scope).where(
+        vendorQuotationLines,
+        eq(vendorQuotationLines.vendorQuotationId, po.vendorQuotationId),
+      ),
+    )
+    .orderBy(asc(purchaseRequestLines.lineNo));
+  // A request line has no kind of its own: a service request gives service lines, any other gives goods.
+  const kind: 'goods' | 'service' = pr?.requestType === 'service' ? 'service' : 'goods';
+  return rows.map((r, i) => ({
+    quotationLineId: r.q.id,
+    lineNo: i + 1,
+    prLineId: r.pr.id,
+    kind,
+    requiresSerials: kind === 'goods' && r.pr.requiresSerials,
+    description: r.pr.description,
+    uom: r.pr.uom,
+    orderedQuantity: r.q.quantity,
+    unitPrice: r.q.unitPrice,
+    taxCodeId: r.q.taxCodeId,
+    gross: r.q.gross,
+    taxAmount: r.q.taxAmount,
+    lineTotal: r.q.lineTotal,
+  }));
+}
+
 @Injectable()
 export class PurchaseOrdersService {
   constructor(
@@ -222,9 +275,23 @@ export class PurchaseOrdersService {
         .innerJoin(vendors, vendorOf(purchaseOrders))
         .where(scoped(scope).where(purchaseOrders, eq(purchaseOrders.id, id)));
       if (row === undefined) throw notFound();
+      const lines = await linesOf(tx, scope, id, false);
+      // A draft from the commitment route has no lines until issue copies them from the approved quotation:
+      // show those as the lines it will be issued with, from the same source issue() reads.
+      const proposed =
+        row.po.status === 'draft' && lines.length === 0
+          ? (await quotationLinesOf(tx, scope, row.po)).map(
+              ({ quotationLineId, ...l }): PurchaseOrderLineDto => ({
+                ...l,
+                id: quotationLineId,
+                cancelledQuantity: '0.0000',
+              }),
+            )
+          : undefined;
       return {
-        ...toDto(row.po, await linesOf(tx, scope, id, false)),
+        ...toDto(row.po, lines),
         vendorName: row.vendorName,
+        ...(proposed !== undefined ? { proposedLines: proposed } : {}),
       };
     });
   }
@@ -628,51 +695,16 @@ export class PurchaseOrdersService {
     po: PoRow,
     now: Date,
   ): Promise<PoLineRow[]> {
-    if (po.vendorQuotationId === null) return [];
-    const [pr] = await tx
-      .select({ requestType: purchaseRequests.requestType })
-      .from(purchaseRequests)
-      .where(scoped(scope).where(purchaseRequests, eq(purchaseRequests.id, po.purchaseRequestId)));
-    const rows = await tx
-      .select({ q: vendorQuotationLines, pr: purchaseRequestLines })
-      .from(vendorQuotationLines)
-      .innerJoin(
-        purchaseRequestLines,
-        and(
-          eq(purchaseRequestLines.tenantId, vendorQuotationLines.tenantId),
-          eq(purchaseRequestLines.organizationId, vendorQuotationLines.organizationId),
-          eq(purchaseRequestLines.id, vendorQuotationLines.prLineId),
-        ),
-      )
-      .where(
-        scoped(scope).where(
-          vendorQuotationLines,
-          eq(vendorQuotationLines.vendorQuotationId, po.vendorQuotationId),
-        ),
-      )
-      .orderBy(asc(purchaseRequestLines.lineNo));
-    if (rows.length === 0) return [];
-    // A request line has no kind of its own: a service request gives service lines, any other gives goods.
-    const kind: 'goods' | 'service' = pr?.requestType === 'service' ? 'service' : 'goods';
+    const lines = await quotationLinesOf(tx, scope, po);
+    if (lines.length === 0) return [];
     return tx
       .insert(purchaseOrderLines)
       .values(
-        rows.map((r, i) => ({
+        lines.map(({ quotationLineId: _q, ...l }) => ({
           ...scope,
+          ...l,
           purchaseOrderId: po.id,
           purchaseRequestId: po.purchaseRequestId,
-          lineNo: i + 1,
-          prLineId: r.pr.id,
-          kind,
-          requiresSerials: kind === 'goods' && r.pr.requiresSerials,
-          description: r.pr.description,
-          uom: r.pr.uom,
-          orderedQuantity: r.q.quantity,
-          unitPrice: r.q.unitPrice,
-          taxCodeId: r.q.taxCodeId,
-          gross: r.q.gross,
-          taxAmount: r.q.taxAmount,
-          lineTotal: r.q.lineTotal,
           createdAt: now,
           updatedAt: now,
         })),

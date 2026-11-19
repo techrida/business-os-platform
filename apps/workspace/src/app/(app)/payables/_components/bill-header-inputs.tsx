@@ -17,6 +17,8 @@ export interface BillEntryHeader {
   vendorPartyId?: string;
   vendorName?: string;
   purchaseOrderId?: string;
+  /** Today as YYYY-MM-DD in the tenant's calendar: the invoice date starts here and stays editable. */
+  today?: string;
 }
 
 /** Header and invoice upload for an entry that did not come from a portal submission. */
@@ -33,7 +35,7 @@ export function BillHeaderInputs({
 }) {
   const [vendorId, setVendorId] = useState(entry.vendorPartyId ?? '');
   const [invoiceNo, setInvoiceNo] = useState('');
-  const [invoiceDate, setInvoiceDate] = useState('');
+  const [invoiceDate, setInvoiceDate] = useState(entry.today ?? '');
   const [documentId, setDocumentId] = useState('');
   const [file, setFile] = useState<File | null>(null);
   const [uploading, setUploading] = useState(false);
