@@ -952,6 +952,25 @@ describe('department and cost-centre names on a request (I-27)', () => {
     expect(approval.references).toHaveLength(2);
   });
 
+  it('shows the department head the request as it stands, with no link to a page it cannot open (U18 #2)', async () => {
+    const { id, request } = await submitted();
+    const expected = await namesOf(dept.headed, centers.active);
+    // The head reads only their own requests, and this one is the requester's: the request page would 404.
+    as(U.head, 'operations_officer');
+    const approval = await approvals.get(request.id);
+    expect(approval.context).toMatchObject({ href: null, documents: [] });
+    expect(approval.context!.fields).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ key: 'department', value: expected.departmentName }),
+        expect.objectContaining({ key: 'costCenter', value: expected.costCenterName }),
+        expect.objectContaining({ key: 'status', value: 'submitted' }),
+      ]),
+    );
+    // The requester reads their own request, so the same approval links it for them.
+    as(U.req, 'operations_officer');
+    expect((await approvals.get(request.id)).context?.href).toBe(`/procurement/requests/${id}`);
+  });
+
   it("names another requester's department and cost centre for Procurement, in the detail and the list", async () => {
     const mine = await draft();
     const expected = await namesOf(dept.headed, centers.active);
