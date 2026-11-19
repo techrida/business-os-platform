@@ -9,7 +9,9 @@
 // Converted is never set here: it belongs to the convert action (a later unit).
 import {
   type CreateLeadBody,
+  LEAD_STAGES,
   type LeadDto,
+  type LeadStage,
   type LeadStageChangeBody,
   type Permission,
 } from '@bos/contracts';
@@ -22,7 +24,7 @@ import {
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
-import { and, desc, eq, ilike, or, type SQL } from 'drizzle-orm';
+import { and, count, desc, eq, inArray, type SQL } from 'drizzle-orm';
 
 import { AuditService } from '../../platform/audit/audit.service';
 import { AuthzService, scopeWhereFor } from '../../platform/authz/authz.service';
@@ -30,9 +32,16 @@ import { type ResourceRef } from '../../platform/authz/can';
 import { DB, type Db } from '../../platform/db/db.module';
 import { updateVersioned, withIdempotency } from '../../platform/db/idempotency';
 import { withTx, type DbTransaction, type TxScope } from '../../platform/db/tx';
+import { searchPage } from '../../platform/list';
 import { NumberingService } from '../../platform/settings/numbering.service';
 import { LeadsCaller } from './leads.caller';
-import { type LeadRow, type ListLeadsQuery, toLeadDto } from './leads.types';
+import {
+  type LeadRow,
+  type LeadSummary,
+  type LeadSummaryQuery,
+  type ListLeadsQuery,
+  toLeadDto,
+} from './leads.types';
 import { planLeadStageChange, type LeadStageCaller, type LeadStageRefusal } from './lead-stage';
 
 const AUDIT_ENTITY = 'leads';
@@ -53,8 +62,16 @@ export function leadRef(
   };
 }
 
-/** `%` and `_` are wildcards in LIKE; a search for "50%" must match the text, not everything. */
-const escapeLike = (s: string): string => s.replace(/[\\%_]/g, (c) => `\\${c}`);
+/** Searchable text of a lead: what the table shows plus what a salesperson types from an inbound email or call. */
+const SEARCH_COLUMNS = [
+  leads.title,
+  leads.number,
+  leads.companyName,
+  leads.contactName,
+  leads.emailNorm,
+  leads.phoneE164,
+  leads.campaign,
+];
 
 function refusalToException(kind: LeadStageRefusal, message: string): Error {
   switch (kind) {
@@ -81,28 +98,54 @@ export class LeadsService {
 
   // -------------------------------------------------------------------------------------------------- read
 
-  async list(q: ListLeadsQuery): Promise<LeadDto[]> {
-    const { scope, principal } = this.caller.current();
-    const filters: SQL[] = [scopeWhereFor(principal, leads, 'crm.lead.read')];
-    if (q.stage !== undefined) filters.push(eq(leads.stage, q.stage));
-    if (q.q !== undefined) {
-      const pattern = `%${escapeLike(q.q)}%`;
-      filters.push(
-        or(
-          ilike(leads.title, pattern),
-          ilike(leads.number, pattern),
-          ilike(leads.companyName, pattern),
-          ilike(leads.contactName, pattern),
-        )!,
-      );
-    }
-    const rows = await this.db
-      .select()
-      .from(leads)
-      .where(scoped(scope).where(leads, and(...filters)))
-      .orderBy(desc(leads.createdAt), desc(leads.id))
-      .limit(q.limit);
-    return rows.map(toLeadDto);
+  async list(q: ListLeadsQuery): Promise<{ rows: LeadDto[]; total: number }> {
+    const { scope } = this.caller.current();
+    const where = this.listWhere(q, q.stage);
+    const { rows, total } = await searchPage(this.db, {
+      q: q.q,
+      columns: SEARCH_COLUMNS,
+      where: scoped(scope).where(leads, where),
+      orderBy: [desc(leads.createdAt), desc(leads.id)],
+      limit: q.limit,
+      offset: q.offset,
+      rows: (tx, p) =>
+        tx
+          .select()
+          .from(leads)
+          .where(p.where)
+          .orderBy(...p.orderBy)
+          .limit(p.limit)
+          .offset(p.offset),
+      count: (tx, w) => tx.$count(leads, w),
+    });
+    return { rows: rows.map(toLeadDto), total };
+  }
+
+  /**
+   * Leads per stage under the list's scope, search and filters except `stage`. Its search decision ignores the stage
+   * too, so in fuzzy mode (few exact hits) a card can differ from the list's total for the same stage filter.
+   */
+  async summary(q: LeadSummaryQuery): Promise<LeadSummary> {
+    const { scope } = this.caller.current();
+    const { rows, total } = await searchPage(this.db, {
+      q: q.q,
+      columns: SEARCH_COLUMNS,
+      where: scoped(scope).where(leads, this.listWhere(q, undefined)),
+      orderBy: [desc(leads.id)],
+      // One grouped row per stage; the page window does not apply.
+      limit: 1,
+      offset: 0,
+      rows: (tx, p) =>
+        tx
+          .select({ stage: leads.stage, n: count() })
+          .from(leads)
+          .where(p.where)
+          .groupBy(leads.stage),
+      count: (tx, w) => tx.$count(leads, w),
+    });
+    const byStage = Object.fromEntries(LEAD_STAGES.map((s) => [s, 0])) as LeadSummary['byStage'];
+    for (const r of rows) byStage[r.stage] = r.n;
+    return { total, byStage };
   }
 
   async get(id: string): Promise<LeadDto> {
@@ -226,6 +269,23 @@ export class LeadsService {
   }
 
   // ----------------------------------------------------------------------------------------------- helpers
+
+  /** Scope first, then the filters, which only narrow it (never widen); search is added by searchPage. */
+  private listWhere(
+    q: Pick<LeadSummaryQuery, 'source' | 'ownerUserId'>,
+    stage: LeadStage[] | undefined,
+  ): SQL | undefined {
+    const { principal } = this.caller.current();
+    const filters: SQL[] = [scopeWhereFor(principal, leads, 'crm.lead.read')];
+    if (stage !== undefined && stage.length > 0) filters.push(inArray(leads.stage, stage));
+    if (q.source !== undefined && q.source.length > 0) {
+      filters.push(inArray(leads.source, q.source));
+    }
+    if (q.ownerUserId !== undefined && q.ownerUserId.length > 0) {
+      filters.push(inArray(leads.ownerUserId, q.ownerUserId));
+    }
+    return and(...filters);
+  }
 
   /**
    * Record-level authz that answers 404, not 403, for a lead outside the caller's scope: a 403 would confirm that a
