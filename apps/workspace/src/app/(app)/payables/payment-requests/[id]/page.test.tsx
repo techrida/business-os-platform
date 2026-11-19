@@ -8,6 +8,14 @@ import PaymentRequestPage from './page';
 vi.mock('server-only', () => ({}));
 vi.mock('@/lib/bff', () => ({ requireStaffSession: vi.fn().mockResolvedValue({ roles: [] }) }));
 vi.mock('@/components/p2/customers/permissions', () => ({ hasPermission: () => true }));
+// The caller's live grants (GET /v1/me); a test replaces them for an edited role.
+const grants = vi.hoisted(() => ({
+  live: new Map<string, string>([['payables.payment.request', 'all']]),
+}));
+vi.mock('@/lib/grants', () => ({
+  getGrants: () => Promise.resolve(grants.live),
+  hasGrant: (g: Map<string, string>, p: string) => g.has(p),
+}));
 vi.mock('../forms', () => ({ PaymentRequestCommand: () => null }));
 vi.mock('@/lib/api-payables', () => ({
   listPaymentRequestItems: vi.fn().mockResolvedValue([]),

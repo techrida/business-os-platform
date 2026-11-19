@@ -20,13 +20,14 @@ import { listBillableOrders, ORDER_PICKER_LIMIT } from '@/lib/api-payables-order
 import { getPoProgress, type PoProgress } from '@/lib/api-purchase-orders';
 import { listVendors } from '@/lib/api-vendors';
 import { requireStaffSession } from '@/lib/bff';
+import { getGrants, hasGrant } from '@/lib/grants';
 import { when } from '@/lib/kernel-format';
 
 import { PO_STATUS_LABEL, qtyText } from '../../../procurement/orders/_lib/model';
 import { BillEntryForm, type OrderLine } from '../../_components/bill-entry-form';
 import { amountText, duplicateText } from '../../_lib/duplicates';
 import { billFailure } from '../../_lib/failure';
-import { billGrants, fileStatusLabel } from '../../_lib/model';
+import { fileStatusLabel } from '../../_lib/model';
 import styles from '../../payables.module.css';
 
 export const metadata: Metadata = { title: 'New bill · Business OS' };
@@ -72,7 +73,8 @@ export default async function NewBillPage({
   const here = `/payables/bills/new${query.size > 0 ? `?${query}` : ''}`;
   const session = await requireStaffSession(here);
 
-  if (!billGrants(session.roles).enter) {
+  // The caller's live grants, as the "Enter bill" links that lead here are decided (not the role defaults).
+  if (!hasGrant(await getGrants(session), 'payables.bill.enter')) {
     return (
       <Shell>
         <Alert tone="info" role="status" title="You cannot key in bills">
