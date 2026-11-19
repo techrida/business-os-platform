@@ -238,9 +238,12 @@ export function putSetting(
   session: Session,
   key: SettingKey,
   value: unknown,
+  /** The version the screen loaded (`null` when it loaded the default). A newer saved version makes the API answer 409. */
+  expectedVersion?: number | null,
 ): Promise<{ version: number }> {
   return requestParsed(session, 'PUT', `/v1/admin/settings/${seg(key)}`, VersionNumberSchema, {
     value,
+    ...(expectedVersion === undefined ? {} : { expectedVersion }),
   });
 }
 
