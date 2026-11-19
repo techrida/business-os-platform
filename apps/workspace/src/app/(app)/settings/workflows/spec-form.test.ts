@@ -223,6 +223,30 @@ describe('specToForm and formToSpec', () => {
   });
 });
 
+describe('emptySpecForm', () => {
+  it('starts from the built-in default times when none are given', () => {
+    const form = emptySpecForm('test_memo');
+    expect([form.remindAfterHours, form.escalateAfterHours, form.escalateRole]).toEqual([
+      '24',
+      '72',
+      'founder',
+    ]);
+  });
+
+  it('starts from the saved default times it is given', () => {
+    const form = emptySpecForm('test_memo', {
+      remindAfterHours: 8,
+      escalateAfterHours: 36,
+      escalateTo: { role: 'management' },
+    });
+    expect([form.remindAfterHours, form.escalateAfterHours, form.escalateRole]).toEqual([
+      '8',
+      '36',
+      'management',
+    ]);
+  });
+});
+
 describe('formToSpec validation', () => {
   it('reports readable issues for an empty reason and a bad SLA', () => {
     const form = emptySpecForm('test_memo');

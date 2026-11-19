@@ -22,7 +22,7 @@ export const metadata: Metadata = { title: 'Currencies and exchange rates · Bus
 export default async function CurrenciesPage() {
   const session = await requireSection('currencies');
   const [fields, rates] = await Promise.all([
-    loadFields(session, ['currency.enabled', 'fx.max_rate_age_days']),
+    loadFields(session, ['fx.max_rate_age_days']),
     section('view exchange rates', () => listFxRates(session, { limit: 50 })),
   ]);
 
@@ -31,7 +31,7 @@ export default async function CurrenciesPage() {
       <BackToSettings />
       <PageHeader
         title="Currencies and exchange rates"
-        description="Which currencies documents may use, and how much NPR each is worth. Every change is recorded in the audit trail."
+        description="How much NPR each foreign currency is worth, and how old a rate may be. Every change is recorded in the audit trail."
       />
       <div className={styles.column}>
         {fields.ok ? (

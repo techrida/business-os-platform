@@ -8,8 +8,6 @@ import { listTaxCodes } from '@/lib/api-tax-codes';
 import { listWithholdingCodes } from '@/lib/api-withholding-codes';
 
 import { BackToSettings } from '../_components/back-link';
-import { cardKey, loadFields } from '../_components/load-fields';
-import { SettingCard } from '../_components/setting-card';
 import styles from '../_components/settings.module.css';
 import admin from '../admin.module.css';
 import { requireSection } from '../guard';
@@ -22,8 +20,7 @@ const percent = (basisPoints: number): string => `${(basisPoints / 100).toFixed(
 
 export default async function TaxPage() {
   const session = await requireSection('tax');
-  const [fields, vat, withholding] = await Promise.all([
-    loadFields(session, ['tax.vat_rate']),
+  const [vat, withholding] = await Promise.all([
     section('view VAT codes', () => listTaxCodes(session)),
     section('view withholding codes', () => listWithholdingCodes(session)),
   ]);
@@ -31,24 +28,8 @@ export default async function TaxPage() {
   return (
     <Page className={admin.page}>
       <BackToSettings />
-      <PageHeader
-        title="Tax"
-        description="VAT and withholding codes documents can use, and the default VAT rate."
-      />
+      <PageHeader title="Tax" description="VAT and withholding codes documents can use." />
       <div className={styles.column}>
-        {fields.ok ? (
-          <div className={styles.narrow}>
-            <SettingCard
-              key={cardKey(fields.data)}
-              section="tax"
-              title="Default VAT rate"
-              fields={fields.data}
-            />
-          </div>
-        ) : (
-          <SectionError message={fields.message} />
-        )}
-
         <Panel title="VAT codes" description="Read-only. Codes are set up with the system.">
           {!vat.ok ? (
             <SectionError message={vat.message} />

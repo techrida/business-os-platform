@@ -1,3 +1,5 @@
+import { SETTING_DEFAULTS, SlaSpecSchema } from '@bos/contracts';
+
 import { Avatar } from '@/components/ui/avatar';
 import { Badge } from '@/components/ui/badge';
 import { EmptyState } from '@/components/ui/empty-state';
@@ -6,6 +8,7 @@ import { Page, PageHeader } from '@/components/ui/page';
 import { Panel } from '@/components/ui/panel';
 import { Table, Td, Th } from '@/components/ui/table';
 import {
+  getSetting,
   listApprovalGroups,
   listDelegations,
   listApprovalPeople,
@@ -91,6 +94,7 @@ export default async function WorkflowsPage() {
     delegationPeople,
     directoryNames,
     timing,
+    savedSla,
   ] = await Promise.all([
     section('view workflows', () => listWorkflows(session)),
     section('manage approval groups', () => listApprovalGroups(session)),
@@ -100,7 +104,15 @@ export default async function WorkflowsPage() {
     section('choose delegation people', () => listApprovalPeople(session, 'delegations')),
     userNames(session),
     loadFields(session, ['approvals.sla_defaults']),
+    section('view the default reminder times', () => getSetting(session, 'approvals.sla_defaults')),
   ]);
+
+  // A new workflow starts from the saved default times. A read that failed, or a stored value this
+  // screen cannot read, falls back to the built-in default, as the API does.
+  const parsedSla = savedSla.ok ? SlaSpecSchema.safeParse(savedSla.data.value) : null;
+  const slaDefaults = parsedSla?.success
+    ? parsedSla.data
+    : SETTING_DEFAULTS['approvals.sla_defaults'];
 
   const options = (people: typeof users): UserOption[] | null =>
     people.ok
@@ -323,6 +335,8 @@ export default async function WorkflowsPage() {
               </summary>
               <div className={styles.disclosureBody}>
                 <WorkflowEditor
+                  // Remounts when the saved defaults change, so the form never starts from stale times.
+                  key={JSON.stringify(slaDefaults)}
                   action={createWorkflowAction}
                   mode="create"
                   documentType=""
@@ -330,6 +344,7 @@ export default async function WorkflowsPage() {
                   submitLabel="Create as draft"
                   groupKeys={groupKeys}
                   users={userOptions}
+                  slaDefaults={slaDefaults}
                 />
               </div>
             </details>

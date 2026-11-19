@@ -10,7 +10,7 @@ import {
   type DocumentStyle,
 } from '@bos/contracts';
 import * as Popover from '@radix-ui/react-popover';
-import { useActionState, useEffect, useRef, useState } from 'react';
+import { useActionState, useEffect, useRef, useState, type ReactNode } from 'react';
 
 import shell from '@/app/(app)/settings/_components/settings.module.css';
 import { IDLE, type ActionState } from '@/app/(app)/settings/action-state';
@@ -33,6 +33,8 @@ export interface DocumentStyleFormProps {
   saveAction: (previous: ActionState, formData: FormData) => Promise<ActionState>;
   /** The five previews in a colour; `null` when it could not be asked. */
   previewsAction: (colour: string) => Promise<DocumentPreviews | null>;
+  /** Placed in the card header, for example the reset-to-default icon. */
+  actions?: ReactNode;
 }
 
 const isPreset = (hex: string) => PRESET_BRAND_COLOURS.some((preset) => preset.hex === hex);
@@ -128,6 +130,7 @@ export function DocumentStyleForm({
   initialPreviews,
   saveAction,
   previewsAction,
+  actions,
 }: DocumentStyleFormProps) {
   const [saved, setSaved] = useState<DocumentStyle>(initial);
   const [layout, setLayout] = useState<DocumentLayout>(initial.layout);
@@ -204,6 +207,7 @@ export function DocumentStyleForm({
     <Panel
       title="Quotation style"
       description="Pick how your quotations are laid out and the colour they use."
+      actions={actions}
     >
       <form action={formAction} className={shell.form} noValidate>
         <fieldset className={styles.group}>

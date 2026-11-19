@@ -5,6 +5,7 @@
 import {
   DEFAULT_DEPARTMENT_HEAD_FALLBACK_ROLE,
   ROLE_KEYS,
+  SETTING_DEFAULTS,
   WorkflowWriteSpecSchema,
   type Condition,
   type RoleKey,
@@ -87,13 +88,21 @@ export function emptyRule(taken: readonly string[], ruleCount: number): RuleForm
   };
 }
 
-export function emptySpecForm(documentType = ''): SpecForm {
+/**
+ * A new workflow starts from the saved default reminder and escalation times (`approvals.sla_defaults`),
+ * so what the form shows is what a workflow that sets no times of its own would get. The built-in
+ * default stands in when the saved value could not be read.
+ */
+export function emptySpecForm(
+  documentType = '',
+  sla: WorkflowSpec['sla'] = SETTING_DEFAULTS['approvals.sla_defaults'],
+): SpecForm {
   return {
     documentType,
     distinctApprovers: true,
-    remindAfterHours: '24',
-    escalateAfterHours: '72',
-    escalateRole: 'founder',
+    remindAfterHours: String(sla.remindAfterHours),
+    escalateAfterHours: String(sla.escalateAfterHours),
+    escalateRole: sla.escalateTo.role,
     steps: [emptyStep([])],
     rules: [],
   };
