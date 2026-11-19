@@ -36,15 +36,28 @@ export type NonNegativeDecimalString = z.infer<typeof NonNegativeDecimalString>;
 const TaxRatePercent = z.string().regex(/^\d{1,3}(\.\d{1,4})?$/);
 
 /** A percentage from 0 to 100 with up to 4 decimals (the discount input is numeric(18,4)). */
-const PercentFourDecimals = z.string().regex(/^(?:\d{1,2}(?:\.\d{1,4})?|100(?:\.0{1,4})?)$/);
+export const PercentFourDecimals = z.string().regex(/^(?:\d{1,2}(?:\.\d{1,4})?|100(?:\.0{1,4})?)$/);
 
-/** A percentage from 0 to 100 with up to 2 decimals (a payment milestone). */
-const PercentTwoDecimals = z.string().regex(/^(?:\d{1,2}(?:\.\d{1,2})?|100(?:\.0{1,2})?)$/);
+export const PAYMENT_PERCENT_SCALE = 10_000;
+export const FULL_PAYMENT_PERCENT_UNITS = 100 * PAYMENT_PERCENT_SCALE;
 
-/** "33.3" becomes 3330 (hundredths), so milestones add up in integers. Input is already validated. */
-function toHundredths(percent: string): number {
-  const [whole = '0', frac = ''] = percent.split('.');
-  return Number(whole) * 100 + Number(frac.padEnd(2, '0'));
+/** "33.3334" becomes 333334. Input has already passed PercentFourDecimals. */
+export function paymentPercentUnits(percent: string): number {
+  const [whole = '0', fraction = ''] = percent.split('.');
+  return Number(whole) * PAYMENT_PERCENT_SCALE + Number(fraction.padEnd(4, '0'));
+}
+
+/** Trim the insignificant fractional zeros without rounding a decimal string. */
+export function trimPercent(percent: string): string {
+  if (!percent.includes('.')) return percent;
+  const trimmed = percent.replace(/0+$/, '').replace(/\.$/, '');
+  return trimmed === '' || trimmed === '-' ? '0' : trimmed;
+}
+
+export function formatPaymentPercentUnits(units: number): string {
+  const whole = Math.floor(units / PAYMENT_PERCENT_SCALE);
+  const fraction = String(units % PAYMENT_PERCENT_SCALE).padStart(4, '0');
+  return trimPercent(`${whole}.${fraction}`);
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -209,7 +222,7 @@ export type Discount = z.infer<typeof DiscountSchema>;
 
 export const PaymentMilestoneSchema = z.strictObject({
   label: text(100),
-  percent: PercentTwoDecimals,
+  percent: PercentFourDecimals,
   dueDescription: text(200).optional(),
 });
 export type PaymentMilestone = z.infer<typeof PaymentMilestoneSchema>;
@@ -247,8 +260,8 @@ function contentChecks(c: ContentChecks, ctx: z.RefinementCtx): void {
     ctx.addIssue({ code: 'custom', path: ['validUntil'], message: 'must not be before issueDate' });
   }
   if (c.paymentSchedule != null && c.paymentSchedule.length > 0) {
-    const sum = c.paymentSchedule.reduce((n, m) => n + toHundredths(m.percent), 0);
-    if (sum !== 10000) {
+    const sum = c.paymentSchedule.reduce((n, m) => n + paymentPercentUnits(m.percent), 0);
+    if (sum !== FULL_PAYMENT_PERCENT_UNITS) {
       ctx.addIssue({
         code: 'custom',
         path: ['paymentSchedule'],

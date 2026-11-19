@@ -1,5 +1,6 @@
 'use client';
 
+import { trimPercent } from '@bos/contracts';
 import { Dec, formatMoney } from '@bos/locale';
 
 import { Button } from '@/components/ui/button';
@@ -7,7 +8,7 @@ import { DatePicker } from '@/components/ui/date-picker';
 import { Field, Input } from '@/components/ui/field';
 
 import {
-  milestoneAmount,
+  milestoneAmounts,
   milestoneDue,
   reconcileMilestone,
   scheduleProgress,
@@ -53,9 +54,10 @@ export function ScheduleSection({
   onRemove: (key: string) => void;
 }) {
   const state = scheduleState(milestones);
+  const amounts = milestoneAmounts(milestones, total);
   const zeroTotal = total !== null && new Dec(total).isZero();
 
-  function changeAmount(milestone: MilestoneValues, value: string) {
+  function changeAmount(milestone: MilestoneValues, value: string, pricedAmount: string | null) {
     const draft = {
       value,
       initialPercent: amountDrafts[milestone.key]?.initialPercent ?? milestone.percent,
@@ -72,13 +74,18 @@ export function ScheduleSection({
       return;
     }
 
-    // Reject an amount that the two-decimal percentage cannot represent exactly.
+    if (pricedAmount !== null && new Dec(value).eq(pricedAmount)) {
+      onAmountDraft(milestone.key, draft);
+      return;
+    }
+
+    // Reject an amount that the four-decimal percentage cannot represent exactly.
     if (result.amount === null || !new Dec(value).eq(result.amount)) {
       const suggestion =
         result.amount === null ? '' : ` Try ${formatMoney(result.amount, currency)}.`;
       onAmountDraft(milestone.key, {
         ...draft,
-        error: `This amount needs more than two decimal places in the percentage.${suggestion}`,
+        error: `This amount needs more than four decimal places in the percentage.${suggestion}`,
       });
       return;
     }
@@ -95,13 +102,13 @@ export function ScheduleSection({
         <ol className={styles.milestones} aria-label="Payment milestones">
           {milestones.map((m, index) => {
             const error = (field: string) => errors[`paymentSchedule.${index}.${field}`];
-            const amount = milestoneAmount(m.percent, total);
+            const amount = amounts[index] ?? null;
             const draft: AmountDraft | undefined = amountDrafts[m.key];
             const due = milestoneDue(m.dueDescription);
             const rowInvalid = scheduleState([m]).kind === 'invalid';
             const scheduleError = showScheduleErrors
               ? rowInvalid
-                ? 'Enter 0–100% with up to two decimal places.'
+                ? 'Enter 0–100% with up to four decimal places.'
                 : state.kind === 'short' || state.kind === 'over'
                   ? 'Adjust the milestones to total 100%.'
                   : undefined
@@ -136,18 +143,22 @@ export function ScheduleSection({
                         inputMode="decimal"
                         min="0"
                         max="100"
-                        step="0.01"
+                        step="0.0001"
                         className={styles.numInput}
                         value={m.percent}
                         onChange={(ev) => {
-                          const value = ev.target.value;
+                          onAmountDraft(m.key, undefined);
+                          onChange(m.key, { percent: ev.target.value });
+                        }}
+                        onBlur={() => {
                           const result = reconcileMilestone(
                             m.percent,
-                            { field: 'percent', value },
+                            { field: 'percent', value: m.percent },
                             total,
                           );
-                          onAmountDraft(m.key, undefined);
-                          onChange(m.key, { percent: result.ok ? result.percent : value });
+                          if (!result.ok) return;
+                          const percent = trimPercent(result.percent);
+                          if (percent !== m.percent) onChange(m.key, { percent });
                         }}
                       />
                     )}
@@ -181,7 +192,7 @@ export function ScheduleSection({
                             ? ''
                             : (draft?.value ?? amount ?? (zeroTotal ? '0.00' : ''))
                         }
-                        onChange={(ev) => changeAmount(m, ev.target.value)}
+                        onChange={(ev) => changeAmount(m, ev.target.value, amount)}
                         onBlur={() => {
                           if (draft && !draft.error) onAmountDraft(m.key, undefined);
                         }}

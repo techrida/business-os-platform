@@ -1,3 +1,4 @@
+import { trimPercent } from '@bos/contracts';
 import { describe, expect, it } from 'vitest';
 
 import {
@@ -5,7 +6,6 @@ import {
   exceedsDiscountLimit,
   parseApprovalSnapshot,
   routeReasons,
-  trimPercent,
 } from './approval-snapshot';
 
 const valid = () => ({

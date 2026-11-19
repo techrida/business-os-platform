@@ -67,7 +67,7 @@ const sample: Record<string, string> = {
   attempts: '5',
   quotationNumber: 'QT-2082/83-00007',
   customerName: 'Himal Traders',
-  validUntil: '2083-01-15',
+  validUntil: '2026-11-19',
   entityType: 'lead',
   entityName: 'Himal Traders',
   assignerName: 'Hari Gurung',
@@ -119,7 +119,7 @@ describe('renderEmail', () => {
     const sent = renderEmail('quotation.sent', varsFor('quotation.sent'), opts);
     expect(sent.subject).toContain('QT-2082/83-00007');
     expect(sent.text).toContain('Himal Traders');
-    expect(sent.text).toContain('2083-01-15');
+    expect(sent.text).toContain('19 Nov 2026');
 
     const digest = renderEmail('crm.follow_up_digest', varsFor('crm.follow_up_digest'), opts);
     expect(digest.text).toContain('4');
