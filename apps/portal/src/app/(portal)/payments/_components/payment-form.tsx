@@ -1,6 +1,6 @@
 'use client';
 
-import { CURRENCIES, type Currency, PAYMENT_METHODS, type PaymentMethod } from '@bos/contracts';
+import { type Currency, PAYMENT_METHODS, type PaymentMethod } from '@bos/contracts';
 import { useActionState, useEffect, useRef, useState } from 'react';
 
 import { type PaymentFormState, submitPaymentAction } from '@/app/(portal)/payments/actions';
@@ -9,6 +9,7 @@ import { Field, Input } from '@/components/portal/field';
 import quotation from '@/components/portal/quotation.module.css';
 import { Button } from '@/components/ui/button';
 import { Select } from '@/components/ui/select';
+import { currencyOptions } from '@/lib/enabled-currencies';
 
 import styles from './payment-form.module.css';
 import { METHOD_LABEL } from './payment-status';
@@ -26,12 +27,17 @@ interface Proof {
  * Idempotency-Key and the uploaded proof ids live in the form, so a retry after a timeout sends the
  * very same request. When the customer arrives from an invoice, the currency and the amount still
  * open are the server's figures, passed in as strings; this form computes nothing.
+ *
+ * Only the company's enabled currencies are offered (D44). An invoice in a currency the company has
+ * since switched off keeps that currency in the list, disabled with a note, and the form starts on
+ * the first enabled one without the invoice's open amount, which is in the other currency.
  */
 export function PaymentForm({
   idempotencyKey,
   today,
   invoice,
   defaultCurrency,
+  enabledCurrencies,
   suggestedAmount,
 }: {
   /** A UUID the server generated for this render. */
@@ -40,7 +46,10 @@ export function PaymentForm({
   today: string;
   /** The invoice the customer came from, when there is one. Context only: the payment is allocated by our finance team. */
   invoice?: { id: string; number: string } | undefined;
+  /** The invoice's currency, else NPR. */
   defaultCurrency: Currency;
+  /** The company's enabled currencies (`portalEnabledCurrencies`). */
+  enabledCurrencies: readonly Currency[];
   /** The server's open amount for that invoice, or empty. */
   suggestedAmount: string;
 }) {
@@ -50,9 +59,16 @@ export function PaymentForm({
   );
   const fe = state.fieldErrors ?? {};
 
-  // Controlled: React 19 resets uncontrolled fields after every action.
-  const [currency, setCurrency] = useState<string>(defaultCurrency);
-  const [amount, setAmount] = useState(suggestedAmount);
+  // A switched-off invoice currency stays visible but disabled; NPR is always first and enabled.
+  const options = currencyOptions(enabledCurrencies, defaultCurrency);
+  const invoiceCurrencyOff = options.some((o) => o.code === defaultCurrency && o.disabled);
+  const startCurrency = invoiceCurrencyOff ? (options[0]?.code ?? 'NPR') : defaultCurrency;
+
+  // Controlled: React 19 resets uncontrolled fields after every action. Set on the first render,
+  // because the hidden field submits whatever value it holds.
+  const [currency, setCurrency] = useState<string>(startCurrency);
+  // The open amount is in the invoice's currency, so it is not offered against another one.
+  const [amount, setAmount] = useState(invoiceCurrencyOff ? '' : suggestedAmount);
   const [method, setMethod] = useState<PaymentMethod>('bank_transfer');
   const [receivedOn, setReceivedOn] = useState(today);
   const [bankReference, setBankReference] = useState('');
@@ -139,7 +155,15 @@ export function PaymentForm({
       ) : null}
 
       <div className={styles.grid}>
-        <Field label="Currency" error={fe.currency}>
+        <Field
+          label="Currency"
+          hint={
+            invoiceCurrencyOff
+              ? `This invoice is in ${defaultCurrency}, which is switched off for the company. Choose another currency.`
+              : undefined
+          }
+          error={fe.currency}
+        >
           {(control) => (
             <Select
               name="currency"
@@ -148,9 +172,9 @@ export function PaymentForm({
               onChange={(e) => setCurrency(e.target.value)}
               {...control}
             >
-              {CURRENCIES.map((c) => (
-                <option key={c} value={c}>
-                  {c}
+              {options.map((o) => (
+                <option key={o.code} value={o.code} disabled={o.disabled}>
+                  {o.code}
                 </option>
               ))}
             </Select>

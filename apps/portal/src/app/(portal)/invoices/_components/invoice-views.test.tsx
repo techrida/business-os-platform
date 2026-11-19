@@ -300,13 +300,25 @@ describe('InvoiceView as the printed invoice', () => {
       <InvoiceView view={sampleInvoice()} settlement={sampleSettlement()} />,
     );
     expect(tax).toContain('Invoice to');
-    expect(tax).toContain('Total due');
+    expect(tax).toContain('Invoice total');
     const note = renderToStaticMarkup(
       <InvoiceView view={sampleInvoice({ kind: 'credit_note' })} settlement={sampleSettlement()} />,
     );
     expect(note).toContain('Credit note');
     expect(note).toContain('Total credited');
-    expect(note).not.toContain('Total due');
+    expect(note).not.toContain('Invoice total');
+    // A credit note owes nothing: no payment-due copy under its credited total.
+    const undated = renderToStaticMarkup(
+      <InvoiceView
+        view={sampleInvoice({ kind: 'credit_note', dueDate: null })}
+        settlement={sampleSettlement()}
+      />,
+    );
+    expect(undated).not.toContain('Due on receipt');
+    const taxUndated = renderToStaticMarkup(
+      <InvoiceView view={sampleInvoice({ dueDate: null })} settlement={sampleSettlement()} />,
+    );
+    expect(taxUndated).toContain('Due on receipt');
   });
 });
 

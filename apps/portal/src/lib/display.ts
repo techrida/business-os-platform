@@ -33,5 +33,7 @@ export function displayFormat(display: PortalDisplay = DEFAULT_PORTAL_DISPLAY) {
  */
 export function taxLineLabel(label: string, percent: string): string {
   const rate = percent.replace(/(\.\d*?)0+$/, '$1').replace(/\.$/, '');
-  return label.includes(`${rate}%`) ? label : `${label} ${rate}%`;
+  // A whole percent token only: "VAT 13%" shows 13%, but it does not show 3%.
+  const shown = new RegExp(`(^|[^\\d.])${rate.replace('.', '\\.')}%`).test(label);
+  return shown ? label : `${label} ${rate}%`;
 }

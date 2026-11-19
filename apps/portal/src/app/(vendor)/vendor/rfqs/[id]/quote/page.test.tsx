@@ -1,12 +1,13 @@
-import type { ReactElement } from 'react';
+import { defaultPortalDisplay } from '@bos/contracts';
+import { isValidElement, type ReactElement } from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { RFQ_ID, sampleRfq } from '@/components/vendor/rfq-fixtures';
 import { sampleOnboarding } from '@/components/vendor/vendor-fixtures';
 import { ApiError } from '@/lib/api';
 
-import { Redirect, vendorSession } from '../../../_upload/test-kit';
+import { callOf, json, Redirect, stubPortalEnv, vendorSession } from '../../../_upload/test-kit';
 
 const m = vi.hoisted(() => ({
   getSession: vi.fn(),
@@ -31,6 +32,12 @@ vi.mock('@/lib/api.vendor', () => ({
 }));
 
 const { default: QuotePage } = await import('./page');
+const { QuoteForm } = await import('./_components/quote-form');
+
+// The portal display goes through the real `getPortalDisplay` and API client; only `fetch` is faked.
+const fetchMock = vi.fn<typeof fetch>();
+// A frozen display (no `enabledCurrencies`), as an API from before D44 answers.
+const DISPLAY = defaultPortalDisplay();
 
 const text = (html: string) => html.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ');
 const render = async (id: string = RFQ_ID, search: { sent?: string } = {}) =>
@@ -48,7 +55,35 @@ beforeEach(() => {
     sampleOnboarding({ status: 'approved', capability: 'full' }),
   );
   m.getVendorRfq.mockResolvedValue(sampleRfq());
+  stubPortalEnv();
+  fetchMock.mockReset();
+  fetchMock.mockImplementation(() => Promise.resolve(json(DISPLAY)));
+  vi.stubGlobal('fetch', fetchMock);
 });
+
+afterEach(() => {
+  vi.unstubAllGlobals();
+  vi.unstubAllEnvs();
+});
+
+/** The `currencies` the page hands the form (the options themselves are tested in the form's test). */
+const currenciesOf = async (): Promise<unknown> => {
+  const find = (node: unknown): unknown => {
+    if (Array.isArray(node)) {
+      for (const child of node) {
+        const hit = find(child);
+        if (hit !== undefined) return hit;
+      }
+      return undefined;
+    }
+    if (!isValidElement<{ children?: unknown; currencies?: unknown }>(node)) return undefined;
+    if (node.type === QuoteForm) return node.props.currencies;
+    return find(node.props.children);
+  };
+  return find(
+    await QuotePage({ params: Promise.resolve({ id: RFQ_ID }), searchParams: Promise.resolve({}) }),
+  );
+};
 
 describe('submit a quotation page', () => {
   it('shows the request number and its items above the form, with one key and the request id', async () => {
@@ -122,5 +157,26 @@ describe('submit a quotation page', () => {
       `redirect /auth/login?returnTo=${encodeURIComponent(`/vendor/rfqs/${RFQ_ID}/quote`)}`,
     );
     expect(m.getVendorOnboarding).not.toHaveBeenCalled();
+  });
+
+  it('hands the form only the currencies the company switched on, read with the vendor session', async () => {
+    fetchMock.mockImplementation(() =>
+      Promise.resolve(json({ ...DISPLAY, enabledCurrencies: ['NPR', 'USD'] })),
+    );
+    expect(await currenciesOf()).toEqual(['NPR', 'USD']);
+    expect(await render()).toContain('name="currency" value="NPR"');
+    const displayCall = fetchMock.mock.calls.findIndex((_, n) =>
+      callOf(fetchMock, n).url.endsWith('/v1/portal/display'),
+    );
+    expect(displayCall).toBeGreaterThanOrEqual(0);
+    expect(callOf(fetchMock, displayCall).headers.get('authorization')).toBe(
+      `Bearer ${vendorSession().accessToken}`,
+    );
+  });
+
+  it('hands the form every currency when the display has no list, or cannot be read', async () => {
+    expect(await currenciesOf()).toEqual(['NPR', 'INR', 'USD']);
+    fetchMock.mockImplementation(() => Promise.resolve(json({ error: {} }, 503)));
+    expect(await currenciesOf()).toEqual(['NPR', 'INR', 'USD']);
   });
 });
