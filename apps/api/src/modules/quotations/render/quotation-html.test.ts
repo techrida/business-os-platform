@@ -1,10 +1,18 @@
 import {
   CUSTOMER_VIEW_FORBIDDEN_WORDS,
   CustomerQuotationViewSchema,
+  DOCUMENT_LAYOUTS,
+  EMPTY_COMPANY_PROFILE,
+  deriveBrandPalette,
+  type CompanyProfile,
   type CustomerQuotationView,
+  type DocumentLayout,
+  type DocumentStyleSnapshot,
 } from '@bos/contracts';
+import { amountInWords } from '@bos/locale';
 import { describe, expect, it } from 'vitest';
 
+import { NEUTRALS } from './layouts/shared.js';
 import { renderQuotationHtml } from './quotation-html.js';
 
 const address = {
@@ -66,17 +74,55 @@ const sample = (currency: 'USD' | 'NPR', over: Partial<CustomerQuotationView> = 
     ...over,
   });
 
+// A 1x1 transparent PNG: passes LogoDataUrlSchema.
+const LOGO =
+  'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNkYAAAAAYAAjCB0C8AAAAASUVORK5CYII=';
+
+const PROFILE: CompanyProfile = {
+  displayName: 'Techrida',
+  logoDataUrl: null,
+  phones: ['+977 1 4000000', '+977 9800000000'],
+  email: 'hello@techrida.example',
+  website: 'techrida.example',
+  panVatNo: '609876543',
+  signatoryName: 'Amanda Vance',
+  signatoryTitle: 'Director',
+};
+
+const snapshot = (
+  layout: DocumentLayout,
+  primaryColour = '#1d4ed8',
+  over: Partial<DocumentStyleSnapshot> = {},
+): DocumentStyleSnapshot => ({
+  style: { layout, primaryColour },
+  profile: PROFILE,
+  numberSystem: 'south_asian',
+  capturedAt: '2026-11-19T00:00:00.000Z',
+  ...over,
+});
+
+const COLOURS = ['#1d4ed8', '#be123c'] as const;
+const CASES = DOCUMENT_LAYOUTS.flatMap((layout) =>
+  COLOURS.map((colour) => [layout, colour] as const),
+);
+
 /**
  * The NPR currency code is a legitimate word on a quotation, so strip it before the forbidden-word scan. The
- * <style> block goes too: the CSS property `margin` is layout, not content a customer reads.
+ * <style> block goes too (the CSS property `margin` is layout, not content a customer reads), and so does the
+ * logo's base64, whose `+` and `/` are word boundaries.
  */
 const withoutCurrencyCode = (html: string) =>
-  html.replace(/<style>[\s\S]*?<\/style>/g, '').replace(/\bNPR\b/g, '');
+  html
+    .replace(/<style>[\s\S]*?<\/style>/g, '')
+    .replace(/src="data:[^"]*"/g, '')
+    .replace(/\bNPR\b/g, '');
 
 const forbiddenIn = (html: string) =>
   CUSTOMER_VIEW_FORBIDDEN_WORDS.filter((w) =>
     new RegExp(`\\b${w}\\b`, 'i').test(withoutCurrencyCode(html)),
   );
+
+const cssOf = (html: string) => (html.match(/<style>([\s\S]*?)<\/style>/) ?? ['', ''])[1]!;
 
 describe('renderQuotationHtml', () => {
   it('renders a self-contained A4 document with the Noto font stack', () => {
@@ -89,7 +135,9 @@ describe('renderQuotationHtml', () => {
     expect(html).not.toMatch(/https?:\/\//i);
     expect(html).not.toMatch(/<(link|script|img|iframe|object|embed)\b/i);
     expect(html).not.toMatch(/url\(|@import|\bsrc=|\bhref=/i);
-    expect(html).toContain('http-equiv="Content-Security-Policy"');
+    expect(html).toContain(
+      `http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'"`,
+    );
   });
 
   it('shows the parties, the number with its revision, and the dates', () => {
@@ -138,21 +186,36 @@ describe('renderQuotationHtml', () => {
     expect(renderQuotationHtml(sample('USD'), { showBsDate: false })).not.toContain('BS');
   });
 
-  it('formats USD with western grouping and NPR with lakh grouping', () => {
+  it('groups money by the snapshot number system, South Asian when there is no snapshot', () => {
+    // Without a snapshot every currency uses lakh grouping (the brief's default), USD included.
     const usd = renderQuotationHtml(sample('USD'));
-    expect(usd).toContain('USD 4,068,000.00');
-    expect(usd).toContain('USD 45,000.00');
+    expect(usd).toContain('USD 40,68,000.00');
+    expect(usd).toContain('45,000.00');
     const npr = renderQuotationHtml(sample('NPR'));
     expect(npr).toContain('NPR 40,68,000.00');
-    expect(npr).toContain('NPR 12,50,000.00');
-    expect(npr).not.toContain('NPR 4,068,000.00');
+    expect(npr).toContain('12,50,000.00');
+    expect(npr).not.toContain('4,068,000.00');
+    const intl = renderQuotationHtml(sample('NPR'), {
+      snapshot: snapshot('banded', '#1d4ed8', { numberSystem: 'international' }),
+    });
+    expect(intl).toContain('NPR 4,068,000.00');
+    expect(intl).toContain('1,250,000.00');
+    expect(intl).not.toContain('40,68,000.00');
+  });
+
+  it('names the currency once in the item headers and prints bare figures in the rows', () => {
+    const html = renderQuotationHtml(sample('NPR'));
+    expect(html).toContain('Unit price (NPR)');
+    expect(html).toContain('Amount (NPR)');
+    expect(html).toContain('<td class="num">5,40,000.00</td>');
   });
 
   it('shows the VAT line by percent and base, and the discount only when there is one', () => {
     const html = renderQuotationHtml(sample('USD'));
     expect(html).toContain('VAT (13%)');
-    expect(html).toContain('USD 468,000.00');
+    expect(html).toContain('USD 4,68,000.00');
     expect(html).toContain('Discount');
+    expect(html).toContain('Total due');
     const noDiscount = renderQuotationHtml(
       sample('USD', {
         totals: {
@@ -171,6 +234,12 @@ describe('renderQuotationHtml', () => {
     expect(renderQuotationHtml(sample('USD'))).toMatch(/>2\.5</);
   });
 
+  it('says so when there are no lines instead of printing an empty table', () => {
+    expect(renderQuotationHtml(sample('USD', { lines: [] }))).toContain(
+      'No items on this quotation.',
+    );
+  });
+
   it('carries none of the forbidden internal words, in a USD and an NPR document', () => {
     for (const currency of ['USD', 'NPR'] as const) {
       const html = renderQuotationHtml(sample(currency));
@@ -180,7 +249,6 @@ describe('renderQuotationHtml', () => {
     expect(forbiddenIn('<td>Unit cost</td>')).toEqual(['cost']);
     expect(forbiddenIn('<td>Exchange rate</td>')).toEqual(['rate']);
     expect(forbiddenIn('<td>NPR 5.00</td>')).toEqual([]);
-    expect(forbiddenIn('<style>td { margin: 0 }</style><td>Margin 5%</td>')).toEqual(['margin']);
     expect(forbiddenIn('<style>td { margin: 0 }</style><td>Margin 5%</td>')).toEqual(['margin']);
   });
 
@@ -241,5 +309,132 @@ describe('renderQuotationHtml', () => {
     for (const heading of ['Scope', 'Assumptions', 'Exclusions', 'Payment schedule', 'Delivery']) {
       expect(html, heading).not.toContain(heading);
     }
+  });
+
+  it('falls back to the default layout for a layout it does not know', () => {
+    const bad = snapshot('banded');
+    const html = renderQuotationHtml(sample('USD'), {
+      snapshot: { ...bad, style: { ...bad.style, layout: 'constructor' as DocumentLayout } },
+    });
+    expect(html).toContain('<body class="layout-banded">');
+  });
+});
+
+describe.each(CASES)('layout %s in %s', (layout, colour) => {
+  const palette = deriveBrandPalette(colour);
+  const render = (view = sample('NPR'), over: Partial<DocumentStyleSnapshot> = {}) =>
+    renderQuotationHtml(view, { snapshot: snapshot(layout, colour, over) });
+
+  it('uses the layout and the palette primary', () => {
+    const html = render();
+    expect(html).toContain(`<body class="layout-${layout}">`);
+    expect(cssOf(html)).toContain(palette.primary);
+  });
+
+  it('takes every hex colour from the palette or the neutral list', () => {
+    const allowed = new Set<string>([
+      ...Object.values<string>(palette as unknown as Record<string, string>),
+      ...Object.values(NEUTRALS),
+    ]);
+    const found = cssOf(render()).match(/#[0-9a-fA-F]{3,8}\b/g) ?? [];
+    expect(found.length).toBeGreaterThan(0);
+    expect(found.filter((hex) => !allowed.has(hex.toLowerCase()))).toEqual([]);
+  });
+
+  it('prints the amount in words in both number systems', () => {
+    const view = sample('NPR');
+    const lakh = render(view);
+    expect(lakh).toContain('Amount in words:');
+    expect(lakh).toContain('Forty Lakh Sixty Eight Thousand Rupees Only');
+    expect(lakh).toContain(amountInWords('4068000.00', 'NPR', 'south_asian'));
+    const intl = render(view, { numberSystem: 'international' });
+    expect(intl).toContain(amountInWords('4068000.00', 'NPR', 'international'));
+    expect(intl).toContain('Four Million Sixty Eight Thousand Rupees Only');
+  });
+
+  it('prints the footer contacts, the signatory and the wordmark', () => {
+    const html = render();
+    const foot = html.match(/<footer class="foot">([\s\S]*?)<\/footer>/)?.[1] ?? '';
+    for (const text of [
+      '+977 1 4000000',
+      '+977 9800000000',
+      'hello@techrida.example',
+      'techrida.example',
+      'PAN/VAT No. 609876543',
+      '1 Durbar Marg',
+    ]) {
+      expect(foot, text).toContain(text);
+    }
+    expect(html).toContain('Amanda Vance');
+    expect(html).toContain('Director');
+    expect(html).toContain('<span class="wordmark">Techrida</span>');
+  });
+
+  it('falls back to the entity PAN and the legal name when the profile is empty', () => {
+    const html = render(sample('NPR'), { profile: EMPTY_COMPANY_PROFILE });
+    expect(html).toContain('PAN/VAT No. 301234567');
+    expect(html).toContain('<span class="wordmark">Techrida Pvt. Ltd.</span>');
+    expect(html).toContain('Authorised signatory');
+  });
+
+  it('prints a valid logo as a data URL and omits the image when there is none', () => {
+    const withLogo = render(sample('NPR'), { profile: { ...PROFILE, logoDataUrl: LOGO } });
+    expect(withLogo).toContain(`<img src="${LOGO}"`);
+    expect(withLogo).toContain('img-src data:');
+    expect(withLogo.match(/\bsrc="([^"]*)"/g)).toEqual([`src="${LOGO}"`]);
+    expect(withLogo).not.toContain('class="wordmark"');
+    const without = render();
+    expect(without).not.toMatch(/<img\b/);
+    expect(without).not.toContain('img-src');
+  });
+
+  it('drops a logo that is not a schema-valid data URL', () => {
+    const html = render(sample('NPR'), {
+      profile: { ...PROFILE, logoDataUrl: 'javascript:alert(1)//data:image/png;base64,AA==' },
+    });
+    expect(html).not.toMatch(/<img\b/);
+  });
+
+  it('escapes hostile text in the description, customer and profile', () => {
+    const evil = `<script>alert("x")</script>'"`;
+    const html = render(
+      sample('NPR', {
+        customer: { legalName: evil, panVatNo: null, address: { ...address, line1: evil } },
+        contact: { fullName: evil, email: null },
+        lines: [
+          {
+            lineNo: 1,
+            description: evil,
+            uom: 'pcs',
+            quantity: '1',
+            unitPrice: '1.00',
+            amount: '1.00',
+          },
+        ],
+      }),
+      {
+        profile: {
+          ...PROFILE,
+          logoDataUrl: LOGO,
+          displayName: evil,
+          phones: [evil],
+          website: evil,
+          signatoryName: evil,
+          signatoryTitle: evil,
+        },
+      },
+    );
+    expect(html).not.toMatch(/<script\b/i);
+    expect(html).toContain('alt="&lt;script&gt;alert(&quot;x&quot;)');
+    expect(html).toContain('&lt;script&gt;alert(&quot;x&quot;)&lt;/script&gt;&#39;&quot;');
+  });
+
+  it('prints nothing internal and fetches nothing', () => {
+    const html = render(sample('NPR'), { profile: { ...PROFILE, logoDataUrl: LOGO } });
+    expect(forbiddenIn(html)).toEqual([]);
+    expect(html).not.toMatch(/https?:\/\//i);
+    expect(html).not.toMatch(/url\(\s*['"]?http/i);
+    expect(html).not.toMatch(/<(script|link|iframe|object|embed)\b/i);
+    expect(html).not.toContain('11111111-1111-4111-8111-111111111111');
   });
 });
