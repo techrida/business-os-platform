@@ -151,7 +151,7 @@ Assert on something the action changes. For example, count the rows that carry a
 - `--from` reloads `state.json` and skips the earlier steps; their results are kept from the earlier run. Retry-safe after a partial run: start-5, sales-2, sales-8 and sales-10 to sales-15. Any other step that already changed data (a created lead, a submitted memo or a built quotation, say) cannot be re-run on the same label. Resume from the step after it, or start a new label.
 - The workspace dev server restarts itself under memory pressure, so a run on a loaded machine may need one or two `--from` resumes. The segments together form the run's video.
 - The browser print dialog cannot be shown headless. start-3 checks the print frame's content instead of a printed page.
-- The TOTP code appears briefly in the private-window video of start-6. It expires within 30 s, but treat that video as internal.
+- start-6 masks the one-time code field (`-webkit-text-security: disc`) before typing, so the code is drawn as dots in the video and in failure screenshots; the step fails rather than type it unmasked. The login name is visible; the password field is masked by the page itself.
 - Portal steps (customer side) are not driven in Phase A.
 - No database checks are used. Every assertion goes through the UI, Mailpit or downloaded files.
 - The video is the browser viewport only. Native file-chooser windows and downloads are not visible in it.

@@ -1,7 +1,7 @@
 // The things every step does through the real UI: captions, navigation that survives the dev
 // server compiling a route, the Dev account switcher, custom dropdowns, typeahead pickers and
 // native file choosers. Workflows call these instead of raw Playwright where a pattern repeats.
-/* global window, document -- referenced inside page.evaluate callbacks, which run in the browser */
+/* global window, document, getComputedStyle, CSSStyleSheet -- referenced inside page.evaluate callbacks, which run in the browser */
 import { createHmac } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 
@@ -597,6 +597,33 @@ export function totp(secret, now = Date.now()) {
   return String((h.readUInt32BE(o) & 0x7fffffff) % 1_000_000).padStart(6, '0');
 }
 
+/**
+ * Draws the one-time code as dots so it is never legible in the video or a failure screenshot.
+ * A constructed stylesheet (kept across re-renders) plus an inline style; both are CSSOM, which
+ * the login page's Content-Security-Policy does not block. Refuses to continue if neither applies.
+ */
+async function maskInput(session, input) {
+  const how = await input.evaluate((el) => {
+    const css = 'input[name=code]{-webkit-text-security:disc!important}';
+    try {
+      const sheet = new CSSStyleSheet();
+      sheet.replaceSync(css);
+      document.adoptedStyleSheets = [...document.adoptedStyleSheets, sheet];
+    } catch {
+      // the inline style below still applies
+    }
+    el.style.setProperty('-webkit-text-security', 'disc', 'important');
+    if (getComputedStyle(el).getPropertyValue('-webkit-text-security') === 'disc') return 'disc';
+    // Fallback: invisible text.
+    el.style.setProperty('color', 'transparent', 'important');
+    el.style.setProperty('text-shadow', 'none', 'important');
+    return getComputedStyle(el).color === 'rgba(0, 0, 0, 0)' ? 'transparent' : 'none';
+  });
+  if (how === 'none')
+    throw new StepFailure('Could not mask the one-time code input; not typing it on video');
+  session.checks.push(`one-time code input masked (${how}) before typing`);
+}
+
 /** Types the login into ZITADEL's own form. Values are never logged. */
 export async function realLogin(session, page, key, startUrl) {
   const p = readPersona(session.cfg.personasFile, key);
@@ -627,6 +654,7 @@ export async function realLogin(session, page, key, startUrl) {
   if (p.totpSecret) {
     const code = page.locator('input[name=code]');
     await code.waitFor({ state: 'visible', timeout: 60000 });
+    await maskInput(session, code);
     const left = 30 - (Math.floor(Date.now() / 1000) % 30);
     if (left < 5) await sleep((left + 1) * 1000);
     await code.fill(totp(p.totpSecret));
