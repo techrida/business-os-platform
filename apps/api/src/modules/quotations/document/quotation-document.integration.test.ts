@@ -643,6 +643,23 @@ describe('QuotationDocumentService.retry', () => {
     expect(await renderStateOf(q.currentVersionId)).toBe('failed');
   });
 
+  it('is a 404 for a caller who may read the quotation but may send only their own, and the failed state stays', async () => {
+    const q = await createQuotation();
+    await approveVersion(q.currentVersionId);
+    await setRenderState(q.currentVersionId, 'failed');
+
+    current.grants = new Map<Permission, Scope>([
+      ['quotation.read', 'all'],
+      ['quotation.send', 'own'],
+    ]);
+    current.userId = randomUUID();
+    await expect(service.retry(q.id, q.currentVersionId)).rejects.toBeInstanceOf(NotFoundException);
+    expect(await renderStateOf(q.currentVersionId)).toBe('failed');
+
+    current.userId = f.ownerUserId;
+    await expect(service.retry(q.id, q.currentVersionId)).resolves.toEqual({ state: 'queued' });
+  });
+
   it('is a 403 for a portal caller, and the failed state stays', async () => {
     const q = await createQuotation();
     await approveVersion(q.currentVersionId);
