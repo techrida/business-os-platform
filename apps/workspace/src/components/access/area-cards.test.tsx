@@ -1,0 +1,115 @@
+// @vitest-environment jsdom
+import type { ReactNode } from 'react';
+import { afterEach, beforeEach, expect, it, vi, type Mock } from 'vitest';
+
+import { accessCatalogue } from '@/test/access-catalogue';
+import { click, mountForm } from '@/test/form-interactions';
+
+const router = vi.hoisted(() => ({ push: vi.fn(), refresh: vi.fn() }));
+vi.mock('next/navigation', () => ({ useRouter: () => router }));
+vi.mock('next/link', () => ({
+  default: ({ href, children, ...rest }: { href: string; children: ReactNode }) => (
+    <a href={href} {...rest}>
+      {children}
+    </a>
+  ),
+}));
+vi.mock('@/components/ui/toast', () => ({ toast: { success: vi.fn(), error: vi.fn() } }));
+
+import { AreaCards, type AreaCardsActions } from './area-cards';
+
+let mounted: Awaited<ReturnType<typeof mountForm>> | undefined;
+let actions: {
+  preview: Mock<AreaCardsActions['preview']>;
+  save: Mock<AreaCardsActions['save']>;
+  check: Mock<AreaCardsActions['check']>;
+};
+
+beforeEach(() => {
+  router.push.mockReset();
+  router.refresh.mockReset();
+  Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true });
+  vi.stubGlobal(
+    'ResizeObserver',
+    class {
+      observe = vi.fn();
+      disconnect = vi.fn();
+    },
+  );
+  actions = {
+    preview: vi.fn<AreaCardsActions['preview']>(() =>
+      Promise.resolve({
+        ok: true,
+        preview: {
+          applied: [],
+          impact: {
+            widened: { people: 0, sample: [] },
+            narrowed: { people: 0, sample: [] },
+            unchanged: 0,
+          },
+          warnings: [],
+          summaries: {},
+          assignmentSummaries: {},
+        },
+      }),
+    ),
+    save: vi.fn<AreaCardsActions['save']>(() => Promise.resolve({ ok: true })),
+    check: vi.fn<AreaCardsActions['check']>(() =>
+      Promise.resolve({ ok: false, message: 'Not used here.' }),
+    ),
+  };
+});
+
+afterEach(async () => {
+  await mounted?.unmount();
+  mounted = undefined;
+  vi.unstubAllGlobals();
+  document.body.innerHTML = '';
+});
+
+async function render(canEdit = true) {
+  mounted = await mountForm(
+    <AreaCards
+      catalogue={accessCatalogue()}
+      canEdit={canEdit}
+      departments={[]}
+      people={[]}
+      actions={actions}
+    />,
+  );
+  return mounted.container;
+}
+
+function byLabel(label: string): HTMLButtonElement {
+  const found = document.querySelector<HTMLButtonElement>(`button[aria-label="${label}"]`);
+  if (!found) throw new Error(`No button labelled "${label}"`);
+  return found;
+}
+
+function textButton(label: string): HTMLButtonElement {
+  const found = [...document.querySelectorAll<HTMLButtonElement>('button')].find(
+    (element) => element.textContent?.trim() === label,
+  );
+  if (!found) throw new Error(`No button "${label}"`);
+  return found;
+}
+
+const cardTitles = (container: HTMLElement) =>
+  [...container.querySelectorAll('section h2')].map((h) => h.textContent);
+
+it('shows the nine areas in the catalogue order, each with its summary', async () => {
+  const container = await render();
+  expect(cardTitles(container)).toEqual([
+    'Leads',
+    'Opportunities',
+    'Quotations',
+    'Sales orders',
+    'Invoices',
+    'Procurement',
+    'Payables',
+    'Approvals',
+    'Documents',
+  ]);
+  expect(container.textContent).toContain('Sales and Marketing see their own leads.');
+  expect(container.textContent).toContain('Only Founders can see invoices.');
+});
