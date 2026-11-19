@@ -39,6 +39,8 @@ export const AdminUserSchema = z.object({
   idpOrgId: z.guid(),
   email: z.string().nullable(),
   displayName: z.string().nullable(),
+  /** The user's picture (`app.users.avatar_document_id`); null or absent shows initials. */
+  avatarDocumentId: z.guid().nullable().optional(),
   status: UserStatusSchema,
   roles: z.array(RoleKeySchema),
   department: DepartmentSchema.nullable(),

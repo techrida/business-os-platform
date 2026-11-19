@@ -379,7 +379,7 @@ export class SqlUsersStore extends UsersStore {
     const pattern = q.q ? `%${q.q.replace(/[!%_]/g, '!$&')}%` : null;
     return rows<ListedUser & Record<string, unknown>>(
       this.db,
-      sql`SELECT ${USER_COLUMNS},
+      sql`SELECT ${USER_COLUMNS}, u.avatar_document_id AS "avatarDocumentId",
             to_char(u.last_active_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"') AS "lastActiveAt",
             to_char(u.created_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"') AS "createdAt",
             CASE WHEN d.id IS NOT NULL THEN jsonb_build_object('id', d.id, 'name', d.name) END AS department,

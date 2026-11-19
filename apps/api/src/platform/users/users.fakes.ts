@@ -167,6 +167,7 @@ export class FakeUsersStore extends UsersStore {
         )
         .map((u) => ({
           ...u,
+          avatarDocumentId: null,
           roles: this.roles.get(u.id) ?? [],
           department: null,
           lastActiveAt: null,
