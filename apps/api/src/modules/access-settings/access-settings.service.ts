@@ -1120,6 +1120,7 @@ export class AccessSettingsService {
             FROM app.departments
            WHERE tenant_id = ${scope.tenantId}
              AND organization_id = ${scope.organizationId}
+             AND status = 'active'
            ORDER BY lower(name), id
         `),
         options.includeOpenOwned

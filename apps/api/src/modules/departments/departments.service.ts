@@ -693,7 +693,7 @@ export class DepartmentsAdminService {
             meta: { userId: headUserId },
           });
 
-          await this.revisions.bump(tx, scope);
+          await this.revisions.bump(tx, scope, { actorUserId: actor.kind === 'user' ? actor.id : null });
         }
 
         return this.loadDetail(tx, scope, created.id);
@@ -994,7 +994,7 @@ export class DepartmentsAdminService {
       });
 
       if (touchedAccess) {
-        await this.revisions.bump(tx, scope);
+        await this.revisions.bump(tx, scope, { actorUserId: actor.kind === 'user' ? actor.id : null });
       }
 
       return {
@@ -1124,7 +1124,10 @@ export class DepartmentsAdminService {
 
       // Check optimistic concurrency and reserve the next revision inside this transaction.
       // Any validation error below rolls the whole transaction (including this bump) back.
-      const nextRevision = await this.revisions.bump(tx, scope, body.expectedRevision);
+      const nextRevision = await this.revisions.bump(tx, scope, {
+        expectedRevision: body.expectedRevision,
+        actorUserId: actor.kind === 'user' ? actor.id : null,
+      });
 
       const snapshot = await this.loadEntitySnapshot(tx, scope);
       const applied = applyDepartmentChanges(snapshot, body.changes);

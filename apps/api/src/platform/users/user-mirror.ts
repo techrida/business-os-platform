@@ -15,6 +15,7 @@ import type { AdminUsersQuery, RoleKey } from '@bos/contracts';
 import { InjectQueue } from '@nestjs/bullmq';
 import { ConflictException, Inject, Injectable, Logger, NotFoundException } from '@nestjs/common';
 import { Queue } from 'bullmq';
+import { sql } from 'drizzle-orm';
 
 import type { EntityMembership, ResolvedUser } from '../authz/user-directory';
 import { DB, type Db, type DbTransaction } from '../db/db.module';
@@ -296,6 +297,10 @@ export class UserMirror {
       currentRoles.includes('founder') &&
       !roles.includes('founder')
     ) {
+      // Same lock key as the access settings saves: two removals cannot both see the other Founder.
+      await tx.execute(
+        sql`SELECT pg_advisory_xact_lock(hashtext('access_revisions:' || ${scope.tenantId}))`,
+      );
       const activeFounders = await this.store.activeRoleHolderIds(tx, scope.tenantId, 'founder');
       if (activeFounders.filter((id) => id !== userId).length === 0) {
         const name = user.displayName?.trim() || user.email || 'This user';
