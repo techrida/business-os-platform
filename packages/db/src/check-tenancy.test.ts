@@ -149,6 +149,7 @@ describe('tenant-scoped tables (ADR 0027 §6)', () => {
         'app.vendors',
         'app.vendor_contacts',
         'app.vendor_bank_accounts',
+        'app.access_revisions',
         'app.authz_versions',
         'app.fx_rates',
         'app.idp_orgs',

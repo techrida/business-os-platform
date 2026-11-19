@@ -1,6 +1,8 @@
 import {
+  AccessWarningSchema,
   ErrorBodySchema,
   ErrorReasonSchema,
+  type AccessWarning,
   type ErrorBody,
   type ErrorReason,
 } from '@bos/contracts';
@@ -114,6 +116,10 @@ export type ErrorCode =
   | 'BILL_NOT_PAYABLE'
   | 'CURRENCY_MISMATCH'
   | 'PURCHASE_ORDER_NOT_FOUND'
+  // U20b access settings and last-Founder guard.
+  | 'stale_access'
+  | 'confirmation_required'
+  | 'last_founder'
   | 'unprocessable'
   | 'supporting_document_unsupported'
   | 'payload_too_large'
@@ -236,6 +242,9 @@ const GENERIC_MESSAGE: Record<ErrorCode, string> = {
   BILL_NOT_PAYABLE: 'A line names a bill that is not approved for payment',
   CURRENCY_MISMATCH: 'The payable items of a payment request must all be in one currency',
   PURCHASE_ORDER_NOT_FOUND: 'This vendor has no such purchase order',
+  stale_access: 'Access settings were changed by someone else. Reload and try again.',
+  confirmation_required: 'Confirm the warning before saving these access changes.',
+  last_founder: 'Cannot remove the only Founder. Make someone else a Founder first.',
   unprocessable: 'The submitted data cannot be processed',
   supporting_document_unsupported:
     'A supporting document cannot be attached to a bank change request yet',
@@ -354,6 +363,10 @@ const CONFLICT_CODES: readonly ErrorCode[] = [
   // P4 payment requests: a line asks for more than the open balance of its payable item, net of the other live
   // requests' claims (the ledger's OVER_ALLOCATION, with the item and the amounts in `details`).
   'OVER_ALLOCATION',
+  // U20b access settings: optimistic-lock mismatch, unacknowledged confirm warnings, and removing the sole Founder.
+  'stale_access',
+  'confirmation_required',
+  'last_founder',
 ];
 
 function conflictCodeOf(exception: HttpException): ErrorCode | undefined {
@@ -474,6 +487,26 @@ function duplicatesOf(exception: HttpException): DuplicateCandidate[] | undefine
   return parsed.success ? parsed.data : undefined;
 }
 
+const AccessWarningListSchema = z.array(AccessWarningSchema).min(1).max(100);
+const FieldErrorsSchema = z.record(z.string(), z.string());
+
+/** Validated warnings carried by `confirmation_required` (409) or blocked access saves (422). */
+function warningsOf(exception: HttpException): AccessWarning[] | undefined {
+  const response = exception.getResponse();
+  if (typeof response !== 'object' || !('warnings' in response)) return undefined;
+  const parsed = AccessWarningListSchema.safeParse(response.warnings);
+  return parsed.success ? parsed.data : undefined;
+}
+
+/** Validated per-field errors carried by a 422 `unprocessable` refusal. */
+function fieldErrorsOf(exception: HttpException): Record<string, string> | undefined {
+  const response = exception.getResponse();
+  if (typeof response !== 'object' || !('fieldErrors' in response)) return undefined;
+  const parsed = FieldErrorsSchema.safeParse(response.fieldErrors);
+  if (!parsed.success || Object.keys(parsed.data).length === 0) return undefined;
+  return parsed.data;
+}
+
 /** What `routeOf` returns when Express matched no route (a middleware refused the request first). */
 export const UNMATCHED_ROUTE = 'unmatched';
 
@@ -551,6 +584,8 @@ export class ErrorBodyFilter implements ExceptionFilter {
     let conflictCode: ErrorCode | undefined;
     let details: Record<string, string | number> | undefined;
     let duplicates: DuplicateCandidate[] | undefined;
+    let warnings: AccessWarning[] | undefined;
+    let fieldErrors: Record<string, string> | undefined;
     if (exception instanceof HttpException) {
       status = exception.getStatus();
       exposedMessage = messageOf(exception);
@@ -563,6 +598,12 @@ export class ErrorBodyFilter implements ExceptionFilter {
       conflictCode = conflictCodeOf(exception) ?? unprocessableCodeOf(exception);
       if (conflictCode !== undefined) details = detailsOf(exception);
       if (conflictCode === 'duplicate_found') duplicates = duplicatesOf(exception);
+      if (conflictCode === 'confirmation_required' || conflictCode === 'unprocessable') {
+        warnings = warningsOf(exception);
+      }
+      if (conflictCode === 'unprocessable') {
+        fieldErrors = fieldErrorsOf(exception);
+      }
     } else {
       status = statusOfPlainError(exception) ?? HttpStatus.INTERNAL_SERVER_ERROR;
     }
@@ -602,7 +643,13 @@ export class ErrorBodyFilter implements ExceptionFilter {
     if (res.headersSent) {
       return;
     }
-    const body: ErrorBody & { error: { duplicates?: DuplicateCandidate[] } } = {
+    const body: ErrorBody & {
+      error: {
+        duplicates?: DuplicateCandidate[];
+        warnings?: AccessWarning[];
+        fieldErrors?: Record<string, string>;
+      };
+    } = {
       error: {
         code,
         message,
@@ -610,6 +657,8 @@ export class ErrorBodyFilter implements ExceptionFilter {
         ...(reason === undefined ? {} : { reason }),
         ...(details === undefined ? {} : { details }),
         ...(duplicates === undefined ? {} : { duplicates }),
+        ...(warnings === undefined ? {} : { warnings }),
+        ...(fieldErrors === undefined ? {} : { fieldErrors }),
       },
     };
     res.setHeader(REQUEST_ID_HEADER, correlationId);
