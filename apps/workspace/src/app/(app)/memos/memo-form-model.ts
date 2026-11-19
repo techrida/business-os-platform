@@ -51,6 +51,9 @@ const personOf = (directory: MemoDirectory, id: string) =>
 /**
  * The paper's template for the current form state. A pure function of its inputs: whatever is typed or picked
  * reaches the paper on the same render. Blank recommender rows never reach it.
+ *
+ * The letterhead is always the directory's live one: the form edits only drafts and returned memos, and submit
+ * freezes the then-current letterhead again. A letterhead frozen by an earlier submit is never shown here.
  */
 export function buildPreviewTemplate(
   directory: MemoDirectory,
@@ -61,6 +64,7 @@ export function buildPreviewTemplate(
   return {
     organizationId: directory.organizationId,
     organizationName: saved?.organizationName ?? directory.organizationName,
+    ...(directory.letterhead ? { letterhead: directory.letterhead } : {}),
     departmentId: fields.departmentId,
     departmentName: directory.departments.find((d) => d.id === fields.departmentId)?.name ?? '',
     date: fields.date,

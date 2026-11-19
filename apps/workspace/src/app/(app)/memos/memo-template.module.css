@@ -27,15 +27,101 @@
   color: var(--text-primary);
   border: 1px solid var(--input-border);
   border-radius: var(--radius-lg);
-  padding: clamp(16px, 4vw, 44px);
+  /* The band reaches the sheet's edges through this padding, so both read the same value. */
+  --memo-paper-pad: clamp(16px, 4vw, 44px);
+  padding: var(--memo-paper-pad);
   font: inherit;
   overflow-wrap: anywhere;
   word-break: break-word;
+  /* The band stacks on the paper's own width: on a wide screen the paper is half the page. */
+  container: memo-paper / inline-size;
 }
-.paper header {
-  text-align: center;
-  font-size: 15px;
-  line-height: 1.4;
+
+/* ---- Letterhead band: the title on the left, the company on the right, tinted in the brand colour ---- */
+
+.band {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px 32px;
+  margin: calc(-1 * var(--memo-paper-pad)) calc(-1 * var(--memo-paper-pad)) 0;
+  padding: clamp(20px, 5vw, 40px) var(--memo-paper-pad);
+  /* The paper does not clip, so the band follows the sheet's rounded top itself (inside its 1px border). */
+  border-radius: calc(var(--radius-lg) - 1px) calc(var(--radius-lg) - 1px) 0 0;
+  /* Keep the tint when printed: browsers drop backgrounds by default. */
+  -webkit-print-color-adjust: exact;
+  print-color-adjust: exact;
+}
+
+.bandTitle {
+  margin: 0;
+  flex: none;
+  font-size: clamp(32px, 9cqi, 48px);
+  font-weight: 300;
+  line-height: 1.05;
+  letter-spacing: -0.02em;
+}
+
+.bandCompany {
+  display: flex;
+  align-items: center;
+  gap: 20px;
+  min-width: 0;
+}
+
+.bandText {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+  font-size: 13px;
+  line-height: 1.45;
+}
+
+.bandName {
+  margin-bottom: 4px;
+  font-size: 16px;
+  font-weight: 600;
+  line-height: 1.3;
+}
+
+.bandLine {
+  color: var(--text-secondary);
+}
+
+.bandDepartment {
+  margin-top: 6px;
+}
+
+.bandLogo {
+  flex: none;
+  display: block;
+  max-height: 56px;
+  max-width: min(140px, 30cqi);
+  width: auto;
+  height: auto;
+  object-fit: contain;
+}
+
+/* A narrow paper (a phone, or a narrow column): the title sits above the company block. */
+@container memo-paper (max-width: 480px) {
+  .band {
+    flex-direction: column;
+    align-items: stretch;
+  }
+  .bandCompany {
+    justify-content: space-between;
+  }
+}
+
+/* The print frame strips the paper's padding, so the band stops reaching past it. */
+@media print {
+  .band {
+    margin: 0;
+    padding: 24px;
+    border-radius: 0;
+    break-inside: avoid;
+  }
 }
 .date {
   text-align: right;
