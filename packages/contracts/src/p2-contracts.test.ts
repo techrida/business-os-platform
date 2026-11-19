@@ -26,6 +26,42 @@ const NEW_PERMISSIONS: readonly Permission[] = [
   'verification.review',
 ];
 
+describe('quotation.cost.read (D29a)', () => {
+  it('is listed once and held by founder at scope all', () => {
+    expect(PERMISSIONS.filter((p) => p === 'quotation.cost.read')).toHaveLength(1);
+    expect(DEFAULT_ROLE_PERMISSIONS.founder['quotation.cost.read']).toBe('all');
+  });
+
+  it('goes to exactly the roles that draft or approve quotations', () => {
+    const holders = ROLE_KEYS.filter(
+      (role) => DEFAULT_ROLE_PERMISSIONS[role]['quotation.cost.read'] === 'all',
+    );
+    expect([...holders].sort()).toEqual(
+      ['accountant', 'finance', 'founder', 'management', 'pmo', 'sales'].sort(),
+    );
+    // Migration 0055 uses the same rule on existing role_permissions rows.
+    for (const role of ROLE_KEYS) {
+      const grants = DEFAULT_ROLE_PERMISSIONS[role];
+      const drafts = grants['quotation.draft'] !== undefined;
+      const approves = grants['approvals.requests.act'] !== undefined;
+      if (drafts || approves) expect(grants['quotation.cost.read'], role).toBe('all');
+    }
+  });
+
+  it('is withheld from operations head, procurement, warehouse and the portal roles', () => {
+    for (const role of [
+      'operations_head',
+      'procurement',
+      'warehouse',
+      'operations_officer',
+      'customer_user',
+      'vendor_user',
+    ] as const) {
+      expect(DEFAULT_ROLE_PERMISSIONS[role]['quotation.cost.read'], role).toBeUndefined();
+    }
+  });
+});
+
 describe('P2 roles', () => {
   it.each(['pmo', 'operations_head', 'procurement', 'warehouse', 'operations_officer'])(
     'knows the role %s',
