@@ -5,16 +5,23 @@ import { click, mountForm } from '@/test/form-interactions';
 
 const seen = vi.hoisted(() => ({
   avatars: [] as Array<Record<string, unknown>>,
+  avatarMounts: 0,
   uploads: [] as Array<Record<string, unknown>>,
   refresh: vi.fn(),
 }));
 vi.mock('next/navigation', () => ({ useRouter: () => ({ refresh: seen.refresh }) }));
-vi.mock('@/components/ui/avatar', () => ({
-  Avatar: (props: Record<string, unknown>) => {
-    seen.avatars.push(props);
-    return <span data-testid="avatar" />;
-  },
-}));
+vi.mock('@/components/ui/avatar', async () => {
+  const { useEffect } = await import('react');
+  return {
+    Avatar: (props: Record<string, unknown>) => {
+      seen.avatars.push(props);
+      useEffect(() => {
+        seen.avatarMounts += 1;
+      }, []);
+      return <span data-testid="avatar" />;
+    },
+  };
+});
 vi.mock('@/components/ui/image-upload', () => ({
   ImageUpload: (props: Record<string, unknown>) => {
     seen.uploads.push(props);
@@ -35,6 +42,7 @@ let mounted: Awaited<ReturnType<typeof mountForm>> | undefined;
 beforeEach(() => {
   seen.avatars = [];
   seen.uploads = [];
+  seen.avatarMounts = 0;
   seen.refresh.mockReset();
   Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true });
   vi.stubGlobal(
@@ -100,8 +108,11 @@ describe('Sidebar account', () => {
     const close = Array.from(dialog?.querySelectorAll('footer button') ?? []).find(
       (b) => b.textContent === 'Close',
     );
+    const mountsBeforeClose = seen.avatarMounts;
     await click(close ?? null);
     expect(document.querySelector('[role="dialog"]')).toBeNull();
+    // The sidebar picture gets a fresh try: a new upload 404s while it is scanning, and Avatar keeps a failure.
+    expect(seen.avatarMounts).toBe(mountsBeforeClose + 1);
   });
 
   it('shows the picture without the upload when the id is unknown', async () => {
