@@ -94,6 +94,15 @@ function textButton(label: string): HTMLButtonElement {
   return found;
 }
 
+function dialogButton(label: string): HTMLButtonElement {
+  const dialog = document.querySelector('[role="dialog"]');
+  const found = [...(dialog?.querySelectorAll<HTMLButtonElement>('button') ?? [])].find(
+    (element) => element.textContent?.trim() === label,
+  );
+  if (!found) throw new Error(`No dialog button "${label}"`);
+  return found;
+}
+
 const cardTitles = (container: HTMLElement) =>
   [...container.querySelectorAll('section h2')].map((h) => h.textContent);
 
@@ -198,7 +207,7 @@ it('sends nothing that writes until Save changes in the review dialog', async ()
   expect(router.refresh).toHaveBeenCalled();
 });
 
-it('names each undo icon after what it resets, shows none at the default and reviews it', async () => {
+it('names each undo icon, shows none at the default and reviews its one change', async () => {
   await render();
   await click(byLabel('Edit Leads'));
   expect(card('Leads').querySelector('button[aria-label^="Reset "]')).toBeNull();
@@ -221,7 +230,7 @@ it('names each undo icon after what it resets, shows none at the default and rev
 it('puts no permission key and no role key with an underscore on the page', async () => {
   await render();
   await click(byLabel('Edit Leads'));
-  // Links carry role keys as route parameters; everything else a person can read or hear is checked.
+  // Links carry role keys as route parameters; everything a person can read or hear is checked.
   const html = document.body.innerHTML.replace(/href="[^"]*"/g, '');
   for (const permission of accessCatalogue().permissions.map((p) => p.key)) {
     expect(html).not.toContain(permission);
@@ -253,7 +262,7 @@ it('asks before discarding unsaved edits when another card opens', async () => {
   await flush();
   const dialog = document.querySelector('[role="dialog"]');
   expect(dialog?.textContent).toContain('Discard your changes to Leads?');
-  await click(textButton('Keep editing'));
+  await click(dialogButton('Keep editing'));
   await flush();
   expect(checkbox(card('Leads'), 'Department heads also see their whole department').checked).toBe(
     false,
@@ -261,7 +270,7 @@ it('asks before discarding unsaved edits when another card opens', async () => {
 
   await click(byLabel('Edit Invoices'));
   await flush();
-  await click(textButton('Discard'));
+  await click(dialogButton('Discard'));
   await flush();
   expect(card('Invoices').textContent).toContain('Who can see invoices');
   expect(card('Leads').textContent).not.toContain('Who can see leads');
