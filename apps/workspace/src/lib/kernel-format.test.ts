@@ -117,6 +117,19 @@ describe('documentNumberText', () => {
     );
   });
 
+  it('keeps a draft-looking reference a person typed into another field as typed', () => {
+    const rows = snapshotEntries({
+      reference: 'Draft debit_note 7d92d5bf',
+      noteReason: 'Related to Draft debit_note 0a1b2c3d',
+      subject: 'Draft debit_note 0a1b2c3d',
+    });
+    expect(rows.find((row) => row.key === 'reference')?.value).toBe('Draft debit note');
+    expect(rows.find((row) => row.key === 'noteReason')?.value).toBe(
+      'Related to Draft debit_note 0a1b2c3d',
+    );
+    expect(rows.find((row) => row.key === 'subject')?.value).toBe('Draft debit_note 0a1b2c3d');
+  });
+
   it('leaves a real document number alone', () => {
     expect(documentNumberText('INV-2083/84-00001')).toBe('INV-2083/84-00001');
     expect(documentNumberText('Draft budget for review')).toBe('Draft budget for review');
