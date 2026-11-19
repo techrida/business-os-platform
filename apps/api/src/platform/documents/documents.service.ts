@@ -463,6 +463,15 @@ export class DocumentsService {
     await this.cleanupRemoved(unclean);
   }
 
+  /**
+   * The staff upload check of an owner, for a caller that changes which of its documents is current (U12: the image
+   * pointer routes): the owner must exist in the scope (404) and the request principal must hold the policy's upload
+   * grant against its ref (403). The same check `create` and `remove` make; an unregistered owner type is a 403.
+   */
+  async assertCanManage(scope: TxScope, ownerType: string, ownerId: string): Promise<void> {
+    await this.assertOwner(scope, ownerType, ownerId, 'documents.upload');
+  }
+
   async removeInTransaction(tx: DbTransaction, scope: TxScope, documentId: string) {
     const s = scoped(scope);
     const doc = await this.loadDocument(tx, scope, documentId);
