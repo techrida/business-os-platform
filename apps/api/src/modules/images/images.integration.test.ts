@@ -4,7 +4,8 @@
 // Real: every migration as bos_owner, every query as bos_app, the image owner policies with their database loaders,
 // DocumentsService with the real AuthzService (staff principals carry the seeded DEFAULT_ROLE_PERMISSIONS of their
 // role), the disk storage on a temp dir, the type check, the ScanProcessor talking the clamd protocol to fake-clamd,
-// SettingsService, AuditService and the controller handlers, called inside a request store bound to the caller's
+// SettingsService, AuditService and the controller handlers (the POST upload gets a real readable stream carrying the
+// request headers, as Express hands it over), called inside a request store bound to the caller's
 // principal as the tenancy interceptor binds it. Fakes: the BullMQ scan queue (the test hands the captured job to
 // the processor), notify, and the Express response (a writable stream recording status and headers).
 import 'reflect-metadata';
@@ -17,6 +18,7 @@ import { PassThrough, Readable } from 'node:stream';
 
 import {
   DEFAULT_ROLE_PERMISSIONS,
+  IMAGE_MAX_BYTES,
   type ImageOwnerType,
   type Permission,
   type RoleKey,
@@ -168,6 +170,37 @@ async function uploadClean(
 
 const putAs = (p: Principal, ownerType: string, ownerId: string, body: unknown) =>
   asCaller(p, () => controller.set(ownerType, ownerId, body));
+
+/** POST /v1/images/:ownerType/:ownerId as `p`: the body is `bytes`, sent with `headers` (lower-case names). */
+const postAs = (
+  p: Principal,
+  ownerType: string,
+  ownerId: string,
+  headers: Record<string, string>,
+  bytes: Buffer = PNG,
+) =>
+  asCaller(p, () =>
+    controller.upload(
+      ownerType,
+      ownerId,
+      Object.assign(Readable.from([bytes]), { headers }) as unknown as Request,
+    ),
+  );
+
+const pngHeaders = (bytes: Buffer = PNG): Record<string, string> => ({
+  'content-type': 'image/png',
+  'content-length': String(bytes.length),
+  'x-file-name': 'my%20face.png',
+});
+
+/** How many documents (removed ones included) the owner has: a refusal before the body must leave this unchanged. */
+async function documentCount(ownerType: string, ownerId: string): Promise<number> {
+  const { rows } = await pool.query<{ n: string }>(
+    'SELECT count(*) AS n FROM app.documents WHERE owner_type = $1 AND owner_id = $2',
+    [ownerType, ownerId],
+  );
+  return Number(rows[0]?.n ?? 0);
+}
 
 /** An Express-like response that is a real writable stream, recording status and headers. */
 function fakeResponse() {
@@ -426,5 +459,72 @@ describe('PUT /v1/images/entity_logo/:entityId', () => {
     expect(await statusOf(putAs(staff(a), 'entity_logo', entityA2, { documentId: null }))).toBe(
       404,
     );
+  });
+});
+
+describe('POST /v1/images/:ownerType/:ownerId', () => {
+  it('lets a finance user (no documents.upload) upload their own avatar in one request: 200, scan queued, pointer set', async () => {
+    const finance = staff(a, 'finance');
+    expect(finance.grants.has('documents.upload')).toBe(false);
+    // documentCount sees the new row, so the refusals below that leave it unchanged are not vacuous.
+    const before = await documentCount('user_avatar', a.userId);
+
+    const { documentId } = await postAs(finance, 'user_avatar', a.userId, pngHeaders());
+    expect(await documentCount('user_avatar', a.userId)).toBe(before + 1);
+    expect(await avatarOf(a.userId)).toBe(documentId);
+    expect(await removedAt(documentId)).toBeNull();
+
+    // The scan job of the new version was queued; running it makes the picture servable.
+    const { rows } = await pool.query<{ id: string }>(
+      'SELECT id FROM app.document_versions WHERE document_id = $1',
+      [documentId],
+    );
+    expect(rows).toHaveLength(1);
+    const call = queue.add.mock.calls.find((c) => (c[1] as ScanJobData).versionId === rows[0]?.id);
+    expect(call).toBeDefined();
+    await processor.scanVersion(call?.[1] as ScanJobData, true);
+    const served = await getAs(finance, documentId);
+    expect(served.status).toBe(200);
+    expect(served.body.equals(PNG)).toBe(true);
+  });
+
+  it("is 403 for a finance user posting another user's avatar, and stores nothing", async () => {
+    const other = await createStaffUser(pool, {
+      tenantId: a.tenantId,
+      organizationId: a.organizationId,
+      idpOrgId: a.idpOrgId,
+    });
+    const before = await documentCount('user_avatar', other.userId);
+    expect(
+      await statusOf(postAs(staff(a, 'finance'), 'user_avatar', other.userId, pngHeaders())),
+    ).toBe(403);
+    expect(await documentCount('user_avatar', other.userId)).toBe(before);
+    expect(await avatarOf(other.userId)).toBeNull();
+    expect(queue.add).not.toHaveBeenCalled();
+  });
+
+  it('is 413 for an over-cap Content-Length before any row is written', async () => {
+    const before = await documentCount('user_avatar', a.userId);
+    const headers = { ...pngHeaders(), 'content-length': String(IMAGE_MAX_BYTES + 1) };
+    expect(await statusOf(postAs(staff(a), 'user_avatar', a.userId, headers))).toBe(413);
+    expect(await documentCount('user_avatar', a.userId)).toBe(before);
+    expect(queue.add).not.toHaveBeenCalled();
+  });
+
+  it('is 415 for a text/plain body, before any row is written', async () => {
+    const before = await documentCount('user_avatar', a.userId);
+    const headers = { ...pngHeaders(), 'content-type': 'text/plain' };
+    expect(await statusOf(postAs(staff(a), 'user_avatar', a.userId, headers))).toBe(415);
+    expect(await documentCount('user_avatar', a.userId)).toBe(before);
+    expect(queue.add).not.toHaveBeenCalled();
+  });
+
+  it('is 403 for a sales user posting the entity logo, and stores nothing', async () => {
+    const before = await documentCount('entity_logo', a.organizationId);
+    expect(
+      await statusOf(postAs(staff(a, 'sales'), 'entity_logo', a.organizationId, pngHeaders())),
+    ).toBe(403);
+    expect(await documentCount('entity_logo', a.organizationId)).toBe(before);
+    expect(queue.add).not.toHaveBeenCalled();
   });
 });
