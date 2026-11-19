@@ -24,7 +24,7 @@ export const PROJECT_ROLES = [
   // P4 (Kuu D03): receipts go to warehouse, and receiver is gone.
   'warehouse',
   'operations_officer',
-  // D50: Marketing creates and hands off leads. The role only; its dev users come with the access-model seed.
+  // D50: Marketing creates and hands off leads. Its dev users are the Marketing department personas below.
   'marketing',
 ] as const;
 export type RoleKey = (typeof PROJECT_ROLES)[number];
@@ -107,6 +107,40 @@ export const PERSONAS: readonly PersonaSpec[] = [
     familyName: 'Finance Two',
     orgKind: 'staff',
     role: 'finance',
+  },
+  // U20a phase 2 (D50, D51): one Sales and one Marketing department with a person at every level, so the access
+  // model (own at staff, department at manager and head, who may assign to whom) can be tried by switching user.
+  // Appended last, so earlier orders and logins do not change. The `sales` persona above is the Sales staff member;
+  // `sales2` is a second staff member, so staff-to-peer rules have someone to act on.
+  { key: 'sales2', givenName: 'Dev', familyName: 'Sales Two', orgKind: 'staff', role: 'sales' },
+  {
+    key: 'salesmgr',
+    givenName: 'Dev',
+    familyName: 'Sales Manager',
+    orgKind: 'staff',
+    role: 'sales',
+  },
+  { key: 'saleshead', givenName: 'Dev', familyName: 'Sales Head', orgKind: 'staff', role: 'sales' },
+  {
+    key: 'marketing',
+    givenName: 'Dev',
+    familyName: 'Marketing',
+    orgKind: 'staff',
+    role: 'marketing',
+  },
+  {
+    key: 'marketingmgr',
+    givenName: 'Dev',
+    familyName: 'Marketing Manager',
+    orgKind: 'staff',
+    role: 'marketing',
+  },
+  {
+    key: 'marketinghead',
+    givenName: 'Dev',
+    familyName: 'Marketing Head',
+    orgKind: 'staff',
+    role: 'marketing',
   },
 ];
 

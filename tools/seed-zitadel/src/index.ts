@@ -182,7 +182,7 @@ export interface TenancyStore {
   /**
    * P1 step 8: role grants, the `test_memo` workflow and the INR peg for the tenant of the staff
    * org, found by its ZITADEL org id, and that tenant's default entity. Returns 0 on a second run.
-   * With the staff personas it also seeds the dev department and the VEND-DEV vendor (P4 SEED-2).
+   * With the staff personas it also seeds the dev departments and the VEND-DEV vendor (P4 SEED-2).
    */
   seedKernel(
     staffZitadelOrgId: string,
@@ -673,7 +673,7 @@ export async function runSeed(deps: SeedDeps): Promise<SeedResult> {
   if (dbChanges > 0) changed(`upserted ${dbChanges} tenancy row(s) (entity, parties, idp_orgs)`);
 
   // --- P1 step 8: kernel rows (deny-by-default needs grants to exist; test_memo workflow v1). ---
-  // The staff personas go along so the DB seed can create the dev department and VEND-DEV, which need user ids.
+  // The staff personas go along so the DB seed can create the dev departments and VEND-DEV, which need user ids.
   const devPersonas: DevPersona[] = [];
   for (const persona of PERSONAS) {
     const state = personaState.get(persona.key);
