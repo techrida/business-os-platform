@@ -14,7 +14,10 @@ import { requireStaffSession } from '@/lib/bff';
 
 const PAGE: Record<string, string> = { leadId: '/leads', opportunityId: '/opportunities' };
 
-/** Log a call, meeting, email, note or task on a lead or an opportunity. */
+/**
+ * Log a call, meeting, email or note on a lead or an opportunity. `task` and a note with a due time
+ * are refused by the parser (D39), so nothing reaches the API.
+ */
 export async function logActivityAction(_prev: FormState, form: FormData): Promise<FormState> {
   const kind = form.get('subjectKind');
   const id = form.get('subjectId');
