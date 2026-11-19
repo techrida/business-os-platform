@@ -103,12 +103,7 @@ async function setRows(scope: TxScope, rows: readonly Row[]): Promise<void> {
   });
 }
 
-type LevelRow = [
-  role: RoleKey,
-  permission: Permission,
-  minLevel: 'manager' | 'head',
-  scope: Scope,
-];
+type LevelRow = [role: RoleKey, permission: Permission, minLevel: 'manager' | 'head', scope: Scope];
 
 /** Replaces the tenant's role_permission_levels with `rows`. */
 async function setLevelRows(scope: TxScope, rows: readonly LevelRow[]): Promise<void> {
@@ -390,9 +385,9 @@ describe('RoleCache: an emptied policy and rolesGranting', () => {
 
     const cache = new RoleCache(db, clock);
     expect((await cache.grantsFor(org.tenantId, org.organizationId, ['founder'])).size).toBe(0);
-    expect(
-      (await cache.grantsFor(org.tenantId, org.organizationId, ['sales'], 'head')).size,
-    ).toBe(0);
+    expect((await cache.grantsFor(org.tenantId, org.organizationId, ['sales'], 'head')).size).toBe(
+      0,
+    );
     expect(await cache.rolesGranting(org.tenantId, 'memo.read')).toEqual([]);
   });
 
@@ -601,8 +596,7 @@ describe('RoleCache: level grants', () => {
     await setLevelRows(org, [['sales', 'crm.lead.read', 'manager', 'department']]);
     await otherInstance().invalidate(org.tenantId, org.organizationId);
     const cache = new RoleCache(db, clock);
-    const managerReads = async () =>
-      (await at(cache, org, ['sales'], 'manager'))['crm.lead.read'];
+    const managerReads = async () => (await at(cache, org, ['sales'], 'manager'))['crm.lead.read'];
     expect(await managerReads()).toBe('department');
 
     await setLevelRows(org, [['sales', 'crm.lead.read', 'head', 'department']]);

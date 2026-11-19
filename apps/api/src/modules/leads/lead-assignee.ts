@@ -168,7 +168,10 @@ export interface AssignmentCheck {
 }
 
 /** The 400 for a refused hand-over: the field and the rule's message, and the code for a client to switch on. */
-export function assignmentRefused(field: string, reason: AssignmentDenyReason): BadRequestException {
+export function assignmentRefused(
+  field: string,
+  reason: AssignmentDenyReason,
+): BadRequestException {
   return new BadRequestException({
     code: 'bad_request',
     message: `${field} ${ASSIGNMENT_DENY_MESSAGES[reason]}`,

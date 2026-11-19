@@ -310,7 +310,12 @@ export async function startHarness({ Pool, drizzle }: Driver): Promise<Harness> 
     state.roles = roles;
     state.departmentId = membership.departmentId;
     state.level = membership.level;
-    state.grants = await roleCache.grantsFor(tenantId, acting.organizationId, roles, membership.level);
+    state.grants = await roleCache.grantsFor(
+      tenantId,
+      acting.organizationId,
+      roles,
+      membership.level,
+    );
     state.acting = acting;
   };
 
@@ -341,8 +346,7 @@ export async function startHarness({ Pool, drizzle }: Driver): Promise<Harness> 
     actAs,
     roleCache,
     notify,
-    department: async (name) =>
-      (await createDepartment(pool, { ...scopeA, name })).departmentId,
+    department: async (name) => (await createDepartment(pool, { ...scopeA, name })).departmentId,
     member,
     seedCustomer: async (owner) => {
       const { partyId } = await createParty(pool, { tenantId, kind: 'customer' });

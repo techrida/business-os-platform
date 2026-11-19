@@ -248,7 +248,11 @@ export class LeadsService {
     if (found === undefined) throw notFound();
     const { nextFollowUp, ...row } = found;
     // The creator and the follow-up assignees read the lead too (D50, D55-5), as the list query lets them.
-    this.assertVisible('crm.lead.read', row, await loadRecordReaders(this.db, scope, leads, row.id));
+    this.assertVisible(
+      'crm.lead.read',
+      row,
+      await loadRecordReaders(this.db, scope, leads, row.id),
+    );
     return toLeadDto(
       row,
       nextFollowUp,
@@ -290,7 +294,13 @@ export class LeadsService {
     const created = await withTx(this.db, scope, actor, async (tx) => {
       const run = async (): Promise<LeadDto> => {
         const check = this.assignmentCheck(tx, scope, 'create');
-        const ownerUserId = await this.ownerForCreate(tx, scope, principal, body.ownerUserId, check);
+        const ownerUserId = await this.ownerForCreate(
+          tx,
+          scope,
+          principal,
+          body.ownerUserId,
+          check,
+        );
         const assigneeUserId = followUp?.assigneeUserId ?? ownerUserId;
         if (followUp?.assigneeUserId !== undefined) {
           await assertAssignable(
@@ -679,7 +689,11 @@ export class LeadsService {
    * back change tells nobody. The caller nudges the drainer after the commit. One notice per owner change: the key
    * names the lead's version.
    */
-  private async notifyAssigned(tx: DbTransaction, principal: Principal, lead: LeadRow): Promise<void> {
+  private async notifyAssigned(
+    tx: DbTransaction,
+    principal: Principal,
+    lead: LeadRow,
+  ): Promise<void> {
     if (lead.ownerUserId === null) return;
     const [me] = await tx
       .select({ displayName: users.displayName })

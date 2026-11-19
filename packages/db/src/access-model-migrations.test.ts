@@ -202,10 +202,7 @@ beforeAll(async () => {
     await mkdir(join(folder, 'meta'));
     await writeFile(join(folder, 'meta/_journal.json'), JSON.stringify({ ...journal, entries }));
     for (const entry of entries) {
-      await copyFile(
-        join(MIGRATIONS_FOLDER, `${entry.tag}.sql`),
-        join(folder, `${entry.tag}.sql`),
-      );
+      await copyFile(join(MIGRATIONS_FOLDER, `${entry.tag}.sql`), join(folder, `${entry.tag}.sql`));
     }
     return folder;
   };

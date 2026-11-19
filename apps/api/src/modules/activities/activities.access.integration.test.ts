@@ -204,8 +204,9 @@ const plan = async (subject: Record<string, string>, assigneeUserId?: string) =>
 const refusalOf = async (body: Record<string, unknown>): Promise<unknown> => {
   const error: unknown = await service.create(body as never).catch((e: unknown) => e);
   expect(error).toBeInstanceOf(BadRequestException);
-  return ((error as BadRequestException).getResponse() as { details?: { assignmentReason?: unknown } })
-    .details?.assignmentReason;
+  return (
+    (error as BadRequestException).getResponse() as { details?: { assignmentReason?: unknown } }
+  ).details?.assignmentReason;
 };
 
 /** The `crm.assigned` bell and outbox rows of one follow-up, as the owner role sees them (no row security). */
@@ -317,7 +318,10 @@ describe('a lead follow-up handed to a Sales peer (D50, K5)', () => {
     ).toBe(403);
     expect((await patch(followUp.id, 'cancel', { expectedVersion: 1 })).status).toBe(403);
 
-    const done = await patch(followUp.id, 'complete', { expectedVersion: 1, note: 'Spoke to them' });
+    const done = await patch(followUp.id, 'complete', {
+      expectedVersion: 1,
+      note: 'Spoke to them',
+    });
     expect(done.status, JSON.stringify(done.body)).toBe(200);
     expect(dto(done.body)).toMatchObject({ planned: false, version: 2 });
 
@@ -338,9 +342,7 @@ describe('a lead follow-up handed to a Sales peer (D50, K5)', () => {
       code: 'bad_request',
       message: 'assigneeUserId cannot see the record this is about',
     });
-    expect(await refusalOf({ ...body, assigneeUserId: P.storeKeeper })).toBe(
-      'cannot_read_subject',
-    );
+    expect(await refusalOf({ ...body, assigneeUserId: P.storeKeeper })).toBe('cannot_read_subject');
     // Positive control: the same Founder may give it to a salesperson.
     expect((await post({ ...body, assigneeUserId: P.salesPeer })).status).toBe(201);
   });

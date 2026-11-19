@@ -543,14 +543,20 @@ describe('seedKernelRows: dev vendor and department (SEED-2)', () => {
       displayName: 'Dev Warehouse',
     },
     // U20a phase 2: the Sales and Marketing department people.
-    ...['sales', 'sales2', 'salesmgr', 'saleshead', 'marketing', 'marketingmgr', 'marketinghead'].map(
-      (key) => ({
-        personaKey: key,
-        zitadelUserId: `z-${key}`,
-        email: `${key}@dev.bos.test`,
-        displayName: `Dev ${key}`,
-      }),
-    ),
+    ...[
+      'sales',
+      'sales2',
+      'salesmgr',
+      'saleshead',
+      'marketing',
+      'marketingmgr',
+      'marketinghead',
+    ].map((key) => ({
+      personaKey: key,
+      zitadelUserId: `z-${key}`,
+      email: `${key}@dev.bos.test`,
+      displayName: `Dev ${key}`,
+    })),
   ];
   const userIds: Record<string, string> = {
     'z-proc': 'u-proc',
@@ -558,9 +564,15 @@ describe('seedKernelRows: dev vendor and department (SEED-2)', () => {
     'z-head': 'u-head',
     'z-warehouse': 'u-warehouse',
     ...Object.fromEntries(
-      ['sales', 'sales2', 'salesmgr', 'saleshead', 'marketing', 'marketingmgr', 'marketinghead'].map(
-        (key) => [`z-${key}`, `u-${key}`],
-      ),
+      [
+        'sales',
+        'sales2',
+        'salesmgr',
+        'saleshead',
+        'marketing',
+        'marketingmgr',
+        'marketinghead',
+      ].map((key) => [`z-${key}`, `u-${key}`]),
     ),
   };
 
@@ -608,9 +620,15 @@ describe('seedKernelRows: dev vendor and department (SEED-2)', () => {
       ['tenant-1', 'idp-staff', 'z-mgmt', 'management@dev.bos.test', 'Dev Management'],
       ['tenant-1', 'idp-staff', 'z-head', 'depthead@dev.bos.test', 'Dev Department Head'],
       ['tenant-1', 'idp-staff', 'z-warehouse', 'warehouse@dev.bos.test', 'Dev Warehouse'],
-      ...['sales', 'sales2', 'salesmgr', 'saleshead', 'marketing', 'marketingmgr', 'marketinghead'].map(
-        (key) => ['tenant-1', 'idp-staff', `z-${key}`, `${key}@dev.bos.test`, `Dev ${key}`],
-      ),
+      ...[
+        'sales',
+        'sales2',
+        'salesmgr',
+        'saleshead',
+        'marketing',
+        'marketingmgr',
+        'marketinghead',
+      ].map((key) => ['tenant-1', 'idp-staff', `z-${key}`, `${key}@dev.bos.test`, `Dev ${key}`]),
     ]);
     for (const c of users) expect(c.text).toContain('ON CONFLICT (zitadel_user_id) DO NOTHING');
   });
@@ -685,11 +703,16 @@ describe('seedKernelRows: dev vendor and department (SEED-2)', () => {
       const own = (c: Call) => c.values[2] === name;
       const insert = calls.findIndex((c) => c.text.includes('INTO app.departments') && own(c));
       const head = calls.findIndex((c) => c.text.startsWith('UPDATE app.departments') && own(c));
-      const lock = calls.findIndex((c) => c.text.startsWith('SELECT id FROM app.departments') && own(c));
+      const lock = calls.findIndex(
+        (c) => c.text.startsWith('SELECT id FROM app.departments') && own(c),
+      );
       expect(calls[lock]?.text).toContain('FOR UPDATE');
       const members = calls
         .map((c, i) => ({ c, i }))
-        .filter(({ c }) => c.text.startsWith('UPDATE app.user_entities') && c.values[3] === `dept-${name}`)
+        .filter(
+          ({ c }) =>
+            c.text.startsWith('UPDATE app.user_entities') && c.values[3] === `dept-${name}`,
+        )
         .map(({ i }) => i);
       expect(members.length, name).toBeGreaterThan(0);
       expect(insert, name).toBeLessThan(head);

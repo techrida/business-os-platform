@@ -271,10 +271,9 @@ function defaultLevelGrants(role: RoleKey): LevelGrant[] {
  * constant, the table (`app.role_permission_levels`) is the live truth once a tenant has rows.
  */
 export const DEFAULT_ROLE_PERMISSION_LEVELS: Readonly<Record<RoleKey, readonly LevelGrant[]>> =
-  Object.fromEntries(ROLE_KEYS.map((role) => [role, defaultLevelGrants(role)])) as unknown as Record<
-    RoleKey,
-    readonly LevelGrant[]
-  >;
+  Object.fromEntries(
+    ROLE_KEYS.map((role) => [role, defaultLevelGrants(role)]),
+  ) as unknown as Record<RoleKey, readonly LevelGrant[]>;
 
 // --- Target default reach on leads (D50). The seed and the services adopt it in phase 2. ---
 

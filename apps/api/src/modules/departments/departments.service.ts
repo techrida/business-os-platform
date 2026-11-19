@@ -635,7 +635,9 @@ export class DepartmentsAdminService {
             meta: { userId: headUserId },
           });
 
-          await this.revisions.bump(tx, scope, { actorUserId: actor.kind === 'user' ? actor.id : null });
+          await this.revisions.bump(tx, scope, {
+            actorUserId: actor.kind === 'user' ? actor.id : null,
+          });
         }
 
         return this.loadDetail(tx, scope, created.id);
@@ -936,7 +938,9 @@ export class DepartmentsAdminService {
       });
 
       if (touchedAccess) {
-        await this.revisions.bump(tx, scope, { actorUserId: actor.kind === 'user' ? actor.id : null });
+        await this.revisions.bump(tx, scope, {
+          actorUserId: actor.kind === 'user' ? actor.id : null,
+        });
       }
 
       return {

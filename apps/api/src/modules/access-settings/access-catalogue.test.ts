@@ -200,7 +200,9 @@ describe('access-summaries', () => {
         expect(sentence).not.toMatch(FORBIDDEN_WORDS);
       }
     }
-    expect(before.leads.join(' ')).toContain('Finance, Accountant, Sales, Marketing, and PMO see their own leads.');
+    expect(before.leads.join(' ')).toContain(
+      'Finance, Accountant, Sales, Marketing, and PMO see their own leads.',
+    );
     expect(before.leads.join(' ')).toContain('Their managers and heads see their department.');
 
     // A head with no head row keeps the manager row at run time, so the manager switch alone still

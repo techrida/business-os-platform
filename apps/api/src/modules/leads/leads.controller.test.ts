@@ -101,7 +101,11 @@ describe('LeadsController', () => {
     expect(service.owners).toHaveBeenLastCalledWith('create');
 
     service.owners.mockClear();
-    for (const query of [{ context: 'approve' }, { context: ['create', 'reassign'] }, { scope: 'all' }]) {
+    for (const query of [
+      { context: 'approve' },
+      { context: ['create', 'reassign'] },
+      { scope: 'all' },
+    ]) {
       expect(() => controller.owners(query), JSON.stringify(query)).toThrow(BadRequestException);
     }
     expect(service.owners).not.toHaveBeenCalled();

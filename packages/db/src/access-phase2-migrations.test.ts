@@ -586,7 +586,8 @@ describe('0088 department stamp on leads and opportunities (D55-4)', () => {
   it('still re-stamps on an owner change and empties when the owner is removed', async () => {
     const other = await newDepartment();
     for (const table of ['leads', 'opportunities'] as const) {
-      const id = table === 'leads' ? await insertLead(memberUser) : await insertOpportunity(memberUser);
+      const id =
+        table === 'leads' ? await insertLead(memberUser) : await insertOpportunity(memberUser);
       await update(table, id, 'owner_user_id = $2', other.userId);
       expect(await departmentOf(table, id), table).toBe(other.departmentId);
       await update(table, id, 'owner_user_id = NULL');
@@ -597,13 +598,14 @@ describe('0088 department stamp on leads and opportunities (D55-4)', () => {
   it('still replaces a department written by hand on an update that leaves the owner alone', async () => {
     const other = await newDepartment();
     for (const table of ['leads', 'opportunities'] as const) {
-      const id = table === 'leads' ? await insertLead(memberUser) : await insertOpportunity(memberUser);
+      const id =
+        table === 'leads' ? await insertLead(memberUser) : await insertOpportunity(memberUser);
       await update(table, id, 'department_id = $2', other.departmentId);
       expect(await departmentOf(table, id), table).toBe(salesDept);
     }
   });
 
-  it("keeps the stamp when the owner is written unchanged after moving department", async () => {
+  it('keeps the stamp when the owner is written unchanged after moving department', async () => {
     // The owner moves department; their old records stay with the old one (D55-4). Re-saving the same owner (a
     // form that sends every field) must not move the record, nor the quotations of an opportunity.
     const { departmentId: firstDept } = await createDepartment(owner, tenantA);
@@ -619,7 +621,11 @@ describe('0088 department stamp on leads and opportunities (D55-4)', () => {
       ),
     );
     await update('leads', lead, 'owner_user_id = owner_user_id');
-    await update('opportunities', opp, 'owner_user_id = owner_user_id, department_id = department_id');
+    await update(
+      'opportunities',
+      opp,
+      'owner_user_id = owner_user_id, department_id = department_id',
+    );
     expect(await departmentOf('leads', lead)).toBe(firstDept);
     expect(await departmentOf('opportunities', opp)).toBe(firstDept);
     expect(await departmentOf('quotations', quotation)).toBe(firstDept);

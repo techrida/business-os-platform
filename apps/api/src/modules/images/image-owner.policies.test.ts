@@ -98,7 +98,9 @@ async function mayUpload(
   const ref: ResourceRef | null = await policy.resource(scope, ownerId);
   if (ref === null) return 'not_found';
   // An owner policy may accept any one of several upload grants; the first refusal is the one reported.
-  const decisions = [policy.uploadPermission ?? 'documents.upload'].flat().map((perm) => can(p, perm, ref));
+  const decisions = [policy.uploadPermission ?? 'documents.upload']
+    .flat()
+    .map((perm) => can(p, perm, ref));
   const allowedDecision = decisions.find((decision) => decision.allowed);
   if (allowedDecision !== undefined) return 'allowed';
   return decisions[0]?.allowed === false ? decisions[0].reason : 'no_permission';
