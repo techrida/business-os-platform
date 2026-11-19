@@ -734,7 +734,8 @@ describe('0013 data move on a database that already has rows (K1-U1b)', () => {
 
   it('dedupes the re-keyed tenant tables, keeping the staff org rows', async () => {
     const rp = await pool.query(
-      `SELECT role_key, permission, scope FROM app.role_permissions WHERE tenant_id = $1 ORDER BY role_key`,
+      `SELECT role_key, permission, scope FROM app.role_permissions
+        WHERE tenant_id = $1 AND role_key <> 'marketing' ORDER BY role_key`,
       [tenantId],
     );
     expect(rp.rows).toEqual([
@@ -744,7 +745,8 @@ describe('0013 data move on a database that already has rows (K1-U1b)', () => {
     const av = await pool.query('SELECT version FROM app.authz_versions WHERE tenant_id = $1', [
       tenantId,
     ]);
-    expect(av.rows).toEqual([{ version: '5' }]);
+    // 5 after the 0013 dedupe, plus one when 0083 gives the tenant its Marketing rows.
+    expect(av.rows).toEqual([{ version: '6' }]);
     const ur = await pool.query(
       'SELECT user_id, role_key FROM app.user_roles WHERE tenant_id = $1 ORDER BY role_key',
       [tenantId],

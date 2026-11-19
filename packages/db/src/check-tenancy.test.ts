@@ -153,6 +153,7 @@ describe('tenant-scoped tables (ADR 0027 §6)', () => {
         'app.idp_orgs',
         'app.parties',
         'app.role_permissions',
+        'app.role_permission_levels',
         'app.tenants',
         'app.user_roles',
         'app.users',
