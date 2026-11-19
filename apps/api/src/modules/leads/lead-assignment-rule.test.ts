@@ -116,7 +116,69 @@ const rows: Row[] = [
   ],
   ['Finance picks the Sales head on create', finance, salesHead, 'create', 'allow:intake_handoff'],
   ['Finance reassigns to Sales later', finance, salesStaff, 'reassign', 'deny:other_department'],
-  ['Finance picks Marketing on create', finance, marketingStaff, 'create', 'deny:other_department'],
+  [
+    'Finance picks Marketing on create',
+    finance,
+    marketingStaff,
+    'create',
+    'deny:sales_owner_required',
+  ],
+  [
+    'Finance keeps the lead itself on create',
+    finance,
+    finance,
+    'create',
+    'deny:sales_owner_required',
+  ],
+  [
+    'Finance picks a Finance colleague on create',
+    finance,
+    party('fin2', ['finance'], 'dept-finance'),
+    'create',
+    'deny:sales_owner_required',
+  ],
+  [
+    'Finance picks an unplaced Sales user on create',
+    finance,
+    unplaced,
+    'create',
+    'deny:no_department',
+  ],
+  [
+    'Finance sharing a department with the Sales head still picks them on create',
+    party('fin-hq', ['finance'], SALES_DEPT),
+    salesHead,
+    'create',
+    'allow:intake_handoff',
+  ],
+  [
+    'Finance who also holds Marketing still picks the Sales head on create',
+    party('fin-mkt', ['finance', 'marketing'], MARKETING_DEPT),
+    salesHead,
+    'create',
+    'allow:intake_handoff',
+  ],
+  [
+    'Sales head to Marketing staff inside one shared department',
+    party('s-hq', ['sales'], 'dept-hq', 'head'),
+    party('m-hq', ['marketing'], 'dept-hq'),
+    'reassign',
+    'deny:reverse_handoff',
+  ],
+  [
+    'Marketing to an unplaced Sales user',
+    marketingStaff,
+    unplaced,
+    'reassign',
+    'deny:no_department',
+  ],
+  [
+    'Unplaced Marketing user to Sales',
+    party('mkt-unplaced', ['marketing'], null),
+    salesStaff,
+    'reassign',
+    'deny:no_department',
+  ],
   [
     'Accountant picks Sales on create',
     party('acc', ['accountant'], 'dept-acc'),
@@ -179,17 +241,47 @@ describe('decideAssignment', () => {
       marketingHead,
       finance,
       unplaced,
+      party('s-hq', ['sales'], 'dept-hq', 'head'),
+      party('m-hq', ['marketing'], 'dept-hq'),
+      party('both', ['sales', 'marketing'], MARKETING_DEPT, 'manager'),
     ];
-    for (const actor of everyone) {
-      for (const target of everyone) {
-        const decision = decideAssignment(actor, target);
-        if (!decision.allowed) continue;
-        if (decision.reason === 'department' || decision.reason === 'sales_handoff') {
-          expect(['staff', 'manager', 'head'].indexOf(target.level)).toBeLessThanOrEqual(
-            ['staff', 'manager', 'head'].indexOf(actor.level),
-          );
+    const levels = ['staff', 'manager', 'head'];
+    for (const context of ['create', 'reassign'] as const) {
+      for (const actor of everyone) {
+        for (const target of everyone) {
+          const decision = decideAssignment(actor, target, context);
+          if (!decision.allowed) continue;
+          const label = `${actor.userId} -> ${target.userId} (${context}): ${decision.reason}`;
+          const upward = levels.indexOf(target.level) > levels.indexOf(actor.level);
+          switch (decision.reason) {
+            case 'founder':
+              expect(actor.roleKeys, label).toContain('founder');
+              break;
+            case 'self':
+              expect(target.userId, label).toBe(actor.userId);
+              break;
+            case 'department':
+              expect(target.departmentId, label).toBe(actor.departmentId);
+              expect(upward, label).toBe(false);
+              break;
+            case 'sales_handoff':
+              expect(actor.roleKeys, label).toContain('marketing');
+              expect(target.roleKeys, label).toContain('sales');
+              expect(upward, label).toBe(false);
+              break;
+            case 'intake_handoff':
+              expect(context, label).toBe('create');
+              expect(target.roleKeys, label).toContain('sales');
+              expect(target.departmentId, label).not.toBeNull();
+              break;
+          }
+          // Sales never reaches a Marketing-only user, in either context.
+          if (actor.roleKeys.includes('sales') && !actor.roleKeys.includes('marketing')) {
+            const marketingOnly =
+              target.roleKeys.includes('marketing') && !target.roleKeys.includes('sales');
+            if (marketingOnly) expect(target.userId, label).toBe(actor.userId);
+          }
         }
-        if (decision.reason === 'department') expect(target.departmentId).toBe(actor.departmentId);
       }
     }
   });
@@ -238,7 +330,6 @@ describe('assignableTargets', () => {
       'sales-peer',
       'sales-manager',
       'sales-head',
-      'finance',
     ]);
     expect(assignableTargets(finance, everyone, 'reassign').map((p) => p.userId)).toEqual([
       'finance',

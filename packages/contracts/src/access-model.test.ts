@@ -104,16 +104,25 @@ describe('target lead access (D50)', () => {
   });
 
   it('lets Management read everything and change nothing', () => {
-    expect(TARGET_LEAD_ACCESS.management.staff).toMatchObject({
-      create: false,
-      read: 'all',
-      write: 'none',
-    });
+    for (const level of ACCESS_LEVELS) {
+      expect(TARGET_LEAD_ACCESS.management[level]).toMatchObject({
+        create: false,
+        read: 'all',
+        write: 'none',
+        assigned: false,
+      });
+    }
   });
 
-  it('lets Finance, Accountant and PMO start leads and read only what they started', () => {
+  it('lets Finance, Accountant and PMO start leads and read, not edit, what they started', () => {
     for (const role of LEAD_INTAKE_ROLE_KEYS) {
-      expect(TARGET_LEAD_ACCESS[role].staff).toMatchObject({ create: true, read: 'created' });
+      for (const level of ACCESS_LEVELS) {
+        expect(TARGET_LEAD_ACCESS[role][level]).toMatchObject({
+          create: true,
+          read: 'created',
+          write: 'none',
+        });
+      }
     }
   });
 
