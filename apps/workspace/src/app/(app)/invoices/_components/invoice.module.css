@@ -254,3 +254,30 @@
 .figure {
   font-variant-numeric: tabular-nums;
 }
+
+/* The per-line breakdown in the side column: one short list per line. */
+.breakdown {
+  display: grid;
+  gap: 16px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.breakdownItem {
+  display: grid;
+  gap: 8px;
+  min-width: 0;
+}
+
+.breakdownItem + .breakdownItem {
+  padding-top: 16px;
+  border-top: var(--border-width-thin) solid var(--divider-color);
+}
+
+.breakdownTitle {
+  margin: 0;
+  font-size: var(--font-size-body-small);
+  font-weight: var(--font-weight-semibold);
+  line-height: var(--line-height-body-small);
+}

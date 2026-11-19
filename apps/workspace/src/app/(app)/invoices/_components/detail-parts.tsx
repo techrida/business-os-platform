@@ -1,8 +1,7 @@
 import type { InvoiceDetail } from '@bos/contracts';
-import type { NumberSystems } from '@bos/locale';
+import type { CustomerDateFormat, NumberSystems } from '@bos/locale';
 
 import { FactList, Panel, type Fact } from '@/components/ui/panel';
-import { Table, Td, Th } from '@/components/ui/table';
 import { money, when } from '@/lib/kernel-format';
 
 import styles from './invoice.module.css';
@@ -10,47 +9,16 @@ import styles from './invoice.module.css';
 type Invoice = InvoiceDetail['invoice'];
 
 /** Every figure below is a string the server sent: this file formats, it never adds or rounds. */
-export function Totals({
-  invoice,
-  numberSystems,
-}: {
-  invoice: Invoice;
-  numberSystems: NumberSystems;
-}) {
-  const { totals, currency } = invoice;
-  const rows: { key: string; label: string; value: string; grand?: boolean }[] = [
-    { key: 'subtotal', label: 'Subtotal', value: totals.subtotal },
-    { key: 'discount', label: 'Discount', value: totals.discountAmount },
-    { key: 'taxable', label: 'Taxable amount', value: totals.taxableAmount },
-    { key: 'exempt', label: 'Exempt amount', value: totals.exemptAmount },
-    { key: 'zero', label: 'Zero-rated amount', value: totals.zeroRatedAmount },
-    { key: 'vat', label: 'VAT', value: totals.taxAmount },
-    { key: 'total', label: 'Total', value: totals.total, grand: true },
-  ];
-  return (
-    <Panel as="aside" title="Totals" description={`Amounts in ${currency}`}>
-      <dl className={styles.totals}>
-        {rows.map((row) => (
-          <div
-            key={row.key}
-            className={row.grand ? `${styles.totalRow} ${styles.grandTotal}` : styles.totalRow}
-          >
-            <dt className={styles.totalTerm}>{row.label}</dt>
-            <dd className={styles.totalValue}>{money(row.value, currency, numberSystems)}</dd>
-          </div>
-        ))}
-      </dl>
-    </Panel>
-  );
-}
 
 /** The NPR value frozen at issue, with the rate that produced it. Only for a foreign-currency invoice. */
 export function NprSnapshot({
   invoice,
   numberSystems,
+  dateFormat,
 }: {
   invoice: Invoice;
   numberSystems: NumberSystems;
+  dateFormat?: CustomerDateFormat;
 }) {
   const { npr, currency } = invoice;
   if (currency === 'NPR') return null;
@@ -72,7 +40,11 @@ export function NprSnapshot({
       label: 'Rate source',
       value: <span className={styles.wrap}>{npr.rateSource}</span>,
     },
-    { key: 'date', label: 'Rate date', value: <time dateTime={npr.rateDate}>{npr.rateDate}</time> },
+    {
+      key: 'date',
+      label: 'Rate date',
+      value: <DayValue iso={npr.rateDate} pattern={dateFormat} />,
+    },
   ];
   return (
     <Panel as="aside" title="Value in NPR" description="Exchange rate at issue">
@@ -81,100 +53,53 @@ export function NprSnapshot({
   );
 }
 
-export function Lines({
+/**
+ * How each line's amount splits: gross, its share of the discount, the taxable base and the VAT. The document shows
+ * the customer's columns; this side panel keeps the internal breakdown, one short list per line so it fits a narrow
+ * column.
+ */
+export function LineBreakdown({
   detail,
   numberSystems,
 }: {
   detail: InvoiceDetail;
   numberSystems: NumberSystems;
 }) {
-  const { invoice, lines, taxSummary } = detail;
+  const { invoice, lines } = detail;
   const { currency } = invoice;
+  if (lines.length === 0) return null;
   return (
-    <>
-      <Panel title="Line Items">
-        <Table caption="Invoice lines" minWidth={860}>
-          <thead>
-            <tr>
-              <Th align="end">#</Th>
-              <Th>Description</Th>
-              <Th align="end">Quantity</Th>
-              <Th align="end">Unit price</Th>
-              <Th align="end">Gross</Th>
-              <Th align="end">Discount</Th>
-              <Th align="end">Taxable</Th>
-              <Th align="end">VAT</Th>
-            </tr>
-          </thead>
-          <tbody>
-            {lines.map((line) => (
-              <tr key={line.lineNo}>
-                <Td align="end">{line.lineNo}</Td>
-                <Td>
-                  <span className={styles.lineText}>{line.description}</span>
-                </Td>
-                <Td align="end" nowrap>
-                  <span className={styles.figure}>
-                    {line.quantity} {line.uom}
-                  </span>
-                </Td>
-                <Td align="end" nowrap>
-                  {money(line.unitPrice, currency, numberSystems)}
-                </Td>
-                <Td align="end" nowrap>
-                  {money(line.gross, currency, numberSystems)}
-                </Td>
-                <Td align="end" nowrap>
-                  {money(line.discountAlloc, currency, numberSystems)}
-                </Td>
-                <Td align="end" nowrap>
-                  {money(line.taxable, currency, numberSystems)}
-                </Td>
-                <Td align="end" nowrap>
-                  {money(line.taxAmount, currency, numberSystems)}
-                </Td>
-              </tr>
-            ))}
-          </tbody>
-        </Table>
-      </Panel>
-      {taxSummary.length > 0 ? (
-        <Panel title="Tax summary">
-          <Table caption="Tax summary" minWidth={520}>
-            <thead>
-              <tr>
-                <Th>Tax</Th>
-                <Th align="end">Rate</Th>
-                <Th align="end">Taxable base</Th>
-                <Th align="end">Tax</Th>
-              </tr>
-            </thead>
-            <tbody>
-              {taxSummary.map((row) => (
-                <tr key={row.taxCodeId}>
-                  <Td>
-                    <span className={styles.lineText}>{row.label}</span>
-                  </Td>
-                  <Td align="end" nowrap>
-                    {row.percent}%
-                  </Td>
-                  <Td align="end" nowrap>
-                    {money(row.base, currency, numberSystems)}
-                  </Td>
-                  <Td align="end" nowrap>
-                    {money(row.tax, currency, numberSystems)}
-                  </Td>
-                </tr>
+    <Panel as="aside" title="Line breakdown" description={`Amounts in ${currency}`}>
+      <ol className={styles.breakdown}>
+        {lines.map((line) => (
+          <li key={line.lineNo} className={styles.breakdownItem}>
+            <h3 className={styles.breakdownTitle}>
+              <span className={styles.quiet}>{line.lineNo}.</span>{' '}
+              <span className={styles.wrap}>{line.description}</span>
+            </h3>
+            <dl className={styles.totals}>
+              {(
+                [
+                  ['Gross', line.gross],
+                  ['Discount', line.discountAlloc],
+                  ['Taxable', line.taxable],
+                  ['VAT', line.taxAmount],
+                ] as const
+              ).map(([label, value]) => (
+                <div key={label} className={styles.totalRow}>
+                  <dt className={styles.totalTerm}>{label}</dt>
+                  <dd className={styles.totalValue}>{money(value, currency, numberSystems)}</dd>
+                </div>
               ))}
-            </tbody>
-          </Table>
-        </Panel>
-      ) : null}
-    </>
+            </dl>
+          </li>
+        ))}
+      </ol>
+    </Panel>
   );
 }
 
 /** A date from the server, as a `<time>` with its Kathmandu date. */
-export function DayValue({ iso }: { iso: string }) {
-  return <time dateTime={iso}>{when(iso, 'date')}</time>;
+export function DayValue({ iso, pattern }: { iso: string; pattern?: CustomerDateFormat }) {
+  return <time dateTime={iso}>{when(iso, 'date', pattern)}</time>;
 }

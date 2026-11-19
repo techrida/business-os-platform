@@ -83,12 +83,49 @@ describe('loadDisplaySettings', () => {
     expect(await loadDisplaySettings(session)).toEqual({
       numberSystems: map,
       dateFormat: 'dd/MM/yyyy',
+      sellerContact: null,
     });
     expect(api.apiFetch).toHaveBeenCalledTimes(1);
   });
 
+  it("returns the seller's contact lines the API sends with the display read", async () => {
+    const sellerContact = {
+      phones: ['+977 1 4000000', '+977 9800000000'],
+      email: 'billing@techrida.example',
+      signatoryName: 'Amanda Vance',
+      signatoryTitle: 'Finance Director',
+    };
+    api.apiFetch.mockImplementation(() =>
+      Response.json({
+        numberSystems: DEFAULT_NUMBER_SYSTEMS,
+        dateFormat: 'dd MMM yyyy',
+        enabledCurrencies: ['NPR'],
+        sellerContact,
+      }),
+    );
+    expect((await loadDisplaySettings(session)).sellerContact).toEqual(sellerContact);
+  });
+
+  it('keeps the number and date settings when the seller contact is missing or malformed', async () => {
+    const map = { NPR: 'international', INR: 'south_asian', USD: 'international' };
+    for (const sellerContact of [undefined, { phones: 'one' }, 'x']) {
+      api.apiFetch.mockImplementation(() =>
+        Response.json({ numberSystems: map, dateFormat: 'dd/MM/yyyy', sellerContact }),
+      );
+      expect(await loadDisplaySettings(session)).toEqual({
+        numberSystems: map,
+        dateFormat: 'dd/MM/yyyy',
+        sellerContact: null,
+      });
+    }
+  });
+
   it('falls back to both defaults on a failed or malformed read', async () => {
-    const fallback = { numberSystems: DEFAULT_NUMBER_SYSTEMS, dateFormat: 'dd MMM yyyy' };
+    const fallback = {
+      numberSystems: DEFAULT_NUMBER_SYSTEMS,
+      dateFormat: 'dd MMM yyyy',
+      sellerContact: null,
+    };
     api.apiFetch.mockImplementation(() =>
       Response.json({ numberSystems: DEFAULT_NUMBER_SYSTEMS, dateFormat: 'yyyy/dd/MM' }),
     );
