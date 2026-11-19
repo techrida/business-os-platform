@@ -26,6 +26,7 @@ export default async function AppLayout({ children }: { children: ReactNode }) {
 
   return (
     <ShellFrame>
+      {/* Only signed-in staff report vitals: /telemetry/vitals needs a session. */}
       <WebVitals />
       <Sidebar user={{ name: roles, detail: session.orgKind }} roles={session.roles} />
       <ShellMain>

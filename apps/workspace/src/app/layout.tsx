@@ -14,6 +14,8 @@ export const metadata: Metadata = {
   title: 'Business OS',
 };
 
+// The vitals reporter is mounted in the signed-in `(app)` layout, not here: its receiver needs a
+// session, so on the login and notice pages every beacon was a 401.
 export default function RootLayout({ children }: { children: ReactNode }) {
   return (
     <html lang="en">
