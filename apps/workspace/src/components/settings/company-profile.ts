@@ -1,4 +1,4 @@
-// Pure helpers for Settings > Company profile: the logo file check, the phone list, the card drafts and
+// Pure helpers for Settings > Company profile: the logo shown, the phone list, the card drafts and
 // how a submitted card becomes a settings write. No React and no server import, so the page, the
 // Server Action and the tests all read one set of rules.
 //
@@ -9,8 +9,8 @@ import {
   AddressSchema,
   CompanyProfileSchema,
   EMPTY_COMPANY_PROFILE,
-  LogoDataUrlSchema,
   PanVatNoSchema,
+  imagePath,
   type Address,
   type CompanyProfile,
 } from '@bos/contracts';
@@ -20,35 +20,26 @@ import { z } from 'zod';
 // Logo
 // ---------------------------------------------------------------------------------------------
 
-export const LOGO_MAX_BYTES = 200 * 1024;
-export const LOGO_ACCEPT = 'image/png,image/jpeg,image/webp';
-export const LOGO_HINT = 'PNG, JPEG or WebP, up to 200 KB';
-const LOGO_TYPES = new Set(['image/png', 'image/jpeg', 'image/webp']);
-
-export type LogoCheck = { ok: true } | { ok: false; message: string };
-
-/** Checks the picked file before it is read. SVG is refused on its own message: it can carry script. */
-export function validateLogoFile(file: { type: string; size: number; name?: string }): LogoCheck {
-  const type = file.type.toLowerCase();
-  if (type === 'image/svg+xml' || /\.svgz?$/i.test(file.name ?? '')) {
-    return { ok: false, message: 'SVG logos are not accepted. Use a PNG, JPEG or WebP image.' };
-  }
-  if (!LOGO_TYPES.has(type)) {
-    return { ok: false, message: 'That file is not a PNG, JPEG or WebP image.' };
-  }
-  if (file.size === 0) return { ok: false, message: 'That file is empty.' };
-  if (file.size > LOGO_MAX_BYTES) {
-    const kb = Math.ceil(file.size / 1024);
-    return {
-      ok: false,
-      message: `That image is ${kb.toLocaleString('en-US')} KB. The limit is 200 KB.`,
-    };
-  }
-  return { ok: true };
+/**
+ * The logo as the page shows it. A logo is an uploaded image (`documentId`). A logo saved before logos were
+ * images is kept as `legacyDataUrl` until the API moves it, and only while there is no image yet.
+ */
+export interface CompanyLogo {
+  documentId: string | null;
+  legacyDataUrl: string | null;
 }
 
-/** True when `value` is a data URL the profile may store (PNG, JPEG or WebP, within the size cap). */
-export const isLogoDataUrl = (value: string): boolean => LogoDataUrlSchema.safeParse(value).success;
+export function companyLogo(profile: CompanyProfile): CompanyLogo {
+  const documentId = profile.logoDocumentId;
+  return {
+    documentId,
+    legacyDataUrl: documentId === null ? (profile.legacyLogoDataUrl ?? null) : null,
+  };
+}
+
+/** Where the logo picture is read from: the image route, the not-yet-moved data URL, or nothing. */
+export const logoSource = (logo: CompanyLogo): string | null =>
+  logo.documentId !== null ? imagePath(logo.documentId) : logo.legacyDataUrl;
 
 // ---------------------------------------------------------------------------------------------
 // Phones
@@ -129,18 +120,15 @@ export interface SignatoryDraft {
   name: string;
   title: string;
 }
-/** The logo as a data URL, or null for none. */
-export type LogoDraft = string | null;
-
 export interface CompanyDrafts {
   identity: IdentityDraft;
   address: AddressDraft;
   contact: ContactDraft;
-  logo: LogoDraft;
   signatory: SignatoryDraft;
 }
 export type CompanyCard = keyof CompanyDrafts;
-export const COMPANY_CARDS = ['identity', 'address', 'contact', 'logo', 'signatory'] as const;
+/** The cards with a Save. The logo is not one: it uploads at once and moves its own pointer. */
+export const COMPANY_CARDS = ['identity', 'address', 'contact', 'signatory'] as const;
 
 export const isCompanyCard = (value: string): value is CompanyCard =>
   (COMPANY_CARDS as readonly string[]).includes(value);
@@ -169,8 +157,6 @@ export function draftsFromSettings({ profile, address, panVatNo }: CompanySettin
       email: profile.email ?? '',
       website: profile.website ?? '',
     },
-    // Until the card uploads the logo as a document, it shows and edits the legacy data URL.
-    logo: profile.legacyLogoDataUrl ?? null,
     signatory: { name: profile.signatoryName ?? '', title: profile.signatoryTitle ?? '' },
   };
 }
@@ -223,8 +209,13 @@ export function addressLines(draft: AddressDraft): string[] {
 export type FieldErrors = Record<string, string>;
 export type Parsed<T> = { ok: true; value: T } | { ok: false; errors: FieldErrors };
 
-/** The profile fields a card may change. `panVatNo` is not here: it is never written to the profile. */
-export type ProfilePatch = Partial<Omit<CompanyProfile, 'panVatNo'>>;
+/**
+ * The profile fields a card may change. `panVatNo` is never written to the profile, and the logo fields are moved
+ * only by the image upload, so no card save can drop or replace the logo.
+ */
+export type ProfilePatch = Partial<
+  Omit<CompanyProfile, 'panVatNo' | 'logoDocumentId' | 'legacyLogoDataUrl'>
+>;
 
 const blank = (value: string): string | null => {
   const t = value.trim();
@@ -316,23 +307,6 @@ export function parseSignatory(draft: SignatoryDraft): Parsed<ProfilePatch> {
   return { ok: true, value: { signatoryName, signatoryTitle } };
 }
 
-export function parseLogo(value: string): Parsed<ProfilePatch> {
-  const url = value.trim();
-  if (url === '') return { ok: true, value: { logoDocumentId: null, legacyLogoDataUrl: null } };
-  if (/^data:image\/svg/i.test(url)) {
-    return {
-      ok: false,
-      errors: { logo: 'SVG logos are not accepted. Use a PNG, JPEG or WebP image.' },
-    };
-  }
-  const parsed = LogoDataUrlSchema.safeParse(url);
-  if (!parsed.success) {
-    return { ok: false, errors: { logo: `That image cannot be saved. ${LOGO_HINT}.` } };
-  }
-  // A picked logo replaces any document logo, so the snapshot prints the one the admin saw saved.
-  return { ok: true, value: { logoDocumentId: null, legacyLogoDataUrl: parsed.data } };
-}
-
 // ---------------------------------------------------------------------------------------------
 // From a submitted form to the writes
 // ---------------------------------------------------------------------------------------------
@@ -342,7 +316,6 @@ export const CARD_WRITES = {
   identity: ['entity.profile', 'entity.pan_vat_no'],
   address: ['entity.address'],
   contact: ['entity.profile'],
-  logo: ['entity.profile'],
   signatory: ['entity.profile'],
 } as const satisfies Record<CompanyCard, readonly string[]>;
 
@@ -398,10 +371,6 @@ export function planCard(
       });
       return r.ok ? { ok: true, value: { profile: r.value } } : r;
     }
-    case 'logo': {
-      const r = parseLogo(str(form, 'logo'));
-      return r.ok ? { ok: true, value: { profile: r.value } } : r;
-    }
     case 'signatory': {
       const r = parseSignatory({ name: str(form, 'name'), title: str(form, 'title') });
       return r.ok ? { ok: true, value: { profile: r.value } } : r;
@@ -441,15 +410,6 @@ export function readExpectedVersion(form: FormLike, key: CompanyKey): number | n
   if (typeof value !== 'string') return undefined;
   if (value === '') return null;
   return /^\d{1,15}$/.test(value) ? Number(value) : undefined;
-}
-
-/** The FormData the logo card submits: the card, the picture (empty to remove) and the loaded profile version. */
-export function logoFormData(value: string | null, profileVersion: number | null): FormData {
-  const data = new FormData();
-  data.set('card', 'logo');
-  data.set('logo', value ?? '');
-  data.set(versionFieldName('entity.profile'), versionFieldValue(profileVersion));
-  return data;
 }
 
 // ---------------------------------------------------------------------------------------------
