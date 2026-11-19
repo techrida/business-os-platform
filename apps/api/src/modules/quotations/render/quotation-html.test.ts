@@ -123,6 +123,9 @@ const forbiddenIn = (html: string) =>
     new RegExp(`\\b${w}\\b`, 'i').test(withoutCurrencyCode(html)),
   );
 
+/** The text as a reader sees it: line-break opportunities removed. */
+const withoutWbr = (html: string) => html.replace(/<wbr>/g, '');
+
 const cssOf = (html: string) => (html.match(/<style>([\s\S]*?)<\/style>/) ?? ['', ''])[1]!;
 
 describe('renderQuotationHtml', () => {
@@ -142,7 +145,7 @@ describe('renderQuotationHtml', () => {
   });
 
   it('shows the parties, the number with its revision, and the dates', () => {
-    const html = renderQuotationHtml(sample('USD'));
+    const html = withoutWbr(renderQuotationHtml(sample('USD')));
     for (const text of [
       'QT-2082-0042 Rev 2',
       'Techrida Pvt. Ltd.',
@@ -375,7 +378,7 @@ describe.each(CASES)('layout %s in %s', (layout, colour) => {
 
   it('prints the footer contacts, the signatory and the wordmark', () => {
     const html = render();
-    const foot = html.match(/<footer class="foot">([\s\S]*?)<\/footer>/)?.[1] ?? '';
+    const foot = withoutWbr(html.match(/<footer class="foot">([\s\S]*?)<\/footer>/)?.[1] ?? '');
     for (const text of [
       '+977 1 4000000',
       '+977 9800000000',
@@ -389,6 +392,33 @@ describe.each(CASES)('layout %s in %s', (layout, colour) => {
     expect(html).toContain('Amanda Vance');
     expect(html).toContain('Director');
     expect(html).toContain('<span class="wordmark">Techrida</span>');
+  });
+
+  it('breaks an email or website only after @ or before a dot or hyphen, never inside a word', () => {
+    const view = sample('NPR', {
+      contact: { fullName: 'Sita Rai', email: 'accounts@himalayanbuild.example' },
+    });
+    const html = render(view, {
+      profile: {
+        ...PROFILE,
+        email: 'accounts@himalayanbuild.example',
+        website: 'www.acme-systems.example',
+      },
+    });
+    const foot = html.match(/<footer class="foot">([\s\S]*?)<\/footer>/)?.[1] ?? '';
+    expect(foot).toContain('accounts@<wbr>himalayanbuild<wbr>.example');
+    expect(foot).toContain('www<wbr>.acme<wbr>-systems<wbr>.example');
+    // The customer's contact email gets the same treatment.
+    expect(html.replace(/<footer[\s\S]*?<\/footer>/, '')).toContain(
+      'accounts@<wbr>himalayanbuild<wbr>.example',
+    );
+    // Splitting inside a word is left to `break-word` (a last resort), never `anywhere`, on the footer and emails.
+    const css = cssOf(html);
+    expect(css).toMatch(/\.party \.email, \.foot \{ overflow-wrap: break-word; \}/);
+    const anywhereSelectors = [...css.matchAll(/([^{}]+)\{\s*overflow-wrap:\s*anywhere;/g)].map(
+      (m) => m[1]!,
+    );
+    expect(anywhereSelectors.join(' ')).not.toMatch(/\.foot\b/);
   });
 
   it('falls back to the entity PAN and the legal name when the profile is empty', () => {

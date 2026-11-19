@@ -63,6 +63,15 @@ export const escapeHtml = (text: string): string =>
 
 export const esc = (value: string | null | undefined): string => escapeHtml(value ?? '');
 
+/**
+ * An email address or web address, escaped, with a line-break opportunity (<wbr>) after `@` and before each dot
+ * or hyphen, so a narrow column breaks it at a readable point instead of inside a word.
+ */
+export const breakableAddress = (value: string): string =>
+  escapeHtml(value)
+    .replace(/@/g, '@<wbr>')
+    .replace(/([.-])/g, '<wbr>$1');
+
 /** A full amount with its currency code, grouped by the document's number system. */
 export const money = (ctx: RenderContext, amount: string): string =>
   escapeHtml(formatMoney(amount, ctx.view.currency, { numberSystem: ctx.numberSystem }));
@@ -152,7 +161,7 @@ export function customerParty(ctx: RenderContext): string {
     : '';
   const attention = contact
     ? `<div class="attn"><p><span class="muted">Attention</span> <strong>${esc(contact.fullName)}</strong></p>${
-        contact.email ? `<p class="muted">${esc(contact.email)}</p>` : ''
+        contact.email ? `<p class="muted email">${breakableAddress(contact.email)}</p>` : ''
       }</div>`
     : '';
   return `<div class="party"><p class="legal">${esc(customer.legalName)}</p><div class="addr">${addressLines(customer.address)}</div>${pan}${attention}</div>`;
@@ -313,7 +322,7 @@ export function footer(ctx: RenderContext): string {
     lines.length
       ? `<div class="foot-col foot-col--${kind}">${glyph}<div>${lines.map((l) => `<div>${l}</div>`).join('')}</div></div>`
       : '';
-  const contact = [p.email, p.website].filter((v): v is string => Boolean(v)).map(esc);
+  const contact = [p.email, p.website].filter((v): v is string => Boolean(v)).map(breakableAddress);
   return `<footer class="foot">
     ${col('tel', ICON_PHONE, p.phones.map(esc))}
     ${col('addr', ICON_PIN, [addressInline(ctx.view.issuer.address)])}
@@ -360,9 +369,11 @@ export const baseCss = (p: BrandPalette): string => `
     border-radius: 8pt; font-size: 7.5pt; font-weight: 700; text-transform: uppercase; letter-spacing: 0.06em;
   }
   .legal { font-weight: 700; font-size: 10.5pt; line-height: 1.3; margin-bottom: 2pt; }
-  .party, .party *, .desc, .text, .kv td, .foot, .wordmark, .legal, .words, .sign, .schedule td {
+  .party, .party *, .desc, .text, .kv td, .wordmark, .legal, .words, .sign, .schedule td {
     overflow-wrap: anywhere;
   }
+  /* Addresses break at their <wbr> points; splitting a word is the last resort, for one longer than the column. */
+  .party .email, .foot { overflow-wrap: break-word; }
   .addr { color: ${N.muted}; }
   .pan { margin-top: 4pt; }
   .attn { margin-top: 6pt; }
@@ -420,10 +431,13 @@ export const baseCss = (p: BrandPalette): string => `
     display: flex; gap: 7mm; padding: 4.5mm 14mm 0; font-size: 7.5pt; line-height: 1.4; color: ${N.muted};
     background: ${N.paper}; border-top: 0.5pt solid ${N.line};
   }
-  .foot-col { flex: 1 1 0; min-width: 0; display: flex; gap: 5pt; align-items: flex-start; }
+  /* Columns size to their content (an email keeps its line); the address takes what is left and wraps. */
+  .foot-col { flex: 0 1 auto; min-width: 0; display: flex; gap: 5pt; align-items: flex-start; }
   .foot-col > div { min-width: 0; }
-  .foot-col--addr { flex-grow: 1.5; }
-  .foot-col--mail { flex-grow: 1.5; }
+  .foot-col--tel { max-width: 40mm; }
+  .foot-col--addr { flex: 1 1 0; min-width: 36mm; }
+  .foot-col--mail { max-width: 64mm; }
+  .foot-col--pan { max-width: 34mm; }
   .foot svg { flex: none; width: 10pt; height: 10pt; margin-top: 0.5pt; color: ${p.accentText}; }
   .foot-bar { position: absolute; left: 0; right: 0; bottom: 0; height: 3mm; background: ${p.primary}; }
 `;
