@@ -106,6 +106,20 @@ describe('sections and paths', () => {
     );
   });
 
+  it('names the Access section and its By role and Check a person pages as one section', () => {
+    expect(settingsSection('roles')).toMatchObject({ label: 'Access', href: '/settings/access' });
+    expect(sectionForPath('/settings/access/roles/sales')?.id).toBe('roles');
+    expect(sectionForPath('/settings/access/check')?.id).toBe('roles');
+    expect(sectionForPath('/settings/departments/abc')?.id).toBe('departments');
+  });
+
+  it('opens Departments with either users or roles read access', () => {
+    const departments = settingsSection('departments');
+    expect(canOpenSection(departments, (p) => p === 'admin.users.read')).toBe(true);
+    expect(canOpenSection(departments, (p) => p === 'admin.roles.read')).toBe(true);
+    expect(canOpenSection(departments, (p) => p === 'admin.settings.write')).toBe(false);
+  });
+
   it('maps a nested path to its section and ignores lookalikes', () => {
     expect(sectionForPath('/settings/users/new')?.id).toBe('users');
     expect(sectionForPath('/settings/users')?.id).toBe('users');
