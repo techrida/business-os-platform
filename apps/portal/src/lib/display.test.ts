@@ -28,6 +28,9 @@ describe('taxLineLabel', () => {
   it('adds the rate only when the label does not already show it', () => {
     expect(taxLineLabel('VAT 13%', '13')).toBe('VAT 13%');
     expect(taxLineLabel('VAT', '13')).toBe('VAT 13%');
+    // 13% in the label is not 3%: the real rate must still show.
+    expect(taxLineLabel('VAT 13%', '3')).toBe('VAT 13% 3%');
+    expect(taxLineLabel('VAT 2.5%', '5')).toBe('VAT 2.5% 5%');
     expect(taxLineLabel('VAT', '13.0000')).toBe('VAT 13%');
     expect(taxLineLabel('Service charge 10%', '10.5')).toBe('Service charge 10% 10.5%');
   });
