@@ -132,7 +132,8 @@ function labelOf(
 
 /**
  * What `p` may do with this case, by the same record checks the write and review routes make: review needs
- * verification.review; edit needs the kind's write permission (and verification read, as every write here does);
+ * verification.review and, like every review route, someone other than the case's submitter (separation of
+ * duties); edit needs the kind's write permission (and verification read, as every write here does);
  * attach adds documents.upload and remove adds verification.read, each on the case's ref.
  */
 export function caseCapabilities(
@@ -145,7 +146,7 @@ export function caseCapabilities(
   const staff = p.orgKind === 'staff';
   const edit = staff && allowed(l.port.writePermission) && allowed('verification.read');
   return {
-    review: staff && allowed('verification.review'),
+    review: staff && allowed('verification.review') && l.row.submittedByUserId !== p.userId,
     edit,
     attach: edit && allowed('documents.upload'),
     remove: edit,
@@ -338,8 +339,13 @@ export class VerificationService implements OnModuleInit {
     this.assertVisible('verification.read', scope, l);
     const label = labelOf(await this.labelsOf(scope.tenantId, [l]), l.row);
     const can = caseCapabilities(this.caller.current().principal, scope, l);
+    // Both party kinds: the decision routes refuse the submitter (separation of duties) whatever the kind.
+    const reviewBlockedReason =
+      l.row.submittedByUserId === this.caller.current().principal.userId
+        ? 'The submitter cannot review this case.'
+        : null;
     if (l.row.partyKind === 'vendor') {
-      return { ...toVerificationCaseDto(l.row), ...label, can };
+      return { ...toVerificationCaseDto(l.row), ...label, can, reviewBlockedReason };
     }
     const versions = await this.documents.listForOwner(scope, VERIFICATION_OWNER_TYPE, id);
     const used = new Set(checklistOf(l.row).map((i) => i.documentId));
@@ -397,10 +403,7 @@ export class VerificationService implements OnModuleInit {
           ? await this.reviewerNames(scope, l.row.submittedByUserId)
           : [],
       looseEvidence: [...latest.values()],
-      reviewBlockedReason:
-        l.row.submittedByUserId === this.caller.current().principal.userId
-          ? 'The submitter cannot review this case.'
-          : null,
+      reviewBlockedReason,
     };
   }
 
