@@ -8,9 +8,11 @@ import { purchaseRequests, scoped } from '@bos/db';
 import { ConflictException, Logger } from '@nestjs/common';
 import { and, eq, sql } from 'drizzle-orm';
 
-import type { DbTransaction } from '../../../platform/db/db.module';
+import type { Db, DbTransaction } from '../../../platform/db/db.module';
+import type { TxScope } from '../../../platform/db/tx';
 import { readTxContext } from '../../../platform/documents/tx-context';
 import type { ApprovalSubject } from '../../approvals/requests.service';
+import { idAt, procurementReferenceNames } from '../reference-names';
 import { PR_STATUS_AFTER_DECISION, PURCHASE_REQUEST_DOCUMENT_TYPE } from './purchase-request.rules';
 
 type Outcome = keyof typeof PR_STATUS_AFTER_DECISION;
@@ -22,6 +24,13 @@ export class PurchaseRequestSubject implements ApprovalSubject {
   private readonly log = new Logger(PurchaseRequestSubject.name);
 
   constructor(private readonly clock: () => Date = () => new Date()) {}
+
+  /** The requesting department, by name. */
+  referenceNames(q: Db, scope: TxScope, snapshot: unknown) {
+    return procurementReferenceNames(q, scope, {
+      departmentIds: [idAt(snapshot, 'purchaseRequest', 'departmentId')],
+    });
+  }
 
   /** Runs in the deciding transaction (ApprovalsService.act); scope and actor come from its bos.* settings. */
   async onDecided(tx: DbTransaction, requestId: string, outcome: Outcome): Promise<void> {
