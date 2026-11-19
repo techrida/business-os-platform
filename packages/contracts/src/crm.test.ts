@@ -19,11 +19,14 @@ import {
   OPPORTUNITY_STAGES,
   OPPORTUNITY_TRANSITIONS,
   OpportunityStageChangeBodySchema,
+  ReorderLeadLostReasonsBodySchema,
+  ResetLeadLostReasonsBodySchema,
   STAGE_CATALOGUE,
   UpdateCustomerBodySchema,
   VerificationCaseDtoSchema,
   findTransition,
   isChecklistComplete,
+  lostReasonsToken,
 } from './index.js';
 
 const address = { line1: '1 Durbar Marg', city: 'Kathmandu', country: 'NP' };
@@ -281,6 +284,116 @@ describe('stage change bodies', () => {
       OpportunityStageChangeBodySchema.safeParse({ stage: 'negotiation', expectedVersion: 1 })
         .success,
     ).toBe(true);
+  });
+
+  it('requires lostReasonId or newLostReason plus note when marking an opportunity lost, and keeps on_hold on free text', () => {
+    expect(OpportunityStageChangeBodySchema.safeParse(leadLost).success).toBe(true);
+    expect(
+      OpportunityStageChangeBodySchema.safeParse({
+        stage: 'lost',
+        newLostReason: 'Slow to reply',
+        note: 'n',
+        expectedVersion: 1,
+      }).success,
+    ).toBe(true);
+    expect(OpportunityStageChangeBodySchema.safeParse(lost).success).toBe(false);
+    expect(
+      OpportunityStageChangeBodySchema.safeParse({ ...leadLost, newLostReason: 'Slow' }).success,
+    ).toBe(false);
+    expect(
+      OpportunityStageChangeBodySchema.safeParse({ ...leadLost, lostReasonId: undefined }).success,
+    ).toBe(false);
+    expect(
+      OpportunityStageChangeBodySchema.safeParse({ ...leadLost, note: undefined }).success,
+    ).toBe(false);
+    expect(
+      OpportunityStageChangeBodySchema.safeParse({
+        stage: 'negotiation',
+        lostReasonId: leadLost.lostReasonId,
+        expectedVersion: 1,
+      }).success,
+    ).toBe(false);
+    expect(
+      OpportunityStageChangeBodySchema.safeParse({
+        stage: 'on_hold',
+        newLostReason: 'Wait',
+        reason: 'budget',
+        note: 'next quarter',
+        expectedVersion: 1,
+      }).success,
+    ).toBe(false);
+    expect(
+      OpportunityStageChangeBodySchema.safeParse({ ...lost, stage: 'on_hold' }).success,
+    ).toBe(true);
+    expect(
+      OpportunityStageChangeBodySchema.safeParse({
+        ...lost,
+        stage: 'on_hold',
+        reason: undefined,
+      }).success,
+    ).toBe(false);
+  });
+});
+
+describe('lostReasonsToken and stale-view schemas (D54-4)', () => {
+  const a = '11111111-1111-4111-8111-111111111111';
+  const b = '22222222-2222-4222-8222-222222222222';
+  const c = '33333333-3333-4333-8333-333333333333';
+  const base = [
+    { id: a, position: 0, version: 1, retired: false },
+    { id: b, position: 1, version: 1, retired: false },
+  ];
+
+  it('is stable for the same list regardless of input array order', () => {
+    const token = lostReasonsToken(base);
+    expect(token).toMatch(/^[0-9a-f]{14}$/);
+    expect(lostReasonsToken(base)).toBe(token);
+    expect(lostReasonsToken([base[1]!, base[0]!])).toBe(token);
+  });
+
+  it('changes when order, version, retired state, or membership changes', () => {
+    const token = lostReasonsToken(base);
+    // Reordered positions
+    expect(
+      lostReasonsToken([
+        { id: a, position: 1, version: 1, retired: false },
+        { id: b, position: 0, version: 1, retired: false },
+      ]),
+    ).not.toBe(token);
+    // Version bumped (e.g. rename)
+    expect(
+      lostReasonsToken([
+        { id: a, position: 0, version: 2, retired: false },
+        { id: b, position: 1, version: 1, retired: false },
+      ]),
+    ).not.toBe(token);
+    // Retired flag toggled
+    expect(
+      lostReasonsToken([
+        { id: a, position: 0, version: 1, retired: true },
+        { id: b, position: 1, version: 1, retired: false },
+      ]),
+    ).not.toBe(token);
+    // Option added
+    expect(
+      lostReasonsToken([...base, { id: c, position: 2, version: 1, retired: false }]),
+    ).not.toBe(token);
+  });
+
+  it('requires expectedOrder on reorder and reset bodies', () => {
+    const token = lostReasonsToken(base);
+    expect(
+      ReorderLeadLostReasonsBodySchema.safeParse({ ids: [b, a], expectedOrder: token }).success,
+    ).toBe(true);
+    expect(ReorderLeadLostReasonsBodySchema.safeParse({ ids: [b, a] }).success).toBe(false);
+    expect(
+      ReorderLeadLostReasonsBodySchema.safeParse({ ids: [b, a], expectedOrder: '' }).success,
+    ).toBe(false);
+    expect(ResetLeadLostReasonsBodySchema.safeParse({ expectedOrder: token }).success).toBe(true);
+    expect(ResetLeadLostReasonsBodySchema.safeParse({}).success).toBe(false);
+    expect(
+      ResetLeadLostReasonsBodySchema.safeParse({ expectedOrder: 'x'.repeat(33) }).success,
+    ).toBe(false);
   });
 });
 
