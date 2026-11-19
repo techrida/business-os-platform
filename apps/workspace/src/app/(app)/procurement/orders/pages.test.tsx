@@ -157,6 +157,22 @@ describe('the purchase order list', () => {
     expect(await list({ status: 'cancelled' })).toContain('No cancelled purchase orders.');
   });
 
+  it('names each vendor from the list response, with no vendor read per row', async () => {
+    vendors.getVendor.mockRejectedValue(apiError(403));
+    api.listPurchaseOrders.mockResolvedValue([
+      order(),
+      order({ id: LINE, number: 'PO-2082-0002', vendorName: 'Everest Supplies' }),
+    ]);
+    const out = await list();
+    expect(out).toContain('Himal Traders Pvt. Ltd.');
+    expect(out).toContain('Everest Supplies');
+    expect(out).not.toContain('Vendor name unavailable');
+    expect(vendors.getVendor).not.toHaveBeenCalled();
+    api.getPurchaseOrder.mockResolvedValue(order());
+    expect(await detail()).toContain('Himal Traders Pvt. Ltd.');
+    expect(vendors.getVendor).not.toHaveBeenCalled();
+  });
+
   it('shows the no-access pattern for a 403 and a retry for any other failure', async () => {
     api.listPurchaseOrders.mockRejectedValue(
       apiError(403, 'forbidden', { reason: 'no_permission' }),
