@@ -81,6 +81,8 @@ export const PurchaseOrderSchema = z.object({
   lines: z.array(PoLineSchema),
   /** A draft with no lines yet: the approved quotation's lines that issue will copy in. Read-only. */
   proposedLines: z.array(PoLineSchema).optional(),
+  /** What the caller may do from this order, from their live grants. Sent by the detail read only. */
+  can: z.object({ enterBill: z.boolean() }).optional(),
 });
 export type PurchaseOrder = z.infer<typeof PurchaseOrderSchema>;
 

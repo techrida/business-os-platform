@@ -38,6 +38,11 @@ const api = vi.hoisted(() => ({
   listTaxCodes: vi.fn(),
   listWithholdingCodes: vi.fn(),
   listVendors: vi.fn(),
+  listBillableOrders: vi.fn(),
+}));
+vi.mock('@/lib/api-payables-orders', () => ({
+  listBillableOrders: api.listBillableOrders,
+  ORDER_PICKER_LIMIT: 200,
 }));
 vi.mock('@/lib/api-payables', () => ({
   listBills: api.listBills,
@@ -175,6 +180,7 @@ beforeEach(() => {
     items: [{ id: VENDOR, legalName: 'Himal Traders' }],
     total: 1,
   });
+  api.listBillableOrders.mockResolvedValue([]);
 });
 
 describe('bills list', () => {

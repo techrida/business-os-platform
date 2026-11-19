@@ -451,6 +451,14 @@ export default async function PurchaseOrderPage({ params }: { params: Promise<{ 
                   Receive goods
                 </LinkButton>
               ) : null}
+              {po.can?.enterBill === true ? (
+                <LinkButton
+                  href={`/payables/bills/new?po=${encodeURIComponent(po.id)}`}
+                  variant="secondary"
+                >
+                  Enter bill
+                </LinkButton>
+              ) : null}
               {po.status !== 'draft' ? (
                 <LinkButton
                   href={`/procurement/receipts?po=${encodeURIComponent(po.id)}`}
