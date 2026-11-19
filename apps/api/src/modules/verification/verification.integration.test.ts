@@ -994,6 +994,34 @@ describe('reading', () => {
     expect((await api().get(`/v1/verification-cases/${theirs.id}`)).status).toBe(404);
   });
 
+  it('pages and counts only what the salesperson may read, not what the SQL matched', async () => {
+    const mine = [];
+    for (let i = 0; i < 3; i++) mine.push(await openCase(await newCustomer(scope, U.salesA)));
+    for (let i = 0; i < 3; i++) await openCase(await newCustomer(scope, U.salesB));
+    as(U.salesA, 'sales');
+    const ids = new Set<string>();
+    let total = -1;
+    for (let offset = 0; ; offset += 2) {
+      const page = await api().get('/v1/verification-cases').query({ limit: 2, offset });
+      expect(page.status).toBe(200);
+      total = Number(page.headers['x-total-count']);
+      const rows = page.body as VerificationCaseDto[];
+      for (const c of rows) ids.add(c.id);
+      if (rows.length < 2) break;
+    }
+    // Every page came from the readable set only, and the header equals the readable rows walked.
+    expect(ids.size).toBe(total);
+    expect(total).toBeGreaterThanOrEqual(3);
+    for (const c of mine) expect(ids.has(c.id)).toBe(true);
+    const beyond = await api().get('/v1/verification-cases').query({ limit: 2, offset: total });
+    expect(beyond.body).toEqual([]);
+    expect(beyond.headers['x-total-count']).toBe(String(total));
+    const filtered = await api()
+      .get('/v1/verification-cases')
+      .query({ status: ['draft', 'submitted'], partyKind: 'customer' });
+    expect(Number(filtered.headers['x-total-count'])).toBeLessThanOrEqual(total);
+  });
+
   it('is 404 across tenants: read, change, submit and decide', async () => {
     const foreignParty = await newCustomer(scope2);
     const { rows } = await withTx(db, scope2, systemActor('test'), (tx) =>

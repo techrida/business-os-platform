@@ -133,6 +133,25 @@ describe('listVendors', () => {
     expect(headers.get('authorization')).toBe('Bearer eyJ.secret-access-token.sig');
   });
 
+  it('sends several statuses and kinds as repeated keys', async () => {
+    answer(reply({ items: [], total: 0 }));
+    await listVendors(session, {
+      status: ['approved', 'draft'],
+      kind: ['company', 'sole_proprietor'],
+      limit: 10,
+      offset: 20,
+    });
+    expect(lastCall().url).toBe(
+      'http://api:3001/v1/vendors?status=approved&status=draft&kind=company&kind=sole_proprietor&limit=10&offset=20',
+    );
+    await listVendors(session, { status: [], kind: [] });
+    expect(lastCall().url).toBe('http://api:3001/v1/vendors');
+  });
+
+  it('refuses an unknown status before it is sent', () => {
+    expect(() => listVendors(session, { status: ['weird'] as never })).toThrow();
+  });
+
   it('leaves empty filters out of the query', async () => {
     answer(reply({ items: [], total: 0 }));
     await listVendors(session, { q: '' });

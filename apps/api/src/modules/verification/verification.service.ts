@@ -38,7 +38,7 @@ import {
   UnprocessableEntityException,
   type OnModuleInit,
 } from '@nestjs/common';
-import { sql, getTableColumns, and, desc, eq, lt, or } from 'drizzle-orm';
+import { sql, getTableColumns, and, asc, desc, eq, inArray, lt, or, type SQL } from 'drizzle-orm';
 
 import { AuditService } from '../../platform/audit/audit.service';
 import { AuthzService } from '../../platform/authz/authz.service';
@@ -48,6 +48,7 @@ import { updateVersioned, withIdempotency } from '../../platform/db/idempotency'
 import { withTx, type TxScope } from '../../platform/db/tx';
 import { type DocumentOwnerPolicy } from '../../platform/documents/documents.ports';
 import { DocumentsService } from '../../platform/documents/documents.service';
+import { searchPage } from '../../platform/list';
 import { CustomerPartyOwner } from './customer-party-owner';
 import { PartyOwnerRegistry, type PartyOwnerPort, type PartyQuery } from './party-owner.port';
 import { VerificationCaller } from './verification.caller';
@@ -79,8 +80,8 @@ interface Loaded {
   port: PartyOwnerPort;
 }
 
-/** A bound so a list can never grow without limit. */
-const LIST_LIMIT = 500;
+/** How many cases one scan step reads before the per-case read check. */
+const SCAN_BATCH = 500;
 
 const CUSTOMER_LABEL = 'Customer';
 
@@ -198,23 +199,68 @@ export class VerificationService implements OnModuleInit {
 
   // -------------------------------------------------------------------------------------------------- read
 
-  async list(query: ListVerificationCasesQuery): Promise<VerificationCaseDto[]> {
+  /**
+   * One page of the cases the caller may read, and how many there are in all. Who may read a case depends on its
+   * party's owner (the `own` scope), which SQL cannot see without joining each kind's table, so the SQL narrows
+   * by tenant, filters and search and the same check as GET /:id runs on each row. The scan walks the matches in
+   * batches, so the page and the total are both counted after that check (a LIMIT before it hid readable cases).
+   */
+  async list(
+    query: ListVerificationCasesQuery,
+  ): Promise<{ rows: VerificationCaseDto[]; total: number }> {
     const { scope } = this.caller.current();
-    const cases = await this.db
-      .select()
-      .from(verificationCases)
-      .where(
-        and(
-          eq(verificationCases.tenantId, scope.tenantId),
-          query.status === undefined ? undefined : eq(verificationCases.status, query.status),
-          query.partyId === undefined ? undefined : eq(verificationCases.partyId, query.partyId),
+    const readable = async (
+      tx: Db | DbTransaction,
+      where: SQL | undefined,
+      order: SQL[],
+      need: number,
+    ): Promise<Loaded[]> => {
+      const out: Loaded[] = [];
+      for (let offset = 0; out.length < need; offset += SCAN_BATCH) {
+        const cases = await tx
+          .select(getTableColumns(verificationCases))
+          .from(verificationCases)
+          .innerJoin(
+            parties,
+            and(
+              eq(parties.tenantId, verificationCases.tenantId),
+              eq(parties.id, verificationCases.partyId),
+            ),
+          )
+          .where(where)
+          .orderBy(...order)
+          .limit(SCAN_BATCH)
+          .offset(offset);
+        const owned = await this.withOwners(tx, scope.tenantId, cases);
+        out.push(...owned.filter((l) => this.mayRead(scope, l)));
+        if (cases.length < SCAN_BATCH) break;
+      }
+      return out;
+    };
+    const { rows, total } = await searchPage(this.db, {
+      q: query.q,
+      columns: [parties.name, parties.code],
+      where: and(
+        eq(verificationCases.tenantId, scope.tenantId),
+        query.status === undefined ? undefined : inArray(verificationCases.status, query.status),
+        query.partyKind === undefined
+          ? undefined
+          : inArray(verificationCases.partyKind, query.partyKind),
+        query.partyId === undefined ? undefined : eq(verificationCases.partyId, query.partyId),
+      ),
+      orderBy: [desc(verificationCases.createdAt), desc(verificationCases.id)],
+      limit: query.limit,
+      offset: query.offset,
+      rows: async (tx, p) =>
+        (await readable(tx, p.where, p.orderBy, p.offset + p.limit)).slice(
+          p.offset,
+          p.offset + p.limit,
         ),
-      )
-      .orderBy(desc(verificationCases.createdAt), desc(verificationCases.id))
-      .limit(LIST_LIMIT);
-    const rows = await this.withOwners(this.db, scope.tenantId, cases);
-    // The same decision as GET /:id for each row, so a list never shows what an open would refuse.
-    return rows.filter((l) => this.mayRead(scope, l)).map((l) => toVerificationCaseDto(l.row));
+      // An id-ordered scan with no stop: the count must see every readable match.
+      count: async (tx, where) =>
+        (await readable(tx, where, [asc(verificationCases.id)], Infinity)).length,
+    });
+    return { rows: rows.map((l) => toVerificationCaseDto(l.row)), total };
   }
 
   async get(id: string): Promise<VerificationCaseDto> {

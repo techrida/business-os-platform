@@ -26,7 +26,6 @@ import { parseOr400 } from '../approvals/approvals.controller';
 import { CustomersService } from './customers.service';
 import {
   ListCustomersQuerySchema,
-  listQueryOf,
   requireIdempotencyKey,
   sentFields,
   type CustomerDetailDto,
@@ -41,7 +40,14 @@ export class CustomersController {
   @Get()
   @Can('customer.read')
   list(@Query() query: Record<string, unknown>): Promise<CustomerList> {
-    return this.customers.list(listQueryOf(parseOr400(ListCustomersQuerySchema, query)));
+    return this.customers.list(parseOr400(ListCustomersQuerySchema, query));
+  }
+
+  /** 200 with the industries in use among the customers the caller may read (for the list filter). */
+  @Get('industries')
+  @Can('customer.read')
+  industries(): Promise<string[]> {
+    return this.customers.industries();
   }
 
   /** 201 with the new CustomerDto. 409 for a PAN/VAT number another customer already holds. */
