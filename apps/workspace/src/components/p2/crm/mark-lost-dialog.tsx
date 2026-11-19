@@ -3,15 +3,14 @@
 import { LEAD_LOST_REASON_LABEL_MAX, type LeadLostReason } from '@bos/contracts';
 import { useId, useMemo, useState, useTransition, type FormEvent } from 'react';
 
-import styles from '@/components/p2/crm/crm.module.css';
-import type { MoveState } from '@/components/p2/crm/types';
 import { Button } from '@/components/ui/button';
 import { Combobox } from '@/components/ui/combobox';
 import { Dialog, DialogClose } from '@/components/ui/dialog';
 import { Field, Textarea } from '@/components/ui/field';
 import { toast } from '@/components/ui/toast';
 
-import { moveLeadStageAction } from '../actions';
+import styles from './crm.module.css';
+import type { MoveAction, MoveState } from './types';
 
 /** The same wording the stage-move parser uses, so the client and the server never disagree. */
 const REASON_REQUIRED = 'Choose a reason from the list, or add a new one.';
@@ -26,8 +25,12 @@ const text = (data: FormData, name: string): string => {
 };
 
 export interface MarkLostDialogProps {
+  /** Which CRM record is being marked lost; controls the dialog wording. */
+  noun: 'lead' | 'opportunity';
+  /** The stage-move server action (`moveLeadStageAction` or `moveOpportunityStageAction`). */
+  action: MoveAction;
   id: string;
-  /** The lead number, named in the dialog so the person knows which lead they are closing. */
+  /** The record number, named in the dialog so the person knows which record they are closing. */
   number: string;
   /** The version the page shows; a stale one comes back as 409 and offers a reload. */
   version: number;
@@ -40,14 +43,21 @@ const NEW_ID = '__new__';
 type Pick = { kind: 'id'; id: string } | { kind: 'new'; text: string } | null;
 
 /**
- * The Mark lost header action (D41). Lost needs a reason and a note (the stage rules and the
- * database both insist), so the dialog refuses an empty one before any request. The reason is chosen from the
- * tenant's list (D49): typing filters it, and text that matches nothing offers Add "<text>", which is saved as a new
- * option together with the lost move. Actions sit in the
- * fixed footer (UIP-DLG-001); a success closes the dialog with a toast (UIP-FEED-001); a stale
- * page (409) toasts with Reload and keeps what was typed.
+ * The Mark lost header action shared by leads and opportunities (D41, D49, D54-3). Lost needs a
+ * reason and a note (the stage rules and the database both insist), so the dialog refuses an empty
+ * one before any request. The reason is chosen from the tenant's list: typing filters it, and text
+ * that matches nothing offers Add "<text>", which is saved as a new option together with the lost
+ * move. Actions sit in the fixed footer (UIP-DLG-001); a success closes the dialog with a toast
+ * (UIP-FEED-001); a stale page (409) toasts with Reload and keeps what was typed.
  */
-export function MarkLostDialog({ id, number, version, reasons }: MarkLostDialogProps) {
+export function MarkLostDialog({
+  noun,
+  action,
+  id,
+  number,
+  version,
+  reasons,
+}: MarkLostDialogProps) {
   const formId = useId();
   const [open, setOpenState] = useState(false);
   const [fieldErrors, setFieldErrors] = useState<Partial<Record<string, string>>>({});
@@ -91,7 +101,7 @@ export function MarkLostDialog({ id, number, version, reasons }: MarkLostDialogP
     data.set('note', note);
 
     startTransition(async () => {
-      const result: MoveState = await moveLeadStageAction({}, data);
+      const result: MoveState = await action({}, data);
       if (result.ok) {
         setOpenState(false);
         toast.success(`Moved to ${result.movedTo ?? 'Lost'}.`);
@@ -115,7 +125,7 @@ export function MarkLostDialog({ id, number, version, reasons }: MarkLostDialogP
           result.fieldErrors?.['stage'] ??
           (result.fieldErrors
             ? 'Check the highlighted fields.'
-            : 'The lead could not be marked lost.'),
+            : `The ${noun} could not be marked lost.`),
         result.reload
           ? { action: { label: 'Reload', onClick: () => window.location.reload() } }
           : undefined,
@@ -128,7 +138,7 @@ export function MarkLostDialog({ id, number, version, reasons }: MarkLostDialogP
       trigger={<Button variant="secondary">Mark lost</Button>}
       open={open}
       onOpenChange={setOpen}
-      title="Mark this lead lost?"
+      title={noun === 'lead' ? 'Mark this lead lost?' : 'Mark this opportunity lost?'}
       description={`${number} will move to Lost. A manager can reopen it later.`}
       tone="destructive"
       locked={pending}

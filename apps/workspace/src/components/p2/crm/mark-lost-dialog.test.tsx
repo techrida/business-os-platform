@@ -19,6 +19,8 @@ const mocks = vi.hoisted(() => ({
 vi.mock('@/components/p2/crm/crm-api', () => ({ changeLeadStage: mocks.changeLeadStage }));
 vi.mock('@/components/ui/toast', () => ({ toast: { success: mocks.success, error: mocks.error } }));
 
+import { moveLeadStageAction } from '@/app/(app)/leads/actions';
+
 import { MarkLostDialog } from './mark-lost-dialog';
 
 const LEAD = '11111111-1111-4111-8111-111111111111';
@@ -84,7 +86,14 @@ async function pickReason(typed: string, label: string) {
 
 async function open(reasons: readonly LeadLostReason[] = REASONS) {
   const mounted = await mountForm(
-    <MarkLostDialog id={LEAD} number="LEAD-1" version={4} reasons={reasons} />,
+    <MarkLostDialog
+      noun="lead"
+      action={moveLeadStageAction}
+      id={LEAD}
+      number="LEAD-1"
+      version={4}
+      reasons={reasons}
+    />,
   );
   const trigger = mounted.container.querySelector('button');
   expect(trigger?.textContent).toBe('Mark lost');
