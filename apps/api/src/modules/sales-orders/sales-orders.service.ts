@@ -22,11 +22,13 @@ import {
   type SalesOrderListItem,
   SALES_ORDER_STATUSES,
   type SalesOrderStatus,
+  type ScheduleLineInvoice,
 } from '@bos/contracts';
 import {
   billingScheduleLines,
   customers,
   documents,
+  invoices,
   openItems,
   paymentTerms,
   quotationAcceptances,
@@ -794,6 +796,9 @@ export class SalesOrdersService {
         .where(scoped(scope).where(salesOrderEvidence, eq(salesOrderEvidence.salesOrderId, id)))
         .orderBy(asc(salesOrderEvidence.createdAt), asc(salesOrderEvidence.id)),
     ]);
+    const { principal } = this.caller.current();
+    const held = await this.heldInvoices(tx, scope, principal, schedule);
+    const staff = principal.orgKind === 'staff';
     return {
       order: {
         id: order.id,
@@ -849,9 +854,48 @@ export class SalesOrdersService {
         billableEvidenceDocumentId: l.billableEvidenceDocumentId,
         billableMarkedAt: l.billableMarkedAt === null ? null : iso(l.billableMarkedAt),
         invoiceId: l.invoiceId,
+        invoice: l.invoiceId === null ? null : (held.labels.get(l.invoiceId) ?? null),
+        can: { openInvoice: l.invoiceId !== null && held.readable.has(l.invoiceId) },
       })),
       evidence: evidence.map((e) => ({ documentId: e.documentId, kind: e.evidenceKind })),
       deliveryReleased: await this.deliveryReleased(tx, scope, schedule),
+      can: {
+        markBillable: staff && can(principal, 'sales_order.mark_billable').allowed,
+        // The draft route asserts invoice.draft on the acting entity.
+        draftInvoice: staff && can(principal, 'invoice.draft', scope).allowed,
+      },
+    };
+  }
+
+  /**
+   * Audit #7: the invoices the schedule holds, named under the order's own read (number and status only), and
+   * which of them the caller may open: the same `invoice.read` scope filter GET /v1/invoices/:id applies.
+   */
+  private async heldInvoices(
+    tx: DbTransaction,
+    scope: TxScope,
+    principal: Principal,
+    schedule: readonly { invoiceId: string | null }[],
+  ): Promise<{ labels: Map<string, ScheduleLineInvoice>; readable: Set<string> }> {
+    const ids = [...new Set(schedule.flatMap((l) => (l.invoiceId === null ? [] : [l.invoiceId])))];
+    if (ids.length === 0) return { labels: new Map(), readable: new Set() };
+    const [labels, readable] = await Promise.all([
+      tx
+        .select({ id: invoices.id, number: invoices.number, status: invoices.status })
+        .from(invoices)
+        .where(scoped(scope).where(invoices, inArray(invoices.id, ids))),
+      principal.orgKind !== 'staff'
+        ? Promise.resolve([])
+        : tx
+            .select({ id: invoices.id })
+            .from(invoices)
+            .where(
+              and(inArray(invoices.id, ids), scopeWhereFor(principal, invoices, 'invoice.read')),
+            ),
+    ]);
+    return {
+      labels: new Map(labels.map((r) => [r.id, { number: r.number, status: r.status }])),
+      readable: new Set(readable.map((r) => r.id)),
     };
   }
 

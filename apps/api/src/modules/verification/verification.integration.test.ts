@@ -583,7 +583,10 @@ describe('POST /v1/verification-cases/:id/checklist/remove', () => {
     });
     const list = await api().get('/v1/verification-cases').query({ partyId, status: 'draft' });
     expect(list.status).toBe(200);
-    expect(list.body).toEqual([dto]);
+    // The list also names the party (audit #8); the case itself is the same.
+    expect(list.body).toEqual([
+      { ...dto, partyName: 'Acme Pvt. Ltd.', partyNumber: expect.stringMatching(/^CUS-/) as unknown },
+    ]);
     expect(await documents.get(scope, next.documentId)).toEqual(documentBefore);
     expect((await removeDocument(draft.id, key, dto.version)).status).toBe(409);
     expect(await domainEvents(draft.id)).toEqual([
@@ -1429,4 +1432,93 @@ it('removes only loose files belonging to an editable case the caller owns', asy
   as(U.salesA, 'sales');
   expect((await remove(loose.documentId)).status).toBe(204);
   expect(await documents.allClean(scope, 'verification_case', mine.id)).toBe(true);
+});
+
+describe('Can review names the pmo reviewer (audit #19)', () => {
+  it('names a pmo user, who reads case files through verification.review, and not a read-only role', async () => {
+    const pmo = await createStaffUser(appPool, {
+      ...scope,
+      idpOrgId: staffIdpOrgId,
+      roleKeys: ['pmo'],
+    });
+    const reader = await createStaffUser(appPool, {
+      ...scope,
+      idpOrgId: staffIdpOrgId,
+      roleKeys: ['operations_head'],
+    });
+    // The live role rows, as the seed writes them: pmo holds documents.read only at scope own.
+    await withTx(db, scope, systemActor('test'), async (tx) => {
+      for (const role of ['pmo', 'operations_head'] as const) {
+        for (const [permission, s] of Object.entries(DEFAULT_ROLE_PERMISSIONS[role])) {
+          await tx.execute(
+            sql`INSERT INTO app.role_permissions (tenant_id, role_key, permission, scope)
+                VALUES (${scope.tenantId}, ${role}, ${permission}, ${s})`,
+          );
+        }
+      }
+    });
+    const nameOf = async (userId: string) => {
+      const { rows } = await appPool.query<{ display_name: string }>(
+        'SELECT display_name FROM app.users WHERE id = $1',
+        [userId],
+      );
+      expect(rows[0]?.display_name).toBeTruthy();
+      return rows[0]!.display_name;
+    };
+
+    const c = await submittedCase();
+    const res = await api().get(`/v1/verification-cases/${c.id}`);
+    expect(res.status, JSON.stringify(res.body)).toBe(200);
+    const names = (res.body as { reviewerNames: string[] }).reviewerNames;
+    expect(names).toContain(await nameOf(pmo.userId));
+    expect(names).not.toContain(await nameOf(reader.userId));
+  });
+});
+
+describe('the own-scope case list is scoped in SQL, before its limit (audit #9)', () => {
+  it('lists an older case of Sales A even when more than 500 newer cases belong to other customers', async () => {
+    // Sales A's own customer and its case, opened long before the others.
+    clock = new Date('2026-01-05T04:00:00Z');
+    const mine = await openCase(await newCustomer(scope, U.salesA));
+
+    // 501 newer cases on Sales B's customers: more than the list limit, all outside Sales A's scope.
+    const tag = randomUUID().slice(0, 8);
+    await withTx(db, scope, systemActor('test'), (tx) =>
+      tx.execute(sql`
+        WITH p AS (
+          INSERT INTO app.parties (id, tenant_id, kind, code, name)
+          SELECT gen_random_uuid(), ${scope.tenantId}, 'customer', 'B' || ${tag} || '-' || g, 'Bulk ' || g
+          FROM generate_series(1, 501) g
+          RETURNING id
+        ), c AS (
+          INSERT INTO app.customers (id, tenant_id, number, legal_name, name_norm, owner_user_id, address)
+          SELECT id, ${scope.tenantId}, 'CUS-' || id::text, 'Bulk Pvt. Ltd.', 'bulk', ${U.salesB}::uuid,
+                 ${ADDRESS}::jsonb
+          FROM p
+          RETURNING id
+        )
+        INSERT INTO app.verification_cases
+          (tenant_id, party_id, party_kind, status, review_policy, checklist, created_at, updated_at)
+        SELECT ${scope.tenantId}, id, 'customer', 'draft', 'document_review_v1', '[]'::jsonb,
+               '2026-11-08T04:00:00Z'::timestamptz, '2026-11-08T04:00:00Z'::timestamptz
+        FROM c
+      `),
+    );
+
+    as(U.salesA, 'sales');
+    const res = await api().get('/v1/verification-cases');
+    expect(res.status, JSON.stringify(res.body)).toBe(200);
+    const items = VerificationCaseDtoSchema.array().parse(res.body);
+    expect(items.map((c) => c.id)).toContain(mine.id);
+    // No extra data: nothing of Sales B's customers reaches Sales A.
+    expect(items.every((c) => c.partyId === mine.partyId)).toBe(true);
+
+    // Sales B (own scope) gets their own newest cases, up to the limit, and not Sales A's.
+    as(U.salesB, 'sales');
+    const theirs = VerificationCaseDtoSchema.array().parse(
+      (await api().get('/v1/verification-cases')).body,
+    );
+    expect(theirs).toHaveLength(500);
+    expect(theirs.map((c) => c.id)).not.toContain(mine.id);
+  });
 });
