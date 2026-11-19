@@ -95,10 +95,11 @@ export default async function VerificationCasePage({
     );
   }
 
-  // The name is a courtesy: a failed lookup shows the short id and the case still works.
+  // The customer record adds its number and PAN/VAT; a failed lookup leaves the case working. A vendor case has no
+  // customer record to read: its name comes with the case.
   let customer: CustomerDto | undefined;
   try {
-    customer = await getCustomer(session, c.partyId);
+    customer = c.partyKind === 'vendor' ? undefined : await getCustomer(session, c.partyId);
   } catch {
     customer = undefined;
   }
@@ -137,7 +138,11 @@ export default async function VerificationCasePage({
   const reviewerNames = new Map(
     history?.items.map((entry) => [entry.reviewedBy, entry.reviewerName]),
   );
-  const name = customerLabel(customer, c.partyId);
+  // The case names its party (customer or vendor) under its own read; the customer record is a fallback.
+  const name =
+    c.partyName !== undefined && c.partyName !== null && c.partyName !== ''
+      ? c.partyName
+      : customerLabel(customer, c.partyId);
   const status = VERIFICATION_STATUS_LABEL[c.status];
   const progress = checklistProgress(c.checklist);
   const mayReview = hasPermission(session.roles, 'verification.review');
@@ -177,7 +182,9 @@ export default async function VerificationCasePage({
           description={
             customer !== undefined
               ? `${customer.number}${customer.panVatNo !== null ? ` · PAN/VAT ${customer.panVatNo}` : ''}`
-              : 'The customer record could not be read.'
+              : c.partyKind === 'vendor'
+                ? 'Vendor'
+                : (c.partyNumber ?? 'The customer record could not be read.')
           }
         />
       </div>

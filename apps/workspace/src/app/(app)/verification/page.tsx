@@ -1,11 +1,10 @@
-import type { CustomerDto, VerificationCaseDto } from '@bos/contracts';
+import type { VerificationCaseDto } from '@bos/contracts';
 import type { Metadata } from 'next';
 import Link from 'next/link';
 
-import { getCustomer, listVerificationCases } from '@/components/p2/customers/api';
+import { listVerificationCases } from '@/components/p2/customers/api';
 import {
   checklistProgress,
-  customerLabel,
   parseStatusFilter,
   VERIFICATION_STATUS_LABEL,
   type StatusFilter,
@@ -22,7 +21,6 @@ import { CellTitle, Table, Td, Th } from '@/components/ui/table';
 import { failureOf } from '@/lib/api-kernel';
 import { requireStaffSession } from '@/lib/bff';
 import { when } from '@/lib/kernel-format';
-import type { Session } from '@/lib/session';
 
 import styles from './verification.module.css';
 
@@ -42,32 +40,23 @@ function filterHref(status: StatusFilter) {
   return status === 'submitted' ? '/verification' : `/verification?status=${status}`;
 }
 
-/** The queue asks for customer names one by one; past this many cases it shows ids instead. */
-const NAME_LOOKUP_LIMIT = 50;
-
-async function customerNames(
-  session: Session,
-  cases: readonly VerificationCaseDto[],
-): Promise<Map<string, CustomerDto>> {
-  const ids = [...new Set(cases.map((c) => c.partyId))].slice(0, NAME_LOOKUP_LIMIT);
-  const settled = await Promise.allSettled(ids.map((id) => getCustomer(session, id)));
-  const names = new Map<string, CustomerDto>();
-  settled.forEach((result, i) => {
-    const id = ids[i];
-    if (result.status === 'fulfilled' && id !== undefined) names.set(id, result.value);
-  });
-  return names;
+/** The party's name as the case list sends it (customer or vendor), or an explicit unavailable state. */
+function partyLabel(c: VerificationCaseDto): string {
+  if (c.partyName !== undefined && c.partyName !== null && c.partyName !== '') return c.partyName;
+  return c.partyKind === 'vendor' ? 'Vendor name unavailable' : 'Customer name unavailable';
 }
 
-function Row({ c, customer }: { c: VerificationCaseDto; customer: CustomerDto | undefined }) {
+function Row({ c }: { c: VerificationCaseDto }) {
   const status = VERIFICATION_STATUS_LABEL[c.status];
   const progress = checklistProgress(c.checklist);
-  const name = customerLabel(customer, c.partyId);
+  const named = c.partyName !== undefined && c.partyName !== null && c.partyName !== '';
+  const name = partyLabel(c);
+  const number = c.partyNumber ?? null;
   return (
     <tr>
       <Td className={styles.customerCell}>
         <div className={styles.customer}>
-          {customer !== undefined ? (
+          {named ? (
             <Avatar name={name} size="medium" shape="circle" />
           ) : (
             <span className={styles.customerIcon}>
@@ -77,11 +66,13 @@ function Row({ c, customer }: { c: VerificationCaseDto; customer: CustomerDto | 
           <CellTitle
             title={<Link href={`/verification/${encodeURIComponent(c.id)}`}>{name}</Link>}
             note={
-              customer !== undefined ? (
+              number !== null ? (
                 <>
                   <span className="sr-only">Customer number: </span>
-                  {customer.number}
+                  {number}
                 </>
+              ) : c.partyKind === 'vendor' ? (
+                'Vendor'
               ) : null
             }
           />
@@ -133,8 +124,6 @@ export default async function VerificationQueuePage({
     const f = failureOf(err);
     problem = { message: f.message, status: f.status };
   }
-  const names =
-    cases !== null ? await customerNames(session, cases) : new Map<string, CustomerDto>();
   const here = filterHref(filter);
 
   return (
@@ -182,7 +171,7 @@ export default async function VerificationQueuePage({
             <Table caption="Verification cases" minWidth={610} className={styles.queueTable ?? ''}>
               <thead>
                 <tr>
-                  <Th>Customer</Th>
+                  <Th>Organization</Th>
                   <Th>Status</Th>
                   <Th>Required documents</Th>
                   <Th>Decided</Th>
@@ -190,7 +179,7 @@ export default async function VerificationQueuePage({
               </thead>
               <tbody>
                 {cases.map((c) => (
-                  <Row key={c.id} c={c} customer={names.get(c.partyId)} />
+                  <Row key={c.id} c={c} />
                 ))}
               </tbody>
             </Table>
