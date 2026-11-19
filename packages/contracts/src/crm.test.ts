@@ -451,10 +451,12 @@ describe('activities: exactly one primary subject', () => {
       quotationId: null,
       dueAt: null,
       assigneeUserId: null,
+      assigneeName: null,
       completedAt: null,
       cancelledAt: null,
       planned: false,
       createdByUserId: null,
+      createdByName: null,
       occurredAt: '2026-11-08T10:00:00+05:45',
       version: 1,
     };
