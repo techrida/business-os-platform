@@ -63,6 +63,12 @@ import { quotationRef } from '../preview/quotation-preview.service';
 import { personNames } from '../../../platform/users/person-names';
 import { PricingService } from '../pricing/pricing.service';
 import type { PricingInput } from '../pricing/pricing.types';
+import {
+  canReadCost,
+  detailVisibleTo,
+  pricingWithAllowedCosts,
+  versionVisibleTo,
+} from './cost-visibility';
 import { DraftingCaller } from './drafting.caller';
 import {
   toQuotationDetail,
@@ -257,13 +263,14 @@ export class DraftingService {
     // Decided before any read: a caller who may not draft learns nothing about the opportunity.
     this.assertMayDraft(principal, scope);
     const now = this.clock();
+    const mayCost = canReadCost(principal);
     return withTx(this.db, scope, actor, async (tx) => {
       const done = await withIdempotency(
         tx,
         { command: 'quotation.create', key: idempotencyKey, body },
         async () => ({
           status: 201,
-          response: await this.createInTx(tx, scope, actor, principal.userId, body, now),
+          response: await this.createInTx(tx, scope, actor, principal.userId, body, now, mayCost),
         }),
       );
       return done.response;
@@ -278,6 +285,7 @@ export class DraftingService {
     ownerUserId: string,
     body: CreateQuotationBody,
     now: Date,
+    mayCost: boolean,
   ): Promise<QuotationDto> {
     const opportunity = await this.findOpportunity(tx, scope, body.opportunityId);
     const customerPartyId = opportunity.customerId;
@@ -293,7 +301,12 @@ export class DraftingService {
       throw badRequest('attachmentDocumentIds are not supported yet');
     }
 
-    const priced = await this.pricing.priceVersion(tx, scope, pricingInputOf(body));
+    // A drafter who may not read costs cannot set them either: a new quotation has no stored cost to keep.
+    const priced = await this.pricing.priceVersion(
+      tx,
+      scope,
+      pricingWithAllowedCosts(pricingInputOf(body), mayCost, new Map()),
+    );
     const { number } = await this.numbering.issue(tx, QUOTATION_SERIES, now);
     const owned = { tenantId: scope.tenantId, organizationId: scope.organizationId };
 
@@ -498,7 +511,7 @@ export class DraftingService {
         quotation.ownerUserId,
         ...statusHistory.map((h) => h.actorId),
       ]);
-      return toQuotationDetail({
+      const answer = toQuotationDetail({
         quotation,
         versions,
         statusHistory,
@@ -511,6 +524,7 @@ export class DraftingService {
             : capabilitiesOf(principal, quotation, current.status),
         people,
       });
+      return detailVisibleTo(principal, answer);
     });
   }
 
@@ -522,7 +536,7 @@ export class DraftingService {
       const quotation = await this.findVisible(tx, principal, id);
       const version = await this.findVersion(tx, quotation, versionId);
       const [parts] = await this.withParts(tx, quotation.tenantId, [version]);
-      return toQuotationVersionDto({ ...parts!, quotation });
+      return versionVisibleTo(principal, toQuotationVersionDto({ ...parts!, quotation }));
     });
   }
 
@@ -596,7 +610,15 @@ export class DraftingService {
       await this.assertPaymentTerm(tx, scope.tenantId, patch.paymentTermId);
     }
 
-    const priced = await this.pricing.priceVersion(tx, scope, pricingInputOf(content));
+    // A drafter who may not read costs keeps the stored cost of each line number (the DTO the content was merged
+    // from is full, so a body that omits a line's cost must not wipe it) and cannot set one; the margin and the
+    // internal cost total are recomputed from those costs.
+    const storedCosts = new Map(saved.lines.map((l) => [l.lineNo, l.unitCost ?? null] as const));
+    const priced = await this.pricing.priceVersion(
+      tx,
+      scope,
+      pricingWithAllowedCosts(pricingInputOf(content), canReadCost(principal), storedCosts),
+    );
     const owned = { tenantId: quotation.tenantId, organizationId: quotation.organizationId };
     await tx
       .delete(quotationLines)

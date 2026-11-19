@@ -47,6 +47,7 @@ import { updateVersioned, withIdempotency } from '../../../platform/db/idempoten
 import { withTx, type Actor, type TxScope } from '../../../platform/db/tx';
 import { ApprovalsNotify } from '../../approvals/ports';
 import { ApprovalsService } from '../../approvals/requests.service';
+import { versionVisibleTo } from '../drafting/cost-visibility';
 import {
   toQuotationVersionDto,
   type QuotationLineRow,
@@ -287,7 +288,8 @@ export class QuotationSubmitService {
     const { scope, actor, principal } = this.caller.current();
     const now = this.clock();
     try {
-      return await withTx(this.db, scope, actor, async (tx) => {
+      // The stored answer (replayed on a retry) is the full DTO; the cost figures are dropped for this caller per reply.
+      const dto = await withTx(this.db, scope, actor, async (tx) => {
         const done = await withIdempotency(
           tx,
           {
@@ -314,6 +316,7 @@ export class QuotationSubmitService {
         );
         return done.response;
       });
+      return versionVisibleTo(principal, dto);
     } catch (error) {
       if (!(error instanceof NoEligibleApprover)) throw error;
       // The submit transaction rolled back; the notice gets a transaction of its own so it is kept.
