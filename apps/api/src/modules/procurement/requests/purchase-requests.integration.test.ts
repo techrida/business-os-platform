@@ -462,7 +462,8 @@ describe('purchase request: the decision', () => {
     const first = await approvals.act(request.id, action, key);
     expect((await prRow(id)).status).toBe('dept_approved');
     expect((await approvals.inbox()).some((i) => i.requestId === request.id)).toBe(false);
-    expect((await httpErrorOf(approvals.get(request.id))).getStatus()).toBe(404);
+    // The head who decided keeps reading the request (U18 #10); deciding again still needs the replay.
+    expect((await approvals.get(request.id)).requestId).toBe(request.id);
     await approvals.getForAction(request.id, action, key);
     expect(await approvals.act(request.id, action, key)).toEqual(first);
     as(U.other, 'operations_officer');
@@ -551,7 +552,8 @@ describe('purchase request: the decision', () => {
     await act(U.head, 'operations_officer', request.id, 'approve');
     as(U.head, 'operations_officer');
     expect((await approvals.inbox()).some((i) => i.requestId === request.id)).toBe(false);
-    expect((await httpErrorOf(approvals.get(request.id))).getStatus()).toBe(404);
+    // They still read the request they decided (U18 #10), but cannot decide the Management step.
+    expect((await approvals.get(request.id)).status).toBe('pending');
     expect(
       (
         await httpErrorOf(
