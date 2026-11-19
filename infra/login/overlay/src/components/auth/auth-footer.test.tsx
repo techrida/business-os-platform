@@ -1,10 +1,13 @@
-import { render, screen } from '@testing-library/react';
+import { cleanup, render, screen } from '@testing-library/react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { loginFooterLinks } from '../../lib/login-footer-links';
 import { AuthFooter } from './auth-footer';
 
-afterEach(() => vi.unstubAllEnvs());
+afterEach(() => {
+  cleanup();
+  vi.unstubAllEnvs();
+});
 
 describe('login footer links', () => {
   it('omits both items when the deployment leaves them unset', () => {
