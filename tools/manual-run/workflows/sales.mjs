@@ -719,13 +719,54 @@ export function workflow(cfg) {
               "sales-3 already started this run's verification case in an earlier attempt. Resume from sales-4.",
             );
           await as(s, 'Dev Sales');
+          // next dev compiles a route on its first visit, and the rebuild (Fast Refresh) reloads
+          // the open page: a click on a not-yet-compiled customer page was undone by a reload of
+          // the list. A plain GET of the page sales-2 recorded compiles it before the click.
+          if (s.state.customerUrl) {
+            const warm = await s.page
+              .evaluate(
+                (url) => fetch(url, { credentials: 'include' }).then((r) => r.status),
+                s.state.customerUrl,
+              )
+              .catch(() => 'failed');
+            s.checks.push(`compiled the customer page first (GET ${warm})`);
+          }
           await s.goto('/customers', (p) => p.getByLabel('Search organizations'));
           await s.fill('Search organizations', v.company);
-          await s.click(s.button('Search').or(s.button('Apply')), 'Search');
+          const searchButton = s.button('Search').or(s.button('Apply'));
+          if (await visible(searchButton)) await s.click(searchButton, 'Search');
+          else {
+            // Round 3: a search field with no button; Enter submits it.
+            await s.page.getByLabel('Search organizations', { exact: true }).press('Enter');
+            await s.page.waitForURL((u) => u.searchParams.get('q') === v.company, {
+              timeout: cfg.navTimeout,
+            });
+            s.checks.push('searched with Enter (the list has no Search button)');
+          }
           const row = s.page.getByRole('link', { name: C }).first();
           await s.see(row, `the customer ${v.company} in the results`);
-          await s.click(row, 'open the customer');
-          await s.see(h1(s.page, C), 'the customer page');
+          // The live search navigates in a transition (form aria-busy); a click while it is still
+          // pending can be overtaken by it, so wait for the list to settle first.
+          await s.page
+            .locator('form[role="search"][aria-busy="true"]')
+            .waitFor({ state: 'detached', timeout: cfg.navTimeout })
+            .catch(() => {});
+          const customerPage = h1(s.page, C);
+          // A dev-server rebuild can still reload the list under the click (see above). A plain
+          // link, so clicking it again changes nothing; at most three clicks, each noted.
+          for (let attempt = 1; ; attempt++) {
+            await s.click(row, attempt === 1 ? 'open the customer' : 'open the customer again');
+            const opened = await customerPage
+              .first()
+              .waitFor({ state: 'visible', timeout: 45000 })
+              .then(() => true)
+              .catch(() => false);
+            if (opened || attempt === 3 || !(await visible(row))) break;
+            s.checks.push(
+              `note: click ${attempt} on the customer did not leave the list (dev-server reload); clicking again`,
+            );
+          }
+          await s.see(customerPage, 'the customer page', cfg.navTimeout);
           s.record('customerUrl', s.page.url().split('?')[0].replace(cfg.appUrl, ''));
           const owner = await main(s);
           if (/Owner name unavailable/.test(owner))
