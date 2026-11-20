@@ -10,8 +10,9 @@ import { describeError } from '../admin-errors';
 import { fail, ok, type ActionState } from '../action-state';
 import { requireSection } from '../guard';
 
-// Server Action for the exchange-rate form. The section permission is re-checked here because each
-// action is its own request, apart from the page that rendered the form.
+// Server Action for the exchange-rate form. The section permission (the live grant
+// settings.fx_rate.write or admin.settings.write) is re-checked here because each action is its own
+// request, apart from the page that rendered the form.
 
 const PATH = '/settings/currencies';
 
