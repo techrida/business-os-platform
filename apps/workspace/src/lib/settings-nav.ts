@@ -178,7 +178,7 @@ export const SETTINGS_GROUPS: readonly SettingsGroup[] = [
         label: 'Tax',
         href: '/settings/tax',
         icon: 'receipt',
-        description: 'VAT and withholding codes, and the default VAT rate.',
+        description: 'VAT and withholding codes documents can use.',
         permission: 'admin.settings.write',
         ready: true,
       },
