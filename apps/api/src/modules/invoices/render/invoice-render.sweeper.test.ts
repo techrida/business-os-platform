@@ -93,6 +93,7 @@ function fixture(
     orphans: vi.fn().mockResolvedValue([]),
     removeOrphan: vi.fn().mockResolvedValue(undefined),
     discardUnfilled: vi.fn().mockResolvedValue(undefined),
+    discardUnprinted: vi.fn().mockResolvedValue(undefined),
     recordFailure: vi.fn().mockResolvedValue({ attempts: 1, givenUp: false }),
     clearFailure: vi.fn().mockResolvedValue(undefined),
   } satisfies RenderStore;
@@ -363,6 +364,31 @@ describe('InvoiceRenderSweeper.sweep', () => {
     expect(f.store.discardUnfilled).toHaveBeenCalledWith(TX, candidate(1), 'doc-1', NOW);
     expect(f.store.recordFailure).toHaveBeenCalledWith(TX, candidate(1), 'error', NOW);
     expect(f.store.recordPrint).not.toHaveBeenCalled();
+  });
+
+  it('removes the stored PDF when its print 1 cannot be recorded, so the next try prints and freezes print 1', async () => {
+    const f = fixture();
+    f.store.recordPrint.mockRejectedValue(new Error('db hiccup'));
+    await expect(f.sweeper.renderOne(candidate(1))).resolves.toBe('failed');
+    expect(f.store.discardUnprinted).toHaveBeenCalledWith(TX, candidate(1), 'doc-1', NOW);
+    expect(f.store.discardUnfilled).not.toHaveBeenCalled();
+    expect(f.store.recordFailure).toHaveBeenCalledWith(TX, candidate(1), 'error', NOW);
+  });
+
+  it('counts the failure even when the document of the failed try cannot be removed', async () => {
+    const f = fixture();
+    f.documents.receiveGenerated.mockRejectedValue(new Error('disk full'));
+    f.store.discardUnfilled.mockRejectedValue(new Error('db hiccup'));
+    await expect(f.sweeper.renderOne(candidate(1))).resolves.toBe('failed');
+    expect(f.store.recordFailure).toHaveBeenCalledWith(TX, candidate(1), 'error', NOW);
+  });
+
+  it('removes the document of the failed try even when the failure cannot be counted', async () => {
+    const f = fixture();
+    f.documents.receiveGenerated.mockRejectedValue(new Error('disk full'));
+    f.store.recordFailure.mockRejectedValue(new Error('db hiccup'));
+    await expect(f.sweeper.renderOne(candidate(1))).resolves.toBe('failed');
+    expect(f.store.discardUnfilled).toHaveBeenCalledWith(TX, candidate(1), 'doc-1', NOW);
   });
 
   it('logs, and does not throw, when the failure itself cannot be recorded', async () => {
