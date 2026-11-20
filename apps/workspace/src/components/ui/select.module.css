@@ -24,6 +24,7 @@
 
 .trigger[data-focus-visible] {
   border-color: var(--select-focus-border);
+  box-shadow: var(--bos-field-focus-shadow);
   outline: 2px solid var(--focus-ring);
   outline-offset: 1px;
 }
@@ -42,7 +43,7 @@
 }
 
 .tick {
-  color: var(--brand-500);
+  color: var(--action-primary);
 }
 
 .trigger svg,
@@ -50,12 +51,13 @@
   flex: none;
 }
 
-.trigger:hover {
+.trigger:hover:not(:disabled) {
   border-color: var(--select-hover-border);
 }
 
 .select[data-open] .trigger {
   border-color: var(--select-focus-border);
+  box-shadow: var(--bos-field-focus-shadow);
 }
 
 .select.invalid .trigger,
@@ -81,11 +83,15 @@
   color: var(--select-placeholder);
 }
 
+/* Shared floating panel surface (Figma Dropdown 31:128). Flex column lets React Aria's inline
+   maxHeight shrink `.list` cleanly without clipping items or a MultiSelect footer. */
 .popover {
-  z-index: 60;
+  z-index: 110;
+  display: flex;
+  flex-direction: column;
   width: max-content;
   min-width: max(var(--trigger-width), 160px);
-  max-width: min(360px, calc(100vw - 24px));
+  max-width: min(360px, calc(100vw - 16px));
   padding: 8px;
   overflow: hidden;
   border: var(--border-width-thin) solid var(--dropdown-border);
@@ -96,33 +102,44 @@
 }
 
 .list {
-  display: grid;
+  display: flex;
+  flex: 1 1 auto;
+  flex-direction: column;
   gap: 4px;
-  max-height: min(280px, var(--available-height, 280px));
+  min-height: 0;
+  max-height: 280px;
   padding: 4px;
   overflow-y: auto;
+  overscroll-behavior: contain;
 }
 
 .item {
   display: flex;
+  flex: none;
   align-items: center;
   gap: 8px;
   min-height: 40px;
   padding: 8px 10px;
   border-radius: var(--radius-xs);
+  color: var(--dropdown-text);
   font-size: var(--font-size-body-small);
   line-height: var(--line-height-body-small);
   cursor: pointer;
 }
 
-.item[data-selected] {
-  background: var(--interactive-selected);
-  color: var(--brand-500);
+.item[data-hovered]:not([data-disabled]),
+.item[data-focused]:not([data-disabled]) {
+  background: var(--dropdown-hover-bg);
 }
 
-.item[data-hovered],
-.item[data-focused] {
-  background: var(--dropdown-hover-bg);
+.item[data-selected] {
+  background: var(--interactive-selected);
+  color: var(--action-primary);
+}
+
+.item[data-selected][data-hovered]:not([data-disabled]),
+.item[data-selected][data-focused]:not([data-disabled]) {
+  background: var(--brand-100);
 }
 
 .item[data-focus-visible] {
@@ -131,6 +148,7 @@
 }
 
 .item[data-disabled] {
+  background: var(--surface-muted);
   color: var(--text-disabled);
   cursor: not-allowed;
 }
@@ -141,10 +159,15 @@
   overflow-wrap: anywhere;
 }
 
-/* Keep the text at 16px on touch screens, as the text inputs do, to avoid focus zoom. */
+/* Keep the text at 16px and hit targets at least 44px on touch screens. */
 @media (pointer: coarse) {
   .trigger {
+    min-height: 44px;
     font-size: max(16px, var(--font-size-body-small));
+  }
+
+  .item {
+    min-height: 44px;
   }
 }
 

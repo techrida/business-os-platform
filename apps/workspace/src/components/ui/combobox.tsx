@@ -3,6 +3,7 @@
 import {
   useEffect,
   useId,
+  useImperativeHandle,
   useMemo,
   useRef,
   useState,
@@ -10,6 +11,7 @@ import {
   type KeyboardEvent,
   type Ref,
 } from 'react';
+import { Popover } from 'react-aria-components';
 
 import {
   ADD_OPTION_ID,
@@ -22,6 +24,9 @@ import {
   UNGROUPED_LABEL,
   type ComboboxOption,
 } from './combobox-model';
+import { Icon } from './icon';
+import { dropdownPopoverProps, usePopoverContainer } from './popover-container';
+import selectStyles from './select.module.css';
 import styles from './combobox.module.css';
 
 /**
@@ -108,7 +113,15 @@ export function Combobox({
   const listId = `${base}-list`;
   const optionId = (id: string) => `${base}-o-${id}`;
   const rootRef = useRef<HTMLDivElement>(null);
+  const internalInputRef = useRef<HTMLInputElement>(null);
+  const popoverRef = useRef<HTMLElement>(null);
   const listRef = useRef<HTMLDivElement>(null);
+  const container = usePopoverContainer();
+  useImperativeHandle<HTMLInputElement | null, HTMLInputElement | null>(
+    inputRef,
+    () => internalInputRef.current,
+    [],
+  );
   const selected = options.find((o) => o.id === value);
   // `query` is null while the box simply shows the chosen label; a string while the user is searching.
   const [query, setQuery] = useState<string | null>(null);
@@ -202,6 +215,13 @@ export function Combobox({
         }
         break;
       }
+      case 'Home':
+      case 'End':
+        if (open && query === null) {
+          e.preventDefault();
+          setActiveId(moveActive(ids, live, e.key));
+        }
+        break;
       case 'Enter':
         // Always swallowed: Enter in a field must not submit the memo form behind the list.
         e.preventDefault();
@@ -237,13 +257,18 @@ export function Combobox({
       ref={rootRef}
       className={[styles.root, className].filter(Boolean).join(' ')}
       onBlur={(e) => {
-        if (e.currentTarget.contains(e.relatedTarget)) return;
+        if (
+          e.currentTarget.contains(e.relatedTarget) ||
+          popoverRef.current?.contains(e.relatedTarget)
+        ) {
+          return;
+        }
         if (open || query !== null) close();
         if (value === '' && text === '') onBlurEmpty?.();
       }}
     >
       <input
-        ref={inputRef}
+        ref={internalInputRef}
         type="text"
         role="combobox"
         className={styles.input}
@@ -271,65 +296,76 @@ export function Combobox({
       <div className="sr-only" role="status" aria-live="polite">
         {announcement}
       </div>
-      {open ? (
-        <div className={styles.popup}>
-          <div
-            ref={listRef}
-            id={listId}
-            role="listbox"
-            aria-label={label}
-            aria-labelledby={labelledBy}
-            className={styles.list}
-            // Clicking an option must not blur the input, or the list would close before the click lands.
-            onMouseDown={(e) => e.preventDefault()}
-          >
-            {layout.groups.map((group) => {
-              const items = group.options.map((o) => (
-                <div
-                  key={o.id}
-                  id={optionId(o.id)}
-                  role="option"
-                  aria-selected={o.id === value}
-                  aria-disabled={o.disabled || undefined}
-                  className={[styles.option, o.id === live ? styles.active : undefined]
-                    .filter(Boolean)
-                    .join(' ')}
-                  onMouseMove={() => {
-                    if (!o.disabled && o.id !== live) setActiveId(o.id);
-                  }}
-                  onClick={() => {
-                    if (!o.disabled) choose(o.id);
-                  }}
-                >
+      <Popover
+        ref={popoverRef}
+        triggerRef={internalInputRef}
+        isOpen={open}
+        onOpenChange={(next) => {
+          if (!next) close();
+        }}
+        isNonModal
+        className={`${selectStyles.popover ?? ''} ${styles.popover ?? ''}`}
+        {...dropdownPopoverProps(container)}
+      >
+        <div
+          ref={listRef}
+          id={listId}
+          role="listbox"
+          aria-label={label}
+          aria-labelledby={labelledBy}
+          className={styles.list}
+          // Clicking an option must not blur the input, or the list would close before the click lands.
+          onMouseDown={(e) => e.preventDefault()}
+        >
+          {layout.groups.map((group) => {
+            const items = group.options.map((o) => (
+              <div
+                key={o.id}
+                id={optionId(o.id)}
+                role="option"
+                aria-selected={o.id === value}
+                aria-disabled={o.disabled || undefined}
+                className={[styles.option, o.id === live ? styles.active : undefined]
+                  .filter(Boolean)
+                  .join(' ')}
+                onMouseMove={() => {
+                  if (!o.disabled && o.id !== live) setActiveId(o.id);
+                }}
+                onClick={() => {
+                  if (!o.disabled) choose(o.id);
+                }}
+              >
+                <span className={styles.optionText}>
                   <span className={styles.name}>{o.label}</span>
                   {o.description ? <span className={styles.meta}>{o.description}</span> : null}
                   {o.disabled && o.disabledReason ? (
                     <span className={styles.meta}>{o.disabledReason}</span>
                   ) : null}
-                  {o.id === value ? (
-                    <span className={styles.check} aria-hidden="true">
-                      ✓
-                    </span>
-                  ) : null}
+                </span>
+                {o.id === value ? <Icon name="check" size={20} className={styles.check} /> : null}
+              </div>
+            ));
+            return group.label === null ? (
+              <div key="flat" role="presentation" className={styles.groupItems}>
+                {items}
+              </div>
+            ) : (
+              <div
+                key={group.key}
+                role="group"
+                aria-labelledby={`${base}-g-${group.key}`}
+                className={styles.groupItems}
+              >
+                <div id={`${base}-g-${group.key}`} role="presentation" className={styles.group}>
+                  {group.label}
                 </div>
-              ));
-              return group.label === null ? (
-                <div key="flat" role="presentation">
-                  {items}
-                </div>
-              ) : (
-                <div key={group.key} role="group" aria-labelledby={`${base}-g-${group.key}`}>
-                  <div id={`${base}-g-${group.key}`} role="presentation" className={styles.group}>
-                    {group.label}
-                  </div>
-                  {items}
-                </div>
-              );
-            })}
-          </div>
-          {message ? <p className={styles.message}>{message}</p> : null}
+                {items}
+              </div>
+            );
+          })}
         </div>
-      ) : null}
+        {message ? <p className={styles.message}>{message}</p> : null}
+      </Popover>
     </div>
   );
 }

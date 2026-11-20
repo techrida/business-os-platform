@@ -54,6 +54,7 @@
 
 @media (pointer: coarse) {
   .group {
+    min-height: 44px;
     font-size: max(16px, var(--font-size-body-small));
   }
 }
@@ -125,11 +126,13 @@
 }
 
 .popover {
-  z-index: 50;
+  z-index: 110;
+  max-width: calc(100vw - 16px);
+  overflow: auto;
   border: var(--border-width-thin) solid var(--dropdown-border);
   border-radius: var(--radius-lg);
   background: var(--dropdown-bg);
-  box-shadow: var(--shadow-section, var(--toast-shadow));
+  box-shadow: var(--shadow-section);
   color: var(--dropdown-text);
 }
 

@@ -97,6 +97,15 @@ describe('keyboard movement', () => {
     expect(moveActive([], 'a', 'ArrowDown')).toBeNull();
   });
 
+  it('jumps to first and last selectable id with Home and End', () => {
+    expect(moveActive(ids, 'b', 'Home')).toBe('a');
+    expect(moveActive(ids, null, 'Home')).toBe('a');
+    expect(moveActive(ids, 'b', 'End')).toBe('c');
+    expect(moveActive(ids, null, 'End')).toBe('c');
+    expect(moveActive([], 'a', 'Home')).toBeNull();
+    expect(moveActive([], 'a', 'End')).toBeNull();
+  });
+
   it('skips options that cannot be selected', () => {
     const flat: ComboboxOption[] = [
       { id: 'a', label: 'A' },

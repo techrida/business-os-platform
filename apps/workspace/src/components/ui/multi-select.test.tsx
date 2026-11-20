@@ -218,3 +218,88 @@ it('resets to its default with the form', async () => {
   });
   expect(triggerText()).toBe('New');
 });
+
+it('supports Home, End and typeahead keyboard navigation in the list', async () => {
+  const seen: string[][] = [];
+  mounted = await mountForm(field({ onChange: (v) => seen.push(v) }));
+  trigger().focus();
+  await key(trigger(), 'ArrowDown');
+  await key(document.activeElement!, 'End');
+  expect(document.activeElement?.textContent?.trim()).toBe('Qualified');
+  await key(document.activeElement!, 'Home');
+  expect(document.activeElement?.textContent?.trim()).toBe('New');
+  await key(document.activeElement!, 'c');
+  expect(document.activeElement?.textContent?.trim()).toBe('Contacted');
+  await key(document.activeElement!, 'Enter');
+  expect(seen).toEqual([['contacted']]);
+});
+
+it('flips above the trigger near the viewport bottom with 8px padding', async () => {
+  const origViewport = window.visualViewport;
+  const origClientHeight = Object.getOwnPropertyDescriptor(
+    document.documentElement,
+    'clientHeight',
+  );
+  const origClientWidth = Object.getOwnPropertyDescriptor(document.documentElement, 'clientWidth');
+  const origOffsetHeight = Object.getOwnPropertyDescriptor(HTMLElement.prototype, 'offsetHeight');
+  const origOffsetWidth = Object.getOwnPropertyDescriptor(HTMLElement.prototype, 'offsetWidth');
+
+  Object.defineProperty(window, 'visualViewport', {
+    configurable: true,
+    value: {
+      width: 1440,
+      height: 900,
+      offsetTop: 0,
+      offsetLeft: 0,
+      pageTop: 0,
+      pageLeft: 0,
+      scale: 1,
+      addEventListener() {},
+      removeEventListener() {},
+    },
+  });
+  Object.defineProperty(document.documentElement, 'clientHeight', {
+    configurable: true,
+    value: 900,
+  });
+  Object.defineProperty(document.documentElement, 'clientWidth', {
+    configurable: true,
+    value: 1440,
+  });
+  Object.defineProperty(HTMLElement.prototype, 'offsetHeight', {
+    configurable: true,
+    get(this: HTMLElement) {
+      return this.getAttribute('data-trigger') === 'Select' ? 200 : 42;
+    },
+  });
+  Object.defineProperty(HTMLElement.prototype, 'offsetWidth', {
+    configurable: true,
+    get() {
+      return 220;
+    },
+  });
+
+  try {
+    mounted = await mountForm(field());
+    trigger().getBoundingClientRect = () => new DOMRect(100, 800, 220, 42);
+    await click(trigger());
+    const popover = document.querySelector<HTMLElement>('[data-trigger="Select"]')!;
+    expect(popover.getAttribute('data-placement')).toBe('top');
+    expect(popover.style.bottom).toBe('108px');
+    expect(popover.style.maxHeight).toBe('784px');
+  } finally {
+    Object.defineProperty(window, 'visualViewport', { configurable: true, value: origViewport });
+    if (origClientHeight) {
+      Object.defineProperty(document.documentElement, 'clientHeight', origClientHeight);
+    }
+    if (origClientWidth) {
+      Object.defineProperty(document.documentElement, 'clientWidth', origClientWidth);
+    }
+    if (origOffsetHeight) {
+      Object.defineProperty(HTMLElement.prototype, 'offsetHeight', origOffsetHeight);
+    }
+    if (origOffsetWidth) {
+      Object.defineProperty(HTMLElement.prototype, 'offsetWidth', origOffsetWidth);
+    }
+  }
+});

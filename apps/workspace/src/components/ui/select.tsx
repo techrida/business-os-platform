@@ -1,5 +1,22 @@
 'use client';
 
+/**
+ * DECISION (UIP-BUILD-001 — adopt proven components, restyle them):
+ * - `react-aria-components` owns every selection, combobox, suggestion and calendar dropdown
+ *   (`Select`, `MultiSelect`, `Combobox` popover, `SuggestInput`, `DatePicker`): full WAI-ARIA
+ *   listbox/combobox semantics, keyboard navigation (Arrows, Home/End, typeahead, Enter/Space,
+ *   Escape), and built-in viewport positioning (`placement="bottom start"`, `shouldFlip`,
+ *   `offset={8}`, `containerPadding={8}`, and inline `maxHeight` bound to available viewport
+ *   height).
+ * - `@radix-ui/react-popover` is used only for non-listbox disclosure popovers (`RowMenu`,
+ *   `ActionMenu`, `HeaderAction` explanations), where Tab and arrows walk links or action buttons
+ *   rather than a `role="listbox"` widget.
+ * - All dropdown surfaces share the Figma dropdown tokens (`--dropdown-bg`, `--dropdown-border`,
+ *   `--dropdown-hover-bg`, `--interactive-selected`, `--shadow-section`), 8 px trigger offset,
+ *   8 px viewport collision padding, 40 px item height (44 px on coarse pointers), and
+ *   `PopoverContainerContext` for portalling inside modal dialogs.
+ */
+
 import {
   Children,
   Fragment,
@@ -24,7 +41,7 @@ import {
 } from 'react-aria-components';
 
 import { Icon, type IconName } from './icon';
-import { usePopoverContainer } from './popover-container';
+import { dropdownPopoverProps, usePopoverContainer } from './popover-container';
 import { useFormReset } from './use-form-reset';
 import styles from './select.module.css';
 
@@ -244,12 +261,7 @@ export function Select({
         <SelectValue className={styles.value ?? ''} />
         <Icon name="chevron-down" size={20} className={styles.chevron} />
       </Trigger>
-      <Popover
-        className={styles.popover ?? ''}
-        offset={8}
-        placement="bottom start"
-        {...(container ? { UNSTABLE_portalContainer: container } : {})}
-      >
+      <Popover className={styles.popover ?? ''} {...dropdownPopoverProps(container)}>
         <ListBox
           items={items.map((o) => ({ ...o, id: toKey(o.value) }))}
           className={styles.list ?? ''}

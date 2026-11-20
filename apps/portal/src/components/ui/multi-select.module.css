@@ -2,11 +2,13 @@
 
 .item {
   display: flex;
+  flex: none;
   align-items: center;
   gap: 10px;
   min-height: 40px;
   padding: 8px 10px;
   border-radius: var(--radius-xs);
+  color: var(--dropdown-text);
   font-size: var(--font-size-body-small);
   line-height: var(--line-height-body-small);
   cursor: pointer;
@@ -44,6 +46,7 @@
 }
 
 .footer {
+  flex: none;
   margin-top: 4px;
   padding: 8px 4px 0;
   border-top: var(--border-width-thin) solid var(--dropdown-border);
@@ -58,7 +61,7 @@
   border: 0;
   border-radius: var(--radius-xs);
   background: transparent;
-  color: var(--brand-500);
+  color: var(--action-primary);
   font: inherit;
   font-size: var(--font-size-body-small);
   line-height: var(--line-height-body-small);
@@ -78,4 +81,11 @@
 .clear:disabled {
   color: var(--text-disabled);
   cursor: not-allowed;
+}
+
+@media (pointer: coarse) {
+  .item,
+  .clear {
+    min-height: 44px;
+  }
 }
