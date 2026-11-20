@@ -12,6 +12,21 @@ const err = (status: number, code = 'x', message = 'The API wording.', reason?: 
   });
 
 describe('rfqFailure', () => {
+  it('shows the infected-file refusal of a recorded quotation with the file name (TR-Q12e)', () => {
+    const f = rfqFailure(
+      err(
+        409,
+        'document_infected',
+        'A virus was found in “eicar.pdf”. Remove it or upload a clean copy, then try again.',
+      ),
+      'record',
+    );
+    expect(f.message).toBe(
+      'A virus was found in “eicar.pdf”. Remove it or upload a clean copy, then try again.',
+    );
+    expect(f.reload).toBe(false);
+  });
+
   it('keeps the key on the in-progress 409, a 5xx and a lost connection', () => {
     const inProgress = rfqFailure(
       new ApiError(409, 'x', {

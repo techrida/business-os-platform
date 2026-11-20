@@ -54,6 +54,7 @@ export * from './schema/ledger.js';
 export * from './schema/sales.js';
 export * from './schema/invoicing.js';
 export * from './schema/payments.js';
+export * from './schema/payment-promises.js';
 export * from './schema/vendors.js';
 export * from './schema/procurement.js';
 export * from './schema/procurement-orders.js';

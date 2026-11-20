@@ -278,25 +278,27 @@ describe('ErrorBodyFilter', () => {
     },
   );
 
-  it.each(['kyb_not_verified', 'customer_merged', 'idp_org_taken'])(
-    'keeps %s on a 409 (portal access grant, K8), and only on a 409',
-    (code) => {
-      const out = filter(new ConflictException({ code, message: 'Cannot grant portal access' }));
+  it.each([
+    'kyb_not_verified',
+    'customer_merged',
+    'idp_org_taken',
+    'first_admin_owner_only',
+    'account_owner_missing',
+  ])('keeps %s on a 409 (portal access grant, K8), and only on a 409', (code) => {
+    const out = filter(new ConflictException({ code, message: 'Cannot grant portal access' }));
 
-      expect(out.status).toBe(409);
-      const parsed = ErrorBodySchema.parse(out.body);
-      expect(parsed.error.code).toBe(code);
-      expect(parsed.error.message).toBe('Cannot grant portal access');
-      expect(
-        ErrorBodySchema.parse(filter(new UnprocessableEntityException({ code, message: 'm' })).body)
-          .error.code,
-      ).toBe('bad_request');
-      expect(
-        ErrorBodySchema.parse(filter(new ForbiddenException({ code, message: 'm' })).body).error
-          .code,
-      ).toBe('forbidden');
-    },
-  );
+    expect(out.status).toBe(409);
+    const parsed = ErrorBodySchema.parse(out.body);
+    expect(parsed.error.code).toBe(code);
+    expect(parsed.error.message).toBe('Cannot grant portal access');
+    expect(
+      ErrorBodySchema.parse(filter(new UnprocessableEntityException({ code, message: 'm' })).body)
+        .error.code,
+    ).toBe('bad_request');
+    expect(
+      ErrorBodySchema.parse(filter(new ForbiddenException({ code, message: 'm' })).body).error.code,
+    ).toBe('forbidden');
+  });
 
   it('keeps quotation_pdf_not_ready on a 409 (the quotation PDF download), and only on a 409', () => {
     const code = 'quotation_pdf_not_ready';
@@ -310,6 +312,17 @@ describe('ErrorBodyFilter', () => {
       ErrorBodySchema.parse(filter(new UnprocessableEntityException({ code, message: 'm' })).body)
         .error.code,
     ).toBe('bad_request');
+  });
+
+  it('keeps document_infected and its message naming the file on a 409 (TR-Q12e)', () => {
+    const message =
+      'A virus was found in “eicar.pdf”. Remove it or upload a clean copy, then try again.';
+    const out = filter(new ConflictException({ code: 'document_infected', message }));
+    expect(out.status).toBe(409);
+    expect(ErrorBodySchema.parse(out.body).error).toMatchObject({
+      code: 'document_infected',
+      message,
+    });
   });
 
   it.each([
@@ -347,8 +360,9 @@ describe('ErrorBodyFilter', () => {
     'serials_not_allowed',
     'serial_duplicate',
     'PO_AMENDMENT_INVALID',
+    'DUE_DATE_BEFORE_ISSUE',
   ])(
-    'keeps %s on a 422 (quotation outcome Q3b/PA-3, goods receipts P4), and only on a 422',
+    'keeps %s on a 422 (quotation outcome Q3b/PA-3, goods receipts P4, invoice issue), and only on a 422',
     (code) => {
       const out = filter(new UnprocessableEntityException({ code, message: 'Not accepted' }));
 
@@ -638,6 +652,20 @@ describe('ErrorBodyFilter', () => {
       'internal',
       'internal',
     ]);
+  });
+
+  it('passes the dates of a refused invoice issue through as details (DUE_DATE_BEFORE_ISSUE)', () => {
+    const out = filter(
+      new UnprocessableEntityException({
+        code: 'DUE_DATE_BEFORE_ISSUE',
+        message: 'The due date is before the issue date',
+        details: { dueDate: '2026-11-09', issueDate: '2026-11-12' },
+      }),
+    );
+    expect(ErrorBodySchema.parse(out.body).error.details).toEqual({
+      dueDate: '2026-11-09',
+      issueDate: '2026-11-12',
+    });
   });
 
   it.each([

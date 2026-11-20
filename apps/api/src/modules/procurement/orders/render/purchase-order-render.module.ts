@@ -5,6 +5,7 @@
 // (PurchaseOrderRenderWorkerModule), never here.
 import { Inject, Module, type OnModuleInit } from '@nestjs/common';
 
+import { AuditModule } from '../../../../platform/audit/audit.module';
 import { DB, type Db } from '../../../../platform/db/db.module';
 import { DocumentsModule } from '../../../../platform/documents/documents.module';
 import { DocumentsService } from '../../../../platform/documents/documents.service';
@@ -17,7 +18,7 @@ import {
 } from './purchase-order-version-owner.policy';
 
 @Module({
-  imports: [DocumentsModule],
+  imports: [AuditModule, DocumentsModule],
   controllers: [PurchaseOrderDocumentController],
   providers: [PurchaseOrdersCaller, PurchaseOrderDocumentService],
 })

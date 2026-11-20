@@ -3,8 +3,9 @@
 import { PdfPages } from '@bos/pdf-viewer';
 import { useCallback, useEffect, useId, useRef, useState, type ComponentProps } from 'react';
 
-import { Button, LinkButton } from './button';
+import { Button } from './button';
 import styles from './document-viewer.module.css';
+import { downloadFile } from './download-file';
 import { Icon } from './icon';
 
 export interface ViewDocumentProps {
@@ -18,9 +19,9 @@ export interface ViewDocumentProps {
   label?: string | undefined;
   variant?: 'primary' | 'secondary' | undefined;
   size?: ComponentProps<typeof Button>['size'];
-  /** Also shows a plain Download link beside the button. It is an ordinary anchor and never prefetches. */
+  /** Also shows a Download button beside the View button (it fetches the file; see `DownloadButton`). */
   withDownload?: boolean | undefined;
-  /** Called when a Download link (beside the button or in the dialog) is activated. */
+  /** Called once a Download (beside the button or in the dialog) has handed the file to the browser to save. */
   onDownload?: (() => void) | undefined;
   /** Accessible name for the View button when the visible label is not enough. */
   ariaLabel?: string | undefined;
@@ -35,7 +36,8 @@ export interface ViewDocumentProps {
  * still being prepared (HTTP 409 or 425) or fails, the dialog shows a message and a Retry button that makes
  * one new request per click. A 404 (not available, or access taken away) shows a plain "not available" message with
  * no Retry and no reason; nothing polls, because every call to such a route issues a single-use signed link.
- * Download is a separate plain anchor. Light mode only. Full screen at 480px and below.
+ * Download fetches the file and saves it, so a refusal (not ready yet, signed out) is a sentence beside the button and
+ * the page stays as it was (round 4, R4c2: TR-Q4). Light mode only. Full screen at 480px and below.
  *
  * @example
  *   <ViewDocument name="QT-1.pdf" previewUrl={`/quotations/${id}/document/preview`}
@@ -89,15 +91,7 @@ export function ViewDocument({
         {label}
       </Button>
       {withDownload ? (
-        <LinkButton
-          variant="secondary"
-          size={size}
-          href={downloadUrl}
-          onClick={() => onDownload?.()}
-        >
-          <DownloadIcon />
-          Download
-        </LinkButton>
+        <DownloadButton url={downloadUrl} name={name} size={size} onDownload={onDownload} />
       ) : null}
       <dialog
         ref={dialogRef}
@@ -130,10 +124,7 @@ export function ViewDocument({
             </div>
             <footer className={styles.footer}>
               {isSameOriginUrl(downloadUrl, window.location.origin) ? (
-                <LinkButton variant="secondary" href={downloadUrl} onClick={() => onDownload?.()}>
-                  <DownloadIcon />
-                  Download
-                </LinkButton>
+                <DownloadButton url={downloadUrl} name={name} onDownload={onDownload} />
               ) : null}
               <Button variant="secondary" onClick={close}>
                 Close
@@ -159,6 +150,59 @@ export function isSameOriginUrl(url: string, origin: string): boolean {
     return false;
   }
   return (parsed.protocol === 'https:' || parsed.protocol === 'http:') && parsed.origin === origin;
+}
+
+/**
+ * Download that stays in the portal: one click fetches the route once and saves the PDF, and a refusal ("This PDF is
+ * not available to download yet…") is read out beside the button instead of replacing the page. A second click while
+ * one is under way is ignored. Only a same-origin route is fetched.
+ */
+function DownloadButton({
+  url,
+  name,
+  size,
+  onDownload,
+}: {
+  url: string;
+  name: string;
+  size?: ComponentProps<typeof Button>['size'];
+  onDownload?: (() => void) | undefined;
+}) {
+  const [busy, setBusy] = useState(false);
+  const [message, setMessage] = useState<string | null>(null);
+  const download = async () => {
+    if (busy) return;
+    setBusy(true);
+    setMessage(null);
+    try {
+      const outcome = isSameOriginUrl(url, window.location.origin)
+        ? await downloadFile(url, name, { expectType: 'application/pdf' })
+        : ({ ok: false, message: 'The file could not be downloaded.' } as const);
+      if (outcome.ok) onDownload?.();
+      else setMessage(outcome.message);
+    } finally {
+      setBusy(false);
+    }
+  };
+  return (
+    <>
+      <Button
+        variant="secondary"
+        size={size}
+        aria-busy={busy || undefined}
+        disabled={busy}
+        onClick={() => void download()}
+      >
+        <DownloadIcon />
+        Download
+      </Button>
+      {message === null ? null : (
+        <span role="alert" className={styles.downloadError}>
+          {message}
+        </span>
+      )}
+    </>
+  );
 }
 
 type PdfState =

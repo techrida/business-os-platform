@@ -10,6 +10,8 @@ import {
   PaymentStatusSchema,
   type PortalInvoiceListItem,
   PortalInvoiceListItemSchema,
+  type PortalSalesOrder,
+  PortalSalesOrderSchema,
   type PortalSubmitPaymentBody,
   PortalSubmitPaymentBodySchema,
   type SignedLinkDto,
@@ -37,6 +39,8 @@ import type { Session } from './session';
  *   POST /v1/portal/payment-proofs                 -> { documentId, versionId, uploadPath }
  *   PUT  <uploadPath> (raw file bytes)             -> 2xx
  *   POST /v1/portal/payments (Idempotency-Key)     -> 2xx
+ *   GET  /v1/portal/sales-orders                   -> PortalSalesOrder[] (milestones, F1-Q34)
+ *   GET  /v1/portal/sales-orders/:id               -> PortalSalesOrder
  */
 
 const seg = (id: string): string => encodeURIComponent(id);
@@ -67,6 +71,24 @@ async function call<T>(
     throw new ApiError(502, `${label} returned an invalid body`, parsed.error.issues);
   }
   return parsed.data;
+}
+
+/**
+ * `GET /v1/portal/sales-orders`: the customer's confirmed and completed orders with their milestones (the billing
+ * schedule, F1-Q34). The strict schema refuses any staff field.
+ */
+export function listPortalSalesOrders(
+  session: Pick<Session, 'accessToken'>,
+): Promise<PortalSalesOrder[]> {
+  return call(session, '/v1/portal/sales-orders', z.array(PortalSalesOrderSchema));
+}
+
+/** `GET /v1/portal/sales-orders/:id`. The API answers 404 for another customer's, a draft, cancelled or unknown order. */
+export function getPortalSalesOrder(
+  session: Pick<Session, 'accessToken'>,
+  id: string,
+): Promise<PortalSalesOrder> {
+  return call(session, `/v1/portal/sales-orders/${seg(id)}`, PortalSalesOrderSchema);
 }
 
 /** `GET /v1/portal/invoices`: the customer's issued invoices and notes only. */

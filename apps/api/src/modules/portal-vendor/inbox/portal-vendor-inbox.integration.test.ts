@@ -577,6 +577,7 @@ describe('quotation submissions', () => {
     );
 
     expect(res.status).toBe(409);
+    expect(res.body).toMatchObject({ code: 'document_infected' });
     expect(await count('vendor_quotation_submissions', `rfq_id = '${rfqId}'`)).toBe(0);
   });
 });
@@ -792,6 +793,7 @@ describe('bill submissions and bank change requests (PV2b)', () => {
     );
 
     expect(res.status).toBe(409);
+    expect(res.body).toMatchObject({ code: 'document_infected' });
     expect(await count('vendor_bill_submissions', `vendor_party_id = '${a.partyId}'`)).toBe(0);
   });
 

@@ -101,16 +101,6 @@
   letter-spacing: normal;
 }
 
-/* Status and Action sit pinned at the end on a subtle background, as in the invoice and quotation
-   lists. Row hover still paints the whole row. */
-.orders .pinned {
-  background: var(--surface-subtle);
-}
-
-.orders .pinnedStart {
-  border-inline-start: var(--border-width-thin) solid var(--border-default);
-}
-
 .rowAction {
   display: inline-grid;
   width: 40px;

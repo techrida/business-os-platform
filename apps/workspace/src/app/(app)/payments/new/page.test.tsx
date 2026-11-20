@@ -233,13 +233,13 @@ describe('record payment page', () => {
     );
   });
 
-  it('offers only the currencies enabled in Settings', async () => {
+  it('offers every currency, choosable, and names the ones switched off in Settings', async () => {
     enabledAre(['NPR', 'USD']);
     const picker = currencySelect(await render());
     expect(picker).toContain('<option value="NPR"');
-    expect(picker).toContain('<option value="USD"');
-    // Old code listed every currency, INR included.
-    expect(picker).not.toContain('value="INR"');
+    expect(picker).toContain('<option value="USD">USD (US dollar)</option>');
+    // Old code left INR out: a payment that arrived in INR could not be recorded.
+    expect(picker).toContain('<option value="INR">INR (Indian rupee), switched off</option>');
     expect(mocks.apiFetch).toHaveBeenCalledWith(
       expect.anything(),
       '/v1/settings/display',
@@ -247,7 +247,7 @@ describe('record payment page', () => {
     );
   });
 
-  it('keeps a customer’s switched-off usual currency visible but disabled, and starts on NPR', async () => {
+  it('starts blank when the customer’s usual currency is switched off, and names it on the field', async () => {
     enabledAre(['NPR', 'INR']);
     mocks.listCustomers.mockResolvedValue({
       items: [customer({ defaultCurrency: 'USD' })],
@@ -255,12 +255,12 @@ describe('record payment page', () => {
     });
     const html = await render({ customerId: CUSTOMER_ID });
     const picker = currencySelect(html);
-    // Old code preselected USD, which the API then refused as not enabled.
-    expect(picker).toContain('<input type="hidden" name="currency" value="NPR"/>');
-    expect(picker).toContain('<option value="USD">USD (US dollar)</option>');
-    expect(picker).toContain('<option value="NPR" selected="">');
+    // Old code started on NPR without asking.
+    expect(picker).toContain('<input type="hidden" name="currency" value=""/>');
+    expect(picker).toContain('data-placeholder="true">Choose a currency</span>');
+    expect(picker).toContain('<option value="USD">USD (US dollar), switched off</option>');
     expect(html).toContain(
-      'This customer usually pays in USD (US dollar), which is switched off in Settings.',
+      'This customer usually pays in USD (US dollar), which is switched off in Settings. Payments in it are still recorded.',
     );
   });
 
@@ -280,9 +280,9 @@ describe('record payment page', () => {
     for (const c of ['NPR', 'INR', 'USD']) expect(picker).toContain(`<option value="${c}"`);
   });
 
-  it('never starts a payment on a switched-off currency', () => {
+  it('never starts a payment on a switched-off currency, nor moves it to NPR', () => {
     expect(startCurrency('USD', ['NPR', 'USD'])).toBe('USD');
-    expect(startCurrency('USD', ['NPR', 'INR'])).toBe('NPR');
+    expect(startCurrency('USD', ['NPR', 'INR'])).toBe('');
     expect(startCurrency(null, ['NPR', 'INR'])).toBe('NPR');
     expect(startCurrency(undefined, ['NPR'])).toBe('NPR');
   });
@@ -309,7 +309,7 @@ describe('record payment page', () => {
           `${o.textContent?.trim()}${o.getAttribute('aria-disabled') === 'true' ? ' (off)' : ''}`,
       );
 
-    it('keeps the payment on an enabled currency and shows the switched-off one as disabled', async () => {
+    it('blanks the currency for a customer whose usual one is off, and the switched-off one stays choosable', async () => {
       mounted = await mountForm(
         <PaymentForm
           idempotencyKey="11111111-1111-4111-8111-111111111111"
@@ -344,22 +344,25 @@ describe('record payment page', () => {
           (o) => o.textContent?.trim() === 'Dollar Co (CUS-0002)',
         ) ?? null,
       );
-      // Old code switched the payment to USD, which the API refuses as not enabled.
-      expect(currency()).toBe('NPR');
+      // Old code moved the payment to NPR without asking.
+      expect(currency()).toBe('');
       expect(box.textContent).toContain(
         'This customer usually pays in USD (US dollar), which is switched off in Settings.',
       );
 
-      await choose(box, 'currency', 'INR (Indian rupee)');
-      expect(currency()).toBe('INR');
+      await choose(box, 'currency', 'USD (US dollar), switched off');
+      expect(currency()).toBe('USD');
+      expect(box.textContent).toContain(
+        'USD (US dollar) is switched off in Settings. Payments in it are still recorded.',
+      );
       await click(
         box.querySelector('input[name="currency"]')!.parentElement!.querySelector('button'),
       );
-      // Old code listed plain codes, all choosable.
+      // Old code showed USD disabled, so a payment that arrived in USD could not be recorded.
       expect(optionStates()).toEqual([
         'NPR (Nepalese rupee)',
         'INR (Indian rupee)',
-        'USD (US dollar) (off)',
+        'USD (US dollar), switched off',
       ]);
       await act(() => Promise.resolve());
       // Opening React Aria pickers in jsdom takes a few seconds; room for a loaded full suite.

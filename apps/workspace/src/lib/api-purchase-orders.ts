@@ -318,7 +318,8 @@ export function cancelPurchaseOrder(
 
 /**
  * `GET .../:id/versions/:version/document`: a short-lived, single-use signed link to that version's
- * PDF. 404 while the file is not rendered and scanned clean. Every call issues a new link.
+ * PDF. 409 while the file is being prepared, 424 once its render was given up, 404 when there is none
+ * to hand out. A refusal issues no link; every successful call issues a new one.
  */
 export function issuePoDocumentLink(
   session: Session,

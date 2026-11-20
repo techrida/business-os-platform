@@ -72,10 +72,10 @@ function Row({ rfq }: { rfq: RfqListItem }) {
           {rfq.quotationCount} of {rfq.invitedVendorCount}
         </span>
       </Td>
-      <Td nowrap className={local.statusColumn}>
+      <Td nowrap pinned>
         <Badge tone={status.tone}>{status.text}</Badge>
       </Td>
-      <Td nowrap className={local.actionColumn}>
+      <Td nowrap pinned>
         <Link href={href} className={local.rowAction} aria-label={`View ${rfq.number}`}>
           <Icon name="chevron-right" size={20} />
         </Link>
@@ -217,7 +217,7 @@ export default async function RfqsPage({
         <div className={layout.results}>
           <ResultCount shown={rfqs.length} total={total} noun="RFQ" />
           <Table
-            className={`${layout.resultsTable ?? ''} ${local.list ?? ''}`}
+            className={layout.resultsTable ?? ''}
             caption="Requests for quotation"
             minWidth={820}
           >
@@ -227,8 +227,8 @@ export default async function RfqsPage({
                 <Th>Purchase request</Th>
                 <Th>Deadline</Th>
                 <Th align="end">Quotations</Th>
-                <Th className={local.statusColumn}>Status</Th>
-                <Th className={local.actionColumn}>Action</Th>
+                <Th pinned>Status</Th>
+                <Th pinned>Action</Th>
               </tr>
             </thead>
             <tbody>

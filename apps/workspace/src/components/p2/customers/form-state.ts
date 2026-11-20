@@ -43,3 +43,14 @@ export interface ContactFormState {
 }
 
 export type { ContactValues, CustomerValues };
+
+/** What the invite-portal-admin action hands back. `savedCount` rises on each success and closes the dialog. */
+export interface PortalInviteState {
+  key: string;
+  errors: { contactId?: string };
+  /** A refusal that blocks the invite, shown in the dialog. */
+  error?: string;
+  /** A short confirmation such as "An invitation was sent to ana@acme.test." Shown as a toast. */
+  saved?: string;
+  savedCount: number;
+}

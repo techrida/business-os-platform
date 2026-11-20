@@ -14,6 +14,7 @@ import { CurrencySchema, DecimalString, type Currency } from './money.js';
 import {
   EvidenceKindSchema,
   PaymentMilestoneDtoSchema,
+  PercentFourDecimals,
   QuantityString,
   type QuotationStatus,
 } from './quotations.js';
@@ -188,3 +189,47 @@ export const RejectQuotationBodySchema = z.strictObject({
   comment: z.string().trim().min(1).max(2000),
 });
 export type RejectQuotationBody = z.infer<typeof RejectQuotationBodySchema>;
+
+// ---------------------------------------------------------------------------------------------
+// Milestones: the billing schedule of the customer's sales orders (F1-Q34, D15)
+// ---------------------------------------------------------------------------------------------
+
+/**
+ * What a customer sees of a schedule line's status. `upcoming` (planned), `reached` (the milestone is done and the
+ * line waits for its invoice, which covers a drafted invoice: an unissued invoice is never shown), `invoiced` (the
+ * line's invoice was issued). A cancelled line is not shown at all.
+ */
+export const PORTAL_MILESTONE_STATUSES = ['upcoming', 'reached', 'invoiced'] as const;
+export const PortalMilestoneStatusSchema = z.enum(PORTAL_MILESTONE_STATUSES);
+export type PortalMilestoneStatus = z.infer<typeof PortalMilestoneStatusSchema>;
+
+/** One instalment of the order's billing schedule, field by field (no NPR value, evidence, marker or version). */
+export const PortalMilestoneSchema = z.strictObject({
+  seq: z.number().int().min(1),
+  label: z.string().min(1),
+  /** The line's share of the order in percent; null for a line added by amount. */
+  percent: PercentFourDecimals.nullable(),
+  /** VAT-inclusive, in the order's currency. */
+  amount: DecimalString,
+  /** When the milestone is planned, when staff set a date; the schedule has no other due date. */
+  plannedDate: isoDate.nullable(),
+  status: PortalMilestoneStatusSchema,
+  /** The issued invoice that billed this line, as the portal's invoice list shows it; null until then. */
+  invoice: z
+    .strictObject({ id: z.guid(), number: z.string().min(1), dueDate: isoDate.nullable() })
+    .nullable(),
+});
+export type PortalMilestone = z.infer<typeof PortalMilestoneSchema>;
+
+/** A confirmed or completed sales order of the customer with its milestones (`GET /v1/portal/sales-orders`). */
+export const PortalSalesOrderSchema = z.strictObject({
+  id: z.guid(),
+  number: z.string().min(1),
+  status: z.enum(['confirmed', 'completed']),
+  /** When the order was confirmed (ISO date-time). */
+  confirmedAt: z.iso.datetime({ offset: true }).nullable(),
+  currency: CurrencySchema,
+  total: DecimalString,
+  milestones: z.array(PortalMilestoneSchema),
+});
+export type PortalSalesOrder = z.infer<typeof PortalSalesOrderSchema>;

@@ -17,10 +17,13 @@
 //   * a USD PO prints neither the FX rate nor an NPR value;
 //   * candidates: versions without a live document, never a rendered one;
 //   * two renders at once give one document; Gotenberg 500 leaves no document and renders on the next try;
+//   * a render that keeps failing (round 4, R4c2: TR-Q4, F1-Q13) is tried again after growing pauses, then given up with
+//     one admin entry on the purchase order; the download answers 409 while it is being tried and 424 once given up,
+//     and a Retry by a caller with procurement.po.issue starts the tries again;
 //   * an orphan generated document older than 1 h is soft-removed by a sweep, a younger one is kept;
 //   * the owner policy refuses every actor but the render job;
-//   * GET .../versions/:version/document: a link for the clean PDF right after the render; 404 for an unknown version, for
-//     another entity of the same tenant and for a random id; 403 for a portal caller.
+//   * GET .../versions/:version/document: a link for the clean PDF right after the render; 409 before it; 404 for an
+//     unknown version, for another entity of the same tenant and for a random id; 403 for a portal caller.
 //
 // Needs Docker. Run: pnpm --filter @bos/api exec vitest run src/modules/procurement/orders/render/purchase-order-render.integration.test.ts
 import 'reflect-metadata';
@@ -47,7 +50,12 @@ import {
   runMigrations,
 } from '@bos/db';
 import { formatBs } from '@bos/locale';
-import { ForbiddenException, NotFoundException } from '@nestjs/common';
+import {
+  ConflictException,
+  ForbiddenException,
+  HttpException,
+  NotFoundException,
+} from '@nestjs/common';
 import { PostgreSqlContainer, type StartedPostgreSqlContainer } from '@testcontainers/postgresql';
 import type { Queue } from 'bullmq';
 import { sql } from 'drizzle-orm';
@@ -76,12 +84,12 @@ import type {
   RenderSettings,
   RunInTx,
 } from '../../../quotations/render/quotation-render.sweeper';
+import { MAX_RENDER_ATTEMPTS, RETRY_PAUSE_MAX_MS } from '../../../quotations/render/render-retry';
 import { quotationLineAmounts } from '../../sourcing/sourcing.rules';
 import { PurchaseOrdersService } from '../purchase-orders.service';
 import { PurchaseOrderDocumentService } from './purchase-order-document.service';
 import {
   drizzlePurchaseOrderRenderStore,
-  FAILED_RETRY_MS,
   ORPHAN_AFTER_MS,
   PurchaseOrderRenderSweeper,
   type RenderCandidate,
@@ -135,6 +143,8 @@ let gotenbergServer: Server;
 let sweeper: PurchaseOrderRenderSweeper;
 let store: ReturnType<typeof drizzlePurchaseOrderRenderStore>;
 let service: PurchaseOrderDocumentService;
+/** The real audit log of the render (admin entries) and of the Retry. */
+let renderAudit: AuditService;
 let orders: PurchaseOrdersService;
 const U = { req: '', proc: '', mgmt: '' };
 
@@ -289,10 +299,11 @@ beforeAll(async () => {
     audit,
     notify,
   );
+  renderAudit = new AuditService(db);
   sweeper = makeSweeper(
     new GotenbergClient(gotenbergUrl, { timeoutMs: 10_000, maxBytes: 1_000_000 }),
   );
-  service = new PurchaseOrderDocumentService(db, documents, caller);
+  service = new PurchaseOrderDocumentService(db, documents, caller, renderAudit);
   // Issue and amend do not touch the approvals service while the band does not rise.
   orders = new PurchaseOrdersService(
     db,
@@ -336,6 +347,7 @@ function makeSweeper(pdf: GotenbergClient): PurchaseOrderRenderSweeper {
     pdf,
     () => new Date(),
     NO_LOGOS,
+    renderAudit,
   );
 }
 
@@ -471,7 +483,7 @@ async function candidateOf(po: IssuedPo, version: number): Promise<RenderCandida
     'SELECT id FROM app.purchase_order_versions WHERE purchase_order_id = $1 AND version = $2',
     [po.id, version],
   );
-  return { ...po.scope, versionId: first(rows).id };
+  return { ...po.scope, versionId: first(rows).id, purchaseOrderId: po.id };
 }
 
 async function documentRows(versionId: string) {
@@ -556,12 +568,13 @@ describe('purchase order render', () => {
       pdf,
       () => clock,
       NO_LOGOS,
+      renderAudit,
     );
 
-    // Every retry has expired before the next tick. The oldest-first query used to pick the same ten forever.
+    // Every pause has expired before the next tick. The oldest-first query used to pick the same ten forever.
     for (let tick = 0; tick < 3; tick += 1) {
       await worker.sweep();
-      clock = new Date(clock.getTime() + FAILED_RETRY_MS + 1);
+      clock = new Date(clock.getTime() + RETRY_PAUSE_MAX_MS + 1);
     }
     expect(await documentRows(healthy.versionId)).toHaveLength(1);
     expect(new Set(load.mock.calls.map(([, c]) => c.versionId))).toEqual(
@@ -576,10 +589,14 @@ describe('purchase order render', () => {
       [failed.map((c) => c.versionId)],
     );
     expect(load.mock.calls.map(([, c]) => c.versionId)).toEqual(oldest.map((r) => r.id));
-    // A removed cursor cannot poison future candidate queries: restart at the oldest available position.
-    expect((await fairStore.candidates(10, [], randomUUID())).map((c) => c.versionId)).toEqual(
-      oldest.map((r) => r.id),
-    );
+    // They just failed again, so they wait out their pause first; after it they lead the batch again. A removed cursor
+    // cannot poison future candidate queries: restart at the oldest available position.
+    const afterPause = new Date(clock.getTime() + RETRY_PAUSE_MAX_MS + 1);
+    const dueNow = (await fairStore.candidates(clock, 100, randomUUID())).map((c) => c.versionId);
+    expect(dueNow.filter((id) => oldest.some((r) => r.id === id))).toEqual([]);
+    expect(
+      (await fairStore.candidates(afterPause, 10, randomUUID())).map((c) => c.versionId),
+    ).toEqual(oldest.map((r) => r.id));
   });
 
   it('prints NPR 21,24,400.00 and stores a clean PDF owned by the version', async () => {
@@ -673,13 +690,10 @@ describe('purchase order render', () => {
     const rendered = await candidateOf(await issuedPo(), 1);
     expect(await sweeper.renderOne(rendered)).toBe('rendered');
 
-    const picked = (await store.candidates(1_000, [])).map((c) => c.versionId);
+    const picked = await store.candidates(new Date(), 1_000);
 
-    expect(picked).toContain(fresh.versionId);
-    expect(picked).not.toContain(rendered.versionId);
-    expect(
-      (await store.candidates(1_000, [fresh.versionId])).map((c) => c.versionId),
-    ).not.toContain(fresh.versionId);
+    expect(picked).toContainEqual(fresh);
+    expect(picked.map((c) => c.versionId)).not.toContain(rendered.versionId);
   });
 
   it('two renders at once give one document', async () => {
@@ -704,7 +718,11 @@ describe('purchase order render', () => {
   });
 
   it('fails a version that is not there, without a document or a render', async () => {
-    const ghost: RenderCandidate = { ...scopeA, versionId: randomUUID() };
+    const ghost: RenderCandidate = {
+      ...scopeA,
+      versionId: randomUUID(),
+      purchaseOrderId: randomUUID(),
+    };
     expect(await sweeper.renderOne(ghost)).toBe('failed');
     expect(gotenberg.requests).toHaveLength(0);
   });
@@ -758,8 +776,8 @@ describe('GET /v1/procurement/purchase-orders/:id/versions/:version/document', (
     const po = await issuedPo();
     const c = await candidateOf(po, 1);
     current.scope = scopeA;
-    // Not rendered yet: nothing to serve.
-    await expect(service.link(po.id, 1)).rejects.toBeInstanceOf(NotFoundException);
+    // Not rendered yet: being prepared (409), never "not found".
+    await expect(service.link(po.id, 1)).rejects.toBeInstanceOf(ConflictException);
     expect(await sweeper.renderOne(c)).toBe('rendered');
 
     const link = await service.link(po.id, 1);
@@ -774,17 +792,17 @@ describe('GET /v1/procurement/purchase-orders/:id/versions/:version/document', (
     await renderClean(v1);
     current.scope = scopeA;
     await expect(service.link(po.id, 1)).resolves.toBeDefined();
-    // Version 2 has no PDF yet.
-    await expect(service.link(po.id, 2)).rejects.toBeInstanceOf(NotFoundException);
+    // Version 2 has no PDF yet: being prepared.
+    await expect(service.link(po.id, 2)).rejects.toBeInstanceOf(ConflictException);
   });
 
-  it('is a 404 for an unknown version, a random id, another entity and before any render', async () => {
+  it('is a 404 for an unknown version, a random id and another entity; a 409 before any render', async () => {
     const po = await issuedPo();
     const unrendered = await issuedPo();
     await renderClean(await candidateOf(po, 1));
 
     current.scope = scopeA;
-    await expect(service.link(unrendered.id, 1)).rejects.toBeInstanceOf(NotFoundException);
+    await expect(service.link(unrendered.id, 1)).rejects.toBeInstanceOf(ConflictException);
     await expect(service.link(randomUUID(), 1)).rejects.toBeInstanceOf(NotFoundException);
     await expect(service.link(po.id, 2)).rejects.toBeInstanceOf(NotFoundException);
     await expect(service.link(po.id, 0)).rejects.toBeInstanceOf(NotFoundException);
@@ -802,5 +820,146 @@ describe('GET /v1/procurement/purchase-orders/:id/versions/:version/document', (
     current.scope = scopeA;
     current.orgKind = 'vendor';
     await expect(service.link(po.id, 1)).rejects.toBeInstanceOf(ForbiddenException);
+  });
+});
+
+describe('a render that keeps failing (R4c2: TR-Q4, F1-Q13)', () => {
+  async function failureRow(versionId: string) {
+    const { rows } = await pool.query<{
+      attempts: number;
+      last_failure_kind: string;
+      next_attempt_at: Date | null;
+      exhausted_at: Date | null;
+    }>(
+      `SELECT attempts, last_failure_kind, next_attempt_at, exhausted_at
+         FROM app.document_render_failures
+        WHERE owner_type = 'purchase_order_version' AND owner_id = $1`,
+      [versionId],
+    );
+    return rows[0];
+  }
+  async function actions(scope: TxScope, purchaseOrderId: string): Promise<string[]> {
+    const events = await renderAudit.list(scope, {
+      entityType: 'purchase_orders',
+      entityId: purchaseOrderId,
+      limit: 100,
+    });
+    return events.map((e) => e.action).filter((a) => a.startsWith('purchase_order.pdf_'));
+  }
+  const ids = (cs: RenderCandidate[]) => cs.map((c) => c.versionId);
+  const failingWorker = (clock: () => Date) =>
+    new PurchaseOrderRenderSweeper(
+      store,
+      runTx,
+      documents,
+      settings,
+      { htmlToPdf: vi.fn().mockRejectedValue(new Error('chromium gone')) },
+      clock,
+      NO_LOGOS,
+      renderAudit,
+    );
+
+  it('retries with a growing pause, then gives up with one admin entry and a 424; Retry starts again', async () => {
+    const po = await issuedPo();
+    const c = await candidateOf(po, 1);
+    current.scope = scopeA;
+    let clock = new Date();
+    const worker = failingWorker(() => clock);
+
+    let previousPause = 0;
+    for (let n = 1; n <= MAX_RENDER_ATTEMPTS; n += 1) {
+      expect(await worker.renderOne(c)).toBe('failed');
+      const row = await failureRow(c.versionId);
+      expect(row).toMatchObject({ attempts: n, last_failure_kind: 'error' });
+      if (n === MAX_RENDER_ATTEMPTS) break;
+      // Still being tried: held back during its pause, due after it, and the screen reads "being prepared".
+      expect(row?.exhausted_at).toBeNull();
+      const due = row?.next_attempt_at ?? new Date(0);
+      const pause = due.getTime() - clock.getTime();
+      expect(pause).toBeGreaterThan(previousPause);
+      previousPause = pause;
+      expect(ids(await store.candidates(clock, 1_000))).not.toContain(c.versionId);
+      clock = new Date(due.getTime() + 1);
+      expect(ids(await store.candidates(clock, 1_000))).toContain(c.versionId);
+      await expect(service.link(po.id, 1)).rejects.toBeInstanceOf(ConflictException);
+      expect(await actions(scopeA, po.id)).toEqual([]);
+    }
+
+    // Given up: never picked again, the download says it failed, and one admin entry says so.
+    const given = await failureRow(c.versionId);
+    expect(given?.exhausted_at).not.toBeNull();
+    expect(given?.next_attempt_at).toBeNull();
+    const farFuture = new Date(clock.getTime() + 365 * 24 * 60 * 60_000);
+    expect(ids(await store.candidates(farFuture, 1_000))).not.toContain(c.versionId);
+    const refused = await service.link(po.id, 1).catch((e: unknown) => e);
+    expect(refused).toBeInstanceOf(HttpException);
+    expect((refused as HttpException).getStatus()).toBe(424);
+    expect(await actions(scopeA, po.id)).toEqual(['purchase_order.pdf_render_failed']);
+    // Another failure after giving up changes nothing and writes no second entry.
+    expect(await worker.renderOne(c)).toBe('failed');
+    expect(await failureRow(c.versionId)).toMatchObject({ attempts: MAX_RENDER_ATTEMPTS });
+    expect(await actions(scopeA, po.id)).toEqual(['purchase_order.pdf_render_failed']);
+
+    // Another entity cannot retry it, and the answer is the same 404 as a random id.
+    current.scope = scopeB;
+    await expect(service.retry(po.id, 1)).rejects.toBeInstanceOf(NotFoundException);
+    current.scope = scopeA;
+    await expect(service.retry(randomUUID(), 1)).rejects.toBeInstanceOf(NotFoundException);
+    current.orgKind = 'vendor';
+    await expect(service.retry(po.id, 1)).rejects.toBeInstanceOf(ForbiddenException);
+    current.orgKind = 'staff';
+
+    await expect(service.retry(po.id, 1)).resolves.toEqual({ state: 'queued' });
+    expect(await failureRow(c.versionId)).toBeUndefined();
+    await expect(service.retry(po.id, 1)).rejects.toBeInstanceOf(ConflictException);
+    expect(await actions(scopeA, po.id)).toEqual([
+      'purchase_order.pdf_render_failed',
+      'purchase_order.pdf_retry_requested',
+    ]);
+    // Back to "being prepared", due at once, and a healthy render now serves the PDF.
+    await expect(service.link(po.id, 1)).rejects.toBeInstanceOf(ConflictException);
+    expect(ids(await store.candidates(clock, 1_000))).toContain(c.versionId);
+    await renderClean(c);
+    await expect(service.link(po.id, 1)).resolves.toBeDefined();
+  });
+
+  it('forgets earlier failures once a render succeeds', async () => {
+    const c = await candidateOf(await issuedPo(), 1);
+    expect(await failingWorker(() => new Date()).renderOne(c)).toBe('failed');
+    expect(await failureRow(c.versionId)).toMatchObject({ attempts: 1 });
+    await renderClean(c);
+    expect(await failureRow(c.versionId)).toBeUndefined();
+  });
+
+  it('removes the document of a try whose bytes were never stored, so the next try is not blocked', async () => {
+    const po = await issuedPo();
+    const c = await candidateOf(po, 1);
+    const brokenDisk = {
+      createGenerated: documents.createGenerated.bind(documents),
+      receiveGenerated: vi.fn().mockRejectedValue(new Error('disk full')),
+    };
+    let clock = new Date();
+    const worker = new PurchaseOrderRenderSweeper(
+      store,
+      runTx,
+      brokenDisk,
+      settings,
+      { htmlToPdf: vi.fn().mockResolvedValue(PDF) },
+      () => clock,
+      NO_LOGOS,
+      renderAudit,
+    );
+    expect(await worker.renderOne(c)).toBe('failed');
+    const [doc] = await documentRows(c.versionId);
+    expect(doc?.status).toBe('awaiting_content');
+    expect(doc?.removed_at).not.toBeNull();
+    // A removed document does not hold the link in "preparing" forever: it is still trying, so 409.
+    current.scope = scopeA;
+    await expect(service.link(po.id, 1)).rejects.toBeInstanceOf(ConflictException);
+    const row = await failureRow(c.versionId);
+    clock = new Date((row?.next_attempt_at ?? new Date()).getTime() + 1);
+    expect(ids(await store.candidates(clock, 1_000))).toContain(c.versionId);
+    expect(await sweeper.renderOne(c)).toBe('rendered');
+    await expect(service.link(po.id, 1)).resolves.toBeDefined();
   });
 });

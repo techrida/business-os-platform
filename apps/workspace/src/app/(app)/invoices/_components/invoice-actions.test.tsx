@@ -121,3 +121,33 @@ describe('the forms', () => {
     expect(render('proforma', 'draft', ['finance'])).toContain('Issue proforma');
   });
 });
+
+describe('a note its viewer created (TR-Q12f)', () => {
+  const invoice = {
+    id: ID,
+    kind: 'debit_note' as const,
+    status: 'approved' as const,
+    number: null,
+    version: 7,
+  };
+  const html = renderToStaticMarkup(
+    <InvoiceActions
+      invoice={invoice}
+      gates={invoiceGates(invoice, permissionChecker(['finance']), true)}
+      reloadHref={`/invoices/${ID}`}
+    />,
+  );
+
+  it('shows Issue off, with the reason under it and as its tooltip, and no issue form', () => {
+    expect(html).toMatch(/<button[^>]*aria-disabled="true"[^>]*>Issue debit note<\/button>/);
+    const described = /aria-describedby="([^"]+)"/.exec(html)?.[1];
+    expect(described).toBeDefined();
+    expect(html).toMatch(
+      new RegExp(`id="${described ?? 'missing'}"[^>]*>You created this note, so someone else`),
+    );
+    expect(html).toContain(
+      `title="You created this note, so someone else with issue access must issue it."`,
+    );
+    expect(html).not.toContain('name="idempotencyKey"');
+  });
+});

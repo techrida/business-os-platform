@@ -286,6 +286,19 @@ async function attach(caseId: string, status: 'quarantined' | 'clean' | 'infecte
   );
 }
 
+/**
+ * The scan finishing after the file was put on the checklist: the only way an infected file is on a case, since
+ * the checklist refuses one the scan already found infected (TR-Q12e).
+ */
+async function scanFinds(versionId: string, status: 'infected' | 'clean') {
+  await withTx(db, scope, systemActor('test-scan'), (tx) =>
+    tx
+      .update(documentVersions)
+      .set({ status, scannedAt: new Date(), updatedAt: new Date() })
+      .where(eq(documentVersions.id, versionId)),
+  );
+}
+
 const putDocument = (
   caseId: string,
   key: (typeof CHECKLIST_ITEM_KEYS)[number],
@@ -310,9 +323,10 @@ async function fillRequired(
 ): Promise<VerificationCaseDto> {
   let dto = c;
   for (const key of REQUIRED_KEYS) {
-    const doc = await attach(dto.id, status);
+    const doc = await attach(dto.id, status === 'infected' ? 'quarantined' : status);
     const res = await putDocument(dto.id, key, doc.documentId, dto.version);
     expect(res.status, JSON.stringify(res.body)).toBe(200);
+    if (status === 'infected') await scanFinds(doc.versionId, 'infected');
     dto = VerificationCaseDtoSchema.parse(res.body);
   }
   return dto;
@@ -668,7 +682,7 @@ describe('POST /v1/verification-cases/:id/submit', () => {
 describe('POST /v1/verification-cases/:id/decision', () => {
   it('blocks final approval after all rows are accepted when a loose upload is still scanning', async () => {
     const draft = await fillRequired(await openCase());
-    const old = await attach(draft.id, 'infected');
+    const old = await attach(draft.id, 'quarantined');
     const withOld = await putDocument(
       draft.id,
       'registration_certificate',
@@ -676,6 +690,7 @@ describe('POST /v1/verification-cases/:id/decision', () => {
       draft.version,
     );
     expect(withOld.status).toBe(200);
+    await scanFinds(old.versionId, 'infected');
     const replacement = await attach(draft.id, 'clean');
     const replaced = await putDocument(
       draft.id,
@@ -684,7 +699,7 @@ describe('POST /v1/verification-cases/:id/decision', () => {
       VerificationCaseDtoSchema.parse(withOld.body).version,
     );
     expect(replaced.status).toBe(200);
-    const optional = await attach(draft.id, 'infected');
+    const optional = await attach(draft.id, 'quarantined');
     const attached = await putDocument(
       draft.id,
       'address_proof',
@@ -692,6 +707,7 @@ describe('POST /v1/verification-cases/:id/decision', () => {
       VerificationCaseDtoSchema.parse(replaced.body).version,
     );
     expect(attached.status).toBe(200);
+    await scanFinds(optional.versionId, 'infected');
     const detached = await removeDocument(
       draft.id,
       'address_proof',
@@ -711,6 +727,16 @@ describe('POST /v1/verification-cases/:id/decision', () => {
     });
     expect(decision.status, JSON.stringify(decision.body)).toBe(409);
     expect(ErrorBodySchema.parse(decision.body).error.message).toContain('not all clean');
+  });
+
+  it('refuses to put a file the scan found infected on the checklist with 409 document_infected (TR-Q12e)', async () => {
+    const draft = await fillRequired(await openCase());
+    const infected = await attach(draft.id, 'infected');
+    const res = await putDocument(draft.id, 'address_proof', infected.documentId, draft.version);
+    expect(res.status).toBe(409);
+    expect(ErrorBodySchema.parse(res.body).error.code).toBe('document_infected');
+    expect(ErrorBodySchema.parse(res.body).error.message).toContain('certificate.pdf');
+    expect((await rawCase(draft.id)).version).toBe(draft.version);
   });
 
   it('blocks approval when a currently attached optional file is still scanning', async () => {
@@ -1250,10 +1276,11 @@ describe('document review boundaries', () => {
 
   it('atomically retires replaced infected optional evidence and permits absence after detach', async () => {
     let c = await fillRequired(await openCase());
-    const infected = await attach(c.id, 'infected');
+    const infected = await attach(c.id, 'quarantined');
     c = VerificationCaseDtoSchema.parse(
       (await putDocument(c.id, 'other', infected.documentId, c.version)).body,
     );
+    await scanFinds(infected.versionId, 'infected');
     const fresh = await attach(c.id, 'clean');
     c = VerificationCaseDtoSchema.parse(
       (await putDocument(c.id, 'other', fresh.documentId, c.version)).body,

@@ -43,6 +43,8 @@ export type ErrorCode =
   | 'kyb_not_verified'
   | 'customer_merged'
   | 'idp_org_taken'
+  | 'first_admin_owner_only'
+  | 'account_owner_missing'
   | 'invalid_transition'
   | 'kyb_not_submitted'
   | 'kyc_expired'
@@ -51,6 +53,8 @@ export type ErrorCode =
   | 'account_exists'
   | 'no_verified_bank_account'
   | 'callback_evidence_not_clean'
+  // TR-Q12e: a record refuses a file the virus scan found infected (any attach point, one code).
+  | 'document_infected'
   | 'NO_ELIGIBLE_APPROVER'
   | 'APPROVER_NOT_ELIGIBLE'
   | 'evidence_policy_unmet'
@@ -62,6 +66,7 @@ export type ErrorCode =
   | 'schedule_line_not_planned'
   | 'SCHEDULE_LINE_TAKEN'
   | 'NOT_APPROVED'
+  | 'DUE_DATE_BEFORE_ISSUE'
   | 'CREDIT_EXCEEDS_INVOICE'
   | 'OVER_ALLOCATION'
   | 'MISMATCHED_ITEMS'
@@ -171,6 +176,8 @@ const GENERIC_MESSAGE: Record<ErrorCode, string> = {
   kyb_not_verified: 'Portal access needs an approved KYB verification case',
   customer_merged: 'This customer was merged into another',
   idp_org_taken: 'The portal organization is already used by another party',
+  first_admin_owner_only: "Only the customer's account owner can invite its first portal admin",
+  account_owner_missing: 'This customer has no account owner to invite its first portal admin',
   invalid_transition: 'This action is not allowed in the current status',
   kyb_not_submitted: 'The KYB verification has not been submitted yet',
   kyc_expired: 'The vendor tax clearance has expired',
@@ -179,6 +186,7 @@ const GENERIC_MESSAGE: Record<ErrorCode, string> = {
   account_exists: 'This vendor already has this bank account',
   no_verified_bank_account: 'The vendor has no verified bank account',
   callback_evidence_not_clean: 'The call-back evidence has not passed the virus scan',
+  document_infected: 'A virus was found in this file. Remove it or upload a clean copy.',
   NO_ELIGIBLE_APPROVER: 'No one is eligible to approve this; an administrator has been told',
   APPROVER_NOT_ELIGIBLE: 'The chosen approver cannot approve this',
   evidence_policy_unmet: 'The evidence given does not meet the policy',
@@ -189,6 +197,7 @@ const GENERIC_MESSAGE: Record<ErrorCode, string> = {
   schedule_line_not_planned: 'This schedule line is no longer planned',
   SCHEDULE_LINE_TAKEN: 'This billing schedule line already has an invoice',
   NOT_APPROVED: 'This invoice is issued only after it has been approved',
+  DUE_DATE_BEFORE_ISSUE: 'The due date is before the issue date',
   CREDIT_EXCEEDS_INVOICE: 'The credit notes of this invoice would total more than the invoice',
   OVER_ALLOCATION: 'The amount is more than the balance still open on an item',
   MISMATCHED_ITEMS: 'The allocation items do not match',
@@ -316,6 +325,9 @@ const CONFLICT_CODES: readonly ErrorCode[] = [
   'kyb_not_verified',
   'customer_merged',
   'idp_org_taken',
+  // F1-Q31: the customer has no portal user yet and the caller is not its account owner, or it has no owner.
+  'first_admin_owner_only',
+  'account_owner_missing',
   // U8 sales orders: only an accepted quotation confirms, only a confirmed order marks a line, only a planned
   // line becomes billable.
   'quotation_not_accepted',
@@ -344,6 +356,8 @@ const CONFLICT_CODES: readonly ErrorCode[] = [
   'account_exists',
   'no_verified_bank_account',
   'callback_evidence_not_clean',
+  // TR-Q12e: a bill, evidence, quotation, KYC or portal submission names a file the scan found infected.
+  'document_infected',
   // P4 sourcing: an invited vendor is not approved or has no account in the entity, or a recommendation is
   // short of the minimum number of quotations without a reason (AD13).
   'VENDOR_NOT_APPROVED',
@@ -400,6 +414,8 @@ const UNPROCESSABLE_CODES: readonly ErrorCode[] = [
   'APPROVER_NOT_ELIGIBLE',
   'evidence_policy_unmet',
   'decided_on_in_future',
+  // P3 invoice issue: the drafted due date is before today, the issue date (R4c1 U15b-Q5).
+  'DUE_DATE_BEFORE_ISSUE',
   // U7 payments: a proof that is not a clean file for this customer, an unknown customer or withholding code,
   // a rejection or reversal without a reason.
   'invalid_proof',

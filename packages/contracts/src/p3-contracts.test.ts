@@ -903,7 +903,15 @@ describe('receivables read models', () => {
     const report = {
       asOf: '2026-11-09',
       rows: [
-        { customerId: id(2), customerName: 'Acme', currency: 'NPR', buckets, totalOpen: '150.00' },
+        {
+          customerId: id(2),
+          customerName: 'Acme',
+          currency: 'NPR',
+          buckets,
+          totalOpen: '150.00',
+          promiseMissed: false,
+          promiseMissedOn: null,
+        },
       ],
       totals: [{ currency: 'NPR', buckets, totalOpen: '150.00' }],
     };

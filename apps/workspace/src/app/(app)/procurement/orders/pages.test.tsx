@@ -60,6 +60,20 @@ const ID = '11111111-1111-4111-8111-111111111111';
 const LINE = '22222222-2222-4222-8222-222222222222';
 const VENDOR = '33333333-3333-4333-8333-333333333333';
 
+// The real viewer, with the routes it was given written beside its trigger, so a test can see whether Retry is
+// offered (the dialog only asks for it once opened).
+vi.mock('@/components/ui/file-preview-dialog', async (importOriginal) => {
+  const real = await importOriginal<typeof import('@/components/ui/file-preview-dialog')>();
+  return {
+    ...real,
+    FilePreviewDialog: (props: Parameters<typeof real.FilePreviewDialog>[0]) => (
+      <span data-download-url={props.downloadUrl} data-retry-url={props.retryUrl}>
+        <real.FilePreviewDialog {...props} />
+      </span>
+    ),
+  };
+});
+
 const apiError = (status: number, code = 'x', extra: Record<string, unknown> = {}) =>
   new ApiError(status, 'x', {
     error: { code, message: 'internal wording', correlationId: 'corr-12345678', ...extra },
@@ -272,17 +286,37 @@ describe('the purchase order page', () => {
     const out = await detail();
     expect(out).toContain('PO-2082-0001');
     expect(out).toContain('Himal Traders Pvt. Ltd.');
-    expect(out).toContain(`/procurement/orders/${ID}/versions/1/document`);
-    expect(out).toContain(`/procurement/orders/${ID}/versions/2/document`);
     // Each version opens in the viewer (a dialog trigger), with Download beside it; the label is not "Download PDF".
+    // Download is a button that fetches the file in the app (R4c2), so no link to the document route is in the page.
     expect(
       out.match(/<button[^>]*aria-haspopup="dialog"[^>]*>[^]*?View PDF<\/button>/g),
     ).toHaveLength(2);
+    expect(out).toMatch(/<button[^>]*aria-label="Download of version 1"/);
+    expect(out).toMatch(/<button[^>]*aria-label="Download of version 2"/);
+    expect(out).not.toContain(`href="/procurement/orders/${ID}/versions/1/document"`);
     expect(out).toContain('of version 2');
     expect(out).not.toContain('Download PDF');
     expect(out).toContain('Total, version 2');
     expect(out).toContain('Still open');
     expect(out).toMatch(/>6</);
+  });
+
+  // R4c2 (TR-Q4): a version PDF whose render was given up offers Retry to who may issue, and to no one else.
+  it('offers Retry on each version PDF to Procurement, who may issue', async () => {
+    api.getPurchaseOrder.mockResolvedValue(order({ currentVersion: 2 }));
+    api.listPoVersions.mockResolvedValue([version(1), version(2)]);
+    const out = await detail();
+    expect(out).toContain(`data-retry-url="/procurement/orders/${ID}/versions/1/document/retry"`);
+    expect(out).toContain(`data-retry-url="/procurement/orders/${ID}/versions/2/document/retry"`);
+  });
+
+  it('offers no Retry on a version PDF when procurement.po.issue was removed', async () => {
+    grants.live = new Map([['procurement.pr.read', 'all']]);
+    api.getPurchaseOrder.mockResolvedValue(order({ currentVersion: 2 }));
+    api.listPoVersions.mockResolvedValue([version(1), version(2)]);
+    const out = await detail();
+    expect(out).toContain('View PDF');
+    expect(out).not.toContain('data-retry-url');
   });
 
   it('offers Issue on a draft only, with no versions yet', async () => {

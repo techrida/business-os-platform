@@ -236,6 +236,27 @@ describe('reads', () => {
     expect(url.searchParams.get('offset')).toBe('50');
   });
 
+  it('passes on the money totals of every match from X-Money-Totals, or null without them', async () => {
+    mocks.apiFetch.mockImplementation(() =>
+      Promise.resolve(
+        new Response('[]', {
+          status: 200,
+          headers: {
+            'X-Total-Count': '0',
+            'X-Money-Totals': '[{"currency":"NPR","amount":"150.00"}]',
+          },
+        }),
+      ),
+    );
+    expect((await listInvoicesPage(session)).totals).toEqual([
+      { currency: 'NPR', amount: '150.00' },
+    ]);
+    mocks.apiFetch.mockImplementation(() =>
+      Promise.resolve(new Response('[]', { status: 200, headers: { 'X-Total-Count': '0' } })),
+    );
+    expect((await listInvoicesPage(session)).totals).toBeNull();
+  });
+
   it('fails like a contract drift when the total header is missing or malformed', async () => {
     for (const headers of [{}, { 'X-Total-Count': 'many' }]) {
       mocks.apiFetch.mockImplementation(() =>
@@ -399,6 +420,13 @@ function refusal(status: number, code: string, extra: Record<string, unknown> = 
 }
 
 describe('describeBillingFailure', () => {
+  it('shows an infected evidence file refusal in the API words, which name the file (TR-Q12e)', () => {
+    const message =
+      'A virus was found in “eicar.pdf”. Remove it or upload a clean copy, then try again.';
+    const f = describeBillingFailure(refusal(409, 'document_infected', { message }));
+    expect(f).toMatchObject({ kind: 'infected', message, reload: false, definite: true });
+  });
+
   it('says plainly that the schedule line already has a draft, and does not ask for a reload', () => {
     const f = describeBillingFailure(refusal(409, 'SCHEDULE_LINE_TAKEN'));
     expect(f.kind).toBe('line_taken');

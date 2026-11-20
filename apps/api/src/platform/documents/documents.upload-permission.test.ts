@@ -8,7 +8,7 @@ import 'reflect-metadata';
 import { randomUUID } from 'node:crypto';
 
 import type { CreateDocumentBody, Permission, Scope } from '@bos/contracts';
-import { ForbiddenException } from '@nestjs/common';
+import { ForbiddenException, NotFoundException } from '@nestjs/common';
 import type { Queue } from 'bullmq';
 import { describe, expect, it, vi } from 'vitest';
 
@@ -104,13 +104,18 @@ function serviceWith(policy: Partial<DocumentOwnerPolicy>): DocumentsService {
   return service;
 }
 
-async function tryCreate(service: DocumentsService, p: Principal): Promise<string> {
+async function tryCreate(
+  service: DocumentsService,
+  p: Principal,
+  action?: Permission,
+): Promise<string> {
   const { tx, inserted } = fakeTx();
   try {
-    await asCaller(p, () => service.create(tx, body));
+    await asCaller(p, () => service.create(tx, body, { action }));
     return `created ${inserted.length}`;
   } catch (e) {
     if (e instanceof ForbiddenException) return `403 ${inserted.length}`;
+    if (e instanceof NotFoundException) return `404 ${inserted.length}`;
     throw e;
   }
 }
@@ -163,6 +168,61 @@ describe('DocumentsService.create and the owner policy uploadPermission', () => 
       expect(await tryCreate(owned, staff([['vendor.bank.verify', 'own']]))).toBe('403 0');
       expect(await tryCreate(owned, staff([['vendor.bank.verify', 'all']]))).toBe('created 2');
     });
+  });
+});
+
+describe('DocumentsService.create and the upload action the owning module names (U20a2-Q3)', () => {
+  // The record belongs to someone else, so an `own` grant on the owner ref never reaches it.
+  const someoneElses = (scope: { tenantId: string; organizationId: string }) =>
+    Promise.resolve({ ...scope, ownerUserId: randomUUID() });
+  const listed = serviceWith({
+    uploadPermission: 'payables.bill.enter',
+    uploadActions: ['payables.bill.enter'],
+    resource: someoneElses,
+  });
+
+  it('a listed action with an own grant authorises the caller to upload their own new file', async () => {
+    const own = staff([['payables.bill.enter', 'own']]);
+    expect(await tryCreate(listed, own)).toBe('403 0');
+    expect(await tryCreate(listed, own, 'payables.bill.enter')).toBe('created 2');
+  });
+
+  it('an action the policy does not list keeps the usual check (deny by default)', async () => {
+    const unlisted = serviceWith({
+      uploadPermission: 'payables.bill.enter',
+      resource: someoneElses,
+    });
+    const own = staff([['payables.bill.enter', 'own']]);
+    expect(await tryCreate(unlisted, own, 'payables.bill.enter')).toBe('403 0');
+    // Naming a stronger action the caller holds changes nothing either: it is not listed.
+    expect(
+      await tryCreate(
+        listed,
+        staff([
+          ['payables.bill.enter', 'own'],
+          ['vendor.bank.verify', 'all'],
+        ]),
+        'vendor.bank.verify',
+      ),
+    ).toBe('403 0');
+  });
+
+  it('a caller without the action is refused, even with documents.upload', async () => {
+    expect(
+      await tryCreate(listed, staff([['documents.upload', 'all']]), 'payables.bill.enter'),
+    ).toBe('403 0');
+    expect(await tryCreate(listed, staff([]), 'payables.bill.enter')).toBe('403 0');
+  });
+
+  it('the owner must exist in the scope: 404 before any write', async () => {
+    const missing = serviceWith({
+      uploadPermission: 'payables.bill.enter',
+      uploadActions: ['payables.bill.enter'],
+      resource: () => Promise.resolve(null),
+    });
+    expect(
+      await tryCreate(missing, staff([['payables.bill.enter', 'all']]), 'payables.bill.enter'),
+    ).toBe('404 0');
   });
 });
 

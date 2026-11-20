@@ -13,7 +13,7 @@ const SCOPE = { tenantId: 't', organizationId: 'o' };
 
 function setup() {
   const payments = {
-    list: vi.fn().mockResolvedValue({ rows: [], total: 0 }),
+    list: vi.fn().mockResolvedValue({ rows: [], total: 0, totals: [] }),
     summary: vi.fn().mockResolvedValue({ total: 0, byStatus: {} }),
   };
   const caller = { current: () => ({ scope: SCOPE, actor: {} }) };
@@ -37,10 +37,18 @@ describe('GET /v1/payments query', () => {
 
   it('answers a bare array with the total of all matches in X-Total-Count', async () => {
     const { payments, res, list } = setup();
-    payments.list.mockResolvedValue({ rows: [{ id: 'a' }], total: 7 });
+    payments.list.mockResolvedValue({
+      rows: [{ id: 'a' }],
+      total: 7,
+      totals: [{ currency: 'NPR', amount: '700.00' }],
+    });
     await expect(list({ limit: '5', offset: '5' })).resolves.toEqual([{ id: 'a' }]);
     expect(payments.list).toHaveBeenCalledWith(SCOPE, { limit: 5, offset: 5 });
     expect(res.setHeader).toHaveBeenCalledWith('X-Total-Count', '7');
+    expect(res.setHeader).toHaveBeenCalledWith(
+      'X-Money-Totals',
+      '[{"currency":"NPR","amount":"700.00"}]',
+    );
   });
 
   it.each([

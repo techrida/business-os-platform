@@ -29,3 +29,19 @@ export const NprSnapshotSchema = z.object({
   rateDate: z.iso.date(),
 });
 export type NprSnapshot = z.infer<typeof NprSnapshotSchema>;
+
+// ---------------------------------------------------------------------------------------------
+// List money totals (D56 U15b-Q4)
+// ---------------------------------------------------------------------------------------------
+
+/**
+ * A list endpoint keeps returning a bare array; beside X-Total-Count, this header carries the sum of the list's
+ * money column over ALL matches (same scope, filters and search, not just the page), as JSON.
+ */
+export const MONEY_TOTALS_HEADER = 'X-Money-Totals';
+
+/** One total per currency, never summed across currencies; currencies with no match are left out. NPR first. */
+export const MoneyTotalsSchema = z.array(
+  z.object({ currency: CurrencySchema, amount: DecimalString }),
+);
+export type MoneyTotals = z.infer<typeof MoneyTotalsSchema>;

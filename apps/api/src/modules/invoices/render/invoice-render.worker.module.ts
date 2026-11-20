@@ -34,6 +34,7 @@ import type { RunInTx } from '../../quotations/render/quotation-render.sweeper';
 import { drizzleInvoiceHeadLoader, InvoiceOwnerPolicy } from '../invoice-owner.policy';
 import {
   drizzleInvoiceRenderStore,
+  INVOICE_RENDER_AUDIT,
   INVOICE_RENDER_CLOCK,
   INVOICE_RENDER_DOCUMENTS,
   INVOICE_RENDER_LOGOS,
@@ -106,6 +107,7 @@ import {
     },
     { provide: INVOICE_RENDER_CLOCK, useValue: () => new Date() },
     { provide: INVOICE_RENDER_LOGOS, useExisting: DocumentLogoResolverFactory },
+    { provide: INVOICE_RENDER_AUDIT, useExisting: AuditService },
     InvoiceRenderSweeper,
     InvoiceRenderProcessor,
     InvoiceRenderScheduler,

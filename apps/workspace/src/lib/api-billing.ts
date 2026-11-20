@@ -1,6 +1,7 @@
 import 'server-only';
 
 import {
+  type MoneyTotals,
   type ConfirmSalesOrderBody,
   type CreateManualInvoiceBody,
   type CreditNoteBody,
@@ -36,6 +37,8 @@ import { isIdempotencyInProgress } from '@/components/p2/quote-builder/failure';
 
 import { ApiError, apiFetch } from './api';
 import { failureOf } from './api-kernel';
+import { infectedFileMessage } from './infected-file';
+import { readMoneyTotals } from './money-totals';
 import { currencyNotEnabledText } from './kernel-ui';
 import type { Session } from './session';
 
@@ -321,7 +324,7 @@ function invoicePairs(filter: InvoicePageFilter, withStatus: boolean): [string, 
 export async function listInvoicesPage(
   session: Session,
   filter: InvoicePageFilter = {},
-): Promise<{ items: InvoiceListItem[]; total: number }> {
+): Promise<{ items: InvoiceListItem[]; total: number; totals: MoneyTotals | null }> {
   const pairs = invoicePairs(filter, true);
   if (filter.limit !== undefined)
     pairs.push(['limit', String(Math.max(1, Math.floor(filter.limit)))]);
@@ -335,7 +338,7 @@ export async function listInvoicesPage(
   if (!Number.isSafeInteger(total)) {
     throw new ApiError(502, 'GET /v1/invoices returned no valid X-Total-Count', header);
   }
-  return { items, total };
+  return { items, total, totals: readMoneyTotals(res) };
 }
 
 const InvoicesSummarySchema = z.object({
@@ -476,6 +479,7 @@ export type BillingFailureKind =
   | 'stale_fx' // fx_rate_stale
   | 'evidence' // evidence_policy_unmet
   | 'credit_hold' // credit_hold: the customer is over its credit limit (F1-Q20/F1-Q26)
+  | 'infected' // document_infected: an evidence file the scan found infected (TR-Q12e)
   | 'in_progress' // the first request with this key has not settled
   | 'stale' // the row version moved: reload
   | 'forbidden'
@@ -551,6 +555,8 @@ export function describeBillingFailure(err: unknown): BillingFailure {
     };
   }
   if (status === 409) {
+    const infected = infectedFileMessage(err);
+    if (infected !== undefined) return final('infected', infected);
     switch (code) {
       case 'SCHEDULE_LINE_TAKEN':
         return final(

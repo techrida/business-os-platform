@@ -57,6 +57,18 @@ const DEPARTMENT_SQL = readFileSync(
   'utf8',
 );
 
+/**
+ * 0115 adds render_attempts to quotation_versions (and creates document_render_failures, which is not a quotation
+ * table): only its quotation_versions statements are part of this shape.
+ */
+const RENDER_ATTEMPTS_SQL = readFileSync(
+  new URL('../migrations/0115_document_render_failures.sql', import.meta.url),
+  'utf8',
+)
+  .split('\n')
+  .filter((line) => line.startsWith('ALTER TABLE "app"."quotation_versions"'))
+  .join('\n');
+
 type Kind = 'foreignKey' | 'unique' | 'check' | 'index';
 
 interface Shape {
@@ -201,7 +213,8 @@ describe('0016_quotations and src/schema/quotations.ts', () => {
 ${ACCEPTANCE_EVIDENCE_SQL}
 ${DOCUMENT_STYLE_SQL}
 ${TERMS_SQL}
-${DEPARTMENT_SQL}`);
+${DEPARTMENT_SQL}
+${RENDER_ATTEMPTS_SQL}`);
   // 0045 writes its check unquoted (app.quotation_versions), which parseSql does not read. The Drizzle table
   // declares it, so name it here instead of leaving the shape test red.
   parsed
@@ -318,6 +331,15 @@ ${DEPARTMENT_SQL}`);
     expect(currentGuardBody()).toContain(added);
     // The trigger is not recreated and 0046's guard is untouched.
     expect(TERMS_SQL).not.toMatch(/CREATE TRIGGER|DROP TRIGGER|document_style_guard/);
+  });
+
+  it('0115 adds render_attempts as an updatable render column, outside the freeze list', () => {
+    expect(RENDER_ATTEMPTS_SQL).toContain(
+      'ALTER TABLE "app"."quotation_versions" ADD COLUMN "render_attempts" integer DEFAULT 0 NOT NULL;',
+    );
+    expect(QUOTATION_VERSION_UPDATABLE_COLUMNS).toContain('render_attempts');
+    expect(QUOTATION_VERSION_MATERIAL_COLUMNS).not.toContain('render_attempts');
+    expect(currentGuardBody()).not.toContain('render_attempts');
   });
 
   it('0046 keeps document_style out of the freeze list and guards it with its own write-once trigger', () => {

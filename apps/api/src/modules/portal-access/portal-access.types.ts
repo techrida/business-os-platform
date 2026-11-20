@@ -39,6 +39,8 @@ export interface PortalTarget {
   kybStatus: string | null;
   /** The customer's portal org (`idp_orgs` row of kind customer), or null before the first grant. */
   idpOrg: { idpOrgId: string; zitadelOrgId: string } | null;
+  /** Whether that org already mirrors a portal user; false means this grant invites the first admin (F1-Q31). */
+  hasPortalUser: boolean;
 }
 
 /** An `idp_orgs` row found by its ZITADEL org id (any tenant: the column is unique across tenants). */

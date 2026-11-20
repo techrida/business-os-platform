@@ -8,6 +8,7 @@ import {
   multi,
   searchParam,
   type CustomerCan,
+  type CustomerPortalAccess,
   type CustomerDto,
   type CustomerVerificationPresence,
   type PartyAccountDto,
@@ -38,13 +39,16 @@ export interface CustomerList {
 /**
  * GET /v1/customers/:id: the customer plus, for staff only, its terms with the legal entities the caller can act
  * for and the name of its account owner (`people`), so the page needs no admin directory to label the owner;
- * what the caller may do with this record (`can`), and whether it has a verification case (`verification`).
+ * what the caller may do with this record (`can`), whether it has a verification case (`verification`), and its
+ * portal access (`portalAccess`).
  */
 export type CustomerDetailDto = CustomerDto & {
   accounts?: PartyAccountDto[];
   people?: PersonName[];
   can?: CustomerCan;
   verification?: CustomerVerificationPresence;
+  /** Whether the customer has a portal user and whether this caller may invite one (F1-Q31). */
+  portalAccess?: CustomerPortalAccess;
 };
 
 /** Printable ASCII, 1 to 200 characters (a UUID from the client is the expected value). Same rule as approvals. */
