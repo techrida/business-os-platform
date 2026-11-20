@@ -1,9 +1,24 @@
 // Unit tests of the lead stage planner: every edge of LEAD_TRANSITIONS against a user and a manager, so a change
 // to the transition table, or to who may use an edge, shows up here.
-import { LEAD_STAGES, LEAD_TRANSITIONS, type LeadStage } from '@bos/contracts';
+import {
+  DEFAULT_ROLE_PERMISSIONS,
+  LEAD_STAGES,
+  LEAD_TRANSITIONS,
+  type AccessLevel,
+  type LeadStage,
+  type Permission,
+  type RoleKey,
+  type Scope,
+} from '@bos/contracts';
 import { describe, expect, it } from 'vitest';
 
-import { planLeadStageChange, type LeadStageCaller } from './lead-stage';
+import type { Principal } from '../../platform/authz/can';
+import {
+  allowedLeadMoves,
+  isStageManager,
+  planLeadStageChange,
+  type LeadStageCaller,
+} from './lead-stage';
 
 const plan = (
   from: LeadStage,
@@ -80,5 +95,81 @@ describe('planLeadStageChange', () => {
       kind: 'stale',
     });
     expect(plan('new', 'contacted', 'user', { expectedVersion: 3 })).toMatchObject({ ok: true });
+  });
+});
+
+const TENANT = '00000000-0000-4000-8000-000000000001';
+const ENTITY = '00000000-0000-4000-8000-000000000002';
+const ME = '00000000-0000-4000-8000-000000000003';
+const COLLEAGUE = '00000000-0000-4000-8000-000000000004';
+
+function principalOf(
+  role: RoleKey,
+  over: Partial<Principal> & { level?: AccessLevel } = {},
+): Principal {
+  return {
+    userId: ME,
+    zitadelUserId: 'z-me',
+    tenantId: TENANT,
+    organizationId: ENTITY,
+    orgKind: 'staff',
+    partyId: null,
+    idpOrgId: '00000000-0000-4000-8000-000000000009',
+    roles: [role],
+    departmentId: null,
+    level: 'staff',
+    status: 'active',
+    grants: new Map(Object.entries(DEFAULT_ROLE_PERMISSIONS[role])) as Map<Permission, Scope>,
+    ...over,
+  };
+}
+
+const leadRow = (stage: LeadStage, ownerUserId: string | null = ME) => ({
+  tenantId: TENANT,
+  organizationId: ENTITY,
+  ownerUserId,
+  departmentId: null,
+  stage,
+});
+
+describe('isStageManager and allowedLeadMoves', () => {
+  it('recognises founder, manager and head as stage managers, and staff as not', () => {
+    expect(isStageManager(principalOf('founder'))).toBe(true);
+    expect(isStageManager(principalOf('sales', { level: 'manager' }))).toBe(true);
+    expect(isStageManager(principalOf('sales', { level: 'head' }))).toBe(true);
+    expect(isStageManager(principalOf('sales', { level: 'staff' }))).toBe(false);
+    const { level: _omitted, ...noLevel } = principalOf('sales');
+    expect(isStageManager(noLevel)).toBe(false);
+  });
+
+  it('returns the exact outgoing user moves for each stage and never includes converted', () => {
+    const sales = principalOf('sales');
+    expect(allowedLeadMoves(sales, leadRow('new'))).toEqual(['contacted', 'lost', 'on_hold']);
+    expect(allowedLeadMoves(sales, leadRow('contacted'))).toEqual(['qualified', 'lost', 'on_hold']);
+    expect(allowedLeadMoves(sales, leadRow('qualified'))).toEqual(['lost', 'on_hold']);
+    expect(allowedLeadMoves(sales, leadRow('on_hold'))).toEqual(['contacted']);
+    expect(allowedLeadMoves(sales, leadRow('converted'))).toEqual([]);
+    expect(allowedLeadMoves(sales, leadRow('lost'))).toEqual([]);
+  });
+
+  it('includes reopen on lost only for a manager, head or founder with write scope', () => {
+    for (const p of [
+      principalOf('sales', { level: 'manager' }),
+      principalOf('sales', { level: 'head' }),
+      principalOf('founder'),
+    ]) {
+      expect(allowedLeadMoves(p, leadRow('lost'))).toEqual(['contacted']);
+    }
+    expect(allowedLeadMoves(principalOf('sales', { level: 'staff' }), leadRow('lost'))).toEqual([]);
+  });
+
+  it('returns [] for a read-only caller or a colleague outside own write scope', () => {
+    expect(allowedLeadMoves(principalOf('management', { level: 'head' }), leadRow('new'))).toEqual(
+      [],
+    );
+    expect(allowedLeadMoves(principalOf('management', { level: 'head' }), leadRow('lost'))).toEqual(
+      [],
+    );
+    expect(allowedLeadMoves(principalOf('sales'), leadRow('new', COLLEAGUE))).toEqual([]);
   });
 });

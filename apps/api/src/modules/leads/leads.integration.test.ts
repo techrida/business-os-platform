@@ -586,7 +586,7 @@ describe('PATCH /v1/leads/:id/stage', () => {
     expect(row).toMatchObject({ stage: 'qualified', convertedOpportunityId: null });
   });
 
-  it('needs a reason and a note for lost and on_hold, and a user cannot reopen a lost lead', async () => {
+  it('needs a reason and a note for lost and on_hold; staff cannot reopen a lost lead, while manager/head/founder with write scope can', async () => {
     const lead = await seed();
     expect((await patchStage(lead.id, { stage: 'lost', expectedVersion: 1 })).status).toBe(400);
     expect(
@@ -604,9 +604,58 @@ describe('PATCH /v1/leads/:id/stage', () => {
       stageReason: 'Too dear for them',
       stageNote: 'too dear',
       lostReason: { label: 'Too dear for them', retired: false },
+      allowedMoves: [],
+      canEdit: true,
     });
+    // Staff-level sales still gets 403 on reopen.
     const reopen = await patchStage(lead.id, { stage: 'contacted', expectedVersion: 2 });
     expect(reopen.status).toBe(403);
+
+    // Founder (with write scope) can reopen a lost lead.
+    h.as('boss', 'founder');
+    const reopened = await patchStage(lead.id, { stage: 'contacted', expectedVersion: 2 });
+    expect(reopened.status, JSON.stringify(reopened.body)).toBe(200);
+    expect(dto(reopened.body)).toMatchObject({
+      stage: 'contacted',
+      stageReason: null,
+      stageNote: null,
+      lostReason: null,
+    });
+  });
+
+  it('logs a contact activity atomically when moving a new lead to contacted, and refuses it from non-new stages', async () => {
+    const lead = await seed();
+    const res = await patchStage(lead.id, {
+      stage: 'contacted',
+      expectedVersion: 1,
+      contactActivity: { kind: 'call', body: 'Introductory call went well' },
+    });
+    expect(res.status, JSON.stringify(res.body)).toBe(200);
+    expect(dto(res.body).stage).toBe('contacted');
+    const logged = await h.db.select().from(activities).where(eq(activities.leadId, lead.id));
+    expect(
+      logged.some(
+        (a) =>
+          a.kind === 'call' &&
+          a.subject === 'Initial call' &&
+          a.body === 'Introductory call went well',
+      ),
+    ).toBe(true);
+    expect(logged.some((a) => a.kind === 'stage_change')).toBe(true);
+
+    // From on_hold -> contacted, contactActivity is refused with 400.
+    await patchStage(lead.id, {
+      stage: 'on_hold',
+      reason: 'budget',
+      note: 'waiting',
+      expectedVersion: 2,
+    });
+    const bad = await patchStage(lead.id, {
+      stage: 'contacted',
+      expectedVersion: 3,
+      contactActivity: { kind: 'email', body: 'Should fail on non-new lead' },
+    });
+    expect(bad.status).toBe(400);
   });
 
   it('clears the reason and note when a lead leaves on_hold', async () => {
