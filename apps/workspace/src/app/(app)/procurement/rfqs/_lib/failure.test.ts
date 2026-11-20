@@ -17,12 +17,12 @@ describe('rfqFailure', () => {
       err(
         409,
         'document_infected',
-        'A virus was found in “eicar.pdf”. Remove it or upload a clean copy, then try again.',
+        'A virus was found in this file. Remove it or upload a clean copy, then try again.',
       ),
       'record',
     );
     expect(f.message).toBe(
-      'A virus was found in “eicar.pdf”. Remove it or upload a clean copy, then try again.',
+      'A virus was found in this file. Remove it or upload a clean copy, then try again.',
     );
     expect(f.reload).toBe(false);
   });

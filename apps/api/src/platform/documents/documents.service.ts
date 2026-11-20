@@ -126,13 +126,14 @@ export function newestNonRejected<T extends { version: number; status: string }>
 }
 
 /**
- * The refusal of an infected file where a record takes it (TR-Q12e): one code and one message everywhere, naming
- * the file, so every screen can say what to do.
+ * The refusal of an infected file where a record takes it (TR-Q12e): one code and one message everywhere, so every
+ * screen can say what to do. The message does not name the file: an uploaded filename is user text, and the
+ * refusal reaches people (and logs) the uploader did not choose.
  */
-export function documentInfected(filename: string): ConflictException {
+export function documentInfected(): ConflictException {
   return new ConflictException({
     code: 'document_infected',
-    message: `A virus was found in “${filename}”. Remove it or upload a clean copy, then try again.`,
+    message: 'A virus was found in this file. Remove it or upload a clean copy, then try again.',
   });
 }
 
@@ -157,7 +158,6 @@ export async function assertNotInfected(
       documentId: documentVersions.documentId,
       version: documentVersions.version,
       status: documentVersions.status,
-      filename: documentVersions.filename,
     })
     .from(documentVersions)
     .where(scoped(scope).where(documentVersions, inArray(documentVersions.documentId, ids)));
@@ -166,7 +166,7 @@ export async function assertNotInfected(
     byDocument.set(v.documentId, [...(byDocument.get(v.documentId) ?? []), v]);
   for (const id of ids) {
     const newest = newestNonRejected(byDocument.get(id) ?? []);
-    if (newest?.status === 'infected') throw documentInfected(newest.filename);
+    if (newest?.status === 'infected') throw documentInfected();
   }
 }
 

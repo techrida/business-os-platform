@@ -1,5 +1,5 @@
 // TR-Q12e: the API refuses a file the virus scan found infected wherever a record takes it, with one 409 code,
-// `document_infected`, whose message names the file. Every screen that saves a record with a file shows that
+// `document_infected`, with one message. Every screen that saves a record with a file shows that
 // message in the app rather than its generic "this changed, reload" conflict words. Pure (no server-only import),
 // so client components and their tests can use it too.
 import { ErrorBodySchema } from '@bos/contracts';

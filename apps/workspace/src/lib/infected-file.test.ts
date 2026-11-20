@@ -9,9 +9,9 @@ const refusal = (status: number, code: string, message: string) =>
   new ApiError(status, 'x', { error: { code, message, correlationId: 'corr-12345678' } });
 
 describe('infectedFileMessage (TR-Q12e)', () => {
-  it('shows the API words, which name the file, for a 409 document_infected', () => {
+  it('shows the API words for a 409 document_infected', () => {
     const message =
-      'A virus was found in “eicar.pdf”. Remove it or upload a clean copy, then try again.';
+      'A virus was found in this file. Remove it or upload a clean copy, then try again.';
     expect(infectedFileMessage(refusal(409, 'document_infected', message))).toBe(message);
   });
 
