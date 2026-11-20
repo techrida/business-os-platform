@@ -129,7 +129,7 @@ describe('submitBillAction', () => {
 
   it('says the attached file is infected, naming it, and rotates the key (TR-Q12e)', async () => {
     const message =
-      'A virus was found in “eicar.pdf”. Remove it or upload a clean copy, then try again.';
+      'A virus was found in this file. Remove it or upload a clean copy, then try again.';
     fetchMock.mockResolvedValueOnce(
       json({ error: { code: 'document_infected', message, correlationId: 'corr-1' } }, 409),
     );
