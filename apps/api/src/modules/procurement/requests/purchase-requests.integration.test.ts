@@ -53,7 +53,7 @@ import { buildLink, renderEmail } from '../../../platform/notify/templates';
 import { MoneyService } from '../../../platform/settings/money.service';
 import { NumberingService } from '../../../platform/settings/numbering.service';
 import { ApprovalsAdminService } from '../../approvals/admin.service';
-import { asSecondPerson } from '../../../../test/support/second-person';
+import { asSecondPerson, SKIP_LIVE_PUBLISHER_CHECK } from '../../../../test/support/second-person';
 import type { ApprovalEmailTemplate } from '../../approvals/ports';
 import { ApprovalsService } from '../../approvals/requests.service';
 import {
@@ -272,7 +272,7 @@ beforeAll(async () => {
     name: 'Purchase request',
     spec: PURCHASE_REQUEST_WORKFLOW_SPEC,
   });
-  await adminPublisher.publish(PURCHASE_REQUEST_DOCUMENT_TYPE, 1);
+  await adminPublisher.publish(PURCHASE_REQUEST_DOCUMENT_TYPE, 1, SKIP_LIVE_PUBLISHER_CHECK);
 
   roleCache = new RoleCache(db);
   approvals = new ApprovalsService(db, audit, notify, directory, caller, () => now, roleCache);
@@ -750,7 +750,7 @@ describe('purchase request: the decision', () => {
           ],
         },
       });
-      await adminPublisher.publish(documentType, 1);
+      await adminPublisher.publish(documentType, 1, SKIP_LIVE_PUBLISHER_CHECK);
       approvals.registerSubject({ documentType, onDecided: async () => {} });
       const { requestId } = await read((tx) =>
         approvals.submit(tx, {

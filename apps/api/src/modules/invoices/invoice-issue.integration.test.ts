@@ -46,7 +46,7 @@ import { NumberingService } from '../../platform/settings/numbering.service';
 import type { CurrencyEnabledService } from '../../platform/settings/currency-enabled';
 import type { SettingsService } from '../../platform/settings/settings.service';
 import { ApprovalsAdminService } from '../approvals/admin.service';
-import { asSecondPerson } from '../../../test/support/second-person';
+import { asSecondPerson, SKIP_LIVE_PUBLISHER_CHECK } from '../../../test/support/second-person';
 import type { ApprovalsNotify } from '../approvals/ports';
 import { ApprovalsService } from '../approvals/requests.service';
 import { LedgerService } from '../ledger/ledger.service';
@@ -387,7 +387,7 @@ beforeAll(async () => {
     name: 'Tax invoice',
     spec: TAX_INVOICE_WORKFLOW_SPEC,
   });
-  await adminPublisher.publish('tax_invoice', 1);
+  await adminPublisher.publish('tax_invoice', 1, SKIP_LIVE_PUBLISHER_CHECK);
 
   approvals = new ApprovalsService(db, audit, notify, directory, caller, () => NOW);
   approvals.registerSubject(new InvoiceApprovalSubject('tax_invoice', () => NOW));

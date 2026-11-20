@@ -29,7 +29,7 @@ import {
 import { and, asc, desc, eq, gt, inArray, isNull } from 'drizzle-orm';
 
 import { DB, type Db, type DbTransaction } from '../../platform/db/db.module';
-import { withTx, type TxScope } from '../../platform/db/tx';
+import { withTx, type Actor, type TxScope } from '../../platform/db/tx';
 import { SettingsService } from '../../platform/settings/settings.service';
 import { APPROVALS_CLOCK, ApprovalsAudit, ApprovalsCaller, type Clock } from './ports';
 import { activeEntityStaff, pgCode } from './requests.service';
@@ -54,6 +54,14 @@ export interface WorkflowVersionDto {
 }
 
 /** Why a publish was refused to its caller (F1-Q11); recorded in the audit trail as well. */
+/**
+ * Re-checks, inside the publish transaction, that the person publishing may still publish. The route's guard reads
+ * the sign-in token, so someone demoted from Management would otherwise keep publishing until it expires. The HTTP
+ * route passes the live-grant check (access-revision lock, then the mirror's current roles); every caller must name
+ * one, so none skips it by accident.
+ */
+export type PublisherCheck = (tx: DbTransaction, scope: TxScope, actor: Actor) => Promise<void>;
+
 type PublishRefusal = 'own_draft' | 'editor_unknown';
 
 /** Thrown inside the publish transaction, so the refusal can be audited after that transaction rolls back. */
@@ -115,11 +123,11 @@ export class ApprovalsAdminService {
 
   /** Runs `fn` in a transaction as the calling user, and turns constraint errors into 409. */
   private async write<T>(
-    fn: (tx: DbTransaction, scope: TxScope, userId: string) => Promise<T>,
+    fn: (tx: DbTransaction, scope: TxScope, userId: string, actor: Actor) => Promise<T>,
   ): Promise<T> {
     const { scope, actor, principal } = this.caller.current();
     try {
-      return await withTx(this.db, scope, actor, (tx) => fn(tx, scope, principal.userId));
+      return await withTx(this.db, scope, actor, (tx) => fn(tx, scope, principal.userId, actor));
     } catch (error) {
       const code = pgCode(error);
       if (code === '23505') throw new ConflictException('That key already exists');
@@ -286,9 +294,15 @@ export class ApprovalsAdminService {
    * and whoever saved the draft is refused here, as is a draft whose editor was never recorded. A refusal is
    * audited on its own transaction, because the publish transaction rolls back with it.
    */
-  async publish(key: string, version: number): Promise<WorkflowVersionDto> {
+  async publish(
+    key: string,
+    version: number,
+    assertPublisher: PublisherCheck,
+  ): Promise<WorkflowVersionDto> {
     try {
-      return await this.write(async (tx, scope, userId) => {
+      return await this.write(async (tx, scope, userId, actor) => {
+        // First, before any row lock: the grant answer then holds for the rest of the transaction.
+        await assertPublisher(tx, scope, actor);
         const def = await this.definition(tx, scope, key);
         const [v] = await tx
           .select()
