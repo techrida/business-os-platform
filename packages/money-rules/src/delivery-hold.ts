@@ -37,7 +37,8 @@ export interface DeliveryHoldRelease {
 
 /** True when `releaser` holds a role `deliveryHoldReleaser` allows and is not the person who requested the delivery. */
 export function mayReleaseDeliveryHold(input: DeliveryHoldRelease): boolean {
-  if (input.requestedByUserId !== null && input.releaser.userId === input.requestedByUserId) return false;
+  if (input.requestedByUserId !== null && input.releaser.userId === input.requestedByUserId)
+    return false;
   const allowed = deliveryHoldReleaser(input.amountNpr, input.thresholdNpr);
   return allowed.some((role) => input.releaser.roles.includes(role));
 }

@@ -1,6 +1,11 @@
 import { describe, expect, it } from 'vitest';
 
-import { DELIVERY_HOLD_SETTING_DEFAULTS, SETTING_DEFAULTS, SETTINGS, SETTING_KEYS } from './settings.js';
+import {
+  DELIVERY_HOLD_SETTING_DEFAULTS,
+  SETTING_DEFAULTS,
+  SETTINGS,
+  SETTING_KEYS,
+} from './settings.js';
 
 describe('delivery-hold setting (F1-Q32, D32)', () => {
   const key = 'sales.delivery_hold.management_npr';

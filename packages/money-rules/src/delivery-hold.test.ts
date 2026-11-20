@@ -31,7 +31,9 @@ describe('mayReleaseDeliveryHold', () => {
   const base = { amountNpr: d('50000'), thresholdNpr: threshold, requestedByUserId: 'u-sales' };
 
   it('allows a Finance user below the threshold', () => {
-    expect(mayReleaseDeliveryHold({ ...base, releaser: { userId: 'u-fin', roles: ['finance'] } })).toBe(true);
+    expect(
+      mayReleaseDeliveryHold({ ...base, releaser: { userId: 'u-fin', roles: ['finance'] } }),
+    ).toBe(true);
   });
 
   it('refuses Management below the threshold and Finance above it', () => {
