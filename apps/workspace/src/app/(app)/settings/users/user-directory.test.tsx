@@ -267,3 +267,76 @@ it('gives each row avatar its user id colour and picture, and a picture button n
     request.mockRestore();
   }
 });
+
+it('offers Deactivate and Reactivate to a company-wide admin, never on their own row or an invite (F1-Q5)', async () => {
+  const ME = '00000000-0000-4000-9000-0000000000a1';
+  const row = (id: string, displayName: string, status: string) => ({
+    id,
+    displayName,
+    email: `${displayName.toLowerCase()}@example.test`,
+    idpOrgId: IDP,
+    status,
+    roles: [],
+    department: null,
+    createdAt: '2026-11-19T00:00:00.000Z',
+    lastActiveAt: null,
+  });
+  const summary = (canChangeStatus: boolean) => ({
+    total: 4,
+    active: 2,
+    invited: 1,
+    deactivated: 1,
+    departments: [],
+    canSendPasswordReset: false,
+    canChangeStatus,
+  });
+  let canChange = true;
+  const request = vi.spyOn(globalThis, 'fetch').mockImplementation((input) => {
+    const url = new URL(input instanceof Request ? input.url : input);
+    if (url.pathname === '/v1/me') {
+      return Promise.resolve(
+        Response.json({
+          userId: '312345678901234567',
+          id: ME,
+          tenantId: '00000000-0000-4000-8000-0000000000f1',
+          organizationId: '00000000-0000-4000-8000-0000000000f2',
+          orgKind: 'staff',
+          partyId: null,
+          roles: ['founder'],
+          correlationId: 'corr-12345678',
+          permissions: [{ permission: 'admin.users.read', scope: 'all' }],
+        }),
+      );
+    }
+    return Promise.resolve(
+      Response.json(
+        url.pathname.endsWith('/summary')
+          ? summary(canChange)
+          : {
+              items: [
+                row(ME, 'Founder', 'active'),
+                row('00000000-0000-4000-9000-0000000000a2', 'Asha', 'active'),
+                row('00000000-0000-4000-9000-0000000000a3', 'Bikash', 'inactive'),
+                row('00000000-0000-4000-9000-0000000000a4', 'Chandra', 'invited'),
+              ],
+              nextPage: null,
+              nextAfter: null,
+            },
+      ),
+    );
+  });
+  try {
+    const html = renderToStaticMarkup(await UsersPage({ searchParams: Promise.resolve({}) }));
+    expect(html).toContain('aria-label="Deactivate Asha · asha@example.test"');
+    expect(html).toContain('aria-label="Reactivate Bikash · bikash@example.test"');
+    expect(html).not.toContain('Deactivate Founder');
+    expect(html).not.toMatch(/(Deactivate|Reactivate) Chandra/);
+    expect(html).toContain('>Deactivated<');
+
+    canChange = false;
+    const plain = renderToStaticMarkup(await UsersPage({ searchParams: Promise.resolve({}) }));
+    expect(plain).not.toMatch(/aria-label="(Deactivate|Reactivate) /);
+  } finally {
+    request.mockRestore();
+  }
+});

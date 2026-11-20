@@ -201,6 +201,17 @@ export async function sendPasswordReset(session: Session, userId: string): Promi
   await request(session, 'POST', `/v1/admin/users/${seg(userId)}/password-reset`);
 }
 
+/** F1-Q5 account actions in Settings > Users; each answers 204, and 409 with a message the page shows. */
+export type UserStatusAction = 'deactivate' | 'reactivate';
+
+export async function changeUserStatus(
+  session: Session,
+  userId: string,
+  action: UserStatusAction,
+): Promise<void> {
+  await request(session, 'POST', `/v1/admin/users/${seg(userId)}/${action}`);
+}
+
 /** Complete, caller-scoped picker data. These routes expose no directory administration fields. */
 export async function listApprovalPeople(
   session: Session,

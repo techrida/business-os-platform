@@ -21,6 +21,10 @@ export const ZITADEL_ENDPOINTS = {
   // UNVERIFIED: user v2 GetUserByID; body { userId }, response { user }.
   getUser: '/zitadel.user.v2.UserService/GetUserByID',
   passwordReset: '/zitadel.user.v2.UserService/PasswordReset',
+  // UNVERIFIED (F1-Q5, from the user v2 docs; no live call yet): body { userId }. ZITADEL refuses a state change
+  // that does not fit (deactivating an invited user, reactivating an active one) with a precondition error.
+  deactivateUser: '/zitadel.user.v2.UserService/DeactivateUser',
+  reactivateUser: '/zitadel.user.v2.UserService/ReactivateUser',
   // VERIFIED path and organizationIdQuery (seed findUser). UNVERIFIED: the `query` paging object, the
   // `sortingColumn` value and the `details.totalResult` answer. reconcile does not trust any of them:
   // it aborts when the walk shows paging is not working (see UserMirror.reconcile).
@@ -497,6 +501,16 @@ export class ZitadelAdminClient {
   /** Asks ZITADEL to mail the invite link (the user then sets a password and enrols TOTP). */
   async sendInviteCode(zitadelUserId: string): Promise<void> {
     await this.post(ZITADEL_ENDPOINTS.createInviteCode, { userId: zitadelUserId, sendCode: {} });
+  }
+
+  /** Shuts the user out of every sign-in (state INACTIVE) until reactivated. */
+  async deactivateUser(zitadelUserId: string): Promise<void> {
+    await this.post(ZITADEL_ENDPOINTS.deactivateUser, { userId: zitadelUserId });
+  }
+
+  /** Lets a deactivated user sign in again (state ACTIVE). */
+  async reactivateUser(zitadelUserId: string): Promise<void> {
+    await this.post(ZITADEL_ENDPOINTS.reactivateUser, { userId: zitadelUserId });
   }
 
   async sendPasswordReset(zitadelUserId: string): Promise<void> {

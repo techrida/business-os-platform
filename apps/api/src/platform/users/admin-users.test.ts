@@ -39,8 +39,10 @@ import { systemActor, withTx } from '../db/tx';
 import { bindIdentity, bindPrincipal, runWithRequestStore } from '../tenancy/request-context';
 import { AdminUsersController } from './admin-users.controller';
 import { UserMirror } from './user-mirror';
+import { UserStatusService } from './user-status';
 import type { UsersSyncData } from './users.constants';
 import {
+  CUST_IDP,
   FakeUsersStore,
   FakeZitadel,
   STAFF_IDP,
@@ -107,6 +109,26 @@ class RepairableZitadel {
   sendPasswordReset(userId: string) {
     this.resetEmails.push(userId);
     return Promise.resolve();
+  }
+  statusCalls: string[] = [];
+  /** A ZITADEL error the next status call answers with, once. */
+  failNextStatusCall: Error | null = null;
+  private setState(userId: string, call: string, status: ZitadelUser['status']) {
+    if (this.failNextStatusCall) {
+      const error = this.failNextStatusCall;
+      this.failNextStatusCall = null;
+      return Promise.reject(error);
+    }
+    this.statusCalls.push(`${call}:${userId}`);
+    const user = this.users.get(userId);
+    if (user) user.status = status;
+    return Promise.resolve();
+  }
+  deactivateUser(userId: string) {
+    return this.setState(userId, 'deactivate', 'inactive');
+  }
+  reactivateUser(userId: string) {
+    return this.setState(userId, 'reactivate', 'active');
   }
   listUsers(orgId: string, cursor?: string | null): Promise<ZitadelUserPage> {
     const all = [...this.users.values()].filter((u) => u.orgId === orgId);
@@ -210,6 +232,7 @@ beforeEach(() => {
     authz,
     liveStore,
     roleCache,
+    new UserStatusService(store, client, audit),
   );
 });
 
@@ -834,6 +857,215 @@ describe('PUT /v1/admin/users/:id/roles last-Founder guard', () => {
       expect(zitadel.grants.get('z-founder-1')).toEqual(['management']);
       expect(store.roles.get(FOUNDER_ONE)).toEqual(['management']);
     });
+  });
+});
+
+describe('POST /v1/admin/users/:id/deactivate and /reactivate (F1-Q5)', () => {
+  const STAFF = '00000000-0000-4000-9000-000000000201';
+  const SECOND_FOUNDER = '00000000-0000-4000-9000-000000000202';
+
+  const addUser = (
+    id: string,
+    over: Partial<{
+      status: 'active' | 'invited' | 'inactive';
+      idpOrgId: string;
+      roles: RoleKey[];
+    }> = {},
+  ) => {
+    store.users.push({
+      id,
+      tenantId: TENANT,
+      idpOrgId: over.idpOrgId ?? STAFF_IDP,
+      zitadelUserId: `z-${id}`,
+      email: `${id.slice(-3)}@techrida.test`,
+      displayName: 'Mina Gurung',
+      status: over.status ?? 'active',
+    });
+    store.roles.set(id, over.roles ?? ['sales']);
+    store.memberships.push({
+      tenantId: TENANT,
+      userId: id,
+      organizationId: STAFF_ORG,
+      isDefault: true,
+      roleKeys: null,
+      departmentId: null,
+    });
+    zitadel.users.set(`z-${id}`, {
+      id: `z-${id}`,
+      orgId: STAFF_ZORG,
+      email: null,
+      displayName: 'Mina Gurung',
+      status: over.status ?? 'active',
+      createdAt: null,
+    });
+  };
+
+  const act = (
+    action: 'deactivate' | 'reactivate',
+    id: string,
+    permissions: Permission[] = ['admin.roles.write'],
+  ) =>
+    asAdmin(permissions, () => controller[action](id)).then(
+      () => null,
+      (e: unknown) => e,
+    );
+
+  it('deactivates an active user in ZITADEL first, then the mirror, bumping authz and invalidating the cache', async () => {
+    addUser(STAFF);
+    const record = vi.spyOn(audit, 'record');
+
+    expect(await act('deactivate', STAFF)).toBeNull();
+
+    expect(zitadel.statusCalls).toEqual([`deactivate:z-${STAFF}`]);
+    expect(store.users.find((u) => u.id === STAFF)?.status).toBe('inactive');
+    expect(store.authzBumps).toBe(1);
+    expect(authz.invalidations).toBe(1);
+    expect(record).toHaveBeenCalledWith(expect.anything(), {
+      action: 'users.deactivated',
+      entityType: 'users',
+      entityId: STAFF,
+      before: { status: 'active' },
+      after: { status: 'inactive' },
+    });
+  });
+
+  it('reactivates a deactivated user and audits it', async () => {
+    addUser(STAFF, { status: 'inactive' });
+    const record = vi.spyOn(audit, 'record');
+
+    expect(await act('reactivate', STAFF)).toBeNull();
+
+    expect(zitadel.statusCalls).toEqual([`reactivate:z-${STAFF}`]);
+    expect(store.users.find((u) => u.id === STAFF)?.status).toBe('active');
+    expect(record).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ action: 'users.reactivated', entityId: STAFF }),
+    );
+  });
+
+  it("refuses the caller's own account, compared by app user id, before ZITADEL", async () => {
+    // The admin's own row in the service's store carries the app id the principal names.
+    store.users.push({
+      id: ADMIN,
+      tenantId: TENANT,
+      idpOrgId: STAFF_IDP,
+      zitadelUserId: 'zitadel-admin',
+      email: 'admin@techrida.test',
+      displayName: 'Admin',
+      status: 'active',
+    });
+
+    const error = await act('deactivate', ADMIN);
+
+    expect(error).toBeInstanceOf(ConflictException);
+    expect((error as ConflictException).getResponse()).toMatchObject({ code: 'own_account' });
+    expect(zitadel.statusCalls).toEqual([]);
+  });
+
+  it('refuses the only Founder of an entity, and allows it once another Founder exists', async () => {
+    addUser(STAFF, { roles: ['founder'] });
+
+    const refused = await act('deactivate', STAFF);
+    expect(refused).toBeInstanceOf(ConflictException);
+    expect((refused as ConflictException).getResponse()).toEqual({
+      code: 'last_founder',
+      message:
+        'Mina Gurung is the only Founder of Techrida Nepal. Make someone else a Founder there before you deactivate them.',
+    });
+    expect(zitadel.statusCalls).toEqual([]);
+    expect(store.users.find((u) => u.id === STAFF)?.status).toBe('active');
+
+    addUser(SECOND_FOUNDER, { roles: ['founder'] });
+    expect(await act('deactivate', STAFF)).toBeNull();
+    expect(store.users.find((u) => u.id === STAFF)?.status).toBe('inactive');
+  });
+
+  it.each([
+    ['deactivate', 'invited'],
+    ['deactivate', 'inactive'],
+    ['reactivate', 'active'],
+    ['reactivate', 'invited'],
+  ] as const)('refuses to %s a user who is %s', async (action, status) => {
+    addUser(STAFF, { status });
+    const error = await act(action, STAFF);
+    expect(error).toBeInstanceOf(ConflictException);
+    expect((error as ConflictException).getResponse()).toMatchObject({ code: 'wrong_status' });
+    expect(zitadel.statusCalls).toEqual([]);
+  });
+
+  it('answers 404 for a portal user and for an unknown id', async () => {
+    addUser(STAFF, { idpOrgId: CUST_IDP });
+    expect(await act('deactivate', STAFF)).toBeInstanceOf(NotFoundException);
+    expect(await act('deactivate', SECOND_FOUNDER)).toBeInstanceOf(NotFoundException);
+    expect(zitadel.statusCalls).toEqual([]);
+  });
+
+  it('refuses 403 a caller whose live grant is gone, before ZITADEL', async () => {
+    addUser(STAFF);
+    liveStore.roles.set(ADMIN, ['sales']);
+    const error = await asAdmin(['admin.roles.write'], () => {
+      // The token still says admin.roles.write; the role cache no longer does.
+      liveAdminGrants = new Map();
+      return controller.deactivate(STAFF);
+    }).catch((e: unknown) => e);
+    expect(error).toBeInstanceOf(ForbiddenException);
+    expect(zitadel.statusCalls).toEqual([]);
+  });
+
+  it('refuses 403 a grant narrower than company scope', async () => {
+    addUser(STAFF);
+    const error = await runWithRequestStore('corr-12345678', () => {
+      bindIdentity({
+        tenantId: TENANT,
+        organizationId: STAFF_ORG,
+        orgKind: 'staff',
+        partyId: null,
+        idpOrgId: STAFF_IDP,
+        userId: 'zitadel-admin',
+        roles: [],
+        departmentId: null,
+        tokenExp: 1_900_000_000,
+      });
+      bindPrincipal({
+        userId: ADMIN,
+        zitadelUserId: 'zitadel-admin',
+        tenantId: TENANT,
+        organizationId: STAFF_ORG,
+        orgKind: 'staff',
+        partyId: null,
+        idpOrgId: STAFF_IDP,
+        roles: [],
+        departmentId: null,
+        status: 'active',
+        grants: new Map([['admin.roles.write', 'own']]),
+      });
+      return controller.deactivate(STAFF);
+    }).catch((e: unknown) => e);
+    expect(error).toBeInstanceOf(ForbiddenException);
+    expect(zitadel.statusCalls).toEqual([]);
+  });
+
+  it('turns a ZITADEL refusal into 409 and an outage into 503, changing nothing in the mirror', async () => {
+    addUser(STAFF);
+    zitadel.failNextStatusCall = new ZitadelHttpError('/DeactivateUser', 400, 'precondition');
+    const refused = await act('deactivate', STAFF);
+    expect(refused).toBeInstanceOf(ConflictException);
+    expect((refused as ConflictException).getResponse()).toMatchObject({
+      code: 'identity_refused',
+    });
+
+    zitadel.failNextStatusCall = new Error('socket hang up');
+    expect(await act('deactivate', STAFF)).toBeInstanceOf(ServiceUnavailableException);
+    expect(store.users.find((u) => u.id === STAFF)?.status).toBe('active');
+  });
+
+  it('reports canChangeStatus in the summary only for a company-wide grant', async () => {
+    const yes = await asAdmin(['admin.users.read', 'admin.roles.write'], () =>
+      controller.summary(),
+    );
+    expect(yes.canChangeStatus).toBe(true);
+    const no = await asAdmin(['admin.users.read'], () => controller.summary());
+    expect(no.canChangeStatus).toBe(false);
   });
 });
 
