@@ -9,8 +9,14 @@ const mocks = vi.hoisted(() => ({
   listActivitiesPage: vi.fn(),
   listLeadOwners: vi.fn(),
   requireStaffSession: vi.fn(),
+  getMe: vi.fn(),
 }));
 vi.mock('@/lib/bff', () => ({ requireStaffSession: mocks.requireStaffSession }));
+// The live grants come from GET /v1/me; when it fails the page falls back to the role defaults.
+vi.mock('@/lib/api', async (importOriginal) => ({
+  ...(await importOriginal<object>()),
+  getMe: mocks.getMe,
+}));
 vi.mock('@/components/p2/crm/activities-api', () => ({
   listActivitiesPage: mocks.listActivitiesPage,
 }));
@@ -89,7 +95,13 @@ beforeEach(() => {
   mocks.requireStaffSession.mockReset().mockResolvedValue({ accessToken: 't', roles: ['sales'] });
   mocks.listActivitiesPage.mockReset();
   mocks.listLeadOwners.mockReset().mockResolvedValue([]);
+  mocks.getMe.mockReset().mockRejectedValue(new Error('down'));
   byStatus([], []);
+});
+
+/** The live grants `/v1/me` reports, each at `all`. */
+const liveGrants = (...permissions: string[]) => ({
+  permissions: permissions.map((permission) => ({ permission, scope: 'all' })),
 });
 
 it('asks for planned and logged activities separately', async () => {
@@ -155,6 +167,23 @@ it('gives every planned row Complete, Reschedule and Cancel, whatever its subjec
 it('asks for the owners list only with crm.lead.write, so a reader gets no 403', async () => {
   byStatus([LATER], []);
   mocks.requireStaffSession.mockResolvedValue({ accessToken: 't', roles: ['no-such-role'] });
+  const html = await render();
+  expect(mocks.listLeadOwners).not.toHaveBeenCalled();
+  expect(html).toContain('aria-label="Reschedule Call back next month"');
+});
+
+it('asks for the owners list when the saved grants add crm.lead.write to a role without it', async () => {
+  byStatus([LATER], []);
+  mocks.requireStaffSession.mockResolvedValue({ accessToken: 'live-1', roles: ['management'] });
+  mocks.getMe.mockResolvedValue(liveGrants('crm.lead.read', 'crm.lead.write'));
+  await render();
+  expect(mocks.listLeadOwners).toHaveBeenCalledTimes(1);
+});
+
+it('skips the owners list when the saved grants removed crm.lead.write from sales', async () => {
+  byStatus([LATER], []);
+  mocks.requireStaffSession.mockResolvedValue({ accessToken: 'live-2', roles: ['sales'] });
+  mocks.getMe.mockResolvedValue(liveGrants('crm.lead.read'));
   const html = await render();
   expect(mocks.listLeadOwners).not.toHaveBeenCalled();
   expect(html).toContain('aria-label="Reschedule Call back next month"');
