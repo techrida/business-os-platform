@@ -78,3 +78,38 @@ it('previews with a dry run only: one POST to the preview path and nothing saved
   expect(init?.method).toBe('POST');
   expect(revalidatePath).not.toHaveBeenCalled();
 });
+
+it('passes on the dry run 422 field errors and blocked warnings as a refusal', async () => {
+  // The body the API's error filter sends for the save's own 422 (accessSaveRefusal).
+  const reason = 'Leads does not use department rules.';
+  const blocked = { code: 'W9', severity: 'blocked', message: reason, changeIndex: 0 };
+  vi.spyOn(globalThis, 'fetch').mockResolvedValue(
+    new Response(
+      JSON.stringify({
+        error: {
+          code: 'unprocessable',
+          message: reason,
+          correlationId: 'c-1',
+          fieldErrors: { 'changes.0.scope': reason },
+          warnings: [blocked],
+        },
+      }),
+      { status: 422 },
+    ),
+  );
+  const result = await previewAccessAction({ changes: CHANGES });
+  expect(result).toEqual({
+    ok: false,
+    kind: 'refused',
+    message: reason,
+    fieldErrors: { 'changes.0.scope': reason },
+    warnings: [blocked],
+  });
+  expect(revalidatePath).not.toHaveBeenCalled();
+});
+
+it('keeps a failed dry run that may pass on retry apart from a refusal', async () => {
+  vi.spyOn(globalThis, 'fetch').mockResolvedValue(new Response('{}', { status: 503 }));
+  const result = await previewAccessAction({ changes: CHANGES });
+  expect(result).toMatchObject({ ok: false, kind: 'error' });
+});
