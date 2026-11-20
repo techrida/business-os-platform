@@ -1,7 +1,6 @@
 /**
  * The notification bell's ring and the unread dot's pop. Values were fitted frame by frame to the
- * reference video (Marcel Kargul's bell, 60 fps); method and fit errors are in
- * previews/p1-icon-motion/README.md.
+ * reference video (Marcel Kargul's bell, 60 fps).
  *
  * Bell: a damped spring kicked from rest, pivoting at the top of the dome (12, 2.5 on the 24 grid).
  *   zeta 0.1279, w0 15.486 rad/s (stiffness 239.8, damping 3.96, mass 1), kick 212 deg/s:

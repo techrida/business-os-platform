@@ -1,6 +1,5 @@
 // The internal memo ("test memo") document. P1 used it to exercise every kernel service end to end, with an
-// amount, a currency and attachments; from P2 a template memo is correspondence with no money (see
-// design/memos/DELIVERY.md, "P2 removal"). Fields follow app.test_memos in section 4.
+// amount, a currency and attachments; from P2 a template memo is correspondence with no money. Fields follow app.test_memos in section 4.
 import { z } from 'zod';
 
 import { HexColourSchema, LogoDataUrlSchema } from './document-style.js';
