@@ -41,8 +41,9 @@ import {
   Optional,
   UnprocessableEntityException,
 } from '@nestjs/common';
-import { and, asc, eq, inArray, isNotNull, ne, sql, type SQL } from 'drizzle-orm';
+import { and, asc, eq, inArray, isNotNull, isNull, ne, sql, type SQL } from 'drizzle-orm';
 
+import { AuditService } from '../../platform/audit/audit.service';
 import { can as decide, type Principal, type ResourceRef } from '../../platform/authz/can';
 import { AuthzService } from '../../platform/authz/authz.service';
 import { DB, type Db, type DbTransaction } from '../../platform/db/db.module';
@@ -200,6 +201,7 @@ export class CustomersService {
     private readonly numbering: NumberingService,
     private readonly authz: AuthzService,
     private readonly caller: CustomersCaller,
+    private readonly audit: AuditService,
     @Optional() @Inject(CUSTOMERS_CLOCK) private readonly clock: () => Date = () => new Date(),
   ) {}
 
@@ -323,13 +325,31 @@ export class CustomersService {
     const { scope, actor, principal } = this.caller.current();
     this.assertStaff(principal);
     const now = this.clock();
-    const { contact, ...fields } = body;
+    const { contact, duplicateOverrideReason, ...fields } = body;
     return withTx(this.db, scope, actor, async (tx) => {
       const done = await withIdempotency(
         tx,
         { command: 'customer.create', key: idempotencyKey, body },
         async () => {
+          const sameName = await this.sameNameCustomers(tx, scope.tenantId, principal, fields);
+          if (sameName.length > 0 && duplicateOverrideReason === undefined) {
+            throw new BadRequestException({
+              code: 'bad_request',
+              reason: 'duplicate_reason_required',
+              message:
+                'A customer with this name already exists; give a reason to create another one',
+            });
+          }
           const customer = await this.createInTx(tx, scope, fields, now);
+          if (sameName.length > 0) {
+            await this.audit.record(tx, {
+              action: 'customer.duplicate_override',
+              entityType: 'customers',
+              entityId: customer.id,
+              after: { legalName: customer.legalName },
+              meta: { reason: duplicateOverrideReason, matchedCustomerIds: sameName },
+            });
+          }
           await this.createContactInTx(
             tx,
             scope,
@@ -342,6 +362,33 @@ export class CustomersService {
       );
       return done.response;
     });
+  }
+
+  /**
+   * F1-Q55: the live customers (not merged away) the caller can read whose normalised name is the new one's: the
+   * same "same name" the workspace's advisory check flags (`duplicate-check.ts`). Limited to the caller's read
+   * scope, so the check never reveals a customer they could not have been warned about. A PAN/VAT match is refused
+   * on its own (409 `duplicate_pan_vat`), so only the name is compared here.
+   */
+  private async sameNameCustomers(
+    tx: DbTransaction,
+    tenantId: string,
+    principal: Principal,
+    fields: Pick<CustomerFields, 'legalName'>,
+  ): Promise<string[]> {
+    const rows = await tx
+      .select({ id: customers.id })
+      .from(customers)
+      .where(
+        and(
+          this.visibleWhere(tenantId, principal, 'customer.read'),
+          eq(customers.nameNorm, normalizeName(fields.legalName)),
+          isNull(customers.mergedIntoId),
+        ),
+      )
+      .orderBy(asc(customers.id))
+      .limit(20);
+    return rows.map((r) => r.id);
   }
 
   /**

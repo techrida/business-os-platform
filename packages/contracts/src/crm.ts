@@ -89,6 +89,12 @@ export type ContactWithEmailBody = z.infer<typeof ContactWithEmailBodySchema>;
  */
 export const CreateCustomerBodySchema = CustomerFieldsSchema.extend({
   contact: ContactWithEmailBodySchema.omit({ isPrimary: true }),
+  /**
+   * F1-Q55: why this customer is created although one of the same name already exists ("Create anyway"). Optional
+   * until the name matches a live customer the caller can read; then it is required (400, reason
+   * `duplicate_reason_required`) and written to the audit trail (`customer.duplicate_override`).
+   */
+  duplicateOverrideReason: text(500).optional(),
 });
 export type CreateCustomerBody = z.infer<typeof CreateCustomerBodySchema>;
 

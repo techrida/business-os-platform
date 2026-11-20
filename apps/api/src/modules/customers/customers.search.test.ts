@@ -11,6 +11,7 @@ import { PgDialect } from 'drizzle-orm/pg-core';
 import { type SQL } from 'drizzle-orm';
 import { expect, it } from 'vitest';
 
+import { AuditService } from '../../platform/audit/audit.service';
 import { can, type Principal } from '../../platform/authz/can';
 import { CAN_KEY } from '../../platform/authz/decorators';
 import type { Db } from '../../platform/db/db.module';
@@ -95,6 +96,7 @@ it('searches names with tenant and owner visibility, and requires customer.read'
       {
         current: () => ({ scope: { tenantId: principal.tenantId }, principal }),
       } as CustomersCaller,
+      {} as AuditService,
     );
     const controller = new CustomersController(service);
     const permission = Reflect.getMetadata(CAN_KEY, controller.list) as 'customer.read';

@@ -44,6 +44,7 @@ import request from 'supertest';
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { configureApp } from '../../app.setup';
+import { AuditService } from '../../platform/audit/audit.service';
 import { can } from '../../platform/authz/can';
 import type { AuthzService } from '../../platform/authz/authz.service';
 import type { Principal } from '../../platform/authz/principal';
@@ -198,6 +199,7 @@ beforeAll(async () => {
     new NumberingService(),
     authz as unknown as AuthzService,
     caller,
+    new AuditService(db),
     () => now,
   );
   const moduleRef = await Test.createTestingModule({
@@ -489,6 +491,81 @@ describe('create a customer and read it back', () => {
       .set('Idempotency-Key', key)
       .send(customerBody());
     expect(other.status).toBe(422);
+  });
+});
+
+describe('"Create anyway" on a customer of the same name (F1-Q55)', () => {
+  const post = (body: Record<string, unknown>) =>
+    request(baseUrl).post('/v1/customers').set('Idempotency-Key', newKey()).send(body);
+  const overrideEvents = async (customerId: string) => {
+    const { rows } = await ownerPool.query(
+      `SELECT actor_id, meta FROM audit.audit_events
+        WHERE action = 'customer.duplicate_override' AND entity_id = $1`,
+      [customerId],
+    );
+    return rows as { actor_id: string; meta: { reason: string; matchedCustomerIds: string[] } }[];
+  };
+
+  it('needs a reason when the name matches a live customer, then records who, why and which', async () => {
+    const tag = randomUUID().slice(0, 6);
+    const first = await createCustomer({ legalName: `Annapurna ${tag} Traders Pvt. Ltd.` });
+
+    // The same name after normalising ("Pvt Ltd" and punctuation drop out): refused without a reason.
+    const refused = await post(customerBody({ legalName: `annapurna  ${tag} traders` }));
+    expect(refused.status, JSON.stringify(refused.body)).toBe(400);
+    expect(errorOf(refused.body)).toMatchObject({
+      code: 'bad_request',
+      reason: 'duplicate_reason_required',
+    });
+    const none = await ownerPool.query(
+      'SELECT count(*)::int AS n FROM app.customers WHERE tenant_id = $1 AND name_norm = $2',
+      [a.tenantId, `annapurna ${tag} traders`],
+    );
+    expect(none.rows[0]).toEqual({ n: 1 });
+
+    const created = await post(
+      customerBody({
+        legalName: `Annapurna ${tag} Traders`,
+        duplicateOverrideReason: 'Separate branch billed on its own',
+      }),
+    );
+    expect(created.status, JSON.stringify(created.body)).toBe(201);
+    const second = CustomerDtoSchema.parse(created.body);
+    expect(await overrideEvents(second.id)).toEqual([
+      {
+        actor_id: a.userId,
+        meta: { reason: 'Separate branch billed on its own', matchedCustomerIds: [first.id] },
+      },
+    ]);
+  });
+
+  it('needs no reason, and records nothing, for a new name or one the caller cannot read', async () => {
+    const tag = randomUUID().slice(0, 6);
+    const fresh = await createCustomer({ legalName: `Fresh ${tag} Pvt. Ltd.` });
+    expect(await overrideEvents(fresh.id)).toEqual([]);
+    // A reason sent with a name that matches nothing is accepted and not recorded.
+    const extra = await createCustomer({
+      legalName: `Lone ${tag} Pvt. Ltd.`,
+      duplicateOverrideReason: 'Just in case',
+    });
+    expect(await overrideEvents(extra.id)).toEqual([]);
+
+    // Another tenant's customer of the same name is not a duplicate here.
+    asStaff(b);
+    await createCustomer({ legalName: `Shared ${tag} Pvt. Ltd.` });
+    asStaff(a);
+    await createCustomer({ legalName: `Shared ${tag} Pvt. Ltd.` });
+
+    // An `own` reader is not told about a colleague's customer it cannot see.
+    await createCustomer({ legalName: `Hidden ${tag} Pvt. Ltd.` });
+    current.grants = new Map<Permission, Scope>([
+      ['customer.read', 'own'],
+      ['customer.write', 'own'],
+    ]);
+    current.userId = (await createStaffUser(appPool, { ...a })).userId;
+    const own = await post(customerBody({ legalName: `Hidden ${tag} Pvt. Ltd.` }));
+    expect(own.status, JSON.stringify(own.body)).toBe(201);
+    asStaff(a);
   });
 });
 
