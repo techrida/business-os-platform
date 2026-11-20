@@ -376,6 +376,32 @@ describe('a lead follow-up handed to a Sales peer (D50, K5)', () => {
   });
 });
 
+describe('a customer follow-up handed to an own reader (U20a2-Q7)', () => {
+  it('lets the assignee list and complete it without reaching the customer, and nothing more', async () => {
+    const customer = await h.seedCustomer(P.sales);
+    await h.actAs(P.sales);
+    const followUp = await plan({ customerId: customer }, P.marketer);
+    const other = await plan({ customerId: customer });
+
+    // Marketing reads only the customers it owns: this one is outside its reach.
+    await h.actAs(P.marketer);
+    expect((await get(`/v1/activities?customerId=${customer}`)).status).toBe(404);
+    expect((await listed('?status=planned&limit=200')).map((a) => a.id)).toContain(followUp.id);
+    // Moving or calling it off still needs the customer, as before.
+    expect(
+      (await patch(followUp.id, 'reschedule', { expectedVersion: 1, dueAt: DUE_2 })).status,
+    ).toBe(404);
+    expect((await patch(followUp.id, 'cancel', { expectedVersion: 1 })).status).toBe(404);
+    // A follow-up on the same customer that is not theirs is still refused (Marketing holds no customer write).
+    expect((await patch(other.id, 'complete', { expectedVersion: 1 })).status).toBe(403);
+
+    const done = await patch(followUp.id, 'complete', { expectedVersion: 1, note: 'Sent it' });
+    expect(done.status, JSON.stringify(done.body)).toBe(200);
+    expect(dto(done.body)).toMatchObject({ id: followUp.id, planned: false, version: 2 });
+    expect((await get(`/v1/activities?customerId=${customer}`)).status).toBe(404);
+  });
+});
+
 describe('a manager and the crm.assigned notice (#22)', () => {
   it('lets a Sales manager reschedule a department member follow-up and hand it on, telling the new assignee', async () => {
     const lead = await leadOf(P.sales);
