@@ -6,8 +6,13 @@ import { ApiError } from '@/lib/api';
 // `server-only` throws outside the react-server condition, which Vitest does not use.
 vi.mock('server-only', () => ({}));
 const session = vi.hoisted(() => ({ roles: ['procurement'] as string[] }));
+const me = vi.hoisted(() => ({ getMe: vi.fn() }));
+vi.mock('@/lib/api', async (orig) => ({
+  ...(await orig<typeof import('@/lib/api')>()),
+  getMe: me.getMe,
+}));
 vi.mock('@/lib/bff', () => ({
-  requireStaffSession: () => Promise.resolve({ roles: session.roles }),
+  requireStaffSession: () => Promise.resolve({ roles: session.roles, accessToken: 'tok' }),
 }));
 vi.mock('next/navigation', () => ({
   notFound: () => {
@@ -121,6 +126,7 @@ const editHtml = async () => html(await EditPage({ params: Promise.resolve({ id:
 beforeEach(() => {
   vi.clearAllMocks();
   session.roles = ['procurement'];
+  me.getMe.mockRejectedValue(new Error('offline'));
   currencies.loadEnabledCurrencies.mockResolvedValue(['NPR', 'INR', 'USD']);
   api.listDepartments.mockResolvedValue([{ id: DEPT, name: 'Operations' }]);
   api.listCostCenters.mockResolvedValue([
@@ -302,15 +308,39 @@ describe('the list', () => {
 });
 
 describe('the detail', () => {
-  it('a draft offers submit, edit and cancel, with totals from the server', async () => {
+  it('a draft offers submit, edit and cancel in the header, with totals from the server', async () => {
     api.getPurchaseRequest.mockResolvedValue(detail());
     const out = await detailHtml();
-    expect(out).toContain('Submit for approval');
-    expect(out).toContain('Edit request');
-    expect(out).toContain('Cancel request');
+    const header = out.slice(0, out.indexOf('<section'));
+    expect(header).toContain('Submit for approval');
+    expect(header).toContain('Edit request');
+    expect(header).toContain('Cancel request');
+    expect(out).not.toContain('<aside');
     expect(out).toContain('45,00,000.00');
     expect(out).toContain('Office chair');
     expect(out).toContain('Ergonomic, black');
+  });
+
+  it('respects server pr.can overrides and hides Submit when can.submit is false', async () => {
+    api.getPurchaseRequest.mockResolvedValue(
+      detail({
+        can: { edit: true, submit: false, cancel: false, startRfq: false, openRfq: false },
+      }),
+    );
+    const out = await detailHtml();
+    expect(out).toContain('Edit request');
+    expect(out).not.toContain('Submit for approval');
+    expect(out).not.toContain('Cancel request');
+  });
+
+  it('respects live permissions when pr.can is absent', async () => {
+    session.roles = ['procurement'];
+    me.getMe.mockResolvedValue({
+      permissions: [{ permission: 'procurement.pr.read', scope: 'all' }],
+    });
+    api.getPurchaseRequest.mockResolvedValue(detail({ status: 'dept_approved' }));
+    const out = await detailHtml();
+    expect(out).not.toContain('Start RFQ');
   });
 
   it('a submitted request is read-only: no submit, edit or cancel, and shows the approval steps', async () => {

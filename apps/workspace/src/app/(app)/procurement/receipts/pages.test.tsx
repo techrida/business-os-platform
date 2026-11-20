@@ -6,8 +6,13 @@ import { ApiError } from '@/lib/api';
 // `server-only` throws outside the react-server condition, which Vitest does not use.
 vi.mock('server-only', () => ({}));
 const session = vi.hoisted(() => ({ roles: ['warehouse'] as string[] }));
+const me = vi.hoisted(() => ({ getMe: vi.fn() }));
+vi.mock('@/lib/api', async (orig) => ({
+  ...(await orig<typeof import('@/lib/api')>()),
+  getMe: me.getMe,
+}));
 vi.mock('@/lib/bff', () => ({
-  requireStaffSession: () => Promise.resolve({ roles: session.roles }),
+  requireStaffSession: () => Promise.resolve({ roles: session.roles, accessToken: 'tok' }),
 }));
 vi.mock('next/navigation', () => ({
   notFound: () => {
@@ -128,6 +133,7 @@ const detail = async (id = RECEIPT, sp: Record<string, string> = {}) =>
 
 beforeEach(() => {
   session.roles = ['warehouse'];
+  me.getMe.mockReset().mockRejectedValue(new Error('offline'));
   for (const fn of Object.values(api)) fn.mockReset();
   api.listReceivableOrders.mockResolvedValue([waiting()]);
   api.listRequestedOrders.mockResolvedValue([]);
@@ -523,5 +529,15 @@ describe('one receipt', () => {
     const broken = await detail();
     expect(broken).toContain('This receipt did not load');
     expect(broken).toContain('Try again');
+  });
+
+  it('respects live permissions and hides Confirm receipt when procurement.receipt.confirm is revoked', async () => {
+    session.roles = ['warehouse'];
+    me.getMe.mockResolvedValue({
+      permissions: [{ permission: 'procurement.receipt.read', scope: 'all' }],
+    });
+    const out = await detail();
+    expect(out).not.toContain('Confirm receipt');
+    expect(out).not.toContain('Discard draft');
   });
 });
