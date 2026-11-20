@@ -26,6 +26,7 @@ import {
 } from '@nestjs/common';
 import { PostgreSqlContainer, type StartedPostgreSqlContainer } from '@testcontainers/postgresql';
 import type { Queue } from 'bullmq';
+import { sql } from 'drizzle-orm';
 import { drizzle } from 'drizzle-orm/node-postgres';
 import { Pool } from 'pg';
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -41,6 +42,7 @@ import { UserMirror } from './user-mirror';
 import type { UsersSyncData } from './users.constants';
 import {
   FakeUsersStore,
+  FakeZitadel,
   STAFF_IDP,
   STAFF_ORG,
   STAFF_ZORG,
@@ -465,6 +467,21 @@ describe('PUT /v1/admin/users/:id/roles last-Founder guard', () => {
   const FOUNDER_TWO = '00000000-0000-4000-9000-000000000102';
   const INVITED_FOUNDER = '00000000-0000-4000-9000-000000000103';
 
+  /** A membership in `organizationId`; `roleKeys` null means every role the user holds. */
+  const joinEntity = (
+    userId: string,
+    organizationId = STAFF_ORG,
+    roleKeys: string[] | null = null,
+  ) =>
+    store.memberships.push({
+      tenantId: TENANT,
+      userId,
+      organizationId,
+      isDefault: organizationId === STAFF_ORG,
+      roleKeys,
+      departmentId: null,
+    });
+
   beforeEach(() => {
     store.users.push({
       id: FOUNDER_ONE,
@@ -476,6 +493,7 @@ describe('PUT /v1/admin/users/:id/roles last-Founder guard', () => {
       status: 'active',
     });
     store.roles.set(FOUNDER_ONE, ['founder']);
+    joinEntity(FOUNDER_ONE);
   });
 
   it('refuses removing Founder from the only active Founder and does not touch ZITADEL', async () => {
@@ -490,6 +508,7 @@ describe('PUT /v1/admin/users/:id/roles last-Founder guard', () => {
       status: 'invited',
     });
     store.roles.set(INVITED_FOUNDER, ['founder']);
+    joinEntity(INVITED_FOUNDER);
 
     let caught: unknown;
     try {
@@ -502,7 +521,8 @@ describe('PUT /v1/admin/users/:id/roles last-Founder guard', () => {
     expect(caught).toBeInstanceOf(ConflictException);
     expect((caught as ConflictException).getResponse()).toEqual({
       code: 'last_founder',
-      message: 'Kiran Thapa is the only Founder. Make someone else a Founder first.',
+      message:
+        'Kiran Thapa is the only Founder of Techrida Nepal. Make someone else a Founder there first.',
     });
     expect(zitadel.grants.has('z-founder-1')).toBe(false);
     expect(store.roles.get(FOUNDER_ONE)).toEqual(['founder']);
@@ -519,6 +539,7 @@ describe('PUT /v1/admin/users/:id/roles last-Founder guard', () => {
       status: 'active',
     });
     store.roles.set(FOUNDER_TWO, ['founder']);
+    joinEntity(FOUNDER_TWO);
 
     await asAdmin(['admin.roles.write'], () =>
       controller.setRoles(FOUNDER_ONE, { roles: ['management'] }),
@@ -526,6 +547,95 @@ describe('PUT /v1/admin/users/:id/roles last-Founder guard', () => {
     expect(zitadel.grants.get('z-founder-1')).toEqual(['management']);
     expect(store.roles.get(FOUNDER_ONE)).toEqual(['management']);
     expect(authz.invalidations).toBe(1);
+  });
+
+  it.each([null, '   '])(
+    'names a Founder without a display name (%j) "This person", never the email',
+    async (displayName) => {
+      store.users[0]!.displayName = displayName;
+      let caught: unknown;
+      try {
+        await asAdmin(['admin.roles.write'], () =>
+          controller.setRoles(FOUNDER_ONE, { roles: ['management'] }),
+        );
+      } catch (error) {
+        caught = error;
+      }
+      expect(caught).toBeInstanceOf(ConflictException);
+      const body = (caught as ConflictException).getResponse() as { message: string };
+      expect(body.message).toBe(
+        'This person is the only Founder of Techrida Nepal. Make someone else a Founder there first.',
+      );
+      expect(body.message).not.toContain('kiran@techrida.test');
+    },
+  );
+
+  describe('per legal entity', () => {
+    const ENTITY_B = '00000000-0000-4000-8000-0000000000bb';
+
+    const addFounder = (id: string, status: 'active' | 'inactive' = 'active') => {
+      store.users.push({
+        id,
+        tenantId: TENANT,
+        idpOrgId: STAFF_IDP,
+        zitadelUserId: `z-${id}`,
+        email: `${id}@techrida.test`,
+        displayName: 'Sita Shrestha',
+        status,
+      });
+      store.roles.set(id, ['founder']);
+    };
+
+    const removeFounder = async (): Promise<unknown> => {
+      try {
+        await asAdmin(['admin.roles.write'], () =>
+          controller.setRoles(FOUNDER_ONE, { roles: ['management'] }),
+        );
+        return null;
+      } catch (error) {
+        return error;
+      }
+    };
+
+    beforeEach(() => {
+      store.entityNames.set(ENTITY_B, 'Techrida India');
+      // Kiran is a Founder in both entities; Sita only in the default one.
+      joinEntity(FOUNDER_ONE, ENTITY_B);
+      addFounder(FOUNDER_TWO);
+      joinEntity(FOUNDER_TWO);
+    });
+
+    it("refuses removing entity B's only Founder while entity A still has Founders", async () => {
+      const caught = await removeFounder();
+      expect(caught).toBeInstanceOf(ConflictException);
+      expect((caught as ConflictException).getResponse()).toEqual({
+        code: 'last_founder',
+        message:
+          'Kiran Thapa is the only Founder of Techrida India. Make someone else a Founder there first.',
+      });
+      expect(zitadel.grants.has('z-founder-1')).toBe(false);
+      expect(store.roles.get(FOUNDER_ONE)).toEqual(['founder']);
+    });
+
+    it('does not count a Founder whose entity B membership narrows role_keys to other roles', async () => {
+      joinEntity(FOUNDER_TWO, ENTITY_B, ['sales']);
+      expect(await removeFounder()).toBeInstanceOf(ConflictException);
+      expect(store.roles.get(FOUNDER_ONE)).toEqual(['founder']);
+    });
+
+    it('does not count a deactivated Founder in entity B', async () => {
+      addFounder(INVITED_FOUNDER, 'inactive');
+      joinEntity(INVITED_FOUNDER, ENTITY_B);
+      expect(await removeFounder()).toBeInstanceOf(ConflictException);
+    });
+
+    it('allows the removal once entity B has another effective Founder', async () => {
+      // role_keys that include founder count the same as NULL (every role).
+      joinEntity(FOUNDER_TWO, ENTITY_B, ['founder', 'sales']);
+      expect(await removeFounder()).toBeNull();
+      expect(zitadel.grants.get('z-founder-1')).toEqual(['management']);
+      expect(store.roles.get(FOUNDER_ONE)).toEqual(['management']);
+    });
   });
 });
 
@@ -720,6 +830,108 @@ describe('SqlUsersStore against migration 0013 (ADR 0027: tenant-scoped users)',
     expect(listed[0]).not.toHaveProperty('organizationId');
     expect(listed[0]).not.toHaveProperty('departmentId');
   }, 60_000);
+
+  it('counts effective Founders per legal entity, and the guard refuses orphaning one with real SQL', async () => {
+    const tenantId = randomUUID();
+    const entityA = randomUUID();
+    const entityB = randomUUID();
+    const idpOrgId = randomUUID();
+    const scope = { tenantId, organizationId: entityA };
+    const ids = await withTx(db, scope, systemActor('test'), async (tx) => {
+      await tx.insert(tenants).values({ id: tenantId });
+      await tx.insert(organizations).values([
+        {
+          id: entityA,
+          tenantId,
+          organizationId: entityA,
+          code: 'A',
+          name: 'Alpha Entity',
+          legalName: 'Alpha Entity Pvt. Ltd.',
+          isDefault: true,
+        },
+        {
+          id: entityB,
+          tenantId,
+          organizationId: entityB,
+          code: 'B',
+          name: 'Beta Entity',
+          legalName: 'Beta Entity Pvt. Ltd.',
+        },
+      ]);
+      await tx.insert(idpOrgs).values({
+        id: idpOrgId,
+        tenantId,
+        zitadelOrgId: `z-${tenantId}`,
+        kind: 'staff',
+        name: 'Staff',
+      });
+      const add = (z: string, status: 'active' | 'inactive' = 'active') =>
+        sqlStore.insertUser(tx, scope, {
+          zitadelUserId: `${z}-${tenantId}`,
+          idpOrgId,
+          email: `${z}@techrida.test`,
+          displayName: z,
+          status,
+        });
+      const kiran = await add('kiran');
+      const sita = await add('sita');
+      const gone = await add('gone', 'inactive');
+      const loose = await add('loose');
+      await tx.insert(userEntities).values([
+        { tenantId, organizationId: entityA, userId: kiran, isDefault: true },
+        { tenantId, organizationId: entityB, userId: kiran },
+        { tenantId, organizationId: entityA, userId: sita, isDefault: true },
+        // Narrowed to sales: not a Founder in B.
+        { tenantId, organizationId: entityB, userId: sita, roleKeys: ['sales'] },
+        { tenantId, organizationId: entityB, userId: gone, isDefault: true },
+      ]);
+      // `loose` holds founder with no membership: an effective Founder nowhere.
+      for (const id of [kiran, sita, gone, loose]) {
+        await sqlStore.replaceRoles(tx, scope, id, ['founder']);
+      }
+      return { kiran, sita, gone, loose };
+    });
+
+    expect(await sqlStore.effectiveRoleHolders(db, tenantId, 'founder')).toEqual(
+      [
+        { organizationId: entityA, entityName: 'Alpha Entity', userId: ids.kiran },
+        { organizationId: entityA, entityName: 'Alpha Entity', userId: ids.sita },
+        { organizationId: entityB, entityName: 'Beta Entity', userId: ids.kiran },
+      ].sort(
+        (x, y) =>
+          x.entityName.localeCompare(y.entityName) || (x.userId < y.userId ? -1 : 1),
+      ),
+    );
+
+    const zitadel = new FakeZitadel();
+    const mirror = new UserMirror(
+      db,
+      sqlStore,
+      zitadel.asClient(),
+      fakeQueue() as unknown as Queue<UsersSyncData>,
+    );
+    // Sita is a Founder in Alpha but not in Beta, so Kiran is Beta's only effective Founder.
+    await expect(
+      withTx(db, scope, systemActor('test'), (tx) =>
+        mirror.setRoles(tx, ids.kiran, ['management']),
+      ),
+    ).rejects.toBeInstanceOf(ConflictException);
+    expect(zitadel.setGrantsCalls).toEqual([]);
+    expect(await sqlStore.rolesOf(db, tenantId, ids.kiran)).toEqual(['founder']);
+
+    // Widening Sita's Beta membership to every role gives Beta another Founder; the removal goes through.
+    await withTx(db, { tenantId, organizationId: entityB }, systemActor('test'), (tx) =>
+      tx.execute(
+        sql`UPDATE app.user_entities SET role_keys = NULL
+            WHERE tenant_id = ${tenantId} AND organization_id = ${entityB} AND user_id = ${ids.sita}`,
+      ),
+    );
+    await withTx(db, scope, systemActor('test'), (tx) =>
+      mirror.setRoles(tx, ids.kiran, ['management']),
+    );
+    expect(await sqlStore.rolesOf(db, tenantId, ids.kiran)).toEqual(['management']);
+  }, 60_000);
+
   const listRows = async (...args: Parameters<SqlUsersStore['list']>) =>
     (await sqlStore.list(...args)).rows;
   const totalOf = async (...args: Parameters<SqlUsersStore['list']>) =>

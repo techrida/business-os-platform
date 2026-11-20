@@ -57,6 +57,13 @@ export interface MembershipRow {
   level?: AccessLevel;
 }
 
+/** One user who holds a role in one legal entity (see `effectiveRoleHolders`). */
+export interface EffectiveRoleHolder {
+  organizationId: string;
+  entityName: string;
+  userId: string;
+}
+
 export interface UserFields {
   zitadelUserId: string;
   /** The IdP org the user logs in through; only insertUser reads it. */
@@ -132,8 +139,15 @@ export abstract class UsersStore {
 
   /** Active holders of `role` with a membership in the entity whose role_keys is NULL or has the role. */
   abstract userIdsWithRole(scope: TxScope, role: RoleKey): Promise<string[]>;
-  /** Active holders of `role` across the tenant, used by the last-Founder guard. */
-  abstract activeRoleHolderIds(q: Queryable, tenantId: string, role: RoleKey): Promise<string[]>;
+  /**
+   * Effective holders of `role` per legal entity, used by the last-Founder guard: an active user with the
+   * role and a membership in the entity whose role_keys is NULL or has the role. One row per (entity, user).
+   */
+  abstract effectiveRoleHolders(
+    q: Queryable,
+    tenantId: string,
+    role: RoleKey,
+  ): Promise<EffectiveRoleHolder[]>;
   /** The address of an `active` user only: notifications must not mail a deactivated or invited person. */
   abstract emailOf(userId: string): Promise<string | null>;
   /**
@@ -389,15 +403,22 @@ export class SqlUsersStore extends UsersStore {
     return found.map((r) => r.id);
   }
 
-  async activeRoleHolderIds(q: Queryable, tenantId: string, role: RoleKey): Promise<string[]> {
-    const found = await rows<{ id: string }>(
+  effectiveRoleHolders(
+    q: Queryable,
+    tenantId: string,
+    role: RoleKey,
+  ): Promise<EffectiveRoleHolder[]> {
+    return rows<EffectiveRoleHolder & Record<string, unknown>>(
       q,
-      sql`SELECT u.id FROM app.user_roles ur
+      sql`SELECT ue.organization_id AS "organizationId", o.name AS "entityName", u.id AS "userId"
+          FROM app.user_roles ur
           JOIN app.users u ON u.tenant_id = ur.tenant_id AND u.id = ur.user_id
+          JOIN app.user_entities ue ON ue.tenant_id = ur.tenant_id AND ue.user_id = ur.user_id
+          JOIN app.organizations o ON o.tenant_id = ue.tenant_id AND o.id = ue.organization_id
           WHERE ur.tenant_id = ${tenantId} AND ur.role_key = ${role} AND u.status = 'active'
-          ORDER BY u.id`,
+            AND (ue.role_keys IS NULL OR ${role}::text = ANY (ue.role_keys))
+          ORDER BY o.name, ue.organization_id, u.id`,
     );
-    return found.map((r) => r.id);
   }
 
   async emailOf(userId: string): Promise<string | null> {
