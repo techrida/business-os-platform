@@ -201,6 +201,17 @@ describe('P1 kernel settings', () => {
     expect(list).toEqual(['PORTAL_PUBLIC_URL: must be an http(s) URL']);
   });
 
+  it('keeps the exact bytes of a nonblank webhook secret and signing key (no trimming)', () => {
+    const postal = `  ${'p'.repeat(32)}  `;
+    const config = loadAppConfig({
+      ...base,
+      POSTAL_WEBHOOK_SECRET: postal,
+      ZITADEL_ACTIONS_SIGNING_KEY: ' key ',
+    });
+    expect(config.POSTAL_WEBHOOK_SECRET).toBe(postal);
+    expect(config.ZITADEL_ACTIONS_SIGNING_KEY).toBe(' key ');
+  });
+
   it('keeps POSTAL_WEBHOOK_SECRET optional in production, treats blank as unset, and refuses a short one without echoing it', () => {
     expect(loadAppConfig(prod).POSTAL_WEBHOOK_SECRET).toBeUndefined();
     for (const blank of ['', '   ', ' '.repeat(40)]) {

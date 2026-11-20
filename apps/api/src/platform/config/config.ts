@@ -187,6 +187,15 @@ const blankAsUnset = z
   .optional()
   .transform((v) => (v === undefined || v.trim() === '' ? undefined : v.trim()));
 
+/**
+ * Like blankAsUnset, but a nonblank value keeps its exact bytes. For HMAC keys that another system
+ * signs with: trimming would change the key and every signature would fail.
+ */
+const blankAsUnsetRaw = z
+  .string()
+  .optional()
+  .transform((v) => (v === undefined || v.trim() === '' ? undefined : v));
+
 const apiShape = {
   API_PORT: port.default(3001),
   // There is no switch that turns authentication off. Tests point OIDC_ISSUER at an in-process
@@ -204,11 +213,11 @@ const apiShape = {
   // At least 32 characters when present; blank counts as unset (as in .env.example or compose `${VAR:-}`);
   // required in production (kernelProblems).
   DOCS_LINK_SECRET: blankAsUnset.pipe(z.string().min(32).optional()),
-  ZITADEL_ACTIONS_SIGNING_KEY: blankAsUnset,
+  ZITADEL_ACTIONS_SIGNING_KEY: blankAsUnsetRaw,
   // Shared secret for the Postal bounce webhook (HMAC-SHA256 of the raw body). Optional on purpose,
   // like the ZITADEL key: with no secret the hook answers 401 to everyone (deny by default).
   // Blank counts as unset so an empty `POSTAL_WEBHOOK_SECRET=` line (as in .env.example) does not block startup.
-  POSTAL_WEBHOOK_SECRET: blankAsUnset.pipe(z.string().min(32).optional()),
+  POSTAL_WEBHOOK_SECRET: blankAsUnsetRaw.pipe(z.string().min(32).optional()),
   // Field-level encryption keyring (M20), see parseFieldKeyring for the format. Required in production;
   // blank counts as unset. Parsed into a FieldKeyring, so the raw string never stays on the config.
   FIELD_ENC_KEYS: blankAsUnset,
