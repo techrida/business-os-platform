@@ -3,6 +3,7 @@
 import {
   DEFAULT_BRAND_COLOUR,
   EMPTY_COMPANY_PROFILE,
+  type MemoApproverRule,
   type MemoDirectory,
   type MemoTemplateSnapshot,
 } from '@bos/contracts';
@@ -236,7 +237,9 @@ function serviceWith(
       : ({
           forScope: () => (documentId: string) => resolve.current(documentId),
         } as unknown as DocumentLogoResolverFactory);
-  const caller = { current: () => ({ scope }) } as unknown as TestMemoCaller;
+  const caller = {
+    current: () => ({ scope, principal: { userId: template.preparedBy.userId } }),
+  } as unknown as TestMemoCaller;
   const n = null as never;
   return new TestMemoService(n, n, n, n, n, n, n, caller, n, settings as never, undefined, logos);
 }
@@ -255,12 +258,25 @@ const people: MemoDirectory = {
   people: [],
 };
 
+/** The approver rule is the integration test's (it plans the real workflow); here it is a fixed answer. */
+const approverRule: MemoApproverRule = {
+  basis: 'department_head',
+  departmentId: null,
+  departmentName: null,
+  eligibleUserIds: [],
+  defaultUserId: null,
+};
+
 describe('directory carries the live letterhead', () => {
   const directoryOf = (service: TestMemoService) => {
     vi.spyOn(
       service as unknown as { people: () => Promise<MemoDirectory> },
       'people',
     ).mockResolvedValue(people);
+    vi.spyOn(
+      service as unknown as { approverRule: () => Promise<MemoApproverRule> },
+      'approverRule',
+    ).mockResolvedValue(approverRule);
     return service.directory();
   };
 
@@ -269,6 +285,7 @@ describe('directory carries the live letterhead', () => {
     const service = serviceWith(fakeSettings(values), { current: resolvesTo(PNG) });
     expect(await directoryOf(service)).toEqual({
       ...people,
+      approverRule,
       letterhead: {
         addressLines: ['Balaju', 'Kathmandu, Kathmandu', 'Bagmati 44600', 'Nepal'],
         logoDataUrl: PNG,

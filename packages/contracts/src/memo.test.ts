@@ -1,6 +1,12 @@
 import { describe, expect, it } from 'vitest';
 
-import { MEMO_LIST_DEFAULT_LIMIT, MemoListQuerySchema } from './memo.js';
+import { WorkflowWriteSpecSchema } from './approvals.js';
+import {
+  MEMO_APPROVER_DEFAULT_SPEC,
+  MEMO_APPROVER_DOCUMENT_TYPE,
+  MEMO_LIST_DEFAULT_LIMIT,
+  MemoListQuerySchema,
+} from './memo.js';
 
 describe('MemoListQuerySchema', () => {
   it('keeps the old defaults when no filter is given', () => {
@@ -38,5 +44,15 @@ describe('MemoListQuerySchema', () => {
     expect(MemoListQuerySchema.parse({ cursor: 'abc_-1', limit: '50' }).limit).toBe(50);
     expect(MemoListQuerySchema.safeParse({ limit: '51' }).success).toBe(false);
     expect(MemoListQuerySchema.safeParse({ cursor: 'not valid!' }).success).toBe(false);
+  });
+});
+
+describe('MEMO_APPROVER_DEFAULT_SPEC (F1-Q9)', () => {
+  it('is a valid workflow an administrator could save: one department-head step falling back to the Founder', () => {
+    const spec = WorkflowWriteSpecSchema.parse(MEMO_APPROVER_DEFAULT_SPEC);
+    expect(spec.documentType).toBe(MEMO_APPROVER_DOCUMENT_TYPE);
+    expect(spec.steps).toHaveLength(1);
+    expect(spec.steps[0]).toMatchObject({ kind: 'department_head', fallbackRole: 'founder' });
+    expect(spec.rules).toEqual([]);
   });
 });

@@ -34,10 +34,12 @@ import {
   createPortalUser,
   createStaffUser,
   createTenantWithEntity,
+  departments,
   documentVersions,
   rolePermissions,
   runMigrations,
   testMemos,
+  userEntities,
   users,
 } from '@bos/db';
 import { fiscalYearOf } from '@bos/locale';
@@ -451,6 +453,67 @@ const statusOf = async (id: string) => {
   const [row] = await db.select().from(testMemos).where(eq(testMemos.id, id));
   return row!;
 };
+
+/** How many Memo approver versions this file has saved: each publish adds the next one (F1-Q9). */
+let memoApproverVersions = 0;
+/** Saves `spec` as the next Memo approver version as the founder and publishes it as a second person. */
+async function publishMemoApprover(spec: unknown): Promise<void> {
+  as(U.boss, 'founder');
+  const editor = new ApprovalsAdminService(db, audit, caller, () => now);
+  if (memoApproverVersions === 0) {
+    await editor.createWorkflow({ key: 'memo_approver', name: 'Memo approver', spec });
+  } else {
+    await editor.addVersion('memo_approver', spec);
+  }
+  memoApproverVersions += 1;
+  await new ApprovalsAdminService(db, audit, asSecondPerson(caller), () => now).publish(
+    'memo_approver',
+    memoApproverVersions,
+  );
+  as(U.salesA, 'sales');
+}
+
+let memoSignersGroup: string | undefined;
+/**
+ * The tests below that are about something other than who may approve name signers freely: the Memo approver
+ * workflow becomes one group step holding `people`, so each of them may sign "Approved by".
+ */
+async function memoSignersAre(people: readonly string[]): Promise<void> {
+  as(U.boss, 'founder');
+  const admin = new ApprovalsAdminService(db, audit, caller, () => now);
+  memoSignersGroup ??= (await admin.createGroup({ key: 'memo-signers', name: 'Memo signers' })).id;
+  for (const userId of people) await admin.addMember(memoSignersGroup, userId);
+  await publishMemoApprover({
+    documentType: 'memo_approver',
+    steps: [
+      { id: 'approver', kind: 'group', group: 'memo-signers', reason: 'A memo signer approves' },
+    ],
+    rules: [],
+  });
+}
+
+/** Puts the memo author's membership in `departmentId` (null: no department) for the length of `fn`. */
+async function inDepartment<T>(departmentId: string | null, fn: () => Promise<T>): Promise<T> {
+  const setDepartment = (id: string | null) =>
+    withTx(db, scope, systemActor('test'), (tx) =>
+      tx.update(userEntities).set({ departmentId: id }).where(eq(userEntities.userId, U.salesA)),
+    );
+  await setDepartment(departmentId);
+  try {
+    return await fn();
+  } finally {
+    await setDepartment(null);
+  }
+}
+
+/** A department of the entity with `headUserId` as its head (null: no head). */
+async function departmentHeadedBy(headUserId: string | null): Promise<string> {
+  const { departmentId } = await createDepartment(appPool, scope);
+  await withTx(db, scope, systemActor('test'), (tx) =>
+    tx.update(departments).set({ headUserId }).where(eq(departments.id, departmentId)),
+  );
+  return departmentId;
+}
 
 // ------------------------------------------------------------------------------------------- tests
 
@@ -1083,7 +1146,149 @@ describe('a memo out of scope looks like an unknown id (R23)', () => {
   });
 });
 
+describe('the Memo approver: who may sign "Approved by" (F1-Q9)', () => {
+  // Runs before any other template memo is submitted: until then the entity has no published Memo approver
+  // workflow, so the first tests read the built-in rule (the one the seed publishes).
+  const memoFor = async (departmentId: string, approvedByUserId: string) => {
+    const res = await request(baseUrl)
+      .post('/v1/test-memos')
+      .send(
+        templateMemoBody({
+          departmentId,
+          date: '2026-11-12',
+          closing: '',
+          preparedByUserId: U.salesA,
+          recommenderUserIds: [],
+          approvedByUserId,
+        }),
+      );
+    expect(res.status, JSON.stringify(res.body)).toBe(201);
+    return MemoDtoSchema.parse(res.body).id;
+  };
+  const ruleNow = async () =>
+    MemoDirectorySchema.parse((await request(baseUrl).get('/v1/test-memos/directory')).body)
+      .approverRule;
+
+  it("defaults to the head of the author's department, with no workflow published", async () => {
+    const dept = await departmentHeadedBy(U.mgmt);
+    await inDepartment(dept, async () => {
+      const rule = await ruleNow();
+      expect(rule).toMatchObject({
+        basis: 'department_head',
+        departmentId: dept,
+        eligibleUserIds: [U.mgmt],
+        defaultUserId: U.mgmt,
+      });
+      expect(rule?.blockReason).toBeUndefined();
+
+      // The memo's own page carries the same rule for its owner.
+      const wrong = await memoFor(dept, U.fin);
+      const detail = (await request(baseUrl).get(`/v1/test-memos/${wrong}`)).body as {
+        approverRule?: unknown;
+      };
+      expect(detail.approverRule).toEqual(rule);
+
+      // Anyone else in "Approved by" is shown blocked before submit and refused at submit, in the same words.
+      const preview = RoutePlanSchema.parse(
+        (await request(baseUrl).get(`/v1/test-memos/${wrong}/route`)).body,
+      );
+      expect(preview.blocked).toBe(true);
+      expect(preview.steps.at(-1)?.blocked).toBe(true);
+      expect(preview.blockReason).toMatch(/cannot approve this memo.*the head of/);
+      const refused = await submitMemo(wrong);
+      expect(refused.status).toBe(409);
+      expect(ErrorBodySchema.parse(refused.body).error.message).toBe(preview.blockReason);
+      expect((await statusOf(wrong)).status).toBe('draft');
+
+      const right = await memoFor(dept, U.mgmt);
+      const submitted = await submitMemo(right);
+      expect(submitted.status, JSON.stringify(submitted.body)).toBe(200);
+      expect(await userStepsOf((submitted.body as { requestId: string }).requestId)).toEqual([
+        U.mgmt,
+      ]);
+    });
+  });
+
+  it('falls back to the Founder, and says so, when the department has no head or the author has none', async () => {
+    const headless = await departmentHeadedBy(null);
+    for (const departmentId of [headless, null]) {
+      await inDepartment(departmentId, async () => {
+        expect(await ruleNow()).toMatchObject({
+          basis: 'fallback',
+          departmentId,
+          roleKey: 'founder',
+          eligibleUserIds: [U.founder],
+          defaultUserId: U.founder,
+        });
+      });
+    }
+    await inDepartment(headless, async () => {
+      const id = await memoFor(headless, U.founder);
+      expect((await submitMemo(id)).status).toBe(200);
+    });
+  });
+
+  it('names the dead end when the head cannot decide approvals, and submit refuses it', async () => {
+    // Sales holds no approvals.requests.act, so a sales head is planned but cannot sign.
+    const dept = await departmentHeadedBy(U.salesB);
+    await inDepartment(dept, async () => {
+      const rule = await ruleNow();
+      expect(rule).toMatchObject({
+        basis: 'department_head',
+        eligibleUserIds: [],
+        defaultUserId: null,
+      });
+      expect(rule?.blockReason).toMatch(/cannot decide approvals/);
+      const id = await memoFor(dept, U.fin);
+      const refused = await submitMemo(id);
+      expect(refused.status).toBe(409);
+      expect(ErrorBodySchema.parse(refused.body).error.message).toBe(rule?.blockReason);
+    });
+  });
+
+  it('follows the published Memo approver workflow instead of the built-in rule', async () => {
+    await publishMemoApprover({
+      documentType: 'memo_approver',
+      steps: [
+        { id: 'approver', kind: 'role', role: 'management', reason: 'Management approves memos' },
+      ],
+      rules: [],
+    });
+    const dept = await departmentHeadedBy(U.founder);
+    await inDepartment(dept, async () => {
+      expect(await ruleNow()).toMatchObject({
+        basis: 'workflow',
+        roleKey: 'management',
+        eligibleUserIds: [U.mgmt],
+        defaultUserId: U.mgmt,
+      });
+      const id = await memoFor(dept, U.founder);
+      const refused = await submitMemo(id);
+      expect(refused.status).toBe(409);
+      expect(ErrorBodySchema.parse(refused.body).error.message).toMatch(
+        /cannot approve this memo.*someone in the Management role/,
+      );
+    });
+  });
+
+  it('refuses a Memo approver workflow that says more than who approves', async () => {
+    as(U.boss, 'founder');
+    const admin = new ApprovalsAdminService(db, audit, caller, () => now);
+    await expect(
+      admin.addVersion('memo_approver', {
+        documentType: 'memo_approver',
+        steps: [
+          { id: 'one', kind: 'role', role: 'management', reason: 'Management' },
+          { id: 'two', kind: 'role', role: 'founder', reason: 'Founder' },
+        ],
+        rules: [],
+      }),
+    ).rejects.toMatchObject({ status: 400 });
+  });
+});
+
 describe('internal memo template', () => {
+  beforeAll(() => memoSignersAre([U.acc, U.fin]));
   it('returns a selectable signer with a blank mirrored name as "Unnamed user", never an email fragment', async () => {
     const staff = await createStaffUser(appPool, { ...scope, idpOrgId: staffIdpOrgId });
     await withTx(db, scope, systemActor('test'), (tx) =>
@@ -1267,6 +1472,7 @@ describe('a template memo routes through exactly the people the author named', (
       sales: await staff(['sales']),
     };
     deptId = (await createDepartment(appPool, scope)).departmentId;
+    await memoSignersAre([ops.a, ops.b, ops.c, U.boss]);
   });
 
   const nameOf = async (userId: string) =>

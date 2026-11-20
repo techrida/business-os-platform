@@ -390,6 +390,7 @@ function MemoFormInner({
               onRecommenders={setField('recommenders')}
               approvedBy={fields.approvedBy}
               onApprovedBy={setField('approvedBy')}
+              approverRule={directory.approverRule}
             />
           </Panel>
         ) : null}
