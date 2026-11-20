@@ -9,7 +9,6 @@ import type { DocumentLogoResolver } from '../../quotations/render/issuer';
 import type { RenderSettings, RunInTx } from '../../quotations/render/quotation-render.sweeper';
 import {
   failureKind,
-  FAILED_RETRY_MS,
   InvoiceRenderSweeper,
   RenderSourceMissingError,
   type RenderCandidate,
@@ -93,7 +92,11 @@ function fixture(
     recordPrint: vi.fn().mockResolvedValue(undefined),
     orphans: vi.fn().mockResolvedValue([]),
     removeOrphan: vi.fn().mockResolvedValue(undefined),
+    discardUnfilled: vi.fn().mockResolvedValue(undefined),
+    recordFailure: vi.fn().mockResolvedValue({ attempts: 1, givenUp: false }),
+    clearFailure: vi.fn().mockResolvedValue(undefined),
   } satisfies RenderStore;
+  const audit = { record: vi.fn().mockResolvedValue(undefined) };
   const documents = {
     createGenerated: vi.fn().mockResolvedValue({ documentId: 'doc-1', versionId: 'ver-1' }),
     receiveGenerated: vi.fn().mockResolvedValue({}),
@@ -119,9 +122,11 @@ function fixture(
     pdf,
     () => now,
     logos,
+    audit,
   );
   return {
     store,
+    audit,
     documents,
     settings,
     live,
@@ -298,23 +303,74 @@ describe('InvoiceRenderSweeper.renderOne', () => {
 });
 
 describe('InvoiceRenderSweeper.sweep', () => {
-  it('leaves a failed invoice out of the query for the retry window, then tries it again', async () => {
+  it('asks the store for the invoices due now, and counts a failure with its kind', async () => {
     const f = fixture({ candidates: [candidate(1)] });
     f.pdf.htmlToPdf.mockRejectedValueOnce(new GotenbergError('boom', 'timeout'));
     await f.sweeper.sweep();
-    expect(f.store.candidates).toHaveBeenLastCalledWith(10, [], undefined);
+    expect(f.store.candidates).toHaveBeenLastCalledWith(NOW, 10, undefined);
+    expect(f.store.recordFailure).toHaveBeenCalledWith(TX, candidate(1), 'gotenberg_timeout', NOW);
+    // Not the last try: no admin entry, nothing to discard.
+    expect(f.audit.record).not.toHaveBeenCalled();
+    expect(f.store.discardUnfilled).not.toHaveBeenCalled();
 
-    f.advance(FAILED_RETRY_MS - 1_000);
+    f.advance(60_000);
     await f.sweeper.sweep();
     expect(f.store.candidates).toHaveBeenLastCalledWith(
+      new Date(NOW.getTime() + 60_000),
       10,
-      [candidate(1).invoiceId],
       candidate(1).invoiceId,
     );
+  });
 
-    f.advance(2_000);
-    await f.sweeper.sweep();
-    expect(f.store.candidates).toHaveBeenLastCalledWith(10, [], candidate(1).invoiceId);
+  it('writes one admin entry, in the failure transaction, when the last try fails', async () => {
+    const f = fixture({ candidates: [candidate(1)] });
+    f.pdf.htmlToPdf.mockRejectedValue(new GotenbergError('boom', 'http', 500));
+    f.store.recordFailure.mockResolvedValue({ attempts: 4, givenUp: true });
+    const result = await f.sweeper.sweep();
+    expect(result.failures).toEqual([
+      { invoiceId: candidate(1).invoiceId, kind: 'gotenberg_http' },
+    ]);
+    expect(f.audit.record).toHaveBeenCalledOnce();
+    expect(f.audit.record).toHaveBeenCalledWith(TX, {
+      action: 'invoice.pdf_render_failed',
+      entityType: 'invoices',
+      entityId: candidate(1).invoiceId,
+      after: { attempts: 4, failureKind: 'gotenberg_http' },
+    });
+  });
+
+  it('forgets earlier failures in the transaction that records the print', async () => {
+    const f = fixture();
+    const order: string[] = [];
+    f.store.recordPrint.mockImplementation(() => {
+      order.push('print');
+      return Promise.resolve();
+    });
+    f.store.clearFailure.mockImplementation(() => {
+      order.push('clear');
+      return Promise.resolve();
+    });
+    await expect(f.sweeper.renderOne(candidate(1))).resolves.toBe('rendered');
+    expect(f.store.clearFailure).toHaveBeenCalledWith(TX, candidate(1));
+    expect(order).toEqual(['print', 'clear']);
+    expect(f.store.recordFailure).not.toHaveBeenCalled();
+  });
+
+  it('discards the document a failed try created before its bytes were stored', async () => {
+    const f = fixture();
+    f.documents.receiveGenerated.mockRejectedValue(new Error('disk full'));
+    await expect(f.sweeper.renderOne(candidate(1))).resolves.toBe('failed');
+    expect(f.store.discardUnfilled).toHaveBeenCalledWith(TX, candidate(1), 'doc-1', NOW);
+    expect(f.store.recordFailure).toHaveBeenCalledWith(TX, candidate(1), 'error', NOW);
+    expect(f.store.recordPrint).not.toHaveBeenCalled();
+  });
+
+  it('logs, and does not throw, when the failure itself cannot be recorded', async () => {
+    const f = fixture({ candidates: [candidate(1), candidate(2)] });
+    f.pdf.htmlToPdf.mockRejectedValueOnce(new GotenbergError('boom', 'timeout'));
+    f.store.recordFailure.mockRejectedValueOnce(new Error('db down'));
+    const result = await f.sweeper.sweep();
+    expect(result).toMatchObject({ rendered: 1, failed: 1 });
   });
 
   it('advances past failed candidates and keeps its position across an empty tick', async () => {
@@ -322,11 +378,10 @@ describe('InvoiceRenderSweeper.sweep', () => {
     f.pdf.htmlToPdf.mockRejectedValue(new GotenbergError('boom', 'timeout'));
     f.store.candidates.mockResolvedValueOnce([candidate(1), candidate(2)]).mockResolvedValue([]);
     await f.sweeper.sweep();
-    f.advance(FAILED_RETRY_MS + 1);
     await f.sweeper.sweep();
-    expect(f.store.candidates).toHaveBeenLastCalledWith(10, [], candidate(2).invoiceId);
+    expect(f.store.candidates).toHaveBeenLastCalledWith(NOW, 10, candidate(2).invoiceId);
     await f.sweeper.sweep();
-    expect(f.store.candidates).toHaveBeenLastCalledWith(10, [], candidate(2).invoiceId);
+    expect(f.store.candidates).toHaveBeenLastCalledWith(NOW, 10, candidate(2).invoiceId);
   });
 
   it('removes orphans an hour old and counts them', async () => {
