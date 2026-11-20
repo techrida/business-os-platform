@@ -505,8 +505,16 @@ export function workflow(cfg) {
           let openings = 0;
           const openPanel = async () => {
             for (;;) {
-              openings++;
-              await s.click(bell, openings === 1 ? 'the notification bell' : 'the bell again');
+              // Idempotent: the bell toggles the panel, so it is clicked only while the panel is closed.
+              if (
+                !(await panel
+                  .first()
+                  .isVisible()
+                  .catch(() => false))
+              ) {
+                openings++;
+                await s.click(bell, openings === 1 ? 'the notification bell' : 'the bell again');
+              }
               await s.see(panel, 'the notifications panel');
               const found = await Promise.race([
                 link
@@ -540,7 +548,7 @@ export function workflow(cfg) {
           );
           await s.pause(400);
           if (!(await link.isVisible().catch(() => false))) {
-            s.checks.push('note: the notifications panel closed before the click; reopening it');
+            s.checks.push('note: the notification was not visible before the click; looking again');
             await openPanel();
           }
           await s.click(link, 'the matching notification');
