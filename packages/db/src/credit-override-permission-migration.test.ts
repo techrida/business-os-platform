@@ -1,5 +1,5 @@
 // Integration test for migration 0104_credit_override_permission (F1-Q20, F1-Q26): `credit.override` at `all` for the
-// Management and Finance roles of a tenant that already holds role_permissions rows, as `seeded` rows written by
+// Founder, Management and Finance roles of a tenant that already holds role_permissions rows, as `seeded` rows written by
 // system:migration-0104, with the authz version bumped once; a tenant still on the code defaults gets no row (a row
 // there would strip every other role's defaults); a role that already holds the permission keeps its own row.
 // Needs Docker: a real postgres:16-alpine from Testcontainers. Run with:
@@ -138,9 +138,10 @@ afterAll(async () => {
 });
 
 describe('0104 credit.override', () => {
-  it('gives Management and Finance the permission at all, seeded, written by the migration', async () => {
+  it('gives Founder, Management and Finance the permission at all, seeded, written by the migration', async () => {
     expect(await grants(running)).toEqual([
       { role_key: 'finance', scope: 'all', seeded: true },
+      { role_key: 'founder', scope: 'all', seeded: true },
       { role_key: 'management', scope: 'all', seeded: true },
     ]);
     const { rows } = await pool.query<{ actor_id: string }>(
@@ -155,6 +156,7 @@ describe('0104 credit.override', () => {
   it("keeps a role's own row and adds only the missing role", async () => {
     expect(await grants(customised)).toEqual([
       { role_key: 'finance', scope: 'all', seeded: false },
+      { role_key: 'founder', scope: 'all', seeded: true },
       { role_key: 'management', scope: 'all', seeded: true },
     ]);
     expect(await version(customised)).toBe(versionsBefore.get(customised.tenantId)! + 1);
@@ -172,7 +174,7 @@ describe('0104 credit.override', () => {
   it('is not re-applied by the runner', async () => {
     const v = await version(running);
     await runMigrations(url, MIGRATIONS_FOLDER);
-    expect(await grants(running)).toHaveLength(2);
+    expect(await grants(running)).toHaveLength(3);
     expect(await version(running)).toBe(v);
   });
 });

@@ -1,11 +1,12 @@
--- 0104_credit_override_permission: the `credit.override` grant (F1-Q20, F1-Q26) for the Management and Finance roles,
--- at `all` (an on/off permission: it reaches every deal of the entity), as DEFAULT_ROLE_PERMISSIONS in
--- packages/contracts now holds it. Founder holds every permission by construction and needs no row.
+-- 0104_credit_override_permission: the `credit.override` grant (F1-Q20, F1-Q26) for the Founder, Management and
+-- Finance roles, at `all` (an on/off permission: it reaches every deal of the entity), as DEFAULT_ROLE_PERMISSIONS in
+-- packages/contracts now holds it (Founder holds every permission there). A tenant with rows reads Founder's grants
+-- from its rows too, so Founder needs its row like 0053 wrote one.
 --
 -- Only tenants that already hold role_permissions rows get them: a tenant with none still runs on the code defaults
 -- (which now hold the grant), and the grant loader leaves the defaults as soon as one row exists, so a row written
--- there would strip every other role (the 0083 and 0088 rule). Rows are `seeded`. A tenant whose management or
--- finance role already holds the permission keeps its row. The authz version moves only for a tenant that gained a
+-- there would strip every other role (the 0083 and 0088 rule). Rows are `seeded`. A role that already holds the
+-- permission keeps its row. The authz version moves only for a tenant that gained a
 -- row, so the API's grant cache reloads.
 --
 -- Runs as bos_owner, in the migrator's one transaction, split at the breakpoint comments (same rule as 0000).
@@ -38,7 +39,7 @@ BEGIN
 
     INSERT INTO app.role_permissions (tenant_id, role_key, permission, scope, seeded)
     SELECT target.tenant_id, roles.role_key, 'credit.override', 'all', true
-    FROM (VALUES ('management'), ('finance')) AS roles(role_key)
+    FROM (VALUES ('founder'), ('management'), ('finance')) AS roles(role_key)
     ON CONFLICT (tenant_id, role_key, permission) DO NOTHING;
     GET DIAGNOSTICS inserted_rows = ROW_COUNT;
 
