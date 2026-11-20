@@ -6,6 +6,7 @@
 import 'reflect-metadata';
 
 import { randomUUID } from 'node:crypto';
+import { readFileSync } from 'node:fs';
 
 import { AdminUserSchema, type Permission, type RoleKey } from '@bos/contracts';
 import {
@@ -967,6 +968,20 @@ describe('POST /v1/admin/users/:id/deactivate, /reactivate, /lock and /unlock (F
     });
   });
 
+  it('writes the admin lock here before it locks the person in ZITADEL, so a lost write never leaves a lock the app did not record (P2-1)', async () => {
+    addUser(STAFF);
+    let storedWhenZitadelLocked: unknown;
+    const lockUser = zitadel.lockUser.bind(zitadel);
+    vi.spyOn(zitadel, 'lockUser').mockImplementation((id: string) => {
+      storedWhenZitadelLocked = store.users.find((u) => u.id === STAFF)?.lockReason;
+      return lockUser(id);
+    });
+
+    expect(await act('lock', STAFF)).toBeNull();
+
+    expect(storedWhenZitadelLocked).toBe('admin');
+  });
+
   it.each(['admin', 'failed_sign_ins'] as const)(
     'unlocks a user under a %s lock before it ends, clearing the lock, audited',
     async (reason) => {
@@ -1763,6 +1778,56 @@ describe('SqlUsersStore against migration 0013 (ADR 0027: tenant-scoped users)',
       lockedUntil: null,
     });
     expect(await expiredHere(until)).toEqual([]);
+  }, 60_000);
+
+  it('migration 0126 turns stored timed locks into admin locks, audited as system:migration-0126 (P2-1)', async () => {
+    const f = await directoryFixture('M');
+    await withTx(db, f.scope, systemActor('test'), (tx) =>
+      sqlStore.updateUser(tx, f.inactive, {
+        email: 'inactive@example.test',
+        displayName: null,
+        status: 'inactive',
+        lock: {
+          reason: 'failed_sign_ins',
+          lockedAt: new Date('2026-11-20T10:00:00.000Z'),
+          until: new Date('2026-11-20T10:15:00.000Z'),
+        },
+      }),
+    );
+    const migration = readFileSync(
+      new URL(
+        '../../../../../packages/db/migrations/0126_user_locks_admin_default.sql',
+        import.meta.url,
+      ),
+      'utf8',
+    );
+    const owner = new Pool({ connectionString: urlFor('bos_owner', OWNER_PW, 'bos'), max: 1 });
+    try {
+      const client = await owner.connect();
+      try {
+        await client.query('BEGIN');
+        for (const statement of migration.split('--> statement-breakpoint')) {
+          await client.query(statement);
+        }
+        await client.query('COMMIT');
+      } finally {
+        client.release();
+      }
+
+      expect(await sqlStore.findById(db, f.scope, f.inactive)).toMatchObject({
+        status: 'inactive',
+        lockReason: 'admin',
+        lockedUntil: null,
+      });
+      const audited = await owner.query<{ reason: string }>(
+        `SELECT after->>'lock_reason' AS reason FROM audit.audit_events
+         WHERE entity_id = $1 AND actor_id = 'system:migration-0126'`,
+        [f.inactive],
+      );
+      expect(audited.rows).toEqual([{ reason: 'admin' }]);
+    } finally {
+      await owner.end();
+    }
   }, 60_000);
 
   it('places an invitee in a department at a level on the real membership row (F1-Q50)', async () => {

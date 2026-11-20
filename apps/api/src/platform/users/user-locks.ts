@@ -2,7 +2,8 @@
 // once its org lockout policy says so; ZITADEL itself never unlocks them again. This file gives the lock its two app
 // halves, the same for every deployment:
 //
-// - ensureLockoutPolicies pins ACCOUNT_LOCKOUT's attempt limits on every staff org. ZITADEL's default allows any number
+// - ensureLockoutPolicies pins ACCOUNT_LOCKOUT's attempt limits on every staff org and records, once, when the
+//   policy was first known to be in place (ops.sync_cursors `users.lockout-pinned:<org>`). ZITADEL's default allows any number
 //   of attempts (verified at v4.20.1: the instance policy sends no limits), so without this nobody is ever locked. It
 //   runs before each reconcile pass, so a ZITADEL that was not ready when the worker started is fixed on a later pass.
 //   A failure is logged as an error naming the org: the lockout is off until it succeeds.
@@ -21,6 +22,7 @@ import { Inject, Injectable, Logger } from '@nestjs/common';
 import { AuditService } from '../audit/audit.service';
 import { DB, type Db } from '../db/db.module';
 import { type TxScope, systemActor, withTx } from '../db/tx';
+import { lockoutPinnedCursor } from './users.constants';
 import { UsersStore } from './users.store';
 import { ZitadelAdminClient, ZitadelNotConfiguredError } from './zitadel-admin.client';
 
@@ -63,6 +65,12 @@ export class UserLocks {
     for (const org of await this.store.listStaffIdpOrgs()) {
       try {
         const result = await this.zitadel.ensureOrgLockoutPolicy(org.zitadelOrgId, want);
+        // From now on ZITADEL may lock people for failed sign-ins on this org. Kept from the first time: only a lock
+        // ZITADEL set after it can be a timed lock (UserMirror.lockChange); any earlier one came from the console.
+        const marker = lockoutPinnedCursor(org.zitadelOrgId);
+        if ((await this.store.getCursor(marker)) === null) {
+          await this.store.setCursor(marker, new Date().toISOString());
+        }
         if (result === 'unchanged') continue;
         const scope = await this.entityScope(org.tenantId);
         await withTx(this.db, scope, systemActor(LOCKOUT_POLICY_ACTOR), (tx) =>
