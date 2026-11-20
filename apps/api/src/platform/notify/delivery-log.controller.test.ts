@@ -39,16 +39,14 @@ describe('DeliveryLogController', () => {
     expect(fake.list).toHaveBeenLastCalledWith({ filter: 'all', limit: 10, before: ID });
   });
 
-  it.each([
-    { filter: 'sent' },
-    { limit: '0' },
-    { limit: '101' },
-    { before: 'not-a-uuid' },
-  ])('GET rejects %j with 400 and never reaches the service', (query) => {
-    const { fake, controller } = setup();
-    expect(() => controller.list(query)).toThrow(/Invalid query/);
-    expect(fake.list).not.toHaveBeenCalled();
-  });
+  it.each([{ filter: 'sent' }, { limit: '0' }, { limit: '101' }, { before: 'not-a-uuid' }])(
+    'GET rejects %j with 400 and never reaches the service',
+    (query) => {
+      const { fake, controller } = setup();
+      expect(() => controller.list(query)).toThrow(/Invalid query/);
+      expect(fake.list).not.toHaveBeenCalled();
+    },
+  );
 
   it('POST :id/resend answers 200 with the outcome', async () => {
     const { fake, controller } = setup();

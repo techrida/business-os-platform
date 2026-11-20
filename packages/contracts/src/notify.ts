@@ -22,7 +22,13 @@ export type UnreadCountDto = z.infer<typeof UnreadCountDtoSchema>;
  * server took it but it bounced back, or it was stopped because the address bounced before. Only those two
  * can be resent.
  */
-export const EMAIL_DELIVERY_STATES = ['queued', 'sending', 'delivered', 'failed', 'bounced'] as const;
+export const EMAIL_DELIVERY_STATES = [
+  'queued',
+  'sending',
+  'delivered',
+  'failed',
+  'bounced',
+] as const;
 export const EmailDeliveryStateSchema = z.enum(EMAIL_DELIVERY_STATES);
 export type EmailDeliveryState = z.infer<typeof EmailDeliveryStateSchema>;
 
