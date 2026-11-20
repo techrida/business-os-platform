@@ -2,6 +2,7 @@ import {
   DEFAULT_ROWS,
   PAYMENT_METHODS,
   PAYMENT_STATUSES,
+  type MoneyTotals,
   type PaymentListItem,
   type PaymentStatus,
   pageWindow,
@@ -30,6 +31,7 @@ import { failureOf } from '@/lib/api-kernel';
 import { requireStaffSession } from '@/lib/bff';
 import { getNumberSystems } from '@/lib/display-settings';
 import { money, when } from '@/lib/kernel-format';
+import { MoneyTotalRows } from '@/components/p3/money-total-rows';
 import {
   activeFilterLabels,
   clearFiltersHref,
@@ -120,6 +122,7 @@ export default async function PaymentsPage({
 
   let items: PaymentListItem[] | null = null;
   let total = 0;
+  let totals: MoneyTotals | null = null;
   let window = pageWindow(state.page, rows);
   let summary: PaymentsSummary | null = null;
   let problem: { message: string; status: number } | null = null;
@@ -134,6 +137,7 @@ export default async function PaymentsPage({
     window = pageWindow(state.page, rows, page.total);
     items = page.items;
     total = page.total;
+    totals = page.totals;
     // A page past the end (rows changed) shows the last page instead of nothing.
     if (items.length === 0 && total > 0) {
       items = (
@@ -250,6 +254,13 @@ export default async function PaymentsPage({
                 <PaymentRow numberSystems={numberSystems} key={item.id} item={item} />
               ))}
             </tbody>
+            <MoneyTotalRows
+              totals={totals}
+              column={3}
+              columns={8}
+              allPages={total > items.length}
+              format={(amount, currency) => money(amount, currency, numberSystems)}
+            />
           </Table>
           <ListPager
             pathname="/payments"

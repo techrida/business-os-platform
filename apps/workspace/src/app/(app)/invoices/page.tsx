@@ -6,6 +6,7 @@ import {
   type InvoiceKind,
   type InvoiceListItem,
   type InvoiceStatus,
+  type MoneyTotals,
   pageWindow,
   ROWS_OPTIONS,
   SETTLEMENT_STATUSES,
@@ -23,6 +24,7 @@ import { Icon } from '@/components/ui/icon';
 import { Page, PageHeader } from '@/components/ui/page';
 import { StatCard } from '@/components/ui/stat-card';
 import { Table, Td, Th } from '@/components/ui/table';
+import { MoneyTotalRows } from '@/components/p3/money-total-rows';
 import {
   getInvoicesSummary,
   type InvoicePageFilter,
@@ -209,6 +211,7 @@ export default async function InvoicesPage({ searchParams }: { searchParams: Pro
 
   let items: InvoiceListItem[] | null = null;
   let total = 0;
+  let totals: MoneyTotals | null = null;
   let window = pageWindow(state.page, rows);
   let summary: InvoicesSummary | null = null;
   let problem: { message: string; status: number } | null = null;
@@ -228,6 +231,7 @@ export default async function InvoicesPage({ searchParams }: { searchParams: Pro
     window = pageWindow(state.page, rows, page.total);
     items = page.items;
     total = page.total;
+    totals = page.totals;
     // A page past the end (rows changed, or rows deleted) shows the last page instead of nothing.
     if (items.length === 0 && total > 0) {
       items = (
@@ -334,6 +338,13 @@ export default async function InvoicesPage({ searchParams }: { searchParams: Pro
                 <InvoiceRow numberSystems={numberSystems} key={item.id} item={item} can={can} />
               ))}
             </tbody>
+            <MoneyTotalRows
+              totals={totals}
+              column={5}
+              columns={8}
+              allPages={total > items.length}
+              format={(amount, currency) => money(amount, currency, numberSystems)}
+            />
           </Table>
           <ListPager
             pathname="/invoices"

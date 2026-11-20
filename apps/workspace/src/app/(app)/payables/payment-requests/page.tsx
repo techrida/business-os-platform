@@ -1,5 +1,6 @@
 import {
   DEFAULT_ROWS,
+  type MoneyTotals,
   PAYMENT_REQUEST_STATUSES,
   PaymentRequestStatusSchema,
   ROWS_OPTIONS,
@@ -18,8 +19,8 @@ import { Page, PageHeader } from '@/components/ui/page';
 import { StatCard } from '@/components/ui/stat-card';
 import { Table, Td, Th } from '@/components/ui/table';
 import layout from '@/components/p3/list.module.css';
+import { MoneyTotalRows } from '@/components/p3/money-total-rows';
 import { listPaymentRequestsPage, type PaymentRequestListItem } from '@/lib/api-payables';
-import { getVendor } from '@/lib/api-vendors';
 import { requireStaffSession } from '@/lib/bff';
 import { getNumberSystems } from '@/lib/display-settings';
 import { getGrants, hasGrant } from '@/lib/grants';
@@ -83,6 +84,7 @@ export default async function PaymentRequestsPage({
   );
   let rows: PaymentRequestListItem[];
   let total = 0;
+  let totals: MoneyTotals | null = null;
   let window = pageWindow(list.page, list.rows);
   try {
     const fetchPage = () =>
@@ -103,6 +105,7 @@ export default async function PaymentRequestsPage({
     }
     rows = result.items;
     total = result.total;
+    totals = result.totals;
   } catch (err) {
     const f = paymentRequestFailure(err);
     return (
@@ -127,15 +130,6 @@ export default async function PaymentRequestsPage({
       },
     },
   );
-  // The list row carries the vendor's id only: each vendor on the page is read once, under the person's own
-  // vendor read. A vendor that does not load (no vendor read, or an error) shows as plain text, never a dead link.
-  const vendorIds = [...new Set(rows.map((row) => row.vendorPartyId))];
-  const vendorReads = await Promise.allSettled(vendorIds.map((id) => getVendor(session, id)));
-  const vendorNames = new Map<string, string>();
-  vendorReads.forEach((read, i) => {
-    const id = vendorIds[i];
-    if (read.status === 'fulfilled' && id !== undefined) vendorNames.set(id, read.value.legalName);
-  });
   const cards = await counts;
   return (
     <Page>
@@ -202,7 +196,6 @@ export default async function PaymentRequestsPage({
               <tbody>
                 {rows.map((row) => {
                   const href = `/payables/payment-requests/${encodeURIComponent(row.id)}`;
-                  const vendorName = vendorNames.get(row.vendorPartyId);
                   const amount = poMoney(row.totalAmount, row.currency, numberSystems);
                   // Drafts share a name, so the action is named by the amount and the account too.
                   const name = `${row.number ?? 'draft request'} for ${amount} to the account ending ${row.bankLast4}`;
@@ -215,15 +208,16 @@ export default async function PaymentRequestsPage({
                         </Link>
                       </Td>
                       <Td>
-                        {vendorName !== undefined ? (
+                        {/* The row names its vendor; the link shows only when the vendor page would open. */}
+                        {row.can.readVendor ? (
                           <Link
                             href={`/vendors/${encodeURIComponent(row.vendorPartyId)}`}
                             className={styles.long}
                           >
-                            {vendorName}
+                            {row.vendorName}
                           </Link>
                         ) : (
-                          <span className={styles.quiet}>Vendor name unavailable</span>
+                          <span className={styles.long}>{row.vendorName}</span>
                         )}
                       </Td>
                       <Td nowrap>Ending {row.bankLast4}</Td>
@@ -242,6 +236,13 @@ export default async function PaymentRequestsPage({
                   );
                 })}
               </tbody>
+              <MoneyTotalRows
+                totals={totals}
+                column={3}
+                columns={6}
+                allPages={total > rows.length}
+                format={(amount, currency) => poMoney(amount, currency, numberSystems)}
+              />
             </Table>
             <ListPager
               pathname={PATH}
