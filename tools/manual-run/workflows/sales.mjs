@@ -591,10 +591,29 @@ export function workflow(cfg) {
         async run(s) {
           await as(s, 'Dev Sales');
           // Retry-safe: an earlier attempt that converted the lead recorded the opportunity.
+          // Round 3: Convert stays on the lead, now Converted, which links to its opportunity.
+          const openOpportunity = s.page.getByRole('link', {
+            name: 'Open the opportunity',
+            exact: true,
+          });
+          const toOpportunity = async () => {
+            await s.click(openOpportunity, 'Open the opportunity');
+            await s.page.waitForURL(/\/opportunities\/[0-9a-f-]{36}/, { timeout: cfg.navTimeout });
+            s.record('opportunityUrl', s.page.url().split('?')[0].replace(cfg.appUrl, ''));
+          };
           if (!s.state.opportunityUrl) {
             await openUrl(s, 'leadUrl', (p) =>
-              p.getByRole('button', { name: 'Convert to opportunity' }),
+              p
+                .getByRole('button', { name: 'Convert to opportunity' })
+                .or(p.getByRole('link', { name: 'Open the opportunity', exact: true })),
             );
+          }
+          if (!s.state.opportunityUrl && (await visible(openOpportunity))) {
+            // An earlier attempt converted this run's lead before recording the opportunity.
+            s.checks.push('note: the lead was converted by an earlier attempt of this run');
+            await toOpportunity();
+          }
+          if (!s.state.opportunityUrl) {
             await s.click(s.button('Convert to opportunity'), 'Convert to opportunity');
             const d = s.page.getByRole('dialog', { name: 'Convert lead to opportunity' });
             await s.see(d, 'the Convert dialog');
@@ -615,8 +634,28 @@ export function workflow(cfg) {
             await fill('Opportunity name', v.leadTitle);
             await s.pause();
             await d.getByRole('button', { name: 'Convert', exact: true }).click();
-            await s.page.waitForURL(/\/opportunities\/[0-9a-f-]{36}/, { timeout: cfg.navTimeout });
-            s.record('opportunityUrl', s.page.url().split('?')[0].replace(cfg.appUrl, ''));
+            // Older builds redirect to the opportunity; round 3 shows the Converted lead instead.
+            const outcome = await Promise.race([
+              s.page
+                .waitForURL(/\/opportunities\/[0-9a-f-]{36}/, { timeout: cfg.navTimeout })
+                .then(() => 'opportunity')
+                .catch(() => 'timeout'),
+              openOpportunity
+                .first()
+                .waitFor({ state: 'visible', timeout: cfg.navTimeout })
+                .then(() => 'lead')
+                .catch(() => 'timeout'),
+            ]);
+            if (outcome === 'timeout')
+              throw new StepFailure(
+                'Convert neither opened the opportunity nor showed the converted lead',
+              );
+            if (outcome === 'opportunity')
+              s.record('opportunityUrl', s.page.url().split('?')[0].replace(cfg.appUrl, ''));
+            else {
+              await s.see(status(s, 'Converted'), 'lead stage Converted after Convert');
+              await toOpportunity();
+            }
             await s.see(h1(s.page, L), 'the linked opportunity');
             await s.see(status(s, 'Qualified'), 'opportunity stage Qualified');
             const text = await main(s);
