@@ -127,6 +127,8 @@ function setup(
     logo?: DocumentLogoResolver;
     /** The attempts markFailed reports after counting the failure; default 1 (tries left). */
     attemptsAfterFailure?: number;
+    /** Claims left by a worker that died, as the store finds them; default none. */
+    abandoned?: RenderCandidate[];
   } = {},
 ) {
   const calls: string[] = [];
@@ -137,6 +139,17 @@ function setup(
     candidates: vi.fn((now: Date, limit: number) => {
       calls.push(`candidates(${now.toISOString()},${limit})`);
       return Promise.resolve(opts.candidates ?? []);
+    }),
+    abandoned: vi.fn((staleBefore: Date, limit: number) => {
+      calls.push(`abandoned(${staleBefore.toISOString()},${limit})`);
+      return Promise.resolve(opts.abandoned ?? []);
+    }),
+    markAbandoned: vi.fn((_tx: DbTransaction, c: RenderCandidate) => {
+      calls.push(`abandoned:${c.versionId}`);
+      return Promise.resolve({
+        attempts: opts.attemptsAfterFailure ?? 1,
+        quotationId: `quotation-of-${c.versionId}`,
+      });
     }),
     claim: vi.fn((_tx: DbTransaction, c: RenderCandidate) => {
       calls.push(`claim:${c.versionId}`);
@@ -265,7 +278,9 @@ describe('QuotationRenderSweeper', () => {
       orphansRemoved: 0,
       failures: [],
     });
-    expect(calls.filter((x) => !x.startsWith('candidates'))).toEqual([
+    expect(
+      calls.filter((x) => !x.startsWith('candidates') && !x.startsWith('abandoned(')),
+    ).toEqual([
       `claim:${c.versionId}`,
       `load:${c.versionId}`,
       `style:${c.versionId}`,
@@ -711,7 +726,7 @@ describe('failureKind', () => {
 });
 
 describe('the stale and orphan windows', () => {
-  it('re-takes an abandoned claim after 10 minutes and removes an orphan after an hour', () => {
+  it('counts an abandoned claim as failed after 10 minutes and removes an orphan after an hour', () => {
     // The retry of a failure follows render-retry.ts (render-retry.test.ts).
     expect(PENDING_STALE_MS).toBe(10 * 60_000);
     expect(ORPHAN_AFTER_MS).toBe(60 * 60_000);
