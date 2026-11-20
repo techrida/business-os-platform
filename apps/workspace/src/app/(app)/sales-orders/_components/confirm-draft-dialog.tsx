@@ -4,6 +4,7 @@ import { TransactionFormDialog } from '@/components/p3/transaction-form-dialog';
 
 import { confirmOrderAction } from '../_lib/actions';
 import type { ActionState } from '../_lib/state';
+import { CreditHoldHelp } from './credit-hold-help';
 
 export interface ConfirmDraftDialogProps {
   /** The accepted quotation version the draft was made from. */
@@ -16,6 +17,8 @@ export interface ConfirmDraftDialogProps {
 /**
  * Confirm a draft sales order (F1-Q25): the same `POST /v1/sales-orders` as confirming from the list,
  * which promotes this draft. The draft already carries the quotation's evidence, so nothing is asked here.
+ * A credit hold refusal (F1-Q20) offers the same help as confirming from the list: Override for a
+ * `credit.override` holder, a link for someone who can open the deal.
  */
 export function ConfirmDraftDialog({
   quotationVersionId,
@@ -34,7 +37,12 @@ export function ConfirmDraftDialog({
       action={confirmOrderAction}
       reloadHref={reloadHref}
     >
-      {() => <input type="hidden" name="quotationVersionId" value={quotationVersionId} />}
+      {(state) => (
+        <>
+          {state.creditHold ? <CreditHoldHelp hold={state.creditHold} /> : null}
+          <input type="hidden" name="quotationVersionId" value={quotationVersionId} />
+        </>
+      )}
     </TransactionFormDialog>
   );
 }
