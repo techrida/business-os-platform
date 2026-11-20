@@ -24,6 +24,14 @@ const TAX_CODE_READERS: readonly Permission[] = [
   'quotation.read',
   'procurement.sourcing',
   'payables.bill.enter',
+  // Settings > Tax lists the codes to the people who may change tax settings (F1-Q48).
+  'settings.finance.write',
+];
+
+/** Any one of these lets a caller read the withholding (TDS) codes: bill entry, and the Tax settings page. */
+const WITHHOLDING_CODE_READERS: readonly Permission[] = [
+  'payables.bill.enter',
+  'settings.finance.write',
 ];
 
 @Injectable()
@@ -49,7 +57,7 @@ export class ReferenceService {
     if (caller.orgKind !== 'staff') {
       throw new ForbiddenException({ code: 'forbidden', message: 'Forbidden' });
     }
-    this.authz.assert('payables.bill.enter');
+    this.assertAnyOf(WITHHOLDING_CODE_READERS);
     const day = kathmanduDay(new Date());
     return this.db
       .select({

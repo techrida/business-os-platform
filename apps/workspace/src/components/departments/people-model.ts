@@ -332,7 +332,7 @@ export function recordNotices(state: PeopleState): string[] {
           `Reassign them if ${person.leaving.to.name} should have them.`,
       );
     } else if (person.leaving?.kind === 'remove') {
-      notices.push(`Records ${person.name} owns stay with them and stay under ${here}.`);
+      notices.push(`Records ${person.name} owns stay under ${here}.`);
     }
   }
   return notices;
