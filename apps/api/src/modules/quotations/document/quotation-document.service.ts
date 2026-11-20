@@ -32,7 +32,7 @@ import { withTx } from '../../../platform/db/tx';
 import { DocumentsService } from '../../../platform/documents/documents.service';
 import { DraftingCaller } from '../drafting/drafting.caller';
 import { QUOTATION_OWNER_TYPE } from '../quotation-owner.policy';
-import { MAX_RENDER_ATTEMPTS } from '../render/render-retry';
+import { MAX_RENDER_ATTEMPTS, quotationRenderGivenUp } from '../render/render-retry';
 
 /** What the link needs of a version: the entity it lives in and its rendered document, null when none. */
 export interface QuotationDocumentHead {
@@ -180,7 +180,7 @@ export class QuotationDocumentService {
       this.store.head(tx, principal, quotationId, versionId),
     );
     if (head === undefined) throw versionNotFound();
-    if (renderGivenUp(head)) throw renderFailed();
+    if (quotationRenderGivenUp(head)) throw renderFailed();
     const documentId = head.renderedDocumentId;
     if (head.renderState !== 'rendered' || documentId === null) {
       throw notReady();
@@ -220,7 +220,7 @@ export class QuotationDocumentService {
       // A retry writes: the quotation must be inside the caller's quotation.send scope, not only quotation.read.
       const head = await this.store.head(tx, principal, quotationId, versionId, 'quotation.send');
       if (head === undefined) throw versionNotFound();
-      if (!renderGivenUp(head) || head.status !== 'approved') throw retryNotNeeded();
+      if (!quotationRenderGivenUp(head) || head.status !== 'approved') throw retryNotNeeded();
       if (!(await this.store.requeueFailed(tx, head, versionId, new Date()))) {
         throw retryNotNeeded();
       }
@@ -234,11 +234,6 @@ export class QuotationDocumentService {
     });
     return { state: 'queued' };
   }
-}
-
-/** The render failed on its last try: the sweeper will not take it again until a Retry. */
-function renderGivenUp(head: Pick<QuotationDocumentHead, 'renderState' | 'renderAttempts'>) {
-  return head.renderState === 'failed' && head.renderAttempts >= MAX_RENDER_ATTEMPTS;
 }
 
 function assertStaff(principal: Principal): void {

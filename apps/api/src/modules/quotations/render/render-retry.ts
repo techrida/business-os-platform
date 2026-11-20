@@ -8,6 +8,8 @@
 // Giving up writes one admin (audit) entry for the document, in the same transaction as the state change, so two
 // workers that race on the last failure write it once. Retry (staff) starts a fresh set of tries.
 
+import { PDF_PREPARE_WITHIN_MS } from '@bos/contracts';
+
 /** Tries in all, the first render included, before the render is given up. */
 export const MAX_RENDER_ATTEMPTS = 4;
 /** The pause after the first failure; it doubles after each further failure, up to RETRY_PAUSE_MAX_MS. */
@@ -15,9 +17,12 @@ export const RETRY_PAUSE_BASE_MS = 60_000;
 export const RETRY_PAUSE_MAX_MS = 30 * 60_000;
 /**
  * An upper bound on how long after the first try a render is given up: every pause, plus one sweep tick and one render
- * deadline per try. Tests check the screens poll at least this long.
+ * deadline per try. It is the contracts' PDF_PREPARE_WITHIN_MS, how long the screens poll a PDF that is being
+ * prepared; render-retry.test.ts checks this policy fits in it. A backlog of more than one batch, or a quotation claim
+ * left by a worker that died (taken again after 10 minutes, not counted as a try), can take longer: the screens then
+ * offer "Check again".
  */
-export const RENDER_GIVE_UP_WITHIN_MS = 15 * 60_000;
+export const RENDER_GIVE_UP_WITHIN_MS = PDF_PREPARE_WITHIN_MS;
 
 /**
  * The pause before the next try, after `failures` failed tries in a row (1 or more). Null once the tries are used up:
@@ -28,6 +33,17 @@ export function nextRetryPauseMs(failures: number): number | null {
     throw new RangeError(`not a failure count: ${failures}`);
   if (failures >= MAX_RENDER_ATTEMPTS) return null;
   return Math.min(RETRY_PAUSE_BASE_MS * 2 ** (failures - 1), RETRY_PAUSE_MAX_MS);
+}
+
+/**
+ * A quotation version's render was given up: `failed` on its last try. The sweeper does not take it again until a
+ * Retry. Quotation versions keep their tries on the row (render_attempts, 0115).
+ */
+export function quotationRenderGivenUp(v: {
+  renderState: string;
+  renderAttempts: number;
+}): boolean {
+  return v.renderState === 'failed' && v.renderAttempts >= MAX_RENDER_ATTEMPTS;
 }
 
 /** The audit action the sweepers write when a document's render is given up, by document kind. */

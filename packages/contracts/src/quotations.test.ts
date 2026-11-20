@@ -419,6 +419,7 @@ describe('QuotationVersionDtoSchema', () => {
     renderedDocumentId: null,
     renderedSha256: null,
     renderedScanStatus: null,
+    renderFailed: false,
     supersedesVersionId: null,
     supersededByVersionId: id(),
     revisionReason: 'Customer changed scope',
@@ -561,6 +562,7 @@ describe('QuotationVersionDtoSchema.renderedScanStatus', () => {
     renderedDocumentId: id(),
     renderedSha256: null,
     renderedScanStatus: 'clean',
+    renderFailed: false,
     supersedesVersionId: null,
     supersededByVersionId: null,
     revisionReason: null,
@@ -595,6 +597,17 @@ describe('QuotationVersionDtoSchema.renderedScanStatus', () => {
 
   it('is required: a producer that omits it fails, so the default is deny', () => {
     const { renderedScanStatus: _omitted, ...without } = base();
+    expect(QuotationVersionDtoSchema.safeParse(without).success).toBe(false);
+  });
+
+  it('carries renderFailed (R4c2), a required boolean: a producer that omits it fails the parse', () => {
+    expect(QuotationVersionDtoSchema.safeParse({ ...base(), renderFailed: true }).success).toBe(
+      true,
+    );
+    expect(QuotationVersionDtoSchema.safeParse({ ...base(), renderFailed: 'yes' }).success).toBe(
+      false,
+    );
+    const { renderFailed: _omitted, ...without } = base();
     expect(QuotationVersionDtoSchema.safeParse(without).success).toBe(false);
   });
 });
