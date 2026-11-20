@@ -924,4 +924,34 @@ describe('a render that keeps failing (R4c2: TR-Q4, F1-Q13)', () => {
       'clean',
     ]);
   });
+
+  it('removes the document whose bytes failed the PDF type check, so the render is tried again', async () => {
+    const scope = await newScope();
+    const inv = await seedInvoice(scope);
+    let clock = new Date();
+    // The renderer answered, but not with a PDF: the real receive rejects the bytes with a 415.
+    const notAPdf = new InvoiceRenderSweeper(
+      store,
+      runTx,
+      documents,
+      settings,
+      { htmlToPdf: vi.fn().mockResolvedValue(Buffer.from('<html>gateway error</html>')) },
+      () => clock,
+      NO_LOGOS,
+      renderAudit,
+    );
+    expect(await notAPdf.renderOne(inv)).toBe('failed');
+    const [doc] = await documentRows(inv.invoiceId);
+    expect(doc?.status).toBe('rejected');
+    expect(doc?.removed_at).not.toBeNull();
+    const row = await failureRow(inv.invoiceId);
+    expect(row).toMatchObject({ attempts: 1, last_failure_kind: 'http_415' });
+    clock = new Date((row?.next_attempt_at ?? new Date()).getTime() + 1);
+    expect(ids(await store.candidates(clock, 1_000))).toContain(inv.invoiceId);
+    expect(await sweeper.renderOne(inv)).toBe('rendered');
+    expect((await documentRows(inv.invoiceId)).map((d) => d.status)).toEqual([
+      'rejected',
+      'clean',
+    ]);
+  });
 });
