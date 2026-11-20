@@ -503,7 +503,13 @@ describe('recently received orders (U18-Q3)', () => {
     expect(ids).toEqual(expect.arrayContaining([closed.id, shortClosed.id, done.id]));
     expect(ids.indexOf(done.id)).toBeLessThan(ids.indexOf(closed.id));
     expect(await received(1)).toHaveLength(1);
-    for (const status of ['draft', 'issued', 'partially_received', 'amendment_pending', 'cancelled']) {
+    for (const status of [
+      'draft',
+      'issued',
+      'partially_received',
+      'amendment_pending',
+      'cancelled',
+    ]) {
       const po = await newPo({ status });
       expect((await received()).map((r) => r.id)).not.toContain(po.id);
     }
