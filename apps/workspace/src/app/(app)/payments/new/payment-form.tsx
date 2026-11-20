@@ -1,6 +1,6 @@
 'use client';
 
-import { type Currency, PAYMENT_METHODS, type PaymentMethod } from '@bos/contracts';
+import { CURRENCIES, type Currency, PAYMENT_METHODS, type PaymentMethod } from '@bos/contracts';
 import { type ReactNode, useActionState, useEffect, useId, useRef, useState } from 'react';
 
 import { Alert } from '@/components/ui/alert';
@@ -11,7 +11,7 @@ import { Icon } from '@/components/ui/icon';
 import { PageHeader } from '@/components/ui/page';
 import { toast } from '@/components/ui/toast';
 import { Panel } from '@/components/ui/panel';
-import { CURRENCY_NAME, currencyChoices } from '@/lib/enabled-currencies';
+import { CURRENCY_NAME, normalizeEnabled } from '@/lib/enabled-currencies';
 
 import { methodLabel } from '../_lib/status';
 
@@ -31,14 +31,30 @@ export interface CustomerOption {
 
 /**
  * The currency the form starts on for a customer: their usual one while it is enabled in Settings,
- * else NPR, which is always enabled. A switched-off currency is never preselected: the API would
- * refuse it, and its option is disabled, so the person could not pick it back after moving off it.
+ * else blank when that usual one is switched off (the person chooses; no silent move to NPR), else
+ * NPR for a customer with no usual currency.
  */
 export function startCurrency(
   defaultCurrency: Currency | null | undefined,
   enabled: readonly Currency[],
-): Currency {
-  return defaultCurrency && enabled.includes(defaultCurrency) ? defaultCurrency : 'NPR';
+): Currency | '' {
+  if (!defaultCurrency) return 'NPR';
+  return enabled.includes(defaultCurrency) ? defaultCurrency : '';
+}
+
+/**
+ * Every currency, each choosable: a payment is money that has already arrived, so it is accepted in
+ * a currency switched off in Settings (D56 U16-Q1). A switched-off one says so in its label.
+ */
+export function paymentCurrencyChoices(
+  enabled: readonly Currency[],
+): { value: Currency; label: string; on: boolean }[] {
+  const on = new Set<Currency>(normalizeEnabled(enabled));
+  return CURRENCIES.map((c) => ({
+    value: c,
+    label: on.has(c) ? CURRENCY_NAME[c] : `${CURRENCY_NAME[c]}, switched off`,
+    on: on.has(c),
+  }));
 }
 
 interface Proof {
@@ -128,7 +144,7 @@ export function PaymentForm({
   function chooseCustomer(id: string) {
     setCustomerId(id);
     const fallback = customers.find((c) => c.id === id)?.defaultCurrency;
-    if (!currencyChosen && fallback) setCurrency(startCurrency(fallback, enabledCurrencies));
+    if (!currencyChosen) setCurrency(startCurrency(fallback, enabledCurrencies));
   }
 
   async function addFiles(files: FileList | null) {
@@ -179,13 +195,16 @@ export function PaymentForm({
     if (pickerRef.current) pickerRef.current.value = '';
   }
 
-  // The chosen customer's usual currency stays in the list when it is switched off, but disabled.
+  // A switched-off currency is named on the field, never replaced: the chosen one, else the usual one.
+  const currencyOptions = paymentCurrencyChoices(enabledCurrencies);
+  const chosenOff = currencyOptions.find((c) => c.value === currency && !c.on);
   const usualCurrency = customers.find((c) => c.id === customerId)?.defaultCurrency ?? null;
-  const usualOffHint =
-    usualCurrency !== null && !enabledCurrencies.includes(usualCurrency)
-      ? `This customer usually pays in ${CURRENCY_NAME[usualCurrency]}, which is switched off in Settings.`
-      : undefined;
-  const currencyOptions = currencyChoices(enabledCurrencies, usualCurrency);
+  const currencyHint =
+    chosenOff !== undefined
+      ? `${CURRENCY_NAME[chosenOff.value]} is switched off in Settings. Payments in it are still recorded.`
+      : usualCurrency !== null && !normalizeEnabled(enabledCurrencies).includes(usualCurrency)
+        ? `This customer usually pays in ${CURRENCY_NAME[usualCurrency]}, which is switched off in Settings. Payments in it are still recorded.`
+        : undefined;
 
   const busy = pending || uploading > 0;
   const customerLocked = proofs.length > 0 || uploading > 0;
@@ -261,7 +280,7 @@ export function PaymentForm({
             </Field>
 
             <div className={styles.grid}>
-              <Field label="Currency" hint={usualOffHint} error={fe.currency}>
+              <Field label="Currency" hint={currencyHint} error={fe.currency}>
                 {(control) => (
                   <Select
                     name="currency"
@@ -273,8 +292,9 @@ export function PaymentForm({
                     }}
                     {...control}
                   >
+                    <option value="">Choose a currency</option>
                     {currencyOptions.map((c) => (
-                      <option key={c.value} value={c.value} disabled={!c.enabled}>
+                      <option key={c.value} value={c.value}>
                         {c.label}
                       </option>
                     ))}
