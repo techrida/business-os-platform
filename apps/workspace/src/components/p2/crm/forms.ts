@@ -104,27 +104,49 @@ const STAGE_MESSAGES: Record<string, string> = {
   lostReasonId: 'Choose a reason from the list, or add a new one.',
   newLostReason: 'Keep a new reason to 60 characters or fewer.',
   note: 'Add a note for the record, up to 2,000 characters.',
+  contactKind: 'Choose call or email.',
+  contactSubject: 'Say what the contact was about, up to 200 characters.',
+  contactBody: 'Add a note about the call or email, up to 10,000 characters.',
+  contactActivity: 'A contact note is only logged when moving to Contacted.',
   expectedVersion: RELOAD,
 };
+
+/** Maps `['contactActivity', 'kind' | 'subject' | 'body']` to the form's flat field names. */
+function stageKey(path: PropertyKey[]): string {
+  if (path[0] !== 'contactActivity') return lastKey(path);
+  const key = String(path[1] ?? '');
+  if (key === '') return 'contactActivity';
+  return `contact${key.charAt(0).toUpperCase()}${key.slice(1)}`;
+}
+
+function contactActivity(form: FormData): Record<string, unknown> | undefined {
+  const kind = field(form, 'contactKind');
+  const subject = field(form, 'contactSubject');
+  const body = field(form, 'contactBody');
+  if (kind === undefined && subject === undefined && body === undefined) return undefined;
+  return defined({ kind, subject, body });
+}
 
 /** The stage field is checked against the user-reachable stages in the contract, so `won`, `quotation_sent` and `converted` are refused here too. */
 export function parseStageMove(
   kind: RecordKind,
   form: FormData,
 ): Parsed<LeadStageChangeBody | OpportunityStageChangeBody> {
+  const stage = field(form, 'stage');
   const input = defined({
-    stage: field(form, 'stage'),
+    stage,
     reason: field(form, 'reason'),
     // A lead or opportunity moved to Lost carries an option of the tenant's list, or a new one to add (D49, D54-3).
     lostReasonId: field(form, 'lostReasonId'),
     newLostReason: field(form, 'newLostReason'),
     note: field(form, 'note'),
+    ...(kind === 'lead' && stage === 'contacted' ? { contactActivity: contactActivity(form) } : {}),
     expectedVersion: numberField(form, 'expectedVersion') ?? Number.NaN,
   });
   const schema = kind === 'lead' ? LeadStageChangeBodySchema : OpportunityStageChangeBodySchema;
   const r = schema.safeParse(input);
   if (r.success) return { ok: true, data: r.data };
-  return { ok: false, fieldErrors: collect(r.error.issues, lastKey, STAGE_MESSAGES, RELOAD) };
+  return { ok: false, fieldErrors: collect(r.error.issues, stageKey, STAGE_MESSAGES, RELOAD) };
 }
 
 // ---------------------------------------------------------------------------------------------

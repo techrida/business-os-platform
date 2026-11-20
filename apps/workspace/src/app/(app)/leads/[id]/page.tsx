@@ -9,11 +9,13 @@ import { ConvertDialog } from '@/components/p2/crm/convert-dialog';
 import { getLead, listActivities } from '@/components/p2/crm/crm-api';
 import { FollowUpsCard } from '@/components/p2/crm/follow-ups-card';
 import { moneyOrNull, sentence } from '@/components/p2/crm/format';
+import { MarkContactedDialog } from '@/components/p2/crm/mark-contacted-dialog';
 import { MarkLostDialog } from '@/components/p2/crm/mark-lost-dialog';
-import { MoveForm } from '@/components/p2/crm/move-form';
 import { loadPeople } from '@/components/p2/crm/people';
+import { PutOnHoldDialog } from '@/components/p2/crm/put-on-hold-dialog';
 import { ActivityList, LoadProblem, StageBadge } from '@/components/p2/crm/server-bits';
-import { stageLabel, userMoves } from '@/components/p2/crm/stages';
+import { StageConfirmDialog } from '@/components/p2/crm/stage-confirm-dialog';
+import { resolvedMoves, stageLabel } from '@/components/p2/crm/stages';
 import { Alert } from '@/components/ui/alert';
 import { Button, LinkButton } from '@/components/ui/button';
 import { Card } from '@/components/ui/card';
@@ -134,15 +136,40 @@ function leadTimeline(lead: LeadDto, activity: readonly ActivityDto[]): Timeline
     };
   });
 
-  if (current === -1) {
+  if (lead.stage === 'on_hold' || lead.stage === 'lost') {
+    const change = activity.find(
+      (item) => item.kind === 'stage_change' && item.subject.endsWith(` to ${lead.stage}`),
+    );
     steps.push({
       key: lead.stage,
       title: stageLabel('lead', lead.stage),
-      status: 'Current',
+      status: change?.occurredAt ? when(change.occurredAt, 'date') : 'Current',
       tone: lead.stage === 'lost' ? 'error' : 'warning',
     });
   }
   return steps;
+}
+
+function leadStageMessage(stage: LeadDto['stage'], canEdit: boolean, canReopen: boolean): string {
+  if (!canEdit) return 'You have read-only access to this lead.';
+  if (stage === 'new') {
+    return 'Log a call or email with Mark contacted to move this lead to Contacted.';
+  }
+  if (stage === 'contacted') {
+    return 'Use the header actions to qualify this lead, put it on hold, or mark it lost.';
+  }
+  if (stage === 'qualified') {
+    return 'Qualifying is complete. Convert this lead to an opportunity, put it on hold, or mark it lost.';
+  }
+  if (stage === 'on_hold') {
+    return 'This lead is on hold. Use Resume in the header to move it back to Contacted.';
+  }
+  if (stage === 'lost') {
+    return canReopen
+      ? 'This lead is lost. Use Reopen in the header to return it to Contacted.'
+      : 'Only a manager can reopen a lost lead.';
+  }
+  return 'This lead is converted. Its stage is final.';
 }
 
 export default async function LeadPage({ params }: { params: Promise<{ id: string }> }) {
@@ -174,7 +201,8 @@ export default async function LeadPage({ params }: { params: Promise<{ id: strin
     );
   }
   const lead = leadResult.value;
-  const moves = userMoves('lead', lead.stage);
+  const moves = resolvedMoves('lead', lead.stage, lead.allowedMoves);
+  const canEdit = lead.canEdit ?? true;
   const planned = plannedResult.status === 'fulfilled' ? plannedResult.value : null;
   const plannedProblem =
     plannedResult.status === 'rejected' ? failureOf(plannedResult.reason).message : null;
@@ -187,10 +215,19 @@ export default async function LeadPage({ params }: { params: Promise<{ id: strin
   // Overdue is measured against the server's clock for this render.
   const now = new Date();
 
-  const canQualify = moves.some((move) => move.stage === 'qualified');
-  const canMarkLost = moves.some((move) => move.stage === 'lost');
+  const hasMove = (stage: string) => moves.some((move) => move.stage === stage);
+  const canMarkContacted = lead.stage === 'new' && hasMove('contacted');
+  const canQualify = lead.stage === 'contacted' && hasMove('qualified');
+  const canResume = lead.stage === 'on_hold' && hasMove('contacted');
+  const canReopen = lead.stage === 'lost' && hasMove('contacted');
+  const canPutOnHold = hasMove('on_hold');
+  const canMarkLost = hasMove('lost');
+  const hasHeaderActions =
+    canMarkContacted || canQualify || canResume || canReopen || canPutOnHold || canMarkLost;
   // The options Mark lost offers (D49). Only asked for when the action is shown; a failure leaves the dialog able to add one.
   const lostReasons = canMarkLost ? await listLeadLostReasonChoices(session).catch(() => []) : [];
+  const reasonLabel = lead.lostReason?.label ?? lead.stageReason;
+  const hasReasonDetail = Boolean(reasonLabel || lead.stageNote);
 
   return (
     <Page className={styles.detail}>
@@ -205,11 +242,63 @@ export default async function LeadPage({ params }: { params: Promise<{ id: strin
           </span>
         }
         actions={
-          // No wrapper at all for a lost or converted lead, so the header keeps no empty slot.
-          canQualify || canMarkLost ? (
+          // No wrapper at all when no moves are allowed, so the header keeps no empty slot.
+          hasHeaderActions ? (
             <>
+              {canMarkContacted ? (
+                <MarkContactedDialog
+                  action={moveLeadStageAction}
+                  id={lead.id}
+                  number={lead.number}
+                  version={lead.version}
+                />
+              ) : null}
               {canQualify ? (
-                <QualifyLead id={lead.id} number={lead.number} version={lead.version} />
+                <QualifyLead
+                  id={lead.id}
+                  number={lead.number}
+                  version={lead.version}
+                  variant="primary"
+                />
+              ) : null}
+              {canResume ? (
+                <StageConfirmDialog
+                  action={moveLeadStageAction}
+                  id={lead.id}
+                  version={lead.version}
+                  stage="contacted"
+                  triggerLabel="Resume"
+                  triggerVariant="primary"
+                  title="Resume this lead?"
+                  description={`${lead.number} will move from On Hold back to Contacted.`}
+                  confirmLabel="Resume lead"
+                  successMessage="Moved to Contacted."
+                  errorMessage="The lead could not be resumed."
+                />
+              ) : null}
+              {canReopen ? (
+                <StageConfirmDialog
+                  action={moveLeadStageAction}
+                  id={lead.id}
+                  version={lead.version}
+                  stage="contacted"
+                  triggerLabel="Reopen"
+                  triggerVariant="primary"
+                  title="Reopen this lead?"
+                  description={`${lead.number} will move from Lost back to Contacted.`}
+                  confirmLabel="Reopen lead"
+                  successMessage="Moved to Contacted."
+                  errorMessage="The lead could not be reopened."
+                />
+              ) : null}
+              {canPutOnHold ? (
+                <PutOnHoldDialog
+                  noun="lead"
+                  action={moveLeadStageAction}
+                  id={lead.id}
+                  number={lead.number}
+                  version={lead.version}
+                />
               ) : null}
               {canMarkLost ? (
                 <MarkLostDialog
@@ -228,6 +317,21 @@ export default async function LeadPage({ params }: { params: Promise<{ id: strin
 
       <Card className={styles.timelineCard}>
         <StatusTimeline label="Lead progression" steps={leadTimeline(lead, logged ?? [])} />
+        {hasReasonDetail ? (
+          <div className={styles.timelineReason}>
+            <Alert
+              tone={lead.stage === 'lost' ? 'error' : 'warning'}
+              title={reasonLabel ?? stageLabel('lead', lead.stage)}
+            >
+              {lead.lostReason?.retired ? (
+                <span className={styles.longText}>
+                  This reason is no longer offered for new leads.
+                </span>
+              ) : null}
+              {lead.stageNote ? <span className={styles.longText}>{lead.stageNote}</span> : null}
+            </Alert>
+          </div>
+        ) : null}
       </Card>
 
       <div className={styles.detailColumns}>
@@ -245,7 +349,7 @@ export default async function LeadPage({ params }: { params: Promise<{ id: strin
             className={styles.detailPanel}
           >
             <FactList
-              facts={facts(lead, owners, numberSystems)}
+              facts={facts(lead, canEdit ? owners : [], numberSystems)}
               className={styles.overviewFacts ?? ''}
             />
           </Panel>
@@ -269,7 +373,11 @@ export default async function LeadPage({ params }: { params: Promise<{ id: strin
           </Panel>
 
           <Panel title="Log activity" className={styles.detailPanel}>
-            <ActivityForm action={logActivityAction} subjectKind="leadId" subjectId={lead.id} />
+            {canEdit ? (
+              <ActivityForm action={logActivityAction} subjectKind="leadId" subjectId={lead.id} />
+            ) : (
+              <p className={styles.quiet}>You have read-only access to this lead.</p>
+            )}
           </Panel>
         </div>
 
@@ -281,29 +389,33 @@ export default async function LeadPage({ params }: { params: Promise<{ id: strin
             as="aside"
           >
             {lead.stage === 'qualified' ? (
-              <>
-                <p className={styles.quiet}>
-                  Create an opportunity using this lead’s details. The lead will link to the new
-                  opportunity.
-                </p>
-                <ConvertDialog
-                  action={convertLeadAction}
-                  lead={{
-                    id: lead.id,
-                    version: lead.version,
-                    number: lead.number,
-                    title: lead.title,
-                    companyName: lead.companyName,
-                    contactName: lead.contactName,
-                    email: lead.email ?? '',
-                    phone: lead.phone ?? '',
-                    requirement: lead.requirement,
-                    value: moneyOrNull(lead.expectedValue, lead.currency, numberSystems),
-                    probability: lead.probability,
-                    expectedClose: lead.expectedClose ? when(lead.expectedClose, 'date') : null,
-                  }}
-                />
-              </>
+              canEdit ? (
+                <>
+                  <p className={styles.quiet}>
+                    Create an opportunity using this lead’s details. The lead will link to the new
+                    opportunity.
+                  </p>
+                  <ConvertDialog
+                    action={convertLeadAction}
+                    lead={{
+                      id: lead.id,
+                      version: lead.version,
+                      number: lead.number,
+                      title: lead.title,
+                      companyName: lead.companyName,
+                      contactName: lead.contactName,
+                      email: lead.email ?? '',
+                      phone: lead.phone ?? '',
+                      requirement: lead.requirement,
+                      value: moneyOrNull(lead.expectedValue, lead.currency, numberSystems),
+                      probability: lead.probability,
+                      expectedClose: lead.expectedClose ? when(lead.expectedClose, 'date') : null,
+                    }}
+                  />
+                </>
+              ) : (
+                <p className={styles.quiet}>You have read-only access to this lead.</p>
+              )
             ) : lead.convertedOpportunityId ? (
               <LinkButton href={`/opportunities/${lead.convertedOpportunityId}`}>
                 Open the opportunity <Icon name="chevron-right" size={16} />
@@ -334,6 +446,7 @@ export default async function LeadPage({ params }: { params: Promise<{ id: strin
               items={planned ?? []}
               ownerUserId={lead.ownerUserId}
               owners={owners}
+              schedule={canEdit}
               now={now}
               className={styles.detailPanel}
             />
@@ -343,31 +456,7 @@ export default async function LeadPage({ params }: { params: Promise<{ id: strin
             <div>
               <StageBadge kind="lead" stage={lead.stage} />
             </div>
-            {lead.stageReason ? (
-              <Alert
-                tone={lead.stage === 'lost' ? 'error' : 'warning'}
-                title={lead.lostReason?.label ?? lead.stageReason}
-              >
-                {lead.lostReason?.retired ? (
-                  <span className={styles.longText}>
-                    This reason is no longer offered for new leads.
-                  </span>
-                ) : null}
-                {lead.stageNote ? <span className={styles.longText}>{lead.stageNote}</span> : null}
-              </Alert>
-            ) : null}
-            <MoveForm
-              action={moveLeadStageAction}
-              recordId={lead.id}
-              version={lead.version}
-              moves={moves}
-              exclude={['qualified', 'lost', 'converted']}
-              emptyText={
-                lead.stage === 'converted'
-                  ? 'This lead is converted. Its stage is final.'
-                  : 'No further moves from here. A manager can reopen a lost lead.'
-              }
-            />
+            <p className={styles.quiet}>{leadStageMessage(lead.stage, canEdit, canReopen)}</p>
           </Panel>
         </div>
       </div>
