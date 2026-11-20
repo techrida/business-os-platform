@@ -149,7 +149,8 @@ function card(doc: Document, title: string): Element {
 /** The page header's action buttons, by label. */
 function headerButtons(doc: Document): string[] {
   const header = doc.querySelector('h1')?.parentElement?.parentElement?.parentElement;
-  return [...(header?.querySelectorAll('button, a') ?? [])].map((b) => b.textContent?.trim() ?? '');
+  if (!header) throw new Error('PageHeader container not found');
+  return [...header.querySelectorAll('button, a')].map((b) => b.textContent?.trim() ?? '');
 }
 
 beforeEach(() => {
@@ -360,7 +361,48 @@ describe('lead detail page composition (U14 D39, D41, D48)', () => {
     );
     expect(card(doc, 'Log activity').querySelector('form')).toBeNull();
     expect(card(doc, 'Lead overview').textContent).not.toContain('Save owner');
-    expect(card(doc, 'Follow-ups').textContent).not.toContain('Schedule follow-up');
+    const followUps = card(doc, 'Follow-ups');
+    expect(followUps.textContent).not.toContain('Schedule follow-up');
+    expect(followUps.querySelectorAll('button')).toHaveLength(0);
+  });
+
+  it('hides the owner editor on a converted lead and picks the latest stage_change date', async () => {
+    const olderContacted = activity('33333333-3333-4333-8333-333333333335', {
+      kind: 'stage_change',
+      subject: 'Moved from new to contacted',
+      occurredAt: '2026-11-09T05:45:00.000Z',
+    });
+    const newerContacted = activity('33333333-3333-4333-8333-333333333336', {
+      kind: 'stage_change',
+      subject: 'Moved from on_hold to contacted',
+      occurredAt: '2026-11-18T05:45:00.000Z',
+    });
+    mocks.getLead.mockResolvedValue(
+      lead({
+        stage: 'converted',
+        allowedMoves: [],
+        convertedOpportunityId: '44444444-4444-4444-8444-444444444444',
+      }),
+    );
+    mocks.listActivities.mockImplementation((_s: unknown, opts: { status?: string }) =>
+      Promise.resolve(opts.status === 'logged' ? [olderContacted, newerContacted] : []),
+    );
+    const doc = await render();
+    expect(card(doc, 'Lead overview').textContent).not.toContain('Save owner');
+    const timelineText = doc.querySelector('[aria-label="Lead progression"]')?.textContent ?? '';
+    expect(timelineText).toContain('18 Nov 2026');
+    expect(timelineText).not.toContain('09 Nov 2026');
+  });
+
+  it('fails closed when canEdit and allowedMoves are omitted for a read-only role', async () => {
+    mocks.requireStaffSession.mockResolvedValue({ accessToken: 'tok', roles: ['management'] });
+    mocks.getLead.mockResolvedValue(
+      lead({ stage: 'contacted', canEdit: undefined, allowedMoves: undefined }),
+    );
+    const doc = await render();
+    expect(headerButtons(doc)).toEqual([]);
+    expect(card(doc, 'Stage').textContent).toContain('You have read-only access to this lead.');
+    expect(card(doc, 'Follow-ups').querySelectorAll('button')).toHaveLength(0);
   });
 
   it('reads the lost reasons only when Mark lost is offered, and shows the reason by its option label (D49)', async () => {

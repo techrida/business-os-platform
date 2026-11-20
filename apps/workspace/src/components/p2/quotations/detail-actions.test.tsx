@@ -63,8 +63,13 @@ function current(over: Partial<QuotationVersionDto> = {}): QuotationVersionDto {
   } as QuotationVersionDto;
 }
 
-/** The server's answer for an owner who may edit and revise; each test narrows it where it matters. */
-const ALLOWED: QuotationCapabilities = { canEdit: true, canRevise: true };
+/** The server's answer for an owner who may edit, send, record outcome, and revise; each test narrows it where it matters. */
+const ALLOWED: QuotationCapabilities = {
+  canEdit: true,
+  canRevise: true,
+  canSend: true,
+  canRecordOutcome: true,
+};
 
 function render(
   over: Partial<QuotationVersionDto> = {},
@@ -223,6 +228,19 @@ describe('Send and Record outcome respect server capabilities and live fallbacks
       />,
     );
     expect(noOutcome).toBe('');
+
+    const omitted = renderToStaticMarkup(
+      <DetailActions
+        quotationId={Q}
+        number="QT-2082-0042"
+        current={current({ status: 'approved' })}
+        contacts={contacts}
+        capabilities={{ canEdit: false, canRevise: false }}
+        reloadHref={`/quotations/${Q}`}
+        today={TODAY}
+      />,
+    );
+    expect(omitted).toBe('');
   });
 });
 

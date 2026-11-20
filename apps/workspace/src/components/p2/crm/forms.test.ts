@@ -206,6 +206,20 @@ describe('parseStageMove', () => {
         },
       },
     });
+
+    const wrongStage = parseStageMove(
+      'lead',
+      form({
+        stage: 'qualified',
+        expectedVersion: '3',
+        contactKind: 'call',
+        contactBody: 'Should not be accepted on qualify.',
+      }),
+    );
+    expect(wrongStage.ok).toBe(false);
+    if (!wrongStage.ok) {
+      expect(wrongStage.fieldErrors['contactActivity']).toContain('moving to Contacted');
+    }
   });
 
   it('maps contactActivity validation errors to contactKind, contactSubject and contactBody', () => {

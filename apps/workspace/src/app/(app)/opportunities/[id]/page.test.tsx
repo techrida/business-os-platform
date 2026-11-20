@@ -123,7 +123,8 @@ function headerLinks(html: string): [string, string][] {
 /** Stage action buttons in the page header, by label. */
 function headerStageButtons(doc: Document): string[] {
   const header = doc.querySelector('h1')?.parentElement?.parentElement?.parentElement;
-  return [...(header?.querySelectorAll('button') ?? [])].map((b) => b.textContent?.trim() ?? '');
+  if (!header) throw new Error('PageHeader container not found');
+  return [...header.querySelectorAll('button')].map((b) => b.textContent?.trim() ?? '');
 }
 
 beforeEach(() => {
@@ -442,6 +443,35 @@ describe('opportunity stage action buttons, timeline and read-only hygiene', () 
       opportunity('qualified', { allowedMoves: [], canEdit: false }),
     );
     mocks.listQuotations.mockResolvedValue([quote(Q1)]);
+    mocks.listActivities.mockImplementation((_s: unknown, opts: { status?: string }) =>
+      Promise.resolve(
+        opts.status === 'planned'
+          ? [
+              {
+                id: '66666666-6666-4666-8666-666666666667',
+                kind: 'call',
+                subject: 'Follow up on quote',
+                body: null,
+                leadId: null,
+                opportunityId: OPP,
+                customerId: null,
+                contactId: null,
+                quotationId: null,
+                dueAt: '2099-01-02T04:00:00.000Z',
+                assigneeUserId: null,
+                assigneeName: null,
+                completedAt: null,
+                cancelledAt: null,
+                planned: true,
+                createdByUserId: null,
+                createdByName: null,
+                occurredAt: WHEN,
+                version: 1,
+              },
+            ]
+          : [],
+      ),
+    );
 
     const html = await render();
     const doc = parse(html);
@@ -451,6 +481,22 @@ describe('opportunity stage action buttons, timeline and read-only hygiene', () 
       'You have read-only access to this opportunity.',
     );
     expect(html).not.toContain('Add activity');
+    expect(html).not.toContain('aria-label="Complete Follow up on quote"');
+    expect(html).not.toContain('aria-label="Reschedule Follow up on quote"');
+    expect(html).not.toContain('aria-label="Cancel Follow up on quote"');
+  });
+
+  it('fails closed when canEdit and allowedMoves are omitted for a read-only role', async () => {
+    mocks.requireStaffSession.mockResolvedValue({ accessToken: 'tok', roles: ['management'] });
+    mocks.getOpportunity.mockResolvedValue(
+      opportunity('qualified', { allowedMoves: undefined, canEdit: undefined }),
+    );
+    const html = await render();
+    const doc = parse(html);
+    expect(headerStageButtons(doc)).toEqual([]);
+    expect(doc.querySelector('[aria-label="Stage"]')?.textContent).toContain(
+      'You have read-only access to this opportunity.',
+    );
   });
 
   it('still shows Mark lost when the lost-reasons list fails to load', async () => {
