@@ -1,6 +1,9 @@
 // Tests for the kernel seed rows. A fake pg client records every statement and answers from a small
 // script, so we can check the order (BEGIN, seed actor, rows, COMMIT) and idempotency without Postgres.
 import { DEFAULT_ROLE_PERMISSIONS, WorkflowSpecSchema } from '@bos/contracts';
+import { readFileSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
+
 import type pg from 'pg';
 import { describe, expect, it } from 'vitest';
 
@@ -1290,7 +1293,7 @@ describe('seedKernelRows: P3 invoice approval workflows and grants', () => {
     ['debit_note', 'Debit note approval', DEBIT_NOTE_WORKFLOW_SPEC],
   ] as const;
 
-  it.each(P3_WORKFLOWS)(
+  it.each(P3_WORKFLOWS.slice(1))(
     'keeps the %s spec valid: accountant, then finance, distinct approvers, no amount rules',
     (documentType, _name, rawSpec) => {
       const spec = WorkflowSpecSchema.parse(rawSpec);
@@ -1303,6 +1306,37 @@ describe('seedKernelRows: P3 invoice approval workflows and grants', () => {
       expect(spec.rules).toEqual([]);
     },
   );
+
+  it('routes a tax invoice by its source (F1-Q30): Accountant only for a manual one, then Finance for every one', () => {
+    const spec = WorkflowSpecSchema.parse(TAX_INVOICE_WORKFLOW_SPEC);
+    expect(spec.documentType).toBe('tax_invoice');
+    expect(spec.distinctApprovers).toBe(true);
+    expect(spec.steps).toEqual([]);
+    expect(spec.rules.map((r) => [r.when, r.add.id, r.add.kind, r.add.role, r.position])).toEqual([
+      [
+        { field: 'fromSchedule', op: 'eq', value: false },
+        'accountant',
+        'role',
+        'accountant',
+        'end',
+      ],
+      [{ field: 'kind', op: 'eq', value: 'tax_invoice' }, 'finance', 'role', 'finance', 'end'],
+    ]);
+  });
+
+  it('keeps the tax invoice spec word for word with migration 0110', () => {
+    const migration = readFileSync(
+      fileURLToPath(
+        new URL('../../../packages/db/migrations/0110_tax_invoice_route.sql', import.meta.url),
+      ),
+      'utf8',
+    );
+    const literal = /v_new jsonb := '([^']+)'::jsonb;/.exec(migration)?.[1];
+    expect(literal).toBeDefined();
+    expect(JSON.parse(literal ?? 'null')).toEqual(
+      JSON.parse(JSON.stringify(WorkflowSpecSchema.parse(TAX_INVOICE_WORKFLOW_SPEC))),
+    );
+  });
 
   it.each(P3_WORKFLOWS)(
     'seeds the %s workflow for the entity as published v1',
