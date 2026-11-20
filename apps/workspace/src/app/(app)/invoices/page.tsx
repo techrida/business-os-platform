@@ -44,10 +44,10 @@ import {
 } from '@/lib/list-params';
 
 import { InvoiceFilters } from './_components/invoice-filters';
-import { InvoiceStatusBadge } from './_components/badges';
 import styles from './_components/invoice.module.css';
 import { ListPager } from './_components/list-pager';
-import { type Can, recordPaymentHref, settlementMayOwe } from './_lib/gates';
+import { ListStatusBadge } from './_components/list-status';
+import { type Can, recordPaymentHref } from './_lib/gates';
 import { kindMeta, settlementLabel, statusMeta } from './_lib/meta';
 
 export const metadata: Metadata = { title: 'Invoices · Business OS' };
@@ -57,17 +57,16 @@ function InvoiceRow({
   item,
   numberSystems,
   can,
-  mayOwe,
 }: {
   item: InvoiceListItem;
   numberSystems: NumberSystems;
   can: Can;
-  mayOwe: boolean;
 }) {
   const kind = kindMeta(item.kind).label;
   const name = item.number ?? `${kind} (${statusMeta(item.status).label.toLowerCase()})`;
   const href = `/invoices/${encodeURIComponent(item.id)}`;
-  const pay = mayOwe ? recordPaymentHref(item, can) : null;
+  // The row's own derived settlement decides the button, whatever the Payment filter (U15b-Q2).
+  const pay = recordPaymentHref(item, can, item.settlement);
   return (
     <tr>
       <Th scope="row">
@@ -99,7 +98,7 @@ function InvoiceRow({
         <span className={styles.amount}>{money(item.total, item.currency, numberSystems)}</span>
       </Td>
       <Td nowrap>
-        <InvoiceStatusBadge status={item.status} />
+        <ListStatusBadge item={item} />
       </Td>
       <Td nowrap>
         <span className={styles.rowActions}>
@@ -332,13 +331,7 @@ export default async function InvoicesPage({ searchParams }: { searchParams: Pro
             </thead>
             <tbody>
               {items.map((item) => (
-                <InvoiceRow
-                  numberSystems={numberSystems}
-                  key={item.id}
-                  item={item}
-                  can={can}
-                  mayOwe={settlementMayOwe(multi.settlement)}
-                />
+                <InvoiceRow numberSystems={numberSystems} key={item.id} item={item} can={can} />
               ))}
             </tbody>
           </Table>
