@@ -265,25 +265,21 @@ describe('ErrorBodyFilter', () => {
     'idp_org_taken',
     'first_admin_owner_only',
     'account_owner_missing',
-  ])(
-    'keeps %s on a 409 (portal access grant, K8), and only on a 409',
-    (code) => {
-      const out = filter(new ConflictException({ code, message: 'Cannot grant portal access' }));
+  ])('keeps %s on a 409 (portal access grant, K8), and only on a 409', (code) => {
+    const out = filter(new ConflictException({ code, message: 'Cannot grant portal access' }));
 
-      expect(out.status).toBe(409);
-      const parsed = ErrorBodySchema.parse(out.body);
-      expect(parsed.error.code).toBe(code);
-      expect(parsed.error.message).toBe('Cannot grant portal access');
-      expect(
-        ErrorBodySchema.parse(filter(new UnprocessableEntityException({ code, message: 'm' })).body)
-          .error.code,
-      ).toBe('bad_request');
-      expect(
-        ErrorBodySchema.parse(filter(new ForbiddenException({ code, message: 'm' })).body).error
-          .code,
-      ).toBe('forbidden');
-    },
-  );
+    expect(out.status).toBe(409);
+    const parsed = ErrorBodySchema.parse(out.body);
+    expect(parsed.error.code).toBe(code);
+    expect(parsed.error.message).toBe('Cannot grant portal access');
+    expect(
+      ErrorBodySchema.parse(filter(new UnprocessableEntityException({ code, message: 'm' })).body)
+        .error.code,
+    ).toBe('bad_request');
+    expect(
+      ErrorBodySchema.parse(filter(new ForbiddenException({ code, message: 'm' })).body).error.code,
+    ).toBe('forbidden');
+  });
 
   it('keeps quotation_pdf_not_ready on a 409 (the quotation PDF download), and only on a 409', () => {
     const code = 'quotation_pdf_not_ready';
