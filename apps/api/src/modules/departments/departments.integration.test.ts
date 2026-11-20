@@ -43,7 +43,7 @@ import type { AuthzService } from '../../platform/authz/authz.service';
 import { can } from '../../platform/authz/can';
 import { ANY_AUTHENTICATED_KEY, CAN_KEY } from '../../platform/authz/decorators';
 import type { Principal, ResourceRef } from '../../platform/authz/principal';
-import type { Db } from '../../platform/db/db.module';
+import type { Db, DbTransaction } from '../../platform/db/db.module';
 import { type Actor, systemActor, type TxScope, withTx } from '../../platform/db/tx';
 import { ErrorBodyFilter } from '../../platform/tenancy/error-body.filter';
 import { UserMirror } from '../../platform/users/user-mirror';
@@ -858,5 +858,100 @@ describe('Tenant and legal entity isolation', () => {
     );
     expect(list2A.items).toHaveLength(0);
     expect(list2A.unassigned).toBe(1);
+  });
+});
+
+describe('Retire under concurrent access writes', () => {
+  async function activeMember(departmentId: string, level: 'staff' | 'manager'): Promise<string> {
+    const { userId } = await createStaffUser(appPool, { ...tenant1, roleKeys: ['sales'] });
+    await withTx(db, scope1A, systemActor('test-seed'), (tx) =>
+      tx.execute(
+        sql`UPDATE app.user_entities SET department_id = ${departmentId}::uuid, level = ${level}
+             WHERE tenant_id = ${tenant1.tenantId}::uuid AND organization_id = ${tenant1.organizationId}::uuid
+               AND user_id = ${userId}::uuid`,
+      ),
+    );
+    return userId;
+  }
+
+  async function membershipOf(userId: string): Promise<{ department_id: string | null; level: string }> {
+    const res = await ownerPool.query<{ department_id: string | null; level: string }>(
+      `SELECT department_id, level FROM app.user_entities
+        WHERE tenant_id = $1 AND organization_id = $2 AND user_id = $3`,
+      [tenant1.tenantId, tenant1.organizationId, userId],
+    );
+    return res.rows[0]!;
+  }
+
+  /** Resolves once some backend waits for a lock: the event the race needs, not a wall-clock window. */
+  async function untilSomeoneWaitsForALock(): Promise<void> {
+    for (let attempt = 0; attempt < 400; attempt += 1) {
+      const res = await ownerPool.query<{ n: number }>(
+        'SELECT count(*)::int AS n FROM pg_locks WHERE NOT granted',
+      );
+      if ((res.rows[0]?.n ?? 0) > 0) return;
+      await new Promise((resolve) => setTimeout(resolve, 25));
+    }
+    throw new Error('No backend ever waited for a lock');
+  }
+
+  /** Runs `work` in its own transaction and keeps it open until `release()` is called. */
+  function heldTransaction(work: (tx: DbTransaction) => Promise<void>): {
+    started: Promise<void>;
+    release: () => void;
+    done: Promise<unknown>;
+  } {
+    let release!: () => void;
+    let markStarted!: () => void;
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const started = new Promise<void>((resolve) => {
+      markStarted = resolve;
+    });
+    const done = withTx(db, scope1A, systemActor('test-race'), async (tx) => {
+      await work(tx);
+      markStarted();
+      await gate;
+    });
+    return { started, release, done };
+  }
+
+  it('does not overwrite a member move that commits while the retire waits for the member row', async () => {
+    const other = AdminDepartmentDetailSchema.parse(
+      (await request(baseUrl).post('/v1/admin/departments').send({ name: 'Race Landing' })).body,
+    );
+    const dept = AdminDepartmentDetailSchema.parse(
+      (await request(baseUrl).post('/v1/admin/departments').send({ name: 'Race Source' })).body,
+    );
+    const mover = await activeMember(dept.id, 'manager');
+    const stayer = await activeMember(dept.id, 'staff');
+
+    // Another writer moves `mover` out and holds its row lock (an UPDATE, as the access save does).
+    const move = heldTransaction(async (tx) => {
+      await tx.execute(
+        sql`UPDATE app.user_entities SET department_id = ${other.id}::uuid, level = 'staff'
+             WHERE tenant_id = ${tenant1.tenantId}::uuid AND organization_id = ${tenant1.organizationId}::uuid
+               AND user_id = ${mover}::uuid`,
+      );
+    });
+    await move.started;
+
+    const retire = request(baseUrl)
+      .post(`/v1/admin/departments/${dept.id}/retire`)
+      .send({ expectedVersion: dept.version, moveMembersTo: null })
+      .then((res) => res);
+    await untilSomeoneWaitsForALock();
+    move.release();
+    await move.done;
+
+    const retired = await retire;
+    expect(retired.status, JSON.stringify(retired.body)).toBe(200);
+    expect(await membershipOf(mover)).toEqual({ department_id: other.id, level: 'staff' });
+    expect(await membershipOf(stayer)).toEqual({ department_id: null, level: 'staff' });
+    const removed = (await auditEventsOf(scope1A, dept.id))
+      .filter((e) => e.action === 'department.member.removed')
+      .map((e) => e.meta?.userId);
+    expect(removed).toEqual([stayer]);
   });
 });
