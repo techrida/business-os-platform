@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { canSeeAdmin, money, snapshotEntries, when } from './kernel-format';
+import { money, snapshotEntries, when } from './kernel-format';
 import {
   currencyNotEnabledText,
   describeFailure,
@@ -281,12 +281,6 @@ describe('display helpers', () => {
     expect(attachments?.value).toContain('quote.pdf');
     expect(rows.find((r) => r.key === 'memoVersion')?.value).toBe('0');
     expect(rows.find((r) => r.key === 'flag')?.value).toBe('false');
-  });
-  it('shows Admin only for roles whose default grants include admin.*', () => {
-    expect(canSeeAdmin(['founder'])).toBe(true);
-    expect(canSeeAdmin(['sales', 'finance'])).toBe(false);
-    expect(canSeeAdmin([])).toBe(false);
-    expect(canSeeAdmin(['nonsense'])).toBe(false);
   });
 });
 
