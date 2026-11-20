@@ -575,6 +575,7 @@ describe('match (check 6, AD6 defaults from settings)', () => {
     as(U.acct, 'accountant');
     const expectedKeys = [
       'approvalRequestId',
+      'can',
       'currency',
       'documentId',
       'enteredBy',
