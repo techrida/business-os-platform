@@ -140,14 +140,14 @@ const salesRecordsReadAllGrants: RoleGrants = {
   'verification.read': 'all',
 };
 
-/** Read every lead and opportunity (D50: Management only; the Founder holds it through PERMISSIONS). */
+/** Read every lead and opportunity (Management, Finance and Accountant; the Founder holds it through PERMISSIONS). Finance and Accountant work across the company (Kuu, 2026-11-20, U20a2-Q4). */
 const crmReadAllGrants: RoleGrants = {
   'crm.lead.read': 'all',
   'crm.opportunity.read': 'all',
 };
 
 /**
- * Finance, Accountant and PMO start leads for a Sales owner (D50) and keep reading what they started. That reach
+ * PMO starts leads for a Sales owner (D50) and keeps reading what it started. That reach
  * is stored as `own`: own read on leads also covers the leads the caller created, and on leads and opportunities
  * the records the caller holds an activity assignment on (read only). Opportunities follow their lead.
  */
@@ -300,7 +300,7 @@ export const DEFAULT_ROLE_PERMISSIONS: Record<RoleKey, RoleGrants> = {
     ...ownProfileGrants,
     ...approverGrants,
     'audit.read': 'all',
-    ...crmCreatedReadGrants,
+    ...crmReadAllGrants,
     ...salesRecordsReadAllGrants,
     ...salesCreatorGrants,
     ...salesCostReadGrants,
@@ -315,7 +315,7 @@ export const DEFAULT_ROLE_PERMISSIONS: Record<RoleKey, RoleGrants> = {
   accountant: {
     ...ownProfileGrants,
     ...approverGrants,
-    ...crmCreatedReadGrants,
+    ...crmReadAllGrants,
     ...salesRecordsReadAllGrants,
     ...salesCreatorGrants,
     ...salesCostReadGrants,
