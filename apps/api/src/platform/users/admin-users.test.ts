@@ -56,6 +56,7 @@ import { UsersService } from './users.service';
 import { SqlUsersStore } from './users.store';
 import {
   type CreateHumanInput,
+  type ZitadelAdminClient,
   ZitadelHttpError,
   type ZitadelUser,
   type ZitadelUserPage,
@@ -106,6 +107,9 @@ class RepairableZitadel {
   getUser(userId: string) {
     return Promise.resolve(this.users.get(userId) ?? null);
   }
+  listGrants(userId: string) {
+    return Promise.resolve([...(this.grants.get(userId) ?? [])]);
+  }
   sendPasswordReset(userId: string) {
     this.resetEmails.push(userId);
     return Promise.resolve();
@@ -113,7 +117,7 @@ class RepairableZitadel {
   statusCalls: string[] = [];
   /** A ZITADEL error the next status call answers with, once. */
   failNextStatusCall: Error | null = null;
-  private setState(userId: string, call: string, status: ZitadelUser['status']) {
+  private setState(userId: string, call: string, status: ZitadelUser['status'], locked = false) {
     if (this.failNextStatusCall) {
       const error = this.failNextStatusCall;
       this.failNextStatusCall = null;
@@ -121,8 +125,14 @@ class RepairableZitadel {
     }
     this.statusCalls.push(`${call}:${userId}`);
     const user = this.users.get(userId);
-    if (user) user.status = status;
+    if (user) Object.assign(user, { status, locked });
     return Promise.resolve();
+  }
+  lockUser(userId: string) {
+    return this.setState(userId, 'lock', 'inactive', true);
+  }
+  unlockUser(userId: string) {
+    return this.setState(userId, 'unlock', 'active');
   }
   deactivateUser(userId: string) {
     return this.setState(userId, 'deactivate', 'inactive');
@@ -860,7 +870,7 @@ describe('PUT /v1/admin/users/:id/roles last-Founder guard', () => {
   });
 });
 
-describe('POST /v1/admin/users/:id/deactivate and /reactivate (F1-Q5)', () => {
+describe('POST /v1/admin/users/:id/deactivate, /reactivate, /lock and /unlock (F1-Q5, F1-Q4)', () => {
   const STAFF = '00000000-0000-4000-9000-000000000201';
   const SECOND_FOUNDER = '00000000-0000-4000-9000-000000000202';
 
@@ -870,6 +880,7 @@ describe('POST /v1/admin/users/:id/deactivate and /reactivate (F1-Q5)', () => {
       status: 'active' | 'invited' | 'inactive';
       idpOrgId: string;
       roles: RoleKey[];
+      lockReason: 'failed_sign_ins' | 'admin';
     }> = {},
   ) => {
     store.users.push({
@@ -880,6 +891,9 @@ describe('POST /v1/admin/users/:id/deactivate and /reactivate (F1-Q5)', () => {
       email: `${id.slice(-3)}@techrida.test`,
       displayName: 'Mina Gurung',
       status: over.status ?? 'active',
+      lockReason: over.lockReason ?? null,
+      lockedUntil:
+        over.lockReason === 'failed_sign_ins' ? new Date(Date.now() + 60_000).toISOString() : null,
     });
     store.roles.set(id, over.roles ?? ['sales']);
     store.memberships.push({
@@ -896,12 +910,13 @@ describe('POST /v1/admin/users/:id/deactivate and /reactivate (F1-Q5)', () => {
       email: null,
       displayName: 'Mina Gurung',
       status: over.status ?? 'active',
+      locked: over.lockReason !== undefined,
       createdAt: null,
     });
   };
 
   const act = (
-    action: 'deactivate' | 'reactivate',
+    action: 'deactivate' | 'reactivate' | 'lock' | 'unlock',
     id: string,
     permissions: Permission[] = ['admin.roles.write'],
   ) =>
@@ -924,8 +939,116 @@ describe('POST /v1/admin/users/:id/deactivate and /reactivate (F1-Q5)', () => {
       action: 'users.deactivated',
       entityType: 'users',
       entityId: STAFF,
-      before: { status: 'active' },
-      after: { status: 'inactive' },
+      before: { status: 'active', lockReason: null },
+      after: { status: 'inactive', lockReason: null },
+    });
+  });
+
+  it('locks an active user in ZITADEL and stores an admin lock with no end, audited', async () => {
+    addUser(STAFF);
+    const record = vi.spyOn(audit, 'record');
+
+    expect(await act('lock', STAFF)).toBeNull();
+
+    expect(zitadel.statusCalls).toEqual([`lock:z-${STAFF}`]);
+    expect(store.users.find((u) => u.id === STAFF)).toMatchObject({
+      status: 'inactive',
+      lockReason: 'admin',
+      lockedUntil: null,
+    });
+    expect(store.authzBumps).toBe(1);
+    expect(authz.invalidations).toBe(1);
+    expect(record).toHaveBeenCalledWith(expect.anything(), {
+      action: 'users.locked',
+      entityType: 'users',
+      entityId: STAFF,
+      before: { status: 'active', lockReason: null },
+      after: { status: 'inactive', lockReason: 'admin' },
+    });
+  });
+
+  it.each(['admin', 'failed_sign_ins'] as const)(
+    'unlocks a user under a %s lock before it ends, clearing the lock, audited',
+    async (reason) => {
+      addUser(STAFF, { status: 'inactive', lockReason: reason });
+      const record = vi.spyOn(audit, 'record');
+
+      expect(await act('unlock', STAFF)).toBeNull();
+
+      expect(zitadel.statusCalls).toEqual([`unlock:z-${STAFF}`]);
+      expect(store.users.find((u) => u.id === STAFF)).toMatchObject({
+        status: 'active',
+        lockReason: null,
+        lockedUntil: null,
+      });
+      expect(record).toHaveBeenCalledWith(expect.anything(), {
+        action: 'users.unlocked',
+        entityType: 'users',
+        entityId: STAFF,
+        before: { status: 'inactive', lockReason: reason },
+        after: { status: 'active', lockReason: null },
+      });
+    },
+  );
+
+  it('refuses to reactivate a locked user (ZITADEL holds them LOCKED, not INACTIVE): unlock is the action', async () => {
+    addUser(STAFF, { status: 'inactive', lockReason: 'failed_sign_ins' });
+
+    const error = await act('reactivate', STAFF);
+
+    expect(error).toBeInstanceOf(ConflictException);
+    expect((error as ConflictException).getResponse()).toMatchObject({ code: 'wrong_status' });
+    expect(zitadel.statusCalls).toEqual([]);
+  });
+
+  it('refuses to lock yourself or the only Founder of an entity', async () => {
+    store.users.push({
+      id: ADMIN,
+      tenantId: TENANT,
+      idpOrgId: STAFF_IDP,
+      zitadelUserId: 'zitadel-admin',
+      email: 'admin@techrida.test',
+      displayName: 'Admin',
+      status: 'active',
+    });
+    addUser(STAFF, { roles: ['founder'] });
+
+    const own = await act('lock', ADMIN);
+    const founder = await act('lock', STAFF);
+
+    expect((own as ConflictException).getResponse()).toMatchObject({ code: 'own_account' });
+    expect((founder as ConflictException).getResponse()).toEqual({
+      code: 'last_founder',
+      message:
+        'Mina Gurung is the only Founder of Techrida Nepal. Make someone else a Founder there before you lock them.',
+    });
+    expect(zitadel.statusCalls).toEqual([]);
+  });
+
+  it('does not let a sync read before the lock undo it', async () => {
+    addUser(STAFF);
+    const stale = { ...zitadel.users.get(`z-${STAFF}`)! };
+    expect(await act('lock', STAFF)).toBeNull();
+    // A reconcile that listed the user before the lock now applies what it read; the re-read behind the row lock wins.
+    const mirror = new UserMirror(
+      fakeDb(),
+      store,
+      zitadel as unknown as ZitadelAdminClient,
+      fakeQueue() as unknown as Queue<UsersSyncData>,
+    );
+    const real = zitadel.getUser.bind(zitadel);
+    let first = true;
+    vi.spyOn(zitadel, 'getUser').mockImplementation((id: string) => {
+      if (!first) return real(id);
+      first = false;
+      return Promise.resolve(stale);
+    });
+
+    await mirror.syncUser(`z-${STAFF}`);
+
+    expect(store.users.find((u) => u.id === STAFF)).toMatchObject({
+      status: 'inactive',
+      lockReason: 'admin',
     });
   });
 
@@ -985,7 +1108,11 @@ describe('POST /v1/admin/users/:id/deactivate and /reactivate (F1-Q5)', () => {
     ['deactivate', 'inactive'],
     ['reactivate', 'active'],
     ['reactivate', 'invited'],
-  ] as const)('refuses to %s a user who is %s', async (action, status) => {
+    ['lock', 'invited'],
+    ['lock', 'inactive'],
+    ['unlock', 'active'],
+    ['unlock', 'inactive'],
+  ] as const)('refuses to %s a user who is %s (and not locked)', async (action, status) => {
     addUser(STAFF, { status });
     const error = await act(action, STAFF);
     expect(error).toBeInstanceOf(ConflictException);

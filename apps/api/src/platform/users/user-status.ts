@@ -1,5 +1,7 @@
-// User status actions in Settings > Users (F1-Q5): deactivate and reactivate a staff user from the app instead of the
-// identity console, audited. Serves the NFR "a removed user must stop working": ZITADEL is the truth for whether a
+// User status actions in Settings > Users (F1-Q5): deactivate, reactivate, lock and unlock a staff user from the app
+// instead of the identity console, audited. A lock (F1-Q4) is the other way to shut someone out: ZITADEL locks a person
+// by itself after too many failed sign-ins (a timed lock the lock-expiry job ends), and an admin may lock someone here
+// (no expiry). Unlock ends either kind; reactivate is only for a deactivated person who is not locked. Serves the NFR "a removed user must stop working": ZITADEL is the truth for whether a
 // person can sign in, so each action changes ZITADEL first and then the mirror, in the admin's transaction, while
 // holding the user's row lock. The mirror's sync takes the same lock and re-reads ZITADEL before it changes a status,
 // so a sync that read the user before the action cannot write the older state back afterwards.
@@ -19,7 +21,7 @@ import { AuditService } from '../audit/audit.service';
 import type { DbTransaction } from '../db/db.module';
 import type { Actor } from '../db/tx';
 import { soleFounderEntities } from './user-mirror';
-import { type UserRow, UsersStore } from './users.store';
+import { type UserLock, type UserRow, UsersStore } from './users.store';
 import {
   type MirroredStatus,
   ZitadelAdminClient,
@@ -27,13 +29,19 @@ import {
   ZitadelNotConfiguredError,
 } from './zitadel-admin.client';
 
-export const USER_STATUS_ACTIONS = ['deactivate', 'reactivate'] as const;
+export const USER_STATUS_ACTIONS = ['deactivate', 'reactivate', 'lock', 'unlock'] as const;
 export type UserStatusAction = (typeof USER_STATUS_ACTIONS)[number];
 
 interface ActionRule {
   /** The mirrored status the action starts from. */
   from: MirroredStatus;
+  /** Whether the person must be locked (unlock) or must not be (every other action). */
+  locked: boolean;
   to: MirroredStatus;
+  /** The ZITADEL call that makes the change. */
+  call: (zitadel: ZitadelAdminClient, zitadelUserId: string) => Promise<void>;
+  /** The lock to store with the new status: undefined keeps it (none), null clears it. */
+  lock: () => UserLock | null | undefined;
   /** Whether the action takes access away (then the self and last-Founder guards apply). */
   removesAccess: boolean;
   audit: string;
@@ -45,7 +53,10 @@ interface ActionRule {
 const RULES: Record<UserStatusAction, ActionRule> = {
   deactivate: {
     from: 'active',
+    locked: false,
     to: 'inactive',
+    call: (zitadel, id) => zitadel.deactivateUser(id),
+    lock: () => undefined,
     removesAccess: true,
     audit: 'users.deactivated',
     verb: 'deactivate',
@@ -54,11 +65,38 @@ const RULES: Record<UserStatusAction, ActionRule> = {
   },
   reactivate: {
     from: 'inactive',
+    locked: false,
     to: 'active',
+    call: (zitadel, id) => zitadel.reactivateUser(id),
+    lock: () => undefined,
     removesAccess: false,
     audit: 'users.reactivated',
     verb: 'reactivate',
-    wrongState: 'Only a deactivated user can be reactivated.',
+    // A locked person is INACTIVE here too, but ZITADEL holds them LOCKED: they are unlocked, not reactivated.
+    wrongState: 'Only a deactivated user can be reactivated. A locked user is unlocked instead.',
+  },
+  lock: {
+    from: 'active',
+    locked: false,
+    to: 'inactive',
+    call: (zitadel, id) => zitadel.lockUser(id),
+    // An admin lock never ends by itself.
+    lock: () => ({ reason: 'admin', lockedAt: new Date(), until: null }),
+    removesAccess: true,
+    audit: 'users.locked',
+    verb: 'lock',
+    wrongState: 'Only an active user can be locked.',
+  },
+  unlock: {
+    from: 'inactive',
+    locked: true,
+    to: 'active',
+    call: (zitadel, id) => zitadel.unlockUser(id),
+    lock: () => null,
+    removesAccess: false,
+    audit: 'users.unlocked',
+    verb: 'unlock',
+    wrongState: 'Only a locked user can be unlocked.',
   },
 };
 
@@ -94,21 +132,19 @@ export class UserStatusService {
         message: `You cannot ${rule.verb} your own account.`,
       });
     }
-    if (target.status !== rule.from) {
+    if (target.status !== rule.from || Boolean(target.lockReason) !== rule.locked) {
       throw new ConflictException({ code: 'wrong_status', message: rule.wrongState });
     }
     if (rule.removesAccess) await this.assertNotSoleFounder(tx, scope.tenantId, target, rule);
 
-    const before = target.status;
-    await this.identityCall(() =>
-      action === 'deactivate'
-        ? this.zitadel.deactivateUser(target.zitadelUserId)
-        : this.zitadel.reactivateUser(target.zitadelUserId),
-    );
+    const before = { status: target.status, lockReason: target.lockReason ?? null };
+    await this.identityCall(() => rule.call(this.zitadel, target.zitadelUserId));
+    const lock = rule.lock();
     await this.store.updateUser(tx, target.id, {
       email: target.email,
       displayName: target.displayName,
       status: rule.to,
+      ...(lock === undefined ? {} : { lock }),
     });
     // Every process drops its cached principals at once, so a deactivated person is refused on their next request.
     await this.store.bumpAuthzVersion(tx, scope);
@@ -116,8 +152,11 @@ export class UserStatusService {
       action: rule.audit,
       entityType: 'users',
       entityId: target.id,
-      before: { status: before },
-      after: { status: rule.to },
+      before,
+      after: {
+        status: rule.to,
+        lockReason: lock === undefined ? before.lockReason : (lock?.reason ?? null),
+      },
     });
   }
 

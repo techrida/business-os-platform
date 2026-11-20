@@ -268,14 +268,20 @@ it('gives each row avatar its user id colour and picture, and a picture button n
   }
 });
 
-it('offers Deactivate and Reactivate to a company-wide admin, never on their own row or an invite (F1-Q5)', async () => {
+it('offers Lock, Deactivate, Unlock and Reactivate to a company-wide admin, never on their own row or an invite (F1-Q5, F1-Q4)', async () => {
   const ME = '00000000-0000-4000-9000-0000000000a1';
-  const row = (id: string, displayName: string, status: string) => ({
+  const row = (
+    id: string,
+    displayName: string,
+    status: string,
+    lock: { lockReason: string; lockedUntil: string | null } | null = null,
+  ) => ({
     id,
     displayName,
     email: `${displayName.toLowerCase()}@example.test`,
     idpOrgId: IDP,
     status,
+    ...(lock ?? {}),
     roles: [],
     department: null,
     createdAt: '2026-11-19T00:00:00.000Z',
@@ -318,6 +324,14 @@ it('offers Deactivate and Reactivate to a company-wide admin, never on their own
                 row('00000000-0000-4000-9000-0000000000a2', 'Asha', 'active'),
                 row('00000000-0000-4000-9000-0000000000a3', 'Bikash', 'inactive'),
                 row('00000000-0000-4000-9000-0000000000a4', 'Chandra', 'invited'),
+                row('00000000-0000-4000-9000-0000000000a5', 'Dipesh', 'inactive', {
+                  lockReason: 'failed_sign_ins',
+                  lockedUntil: '2026-11-20T10:15:00.000Z',
+                }),
+                row('00000000-0000-4000-9000-0000000000a6', 'Esha', 'inactive', {
+                  lockReason: 'admin',
+                  lockedUntil: null,
+                }),
               ],
               nextPage: null,
               nextAfter: null,
@@ -328,14 +342,22 @@ it('offers Deactivate and Reactivate to a company-wide admin, never on their own
   try {
     const html = renderToStaticMarkup(await UsersPage({ searchParams: Promise.resolve({}) }));
     expect(html).toContain('aria-label="Deactivate Asha · asha@example.test"');
+    expect(html).toContain('aria-label="Lock Asha · asha@example.test"');
     expect(html).toContain('aria-label="Reactivate Bikash · bikash@example.test"');
-    expect(html).not.toContain('Deactivate Founder');
-    expect(html).not.toMatch(/(Deactivate|Reactivate) Chandra/);
+    expect(html).not.toMatch(/(Lock|Unlock) Bikash/);
+    expect(html).not.toMatch(/(Deactivate|Lock) Founder/);
+    expect(html).not.toMatch(/(Deactivate|Reactivate|Lock|Unlock) Chandra/);
     expect(html).toContain('>Deactivated<');
+    // A locked person is unlocked, never reactivated; a timed lock shows when it ends.
+    expect(html).toContain('aria-label="Unlock Dipesh · dipesh@example.test"');
+    expect(html).toContain('aria-label="Unlock Esha · esha@example.test"');
+    expect(html).not.toMatch(/(Reactivate|Deactivate|Lock) (Dipesh|Esha)/);
+    expect(html.match(/>Locked</g)).toHaveLength(2);
+    expect(html).toContain('dateTime="2026-11-20T10:15:00.000Z"');
 
     canChange = false;
     const plain = renderToStaticMarkup(await UsersPage({ searchParams: Promise.resolve({}) }));
-    expect(plain).not.toMatch(/aria-label="(Deactivate|Reactivate) /);
+    expect(plain).not.toMatch(/aria-label="(Deactivate|Reactivate|Lock|Unlock) /);
   } finally {
     request.mockRestore();
   }
