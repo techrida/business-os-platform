@@ -479,15 +479,26 @@ export class TestMemoService implements OnModuleInit {
     const departmentId = owner?.departmentId ?? null;
     const departmentName = departmentId === null ? null : (owner?.name ?? null);
     const base = { departmentId, departmentName };
-    const plan = await this.approvals.planOf(
-      scope,
-      MEMO_APPROVER_DOCUMENT_TYPE,
-      { departmentId: departmentId ?? '' },
-      sodUserIds,
-      q,
-      MEMO_APPROVER_BUILT_IN,
-    );
-    const step = plan.steps.at(-1);
+    const planFor = (sod: readonly string[]) =>
+      this.approvals.planOf(
+        scope,
+        MEMO_APPROVER_DOCUMENT_TYPE,
+        { departmentId: departmentId ?? '' },
+        sod,
+        q,
+        MEMO_APPROVER_BUILT_IN,
+      );
+    let step = (await planFor(sodUserIds)).steps.at(-1);
+    // A head without approval rights (a seeded operations or sales head, say) counts as no head: the step falls back
+    // to its role, as it does for a head who wrote the memo, and the form says why.
+    let headCannotApprove = false;
+    if (step?.kind === 'department_head' && step.userId !== undefined) {
+      const head = step.userId;
+      if (!(await this.approverIds(scope, [head])).has(head)) {
+        headCannotApprove = true;
+        step = (await planFor([...sodUserIds, head])).steps.at(-1);
+      }
+    }
     const basis: MemoApproverRule['basis'] =
       step?.kind !== 'department_head'
         ? 'workflow'
@@ -502,6 +513,7 @@ export class TestMemoService implements OnModuleInit {
       ...base,
       basis,
       ...(roleKey === undefined ? {} : { roleKey, roleName: roleLabel(roleKey) }),
+      ...(headCannotApprove ? { headCannotApprove } : {}),
       eligibleUserIds,
       defaultUserId:
         basis === 'department_head' && step?.userId !== undefined && approvers.has(step.userId)
@@ -511,14 +523,13 @@ export class TestMemoService implements OnModuleInit {
             : null,
     };
     if (eligibleUserIds.length > 0) return rule;
-    const role =
-      roleKey === undefined ? 'the workflow' : `the ${roleLabel(roleKey)} role`;
+    const role = roleKey === undefined ? 'the workflow' : `the ${roleLabel(roleKey)} role`;
+    const noHead = headCannotApprove
+      ? `the head of ${departmentName ?? 'your department'} cannot decide approvals`
+      : `${departmentName ?? 'your department'} has no department head who can`;
     return {
       ...rule,
-      blockReason:
-        basis === 'department_head'
-          ? `The head of ${departmentName ?? 'your department'} cannot decide approvals. An administrator gives them approval rights in Settings > Access, or changes the head in Settings > Departments.`
-          : `Nobody in ${role} can approve this memo${basis === 'fallback' ? `, and ${departmentName ?? 'your department'} has no department head who can` : ''}. An administrator sets a department head in Settings > Departments or changes the Memo approver workflow in Settings > Workflows.`,
+      blockReason: `Nobody in ${role} can approve this memo${basis === 'fallback' ? `, and ${noHead}` : ''}. An administrator gives someone approval rights in Settings > Access, sets a department head in Settings > Departments or changes the Memo approver workflow in Settings > Workflows.`,
     };
   }
 

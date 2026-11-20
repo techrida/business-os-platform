@@ -1228,17 +1228,29 @@ describe('the Memo approver: who may sign "Approved by" (F1-Q9)', () => {
     });
   });
 
-  it('names the dead end when the head cannot decide approvals, and submit refuses it', async () => {
-    // Sales holds no approvals.requests.act, so a sales head is planned but cannot sign.
+  it('treats a head who cannot decide approvals as no head: the Founder approves, and the form says why', async () => {
+    // Sales holds no approvals.requests.act (nor do the seeded operations and sales heads), so a sales head cannot sign.
     const dept = await departmentHeadedBy(U.salesB);
     await inDepartment(dept, async () => {
-      const rule = await ruleNow();
-      expect(rule).toMatchObject({
-        basis: 'department_head',
-        eligibleUserIds: [],
-        defaultUserId: null,
+      expect(await ruleNow()).toMatchObject({
+        basis: 'fallback',
+        headCannotApprove: true,
+        roleKey: 'founder',
+        eligibleUserIds: [U.founder],
+        defaultUserId: U.founder,
       });
-      expect(rule?.blockReason).toMatch(/cannot decide approvals/);
+      const head = await memoFor(dept, U.salesB);
+      expect((await submitMemo(head)).status).toBe(409);
+      const founder = await memoFor(dept, U.founder);
+      expect((await submitMemo(founder)).status).toBe(200);
+
+      // With nobody in the fallback role either, the rule is a dead end that names its fix, and submit refuses it.
+      roles.founder = [];
+      const rule = await ruleNow();
+      expect(rule).toMatchObject({ eligibleUserIds: [], defaultUserId: null });
+      expect(rule?.blockReason).toMatch(
+        /Nobody in the Founder role can approve this memo, and the head of .* cannot decide approvals/,
+      );
       const id = await memoFor(dept, U.fin);
       const refused = await submitMemo(id);
       expect(refused.status).toBe(409);

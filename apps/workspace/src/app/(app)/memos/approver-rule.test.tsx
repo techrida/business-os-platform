@@ -75,6 +75,9 @@ describe('Approved by follows the Memo approver rule (F1-Q9)', () => {
     expect(approverHint(fallback)).toBe(
       'Operations has no department head who can approve, so someone in the Founder role approves instead.',
     );
+    expect(approverHint({ ...fallback, headCannotApprove: true })).toBe(
+      'The head of Operations cannot decide approvals, so someone in the Founder role approves instead.',
+    );
     expect(approverHint({ ...fallback, departmentId: null, departmentName: null })).toBe(
       'The author is in no department, so someone in the Founder role approves instead.',
     );
