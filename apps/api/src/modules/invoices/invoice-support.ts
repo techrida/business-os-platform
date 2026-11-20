@@ -8,6 +8,7 @@ import {
   ForbiddenException,
   Injectable,
   NotFoundException,
+  UnprocessableEntityException,
 } from '@nestjs/common';
 
 import { principal, type Principal } from '../../platform/authz/principal';
@@ -53,6 +54,18 @@ export const notApproved = () =>
   new ConflictException({
     code: 'NOT_APPROVED',
     message: 'This invoice is issued only after it has been approved',
+  });
+
+/**
+ * 422 DUE_DATE_BEFORE_ISSUE: the drafted due date is before today, the issue date, so the invoice would be overdue the
+ * moment it is issued. Its own code, so the workspace never words it as a stale version (409 conflict). `details`
+ * carries the two dates when they are known (the database check names neither).
+ */
+export const dueDateBeforeIssue = (dates?: { dueDate: string; issueDate: string }) =>
+  new UnprocessableEntityException({
+    code: 'DUE_DATE_BEFORE_ISSUE',
+    message: 'The due date is before the issue date; correct the due date and issue again',
+    ...(dates === undefined ? {} : { details: dates }),
   });
 
 /** The `YYYY-MM-DD` of the Kathmandu calendar day of `at` (plan A10: the issue date is server today). */

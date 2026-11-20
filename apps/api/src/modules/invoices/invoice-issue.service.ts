@@ -41,6 +41,7 @@ import { creditExceedsInvoice } from './notes/note-drafting.service';
 import {
   assertStaff,
   conflict,
+  dueDateBeforeIssue,
   formatAddress,
   INVOICE_CLOCK,
   InvoiceCaller,
@@ -97,8 +98,8 @@ export class InvoiceIssueService {
 
   /**
    * `issued` the first time, `already_issued` (with the same number) for a replay or a second click. 404 outside the
-   * entity, 403 without `invoice.issue`, 409 for a stale `expectedVersion`, a status that is not draft, a due date
-   * before today, or a kind that needs approval first (NOT_APPROVED).
+   * entity, 403 without `invoice.issue`, 409 for a stale `expectedVersion`, a status that is not draft or a kind that
+   * needs approval first (NOT_APPROVED), 422 DUE_DATE_BEFORE_ISSUE for a due date before today.
    */
   async issue(
     id: string,
@@ -138,9 +139,7 @@ export class InvoiceIssueService {
         throw creditExceedsInvoice();
       }
       if (pg?.code === '23514' && pg.constraint === 'invoices_due_date_check') {
-        throw conflict(
-          'The due date is before the issue date; correct the due date and issue again',
-        );
+        throw dueDateBeforeIssue();
       }
       throw error;
     }
@@ -345,7 +344,8 @@ export class InvoiceIssueService {
 
   /**
    * The due date at issue: issue date + the order's credit days when the invoice has a sales order; otherwise the
-   * drafted due date (409 when it is already past), or the issue date when none was drafted (due on receipt).
+   * drafted due date (422 DUE_DATE_BEFORE_ISSUE when it is already past), or the issue date when none was drafted (due
+   * on receipt).
    */
   private async dueDateOf(
     tx: DbTransaction,
@@ -363,9 +363,8 @@ export class InvoiceIssueService {
       return addDays(issueDate, order.creditDays);
     }
     if (invoice.dueDate === null) return issueDate;
-    if (invoice.dueDate < issueDate) {
-      throw conflict('The due date is before the issue date; correct the due date and issue again');
-    }
+    if (invoice.dueDate < issueDate)
+      throw dueDateBeforeIssue({ dueDate: invoice.dueDate, issueDate });
     return invoice.dueDate;
   }
 
