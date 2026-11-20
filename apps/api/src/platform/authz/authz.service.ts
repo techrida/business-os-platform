@@ -12,7 +12,7 @@ import { DB, type Db } from '../db/db.module';
 import { systemActor, withTx } from '../db/tx';
 import { can } from './can';
 import { type Principal, type ResourceRef, type ScopableTable, principal } from './principal';
-import { type RecordReach, assignedToSql, recordReachOf } from './record-reach';
+import { type RecordReach, assignedToSql, ownedViaSql, recordReachOf } from './record-reach';
 import { RoleCache } from './role-cache';
 
 // The @bos/db index exports `Scoped` but not its counterparty helper types, so derive them here.
@@ -53,6 +53,7 @@ interface ScopeColumns {
   department: AnyPgColumn | undefined;
   /** The table's reach when `action` is its read permission; undefined for every other action. */
   readReach: RecordReach | undefined;
+  ownerVia?: RecordReach['ownerVia'];
 }
 
 function columnsOf(table: ScopableTable, action: Permission): ScopeColumns {
@@ -64,16 +65,19 @@ function columnsOf(table: ScopableTable, action: Permission): ScopeColumns {
     owner: reach.owner,
     department: reach.department,
     readReach: reach.readPermission === action ? reach : undefined,
+    ownerVia: reach.ownerVia,
   };
 }
 
 /**
- * `p`'s own rows, the SQL of `isMine()` in can.ts: the owner column, plus on the table's read permission the
- * creator and the assignees. Undefined when the table has none of them, which matches no row.
+ * `p`'s own rows, the SQL of `isMine()` in can.ts: the owner column and the parent's owner (`ownerVia`), plus on
+ * the table's read permission the creator and the assignees. Undefined when the table has none of them, which
+ * matches no row.
  */
 function mineCondition(p: Principal, table: ScopableTable, c: ScopeColumns): SQL | undefined {
   const parts: SQL[] = [];
   if (c.owner !== undefined) parts.push(eq(c.owner, p.userId));
+  if (c.ownerVia !== undefined) parts.push(ownedViaSql(table, c.ownerVia, p.userId));
   const reach = c.readReach;
   if (reach !== undefined) {
     if (reach.creator !== undefined) parts.push(eq(reach.creator, p.userId));
