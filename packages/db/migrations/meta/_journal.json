@@ -561,6 +561,34 @@
       "when": 1783000000126,
       "tag": "0113_payment_promises",
       "breakpoints": true
+    },
+    {
+      "idx": 80,
+      "version": "7",
+      "when": 1783000000126,
+      "tag": "0125_user_locks",
+      "breakpoints": true
+    },
+    {
+      "idx": 81,
+      "version": "7",
+      "when": 1783000000128,
+      "tag": "0126_user_locks_admin_default",
+      "breakpoints": true
+    },
+    {
+      "idx": 82,
+      "version": "7",
+      "when": 1783000000128,
+      "tag": "0127_workflow_publish",
+      "breakpoints": true
+    },
+    {
+      "idx": 83,
+      "version": "7",
+      "when": 1783000000128,
+      "tag": "0128_email_delivery_resend",
+      "breakpoints": true
     }
   ]
 }

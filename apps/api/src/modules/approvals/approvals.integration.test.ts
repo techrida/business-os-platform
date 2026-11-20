@@ -37,7 +37,10 @@ import { SettingsService } from '../../platform/settings/settings.service';
 import { UserMirror } from '../../platform/users/user-mirror';
 import { UsersService } from '../../platform/users/users.service';
 import { SqlUsersStore } from '../../platform/users/users.store';
+import { RoleCache } from '../../platform/authz/role-cache';
 import { ApprovalsAdminService } from './admin.service';
+import { AdminWorkflowsController } from './admin-workflows.controller';
+import { SKIP_LIVE_PUBLISHER_CHECK } from '../../../test/support/second-person';
 import { canonicalSha256 } from '../../platform/hashing/canonical-json';
 import type { ApprovalEmailTemplate, Caller } from './ports';
 import { ApprovalsService, type SubmitInput } from './requests.service';
@@ -161,6 +164,20 @@ const caller = {
 const clock = () => now;
 const onDecided = vi.fn(() => Promise.resolve(undefined));
 
+/**
+ * Publishes as a second person (F1-Q11): the drafts here are saved by `me`, and the API refuses a publish by whoever
+ * saved the draft, so Management (or the Founder, when Management saved it) publishes. `me` is restored afterwards.
+ */
+async function publishSeconded(key: string, version: number, svc = admin) {
+  const editor = me;
+  me = editor === U.mgmt ? U.founder : U.mgmt;
+  try {
+    return await svc.publish(key, version, SKIP_LIVE_PUBLISHER_CHECK);
+  } finally {
+    me = editor;
+  }
+}
+
 let service: ApprovalsService;
 let admin: ApprovalsAdminService;
 let sla: ApprovalsSlaService;
@@ -266,7 +283,7 @@ beforeAll(async () => {
   resetRoles();
   me = U.founder;
   await admin.createWorkflow({ key: 'test_memo', name: 'Test memo', spec: seedSpec });
-  await admin.publish('test_memo', 1);
+  await publishSeconded('test_memo', 1);
 }, 180_000);
 
 afterAll(async () => {
@@ -688,7 +705,7 @@ describe('versions, inbox and reading', () => {
       ],
     });
     await admin.addVersion('test_memo', v2);
-    await admin.publish('test_memo', 2);
+    await publishSeconded('test_memo', 2);
     const fresh = await submit();
 
     me = U.acc;
@@ -703,7 +720,7 @@ describe('versions, inbox and reading', () => {
       [1, 'retired'],
       [2, 'published'],
     ]);
-    await expect(admin.publish('test_memo', 2)).rejects.toMatchObject({ status: 409 });
+    await expect(publishSeconded('test_memo', 2)).rejects.toMatchObject({ status: 409 });
     await expect(
       admin.addVersion('test_memo', { ...seedSpec, documentType: 'other' }),
     ).rejects.toMatchObject({ status: 400 });
@@ -799,6 +816,147 @@ describe('SLA tick for an explicit route (internal memo)', () => {
   });
 });
 
+describe('admin: publishing a workflow needs a second person (F1-Q11)', () => {
+  const spec = {
+    documentType: 'second_person',
+    steps: [{ id: 'fin', kind: 'role', role: 'finance', reason: 'Finance signs' }],
+  };
+
+  it('refuses the editor, audits the refusal, and publishes for another Management member', async () => {
+    me = U.founder;
+    await admin.createWorkflow({ key: 'second_person', name: 'Second person', spec });
+    audit.record.mockClear();
+
+    await expect(
+      admin.publish('second_person', 1, SKIP_LIVE_PUBLISHER_CHECK),
+    ).rejects.toMatchObject({
+      status: 403,
+      response: { reason: 'separation_of_duties' },
+    });
+    const recorded = () =>
+      (audit.record.mock.calls as unknown as [unknown, { action: string; after?: unknown }][]).map(
+        ([, entry]) => entry,
+      );
+    expect(
+      recorded().find((e) => e.action === 'approvals.workflow.publish_refused')?.after,
+    ).toEqual({
+      key: 'second_person',
+      version: 1,
+      reason: 'own_draft',
+      editedBy: U.founder,
+    });
+    let [wf] = (await admin.listWorkflows()).filter((w) => w.key === 'second_person');
+    expect(wf?.versions[0]).toMatchObject({
+      status: 'draft',
+      createdBy: U.founder,
+      createdByName: expect.any(String) as unknown,
+      savedByCaller: true,
+    });
+
+    me = U.mgmt;
+    const published = await admin.publish('second_person', 1, SKIP_LIVE_PUBLISHER_CHECK);
+    expect(published).toMatchObject({
+      status: 'published',
+      createdBy: U.founder,
+      publishedBy: U.mgmt,
+      savedByCaller: false,
+    });
+    expect(recorded().find((e) => e.action === 'approvals.workflow.publish')?.after).toEqual({
+      key: 'second_person',
+      version: 1,
+      editedBy: U.founder,
+      publishedBy: U.mgmt,
+    });
+
+    // Management saves the next draft: now the Founder is the second person, and Management may not publish it.
+    await admin.addVersion('second_person', spec);
+    await expect(
+      admin.publish('second_person', 2, SKIP_LIVE_PUBLISHER_CHECK),
+    ).rejects.toMatchObject({ status: 403 });
+    me = U.founder;
+    await admin.publish('second_person', 2, SKIP_LIVE_PUBLISHER_CHECK);
+    [wf] = (await admin.listWorkflows()).filter((w) => w.key === 'second_person');
+    expect(wf?.versions.map((v) => [v.version, v.status, v.createdBy, v.publishedBy])).toEqual([
+      [1, 'retired', U.founder, U.mgmt],
+      [2, 'published', U.mgmt, U.founder],
+    ]);
+  });
+
+  it("re-checks the publisher's live grant: Management demoted after sign-in cannot publish on the old token", async () => {
+    me = U.founder;
+    await admin.createWorkflow({
+      key: 'demoted',
+      name: 'Demoted publisher',
+      spec: { ...spec, documentType: 'demoted' },
+    });
+    // The HTTP route, as the app builds it: the live check runs inside the publish transaction.
+    const routes = new AdminWorkflowsController(admin, db, new RoleCache(db));
+    const mirrorRoles = (roleKeys: RoleKey[]) =>
+      withTx(db, scope, systemActor('test-seed'), async (tx) => {
+        await tx.execute(
+          sql`DELETE FROM app.user_roles WHERE tenant_id = ${scope.tenantId} AND user_id = ${U.mgmt}`,
+        );
+        for (const role of roleKeys) {
+          await tx.execute(
+            sql`INSERT INTO app.user_roles (tenant_id, user_id, role_key) VALUES (${scope.tenantId}, ${U.mgmt}, ${role})`,
+          );
+        }
+      });
+    // Management is taken away; the person keeps another role and the entity membership. Their token (the
+    // principal below) still says Management until it expires.
+    await mirrorRoles(['finance']);
+    me = U.mgmt;
+    try {
+      await expect(routes.publish('demoted', 1)).rejects.toMatchObject({
+        status: 403,
+        response: { reason: 'no_permission' },
+      });
+      expect(
+        (await admin.listWorkflows()).find((w) => w.key === 'demoted')?.versions[0]?.status,
+      ).toBe('draft');
+    } finally {
+      await mirrorRoles(['management']);
+    }
+    // With Management back in the mirror, the same route publishes.
+    await expect(routes.publish('demoted', 1)).resolves.toMatchObject({
+      status: 'published',
+      publishedBy: U.mgmt,
+    });
+  });
+
+  it('refuses a draft whose editor was never recorded, whoever publishes it', async () => {
+    me = U.founder;
+    await admin.createWorkflow({
+      key: 'no_editor',
+      name: 'No editor',
+      spec: { ...spec, documentType: 'no_editor' },
+    });
+    // A draft saved before 0127 recorded the editor.
+    await withTx(db, scope, systemActor('test-seed'), (tx) =>
+      tx.execute(
+        sql`UPDATE app.workflow_versions v SET created_by = NULL
+              FROM app.workflow_definitions d
+             WHERE d.id = v.definition_id AND d.tenant_id = ${scope.tenantId} AND d.key = 'no_editor'`,
+      ),
+    );
+    me = U.mgmt;
+    const refusal: unknown = await admin
+      .publish('no_editor', 1, SKIP_LIVE_PUBLISHER_CHECK)
+      .catch((e: unknown) => e);
+    expect(refusal).toMatchObject({ status: 403 });
+    expect(JSON.stringify((refusal as { getResponse(): unknown }).getResponse())).toContain(
+      'Save it again',
+    );
+    expect(
+      (await admin.listWorkflows()).find((w) => w.key === 'no_editor')?.versions[0],
+    ).toMatchObject({
+      status: 'draft',
+      createdBy: null,
+      savedByCaller: false,
+    });
+  });
+});
+
 describe('admin: groups and delegations', () => {
   it('manages a group, routes a group step to its members, and refuses unknown groups on publish', async () => {
     me = U.founder;
@@ -807,7 +965,7 @@ describe('admin: groups and delegations', () => {
       steps: [{ id: 'treasury', kind: 'group', group: 'treasury', reason: 'Treasury signs' }],
     };
     await admin.createWorkflow({ key: 'purchase', name: 'Purchase', spec: groupSpec });
-    await expect(admin.publish('purchase', 1)).rejects.toMatchObject({ status: 400 });
+    await expect(publishSeconded('purchase', 1)).rejects.toMatchObject({ status: 400 });
 
     const { id } = await admin.createGroup({ key: 'treasury', name: 'Treasury' });
     await expect(admin.createGroup({ key: 'treasury', name: 'Again' })).rejects.toMatchObject({
@@ -817,7 +975,7 @@ describe('admin: groups and delegations', () => {
     await admin.addMember(id, U.fin);
     await admin.removeMember(id, U.fin);
     expect((await admin.listGroups()).find((g) => g.id === id)?.memberUserIds).toEqual([U.mgmt]);
-    await admin.publish('purchase', 1);
+    await publishSeconded('purchase', 1);
 
     service.registerSubject({ documentType: 'purchase', onDecided });
     const { requestId } = await submit({ documentType: 'purchase' });
@@ -991,7 +1149,7 @@ describe('P1 review fixes (FIX-A2)', () => {
         steps: [{ id: 'ops', kind: 'group', group: 'ops', reason: 'Ops signs' }],
       },
     });
-    await admin.publish('ops_memo', 1);
+    await publishSeconded('ops_memo', 1);
     service.registerSubject({ documentType: 'ops_memo', onDecided });
     await withTx(db, scope, systemActor('test'), (tx) =>
       tx.execute(sql`UPDATE app.users SET status = 'inactive' WHERE id = ${leaver}`),
@@ -1059,7 +1217,7 @@ describe('P1 review fixes (FIX-A2c)', () => {
         name: documentType,
         spec: { documentType, distinctApprovers, steps: seedSpec.steps },
       });
-      await admin.publish(documentType, 1);
+      await publishSeconded(documentType, 1);
       service.registerSubject({ documentType, onDecided });
     }
   });
@@ -1218,7 +1376,7 @@ describe('ADR 0027: role steps use the roles of the request entity', () => {
         steps: [{ id: 'sign', kind: 'group', group: 'adr27-signers', reason: 'Signers sign' }],
       },
     });
-    await admin.publish('adr27_memo', 1);
+    await publishSeconded('adr27_memo', 1);
     service.registerSubject({ documentType: 'adr27_memo', onDecided });
     // The user leaves the entity: the group row stays, the membership does not.
     await withTx(db, scope, systemActor('test'), (tx) =>
@@ -1259,7 +1417,7 @@ describe('cancel (K1, kernel gap M5)', () => {
       name: 'K1 cancel',
       spec: { documentType: 'k1_cancel', steps: seedSpec.steps },
     });
-    await admin.publish('k1_cancel', 1);
+    await publishSeconded('k1_cancel', 1);
     service.registerSubject({ documentType: 'k1_cancel', onDecided });
   });
 
@@ -1374,7 +1532,7 @@ describe('subject hooks (K1): link and onCancelled', () => {
       name: 'K1 quote',
       spec: { documentType: 'k1_quote', steps: [seedSpec.steps[0]!] },
     });
-    await admin.publish('k1_quote', 1);
+    await publishSeconded('k1_quote', 1);
     service.registerSubject({
       documentType: 'k1_quote',
       onDecided,
@@ -1388,7 +1546,7 @@ describe('subject hooks (K1): link and onCancelled', () => {
       name: 'K1 no link',
       spec: { documentType: 'k1_nolink', steps: [seedSpec.steps[0]!] },
     });
-    await admin.publish('k1_nolink', 1);
+    await publishSeconded('k1_nolink', 1);
   });
 
   it('sends the decided notice to the link the subject gives', async () => {
@@ -1578,7 +1736,7 @@ describe('request eligibility before disclosure or locking', () => {
         rules: [],
       },
     });
-    await admin.publish('purchase_request', 1);
+    await publishSeconded('purchase_request', 1);
     service.registerSubject({ documentType: 'purchase_request', onDecided });
     const first = await submit({ documentType: 'purchase_request', facts: { departmentId } });
     const second = await submit({ documentType: 'purchase_request', facts: { departmentId } });
@@ -1621,7 +1779,7 @@ describe('request eligibility before disclosure or locking', () => {
           rules: [],
         },
       });
-      await admin.publish('purchase_request', 1);
+      await publishSeconded('purchase_request', 1);
     }
     try {
       service.registerSubject({ documentType: 'purchase_request', onDecided });
@@ -1686,7 +1844,7 @@ describe('inbox filters: search and type narrow the list, never widen who may de
           rules: [],
         },
       });
-      await admin.publish('purchase_request', 1);
+      await publishSeconded('purchase_request', 1);
     } catch {
       /* already there */
     }
@@ -1853,7 +2011,7 @@ describe('approvals.sla_defaults setting (a spec that leaves sla out)', () => {
       name: documentType,
       spec: { documentType, steps: seedSpec.steps, ...(sla === undefined ? {} : { sla }) },
     });
-    await withSettings.publish(documentType, 1);
+    await publishSeconded(documentType, 1, withSettings);
     service.registerSubject({ documentType, onDecided });
     const { requestId } = await submit({ documentType });
     const steps = await db
@@ -1951,7 +2109,7 @@ describe('quotation snapshot cost figures follow the viewer (D29)', () => {
       name: 'Quotation version',
       spec: { documentType: QUOTE, steps: [seedSpec.steps[0]!] },
     });
-    await admin.publish(QUOTE, 1);
+    await publishSeconded(QUOTE, 1);
     service.registerSubject({ documentType: QUOTE, onDecided });
   });
 

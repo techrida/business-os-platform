@@ -15,6 +15,7 @@ describe('development cookie namespace', () => {
     vi.stubEnv('BOS_DEV_COOKIE_NAMESPACE', undefined);
     expect(cookieName('session')).toBe('__Host-bos_session');
     expect(cookieName('login')).toBe('__Host-bos_login');
+    expect(cookieName('signed_out')).toBe('__Host-bos_signed_out');
   });
 
   it('uses separate session and login cookies for concurrent development instances', async () => {

@@ -27,8 +27,12 @@ const IDP_ORG = '99999999-9999-4999-8999-999999999999';
 const SUB = '312345678901234567';
 const AVATAR = '55555555-5555-4555-8555-555555555555';
 
-/** Answers the controller's one users lookup (the picture pointer); records the WHERE parameters so a test can see whose row was read. */
-function fakeDb(rows: { avatarDocumentId: string | null }[] = [{ avatarDocumentId: null }]) {
+/** Answers the controller's one users lookup (name and picture pointer); records the WHERE parameters so a test can see whose row was read. */
+function fakeDb(
+  rows: { avatarDocumentId: string | null; displayName?: string | null }[] = [
+    { avatarDocumentId: null },
+  ],
+) {
   const seen: unknown[][] = [];
   const db = {
     select: () => ({
@@ -139,6 +143,7 @@ describe('MeController', () => {
       correlationId: 'corr-12345678',
       permissions: [{ permission: 'portal.quotation.read', scope: 'customer_org' }],
       avatarDocumentId: null,
+      displayName: null,
       // The principal's own department (this fixture gives one) and, with no level on it, staff.
       level: 'staff',
       departmentId: DEPARTMENT,
@@ -186,6 +191,25 @@ describe('MeController', () => {
     expect(MeResponseSchema.parse(body).avatarDocumentId).toBe(AVATAR);
     expect(body.id).toBe(APP_USER);
     expect(seen).toEqual([[TENANT, APP_USER]]);
+  });
+
+  it("carries the caller's own display name from the same row, and null for a blank one", async () => {
+    const { db, seen } = fakeDb([{ avatarDocumentId: null, displayName: '  Amanda Rai ' }]);
+    const body = MeResponseSchema.parse(await meAs(principalOf(['sales'], new Map()), db));
+    expect(body.displayName).toBe('Amanda Rai');
+    expect(seen).toEqual([[TENANT, APP_USER]]);
+
+    const blank = MeResponseSchema.parse(
+      await meAs(
+        principalOf(['sales'], new Map()),
+        fakeDb([{ avatarDocumentId: null, displayName: '   ' }]).db,
+      ),
+    );
+    expect(blank.displayName).toBeNull();
+    const noRow = MeResponseSchema.parse(
+      await meAs(principalOf(['sales'], new Map()), fakeDb([]).db),
+    );
+    expect(noRow.displayName).toBeNull();
   });
 
   it('throws outside an authenticated request', async () => {
@@ -264,6 +288,7 @@ describe('MeController', () => {
         'avatarDocumentId',
         'correlationId',
         'departmentId',
+        'displayName',
         'id',
         'level',
         'orgKind',

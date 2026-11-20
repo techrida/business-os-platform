@@ -118,6 +118,8 @@ export const workflowVersions = appSchema.table(
     status: text('status', { enum: WORKFLOW_VERSION_STATUSES }).notNull().default('draft'),
     spec: jsonb('spec').notNull(),
     createdAt: tz('created_at').notNull().defaultNow(),
+    /** Who saved this version (0127). Null before 0127; such a draft is refused at publish until saved again. */
+    createdBy: uuid('created_by'),
     publishedAt: tz('published_at'),
     publishedBy: uuid('published_by'),
   },

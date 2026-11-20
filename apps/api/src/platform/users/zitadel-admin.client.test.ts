@@ -300,3 +300,117 @@ describe('ensureOrgLoginPolicy', () => {
     expect(sent).toHaveLength(1);
   });
 });
+
+describe('user lock state (F1-Q4)', () => {
+  it('reads a LOCKED user as inactive and locked, with the date ZITADEL last changed it', async () => {
+    answers.push({
+      status: 200,
+      body: {
+        user: {
+          userId: 'u-1',
+          state: 'USER_STATE_LOCKED',
+          details: { resourceOwner: 'o-1', changeDate: '2026-11-20T10:00:00Z' },
+        },
+      },
+    });
+
+    await expect(client().getUser('u-1')).resolves.toMatchObject({
+      status: 'inactive',
+      locked: true,
+      changedAt: new Date('2026-11-20T10:00:00Z'),
+    });
+  });
+
+  it('reads a deactivated user as inactive but not locked', async () => {
+    answers.push({
+      status: 200,
+      body: {
+        user: { userId: 'u-1', state: 'USER_STATE_INACTIVE', details: { resourceOwner: 'o-1' } },
+      },
+    });
+
+    await expect(client().getUser('u-1')).resolves.toMatchObject({
+      status: 'inactive',
+      locked: false,
+      changedAt: null,
+    });
+  });
+});
+
+describe('lockUser and unlockUser (F1-Q5)', () => {
+  it.each([
+    ['lockUser', '/zitadel.user.v2.UserService/LockUser'],
+    ['unlockUser', '/zitadel.user.v2.UserService/UnlockUser'],
+    ['deleteUser', '/zitadel.user.v2.UserService/DeleteUser'],
+  ] as const)('%s posts { userId } to %s', async (method, path) => {
+    await client()[method]('u-1');
+
+    expect(calls).toEqual([{ path, body: { userId: 'u-1' } }]);
+    expect(sent[0]?.method).toBe('POST');
+  });
+
+  it('turns a refusal into a ZitadelHttpError with the status', async () => {
+    answers.push({ status: 400, body: { code: 'failed_precondition', message: 'not active' } });
+
+    await expect(client().lockUser('u-1')).rejects.toMatchObject({ status: 400 });
+  });
+});
+
+describe('ensureOrgLockoutPolicy (F1-Q4)', () => {
+  const WANT = { maxPasswordAttempts: 5, maxOtpAttempts: 5 };
+  const PATH = '/management/v1/policies/lockout';
+
+  it('gives an org that inherits the default (no limits, as v4.20.1 sends it) a custom policy', async () => {
+    answers.push({
+      status: 200,
+      body: {
+        policy: { details: { sequence: '22' }, isDefault: true, showLockoutFailure: true },
+        isDefault: true,
+      },
+    });
+
+    await expect(client().ensureOrgLockoutPolicy('o-1', WANT)).resolves.toBe('created');
+
+    expect(calls.map((c) => c.path)).toEqual([PATH, PATH]);
+    expect(sent).toEqual([
+      { method: 'GET', orgId: 'o-1' },
+      { method: 'POST', orgId: 'o-1' },
+    ]);
+    // Every other setting is carried over; the read-only fields are not sent back.
+    expect(calls[1]?.body).toEqual({ showLockoutFailure: true, ...WANT });
+  });
+
+  it('updates a custom policy whose limits differ (uint64 arrives as a string)', async () => {
+    answers.push({
+      status: 200,
+      body: { policy: { maxPasswordAttempts: '10', maxOtpAttempts: '5' }, isDefault: false },
+    });
+
+    await expect(client().ensureOrgLockoutPolicy('o-1', WANT)).resolves.toBe('updated');
+
+    expect(sent.map((s) => s.method)).toEqual(['GET', 'PUT']);
+    expect(calls[1]?.body).toEqual(WANT);
+  });
+
+  it('leaves a matching custom policy alone', async () => {
+    answers.push({
+      status: 200,
+      body: { policy: { maxPasswordAttempts: '5', maxOtpAttempts: '5' }, isDefault: false },
+    });
+
+    await expect(client().ensureOrgLockoutPolicy('o-1', WANT)).resolves.toBe('unchanged');
+
+    expect(sent.map((s) => s.method)).toEqual(['GET']);
+  });
+
+  it('updates instead when another process created the custom policy first (409)', async () => {
+    answers.push(
+      { status: 200, body: { policy: { isDefault: true }, isDefault: true } },
+      { status: 409, body: { code: 'already_exists', message: 'exists' } },
+    );
+
+    await expect(client().ensureOrgLockoutPolicy('o-1', WANT)).resolves.toBe('updated');
+
+    expect(sent.map((s) => s.method)).toEqual(['GET', 'POST', 'PUT']);
+  });
+});

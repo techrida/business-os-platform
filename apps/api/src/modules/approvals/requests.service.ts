@@ -289,6 +289,31 @@ export class ApprovalsService {
   }
 
   /**
+   * The plan of a document type's published workflow, not redacted, for a module that checks a person it names
+   * against the workflow (the memo's "Approved by" against the Memo approver workflow, F1-Q9). No HTTP route reaches
+   * it; the caller decides what to show. With no published workflow for the type, plans `builtIn` when given (the
+   * rule the type starts with), else 409. Read-only.
+   */
+  async planOf(
+    scope: TxScope,
+    documentType: string,
+    facts: Record<string, unknown>,
+    sodUserIds: readonly string[],
+    q: Q = this.db,
+    builtIn?: WorkflowSpec,
+  ): Promise<RoutePlan> {
+    const spec = await this.publishedSpec(q, scope, documentType).then(
+      (published) => published.spec,
+      (error: unknown) => {
+        if (builtIn !== undefined && error instanceof ConflictException) return builtIn;
+        throw error;
+      },
+    );
+    const data = await this.loadDirectory(q, scope, spec);
+    return this.plan(spec, facts, data, sodUserIds);
+  }
+
+  /**
    * Who the author may name as the approver of the first step of this document's route, or null when that
    * step is not a role step (nothing to choose). Active staff of this entity holding the step's role, plus
    * the widened roles of assignee.ts, minus `sodUserIds` (the author and whoever submits). Unlike preview(),

@@ -46,6 +46,8 @@ vi.mock('@/lib/oidc', () => ({
   // Pinned to the literal here and in oidc.test.ts, so a renamed constant fails one of them.
   LOGIN_COOKIE: '__Host-bos_login',
   LOGIN_COOKIE_MAX_AGE: 600,
+  SIGNED_OUT_COOKIE: '__Host-bos_signed_out',
+  SIGNED_OUT_COOKIE_MAX_AGE: 2_592_000,
   beginLogin: m.beginLogin,
   completeLogin: m.completeLogin,
   endSessionUrl: m.endSessionUrl,
@@ -86,6 +88,12 @@ const SESSION_COOKIE = '__Host-bos_session';
 const SESSION_ID = 's'.repeat(43);
 const BINDING = 'b'.repeat(43);
 const LOGIN_COOKIE_ATTRS = { httpOnly: true, secure: true, sameSite: 'lax', path: '/' };
+const SIGNED_OUT_COOKIE = '__Host-bos_signed_out';
+/** The signed-out marker writes, as [value, maxAge] pairs. */
+const signedOutWrites = (): [unknown, number | undefined][] =>
+  (m.cookieSet.mock.calls as unknown[][])
+    .filter((c) => c[0] === SIGNED_OUT_COOKIE)
+    .map((c) => [c[1], (c[2] as { maxAge?: number }).maxAge]);
 
 // Loaded through require, as in session.test.ts: ioredis-mock has no reachable types.
 const RedisMock = createRequire(import.meta.url)('ioredis-mock') as new () => Redis;
@@ -171,6 +179,21 @@ describe('GET /auth/login', () => {
       expect(m.beginLogin.mock.calls[0]?.[0]).toMatchObject({ prompt });
     },
   );
+
+  // R2-001: after a sign-out that left the ZITADEL session alive, picking the remembered account must not sign
+  // the person straight back in.
+  it('asks for prompt=login while the signed-out marker is set, whatever prompt the link carried', async () => {
+    requestCookies.set(SIGNED_OUT_COOKIE, '1');
+    await call('?prompt=none');
+    expect(m.beginLogin.mock.calls[0]?.[0]).toMatchObject({ prompt: 'login' });
+    await call();
+    expect(m.beginLogin.mock.calls[1]?.[0]).toMatchObject({ prompt: 'login' });
+  });
+
+  it('sends no prompt of its own without the marker', async () => {
+    await call();
+    expect(m.beginLogin.mock.calls[0]?.[0]).not.toHaveProperty('prompt');
+  });
 
   it('passes max_age=0 through as a number for step-up (K7)', async () => {
     await call('?prompt=login&max_age=0');
@@ -290,6 +313,29 @@ describe('GET /auth/callback', () => {
     expect(m.setSessionCookie).toHaveBeenCalledWith('sid-1');
     expect(res.status).toBe(303);
     expect(res.headers.get('location')).toBe('https://app.localhost/orders');
+  });
+
+  it('clears the signed-out marker once the person has signed in again', async () => {
+    m.completeLogin.mockResolvedValue({ tokens, sub: 'user-1', returnTo: '/' });
+    m.getMe.mockResolvedValue({ organizationId: 'org-1', orgKind: 'staff', roles: ['admin'] });
+    m.createSession.mockResolvedValue('sid-1');
+    requestCookies.set(LOGIN_COOKIE, BINDING);
+    requestCookies.set(SIGNED_OUT_COOKIE, '1');
+
+    await call('?code=c&state=s');
+
+    expect(m.cookieSet).toHaveBeenCalledWith(SIGNED_OUT_COOKIE, '', {
+      ...LOGIN_COOKIE_ATTRS,
+      maxAge: 0,
+    });
+  });
+
+  it('keeps the signed-out marker when the login fails', async () => {
+    requestCookies.set(SIGNED_OUT_COOKIE, '1');
+    vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    await call('?code=c&state=s');
+    expect(signedOutWrites()).toEqual([]);
   });
 
   it('restarts an expired transaction once without creating a session', async () => {
@@ -500,6 +546,8 @@ describe('/auth/logout', () => {
     expect(m.endSessionUrl.mock.calls[0]).toEqual([{ idTokenHint: ID_TOKEN }]);
     expect(res.status).toBe(303);
     expect(res.headers.get('location')).toBe(END_SESSION);
+    // ZITADEL ends its session on the hint, so the next login may use its account chooser as usual.
+    expect(signedOutWrites()).toEqual([]);
   });
 
   // CR-06: getSession is null when the record idled out or Valkey is down. The ZITADEL session
@@ -516,6 +564,11 @@ describe('/auth/logout', () => {
     expect(m.clearSessionCookie).toHaveBeenCalledTimes(1);
     expect(res.status).toBe(303);
     expect(res.headers.get('location')).toBe(END_SESSION);
+    // R2-001: without the hint ZITADEL keeps its session, so the next login must ask for the credentials.
+    expect(m.cookieSet).toHaveBeenCalledWith(SIGNED_OUT_COOKIE, '1', {
+      ...LOGIN_COOKIE_ATTRS,
+      maxAge: 2_592_000,
+    });
   });
 
   it('without any cookie: clears the cookie and still ends the IdP session', async () => {
@@ -571,6 +624,8 @@ describe('/auth/logout', () => {
     expect(m.destroySession).toHaveBeenCalledWith(SESSION_ID);
     expect(m.clearSessionCookie).toHaveBeenCalledTimes(1);
     expect(res.headers.get('location')).toBe('https://app.localhost/');
+    // The IdP session was never asked to end, so the next login must ask for the credentials.
+    expect(signedOutWrites()).toEqual([['1', 2_592_000]]);
   });
 });
 

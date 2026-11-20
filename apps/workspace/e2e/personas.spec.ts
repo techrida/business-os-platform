@@ -95,10 +95,14 @@ test.describe('persona sign-in and sign-out', () => {
       await test.step('lands where the organisation kind says', async () => {
         if (who.orgKind === 'staff') {
           await expect(page).toHaveURL(`${appOrigin}/`);
-          await expect(page.getByRole('heading', { name: 'Welcome back' })).toBeVisible();
-          // The header shows the org kind badge and the roles that came from the token.
+          // The greeting uses the display name from /v1/me (`Good morning, Dev`); `Welcome back` without one.
+          await expect(
+            page.getByRole('heading', {
+              name: /^(Welcome back|Good (morning|afternoon|evening)(, .+)?)$/,
+            }),
+          ).toBeVisible();
+          // The header shows the roles that came from the token.
           const header = page.getByRole('banner');
-          await expect(header).toContainText(/staff/i);
           await expect(header).toContainText(new RegExp(who.role.replace(/[_-]/g, ' '), 'i'));
         } else {
           // A valid session, but not for this app: `/` sends customers and vendors away.
@@ -187,7 +191,11 @@ test.describe('dev persona switcher', () => {
     await page.goto('/dev/personas');
     await page.getByRole('button', { name: sales.label, exact: true }).click();
     await expect(page).toHaveURL(new URL('/', baseURL).toString());
-    await expect(page.getByRole('heading', { name: 'Welcome back' })).toBeVisible();
+    await expect(
+      page.getByRole('heading', {
+        name: /^(Welcome back|Good (morning|afternoon|evening)(, .+)?)$/,
+      }),
+    ).toBeVisible();
     const whoami = await page.evaluate(async () => {
       const response = await fetch('/dev/api/whoami');
       return { status: response.status, body: (await response.json()) as { roles: string[] } };

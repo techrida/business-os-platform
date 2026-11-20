@@ -53,6 +53,7 @@ import { buildLink, renderEmail } from '../../../platform/notify/templates';
 import { MoneyService } from '../../../platform/settings/money.service';
 import { NumberingService } from '../../../platform/settings/numbering.service';
 import { ApprovalsAdminService } from '../../approvals/admin.service';
+import { asSecondPerson, SKIP_LIVE_PUBLISHER_CHECK } from '../../../../test/support/second-person';
 import type { ApprovalEmailTemplate } from '../../approvals/ports';
 import { ApprovalsService } from '../../approvals/requests.service';
 import {
@@ -265,12 +266,13 @@ beforeAll(async () => {
   // The workflow the seed unit publishes, published in entity A as an admin would.
   as(U.admin, 'founder');
   const admin = new ApprovalsAdminService(db, audit, caller, () => now);
+  const adminPublisher = new ApprovalsAdminService(db, audit, asSecondPerson(caller), () => now);
   await admin.createWorkflow({
     key: PURCHASE_REQUEST_DOCUMENT_TYPE,
     name: 'Purchase request',
     spec: PURCHASE_REQUEST_WORKFLOW_SPEC,
   });
-  await admin.publish(PURCHASE_REQUEST_DOCUMENT_TYPE, 1);
+  await adminPublisher.publish(PURCHASE_REQUEST_DOCUMENT_TYPE, 1, SKIP_LIVE_PUBLISHER_CHECK);
 
   roleCache = new RoleCache(db);
   approvals = new ApprovalsService(db, audit, notify, directory, caller, () => now, roleCache);
@@ -732,6 +734,12 @@ describe('purchase request: the decision', () => {
       as(U.admin, 'founder');
       const documentType = `head_control_${kind}`;
       const admin = new ApprovalsAdminService(db, new AuditService(db), caller, () => now);
+      const adminPublisher = new ApprovalsAdminService(
+        db,
+        new AuditService(db),
+        asSecondPerson(caller),
+        () => now,
+      );
       await admin.createWorkflow({
         key: documentType,
         name: documentType,
@@ -742,7 +750,7 @@ describe('purchase request: the decision', () => {
           ],
         },
       });
-      await admin.publish(documentType, 1);
+      await adminPublisher.publish(documentType, 1, SKIP_LIVE_PUBLISHER_CHECK);
       approvals.registerSubject({ documentType, onDecided: async () => {} });
       const { requestId } = await read((tx) =>
         approvals.submit(tx, {

@@ -21,6 +21,17 @@ export const ZITADEL_ENDPOINTS = {
   // UNVERIFIED: user v2 GetUserByID; body { userId }, response { user }.
   getUser: '/zitadel.user.v2.UserService/GetUserByID',
   passwordReset: '/zitadel.user.v2.UserService/PasswordReset',
+  // F1-Q5. VERIFIED at v4.20.1 (2026-11-20): each path exists and takes body { userId } (an unknown id answers
+  // 404 "User could not be found", an unknown method answers "404 page not found"). UNVERIFIED: a real state change
+  // with this client's PAT. ZITADEL refuses a change that does not fit (deactivating an invited user, reactivating
+  // an active one) with a precondition error.
+  deactivateUser: '/zitadel.user.v2.UserService/DeactivateUser',
+  reactivateUser: '/zitadel.user.v2.UserService/ReactivateUser',
+  lockUser: '/zitadel.user.v2.UserService/LockUser',
+  // VERIFIED at v4.20.1 (2026-11-20): exists and takes { userId } (an unknown id answers 404 "User could not be
+  // found"). Used only to take back an identity an invite created a moment ago (UsersService.placeInvitee).
+  deleteUser: '/zitadel.user.v2.UserService/DeleteUser',
+  unlockUser: '/zitadel.user.v2.UserService/UnlockUser',
   // VERIFIED path and organizationIdQuery (seed findUser). UNVERIFIED: the `query` paging object, the
   // `sortingColumn` value and the `details.totalResult` answer. reconcile does not trust any of them:
   // it aborts when the walk shows paging is not working (see UserMirror.reconcile).
@@ -47,7 +58,18 @@ export const ZITADEL_ENDPOINTS = {
   // GetLoginPolicy, POST = AddCustomLoginPolicy, PUT = UpdateCustomLoginPolicy, on the org named by the
   // `x-zitadel-orgid` header. UNVERIFIED with this client's PAT (needs policy.write on the customer org).
   orgLoginPolicy: '/management/v1/policies/login',
+  // F1-Q4. VERIFIED GET at v4.20.1 (2026-11-20, staff org): { policy: { details, isDefault }, isDefault } with
+  // the attempt limits left out while they are 0 (no lockout). UNVERIFIED: POST = AddCustomLockoutPolicy and
+  // PUT = UpdateCustomLockoutPolicy with body { maxPasswordAttempts, maxOtpAttempts }, and that the provisioner
+  // holds policy.write on the staff org.
+  orgLockoutPolicy: '/management/v1/policies/lockout',
 } as const;
+
+/** The org lockout-policy settings a caller pins (management v1 field names). */
+export interface OrgLockoutPolicy {
+  maxPasswordAttempts: number;
+  maxOtpAttempts: number;
+}
 
 /** The ZITADEL project that holds the role keys (tools/seed-zitadel/src/personas.ts PROJECT_NAME). */
 export const BOS_PROJECT_NAME = 'business-os';
@@ -83,6 +105,13 @@ export interface ZitadelUser {
   displayName: string;
   /** Null when ZITADEL sent a state we do not recognise: callers leave the mirrored user unchanged. */
   status: MirroredStatus | null;
+  /**
+   * ZITADEL holds the user LOCKED (status 'inactive'): its lockout policy saw too many wrong passwords or codes, or
+   * an admin locked them. Absent means false.
+   */
+  locked?: boolean;
+  /** When ZITADEL last changed the user (`details.changeDate`), or null when it did not say. */
+  changedAt?: Date | null;
   /** When ZITADEL created the user (`details.creationDate`), or null when it did not say. */
   createdAt: Date | null;
 }
@@ -131,7 +160,11 @@ const UserShape = z.object({
   username: Str.default(''),
   preferredLoginName: Str.default(''),
   details: z
-    .object({ resourceOwner: Str.default(''), creationDate: Str.optional() })
+    .object({
+      resourceOwner: Str.default(''),
+      creationDate: Str.optional(),
+      changeDate: Str.optional(),
+    })
     .default({ resourceOwner: '' }),
   human: z
     .object({
@@ -189,6 +222,17 @@ const LoginPolicyResponse = z.object({
   }),
   isDefault: z.boolean().default(false),
 });
+// uint64 fields arrive as strings, and protobuf JSON leaves out zeros (0 = no lockout).
+const Attempts = z.union([Str, z.number()]).optional();
+const LockoutPolicyResponse = z.object({
+  policy: z.looseObject({
+    isDefault: z.boolean().default(false),
+    maxPasswordAttempts: Attempts,
+    maxOtpAttempts: Attempts,
+  }),
+  isDefault: z.boolean().default(false),
+});
+const attempts = (value: string | number | undefined): number => Number(value ?? 0);
 /**
  * AddCustomLoginPolicy and UpdateCustomLoginPolicy replace the whole policy (proto3 scalars), so every
  * setting read must be sent back or it silently resets: allowUsernamePassword would become false and lock
@@ -269,7 +313,9 @@ function toUser(u: UserShape): ZitadelUser {
     email: email.length > 0 ? email : null,
     displayName,
     status: statusFromState(u.state),
+    locked: u.state === 'USER_STATE_LOCKED',
     createdAt: dateOrNull(u.details.creationDate),
+    changedAt: dateOrNull(u.details.changeDate),
   };
 }
 
@@ -497,6 +543,68 @@ export class ZitadelAdminClient {
   /** Asks ZITADEL to mail the invite link (the user then sets a password and enrols TOTP). */
   async sendInviteCode(zitadelUserId: string): Promise<void> {
     await this.post(ZITADEL_ENDPOINTS.createInviteCode, { userId: zitadelUserId, sendCode: {} });
+  }
+
+  /** Shuts the user out of every sign-in (state INACTIVE) until reactivated. */
+  async deactivateUser(zitadelUserId: string): Promise<void> {
+    await this.post(ZITADEL_ENDPOINTS.deactivateUser, { userId: zitadelUserId });
+  }
+
+  /** Lets a deactivated user sign in again (state ACTIVE). */
+  async reactivateUser(zitadelUserId: string): Promise<void> {
+    await this.post(ZITADEL_ENDPOINTS.reactivateUser, { userId: zitadelUserId });
+  }
+
+  /** Removes the user from ZITADEL for good: their invite link and sign-in stop working. */
+  async deleteUser(zitadelUserId: string): Promise<void> {
+    await this.post(ZITADEL_ENDPOINTS.deleteUser, { userId: zitadelUserId });
+  }
+
+  /** Shuts the user out of every sign-in (state LOCKED) until unlocked. */
+  async lockUser(zitadelUserId: string): Promise<void> {
+    await this.post(ZITADEL_ENDPOINTS.lockUser, { userId: zitadelUserId });
+  }
+
+  /** Lets a locked user sign in again (state ACTIVE) and resets their failed attempts. */
+  async unlockUser(zitadelUserId: string): Promise<void> {
+    await this.post(ZITADEL_ENDPOINTS.unlockUser, { userId: zitadelUserId });
+  }
+
+  /**
+   * Pins the attempt limits in the org's own lockout policy (F1-Q4), the same way ensureOrgLoginPolicy pins the login
+   * policy: an org that inherits the instance policy gets a custom one, a custom one that differs is updated, and a
+   * matching custom one is left alone. The org is named in `x-zitadel-orgid`.
+   */
+  async ensureOrgLockoutPolicy(
+    zitadelOrgId: string,
+    want: Readonly<OrgLockoutPolicy>,
+  ): Promise<'created' | 'updated' | 'unchanged'> {
+    const asOrg = { 'x-zitadel-orgid': zitadelOrgId };
+    const current = parse(
+      LockoutPolicyResponse,
+      await this.request('GET', ZITADEL_ENDPOINTS.orgLockoutPolicy, undefined, asOrg),
+      'GetLockoutPolicy',
+    );
+    const { policy } = current;
+    const inherited = policy.isDefault || current.isDefault;
+    const matches =
+      attempts(policy.maxPasswordAttempts) === want.maxPasswordAttempts &&
+      attempts(policy.maxOtpAttempts) === want.maxOtpAttempts;
+    if (!inherited && matches) return 'unchanged';
+    const body = { ...policy, ...want };
+    delete (body as Record<string, unknown>).details;
+    delete (body as Record<string, unknown>).isDefault;
+    if (inherited) {
+      try {
+        await this.request('POST', ZITADEL_ENDPOINTS.orgLockoutPolicy, body, asOrg);
+        return 'created';
+      } catch (error) {
+        // Another process created the custom policy a moment ago: update that one instead.
+        if (!(error instanceof ZitadelHttpError && error.status === 409)) throw error;
+      }
+    }
+    await this.request('PUT', ZITADEL_ENDPOINTS.orgLockoutPolicy, body, asOrg);
+    return 'updated';
   }
 
   async sendPasswordReset(zitadelUserId: string): Promise<void> {

@@ -41,8 +41,9 @@ export interface DraftMemo {
 
 /**
  * Fills the New memo form and saves a draft; ends on the memo's own page. An internal memo has no amount and no
- * files: the author names the signers, and those people are the approval route, in this order. Every name must be
- * a seeded person who can decide approvals (the pickers offer no one else), for example "Dev Management".
+ * files: the author names the signers, and those people are the approval route, in this order. Every recommender
+ * must be a seeded person who can decide approvals, for example "Dev Management". The approver must be someone the
+ * Memo approver rule allows ("Approved by" lists no one else): for a Sales author, "Dev Founder".
  */
 export async function createDraftMemo(
   page: Page,
@@ -85,14 +86,14 @@ export async function createDraftMemo(
     await expect(box).toHaveValue(signers[i]!);
     if (i === 0 && !approver) {
       // A typed label alone cannot submit a signer. Check the real form field, then verify
-      // the same signer is unavailable for a second step of this memo.
+      // "Approved by" does not offer this recommender: the approver rule lists only eligible people.
       const template = JSON.parse(await page.locator('input[name="template"]').inputValue()) as {
         recommenderUserIds: string[];
       };
       expect(template.recommenderUserIds).toEqual([expect.stringMatching(/^[0-9a-f-]{36}$/i)]);
       const finalSigner = page.getByRole('combobox', { name: 'Approved by', exact: true });
       await finalSigner.fill(signers[i]!);
-      await expect(option).toBeDisabled();
+      await expect(option).toHaveCount(0);
       await finalSigner.press('Escape');
     }
   }

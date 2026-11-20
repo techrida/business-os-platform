@@ -331,9 +331,10 @@ describe('0062-0063 follow-ups on seeded old-shape rows', () => {
       });
 
       // Other kinds are left as they were (0062 only adds the two NULL columns).
-      const after = await pool.query(`SELECT * FROM app.activities WHERE id = ANY($1) ORDER BY id`, [
-        [seed.openCall, seed.note],
-      ]);
+      const after = await pool.query(
+        `SELECT * FROM app.activities WHERE id = ANY($1) ORDER BY id`,
+        [[seed.openCall, seed.note]],
+      );
       expect(after.rows).toEqual(
         untouched.rows.map((row: Record<string, unknown>) => ({
           ...row,

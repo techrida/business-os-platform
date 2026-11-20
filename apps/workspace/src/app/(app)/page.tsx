@@ -3,7 +3,6 @@ import Link from 'next/link';
 import { listActivitiesPage } from '@/components/p2/crm/activities-api';
 import { getLeadSummary } from '@/components/p2/crm/leads-api';
 import { listOpportunitiesPage } from '@/components/p2/crm/opportunities-api';
-import { canAssignFollowUps, loadPeople } from '@/components/p2/crm/people';
 import { listCustomers } from '@/components/p2/customers/api';
 import { permissionChecker } from '@/components/p2/customers/permissions';
 import { getQuotationsSummary, listQuotationsPage } from '@/components/p2/quotations/api';
@@ -51,7 +50,6 @@ export default async function OverviewPage() {
     unread,
     notifications,
     me,
-    people,
     customers,
     leads,
     opportunities,
@@ -63,7 +61,6 @@ export default async function OverviewPage() {
     getUnreadCount(session),
     listNotifications(session, { limit: 5 }),
     getMe(session),
-    canAssignFollowUps(session).then((owners) => loadPeople(session, { owners })),
     listCustomers(session, { limit: 1 }),
     getLeadSummary(session),
     listOpportunitiesPage(session, { stage: ACTIVE_OPPORTUNITY_STAGES, limit: 1 }),
@@ -73,10 +70,8 @@ export default async function OverviewPage() {
   ]);
 
   const approvals = inbox.status === 'fulfilled' ? inbox.value : null;
-  const myName =
-    me.status === 'fulfilled' && people.status === 'fulfilled'
-      ? people.value.owners.find((o) => o.userId === me.value.userId)?.displayName
-      : undefined;
+  // /v1/me carries the caller's own name (its `userId` is the identity sub, not an app user id).
+  const myName = me.status === 'fulfilled' ? me.value.displayName : undefined;
   // The live grants win over the role defaults, so a revoked permission removes its tile.
   const granted =
     me.status === 'fulfilled' && me.value.permissions !== undefined

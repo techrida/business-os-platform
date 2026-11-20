@@ -28,6 +28,8 @@ import type { DocumentOwnerPolicy } from './platform/documents/documents.ports';
 import { DocumentsService } from './platform/documents/documents.service';
 import { OutboxDrainer } from './platform/notify/outbox.drainer';
 import { OutboxDrainScheduler, OutboxProcessor } from './platform/notify/outbox.processor';
+import { UserLocks } from './platform/users/user-locks';
+import { UsersProcessor } from './platform/users/users.processor';
 
 // WorkerModule boot check. The worker-only modules (render sweeper, quotation expiry, approvals SLA,
 // notify outbox) are imported by nothing but WorkerModule, so no other test compiles them and a missing or
@@ -107,6 +109,11 @@ describe('WorkerModule boot (DI graph)', () => {
     expect(moduleRef.get(PortalLoginPolicyWorkerModule, { strict: false })).toBeInstanceOf(
       PortalLoginPolicyWorkerModule,
     );
+  });
+
+  it('resolves the users processor with the timed-lock service (F1-Q4)', () => {
+    expect(moduleRef.get(UserLocks, { strict: false })).toBeInstanceOf(UserLocks);
+    expect(moduleRef.get(UsersProcessor, { strict: false })).toBeInstanceOf(UsersProcessor);
   });
 
   it('resolves the approvals SLA processor and scheduler', () => {

@@ -1,10 +1,13 @@
+import { ACCOUNT_LOCKOUT } from '@bos/contracts';
 import { Logger, NotFoundException } from '@nestjs/common';
 import type { Queue } from 'bullmq';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import type { DbTransaction } from '../db/db.module';
+import type { AuditService } from '../audit/audit.service';
+import { UserLocks } from './user-locks';
 import { UserMirror } from './user-mirror';
-import type { UsersSyncData } from './users.constants';
+import { lockoutPinnedCursor, type UsersSyncData } from './users.constants';
 import {
   CUST_IDP,
   CUST_ZORG,
@@ -451,5 +454,228 @@ describe('UserMirror.resolve on an accepted invite', () => {
     });
     expect(store.users.find((u) => u.id === userId)?.status).toBe('active');
     expect(queue.added).toEqual([{ name: 'users.sync', data: { zitadelUserId: 'z-new' } }]);
+  });
+});
+
+describe('UserMirror status changes are re-read behind the row lock (F1-Q5)', () => {
+  /** getUser answers `stale` once (the read before the row lock), then whatever ZITADEL now holds. */
+  const staleOnce = (stale: ReturnType<typeof zUser>) => {
+    const real = zitadel.getUser.bind(zitadel);
+    let served = false;
+    vi.spyOn(zitadel, 'getUser').mockImplementation((id: string) => {
+      if (served) return real(id);
+      served = true;
+      return Promise.resolve(stale);
+    });
+  };
+
+  beforeEach(async () => {
+    zitadel.users.set('z1', zUser('z1'));
+    await mirror.syncUser('z1');
+  });
+
+  it('does not write back an active state read before an admin deactivated the user (old code: active again)', async () => {
+    // The admin's action: ZITADEL and the mirror both say inactive now.
+    zitadel.users.set('z1', zUser('z1', { status: 'inactive' }));
+    store.users[0]!.status = 'inactive';
+    staleOnce(zUser('z1'));
+
+    await mirror.syncUser('z1');
+
+    expect(store.users[0]?.status).toBe('inactive');
+  });
+
+  it('does not write back an inactive state read before an admin reactivated the user', async () => {
+    store.users[0]!.status = 'active';
+    staleOnce(zUser('z1', { status: 'inactive' }));
+
+    await mirror.syncUser('z1');
+
+    expect(store.users[0]?.status).toBe('active');
+  });
+
+  it('leaves a change that would let someone in for the next pass when the re-read fails', async () => {
+    store.users[0]!.status = 'inactive';
+    let calls = 0;
+    vi.spyOn(zitadel, 'getUser').mockImplementation(() => {
+      calls += 1;
+      return calls === 1 ? Promise.resolve(zUser('z1')) : Promise.reject(new Error('ZITADEL 503'));
+    });
+    vi.spyOn(Logger.prototype, 'warn').mockImplementation(() => undefined);
+
+    await mirror.syncUser('z1');
+
+    expect(store.users[0]?.status).toBe('inactive');
+  });
+
+  it('still applies a change that takes access away when the re-read fails', async () => {
+    let calls = 0;
+    vi.spyOn(zitadel, 'getUser').mockImplementation(() => {
+      calls += 1;
+      return calls === 1
+        ? Promise.resolve(zUser('z1', { status: 'inactive' }))
+        : Promise.reject(new Error('ZITADEL 503'));
+    });
+
+    await mirror.syncUser('z1');
+
+    expect(store.users[0]?.status).toBe('inactive');
+  });
+});
+
+describe('UserMirror mirrors ZITADEL locks as a timed lock (F1-Q4)', () => {
+  // A lock ZITADEL set a minute ago, after the lockout policy was pinned an hour ago: a failed-sign-in lock.
+  const locked = (over: Partial<ReturnType<typeof zUser>> = {}) =>
+    zUser('z1', {
+      status: 'inactive',
+      locked: true,
+      changedAt: new Date(Date.now() - 60_000),
+      ...over,
+    });
+
+  beforeEach(async () => {
+    store.cursors.set(
+      lockoutPinnedCursor(STAFF_ZORG),
+      new Date(Date.now() - 3_600_000).toISOString(),
+    );
+    zitadel.users.set('z1', zUser('z1'));
+    await mirror.syncUser('z1');
+  });
+
+  it('turns a lock ZITADEL set after failed sign-ins into a lock that ends 15 minutes after ZITADEL locked them', async () => {
+    const lockedAt = new Date(Date.now() - 4 * 60_000);
+    zitadel.users.set('z1', locked({ changedAt: lockedAt }));
+
+    expect(await mirror.syncUser('z1')).toBe(true);
+
+    expect(store.users[0]).toMatchObject({
+      status: 'inactive',
+      lockReason: 'failed_sign_ins',
+      lockedUntil: new Date(
+        lockedAt.getTime() + ACCOUNT_LOCKOUT.lockMinutes * 60_000,
+      ).toISOString(),
+    });
+  });
+
+  it('treats a lock without a change date as an admin lock, which never ends by itself (P2-1)', async () => {
+    zitadel.users.set('z1', locked({ changedAt: null }));
+
+    await mirror.syncUser('z1');
+
+    expect(store.users[0]).toMatchObject({ lockReason: 'admin', lockedUntil: null });
+  });
+
+  it('treats a lock from before the lockout policy was pinned as an admin lock (console lock, P2-1)', async () => {
+    zitadel.users.set('z1', locked({ changedAt: new Date(Date.now() - 2 * 3_600_000) }));
+
+    await mirror.syncUser('z1');
+
+    expect(store.users[0]).toMatchObject({ lockReason: 'admin', lockedUntil: null });
+  });
+
+  it('treats a lock older than one window as an admin lock even after the pin (P2-1)', async () => {
+    zitadel.users.set(
+      'z1',
+      locked({ changedAt: new Date(Date.now() - (ACCOUNT_LOCKOUT.lockMinutes + 1) * 60_000) }),
+    );
+
+    await mirror.syncUser('z1');
+
+    expect(store.users[0]).toMatchObject({ lockReason: 'admin', lockedUntil: null });
+  });
+
+  it('treats every lock as an admin lock while the lockout policy was never pinned (P2-1)', async () => {
+    store.cursors.delete(lockoutPinnedCursor(STAFF_ZORG));
+    zitadel.users.set('z1', locked());
+
+    await mirror.syncUser('z1');
+
+    expect(store.users[0]).toMatchObject({ lockReason: 'admin', lockedUntil: null });
+  });
+
+  it('keeps a console-locked user locked through reconcile and the lock-expiry job (P2-1)', async () => {
+    // Locked in the console two hours ago, before this deployment pinned the policy.
+    zitadel.users.set('z1', locked({ changedAt: new Date(Date.now() - 2 * 3_600_000) }));
+    const unlockUser = vi.fn(() => Promise.resolve());
+    const client = Object.assign(zitadel, { unlockUser }).asClient();
+    const audit = { record: vi.fn(() => Promise.resolve()) } as unknown as AuditService;
+    const expiry = new UserLocks(db, store, client, audit);
+
+    await mirror.reconcile();
+    const result = await expiry.expire(new Date(Date.now() + 2 * 3_600_000));
+
+    expect(result).toEqual({ unlocked: 0, cleared: 0, postponed: 0 });
+    expect(unlockUser).not.toHaveBeenCalled();
+    expect(store.users[0]).toMatchObject({
+      status: 'inactive',
+      lockReason: 'admin',
+      lockedUntil: null,
+    });
+  });
+
+  it('keeps an admin lock as it is while ZITADEL still holds the user locked', async () => {
+    zitadel.users.set('z1', locked());
+    Object.assign(store.users[0]!, { status: 'inactive', lockReason: 'admin', lockedUntil: null });
+    const writes = store.updates.length;
+
+    expect(await mirror.syncUser('z1')).toBe(false);
+
+    expect(store.updates.length).toBe(writes);
+    expect(store.users[0]).toMatchObject({ lockReason: 'admin', lockedUntil: null });
+  });
+
+  it('clears the lock when ZITADEL lets the user in again (unlocked in the console)', async () => {
+    zitadel.users.set('z1', locked());
+    await mirror.syncUser('z1');
+    zitadel.users.set('z1', zUser('z1'));
+
+    await mirror.syncUser('z1');
+
+    expect(store.users[0]).toMatchObject({ status: 'active', lockReason: null, lockedUntil: null });
+  });
+
+  it('clears the lock but keeps the person out when ZITADEL deactivates a locked user', async () => {
+    zitadel.users.set('z1', locked());
+    await mirror.syncUser('z1');
+    zitadel.users.set('z1', zUser('z1', { status: 'inactive' }));
+
+    expect(await mirror.syncUser('z1')).toBe(true);
+
+    expect(store.users[0]).toMatchObject({ status: 'inactive', lockReason: null });
+  });
+
+  it('does not write a lock read before an admin unlocked the user', async () => {
+    // The admin's unlock: ZITADEL and the mirror both say active now; the sync read the user while still locked.
+    let calls = 0;
+    vi.spyOn(zitadel, 'getUser').mockImplementation(() => {
+      calls += 1;
+      return Promise.resolve(calls === 1 ? locked() : zUser('z1'));
+    });
+
+    await mirror.syncUser('z1');
+
+    expect(store.users[0]?.status).toBe('active');
+    expect(store.users[0]?.lockReason ?? null).toBeNull();
+  });
+
+  it('keeps the stored lock when the re-read of a lock-only change fails', async () => {
+    zitadel.users.set('z1', locked());
+    await mirror.syncUser('z1');
+    const until = store.users[0]?.lockedUntil;
+    let calls = 0;
+    vi.spyOn(zitadel, 'getUser').mockImplementation(() => {
+      calls += 1;
+      return calls === 1
+        ? Promise.resolve(zUser('z1', { status: 'inactive' }))
+        : Promise.reject(new Error('ZITADEL 503'));
+    });
+
+    await mirror.syncUser('z1');
+
+    expect(store.users[0]).toMatchObject({
+      status: 'inactive',
+      lockReason: 'failed_sign_ins',
+      lockedUntil: until,
+    });
   });
 });
