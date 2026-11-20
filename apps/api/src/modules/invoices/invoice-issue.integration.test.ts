@@ -759,6 +759,36 @@ describe('issue guards', () => {
     expect(resubmitted.approvalRequestId).not.toBe(decided);
   });
 
+  it('reopen refuses a draft or submitted invoice (409) and leaves it, and a caller without invoice.issue (403)', async () => {
+    const id = await draftManual();
+    as(U.fin, 'finance');
+    const onDraft = await submitting
+      .reopen(id, { expectedVersion: (await invoiceRow(id)).version, reason: 'x' }, key())
+      .catch((e: unknown) => e);
+    expect(statusOf(onDraft)).toBe(409);
+    expect((await invoiceRow(id)).status).toBe('draft');
+
+    await submit(id);
+    const open = (await invoiceRow(id)).approvalRequestId;
+    as(U.fin, 'finance');
+    const onSubmitted = await submitting
+      .reopen(id, { expectedVersion: (await invoiceRow(id)).version, reason: 'x' }, key())
+      .catch((e: unknown) => e);
+    expect(statusOf(onSubmitted)).toBe(409);
+    expect((await invoiceRow(id)).status).toBe('submitted');
+    expect((await requestOf(id))!.id).toBe(open);
+    expect((await requestOf(id))!.status).not.toBe('cancelled');
+
+    const other = await draftManual();
+    const version = await forceApproved(other);
+    as(U.acc, 'accountant');
+    const denied = await submitting
+      .reopen(other, { expectedVersion: version, reason: 'x' }, key())
+      .catch((e: unknown) => e);
+    expect(statusOf(denied)).toBe(403);
+    expect((await invoiceRow(other)).status).toBe('approved');
+  });
+
   it('a stale FX rate answers 409 fx_rate_stale and consumes no number', async () => {
     const id = await draftManual('USD');
     const version = await forceApproved(id);
