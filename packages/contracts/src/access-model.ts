@@ -404,7 +404,7 @@ export type AssignmentDecision =
   | { allowed: false; reason: AssignmentDenyReason };
 
 /**
- * A 400 message for a refused assignment, after the field name the way `assertLeadAssignee` writes it ("Owner
+ * A 400 message for a refused assignment, after the field name the way the assignment check writes it ("Owner
  * cannot be ..."). The API also sends the code itself as `details.assignmentReason`.
  */
 export const ASSIGNMENT_DENY_MESSAGES: Readonly<Record<AssignmentDenyReason, string>> = {
