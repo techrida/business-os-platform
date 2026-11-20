@@ -110,6 +110,8 @@ export const VendorCapabilitiesSchema = z.strictObject({
   block: z.boolean(),
   archive: z.boolean(),
   activateBlockedBySod: z.boolean().optional(),
+  activateBlockedByKyb: z.boolean().optional(),
+  activateBlockedByKycExpired: z.boolean().optional(),
   proposeBank: z.boolean().optional(),
   verifyBank: z.boolean().optional(),
 });

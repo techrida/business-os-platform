@@ -346,7 +346,8 @@ export function purchaseRequestCapabilities(
     sodUserIds: [],
   };
   const mayWrite = isStaff && can(principal, 'procurement.pr.create', ref).allowed;
-  const maySource = isStaff && can(principal, 'procurement.sourcing', ref).allowed;
+  // SourcingController checks route-level `procurement.sourcing` (buyers source PRs across departments).
+  const maySource = isStaff && can(principal, 'procurement.sourcing').allowed;
   const editable = isPrEditable(row.status);
   return {
     edit: editable && mayWrite,

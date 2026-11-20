@@ -85,33 +85,49 @@ const ACCOUNT_UNIQUE = 'vendor_accounts_tenant_org_vendor_unique';
 const vendorNotFound = () =>
   new NotFoundException({ code: 'not_found', message: 'Vendor not found' });
 
+export interface VendorKybGate {
+  approved: boolean;
+  kycExpired: boolean;
+}
+
 /**
- * What `principal` may do on `row` now, by the same live grants, lifecycle transitions and creator SoD
- * rules the service enforces. Pure, so screens and tests need no database.
+ * What `principal` may do on `row` now, by the same live grants, lifecycle transitions, creator SoD,
+ * and KYB/tax-clearance rules the service enforces. Pure, so screens and tests need no database.
  */
 export function vendorCapabilities(
   principal: Principal,
   row: Pick<VendorRow, 'id' | 'tenantId' | 'ownerUserId' | 'createdBy' | 'status'>,
+  kyb?: VendorKybGate,
 ): VendorCapabilities {
   const isStaff = principal.orgKind === 'staff';
   const ref = vendorRef(row, principal);
-  const mayWrite = isStaff && can(principal, 'vendor.write', ref).allowed;
+  const mutable = row.status !== 'blocked' && row.status !== 'archived';
+  const mayWrite = isStaff && mutable && can(principal, 'vendor.write', ref).allowed;
   const mayActivate = isStaff && can(principal, 'vendor.activate', ref).allowed;
   const isCreator = row.createdBy !== null && row.createdBy === principal.userId;
   const canActivateStatus = lifecycleAllowed('activate', row.status);
+  const eligibleActivate = canActivateStatus && mayActivate && !isCreator;
+  const kybBlocked = eligibleActivate && kyb !== undefined && !kyb.approved;
+  const kycExpiredBlocked = eligibleActivate && kyb !== undefined && kyb.approved && kyb.kycExpired;
   return {
     write: mayWrite,
-    activate: canActivateStatus && mayActivate && !isCreator,
+    activate: eligibleActivate && !kybBlocked && !kycExpiredBlocked,
     suspend: lifecycleAllowed('suspend', row.status) && mayActivate,
     block: lifecycleAllowed('block', row.status) && mayActivate,
     archive: lifecycleAllowed('archive', row.status) && mayActivate,
     activateBlockedBySod: canActivateStatus && mayActivate && isCreator,
-    proposeBank: isStaff && can(principal, 'vendor.bank.propose', ref).allowed,
+    ...(kyb !== undefined
+      ? {
+          activateBlockedByKyb: kybBlocked,
+          activateBlockedByKycExpired: kycExpiredBlocked,
+        }
+      : {}),
+    proposeBank: isStaff && mutable && can(principal, 'vendor.bank.propose', ref).allowed,
     verifyBank: isStaff && can(principal, 'vendor.bank.verify', ref).allowed,
   };
 }
 
-export function toVendorDto(row: VendorRow, principal?: Principal): VendorDto {
+export function toVendorDto(row: VendorRow, principal?: Principal, kyb?: VendorKybGate): VendorDto {
   return {
     id: row.id,
     legalName: row.legalName,
@@ -125,7 +141,7 @@ export function toVendorDto(row: VendorRow, principal?: Principal): VendorDto {
     version: row.version,
     approvedAt: null,
     logoDocumentId: row.logoDocumentId,
-    ...(principal === undefined ? {} : { can: vendorCapabilities(principal, row) }),
+    ...(principal === undefined ? {} : { can: vendorCapabilities(principal, row, kyb) }),
   };
 }
 
@@ -263,7 +279,13 @@ export class VendorsService {
     const row = await this.find(this.db, scope.tenantId, id);
     if (row === undefined) throw vendorNotFound();
     this.assertVisible('vendor.read', row, principal);
-    return toVendorDto(row, principal);
+    if (!lifecycleAllowed('activate', row.status)) {
+      return toVendorDto(row, principal);
+    }
+    const kyb = await kybCaseOf(this.db, scope.tenantId, id);
+    const approved = kyb?.status === 'approved';
+    const kycExpired = approved ? lapsedTaxClearance(kyb.items, isoDay(this.clock())) : false;
+    return toVendorDto(row, principal, { approved, kycExpired });
   }
 
   // ------------------------------------------------------------------------------------------------- create
