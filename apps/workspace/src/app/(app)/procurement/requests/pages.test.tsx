@@ -684,3 +684,29 @@ describe('currency picker (D44)', () => {
     expect(out).toContain('name="currency" value="INR"');
   });
 });
+
+describe('live saved grants decide the new request page', () => {
+  const live = (...permissions: string[]) =>
+    me.getMe.mockResolvedValue({
+      permissions: permissions.map((permission) => ({ permission, scope: 'own' })),
+    });
+  const DENIED = 'do not include raising purchase requests';
+
+  it('opens the form to a role whose saved grants add procurement.pr.create (defaults do not)', async () => {
+    session.roles = ['finance'];
+    live('procurement.pr.read', 'procurement.pr.create');
+    const out = html(await NewPage());
+    expect(out).toContain('Save draft');
+    expect(out).not.toContain(DENIED);
+    expect(api.listDepartments).toHaveBeenCalled();
+  });
+
+  it('shuts the form once procurement.pr.create is removed from the saved grants', async () => {
+    session.roles = ['procurement'];
+    live('procurement.pr.read');
+    const out = html(await NewPage());
+    expect(out).toContain(DENIED);
+    expect(out).not.toContain('Save draft');
+    expect(api.listDepartments).not.toHaveBeenCalled();
+  });
+});
