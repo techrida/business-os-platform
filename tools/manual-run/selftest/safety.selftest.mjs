@@ -45,6 +45,28 @@ const PASSWORD = 'S3cret-pa55"word';
 const TOTP_SECRET = 'JBSWY3DPEHPK3PXP';
 
 describe('URL redaction', () => {
+  test('user info ends at the authority: a later @ in the query does not hide the code', () => {
+    // No slash after the host: the old pattern ran from `?` through the `@` and left the code.
+    assert.equal(
+      redactUrl('https://auth.localhost?login_hint=user@example.com&code=abc123'),
+      'https://auth.localhost',
+    );
+    assert.doesNotMatch(
+      redactText('see https://auth.localhost?login_hint=user@example.com&code=abc123 now'),
+      /abc123/,
+    );
+  });
+
+  test('protocol-relative user info is stripped too', () => {
+    assert.equal(
+      redactText('//user:Synthetic-pw@host.localhost/x'),
+      '//[redacted]@host.localhost/x',
+    );
+    assert.doesNotMatch(redactText('a href=//user:Synthetic-pw@host.localhost/x'), /Synthetic-pw/);
+    // text that merely contains two slashes is left alone
+    assert.equal(redactText('path a//b and mail me@x.org'), 'path a//b and mail me@x.org');
+  });
+
   test('drops the query string and fragment of a URL', () => {
     assert.equal(
       redactUrl('https://app.localhost/auth/callback?code=123456&state=abc#frag'),

@@ -9,6 +9,7 @@
 import { TOTP_STEP_MS, totp } from './totp.mjs';
 
 export const REDACTED = '[redacted]';
+const REDACTED_URL = '[redacted-url]';
 
 const secrets = new Set();
 const totpSecrets = new Set();
@@ -73,30 +74,48 @@ export function redactSecrets(text) {
   return out;
 }
 
-// `scheme://` then everything up to the last `@` before the first `/` or space: the URL's user
-// info. Quotes, `?` and `#` typed into a password do not end it (URL.href keeps `'` as typed);
-// over-redacting text that holds an `@` is the safe side.
-const USERINFO = /\b([a-z][a-z0-9+.-]*:\/\/)[^\s/]*@/gi;
+// Every `scheme://…` in a text is read with the WHATWG URL parser, which is the only reliable way to
+// tell the user info from a later `@` in a query (`?login_hint=a@b.c&code=…`): a URL that parses
+// keeps only `scheme://[redacted]@host/path` (no query, no fragment); one that does not parse (a
+// password with a raw `?` or `#`) is replaced as a whole. A protocol-relative `//user:pw@host/x`
+// has no scheme to parse, so its user info is cut at the authority's end.
+const URL_CANDIDATE = /\b[a-z][a-z0-9+.-]*:\/\/[^\s<>]+/gi;
+const TRAILING = /[)\]}>.,;:!'"]+$/;
+const PROTOCOL_RELATIVE_USERINFO = /(?<![\w:/])\/\/[^\s/?#@]*@/g;
+
+function readUrl(candidate) {
+  const trailing = TRAILING.exec(candidate)?.[0] ?? '';
+  const raw = trailing ? candidate.slice(0, -trailing.length) : candidate;
+  let out;
+  try {
+    const u = new URL(raw);
+    const hasPath = /^[a-z][a-z0-9+.-]*:\/\/[^/?#]*\//i.test(raw);
+    const path = u.pathname === '/' && !hasPath ? '' : u.pathname;
+    out = `${u.protocol}//${u.username || u.password ? `${REDACTED}@` : ''}${u.host}${path}`;
+  } catch {
+    out = REDACTED_URL;
+  }
+  return out + trailing;
+}
+
+const stripUserinfo = (text) =>
+  text.replace(URL_CANDIDATE, readUrl).replace(PROTOCOL_RELATIVE_USERINFO, `//${REDACTED}@`);
 
 /** `https://u:pw@h/p?code=1#x` → `https://[redacted]@h/p`. Non-URL text is returned unchanged. */
 export function redactUrl(url) {
+  const text = String(url ?? '');
+  // A relative URL (`/payments/x?q=a`) has no scheme: drop its query and fragment.
+  const clean = redactSecrets(text); // before parsing: the parser re-encodes a secret in a path
   return redactSecrets(
-    String(url ?? '')
-      .replace(USERINFO, `$1${REDACTED}@`)
-      .replace(/[?#].*$/s, ''),
+    /^[a-z][a-z0-9+.-]*:\/\//i.test(clean) ? stripUserinfo(clean) : clean.replace(/[?#].*$/s, ''),
   );
 }
 
 /**
- * Strips the user info of every URL inside free text, the query and fragment of every
- * http(s)/ws(s) URL, and every secret.
+ * Strips the user info, query and fragment of every URL inside free text, and every secret.
  */
 export function redactText(text) {
-  return redactSecrets(
-    String(text ?? '')
-      .replace(USERINFO, `$1${REDACTED}@`)
-      .replace(/\b((?:https?|wss?):\/\/[^\s?#'"<>]*)[?#][^\s'"<>]*/gi, '$1'),
-  );
+  return redactSecrets(stripUserinfo(redactSecrets(String(text ?? ''))));
 }
 
 /**
