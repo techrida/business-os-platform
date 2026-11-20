@@ -7,6 +7,8 @@
 // - pass the assignment rule (lead-assignment-rule.ts) under the entity's stored rule for the area;
 // - can read the record the work is about with their live grants (dead-end #21): work given to someone who cannot
 //   open it is stranded. Any scope counts, `assigned` included, because holding the work is what reaches it.
+// - for an owner, when the area names one (`ownerWrite`, leads: `crm.lead.write`), also hold that write at some scope
+//   with their live grants: a role that never edits the record (Management) never owns it.
 // A refusal is a 400 naming the field, with the rule's code in `details.assignmentReason`: the request names someone
 // it may not, the record itself is fine.
 import {
@@ -162,6 +164,12 @@ export interface AssignmentCheck {
   rule: () => Promise<AssignmentRuleConfig | undefined>;
   /** The read permission of the record the work is about, which the target must hold at some scope (#21). */
   subjectRead: Permission;
+  /**
+   * The write permission an owner must also hold at some scope, so a role that never edits the record never owns it
+   * (Management reads every lead and writes none). Checked for the owner field and the owner pickers only; absent,
+   * an owner needs the read alone.
+   */
+  ownerWrite?: Permission;
 }
 
 /** The 400 for a refused hand-over: the field and the rule's message, and the code for a client to switch on. */
@@ -202,6 +210,28 @@ function selfHolds(principal: Principal, permission: Permission, asOwner: boolea
   return held !== undefined && !(asOwner && held === 'assigned');
 }
 
+/** Whether the caller themselves may own the record: the subject read and, when named, the owner write. */
+function selfMayOwn(principal: Principal, check: AssignmentCheck): boolean {
+  return (
+    selfHolds(principal, check.subjectRead, true) &&
+    (check.ownerWrite === undefined || principal.grants.has(check.ownerWrite))
+  );
+}
+
+/** Whether `party` may own the record by their live grants: the subject read and, when named, the owner write. */
+async function partyMayOwn(
+  roleCache: RoleCache,
+  scope: EntityScope,
+  party: AssignmentParty,
+  check: AssignmentCheck,
+): Promise<boolean> {
+  if (!(await partyHolds(roleCache, scope, party, check.subjectRead, true))) return false;
+  return (
+    check.ownerWrite === undefined ||
+    (await partyHolds(roleCache, scope, party, check.ownerWrite, false))
+  );
+}
+
 /**
  * `userId` may be handed this work by the caller: active staff of the acting entity, allowed by the rule, and able
  * to read the subject. Otherwise a 400 naming `field` (`assignmentRefused`). The caller themselves is taken from the
@@ -219,26 +249,28 @@ export async function assertAssignable(
   if (userId === principal.userId) {
     const decision = decideAssignment(actor, actor, check.context);
     if (!decision.allowed) throw assignmentRefused(field, decision.reason);
-    if (!selfHolds(principal, check.subjectRead, field === 'ownerUserId')) {
-      throw assignmentRefused(field, 'cannot_read_subject');
-    }
+    const allowed =
+      field === 'ownerUserId'
+        ? selfMayOwn(principal, check)
+        : selfHolds(principal, check.subjectRead, false);
+    if (!allowed) throw assignmentRefused(field, 'cannot_read_subject');
     return;
   }
   const [target] = await loadAssignmentParties(tx, scope, [userId]);
   if (target === undefined) throw assignmentRefused(field, 'not_active_staff');
   const decision = decideAssignment(actor, target, check.context, await check.rule());
   if (!decision.allowed) throw assignmentRefused(field, decision.reason);
-  if (
-    !(await partyHolds(check.roleCache, scope, target, check.subjectRead, field === 'ownerUserId'))
-  ) {
-    throw assignmentRefused(field, 'cannot_read_subject');
-  }
+  const allowed =
+    field === 'ownerUserId'
+      ? await partyMayOwn(check.roleCache, scope, target, check)
+      : await partyHolds(check.roleCache, scope, target, check.subjectRead, false);
+  if (!allowed) throw assignmentRefused(field, 'cannot_read_subject');
 }
 
 /**
  * The people the caller may hand this work to, in directory order: what an owner or assignee picker lists, and
- * exactly whom `assertAssignable` accepts (the rule's `assignableTargets`, narrowed to those who can read the
- * subject).
+ * exactly whom `assertAssignable` accepts for the owner (the rule's `assignableTargets`, narrowed to those who can
+ * read the subject and, when the check names one, hold the owner write).
  */
 export async function assignableParties(
   tx: DbTransaction,
@@ -251,18 +283,13 @@ export async function assignableParties(
   const out: AssignmentCandidate[] = [];
   for (const candidate of await loadAssignmentParties(tx, scope)) {
     if (candidate.userId === principal.userId) {
-      if (
-        decideAssignment(actor, actor, check.context).allowed &&
-        selfHolds(principal, check.subjectRead, true)
-      ) {
+      if (decideAssignment(actor, actor, check.context).allowed && selfMayOwn(principal, check)) {
         out.push(candidate);
       }
       continue;
     }
     if (!decideAssignment(actor, candidate, check.context, config).allowed) continue;
-    if (await partyHolds(check.roleCache, scope, candidate, check.subjectRead, true)) {
-      out.push(candidate);
-    }
+    if (await partyMayOwn(check.roleCache, scope, candidate, check)) out.push(candidate);
   }
   return out;
 }
