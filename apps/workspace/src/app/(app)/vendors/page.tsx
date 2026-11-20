@@ -91,10 +91,10 @@ function Row({ v }: { v: VendorDto }) {
         )}
       </Td>
       <Td nowrap>{v.country}</Td>
-      <Td nowrap className={styles.statusColumn}>
+      <Td nowrap pinned>
         <Badge tone={status.tone}>{status.text}</Badge>
       </Td>
-      <Td nowrap className={styles.actionColumn}>
+      <Td nowrap pinned>
         <Link href={href} className={styles.rowAction} aria-label={`View ${name}`}>
           <Icon name="chevron-right" size={20} />
         </Link>
@@ -213,15 +213,15 @@ export default async function VendorsPage({ searchParams }: { searchParams: Prom
         )
       ) : vendors !== null && total !== null ? (
         <div className={styles.results}>
-          <Table caption="Vendors" minWidth={800} className={styles.list ?? ''}>
+          <Table caption="Vendors" minWidth={800}>
             <thead>
               <tr>
                 <Th>Vendor</Th>
                 <Th>Kind</Th>
                 <Th>PAN</Th>
                 <Th>Country</Th>
-                <Th className={styles.statusColumn}>Status</Th>
-                <Th className={styles.actionColumn}>Action</Th>
+                <Th pinned>Status</Th>
+                <Th pinned>Action</Th>
               </tr>
             </thead>
             <tbody>
