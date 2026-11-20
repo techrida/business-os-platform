@@ -9,9 +9,6 @@
 //   open it is stranded. Any scope counts, `assigned` included, because holding the work is what reaches it.
 // A refusal is a 400 naming the field, with the rule's code in `details.assignmentReason`: the request names someone
 // it may not, the record itself is fine.
-//
-// `assertLeadAssignee` and `mayAssignLead` are the older scope-based check that activities use until they move to
-// the rule.
 import {
   ASSIGNMENT_DENY_MESSAGES,
   type AssignmentAreaKey,
