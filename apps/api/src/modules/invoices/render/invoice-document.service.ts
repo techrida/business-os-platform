@@ -95,7 +95,15 @@ export class InvoiceDocumentService {
       const [invoice] = await tx
         .select({ id: invoices.id })
         .from(invoices)
-        .where(and(visible, eq(invoices.id, invoiceId), eq(invoices.status, 'issued')))
+        .where(
+          and(
+            visible,
+            eq(invoices.id, invoiceId),
+            eq(invoices.status, 'issued'),
+            // The sweeper's own filter: "preparing" (409) only for an invoice it will render.
+            inArray(invoices.kind, [...RENDERABLE_INVOICE_KINDS]),
+          ),
+        )
         .limit(1);
       if (invoice === undefined) return { kind: 'hidden' };
       // Every upload of every live document of the invoice: oldest document first, newest upload first within it.
