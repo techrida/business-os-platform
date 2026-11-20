@@ -552,6 +552,7 @@ export default async function CustomerPage({
                   logoDocumentId={customer.logoDocumentId ?? null}
                   label="Customer logo"
                   readOnly={!(mayWrite && !merged)}
+                  size="xlarge"
                 />
               </div>
               <h1 id="organization-name" className={styles.profileName}>
