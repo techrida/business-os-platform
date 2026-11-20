@@ -467,7 +467,7 @@ async function issuedPo(opts: PoOptions = {}): Promise<IssuedPo> {
   return { id, number, lineId, vendor: v, scope };
 }
 
-/** Amends line 1 to `unitPrice`: the band does not rise, so version 2 is written at once. */
+/** Amends line 1 to a lower `unitPrice`: the total falls, so version 2 is written at once (F1-Q40). */
 async function amend(po: IssuedPo, unitPrice: string): Promise<void> {
   current.scope = po.scope;
   const r = await orders.amend(

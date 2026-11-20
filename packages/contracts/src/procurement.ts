@@ -147,7 +147,7 @@ export const PO_TRANSITIONS: Readonly<Record<PoStatus, readonly PoStatus[]>> = {
 };
 export const canTransitionPo = (from: PoStatus, to: PoStatus) => allowed(PO_TRANSITIONS, from, to);
 
-/** The approval band a PO was committed in (AD4). An amendment needs re-approval only if the band rises. */
+/** The approval band a PO was committed in (AD4). It picks the approvers; F1-Q40 decides when a re-approval runs. */
 export const PO_APPROVED_BANDS = ['base', 'management', 'founder'] as const;
 export const PoApprovedBandSchema = z.enum(PO_APPROVED_BANDS);
 export type PoApprovedBand = z.infer<typeof PoApprovedBandSchema>;
@@ -363,7 +363,10 @@ export type ReverseReceiptBody = z.infer<typeof ReverseReceiptBodySchema>;
 /** A purchase order advance percentage, including values saved before four-place precision. */
 export const PurchaseOrderAdvancePercentSchema = PercentFourDecimals;
 
-/** Amend an issued PO: a new version. Changing the vendor is a cancel and a new PO, so no vendor field here. */
+/**
+ * Amend an issued PO: a new version. Changing the vendor is a cancel and a new PO, so no vendor field here. The lines
+ * may be empty when only the payment terms change (F1-Q40); the server refuses an amendment that changes nothing.
+ */
 export const AmendPurchaseOrderBodySchema = z.strictObject({
   reason: text(1000),
   paymentTermsDays: z.number().int().min(0).max(365).optional(),
@@ -375,7 +378,6 @@ export const AmendPurchaseOrderBodySchema = z.strictObject({
         unitPrice: NonNegativeDecimalString.optional(),
       }),
     )
-    .min(1)
     .max(200),
 });
 export type AmendPurchaseOrderBody = z.infer<typeof AmendPurchaseOrderBodySchema>;
