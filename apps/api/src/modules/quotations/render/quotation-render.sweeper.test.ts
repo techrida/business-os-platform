@@ -15,9 +15,9 @@ import { describe, expect, it, vi } from 'vitest';
 import { GotenbergError } from './gotenberg.client';
 import type { DocumentLogoResolver } from './issuer';
 import { renderQuotationHtml } from './quotation-html';
+import { MAX_RENDER_ATTEMPTS } from './render-retry';
 import {
   failureKind,
-  FAILED_RETRY_MS,
   ORPHAN_AFTER_MS,
   PENDING_STALE_MS,
   QuotationRenderProcessor,
@@ -125,6 +125,8 @@ function setup(
     styles?: Record<string, unknown>;
     /** What the logo resolver answers for the profile's logo document; default: no bytes (null). */
     logo?: DocumentLogoResolver;
+    /** The attempts markFailed reports after counting the failure; default 1 (tries left). */
+    attemptsAfterFailure?: number;
   } = {},
 ) {
   const calls: string[] = [];
@@ -161,7 +163,10 @@ function setup(
     }),
     markFailed: vi.fn((_tx: DbTransaction, c: RenderCandidate) => {
       calls.push(`failed:${c.versionId}`);
-      return Promise.resolve();
+      return Promise.resolve({
+        attempts: opts.attemptsAfterFailure ?? 1,
+        quotationId: `quotation-of-${c.versionId}`,
+      });
     }),
     orphans: vi.fn(() => Promise.resolve(opts.orphans ?? [])),
     removeOrphan: vi.fn((_tx: DbTransaction, o: OrphanDocument) => {
@@ -218,6 +223,12 @@ function setup(
   // A watched resolver per scope, standing in for DocumentLogoResolverFactory.
   const resolveLogo = vi.fn<DocumentLogoResolver>(opts.logo ?? (() => Promise.resolve(null)));
   const logos = { forScope: vi.fn((_scope: TxScope) => resolveLogo) };
+  const audit = {
+    record: vi.fn((_tx: DbTransaction, _e: unknown) => {
+      calls.push('audit');
+      return Promise.resolve();
+    }),
+  };
   const sweeper = new QuotationRenderSweeper(
     store,
     runTx,
@@ -226,9 +237,11 @@ function setup(
     { htmlToPdf },
     () => NOW,
     logos,
+    audit,
   );
   return {
     sweeper,
+    audit,
     store,
     documents,
     htmlToPdf,
@@ -332,6 +345,52 @@ describe('QuotationRenderSweeper', () => {
       `quotation render failed: version=${bad.versionId} kind=gotenberg_timeout`,
     );
     expect(JSON.stringify(warn.mock.calls)).not.toContain('Himal');
+  });
+
+  it('writes no admin entry for a failure with tries left', async () => {
+    const c = candidate(1);
+    const { sweeper, audit, store } = setup({
+      candidates: [c],
+      pdf: () => Promise.reject(new GotenbergError('boom', 'http', 500)),
+    });
+    await sweeper.sweep();
+    expect(store.markFailed).toHaveBeenCalledWith(TX, c, NOW);
+    expect(audit.record).not.toHaveBeenCalled();
+  });
+
+  it('writes one admin entry on the quotation, in the failure transaction, when the last try fails', async () => {
+    const c = candidate(1);
+    const { sweeper, audit, calls, txs } = setup({
+      candidates: [c],
+      pdf: () => Promise.reject(new GotenbergError('boom', 'http', 500)),
+      attemptsAfterFailure: MAX_RENDER_ATTEMPTS,
+    });
+    await expect(sweeper.sweep()).resolves.toMatchObject({ failed: 1 });
+    expect(audit.record).toHaveBeenCalledOnce();
+    expect(audit.record).toHaveBeenCalledWith(TX, {
+      action: 'quotation.pdf_render_failed',
+      entityType: 'quotations',
+      entityId: `quotation-of-${c.versionId}`,
+      after: {
+        versionId: c.versionId,
+        attempts: MAX_RENDER_ATTEMPTS,
+        failureKind: 'gotenberg_http',
+      },
+    });
+    // Recorded right after the failure, by the render job, in the same transaction (the last one opened).
+    expect(calls.slice(-2)).toEqual([`failed:${c.versionId}`, 'audit']);
+    expect(txs.at(-1)?.actor.id).toBe('system:quotation-render');
+  });
+
+  it('writes no admin entry when the version was no longer pending (another worker finished it)', async () => {
+    const c = candidate(1);
+    const { sweeper, audit, store } = setup({
+      candidates: [c],
+      pdf: () => Promise.reject(new GotenbergError('boom', 'timeout')),
+    });
+    vi.mocked(store.markFailed).mockResolvedValueOnce(undefined);
+    await expect(sweeper.sweep()).resolves.toMatchObject({ failed: 1 });
+    expect(audit.record).not.toHaveBeenCalled();
   });
 
   it('fails the version, not the sweep, when the issuing entity has no address', async () => {
@@ -651,10 +710,10 @@ describe('failureKind', () => {
   });
 });
 
-describe('the stale and retry windows', () => {
-  it('re-takes an abandoned claim after 10 minutes and a failure after 5', () => {
+describe('the stale and orphan windows', () => {
+  it('re-takes an abandoned claim after 10 minutes and removes an orphan after an hour', () => {
+    // The retry of a failure follows render-retry.ts (render-retry.test.ts).
     expect(PENDING_STALE_MS).toBe(10 * 60_000);
-    expect(FAILED_RETRY_MS).toBe(5 * 60_000);
     expect(ORPHAN_AFTER_MS).toBe(60 * 60_000);
   });
 });

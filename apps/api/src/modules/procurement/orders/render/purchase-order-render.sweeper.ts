@@ -58,7 +58,6 @@ import { and, asc, eq, inArray, isNull, lt, not, notExists, sql } from 'drizzle-
 
 import type { Db, DbTransaction } from '../../../../platform/db/db.module';
 import { systemActor, type TxScope } from '../../../../platform/db/tx';
-import type { RenderAudit } from '../../../invoices/render/invoice-render.sweeper';
 import { freezeEntityLogo } from '../../../invoices/render/frozen-logo';
 import {
   clearRenderFailure,
@@ -73,6 +72,7 @@ import { DocumentLogoUnavailableError } from '../../../quotations/render/issuer'
 import type {
   Clock,
   PdfRenderer,
+  RenderAudit,
   RenderDocuments,
   RenderLogos,
   RenderSettings,
