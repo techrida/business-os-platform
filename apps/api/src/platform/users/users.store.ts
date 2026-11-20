@@ -112,8 +112,16 @@ export abstract class UsersStore {
     zitadelUserId: string,
     lock?: boolean,
   ): Promise<UserRow | null>;
-  /** Tenant-scoped: `scope.organizationId` is not a filter, users have no entity. */
-  abstract findById(q: Queryable, scope: TxScope, userId: string): Promise<UserRow | null>;
+  /**
+   * Tenant-scoped: `scope.organizationId` is not a filter, users have no entity. `lock` takes FOR UPDATE, the same row
+   * lock a sync takes in findByZitadelId, so a status action and a sync of the same user run one after the other.
+   */
+  abstract findById(
+    q: Queryable,
+    scope: TxScope,
+    userId: string,
+    lock?: boolean,
+  ): Promise<UserRow | null>;
   /** Inserts, or returns the existing row's id when a concurrent insert won. */
   abstract insertUser(tx: DbTransaction, scope: TxScope, u: UserFields): Promise<string>;
   abstract updateUser(
@@ -288,11 +296,17 @@ export class SqlUsersStore extends UsersStore {
     return row ?? null;
   }
 
-  async findById(q: Queryable, scope: TxScope, userId: string): Promise<UserRow | null> {
+  async findById(
+    q: Queryable,
+    scope: TxScope,
+    userId: string,
+    lock = false,
+  ): Promise<UserRow | null> {
     const [row] = await rows<UserRecord>(
       q,
       sql`SELECT ${USER_COLUMNS} FROM app.users u
-          WHERE u.tenant_id = ${scope.tenantId} AND u.id = ${userId}`,
+          WHERE u.tenant_id = ${scope.tenantId} AND u.id = ${userId}
+          ${lock ? sql`FOR UPDATE` : sql``}`,
     );
     return row ?? null;
   }

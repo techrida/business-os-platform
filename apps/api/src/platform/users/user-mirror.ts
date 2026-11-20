@@ -25,6 +25,7 @@ import { type IdpOrgRow, type ListedUsers, type UserRow, UsersStore } from './us
 import {
   ZitadelAdminClient,
   ZitadelHttpError,
+  type MirroredStatus,
   ZitadelNotConfiguredError,
   type ZitadelUser,
 } from './zitadel-admin.client';
@@ -55,6 +56,26 @@ function sameRoles(a: readonly string[], b: readonly string[]): boolean {
 }
 
 export type { EntityMembership, ResolvedUser };
+
+/**
+ * The legal entities whose only effective Founder is `userId`, joined for a message, or null when there is none.
+ * Per entity, not company-wide: an entity whose only Founder this is would be left with none, even when other entities
+ * still have Founders. The caller holds the access-revision lock, so two removals cannot both see the other Founder.
+ */
+export async function soleFounderEntities(
+  q: DbTransaction,
+  store: UsersStore,
+  tenantId: string,
+  userId: string,
+): Promise<string | null> {
+  const founders = await store.effectiveRoleHolders(q, tenantId, 'founder');
+  const orphaned = founders.filter(
+    (f) =>
+      f.userId === userId &&
+      !founders.some((o) => o.organizationId === f.organizationId && o.userId !== userId),
+  );
+  return orphaned.length > 0 ? orphaned.map((f) => f.entityName).join(', ') : null;
+}
 
 @Injectable()
 export class UserMirror {
@@ -301,18 +322,10 @@ export class UserMirror {
       await tx.execute(
         sql`SELECT pg_advisory_xact_lock(hashtext('access_revisions:' || ${scope.tenantId}))`,
       );
-      // Per legal entity, not company-wide: an entity whose only effective Founder is this user would
-      // be left with none, even when other entities still have Founders.
-      const founders = await this.store.effectiveRoleHolders(tx, scope.tenantId, 'founder');
-      const orphaned = founders.filter(
-        (f) =>
-          f.userId === userId &&
-          !founders.some((o) => o.organizationId === f.organizationId && o.userId !== userId),
-      );
-      if (orphaned.length > 0) {
+      const entities = await soleFounderEntities(tx, this.store, scope.tenantId, userId);
+      if (entities !== null) {
         // Never the email: the address is not a name (U20a2-Q10).
         const name = user.displayName?.trim() || 'This person';
-        const entities = orphaned.map((f) => f.entityName).join(', ');
         throw new ConflictException({
           code: 'last_founder',
           message: `${name} is the only Founder of ${entities}. Make someone else a Founder there first.`,
@@ -329,21 +342,36 @@ export class UserMirror {
   /** The one write path for ZITADEL data: upsert the user, mirror the roles, bump authz on change. */
   private async apply(
     org: IdpOrgRow,
-    user: ZitadelUser,
+    read: ZitadelUser,
     roles: readonly RoleKey[],
   ): Promise<boolean> {
-    const status = user.status;
-    if (status === null) {
+    if (read.status === null) {
       // A state we cannot read must never lock anyone out or let anyone in: write nothing at all.
       this.logger.warn(
-        `users.apply skipped ${user.id}: unknown state from ZITADEL; left unchanged`,
+        `users.apply skipped ${read.id}: unknown state from ZITADEL; left unchanged`,
       );
       return false;
     }
+    let user = read;
+    let status: MirroredStatus = read.status;
     const scope = await this.entityScope(org.tenantId);
     return withTx(this.db, scope, zitadelActor(), async (tx) => {
       let changed = false;
       const existing = await this.store.findByZitadelId(tx, user.id, true);
+      if (existing && existing.status !== status) {
+        // `user` was read before this row lock. An admin status action (which holds the same lock while it changes
+        // ZITADEL) may have finished in between, and writing the older state back would undo it: a deactivated
+        // leaver active again until the next pass. So a status change is re-read now, behind that lock.
+        const fresh = await this.zitadel.getUser(user.id).catch(() => null);
+        if (fresh?.status) {
+          user = fresh;
+          status = fresh.status;
+        } else if (status === 'active' || status === 'invited') {
+          // Unconfirmed, and it would let someone in: leave the row for the next pass.
+          this.logger.warn(`users.apply: could not confirm ${user.id}; status left unchanged`);
+          status = existing.status;
+        }
+      }
       let userId: string;
       if (!existing) {
         userId = await this.store.insertUser(tx, scope, {
