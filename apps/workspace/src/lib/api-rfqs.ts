@@ -194,3 +194,21 @@ export function commitRfq(session: Session, id: string, idempotencyKey: string):
     jsonInit('POST', {}, idempotencyKey),
   );
 }
+
+/**
+ * `POST .../:id/deadline`: 200 with the RFQ. Moves an open RFQ's quotation deadline later (F1-Q47);
+ * 409 unless open, 400 `deadline_in_past` for a past instant, 400 for one not after the current one.
+ */
+export function extendRfqDeadline(
+  session: Session,
+  id: string,
+  body: { deadline: string },
+  idempotencyKey: string,
+): Promise<RfqDto> {
+  return call(
+    session,
+    `${RFQ_PATH}/${seg(id)}/deadline`,
+    RfqDtoSchema,
+    jsonInit('POST', body, idempotencyKey),
+  );
+}

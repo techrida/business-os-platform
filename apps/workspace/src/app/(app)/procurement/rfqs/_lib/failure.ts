@@ -16,7 +16,8 @@ import type { PrFailure } from '../../requests/_lib/failure';
  * 409 keeps it.
  */
 
-export type RfqOp = 'load' | 'create' | 'record' | 'convert' | 'score' | 'recommend' | 'commit';
+export type RfqOp =
+  'load' | 'create' | 'record' | 'convert' | 'score' | 'recommend' | 'commit' | 'extend';
 export type RfqFailure = PrFailure;
 
 const DID_NOT_RESPOND = 'The platform did not respond. Nothing was lost; try again in a moment.';
@@ -52,10 +53,33 @@ const NOT_FOUND: Record<RfqOp, string> = {
   score: 'We could not find that RFQ or quotation.',
   recommend: 'We could not find that RFQ.',
   commit: 'We could not find that RFQ.',
+  extend: 'We could not find that RFQ.',
 };
 
 const STALE =
   'This RFQ changed since you opened it. Reload to see where it stands, then try again.';
+
+/**
+ * F1-Q47: the API's 409 for a quotation that arrived after the RFQ's deadline. Read by its code, or by
+ * its exact sentence while the error filter does not pass the code yet (it then says `conflict`).
+ * Keep the sentence equal to RFQ_DEADLINE_PASSED_MESSAGE in the API's sourcing.rules.ts.
+ */
+const DEADLINE_PASSED_CODE = 'rfq_deadline_passed';
+const DEADLINE_PASSED_TEXT =
+  'The quotation deadline of this RFQ has passed. Procurement can extend it to take more quotations.';
+
+export function isRfqDeadlinePassed(err: unknown): boolean {
+  if (!(err instanceof ApiError) || err.status !== 409) return false;
+  const { code, message } = fieldsOf(err);
+  return code === DEADLINE_PASSED_CODE || message === DEADLINE_PASSED_TEXT;
+}
+
+const DEADLINE_PASSED: Partial<Record<RfqOp, string>> = {
+  record:
+    'The quotation deadline has passed, so this quotation was not recorded. Extend the deadline on the RFQ first if you still want to take it.',
+  convert:
+    'This submission was sent after the quotation deadline, so it was not converted. Extend the deadline past the time it was sent to take it.',
+};
 
 /** The API refused an RFQ because its quotation deadline is not after now (400 `deadline_in_past`). */
 export function isDeadlineInPast(err: unknown): boolean {
@@ -88,6 +112,15 @@ export function rfqFailure(err: unknown, op: RfqOp): RfqFailure {
   if (status === 403) return { ...base, message: forbidden(reason), definite };
   if (status === 404) return { ...base, message: NOT_FOUND[op], definite };
   if (status === 409) {
+    if (isRfqDeadlinePassed(err)) {
+      return {
+        ...base,
+        message:
+          DEADLINE_PASSED[op] ??
+          'The quotation deadline has passed. Extend it on the RFQ to take more quotations.',
+        definite,
+      };
+    }
     const infected = infectedFileMessage(err);
     if (infected !== undefined) return { ...base, message: infected, definite };
     if (code === 'FEWER_THAN_MIN_QUOTES') {

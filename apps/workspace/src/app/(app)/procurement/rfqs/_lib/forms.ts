@@ -65,9 +65,11 @@ export function deadlineToIso(local: string): string | null {
   return real ? `${local.trim()}:00+05:45` : null;
 }
 
+const DEADLINE_WORDS = 'Choose the quotation deadline: a date and time, in Kathmandu time.';
+
 const RFQ_WORDS: Record<string, string> = {
   purchaseRequestId: 'Choose the purchase request to source.',
-  deadline: 'Choose the quotation deadline: a date and time, in Kathmandu time.',
+  deadline: DEADLINE_WORDS,
   vendorIds: 'Invite at least one vendor, up to 50.',
 };
 
@@ -102,6 +104,42 @@ export function parseRfqValues(input: RfqValues, now: Date = new Date()): Parsed
   }
   if (Object.keys(errors).length === 0) errors.form = 'Check the form and try again.';
   return { ok: false, errors };
+}
+
+// ---------------------------------------------------------------------- deadline extension (F1-Q47)
+
+const KATHMANDU_OFFSET_MS = (5 * 60 + 45) * 60_000;
+
+/** An ISO instant as `datetime-local` text in Kathmandu time (`YYYY-MM-DDTHH:mm`); empty when unreadable. */
+export function isoToKathmanduLocal(iso: string): string {
+  const t = new Date(iso).getTime();
+  if (Number.isNaN(t)) return '';
+  return new Date(t + KATHMANDU_OFFSET_MS).toISOString().slice(0, 16);
+}
+
+/** Shown when the new deadline is not after the current one (the API refuses it the same). */
+export const DEADLINE_NOT_LATER = 'Choose a deadline later than the current one.';
+
+export type ParsedExtension =
+  { ok: true; data: { deadline: string } } | { ok: false; errors: FieldErrors };
+
+/**
+ * The typed new deadline, read as Kathmandu time like the create form's, and checked against now
+ * and the current deadline: the API refuses one that is not after both.
+ */
+export function parseExtensionValues(
+  local: string,
+  currentDeadline: string,
+  now: Date = new Date(),
+): ParsedExtension {
+  const iso = deadlineToIso(local);
+  if (iso === null) return { ok: false, errors: { deadline: DEADLINE_WORDS } };
+  const at = new Date(iso).getTime();
+  if (at <= now.getTime()) return { ok: false, errors: { deadline: DEADLINE_IN_PAST } };
+  if (at <= new Date(currentDeadline).getTime()) {
+    return { ok: false, errors: { deadline: DEADLINE_NOT_LATER } };
+  }
+  return { ok: true, data: { deadline: iso } };
 }
 
 // ---------------------------------------------------------------------- quotation entry

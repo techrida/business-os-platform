@@ -25,11 +25,24 @@ import { getPermissionCheck } from '@/lib/live-permissions';
 import { ApprovalTimeline } from '../../approval-timeline';
 import layout from '../../procurement.module.css';
 import styles from '../../requests/requests.module.css';
-import { CommitForm, RecommendForm, ScoreForm } from '../_components/decision-forms';
-import { commitRfqAction, recommendQuotationAction, scoreQuotationAction } from '../actions';
+import {
+  CommitForm,
+  ExtendDeadlineForm,
+  RecommendForm,
+  ScoreForm,
+} from '../_components/decision-forms';
+import {
+  commitRfqAction,
+  extendDeadlineAction,
+  recommendQuotationAction,
+  scoreQuotationAction,
+} from '../actions';
 import { rfqFailure } from '../_lib/failure';
 import {
+  arrivedLate,
   canCommit,
+  canExtendDeadline,
+  deadlinePassed,
   RFQ_STATUS_LABEL,
   RFQ_STATUS_NOTE,
   rfqGrants,
@@ -138,6 +151,10 @@ export default async function RfqPage({
   const allowed = await getPermissionCheck(session);
   const grants = rfqGrants(allowed);
   const open = takesQuotations(rfq.status);
+  // F1-Q47: after the deadline an open RFQ takes no quotation until Procurement extends it.
+  const passed = deadlinePassed(rfq.deadline, new Date());
+  const entersQuotations = grants.sourcing && open && !passed;
+  const extend = canExtendDeadline(rfq.status, allowed);
   const [comparison, submissions, pr, approval] = await Promise.all([
     attempt(() => getComparison(session, id)),
     grants.sourcing && open ? attempt(() => listSubmissions(session, id)) : Promise.resolve(null),
@@ -178,7 +195,11 @@ export default async function RfqPage({
         </Link>
       ),
     },
-    { key: 'deadline', label: 'Quotation deadline', value: when(rfq.deadline) },
+    {
+      key: 'deadline',
+      label: 'Quotation deadline',
+      value: open && passed ? `${when(rfq.deadline)} (passed)` : when(rfq.deadline),
+    },
     {
       key: 'vendors',
       label: `Invited vendors (${rfq.vendorIds.length})`,
@@ -240,8 +261,23 @@ export default async function RfqPage({
           status={<Badge tone={status.tone}>{status.text}</Badge>}
           description={RFQ_STATUS_NOTE[rfq.status]}
           actions={
-            grants.sourcing && open ? (
-              <LinkButton href={`${self}/quotations/new`}>Enter a quotation</LinkButton>
+            entersQuotations || extend ? (
+              <>
+                {entersQuotations ? (
+                  <LinkButton href={`${self}/quotations/new`}>Enter a quotation</LinkButton>
+                ) : null}
+                {extend ? (
+                  <ExtendDeadlineForm
+                    action={extendDeadlineAction}
+                    idempotencyKey={randomUUID()}
+                    rfqId={rfq.id}
+                    deadline={rfq.deadline}
+                    deadlineText={when(rfq.deadline)}
+                    passed={passed}
+                    reloadHref={self}
+                  />
+                ) : null}
+              </>
             ) : null
           }
         />
@@ -253,6 +289,15 @@ export default async function RfqPage({
         <SuccessNotice message="The quotation was recorded." />
       ) : sp.recommended !== undefined ? (
         <SuccessNotice message="The quotation was recommended." />
+      ) : null}
+
+      {open && passed ? (
+        <Alert tone="warning" role="status" title="The quotation deadline has passed">
+          No more quotations are taken since {when(rfq.deadline)}.{' '}
+          {extend
+            ? 'Recommend one of the quotations received, or extend the deadline to take more.'
+            : 'A quotation already received can still be recommended.'}
+        </Alert>
       ) : null}
 
       <section aria-label="RFQ" className={layout.detailColumns}>
@@ -293,7 +338,7 @@ export default async function RfqPage({
         ) : comparison.value.length === 0 ? (
           <p className={styles.note}>
             No quotation has been recorded yet.
-            {grants.sourcing && open
+            {entersQuotations
               ? ' Enter one from a vendor’s document, or convert a vendor submission.'
               : ''}
           </p>
@@ -420,7 +465,10 @@ export default async function RfqPage({
               </thead>
               <tbody>
                 {submissions.value.map((s) => {
-                  const c = submissionConvertibility(s.scanStatus);
+                  const c = submissionConvertibility(
+                    s.scanStatus,
+                    arrivedLate(s.submittedAt, rfq.deadline),
+                  );
                   return (
                     <tr key={s.id}>
                       <Td>
