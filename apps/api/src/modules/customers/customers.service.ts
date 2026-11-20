@@ -13,6 +13,7 @@ import {
   type Address,
   type ContactDto,
   type CustomerCan,
+  type CustomerPortalAccess,
   type CreateContactBody,
   type CreateCustomerBody,
   type CustomerDto,
@@ -51,6 +52,7 @@ import { withTx, type TxScope } from '../../platform/db/tx';
 import { searchPage } from '../../platform/list';
 import { NumberingService } from '../../platform/settings/numbering.service';
 import { personNames } from '../../platform/users/person-names';
+import { customerHasPortalUser, firstAdminRule } from '../portal-access/first-admin';
 import { CustomersCaller } from './customers.caller';
 import { escapeLike, normalizeEmail, normalizeName, normalizePan } from './customers.normalize';
 import {
@@ -153,6 +155,26 @@ export function customerCapabilities(
     write,
     readVerification,
     openVerification: write && readVerification && row.mergedIntoId === null,
+  };
+}
+
+/**
+ * The portal access block of the detail read (F1-Q31): may `p` invite a portal admin now? The same checks, in the
+ * same order, as PortalAccessService.grant before it reads the contact: customer.write on the record (staff only),
+ * not merged away, and the first-admin rule.
+ */
+export function customerPortalAccess(
+  row: Pick<CustomerRow, 'ownerUserId' | 'mergedIntoId'>,
+  p: Principal,
+  can: CustomerCan,
+  hasPortalUser: boolean,
+): CustomerPortalAccess {
+  return {
+    hasUser: hasPortalUser,
+    canInvite:
+      can.write &&
+      row.mergedIntoId === null &&
+      firstAdminRule(row, p.userId, hasPortalUser) === 'ok',
   };
 }
 
@@ -279,17 +301,20 @@ export class CustomersService {
     // no entities, so the field is left out (not an empty list, which would claim "no terms set").
     if (principal.orgKind !== 'staff') return dto;
     // The owner by name, read in the customer's tenant only, so the page needs no admin directory (403 for Sales).
-    const [accounts, people, hasCase] = await Promise.all([
+    const [accounts, people, hasCase, hasPortalUser] = await Promise.all([
       this.accountsFor(scope.tenantId, principal.userId, id),
       personNames(this.db, row.tenantId, [row.ownerUserId]),
       this.hasVerificationCase(scope.tenantId, id),
+      customerHasPortalUser(this.db, row.tenantId, id),
     ]);
+    const can = customerCapabilities(row, principal);
     return {
       ...dto,
       accounts,
       people,
-      can: customerCapabilities(row, principal),
+      can,
       verification: { exists: hasCase },
+      portalAccess: customerPortalAccess(row, principal, can, hasPortalUser),
     };
   }
 

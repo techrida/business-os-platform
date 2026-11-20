@@ -20,3 +20,15 @@ export type CustomerCan = z.infer<typeof CustomerCanSchema>;
  */
 export const CustomerVerificationPresenceSchema = z.object({ exists: z.boolean() });
 export type CustomerVerificationPresence = z.infer<typeof CustomerVerificationPresenceSchema>;
+
+/**
+ * The customer's portal access as staff see it (F1-Q31). `hasUser`: its portal org already has a user (the first
+ * admin was invited). `canInvite`: this caller may invite a portal admin now, by the same rule the grant route
+ * applies: customer.write on the record, not merged away, and, for the first admin, being the account owner.
+ * KYB and the contact's email are still checked by the grant itself.
+ */
+export const CustomerPortalAccessSchema = z.object({
+  hasUser: z.boolean(),
+  canInvite: z.boolean(),
+});
+export type CustomerPortalAccess = z.infer<typeof CustomerPortalAccessSchema>;

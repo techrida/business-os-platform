@@ -998,6 +998,8 @@ describe('detail can and verification presence (audit #6)', () => {
     const body = await detail(mine.id);
     expect(body.can).toEqual({ write: true, readVerification: true, openVerification: true });
     expect(body.verification).toEqual({ exists: false });
+    // F1-Q31: the owner may invite the first portal admin.
+    expect(body.portalAccess).toEqual({ hasUser: false, canInvite: true });
   });
 
   it("tells Sales a colleague's customer has a case, without offering to start one or leaking the case", async () => {
@@ -1008,6 +1010,8 @@ describe('detail can and verification presence (audit #6)', () => {
 
     const body = await detail(theirs.id);
     expect(body.can).toEqual({ write: true, readVerification: false, openVerification: false });
+    // F1-Q31: only the account owner invites the first portal admin.
+    expect(body.portalAccess).toEqual({ hasUser: false, canInvite: false });
     expect(body.verification).toEqual({ exists: true });
     // Existence only: nothing of the case itself (id, status, reviewer note) comes with the customer.
     const text = JSON.stringify(body);
