@@ -3,7 +3,8 @@
 // The document id is the amendment's own id (a fresh uuid per amendment), so each request names exactly one
 // proposal; the proposal itself is the `amendment` part of the request's snapshot.
 // - approved: version N+1 is written from the proposal and approved_total, approved_total_npr and approved_band move
-//   to the amended values; the status follows what has been received.
+//   to the amended values; the status follows what has been received (and an emergency order left fully received
+//   asks for its review, F1-Q41).
 // - returned or rejected: the PO leaves amendment_pending unchanged (back to issued, or to the received status).
 // A PO that is not waiting for this decision is refused (409), never silently skipped.
 import type { ApprovalContext } from '@bos/contracts';
@@ -24,7 +25,7 @@ import type { Db, DbTransaction } from '../../../platform/db/db.module';
 import type { TxScope } from '../../../platform/db/tx';
 import { actorUuid, readTxContext } from '../../../platform/documents/tx-context';
 import { fact, readableDocuments } from '../../approvals/context';
-import type { ApprovalSubject } from '../../approvals/requests.service';
+import type { ApprovalSubject, ApprovalsService } from '../../approvals/requests.service';
 import { idAt, procurementReferenceNames } from '../reference-names';
 import { mayReadPo, requestFactsColumns, requestOf } from './po-read-access';
 import { PO_AMENDMENT_DOCUMENT_TYPE, PO_AUDIT_ENTITY } from './purchase-order.rules';
@@ -51,6 +52,8 @@ export class PoAmendmentSubject implements ApprovalSubject {
 
   constructor(
     private readonly audit: AuditService,
+    /** Asks for the review of an emergency purchase that the amendment leaves fully received (F1-Q41). */
+    private readonly approvals: ApprovalsService,
     private readonly clock: () => Date = () => new Date(),
   ) {}
 
@@ -151,11 +154,19 @@ export class PoAmendmentSubject implements ApprovalSubject {
       throw conflict('The purchase order is not waiting for an amendment decision');
     }
     if (outcome === 'approved') {
-      await applyAmendment(tx, scope, this.audit, po, proposal, {
-        approvalRequestId: requestId,
-        createdBy: actorUuid(ctx) ?? requesterUserId,
-        now,
-      });
+      await applyAmendment(
+        tx,
+        scope,
+        { audit: this.audit, approvals: this.approvals },
+        po,
+        proposal,
+        {
+          approvalRequestId: requestId,
+          createdBy: actorUuid(ctx) ?? requesterUserId,
+          amendedBy: requesterUserId,
+          now,
+        },
+      );
       return;
     }
     // amendment_pending → issued (PO_TRANSITIONS); from there the received quantities give the status.
