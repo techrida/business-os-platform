@@ -1,7 +1,5 @@
 import type { PoStatus, ReceiptKind, ReceiptStatus } from '@bos/contracts';
 
-import { hasPermission } from '@/components/p2/customers/permissions';
-
 import { toScaled } from '../../orders/_lib/forms';
 import { isReceivable, qtyText, type BadgeTone } from '../../orders/_lib/model';
 
@@ -38,17 +36,17 @@ export interface ReceiptGrants {
   issue: boolean;
 }
 
-export type ReceiptGrantSource = readonly string[] | ((permission: string) => boolean);
+/**
+ * The live-grant predicate from `getPermissionCheck`. Role keys are not accepted: a grant changed in
+ * Settings > Access must show here the way the API enforces it.
+ */
+export type ReceiptGrantSource = (permission: string) => boolean;
 
-function allows(source: ReceiptGrantSource, permission: string): boolean {
-  return typeof source === 'function' ? source(permission) : hasPermission(source, permission);
-}
-
-/** The permissions from live grants (`getPermissionCheck`) or role defaults. Server-side only. */
+/** The permissions from live grants. Server-side only. */
 export function receiptGrants(source: ReceiptGrantSource): ReceiptGrants {
   return {
-    confirm: allows(source, 'procurement.receipt.confirm'),
-    issue: allows(source, 'procurement.po.issue'),
+    confirm: source('procurement.receipt.confirm'),
+    issue: source('procurement.po.issue'),
   };
 }
 
