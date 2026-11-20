@@ -873,6 +873,7 @@ describe('demo feedback guards', () => {
       canRevise: false,
       canSend: false,
       canRecordOutcome: false,
+      canCancel: true,
     });
 
     await approve(created.currentVersionId);
@@ -881,6 +882,7 @@ describe('demo feedback guards', () => {
       canRevise: true,
       canSend: true,
       canRecordOutcome: false,
+      canCancel: false,
     });
 
     // PMO reads all and drafts its own, but holds no quotation.revise: Revise would answer 403, so it is not offered.
@@ -890,6 +892,7 @@ describe('demo feedback guards', () => {
         canRevise: false,
         canSend: false,
         canRecordOutcome: false,
+        canCancel: false,
       });
     });
   });
@@ -1751,6 +1754,7 @@ describe('saved reach on quotations (U20a phase 2)', () => {
       canRevise: false,
       canSend: false,
       canRecordOutcome: false,
+      canCancel: false,
     });
     expect(await statusOf(service.detail(other.id))).toBe(404);
     expect(await statusOf(edit(theirs))).toBe(403);
