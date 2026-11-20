@@ -49,7 +49,7 @@ import { DB, type Db, type DbTransaction } from '../../platform/db/db.module';
 import { updateVersioned, withIdempotency } from '../../platform/db/idempotency';
 import { withTx, type TxScope } from '../../platform/db/tx';
 import { type DocumentOwnerPolicy } from '../../platform/documents/documents.ports';
-import { DocumentsService } from '../../platform/documents/documents.service';
+import { assertNotInfected, DocumentsService } from '../../platform/documents/documents.service';
 import { searchPage } from '../../platform/list';
 import { CustomerPartyOwner } from './customer-party-owner';
 import {
@@ -576,6 +576,7 @@ export class VerificationService implements OnModuleInit {
           message: 'documentId is not a document of this verification case',
         });
       }
+      await assertNotInfected(tx, scope, [body.documentId]);
       const before = checklistOf(l.row);
       await this.preserveLegacyDecision(tx, l.row);
       const after = attachDocument(before, body.key, body.documentId, body.expiresOn ?? null);
