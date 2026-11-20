@@ -14,11 +14,10 @@ import {
 const items = NAV_GROUPS.flatMap((group) => group.items);
 
 describe('NAV_GROUPS', () => {
-  it('lists the Figma groups in order', () => {
+  it('lists the sidebar groups in order without the removed Organization group', () => {
     expect(NAV_GROUPS.map((g) => g.label)).toEqual([
       'Overview',
       'Work',
-      'Organization',
       'CRM',
       'Sales Management',
       'Sales',
@@ -244,14 +243,13 @@ describe('NAV_GROUPS', () => {
     }
   });
 
-  it('moved Users, Roles & Permissions and Approval Workflows under Settings', () => {
+  it('moved Organization (Department, Users, Roles & Permissions, Approval Workflows) under Settings', () => {
     const labels = items.map((i) => i.label);
-    for (const moved of ['Users', 'Roles & Permissions', 'Approval Workflows']) {
+    for (const moved of ['Department', 'Users', 'Roles & Permissions', 'Approval Workflows']) {
       expect(labels).not.toContain(moved);
     }
     expect(items.some((i) => i.href?.startsWith('/admin'))).toBe(false);
-    const organization = NAV_GROUPS.find((g) => g.label === 'Organization');
-    expect(organization?.items.filter(isBuilt)).toEqual([]);
+    expect(NAV_GROUPS.some((g) => g.label === 'Organization')).toBe(false);
   });
 
   it('does not list Approvals or User twice (Inbox and Users replace them)', () => {
@@ -329,7 +327,7 @@ describe('visibleGroups', () => {
   const labelsFor = (showAdmin: boolean) =>
     visibleGroups(showAdmin).flatMap((g) => g.items.map((i) => i.label));
 
-  it('hides Settings and the empty Organization group from non-admins', () => {
+  it('hides Settings from non-admins and has no Organization group', () => {
     expect(visibleGroups(false).map((g) => g.label)).not.toContain('Organization');
     expect(labelsFor(false)).not.toContain('Settings');
     expect(labelsFor(false)).toContain('Inbox');
@@ -337,7 +335,7 @@ describe('visibleGroups', () => {
     expect(labelsFor(true)).not.toContain('Department');
   });
 
-  it('shows Settings to admins, and the Organization group stays empty without its moved items', () => {
+  it('shows Settings to admins without any Organization group', () => {
     expect(visibleGroups(true).map((g) => g.label)).not.toContain('Organization');
     expect(labelsFor(true)).toContain('Settings');
     expect(visibleGroups(true).find((g) => g.label === 'System')?.items).toEqual([

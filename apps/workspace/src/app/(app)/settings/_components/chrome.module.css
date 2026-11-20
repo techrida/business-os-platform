@@ -1,12 +1,14 @@
-/* Settings chrome: the sub-sidebar beside the content, the phone menu, the back link.
-   Tokens only. Sub-sidebar: 232px from 1024px, 200px from 768px, hidden below 768px (CSS only,
-   so the server never sniffs the viewport). Below 768px `/settings` is the menu and each section
-   page shows a "Settings" back link instead. */
+/* Settings chrome: the left-hand section sidebar beside the content, the active section's sub-tab
+   strip, the mobile section menu, and the Settings landing list/grid. Tokens only. Section
+   sidebar: 232px from 1024px, 200px from 768px, hidden below 768px (CSS only, so the server never
+   sniffs the viewport). Below 768px, `/settings` lists sections and each section shows a mobile
+   section menu above horizontally scrollable sub-tabs. */
 
 .frame {
   display: grid;
   grid-template-columns: minmax(0, 1fr);
   align-items: start;
+  min-width: 0;
 }
 
 .content {
@@ -133,22 +135,163 @@
   }
 }
 
-/* ---- index: the phone menu, a card grid from 768px --------------------------------------------- */
+/* ---- section sub-tab strip and mobile section menu --------------------------------------------- */
 
-.groups {
+.sectionChrome {
   display: grid;
-  gap: 24px;
+  gap: 12px;
+  width: 100%;
+  max-width: var(--container-max-width);
+  min-width: 0;
+  margin-inline: auto;
+  padding: max(16px, var(--spacing-page)) var(--margin-page) 0;
 }
 
-.groupHead {
-  margin-block-end: 8px;
-  color: var(--text-tertiary);
+.sectionChrome > * {
+  min-width: 0;
+}
+
+/* When the section chrome renders above a leaf page, it already provides the mobile section menu,
+   so hide the legacy per-page BackToSettings link beneath it. */
+.sectionChrome ~ * .back {
+  display: none;
+}
+
+.tabStrip {
+  min-width: 0;
+  max-width: 100%;
+}
+
+.tabStrip a {
+  white-space: nowrap;
+}
+
+.mobileSections {
+  border: var(--border-width-thin) solid var(--border-default);
+  border-radius: var(--radius-xl);
+  background: var(--surface-default);
+  overflow: hidden;
+}
+
+.mobileSummary {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 44px;
+  padding: 8px 14px;
+  color: var(--text-primary);
+  font-size: var(--font-size-body-small);
+  font-weight: var(--font-weight-semibold);
+  line-height: var(--line-height-body-small);
+  list-style: none;
+  cursor: pointer;
+}
+
+.mobileSummary::-webkit-details-marker {
+  display: none;
+}
+
+.mobileSummary:hover {
+  background: var(--interactive-hover);
+}
+
+.mobileSummary:focus-visible {
+  outline: 2px solid transparent;
+  box-shadow: inset 0 0 0 2px var(--focus-ring);
+}
+
+.mobileSummaryLabel {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.mobileChevron {
+  flex: none;
+  color: var(--icon-default);
+  transition: transform 140ms ease;
+}
+
+.mobileSections[open] .mobileChevron {
+  transform: rotate(180deg);
+}
+
+.mobileMenuList {
+  display: grid;
+  margin: 0;
+  padding: 6px;
+  list-style: none;
+  border-block-start: var(--border-width-thin) solid var(--border-default);
+  background: var(--surface-default);
+}
+
+.mobileMenuItem {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 44px;
+  padding: 8px 10px;
+  border-radius: var(--radius-lg);
+  color: var(--text-secondary);
+  font-size: var(--font-size-body-small);
+  font-weight: var(--font-weight-medium);
+  line-height: var(--line-height-body-small);
+  text-decoration: none;
+}
+
+.mobileMenuItem:hover {
+  background: var(--interactive-hover);
+  color: var(--text-primary);
+}
+
+.mobileMenuItem:focus-visible,
+.mobileMenuAll:focus-visible {
+  outline: 2px solid transparent;
+  box-shadow: var(--bos-focus-shadow);
+}
+
+.mobileMenuItem[aria-current='true'] {
+  background: var(--interactive-selected);
+  color: var(--text-primary);
+  font-weight: var(--font-weight-semibold);
+}
+
+.mobileMenuItem[aria-current='true'] .icon {
+  color: var(--action-primary);
+}
+
+.mobileMenuAllRow {
+  margin-block-start: 4px;
+  padding-block-start: 4px;
+  border-block-start: var(--border-width-thin) solid var(--border-default);
+}
+
+.mobileMenuAll {
+  display: flex;
+  align-items: center;
+  min-height: 40px;
+  padding: 6px 10px;
+  border-radius: var(--radius-lg);
+  color: var(--text-secondary);
   font-size: var(--font-size-caption);
   font-weight: var(--font-weight-medium);
-  line-height: var(--line-height-caption);
+  text-decoration: none;
 }
 
-.rows {
+.mobileMenuAll:hover {
+  background: var(--interactive-hover);
+  color: var(--text-primary);
+}
+
+@media (min-width: 768px) {
+  .mobileSections {
+    display: none;
+  }
+}
+
+/* ---- index: section list on mobile (390px), card grid from 768px ------------------------------- */
+
+.sectionGrid {
   display: grid;
   margin: 0;
   padding: 0;
@@ -159,52 +302,56 @@
   overflow: hidden;
 }
 
-.row {
+.sectionCard {
+  display: grid;
+  gap: 12px;
+  padding: 14px 16px;
+}
+
+.sectionCard + .sectionCard {
+  border-block-start: var(--border-width-thin) solid var(--border-default);
+}
+
+.sectionCardTop {
   position: relative;
   display: grid;
   grid-template-columns: auto minmax(0, 1fr) auto;
   align-items: center;
   gap: 12px;
-  min-height: 56px;
-  padding: 8px 16px;
-  transition: background-color 120ms ease;
+  min-height: 44px;
 }
 
-.row + .row {
-  border-block-start: var(--border-width-thin) solid var(--border-default);
-}
-
-.row:hover {
-  background: var(--surface-subtle);
-}
-
-.rowLink {
+.sectionCardLink {
   color: var(--text-primary);
   font-size: var(--font-size-body);
-  font-weight: var(--font-weight-medium);
+  font-weight: var(--font-weight-semibold);
   line-height: var(--line-height-body);
   text-decoration: none;
   overflow-wrap: anywhere;
 }
 
-/* The link stretches over the row, so the whole row is the hit area. */
-.rowLink::after {
+.sectionCardLink::after {
   content: '';
   position: absolute;
   inset: 0;
 }
 
-.rowLink:focus-visible {
+.sectionCardLink:hover {
+  color: var(--action-primary);
+}
+
+.sectionCardLink:focus-visible {
   box-shadow: none;
 }
 
-.rowLink:focus-visible::after {
+.sectionCardLink:focus-visible::after {
   box-shadow: var(--bos-focus-shadow);
   border-radius: var(--radius-lg);
 }
 
 .rowText {
   display: grid;
+  gap: 2px;
   min-width: 0;
 }
 
@@ -219,31 +366,68 @@
   color: var(--icon-default);
 }
 
+.subtabLinks {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.subtabLink {
+  display: inline-flex;
+  align-items: center;
+  min-height: 32px;
+  padding: 4px 10px;
+  border: var(--border-width-thin) solid var(--border-default);
+  border-radius: var(--radius-lg);
+  background: var(--surface-subtle);
+  color: var(--text-secondary);
+  font-size: var(--font-size-caption);
+  font-weight: var(--font-weight-medium);
+  line-height: var(--line-height-caption);
+  text-decoration: none;
+  transition:
+    background-color 120ms ease,
+    border-color 120ms ease,
+    color 120ms ease;
+}
+
+.subtabLink:hover {
+  border-color: var(--border-strong);
+  background: var(--interactive-hover);
+  color: var(--text-primary);
+}
+
+.subtabLink:focus-visible {
+  outline: 2px solid transparent;
+  box-shadow: var(--bos-focus-shadow);
+}
+
 @media (min-width: 768px) {
-  .rows {
-    grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
-    gap: 12px;
+  .sectionGrid {
+    grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
+    gap: 16px;
     border: 0;
     border-radius: 0;
     background: transparent;
     overflow: visible;
   }
 
-  .row {
-    grid-template-columns: minmax(0, 1fr);
+  .sectionCard {
     align-content: start;
-    gap: 8px;
-    padding: 16px 20px;
+    padding: 20px;
     border: var(--border-width-thin) solid var(--card-border);
     border-radius: var(--radius-xl);
     background: var(--card-bg);
   }
 
-  .row + .row {
+  .sectionCard + .sectionCard {
     border-block-start: var(--border-width-thin) solid var(--card-border);
   }
 
-  .row:hover {
+  .sectionCard:hover {
     border-color: var(--border-strong);
   }
 

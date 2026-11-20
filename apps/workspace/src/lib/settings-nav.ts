@@ -42,8 +42,17 @@ export interface SettingsSection {
   ready: boolean;
 }
 
+export type SettingsGroupId = 'company-setup' | 'organisation' | 'finance' | 'sales-and-purchasing';
+
 export interface SettingsGroup {
+  id: SettingsGroupId;
   label: string;
+  /** Addressable section index URL; redirects to the first sub-tab the person may open. */
+  href: string;
+  icon: SettingsIconName;
+  /** One line under the section name on the index and the phone menu. */
+  description: string;
+  /** Sub-tabs within this left-hand section. */
   sections: readonly SettingsSection[];
 }
 
@@ -54,7 +63,11 @@ const COMPANY_PERMISSION = 'admin.settings.write';
 
 export const SETTINGS_GROUPS: readonly SettingsGroup[] = [
   {
+    id: 'company-setup',
     label: 'Company',
+    href: '/settings/company-setup',
+    icon: 'building',
+    description: 'Company profile, document templates, number and date format, and saved terms.',
     sections: [
       {
         id: 'company',
@@ -95,7 +108,11 @@ export const SETTINGS_GROUPS: readonly SettingsGroup[] = [
     ],
   },
   {
-    label: 'People and access',
+    id: 'organisation',
+    label: 'Organisation',
+    href: '/settings/organisation',
+    icon: 'users',
+    description: 'Users, departments, access controls and approval workflows.',
     sections: [
       {
         id: 'users',
@@ -141,7 +158,11 @@ export const SETTINGS_GROUPS: readonly SettingsGroup[] = [
     ],
   },
   {
+    id: 'finance',
     label: 'Finance',
+    href: '/settings/finance',
+    icon: 'banknote',
+    description: 'Currencies, exchange rates, tax codes and document numbering.',
     sections: [
       {
         id: 'currencies',
@@ -173,7 +194,11 @@ export const SETTINGS_GROUPS: readonly SettingsGroup[] = [
     ],
   },
   {
+    id: 'sales-and-purchasing',
     label: 'Sales and purchasing',
+    href: '/settings/sales-and-purchasing',
+    icon: 'trending-up',
+    description: 'Quotation, deal, billing schedule and purchasing defaults.',
     sections: [
       {
         id: 'sales',
@@ -204,6 +229,9 @@ export const SETTINGS_SECTIONS: readonly SettingsSection[] = SETTINGS_GROUPS.fla
 const asList = (permission: string | readonly string[]): readonly string[] =>
   typeof permission === 'string' ? [permission] : permission;
 
+const matchesHref = (pathname: string, href: string): boolean =>
+  pathname === href || pathname.startsWith(`${href}/`);
+
 /** True when `can` grants the section's permission, or any one of them. No predicate grants none. */
 export function canOpenSection(
   section: SettingsSection,
@@ -212,7 +240,7 @@ export function canOpenSection(
   return asList(section.permission).some((permission) => can?.(permission) === true);
 }
 
-/** Ready sections the person may open, grouped; a group with none left is omitted. */
+/** Ready sub-tabs the person may open, grouped into sections; a section with none left is omitted. */
 export function visibleSettingsGroups(
   can: ((permission: string) => boolean) | undefined,
 ): readonly SettingsGroup[] {
@@ -222,23 +250,51 @@ export function visibleSettingsGroups(
   })).filter((group) => group.sections.length > 0);
 }
 
-/** The section with this id. */
+/** The sub-tab with this id. */
 export function settingsSection(id: SettingsSectionId): SettingsSection {
   const found = SETTINGS_SECTIONS.find((section) => section.id === id);
   if (found === undefined) throw new Error(`Unknown settings section: ${id}`);
   return found;
 }
 
-/** The first section the person may open: where a refused visitor is sent. Undefined when none. */
+/** The top-level section with this id. */
+export function settingsGroup(id: SettingsGroupId): SettingsGroup {
+  const found = SETTINGS_GROUPS.find((group) => group.id === id);
+  if (found === undefined) throw new Error(`Unknown settings group: ${id}`);
+  return found;
+}
+
+/** The first sub-tab the person may open: where a refused visitor is sent. Undefined when none. */
 export function firstAllowedSection(
   can: ((permission: string) => boolean) | undefined,
 ): SettingsSection | undefined {
   return visibleSettingsGroups(can)[0]?.sections[0];
 }
 
-/** The section that owns a path (`/settings/users/new` belongs to Users), if any. */
-export function sectionForPath(pathname: string): SettingsSection | undefined {
-  return SETTINGS_SECTIONS.find(
-    (section) => pathname === section.href || pathname.startsWith(`${section.href}/`),
+/** The first sub-tab inside `id` that the person may open, or undefined when none opens. */
+export function firstAllowedInGroup(
+  id: SettingsGroupId,
+  can: ((permission: string) => boolean) | undefined,
+): SettingsSection | undefined {
+  return visibleSettingsGroups(can).find((group) => group.id === id)?.sections[0];
+}
+
+/** The sub-tab that owns a path (`/settings/users/new` belongs to Users), if any. */
+export function sectionForPath(
+  pathname: string,
+  sections: readonly SettingsSection[] = SETTINGS_SECTIONS,
+): SettingsSection | undefined {
+  return sections.find((section) => matchesHref(pathname, section.href));
+}
+
+/** The top-level section that owns a path (its index URL or any sub-tab under it), if any. */
+export function groupForPath(
+  pathname: string,
+  groups: readonly SettingsGroup[] = SETTINGS_GROUPS,
+): SettingsGroup | undefined {
+  return groups.find(
+    (group) =>
+      matchesHref(pathname, group.href) ||
+      group.sections.some((section) => matchesHref(pathname, section.href)),
   );
 }
