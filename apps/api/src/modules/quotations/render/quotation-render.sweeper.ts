@@ -5,7 +5,8 @@
 //
 // Safe to repeat and to run on two workers at once: every version is first claimed with one conditional UPDATE
 // (render_state -> 'pending'), and only the claimant renders. A claim older than 10 minutes counts as abandoned
-// (the worker died) and is taken again. A failed version (round 4, R4c2: TR-Q4, F1-Q13) is retried after a pause that
+// (the worker died mid-render): each sweep first records it as a failed try, exactly like a render that threw, so a
+// version that kills its worker every time is given up at the limit instead of being taken again forever. A failed version (round 4, R4c2: TR-Q4, F1-Q13) is retried after a pause that
 // grows with render_attempts, the failures since its last success or Retry (render-retry.ts). The failure that uses up
 // the last try leaves the version `failed` at MAX_RENDER_ATTEMPTS, which the candidate query never takes again, and
 // writes one admin (audit) entry `quotation.pdf_render_failed` in the same transaction; the download then answers 424
@@ -74,12 +75,16 @@ import { MAX_RENDER_ATTEMPTS, nextRetryPauseMs, RENDER_GIVEN_UP_ACTION } from '.
 export const QUOTATION_RENDER_QUEUE = 'quotation.render';
 export const QUOTATION_RENDER_SWEEP_JOB = 'quotation.render.sweep';
 export const SWEEP_EVERY_MS = 60_000;
-/** A version still `pending` after this long was claimed by a worker that died; it is taken again. */
+/** A version still `pending` after this long was claimed by a worker that died; that try counts as failed. */
 export const PENDING_STALE_MS = 10 * 60_000;
 /** A generated document still awaiting its bytes after this long was left by a render that crashed midway. */
 export const ORPHAN_AFTER_MS = 60 * 60_000;
 /** Versions handled per tick; the rest wait a minute. Keeps one tick bounded (each render has its own deadline). */
 const BATCH = 10;
+/** Abandoned claims recorded per tick. Cheap (one UPDATE each), so a larger batch than renders. */
+const ABANDONED_BATCH = 50;
+/** The kind a dead worker's try is logged and audited with: there is no error to name. */
+export const ABANDONED_KIND = 'abandoned';
 const ORPHAN_BATCH = 50;
 
 export const RENDER_STORE = Symbol('QUOTATION_RENDER_STORE');
@@ -115,6 +120,18 @@ export interface OrphanDocument {
 export interface RenderStore {
   /** Approved versions that need a render now, oldest first. */
   candidates(now: Date, limit: number): Promise<RenderCandidate[]>;
+  /** Approved versions still `pending` since before `staleBefore`: the worker that claimed them died. */
+  abandoned(staleBefore: Date, limit: number): Promise<RenderCandidate[]>;
+  /**
+   * Records a dead worker's try as failed, like markFailed: only a version still `pending` since before `staleBefore`
+   * becomes `failed`, with one more failed attempt, so a live claim is never touched and two workers count it once.
+   */
+  markAbandoned(
+    tx: DbTransaction,
+    c: RenderCandidate,
+    staleBefore: Date,
+    now: Date,
+  ): Promise<{ attempts: number; quotationId: string } | undefined>;
   /** One conditional UPDATE: true only for the caller that moved the version to `pending`. */
   claim(tx: DbTransaction, c: RenderCandidate, now: Date): Promise<boolean>;
   load(tx: DbTransaction, c: RenderCandidate): Promise<RenderSource | undefined>;
@@ -230,6 +247,13 @@ export class QuotationRenderSweeper {
       orphansRemoved: 0,
       failures: [],
     };
+    // First count the tries of workers that died mid-render, so those versions go through the same pauses and limit.
+    for (const c of await this.store.abandoned(this.staleBefore(), ABANDONED_BATCH)) {
+      if (await this.recordAbandoned(c)) {
+        result.failed += 1;
+        result.failures.push({ versionId: c.versionId, kind: ABANDONED_KIND });
+      }
+    }
     const candidates = await this.store.candidates(this.clock(), BATCH);
     // One at a time: Chromium is the scarce resource, and a version's failure must not touch the next one.
     for (const c of candidates) {
@@ -292,28 +316,59 @@ export class QuotationRenderSweeper {
     } catch (error) {
       const kind = failureKind(error);
       this.logger.warn(`quotation render failed: version=${c.versionId} kind=${kind}`);
-      try {
-        // One transaction: the failure and, when it used up the last try, the admin entry. The conditional UPDATE
-        // means only the worker that moved the version off `pending` counts it, so the entry is written once.
-        await this.runTx(scope, actor, async (tx) => {
-          const failed = await this.store.markFailed(tx, c, this.clock());
-          if (failed?.attempts !== MAX_RENDER_ATTEMPTS) return;
-          await this.audit.record(tx, {
-            action: RENDER_GIVEN_UP_ACTION.quotation,
-            entityType: 'quotations',
-            entityId: failed.quotationId,
-            after: { versionId: c.versionId, attempts: failed.attempts, failureKind: kind },
-          });
-          this.logger.error(
-            `quotation render given up: version=${c.versionId} attempts=${failed.attempts} kind=${kind}`,
-          );
-        });
-      } catch (markError) {
-        this.logger.error(
-          `quotation render: could not record the failure: version=${c.versionId} kind=${failureKind(markError)}`,
-        );
-      }
+      await this.recordFailure(c, kind, (tx) => this.store.markFailed(tx, c, this.clock()));
       return { outcome: 'failed', kind };
+    }
+  }
+
+  private staleBefore(): Date {
+    return new Date(this.clock().getTime() - PENDING_STALE_MS);
+  }
+
+  /** A claim left by a worker that died: one failed try, recorded like any other. True when this worker counted it. */
+  private async recordAbandoned(c: RenderCandidate): Promise<boolean> {
+    const staleBefore = this.staleBefore();
+    const counted = await this.recordFailure(c, ABANDONED_KIND, (tx) =>
+      this.store.markAbandoned(tx, c, staleBefore, this.clock()),
+    );
+    if (counted) {
+      this.logger.warn(`quotation render failed: version=${c.versionId} kind=${ABANDONED_KIND}`);
+    }
+    return counted;
+  }
+
+  /**
+   * One transaction: the failure and, when it used up the last try, the admin entry. The conditional UPDATE in `mark`
+   * means only the worker that moved the version off `pending` counts it, so the entry is written once. True when the
+   * failure was counted here.
+   */
+  private async recordFailure(
+    c: RenderCandidate,
+    kind: string,
+    mark: (tx: DbTransaction) => Promise<{ attempts: number; quotationId: string } | undefined>,
+  ): Promise<boolean> {
+    const scope: TxScope = { tenantId: c.tenantId, organizationId: c.organizationId };
+    try {
+      return await this.runTx(scope, systemActor(QUOTATION_RENDER_JOB_PREFIX), async (tx) => {
+        const failed = await mark(tx);
+        if (failed === undefined) return false;
+        if (failed.attempts !== MAX_RENDER_ATTEMPTS) return true;
+        await this.audit.record(tx, {
+          action: RENDER_GIVEN_UP_ACTION.quotation,
+          entityType: 'quotations',
+          entityId: failed.quotationId,
+          after: { versionId: c.versionId, attempts: failed.attempts, failureKind: kind },
+        });
+        this.logger.error(
+          `quotation render given up: version=${c.versionId} attempts=${failed.attempts} kind=${kind}`,
+        );
+        return true;
+      });
+    } catch (markError) {
+      this.logger.error(
+        `quotation render: could not record the failure: version=${c.versionId} kind=${failureKind(markError)}`,
+      );
+      return false;
     }
   }
 
@@ -377,7 +432,8 @@ export function drizzleRenderStore(db: Db): RenderStore {
       eq(quotationVersions.id, c.versionId),
     );
   /**
-   * None, failed with tries left and its pause over, or pending since a worker died. The pause depends on the version's
+   * None, or failed with tries left and its pause over. A claim left by a worker that died is first recorded as a
+   * failed try (markAbandoned), so it comes back here with its pause and its limit. The pause depends on the version's
    * own render_attempts, so there is one branch per count below the limit; 0 is a version that failed before attempts
    * were counted (0115), which waits the first pause. A version at the limit is given up and never matches.
    */
@@ -397,10 +453,12 @@ export function drizzleRenderStore(db: Db): RenderStore {
     or(
       eq(quotationVersions.renderState, 'none'),
       and(eq(quotationVersions.renderState, 'failed'), failedAndDue(now)),
-      and(
-        eq(quotationVersions.renderState, 'pending'),
-        lt(quotationVersions.updatedAt, new Date(now.getTime() - PENDING_STALE_MS)),
-      ),
+    );
+  const abandonedSince = (staleBefore: Date) =>
+    and(
+      eq(quotationVersions.status, 'approved'),
+      eq(quotationVersions.renderState, 'pending'),
+      lt(quotationVersions.updatedAt, staleBefore),
     );
 
   return {
@@ -415,6 +473,35 @@ export function drizzleRenderStore(db: Db): RenderStore {
         .where(and(eq(quotationVersions.status, 'approved'), needsRender(now)))
         .orderBy(asc(quotationVersions.updatedAt))
         .limit(limit);
+    },
+
+    async abandoned(staleBefore, limit) {
+      return db
+        .select({
+          tenantId: quotationVersions.tenantId,
+          organizationId: quotationVersions.organizationId,
+          versionId: quotationVersions.id,
+        })
+        .from(quotationVersions)
+        .where(abandonedSince(staleBefore))
+        .orderBy(asc(quotationVersions.updatedAt))
+        .limit(limit);
+    },
+
+    async markAbandoned(tx, c, staleBefore, now) {
+      const [row] = await tx
+        .update(quotationVersions)
+        .set({
+          renderState: 'failed',
+          renderAttempts: sql`${quotationVersions.renderAttempts} + 1`,
+          updatedAt: now,
+        })
+        .where(and(ownVersion(c), abandonedSince(staleBefore)))
+        .returning({
+          attempts: quotationVersions.renderAttempts,
+          quotationId: quotationVersions.quotationId,
+        });
+      return row;
     },
 
     async claim(tx, c, now) {
