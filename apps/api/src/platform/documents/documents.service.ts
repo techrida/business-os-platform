@@ -125,6 +125,51 @@ export function newestNonRejected<T extends { version: number; status: string }>
   );
 }
 
+/**
+ * The refusal of an infected file where a record takes it (TR-Q12e): one code and one message everywhere, naming
+ * the file, so every screen can say what to do.
+ */
+export function documentInfected(filename: string): ConflictException {
+  return new ConflictException({
+    code: 'document_infected',
+    message: `A virus was found in “${filename}”. Remove it or upload a clean copy, then try again.`,
+  });
+}
+
+/**
+ * TR-Q12e: the server refuses an infected file wherever a record takes it (a bill's invoice, an evidence file, a
+ * quotation document, a KYC file, a portal submission). Throws 409 `document_infected` when, for any of
+ * `documentIds` in this scope, the newest version that was not rejected is `infected`. Call it after the caller's
+ * own check that the ids are documents it may attach, in the same transaction, before writing the reference.
+ * Only `infected` is refused here: a file still scanning (awaiting_content, quarantined) or whose scan failed may
+ * still be saved on a draft as before, and each submit or approval step keeps its own rule that the file is clean.
+ * Ids outside the scope, or with no versions, are left to the caller's own check (nothing is learned from them).
+ */
+export async function assertNotInfected(
+  reader: Reader,
+  scope: TxScope,
+  documentIds: readonly string[],
+): Promise<void> {
+  const ids = [...new Set(documentIds)].filter((id) => Id.safeParse(id).success);
+  if (ids.length === 0) return;
+  const versions = await reader
+    .select({
+      documentId: documentVersions.documentId,
+      version: documentVersions.version,
+      status: documentVersions.status,
+      filename: documentVersions.filename,
+    })
+    .from(documentVersions)
+    .where(scoped(scope).where(documentVersions, inArray(documentVersions.documentId, ids)));
+  const byDocument = new Map<string, (typeof versions)[number][]>();
+  for (const v of versions)
+    byDocument.set(v.documentId, [...(byDocument.get(v.documentId) ?? []), v]);
+  for (const id of ids) {
+    const newest = newestNonRejected(byDocument.get(id) ?? []);
+    if (newest?.status === 'infected') throw documentInfected(newest.filename);
+  }
+}
+
 export async function newestDocumentVersion(reader: Reader, scope: TxScope, documentId: string) {
   const versions = await reader
     .select()
