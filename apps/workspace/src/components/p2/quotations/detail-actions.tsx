@@ -15,6 +15,7 @@ import { LinkButton } from '@/components/ui/button';
 import { CancelDialog } from './cancel-dialog';
 import { canRecordOutcome, kathmanduToday, preselectedContactId, sendGate } from './eligibility';
 import { mayCancel, type QuotationLifecycle } from './lifecycle-contract';
+import { opportunityBlockers, type OpportunityFacts } from './opportunity-gate';
 import { OutcomeDialog } from './outcome-dialog';
 import { ReviseForm } from './revise-form';
 import { SendDialog } from './send-dialog';
@@ -27,6 +28,13 @@ export interface DetailActionVisibility {
   mayRecordOutcome?: boolean;
   /** The lifecycle answers the contract does not carry yet (Cancel quotation). */
   lifecycle?: QuotationLifecycle;
+  /**
+   * The quotation's opportunity, for the stage rules Send and Accepted depend on. Null when it could
+   * not be read: then nothing is held back here and the API decides.
+   */
+  opportunity?: OpportunityFacts | null;
+  /** The current version's id, which an opportunity already Won may name. */
+  versionId?: string;
 }
 
 const NO_LIFECYCLE: QuotationLifecycle = { confirmations: {} };
@@ -39,9 +47,14 @@ export function hasDetailActions({
   maySend,
   mayRecordOutcome,
   lifecycle = NO_LIFECYCLE,
+  opportunity,
+  versionId = '',
 }: DetailActionVisibility): boolean {
+  const blockers = opportunityBlockers(opportunity, versionId);
   const showSend =
-    (status === 'approved' || status === 'expired') && (capabilities.canSend ?? maySend ?? false);
+    (status === 'approved' || status === 'expired') &&
+    blockers.send === null &&
+    (capabilities.canSend ?? maySend ?? false);
   const showOutcome =
     includeOutcome &&
     canRecordOutcome(status) &&
@@ -73,6 +86,7 @@ export function DetailActions({
   maySend,
   mayRecordOutcome,
   lifecycle = NO_LIFECYCLE,
+  opportunity,
 }: {
   quotationId: string;
   number: string;
@@ -91,13 +105,19 @@ export function DetailActions({
   mayRecordOutcome?: boolean;
   /** The lifecycle answers the contract does not carry yet (Cancel quotation). */
   lifecycle?: QuotationLifecycle;
+  /** The quotation's opportunity; null when it could not be read (then the API decides). */
+  opportunity?: OpportunityFacts | null;
 }) {
   const { status } = current;
   const ids = { quotationId, versionId: current.id, version: current.version, number, reloadHref };
 
   // Send is offered for an approved quotation, and for an expired one so the reason is on screen.
+  // An opportunity the API would refuse to move hides it; the page says why (opportunity-gate.ts).
+  const blockers = opportunityBlockers(opportunity, current.id);
   const showSend =
-    (status === 'approved' || status === 'expired') && (capabilities.canSend ?? maySend ?? false);
+    (status === 'approved' || status === 'expired') &&
+    blockers.send === null &&
+    (capabilities.canSend ?? maySend ?? false);
   const showOutcome =
     includeOutcome &&
     canRecordOutcome(status) &&
@@ -133,6 +153,7 @@ export function DetailActions({
           {...ids}
           revisionNo={current.revisionNo}
           today={today}
+          acceptBlocker={blockers.accept}
           idempotencyKey={randomUUID()}
         />
       ) : null}
