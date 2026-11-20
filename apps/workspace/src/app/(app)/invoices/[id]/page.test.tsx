@@ -345,6 +345,18 @@ describe('invoice detail page', () => {
     expect(html).toContain(`data-download-url="/invoices/${ID}/document"`);
   });
 
+  // `can` is what the API sends for this invoice: the issue grant judged on the record (an `own` grant only on the
+  // invoices the caller drafted), not the invoice's state, so it stays true on an issued invoice.
+  it('offers Retry when the API says the caller may issue this invoice, and not when it says no', async () => {
+    const can = { submit: false, issue: true, discard: false, notes: true, recordPayment: true };
+    mocks.getInvoice.mockResolvedValue({ ...issued(), can });
+    expect(await render()).toContain(`data-retry-url="/invoices/${ID}/document/retry"`);
+    mocks.getInvoice.mockResolvedValue({ ...issued(), can: { ...can, issue: false } });
+    const html = await render();
+    expect(html).toMatch(/View PDF/);
+    expect(html).not.toContain('data-retry-url');
+  });
+
   it('offers no Retry on the PDF to the Accountant, who may not issue', async () => {
     mocks.requireStaffSession.mockResolvedValue({ accessToken: 't', roles: ['accountant'] });
     const html = await render();
