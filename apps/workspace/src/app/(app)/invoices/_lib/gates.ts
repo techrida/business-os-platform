@@ -27,6 +27,11 @@ export interface InvoiceGates {
   /** Issue: an approved invoice, or a proforma draft (which has no approval step). */
   issue: boolean;
   discard: boolean;
+  /**
+   * Back to draft: an approved invoice that can no longer be issued as approved (its due date passed). Whoever may
+   * issue it may take it back; it then needs a new approval.
+   */
+  reopen: boolean;
   /** Where the "Credit note" and "Debit note" buttons mount: an issued tax invoice, for Finance. */
   notes: boolean;
   /**
@@ -76,6 +81,11 @@ export function invoiceGates(
       canTransitionInvoice(kind, status, 'discarded') &&
       can('invoice.draft') &&
       reaches(invoice, 'discard'),
+    reopen:
+      status === 'approved' &&
+      canTransitionInvoice(kind, status, 'draft') &&
+      can('invoice.issue') &&
+      reaches(invoice, 'issue'),
     notes:
       kind === 'tax_invoice' &&
       status === 'issued' &&

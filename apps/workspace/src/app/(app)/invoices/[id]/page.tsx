@@ -230,7 +230,12 @@ export default async function InvoiceDetailPage({ params }: { params: Promise<{ 
         }
         description={customerName}
         actions={
-          pdfNumber || gates.submit || gates.issue || gates.discard || recordPayment ? (
+          pdfNumber ||
+          gates.submit ||
+          gates.issue ||
+          gates.reopen ||
+          gates.discard ||
+          recordPayment ? (
             <>
               <InvoiceActions invoice={invoice} gates={gates} reloadHref={path} />
               {pdfNumber ? (
