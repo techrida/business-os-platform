@@ -7,8 +7,20 @@
 //
 // Every write runs inside the caller's transaction and first takes a per-owner advisory lock, so a sweeper and a Retry
 // (or two sweepers) never both count one failure or both write the "given up" admin entry.
-import { documentRenderFailures, scoped } from '@bos/db';
-import { and, eq, exists, gt, isNotNull, or, sql, type SQL } from 'drizzle-orm';
+import { documentRenderFailures, documents, documentVersions, scoped } from '@bos/db';
+import {
+  and,
+  eq,
+  exists,
+  gt,
+  isNotNull,
+  isNull,
+  not,
+  notExists,
+  or,
+  sql,
+  type SQL,
+} from 'drizzle-orm';
 import type { AnyPgColumn } from 'drizzle-orm/pg-core';
 
 import type { Db, DbTransaction } from '../../../platform/db/db.module';
@@ -152,4 +164,41 @@ export function renderHeldBack(
         ),
       ),
   );
+}
+
+/**
+ * Soft-removes document `documentId` of `o` when none of its uploads got bytes (all still awaiting_content): the try
+ * that created it failed before storing them, and a live document would keep the owner out of the candidates. The same
+ * soft remove as the sweepers' orphan cleanup; a document that got its bytes is left alone.
+ */
+export async function discardUnfilledDocument(
+  tx: DbTransaction,
+  o: RenderFailureOwner,
+  documentId: string,
+  now: Date,
+): Promise<void> {
+  const filled = tx
+    .select({ one: sql`1` })
+    .from(documentVersions)
+    .where(
+      and(
+        eq(documentVersions.tenantId, o.tenantId),
+        eq(documentVersions.documentId, documentId),
+        not(eq(documentVersions.status, 'awaiting_content')),
+      ),
+    );
+  await tx
+    .update(documents)
+    .set({ removedAt: now, updatedAt: now })
+    .where(
+      and(
+        eq(documents.tenantId, o.tenantId),
+        eq(documents.organizationId, o.organizationId),
+        eq(documents.ownerType, o.ownerType),
+        eq(documents.ownerId, o.ownerId),
+        eq(documents.id, documentId),
+        isNull(documents.removedAt),
+        notExists(filled),
+      ),
+    );
 }
