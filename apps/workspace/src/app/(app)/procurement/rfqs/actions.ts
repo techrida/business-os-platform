@@ -16,6 +16,7 @@ import {
   scoreQuotation,
 } from '@/lib/api-rfqs';
 import { requireStaffSession } from '@/lib/bff';
+import { getPermissionCheck } from '@/lib/live-permissions';
 
 import { isDeadlineInPast, rfqFailure } from './_lib/failure';
 import {
@@ -34,13 +35,13 @@ import type { CommandState, RfqEditState, RfqFormState } from './_lib/state';
 
 /**
  * Server actions for the RFQ screens. Each one asks `requireStaffSession` first, checks the
- * permission it needs (deny by default: the API still decides every call), validates with the
- * contracts' schema, and words any refusal for a person through `rfqFailure`. The browser never
+ * live permission it needs (deny by default: the API still decides every call), validates with
+ * the contracts' schema, and words any refusal for a person through `rfqFailure`. The browser never
  * sees the API URL or a token.
  *
  * Idempotency: every write carries the key the form submitted. A definite answer (a 4xx other
  * than 408, 429 and the "still in progress" 409) rotates it, because the next try is a new
- * decision. A timeout, 408, 429, a 5xx or the in-progress 409 keeps it, so the first request is
+ * decision. A timeout, 408, 429, a 5xx or the in-progress 409 keeps it so the first request is
  * replayed instead of a second one being made. The RFQ bodies are strict and carry no `expectedVersion`. Money never passes through
  * here except as the text the person typed.
  */
@@ -66,7 +67,9 @@ function text(form: FormData, name: string): string {
 export async function createRfqAction(_prev: RfqFormState, form: FormData): Promise<RfqFormState> {
   const session = await requireStaffSession('/procurement/rfqs/new');
   const key = keyOf(form);
-  if (!rfqGrants(session.roles).sourcing) return { key, errors: {}, error: NO_SOURCING };
+  if (!rfqGrants(await getPermissionCheck(session)).sourcing) {
+    return { key, errors: {}, error: NO_SOURCING };
+  }
   const parsed = parseRfqValues(rfqValuesFromForm(form));
   if (!parsed.ok) return { key, errors: parsed.errors };
 
@@ -107,7 +110,9 @@ export async function recordQuotationAction(
   const key = keyOf(form);
   if (!isGuid(rfqId)) return { key, errors: {}, error: INCOMPLETE, reload: true };
   const session = await requireStaffSession(`/procurement/rfqs/${rfqId}`);
-  if (!rfqGrants(session.roles).sourcing) return { key, errors: {}, error: NO_SOURCING };
+  if (!rfqGrants(await getPermissionCheck(session)).sourcing) {
+    return { key, errors: {}, error: NO_SOURCING };
+  }
   const parsed = parseQuoteValues(quoteValuesFromForm(form));
   if (!parsed.ok) return { key, errors: parsed.errors };
 
@@ -144,7 +149,7 @@ export async function scoreQuotationAction(
     return { key, errors: {}, count: prev.count, error: INCOMPLETE, reload: true };
   }
   const session = await requireStaffSession(`/procurement/rfqs/${rfqId}`);
-  if (!rfqGrants(session.roles).sourcing) {
+  if (!rfqGrants(await getPermissionCheck(session)).sourcing) {
     return { key, errors: {}, count: prev.count, error: NO_SOURCING };
   }
   const parsed = parseScoreValues(scoreValuesFromForm(form));
@@ -191,7 +196,9 @@ export async function recommendQuotationAction(
   const key = keyOf(form);
   if (!isGuid(rfqId)) return { key, errors: {}, error: INCOMPLETE, reload: true };
   const session = await requireStaffSession(`/procurement/rfqs/${rfqId}`);
-  if (!rfqGrants(session.roles).sourcing) return { key, errors: {}, error: NO_SOURCING };
+  if (!rfqGrants(await getPermissionCheck(session)).sourcing) {
+    return { key, errors: {}, error: NO_SOURCING };
+  }
   const parsed = parseRecommendValues(recommendValuesFromForm(form));
   if (!parsed.ok) return { key, errors: parsed.errors };
 
@@ -222,7 +229,9 @@ export async function commitRfqAction(prev: CommandState, form: FormData): Promi
   const key = keyOf(form);
   if (!isGuid(rfqId)) return { key, count: prev.count, error: INCOMPLETE, reload: true };
   const session = await requireStaffSession(`/procurement/rfqs/${rfqId}`);
-  if (!rfqGrants(session.roles).sourcing) return { key, count: prev.count, error: NO_SOURCING };
+  if (!rfqGrants(await getPermissionCheck(session)).sourcing) {
+    return { key, count: prev.count, error: NO_SOURCING };
+  }
 
   let purchaseRequestId: string;
   try {

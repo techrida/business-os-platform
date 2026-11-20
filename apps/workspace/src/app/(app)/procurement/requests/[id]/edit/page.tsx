@@ -16,13 +16,14 @@ import {
 } from '@/lib/api-procurement';
 import { requireStaffSession } from '@/lib/bff';
 import { loadEnabledCurrencies } from '@/lib/enabled-currencies.server';
+import { getPermissionCheck } from '@/lib/live-permissions';
 
 import layout from '../../../procurement.module.css';
 import { updatePrAction } from '../../actions';
 import { PrForm } from '../../_components/pr-form';
 import { prFailure } from '../../_lib/failure';
 import { valuesFromDto } from '../../_lib/forms';
-import { isPrEditable, PR_STATUS_LABEL, prGrants } from '../../_lib/model';
+import { isPrEditable, PR_STATUS_LABEL } from '../../_lib/model';
 
 export const metadata: Metadata = { title: 'Edit purchase request · Business OS' };
 export const dynamic = 'force-dynamic';
@@ -60,7 +61,9 @@ export default async function EditPurchaseRequestPage({
   const label = pr.number ?? 'Draft purchase request';
   // Mid-sentence in the title ("Edit PR-…", "Edit draft purchase request"); the crumb keeps the capital.
   const titleName = pr.number ?? 'draft purchase request';
-  const editable = isPrEditable(pr.status) && prGrants(session.roles).create;
+  const editable =
+    pr.can?.edit ??
+    (isPrEditable(pr.status) && (await getPermissionCheck(session))('procurement.pr.create'));
   const departments = editable ? await listDepartments(session).catch(() => []) : [];
   const enabledCurrencies = editable ? await loadEnabledCurrencies(session) : [];
   let costCenters: Awaited<ReturnType<typeof listCostCenters>> = [];

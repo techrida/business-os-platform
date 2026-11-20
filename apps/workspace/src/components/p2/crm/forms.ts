@@ -140,7 +140,7 @@ export function parseStageMove(
     lostReasonId: field(form, 'lostReasonId'),
     newLostReason: field(form, 'newLostReason'),
     note: field(form, 'note'),
-    ...(kind === 'lead' && stage === 'contacted' ? { contactActivity: contactActivity(form) } : {}),
+    ...(kind === 'lead' ? { contactActivity: contactActivity(form) } : {}),
     expectedVersion: numberField(form, 'expectedVersion') ?? Number.NaN,
   });
   const schema = kind === 'lead' ? LeadStageChangeBodySchema : OpportunityStageChangeBodySchema;

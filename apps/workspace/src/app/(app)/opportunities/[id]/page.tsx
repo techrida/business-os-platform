@@ -34,6 +34,7 @@ import { listOpportunityLostReasonChoices } from '@/lib/api-lead-lost-reasons';
 import { requireStaffSession } from '@/lib/bff';
 import { getNumberSystems } from '@/lib/display-settings';
 import { money, when } from '@/lib/kernel-format';
+import { getPermissionCheck } from '@/lib/live-permissions';
 import { getCustomer } from '@/components/p2/customers/api';
 
 import { moveOpportunityStageAction } from '../actions';
@@ -292,8 +293,12 @@ export default async function OpportunityPage({ params }: { params: Promise<{ id
   }
   const opp = oppResult.value;
   const customer = await getCustomer(session, opp.customerId).catch(() => null);
-  const moves = resolvedMoves('opportunity', opp.stage, opp.allowedMoves);
-  const canEdit = opp.canEdit ?? true;
+  const canEdit = opp.canEdit ?? (await getPermissionCheck(session))('crm.opportunity.write');
+  const moves = resolvedMoves(
+    'opportunity',
+    opp.stage,
+    opp.allowedMoves ?? (canEdit ? undefined : []),
+  );
   const activityProblem =
     activityResult.status === 'rejected' ? failureOf(activityResult.reason) : null;
   const { owners } = peopleResult.status === 'fulfilled' ? peopleResult.value : { owners: [] };
@@ -533,6 +538,7 @@ export default async function OpportunityPage({ params }: { params: Promise<{ id
           items={plannedResult.status === 'fulfilled' ? plannedResult.value : []}
           owners={owners}
           schedule={false}
+          canEdit={canEdit}
           now={now}
           className={styles.records}
         />

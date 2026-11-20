@@ -33,6 +33,8 @@ export interface FollowUpsCardProps {
   owners: readonly LeadOwnerOption[];
   /** Offer Schedule follow-up in the header. Default: yes, when there is a lead. */
   schedule?: boolean | undefined;
+  /** Whether the caller can complete, reschedule, cancel, or schedule follow-ups. Default: true. */
+  canEdit?: boolean | undefined;
   /** The time overdue is measured against. Default: now. */
   now?: Date | undefined;
   className?: string | undefined;
@@ -182,10 +184,12 @@ function FollowUpRow({
   item,
   owners,
   now,
+  canEdit,
 }: {
   item: ActivityDto;
   owners: readonly LeadOwnerOption[];
   now: Date;
+  canEdit: boolean;
 }) {
   const overdue = isOverdue(item, now);
   const assignee = assigneeName(item);
@@ -208,7 +212,7 @@ function FollowUpRow({
           </span>
         </p>
       </div>
-      <FollowUpActions item={item} owners={owners} />
+      {canEdit ? <FollowUpActions item={item} owners={owners} /> : null}
     </li>
   );
 }
@@ -224,12 +228,13 @@ export function FollowUpsCard({
   ownerUserId,
   owners,
   schedule,
+  canEdit = true,
   now,
   className,
 }: FollowUpsCardProps) {
   const planned = sortFollowUps(items);
   const at = now ?? new Date();
-  const scheduleFor = schedule === false ? undefined : leadId;
+  const scheduleFor = schedule === false || !canEdit ? undefined : leadId;
   return (
     <Panel
       title="Follow-ups"
@@ -254,7 +259,7 @@ export function FollowUpsCard({
       ) : (
         <ol className={styles.list}>
           {planned.map((item) => (
-            <FollowUpRow key={item.id} item={item} owners={owners} now={at} />
+            <FollowUpRow key={item.id} item={item} owners={owners} now={at} canEdit={canEdit} />
           ))}
         </ol>
       )}
