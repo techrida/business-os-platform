@@ -63,7 +63,7 @@ import type { Principal } from '../../../platform/authz/principal';
 import { DB, type Db, type DbTransaction } from '../../../platform/db/db.module';
 import { updateVersioned, withIdempotency } from '../../../platform/db/idempotency';
 import { withTx, type Actor, type TxScope } from '../../../platform/db/tx';
-import { DocumentsService } from '../../../platform/documents/documents.service';
+import { assertNotInfected, DocumentsService } from '../../../platform/documents/documents.service';
 import { CurrencyEnabledService } from '../../../platform/settings/currency-enabled';
 import { SettingsService } from '../../../platform/settings/settings.service';
 import {
@@ -607,7 +607,8 @@ export class VendorPortalInboxService {
 
   /**
    * 404 unless `documentId` is a live document of `ownerType`/`ownerId` in this entity; 409 when none of its versions
-   * has received bytes yet (the PUT was not made), or the bytes were refused.
+   * has received bytes yet (the PUT was not made), or the bytes were refused; 409 document_infected when the scan
+   * found a virus in it (TR-Q12e).
    */
   private async assertDocument(
     tx: DbTransaction,
@@ -630,6 +631,8 @@ export class VendorPortalInboxService {
         ),
       );
     if (doc === undefined) throw notFound();
+    // Before the received check, so a file the scan refused says why rather than "wait".
+    await assertNotInfected(tx, scope, [documentId]);
     const [received] = await tx
       .select({ id: documentVersions.id })
       .from(documentVersions)

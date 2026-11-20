@@ -201,11 +201,14 @@ function Versions({
   result,
   here,
   numberSystems,
+  mayRetryPdf,
 }: {
   po: PurchaseOrder;
   result: PromiseSettledResult<PoVersion[]>;
   here: string;
   numberSystems: NumberSystems;
+  /** Retry on a PDF render that was given up: the API needs procurement.po.issue, as for the download itself. */
+  mayRetryPdf: boolean;
 }) {
   return (
     <Panel
@@ -268,6 +271,13 @@ function Versions({
                     label="View PDF"
                     variant="link"
                     withDownload
+                    downloadInApp
+                    pollWhilePreparing
+                    retryUrl={
+                      mayRetryPdf
+                        ? `/procurement/orders/${encodeURIComponent(po.id)}/versions/${v.version}/document/retry`
+                        : undefined
+                    }
                     context={`of version ${v.version}`}
                   />
                 </Td>
@@ -497,7 +507,13 @@ export default async function PurchaseOrderPage({ params }: { params: Promise<{ 
       </div>
 
       <Lines numberSystems={numberSystems} po={po} progress={progress} />
-      <Versions numberSystems={numberSystems} po={po} result={versions} here={here} />
+      <Versions
+        numberSystems={numberSystems}
+        po={po}
+        result={versions}
+        here={here}
+        mayRetryPdf={grants.issue}
+      />
     </Page>
   );
 }

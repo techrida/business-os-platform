@@ -2,6 +2,7 @@ import { ErrorBodySchema } from '@bos/contracts';
 
 import { isIdempotencyInProgress } from '@/components/p2/quote-builder/failure';
 import { ApiError } from '@/lib/api';
+import { infectedFileMessage } from '@/lib/infected-file';
 
 /**
  * The shared part of the words for the purchase order and receipt screens. Pure apart from the
@@ -87,6 +88,8 @@ export function failureWith(err: unknown, words: Words): ProcFailure {
   }
   if (status === 404) return { ...base, message: words.notFound, definite };
   if (status === 409) {
+    const infected = infectedFileMessage(err);
+    if (infected !== undefined) return { ...base, message: infected, definite };
     const named = words.conflict(code);
     if (named !== undefined) return { ...named, status, definite };
     return { status, message: words.conflictFallback, reload: true, definite };

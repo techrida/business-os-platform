@@ -55,7 +55,12 @@ export function InvoiceView({
     view.currency,
     effective.numberSystems[view.currency],
   );
-  const contact = view.sellerContact ?? null;
+  // The contact the original PDF printed (frozen at print 1, U16-Q4) wins, so the page and every copy agree after the
+  // company profile changes; an invoice printed without one stored shows the profile as it is now.
+  const contact =
+    view.format?.sellerContact !== undefined
+      ? view.format.sellerContact
+      : (view.sellerContact ?? null);
 
   return (
     <div className={styles.wrap}>

@@ -306,9 +306,38 @@ export const DocumentStyleSnapshotSchema = z
 export type DocumentStyleSnapshot = z.infer<typeof DocumentStyleSnapshotSchema>;
 
 /**
- * The number grouping, date pattern and company logo a document was printed with. Invoices keep it on their first
- * print so a copy printed later looks the same; purchase orders print once and use the settings in force at that
- * moment.
+ * How to reach the selling company, as a printed or on-screen customer document shows it (U16-Q4): the phones, email
+ * and signatory of the company profile and nothing else. The address and PAN/VAT number come from the document's own
+ * frozen seller, never from here.
+ */
+export const DocumentSellerContactSchema = z.strictObject({
+  phones: z.array(z.string()),
+  email: z.string().nullable(),
+  signatoryName: z.string().nullable(),
+  signatoryTitle: z.string().nullable(),
+});
+export type DocumentSellerContact = z.infer<typeof DocumentSellerContactSchema>;
+
+/**
+ * The customer-facing contact of a stored `entity.profile`, named key by key so the logo, display name, website or a
+ * key added later never reach a document. Null when the stored value does not validate (a row edited by hand): the
+ * document then prints no contact block rather than failing.
+ */
+export function documentSellerContact(rawProfile: unknown): DocumentSellerContact | null {
+  const profile = CompanyProfileSchema.safeParse(rawProfile);
+  if (!profile.success) return null;
+  return {
+    phones: [...profile.data.phones],
+    email: profile.data.email,
+    signatoryName: profile.data.signatoryName,
+    signatoryTitle: profile.data.signatoryTitle,
+  };
+}
+
+/**
+ * The number grouping, date pattern, company logo and seller contact a document was printed with. Invoices keep it on
+ * their first print so a copy printed later looks the same; purchase orders print once and use the settings in force
+ * at that moment.
  */
 export const DocumentFormatSnapshotSchema = z.strictObject({
   numberSystems: NumberSystemsSchema,
@@ -318,6 +347,11 @@ export const DocumentFormatSnapshotSchema = z.strictObject({
    * logo. Absent on documents printed before logos were frozen: they stay logo-less.
    */
   logoDataUrl: LogoDataUrlSchema.nullable().optional(),
+  /**
+   * The seller's phones, email and signatory at the first print (U16-Q4), so a profile edit never alters a copy. Null:
+   * the profile could not be read then. Absent on documents printed before contacts were frozen: they stay without.
+   */
+  sellerContact: DocumentSellerContactSchema.nullable().optional(),
   capturedAt: z.iso.datetime(),
 });
 export type DocumentFormatSnapshot = z.infer<typeof DocumentFormatSnapshotSchema>;

@@ -5,7 +5,10 @@
 // - "role assignment has one source of truth": the org, the user and the portal role grant (customer_user or
 //   vendor_user) are made in ZITADEL first, and app.idp_orgs / app.users only mirror them;
 // - "every change is audited": the attempt, each ZITADEL step and the result each get an audit row naming the
-//   staff admin.
+//   staff admin;
+// - F1-Q31: a customer's first portal admin is invited by its account owner (customers.owner_user_id) and is one
+//   of its existing contacts (the body names a contact id, never an email). Once the customer has a portal user,
+//   later grants need customer.write only.
 //
 // ZITADEL is external, so no transaction is held open across its calls. The order is:
 //   1. preflight read (party, contact, KYB case or vendor status, existing portal org) and a "requested" audit row;
@@ -46,6 +49,7 @@ import {
 } from '../../platform/users/zitadel-admin.client';
 import { customerRef } from '../customers/customers.service';
 import { vendorRef } from '../vendors/vendors.service';
+import { firstAdminRule, type FirstAdminRule } from './first-admin';
 import { PortalAccessCaller } from './portal-access.caller';
 import {
   PortalAccessStore,
@@ -88,6 +92,37 @@ const notFound = (what: 'Customer' | 'Vendor' | 'Contact') =>
   new NotFoundException({ code: 'not_found', message: `${what} not found` });
 
 const isConflict = (error: unknown) => error instanceof ZitadelHttpError && error.status === 409;
+
+/**
+ * The contact is not one of this customer's (or does not exist). Still the 404 of a hidden record, with a message
+ * that names the rule: a portal admin is always one of the customer's existing contacts (F1-Q31), never a new email.
+ */
+const contactNotOnCustomer = () =>
+  new NotFoundException({
+    code: 'not_found',
+    message:
+      "Contact not found on this customer. The portal admin must be one of the customer's existing contacts",
+  });
+
+/**
+ * F1-Q31: the first portal admin is invited by the customer's account owner only. Both refusals are 409s, like
+ * kyb_not_verified: they depend on the customer's state (no portal user yet), and another caller or a set owner
+ * clears them.
+ */
+function assertFirstAdminRule(rule: FirstAdminRule): void {
+  if (rule === 'owner_only') {
+    throw new ConflictException({
+      code: 'first_admin_owner_only',
+      message: "Only the customer's account owner can invite its first portal admin",
+    });
+  }
+  if (rule === 'owner_missing') {
+    throw new ConflictException({
+      code: 'account_owner_missing',
+      message: 'Assign an account owner to this customer; the owner invites its first portal admin',
+    });
+  }
+}
 
 const emailMissing = () =>
   new BadRequestException({
@@ -281,7 +316,8 @@ export class PortalAccessService {
         message: 'This customer was merged into another; grant access on the surviving customer',
       });
     }
-    if (!target.contact) throw notFound('Contact');
+    assertFirstAdminRule(firstAdminRule(target.customer, principal.userId, target.hasPortalUser));
+    if (!target.contact) throw contactNotOnCustomer();
     if (target.kybStatus !== 'approved') {
       throw new ConflictException({
         code: 'kyb_not_verified',

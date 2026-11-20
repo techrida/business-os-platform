@@ -3,6 +3,7 @@
 import type { ComponentProps } from 'react';
 
 import { Button, LinkButton } from './button';
+import { DownloadButton } from './download-button';
 import { DownloadIcon, FilePreviewDialog } from './file-preview-dialog';
 import { Icon } from './icon';
 import styles from './file-preview-dialog.module.css';
@@ -32,6 +33,10 @@ export interface ViewDocumentProps {
    * viewers of a document that can be regenerated; without it the dialog offers no Retry.
    */
   retryUrl?: string | undefined;
+  /** See FilePreviewDialog: a generated PDF whose route answers 409 while it is being prepared is checked again. */
+  pollWhilePreparing?: boolean | undefined;
+  /** Both Download controls fetch the file and keep a refusal in the app (FilePreviewDialog `downloadInApp`). */
+  downloadInApp?: boolean | undefined;
 }
 
 /**
@@ -53,6 +58,8 @@ export function ViewDocument({
   onDownload,
   context,
   retryUrl,
+  pollWhilePreparing,
+  downloadInApp,
 }: ViewDocumentProps) {
   const content = (
     <>
@@ -88,8 +95,22 @@ export function ViewDocument({
         trigger={trigger}
         onDownload={onDownload}
         retryUrl={retryUrl}
+        pollWhilePreparing={pollWhilePreparing}
+        downloadInApp={downloadInApp}
       />
-      {withDownload ? (
+      {withDownload && downloadInApp ? (
+        <DownloadButton
+          url={downloadUrl}
+          name={name}
+          expectType={mimeType === 'application/pdf' ? 'application/pdf' : undefined}
+          size={size}
+          aria-label={context ? `Download ${context}` : undefined}
+          onDownload={onDownload}
+        >
+          <DownloadIcon />
+          Download
+        </DownloadButton>
+      ) : withDownload ? (
         <LinkButton
           variant="secondary"
           size={size}

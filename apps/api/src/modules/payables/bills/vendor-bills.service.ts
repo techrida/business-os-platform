@@ -76,7 +76,10 @@ import { DB, type Db, type DbTransaction } from '../../../platform/db/db.module'
 import { withIdempotency } from '../../../platform/db/idempotency';
 import { withTx, type TxScope } from '../../../platform/db/tx';
 import { searchPage } from '../../../platform/list';
-import { newestDocumentVersion } from '../../../platform/documents/documents.service';
+import {
+  assertNotInfected,
+  newestDocumentVersion,
+} from '../../../platform/documents/documents.service';
 import { NumberingService } from '../../../platform/settings/numbering.service';
 import { SettingsService } from '../../../platform/settings/settings.service';
 import { ApprovalsService } from '../../approvals/requests.service';
@@ -617,6 +620,7 @@ export class VendorBillsService {
     ) {
       throw unprocessable('DOCUMENT_NOT_FOUND', 'The invoice file was not found');
     }
+    await assertNotInfected(tx, scope, [body.documentId]);
 
     const poLineIds = body.lines.flatMap((l) => (l.poLineId === undefined ? [] : [l.poLineId]));
     if (body.lines.some((l) => l.receiptLineId !== undefined && l.poLineId === undefined)) {
@@ -956,6 +960,9 @@ export class VendorBillsService {
                 'invalid_transition',
                 `A match exception needs a bill in variance, not ${bill.status}`,
               );
+            }
+            if (body.evidenceDocumentId !== undefined) {
+              await assertNotInfected(tx, scope, [body.evidenceDocumentId]);
             }
             const exceptionId = randomUUID();
             await tx.insert(matchExceptions).values({

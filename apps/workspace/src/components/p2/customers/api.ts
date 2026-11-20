@@ -3,10 +3,12 @@ import 'server-only';
 import {
   ContactDtoSchema,
   CustomerCanSchema,
+  CustomerPortalAccessSchema,
   CustomerDtoSchema,
   CustomerVerificationPresenceSchema,
   PartyAccountDtoSchema,
   type CustomerCan,
+  type CustomerPortalAccess,
   type CustomerVerificationPresence,
   type PersonName,
   PersonNameSchema,
@@ -177,12 +179,15 @@ const CustomerDetailSchema = CustomerDtoSchema.extend({
   can: CustomerCanSchema.optional(),
   /** Whether the customer has a verification case, even one this person may not open. */
   verification: CustomerVerificationPresenceSchema.optional(),
+  /** Whether the customer has a portal user and whether this person may invite one; absent reads as "no". */
+  portalAccess: CustomerPortalAccessSchema.optional(),
 });
 export type CustomerDetail = CustomerDto & {
   accounts?: PartyAccountDto[] | undefined;
   people?: PersonName[] | undefined;
   can?: CustomerCan | undefined;
   verification?: CustomerVerificationPresence | undefined;
+  portalAccess?: CustomerPortalAccess | undefined;
 };
 
 /** The record's `can` flags, every one "no" when the API sent none. */
@@ -254,6 +259,40 @@ export function createContact(
     `/v1/customers/${seg(customerId)}/contacts`,
     ContactDtoSchema,
     jsonInit('POST', body, { 'idempotency-key': idempotencyKey }),
+  );
+}
+
+// ---------------------------------------------------------------------------------------------
+// Portal access (F1-Q31)
+// ---------------------------------------------------------------------------------------------
+
+/** `POST /v1/customers/:id/portal-access` answer (apps/api portal-access.types.ts PortalAccessDto). */
+export const CustomerPortalGrantSchema = z.object({
+  customerId: z.guid(),
+  contactId: z.guid(),
+  userId: z.guid(),
+  idpOrgId: z.guid(),
+  email: z.string(),
+  status: z.enum(['invited', 'active', 'inactive']),
+  inviteSent: z.boolean(),
+});
+export type CustomerPortalGrant = z.infer<typeof CustomerPortalGrantSchema>;
+
+/**
+ * `POST /v1/customers/:id/portal-access`: the contact becomes a portal admin and gets an invite. The body names an
+ * existing contact of this customer, never an email; the first admin is invited by the account owner only.
+ */
+export function grantCustomerPortalAccess(
+  session: Session,
+  customerId: string,
+  contactId: string,
+  idempotencyKey: string,
+): Promise<CustomerPortalGrant> {
+  return call(
+    session,
+    `/v1/customers/${seg(customerId)}/portal-access`,
+    CustomerPortalGrantSchema,
+    jsonInit('POST', { contactId }, { 'idempotency-key': idempotencyKey }),
   );
 }
 

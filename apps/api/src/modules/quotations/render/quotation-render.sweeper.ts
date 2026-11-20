@@ -5,7 +5,11 @@
 //
 // Safe to repeat and to run on two workers at once: every version is first claimed with one conditional UPDATE
 // (render_state -> 'pending'), and only the claimant renders. A claim older than 10 minutes counts as abandoned
-// (the worker died) and is taken again; a failed version is retried after a short pause. The file goes in through
+// (the worker died) and is taken again. A failed version (round 4, R4c2: TR-Q4, F1-Q13) is retried after a pause that
+// grows with render_attempts, the failures since its last success or Retry (render-retry.ts). The failure that uses up
+// the last try leaves the version `failed` at MAX_RENDER_ATTEMPTS, which the candidate query never takes again, and
+// writes one admin (audit) entry `quotation.pdf_render_failed` in the same transaction; the download then answers 424
+// and staff may Retry, which resets the attempts. A success resets them too. The file goes in through
 // the documents module's generated-file path under the actor `system:quotation-render`, which the owner policy
 // allows only for an approved version, so the PDF is of exactly the content that was approved.
 //
@@ -41,8 +45,9 @@ import {
   type OnApplicationBootstrap,
 } from '@nestjs/common';
 import { type Job, Queue } from 'bullmq';
-import { and, asc, eq, isNull, lt, or } from 'drizzle-orm';
+import { and, asc, eq, isNull, lt, or, sql } from 'drizzle-orm';
 
+import type { AuditRecordInput } from '../../../platform/audit/audit.service';
 import type { Db, DbTransaction } from '../../../platform/db/db.module';
 import { type Actor, systemActor, type TxScope } from '../../../platform/db/tx';
 import type { DocumentsService } from '../../../platform/documents/documents.service';
@@ -64,14 +69,13 @@ import {
   parseStoredDocumentStyle,
 } from './issuer';
 import { renderQuotationHtml } from './quotation-html';
+import { MAX_RENDER_ATTEMPTS, nextRetryPauseMs, RENDER_GIVEN_UP_ACTION } from './render-retry';
 
 export const QUOTATION_RENDER_QUEUE = 'quotation.render';
 export const QUOTATION_RENDER_SWEEP_JOB = 'quotation.render.sweep';
 export const SWEEP_EVERY_MS = 60_000;
 /** A version still `pending` after this long was claimed by a worker that died; it is taken again. */
 export const PENDING_STALE_MS = 10 * 60_000;
-/** A failed version waits this long before the next try, so a permanent fault does not hammer Gotenberg. */
-export const FAILED_RETRY_MS = 5 * 60_000;
 /** A generated document still awaiting its bytes after this long was left by a render that crashed midway. */
 export const ORPHAN_AFTER_MS = 60 * 60_000;
 /** Versions handled per tick; the rest wait a minute. Keeps one tick bounded (each render has its own deadline). */
@@ -85,6 +89,8 @@ export const RENDER_SETTINGS = Symbol('QUOTATION_RENDER_SETTINGS');
 export const RENDER_PDF = Symbol('QUOTATION_RENDER_PDF');
 export const RENDER_CLOCK = Symbol('QUOTATION_RENDER_CLOCK');
 export const RENDER_LOGOS = Symbol('QUOTATION_RENDER_LOGOS');
+/** AuditService in the worker: writes the admin entry when a render is given up. */
+export const RENDER_AUDIT = Symbol('QUOTATION_RENDER_AUDIT');
 
 export interface RenderCandidate {
   tenantId: string;
@@ -127,8 +133,15 @@ export interface RenderStore {
     rendered: { documentId: string; sha256: Buffer },
     now: Date,
   ): Promise<void>;
-  /** Only a version still `pending` becomes `failed`: one that finished meanwhile is left alone. */
-  markFailed(tx: DbTransaction, c: RenderCandidate, now: Date): Promise<void>;
+  /**
+   * Only a version still `pending` becomes `failed`, with one more failed attempt: one that finished meanwhile is left
+   * alone (undefined). Returns the attempts so far and the quotation, for the admin entry when they reach the limit.
+   */
+  markFailed(
+    tx: DbTransaction,
+    c: RenderCandidate,
+    now: Date,
+  ): Promise<{ attempts: number; quotationId: string } | undefined>;
   orphans(cutoff: Date, limit: number): Promise<OrphanDocument[]>;
   removeOrphan(tx: DbTransaction, o: OrphanDocument, now: Date): Promise<void>;
 }
@@ -147,6 +160,10 @@ export type Clock = () => Date;
 /** Turns the profile's logo document into bytes for the frozen style (DocumentLogoResolverFactory in the worker). */
 export interface RenderLogos {
   forScope(scope: TxScope): DocumentLogoResolver;
+}
+/** The audit trail, as a port: AuditService.record in the worker, a fake in the tests. Every render sweeper uses it. */
+export interface RenderAudit {
+  record(tx: DbTransaction, e: AuditRecordInput): Promise<void>;
 }
 
 export type RenderOutcome = 'rendered' | 'failed' | 'skipped';
@@ -201,6 +218,7 @@ export class QuotationRenderSweeper {
     @Inject(RENDER_PDF) private readonly pdf: PdfRenderer,
     @Inject(RENDER_CLOCK) private readonly clock: Clock,
     @Inject(RENDER_LOGOS) private readonly logos: RenderLogos,
+    @Inject(RENDER_AUDIT) private readonly audit: RenderAudit,
   ) {}
 
   /** One pass over every tenant: render what is due, then clean up what crashed renders left behind. */
@@ -275,7 +293,21 @@ export class QuotationRenderSweeper {
       const kind = failureKind(error);
       this.logger.warn(`quotation render failed: version=${c.versionId} kind=${kind}`);
       try {
-        await this.runTx(scope, actor, (tx) => this.store.markFailed(tx, c, this.clock()));
+        // One transaction: the failure and, when it used up the last try, the admin entry. The conditional UPDATE
+        // means only the worker that moved the version off `pending` counts it, so the entry is written once.
+        await this.runTx(scope, actor, async (tx) => {
+          const failed = await this.store.markFailed(tx, c, this.clock());
+          if (failed?.attempts !== MAX_RENDER_ATTEMPTS) return;
+          await this.audit.record(tx, {
+            action: RENDER_GIVEN_UP_ACTION.quotation,
+            entityType: 'quotations',
+            entityId: failed.quotationId,
+            after: { versionId: c.versionId, attempts: failed.attempts, failureKind: kind },
+          });
+          this.logger.error(
+            `quotation render given up: version=${c.versionId} attempts=${failed.attempts} kind=${kind}`,
+          );
+        });
       } catch (markError) {
         this.logger.error(
           `quotation render: could not record the failure: version=${c.versionId} kind=${failureKind(markError)}`,
@@ -344,14 +376,27 @@ export function drizzleRenderStore(db: Db): RenderStore {
       eq(quotationVersions.organizationId, c.organizationId),
       eq(quotationVersions.id, c.versionId),
     );
-  /** None, failed a while ago, or pending since a worker died. */
+  /**
+   * None, failed with tries left and its pause over, or pending since a worker died. The pause depends on the version's
+   * own render_attempts, so there is one branch per count below the limit; 0 is a version that failed before attempts
+   * were counted (0115), which waits the first pause. A version at the limit is given up and never matches.
+   */
+  const failedAndDue = (now: Date) =>
+    or(
+      ...Array.from({ length: MAX_RENDER_ATTEMPTS }, (_, attempts) =>
+        and(
+          eq(quotationVersions.renderAttempts, attempts),
+          lt(
+            quotationVersions.updatedAt,
+            new Date(now.getTime() - (nextRetryPauseMs(Math.max(attempts, 1)) ?? 0)),
+          ),
+        ),
+      ),
+    );
   const needsRender = (now: Date) =>
     or(
       eq(quotationVersions.renderState, 'none'),
-      and(
-        eq(quotationVersions.renderState, 'failed'),
-        lt(quotationVersions.updatedAt, new Date(now.getTime() - FAILED_RETRY_MS)),
-      ),
+      and(eq(quotationVersions.renderState, 'failed'), failedAndDue(now)),
       and(
         eq(quotationVersions.renderState, 'pending'),
         lt(quotationVersions.updatedAt, new Date(now.getTime() - PENDING_STALE_MS)),
@@ -546,6 +591,7 @@ export function drizzleRenderStore(db: Db): RenderStore {
           renderedDocumentId: rendered.documentId,
           renderedSha256: rendered.sha256,
           renderState: 'rendered',
+          renderAttempts: 0,
           updatedAt: now,
         })
         .where(and(ownVersion(c), eq(quotationVersions.renderState, 'pending')))
@@ -555,10 +601,19 @@ export function drizzleRenderStore(db: Db): RenderStore {
     },
 
     async markFailed(tx, c, now) {
-      await tx
+      const [row] = await tx
         .update(quotationVersions)
-        .set({ renderState: 'failed', updatedAt: now })
-        .where(and(ownVersion(c), eq(quotationVersions.renderState, 'pending')));
+        .set({
+          renderState: 'failed',
+          renderAttempts: sql`${quotationVersions.renderAttempts} + 1`,
+          updatedAt: now,
+        })
+        .where(and(ownVersion(c), eq(quotationVersions.renderState, 'pending')))
+        .returning({
+          attempts: quotationVersions.renderAttempts,
+          quotationId: quotationVersions.quotationId,
+        });
+      return row;
     },
 
     async orphans(cutoff, limit) {

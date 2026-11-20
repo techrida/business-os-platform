@@ -9,7 +9,6 @@ import type { DocumentLogoResolver } from '../../quotations/render/issuer';
 import type { RenderSettings, RunInTx } from '../../quotations/render/quotation-render.sweeper';
 import {
   failureKind,
-  FAILED_RETRY_MS,
   InvoiceRenderSweeper,
   RenderSourceMissingError,
   type RenderCandidate,
@@ -93,7 +92,11 @@ function fixture(
     recordPrint: vi.fn().mockResolvedValue(undefined),
     orphans: vi.fn().mockResolvedValue([]),
     removeOrphan: vi.fn().mockResolvedValue(undefined),
+    discardUnfilled: vi.fn().mockResolvedValue(undefined),
+    recordFailure: vi.fn().mockResolvedValue({ attempts: 1, givenUp: false }),
+    clearFailure: vi.fn().mockResolvedValue(undefined),
   } satisfies RenderStore;
+  const audit = { record: vi.fn().mockResolvedValue(undefined) };
   const documents = {
     createGenerated: vi.fn().mockResolvedValue({ documentId: 'doc-1', versionId: 'ver-1' }),
     receiveGenerated: vi.fn().mockResolvedValue({}),
@@ -119,9 +122,11 @@ function fixture(
     pdf,
     () => now,
     logos,
+    audit,
   );
   return {
     store,
+    audit,
     documents,
     settings,
     live,
@@ -159,6 +164,7 @@ describe('InvoiceRenderSweeper.renderOne', () => {
       numberSystems: SOUTH_ASIAN,
       dateFormat: 'dd MMM yyyy',
       logoDataUrl: null,
+      sellerContact: null,
       capturedAt: NOW.toISOString(),
     });
   });
@@ -198,6 +204,7 @@ describe('InvoiceRenderSweeper.renderOne', () => {
         numberSystems: { NPR: 'south_asian', INR: 'south_asian', USD: 'international' },
         dateFormat: 'dd MMM yyyy',
         logoDataUrl: null,
+        sellerContact: null,
         capturedAt: NOW.toISOString(),
       });
     },
@@ -296,23 +303,74 @@ describe('InvoiceRenderSweeper.renderOne', () => {
 });
 
 describe('InvoiceRenderSweeper.sweep', () => {
-  it('leaves a failed invoice out of the query for the retry window, then tries it again', async () => {
+  it('asks the store for the invoices due now, and counts a failure with its kind', async () => {
     const f = fixture({ candidates: [candidate(1)] });
     f.pdf.htmlToPdf.mockRejectedValueOnce(new GotenbergError('boom', 'timeout'));
     await f.sweeper.sweep();
-    expect(f.store.candidates).toHaveBeenLastCalledWith(10, [], undefined);
+    expect(f.store.candidates).toHaveBeenLastCalledWith(NOW, 10, undefined);
+    expect(f.store.recordFailure).toHaveBeenCalledWith(TX, candidate(1), 'gotenberg_timeout', NOW);
+    // Not the last try: no admin entry, nothing to discard.
+    expect(f.audit.record).not.toHaveBeenCalled();
+    expect(f.store.discardUnfilled).not.toHaveBeenCalled();
 
-    f.advance(FAILED_RETRY_MS - 1_000);
+    f.advance(60_000);
     await f.sweeper.sweep();
     expect(f.store.candidates).toHaveBeenLastCalledWith(
+      new Date(NOW.getTime() + 60_000),
       10,
-      [candidate(1).invoiceId],
       candidate(1).invoiceId,
     );
+  });
 
-    f.advance(2_000);
-    await f.sweeper.sweep();
-    expect(f.store.candidates).toHaveBeenLastCalledWith(10, [], candidate(1).invoiceId);
+  it('writes one admin entry, in the failure transaction, when the last try fails', async () => {
+    const f = fixture({ candidates: [candidate(1)] });
+    f.pdf.htmlToPdf.mockRejectedValue(new GotenbergError('boom', 'http', 500));
+    f.store.recordFailure.mockResolvedValue({ attempts: 4, givenUp: true });
+    const result = await f.sweeper.sweep();
+    expect(result.failures).toEqual([
+      { invoiceId: candidate(1).invoiceId, kind: 'gotenberg_http' },
+    ]);
+    expect(f.audit.record).toHaveBeenCalledOnce();
+    expect(f.audit.record).toHaveBeenCalledWith(TX, {
+      action: 'invoice.pdf_render_failed',
+      entityType: 'invoices',
+      entityId: candidate(1).invoiceId,
+      after: { attempts: 4, failureKind: 'gotenberg_http' },
+    });
+  });
+
+  it('forgets earlier failures in the transaction that records the print', async () => {
+    const f = fixture();
+    const order: string[] = [];
+    f.store.recordPrint.mockImplementation(() => {
+      order.push('print');
+      return Promise.resolve();
+    });
+    f.store.clearFailure.mockImplementation(() => {
+      order.push('clear');
+      return Promise.resolve();
+    });
+    await expect(f.sweeper.renderOne(candidate(1))).resolves.toBe('rendered');
+    expect(f.store.clearFailure).toHaveBeenCalledWith(TX, candidate(1));
+    expect(order).toEqual(['print', 'clear']);
+    expect(f.store.recordFailure).not.toHaveBeenCalled();
+  });
+
+  it('discards the document a failed try created before its bytes were stored', async () => {
+    const f = fixture();
+    f.documents.receiveGenerated.mockRejectedValue(new Error('disk full'));
+    await expect(f.sweeper.renderOne(candidate(1))).resolves.toBe('failed');
+    expect(f.store.discardUnfilled).toHaveBeenCalledWith(TX, candidate(1), 'doc-1', NOW);
+    expect(f.store.recordFailure).toHaveBeenCalledWith(TX, candidate(1), 'error', NOW);
+    expect(f.store.recordPrint).not.toHaveBeenCalled();
+  });
+
+  it('logs, and does not throw, when the failure itself cannot be recorded', async () => {
+    const f = fixture({ candidates: [candidate(1), candidate(2)] });
+    f.pdf.htmlToPdf.mockRejectedValueOnce(new GotenbergError('boom', 'timeout'));
+    f.store.recordFailure.mockRejectedValueOnce(new Error('db down'));
+    const result = await f.sweeper.sweep();
+    expect(result).toMatchObject({ rendered: 1, failed: 1 });
   });
 
   it('advances past failed candidates and keeps its position across an empty tick', async () => {
@@ -320,11 +378,10 @@ describe('InvoiceRenderSweeper.sweep', () => {
     f.pdf.htmlToPdf.mockRejectedValue(new GotenbergError('boom', 'timeout'));
     f.store.candidates.mockResolvedValueOnce([candidate(1), candidate(2)]).mockResolvedValue([]);
     await f.sweeper.sweep();
-    f.advance(FAILED_RETRY_MS + 1);
     await f.sweeper.sweep();
-    expect(f.store.candidates).toHaveBeenLastCalledWith(10, [], candidate(2).invoiceId);
+    expect(f.store.candidates).toHaveBeenLastCalledWith(NOW, 10, candidate(2).invoiceId);
     await f.sweeper.sweep();
-    expect(f.store.candidates).toHaveBeenLastCalledWith(10, [], candidate(2).invoiceId);
+    expect(f.store.candidates).toHaveBeenLastCalledWith(NOW, 10, candidate(2).invoiceId);
   });
 
   it('removes orphans an hour old and counts them', async () => {
@@ -459,5 +516,95 @@ describe('InvoiceRenderSweeper: the company logo', () => {
     expect(htmlOf(f)).toContain('Copy of original (1)');
     expect(htmlOf(f)).not.toContain('<img');
     expect(f.resolveLogo).not.toHaveBeenCalled();
+  });
+});
+
+describe('InvoiceRenderSweeper: amount in words, signatory and seller contact (U16-Q4)', () => {
+  const profile = (over: Record<string, unknown> = {}) => ({ ...EMPTY_COMPANY_PROFILE, ...over });
+  const CONTACT_A = {
+    phones: ['01-4000000', '9800000000'],
+    email: 'billing@techrida.example',
+    signatoryName: 'Sita Sharma',
+    signatoryTitle: 'Finance Manager',
+  };
+  const htmlOf = (f: ReturnType<typeof fixture>, n = 0) =>
+    f.pdf.htmlToPdf.mock.calls[n]?.[0] as string;
+
+  it('prints the words, the signatory and the contact of the profile on print 1, and freezes them', async () => {
+    const f = fixture({ profile: profile({ ...CONTACT_A, website: 'https://techrida.example' }) });
+    await expect(f.sweeper.renderOne(candidate(1))).resolves.toBe('rendered');
+    const html = htmlOf(f);
+    expect(html).toContain(
+      'Amount in words: Twenty Lakh Eighteen Thousand One Hundred Eighty Rupees Only',
+    );
+    expect(html).toContain('<span class="name">Sita Sharma</span>');
+    expect(html).toContain('<span>Finance Manager</span>');
+    expect(html).toContain('Authorised signatory');
+    expect(html).toContain('Phones 01-4000000, 9800000000');
+    expect(html).toContain('Email billing@techrida.example');
+    // Only the four contact keys: never the website.
+    expect(html).not.toContain('techrida.example"');
+    expect(html).not.toContain('https://techrida.example');
+    const stored = f.store.recordPrint.mock.calls[0]?.[4] as DocumentFormatSnapshot;
+    expect(stored.sellerContact).toEqual(CONTACT_A);
+  });
+
+  it('prints a copy with the contact of print 1 after the profile changed', async () => {
+    const f = fixture({ profile: profile(CONTACT_A) });
+    const c = candidate(1);
+    let printed = 0;
+    let stored: DocumentFormatSnapshot | null = null;
+    f.store.load.mockImplementation(() => Promise.resolve(source(printed + 1, 'NPR', stored)));
+    f.store.recordPrint.mockImplementation(
+      (_tx, _c, printNo: number, _now, format: DocumentFormatSnapshot | null) => {
+        printed = printNo;
+        if (printNo === 1) stored = format;
+        return Promise.resolve();
+      },
+    );
+
+    await expect(f.sweeper.renderOne(c)).resolves.toBe('rendered');
+    f.live['entity.profile'] = profile({
+      phones: ['01-5999999'],
+      email: 'new@techrida.example',
+      signatoryName: 'Hari Rai',
+      signatoryTitle: 'Director',
+    });
+    await expect(f.sweeper.renderOne(c)).resolves.toBe('rendered');
+
+    const copy = htmlOf(f, 1);
+    expect(copy).toContain('Copy of original (1)');
+    expect(copy).toContain('Sita Sharma');
+    expect(copy).toContain('Email billing@techrida.example');
+    expect(copy).not.toContain('Hari Rai');
+    expect(copy).not.toContain('01-5999999');
+  });
+
+  it('prints a copy of an original printed before contacts were frozen without one, but with the words', async () => {
+    const f = fixture({
+      src: source(2, 'NPR', {
+        numberSystems: SOUTH_ASIAN,
+        dateFormat: 'dd MMM yyyy',
+        logoDataUrl: null,
+        capturedAt: NOW.toISOString(),
+      }),
+      profile: profile(CONTACT_A),
+    });
+    await expect(f.sweeper.renderOne(candidate(1))).resolves.toBe('rendered');
+    const html = htmlOf(f);
+    expect(html).toContain('Copy of original (1)');
+    expect(html).not.toContain('Sita Sharma');
+    expect(html).not.toContain('billing@techrida.example');
+    expect(html).toContain('Amount in words: Twenty Lakh');
+    expect(html).toContain('Authorised signatory');
+  });
+
+  it('prints no contact, and still renders, when the profile no longer parses', async () => {
+    const f = fixture({ profile: { phones: 'not a list' } });
+    await expect(f.sweeper.renderOne(candidate(1))).resolves.toBe('rendered');
+    expect(htmlOf(f)).not.toContain('Email ');
+    expect(htmlOf(f)).toContain('Authorised signatory');
+    const stored = f.store.recordPrint.mock.calls[0]?.[4] as DocumentFormatSnapshot;
+    expect(stored.sellerContact).toBeNull();
   });
 });
