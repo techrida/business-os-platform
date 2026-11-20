@@ -43,6 +43,8 @@ export type ErrorCode =
   | 'kyb_not_verified'
   | 'customer_merged'
   | 'idp_org_taken'
+  | 'first_admin_owner_only'
+  | 'account_owner_missing'
   | 'invalid_transition'
   | 'kyb_not_submitted'
   | 'kyc_expired'
@@ -170,6 +172,8 @@ const GENERIC_MESSAGE: Record<ErrorCode, string> = {
   kyb_not_verified: 'Portal access needs an approved KYB verification case',
   customer_merged: 'This customer was merged into another',
   idp_org_taken: 'The portal organization is already used by another party',
+  first_admin_owner_only: "Only the customer's account owner can invite its first portal admin",
+  account_owner_missing: 'This customer has no account owner to invite its first portal admin',
   invalid_transition: 'This action is not allowed in the current status',
   kyb_not_submitted: 'The KYB verification has not been submitted yet',
   kyc_expired: 'The vendor tax clearance has expired',
@@ -314,6 +318,9 @@ const CONFLICT_CODES: readonly ErrorCode[] = [
   'kyb_not_verified',
   'customer_merged',
   'idp_org_taken',
+  // F1-Q31: the customer has no portal user yet and the caller is not its account owner, or it has no owner.
+  'first_admin_owner_only',
+  'account_owner_missing',
   // U8 sales orders: only an accepted quotation confirms, only a confirmed order marks a line, only a planned
   // line becomes billable.
   'quotation_not_accepted',

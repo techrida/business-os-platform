@@ -259,7 +259,13 @@ describe('ErrorBodyFilter', () => {
     },
   );
 
-  it.each(['kyb_not_verified', 'customer_merged', 'idp_org_taken'])(
+  it.each([
+    'kyb_not_verified',
+    'customer_merged',
+    'idp_org_taken',
+    'first_admin_owner_only',
+    'account_owner_missing',
+  ])(
     'keeps %s on a 409 (portal access grant, K8), and only on a 409',
     (code) => {
       const out = filter(new ConflictException({ code, message: 'Cannot grant portal access' }));
