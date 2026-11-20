@@ -1112,15 +1112,12 @@ describe('credit hold at the hand-over to a sales order (F1-Q20, F1-Q26)', () =>
       const key = `so-${randomUUID()}`;
       const refused = await holdOf(confirm(q, [], key));
       expect(refused.status).toBe(409);
+      // The deal only: Sales confirms, and the amounts are for holders of credit.override.
       expect(refused.body).toMatchObject({
         code: 'credit_hold',
-        details: {
-          opportunityId: q.opportunityId,
-          creditLimit: '100000.00',
-          exposure: '100000.01',
-          currency: 'NPR',
-        },
+        details: { opportunityId: q.opportunityId },
       });
+      expect(JSON.stringify(refused.body)).not.toContain('100000');
       expect(await liveOrders(q.id)).toEqual([]);
 
       // The deal's own page carries the flag for whoever reads the deal, amounts only through credit.override.

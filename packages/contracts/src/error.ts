@@ -47,7 +47,8 @@ export type ErrorBody = z.infer<typeof ErrorBodySchema>;
  * draft; `OVER_ALLOCATION` and `MISMATCHED_ITEMS` come from the ledger (an allocation above the open
  * amount, or across customers, currencies or sides); `evidence_policy_unmet` blocks a sales order
  * confirm; `fx_rate_stale` blocks issue with a rate older than `fx.max_rate_age_days`; `NOT_APPROVED`
- * and `PERIOD_FY_MISMATCH` refuse an issue. `already_issued` is the replay answer of `issue`: the
+ * and `PERIOD_FY_MISMATCH` refuse an issue; `credit_hold` blocks a sales order confirm while the customer is over its
+ * credit limit and the deal has no credit override (F1-Q20/F1-Q26; details name the deal only). `already_issued` is the replay answer of `issue`: the
  * command returns it as a 200 result (`IssueInvoiceResult`), and the code is listed so a client can
  * name it. Facts such as the currency and rate date travel in `ErrorBody.error.details`.
  */
@@ -61,6 +62,7 @@ export const BILLING_ERROR_CODES = {
   already_issued: 200,
   fx_rate_stale: 409,
   evidence_policy_unmet: 422,
+  credit_hold: 409,
 } as const;
 export type BillingErrorCode = keyof typeof BILLING_ERROR_CODES;
 export const BillingErrorCodeSchema = z.enum(
