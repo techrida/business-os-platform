@@ -15,7 +15,7 @@ import {
 } from 'react-aria-components';
 
 import { Icon } from './icon';
-import { usePopoverContainer } from './popover-container';
+import { dropdownPopoverProps, usePopoverContainer } from './popover-container';
 import { useFormReset } from './use-form-reset';
 import selectStyles from './select.module.css';
 import styles from './multi-select.module.css';
@@ -131,12 +131,7 @@ export function MultiSelect({
         <SelectValue className={selectStyles.value ?? ''}>{() => triggerText}</SelectValue>
         <Icon name="chevron-down" size={20} className={selectStyles.chevron} />
       </Trigger>
-      <Popover
-        className={selectStyles.popover ?? ''}
-        offset={8}
-        placement="bottom start"
-        {...(container ? { UNSTABLE_portalContainer: container } : {})}
-      >
+      <Popover className={selectStyles.popover ?? ''} {...dropdownPopoverProps(container)}>
         <ListBox
           aria-label={label}
           items={options.map((o) => ({ ...o, id: o.value }))}

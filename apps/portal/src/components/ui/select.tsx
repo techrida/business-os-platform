@@ -27,7 +27,7 @@ import {
 } from 'react-aria-components';
 
 import { Icon, type IconName } from './icon';
-import { usePopoverContainer } from './popover-container';
+import { dropdownPopoverProps, usePopoverContainer } from './popover-container';
 import { useFormReset } from './use-form-reset';
 import styles from './select.module.css';
 
@@ -245,12 +245,7 @@ export function Select({
         <SelectValue className={styles.value ?? ''} />
         <Icon name="chevron-down" size={20} className={styles.chevron} />
       </Trigger>
-      <Popover
-        className={styles.popover ?? ''}
-        offset={8}
-        placement="bottom start"
-        {...(container ? { UNSTABLE_portalContainer: container } : {})}
-      >
+      <Popover className={styles.popover ?? ''} {...dropdownPopoverProps(container)}>
         <ListBox
           items={items.map((o) => ({ ...o, id: toKey(o.value) }))}
           className={styles.list ?? ''}

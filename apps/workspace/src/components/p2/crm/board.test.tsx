@@ -210,6 +210,8 @@ it('refuses drops onto the Lost column while allowing drops onto valid columns',
     });
     expect(card.querySelector('details')?.open).toBe(true);
     expect(card.querySelector<HTMLInputElement>('input[name="stage"]')?.value).toBe('contacted');
+    await act(() => new Promise<void>((resolve) => requestAnimationFrame(() => resolve())));
+    expect(document.activeElement).toBe(card.querySelector('button[aria-haspopup="listbox"]'));
     expect(action).not.toHaveBeenCalled();
   } finally {
     await mounted.unmount();
