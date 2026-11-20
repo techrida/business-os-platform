@@ -10,6 +10,7 @@ import {
   getVatRegister,
   listPaymentRequestsPage,
   listPaymentRequestItems,
+  listPaymentRequestItemsWithoutBankAccount,
   requestBillException,
   submitPaymentRequest,
   uploadBillDocumentContent,
@@ -77,6 +78,16 @@ describe('available payment request items client', () => {
     expect(apiFetch).toHaveBeenCalledExactlyOnceWith(
       session,
       '/v1/payables/payment-requests/items',
+      undefined,
+    );
+  });
+
+  it('reads the items held back for a missing bank account from their own route, in the same shape', async () => {
+    reply([item]);
+    expect(await listPaymentRequestItemsWithoutBankAccount(session)).toEqual([item]);
+    expect(apiFetch).toHaveBeenCalledExactlyOnceWith(
+      session,
+      '/v1/payables/payment-requests/items/without-bank-account',
       undefined,
     );
   });
