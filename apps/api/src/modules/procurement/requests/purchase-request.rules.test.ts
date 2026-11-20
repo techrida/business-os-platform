@@ -339,6 +339,16 @@ describe('purchaseRequestCapabilities', () => {
       openRfq: false,
     });
     expect(purchaseRequestCapabilities(officer, pr('sourcing', ME), RFQ).openRfq).toBe(false);
+
+    // A buyer with department-scoped sourcing still matches SourcingController's route-level check.
+    const deptBuyer = principalOf('procurement', {
+      departmentId: '00000000-0000-4000-8000-000000000099',
+      grants: new Map([['procurement.sourcing', 'department']]),
+    });
+    expect(purchaseRequestCapabilities(deptBuyer, pr('dept_approved', OTHER), null).startRfq).toBe(
+      true,
+    );
+    expect(purchaseRequestCapabilities(deptBuyer, pr('sourcing', OTHER), RFQ).openRfq).toBe(true);
   });
 
   it('denies everything for an inactive or non-staff principal', () => {

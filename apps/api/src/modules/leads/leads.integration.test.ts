@@ -623,8 +623,19 @@ describe('PATCH /v1/leads/:id/stage', () => {
     });
   });
 
-  it('logs a contact activity atomically when moving a new lead to contacted, and refuses it from non-new stages', async () => {
+  it('logs a contact activity atomically when moving a new lead to contacted, and refuses it on stale or non-new leads without writing', async () => {
     const lead = await seed();
+
+    // A stale expectedVersion rolls back without writing the contact activity.
+    const stale = await patchStage(lead.id, {
+      stage: 'contacted',
+      expectedVersion: 99,
+      contactActivity: { kind: 'call', body: 'Should not persist on stale version' },
+    });
+    expect(stale.status).toBe(409);
+    const afterStale = await h.db.select().from(activities).where(eq(activities.leadId, lead.id));
+    expect(afterStale.some((a) => a.kind === 'call' || a.kind === 'email')).toBe(false);
+
     const res = await patchStage(lead.id, {
       stage: 'contacted',
       expectedVersion: 1,
@@ -643,7 +654,7 @@ describe('PATCH /v1/leads/:id/stage', () => {
     ).toBe(true);
     expect(logged.some((a) => a.kind === 'stage_change')).toBe(true);
 
-    // From on_hold -> contacted, contactActivity is refused with 400.
+    // From on_hold -> contacted, contactActivity is refused with 409 and writes no email activity.
     await patchStage(lead.id, {
       stage: 'on_hold',
       reason: 'budget',
@@ -655,7 +666,9 @@ describe('PATCH /v1/leads/:id/stage', () => {
       expectedVersion: 3,
       contactActivity: { kind: 'email', body: 'Should fail on non-new lead' },
     });
-    expect(bad.status).toBe(400);
+    expect(bad.status).toBe(409);
+    const afterBad = await h.db.select().from(activities).where(eq(activities.leadId, lead.id));
+    expect(afterBad.some((a) => a.kind === 'email')).toBe(false);
   });
 
   it('clears the reason and note when a lead leaves on_hold', async () => {
