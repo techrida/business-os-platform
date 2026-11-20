@@ -1,7 +1,7 @@
 // Unit tests of QuotationSubmitService with the database, pricing and approvals faked: the order of operations and
 // what reaches the approvals engine. The SQL (scoped reads, the S2 freeze and snapshot checks, the 404 for another
 // entity) runs on Postgres in the integration test.
-import type { RoutePlan } from '@bos/contracts';
+import { DEFAULT_SALES_SCHEDULE, type RoutePlan } from '@bos/contracts';
 import {
   ConflictException,
   ForbiddenException,
@@ -276,6 +276,7 @@ function setup(h: SubmitHead = head(), mayReadCost = true) {
     audit as never,
     store,
     caller as never,
+    { get: vi.fn().mockResolvedValue(DEFAULT_SALES_SCHEDULE) } as never,
     () => NOW,
   );
   return { service, store, authz, pricing, approvals, notify, audit };
@@ -611,6 +612,21 @@ describe('assertNoZeroInstalment (FR-4)', () => {
     ).toThrow(UnprocessableEntityException);
     expect(() => assertNoZeroInstalment('0.02', 'NPR', schedule)).not.toThrow();
     expect(() => assertNoZeroInstalment('0.00', 'NPR', [])).not.toThrow();
+  });
+
+  it('splits the company default schedule when the quotation has none (the order bills on it)', () => {
+    // 20% of 0.02 is 0.004, so the default Final 20% line would be 0.00 on the order.
+    let error: unknown;
+    try {
+      assertNoZeroInstalment('0.02', 'NPR', [], DEFAULT_SALES_SCHEDULE);
+    } catch (e) {
+      error = e;
+    }
+    expect(error).toBeInstanceOf(UnprocessableEntityException);
+    expect((error as UnprocessableEntityException).getResponse()).toMatchObject({
+      code: 'PAYMENT_INSTALMENT_ZERO',
+    });
+    expect(() => assertNoZeroInstalment('100.00', 'NPR', [], DEFAULT_SALES_SCHEDULE)).not.toThrow();
   });
 });
 
