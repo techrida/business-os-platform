@@ -232,6 +232,57 @@ describe('a merged result is green only when every kept step is', () => {
     assert.equal(merged.status, 'PASS');
   });
 
+  test('a step interrupted two segments ago survives a later checkpoint and keeps the run red', () => {
+    const cfg = cfgFor();
+    const stored = () =>
+      JSON.parse(readFileSync(path.join(cfg.outDir, 'results.json'), 'utf8')).workflows.start;
+    const ids = (r) => r.steps.map((st) => `${st.id}:${st.status}`);
+    // Full run, stopped while start-3 ran (a checkpoint holds the steps up to the one in flight).
+    saveResults(
+      cfg,
+      run(
+        'r1',
+        [step('start-1', 'PASS'), step('start-2', 'PASS'), step('start-3', 'INTERRUPTED')],
+        {
+          status: 'RUNNING',
+          interrupted: true,
+        },
+      ),
+    );
+    // --only start-1, stopped while start-1 ran: its checkpoint has no entry for start-3.
+    saveResults(
+      cfg,
+      run('r2', [step('start-1', 'INTERRUPTED')], { status: 'RUNNING', interrupted: true }),
+      stored(),
+    );
+    assert.deepEqual(ids(stored()), ['start-1:INTERRUPTED', 'start-2:PASS', 'start-3:INTERRUPTED']);
+    // --only start-1 again, to the end: start-3 is still the interrupted one, never SKIPPED/PASS.
+    const merged = saveResults(
+      cfg,
+      run('r3', [
+        step('start-1', 'PASS'),
+        step('start-2', 'SKIPPED'),
+        step('start-3', 'SKIPPED'),
+        step('start-4', 'SKIPPED'),
+      ]),
+      stored(),
+    );
+    assert.deepEqual(ids(merged), [
+      'start-1:PASS',
+      'start-2:PASS',
+      'start-3:INTERRUPTED',
+      'start-4:SKIPPED',
+    ]);
+    assert.equal(merged.status, 'INTERRUPTED');
+    // A FAIL kept from an earlier segment is not overwritten by a SKIPPED either.
+    const failed = run('r4', [step('start-1', 'PASS'), step('start-2', 'FAIL')], {
+      status: 'FAIL',
+    });
+    const after = saveResults(cfg, run('r5', [step('start-1', 'INTERRUPTED')]), failed);
+    assert.deepEqual(ids(after), ['start-1:INTERRUPTED', 'start-2:FAIL']);
+    assert.equal(after.status, 'FAIL');
+  });
+
   test('a video error makes the merged result FAIL even when every step passed', () => {
     const cfg = cfgFor();
     const earlier = run('r1', [step('start-1', 'PASS'), step('start-2', 'PASS')]);

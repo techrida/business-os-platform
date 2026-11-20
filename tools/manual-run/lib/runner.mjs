@@ -356,14 +356,18 @@ export function withTimeout(body, ms, message, onTimeout = () => {}) {
  */
 function mergeResumed(prev, next) {
   const before = new Map(prev.steps.map((st) => [st.id, st]));
-  // A run that could not start has no steps of its own: show the earlier ones.
-  const steps = next.steps.length
-    ? next.steps.map((st) =>
-        st.status === 'SKIPPED' && before.has(st.id) && before.get(st.id).status !== 'SKIPPED'
-          ? { ...before.get(st.id), fromEarlierRun: true }
-          : st,
-      )
-    : prev.steps.map((st) => ({ ...st, fromEarlierRun: true }));
+  const ran = new Set(next.steps.map((st) => st.id));
+  // A step SKIPPED by this segment's selection keeps its stored result. next.steps is always a
+  // prefix of the workflow's steps (a checkpoint stops at the step that ran; a run that could not
+  // start has none), so every stored step after it is kept too, in the workflow's order.
+  const steps = [
+    ...next.steps.map((st) =>
+      st.status === 'SKIPPED' && before.has(st.id) && before.get(st.id).status !== 'SKIPPED'
+        ? { ...before.get(st.id), fromEarlierRun: true }
+        : st,
+    ),
+    ...prev.steps.filter((st) => !ran.has(st.id)).map((st) => ({ ...st, fromEarlierRun: true })),
+  ];
   const has = (status) => steps.some((st) => st.status === status);
   // A step kept from an earlier segment counts as much as one of this segment: an INTERRUPTED one
   // left behind by a stopped run keeps the workflow unfinished until a later segment runs it.
