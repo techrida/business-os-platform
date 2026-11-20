@@ -31,6 +31,27 @@ export interface AuditListQuery {
   /** The last event id the caller has seen (a bigint as a string); the page starts after it. */
   afterId?: string | undefined;
   limit: number;
+  /** `asc` (the default) pages forward from `afterId`; `desc` returns the newest `limit` events, newest first. */
+  order?: 'asc' | 'desc' | undefined;
+}
+
+/** audit.read_events returns at most this many rows per call. */
+const READ_EVENTS_MAX = 500;
+
+/**
+ * How many id-only pages a newest-first read may walk before it refuses (200 x 500 = 100,000 matching
+ * events). A larger result needs a narrower filter (`from`, `entityId`) instead of an ever longer scan.
+ */
+export const NEWEST_FIRST_MAX_PAGES = 200;
+
+/** Too many matching events to find the newest ones within NEWEST_FIRST_MAX_PAGES. */
+export class AuditNewestFirstTooLargeError extends Error {
+  constructor() {
+    super(
+      `More than ${NEWEST_FIRST_MAX_PAGES * READ_EVENTS_MAX} audit events match; narrow the list with from or entityId.`,
+    );
+    this.name = 'AuditNewestFirstTooLargeError';
+  }
 }
 
 /**
@@ -95,8 +116,52 @@ export class AuditService {
     );
   }
 
-  /** Events of the caller's tenant and organization in id order, optionally filtered. */
+  /**
+   * Events of the caller's tenant and organization in id order, optionally filtered. `order: 'desc'`
+   * returns the newest `limit` events instead, newest first (see `listNewestFirst`).
+   */
   async list(scope: TxScope, q: AuditListQuery): Promise<AuditEventDto[]> {
+    if (q.order === 'desc') return this.listNewestFirst(scope, q);
+    return this.readPage(scope, q);
+  }
+
+  /**
+   * The newest `limit` events, newest first. audit.read_events only pages forward by id and bos_app has no
+   * right on audit.audit_events, so the end cannot be read directly: this walks the matching ids forward
+   * (ids only, 500 per call), keeps the last `limit + 1`, then reads the full rows of the tail in one more
+   * call and reverses them. Ids are compared by position only, never as numbers.
+   *
+   * Cost grows with the number of matching events (one round trip per 500), so the walk stops at
+   * NEWEST_FIRST_MAX_PAGES and refuses rather than return the tail of a truncated scan. Events appended
+   * after the walk has passed are not included.
+   */
+  private async listNewestFirst(scope: TxScope, q: AuditListQuery): Promise<AuditEventDto[]> {
+    const keep = q.limit + 1;
+    let tail: string[] = [];
+    let cursor: string | null = null;
+    for (let page = 0; ; page += 1) {
+      if (page === NEWEST_FIRST_MAX_PAGES) throw new AuditNewestFirstTooLargeError();
+      const result = await this.db.execute<{ id: string }>(sql`
+        SELECT id
+          FROM audit.read_events(
+            ${scope.tenantId}::uuid, ${scope.organizationId}::uuid,
+            ${q.entityType ?? null}::text, ${q.entityId ?? null}::text,
+            ${q.from?.toISOString() ?? null}::timestamptz, ${q.to?.toISOString() ?? null}::timestamptz,
+            ${cursor}::bigint, ${READ_EVENTS_MAX}::integer)`);
+      const ids = result.rows.map((row) => String(row.id));
+      tail = [...tail, ...ids].slice(-keep);
+      const last = ids.at(-1);
+      if (ids.length < READ_EVENTS_MAX || last === undefined) break;
+      cursor = last;
+    }
+    // With limit + 1 ids in hand, the first one is the cursor and the rest are exactly the newest `limit`.
+    const afterId = tail.length === keep ? tail[0] : undefined;
+    const events = await this.readPage(scope, { ...q, afterId, limit: q.limit });
+    return events.reverse();
+  }
+
+  /** One forward page of audit.read_events, with the actors' display names. */
+  private async readPage(scope: TxScope, q: AuditListQuery): Promise<AuditEventDto[]> {
     // Why to_char/host instead of the driver's own conversion: node-postgres turns timestamptz into a JS
     // Date (milliseconds) and date into a Date at local midnight, but the stored hash covers microseconds
     // and a date without a time zone. Formatting in SQL keeps the exposed values equal to what was hashed,
