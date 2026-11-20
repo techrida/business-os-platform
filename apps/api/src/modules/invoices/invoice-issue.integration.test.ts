@@ -1,6 +1,7 @@
 // Integration tests of invoice approval (submit, decide) and tax-invoice issue on a real Postgres (Testcontainers, needs
 // Docker in WSL). Real: migrations as bos_owner, queries as bos_app (every CHECK and trigger of 0019-0021 runs), the
-// approvals engine with the seed's tax_invoice workflow published through ApprovalsAdminService, the invoice services,
+// approvals engine with the original tax_invoice workflow published through ApprovalsAdminService (then the seed's
+// schedule-aware route as v2, F1-Q30), the invoice services,
 // NumberingService, LedgerService and AuditService. Faked: the request context, authz.assert (the real pure can() on a
 // fake principal), notify, the role directory (role -> real staff users of entity A), MoneyService (NPR at 1; USD is
 // stale) and the entity settings. Covers P3 done checks 3 (20 parallel issues), 4 (300 issues without gaps, a forced
@@ -21,6 +22,7 @@ import {
 } from '@bos/contracts';
 import {
   approvalRequests,
+  approvalSteps,
   billingScheduleLines,
   createStaffUser,
   invoices,
@@ -31,7 +33,7 @@ import {
 } from '@bos/db';
 import { ConflictException, ForbiddenException, HttpException } from '@nestjs/common';
 import { PostgreSqlContainer, type StartedPostgreSqlContainer } from '@testcontainers/postgresql';
-import { and, eq, inArray, sql } from 'drizzle-orm';
+import { and, asc, eq, inArray, sql } from 'drizzle-orm';
 import { drizzle } from 'drizzle-orm/node-postgres';
 import { Pool } from 'pg';
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
@@ -65,9 +67,9 @@ const APP_PW = 'app-test-pw';
 /** 2026-11-09 11:45 in Kathmandu: BS 2083-07-23, fiscal year 2083/84. */
 const NOW = new Date('2026-11-09T06:00:00Z');
 
-// Copied word for word from tools/seed-zitadel/src/db-seed.ts (invoiceApprovalSpec('tax_invoice', 'tax invoice')).
-// apps/api does not depend on the seed package, so it is not imported; keep the two in step.
-const TAX_INVOICE_WORKFLOW_SPEC: unknown = {
+// The tax_invoice route every entity had before F1-Q30 (migration 0110's `v_old`): Accountant then Finance. Published
+// as v1 here, so a request opened under it can be decided after the new route is published.
+const ORIGINAL_TAX_INVOICE_WORKFLOW_SPEC: unknown = {
   documentType: 'tax_invoice',
   steps: [
     {
@@ -79,6 +81,41 @@ const TAX_INVOICE_WORKFLOW_SPEC: unknown = {
     { id: 'finance', kind: 'role', role: 'finance', reason: 'Base route: finance approves' },
   ],
   rules: [],
+  distinctApprovers: true,
+  sla: { remindAfterHours: 24, escalateAfterHours: 72, escalateTo: { role: 'founder' } },
+};
+
+// Copied word for word from tools/seed-zitadel/src/db-seed.ts (TAX_INVOICE_WORKFLOW_SPEC, F1-Q30) and migration 0110's
+// `v_new`. apps/api does not depend on the seed package, so it is not imported; keep the three in step.
+const TAX_INVOICE_WORKFLOW_SPEC: unknown = {
+  documentType: 'tax_invoice',
+  steps: [],
+  rules: [
+    {
+      id: 'manual-invoice',
+      when: { field: 'fromSchedule', op: 'eq', value: false },
+      add: {
+        id: 'accountant',
+        kind: 'role',
+        role: 'accountant',
+        reason: 'Accountant checks a manual tax invoice',
+      },
+      position: 'end',
+      reason: 'Accountant check: a manual invoice, not from an approved billing schedule',
+    },
+    {
+      id: 'finance-approves',
+      when: { field: 'kind', op: 'eq', value: 'tax_invoice' },
+      add: {
+        id: 'finance',
+        kind: 'role',
+        role: 'finance',
+        reason: 'Finance approves every tax invoice',
+      },
+      position: 'end',
+      reason: 'Finance approves every tax invoice',
+    },
+  ],
   distinctApprovers: true,
   sla: { remindAfterHours: 24, escalateAfterHours: 72, escalateTo: { role: 'founder' } },
 };
@@ -95,6 +132,7 @@ let drafting: InvoiceDraftingService;
 let issuing: InvoiceIssueService;
 let submitting: InvoiceApprovalService;
 let audit: AuditService;
+let admin: ApprovalsAdminService;
 
 /** Real staff users of entity A: two accountants (the drafter and a checker), finance, and the admin. */
 const U = { acc: '', acc2: '', fin: '', admin: '' };
@@ -379,11 +417,11 @@ beforeAll(async () => {
 
   audit = new AuditService(db);
   as(U.admin, 'founder');
-  const admin = new ApprovalsAdminService(db, audit, caller, () => NOW);
+  admin = new ApprovalsAdminService(db, audit, caller, () => NOW);
   await admin.createWorkflow({
     key: 'tax_invoice',
     name: 'Tax invoice',
-    spec: TAX_INVOICE_WORKFLOW_SPEC,
+    spec: ORIGINAL_TAX_INVOICE_WORKFLOW_SPEC,
   });
   await admin.publish('tax_invoice', 1);
 
@@ -484,6 +522,65 @@ describe('submit, approve and issue a tax invoice end to end', () => {
     const err2 = await issueAs(id, (await invoiceRow(id)).version).catch((e: unknown) => e);
     expect(responseOf(err2)).toMatchObject({ code: 'NOT_APPROVED' });
     expect((await invoiceRow(id)).number).toBeNull();
+  });
+});
+
+/** The roles of a request's steps, in order. */
+const stepRoles = async (requestId: string) =>
+  (
+    await db
+      .select({ roleKey: approvalSteps.roleKey })
+      .from(approvalSteps)
+      .where(eq(approvalSteps.requestId, requestId))
+      .orderBy(asc(approvalSteps.seq))
+  ).map((s) => s.roleKey);
+
+describe('the tax invoice route by source (F1-Q30)', () => {
+  it('a request opened under the original route keeps Accountant then Finance after the new route is published', async () => {
+    const { advanceId } = await seedOrder();
+    as(U.acc, 'accountant');
+    const inFlight = (await drafting.draftFromSchedule({ scheduleLineId: advanceId }, key()))
+      .invoice.id;
+    await submit(inFlight);
+    const request = (await requestOf(inFlight))!;
+    expect(await stepRoles(request.id)).toEqual(['accountant', 'finance']);
+
+    // F1-Q30: the new route becomes the current version (what migration 0110 does for a seeded entity).
+    as(U.admin, 'founder');
+    await admin.addVersion('tax_invoice', TAX_INVOICE_WORKFLOW_SPEC);
+    await admin.publish('tax_invoice', 2);
+
+    // The open request still needs both steps: Finance alone cannot skip the Accountant.
+    const early = await act(U.fin, 'finance', request.id, 'approve').catch((e: unknown) => e);
+    expect(early).toBeInstanceOf(ForbiddenException);
+    await act(U.acc2, 'accountant', request.id, 'approve');
+    expect((await invoiceRow(inFlight)).status).toBe('submitted');
+    await act(U.fin, 'finance', request.id, 'approve');
+    expect((await invoiceRow(inFlight)).status).toBe('approved');
+  });
+
+  it('an invoice drafted from an approved schedule line goes to Finance only, and Finance approval approves it', async () => {
+    const { advanceId } = await seedOrder();
+    as(U.acc, 'accountant');
+    const id = (await drafting.draftFromSchedule({ scheduleLineId: advanceId }, key())).invoice.id;
+    await submit(id);
+    const request = (await requestOf(id))!;
+    expect(await stepRoles(request.id)).toEqual(['finance']);
+    expect(request.facts).toMatchObject({ fromSchedule: true, kind: 'tax_invoice' });
+    await act(U.fin, 'finance', request.id, 'approve');
+    expect((await invoiceRow(id)).status).toBe('approved');
+  });
+
+  it('a manual invoice keeps Accountant then Finance', async () => {
+    const id = await draftManual();
+    await submit(id);
+    const request = (await requestOf(id))!;
+    expect(await stepRoles(request.id)).toEqual(['accountant', 'finance']);
+    expect(request.facts).toMatchObject({ fromSchedule: false });
+    await act(U.acc2, 'accountant', request.id, 'approve');
+    expect((await invoiceRow(id)).status).toBe('submitted');
+    await act(U.fin, 'finance', request.id, 'approve');
+    expect((await invoiceRow(id)).status).toBe('approved');
   });
 });
 
