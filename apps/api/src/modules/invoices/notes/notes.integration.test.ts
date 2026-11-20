@@ -795,3 +795,80 @@ describe("debit notes fall due on the customer's payment terms (TR-Q12c)", () =>
     expect((await invoiceRow(id)).dueDate).toBe('2026-11-09');
   });
 });
+
+describe('the creator of a note may not issue it (TR-Q12f)', () => {
+  async function approved(id: string): Promise<number> {
+    await withTx(db, scopeA, systemActor('note-fixture'), (tx) =>
+      tx.execute(
+        sql`UPDATE app.invoices SET status = 'approved', version = version + 1 WHERE id = ${id}`,
+      ),
+    );
+    return (await invoiceRow(id)).version;
+  }
+  const noteSeq = async (kind: 'credit_note' | 'debit_note') =>
+    (
+      await db.execute<{ last: number | null }>(
+        sql`SELECT max(seq)::int AS last FROM app.invoices
+            WHERE tenant_id = ${f.tenantId} AND organization_id = ${f.entityId} AND kind = ${kind}`,
+      )
+    ).rows[0]?.last ?? 0;
+
+  it.each(['credit_note', 'debit_note'] as const)(
+    'a %s: its creator gets 403 separation_of_duties and no number; another Finance user issues it',
+    async (kind) => {
+      const original = await issuedInvoice();
+      as(U.fin, 'finance');
+      const id = (
+        kind === 'credit_note'
+          ? await notes.draftCreditNote(creditBody(original, '1'), key())
+          : await notes.draftDebitNote(debitBody(original), key())
+      ).invoice.id;
+      const version = await approved(id);
+      const before = await noteSeq(kind);
+
+      // The page says so before the click: the detail flags the note for its creator only.
+      expect((await drafting.detail(id)).issueBlockedBySod).toBe(true);
+      const err = await issuing
+        .issue(id, { expectedVersion: version }, key())
+        .catch((e: unknown) => e);
+      expect(statusOf(err)).toBe(403);
+      expect(responseOf(err)).toMatchObject({
+        code: 'forbidden',
+        reason: 'separation_of_duties',
+        message: 'The creator of a credit or debit note cannot issue it',
+      });
+      const row = await invoiceRow(id);
+      expect([row.status, row.number]).toEqual(['approved', null]);
+      expect(await noteSeq(kind)).toBe(before);
+
+      as(U.fin2, 'finance');
+      expect((await drafting.detail(id)).issueBlockedBySod).toBeUndefined();
+      const result = IssueInvoiceResultSchema.parse(
+        await issuing.issue(id, { expectedVersion: version }, key()),
+      );
+      expect(result.kind).toBe('issued');
+      expect((await invoiceRow(id)).issuedBy).toBe(U.fin2);
+    },
+  );
+
+  it('a tax invoice is not covered: its drafter may still issue it', async () => {
+    as(U.fin, 'finance');
+    const id = (
+      await drafting.draftManual(
+        {
+          customerId: f.customerPartyId,
+          currency: 'NPR',
+          manualReason: 'Drafted and issued by Finance',
+          lines: [typedLine('Support', '1', '100.00', f.taxCodeVat13Id)],
+        },
+        key(),
+      )
+    ).invoice.id;
+    const version = await approved(id);
+    expect((await drafting.detail(id)).issueBlockedBySod).toBeUndefined();
+    const result = IssueInvoiceResultSchema.parse(
+      await issuing.issue(id, { expectedVersion: version }, key()),
+    );
+    expect(result.kind).toBe('issued');
+  });
+});
