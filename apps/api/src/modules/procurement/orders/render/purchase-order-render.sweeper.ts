@@ -11,10 +11,16 @@
 //
 // Claiming: the slow part (Chromium) runs with no transaction and no lock. The write is then serialised per version by
 // a transaction advisory lock and a re-check for a live document, so two workers that raced both render but only one
-// stores a file; the other answers `skipped`. Failure backoff has no durable home, so a failed version is remembered in
-// this process for FAILED_RETRY_MS and left out of the candidate query. A rotating cursor keeps expired failures from
-// filling every batch; a restart forgets both the backoff and cursor. A document that never got its bytes (a crash
-// between the two steps) is soft-removed after ORPHAN_AFTER_MS, which makes its version a candidate again.
+// stores a file; the other answers `skipped`.
+//
+// Failures (round 4, R4c2; render-retry.ts, invoices/render/render-failures.ts): a failed render is recorded in
+// `document_render_failures` and tried again after a pause that grows, until the tries run out. Then the render is
+// given up, one admin (audit) entry `purchase_order.pdf_render_failed` is written on the purchase order in the same
+// transaction, the candidate query leaves the version alone, and the download answers 424 so staff see the error and
+// a Retry (the Retry route deletes the row). A success deletes the row. A rotating cursor keeps the oldest versions
+// from filling every batch; a restart forgets only the cursor. A document created by a render that failed before its
+// bytes were stored is removed in the same failure path; one left by a crash between the two steps is soft-removed
+// after ORPHAN_AFTER_MS, which makes its version a candidate again.
 //
 // Number and date format: a delivered PO PDF is never rendered again (its document cannot be removed), so the format
 // is the one in force at the first render. No snapshot column is needed. The same render freezes the company logo's
@@ -48,11 +54,20 @@ import {
   type OnApplicationBootstrap,
 } from '@nestjs/common';
 import { type Job, Queue } from 'bullmq';
-import { and, asc, eq, inArray, isNull, lt, notExists, notInArray, sql } from 'drizzle-orm';
+import { and, asc, eq, inArray, isNull, lt, not, notExists, sql } from 'drizzle-orm';
 
 import type { Db, DbTransaction } from '../../../../platform/db/db.module';
 import { systemActor, type TxScope } from '../../../../platform/db/tx';
+import type { RenderAudit } from '../../../invoices/render/invoice-render.sweeper';
 import { freezeEntityLogo } from '../../../invoices/render/frozen-logo';
+import {
+  clearRenderFailure,
+  discardUnfilledDocument,
+  recordRenderFailure,
+  renderHeldBack,
+  type RecordedFailure,
+  type RenderFailureOwner,
+} from '../../../invoices/render/render-failures';
 import { GotenbergError } from '../../../quotations/render/gotenberg.client';
 import { DocumentLogoUnavailableError } from '../../../quotations/render/issuer';
 import type {
@@ -63,6 +78,8 @@ import type {
   RenderSettings,
   RunInTx,
 } from '../../../quotations/render/quotation-render.sweeper';
+import { RENDER_GIVEN_UP_ACTION } from '../../../quotations/render/render-retry';
+import { PO_AUDIT_ENTITY } from '../purchase-order.rules';
 import { renderPurchaseOrderHtml } from './purchase-order-html';
 import { PO_RENDER_JOB_PREFIX, PO_VERSION_OWNER_TYPE } from './purchase-order-version-owner.policy';
 import {
@@ -76,8 +93,6 @@ import {
 export const PO_RENDER_QUEUE = 'purchase-order.render';
 export const PO_RENDER_SWEEP_JOB = 'purchase-order.render.sweep';
 export const SWEEP_EVERY_MS = 60_000;
-/** A failed version is left alone this long (in this process), so a permanent fault does not hammer Gotenberg. */
-export const FAILED_RETRY_MS = 5 * 60_000;
 /** A generated document still awaiting its bytes after this long was left by a render that crashed midway. */
 export const ORPHAN_AFTER_MS = 60 * 60_000;
 /** Versions handled per tick; the rest wait a minute. Keeps one tick bounded (each render has its own deadline). */
@@ -92,11 +107,15 @@ export const PO_RENDER_PDF = Symbol('PO_RENDER_PDF');
 export const PO_RENDER_CLOCK = Symbol('PO_RENDER_CLOCK');
 /** DocumentLogoResolverFactory in the worker: turns the profile's logo document into the bytes the render freezes. */
 export const PO_RENDER_LOGOS = Symbol('PO_RENDER_LOGOS');
+/** AuditService in the worker: writes the admin entry when a render is given up. */
+export const PO_RENDER_AUDIT = Symbol('PO_RENDER_AUDIT');
 
 export interface RenderCandidate {
   tenantId: string;
   organizationId: string;
   versionId: string;
+  /** The purchase order the version belongs to: the admin entry of a given-up render is written on it. */
+  purchaseOrderId: string;
 }
 
 /** What the mapper needs of a version's rows. The buying entity's PAN is read from settings by the sweeper. */
@@ -110,8 +129,11 @@ export interface OrphanDocument {
 
 /** The sweeper's database access, as a port. `tx` is the transaction `PO_RENDER_TX` opened for the version's scope. */
 export interface RenderStore {
-  /** Versions with no live document, oldest first after `after`, wrapping when exhausted, except `exclude`. */
-  candidates(limit: number, exclude: readonly string[], after?: string): Promise<RenderCandidate[]>;
+  /**
+   * Versions with no live document that may be tried at `now` (not waiting out a failure's pause, not given up),
+   * oldest first after `after`, wrapping when exhausted.
+   */
+  candidates(now: Date, limit: number, after?: string): Promise<RenderCandidate[]>;
   load(tx: DbTransaction, c: RenderCandidate): Promise<RenderSource | undefined>;
   /**
    * Takes this version's render lock for the rest of `tx` and answers whether it already has a live document. The
@@ -120,6 +142,22 @@ export interface RenderStore {
   lockAndHasDocument(tx: DbTransaction, c: RenderCandidate): Promise<boolean>;
   orphans(cutoff: Date, limit: number): Promise<OrphanDocument[]>;
   removeOrphan(tx: DbTransaction, o: OrphanDocument, now: Date): Promise<void>;
+  /** Soft-removes the version's document `documentId` when it never got its bytes (render-failures.ts). */
+  discardUnfilled(
+    tx: DbTransaction,
+    c: RenderCandidate,
+    documentId: string,
+    now: Date,
+  ): Promise<void>;
+  /** Counts one failed try (render-failures.ts). */
+  recordFailure(
+    tx: DbTransaction,
+    c: RenderCandidate,
+    kind: string,
+    now: Date,
+  ): Promise<RecordedFailure>;
+  /** Forgets the version's failures after a success. */
+  clearFailure(tx: DbTransaction, c: RenderCandidate): Promise<void>;
 }
 
 export type RenderOutcome = 'rendered' | 'failed' | 'skipped';
@@ -164,8 +202,6 @@ export function failureKind(error: unknown): string {
 @Injectable()
 export class PurchaseOrderRenderSweeper {
   private readonly logger = new Logger(PurchaseOrderRenderSweeper.name);
-  /** version id -> when it last failed. In memory on purpose: see the file header. */
-  private readonly failedAt = new Map<string, number>();
   /** The last attempted row's immutable position; one cursor rather than an unbounded attempt history. */
   private after: string | undefined;
 
@@ -177,6 +213,7 @@ export class PurchaseOrderRenderSweeper {
     @Inject(PO_RENDER_PDF) private readonly pdf: PdfRenderer,
     @Inject(PO_RENDER_CLOCK) private readonly clock: Clock,
     @Inject(PO_RENDER_LOGOS) private readonly logos: RenderLogos,
+    @Inject(PO_RENDER_AUDIT) private readonly audit: RenderAudit,
   ) {}
 
   /** One pass over every tenant: render what is due, then clean up what crashed renders left behind. */
@@ -188,7 +225,7 @@ export class PurchaseOrderRenderSweeper {
       orphansRemoved: 0,
       failures: [],
     };
-    const candidates = await this.store.candidates(BATCH, this.backedOff(), this.after);
+    const candidates = await this.store.candidates(this.clock(), BATCH, this.after);
     // One at a time: Chromium is the scarce resource, and a version's failure must not touch the next one.
     for (const c of candidates) {
       const { outcome, kind } = await this.attempt(c);
@@ -204,17 +241,12 @@ export class PurchaseOrderRenderSweeper {
     return (await this.attempt(c)).outcome;
   }
 
-  /** The versions that failed less than FAILED_RETRY_MS ago. Older entries are forgotten here. */
-  private backedOff(): string[] {
-    const cutoff = this.clock().getTime() - FAILED_RETRY_MS;
-    for (const [id, at] of this.failedAt) if (at <= cutoff) this.failedAt.delete(id);
-    return [...this.failedAt.keys()];
-  }
-
   /** One version: its outcome and, for a failure, the kind that was logged. */
   private async attempt(c: RenderCandidate): Promise<{ outcome: RenderOutcome; kind?: string }> {
     const scope: TxScope = { tenantId: c.tenantId, organizationId: c.organizationId };
     const actor = systemActor(PO_RENDER_JOB_PREFIX);
+    /** The document this try created, if it got that far: a failure after it must not leave it blocking the next. */
+    let created: { documentId: string } | undefined;
     try {
       const source = await this.runTx(scope, actor, (tx) => this.store.load(tx, c));
       if (source === undefined) throw new RenderSourceMissingError();
@@ -257,7 +289,7 @@ export class PurchaseOrderRenderSweeper {
       };
 
       // The lock and the re-check make "no live document yet" true until this commits, so only one racer stores.
-      const created = await this.runTx(scope, actor, async (tx) =>
+      const generated = await this.runTx(scope, actor, async (tx) =>
         (await this.store.lockAndHasDocument(tx, c))
           ? undefined
           : this.documents.createGenerated(
@@ -266,16 +298,51 @@ export class PurchaseOrderRenderSweeper {
               file,
             ),
       );
-      if (created === undefined) return { outcome: 'skipped' };
+      if (generated === undefined) return { outcome: 'skipped' };
+      created = generated;
       // After the commit above: the content step opens its own transactions and the scan worker reads the row.
-      await this.documents.receiveGenerated(created, file, { scope, actor });
-      this.failedAt.delete(c.versionId);
+      await this.documents.receiveGenerated(generated, file, { scope, actor });
+      await this.runTx(scope, actor, (tx) => this.store.clearFailure(tx, c));
       return { outcome: 'rendered' };
     } catch (error) {
       const kind = failureKind(error);
-      this.failedAt.set(c.versionId, this.clock().getTime());
       this.logger.warn(`purchase order render failed: version=${c.versionId} kind=${kind}`);
+      await this.noteFailure(c, scope, kind, created);
       return { outcome: 'failed', kind };
+    }
+  }
+
+  /**
+   * Records a failed try, in one transaction: removes the document this try created if it never got its bytes, counts
+   * the failure, and, when that used up the last try, writes the admin entry on the purchase order. A failure here is
+   * logged and left to the next sweep.
+   */
+  private async noteFailure(
+    c: RenderCandidate,
+    scope: TxScope,
+    kind: string,
+    created: { documentId: string } | undefined,
+  ): Promise<void> {
+    try {
+      await this.runTx(scope, systemActor(PO_RENDER_JOB_PREFIX), async (tx) => {
+        const now = this.clock();
+        if (created !== undefined) await this.store.discardUnfilled(tx, c, created.documentId, now);
+        const recorded = await this.store.recordFailure(tx, c, kind, now);
+        if (!recorded.givenUp) return;
+        await this.audit.record(tx, {
+          action: RENDER_GIVEN_UP_ACTION.purchase_order,
+          entityType: PO_AUDIT_ENTITY,
+          entityId: c.purchaseOrderId,
+          after: { versionId: c.versionId, attempts: recorded.attempts, failureKind: kind },
+        });
+        this.logger.error(
+          `purchase order render given up: version=${c.versionId} attempts=${recorded.attempts} kind=${kind}`,
+        );
+      });
+    } catch (error) {
+      this.logger.error(
+        `purchase order render: could not record the failure: version=${c.versionId} kind=${failureKind(error)}`,
+      );
     }
   }
 
@@ -304,10 +371,17 @@ export class PurchaseOrderRenderSweeper {
   }
 }
 
+const ownerOf = (c: RenderCandidate): RenderFailureOwner => ({
+  tenantId: c.tenantId,
+  organizationId: c.organizationId,
+  ownerType: PO_VERSION_OWNER_TYPE,
+  ownerId: c.versionId,
+});
+
 /** The store on the real tables. Every query names the tenant and the acting entity. */
 export function drizzlePurchaseOrderRenderStore(db: Db): RenderStore {
   return {
-    async candidates(limit, exclude, after) {
+    async candidates(now, limit, after) {
       const hasLiveDocument = db
         .select({ one: sql`1` })
         .from(documents)
@@ -326,16 +400,28 @@ export function drizzlePurchaseOrderRenderStore(db: Db): RenderStore {
             tenantId: purchaseOrderVersions.tenantId,
             organizationId: purchaseOrderVersions.organizationId,
             versionId: purchaseOrderVersions.id,
+            purchaseOrderId: purchaseOrderVersions.purchaseOrderId,
           })
           .from(purchaseOrderVersions)
           .where(
             and(
               notExists(hasLiveDocument),
+              not(
+                renderHeldBack(
+                  db,
+                  PO_VERSION_OWNER_TYPE,
+                  {
+                    tenantId: purchaseOrderVersions.tenantId,
+                    organizationId: purchaseOrderVersions.organizationId,
+                    id: purchaseOrderVersions.id,
+                  },
+                  now,
+                ),
+              ),
               cursor === undefined
                 ? undefined
                 : sql`(${purchaseOrderVersions.createdAt}, ${purchaseOrderVersions.id}) >
                     (SELECT created_at, id FROM ${purchaseOrderVersions} WHERE id = ${cursor})`,
-              exclude.length === 0 ? undefined : notInArray(purchaseOrderVersions.id, [...exclude]),
             ),
           )
           .orderBy(asc(purchaseOrderVersions.createdAt), asc(purchaseOrderVersions.id))
@@ -437,6 +523,18 @@ export function drizzlePurchaseOrderRenderStore(db: Db): RenderStore {
         )
         .limit(1);
       return found !== undefined;
+    },
+
+    discardUnfilled(tx, c, documentId, now) {
+      return discardUnfilledDocument(tx, ownerOf(c), documentId, now);
+    },
+
+    recordFailure(tx, c, kind, now) {
+      return recordRenderFailure(tx, ownerOf(c), kind, now);
+    },
+
+    clearFailure(tx, c) {
+      return clearRenderFailure(tx, ownerOf(c));
     },
 
     async orphans(cutoff, limit) {
