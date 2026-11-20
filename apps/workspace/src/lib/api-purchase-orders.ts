@@ -181,6 +181,21 @@ export const ReceivableOrderSchema = z.strictObject({
 });
 export type ReceivableOrder = z.infer<typeof ReceivableOrderSchema>;
 
+/**
+ * A row of the warehouse's recently received list (apps/api receivable-orders.service.ts, U18-Q3): an order that is
+ * fully received, closed or short-closed. Strict: a field the DTO does not have fails the parse.
+ */
+export const ReceivedOrderSchema = z.strictObject({
+  id: z.guid(),
+  number: Text,
+  vendorId: z.guid(),
+  vendorName: Text,
+  kind: z.enum(['goods', 'service', 'mixed']),
+  status: z.enum(['fully_received', 'closed', 'short_closed']),
+  lastReceivedAt: Text.optional(),
+});
+export type ReceivedOrder = z.infer<typeof ReceivedOrderSchema>;
+
 /** One purchase order raised from the caller's own purchase requests: the receipts picker of a requester. */
 export const RequestedOrderSchema = z.strictObject({
   id: z.guid(),
@@ -354,6 +369,11 @@ export function listReceivableOrders(session: Session, limit?: number): Promise<
       ? '/v1/procurement/receivable-orders'
       : `/v1/procurement/receivable-orders?limit=${encodeURIComponent(String(limit))}`;
   return call(session, path, z.array(ReceivableOrderSchema));
+}
+
+/** The orders the warehouse has finished with (needs procurement.receipt.confirm), most recently received first. */
+export function listReceivedOrders(session: Session): Promise<ReceivedOrder[]> {
+  return call(session, '/v1/procurement/received-orders', z.array(ReceivedOrderSchema));
 }
 
 /** The purchase orders of the caller's own purchase requests (needs procurement.pr.read), newest first. */

@@ -18,6 +18,7 @@ import {
   listPurchaseOrdersPage,
   listReceipts,
   listReceivableOrders,
+  listReceivedOrders,
   PurchaseOrderSchema,
   reverseReceipt,
   shortClosePurchaseOrder,
@@ -340,6 +341,33 @@ describe('receivable orders', () => {
   it('carries a 403 with its status', async () => {
     answer(reply({ error: { code: 'forbidden' } }, 403));
     await expect(listReceivableOrders(session)).rejects.toMatchObject({ status: 403 });
+  });
+});
+
+describe('recently received orders (U18-Q3)', () => {
+  const done = {
+    id: VENDOR,
+    number: 'PO-2082/83-00007',
+    vendorId: VENDOR,
+    vendorName: 'Himal Traders Pvt. Ltd.',
+    kind: 'goods',
+    status: 'fully_received',
+    lastReceivedAt: '2026-11-09T05:45:00.000Z',
+  };
+
+  it('reads the finished orders, with or without a last receipt time', async () => {
+    const { lastReceivedAt: _at, ...closed } = { ...done, status: 'closed' };
+    answer(reply([done, closed]));
+    const out = await listReceivedOrders(session);
+    expect(lastCall().url).toBe('http://api:3001/v1/procurement/received-orders');
+    expect(out).toEqual([done, closed]);
+  });
+
+  it('turns an open status or an extra field into a 502', async () => {
+    for (const bad of [{ ...done, status: 'issued' }, { ...done, openQuantity: '1.0000' }]) {
+      answer(reply([bad]));
+      await expect(listReceivedOrders(session)).rejects.toMatchObject({ status: 502 });
+    }
   });
 });
 

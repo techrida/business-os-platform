@@ -13,6 +13,7 @@ import { EmergencyReviewSubject } from './emergency-review';
 import {
   PurchaseOrderProgressController,
   ReceivableOrdersController,
+  ReceivedOrdersController,
   ReceiptsController,
   RequestedOrdersController,
 } from './receipts.controller';
@@ -27,6 +28,7 @@ import { RequestedOrdersService } from './requested-orders.service';
     ReceiptsController,
     PurchaseOrderProgressController,
     ReceivableOrdersController,
+    ReceivedOrdersController,
     RequestedOrdersController,
   ],
   providers: [ReceiptsService, ReceiptsCaller, ReceivableOrdersService, RequestedOrdersService],
