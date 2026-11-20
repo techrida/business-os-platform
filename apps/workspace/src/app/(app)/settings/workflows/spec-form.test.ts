@@ -322,3 +322,121 @@ describe('the seeded Memo approver workflow (F1-Q9)', () => {
     expect(converted.ok).toBe(true);
   });
 });
+
+// The tax_invoice routes (F1-Q30), copied word for word: the original from migration 0110's `v_old`, the new one
+// from tools/seed-zitadel/src/db-seed.ts TAX_INVOICE_WORKFLOW_SPEC and migration 0110's `v_new`. The workspace does
+// not depend on the seed package, so they are not imported; keep them in step with those two files.
+const ORIGINAL_TAX_INVOICE_WORKFLOW_SPEC = {
+  documentType: 'tax_invoice',
+  steps: [
+    {
+      id: 'accountant',
+      kind: 'role',
+      role: 'accountant',
+      reason: 'Base route: accountant checks the tax invoice',
+    },
+    { id: 'finance', kind: 'role', role: 'finance', reason: 'Base route: finance approves' },
+  ],
+  rules: [],
+  distinctApprovers: true,
+  sla: { remindAfterHours: 24, escalateAfterHours: 72, escalateTo: { role: 'founder' } },
+};
+const TAX_INVOICE_WORKFLOW_SPEC = {
+  documentType: 'tax_invoice',
+  steps: [],
+  rules: [
+    {
+      id: 'manual-invoice',
+      when: { field: 'fromSchedule', op: 'eq', value: false },
+      add: {
+        id: 'accountant',
+        kind: 'role',
+        role: 'accountant',
+        reason: 'Accountant checks a manual tax invoice',
+      },
+      position: 'end',
+      reason: 'Accountant check: a manual invoice, not from an approved billing schedule',
+    },
+    {
+      id: 'finance-approves',
+      when: { field: 'kind', op: 'eq', value: 'tax_invoice' },
+      add: {
+        id: 'finance',
+        kind: 'role',
+        role: 'finance',
+        reason: 'Finance approves every tax invoice',
+      },
+      position: 'end',
+      reason: 'Finance approves every tax invoice',
+    },
+  ],
+  distinctApprovers: true,
+  sla: { remindAfterHours: 24, escalateAfterHours: 72, escalateTo: { role: 'founder' } },
+};
+
+describe('the tax invoice route (U23-Q4, F1-Q30)', () => {
+  it.each([
+    ['the original route', ORIGINAL_TAX_INVOICE_WORKFLOW_SPEC],
+    ['the route from migration 0110', TAX_INVOICE_WORKFLOW_SPEC],
+  ])('%s opens in the form and saves back identical', (_name, raw) => {
+    const converted = specToForm(WorkflowSpecSchema.parse(raw));
+    if (!converted.ok) throw new Error(converted.reasons.join('; '));
+    const built = formToSpec(converted.form);
+    if (!built.ok) throw new Error(built.issues.join('; '));
+    expect(built.spec).toEqual(raw);
+    // Byte for byte, so a boolean false never comes back as the text "false".
+    expect(JSON.stringify(built.spec)).toBe(JSON.stringify(raw));
+  });
+
+  it('shows the billing-schedule and document-type conditions as facts, not as amounts', () => {
+    const converted = specToForm(WorkflowSpecSchema.parse(TAX_INVOICE_WORKFLOW_SPEC));
+    if (!converted.ok) throw new Error('should convert');
+    expect(converted.form.steps).toEqual([]);
+    expect(converted.form.rules.map((r) => r.fact)).toEqual([
+      { field: 'fromSchedule', value: false },
+      { field: 'kind', value: 'tax_invoice' },
+    ]);
+  });
+
+  it('writes a changed billing-schedule condition as a boolean', () => {
+    const converted = specToForm(WorkflowSpecSchema.parse(TAX_INVOICE_WORKFLOW_SPEC));
+    if (!converted.ok) throw new Error('should convert');
+    const [manual, every] = converted.form.rules;
+    if (!manual || !every) throw new Error('two rules');
+    const built = formToSpec({
+      ...converted.form,
+      rules: [{ ...manual, fact: { field: 'fromSchedule', value: true } }, every],
+    });
+    expect(built.ok && built.spec.rules[0]?.when).toEqual({
+      field: 'fromSchedule',
+      op: 'eq',
+      value: true,
+    });
+  });
+
+  it.each([
+    [
+      'fromSchedule compared with the text "false"',
+      { field: 'fromSchedule', op: 'eq', value: 'false' },
+    ],
+    ['fromSchedule with neq', { field: 'fromSchedule', op: 'neq', value: false }],
+    ['kind compared with a number', { field: 'kind', op: 'eq', value: 1 }],
+    ['kind with in', { field: 'kind', op: 'in', value: ['tax_invoice'] }],
+    ['kind with neq', { field: 'kind', op: 'neq', value: 'credit_note' }],
+    ['a field the form does not know', { field: 'currency', op: 'eq', value: 'USD' }],
+  ])('keeps a rule on %s in JSON', (_name, when) => {
+    const spec = WorkflowSpecSchema.parse({
+      ...TAX_INVOICE_WORKFLOW_SPEC,
+      rules: [{ ...TAX_INVOICE_WORKFLOW_SPEC.rules[0], when }],
+    });
+    const converted = specToForm(spec);
+    expect(converted.ok).toBe(false);
+    if (converted.ok) return;
+    expect(converted.reasons).toHaveLength(1);
+    expect(converted.reasons[0]).toContain('manual-invoice');
+  });
+
+  it('starts a new rule as an amount threshold, never a fact a submit may not send', () => {
+    expect(emptyRule([], 0).fact).toBeUndefined();
+  });
+});
