@@ -141,8 +141,8 @@ describe('billActions with the per-bill can flags', () => {
   const po = 'po-1';
   const matching = { status: 'matching', matchStatus: 'matched', purchaseOrderId: po } as const;
   const approved = { status: 'approved', matchStatus: 'matched', purchaseOrderId: po } as const;
-  const OTHERS = { match: false, submit: false, void: false };
-  const OWN = { match: true, submit: true, void: true };
+  const OTHERS = { match: false, submit: false, void: false, discard: false, exception: false };
+  const OWN = { match: true, submit: true, void: true, discard: true, exception: true };
 
   it("hides Match, Submit and Void on another person's bill under an own grant", () => {
     expect(billActions({ ...matching, can: OTHERS }, enter)).toEqual({
@@ -164,10 +164,10 @@ describe('billActions with the per-bill can flags', () => {
 
   it('decides each action by its own flag', () => {
     expect(
-      billActions({ ...matching, can: { match: false, submit: true, void: true } }, enter),
+      billActions({ ...matching, can: { match: false, submit: true, void: true, discard: true, exception: true } }, enter),
     ).toEqual({ match: false, submit: true, void: false });
     expect(
-      billActions({ ...approved, can: { match: true, submit: true, void: false } }, enter).void,
+      billActions({ ...approved, can: { match: true, submit: true, void: false, discard: true, exception: true } }, enter).void,
     ).toBe(false);
   });
 
