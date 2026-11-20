@@ -49,6 +49,7 @@ import { NO_LIMIT, searchPage } from '../../platform/list';
 import { withTx, type Actor, type TxScope } from '../../platform/db/tx';
 import { CurrencyEnabledService } from '../../platform/settings/currency-enabled';
 import { LedgerService } from '../ledger/ledger.service';
+import { invoiceSettlements } from '../receivables/invoice-settlements';
 import { loadTaxCodePeriods } from '../quotations/pricing/tax-codes.resolver';
 import { toInvoiceDetail, toInvoiceListItem } from './invoice-mapping';
 import { priceInvoice, priceSlice, type PricedInvoice } from './invoice-pricing';
@@ -192,7 +193,24 @@ export class InvoiceDraftingService {
           return row?.n ?? 0;
         },
       });
-      return { rows: rows.map((r) => toInvoiceListItem(r.invoice, r.customerName)), total };
+      // Paid / overdue and the open amount of this page's issued tax invoices and debit notes (U15b-Q2).
+      const states = await invoiceSettlements(
+        tx,
+        scope,
+        rows.map((r) => r.invoice),
+        today,
+      );
+      return {
+        rows: rows.map((r) => {
+          const state = states.get(r.invoice.id);
+          return {
+            ...toInvoiceListItem(r.invoice, r.customerName),
+            settlement: state?.settlement ?? null,
+            openAmount: state?.openAmount ?? null,
+          };
+        }),
+        total,
+      };
     });
   }
 
