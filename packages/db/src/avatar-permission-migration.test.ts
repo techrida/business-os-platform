@@ -255,6 +255,7 @@ describe('0053 profile.avatar.write, applied late on a database that already ran
       user_admin: 'all',
       accountant: 'own',
       finance: 'own',
+      management: 'own',
       marketing: 'own',
       sales: 'own',
     });
@@ -266,6 +267,7 @@ describe('0053 profile.avatar.write, applied late on a database that already ran
       user_admin: { scope: 'all', seeded: true },
       accountant: { scope: 'own', seeded: true },
       finance: { scope: 'own', seeded: true },
+      management: { scope: 'own', seeded: true },
       marketing: { scope: 'own', seeded: true },
       sales: { scope: 'own', seeded: true },
     });

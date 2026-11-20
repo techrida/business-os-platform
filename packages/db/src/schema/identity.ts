@@ -26,6 +26,12 @@ import { appSchema, idpOrgs, opsSchema, organizations, tenants } from './platfor
 /** Lifecycle of a user row. `invited` = created in ZITADEL, never logged in; `inactive` = may not act. */
 export const USER_STATUSES = ['invited', 'active', 'inactive'] as const;
 
+/**
+ * Why a user is locked (migration 0125, F1-Q4): `failed_sign_ins` = ZITADEL's lockout policy locked them and the
+ * lock-expiry job unlocks them at `locked_until`; `admin` = an admin locked them and only an admin unlocks.
+ */
+export const USER_LOCK_REASONS = ['failed_sign_ins', 'admin'] as const;
+
 /** Lifecycle of a department row (migration 0086). Retired departments keep historical records. */
 export const DEPARTMENT_STATUSES = ['active', 'retired'] as const;
 
@@ -115,11 +121,26 @@ export const users = appSchema.table(
      * and entity, and a user works in several entities. NULL shows the initials avatar.
      */
     avatarDocumentId: uuid('avatar_document_id'),
+    /** Why the user is locked; NULL = not locked (migration 0125). A locked user's status is 'inactive'. */
+    lockReason: text('lock_reason', { enum: USER_LOCK_REASONS }),
+    lockedAt: timestamp('locked_at', { withTimezone: true }),
+    /** When the lock-expiry job unlocks a `failed_sign_ins` lock; NULL for an admin lock. */
+    lockedUntil: timestamp('locked_until', { withTimezone: true }),
     createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
   },
   (t) => [
     check('users_status_check', sql`${t.status} in ('invited', 'active', 'inactive')`),
+    check('users_lock_reason_check', sql`${t.lockReason} IN ('failed_sign_ins', 'admin')`),
+    check(
+      'users_lock_shape_check',
+      sql`(${t.lockReason} IS NULL AND ${t.lockedAt} IS NULL AND ${t.lockedUntil} IS NULL)
+        OR (${t.lockReason} = 'admin' AND ${t.lockedAt} IS NOT NULL AND ${t.lockedUntil} IS NULL)
+        OR (${t.lockReason} = 'failed_sign_ins' AND ${t.lockedAt} IS NOT NULL AND ${t.lockedUntil} IS NOT NULL)`,
+    ),
+    index('users_lock_expiry_idx')
+      .on(t.lockedUntil)
+      .where(sql`${t.lockReason} = 'failed_sign_ins'`),
     index('users_display_name_trgm_idx').using('gin', t.displayName.op('gin_trgm_ops')),
     index('users_email_trgm_idx').using('gin', t.email.op('gin_trgm_ops')),
     index('users_tenant_status_idx').on(t.tenantId, t.status),

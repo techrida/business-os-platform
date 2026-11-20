@@ -3,7 +3,13 @@
 //
 // Raw SQL on purpose: this tool runs as the table owner and must not depend on the API's Drizzle
 // schema. Every statement is idempotent, and `seedKernelRows` returns 0 on a second run.
-import { DEFAULT_ROLE_PERMISSIONS, WorkflowSpecSchema, type WorkflowSpec } from '@bos/contracts';
+import {
+  DEFAULT_ROLE_PERMISSIONS,
+  MEMO_APPROVER_DEFAULT_SPEC,
+  MEMO_APPROVER_DOCUMENT_TYPE,
+  WorkflowSpecSchema,
+  type WorkflowSpec,
+} from '@bos/contracts';
 import type pg from 'pg';
 
 import { PERSONAS, personaUsername } from './personas.js';
@@ -729,6 +735,7 @@ export async function seedKernelRows(
 ): Promise<number> {
   // Parse first so a bad spec fails before any SQL, and so we store the schema's defaulted form.
   const memoSpec = WorkflowSpecSchema.parse(TEST_MEMO_WORKFLOW_SPEC);
+  const memoApproverSpec = WorkflowSpecSchema.parse(MEMO_APPROVER_DEFAULT_SPEC);
   const quotationSpec = WorkflowSpecSchema.parse(QUOTATION_VERSION_WORKFLOW_SPEC);
   const taxInvoiceSpec = WorkflowSpecSchema.parse(TAX_INVOICE_WORKFLOW_SPEC);
   const creditNoteSpec = WorkflowSpecSchema.parse(CREDIT_NOTE_WORKFLOW_SPEC);
@@ -841,6 +848,14 @@ export async function seedKernelRows(
       name: 'Debit note approval',
       documentType: 'debit_note',
       spec: debitNoteSpec,
+    });
+    // Who signs "Approved by" on a memo (F1-Q9): the requester's department head, else the Founder. Migration 0127
+    // adds the same v1 to entities that existed before it.
+    changed += await seedWorkflow(client, scope, {
+      key: MEMO_APPROVER_DOCUMENT_TYPE,
+      name: 'Memo approver',
+      documentType: MEMO_APPROVER_DOCUMENT_TYPE,
+      spec: memoApproverSpec,
     });
     // After the payment terms (the vendor account points at NET30).
     if (personas && personas.length > 0) {

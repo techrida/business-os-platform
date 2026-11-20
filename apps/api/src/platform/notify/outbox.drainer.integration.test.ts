@@ -240,7 +240,7 @@ describe('OutboxDrainer: retries and dead letters', () => {
     expect(role).toBe('founder');
     expect(n).toMatchObject({
       title: 'Email could not be delivered',
-      link: '/inbox/',
+      link: '/settings/email-delivery',
       dedupeKey: `dead-letter:${id}`,
       email: {
         template: 'outbox.dead_letter',

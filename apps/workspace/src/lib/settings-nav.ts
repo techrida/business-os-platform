@@ -11,7 +11,7 @@ import type { NavIconName } from './nav';
 
 /** Icons the Settings menu can draw. The drawings live in components/ui/icon.tsx. */
 export type SettingsIconName =
-  NavIconName | 'layout-template' | 'calendar-days' | 'bookmark' | 'hash';
+  NavIconName | 'layout-template' | 'calendar-days' | 'bookmark' | 'hash' | 'mail';
 
 export type SettingsSectionId =
   | 'company'
@@ -23,6 +23,7 @@ export type SettingsSectionId =
   // The Access section keeps the id 'roles' so existing guards keep working; it is labelled Access.
   | 'roles'
   | 'workflows'
+  | 'email-delivery'
   | 'currencies'
   | 'tax'
   | 'numbering'
@@ -154,9 +155,19 @@ export const SETTINGS_GROUPS: readonly SettingsGroup[] = [
         permission: [
           'approvals.definitions.read',
           'approvals.definitions.write',
+          'approvals.definitions.publish',
           'approvals.groups.write',
           'approvals.delegations.write',
         ],
+        ready: true,
+      },
+      {
+        id: 'email-delivery',
+        label: 'Email delivery',
+        href: '/settings/email-delivery',
+        icon: 'mail',
+        description: 'Emails that could not be delivered, and sending them again.',
+        permission: ['email_delivery.read'],
         ready: true,
       },
     ],
@@ -209,7 +220,8 @@ export const SETTINGS_GROUPS: readonly SettingsGroup[] = [
         label: 'Sales',
         href: '/settings/sales',
         icon: 'trending-up',
-        description: 'Quotation validity, evidence for won deals and the billing schedule.',
+        description:
+          'Quotation validity, evidence for won deals, the billing schedule and delivery holds.',
         permission: 'admin.settings.write',
         ready: true,
       },

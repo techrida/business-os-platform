@@ -8,6 +8,7 @@ import 'server-only';
 // Nullable columns are declared nullable so responses from incomplete records still parse.
 
 import {
+  type AccessLevel,
   type AdminUsersQuery,
   AdminUsersPageSchema,
   AdminUsersSummarySchema,
@@ -41,6 +42,13 @@ const WorkflowVersionSchema = z.object({
   status: z.enum(['draft', 'published', 'retired']),
   spec: z.unknown(),
   publishedAt: z.string().nullable(),
+  /** Who saved the version; null when it was saved before the editor was recorded. Optional for older APIs. */
+  createdBy: z.string().nullable().optional(),
+  /** The editor's display name from the API, for viewers who cannot read the user directory. */
+  createdByName: z.string().nullable().optional(),
+  publishedBy: z.string().nullable().optional(),
+  /** The caller saved it, so the caller cannot publish it: a second person does (F1-Q11). */
+  savedByCaller: z.boolean().optional(),
 });
 const WorkflowSchema = z.object({
   id: z.string(),
@@ -200,6 +208,17 @@ export async function sendPasswordReset(session: Session, userId: string): Promi
   await request(session, 'POST', `/v1/admin/users/${seg(userId)}/password-reset`);
 }
 
+/** F1-Q5 account actions in Settings > Users; each answers 204, and 409 with a message the page shows. */
+export type UserStatusAction = 'deactivate' | 'reactivate' | 'lock' | 'unlock';
+
+export async function changeUserStatus(
+  session: Session,
+  userId: string,
+  action: UserStatusAction,
+): Promise<void> {
+  await request(session, 'POST', `/v1/admin/users/${seg(userId)}/${action}`);
+}
+
 /** Complete, caller-scoped picker data. These routes expose no directory administration fields. */
 export async function listApprovalPeople(
   session: Session,
@@ -227,7 +246,15 @@ export async function listApprovalPeople(
 
 export function inviteUser(
   session: Session,
-  b: { email: string; givenName: string; familyName: string; roles: RoleKey[] },
+  b: {
+    email: string;
+    givenName: string;
+    familyName: string;
+    roles: RoleKey[];
+    /** F1-Q50: optional placement; both are left out when the form did not ask. */
+    departmentId?: string;
+    level?: AccessLevel;
+  },
 ): Promise<{ userId: string }> {
   return requestParsed(
     session,

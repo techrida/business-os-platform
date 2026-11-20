@@ -21,8 +21,6 @@ const mocks = vi.hoisted(() => ({
   getInbox: vi.fn(),
   getUnreadCount: vi.fn(),
   listNotifications: vi.fn(),
-  loadPeople: vi.fn(),
-  canAssignFollowUps: vi.fn(),
   listCustomers: vi.fn(),
   getLeadSummary: vi.fn(),
   listOpportunitiesPage: vi.fn(),
@@ -37,10 +35,6 @@ vi.mock('@/lib/api-kernel', () => ({
   getInbox: mocks.getInbox,
   getUnreadCount: mocks.getUnreadCount,
   listNotifications: mocks.listNotifications,
-}));
-vi.mock('@/components/p2/crm/people', () => ({
-  canAssignFollowUps: mocks.canAssignFollowUps,
-  loadPeople: mocks.loadPeople,
 }));
 vi.mock('@/components/p2/customers/api', () => ({ listCustomers: mocks.listCustomers }));
 vi.mock('@/components/p2/customers/permissions', () => ({
@@ -109,8 +103,10 @@ beforeEach(() => {
   mocks.granted = new Set();
   mocks.requireStaffSession.mockReset().mockResolvedValue({ accessToken: 'tok', roles: ['sales'] });
   mocks.getNumberSystems.mockReset().mockResolvedValue(undefined);
-  mocks.getMe.mockReset().mockResolvedValue({ userId: ME });
-  mocks.canAssignFollowUps.mockReset().mockResolvedValue(false);
+  // userId is the identity sub; the app id and the name come separately, as /v1/me sends them.
+  mocks.getMe
+    .mockReset()
+    .mockResolvedValue({ userId: '312345678901234567', id: ME, displayName: 'Amanda Vance' });
   mocks.getInbox.mockReset().mockResolvedValue([]);
   mocks.getUnreadCount.mockReset().mockResolvedValue({ count: 2 });
   mocks.listNotifications.mockReset().mockResolvedValue([
@@ -123,9 +119,6 @@ beforeEach(() => {
       createdAt: '2026-11-18T05:45:00.000Z',
     },
   ]);
-  mocks.loadPeople.mockReset().mockResolvedValue({
-    owners: [{ userId: ME, displayName: 'Amanda Vance', email: 'amanda@x.test' }],
-  });
   mocks.listCustomers.mockReset().mockResolvedValue({ items: [], total: 24 });
   mocks.getLeadSummary.mockReset().mockResolvedValue({
     total: 21,
@@ -159,12 +152,12 @@ describe('overview page', () => {
     expect(stages).not.toContain('on_hold');
   });
 
-  it('keeps Welcome back when the name cannot be resolved or is an email', async () => {
-    mocks.loadPeople.mockResolvedValue({ owners: [] });
+  it('keeps Welcome back when the name is missing, is an email, or /v1/me fails', async () => {
+    mocks.getMe.mockResolvedValue({ userId: '312345678901234567', id: ME, displayName: null });
     expect(await render()).toContain('Welcome back');
-    mocks.loadPeople.mockResolvedValue({
-      owners: [{ userId: ME, displayName: 'amanda@x.test', email: 'amanda@x.test' }],
-    });
+    mocks.getMe.mockResolvedValue({ userId: '312345678901234567', displayName: 'amanda@x.test' });
+    expect(await render()).toContain('Welcome back');
+    mocks.getMe.mockRejectedValue(new Error('GET /v1/me failed with 502'));
     expect(await render()).toContain('Welcome back');
   });
 
@@ -233,19 +226,5 @@ describe('overview page', () => {
     expect(html).toContain('href="/customers/new"');
     expect(html).not.toContain('Add user');
     expect(html).not.toContain('href="/opportunities"');
-  });
-});
-
-describe('overview owners list', () => {
-  // canAssignFollowUps reads the live grants, so it answers a promise; the page waits for it.
-  it('asks loadPeople for owners only once the live check says yes', async () => {
-    mocks.canAssignFollowUps.mockResolvedValue(true);
-    await render();
-    expect(mocks.loadPeople).toHaveBeenCalledWith(expect.anything(), { owners: true });
-
-    mocks.loadPeople.mockClear();
-    mocks.canAssignFollowUps.mockResolvedValue(false);
-    await render();
-    expect(mocks.loadPeople).toHaveBeenCalledWith(expect.anything(), { owners: false });
   });
 });

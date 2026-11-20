@@ -28,6 +28,12 @@ const api = vi.hoisted(() => ({
   deleteTermPreset: vi.fn(),
 }));
 vi.mock('@/lib/api-term-presets', () => api);
+const master = vi.hoisted(() => ({
+  listAdminPaymentTerms: vi.fn(),
+  createPaymentTerm: vi.fn(),
+  updatePaymentTerm: vi.fn(),
+}));
+vi.mock('@/lib/api-master-data', () => master);
 const putSetting =
   vi.fn<
     (
@@ -67,6 +73,7 @@ beforeEach(() => {
   putSetting.mockResolvedValue({ version: 2 });
   getSetting.mockReset();
   getSetting.mockResolvedValue({ key: 'quotation.term_presets', value: [], version: 3 });
+  master.listAdminPaymentTerms.mockResolvedValue([]);
 });
 
 describe('the Saved terms page', () => {
