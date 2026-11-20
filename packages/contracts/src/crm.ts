@@ -545,6 +545,18 @@ export const OpportunityStageChangeBodySchema = z
   });
 export type OpportunityStageChangeBody = z.infer<typeof OpportunityStageChangeBodySchema>;
 
+/**
+ * `PATCH /v1/opportunities/:id/owner` (F1-Q51): hand the deal to another person. The same assignment rule as a
+ * lead's owner (D38/D50, the entity's stored rule for opportunities); the old owner's open follow-ups on the deal
+ * move with it (D45).
+ */
+export const OpportunityOwnerChangeBodySchema = z.strictObject({
+  ownerUserId: z.guid(),
+  /** The row version the client saw; a different current version means 409. */
+  expectedVersion: z.number().int().min(1),
+});
+export type OpportunityOwnerChangeBody = z.infer<typeof OpportunityOwnerChangeBodySchema>;
+
 // ---------------------------------------------------------------------------------------------
 // Leads
 // ---------------------------------------------------------------------------------------------
