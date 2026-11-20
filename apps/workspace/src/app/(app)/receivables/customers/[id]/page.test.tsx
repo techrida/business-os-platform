@@ -14,8 +14,14 @@ const mocks = vi.hoisted(() => ({
   getCustomerStatement: vi.fn(),
   getCustomerAdvance: vi.fn(),
   getCustomer: vi.fn(),
+  getMe: vi.fn(),
 }));
 vi.mock('@/lib/bff', () => ({ requireStaffSession: mocks.requireStaffSession }));
+// The live grants come from GET /v1/me; when it fails the page falls back to the role defaults.
+vi.mock('@/lib/api', async (importOriginal) => ({
+  ...(await importOriginal<object>()),
+  getMe: mocks.getMe,
+}));
 vi.mock('@/lib/api-receivables', () => ({
   getCustomerStatement: mocks.getCustomerStatement,
   getCustomerAdvance: mocks.getCustomerAdvance,
@@ -37,6 +43,12 @@ beforeEach(() => {
   });
   mocks.getCustomerStatement.mockResolvedValue([settlementRow()]);
   mocks.getCustomerAdvance.mockResolvedValue([advanceRow()]);
+  mocks.getMe.mockRejectedValue(new Error('down'));
+});
+
+/** The live grants `/v1/me` reports, each at `all`. */
+const liveGrants = (...permissions: string[]) => ({
+  permissions: permissions.map((permission) => ({ permission, scope: 'all' })),
 });
 
 describe('customer statement', () => {
@@ -182,6 +194,31 @@ describe('customer statement', () => {
 
   it('does not fetch anything for a role without ar.read', async () => {
     mocks.requireStaffSession.mockResolvedValue({ accessToken: 't', roles: ['sales'] });
+    const html = await render();
+    expect(html).toContain('Your roles do not include receivables');
+    expect(mocks.getCustomerStatement).not.toHaveBeenCalled();
+    expect(mocks.getCustomerAdvance).not.toHaveBeenCalled();
+    expect(mocks.getCustomer).not.toHaveBeenCalled();
+  });
+
+  it('follows the saved grants over the role defaults for the statement and Record payment', async () => {
+    // Sales lacks both by default; the Founder granted them in Settings > Access.
+    mocks.requireStaffSession.mockResolvedValue({ accessToken: 't', roles: ['sales'] });
+    mocks.getMe.mockResolvedValue(liveGrants('ar.read', 'payment.record'));
+    const granted = await render();
+    expect(mocks.getCustomerStatement).toHaveBeenCalledTimes(1);
+    expect(granted).toContain(`href="/payments/new?customerId=${CUSTOMER_ID}"`);
+
+    // Accountant holds both by default; payment.record was removed from the saved rows.
+    mocks.requireStaffSession.mockResolvedValue({ accessToken: 't', roles: ['accountant'] });
+    mocks.getMe.mockResolvedValue(liveGrants('ar.read'));
+    const removed = await render();
+    expect(removed).toContain('href="/payments"');
+    expect(removed).not.toContain('/payments/new');
+  });
+
+  it('closes the statement when the saved grants removed ar.read, fetching nothing', async () => {
+    mocks.getMe.mockResolvedValue(liveGrants('payment.record'));
     const html = await render();
     expect(html).toContain('Your roles do not include receivables');
     expect(mocks.getCustomerStatement).not.toHaveBeenCalled();
