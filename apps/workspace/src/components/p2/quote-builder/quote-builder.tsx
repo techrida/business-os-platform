@@ -248,6 +248,13 @@ export function QuoteBuilder({
     ]),
   ]);
   const firstPreview = useRef(true);
+  // The pricing inputs on screen now. A reply is shown whenever it answers them, even if the request
+  // that asked was cleaned up meanwhile (TR-Q8: a dropped reply left the totals updating until the next
+  // keystroke). A reply for inputs that have since changed is ignored.
+  const currentPreviewKey = useRef(previewKey);
+  useEffect(() => {
+    currentPreviewKey.current = previewKey;
+  });
 
   useEffect(() => {
     const snapshot = latest.current;
@@ -258,7 +265,6 @@ export function QuoteBuilder({
     )
       return;
 
-    let cancelled = false;
     const delay = firstPreview.current || retryNow.current ? 0 : 600;
     firstPreview.current = false;
     retryNow.current = false;
@@ -267,7 +273,7 @@ export function QuoteBuilder({
       let next: PreviewView;
       try {
         // A reply that never comes must not leave the panel waiting for ever: after the limit it says
-        // so and offers Try again. A late reply to an abandoned request is ignored.
+        // so and offers Try again.
         const res = await Promise.race([
           previewQuoteAction({ quotationId, versionId, values: snapshot }),
           new Promise<'timeout'>((resolve) => {
@@ -291,14 +297,16 @@ export function QuoteBuilder({
       } finally {
         clearTimeout(watchdog);
       }
-      if (!cancelled) setLastView({ ...next, key: previewKey, currency: snapshot.currency });
+      if (currentPreviewKey.current === previewKey) {
+        setLastView({ ...next, key: previewKey, currency: snapshot.currency });
+      }
     }
 
     let watchdog: ReturnType<typeof setTimeout> | undefined;
     const timer = setTimeout(() => void run(target.quotationId, target.versionId), delay);
     return () => {
-      cancelled = true;
       clearTimeout(timer);
+      // Inputs that change again bring their own limit; a reply to these still lands if it comes.
       clearTimeout(watchdog);
     };
     // The key captures the pricing inputs, including the issue date saved on the server.
