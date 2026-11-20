@@ -279,9 +279,7 @@ it('marks a value the dry run refuses with a field error, with no Try again', as
   const managers = await stageManagersAndReview();
   const dialog = document.querySelector('[role="dialog"]');
   expect(dialog?.textContent).toContain(reason);
-  const labels = [...(dialog?.querySelectorAll('button') ?? [])].map((b) =>
-    b.textContent?.trim(),
-  );
+  const labels = [...(dialog?.querySelectorAll('button') ?? [])].map((b) => b.textContent?.trim());
   expect(labels).not.toContain('Try again');
   expect(dialogButton('Save changes').disabled).toBe(true);
   await click(dialogButton('Back'));
