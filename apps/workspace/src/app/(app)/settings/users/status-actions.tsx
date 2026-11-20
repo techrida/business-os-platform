@@ -6,10 +6,19 @@ import { toast } from '@/components/ui/toast';
 
 import { changeUserStatusAction } from './actions';
 
-type Action = 'deactivate' | 'reactivate' | 'lock' | 'unlock';
+/** `keepLocked` is the lock action on a person already locked after failed sign-ins (the lock then never ends). */
+export type StatusActionKind = 'deactivate' | 'reactivate' | 'lock' | 'keepLocked' | 'unlock';
+
+const API_ACTION = {
+  deactivate: 'deactivate',
+  reactivate: 'reactivate',
+  lock: 'lock',
+  keepLocked: 'lock',
+  unlock: 'unlock',
+} as const;
 
 const COPY: Record<
-  Action,
+  StatusActionKind,
   { label: string; title: string; description: (name: string) => string; confirm: string }
 > = {
   deactivate: {
@@ -31,6 +40,13 @@ const COPY: Record<
     description: (name) =>
       `${name} is signed out and cannot sign in until someone unlocks them. Their records stay as they are.`,
     confirm: 'Lock',
+  },
+  keepLocked: {
+    label: 'Keep locked',
+    title: 'Keep this user locked?',
+    description: (name) =>
+      `${name} was locked after too many failed sign-ins. They stay locked until someone unlocks them, instead of being let back in when the lock runs out.`,
+    confirm: 'Keep locked',
   },
   unlock: {
     label: 'Unlock',
@@ -55,7 +71,7 @@ export function StatusAction({
   name: string;
   /** Tells rows apart for screen readers (name and email). */
   label: string;
-  action: Action;
+  action: StatusActionKind;
 }) {
   const copy = COPY[action];
   return (
@@ -68,10 +84,10 @@ export function StatusAction({
       title={copy.title}
       description={copy.description(name)}
       confirmLabel={copy.confirm}
-      destructive={action === 'deactivate' || action === 'lock'}
+      destructive={action === 'deactivate' || action === 'lock' || action === 'keepLocked'}
       onConfirm={async () => {
         try {
-          const result = await changeUserStatusAction(userId, action);
+          const result = await changeUserStatusAction(userId, API_ACTION[action]);
           if (result.status === 'ok') {
             toast.success(result.message);
             return true;

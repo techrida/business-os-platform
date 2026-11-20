@@ -1006,6 +1006,76 @@ describe('POST /v1/admin/users/:id/deactivate, /reactivate, /lock and /unlock (F
     },
   );
 
+  it('keeps a timed lock for good: lock turns failed_sign_ins into an admin lock without calling ZITADEL (P2-2)', async () => {
+    addUser(STAFF, { status: 'inactive', lockReason: 'failed_sign_ins' });
+    const record = vi.spyOn(audit, 'record');
+
+    expect(await act('lock', STAFF)).toBeNull();
+
+    expect(zitadel.statusCalls).toEqual([]);
+    expect(store.users.find((u) => u.id === STAFF)).toMatchObject({
+      status: 'inactive',
+      lockReason: 'admin',
+      lockedUntil: null,
+    });
+    expect(record).toHaveBeenCalledWith(expect.anything(), {
+      action: 'users.locked',
+      entityType: 'users',
+      entityId: STAFF,
+      before: { status: 'inactive', lockReason: 'failed_sign_ins' },
+      after: { status: 'inactive', lockReason: 'admin' },
+    });
+  });
+
+  it('refuses to lock someone already under an admin lock', async () => {
+    addUser(STAFF, { status: 'inactive', lockReason: 'admin' });
+
+    const error = await act('lock', STAFF);
+
+    expect((error as ConflictException).getResponse()).toMatchObject({ code: 'wrong_status' });
+    expect(zitadel.statusCalls).toEqual([]);
+  });
+
+  it.each(['admin', 'failed_sign_ins'] as const)(
+    'deactivates a person under a %s lock: unlock, then deactivate in ZITADEL, lock cleared, audited (P2-2)',
+    async (reason) => {
+      addUser(STAFF, { status: 'inactive', lockReason: reason });
+      const record = vi.spyOn(audit, 'record');
+
+      expect(await act('deactivate', STAFF)).toBeNull();
+
+      expect(zitadel.statusCalls).toEqual([`unlock:z-${STAFF}`, `deactivate:z-${STAFF}`]);
+      expect(zitadel.users.get(`z-${STAFF}`)).toMatchObject({ status: 'inactive', locked: false });
+      expect(store.users.find((u) => u.id === STAFF)).toMatchObject({
+        status: 'inactive',
+        lockReason: null,
+        lockedUntil: null,
+      });
+      expect(record).toHaveBeenCalledWith(expect.anything(), {
+        action: 'users.deactivated',
+        entityType: 'users',
+        entityId: STAFF,
+        before: { status: 'inactive', lockReason: reason },
+        after: { status: 'inactive', lockReason: null },
+      });
+    },
+  );
+
+  it('locks a person again in ZITADEL when deactivating them fails after the unlock, and changes nothing here', async () => {
+    addUser(STAFF, { status: 'inactive', lockReason: 'admin' });
+    const deactivateUser = vi
+      .spyOn(zitadel, 'deactivateUser')
+      .mockRejectedValue(new ZitadelHttpError('/DeactivateUser', 400, 'precondition'));
+
+    const error = await act('deactivate', STAFF);
+
+    expect((error as ConflictException).getResponse()).toMatchObject({ code: 'identity_refused' });
+    expect(deactivateUser).toHaveBeenCalledOnce();
+    expect(zitadel.statusCalls).toEqual([`unlock:z-${STAFF}`, `lock:z-${STAFF}`]);
+    expect(zitadel.users.get(`z-${STAFF}`)).toMatchObject({ status: 'inactive', locked: true });
+    expect(store.users.find((u) => u.id === STAFF)).toMatchObject({ lockReason: 'admin' });
+  });
+
   it('refuses to reactivate a locked user (ZITADEL holds them LOCKED, not INACTIVE): unlock is the action', async () => {
     addUser(STAFF, { status: 'inactive', lockReason: 'failed_sign_ins' });
 
