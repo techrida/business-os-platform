@@ -60,7 +60,6 @@ import {
 import { type Job, Queue } from 'bullmq';
 import { and, asc, desc, eq, inArray, isNull, lt, not, notExists, sql } from 'drizzle-orm';
 
-import type { AuditRecordInput } from '../../../platform/audit/audit.service';
 import type { Db, DbTransaction } from '../../../platform/db/db.module';
 import { systemActor, type TxScope } from '../../../platform/db/tx';
 import { GotenbergError } from '../../quotations/render/gotenberg.client';
@@ -69,6 +68,7 @@ import type {
   Clock,
   PdfRenderer,
   RenderDocuments,
+  RenderAudit,
   RenderLogos,
   RenderSettings,
   RunInTx,
@@ -112,11 +112,6 @@ export const INVOICE_RENDER_CLOCK = Symbol('INVOICE_RENDER_CLOCK');
 export const INVOICE_RENDER_LOGOS = Symbol('INVOICE_RENDER_LOGOS');
 /** AuditService in the worker: writes the admin entry when a render is given up. */
 export const INVOICE_RENDER_AUDIT = Symbol('INVOICE_RENDER_AUDIT');
-
-/** The audit trail, as a port: AuditService.record in the worker, a fake in the tests. */
-export interface RenderAudit {
-  record(tx: DbTransaction, e: AuditRecordInput): Promise<void>;
-}
 
 export interface RenderCandidate {
   tenantId: string;

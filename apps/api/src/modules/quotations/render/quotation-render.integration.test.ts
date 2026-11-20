@@ -4,8 +4,10 @@
 // against the fake clamd. Fakes: authz (it must never be called on the system path), audit, the scan queue.
 //
 // What it holds:
-//   * selection: approved with state none is picked; failed only after 5 min, pending only after 10 min;
-//     rendered, draft and sent versions never;
+//   * selection: approved with state none is picked; failed only after the pause its attempts call for and never at
+//     the try limit (render-retry.ts), pending only after 10 min; rendered, draft and sent versions never;
+//   * a render that keeps failing (round 4, R4c2: TR-Q4, F1-Q13) counts its attempts, is given up at the limit with one
+//     admin entry `quotation.pdf_render_failed` on the quotation, and a success resets the count;
 //   * an approved version ends `rendered` with one document, a 32-byte rendered_sha256 that matches the document
 //     version, and the document is clean at once (a generated file skips the virus scan, D28; no scan job is queued);
 //   * the render update passes the frozen guard (the version stays approved, its content stays frozen);
@@ -44,6 +46,7 @@ import { ScanProcessor } from '../../../platform/documents/scan.processor';
 import { SignedLinks, type LinkStore } from '../../../platform/documents/signed-link';
 import { DiskStorageAdapter } from '../../../platform/documents/storage.adapter';
 import { SettingsService } from '../../../platform/settings/settings.service';
+import { AuditService } from '../../../platform/audit/audit.service';
 import {
   drizzleHeadLoader,
   QUOTATION_OWNER_TYPE,
@@ -54,7 +57,6 @@ import { GotenbergClient } from './gotenberg.client';
 import { NO_DOCUMENT_LOGO_RESOLVER } from './issuer';
 import {
   drizzleRenderStore,
-  FAILED_RETRY_MS,
   ORPHAN_AFTER_MS,
   PENDING_STALE_MS,
   QuotationRenderSweeper,
@@ -62,6 +64,7 @@ import {
   type RenderCandidate,
   type RunInTx,
 } from './quotation-render.sweeper';
+import { MAX_RENDER_ATTEMPTS, nextRetryPauseMs, RETRY_PAUSE_BASE_MS } from './render-retry';
 
 vi.setConfig({ testTimeout: 60_000, hookTimeout: 180_000 });
 
@@ -104,6 +107,8 @@ let gotenbergServer: Server;
 let gotenbergUrl: string;
 let sweeper: QuotationRenderSweeper;
 let store: ReturnType<typeof drizzleRenderStore>;
+/** The real audit log the sweeper writes its admin entry to. */
+let renderAudit: AuditService;
 
 /** What the fake Gotenberg is told to do, and what it saw. */
 const gotenberg = {
@@ -186,6 +191,7 @@ beforeAll(async () => {
   documents.registerOwner(new QuotationOwnerPolicy(drizzleHeadLoader(db)));
   settings = new SettingsService(db);
   store = drizzleRenderStore(db);
+  renderAudit = new AuditService(db);
 
   fakeClamd = await startFakeClamd();
   processor = new ScanProcessor(
@@ -236,9 +242,16 @@ afterEach(async () => {
 
 function makeSweeper(pdf: PdfRenderer): QuotationRenderSweeper {
   // No entity logo is set in these tests, so the logo resolver is never asked; the unit tests cover it.
-  return new QuotationRenderSweeper(store, runTx, documents, settings, pdf, () => new Date(), {
-    forScope: () => NO_DOCUMENT_LOGO_RESOLVER,
-  });
+  return new QuotationRenderSweeper(
+    store,
+    runTx,
+    documents,
+    settings,
+    pdf,
+    () => new Date(),
+    { forScope: () => NO_DOCUMENT_LOGO_RESOLVER },
+    renderAudit,
+  );
 }
 
 /** A tenant with its default entity, a tax code, a customer and (unless told not to) the issuing entity's settings. */
@@ -275,6 +288,8 @@ interface SeedOptions {
   /** The version's status; `approved` by default. Never `rendered`: that comes from a real render. */
   status?: 'draft' | 'approved' | 'sent';
   renderState?: 'none' | 'pending' | 'failed';
+  /** Failed renders so far (render_attempts); 0 by default, as for a version that failed before they were counted. */
+  renderAttempts?: number;
   /** How long ago the version last changed; render retries are timed from it. */
   idleMs?: number;
 }
@@ -339,7 +354,9 @@ async function seedVersion(scope: TestScope, options: SeedOptions = {}): Promise
       const updatedAt = new Date(Date.now() - (options.idleMs ?? 0));
       await tx.execute(sql`
         UPDATE app.quotation_versions
-           SET render_state = ${options.renderState ?? 'none'}, updated_at = ${ts(updatedAt)}::timestamptz
+           SET render_state = ${options.renderState ?? 'none'},
+               render_attempts = ${options.renderAttempts ?? 0},
+               updated_at = ${ts(updatedAt)}::timestamptz
          WHERE id = ${id}::uuid`);
     }
     return id;
@@ -351,10 +368,12 @@ async function versionRow(versionId: string) {
   const { rows } = await pool.query<{
     status: string;
     render_state: string;
+    render_attempts: number;
+    quotation_id: string;
     rendered_document_id: string | null;
     rendered_sha256: Buffer | null;
   }>(
-    `SELECT status, render_state, rendered_document_id, rendered_sha256
+    `SELECT status, render_state, render_attempts, quotation_id, rendered_document_id, rendered_sha256
        FROM app.quotation_versions WHERE id = $1`,
     [versionId],
   );
@@ -411,13 +430,32 @@ describe('quotation render candidates', () => {
   it('picks approved versions that need a render and nothing else', async () => {
     const scope = await newScope();
     const fresh = await seedVersion(scope);
+    // Before 0115 a failure was not counted: 0 attempts waits the first pause.
     const failedRecently = await seedVersion(scope, {
       renderState: 'failed',
-      idleMs: FAILED_RETRY_MS - 60_000,
+      idleMs: RETRY_PAUSE_BASE_MS - 20_000,
     });
     const failedLongAgo = await seedVersion(scope, {
       renderState: 'failed',
-      idleMs: FAILED_RETRY_MS + 60_000,
+      idleMs: RETRY_PAUSE_BASE_MS + 20_000,
+    });
+    // After two failures the pause is longer: the same idle time is not enough.
+    const secondPause = nextRetryPauseMs(2) ?? 0;
+    const failedTwiceRecently = await seedVersion(scope, {
+      renderState: 'failed',
+      renderAttempts: 2,
+      idleMs: secondPause - 20_000,
+    });
+    const failedTwiceLongAgo = await seedVersion(scope, {
+      renderState: 'failed',
+      renderAttempts: 2,
+      idleMs: secondPause + 20_000,
+    });
+    // Given up: never taken again, however long ago.
+    const givenUp = await seedVersion(scope, {
+      renderState: 'failed',
+      renderAttempts: MAX_RENDER_ATTEMPTS,
+      idleMs: 365 * 24 * 60 * 60_000,
     });
     const pendingRecently = await seedVersion(scope, {
       renderState: 'pending',
@@ -437,8 +475,17 @@ describe('quotation render candidates', () => {
 
     expect(picked).toContain(fresh.versionId);
     expect(picked).toContain(failedLongAgo.versionId);
+    expect(picked).toContain(failedTwiceLongAgo.versionId);
     expect(picked).toContain(pendingStale.versionId);
-    for (const never of [failedRecently, pendingRecently, draft, sent, rendered]) {
+    for (const never of [
+      failedRecently,
+      failedTwiceRecently,
+      givenUp,
+      pendingRecently,
+      draft,
+      sent,
+      rendered,
+    ]) {
       expect(picked).not.toContain(never.versionId);
     }
   });
@@ -571,6 +618,70 @@ describe('quotation render', () => {
     expect(row.rendered_document_id).toBeNull();
     expect(await documentRows(v.versionId)).toHaveLength(0);
     expect(queue.add).not.toHaveBeenCalled();
+  });
+});
+
+describe('a render that keeps failing (R4c2: TR-Q4, F1-Q13)', () => {
+  async function actions(scope: TxScope, quotationId: string): Promise<string[]> {
+    const events = await renderAudit.list(scope, {
+      entityType: 'quotations',
+      entityId: quotationId,
+      limit: 100,
+    });
+    return events.map((e) => e.action).filter((a) => a.startsWith('quotation.pdf_'));
+  }
+  /** Moves the version's last change back past any pause, so it is due again now. */
+  async function waitOutPause(scope: TxScope, versionId: string): Promise<void> {
+    await withTx(db, scope, seedActor(), (tx) =>
+      tx.execute(
+        sql`UPDATE app.quotation_versions SET updated_at = now() - interval '1 day'
+             WHERE id = ${versionId}::uuid`,
+      ),
+    );
+  }
+
+  it('counts each failure, gives up at the limit with one admin entry, and is never taken again', async () => {
+    const scope = await newScope();
+    const v = await seedVersion(scope);
+    gotenberg.mode = 'error';
+
+    for (let n = 1; n <= MAX_RENDER_ATTEMPTS; n += 1) {
+      expect(await sweeper.renderOne(v)).toBe('failed');
+      const row = await versionRow(v.versionId);
+      expect(row).toMatchObject({ render_state: 'failed', render_attempts: n });
+      const ids = (await store.candidates(new Date(), 1_000)).map((c) => c.versionId);
+      // Held back during its pause; due after it while tries are left.
+      expect(ids).not.toContain(v.versionId);
+      await waitOutPause(scope, v.versionId);
+      const due = (await store.candidates(new Date(), 1_000)).map((c) => c.versionId);
+      if (n < MAX_RENDER_ATTEMPTS) {
+        expect(due).toContain(v.versionId);
+        expect(await actions(scope, row.quotation_id)).toEqual([]);
+      } else {
+        expect(due).not.toContain(v.versionId);
+      }
+    }
+    const { quotation_id: quotationId } = await versionRow(v.versionId);
+    expect(await actions(scope, quotationId)).toEqual(['quotation.pdf_render_failed']);
+    // Given up: the claim refuses it, so it cannot fail again or write a second entry.
+    expect(await sweeper.renderOne(v)).toBe('skipped');
+    expect((await versionRow(v.versionId)).render_attempts).toBe(MAX_RENDER_ATTEMPTS);
+    expect(await actions(scope, quotationId)).toEqual(['quotation.pdf_render_failed']);
+  });
+
+  it('resets the attempts when a later try renders', async () => {
+    const scope = await newScope();
+    const v = await seedVersion(scope);
+    gotenberg.mode = 'error';
+    expect(await sweeper.renderOne(v)).toBe('failed');
+    expect((await versionRow(v.versionId)).render_attempts).toBe(1);
+    await waitOutPause(scope, v.versionId);
+    gotenberg.mode = 'ok';
+    expect(await sweeper.renderOne(v)).toBe('rendered');
+    expect(await versionRow(v.versionId)).toMatchObject({
+      render_state: 'rendered',
+      render_attempts: 0,
+    });
   });
 });
 

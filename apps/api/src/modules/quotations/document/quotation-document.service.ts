@@ -1,10 +1,13 @@
 // QuotationDocumentService: a staff member downloads the rendered PDF of a quotation version. Serves the NFRs:
 // - "a file is served only after a clean scan": the link comes from DocumentsService.issueLinkForOwner, which
 //   refuses unless the newest upload of the document is `clean`. The refusals are told apart so the screen can say
-//   what is true: still being prepared (no render yet, or the file awaits its scan) is a 409
-//   `quotation_pdf_not_ready`; a render that failed is a 424 `quotation_pdf_failed` (staff can retry it); a file that
-//   was removed or whose upload is infected, rejected or failed its scan is a 404 `quotation_pdf_unavailable`;
-// - a failed render is requeued by `retry` (render_state failed -> none, so the render sweeper takes it again), audited;
+//   what is true: still being prepared (no render yet, a failed render the sweeper will try again, or the file awaits
+//   its scan) is a 409 `quotation_pdf_not_ready`; a render that was given up after its last try (render-retry.ts) is
+//   a 424 `quotation_pdf_failed` (staff can retry it); a file that was removed or whose upload is infected, rejected or
+//   failed its scan is a 404 `quotation_pdf_unavailable`. So a quotation never shows "being prepared" for ever
+//   (round 4, R4c2: TR-Q4, F1-Q13);
+// - a given-up render is requeued by `retry` (render_state failed -> none and its attempts back to 0, so the render
+//   sweeper takes it again with a fresh set of tries), audited;
 // - "authorization is deny-by-default" and "one legal entity at a time": the version is read in the caller's entity
 //   under the same scopeWhereFor('quotation.read') rule as the drafting reads, so another entity's version, or
 //   another owner's under `own` scope, is a 404 rather than a 403 that would confirm it exists;
@@ -19,7 +22,7 @@ import {
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
-import { and, eq } from 'drizzle-orm';
+import { and, eq, gte } from 'drizzle-orm';
 
 import { AuditService } from '../../../platform/audit/audit.service';
 import { scopeWhereFor } from '../../../platform/authz/authz.service';
@@ -29,6 +32,7 @@ import { withTx } from '../../../platform/db/tx';
 import { DocumentsService } from '../../../platform/documents/documents.service';
 import { DraftingCaller } from '../drafting/drafting.caller';
 import { QUOTATION_OWNER_TYPE } from '../quotation-owner.policy';
+import { MAX_RENDER_ATTEMPTS } from '../render/render-retry';
 
 /** What the link needs of a version: the entity it lives in and its rendered document, null when none. */
 export interface QuotationDocumentHead {
@@ -37,6 +41,8 @@ export interface QuotationDocumentHead {
   renderedDocumentId: string | null;
   /** The render job's state for the version: none, pending, rendered or failed. */
   renderState: QuotationRenderState;
+  /** Failed renders since the last success or Retry; `failed` at MAX_RENDER_ATTEMPTS is given up. */
+  renderAttempts: number;
   /** The version's status; the render sweeper only renders an approved one. */
   status: QuotationVersionStatus;
 }
@@ -95,6 +101,7 @@ export class QuotationDocumentStore {
         organizationId: quotationVersions.organizationId,
         renderedDocumentId: quotationVersions.renderedDocumentId,
         renderState: quotationVersions.renderState,
+        renderAttempts: quotationVersions.renderAttempts,
         status: quotationVersions.status,
       })
       .from(quotationVersions)
@@ -118,10 +125,11 @@ export class QuotationDocumentStore {
   }
 
   /**
-   * Puts a failed render back in the queue: one conditional UPDATE, render_state failed -> none, only for a version
-   * of status approved (the sweeper renders no other status, so resetting one would only hide the failure). The
-   * render sweeper takes a `none` approved version on its next pass (no other column is needed). True only for the
-   * caller that moved it, so a second click, or a sweeper claim in between, changes nothing.
+   * Puts a given-up render back in the queue: one conditional UPDATE, render_state failed -> none and render_attempts
+   * back to 0, only for a version of status approved whose tries are used up (the sweeper renders no other status, so
+   * resetting one would only hide the failure; one with tries left is still being retried). The render sweeper takes
+   * a `none` approved version on its next pass. True only for the caller that moved it, so a second click, or a
+   * sweeper claim in between, changes nothing.
    */
   async requeueFailed(
     tx: DbTransaction,
@@ -131,13 +139,14 @@ export class QuotationDocumentStore {
   ): Promise<boolean> {
     const rows = await tx
       .update(quotationVersions)
-      .set({ renderState: 'none', updatedAt: now })
+      .set({ renderState: 'none', renderAttempts: 0, updatedAt: now })
       .where(
         and(
           eq(quotationVersions.tenantId, head.tenantId),
           eq(quotationVersions.organizationId, head.organizationId),
           eq(quotationVersions.id, versionId),
           eq(quotationVersions.renderState, 'failed'),
+          gte(quotationVersions.renderAttempts, MAX_RENDER_ATTEMPTS),
           eq(quotationVersions.status, 'approved'),
         ),
       )
@@ -158,8 +167,9 @@ export class QuotationDocumentService {
 
   /**
    * A signed link to the rendered PDF of one version. 403 for a portal caller; 404 `not_found` when the version is
-   * not in the caller's read scope or not of that quotation; 424 `quotation_pdf_failed` when the render failed;
-   * 409 `quotation_pdf_not_ready` while it is not rendered yet or its file awaits the scan; 404
+   * not in the caller's read scope or not of that quotation; 424 `quotation_pdf_failed` when the render was given up;
+   * 409 `quotation_pdf_not_ready` while it is not rendered yet (a failed render with tries left included) or its file
+   * awaits the scan; 404
    * `quotation_pdf_unavailable` when the file was removed or its upload is infected, rejected or failed the scan.
    * The link is issued after the read transaction closes, in the version's own entity.
    */
@@ -170,9 +180,9 @@ export class QuotationDocumentService {
       this.store.head(tx, principal, quotationId, versionId),
     );
     if (head === undefined) throw versionNotFound();
-    if (head.renderState === 'failed') throw renderFailed();
+    if (renderGivenUp(head)) throw renderFailed();
     const documentId = head.renderedDocumentId;
-    if (head.renderState === 'none' || head.renderState === 'pending' || documentId === null) {
+    if (head.renderState !== 'rendered' || documentId === null) {
       throw notReady();
     }
     const entity = { tenantId: head.tenantId, organizationId: head.organizationId };
@@ -197,10 +207,11 @@ export class QuotationDocumentService {
   }
 
   /**
-   * Puts the PDF of a version whose render failed back in the render queue: 202 `{ state: 'queued' }`. 403 for a
-   * portal caller; 404 for a version outside the caller's read scope; 409 `quotation_pdf_retry_not_needed` when the
-   * render did not fail or the version is not approved (so a second click, or a click while the sweeper already took it, is refused and changes
-   * nothing). The state change and its audit row are one transaction under the caller's scope and actor.
+   * Puts the PDF of a version whose render was given up back in the render queue: 202 `{ state: 'queued' }`. 403 for
+   * a portal caller; 404 for a version outside the caller's quotation.send scope; 409 `quotation_pdf_retry_not_needed`
+   * when the render was not given up (never failed, still being tried) or the version is not approved, so a second
+   * click, or a click while the sweeper already took it, is refused and changes nothing. The state change and its
+   * audit row are one transaction under the caller's scope and actor.
    */
   async retry(quotationId: string, versionId: string): Promise<QuotationPdfRetryDto> {
     const { scope, actor, principal } = this.caller.current();
@@ -209,7 +220,7 @@ export class QuotationDocumentService {
       // A retry writes: the quotation must be inside the caller's quotation.send scope, not only quotation.read.
       const head = await this.store.head(tx, principal, quotationId, versionId, 'quotation.send');
       if (head === undefined) throw versionNotFound();
-      if (head.renderState !== 'failed' || head.status !== 'approved') throw retryNotNeeded();
+      if (!renderGivenUp(head) || head.status !== 'approved') throw retryNotNeeded();
       if (!(await this.store.requeueFailed(tx, head, versionId, new Date()))) {
         throw retryNotNeeded();
       }
@@ -217,12 +228,17 @@ export class QuotationDocumentService {
         action: 'quotation.pdf_retry_requested',
         entityType: AUDIT_ENTITY,
         entityId: quotationId,
-        before: { versionId, renderState: 'failed' },
-        after: { versionId, renderState: 'none' },
+        before: { versionId, renderState: 'failed', renderAttempts: head.renderAttempts },
+        after: { versionId, renderState: 'none', renderAttempts: 0 },
       });
     });
     return { state: 'queued' };
   }
+}
+
+/** The render failed on its last try: the sweeper will not take it again until a Retry. */
+function renderGivenUp(head: Pick<QuotationDocumentHead, 'renderState' | 'renderAttempts'>) {
+  return head.renderState === 'failed' && head.renderAttempts >= MAX_RENDER_ATTEMPTS;
 }
 
 function assertStaff(principal: Principal): void {

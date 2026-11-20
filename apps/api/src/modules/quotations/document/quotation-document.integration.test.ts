@@ -63,6 +63,7 @@ import {
 } from '../drafting/quotation.fixture';
 import { PricingService } from '../pricing/pricing.service';
 import { QUOTATION_OWNER_TYPE } from '../quotation-owner.policy';
+import { MAX_RENDER_ATTEMPTS } from '../render/render-retry';
 import { QuotationDocumentService, QuotationDocumentStore } from './quotation-document.service';
 
 vi.setConfig({ testTimeout: 60_000, hookTimeout: 180_000 });
@@ -436,11 +437,19 @@ async function asSystem(sql: string, params: unknown[]) {
   }
 }
 
-/** Sets the render state straight, as the sweeper leaves it (a failed render has no rendered document). */
-async function setRenderState(versionId: string, state: 'none' | 'pending' | 'failed') {
+/**
+ * Sets the render state straight, as the sweeper leaves it (a failed render has no rendered document). `failed` is
+ * the sweeper's last word unless told otherwise: given up after MAX_RENDER_ATTEMPTS tries (render-retry.ts).
+ */
+async function setRenderState(
+  versionId: string,
+  state: 'none' | 'pending' | 'failed',
+  attempts = state === 'failed' ? MAX_RENDER_ATTEMPTS : 0,
+) {
   await asSystem(
-    `UPDATE app.quotation_versions SET render_state = $2, updated_at = now() WHERE id = $1::uuid`,
-    [versionId, state],
+    `UPDATE app.quotation_versions SET render_state = $2, render_attempts = $3, updated_at = now()
+      WHERE id = $1::uuid`,
+    [versionId, state, attempts],
   );
 }
 /** Moves a Draft version to approved the way the schema allows (draft -> submitted -> approved). */
@@ -465,9 +474,26 @@ const renderStateOf = async (versionId: string) =>
       [versionId],
     )
   ).rows[0]!.render_state;
+const renderAttemptsOf = async (versionId: string) =>
+  (
+    await ownerPool.query<{ render_attempts: number }>(
+      'SELECT render_attempts FROM app.quotation_versions WHERE id = $1::uuid',
+      [versionId],
+    )
+  ).rows[0]!.render_attempts;
 
 describe('QuotationDocumentService.link: the three refusals', () => {
-  it('is a 424 quotation_pdf_failed when the render failed', async () => {
+  it('is a 409 quotation_pdf_not_ready, not a failure, while a failed render still has tries left', async () => {
+    const q = await createQuotation();
+    await setRenderState(q.currentVersionId, 'failed', MAX_RENDER_ATTEMPTS - 1);
+
+    const { status, body } = await answerOf(service.link(q.id, q.currentVersionId));
+
+    expect(status).toBe(409);
+    expect(body).toMatchObject({ code: 'quotation_pdf_not_ready' });
+  });
+
+  it('is a 424 quotation_pdf_failed when the render was given up', async () => {
     const q = await createQuotation();
     await setRenderState(q.currentVersionId, 'failed');
 
@@ -540,7 +566,20 @@ describe('QuotationDocumentService.link: the three refusals', () => {
 // ---------------------------------------------------------------------------------------------- retry
 
 describe('QuotationDocumentService.retry', () => {
-  it('requeues a failed render (failed -> none), audits it, and the link then reads 409 not ready', async () => {
+  it('is a 409 quotation_pdf_retry_not_needed while a failed render still has tries left, and changes nothing', async () => {
+    const q = await createQuotation();
+    await approveVersion(q.currentVersionId);
+    await setRenderState(q.currentVersionId, 'failed', 1);
+
+    const { status, body } = await answerOf(service.retry(q.id, q.currentVersionId));
+
+    expect(status).toBe(409);
+    expect(body).toMatchObject({ code: 'quotation_pdf_retry_not_needed' });
+    expect(await renderStateOf(q.currentVersionId)).toBe('failed');
+    expect(await renderAttemptsOf(q.currentVersionId)).toBe(1);
+  });
+
+  it('requeues a given-up render (failed -> none, attempts -> 0), audits it, and the link then reads 409 not ready', async () => {
     const q = await createQuotation();
     await approveVersion(q.currentVersionId);
     await setRenderState(q.currentVersionId, 'failed');
@@ -548,6 +587,7 @@ describe('QuotationDocumentService.retry', () => {
     await expect(service.retry(q.id, q.currentVersionId)).resolves.toEqual({ state: 'queued' });
 
     expect(await renderStateOf(q.currentVersionId)).toBe('none');
+    expect(await renderAttemptsOf(q.currentVersionId)).toBe(0);
     const events = (
       await audit.list(scopeA, { entityType: 'quotations', entityId: q.id, limit: 100 })
     ).filter((e) => e.action === 'quotation.pdf_retry_requested');
