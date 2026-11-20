@@ -177,6 +177,15 @@ describe('quotation statuses and the transition table', () => {
     }
   });
 
+  it('has no withdraw (Recall): only an approver returns a Submitted version, and Cancel ends it (F1-Q27)', async () => {
+    expect(QUOTATION_TRANSITIONS.map((t) => t.action)).not.toContain('withdraw');
+    const back = QUOTATION_TRANSITIONS.filter((t) => t.from === 'submitted' && t.to === 'returned');
+    expect(back.map((t) => t.action)).toEqual(['return']);
+    // No dead body schema is left for a route that does not exist.
+    const contracts: Record<string, unknown> = await import('./index.js');
+    expect(Object.keys(contracts).filter((k) => /withdrawquotation/i.test(k))).toEqual([]);
+  });
+
   it('lets only the system expire a version', () => {
     for (const t of QUOTATION_TRANSITIONS.filter((x) => x.action === 'expire')) {
       expect(t.by).toBe('system');
