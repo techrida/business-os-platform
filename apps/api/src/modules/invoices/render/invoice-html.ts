@@ -9,7 +9,18 @@
 //
 // The one image allowed is the company logo frozen at print 1 (U12), and only as a data URL that passes the logo schema
 // here; the CSP then allows `img-src data:` and nothing more. With no logo the page is exactly as before.
+//
+// Like the screens (workspace invoice document, portal invoice view; D42), the page ends with the total in words, the
+// signatory block ("Authorised signatory" under the name and title) and the seller's contact lines (U16-Q4):
+// - The words are spelled from the frozen total with this print's number system by the same `amountInWords` the
+//   screens use, so every print of one invoice spells the same words. Odd data omits the line; it never fails a render.
+// - The phones, email and signatory are not on the frozen invoice row. Print 1 freezes them from the company profile
+//   into its format snapshot beside the logo, and a copy prints the stored ones, so a later profile edit never
+//   changes what a reprint says. A copy of an original printed before contacts were frozen prints none, as that
+//   original did. The address and PAN/VAT number always come from the seller frozen at issue.
+import type { DocumentSellerContact } from '@bos/contracts';
 import {
+  amountInWords,
   DEFAULT_CUSTOMER_DATE_FORMAT,
   DEFAULT_NUMBER_SYSTEMS,
   Dec,
@@ -108,6 +119,10 @@ const CSS = `
   .totals { width: 100%; border-collapse: collapse; }
   .totals td { padding: 4pt 6pt; border-bottom: .5pt solid var(--line); }
   .totals .grand td { padding-block: 8pt; background: var(--brand); color: #fff; font-weight: 700; font-size: 10pt; }
+  .words { margin-top: 12pt; font-weight: 600; break-inside: avoid; }
+  .sign { display: flex; flex-direction: column; align-items: flex-end; gap: 1pt; margin-top: 36pt; break-inside: avoid; }
+  .sign .rule { width: 52mm; margin-bottom: 4pt; border-top: .5pt solid var(--ink); }
+  .sign .name { font-weight: 700; }
   .foot {
     margin-top: 26pt;
     padding: 8pt 0;
@@ -138,6 +153,17 @@ export interface RenderInvoiceOptions {
   dateFormat?: CustomerDateFormat;
   /** The logo frozen at print 1. Printed only when it is a valid logo data URL; otherwise the text header alone. */
   logoDataUrl?: string | null;
+  /** The phones, email and signatory frozen at print 1. Left out or null, the page prints none of them. */
+  sellerContact?: DocumentSellerContact | null;
+}
+
+/** The total in words, as the screens spell it; null on data the speller refuses, so the line is left out. */
+function totalInWords(view: InvoiceRenderView, numberSystems: NumberSystems): string | null {
+  try {
+    return amountInWords(view.totals.total, view.currency, numberSystems[view.currency]);
+  } catch {
+    return null;
+  }
 }
 
 /** Returns the full HTML document for an issued invoice. Every text is escaped. */
@@ -146,12 +172,9 @@ export function renderInvoiceHtml(
   opts: RenderInvoiceOptions = {},
 ): string {
   const dateFormat = opts.dateFormat ?? DEFAULT_CUSTOMER_DATE_FORMAT;
+  const numberSystems = opts.numberSystems ?? DEFAULT_NUMBER_SYSTEMS;
   const fmt = (amount: string): string =>
-    escapeHtml(
-      formatMoney(amount, view.currency, {
-        numberSystems: opts.numberSystems ?? DEFAULT_NUMBER_SYSTEMS,
-      }),
-    );
+    escapeHtml(formatMoney(amount, view.currency, { numberSystems }));
   const text = (value: string): string => escapeHtml(value);
   const title = TITLES[view.kind];
   const copy = view.copyNo === null ? '' : `Copy of original (${view.copyNo})`;
@@ -191,6 +214,26 @@ export function renderInvoiceHtml(
         `<tr><td>${text(t.label)} (${text(t.percent)}%) on ${fmt(t.base)}</td><td class="num">${fmt(t.tax)}</td></tr>`,
     )
     .join('');
+
+  const words = totalInWords(view, numberSystems);
+  const contact = opts.sellerContact ?? null;
+  const signatory = [
+    '<span class="rule"></span>',
+    contact?.signatoryName ? `<span class="name">${text(contact.signatoryName)}</span>` : '',
+    contact?.signatoryTitle ? `<span>${text(contact.signatoryTitle)}</span>` : '',
+    '<span class="muted">Authorised signatory</span>',
+  ].join('');
+  // The screens' footer order: phones, address, email, PAN/VAT. Empty phones are skipped, as on screen.
+  const phones = contact?.phones.filter((p) => p.trim() !== '') ?? [];
+  const footer: string[] = [`<span>${text(view.seller.legalName)}</span>`];
+  if (phones.length > 0) {
+    footer.push(
+      `<span>${phones.length > 1 ? 'Phones' : 'Phone'} ${phones.map(text).join(', ')}</span>`,
+    );
+  }
+  if (view.seller.address) footer.push(`<span>${text(view.seller.address)}</span>`);
+  if (contact?.email) footer.push(`<span>Email ${text(contact.email)}</span>`);
+  if (view.seller.panVatNo) footer.push(`<span>PAN/VAT ${text(view.seller.panVatNo)}</span>`);
 
   return `<!doctype html>
 <html lang="en">
@@ -245,10 +288,12 @@ export function renderInvoiceHtml(
     </table>
   </div>
 
+  ${words !== null ? `<p class="words">Amount in words: ${text(words)}</p>` : ''}
+
+  <div class="sign">${signatory}</div>
+
   <footer class="foot">
-    <span>${text(view.seller.legalName)}</span>
-    ${view.seller.address ? `<span>${text(view.seller.address)}</span>` : ''}
-    ${view.seller.panVatNo ? `<span>PAN/VAT ${text(view.seller.panVatNo)}</span>` : ''}
+    ${footer.join('\n    ')}
   </footer>
 </body>
 </html>

@@ -159,6 +159,7 @@ describe('InvoiceRenderSweeper.renderOne', () => {
       numberSystems: SOUTH_ASIAN,
       dateFormat: 'dd MMM yyyy',
       logoDataUrl: null,
+      sellerContact: null,
       capturedAt: NOW.toISOString(),
     });
   });
@@ -198,6 +199,7 @@ describe('InvoiceRenderSweeper.renderOne', () => {
         numberSystems: { NPR: 'south_asian', INR: 'south_asian', USD: 'international' },
         dateFormat: 'dd MMM yyyy',
         logoDataUrl: null,
+        sellerContact: null,
         capturedAt: NOW.toISOString(),
       });
     },
@@ -459,5 +461,95 @@ describe('InvoiceRenderSweeper: the company logo', () => {
     expect(htmlOf(f)).toContain('Copy of original (1)');
     expect(htmlOf(f)).not.toContain('<img');
     expect(f.resolveLogo).not.toHaveBeenCalled();
+  });
+});
+
+describe('InvoiceRenderSweeper: amount in words, signatory and seller contact (U16-Q4)', () => {
+  const profile = (over: Record<string, unknown> = {}) => ({ ...EMPTY_COMPANY_PROFILE, ...over });
+  const CONTACT_A = {
+    phones: ['01-4000000', '9800000000'],
+    email: 'billing@techrida.example',
+    signatoryName: 'Sita Sharma',
+    signatoryTitle: 'Finance Manager',
+  };
+  const htmlOf = (f: ReturnType<typeof fixture>, n = 0) =>
+    f.pdf.htmlToPdf.mock.calls[n]?.[0] as string;
+
+  it('prints the words, the signatory and the contact of the profile on print 1, and freezes them', async () => {
+    const f = fixture({ profile: profile({ ...CONTACT_A, website: 'https://techrida.example' }) });
+    await expect(f.sweeper.renderOne(candidate(1))).resolves.toBe('rendered');
+    const html = htmlOf(f);
+    expect(html).toContain(
+      'Amount in words: Twenty Lakh Eighteen Thousand One Hundred Eighty Rupees Only',
+    );
+    expect(html).toContain('<span class="name">Sita Sharma</span>');
+    expect(html).toContain('<span>Finance Manager</span>');
+    expect(html).toContain('Authorised signatory');
+    expect(html).toContain('Phones 01-4000000, 9800000000');
+    expect(html).toContain('Email billing@techrida.example');
+    // Only the four contact keys: never the website.
+    expect(html).not.toContain('techrida.example"');
+    expect(html).not.toContain('https://techrida.example');
+    const stored = f.store.recordPrint.mock.calls[0]?.[4] as DocumentFormatSnapshot;
+    expect(stored.sellerContact).toEqual(CONTACT_A);
+  });
+
+  it('prints a copy with the contact of print 1 after the profile changed', async () => {
+    const f = fixture({ profile: profile(CONTACT_A) });
+    const c = candidate(1);
+    let printed = 0;
+    let stored: DocumentFormatSnapshot | null = null;
+    f.store.load.mockImplementation(() => Promise.resolve(source(printed + 1, 'NPR', stored)));
+    f.store.recordPrint.mockImplementation(
+      (_tx, _c, printNo: number, _now, format: DocumentFormatSnapshot | null) => {
+        printed = printNo;
+        if (printNo === 1) stored = format;
+        return Promise.resolve();
+      },
+    );
+
+    await expect(f.sweeper.renderOne(c)).resolves.toBe('rendered');
+    f.live['entity.profile'] = profile({
+      phones: ['01-5999999'],
+      email: 'new@techrida.example',
+      signatoryName: 'Hari Rai',
+      signatoryTitle: 'Director',
+    });
+    await expect(f.sweeper.renderOne(c)).resolves.toBe('rendered');
+
+    const copy = htmlOf(f, 1);
+    expect(copy).toContain('Copy of original (1)');
+    expect(copy).toContain('Sita Sharma');
+    expect(copy).toContain('Email billing@techrida.example');
+    expect(copy).not.toContain('Hari Rai');
+    expect(copy).not.toContain('01-5999999');
+  });
+
+  it('prints a copy of an original printed before contacts were frozen without one, but with the words', async () => {
+    const f = fixture({
+      src: source(2, 'NPR', {
+        numberSystems: SOUTH_ASIAN,
+        dateFormat: 'dd MMM yyyy',
+        logoDataUrl: null,
+        capturedAt: NOW.toISOString(),
+      }),
+      profile: profile(CONTACT_A),
+    });
+    await expect(f.sweeper.renderOne(candidate(1))).resolves.toBe('rendered');
+    const html = htmlOf(f);
+    expect(html).toContain('Copy of original (1)');
+    expect(html).not.toContain('Sita Sharma');
+    expect(html).not.toContain('billing@techrida.example');
+    expect(html).toContain('Amount in words: Twenty Lakh');
+    expect(html).toContain('Authorised signatory');
+  });
+
+  it('prints no contact, and still renders, when the profile no longer parses', async () => {
+    const f = fixture({ profile: { phones: 'not a list' } });
+    await expect(f.sweeper.renderOne(candidate(1))).resolves.toBe('rendered');
+    expect(htmlOf(f)).not.toContain('Email ');
+    expect(htmlOf(f)).toContain('Authorised signatory');
+    const stored = f.store.recordPrint.mock.calls[0]?.[4] as DocumentFormatSnapshot;
+    expect(stored.sellerContact).toBeNull();
   });
 });
