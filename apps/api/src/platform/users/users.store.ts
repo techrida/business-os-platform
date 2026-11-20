@@ -294,12 +294,19 @@ export class SqlUsersStore extends UsersStore {
   }
 
   membershipsOf(q: Queryable, tenantId: string, userId: string): Promise<MembershipRow[]> {
+    // A membership left on a retired department grants no department reach: it reads as unassigned
+    // staff, the same as a null department.
     return rows<MembershipRow & Record<string, unknown>>(
       q,
-      sql`SELECT organization_id AS "organizationId", is_default AS "isDefault",
-                 role_keys AS "roleKeys", department_id AS "departmentId", level
-          FROM app.user_entities WHERE tenant_id = ${tenantId} AND user_id = ${userId}
-          ORDER BY is_default DESC, organization_id`,
+      sql`SELECT ue.organization_id AS "organizationId", ue.is_default AS "isDefault",
+                 ue.role_keys AS "roleKeys",
+                 CASE WHEN d.status = 'retired' THEN NULL ELSE ue.department_id END AS "departmentId",
+                 CASE WHEN d.status = 'retired' THEN 'staff' ELSE ue.level END AS level
+          FROM app.user_entities ue
+          LEFT JOIN app.departments d ON d.tenant_id = ue.tenant_id
+            AND d.organization_id = ue.organization_id AND d.id = ue.department_id
+          WHERE ue.tenant_id = ${tenantId} AND ue.user_id = ${userId}
+          ORDER BY ue.is_default DESC, ue.organization_id`,
     );
   }
 

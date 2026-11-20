@@ -10,9 +10,10 @@
 //   departments in another tenant/entity return 404.
 // - Active department names are unique per legal entity, case-insensitively (trimmed); clashes
 //   return 422 on `name`.
-// - Retiring a department with active members requires `moveMembersTo` (another active department id
-//   or explicit `null` to unassign them) and completes in one transaction; historical records keep
-//   their reference to the retired department.
+// - Retiring a department with active members requires `moveMembersTo` (another active department
+//   id or explicit `null` to unassign them) and completes in one transaction; members who were only
+//   invited are unassigned when none is given. Historical records keep their reference to the
+//   retired department.
 // - A write that changes a membership or a head bumps the access revision inside the transaction and
 //   invalidates the authz cache AFTER commit.
 import {
@@ -756,10 +757,12 @@ export class DepartmentsAdminService {
         });
       }
 
-      const activeMembers = await tx
+      // Invited members count too: on first login they would otherwise keep this department's reach.
+      const members = await tx
         .select({
           userId: userEntities.userId,
           level: userEntities.level,
+          status: users.status,
         })
         .from(userEntities)
         .innerJoin(
@@ -776,28 +779,32 @@ export class DepartmentsAdminService {
             eq(userEntities.organizationId, scope.organizationId),
             eq(userEntities.departmentId, dept.id),
             eq(idpOrgs.kind, 'staff'),
-            eq(users.status, 'active'),
+            ne(users.status, 'inactive'),
           ),
         );
 
       let touchedAccess = dept.headUserId !== null;
 
-      if (activeMembers.length > 0) {
-        if (body.moveMembersTo === undefined) {
-          const message = `Cannot retire ${dept.name} while ${activeMembers.length} active member(s) remain. Choose a destination department or explicitly unassign them.`;
+      if (members.length > 0) {
+        const activeCount = members.filter((m) => m.status === 'active').length;
+        // Only active members need an explicit choice; people who were only invited are unassigned
+        // when none is given, so a department with just invited members can still be retired.
+        if (body.moveMembersTo === undefined && activeCount > 0) {
+          const message = `Cannot retire ${dept.name} while ${activeCount} active member(s) remain. Choose a destination department or explicitly unassign them.`;
           throw new UnprocessableEntityException({
             code: 'unprocessable',
             message,
             details: {
               moveMembersTo: 'Required while active members remain in this department.',
-              activeMembers: activeMembers.length,
+              activeMembers: activeCount,
             },
           });
         }
+        const destinationId = body.moveMembersTo ?? null;
 
-        const memberIds = activeMembers.map((m) => m.userId);
-        if (body.moveMembersTo !== null) {
-          if (body.moveMembersTo === dept.id) {
+        const memberIds = members.map((m) => m.userId);
+        if (destinationId !== null) {
+          if (destinationId === dept.id) {
             const message =
               'Destination department must be different from the department being retired.';
             throw new UnprocessableEntityException({
@@ -809,7 +816,7 @@ export class DepartmentsAdminService {
           const [target] = await tx
             .select({ id: departments.id, status: departments.status })
             .from(departments)
-            .where(scoped(scope).where(departments, eq(departments.id, body.moveMembersTo)))
+            .where(scoped(scope).where(departments, eq(departments.id, destinationId)))
             .limit(1);
           if (target === undefined || target.status !== 'active') {
             const message =
@@ -823,10 +830,8 @@ export class DepartmentsAdminService {
 
           // Demote any moved head to manager so migration 0079's trigger does not replace the
           // destination department's head.
-          const movedHeadIds = activeMembers.filter((m) => m.level === 'head').map((m) => m.userId);
-          const movedOtherIds = activeMembers
-            .filter((m) => m.level !== 'head')
-            .map((m) => m.userId);
+          const movedHeadIds = members.filter((m) => m.level === 'head').map((m) => m.userId);
+          const movedOtherIds = members.filter((m) => m.level !== 'head').map((m) => m.userId);
           if (movedHeadIds.length > 0) {
             await tx
               .update(userEntities)
@@ -852,7 +857,7 @@ export class DepartmentsAdminService {
               );
           }
 
-          for (const member of activeMembers) {
+          for (const member of members) {
             const nextLevel: AccessLevel = member.level === 'head' ? 'manager' : member.level;
             await this.audit.record(tx, {
               action: 'department.member.moved',
@@ -864,7 +869,7 @@ export class DepartmentsAdminService {
             });
           }
         } else {
-          // Explicit null: unassign all active members and reset level to staff (0079 check).
+          // Explicit null: unassign all active and invited members and reset level to staff (0079 check).
           await tx
             .update(userEntities)
             .set({ departmentId: null, level: 'staff' })
@@ -876,7 +881,7 @@ export class DepartmentsAdminService {
               ),
             );
 
-          for (const member of activeMembers) {
+          for (const member of members) {
             await this.audit.record(tx, {
               action: 'department.member.removed',
               entityType: 'departments',
@@ -933,7 +938,7 @@ export class DepartmentsAdminService {
           headUserId: null,
           version: nextVersion,
           moveMembersTo: body.moveMembersTo ?? null,
-          movedCount: activeMembers.length,
+          movedCount: members.length,
         },
       });
 
