@@ -209,7 +209,7 @@ function opportunityStageMessage(
   if (stage === 'lost') {
     return canReopen
       ? 'This opportunity is lost. Use Reopen in the header to return it to Qualified.'
-      : 'Only a manager can reopen a lost opportunity.';
+      : 'This opportunity is lost. Reopening needs reopen access.';
   }
   if (stage === 'on_hold') {
     return resumeLabel
