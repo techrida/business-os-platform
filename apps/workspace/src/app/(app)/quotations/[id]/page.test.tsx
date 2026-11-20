@@ -367,6 +367,19 @@ describe('quotation detail page', () => {
     expect(html).not.toContain('Awaiting confirmation');
   });
 
+  it('offers Cancel quotation on a submitted quotation when the API says canCancel (F1-Q27)', async () => {
+    const quote = detail();
+    quote.quotation.status = 'submitted';
+    quote.versions[1]!.status = 'submitted';
+    mocks.getQuotation.mockResolvedValue({ ...quote, lifecycle: { canCancel: true } });
+    const html = await render();
+    expect(html).toContain('>Cancel quotation</button>');
+    expect(html).toContain('Cancelling ends this quotation and its approval request');
+
+    mocks.getQuotation.mockResolvedValue(quote);
+    expect(await render()).not.toContain('>Cancel quotation</button>');
+  });
+
   it('asks for no evidence on a quotation that is not accepted', async () => {
     mocks.getQuotation.mockResolvedValue(detail());
     await render();
