@@ -773,6 +773,95 @@ describe("a lead's open follow-ups carry to the opportunity (U16-Q6)", () => {
     ).toMatchObject({ id: peers.id, planned: false, opportunityId });
   });
 
+  /**
+   * A colleague's change to a follow-up, held uncommitted on a second connection (raw SQL standing in for the
+   * complete and reschedule routes) while the lead converts; committed once the convert waits on it. Returns the
+   * wait the convert was in, whether it was still pending at the commit, and its response.
+   *
+   * These pin a serialization the carry relies on rather than test a lock of its own: every audited write takes the
+   * tenant's audit chain lock until COMMIT (audit.append, 0008_audit_hardening.sql), and the convert's first
+   * statement is its audited Idempotency-Key row. So a colleague's change lands wholly before the convert reads the
+   * lead's follow-ups, or after it commits, never between the read and the move. They go red if that is loosened.
+   */
+  async function convertWhileHeld(leadId: string, change: string, params: unknown[]) {
+    // The harness types its pools by the calls it makes; this one is a real pg Pool.
+    const client = await (h.ownerPool as unknown as Pool).connect();
+    let converting: Promise<request.Response> | undefined;
+    try {
+      await client.query('BEGIN');
+      // What withTx sets first: the audit trigger on activities names the actor.
+      const actor = systemActor('test');
+      await client.query(
+        `SELECT set_config('bos.tenant_id', $1, true), set_config('bos.organization_id', $2, true),
+                set_config('bos.actor_kind', $3, true), set_config('bos.actor_id', $4, true),
+                set_config('bos.correlation_id', $5, true)`,
+        [h.scopeA.tenantId, h.scopeA.organizationId, actor.kind, actor.id, actor.correlationId],
+      );
+      await client.query(change, params);
+      let settled = false;
+      converting = convert(leadId, createCustomerBody()).then((res) => {
+        settled = true;
+        return res;
+      });
+      // Wait for a signal, not a clock: either the convert is blocked on a lock, or it finished.
+      let blocked: { query: string; wait_event: string } | undefined;
+      while (blocked === undefined && !settled) {
+        const { rows } = await h.appPool.query(
+          `SELECT query, wait_event FROM pg_stat_activity
+            WHERE datname = current_database() AND wait_event_type = 'Lock'`,
+        );
+        blocked = (rows as { query: string; wait_event: string }[])[0];
+        if (blocked === undefined) await new Promise((resolve) => setImmediate(resolve));
+      }
+      const pendingAtCommit = !settled;
+      await client.query('COMMIT');
+      return { blocked, pendingAtCommit, res: await converting };
+    } finally {
+      await client.query('ROLLBACK').catch(() => undefined);
+      await converting?.catch(() => undefined);
+      client.release();
+    }
+  }
+
+  it('leaves a follow-up completed while the lead converts on the lead, as its history', async () => {
+    await h.actAs(salesStaff);
+    const lead = await qualifiedLead();
+    const call = await onLead(lead.id, salesStaff, { subject: 'Call back' });
+    const { blocked, pendingAtCommit, res } = await convertWhileHeld(
+      lead.id,
+      `UPDATE app.activities SET completed_at = now(), version = version + 1 WHERE id = $1`,
+      [call.id],
+    );
+    expect(res.status, JSON.stringify(res.body)).toBe(201);
+    expect(pendingAtCommit, 'the convert did not wait for the colleague').toBe(true);
+    // It waits at its first audited write, before it reads the lead's follow-ups.
+    expect(blocked).toMatchObject({ wait_event: 'advisory' });
+    expect(blocked?.query).toMatch(/insert into "app"\."idempotency_keys"/i);
+    const after = await activityRow(call.id);
+    expect(after).toMatchObject({ leadId: lead.id, opportunityId: null });
+    expect(after.completedAt).not.toBeNull();
+  });
+
+  it('leaves a follow-up on the lead when it is handed, while the lead converts, to someone who cannot open deals', async () => {
+    await h.actAs(salesStaff);
+    const lead = await qualifiedLead();
+    const call = await onLead(lead.id, salesStaff, { subject: 'Send the brochure' });
+    const { blocked, pendingAtCommit, res } = await convertWhileHeld(
+      lead.id,
+      `UPDATE app.activities SET assignee_user_id = $2, version = version + 1 WHERE id = $1`,
+      [call.id, marketing],
+    );
+    expect(res.status, JSON.stringify(res.body)).toBe(201);
+    expect(pendingAtCommit, 'the convert did not wait for the colleague').toBe(true);
+    expect(blocked).toMatchObject({ wait_event: 'advisory' });
+    expect(await activityRow(call.id)).toMatchObject({
+      leadId: lead.id,
+      opportunityId: null,
+      assigneeUserId: marketing,
+      completedAt: null,
+    });
+  });
+
   it('leaves a follow-up on the lead when its assignee cannot open deals (Marketing)', async () => {
     await h.actAs(salesStaff);
     const lead = await qualifiedLead();
