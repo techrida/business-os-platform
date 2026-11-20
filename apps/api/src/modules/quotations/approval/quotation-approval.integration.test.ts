@@ -59,6 +59,7 @@ import { SettingsService } from '../../../platform/settings/settings.service';
 import { ApprovalsAdminService } from '../../approvals/admin.service';
 import type { ApprovalEmailTemplate } from '../../approvals/ports';
 import { ApprovalsService } from '../../approvals/requests.service';
+import { CancelService } from '../drafting/cancel.service';
 import { DraftingService } from '../drafting/drafting.service';
 import {
   GOLDEN_ISSUE_DATE,
@@ -142,6 +143,7 @@ let scopeB: TxScope;
 let approvals: ApprovalsService;
 let drafting: DraftingService;
 let submitter: QuotationSubmitService;
+let canceller: CancelService;
 
 /** Real staff users of entity A, one per approver role, plus the admin who publishes the workflow. */
 const U = { acc: '', fin: '', mgmt: '', founder: '', admin: '' };
@@ -310,6 +312,14 @@ beforeAll(async () => {
     notify,
     audit,
     new QuotationSubmitStore(),
+    caller,
+    () => now,
+  );
+  canceller = new CancelService(
+    db,
+    approvals,
+    authz as unknown as AuthzService,
+    audit,
     caller,
     () => now,
   );
@@ -734,6 +744,54 @@ describe('quotation approval: decisions', () => {
     const error = await httpErrorOf(act(f.ownerUserId, 'accountant', request!.id, 'approve'));
     expect(error.getStatus()).toBe(403);
     expect(error.getResponse()).toMatchObject({ reason: 'separation_of_duties' });
+  });
+});
+
+describe('quotation approval: cancel while waiting (F1-Q27)', () => {
+  it('the owner cancels a submitted quotation: the request leaves the inbox and can no longer be decided', async () => {
+    const d = await draft('50000.00');
+    const submitted = await submit(d, d.rowVersion);
+    const [request] = await requestsOf(d.versionId);
+    as(U.acc, 'accountant');
+    try {
+      expect((await approvals.inbox()).map((i) => i.requestId)).toContain(request!.id);
+    } finally {
+      as(f.ownerUserId, 'sales');
+    }
+
+    // The detail offers Cancel to the owner while it waits.
+    expect((await drafting.detail(d.quotationId)).capabilities).toMatchObject({
+      canEdit: false,
+      canCancel: true,
+    });
+
+    const cancelled = await canceller.cancel(
+      d.quotationId,
+      { reason: 'Customer withdrew the enquiry', expectedVersion: submitted.version },
+      randomUUID(),
+    );
+    expect(cancelled).toMatchObject({
+      status: 'cancelled',
+      cancelReason: 'Customer withdrew the enquiry',
+    });
+
+    const [after] = await requestsOf(d.versionId);
+    expect(after!.status).toBe('cancelled');
+    as(U.acc, 'accountant');
+    try {
+      expect((await approvals.inbox()).map((i) => i.requestId)).not.toContain(request!.id);
+    } finally {
+      as(f.ownerUserId, 'sales');
+    }
+    expect((await httpErrorOf(act(U.acc, 'accountant', request!.id, 'approve'))).getStatus()).toBe(
+      409,
+    );
+    expect(await versionRow(d.versionId)).toMatchObject({ status: 'cancelled' });
+    expect((await drafting.detail(d.quotationId)).capabilities).toMatchObject({
+      canEdit: false,
+      canRevise: false,
+      canCancel: false,
+    });
   });
 });
 
