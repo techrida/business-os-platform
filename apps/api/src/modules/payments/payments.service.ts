@@ -333,7 +333,7 @@ export class PaymentsService {
 
   /**
    * The acting entity's payments, any status, whose bank reference is the same as `bankReference` once case and
-   * spaces are set aside (TR-Q12d), newest first, so the workspace can warn before a reference is used again. Only
+   * spaces are set aside (TR-Q12d), rejected and withdrawn ones left out, newest first, so the workspace can warn before a reference is used again. Only
    * payments the caller may read are listed. A warning only: recording a payment never checks this.
    */
   async referenceMatches(
@@ -366,6 +366,8 @@ export class PaymentsService {
         and(
           eq(payments.tenantId, scope.tenantId),
           eq(payments.organizationId, scope.organizationId),
+          // Re-recording a payment after it was rejected or withdrawn is normal, so those do not warn.
+          sql`${payments.status} not in ('rejected', 'withdrawn')`,
           sameReferenceWhere(query.bankReference),
         ),
       )
