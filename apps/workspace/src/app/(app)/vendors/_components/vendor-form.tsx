@@ -82,15 +82,19 @@ export function VendorForm({
   const [values, setValues] = useState<VendorValues>(initial);
   const formRef = useRef<HTMLFormElement>(null);
   const summaryRef = useRef<HTMLDivElement>(null);
+  const sameNameRef = useRef<HTMLDivElement>(null);
 
   const set =
     (field: VendorField) =>
     (e: { target: { value: string } }): void =>
       setValues((v) => ({ ...v, [field]: e.target.value }));
 
-  // Send focus to what needs attention: the summary, else the first field that is wrong.
+  // Send focus to what needs attention: the summary, the same-name warning (nothing was added, and the
+  // person may have pressed the button at the bottom), else the first field that is wrong.
   useEffect(() => {
     if (state.error) summaryRef.current?.focus();
+    else if (state.sameName !== undefined && state.sameName.length > 0)
+      sameNameRef.current?.focus();
     else formRef.current?.querySelector<HTMLElement>('[aria-invalid="true"]')?.focus();
   }, [state]);
 
@@ -208,7 +212,13 @@ export function VendorForm({
       ) : null}
 
       {mode === 'create' && state.sameName !== undefined && state.sameName.length > 0 ? (
-        <Alert tone="warning" title="A vendor with this name already exists">
+        <Alert
+          ref={sameNameRef}
+          tabIndex={-1}
+          tone="warning"
+          role="alert"
+          title="A vendor with this name already exists"
+        >
           Check it is not the same vendor before you add another:
           <ul>
             {state.sameName.map((m) => (
