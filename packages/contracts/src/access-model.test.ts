@@ -740,7 +740,10 @@ describe('reopen and company settings defaults (K2, K3)', () => {
       'crm.lead.reopen',
       'crm.opportunity.reopen',
     ] as const) {
-      expect(PERMISSIONS.filter((p) => p === permission), permission).toHaveLength(1);
+      expect(
+        PERMISSIONS.filter((p) => p === permission),
+        permission,
+      ).toHaveLength(1);
     }
   });
 });

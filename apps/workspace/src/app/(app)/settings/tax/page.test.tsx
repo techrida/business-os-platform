@@ -23,9 +23,9 @@ vi.mock('@/lib/api', async (importOriginal) => ({
   ...(await importOriginal<typeof import('@/lib/api')>()),
   getMe: (session: { accessToken: string }) => getMe(session.accessToken),
 }));
-const listTaxCodes = vi.fn();
+const listTaxCodes = vi.fn<() => unknown>();
 vi.mock('@/lib/api-tax-codes', () => ({ listTaxCodes: () => listTaxCodes() }));
-const listWithholdingCodes = vi.fn();
+const listWithholdingCodes = vi.fn<() => unknown>();
 vi.mock('@/lib/api-withholding-codes', () => ({
   listWithholdingCodes: () => listWithholdingCodes(),
 }));

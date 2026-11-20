@@ -897,10 +897,7 @@ describe('SqlUsersStore against migration 0013 (ADR 0027: tenant-scoped users)',
         { organizationId: entityA, entityName: 'Alpha Entity', userId: ids.kiran },
         { organizationId: entityA, entityName: 'Alpha Entity', userId: ids.sita },
         { organizationId: entityB, entityName: 'Beta Entity', userId: ids.kiran },
-      ].sort(
-        (x, y) =>
-          x.entityName.localeCompare(y.entityName) || (x.userId < y.userId ? -1 : 1),
-      ),
+      ].sort((x, y) => x.entityName.localeCompare(y.entityName) || (x.userId < y.userId ? -1 : 1)),
     );
 
     const zitadel = new FakeZitadel();

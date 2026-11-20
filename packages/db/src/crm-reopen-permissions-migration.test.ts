@@ -120,7 +120,7 @@ async function authzVersion(tenantId: string): Promise<number | undefined> {
 
 const levelRows = async (): Promise<unknown[]> =>
   (
-    await owner.query(
+    await owner.query<Record<string, unknown>>(
       'SELECT tenant_id, role_key, permission, min_level, scope, seeded FROM app.role_permission_levels ORDER BY 1, 2, 3, 4',
     )
   ).rows;

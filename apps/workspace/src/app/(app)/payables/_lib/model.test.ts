@@ -164,10 +164,22 @@ describe('billActions with the per-bill can flags', () => {
 
   it('decides each action by its own flag', () => {
     expect(
-      billActions({ ...matching, can: { match: false, submit: true, void: true, discard: true, exception: true } }, enter),
+      billActions(
+        {
+          ...matching,
+          can: { match: false, submit: true, void: true, discard: true, exception: true },
+        },
+        enter,
+      ),
     ).toEqual({ match: false, submit: true, void: false });
     expect(
-      billActions({ ...approved, can: { match: true, submit: true, void: false, discard: true, exception: true } }, enter).void,
+      billActions(
+        {
+          ...approved,
+          can: { match: true, submit: true, void: false, discard: true, exception: true },
+        },
+        enter,
+      ).void,
     ).toBe(false);
   });
 

@@ -329,9 +329,7 @@ describe('GET approval-sla-defaults (the default approval times for workflow edi
     const plain = principalOf('management');
     expect(status(proto.approvalSlaDefaults, plain)).toBe(403);
     currentPrincipal = plain;
-    await expect(controller.getSetting('tax.vat_rate')).rejects.toBeInstanceOf(
-      ForbiddenException,
-    );
+    await expect(controller.getSetting('tax.vat_rate')).rejects.toBeInstanceOf(ForbiddenException);
   });
 
   it('the Founder reads it too; a portal user does not', () => {
@@ -438,9 +436,7 @@ describe('who may read and change which setting (F1-Q48)', () => {
       orgKind: 'customer',
       partyId: '20000000-0000-4000-8000-000000000001',
     };
-    await expect(controller.getSetting('tax.vat_rate')).rejects.toBeInstanceOf(
-      ForbiddenException,
-    );
+    await expect(controller.getSetting('tax.vat_rate')).rejects.toBeInstanceOf(ForbiddenException);
   });
 
   it.each([

@@ -600,9 +600,7 @@ describe('TenancyInterceptor', () => {
         Routes.prototype.me,
         ENTITY_B,
       );
-      expect(grantRequests).toEqual([
-        { roles: ['sales'], level: 'manager' },
-      ]);
+      expect(grantRequests).toEqual([{ roles: ['sales'], level: 'manager' }]);
       expect(bound).toMatchObject({ departmentId: DEPT_B, level: 'manager' });
     });
 
@@ -610,9 +608,7 @@ describe('TenancyInterceptor', () => {
       // A level widens a grant to the department; with none there is nothing to widen to (Check a person agrees).
       row.memberships = [{ ...MEMBERSHIP_A, level: 'manager' }, MEMBERSHIP_B];
       const { bound } = await run(interceptor, auth(finance), Routes, Routes.prototype.me);
-      expect(grantRequests).toEqual([
-        { roles: ['finance'], level: 'staff' },
-      ]);
+      expect(grantRequests).toEqual([{ roles: ['finance'], level: 'staff' }]);
       expect(bound).toMatchObject({ departmentId: null, level: 'manager' });
     });
 
@@ -687,9 +683,7 @@ describe('TenancyInterceptor', () => {
       );
       expect(bound.roles).toEqual(['sales']);
       expect(roles).toEqual(['sales']);
-      expect(grantRequests).toEqual([
-        { roles: ['sales'], level: 'staff' },
-      ]);
+      expect(grantRequests).toEqual([{ roles: ['sales'], level: 'staff' }]);
       // Narrowed away: finance's admin.users.read is not granted in entity B.
       const body = await denial(
         run(interceptor, auth(financeAndSales), Routes, Routes.prototype.readUsers, ENTITY_B),
