@@ -32,6 +32,8 @@ export const DEPARTMENT_ACCESS_STALE_MESSAGE =
 export const DEPARTMENT_SAVE_ERROR_MESSAGE =
   'The department could not be saved. Try again in a moment.';
 export const DEPARTMENT_FORBIDDEN_MESSAGE = 'Only a Founder can change departments.';
+export const DEPARTMENT_MEMBERS_CHANGED_MESSAGE =
+  'People in this department changed. Check the updated count and try again.';
 
 const GUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
@@ -172,7 +174,8 @@ export function renameDepartment(
 /**
  * `POST /v1/admin/departments/:id/retire`. `moveMembersTo` is sent only when given: an id moves
  * the members there, `null` leaves them with no department, leaving it out is only valid for an
- * empty department.
+ * empty department. `expectedMemberIds` (the active members the dialog showed) is sent only when
+ * given; the API refuses with 409 `members_changed` when the department's members differ.
  */
 export function retireDepartment(
   session: Session,
@@ -187,6 +190,9 @@ export function retireDepartment(
     {
       expectedVersion: body.expectedVersion,
       ...(body.moveMembersTo !== undefined ? { moveMembersTo: body.moveMembersTo } : {}),
+      ...(body.expectedMemberIds !== undefined
+        ? { expectedMemberIds: body.expectedMemberIds }
+        : {}),
     },
   );
 }
@@ -263,6 +269,7 @@ export async function listActiveStaff(session: Session): Promise<DepartmentStaff
 
 export type DepartmentWriteFailure =
   | { kind: 'stale'; message: string }
+  | { kind: 'membersChanged'; message: string }
   | { kind: 'invalid'; message: string; fieldErrors?: Record<string, string> }
   | { kind: 'notFound'; message: string }
   | { kind: 'error'; message: string };
@@ -288,7 +295,8 @@ function stringEntries(value: unknown): Record<string, string> {
 }
 
 /**
- * Turns a failed department write into a typed result. A 409 is stale whatever its code
+ * Turns a failed department write into a typed result. A 409 `members_changed` (retire, when the
+ * department's members differ from the dialog's) is its own kind; any other 409 is stale
  * (`conflict` for the department's version, `stale_access` for the access revision); a 400/422
  * carries its field messages in `details` or `fieldErrors`.
  */
@@ -305,6 +313,9 @@ export function mapDepartmentWriteError(error: unknown): DepartmentWriteFailure 
 
   switch (error.status) {
     case 409:
+      if (code === 'members_changed') {
+        return { kind: 'membersChanged', message: DEPARTMENT_MEMBERS_CHANGED_MESSAGE };
+      }
       return {
         kind: 'stale',
         message:
