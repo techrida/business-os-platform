@@ -38,14 +38,17 @@ export default async function AppLayout({ children }: { children: ReactNode }) {
     ),
   ]);
 
+  // The person's name leads the user card with their roles under it; without a name the roles lead, as before.
+  const displayName = me?.displayName?.trim() || null;
+
   return (
     <ShellFrame>
       {/* Only signed-in staff report vitals: /telemetry/vitals needs a session. */}
       <WebVitals />
       <Sidebar
         user={{
-          name: roles,
-          detail: session.orgKind,
+          name: displayName ?? roles,
+          detail: displayName !== null ? roles : session.orgKind,
           imageDocumentId: me?.avatarDocumentId ?? null,
           ...(me?.id ? { id: me.id } : {}),
         }}

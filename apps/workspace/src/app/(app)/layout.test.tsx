@@ -37,6 +37,7 @@ vi.mock('@/lib/session', () => ({ getSession: () => getSession() }));
 const getMe = vi.fn<
   () => Promise<{
     avatarDocumentId?: string | null;
+    displayName?: string | null;
     permissions?: { permission: string; scope: string }[];
   }>
 >();
@@ -101,6 +102,24 @@ describe('the account picture in the sidebar', () => {
       detail: 'staff',
       imageDocumentId: PICTURE,
     });
+  });
+
+  it("leads with the person's name from /v1/me and puts the roles under it", async () => {
+    getSession.mockResolvedValue({ ...staff, roles: ['finance', 'sales'] });
+    getMe.mockResolvedValue({ avatarDocumentId: PICTURE, displayName: ' Amanda Rai ' });
+    renderToStaticMarkup((await AppLayout({ children: <p>page</p> })) as ReactElement);
+    expect(lastSidebarUser()).toEqual({
+      name: 'Amanda Rai',
+      detail: 'Finance, Sales',
+      imageDocumentId: PICTURE,
+    });
+  });
+
+  it('keeps the roles as the name when /v1/me has no name', async () => {
+    getSession.mockResolvedValue(staff);
+    getMe.mockResolvedValue({ avatarDocumentId: null, displayName: '  ' });
+    renderToStaticMarkup((await AppLayout({ children: <p>page</p> })) as ReactElement);
+    expect(lastSidebarUser()).toMatchObject({ name: 'Finance', detail: 'staff' });
   });
 
   it('falls back to initials when /v1/me fails, and the shell still renders', async () => {
