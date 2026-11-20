@@ -39,6 +39,13 @@ vi.mock('./shell-nav', () => ({
   ShellNavSearch: () => null,
 }));
 vi.mock('./shell-state', () => ({ CollapseToggle: () => null, DrawerCloseButton: () => null }));
+// `server-only` throws outside the react-server condition, which Vitest does not use.
+vi.mock('server-only', () => ({}));
+vi.mock('@/lib/api', () => ({ getMe: vi.fn() }));
+
+import type { Permission } from '@bos/contracts';
+
+import { permissionsFrom } from '@/lib/live-permissions';
 
 import { Sidebar } from './sidebar';
 
@@ -151,5 +158,35 @@ describe('Sidebar navigation', () => {
     expect(navLabels()).not.toContain('Settings');
     expect(navLabels()).not.toContain('Invoices');
     expect(navLabels()).toContain('Customers');
+  });
+
+  // The layout passes `permissionsFrom(/v1/me, roles)`: the saved grants, not the role defaults.
+  const saved = (granted: Permission[] | null, roles: string[]) =>
+    permissionsFrom(
+      granted === null
+        ? null
+        : { permissions: granted.map((permission) => ({ permission, scope: 'all' as const })) },
+      roles,
+    );
+
+  it('follows saved grants where they differ from the role defaults', async () => {
+    // Sales holds neither by default; the saved role adds both.
+    mounted = await mountForm(
+      <Sidebar user={user} permissions={saved(['ar.read', 'procurement.sourcing'], ['sales'])} />,
+    );
+    expect(navLabels()).toEqual(expect.arrayContaining(['Receivables', 'Requests for quotation']));
+    await mounted.unmount();
+    // The Founder holds every default; a saved list without settings or sourcing grants hides them.
+    mounted = await mountForm(
+      <Sidebar user={user} permissions={saved(['customer.read'], ['founder'])} />,
+    );
+    expect(navLabels()).not.toContain('Settings');
+    expect(navLabels()).not.toContain('Requests for quotation');
+    expect(navLabels()).toContain('Customers');
+  });
+
+  it('uses the role defaults only when /v1/me fails', async () => {
+    mounted = await mountForm(<Sidebar user={user} permissions={saved(null, ['founder'])} />);
+    expect(navLabels()).toEqual(expect.arrayContaining(['Settings', 'Requests for quotation']));
   });
 });

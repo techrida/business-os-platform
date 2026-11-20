@@ -207,6 +207,114 @@ it('sends nothing that writes until Save changes in the review dialog', async ()
   expect(router.refresh).toHaveBeenCalled();
 });
 
+it('keeps a value the server refused on its control, marked with the reason', async () => {
+  // The save's 422 names the refused change by index, as the access evaluator does.
+  const reason = 'Leads does not use department rules.';
+  actions.save.mockResolvedValueOnce({
+    ok: false,
+    kind: 'invalid',
+    message: reason,
+    fieldErrors: { 'changes.0.area': reason },
+  });
+  await render();
+  await click(byLabel('Edit Leads'));
+  const managers = 'Managers also see their whole department';
+  await click(checkbox(card('Leads'), managers));
+  await click(textButton('Review changes'));
+  await flush();
+  await click(textButton('Save changes'));
+  await flush();
+  expect(document.querySelector('[role="dialog"]')?.textContent).toContain(reason);
+  await click(dialogButton('Back'));
+  await flush();
+
+  const refused = checkbox(card('Leads'), managers);
+  expect(refused.checked).toBe(false);
+  expect(refused.getAttribute('aria-invalid')).toBe('true');
+  const describedBy = refused.getAttribute('aria-describedby') ?? '';
+  expect(describedBy).not.toBe('');
+  expect(document.getElementById(describedBy)?.textContent).toBe(reason);
+  // The other level line was not refused.
+  const heads = checkbox(card('Leads'), 'Department heads also see their whole department');
+  expect(heads.getAttribute('aria-invalid')).toBeNull();
+
+  // Changing the control away from the refused value clears the mark.
+  await click(refused);
+  const cleared = checkbox(card('Leads'), managers);
+  expect(cleared.checked).toBe(true);
+  expect(cleared.getAttribute('aria-invalid')).toBeNull();
+  expect(card('Leads').textContent).not.toContain(reason);
+});
+
+/** Stages "Managers also see…" off on Leads and opens the review (its dry run runs). */
+async function stageManagersAndReview(): Promise<string> {
+  await render();
+  await click(byLabel('Edit Leads'));
+  const managers = 'Managers also see their whole department';
+  await click(checkbox(card('Leads'), managers));
+  await click(textButton('Review changes'));
+  await flush();
+  return managers;
+}
+
+function expectMarked(text: string, reason: string) {
+  const refused = checkbox(card('Leads'), text);
+  expect(refused.getAttribute('aria-invalid')).toBe('true');
+  const describedBy = refused.getAttribute('aria-describedby') ?? '';
+  expect(describedBy).not.toBe('');
+  expect(document.getElementById(describedBy)?.textContent).toBe(reason);
+  const heads = checkbox(card('Leads'), 'Department heads also see their whole department');
+  expect(heads.getAttribute('aria-invalid')).toBeNull();
+}
+
+it('marks a value the dry run refuses with a field error, with no Try again', async () => {
+  // The preview action passes on the dry run's 422: the save's field errors, keyed by index.
+  const reason = 'Leads does not use department rules.';
+  actions.preview.mockResolvedValueOnce({
+    ok: false,
+    kind: 'refused',
+    message: reason,
+    fieldErrors: { 'changes.0.area': reason },
+  });
+  const managers = await stageManagersAndReview();
+  const dialog = document.querySelector('[role="dialog"]');
+  expect(dialog?.textContent).toContain(reason);
+  const labels = [...(dialog?.querySelectorAll('button') ?? [])].map((b) => b.textContent?.trim());
+  expect(labels).not.toContain('Try again');
+  expect(dialogButton('Save changes').disabled).toBe(true);
+  await click(dialogButton('Back'));
+  await flush();
+
+  expect(actions.save).not.toHaveBeenCalled();
+  expect(checkbox(card('Leads'), managers).checked).toBe(false);
+  expectMarked(managers, reason);
+});
+
+it('marks a value the dry run blocks with a warning that names its change', async () => {
+  const reason = 'Department heads would lose sight of their own leads.';
+  actions.preview.mockResolvedValueOnce({
+    ok: true,
+    preview: {
+      applied: [],
+      impact: {
+        widened: { people: 0, sample: [] },
+        narrowed: { people: 0, sample: [] },
+        unchanged: 0,
+      },
+      warnings: [{ code: 'W9', severity: 'blocked', message: reason, changeIndex: 0 }],
+      summaries: {},
+      assignmentSummaries: {},
+    },
+  });
+  const managers = await stageManagersAndReview();
+  expect(dialogButton('Save changes').disabled).toBe(true);
+  await click(dialogButton('Back'));
+  await flush();
+
+  expect(actions.save).not.toHaveBeenCalled();
+  expectMarked(managers, reason);
+});
+
 it('names each undo icon, shows none at the default and reviews its one change', async () => {
   await render();
   await click(byLabel('Edit Leads'));

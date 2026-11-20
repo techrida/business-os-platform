@@ -22,6 +22,7 @@ const mocks = vi.hoisted(() => ({
   getUnreadCount: vi.fn(),
   listNotifications: vi.fn(),
   loadPeople: vi.fn(),
+  canAssignFollowUps: vi.fn(),
   listCustomers: vi.fn(),
   getLeadSummary: vi.fn(),
   listOpportunitiesPage: vi.fn(),
@@ -38,7 +39,7 @@ vi.mock('@/lib/api-kernel', () => ({
   listNotifications: mocks.listNotifications,
 }));
 vi.mock('@/components/p2/crm/people', () => ({
-  canAssignFollowUps: () => false,
+  canAssignFollowUps: mocks.canAssignFollowUps,
   loadPeople: mocks.loadPeople,
 }));
 vi.mock('@/components/p2/customers/api', () => ({ listCustomers: mocks.listCustomers }));
@@ -109,6 +110,7 @@ beforeEach(() => {
   mocks.requireStaffSession.mockReset().mockResolvedValue({ accessToken: 'tok', roles: ['sales'] });
   mocks.getNumberSystems.mockReset().mockResolvedValue(undefined);
   mocks.getMe.mockReset().mockResolvedValue({ userId: ME });
+  mocks.canAssignFollowUps.mockReset().mockResolvedValue(false);
   mocks.getInbox.mockReset().mockResolvedValue([]);
   mocks.getUnreadCount.mockReset().mockResolvedValue({ count: 2 });
   mocks.listNotifications.mockReset().mockResolvedValue([
@@ -231,5 +233,19 @@ describe('overview page', () => {
     expect(html).toContain('href="/customers/new"');
     expect(html).not.toContain('Add user');
     expect(html).not.toContain('href="/opportunities"');
+  });
+});
+
+describe('overview owners list', () => {
+  // canAssignFollowUps reads the live grants, so it answers a promise; the page waits for it.
+  it('asks loadPeople for owners only once the live check says yes', async () => {
+    mocks.canAssignFollowUps.mockResolvedValue(true);
+    await render();
+    expect(mocks.loadPeople).toHaveBeenCalledWith(expect.anything(), { owners: true });
+
+    mocks.loadPeople.mockClear();
+    mocks.canAssignFollowUps.mockResolvedValue(false);
+    await render();
+    expect(mocks.loadPeople).toHaveBeenCalledWith(expect.anything(), { owners: false });
   });
 });

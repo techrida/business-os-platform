@@ -1,4 +1,7 @@
-import { describe, expect, it } from 'vitest';
+import type { Permission } from '@bos/contracts';
+import { describe, expect, it, vi } from 'vitest';
+
+import { permissionsFrom } from '@/lib/live-permissions';
 
 import {
   capText,
@@ -10,6 +13,23 @@ import {
   scaledText,
   signedScaled,
 } from './model';
+
+// `server-only` throws outside the react-server condition, which Vitest does not use.
+vi.mock('server-only', () => ({}));
+vi.mock('@/lib/api', () => ({ getMe: vi.fn() }));
+
+/** The predicate `getPermissionCheck` builds from a `/v1/me` grant list (null: the read failed). */
+function live(roles: string[], granted: Permission[] | null): (permission: string) => boolean {
+  const held = new Set(
+    permissionsFrom(
+      granted === null
+        ? null
+        : { permissions: granted.map((permission) => ({ permission, scope: 'all' as const })) },
+      roles,
+    ),
+  );
+  return (permission) => held.has(permission);
+}
 
 const L = (openQuantity: string, pendingQuantity: string) => ({ openQuantity, pendingQuantity });
 
@@ -47,10 +67,29 @@ describe('scaled quantities', () => {
 });
 
 describe('who may handle what', () => {
-  it('maps default roles to the grants', () => {
-    expect(receiptGrants(['warehouse'])).toEqual({ confirm: true, issue: false });
-    expect(receiptGrants(['procurement'])).toEqual({ confirm: false, issue: true });
-    expect(receiptGrants(['sales'])).toEqual({ confirm: false, issue: false });
+  it('maps live grants to the screen grants', () => {
+    expect(receiptGrants(live(['warehouse'], ['procurement.receipt.confirm']))).toEqual({
+      confirm: true,
+      issue: false,
+    });
+    expect(receiptGrants(live(['procurement'], ['procurement.po.issue']))).toEqual({
+      confirm: false,
+      issue: true,
+    });
+    expect(receiptGrants(live(['sales'], []))).toEqual({ confirm: false, issue: false });
+  });
+
+  it('follows saved grants, not role defaults', () => {
+    // Sales holds no receipt grant by default; a saved one lets it receive goods.
+    expect(receiptGrants(live(['sales'], ['procurement.receipt.confirm'])).confirm).toBe(true);
+    // The warehouse holds it by default; a saved role without it takes it away.
+    expect(receiptGrants(live(['warehouse'], ['procurement.pr.read'])).confirm).toBe(false);
+    expect(mayHandleKind('goods', receiptGrants(live(['warehouse'], [])))).toBe(false);
+  });
+
+  it('falls back to role defaults only when /v1/me fails', () => {
+    expect(receiptGrants(live(['warehouse'], null))).toEqual({ confirm: true, issue: false });
+    expect(receiptGrants(live(['sales'], null))).toEqual({ confirm: false, issue: false });
   });
 
   it('offers a service to everyone and goods to the warehouse', () => {

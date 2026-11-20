@@ -31,7 +31,18 @@ import {
 import styles from './review-changes-dialog.module.css';
 
 export type ReviewPreviewResult =
-  { ok: true; preview: AccessPreviewResponse } | { ok: false; message: string };
+  | { ok: true; preview: AccessPreviewResponse }
+  | {
+      ok: false;
+      message: string;
+      /**
+       * `refused`: the server refused these changes (a 422 with the save's own field errors or
+       * blocked warnings). The same changes are refused again, so no Try again is offered.
+       */
+      kind?: 'refused' | 'error' | undefined;
+      warnings?: AccessWarning[] | undefined;
+      fieldErrors?: Record<string, string> | undefined;
+    };
 
 export type ReviewSaveResult =
   | { ok: true }
@@ -118,7 +129,7 @@ const PREVIEW_FAILED = 'Could not preview these changes. Try again in a moment.'
 
 type PreviewState =
   | { status: 'loading' }
-  | { status: 'error'; message: string }
+  | { status: 'error'; message: string; refused: boolean }
   | { status: 'ready'; preview: AccessPreviewResponse };
 
 interface SaveProblem {
@@ -164,11 +175,15 @@ function OpenReview({
           setTicked(new Set());
           setState({ status: 'ready', preview: result.preview });
         } else {
-          setState({ status: 'error', message: result.message });
+          setState({
+            status: 'error',
+            message: result.message,
+            refused: result.kind === 'refused',
+          });
         }
       })
       .catch(() => {
-        if (live) setState({ status: 'error', message: PREVIEW_FAILED });
+        if (live) setState({ status: 'error', message: PREVIEW_FAILED, refused: false });
       });
     return () => {
       live = false;
@@ -269,7 +284,14 @@ function OpenReview({
       ) : (
         <div className={styles.stack}>
           {state.status === 'loading' ? <PreviewSkeleton /> : null}
-          {state.status === 'error' ? (
+          {state.status === 'error' && state.refused ? (
+            // Refused changes are refused again on retry: the reason and Back, which returns to
+            // the card where the refused values are marked.
+            <Alert tone="error" role="alert">
+              <span className={styles.preLine}>{state.message}</span>
+            </Alert>
+          ) : null}
+          {state.status === 'error' && !state.refused ? (
             <Alert
               tone="error"
               role="alert"
@@ -509,7 +531,7 @@ function CheckWithChanges({
       </div>
       {result.status === 'idle' ? (
         <p className={styles.muted}>
-          Pick a person to see what they could open after these changes.
+          Pick a person to see what this person could open after these changes.
         </p>
       ) : null}
       {result.status === 'loading' ? <PreviewSkeleton /> : null}

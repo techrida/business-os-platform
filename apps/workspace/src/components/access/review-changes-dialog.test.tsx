@@ -248,3 +248,30 @@ it('shows a failed dry run with Try again, which runs it again', async () => {
   expect(runPreview).toHaveBeenCalledTimes(2);
   expect(button('Save changes').disabled).toBe(false);
 });
+
+it('shows a refused dry run with its reason and Back, with no Try again', async () => {
+  // A 422 refusal does not change on retry: the reason, Back to the card, and no Save.
+  const reason = 'Sales cannot see leads across the department here.';
+  const runPreview = vi.fn((_changes: AccessChange[]) =>
+    Promise.resolve<ReviewPreviewResult>({
+      ok: false,
+      kind: 'refused',
+      message: reason,
+      fieldErrors: { 'changes.0.scope': reason },
+    }),
+  );
+  const opener = await openDialog({ runPreview });
+
+  expect(document.querySelector('[role="dialog"] [role="alert"]')?.textContent).toContain(reason);
+  const labels = [...document.querySelectorAll('[role="dialog"] button')].map((b) =>
+    b.textContent?.trim(),
+  );
+  expect(labels).not.toContain('Try again');
+  expect(button('Save changes').disabled).toBe(true);
+  expect(runPreview).toHaveBeenCalledTimes(1);
+
+  await click(button('Back'));
+  await flush();
+  expect(document.querySelector('[role="dialog"]')).toBeNull();
+  expect(document.activeElement).toBe(opener);
+});

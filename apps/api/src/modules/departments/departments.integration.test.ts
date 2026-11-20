@@ -43,13 +43,14 @@ import type { AuthzService } from '../../platform/authz/authz.service';
 import { can } from '../../platform/authz/can';
 import { ANY_AUTHENTICATED_KEY, CAN_KEY } from '../../platform/authz/decorators';
 import type { Principal, ResourceRef } from '../../platform/authz/principal';
-import type { Db } from '../../platform/db/db.module';
+import type { Db, DbTransaction } from '../../platform/db/db.module';
 import { type Actor, systemActor, type TxScope, withTx } from '../../platform/db/tx';
 import { ErrorBodyFilter } from '../../platform/tenancy/error-body.filter';
 import { UserMirror } from '../../platform/users/user-mirror';
 import type { UsersSyncData } from '../../platform/users/users.constants';
 import { SqlUsersStore } from '../../platform/users/users.store';
 import type { ZitadelAdminClient } from '../../platform/users/zitadel-admin.client';
+import { lockAccessRevision } from '../access-settings/access-revision';
 import { AccessRevisionTableStore } from './access-revision.port';
 import type { DepartmentsCaller } from './departments.caller';
 import { DepartmentsAdminController } from './departments.controller';
@@ -791,16 +792,68 @@ describe('Retiring a department with invited members', () => {
     expect(can(principal, 'crm.lead.read', leadIn(dest.id)).allowed).toBe(true);
   });
 
-  it('gives no department reach from a membership still pointing at a retired department', async () => {
+  it('unassigns inactive members on retire without a destination', async () => {
     const dept = AdminDepartmentDetailSchema.parse(
       (await request(baseUrl).post('/v1/admin/departments').send({ name: 'Dormant Desk' })).body,
     );
-    // Inactive members are left in place by the retire; one coming back must not regain the reach.
     const dormant = await seedMember(dept.id, 'manager', 'inactive');
+
+    // Only inactive people: no destination is required, and none is left behind.
     const retired = await request(baseUrl)
       .post(`/v1/admin/departments/${dept.id}/retire`)
       .send({ expectedVersion: dept.version });
     expect(retired.status, JSON.stringify(retired.body)).toBe(200);
+    expect(await membershipRow(dormant.userId)).toEqual({ department_id: null, level: 'staff' });
+    const events = await auditEventsOf(scope1A, dept.id);
+    expect(
+      events.some(
+        (e) => e.action === 'department.member.removed' && e.meta?.userId === dormant.userId,
+      ),
+    ).toBe(true);
+  });
+
+  it('unassigns inactive members instead of moving them to the destination department', async () => {
+    const dest = AdminDepartmentDetailSchema.parse(
+      (await request(baseUrl).post('/v1/admin/departments').send({ name: 'Dormant Landing' })).body,
+    );
+    const dept = AdminDepartmentDetailSchema.parse(
+      (await request(baseUrl).post('/v1/admin/departments').send({ name: 'Dormant Source' })).body,
+    );
+    const dormant = await seedMember(dept.id, 'manager', 'inactive');
+    const invited = await seedMember(dept.id, 'staff', 'invited');
+
+    const retired = await request(baseUrl)
+      .post(`/v1/admin/departments/${dept.id}/retire`)
+      .send({ expectedVersion: dept.version, moveMembersTo: dest.id });
+    expect(retired.status, JSON.stringify(retired.body)).toBe(200);
+    expect(await membershipRow(dormant.userId)).toEqual({ department_id: null, level: 'staff' });
+    expect(await membershipRow(invited.userId)).toEqual({ department_id: dest.id, level: 'staff' });
+
+    // Coming back later gives no reach over either department.
+    await withTx(db, scope1A, systemActor('test-seed'), (tx) =>
+      tx.execute(
+        sql`UPDATE app.users SET status = 'invited'
+             WHERE tenant_id = ${tenant1.tenantId}::uuid AND id = ${dormant.userId}::uuid`,
+      ),
+    );
+    const principal = await principalAtLogin(dormant.zitadelUserId);
+    expect(principal.departmentId).toBeNull();
+    expect(can(principal, 'crm.lead.read', leadIn(dept.id)).allowed).toBe(false);
+    expect(can(principal, 'crm.lead.read', leadIn(dest.id)).allowed).toBe(false);
+  });
+
+  it('gives no department reach from a membership still pointing at a retired department', async () => {
+    const dept = AdminDepartmentDetailSchema.parse(
+      (await request(baseUrl).post('/v1/admin/departments').send({ name: 'Stale Desk' })).body,
+    );
+    const retired = await request(baseUrl)
+      .post(`/v1/admin/departments/${dept.id}/retire`)
+      .send({ expectedVersion: dept.version });
+    expect(retired.status, JSON.stringify(retired.body)).toBe(200);
+
+    // A row written before retire unassigned inactive members (repaired by migration 0093): one coming back
+    // must not regain the reach.
+    const dormant = await seedMember(dept.id, 'manager', 'inactive');
     expect(await membershipRow(dormant.userId)).toEqual({
       department_id: dept.id,
       level: 'manager',
@@ -858,5 +911,192 @@ describe('Tenant and legal entity isolation', () => {
     );
     expect(list2A.items).toHaveLength(0);
     expect(list2A.unassigned).toBe(1);
+  });
+});
+
+describe('Retire under concurrent access writes', () => {
+  async function activeMember(departmentId: string, level: 'staff' | 'manager'): Promise<string> {
+    const { userId } = await createStaffUser(appPool, { ...tenant1, roleKeys: ['sales'] });
+    await withTx(db, scope1A, systemActor('test-seed'), (tx) =>
+      tx.execute(
+        sql`UPDATE app.user_entities SET department_id = ${departmentId}::uuid, level = ${level}
+             WHERE tenant_id = ${tenant1.tenantId}::uuid AND organization_id = ${tenant1.organizationId}::uuid
+               AND user_id = ${userId}::uuid`,
+      ),
+    );
+    return userId;
+  }
+
+  async function membershipOf(
+    userId: string,
+  ): Promise<{ department_id: string | null; level: string }> {
+    const res = await ownerPool.query<{ department_id: string | null; level: string }>(
+      `SELECT department_id, level FROM app.user_entities
+        WHERE tenant_id = $1 AND organization_id = $2 AND user_id = $3`,
+      [tenant1.tenantId, tenant1.organizationId, userId],
+    );
+    return res.rows[0]!;
+  }
+
+  /** Resolves once some backend waits for a lock: the event the race needs, not a wall-clock window. */
+  async function untilSomeoneWaitsForALock(): Promise<void> {
+    for (let attempt = 0; attempt < 400; attempt += 1) {
+      const res = await ownerPool.query<{ n: number }>(
+        'SELECT count(*)::int AS n FROM pg_locks WHERE NOT granted',
+      );
+      if ((res.rows[0]?.n ?? 0) > 0) return;
+      await new Promise((resolve) => setTimeout(resolve, 25));
+    }
+    throw new Error('No backend ever waited for a lock');
+  }
+
+  /** Runs `work` in its own transaction and keeps it open until `release()` is called. */
+  function heldTransaction(work: (tx: DbTransaction) => Promise<void>): {
+    started: Promise<void>;
+    release: () => void;
+    done: Promise<unknown>;
+  } {
+    let release!: () => void;
+    let markStarted!: () => void;
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const started = new Promise<void>((resolve) => {
+      markStarted = resolve;
+    });
+    const done = withTx(db, scope1A, systemActor('test-race'), async (tx) => {
+      await work(tx);
+      markStarted();
+      await gate;
+    });
+    return { started, release, done };
+  }
+
+  it('does not overwrite a member move that commits while the retire waits for the member row', async () => {
+    const other = AdminDepartmentDetailSchema.parse(
+      (await request(baseUrl).post('/v1/admin/departments').send({ name: 'Race Landing' })).body,
+    );
+    const dept = AdminDepartmentDetailSchema.parse(
+      (await request(baseUrl).post('/v1/admin/departments').send({ name: 'Race Source' })).body,
+    );
+    const mover = await activeMember(dept.id, 'manager');
+    const stayer = await activeMember(dept.id, 'staff');
+
+    // Another writer moves `mover` out and holds its row lock (an UPDATE, as the access save does).
+    const move = heldTransaction(async (tx) => {
+      await tx.execute(
+        sql`UPDATE app.user_entities SET department_id = ${other.id}::uuid, level = 'staff'
+             WHERE tenant_id = ${tenant1.tenantId}::uuid AND organization_id = ${tenant1.organizationId}::uuid
+               AND user_id = ${mover}::uuid`,
+      );
+    });
+    await move.started;
+
+    const retire = request(baseUrl)
+      .post(`/v1/admin/departments/${dept.id}/retire`)
+      .send({ expectedVersion: dept.version, moveMembersTo: null })
+      .then((res) => res);
+    await untilSomeoneWaitsForALock();
+    move.release();
+    await move.done;
+
+    const retired = await retire;
+    expect(retired.status, JSON.stringify(retired.body)).toBe(200);
+    expect(await membershipOf(mover)).toEqual({ department_id: other.id, level: 'staff' });
+    expect(await membershipOf(stayer)).toEqual({ department_id: null, level: 'staff' });
+    const removed = (await auditEventsOf(scope1A, dept.id))
+      .filter((e) => e.action === 'department.member.removed')
+      .map((e) => e.meta?.userId);
+    expect(removed).toEqual([stayer]);
+  });
+
+  it('lets an access save and a retire on the same members both finish, without a deadlock', async () => {
+    const other = AdminDepartmentDetailSchema.parse(
+      (await request(baseUrl).post('/v1/admin/departments').send({ name: 'Order Landing' })).body,
+    );
+    const dept = AdminDepartmentDetailSchema.parse(
+      (await request(baseUrl).post('/v1/admin/departments').send({ name: 'Order Source' })).body,
+    );
+    const mover = await activeMember(dept.id, 'staff');
+    const stayer = await activeMember(dept.id, 'staff');
+
+    // The access save's order (AccessSettingsService.save): the access revision lock first, then the
+    // member rows. It holds the lock until the retire is waiting, then moves `mover`.
+    let release!: () => void;
+    let markLocked!: () => void;
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const locked = new Promise<void>((resolve) => {
+      markLocked = resolve;
+    });
+    const save = withTx(db, scope1A, systemActor('test-race'), async (tx) => {
+      await lockAccessRevision(tx, tenant1.tenantId);
+      markLocked();
+      await gate;
+      await tx.execute(
+        sql`UPDATE app.user_entities SET department_id = ${other.id}::uuid
+             WHERE tenant_id = ${tenant1.tenantId}::uuid AND organization_id = ${tenant1.organizationId}::uuid
+               AND user_id = ${mover}::uuid`,
+      );
+    });
+    await locked;
+
+    const retire = request(baseUrl)
+      .post(`/v1/admin/departments/${dept.id}/retire`)
+      .send({ expectedVersion: dept.version, moveMembersTo: null })
+      .then((res) => res);
+    await untilSomeoneWaitsForALock();
+    release();
+
+    // In the old order the retire held the member rows while waiting for the access lock, and one of
+    // the two was aborted as a deadlock.
+    await expect(save).resolves.toBeUndefined();
+    const retired = await retire;
+    expect(retired.status, JSON.stringify(retired.body)).toBe(200);
+    expect(await membershipOf(mover)).toEqual({ department_id: other.id, level: 'staff' });
+    expect(await membershipOf(stayer)).toEqual({ department_id: null, level: 'staff' });
+  });
+});
+
+describe('People without a display name', () => {
+  async function namelessUser(displayName: string | null, email: string): Promise<string> {
+    const { userId } = await createStaffUser(appPool, { ...tenant1, roleKeys: ['sales'] });
+    await withTx(db, scope1A, systemActor('test-seed'), (tx) =>
+      tx.execute(
+        sql`UPDATE app.users SET display_name = ${displayName}, email = ${email}
+             WHERE tenant_id = ${tenant1.tenantId}::uuid AND id = ${userId}::uuid`,
+      ),
+    );
+    return userId;
+  }
+
+  it('labels them Unnamed user as member, head and unassigned person, never by their email', async () => {
+    const headId = await namelessUser(null, 'nameless.head@acme.test');
+    const blankId = await namelessUser('   ', 'blank.name@acme.test');
+
+    const unassigned = UnassignedPeopleResponseSchema.parse(
+      (await request(baseUrl).get('/v1/admin/departments/unassigned')).body,
+    );
+    const blank = unassigned.items.find((p) => p.userId === blankId);
+    expect(blank?.name).toBe('Unnamed user');
+    expect(blank?.email).toBe('blank.name@acme.test');
+    expect(unassigned.items.find((p) => p.userId === headId)?.name).toBe('Unnamed user');
+
+    const created = await request(baseUrl)
+      .post('/v1/admin/departments')
+      .send({ name: 'Nameless Desk', headUserId: headId });
+    expect(created.status, JSON.stringify(created.body)).toBe(201);
+    const dept = AdminDepartmentDetailSchema.parse(created.body);
+    expect(dept.head).toEqual({ id: headId, name: 'Unnamed user' });
+    expect(dept.members.find((m) => m.userId === headId)?.name).toBe('Unnamed user');
+
+    const list = AdminDepartmentListSchema.parse(
+      (await request(baseUrl).get('/v1/admin/departments')).body,
+    );
+    expect(list.items.find((d) => d.id === dept.id)?.head).toEqual({
+      id: headId,
+      name: 'Unnamed user',
+    });
   });
 });

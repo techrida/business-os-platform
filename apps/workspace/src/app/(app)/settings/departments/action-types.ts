@@ -6,10 +6,14 @@ export type DepartmentRecordResult =
   | { ok: true; id: string; name: string }
   | {
       ok: false;
-      kind: 'stale' | 'invalid' | 'notFound' | 'error';
+      kind: 'stale' | 'membersChanged' | 'invalid' | 'notFound' | 'error';
       message: string;
       fieldErrors?: Record<string, string>;
     };
+
+/** The retire dialog's member list: the active members it shows and sends back as expected. */
+export type RetireMembersResult =
+  { ok: true; memberIds: string[] } | { ok: false; message: string };
 
 /** The review dialog's `runPreview` answer. */
 export type PeoplePreviewResult =

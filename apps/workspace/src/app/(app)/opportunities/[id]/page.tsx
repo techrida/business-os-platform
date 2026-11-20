@@ -271,7 +271,7 @@ export default async function OpportunityPage({ params }: { params: Promise<{ id
       listQuotations(session, { opportunityId: id }),
       // The owners list (the Reschedule choices) needs crm.lead.write, so it is only asked for with it;
       // names on the page come from the records themselves (D46).
-      loadPeople(session, { owners: canAssignFollowUps(session) }),
+      canAssignFollowUps(session).then((owners) => loadPeople(session, { owners })),
     ]);
 
   if (oppResult.status === 'rejected') {

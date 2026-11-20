@@ -565,7 +565,7 @@ export function describeBillingFailure(err: unknown): BillingFailure {
       case 'PERIOD_FY_MISMATCH':
         return final(
           'period_mismatch',
-          'Today falls outside the fiscal year this invoice belongs to, so it cannot be issued now. Ask Finance to check the fiscal year setup.',
+          'Today falls outside the fiscal year this invoice belongs to, so it cannot be issued now. Ask the Founder to check the fiscal year setup.',
         );
       case 'fx_rate_stale':
         return final('stale_fx', staleFxMessage(details));

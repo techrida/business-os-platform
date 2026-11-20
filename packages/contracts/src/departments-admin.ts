@@ -110,6 +110,12 @@ export const RetireDepartmentBodySchema = z.strictObject({
    * legal entity to move them to, or explicit `null` to leave them unassigned ("No department").
    */
   moveMembersTo: z.guid().nullable().optional(),
+  /**
+   * The active member ids the caller was shown. When given and the department's active members
+   * differ (someone joined or left since), the retire is refused with 409 `members_changed` and
+   * nobody is moved.
+   */
+  expectedMemberIds: z.array(z.guid()).max(10_000).optional(),
 });
 export type RetireDepartmentBody = z.infer<typeof RetireDepartmentBodySchema>;
 

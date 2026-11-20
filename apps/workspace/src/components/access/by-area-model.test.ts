@@ -1,3 +1,4 @@
+import type { AccessChange } from '@bos/contracts';
 import { describe, expect, it } from 'vitest';
 
 import { accessCatalogue, MARKETING_DEPT, SALES_DEPT } from '@/test/access-catalogue';
@@ -8,6 +9,7 @@ import {
   isAreaEdited,
   permissionInfo,
   reachChoices,
+  refusedControls,
   savedDraft,
   splitByAccess,
   staffRoles,
@@ -116,4 +118,60 @@ it('names the undo icon with what it resets and to what (acceptance criterion 4.
   expect(undoName('Sales', 'Leads', 'Their own')).toBe(
     'Reset Sales on Leads to the default: Their own',
   );
+});
+
+describe('refusedControls', () => {
+  // The key shapes the access evaluator writes: `changes.<i>.scope`, `.area`, `.handOvers.<n>`.
+  const sent: AccessChange[] = [
+    { kind: 'grant', role: 'sales', permission: 'crm.lead.read', scope: 'department' },
+    { kind: 'levelRule', area: 'leads', headsSeeDepartment: true },
+    {
+      kind: 'assignment',
+      area: 'leads',
+      staff: 'self_only',
+      handOvers: [{ fromDepartmentId: SALES_DEPT, toDepartmentId: MARKETING_DEPT }],
+    },
+  ];
+
+  it('ties each refused change back to the card controls that staged it', () => {
+    expect(
+      refusedControls(
+        sent,
+        {
+          'changes.0.scope': 'Their department is not available for Leads on Sales.',
+          'changes.1.area': 'Leads does not use department rules.',
+        },
+        undefined,
+      ),
+    ).toEqual([
+      {
+        control: { type: 'reach', role: 'sales' },
+        message: 'Their department is not available for Leads on Sales.',
+      },
+      { control: { type: 'heads' }, message: 'Leads does not use department rules.' },
+    ]);
+  });
+
+  it('marks only hand-overs for a hand-over error, every sent part for an area error', () => {
+    const handOvers = refusedControls(sent, { 'changes.2.handOvers.0': 'Unknown department.' }, []);
+    expect(handOvers).toEqual([{ control: { type: 'handOvers' }, message: 'Unknown department.' }]);
+    const areaError = refusedControls(sent, { 'changes.2.area': 'Not here.' }, []);
+    expect(areaError.map((r) => r.control)).toEqual([{ type: 'staffRule' }, { type: 'handOvers' }]);
+  });
+
+  it('reads blocked warnings by changeIndex and ignores other warnings and unknown indexes', () => {
+    expect(
+      refusedControls(sent, { 'changes.9': 'Unknown role or permission.' }, [
+        {
+          code: 'W1',
+          severity: 'blocked',
+          message: 'Founders always have full access.',
+          changeIndex: 0,
+        },
+        { code: 'W3', severity: 'confirm', message: 'Fewer people.', changeIndex: 1 },
+      ]),
+    ).toEqual([
+      { control: { type: 'reach', role: 'sales' }, message: 'Founders always have full access.' },
+    ]);
+  });
 });

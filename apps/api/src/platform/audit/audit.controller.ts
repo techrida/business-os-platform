@@ -7,7 +7,7 @@ import { z } from 'zod';
 
 import { Can } from '../authz/decorators';
 import { ctx, currentPrincipal } from '../tenancy/request-context';
-import { AuditService } from './audit.service';
+import { AuditNewestFirstTooLargeError, AuditService } from './audit.service';
 import { eventsVisibleTo } from './cost-redaction';
 
 /** `?entityId=` (an empty value) means "not given", the same as leaving the parameter out. */
@@ -16,19 +16,27 @@ const optional = <S extends z.ZodType>(schema: S) =>
 
 const isoInstant = z.iso.datetime({ offset: true }).transform((s) => new Date(s));
 
-const ListQuery = z.object({
-  entityType: optional(z.string().min(1).max(200)),
-  entityId: optional(z.string().min(1).max(200)),
-  from: optional(isoInstant),
-  to: optional(isoInstant),
-  // A bigint id as a string. 18 digits always fit a Postgres bigint (19 could overflow into a 500).
-  afterId: optional(z.string().regex(/^\d{1,18}$/)),
-  // audit.read_events clamps to 1..500 as well; refusing here tells the caller instead of silently trimming.
-  limit: z.preprocess(
-    (v) => (v === '' ? undefined : v),
-    z.coerce.number().int().min(1).max(500).default(50),
-  ),
-});
+const ListQuery = z
+  .object({
+    entityType: optional(z.string().min(1).max(200)),
+    entityId: optional(z.string().min(1).max(200)),
+    from: optional(isoInstant),
+    to: optional(isoInstant),
+    // A bigint id as a string. 18 digits always fit a Postgres bigint (19 could overflow into a 500).
+    afterId: optional(z.string().regex(/^\d{1,18}$/)),
+    // audit.read_events clamps to 1..500 as well; refusing here tells the caller instead of silently trimming.
+    limit: z.preprocess(
+      (v) => (v === '' ? undefined : v),
+      z.coerce.number().int().min(1).max(500).default(50),
+    ),
+    // `desc` returns the newest `limit` events, newest first. Left out it is `asc`, the forward-paging order.
+    order: optional(z.enum(['asc', 'desc'])),
+  })
+  // There is no backwards cursor: afterId pages forward only.
+  .refine((q) => !(q.order === 'desc' && q.afterId !== undefined), {
+    path: ['afterId'],
+    message: 'afterId cannot be combined with order=desc',
+  });
 
 const VerifyQuery = z.object({ month: ChainVerifyDtoSchema.shape.month });
 
@@ -50,7 +58,11 @@ export class AuditController {
   async list(@Query() query: unknown) {
     const q = parse(ListQuery, query, 'query');
     const { tenantId, organizationId } = ctx();
-    const items = await this.audit.list({ tenantId, organizationId }, q);
+    const items = await this.audit.list({ tenantId, organizationId }, q).catch((err: unknown) => {
+      // Too many matches to find the newest: the caller narrows the filter, it is not a server fault.
+      if (err instanceof AuditNewestFirstTooLargeError) throw new BadRequestException(err.message);
+      throw err;
+    });
     // Internal cost figures (D29) leave only with `quotation.cost.read`: the row stays, the figures do not.
     return { items: eventsVisibleTo(currentPrincipal(), items) };
   }

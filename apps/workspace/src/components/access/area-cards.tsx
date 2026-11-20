@@ -15,12 +15,15 @@ import { AreaCard } from './area-card';
 import styles from './area-cards.module.css';
 import {
   areaChanges,
+  controlMatches,
   defaultDraft,
   isAreaEdited,
+  refusedControls,
   savedDraft,
   withControlFrom,
   type AreaControl,
   type AreaDraft,
+  type RefusedControl,
 } from './by-area-model';
 import type { DepartmentOption } from './hand-overs-editor';
 import {
@@ -58,6 +61,15 @@ export interface AreaCardsProps {
 interface ReviewTarget {
   key: AccessSettingAreaKey;
   changes: AccessChange[];
+  /** The card's values once these changes apply: what a refusal is compared with. */
+  target: AreaDraft;
+}
+
+/** Values the server refused (in the review's dry run or on save), kept on the card's controls. */
+interface Refusal {
+  key: AccessSettingAreaKey;
+  target: AreaDraft;
+  controls: RefusedControl[];
 }
 
 type Pending = { kind: 'open'; key: AccessSettingAreaKey | null } | { kind: 'leave'; href: string };
@@ -84,6 +96,7 @@ export function AreaCards({
   const [pending, setPending] = useState<Pending | null>(null);
   const [review, setReview] = useState<ReviewTarget | null>(null);
   const [staleKey, setStaleKey] = useState<AccessSettingAreaKey | null>(null);
+  const [refusal, setRefusal] = useState<Refusal | null>(null);
   // The discard question is a controlled dialog with no trigger, so it cannot return focus by
   // itself: remember what asked and focus it again when the question closes. After Discard that
   // is the toggle of the card that just opened; after Keep editing, the control that asked.
@@ -96,12 +109,19 @@ export function AreaCards({
   const staged =
     openArea && openSaved && draft ? areaChanges(catalogue, openArea, openSaved, draft) : [];
   const dirty = staged.length > 0;
+  // A refused value stays on its control, marked with the reason, while the control still holds
+  // it; changing the control (or Discard) clears the mark.
+  const refused =
+    refusal && refusal.key === openKey && draft
+      ? refusal.controls.filter((r) => controlMatches(draft, refusal.target, r.control))
+      : [];
 
   function switchTo(key: AccessSettingAreaKey | null) {
     const area = areaOf(key);
     setOpenKey(area ? area.key : null);
     setDraft(area ? savedDraft(catalogue, area) : null);
     setStaleKey(null);
+    setRefusal(null);
   }
 
   function ask(next: Pending) {
@@ -176,8 +196,9 @@ export function AreaCards({
     }
     // Otherwise it opens the review dialog with that single change (spec 7.3, D32 variation).
     const saved = savedDraft(catalogue, area);
-    const single = areaChanges(catalogue, area, saved, withControlFrom(saved, defaults, control));
-    if (single.length > 0) setReview({ key, changes: single });
+    const target = withControlFrom(saved, defaults, control);
+    const single = areaChanges(catalogue, area, saved, target);
+    if (single.length > 0) setReview({ key, changes: single, target });
   }
 
   const reviewArea = review ? areaOf(review.key) : undefined;
@@ -199,6 +220,7 @@ export function AreaCards({
               defaults={defaultDraft(catalogue, area)}
               draft={open && draft ? draft : saved}
               dirty={open && dirty}
+              refused={open ? refused : []}
               edited={isAreaEdited(catalogue, area)}
               canEdit={canEdit}
               stale={staleKey === area.key}
@@ -209,10 +231,14 @@ export function AreaCards({
               }}
               onUndo={(control) => undo(area.key, control)}
               onDiscard={() => {
-                if (open) setDraft(saved);
+                if (!open) return;
+                setDraft(saved);
+                setRefusal(null);
               }}
               onReview={() => {
-                if (open && dirty) setReview({ key: area.key, changes: staged });
+                if (open && dirty && draft) {
+                  setReview({ key: area.key, changes: staged, target: draft });
+                }
               }}
               onReload={() => router.refresh()}
             />
@@ -239,15 +265,38 @@ export function AreaCards({
         title={`Review changes to ${reviewArea?.label ?? 'access'}`}
         changes={review?.changes ?? []}
         expectedRevision={catalogue.revision}
-        runPreview={(changes) => actions.preview({ changes })}
-        runSave={({ acknowledged, note }) =>
-          actions.save({
-            changes: review?.changes ?? [],
+        runPreview={async (changes) => {
+          const sent = review;
+          const result = await actions.preview({ changes });
+          // The dry run refuses what the save would refuse: a 422 with field errors, or a 200
+          // with blocked warnings that disable Save. Mark the controls either way, so Back shows
+          // them on the card. A failure that may pass on retry leaves the marks as they were.
+          if (sent && (result.ok || result.kind === 'refused')) {
+            const controls = result.ok
+              ? refusedControls(changes, undefined, result.preview.warnings)
+              : refusedControls(changes, result.fieldErrors, result.warnings);
+            setRefusal(
+              controls.length > 0 ? { key: sent.key, target: sent.target, controls } : null,
+            );
+          }
+          return result;
+        }}
+        runSave={async ({ acknowledged, note }) => {
+          const sent = review;
+          const result = await actions.save({
+            changes: sent?.changes ?? [],
             expectedRevision: catalogue.revision,
             acknowledged,
             note,
-          })
-        }
+          });
+          if (sent && !result.ok && result.kind === 'invalid') {
+            const controls = refusedControls(sent.changes, result.fieldErrors, result.warnings);
+            setRefusal(
+              controls.length > 0 ? { key: sent.key, target: sent.target, controls } : null,
+            );
+          }
+          return result;
+        }}
         onSaved={() => {
           switchTo(null);
           router.refresh();
@@ -258,6 +307,7 @@ export function AreaCards({
           // closed card started this review.
           if (review.key !== openKey) switchTo(review.key);
           setStaleKey(review.key);
+          setRefusal(null);
         }}
         people={people}
         runCheck={people.length > 0 ? (input) => actions.check(input) : undefined}

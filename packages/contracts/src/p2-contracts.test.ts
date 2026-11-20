@@ -118,9 +118,9 @@ describe('P2 permissions', () => {
   it('lets management and the finance roles read all but never send, accept or revise', () => {
     const { management, finance, accountant } = DEFAULT_ROLE_PERMISSIONS;
     for (const role of [management, finance, accountant]) {
-      // D50: only Management keeps read-all on leads and opportunities; Finance and Accountant read their own.
+      // Management, Finance and Accountant read all leads and opportunities (U20a2-Q4, Kuu 2026-11-20).
       for (const p of ['crm.lead.read', 'crm.opportunity.read'] as const) {
-        expect(role[p], p).toBe(role === management ? 'all' : 'own');
+        expect(role[p], p).toBe('all');
       }
       for (const p of ['customer.read', 'quotation.read', 'verification.read'] as const) {
         expect(role[p], p).toBe('all');

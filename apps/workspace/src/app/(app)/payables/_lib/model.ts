@@ -1,11 +1,11 @@
-import type { BillStatus, MatchStatus } from '@bos/contracts';
+import type { BillStatus, MatchStatus, VendorBillCan } from '@bos/contracts';
 
-import { hasPermission } from '@/components/p2/customers/permissions';
+import type { Grants } from '@/lib/grants';
 
 import type { BadgeTone } from '../../procurement/orders/_lib/model';
 
 /**
- * What the payables screens show and offer, decided from the bill's status and the person's roles.
+ * What the payables screens show and offer, decided from the bill's status and the person's live grants.
  * Pure. The API still decides every call (deny by default); this only keeps buttons away from
  * people and statuses that would be refused. The status rules mirror the API's `submittable` and
  * the bill transitions in the contracts.
@@ -52,17 +52,20 @@ export function fileStatusLabel(status: string | null): { tone: BadgeTone; text:
 }
 
 export interface BillGrants {
-  /** `payables.bill.enter`: accountants, who key in, match, submit and void bills. */
+  /** `payables.bill.enter`: whoever keys in, matches, submits and voids bills. */
   enter: boolean;
-  /** `payables.bill.read`: accountants and finance. */
+  /** `payables.bill.read`: whoever may open the bills. */
   read: boolean;
 }
 
-/** The permissions the session's roles hold by default. Server-side only. */
-export function billGrants(roles: readonly string[]): BillGrants {
+/**
+ * The bill permissions the person holds, read from their live saved grants (`getGrants`, GET /v1/me), never
+ * from role defaults, so a grant an admin added or removed shows at once. Any scope counts, as `hasGrant` does.
+ */
+export function billGrants(grants: Grants): BillGrants {
   return {
-    enter: hasPermission(roles, 'payables.bill.enter'),
-    read: hasPermission(roles, 'payables.bill.read'),
+    enter: grants.has('payables.bill.enter'),
+    read: grants.has('payables.bill.read'),
   };
 }
 
@@ -82,15 +85,27 @@ function submittable(status: BillStatus, matchStatus: MatchStatus): boolean {
   return false;
 }
 
-/** Match again while a PO bill is still being matched; submit when matched; void once approved. */
+/**
+ * Match again while a PO bill is still being matched; submit when matched; void once approved.
+ *
+ * `bill.can` is the API's answer for this bill under the person's grant scope (an `own` grant does not reach
+ * another person's bill): a false flag hides that action. A bill without `can` (a command response, an older
+ * API) falls back to the grant alone.
+ */
 export function billActions(
-  bill: { status: BillStatus; matchStatus: MatchStatus; purchaseOrderId: string | null },
+  bill: {
+    status: BillStatus;
+    matchStatus: MatchStatus;
+    purchaseOrderId: string | null;
+    can?: VendorBillCan | undefined;
+  },
   can: { enter: boolean },
 ): BillActions {
   const on = can.enter;
+  const reach = (action: keyof VendorBillCan) => bill.can?.[action] !== false;
   return {
-    match: on && bill.purchaseOrderId !== null && MATCHABLE.includes(bill.status),
-    submit: on && submittable(bill.status, bill.matchStatus),
-    void: on && bill.status === 'approved',
+    match: on && reach('match') && bill.purchaseOrderId !== null && MATCHABLE.includes(bill.status),
+    submit: on && reach('submit') && submittable(bill.status, bill.matchStatus),
+    void: on && reach('void') && bill.status === 'approved',
   };
 }
