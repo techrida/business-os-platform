@@ -62,6 +62,8 @@ export function nameProblem(name: string): string | null {
 
 const people = (count: number) => (count === 1 ? '1 person' : `${count} people`);
 
+const MEMBERS_NOT_LOADED = 'The people in this department could not be loaded.';
+
 /** A stale or failed save, said inside the dialog, with Reload for the stale case. */
 function Problem({
   result,
@@ -335,15 +337,20 @@ export function RetireDepartmentDialog({
   useEffect(() => {
     if (!open) return;
     let live = true;
-    void loadRetireMembersAction(department.id).then((loaded) => {
-      if (!live) return;
-      if (loaded.ok) {
-        setMemberIds(loaded.memberIds);
-        setLoadProblem(null);
-      } else {
-        setLoadProblem(loaded.message);
-      }
-    });
+    loadRetireMembersAction(department.id)
+      .then((loaded) => {
+        if (!live) return;
+        if (loaded.ok) {
+          setMemberIds(loaded.memberIds);
+          setLoadProblem(null);
+        } else {
+          setLoadProblem(loaded.message);
+        }
+      })
+      .catch(() => {
+        // A failed request (say a dropped connection) gets the same retry as a refused load.
+        if (live) setLoadProblem(MEMBERS_NOT_LOADED);
+      });
     return () => {
       live = false;
     };
@@ -442,7 +449,22 @@ export function RetireDepartmentDialog({
         )}
         <p>Records stay under {department.name}. You can restore it later.</p>
         {loadProblem !== null && (
-          <Alert tone="error" role="alert">
+          <Alert
+            tone="error"
+            role="alert"
+            actions={
+              <Button
+                variant="secondary"
+                size="small"
+                onClick={() => {
+                  setLoadProblem(null);
+                  setLoads((count) => count + 1);
+                }}
+              >
+                Try again
+              </Button>
+            }
+          >
             {loadProblem}
           </Alert>
         )}
