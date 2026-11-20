@@ -101,6 +101,13 @@ class RepairableZitadel {
     this.grants.set(userId, [...roles]);
     return Promise.resolve();
   }
+  deletedUsers: string[] = [];
+  deleteUser(userId: string) {
+    this.deletedUsers.push(userId);
+    this.users.delete(userId);
+    this.grants.delete(userId);
+    return Promise.resolve();
+  }
   sendInviteCode(userId: string) {
     this.inviteCodes.push(userId);
     return Promise.resolve();
@@ -543,6 +550,90 @@ describe('POST /v1/admin/users/invite with a department and level (F1-Q50)', () 
       controller.invite({ ...NEW_USER, roles: [], departmentId: SALES }),
     ).catch((e: unknown) => e);
     expect((error as { getStatus?: () => number }).getStatus?.()).toBe(422);
+  });
+
+  /** The department is valid when checked before ZITADEL and retired when checked again at the membership write. */
+  const retiredOnRecheck = () => {
+    const real = store.departmentForPlacement.bind(store);
+    let reads = 0;
+    vi.spyOn(store, 'departmentForPlacement').mockImplementation(((
+      ...args: Parameters<typeof real>
+    ) =>
+      real(...args).then((found) => {
+        reads += 1;
+        return reads === 1 || !found ? found : { ...found, status: 'retired' as const };
+      })) as typeof real);
+  };
+
+  /** Nothing reached ZITADEL: no identity, no grants, no invite mail. */
+  const expectZitadelUntouched = () => {
+    expect(zitadel.createCalls).toBe(0);
+    expect(zitadel.grants.size).toBe(0);
+    expect(zitadel.inviteCodes).toEqual([]);
+    expect(store.users).toHaveLength(0);
+  };
+
+  it.each([
+    ['in another legal entity', { organizationId: OTHER_ENTITY }, 422],
+    ['retired', { status: 'retired' as const }, 422],
+    ['that already has a head', { headUserId: '00000000-0000-4000-9000-0000000009aa' }, 409],
+  ])(
+    'refuses a department %s before ZITADEL creates, grants or invites anyone',
+    async (_label, over, status) => {
+      department(over);
+      const error = await asAdmin(BOTH, () =>
+        controller.invite({ ...NEW_USER, roles: ['sales'], departmentId: SALES, level: 'head' }),
+      ).catch((e: unknown) => e);
+
+      expect((error as { getStatus?: () => number }).getStatus?.()).toBe(status);
+      expectZitadelUntouched();
+    },
+  );
+
+  it('refuses a head without a department before ZITADEL', async () => {
+    const error = await asAdmin(BOTH, () =>
+      controller.invite({ ...NEW_USER, roles: ['sales'], level: 'head' }),
+    ).catch((e: unknown) => e);
+
+    expect(error).toBeInstanceOf(BadRequestException);
+    expectZitadelUntouched();
+  });
+
+  it('removes the roles and deletes the identity it created when the placement fails after ZITADEL was written', async () => {
+    department();
+    retiredOnRecheck();
+
+    const error = await asAdmin(BOTH, () =>
+      controller.invite({ ...NEW_USER, roles: ['sales'], departmentId: SALES }),
+    ).catch((e: unknown) => e);
+
+    expect((error as { getStatus?: () => number }).getStatus?.()).toBe(422);
+    expect(zitadel.createCalls).toBe(1);
+    expect(zitadel.deletedUsers).toEqual(['z-created-1']);
+    expect(zitadel.users.size).toBe(0);
+    expect(zitadel.grants.size).toBe(0);
+  });
+
+  it('removes the roles but keeps an identity it did not create (an earlier open invite) when the placement fails late', async () => {
+    department();
+    zitadel.users.set('z-open', {
+      id: 'z-open',
+      orgId: STAFF_ZORG,
+      email: NEW_USER.email,
+      displayName: 'Open invite',
+      status: 'invited',
+      createdAt: null,
+    });
+    retiredOnRecheck();
+
+    const error = await asAdmin(BOTH, () =>
+      controller.invite({ ...NEW_USER, roles: ['sales'], departmentId: SALES }),
+    ).catch((e: unknown) => e);
+
+    expect((error as { getStatus?: () => number }).getStatus?.()).toBe(422);
+    expect(zitadel.deletedUsers).toEqual([]);
+    expect(zitadel.users.has('z-open')).toBe(true);
+    expect(zitadel.grants.get('z-open')).toEqual([]);
   });
 
   it('refuses an unknown department, and a malformed one with 400', async () => {

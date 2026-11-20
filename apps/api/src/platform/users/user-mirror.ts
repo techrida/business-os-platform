@@ -68,6 +68,14 @@ function sameRoles(a: readonly string[], b: readonly string[]): boolean {
 
 export type { EntityMembership, ResolvedUser };
 
+/** A person an invite reached: the app row, their ZITADEL identity, and whether this invite created it. */
+export interface InvitedUser {
+  userId: string;
+  zitadelUserId: string;
+  /** False when the invite finished an earlier open invite (the identity existed before this request). */
+  created: boolean;
+}
+
 /**
  * The legal entities whose only effective Founder is `userId`, joined for a message, or null when there is none.
  * Per entity, not company-wide: an entity whose only Founder this is would be left with none, even when other entities
@@ -285,7 +293,7 @@ export class UserMirror {
   async invite(
     tx: DbTransaction,
     b: { email: string; givenName: string; familyName: string; roles: RoleKey[] },
-  ): Promise<{ userId: string }> {
+  ): Promise<InvitedUser> {
     const scope = await this.store.txScope(tx);
     const org = await this.staffOrgOf(scope);
     let zitadelUserId: string;
@@ -312,7 +320,7 @@ export class UserMirror {
       await this.store.replaceRoles(tx, scope, userId, b.roles);
       await this.store.bumpAuthzVersion(tx, scope);
     }
-    return { userId };
+    return { userId, zitadelUserId, created: true };
   }
 
   /** ZITADEL first (it is the truth), then the mirror. The caller invalidates authz after commit. */
