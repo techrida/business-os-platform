@@ -134,6 +134,35 @@ it('keeps Retire disabled when the member list could not be loaded', async () =>
   expect(retireButton()?.disabled).toBe(true);
 });
 
+it('loads the member list again from Try again, which then allows Retire', async () => {
+  mocks.load
+    .mockResolvedValueOnce({ ok: false, message: 'Could not load.' })
+    .mockResolvedValueOnce({ ok: true, memberIds: [] });
+  await mountForm(
+    <RetireDepartmentDialog
+      department={{ id: SALES, name: 'Sales', version: 3, status: 'active', members: 0 }}
+      destinations={[{ id: MARKETING, name: 'Marketing' }]}
+      open
+      onOpenChange={vi.fn()}
+    />,
+  );
+  await act(() => Promise.resolve());
+  expect(retireButton()?.disabled).toBe(true);
+  const tryAgain = [...document.querySelectorAll('[role="alert"] button')].find(
+    (b) => b.textContent === 'Try again',
+  );
+  expect(tryAgain).toBeDefined();
+
+  await click(tryAgain ?? null);
+  await act(() => Promise.resolve());
+  expect(mocks.load).toHaveBeenCalledTimes(2);
+  expect(document.querySelector('[role="alert"]')).toBeNull();
+  expect(retireButton()?.disabled).toBe(false);
+  await click(retireButton());
+  await act(() => Promise.resolve());
+  expect(mocks.retire).toHaveBeenCalledExactlyOnceWith(SALES, 3, undefined, []);
+});
+
 it('shows a duplicate name refusal at the Name field', async () => {
   const message = 'A department named "Sales" already exists.';
   mocks.create.mockResolvedValue({
