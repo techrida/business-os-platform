@@ -129,6 +129,7 @@ export const QUOTATION_VERSION_UPDATABLE_COLUMNS = [
   'rendered_document_id',
   'rendered_sha256',
   'render_state',
+  'render_attempts',
   'document_style',
   'superseded_by_version_id',
   'cancel_reason',
@@ -374,6 +375,11 @@ export const quotationVersions = appSchema.table(
     renderedSha256: bytea('rendered_sha256'),
     renderState: text('render_state', { enum: QUOTATION_RENDER_STATES }).notNull().default('none'),
     /**
+     * Failed renders since the last success or Retry (0115). `failed` below the API's attempt limit waits for its
+     * next background try; `failed` at the limit is given up and offers staff a Retry.
+     */
+    renderAttempts: integer('render_attempts').notNull().default(0),
+    /**
      * The DocumentStyleSnapshot of @bos/contracts (layout, colour, company profile, number system), captured by the
      * render job at the first render and never changed after (quotation_versions_document_style_guard, 0046).
      */
@@ -542,6 +548,7 @@ export const quotationVersions = appSchema.table(
       'quotation_versions_render_state_check',
       sql`${t.renderState} in ('none', 'pending', 'rendered', 'failed')`,
     ),
+    check('quotation_versions_render_attempts_check', sql`${t.renderAttempts} >= 0`),
     check(
       'quotation_versions_rendered_check',
       sql`${t.renderState} <> 'rendered' OR (${t.renderedDocumentId} IS NOT NULL AND ${t.renderedSha256} IS NOT NULL)`,
