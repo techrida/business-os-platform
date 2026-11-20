@@ -6,6 +6,7 @@ import {
   CreatePaymentTermBodySchema,
   CreateTaxCodeBodySchema,
   percentToBasisPoints,
+  RetireTaxCodeBodySchema,
   TaxRatePercentSchema,
   UpdatePaymentTermBodySchema,
 } from './master-data.js';
@@ -67,9 +68,17 @@ describe('tax code bodies', () => {
       rate: '15',
       creditable: true,
       effectiveFrom: '2027-01-01',
+      expectedPeriodId: '00000000-0000-4000-8000-000000000001',
       expectedVersion: 1,
     };
     expect(ChangeTaxCodeBodySchema.safeParse(change).success).toBe(true);
+    // The period id is required: a version alone cannot tell two periods apart (each new one starts at 1).
+    expect(
+      ChangeTaxCodeBodySchema.safeParse({ ...change, expectedPeriodId: undefined }).success,
+    ).toBe(false);
+    expect(
+      RetireTaxCodeBodySchema.safeParse({ effectiveTo: '2027-01-01', expectedVersion: 1 }).success,
+    ).toBe(false);
     expect(ChangeTaxCodeBodySchema.safeParse({ ...change, kind: 'zero' }).success).toBe(false);
   });
 });

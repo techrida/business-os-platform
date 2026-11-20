@@ -193,6 +193,7 @@ export class MasterDataService {
         const periods = await this.periods(tx, scope.tenantId, code, true);
         const plan = planTaxCodeChange(periods, {
           effectiveFrom: body.effectiveFrom,
+          expectedPeriodId: body.expectedPeriodId,
           expectedVersion: body.expectedVersion,
           today,
         });
@@ -260,6 +261,7 @@ export class MasterDataService {
       const periods = await this.periods(tx, scope.tenantId, code, true);
       const plan = planTaxCodeRetire(periods, {
         effectiveTo: body.effectiveTo,
+        expectedPeriodId: body.expectedPeriodId,
         expectedVersion: body.expectedVersion,
         today,
       });
