@@ -351,13 +351,18 @@ it('offers Lock, Deactivate, Unlock and Reactivate to a company-wide admin, neve
     // A locked person is unlocked, never reactivated; a timed lock shows when it ends.
     expect(html).toContain('aria-label="Unlock Dipesh · dipesh@example.test"');
     expect(html).toContain('aria-label="Unlock Esha · esha@example.test"');
-    expect(html).not.toMatch(/(Reactivate|Deactivate|Lock) (Dipesh|Esha)/);
+    expect(html).not.toMatch(/(Reactivate|Lock) (Dipesh|Esha)/);
+    // A locked person can be deactivated (P2-2); a timed lock can be kept for good, an admin lock needs nothing more.
+    expect(html).toContain('aria-label="Deactivate Dipesh · dipesh@example.test"');
+    expect(html).toContain('aria-label="Deactivate Esha · esha@example.test"');
+    expect(html).toContain('aria-label="Keep locked Dipesh · dipesh@example.test"');
+    expect(html).not.toContain('Keep locked Esha');
     expect(html.match(/>Locked</g)).toHaveLength(2);
     expect(html).toContain('dateTime="2026-11-20T10:15:00.000Z"');
 
     canChange = false;
     const plain = renderToStaticMarkup(await UsersPage({ searchParams: Promise.resolve({}) }));
-    expect(plain).not.toMatch(/aria-label="(Deactivate|Reactivate|Lock|Unlock) /);
+    expect(plain).not.toMatch(/aria-label="(Deactivate|Reactivate|Lock|Keep locked|Unlock) /);
   } finally {
     request.mockRestore();
   }
