@@ -270,12 +270,15 @@ export async function finishVideos(cfg, result, context, session, browser, base)
     main ??= claimPath(cfg.outDir, base, '.webm');
     return path.basename(main, '.webm');
   };
-  const place = async (page, claim, what) => {
+  // A tab that closed before its first frame may leave no file: that is noted, not a failure.
+  // The main window and named windows always have a video, so a missing one fails the run.
+  const place = async (page, claim, what, required = true) => {
     const video = page.video();
     if (!video) return false; // a page of a context that does not record
     const v = await video.path().catch(() => null);
     if (!v || !existsSync(v)) {
-      failures.push(`the video of ${what} is missing`);
+      if (required) failures.push(`the video of ${what} is missing`);
+      else (result.videoNotes ??= []).push(`no video file for ${what}`);
       return false;
     }
     const dest = claim();
@@ -296,6 +299,7 @@ export async function finishVideos(cfg, result, context, session, browser, base)
       p,
       () => (n === 0 ? (stem(), main) : claimPath(cfg.outDir, `${stem()}-page${n + 1}`, '.webm')),
       n === 0 ? 'the main window' : `tab ${n + 1}`,
+      n === 0,
     );
     if (placed) n++;
   }
