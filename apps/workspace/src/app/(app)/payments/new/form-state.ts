@@ -1,3 +1,5 @@
+import type { PaymentReferenceMatch } from '@/lib/api-payments';
+
 /** The fields the Record payment form can name in an error. `proof` is the proof-file list. */
 export type RecordPaymentField =
   | 'customerId'
@@ -20,6 +22,11 @@ export interface RecordPaymentState {
   reload?: boolean;
   /** Words per wrong field; the request never reached the API. */
   fieldErrors?: Partial<Record<RecordPaymentField, string>>;
+  /**
+   * Earlier payments with the same bank reference that the person has not yet said are different.
+   * Nothing was recorded; ticking the confirm box and pressing Record payment again records it.
+   */
+  referenceMatches?: PaymentReferenceMatch[];
 }
 
 // Words the record action and its tests share. They live here because a 'use server' file may export only async functions.
