@@ -128,7 +128,14 @@ export function DetailActions({
           blocker={gate.ok ? null : gate.reason}
         />
       ) : null}
-      {showOutcome ? <OutcomeDialog {...ids} today={today} idempotencyKey={randomUUID()} /> : null}
+      {showOutcome ? (
+        <OutcomeDialog
+          {...ids}
+          revisionNo={current.revisionNo}
+          today={today}
+          idempotencyKey={randomUUID()}
+        />
+      ) : null}
       {showRevise ? (
         <ReviseForm
           {...ids}
