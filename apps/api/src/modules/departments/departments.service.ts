@@ -783,6 +783,22 @@ export class DepartmentsAdminService {
           ),
         );
 
+      // The dialog shows the active members (the detail's list); anyone who joined or left since
+      // it opened would otherwise be moved without the caller seeing them.
+      if (body.expectedMemberIds !== undefined) {
+        const expected = new Set(body.expectedMemberIds);
+        const current = new Set(members.filter((m) => m.status === 'active').map((m) => m.userId));
+        if (
+          expected.size !== current.size ||
+          [...current].some((userId) => !expected.has(userId))
+        ) {
+          throw new ConflictException({
+            code: 'members_changed',
+            message: `People in ${dept.name} changed. Check the list and try again.`,
+          });
+        }
+      }
+
       let touchedAccess = dept.headUserId !== null;
 
       if (members.length > 0) {
