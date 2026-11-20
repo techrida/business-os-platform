@@ -1,4 +1,4 @@
-import type { LeadLostReason, OpportunityDto } from '@bos/contracts';
+import type { LeadLostReason, OpportunityDto, QuotationListItem } from '@bos/contracts';
 import type { Metadata } from 'next';
 import Link from 'next/link';
 import { notFound } from 'next/navigation';
@@ -12,7 +12,13 @@ import { canAssignFollowUps, loadPeople } from '@/components/p2/crm/people';
 import { PutOnHoldDialog } from '@/components/p2/crm/put-on-hold-dialog';
 import { ActivityList, LoadProblem, StageBadge } from '@/components/p2/crm/server-bits';
 import { StageConfirmDialog } from '@/components/p2/crm/stage-confirm-dialog';
-import { resolvedMoves, resumeMove, stageLabel, type Move } from '@/components/p2/crm/stages';
+import {
+  resolvedMoves,
+  resumeMove,
+  stageLabel,
+  stagesBefore,
+  type Move,
+} from '@/components/p2/crm/stages';
 import { listQuotations } from '@/components/p2/quotations/api';
 import {
   editQuotationHref,
@@ -130,73 +136,49 @@ function primaryOpportunityMove(
   return null;
 }
 
+/** A quotation in one of these states was sent to the customer, so the deal reached Quotation Sent. */
+const SENT_STATUSES: ReadonlySet<string> = new Set(['sent', 'accepted', 'rejected', 'expired']);
+
+/**
+ * The stages this deal has actually reached. The API records no stage history for deals, so only
+ * what the record proves counts: Qualified (deals start there), the stage it stands at or was held
+ * at, Quotation Sent once a quotation went out, and the stages the state machine says it passed
+ * through (`stagesBefore`). A stage it may have skipped reads "Not recorded", never "Reached".
+ */
 function opportunityTimeline(
-  opp: Pick<OpportunityDto, 'stage'>,
-  hasQuotations: boolean,
+  opp: Pick<OpportunityDto, 'stage' | 'heldFromStage'>,
+  quotations: readonly Pick<QuotationListItem, 'status'>[],
 ): TimelineStep[] {
-  const currentIndex = LINEAR_STAGES.findIndex((stage) => stage === opp.stage);
-  if (currentIndex !== -1) {
-    return LINEAR_STAGES.map((stage, index): TimelineStep => {
-      if (index < currentIndex) {
-        return {
-          key: stage,
-          title: <span>{stageLabel('opportunity', stage)}</span>,
-          status: 'Reached',
-          tone: 'done',
-        };
-      }
-      if (index === currentIndex) {
-        const won = stage === 'won';
-        return {
-          key: stage,
-          title: <span>{stageLabel('opportunity', stage)}</span>,
-          status: won ? 'Won' : 'Current',
-          tone: won ? 'done' : 'current',
-        };
-      }
-      return {
-        key: stage,
-        title: <span>{stageLabel('opportunity', stage)}</span>,
-        status: 'Not yet',
-        tone: 'upcoming',
-      };
-    });
+  const heldAt = opp.stage === 'on_hold' ? (opp.heldFromStage ?? 'negotiation') : null;
+  const reached = new Set<string>(['qualified']);
+  const add = (stage: string) => {
+    reached.add(stage);
+    for (const before of stagesBefore('opportunity', stage)) reached.add(before);
+  };
+  add(opp.stage);
+  if (heldAt) add(heldAt);
+  if (opp.stage === 'won' || quotations.some((q) => SENT_STATUSES.has(q.status))) {
+    add('quotation_sent');
   }
+  // How far along the deal is known to be: earlier stages without proof were maybe skipped.
+  const furthest = Math.max(...LINEAR_STAGES.map((stage, i) => (reached.has(stage) ? i : -1)));
 
+  const steps = LINEAR_STAGES.map((stage, index): TimelineStep => {
+    const title = <span>{stageLabel('opportunity', stage)}</span>;
+    if (stage === opp.stage) {
+      const won = stage === 'won';
+      return { key: stage, title, status: won ? 'Won' : 'Current', tone: won ? 'done' : 'current' };
+    }
+    if (reached.has(stage)) return { key: stage, title, status: 'Reached', tone: 'done' };
+    return index < furthest
+      ? { key: stage, title, status: 'Not recorded', tone: 'muted' }
+      : { key: stage, title, status: 'Not yet', tone: 'upcoming' };
+  });
   if (opp.stage === 'on_hold') {
-    const steps: TimelineStep[] = LINEAR_STAGES.map((stage): TimelineStep => {
-      const reached = stage !== 'won';
-      return {
-        key: stage,
-        title: <span>{stageLabel('opportunity', stage)}</span>,
-        status: reached ? 'Reached' : 'Not yet',
-        tone: reached ? 'done' : 'upcoming',
-      };
-    });
-    steps.push({
-      key: 'on_hold',
-      title: <span>On Hold</span>,
-      status: 'Current',
-      tone: 'warning',
-    });
-    return steps;
+    steps.push({ key: 'on_hold', title: <span>On Hold</span>, status: 'Current', tone: 'warning' });
+  } else if (opp.stage === 'lost') {
+    steps.push({ key: 'lost', title: <span>Lost</span>, status: 'Current', tone: 'error' });
   }
-
-  const steps: TimelineStep[] = LINEAR_STAGES.map((stage): TimelineStep => {
-    const reached = stage === 'qualified' || (stage === 'quotation_sent' && hasQuotations);
-    return {
-      key: stage,
-      title: <span>{stageLabel('opportunity', stage)}</span>,
-      status: reached ? 'Reached' : 'Not yet',
-      tone: reached ? 'done' : 'upcoming',
-    };
-  });
-  steps.push({
-    key: 'lost',
-    title: <span>Lost</span>,
-    status: 'Current',
-    tone: 'error',
-  });
   return steps;
 }
 
@@ -443,7 +425,7 @@ export default async function OpportunityPage({ params }: { params: Promise<{ id
       <Card as="aside" aria-label="Stage" className={styles.stageCard}>
         <StatusTimeline
           label="Opportunity stages"
-          steps={opportunityTimeline(opp, quotations.length > 0)}
+          steps={opportunityTimeline(opp, quotations)}
           className={styles.pipeline ?? ''}
         />
         <div className={styles.stageControls}>

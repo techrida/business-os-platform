@@ -9,6 +9,7 @@ import {
   resolvedMoves,
   resumeMove,
   stageLabel,
+  stagesBefore,
   userMoves,
 } from './stages';
 
@@ -201,5 +202,24 @@ describe('boardColumns and groupByStage', () => {
 
   it('labels stages from the catalogue', () => {
     expect(stageLabel('opportunity', 'requirement_received')).toBe('Requirement Received');
+  });
+});
+
+describe('stagesBefore', () => {
+  it('follows the only way into a stage back to the start', () => {
+    expect(stagesBefore('lead', 'converted')).toEqual(['qualified', 'contacted', 'new']);
+    expect(stagesBefore('lead', 'new')).toEqual([]);
+    expect(stagesBefore('opportunity', 'proposal_sent')).toEqual([
+      'requirement_received',
+      'qualified',
+    ]);
+    expect(stagesBefore('opportunity', 'negotiation')).toEqual(['quotation_sent']);
+  });
+
+  it('stops where a stage has several ways in, so nothing is claimed by position', () => {
+    // A quotation can be sent from Qualified, Requirement Received or Proposal Sent.
+    expect(stagesBefore('opportunity', 'quotation_sent')).toEqual([]);
+    expect(stagesBefore('opportunity', 'won')).toEqual([]);
+    expect(stagesBefore('lead', 'lost')).toEqual([]);
   });
 });

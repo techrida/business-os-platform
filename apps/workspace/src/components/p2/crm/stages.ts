@@ -142,6 +142,29 @@ export function boardColumns(kind: RecordKind): BoardColumn[] {
   });
 }
 
+/**
+ * The stages a record must have passed through to stand at `stage`, read from the state machine:
+ * while a stage has exactly one way in (leaving out On Hold and Lost, which only return a record to
+ * where it was), that earlier stage was reached. A lead at Qualified was Contacted and New; a deal
+ * at Proposal Sent had its requirement received. A stage with several ways in (Quotation Sent, Won)
+ * stops the chain: which one it came through is not known.
+ */
+export function stagesBefore(kind: RecordKind, stage: string): string[] {
+  const passed: string[] = [];
+  let at = stage;
+  for (;;) {
+    const sources = new Set(
+      table(kind)
+        .filter((t) => t.to === at && t.from !== 'on_hold' && t.from !== 'lost')
+        .map((t) => t.from),
+    );
+    const [only] = sources;
+    if (sources.size !== 1 || only === undefined || passed.includes(only)) return passed;
+    passed.push(only);
+    at = only;
+  }
+}
+
 /** Every stage gets a list, so an empty column still draws. */
 export function groupByStage<T extends { stage: string }>(
   kind: RecordKind,

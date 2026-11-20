@@ -379,63 +379,79 @@ describe('opportunity stage action buttons, timeline and read-only hygiene', () 
     expect(newQuoteWhenNoPrimaryStage?.className).toContain('primary');
   });
 
-  it('renders timeline done, current, upcoming, warning (on_hold) and error (lost) tones', async () => {
-    // Linear stage: quotation_sent
-    mocks.getOpportunity.mockResolvedValue(opportunity('quotation_sent'));
-    const linearDoc = parse(await render());
-    const linearSteps = [...linearDoc.querySelectorAll('[aria-label="Opportunity stages"] > li')];
-    expect(linearSteps.map((li) => li.className)).toEqual([
-      expect.stringContaining('done'),
-      expect.stringContaining('done'),
-      expect.stringContaining('done'),
-      expect.stringContaining('current'),
-      expect.stringContaining('upcoming'),
-      expect.stringContaining('upcoming'),
-    ]);
-    expect(linearSteps[0]?.textContent).toContain('Reached');
-    expect(linearSteps[3]?.textContent).toContain('Current');
-    expect(linearSteps[4]?.textContent).toContain('Not yet');
-
-    // Won: all linear steps done, final status Won
-    mocks.getOpportunity.mockResolvedValue(opportunity('won'));
-    const wonDoc = parse(await render());
-    const wonSteps = [...wonDoc.querySelectorAll('[aria-label="Opportunity stages"] > li')];
-    expect(wonSteps.every((li) => li.className.includes('done'))).toBe(true);
-    expect(wonSteps[5]?.textContent).toContain('Won');
-
-    // On hold: qualified..negotiation done, won upcoming, On Hold warning
-    mocks.getOpportunity.mockResolvedValue(
-      opportunity('on_hold', { stageReason: 'Budget pause', stageNote: 'Resume next month.' }),
+  /** Each timeline step as "class: text", so the tone and the words are checked together. */
+  const timeline = async () =>
+    [...parse(await render()).querySelectorAll('[aria-label="Opportunity stages"] > li')].map(
+      (li) =>
+        `${/(done|current|upcoming|muted|warning|error)/.exec(li.className)?.[1]}: ${(
+          li.textContent ?? ''
+        ).replace(/^Step \d+: /, '')}`,
     );
-    const holdDoc = parse(await render());
-    const holdSteps = [...holdDoc.querySelectorAll('[aria-label="Opportunity stages"] > li')];
-    expect(holdSteps.map((li) => li.className)).toEqual([
-      expect.stringContaining('done'),
-      expect.stringContaining('done'),
-      expect.stringContaining('done'),
-      expect.stringContaining('done'),
-      expect.stringContaining('done'),
-      expect.stringContaining('upcoming'),
-      expect.stringContaining('warning'),
-    ]);
-    expect(holdSteps[6]?.textContent).toContain('On Hold');
-    expect(holdSteps[6]?.textContent).toContain('Current');
 
-    // Lost with a quotation: qualified and quotation_sent done, Lost error
+  it('marks only the stages a deal is known to have reached, never by position', async () => {
+    // Quotation Sent can come straight from Qualified, so the two stages between are unknown.
+    mocks.getOpportunity.mockResolvedValue(opportunity('quotation_sent'));
+    expect(await timeline()).toEqual([
+      'done: QualifiedReached',
+      'muted: Requirement ReceivedNot recorded',
+      'muted: Proposal SentNot recorded',
+      'current: Quotation SentCurrent',
+      'upcoming: NegotiationNot yet',
+      'upcoming: WonNot yet',
+    ]);
+
+    // Proposal Sent has one way in, so Requirement Received was reached.
+    mocks.getOpportunity.mockResolvedValue(opportunity('proposal_sent'));
+    expect((await timeline()).slice(0, 3)).toEqual([
+      'done: QualifiedReached',
+      'done: Requirement ReceivedReached',
+      'current: Proposal SentCurrent',
+    ]);
+
+    // Won: a quotation was sent and accepted; whether it went through Negotiation is not known.
+    mocks.getOpportunity.mockResolvedValue(opportunity('won'));
+    const won = await timeline();
+    expect(won[3]).toBe('done: Quotation SentReached');
+    expect(won[4]).toBe('muted: NegotiationNot recorded');
+    expect(won[5]).toBe('done: WonWon');
+  });
+
+  it('marks the held stage and what led to it, with On Hold as the current step', async () => {
+    mocks.getOpportunity.mockResolvedValue(
+      opportunity('on_hold', {
+        heldFromStage: 'negotiation',
+        stageReason: 'Budget pause',
+        stageNote: 'Resume next month.',
+      }),
+    );
+    expect(await timeline()).toEqual([
+      'done: QualifiedReached',
+      'muted: Requirement ReceivedNot recorded',
+      'muted: Proposal SentNot recorded',
+      'done: Quotation SentReached',
+      'done: NegotiationReached',
+      'upcoming: WonNot yet',
+      'warning: On HoldCurrent',
+    ]);
+    // A hold from before heldFromStage was recorded was always at Negotiation.
+    mocks.getOpportunity.mockResolvedValue(opportunity('on_hold'));
+    expect((await timeline())[4]).toBe('done: NegotiationReached');
+  });
+
+  it('counts a sent quotation, not a draft, as reaching Quotation Sent on a lost deal', async () => {
     mocks.getOpportunity.mockResolvedValue(opportunity('lost', { stageReason: 'Price' }));
     mocks.listQuotations.mockResolvedValue([quote(Q1, { status: 'sent', canEdit: false })]);
-    const lostDoc = parse(await render());
-    const lostSteps = [...lostDoc.querySelectorAll('[aria-label="Opportunity stages"] > li')];
-    expect(lostSteps.map((li) => li.className)).toEqual([
-      expect.stringContaining('done'),
-      expect.stringContaining('upcoming'),
-      expect.stringContaining('upcoming'),
-      expect.stringContaining('done'),
-      expect.stringContaining('upcoming'),
-      expect.stringContaining('upcoming'),
-      expect.stringContaining('error'),
+    expect(await timeline()).toEqual([
+      'done: QualifiedReached',
+      'muted: Requirement ReceivedNot recorded',
+      'muted: Proposal SentNot recorded',
+      'done: Quotation SentReached',
+      'upcoming: NegotiationNot yet',
+      'upcoming: WonNot yet',
+      'error: LostCurrent',
     ]);
-    expect(lostSteps[6]?.textContent).toContain('Lost');
+    mocks.listQuotations.mockResolvedValue([quote(Q1, { status: 'draft' })]);
+    expect((await timeline())[3]).toBe('upcoming: Quotation SentNot yet');
   });
 
   it('enforces read-only mode when canEdit is false and allowedMoves is empty', async () => {
