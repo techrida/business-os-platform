@@ -44,6 +44,7 @@ import { type ResourceRef } from '../../../platform/authz/can';
 import { DB, type Db, type DbTransaction } from '../../../platform/db/db.module';
 import { updateVersioned, withIdempotency } from '../../../platform/db/idempotency';
 import { withTx, type Actor, type TxScope } from '../../../platform/db/tx';
+import { SettingsService } from '../../../platform/settings/settings.service';
 import { ApprovalsNotify } from '../../approvals/ports';
 import { ApprovalsService } from '../../approvals/requests.service';
 import { versionVisibleTo } from '../drafting/cost-visibility';
@@ -154,10 +155,13 @@ export function assertNoZeroInstalment(
   total: string,
   currency: string,
   paymentSchedule: unknown,
+  /** The company's default schedule (`sales.default_schedule`): what an order bills on when the quotation has none. */
+  fallbackSchedule: readonly { label: string; percent: string }[] = [],
 ): void {
+  const own = PaymentMilestoneSchema.array().parse(paymentSchedule);
   const instalments = paymentScheduleAmounts(
     total,
-    PaymentMilestoneSchema.array().parse(paymentSchedule),
+    own.length > 0 ? own : fallbackSchedule.map((l) => ({ label: l.label, percent: l.percent })),
   );
   const zero = instalments.find((m) => /^0\.00$/.test(m.amount));
   if (zero === undefined) return;
@@ -290,6 +294,7 @@ export class QuotationSubmitService {
     private readonly audit: AuditService,
     private readonly store: QuotationSubmitStore,
     private readonly caller: QuotationSubmitCaller,
+    private readonly settings: SettingsService,
     @Optional()
     @Inject(QUOTATION_SUBMIT_CLOCK)
     private readonly clock: () => Date = () => new Date(),
@@ -395,7 +400,13 @@ export class QuotationSubmitService {
       storedPricingInput(version, storedLines),
     );
     // FR-4: refused before any write, like a blocked route.
-    assertNoZeroInstalment(priced.columns.total, version.currency, version.paymentSchedule);
+    // A quotation without its own schedule bills on the company default, so that is split too.
+    assertNoZeroInstalment(
+      priced.columns.total,
+      version.currency,
+      version.paymentSchedule,
+      await this.settings.get(scope, 'sales.default_schedule'),
+    );
     const facts = approvalFactsOf(priced.facts);
     const ownerUserId = quotation.ownerUserId ?? callerUserId;
     const sodUserIds = [...new Set([ownerUserId, callerUserId])];

@@ -313,6 +313,7 @@ beforeAll(async () => {
     audit,
     new QuotationSubmitStore(),
     caller,
+    new SettingsService(db),
     () => now,
   );
   canceller = new CancelService(
