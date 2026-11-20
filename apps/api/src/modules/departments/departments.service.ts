@@ -53,6 +53,7 @@ import { can } from '../../platform/authz/can';
 import { DB, type Db, type DbTransaction } from '../../platform/db/db.module';
 import { type TxScope, withTx } from '../../platform/db/tx';
 import { searchPage } from '../../platform/list';
+import { personLabel, UNNAMED_USER } from '../../platform/users/person-names';
 import { lockAccessRevision } from '../access-settings/access-revision';
 import { ACCESS_REVISION_PORT, type AccessRevisionPort } from './access-revision.port';
 import { DepartmentsCaller } from './departments.caller';
@@ -61,14 +62,6 @@ type Queryable = Db | DbTransaction;
 
 const ACTIVE_NAME_INDEX = 'departments_tenant_org_active_name_unique';
 const MAX_LIST_ROWS = 500;
-
-function displayNameOf(displayName: string | null, email: string | null, userId: string): string {
-  const name = displayName?.trim();
-  if (name) return name;
-  const mail = email?.trim();
-  if (mail) return mail;
-  return userId;
-}
 
 function effectiveRoles(
   tenantRoles: readonly string[],
@@ -226,11 +219,11 @@ export class DepartmentsAdminService {
     const map = new Map<string, string>();
     if (headIds.length === 0) return map;
     const rows = await q
-      .select({ id: users.id, displayName: users.displayName, email: users.email })
+      .select({ id: users.id, displayName: users.displayName })
       .from(users)
       .where(and(eq(users.tenantId, tenantId), inArray(users.id, [...headIds])));
     for (const row of rows) {
-      map.set(row.id, displayNameOf(row.displayName, row.email, row.id));
+      map.set(row.id, personLabel(row.displayName));
     }
     return map;
   }
@@ -292,7 +285,7 @@ export class DepartmentsAdminService {
     const members: DepartmentMember[] = memberRows
       .map((row) => ({
         userId: row.userId,
-        name: displayNameOf(row.displayName, row.email, row.userId),
+        name: personLabel(row.displayName),
         email: row.email,
         jobTitle: row.jobTitle,
         level: row.level,
@@ -316,7 +309,7 @@ export class DepartmentsAdminService {
         const headNames = await this.loadHeadNames(q, scope.tenantId, [dept.headUserId]);
         head = {
           id: dept.headUserId,
-          name: headNames.get(dept.headUserId) ?? dept.headUserId,
+          name: headNames.get(dept.headUserId) ?? UNNAMED_USER,
         };
       }
     }
@@ -418,7 +411,7 @@ export class DepartmentsAdminService {
       head:
         dept.headUserId === null
           ? null
-          : { id: dept.headUserId, name: headNames.get(dept.headUserId) ?? dept.headUserId },
+          : { id: dept.headUserId, name: headNames.get(dept.headUserId) ?? UNNAMED_USER },
       managers: managerCounts.get(dept.id) ?? 0,
       members: memberCounts.get(dept.id) ?? 0,
       version: dept.version,
@@ -497,7 +490,7 @@ export class DepartmentsAdminService {
 
     const items: UnassignedPerson[] = rows.map((row) => ({
       userId: row.userId,
-      name: displayNameOf(row.displayName, row.email, row.userId),
+      name: personLabel(row.displayName),
       email: row.email,
       jobTitle: row.jobTitle,
       roles: effectiveRoles(roleMap.get(row.userId) ?? [], row.roleKeys),
