@@ -807,3 +807,42 @@ describe('bill-entry withholding registry', () => {
     expect(out).not.toContain('name="line:0:tdsCodeId"');
   });
 });
+
+describe('bill detail under the per-bill can flags', () => {
+  const open = () => html(BillPage({ params: Promise.resolve({ id: BILL }) }));
+  const matching = { ...header, status: 'matching', matchStatus: 'matched', lines: [line] };
+  const approved = { ...header, status: 'approved', matchStatus: 'matched', lines: [line] };
+  const OTHERS = { match: false, submit: false, void: false };
+  const OWN = { match: true, submit: true, void: true };
+
+  it("hides Match, Submit and Void on another person's bill from someone whose grant is narrowed to own", async () => {
+    // The live grant still holds payables.bill.enter (at `own`); only the API's can says this bill is not theirs.
+    grants.live = new Map([
+      ['payables.bill.read', 'all'],
+      ['payables.bill.enter', 'own'],
+    ]);
+    api.getBill.mockResolvedValue({ ...matching, can: OTHERS });
+    const others = await open();
+    expect(others).toContain('BILL-2083-0001');
+    expect(others).not.toContain('Match again');
+    expect(others).not.toContain('Submit for approval');
+    api.getBill.mockResolvedValue({ ...approved, can: OTHERS });
+    expect(await open()).not.toContain('Void bill');
+
+    api.getBill.mockResolvedValue({ ...matching, can: OWN });
+    const own = await open();
+    expect(own).toContain('Match again');
+    expect(own).toContain('Submit for approval');
+    api.getBill.mockResolvedValue({ ...approved, can: OWN });
+    expect(await open()).toContain('Void bill');
+  });
+
+  it('keeps offering the actions by grant and status when the bill comes without can', async () => {
+    api.getBill.mockResolvedValue(matching);
+    const out = await open();
+    expect(out).toContain('Match again');
+    expect(out).toContain('Submit for approval');
+    api.getBill.mockResolvedValue(approved);
+    expect(await open()).toContain('Void bill');
+  });
+});
