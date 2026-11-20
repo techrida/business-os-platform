@@ -16,6 +16,8 @@ export interface OutcomeDialogProps {
   /** The `version` of the version row the person is looking at. */
   version: number;
   number: string;
+  /** The revision the outcome is recorded on: always the current one. */
+  revisionNo: number;
   /** Today in Kathmandu, `YYYY-MM-DD`: the default date, and the latest the form allows. */
   today: string;
   /** A UUID the server generated for this render. */
@@ -66,6 +68,7 @@ function Choices({
 /** Record outcome: the customer accepted or rejected the sent quotation. */
 export function OutcomeDialog({
   number,
+  revisionNo,
   quotationId,
   versionId,
   version,
@@ -94,8 +97,8 @@ export function OutcomeDialog({
   return (
     <ActionDialog
       triggerLabel="Record outcome"
-      title={`Record the outcome of ${number}`}
-      intro="Write down what the customer answered. Accepting needs at least one kind of evidence. Rejecting needs a comment."
+      title={`Record outcome for revision ${revisionNo}`}
+      intro={`Write down what the customer answered to ${number}, revision ${revisionNo}. Accepting needs at least one kind of evidence. Rejecting needs a comment.`}
       formId={formId}
       submitLabel="Record outcome"
       pending={pending}
