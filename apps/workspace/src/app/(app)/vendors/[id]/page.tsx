@@ -15,14 +15,13 @@ import { notFound } from 'next/navigation';
 
 import { listVerificationCases, type Listing } from '@/components/p2/customers/api';
 import { isGuid, VERIFICATION_STATUS_LABEL } from '@/components/p2/customers/format';
-import { hasPermission } from '@/components/p2/customers/permissions';
 import { Alert } from '@/components/ui/alert';
 import { SuccessNotice } from '@/components/p4/success-notice';
 import { Badge } from '@/components/ui/badge';
 import { LinkButton } from '@/components/ui/button';
 import { Card } from '@/components/ui/card';
 import { EmptyState } from '@/components/ui/empty-state';
-import { Breadcrumb, Page } from '@/components/ui/page';
+import { Breadcrumb, Page, PageHeader } from '@/components/ui/page';
 import { FactList, Panel, type Fact } from '@/components/ui/panel';
 import { CellTitle, Table, Td, Th } from '@/components/ui/table';
 import {
@@ -34,6 +33,7 @@ import {
 } from '@/lib/api-vendors';
 import { requireStaffSession } from '@/lib/bff';
 import { when } from '@/lib/kernel-format';
+import { getPermissionCheck } from '@/lib/live-permissions';
 
 import {
   BankDecision,
@@ -50,7 +50,7 @@ import {
   mayGrantPortal,
   VENDOR_KIND_LABEL,
   VENDOR_STATUS_LABEL,
-  vendorGrants,
+  type VendorGrants,
 } from '../_lib/model';
 import styles from '../vendors.module.css';
 
@@ -301,7 +301,7 @@ function Banks({
   result: PromiseSettledResult<VendorBankAccountDto[]>;
   here: string;
   vendor: VendorDto;
-  grants: ReturnType<typeof vendorGrants>;
+  grants: VendorGrants;
 }) {
   const open = vendor.status !== 'archived';
   return (
@@ -408,8 +408,15 @@ export default async function VendorPage({
     );
   }
 
-  const grants = vendorGrants(session.roles);
-  const maySeeKyb = hasPermission(session.roles, 'verification.read');
+  const allowed = await getPermissionCheck(session);
+  const grants: VendorGrants = {
+    read: allowed('vendor.read'),
+    write: vendor.can?.write ?? allowed('vendor.write'),
+    activate: vendor.can?.activate ?? allowed('vendor.activate'),
+    propose: vendor.can?.proposeBank ?? allowed('vendor.bank.propose'),
+    verify: vendor.can?.verifyBank ?? allowed('vendor.bank.verify'),
+  };
+  const maySeeKyb = allowed('verification.read');
   // The panels below load on their own: one failing leaves the profile and the other panels usable.
   const [contacts, accounts, banks, cases] = await Promise.allSettled([
     listVendorContacts(session, id),
@@ -420,7 +427,10 @@ export default async function VendorPage({
 
   const status = VENDOR_STATUS_LABEL[vendor.status];
   const editable = isEditable(vendor.status);
-  const options = lifecycleOptions(vendor.status, grants);
+  const options = lifecycleOptions(vendor.status, vendor.can ?? grants);
+  const canEdit = grants.write && editable;
+  const hasPrimaryMove = options.some((o) => o.tone === 'primary');
+  const hasHeaderActions = options.length > 0 || canEdit;
   const contactList = contacts.status === 'fulfilled' ? contacts.value : [];
 
   const facts: Fact[] = [
@@ -453,6 +463,34 @@ export default async function VendorPage({
     <Page>
       <Breadcrumb items={[{ label: 'Vendors', href: '/vendors' }, { label: vendor.legalName }]} />
 
+      <PageHeader
+        title={vendor.legalName}
+        status={<Badge tone={status.tone}>{status.text}</Badge>}
+        description={vendor.tradeName ?? undefined}
+        actions={
+          hasHeaderActions ? (
+            <>
+              {options.map((o) => (
+                <LifecycleForm
+                  key={o.command}
+                  vendorId={vendor.id}
+                  option={o}
+                  idempotencyKey={randomUUID()}
+                />
+              ))}
+              {canEdit ? (
+                <LinkButton
+                  href={`${here}/edit`}
+                  variant={hasPrimaryMove ? 'secondary' : 'primary'}
+                >
+                  Edit Details
+                </LinkButton>
+              ) : null}
+            </>
+          ) : null
+        }
+      />
+
       {flags.created !== undefined ? (
         <SuccessNotice message="Vendor added. Add a contact and a bank account before starting review." />
       ) : flags.saved !== undefined ? (
@@ -460,8 +498,6 @@ export default async function VendorPage({
       ) : null}
 
       <div className={styles.columns}>
-        {/* The identity card comes first in the reading order, so the page's h1 precedes every panel
-            heading; on a wide screen the grid places it at the top of the side column (Figma 648:10415). */}
         <Card className={styles.profile} as="section" aria-labelledby="vendor-name">
           <div className={styles.profileIdentity}>
             <div className={styles.profileLogo}>
@@ -471,23 +507,18 @@ export default async function VendorPage({
                 legalName={vendor.legalName}
                 logoDocumentId={vendor.logoDocumentId ?? null}
                 label="Vendor logo"
-                readOnly={!(grants.write && editable)}
+                readOnly={!canEdit}
               />
             </div>
-            <h1 id="vendor-name" className={styles.profileName}>
+            <h2 id="vendor-name" className={styles.profileName}>
               {vendor.legalName}
-            </h1>
+            </h2>
             <Badge tone={status.tone}>{status.text}</Badge>
             {vendor.tradeName !== null ? (
               <p className={styles.tradeName}>
                 <span className="sr-only">Trade name: </span>
                 {vendor.tradeName}
               </p>
-            ) : null}
-            {grants.write && editable ? (
-              <LinkButton href={`${here}/edit`} className={styles.editLink ?? ''}>
-                Edit Details
-              </LinkButton>
             ) : null}
           </div>
           <Panel title="Profile" className={styles.info}>
@@ -496,12 +527,7 @@ export default async function VendorPage({
         </Card>
 
         <div className={styles.main}>
-          <Contacts
-            result={contacts}
-            here={here}
-            vendorId={vendor.id}
-            mayWrite={grants.write && editable}
-          />
+          <Contacts result={contacts} here={here} vendorId={vendor.id} mayWrite={canEdit} />
           <Accounts result={accounts} here={here} />
           <Banks result={banks} here={here} vendor={vendor} grants={grants} />
         </div>
@@ -512,22 +538,15 @@ export default async function VendorPage({
             as="aside"
             description={`This vendor is ${status.text.toLowerCase()}.`}
           >
-            {options.length === 0 ? (
-              <p className={styles.note}>
-                {vendor.status === 'archived'
-                  ? 'This vendor is archived. Nothing more can be done.'
-                  : 'No action is open to your roles at this status.'}
-              </p>
-            ) : (
-              options.map((o) => (
-                <LifecycleForm
-                  key={o.command}
-                  vendorId={vendor.id}
-                  option={o}
-                  idempotencyKey={randomUUID()}
-                />
-              ))
-            )}
+            <p className={styles.note}>
+              {vendor.status === 'archived'
+                ? 'This vendor is archived. Nothing more can be done.'
+                : vendor.can?.activateBlockedBySod
+                  ? 'You created this vendor, so another person with approval access must approve it.'
+                  : options.length === 0
+                    ? 'No status action is open to your current permissions at this status.'
+                    : 'Use the header actions to move this vendor to the next stage.'}
+            </p>
           </Panel>
           <Kyb
             result={

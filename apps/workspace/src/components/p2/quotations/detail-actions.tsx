@@ -36,6 +36,8 @@ export function DetailActions({
   reloadHref,
   today = kathmanduToday(),
   includeOutcome = true,
+  maySend,
+  mayRecordOutcome,
 }: {
   quotationId: string;
   number: string;
@@ -48,12 +50,21 @@ export function DetailActions({
   /** `YYYY-MM-DD` in Kathmandu. A prop so a test can pin the clock. */
   today?: string;
   includeOutcome?: boolean;
+  /** Live permission fallback when `capabilities.canSend` is omitted. */
+  maySend?: boolean;
+  /** Live permission fallback when `capabilities.canRecordOutcome` is omitted. */
+  mayRecordOutcome?: boolean;
 }) {
   const { status } = current;
   const ids = { quotationId, versionId: current.id, version: current.version, number, reloadHref };
 
   // Send is offered for an approved quotation, and for an expired one so the reason is on screen.
-  const showSend = status === 'approved' || status === 'expired';
+  const showSend =
+    (status === 'approved' || status === 'expired') && (capabilities.canSend ?? maySend ?? true);
+  const showOutcome =
+    includeOutcome &&
+    canRecordOutcome(status) &&
+    (capabilities.canRecordOutcome ?? mayRecordOutcome ?? true);
   const gate = sendGate(current, contacts, today);
 
   // Draft and Returned are changed in place in the quote builder; every later change is a revision.
@@ -79,9 +90,7 @@ export function DetailActions({
           blocker={gate.ok ? null : gate.reason}
         />
       ) : null}
-      {includeOutcome && canRecordOutcome(status) ? (
-        <OutcomeDialog {...ids} today={today} idempotencyKey={randomUUID()} />
-      ) : null}
+      {showOutcome ? <OutcomeDialog {...ids} today={today} idempotencyKey={randomUUID()} /> : null}
       {showRevise ? (
         <ReviseForm
           {...ids}

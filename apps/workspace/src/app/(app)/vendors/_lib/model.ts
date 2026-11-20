@@ -122,7 +122,13 @@ const ARCHIVE: LifecycleOption = {
  */
 export function lifecycleOptions(
   status: VendorStatus,
-  can: { write: boolean; activate: boolean },
+  can: {
+    write: boolean;
+    activate: boolean;
+    suspend?: boolean;
+    block?: boolean;
+    archive?: boolean;
+  },
 ): LifecycleOption[] {
   switch (status) {
     case 'draft':
@@ -131,12 +137,20 @@ export function lifecycleOptions(
       return can.write ? [SUBMIT_PENDING] : [];
     case 'under_review':
       return can.activate ? [ACTIVATE] : [];
-    case 'approved':
-      return can.activate ? [SUSPEND, BLOCK] : [];
-    case 'suspended':
-      return can.activate ? [REINSTATE, BLOCK] : [];
+    case 'approved': {
+      const options: LifecycleOption[] = [];
+      if (can.suspend ?? can.activate) options.push(SUSPEND);
+      if (can.block ?? can.activate) options.push(BLOCK);
+      return options;
+    }
+    case 'suspended': {
+      const options: LifecycleOption[] = [];
+      if (can.activate) options.push(REINSTATE);
+      if (can.block ?? can.activate) options.push(BLOCK);
+      return options;
+    }
     case 'blocked':
-      return can.activate ? [ARCHIVE] : [];
+      return (can.archive ?? can.activate) ? [ARCHIVE] : [];
     case 'archived':
       return [];
   }

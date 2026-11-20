@@ -309,9 +309,9 @@ export default async function PaymentDetailPage({ params }: { params: Promise<{ 
   }
 
   // The rest is context: if it fails the payment itself still shows, with words in the gap.
-  // Allocating needs a verified payment and the `payment.allocate` grant; the API still decides.
-  const canAllocate =
-    payment.status === 'verified' && (await getPermissionCheck(session))('payment.allocate');
+  // Allocating and reviewing check live grants (and server `payment.can` when present); the API still decides.
+  const allowed = await getPermissionCheck(session);
+  const canAllocate = payment.status === 'verified' && allowed('payment.allocate');
   const [customer, allocations, proofs, openItems, advance] = await Promise.all([
     getCustomer(session, payment.customerId).catch(() => null),
     listPaymentAllocations(session, id).catch(() => null),
@@ -353,7 +353,17 @@ export default async function PaymentDetailPage({ params }: { params: Promise<{ 
       : null;
 
   const meta = paymentStatusMeta(payment.status);
-  const actions = actionsFor(payment.status);
+  const actions =
+    payment.can !== undefined
+      ? {
+          verify: payment.can.verify,
+          reject: payment.can.reject,
+          reverse: payment.can.reverse,
+        }
+      : allowed('payment.verify')
+        ? actionsFor(payment.status)
+        : { verify: false, reject: false, reverse: false };
+  const hasActions = actions.verify || actions.reject || actions.reverse;
   const customerName = customer?.legalName ?? 'Customer details unavailable';
 
   return (
@@ -369,18 +379,26 @@ export default async function PaymentDetailPage({ params }: { params: Promise<{ 
         status={<Badge tone={meta.tone}>{meta.label}</Badge>}
         description={`${money(payment.amount, payment.currency, numberSystems)} from ${customerName}`}
         actions={
-          <div className={styles.actions}>
-            <ReviewDialogs
-              key={payment.version}
-              paymentId={payment.id}
-              version={payment.version}
-              number={payment.number}
-              actions={actions}
-              keys={{ verify: randomUUID(), reject: randomUUID(), reverse: randomUUID() }}
-            />
-          </div>
+          hasActions ? (
+            <div className={styles.actions}>
+              <ReviewDialogs
+                key={payment.version}
+                paymentId={payment.id}
+                version={payment.version}
+                number={payment.number}
+                actions={actions}
+                keys={{ verify: randomUUID(), reject: randomUUID(), reverse: randomUUID() }}
+              />
+            </div>
+          ) : null
         }
       />
+
+      {payment.can?.verifyBlockedBySod ? (
+        <Alert tone="info" role="status" title="Verification requires another reviewer">
+          You recorded this payment, so someone else must verify it.
+        </Alert>
+      ) : null}
 
       <div className={styles.stack}>
         <Panel title="Payment overview">

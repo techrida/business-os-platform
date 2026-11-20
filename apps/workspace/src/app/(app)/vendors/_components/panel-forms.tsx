@@ -224,18 +224,8 @@ function ReasonField({
   );
 }
 
-/** Block and Archive confirm in a dialog, with the reason in its body and the actions in its footer. */
-export function LifecycleForm(props: {
-  vendorId: string;
-  option: LifecycleOption;
-  idempotencyKey: string;
-}) {
-  const { option } = props;
-  const confirm = option.command === 'block' || option.command === 'archive';
-  return confirm ? <LifecycleDialog {...props} /> : <LifecycleBody {...props} />;
-}
-
-function LifecycleDialog({
+/** Every lifecycle action confirms in a fixed-footer dialog (UIP-DLG-001) with toast feedback. */
+export function LifecycleForm({
   vendorId,
   option,
   idempotencyKey,
@@ -251,6 +241,7 @@ function LifecycleDialog({
     () => setOpen(false),
   );
   const formId = useId();
+  const destructive = option.command === 'block' || option.command === 'archive';
   return (
     <Dialog
       open={open}
@@ -259,7 +250,7 @@ function LifecycleDialog({
       title={`${option.label}?`}
       description={option.help}
       size="small"
-      tone="destructive"
+      tone={destructive ? 'destructive' : 'default'}
       locked={pending}
       closeOnOutsideClick={false}
       footer={
@@ -295,46 +286,6 @@ function LifecycleDialog({
         ) : null}
       </form>
     </Dialog>
-  );
-}
-
-function LifecycleBody({
-  vendorId,
-  option,
-  idempotencyKey,
-}: {
-  vendorId: string;
-  option: LifecycleOption;
-  idempotencyKey: string;
-}) {
-  const { state, formAction, pending, reason, setReason, formRef } = useLifecycle(idempotencyKey);
-  return (
-    <form ref={formRef} action={formAction} noValidate className={styles.lifecycle}>
-      <input type="hidden" name="vendorId" value={vendorId} />
-      <input type="hidden" name="command" value={option.command} />
-      <input type="hidden" name="idempotencyKey" value={state.key} />
-      <Notice
-        state={state}
-        reloadHref={`/vendors/${vendorId}`}
-        title="Nothing changed"
-        announce={false}
-      />
-      {option.needsReason ? (
-        <ReasonField
-          error={state.errors.reason}
-          hint={option.help}
-          reason={reason}
-          setReason={setReason}
-        />
-      ) : (
-        <p className={styles.note}>{option.help}</p>
-      )}
-      <div className={styles.actions}>
-        <Button type="submit" variant={option.tone} disabled={pending}>
-          {pending ? 'Working' : option.label}
-        </Button>
-      </div>
-    </form>
   );
 }
 

@@ -22,6 +22,7 @@ import { listRfqsPage } from '@/lib/api-rfqs';
 import { requireStaffSession } from '@/lib/bff';
 import { when } from '@/lib/kernel-format';
 import { activeFilterLabels, clearFiltersHref, hrefWith, readList } from '@/lib/list-params';
+import { getPermissionCheck } from '@/lib/live-permissions';
 
 import listLayout from '@/components/p3/list.module.css';
 
@@ -92,7 +93,7 @@ export default async function RfqsPage({
   const params = await searchParams;
   const list = readList(params, LIST);
   const status = RfqStatusSchema.array().parse(list.multi.status);
-  const grants = rfqGrants(session.roles);
+  const grants = rfqGrants(await getPermissionCheck(session));
 
   let rfqs: RfqListItem[] | null = null;
   let total = 0;

@@ -22,6 +22,7 @@ import {
 } from '@/lib/api-purchase-orders';
 import { requireStaffSession } from '@/lib/bff';
 import { when } from '@/lib/kernel-format';
+import { getPermissionCheck } from '@/lib/live-permissions';
 import type { Session } from '@/lib/session';
 
 import layout from '../procurement.module.css';
@@ -399,7 +400,7 @@ export default async function ReceiptsPage({
   // Without a valid purchase order ID there is nothing to list, and nothing reaches the API.
   if (!isGuid(po)) {
     const session = await requireStaffSession('/procurement/receipts');
-    const grants = receiptGrants(session.roles);
+    const grants = receiptGrants(await getPermissionCheck(session));
     const [waiting, mine] = await Promise.all([
       loadWaiting(session, grants.confirm),
       loadMine(session),
@@ -411,7 +412,7 @@ export default async function ReceiptsPage({
 
   const here = `/procurement/receipts?po=${po}`;
   const session = await requireStaffSession(here);
-  const grants = receiptGrants(session.roles);
+  const grants = receiptGrants(await getPermissionCheck(session));
   const [receipts, progress] = await Promise.allSettled([
     listReceipts(session, po),
     getPoProgress(session, po),
