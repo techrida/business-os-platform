@@ -42,7 +42,7 @@ import {
   toOpportunityDto,
 } from './opportunities.types';
 import {
-  isStageManager,
+  mayReopenOpportunity,
   opportunityRef,
   planStageChange,
   type StageCaller,
@@ -193,11 +193,13 @@ export class OpportunitiesService {
     by?: StageCaller,
   ): Promise<OpportunityDto> {
     const { scope, actor, principal } = this.caller.current();
-    const callerBy: StageCaller = by ?? (isStageManager(principal) ? 'manager' : 'user');
     return withTx(this.db, scope, actor, async (tx) => {
       const row = await this.lock(tx, scope, id);
       // Scope first (404), then state (409): someone who may not edit learns nothing about the stage.
       this.assertVisible('crm.opportunity.write', row);
+      // The reopen edge needs the live crm.opportunity.reopen grant on this deal's department as well as the level.
+      const callerBy: StageCaller =
+        by ?? (mayReopenOpportunity(principal, row) ? 'manager' : 'user');
 
       // Probe the planner first with a placeholder reason so scope/stale/edge errors win before choosing or
       // inserting a lost-reason option.

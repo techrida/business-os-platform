@@ -1,6 +1,6 @@
 import type { VendorKind, VendorStatus } from '@bos/contracts';
 
-import { hasPermission } from '@/components/p2/customers/permissions';
+import { hasPermission, type PermissionSource } from '@/components/p2/customers/permissions';
 
 /**
  * What the vendor screens show and offer, decided from the vendor's status and the person's
@@ -35,14 +35,18 @@ export interface VendorGrants {
   verify: boolean;
 }
 
-/** The vendor permissions the session's roles hold by default. Server-side only. */
-export function vendorGrants(roles: readonly string[]): VendorGrants {
+/**
+ * The vendor permissions the person holds. Pass the live grants (`grantsFrom` over `getMeOrNull`), the saved
+ * role rows the API enforces; role keys still read the built-in defaults for callers not yet moved.
+ * Server-side only.
+ */
+export function vendorGrants(source: PermissionSource): VendorGrants {
   return {
-    read: hasPermission(roles, 'vendor.read'),
-    write: hasPermission(roles, 'vendor.write'),
-    activate: hasPermission(roles, 'vendor.activate'),
-    propose: hasPermission(roles, 'vendor.bank.propose'),
-    verify: hasPermission(roles, 'vendor.bank.verify'),
+    read: hasPermission(source, 'vendor.read'),
+    write: hasPermission(source, 'vendor.write'),
+    activate: hasPermission(source, 'vendor.activate'),
+    propose: hasPermission(source, 'vendor.bank.propose'),
+    verify: hasPermission(source, 'vendor.bank.verify'),
   };
 }
 

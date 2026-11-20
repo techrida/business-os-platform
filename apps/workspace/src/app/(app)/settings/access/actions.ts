@@ -48,7 +48,19 @@ export async function previewAccessAction(input: unknown): Promise<ReviewPreview
     const preview = await previewAccessChanges(session, { changes: parsed.data.changes });
     return { ok: true, preview };
   } catch (error) {
-    return { ok: false, message: mapAccessPreviewError(error) };
+    // The dry run refuses with the save's own 422 (field errors keyed `changes.<index>`, blocked
+    // warnings with `changeIndex`): pass them on so the card can mark the refused controls.
+    const refusal = mapAccessSaveError(error);
+    if (refusal.kind === 'invalid') {
+      return {
+        ok: false,
+        kind: 'refused',
+        message: refusal.message,
+        ...(refusal.warnings !== undefined ? { warnings: refusal.warnings } : {}),
+        ...(refusal.fieldErrors !== undefined ? { fieldErrors: refusal.fieldErrors } : {}),
+      };
+    }
+    return { ok: false, kind: 'error', message: mapAccessPreviewError(error) };
   }
 }
 

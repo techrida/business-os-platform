@@ -374,6 +374,82 @@ describe('RoleCache.grantsFor', () => {
   });
 });
 
+describe('RoleCache.current, the request path (U20a2-Q10)', () => {
+  it('refuses a grant another instance removed on the very next call, without waiting for the window', async () => {
+    const org = await newOrg();
+    await setRows(org, [
+      ['sales', 'memo.read', 'own'],
+      ['sales', 'memo.create', 'own'],
+    ]);
+    const cache = new RoleCache(db, clock);
+    const salesGrants = async () => (await cache.current(org.tenantId)).grantsFor(['sales']);
+
+    expect((await salesGrants()).get('memo.create')).toBe('own');
+
+    // An access save on another instance removes the grant and bumps the version. The clock does not move.
+    await setRows(org, [['sales', 'memo.read', 'own']]);
+    await otherInstance().invalidate(org.tenantId, org.organizationId);
+
+    const after = await salesGrants();
+    expect(after.has('memo.create')).toBe(false);
+    expect(after.get('memo.read')).toBe('own');
+  });
+
+  it('moves its epoch on the very next call after another instance bumped the version', async () => {
+    const org = await newOrg();
+    const cache = new RoleCache(db, clock);
+    const first = (await cache.current(org.tenantId)).epoch;
+    expect((await cache.current(org.tenantId)).epoch).toBe(first);
+    expect(await cache.epoch(org.tenantId)).toBe(first); // the same value the user cache was keyed to
+
+    await otherInstance().invalidate(org.tenantId, org.organizationId);
+    expect((await cache.current(org.tenantId)).epoch).not.toBe(first);
+  });
+
+  it('makes one indexed version read per call while nothing changed, and reloads rows only on a bump', async () => {
+    const org = await newOrg();
+    await setRows(org, [['sales', 'memo.read', 'own']]);
+    await otherInstance().invalidate(org.tenantId, org.organizationId);
+    const cache = new RoleCache(db, clock);
+    await cache.current(org.tenantId); // cold: version, then rows
+
+    const queries = vi.spyOn(appPool, 'query');
+    for (let i = 0; i < 3; i += 1) {
+      expect((await cache.current(org.tenantId)).grantsFor(['sales']).get('memo.read')).toBe('own');
+    }
+    expect(queries).toHaveBeenCalledTimes(3); // the version only, no row load
+
+    await setRows(org, [['sales', 'memo.read', 'all']]);
+    await otherInstance().invalidate(org.tenantId, org.organizationId);
+    queries.mockClear(); // the writes above went through the same pool
+    expect((await cache.current(org.tenantId)).grantsFor(['sales']).get('memo.read')).toBe('all');
+    expect(queries).toHaveBeenCalledTimes(2); // version, then the one row statement
+  });
+
+  it('confirms the entry for the other callers too, so grantsFor in the same request reads no database', async () => {
+    const org = await newOrg();
+    const cache = new RoleCache(db, clock);
+    await cache.current(org.tenantId);
+    now += VERSION_CHECK_TTL_MS + 1;
+    await cache.current(org.tenantId);
+
+    const queries = vi.spyOn(appPool, 'query');
+    await cache.grantsFor(org.tenantId, org.organizationId, ['sales']);
+    expect(queries).not.toHaveBeenCalled();
+  });
+
+  it('fails when the version cannot be read, rather than serving the cached grants', async () => {
+    const org = await newOrg();
+    const cache = new RoleCache(db, clock);
+    await cache.current(org.tenantId);
+
+    vi.spyOn(appPool, 'query').mockImplementation(() => {
+      throw new Error('database down');
+    });
+    await expect(cache.current(org.tenantId)).rejects.toThrow();
+  });
+});
+
 describe('RoleCache: a tenant without grant rows and rolesGranting', () => {
   /** Every role at every level on a fresh, never-seeded tenant: the code defaults as the cache builds them. */
   async function codeDefaults(

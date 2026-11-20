@@ -500,9 +500,44 @@
       "breakpoints": true
     },
     {
-      "idx": 107,
+      "idx": 71,
       "version": "7",
-      "when": 1783000000107,
+      "when": 1783000000093,
+      "tag": "0093_retired_department_members_repair",
+      "breakpoints": true
+    },
+    {
+      "idx": 72,
+      "version": "7",
+      "when": 1783000000120,
+      "tag": "0120_finance_settings_permissions",
+      "breakpoints": true
+    },
+    {
+      "idx": 73,
+      "version": "7",
+      "when": 1783000000121,
+      "tag": "0121_crm_reopen_permissions",
+      "breakpoints": true
+    },
+    {
+      "idx": 74,
+      "version": "7",
+      "when": 1783000000122,
+      "tag": "0122_level_write_rows_for_department_reach",
+      "breakpoints": true
+    },
+    {
+      "idx": 75,
+      "version": "7",
+      "when": 1783000000123,
+      "tag": "0123_finance_accountant_read_all_crm",
+      "breakpoints": true
+    },
+    {
+      "idx": 76,
+      "version": "7",
+      "when": 1783000000123,
       "tag": "0107_quotation_evidence_confirmations",
       "breakpoints": true
     }

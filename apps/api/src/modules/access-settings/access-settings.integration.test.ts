@@ -25,7 +25,11 @@ import {
   leads,
   runMigrations,
 } from '@bos/db';
-import { ConflictException, UnprocessableEntityException } from '@nestjs/common';
+import {
+  ConflictException,
+  ForbiddenException,
+  UnprocessableEntityException,
+} from '@nestjs/common';
 import { PostgreSqlContainer, type StartedPostgreSqlContainer } from '@testcontainers/postgresql';
 import { sql } from 'drizzle-orm';
 import { drizzle } from 'drizzle-orm/node-postgres';
@@ -770,8 +774,8 @@ describe('Access Settings level rules match the run-time grants (real Postgres)'
       expect(await liveScope(env, ['sales'], level, 'crm.opportunity.write')).toBe('department');
     }
     expect(await liveScope(env, ['sales'], 'staff', 'crm.lead.write')).toBe('own');
-    // Finance only starts leads: its managers see the department's but edit none.
-    expect(await liveScope(env, ['finance'], 'manager', 'crm.lead.read')).toBe('department');
+    // Finance reads every lead (U20a2-Q4) and only starts leads: its managers edit none.
+    expect(await liveScope(env, ['finance'], 'manager', 'crm.lead.read')).toBe('all');
     expect(await liveScope(env, ['finance'], 'manager', 'crm.lead.write')).toBe('own');
   });
 
@@ -894,5 +898,104 @@ describe('Access Settings level rules match the run-time grants (real Postgres)'
         await liveScope(env, ['sales'], 'head', 'crm.lead.read'),
       );
     }
+  });
+});
+
+describe('Access save re-checks the caller against the user mirror (U20b-Q3, real Postgres)', () => {
+  const assignmentChange: AccessChange[] = [
+    { kind: 'assignment', area: 'leads', staff: 'self_only' },
+  ];
+
+  async function saveAs(env: SeededEnv, userId: string): Promise<unknown> {
+    const current = await env.service.getCatalogue(env.scope);
+    try {
+      await env.service.save(env.scope, userActor(userId), {
+        expectedRevision: current.revision,
+        changes: assignmentChange,
+        acknowledged: [],
+      });
+      return null;
+    } catch (err) {
+      return err;
+    }
+  }
+
+  function forbiddenBody(err: unknown): Record<string, unknown> {
+    expect(err).toBeInstanceOf(ForbiddenException);
+    return (err as ForbiddenException).getResponse() as Record<string, unknown>;
+  }
+
+  // Regression: before the live check the save trusted the principal built from the sign-in token,
+  // so this exact call returned 200 and wrote the change for the former Founder.
+  it('refuses with 403 a former Founder whose role was removed after the token was issued (old code: 200)', async () => {
+    const env = await createSeededEnv();
+    const before = await readAccessRevision(db, env.scope.tenantId);
+
+    await withTx(db, env.scope, systemActor('test-seed'), async (tx) => {
+      await tx.execute(sql`
+        DELETE FROM app.user_roles
+         WHERE tenant_id = ${env.scope.tenantId}
+           AND user_id = ${env.founderId}
+           AND role_key = 'founder'
+      `);
+    });
+
+    const err = await saveAs(env, env.founderId);
+    expect(forbiddenBody(err)).toMatchObject({ code: 'forbidden', reason: 'no_permission' });
+    // Nothing was written: the revision is where it was.
+    const after = await readAccessRevision(db, env.scope.tenantId);
+    expect(after.revision).toBe(before.revision);
+  });
+
+  it('saves the same change while the Founder role is still present', async () => {
+    const env = await createSeededEnv();
+    const before = await env.service.getCatalogue(env.scope);
+
+    expect(await saveAs(env, env.founderId)).toBeNull();
+    const after = await env.service.getCatalogue(env.scope);
+    expect(after.revision).not.toBe(before.revision);
+  });
+
+  it('refuses a Founder whose membership in the acting entity narrows the role away', async () => {
+    const env = await createSeededEnv();
+    await withTx(db, env.scope, systemActor('test-seed'), async (tx) => {
+      await tx.execute(sql`
+        INSERT INTO app.user_roles (tenant_id, user_id, role_key)
+        VALUES (${env.scope.tenantId}, ${env.founderId}, 'sales')
+      `);
+      await tx.execute(sql`
+        UPDATE app.user_entities
+           SET role_keys = ARRAY['sales']::text[]
+         WHERE tenant_id = ${env.scope.tenantId}
+           AND organization_id = ${env.scope.organizationId}
+           AND user_id = ${env.founderId}
+      `);
+    });
+
+    expect(forbiddenBody(await saveAs(env, env.founderId))).toMatchObject({
+      reason: 'no_permission',
+    });
+  });
+
+  it("refuses another tenant's Founder acting in this tenant", async () => {
+    const env = await createSeededEnv();
+    const other = await createTenantWithEntity(appPool);
+    const { userId: otherFounderId } = await createStaffUser(appPool, {
+      tenantId: other.tenantId,
+      organizationId: other.organizationId,
+      idpOrgId: other.idpOrgId,
+      roleKeys: ['founder'],
+    });
+
+    expect(forbiddenBody(await saveAs(env, otherFounderId))).toMatchObject({
+      reason: 'no_permission',
+    });
+  });
+
+  it('refuses a staff user who never held the Founder role', async () => {
+    const env = await createSeededEnv();
+    expect(forbiddenBody(await saveAs(env, env.salesHeadId))).toMatchObject({
+      reason: 'no_permission',
+    });
   });
 });

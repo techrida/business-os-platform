@@ -9,6 +9,7 @@ import type {
   AccessPermissionInfo,
   AccessRoleInfo,
   AccessScope,
+  AccessWarning,
   AssignmentHandOverInput,
   ManagerAssignmentRule,
   RoleKey,
@@ -230,6 +231,75 @@ export function controlMatches(a: AreaDraft, b: AreaDraft, control: AreaControl)
     case 'handOvers':
       return sameHandOvers(a.assignment?.handOvers ?? [], b.assignment?.handOvers ?? []);
   }
+}
+
+/** True when `a` and `b` are the same control of a card. */
+export function sameControl(a: AreaControl, b: AreaControl): boolean {
+  if (a.type === 'reach' || b.type === 'reach') {
+    return a.type === 'reach' && b.type === 'reach' && a.role === b.role;
+  }
+  return a.type === b.type;
+}
+
+/** A value the server refused on save, tied to the card control that staged it. */
+export interface RefusedControl {
+  control: AreaControl;
+  message: string;
+}
+
+/** The card controls one sent change came from. */
+function controlsOfChange(change: AccessChange): AreaControl[] {
+  switch (change.kind) {
+    case 'grant':
+      return [{ type: 'reach', role: change.role }];
+    case 'levelRule':
+      return [
+        ...(change.managersSeeDepartment !== undefined ? [{ type: 'managers' } as const] : []),
+        ...(change.headsSeeDepartment !== undefined ? [{ type: 'heads' } as const] : []),
+      ];
+    case 'assignment':
+      return [
+        ...(change.staff !== undefined ? [{ type: 'staffRule' } as const] : []),
+        ...(change.managers !== undefined ? [{ type: 'managerRule' } as const] : []),
+        ...(change.handOvers !== undefined ? [{ type: 'handOvers' } as const] : []),
+      ];
+    default:
+      return [];
+  }
+}
+
+/**
+ * Ties a refused save back to the controls: the server names each refused change as
+ * `changes.<index>` (optionally `.scope`, `.area`, `.handOvers.<n>`) in its field errors, or by
+ * `changeIndex` on a blocked warning. `changes` is exactly what was sent, so the index reads it.
+ * The first reason for a control wins.
+ */
+export function refusedControls(
+  changes: readonly AccessChange[],
+  fieldErrors: Readonly<Record<string, string>> | undefined,
+  warnings: readonly AccessWarning[] | undefined,
+): RefusedControl[] {
+  const refused: RefusedControl[] = [];
+  const add = (index: number, message: string, only?: AreaControl['type']) => {
+    const change = changes[index];
+    if (!change) return;
+    for (const control of controlsOfChange(change)) {
+      if (only !== undefined && control.type !== only) continue;
+      if (refused.some((r) => sameControl(r.control, control))) continue;
+      refused.push({ control, message });
+    }
+  };
+  for (const [key, message] of Object.entries(fieldErrors ?? {})) {
+    const match = /^changes\.(\d+)(?:\.(\w+))?/.exec(key);
+    if (!match) continue;
+    add(Number(match[1]), message, match[2] === 'handOvers' ? 'handOvers' : undefined);
+  }
+  for (const warning of warnings ?? []) {
+    if (warning.severity === 'blocked' && warning.changeIndex !== undefined) {
+      add(warning.changeIndex, warning.message);
+    }
+  }
+  return refused;
 }
 
 /** The draft with one control put back to its value in `source` (the defaults, for an undo). */

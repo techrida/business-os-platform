@@ -28,6 +28,7 @@ vi.mock('next/navigation', () => ({
 }));
 vi.mock('./actions', () => ({
   addContactAction: vi.fn(),
+  createVendorAction: vi.fn(),
   decideBankAction: vi.fn(),
   grantPortalAction: vi.fn(),
   lifecycleAction: vi.fn(),
@@ -46,6 +47,7 @@ vi.mock('@/components/p2/customers/api', () => kyb);
 
 const { default: VendorsPage } = await import('./page');
 const { default: VendorPage } = await import('./[id]/page');
+const { default: NewVendorPage } = await import('./new/page');
 
 const ID = '11111111-1111-4111-8111-111111111111';
 const ACCOUNT = '22222222-2222-4222-8222-222222222222';
@@ -550,5 +552,50 @@ describe('vendor logo', () => {
     const out = await detail();
     expect(logoGroup(out)).not.toContain('type="file"');
     expect(logoGroup(out)).not.toContain('<img');
+  });
+});
+
+describe('live saved grants decide Add vendor', () => {
+  const live = (...permissions: string[]) =>
+    me.getMe.mockResolvedValue({
+      permissions: permissions.map((permission) => ({ permission, scope: 'all' })),
+    });
+  const DENIED = 'Your roles do not include adding vendors';
+
+  it('shows Add vendor on the list to a role whose saved grants add vendor.write (defaults do not)', async () => {
+    session.roles = ['finance'];
+    live('vendor.read', 'vendor.write');
+    api.listVendors.mockResolvedValue({ items: [vendor()], total: 1 });
+    expect(await list()).toContain('Add vendor');
+  });
+
+  it('hides Add vendor on the list once vendor.write is removed from the saved grants', async () => {
+    session.roles = ['procurement'];
+    live('vendor.read');
+    api.listVendors.mockResolvedValue({ items: [vendor()], total: 1 });
+    expect(await list()).not.toContain('Add vendor');
+  });
+
+  it('opens the new vendor form to a role whose saved grants add vendor.write', async () => {
+    session.roles = ['finance'];
+    live('vendor.read', 'vendor.write');
+    const out = html(await NewVendorPage());
+    expect(out).toContain('<form');
+    expect(out).not.toContain(DENIED);
+  });
+
+  it('shuts the new vendor form once vendor.write is removed from the saved grants', async () => {
+    session.roles = ['procurement'];
+    live('vendor.read');
+    const out = html(await NewVendorPage());
+    expect(out).toContain(DENIED);
+    expect(out).not.toContain('<form');
+  });
+
+  it('falls back to the role defaults when the live grants cannot be read', async () => {
+    session.roles = ['procurement'];
+    expect(html(await NewVendorPage())).not.toContain(DENIED);
+    session.roles = ['finance'];
+    expect(html(await NewVendorPage())).toContain(DENIED);
   });
 });
