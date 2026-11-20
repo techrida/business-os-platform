@@ -129,6 +129,12 @@ export const SETTING_COPY: Partial<Record<SettingKey, SettingCopyEntry>> = {
     help: 'Billing slices used when an accepted quotation has no payment schedule. The percentages must add up to 100.',
     kind: 'schedule',
   },
+  'sales.delivery_hold.management_npr': {
+    label: 'Management releases holds above (NPR)',
+    help: 'Finance releases a held delivery worth up to and including this amount. Above it, only Management can.',
+    kind: 'money',
+    numberBounds: { min: 0, step: '0.01' },
+  },
   'approvals.sla_defaults': {
     label: 'Default reminder and escalation times',
     help: 'Used by a workflow that does not set its own times.',

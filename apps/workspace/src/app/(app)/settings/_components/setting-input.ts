@@ -143,7 +143,8 @@ function parseTypedField(key: SettingKey, input: SettingFieldValue): SettingInpu
     }
     case 'procurement.match.price_npr':
     case 'procurement.band.management_npr':
-    case 'procurement.band.founder_npr': {
+    case 'procurement.band.founder_npr':
+    case 'sales.delivery_hold.management_npr': {
       if (input.kind !== 'text') {
         return {
           ok: false,
