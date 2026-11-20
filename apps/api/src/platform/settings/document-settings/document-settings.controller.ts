@@ -1,9 +1,11 @@
 // HTTP routes of the document settings (U9). Thin: parsing and rules live in DocumentSettingsService.
 //
 // - GET v1/settings/display and GET v1/term-presets carry @AnyAuthenticated, not @Can: the first is open to any
-//   active staff user, the second to holders of quotation.draft OR admin.settings.write, and one @Can names one
-//   permission. The service checks both before reading (same pattern as ReferenceService.listTaxCodes).
-// - The three writes are @Can('admin.settings.write'), which only the Founder holds today.
+//   active staff user, the second to holders of quotation.draft, settings.finance.write OR admin.settings.write,
+//   and one @Can names one permission. The service checks both before reading (as ReferenceService.listTaxCodes).
+// - The three term preset writes carry @AnyAuthenticated: settings.finance.write (Finance, Accountant) OR
+//   admin.settings.write may use them (F1-Q48, settings-access.ts). The service checks before reading.
+// - The document preview stays @Can('admin.settings.write').
 import type { TermPreset } from '@bos/contracts';
 import { Body, Controller, Delete, Get, HttpCode, Param, Patch, Post, Query } from '@nestjs/common';
 
@@ -39,14 +41,14 @@ export class DocumentSettingsController {
   /** 201 with the new preset (the server generates the id). 409 when the name is taken within the kind. */
   @Post('admin/term-presets')
   @HttpCode(201)
-  @Can('admin.settings.write')
+  @AnyAuthenticated()
   create(@Body() body: unknown): Promise<TermPreset> {
     return this.documentSettings.create(body);
   }
 
   /** 200 with the updated preset. 404 for an unknown id, 409 when the new name is taken within the kind. */
   @Patch('admin/term-presets/:id')
-  @Can('admin.settings.write')
+  @AnyAuthenticated()
   update(@Param('id') id: string, @Body() body: unknown): Promise<TermPreset> {
     return this.documentSettings.update(id, body);
   }
@@ -54,7 +56,7 @@ export class DocumentSettingsController {
   /** 204. 404 for an unknown id. */
   @Delete('admin/term-presets/:id')
   @HttpCode(204)
-  @Can('admin.settings.write')
+  @AnyAuthenticated()
   remove(@Param('id') id: string): Promise<void> {
     return this.documentSettings.remove(id);
   }
