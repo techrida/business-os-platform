@@ -82,11 +82,18 @@ describe('renderPurchaseOrderHtml', () => {
     expect(html).toContain('<h1>Purchase Order</h1>');
     expect(html).toContain('PO-2083/84-00007');
     expect(html).toContain('Version 1');
-    expect(html).toContain('2083-07-24 BS');
     expect(html).toContain('Techrida Pvt. Ltd.');
     expect(html).toContain('PAN/VAT 301234567');
     expect(html).toContain('Himal Solar Pvt. Ltd.');
     expect(html).toContain('PAN 600123456');
+  });
+
+  it('prints the frozen BS issue date and the converted delivery date in the one long BS form', () => {
+    const html = renderPurchaseOrderHtml(sample());
+    expect(html).toContain('<span class="bs">(24 Kartik 2083 BS)</span>');
+    expect(html).not.toContain('2083-07-24');
+    // The delivery date has no frozen BS form, so it is converted (01 Dec 2026 is 15 Mangsir 2083).
+    expect(html).toContain('<span class="bs">(15 Mangsir 2083 BS)</span>');
   });
 
   it('shows the payment and delivery terms when present', () => {

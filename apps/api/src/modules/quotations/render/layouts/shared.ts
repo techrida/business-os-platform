@@ -16,9 +16,9 @@ import {
 import {
   Dec,
   amountInWords,
+  bsLongOfDay,
   formatCustomerDate,
   formatMoney,
-  toBs,
   type CustomerDateFormat,
   type NumberSystems,
 } from '@bos/locale';
@@ -86,25 +86,18 @@ export function figure(ctx: RenderContext, amount: string): string {
   return escapeHtml(full.startsWith(prefix) ? full.slice(prefix.length) : full);
 }
 
-/** Noon in Kathmandu (UTC+05:45) on the calendar day, so no timezone shifts the day. */
-const kathmanduNoon = (isoDate: string): Date => new Date(`${isoDate}T12:00:00+05:45`);
-
+/**
+ * The Gregorian date with the Bikram Sambat date beside it in the one long BS form (`22 Kartik 2083 BS`, U16-Q5), as on
+ * the invoice and the purchase order. Outside the converter's range (BS 2000 to 2090) the Gregorian date shows alone.
+ */
 export function dateCell(
   isoDate: string,
   ctx: Pick<RenderContext, 'showBs' | 'dateFormat'>,
 ): string {
-  const { showBs } = ctx;
   const gregorian = escapeHtml(formatCustomerDate(isoDate, ctx.dateFormat));
-  if (!showBs) return gregorian;
-  try {
-    const bs = toBs(kathmanduNoon(isoDate));
-    const text = `${String(bs.day).padStart(2, '0')} ${bs.monthNameEn} ${bs.year} BS`;
-    return `${gregorian} <span class="bs">(${escapeHtml(text)})</span>`;
-  } catch (error) {
-    // Outside the converter's range (BS 2000 to 2090): show the Gregorian date alone.
-    if (error instanceof RangeError) return gregorian;
-    throw error;
-  }
+  if (!ctx.showBs) return gregorian;
+  const bs = bsLongOfDay(isoDate);
+  return bs === null ? gregorian : `${gregorian} <span class="bs">(${escapeHtml(bs)})</span>`;
 }
 
 const COUNTRY_NAMES: Record<string, string> = { NP: 'Nepal', IN: 'India', US: 'United States' };
