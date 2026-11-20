@@ -146,26 +146,22 @@ export interface FollowUpState {
   reload?: boolean;
 }
 
-function revalidateLead(leadId: string) {
-  revalidatePath(`/leads/${leadId}`);
-  revalidatePath('/leads');
-  revalidatePath('/activities');
-}
-
 /**
- * Schedule a follow-up on a lead. The dialog posts `subjectKind=leadId` and `subjectId`; any other
- * subject is refused here, as this action only revalidates lead pages. The key handling matches
- * `logActivityAction`: the same key after an unknown outcome, a new one after a save or a refusal.
+ * Schedule a follow-up on a lead or an opportunity (U16-Q6). The dialog posts `subjectKind`
+ * (`leadId` or `opportunityId`) and `subjectId`; any other subject is refused here. The key
+ * handling matches `logActivityAction`: the same key after an unknown outcome, a new one after a
+ * save or a refusal.
  */
 export async function scheduleFollowUpAction(_prev: FormState, form: FormData): Promise<FormState> {
   const kind = form.get('subjectKind');
   const id = form.get('subjectId');
   const values = echo(form);
   const key = keyOf(form);
-  if (kind !== 'leadId' || typeof id !== 'string' || !UUID.test(id)) {
+  if ((kind !== 'leadId' && kind !== 'opportunityId') || typeof id !== 'string' || !UUID.test(id)) {
     return { values, fieldErrors: {}, error: INCOMPLETE, key };
   }
-  const session = await requireStaffSession(`/leads/${id}`);
+  const paths = followUpPaths({ kind, id });
+  const session = await requireStaffSession(paths[0] ?? '/activities');
 
   const parsed = parseScheduleFollowUp(form);
   if (!parsed.ok) {
@@ -177,7 +173,7 @@ export async function scheduleFollowUpAction(_prev: FormState, form: FormData): 
   } catch (err) {
     return { values, fieldErrors: {}, error: failureOf(err).message, key: nextKey(err, key) };
   }
-  revalidateLead(id);
+  for (const path of paths) revalidatePath(path);
   return { values: {}, fieldErrors: {}, ok: true, key: randomUUID() };
 }
 
