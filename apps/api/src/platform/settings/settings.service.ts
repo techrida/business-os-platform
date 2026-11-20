@@ -72,6 +72,28 @@ export async function readTxContext(tx: DbTransaction, caller: string): Promise<
   return { tenantId: row.tenant_id, organizationId: row.organization_id, userId };
 }
 
+/**
+ * The latest version of `key` for the entity with its number, or the default with `version: null`: SettingsService's
+ * read, usable inside a caller's own transaction (an unlocked read; `getLocked` is the read-modify-write one).
+ */
+export async function readSetting<K extends SettingKey>(
+  q: Db | DbTransaction,
+  scope: TxScope,
+  key: K,
+): Promise<{ value: SettingValue<K>; version: number | null }> {
+  // Raw SQL, not drizzle's jsonb column: node-postgres already parses jsonb, and drizzle then runs
+  // JSON.parse on any string result, so the stored string "10" would come back as the number 10.
+  const result = await q.execute<{ version: number; value: unknown }>(sql`
+    SELECT version, value FROM app.settings
+     WHERE tenant_id = ${scope.tenantId}::uuid AND organization_id = ${scope.organizationId}::uuid
+       AND key = ${key}::text
+     ORDER BY version DESC LIMIT 1`);
+  const row = result.rows[0];
+  if (row) return { value: row.value as SettingValue<K>, version: Number(row.version) };
+  // A copy, so a caller that mutates the result cannot change the default for everyone.
+  return { value: structuredClone(SETTING_DEFAULTS[key]), version: null };
+}
+
 @Injectable()
 export class SettingsService {
   constructor(@Inject(DB) private readonly db: Db) {}
@@ -81,17 +103,7 @@ export class SettingsService {
     scope: TxScope,
     key: K,
   ): Promise<{ value: SettingValue<K>; version: number | null }> {
-    // Raw SQL, not drizzle's jsonb column: node-postgres already parses jsonb, and drizzle then runs
-    // JSON.parse on any string result, so the stored string "10" would come back as the number 10.
-    const result = await this.db.execute<{ version: number; value: unknown }>(sql`
-      SELECT version, value FROM app.settings
-       WHERE tenant_id = ${scope.tenantId}::uuid AND organization_id = ${scope.organizationId}::uuid
-         AND key = ${key}::text
-       ORDER BY version DESC LIMIT 1`);
-    const row = result.rows[0];
-    if (row) return { value: row.value as SettingValue<K>, version: Number(row.version) };
-    // A copy, so a caller that mutates the result cannot change the default for everyone.
-    return { value: structuredClone(SETTING_DEFAULTS[key]), version: null };
+    return readSetting(this.db, scope, key);
   }
 
   /**
