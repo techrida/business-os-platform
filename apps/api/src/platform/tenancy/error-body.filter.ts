@@ -65,6 +65,7 @@ export type ErrorCode =
   | 'schedule_line_not_planned'
   | 'SCHEDULE_LINE_TAKEN'
   | 'NOT_APPROVED'
+  | 'DUE_DATE_BEFORE_ISSUE'
   | 'CREDIT_EXCEEDS_INVOICE'
   | 'OVER_ALLOCATION'
   | 'MISMATCHED_ITEMS'
@@ -194,6 +195,7 @@ const GENERIC_MESSAGE: Record<ErrorCode, string> = {
   schedule_line_not_planned: 'This schedule line is no longer planned',
   SCHEDULE_LINE_TAKEN: 'This billing schedule line already has an invoice',
   NOT_APPROVED: 'This invoice is issued only after it has been approved',
+  DUE_DATE_BEFORE_ISSUE: 'The due date is before the issue date',
   CREDIT_EXCEEDS_INVOICE: 'The credit notes of this invoice would total more than the invoice',
   OVER_ALLOCATION: 'The amount is more than the balance still open on an item',
   MISMATCHED_ITEMS: 'The allocation items do not match',
@@ -407,6 +409,8 @@ const UNPROCESSABLE_CODES: readonly ErrorCode[] = [
   'APPROVER_NOT_ELIGIBLE',
   'evidence_policy_unmet',
   'decided_on_in_future',
+  // P3 invoice issue: the drafted due date is before today, the issue date (R4c1 U15b-Q5).
+  'DUE_DATE_BEFORE_ISSUE',
   // U7 payments: a proof that is not a clean file for this customer, an unknown customer or withholding code,
   // a rejection or reversal without a reason.
   'invalid_proof',

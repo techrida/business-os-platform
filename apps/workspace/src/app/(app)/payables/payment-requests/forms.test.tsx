@@ -53,13 +53,21 @@ async function currencyOptions() {
   );
 }
 
-it('offers only the vendor bill currencies that are enabled, starting on an enabled one', async () => {
+it('offers the enabled vendor bill currencies, starting on one, and names the switched-off one', async () => {
   mounted = await mountForm(
     <PaymentRequestEntry idempotencyKey="key" items={items} enabledCurrencies={['NPR', 'USD']} />,
   );
   await choose(mounted.container, 'vendorPartyId', 'Himal Supplies');
   expect(currencyField().value).toBe('NPR');
-  expect(await currencyOptions()).toEqual(['NPR', 'USD']);
+  // Old code left INR out without a word (U16-Q9).
+  expect(mounted.container.textContent).toContain(
+    'This vendor also has approved bills in INR, switched off in Settings.',
+  );
+  expect(await currencyOptions()).toEqual(['NPR', 'USD', 'INR, switched off']);
+  const inr = Array.from(document.querySelectorAll('[role="option"]')).find(
+    (el) => el.textContent?.trim() === 'INR, switched off',
+  );
+  expect(inr?.getAttribute('aria-disabled')).toBe('true');
 });
 
 it('says why nothing is offered when the vendor bills are all in a switched-off currency', async () => {
@@ -69,6 +77,6 @@ it('says why nothing is offered when the vendor bills are all in a switched-off 
   await choose(mounted.container, 'vendorPartyId', 'Terai Traders');
   expect(currencyField().value).toBe('');
   expect(mounted.container.textContent).toContain(
-    "This vendor's approved bills are only in currencies switched off in Settings.",
+    "This vendor's approved bills are only in INR, switched off in Settings.",
   );
 });

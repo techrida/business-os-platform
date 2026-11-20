@@ -202,11 +202,7 @@ export default async function BillsPage({
         <>
           <ResultCount shown={bills.length} total={total} noun="bill" />
           <div className={layout.results}>
-            <Table
-              caption="Vendor bills, newest first"
-              minWidth={1000}
-              className={styles.list ?? ''}
-            >
+            <Table caption="Vendor bills, newest first" minWidth={1000}>
               <thead>
                 <tr>
                   <Th>Bill</Th>
@@ -215,8 +211,8 @@ export default async function BillsPage({
                   <Th>Invoice date</Th>
                   <Th>Match</Th>
                   <Th align="end">Payable</Th>
-                  <Th className={styles.statusColumn}>Status</Th>
-                  <Th className={styles.actionColumn}>Action</Th>
+                  <Th pinned>Status</Th>
+                  <Th pinned>Action</Th>
                 </tr>
               </thead>
               <tbody>
@@ -253,10 +249,10 @@ export default async function BillsPage({
                           {poMoney(b.payableTotal, b.currency, numberSystems)}
                         </span>
                       </Td>
-                      <Td nowrap className={styles.statusColumn}>
+                      <Td nowrap pinned>
                         <Badge tone={st.tone}>{st.text}</Badge>
                       </Td>
-                      <Td nowrap className={styles.actionColumn}>
+                      <Td nowrap pinned>
                         <span className={styles.rowActions}>
                           {requestableItem(payable.items, b.id, payable.currencies) !==
                           undefined ? (

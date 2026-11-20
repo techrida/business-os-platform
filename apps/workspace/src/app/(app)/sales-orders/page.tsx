@@ -79,10 +79,10 @@ function OrderRow({
           <span className={local.quiet}>Not confirmed yet</span>
         )}
       </Td>
-      <Td nowrap className={`${local.pinned} ${local.pinnedStart}`}>
+      <Td nowrap pinned>
         <Badge tone={tone}>{label}</Badge>
       </Td>
-      <Td nowrap className={local.pinned}>
+      <Td nowrap pinned>
         <Link
           href={href}
           className={local.rowAction}
@@ -284,8 +284,8 @@ export default async function SalesOrdersPage({
                 <Th>Quotation</Th>
                 <Th align="end">Total</Th>
                 <Th>Confirmed on</Th>
-                <Th className={`${local.pinned} ${local.pinnedStart}`}>Status</Th>
-                <Th className={local.pinned}>Action</Th>
+                <Th pinned>Status</Th>
+                <Th pinned>Action</Th>
               </tr>
             </thead>
             <tbody>

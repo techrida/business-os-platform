@@ -29,7 +29,16 @@ export interface InvoiceGates {
   discard: boolean;
   /** Where the "Credit note" and "Debit note" buttons mount: an issued tax invoice, for Finance. */
   notes: boolean;
+  /**
+   * Why Issue is shown but off, or null when it works. Only a credit or debit note its viewer created (TR-Q12f): its
+   * issuer must be someone else, and the API refuses the creator too.
+   */
+  issueBlocker: string | null;
 }
+
+/** The reason on a note's Issue button when its viewer created it. */
+export const NOTE_CREATOR_CANNOT_ISSUE =
+  'You created this note, so someone else with issue access must issue it.';
 
 /**
  * Which actions one invoice offers to one person: the contract's transition table decides whether the
@@ -42,23 +51,27 @@ export interface InvoiceGates {
  *  - discard `invoice.draft` (Accountant or Finance)
  *  - notes   `invoice.credit_note` (Finance), for credit and debit notes alike (there is no
  *    separate debit permission). A proforma is not corrected by a note: it opens no open item.
- *
- * Each also needs `invoice.can` to allow it when the API sent one.
+ * * Each also needs `invoice.can` to allow it when the API sent one. A note's creator sees Issue off, with
+ * `issueBlocker` saying why (TR-Q12f).
  */
 export function invoiceGates(
   invoice: { kind: InvoiceKind; status: InvoiceStatus } & Reach,
   can: Can,
+  /** The detail's `issueBlockedBySod`: the server says the viewer created this note. */
+  createdByViewer = false,
 ): InvoiceGates {
   const { kind, status } = invoice;
+  const issue =
+    canTransitionInvoice(kind, status, 'issued') &&
+    can('invoice.issue') &&
+    reaches(invoice, 'issue');
+  const isNote = kind === 'credit_note' || kind === 'debit_note';
   return {
     submit:
       canTransitionInvoice(kind, status, 'submitted') &&
       can('invoice.submit') &&
       reaches(invoice, 'submit'),
-    issue:
-      canTransitionInvoice(kind, status, 'issued') &&
-      can('invoice.issue') &&
-      reaches(invoice, 'issue'),
+    issue,
     discard:
       canTransitionInvoice(kind, status, 'discarded') &&
       can('invoice.draft') &&
@@ -68,6 +81,7 @@ export function invoiceGates(
       status === 'issued' &&
       can('invoice.credit_note') &&
       reaches(invoice, 'notes'),
+    issueBlocker: issue && isNote && createdByViewer ? NOTE_CREATOR_CANNOT_ISSUE : null,
   };
 }
 

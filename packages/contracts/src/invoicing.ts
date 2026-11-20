@@ -185,6 +185,20 @@ export const InvoiceDtoSchema = z
 export type InvoiceDto = z.infer<typeof InvoiceDtoSchema>;
 
 /**
+ * The derived state of one invoice, from its allocations, credit notes and due date. These are values
+ * of a computed status, not stored columns. `settlementOf` in money-rules produces them.
+ */
+export const SETTLEMENT_STATUSES = [
+  'unpaid',
+  'partly_paid',
+  'paid',
+  'overdue',
+  'credited',
+] as const;
+export const SettlementStatusSchema = z.enum(SETTLEMENT_STATUSES);
+export type SettlementStatus = z.infer<typeof SettlementStatusSchema>;
+
+/**
  * What the caller may do on one invoice, from its live grants judged on that record (the drafter owns it for `own`),
  * the same record checks the commands make. Whether the status allows the move is the transition table's answer, not
  * this one. Optional so an older API answer still parses.
@@ -215,6 +229,14 @@ export const InvoiceListItemSchema = z.object({
   total: DecimalString,
   issueDate: isoDate.nullable(),
   dueDate: isoDate.nullable(),
+  /**
+   * Paid, overdue and the rest, derived from the open item (never stored), for an issued tax invoice or debit
+   * note; null for anything without an open item (drafts, proformas, credit notes). Optional so an older API
+   * answer still parses.
+   */
+  settlement: SettlementStatusSchema.nullable().optional(),
+  /** What is still owed, in the invoice's currency; null exactly when `settlement` is. */
+  openAmount: DecimalString.nullable().optional(),
   can: InvoiceCanSchema.optional(),
 });
 export type InvoiceListItem = z.infer<typeof InvoiceListItemSchema>;
@@ -243,6 +265,12 @@ export const InvoiceDetailSchema = z.object({
    * still parses.
    */
   format: DocumentFormatSnapshotSchema.nullable().optional(),
+  /**
+   * True when the caller created this credit or debit note, so may not issue it (TR-Q12f, separation of duties): the
+   * workspace shows Issue disabled with the reason. Only `GET /v1/invoices/:id` sets it, and only when true; optional
+   * so an older API answer still parses.
+   */
+  issueBlockedBySod: z.boolean().optional(),
   /** Set by `GET /v1/invoices/:id`; the command answers leave it out. */
   can: InvoiceCanSchema.optional(),
 });

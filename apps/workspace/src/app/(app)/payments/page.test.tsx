@@ -1,3 +1,4 @@
+import type { MoneyTotals } from '@bos/contracts';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
@@ -40,7 +41,11 @@ const SUMMARY = {
   total: 9,
   byStatus: { submitted: 3, verified: 4, rejected: 2, withdrawn: 0, reversed: 0 },
 };
-const page = (items: ReturnType<typeof listItem>[], total = items.length) => ({ items, total });
+const page = (
+  items: ReturnType<typeof listItem>[],
+  total = items.length,
+  totals: MoneyTotals | null = null,
+) => ({ items, total, totals });
 
 async function render(search: Record<string, string | string[]> = {}): Promise<string> {
   return renderToStaticMarkup(await PaymentsPage({ searchParams: Promise.resolve(search) }));
@@ -101,10 +106,8 @@ describe('payments list', () => {
       'Status',
       'Action',
     ]);
-    // The status badge sits after the date, in the shaded trailing band.
-    expect(html).toMatch(
-      /<\/time><\/td><td class="[^"]*statusColumn[^"]*">.*?Awaiting verification/,
-    );
+    // The status badge sits after the date, in the pinned trailing band.
+    expect(html).toMatch(/<\/time><\/td><td [^>]*data-pinned=""[^>]*>.*?Awaiting verification/);
     const links = html.match(/<a [^>]*>/g) ?? [];
     const numbered = links.find((a) => a.includes('aria-label="View RCPT-2083/84-00001"'));
     expect(numbered).toContain('href="/payments/22222222-2222-4222-8222-222222222222"');
@@ -263,5 +266,23 @@ describe('payments list', () => {
     const html = await render();
     expect(html).toContain('N'.repeat(400));
     expect(html).toMatch(/class="[^"]*customer/);
+  });
+});
+
+describe('total row', () => {
+  it('ends the table with the amounts received of every match, one row per currency', async () => {
+    mocks.listPaymentsPage.mockResolvedValue(
+      page([listItem()], 9, [
+        { currency: 'NPR', amount: '2018180.00' },
+        { currency: 'INR', amount: '500.00' },
+      ]),
+    );
+    const foot = /<tfoot>.*<\/tfoot>/s.exec(await render())?.[0] ?? '';
+    // Old code showed no total at all.
+    expect(foot).toContain('Total, all pages · NPR');
+    expect(foot).toContain('20,18,180.00');
+    expect(foot).toContain('Total, all pages · INR');
+    // Under "Amount received", the fourth column.
+    expect(foot).toContain('colSpan="3"');
   });
 });

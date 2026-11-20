@@ -28,23 +28,6 @@
   border-radius: var(--radius-xl) var(--radius-xl) 0 0;
 }
 
-.table th.statusColumn,
-.table td.statusColumn,
-.table th.actionColumn,
-.table td.actionColumn {
-  background: var(--surface-subtle);
-}
-
-.table th.statusColumn,
-.table td.statusColumn {
-  border-inline-start: var(--border-width-thin) solid var(--border-default);
-}
-
-.table tbody tr:hover > td,
-.table tbody tr:focus-within > td {
-  background: var(--table-row-hover-bg);
-}
-
 .number {
   display: inline-block;
   border: var(--border-width-thin) solid var(--border-default);

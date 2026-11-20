@@ -8,6 +8,7 @@ import {
   ForbiddenException,
   Injectable,
   NotFoundException,
+  UnprocessableEntityException,
 } from '@nestjs/common';
 
 import { principal, type Principal } from '../../platform/authz/principal';
@@ -53,6 +54,38 @@ export const notApproved = () =>
   new ConflictException({
     code: 'NOT_APPROVED',
     message: 'This invoice is issued only after it has been approved',
+  });
+
+/**
+ * 403 `separation_of_duties` (TR-Q12f): whoever created a credit or debit note may not issue it, as the creator of a
+ * vendor may not activate it. Invoices are not covered: Kuu's answer names the notes only.
+ */
+export const noteIssuerIsCreator = () =>
+  new ForbiddenException({
+    code: 'forbidden',
+    message: 'The creator of a credit or debit note cannot issue it',
+    reason: 'separation_of_duties',
+  });
+
+/** Whether `userId` created this note, so may not issue it (TR-Q12f). A note with no recorded creator blocks nobody. */
+export const createdThisNote = (
+  invoice: { kind: string; createdBy: string | null },
+  userId: string | null,
+): boolean =>
+  (invoice.kind === 'credit_note' || invoice.kind === 'debit_note') &&
+  userId !== null &&
+  invoice.createdBy === userId;
+
+/**
+ * 422 DUE_DATE_BEFORE_ISSUE: the drafted due date is before today, the issue date, so the invoice would be overdue the
+ * moment it is issued. Its own code, so the workspace never words it as a stale version (409 conflict). `details`
+ * carries the two dates when they are known (the database check names neither).
+ */
+export const dueDateBeforeIssue = (dates?: { dueDate: string; issueDate: string }) =>
+  new UnprocessableEntityException({
+    code: 'DUE_DATE_BEFORE_ISSUE',
+    message: 'The due date is before the issue date; correct the due date and issue again',
+    ...(dates === undefined ? {} : { details: dates }),
   });
 
 /** The `YYYY-MM-DD` of the Kathmandu calendar day of `at` (plan A10: the issue date is server today). */

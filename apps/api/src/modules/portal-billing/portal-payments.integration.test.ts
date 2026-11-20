@@ -54,7 +54,6 @@ import { SignedLinks, type LinkStore } from '../../platform/documents/signed-lin
 import { DiskStorageAdapter } from '../../platform/documents/storage.adapter';
 import { MoneyService } from '../../platform/settings/money.service';
 import { NumberingService } from '../../platform/settings/numbering.service';
-import type { CurrencyEnabledService } from '../../platform/settings/currency-enabled';
 import type { SettingsService } from '../../platform/settings/settings.service';
 import {
   bindIdentity,
@@ -341,21 +340,8 @@ beforeAll(async () => {
   const money = new MoneyService(db, settings);
   const numbering = new NumberingService();
   const ledger = new LedgerService();
-  // Every currency passes here; the refusal of a disabled one is unit-tested in payments.currency.test.ts.
-  const currencies = {
-    assertEnabled: () => Promise.resolve(),
-  } as unknown as CurrencyEnabledService;
   // The real decision for the portal path; the staff service only seeds rows.
-  const realPayments = new PaymentsService(
-    db,
-    authz,
-    money,
-    numbering,
-    audit,
-    ledger,
-    currencies,
-    () => NOW,
-  );
+  const realPayments = new PaymentsService(db, authz, money, numbering, audit, ledger, () => NOW);
   staffPayments = new PaymentsService(
     db,
     { assert: () => undefined } as unknown as AuthzService,
@@ -363,7 +349,6 @@ beforeAll(async () => {
     numbering,
     audit,
     ledger,
-    currencies,
     () => NOW,
   );
   payments = new PortalPaymentsController(

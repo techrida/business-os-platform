@@ -19,6 +19,11 @@ import {
   QuotationRenderSweeper,
 } from './modules/quotations/render/quotation-render.sweeper';
 import { QuotationRenderWorkerModule } from './modules/quotations/render/quotation-render.worker.module';
+import {
+  PaymentPromiseProcessor,
+  PaymentPromiseScheduler,
+  PaymentPromiseSweeper,
+} from './modules/receivables/promises/payment-promise.sweeper';
 import type { DocumentOwnerPolicy } from './platform/documents/documents.ports';
 import { DocumentsService } from './platform/documents/documents.service';
 import { OutboxDrainer } from './platform/notify/outbox.drainer';
@@ -82,6 +87,18 @@ describe('WorkerModule boot (DI graph)', () => {
     // The module class itself is a provider too: it only exists if the module's imports resolved.
     expect(moduleRef.get(QuotationExpiryWorkerModule, { strict: false })).toBeInstanceOf(
       QuotationExpiryWorkerModule,
+    );
+  });
+
+  it('resolves the payment-promise sweeper, processor and scheduler', () => {
+    expect(moduleRef.get(PaymentPromiseSweeper, { strict: false })).toBeInstanceOf(
+      PaymentPromiseSweeper,
+    );
+    expect(moduleRef.get(PaymentPromiseProcessor, { strict: false })).toBeInstanceOf(
+      PaymentPromiseProcessor,
+    );
+    expect(moduleRef.get(PaymentPromiseScheduler, { strict: false })).toBeInstanceOf(
+      PaymentPromiseScheduler,
     );
   });
 
