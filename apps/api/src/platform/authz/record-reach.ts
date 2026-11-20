@@ -12,6 +12,7 @@ import {
   invoices,
   leads,
   opportunities,
+  paymentRequests,
   purchaseRequests,
   quotations,
   salesOrders,
@@ -215,6 +216,8 @@ defineRecordReach(quotations, {
 defineRecordReach(invoices, { id: invoices.id, owner: invoices.createdBy });
 defineRecordReach(vendorBills, { id: vendorBills.id, owner: vendorBills.enteredBy });
 defineRecordReach(salesOrders, { id: salesOrders.id, owner: salesOrders.createdBy });
+// The requester owns a payment request; it has no department column either.
+defineRecordReach(paymentRequests, { id: paymentRequests.id, owner: paymentRequests.requestedBy });
 
 defineRecordReach(purchaseRequests, {
   id: purchaseRequests.id,

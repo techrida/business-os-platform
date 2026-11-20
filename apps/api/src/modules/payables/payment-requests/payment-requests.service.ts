@@ -53,7 +53,6 @@ import { AuditService } from '../../../platform/audit/audit.service';
 import { scopeWhereFor } from '../../../platform/authz/authz.service';
 import { can } from '../../../platform/authz/can';
 import type { Principal } from '../../../platform/authz/principal';
-import { defineRecordReach } from '../../../platform/authz/record-reach';
 import { DB, type Db, type DbTransaction } from '../../../platform/db/db.module';
 import { withIdempotency } from '../../../platform/db/idempotency';
 import { withTx, type TxScope } from '../../../platform/db/tx';
@@ -85,10 +84,6 @@ import { PaymentRequestsCaller } from './payment-requests.caller';
 
 /** Injection token for a test clock; production falls back to the system time. */
 export const PAYMENT_REQUESTS_CLOCK = Symbol('PAYMENT_REQUESTS_CLOCK');
-
-// The requester owns the request; there is no department column, so `department` reaches what `own` does (spec
-// review R2, as for invoices and bills). Described here because this service is the only reader of the table.
-defineRecordReach(paymentRequests, { id: paymentRequests.id, owner: paymentRequests.requestedBy });
 
 /**
  * The requests `p` may see and act on: every request of the acting entity on an `all` grant, only their own on an
@@ -218,9 +213,12 @@ export class PaymentRequestsService {
 
   // ------------------------------------------------------------------------------------------------- reads
 
-  /** Approved bill credits with a balance left after pending and approved payment requests. */
+  /**
+   * Approved bill credits with a balance left after pending and approved payment requests, of the bills the caller
+   * may read (`payables.bill.read` scope, as the bills list), so a narrowed grant never lists another person's bill.
+   */
   async listItems(): Promise<PaymentRequestItemDto[]> {
-    const { scope, actor } = this.caller.current();
+    const { scope, actor, principal } = this.caller.current();
     return withTx(this.db, scope, actor, async (tx) => {
       const rows = await tx
         .select({
@@ -273,6 +271,7 @@ export class PaymentRequestsService {
               eq(openItems.sourceType, 'vendor_bill'),
               eq(vendorBills.kind, 'bill'),
               inArray(vendorBills.status, [...PAYABLE_BILL_STATUSES]),
+              scopeWhereFor(principal, vendorBills, 'payables.bill.read'),
             ),
           ),
         )
@@ -450,7 +449,15 @@ export class PaymentRequestsService {
           }
           await this.lockVendor(tx, scope, vendorId);
           const snapshot = await this.bank.activeVerifiedAccount(scope, vendorId, tx);
-          await this.checkLines(tx, scope, vendorId, body.currency, body.allocations, null);
+          await this.checkLines(
+            tx,
+            scope,
+            principal,
+            vendorId,
+            body.currency,
+            body.allocations,
+            null,
+          );
 
           const id = randomUUID();
           const [row] = await tx
@@ -536,6 +543,7 @@ export class PaymentRequestsService {
             const checked = await this.checkLines(
               tx,
               scope,
+              principal,
               request.vendorId,
               request.currency,
               lines,
@@ -696,6 +704,7 @@ export class PaymentRequestsService {
   private async checkLines(
     tx: DbTransaction,
     scope: TxScope,
+    principal: Principal,
     vendorId: string,
     currency: string,
     lines: readonly { openItemId: string; amount: string }[],
@@ -716,7 +725,13 @@ export class PaymentRequestsService {
         : await tx
             .select()
             .from(vendorBills)
-            .where(scoped(scope).where(vendorBills, inArray(vendorBills.id, billIds)));
+            .where(
+              and(
+                scoped(scope).where(vendorBills, inArray(vendorBills.id, billIds)),
+                // The entry list's rule (listItems): a bill outside the caller's bill read is not requested.
+                scopeWhereFor(principal, vendorBills, 'payables.bill.read'),
+              ),
+            );
     const billById = new Map(bills.map((b) => [b.id, b]));
     const open = await this.ledger.openAmounts(tx, scope, ids);
     const claimed = await this.claims(tx, scope, ids, requestId);
@@ -725,6 +740,8 @@ export class PaymentRequestsService {
       const item = itemById.get(line.openItemId);
       if (item === undefined) throw notFound('Open item');
       const bill = item.sourceType === 'vendor_bill' ? billById.get(item.sourceId) : undefined;
+      // An item of a bill the caller may not read is answered as one that does not exist.
+      if (item.sourceType === 'vendor_bill' && bill === undefined) throw notFound('Open item');
       if (
         item.side !== 'payable' ||
         item.direction !== 'credit' ||
