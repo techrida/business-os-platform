@@ -197,6 +197,41 @@ describe('describeQuoteFailure: a 0.00 instalment (FR-4)', () => {
     expect(f.message).not.toContain('highlighted fields');
   });
 
+  it("reads the API's own refusal (422 PAYMENT_INSTALMENT_ZERO) and names the milestone", () => {
+    const f = describeQuoteFailure(
+      {
+        status: 422,
+        body: {
+          error: {
+            code: 'PAYMENT_INSTALMENT_ZERO',
+            message:
+              'The payment milestone "On delivery" would be NPR 0.00 at this total, and an order cannot bill nothing. Raise the total, or remove or merge that milestone, then submit again.',
+            details: { label: 'On delivery', total: '0.01' },
+          },
+        },
+      },
+      'submit',
+    );
+    expect(f.kind).toBe('invalid');
+    expect(f.field).toBe('paymentSchedule');
+    expect(f.message).toBe(
+      'The payment milestone "On delivery" would come to 0.00 at this total. Remove that milestone or raise its share, then submit again. Nothing was submitted.',
+    );
+  });
+
+  it('keeps the general wording when the milestone label is missing or too long to quote', () => {
+    const long = 'x'.repeat(200);
+    const f = describeQuoteFailure(
+      {
+        status: 422,
+        body: { error: { code: 'PAYMENT_INSTALMENT_ZERO', message: '', details: { label: long } } },
+      },
+      'submit',
+    );
+    expect(f.message).toContain('At least one payment milestone would come to 0.00');
+    expect(f.message).not.toContain(long);
+  });
+
   it('recognises the refusal by its words when the code differs', () => {
     const f = describeQuoteFailure(
       refusal('bad_request', 'An installment of 0.00 is not allowed'),
