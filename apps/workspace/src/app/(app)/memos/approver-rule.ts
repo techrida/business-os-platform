@@ -32,7 +32,9 @@ export function approverHint(rule: MemoApproverRule): string {
       const why =
         rule.departmentId === null
           ? 'The author is in no department'
-          : `${rule.departmentName ?? "The author's department"} has no department head who can approve`;
+          : rule.headCannotApprove === true
+            ? `The head of ${rule.departmentName ?? "the author's department"} cannot decide approvals`
+            : `${rule.departmentName ?? "The author's department"} has no department head who can approve`;
       return role === undefined
         ? `${why}, so the Memo approver workflow names who approves instead.`
         : `${why}, so someone in the ${role} role approves instead.`;

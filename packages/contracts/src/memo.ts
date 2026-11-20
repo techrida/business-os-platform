@@ -76,7 +76,8 @@ export type MemoDirectoryPerson = z.infer<typeof MemoDirectoryPersonSchema>;
  * from `eligibleUserIds` only, and submit checks the pick again.
  * - `department_head`: the requester's department head approves (`defaultUserId`).
  * - `fallback`: the step falls back to `roleKey`, because the requester has no department, it has no active head,
- *   or the head is the requester (or edited the memo); anyone eligible in that role may be picked.
+ *   the head is the requester (or edited the memo), or the head cannot decide approvals (`headCannotApprove`);
+ *   anyone eligible in that role may be picked.
  * - `workflow`: an administrator set a role, group or person step instead of the department head.
  * `eligibleUserIds` empty: nobody can approve; `blockReason` says what to fix (no one is picked automatically and
  * no grant is widened).
@@ -90,6 +91,8 @@ export const MemoApproverRuleSchema = z.object({
   roleKey: z.string().optional(),
   /** The role's display name, for the form's hint. */
   roleName: z.string().optional(),
+  /** `fallback` because the department's head holds no approval rights (not because there is no head). */
+  headCannotApprove: z.boolean().optional(),
   eligibleUserIds: z.array(z.guid()),
   defaultUserId: z.guid().nullable(),
   blockReason: z.string().optional(),
