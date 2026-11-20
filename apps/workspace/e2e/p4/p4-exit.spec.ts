@@ -150,7 +150,7 @@ test('the completed Journey 11 remains connected across requests, sourcing, rece
       const stepReasons = [
         'Base route: an Accountant checks the recommended quotation',
         'Base route: Finance commits the budget',
-        'Commitment of NPR 120000.00 is above NPR 100,000.00',
+        'Commitment of NPR 120,000.00 is above NPR 100,000.00',
       ];
       for (const [index, reason] of stepReasons.entries()) {
         await expect(commitment.getByRole('listitem').nth(index)).toContainText(reason);

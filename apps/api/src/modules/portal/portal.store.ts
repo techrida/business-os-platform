@@ -17,9 +17,10 @@ import {
   quotations,
   quotationTaxSummary,
   quotationVersions,
+  salesOrders,
 } from '@bos/db';
 import { Inject, Injectable } from '@nestjs/common';
-import { and, asc, eq, inArray } from 'drizzle-orm';
+import { and, asc, eq, exists, inArray, isNotNull } from 'drizzle-orm';
 
 import { scopeWhereFor } from '../../platform/authz/authz.service';
 import type { Principal } from '../../platform/authz/principal';
@@ -66,8 +67,8 @@ export interface PortalQuotationStore {
   /** The document head of one version of a quotation `p` may read, whatever its status; undefined when out of reach. */
   loadDocumentHead(p: Principal, versionId: string): Promise<PortalDocumentHead | undefined>;
   /**
-   * The acceptance of one version of a quotation `p` may read and whether staff confirmed its evidence (F1-Q28);
-   * undefined when out of reach or not accepted.
+   * The acceptance of one version of a quotation `p` may read and whether staff confirmed its evidence (F1-Q28), by
+   * a confirmation row or by confirming an order of the version; undefined when out of reach or not accepted.
    */
   loadAcceptance(p: Principal, versionId: string): Promise<PortalAcceptance | undefined>;
 }
@@ -75,7 +76,11 @@ export interface PortalQuotationStore {
 export interface PortalAcceptance {
   actorKind: 'staff' | 'customer_user';
   evidenceKinds: EvidenceKind[];
-  /** A staff confirmation row exists (quotation_evidence_confirmations). */
+  /**
+   * Staff confirmed the evidence: a quotation_evidence_confirmations row exists, or an order of the version was
+   * confirmed (confirmed_at set, even if later cancelled). Orders confirmed before confirmations existed stand on
+   * acceptances with no confirmation row; confirm now refuses until the row exists, so new orders never rely on this.
+   */
   confirmed: boolean;
 }
 
@@ -179,6 +184,19 @@ export class DrizzlePortalQuotationStore implements PortalQuotationStore {
         actorKind: quotationAcceptances.actorKind,
         evidenceKinds: quotationAcceptances.evidenceKinds,
         confirmationId: quotationEvidenceConfirmations.id,
+        orderConfirmed: exists(
+          this.db
+            .select({ id: salesOrders.id })
+            .from(salesOrders)
+            .where(
+              and(
+                eq(salesOrders.tenantId, quotationAcceptances.tenantId),
+                eq(salesOrders.organizationId, quotationVersions.organizationId),
+                eq(salesOrders.quotationVersionId, quotationAcceptances.versionId),
+                isNotNull(salesOrders.confirmedAt),
+              ),
+            ),
+        ).mapWith(Boolean),
       })
       .from(quotationAcceptances)
       .innerJoin(
@@ -208,7 +226,7 @@ export class DrizzlePortalQuotationStore implements PortalQuotationStore {
     return {
       actorKind: row.actorKind,
       evidenceKinds: row.evidenceKinds,
-      confirmed: row.confirmationId !== null,
+      confirmed: row.confirmationId !== null || row.orderConfirmed,
     };
   }
 
