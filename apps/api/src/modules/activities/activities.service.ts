@@ -201,11 +201,11 @@ export class ActivitiesService {
     let notified = false;
     const dto = await withTx(this.db, scope, actor, async (tx) => {
       const run = async (): Promise<ActivityDto> => {
-        const ref = await this.assertSubject(tx, key, subjectId, 'write');
+        const planned = body.dueAt !== undefined;
+        const ref = await this.assertSubject(tx, key, subjectId, 'write', subjectNotFound, planned);
         if (body.assigneeUserId !== undefined) {
           await this.assertAssignee(tx, scope, key, body.assigneeUserId);
         }
-        const planned = body.dueAt !== undefined;
         // The owner of the record does its work by default; a record without an owner (or a customer or contact,
         // whose owner is not a salesperson) falls back to the caller, so a follow-up always has someone to do it.
         const defaultAssignee =
@@ -440,9 +440,10 @@ export class ActivitiesService {
     id: string,
     mode: 'read' | 'write',
     notFound: () => NotFoundException = subjectNotFound,
+    lockLead = false,
   ): Promise<ResourceRef> {
     const { scope, principal } = this.caller.current();
-    const ref = await this.refOf(q, key, id, scope, principal, mode === 'read');
+    const ref = await this.refOf(q, key, id, scope, principal, mode === 'read', lockLead);
     if (ref === undefined) throw notFound();
     const action: Permission = SUBJECT_PERMISSION[key][mode];
     try {
@@ -461,7 +462,9 @@ export class ActivitiesService {
   /**
    * The ResourceRef of the subject, undefined when it is not in this entity (tenant, for a customer). With
    * `readers`, a lead, opportunity or quotation ref also names its creator and assignees (record-reach.ts): only a
-   * read permission looks at them, so a write check skips the query.
+   * read permission looks at them, so a write check skips the query. `lockLead` reads a lead FOR SHARE until the
+   * transaction ends: a follow-up planned on it then waits out an owner change in flight (which moves the old
+   * owner's follow-ups, leads.service.ts) and goes to the new owner, instead of landing on the old one unmoved.
    */
   private async refOf(
     q: Q,
@@ -470,13 +473,15 @@ export class ActivitiesService {
     scope: TxScope,
     principal: Principal,
     readers: boolean,
+    lockLead = false,
   ): Promise<ResourceRef | undefined> {
     switch (key) {
       case 'leadId': {
-        const [row] = await q
+        const select = q
           .select()
           .from(leads)
           .where(scoped(scope).where(leads, eq(leads.id, id)));
+        const [row] = lockLead ? await select.for('share') : await select;
         if (row === undefined) return undefined;
         return leadRef(row, readers ? await loadRecordReaders(q, scope, leads, id) : undefined);
       }
