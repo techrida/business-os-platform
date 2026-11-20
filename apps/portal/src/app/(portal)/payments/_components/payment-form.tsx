@@ -1,6 +1,6 @@
 'use client';
 
-import { type Currency, PAYMENT_METHODS, type PaymentMethod } from '@bos/contracts';
+import { CURRENCIES, type Currency, PAYMENT_METHODS, type PaymentMethod } from '@bos/contracts';
 import { useActionState, useEffect, useRef, useState } from 'react';
 
 import { type PaymentFormState, submitPaymentAction } from '@/app/(portal)/payments/actions';
@@ -9,7 +9,6 @@ import { Field, Input } from '@/components/portal/field';
 import quotation from '@/components/portal/quotation.module.css';
 import { Button } from '@/components/ui/button';
 import { Select } from '@/components/ui/select';
-import { currencyOptions } from '@/lib/enabled-currencies';
 
 import styles from './payment-form.module.css';
 import { METHOD_LABEL } from './payment-status';
@@ -28,10 +27,18 @@ interface Proof {
  * very same request. When the customer arrives from an invoice, the currency and the amount still
  * open are the server's figures, passed in as strings; this form computes nothing.
  *
- * Only the company's enabled currencies are offered (D44). An invoice in a currency the company has
- * since switched off keeps that currency in the list, disabled with a note, and the form starts on
- * the first enabled one without the invoice's open amount, which is in the other currency.
+ * Every currency is offered and choosable: a payment is money already sent, so it is accepted in a
+ * currency the company has switched off (D56 U16-Q1), and such a currency says so. From an invoice
+ * in a switched-off currency the form starts with no currency chosen (no silent move to NPR) and
+ * with the invoice's open amount filled in; the Currency field names the invoice's currency.
  */
+/** Every currency in the fixed order; `off` marks one the company has switched off (NPR never is). */
+export function paymentCurrencyOptions(
+  enabled: readonly Currency[],
+): { code: Currency; off: boolean }[] {
+  return CURRENCIES.map((code) => ({ code, off: code !== 'NPR' && !enabled.includes(code) }));
+}
+
 export function PaymentForm({
   idempotencyKey,
   today,
@@ -59,16 +66,14 @@ export function PaymentForm({
   );
   const fe = state.fieldErrors ?? {};
 
-  // A switched-off invoice currency stays visible but disabled; NPR is always first and enabled.
-  const options = currencyOptions(enabledCurrencies, defaultCurrency);
-  const invoiceCurrencyOff = options.some((o) => o.code === defaultCurrency && o.disabled);
-  const startCurrency = invoiceCurrencyOff ? (options[0]?.code ?? 'NPR') : defaultCurrency;
+  const options = paymentCurrencyOptions(enabledCurrencies);
+  const isOff = (code: string) => options.some((o) => o.code === code && o.off);
+  const invoiceCurrencyOff = isOff(defaultCurrency);
 
   // Controlled: React 19 resets uncontrolled fields after every action. Set on the first render,
   // because the hidden field submits whatever value it holds.
-  const [currency, setCurrency] = useState<string>(startCurrency);
-  // The open amount is in the invoice's currency, so it is not offered against another one.
-  const [amount, setAmount] = useState(invoiceCurrencyOff ? '' : suggestedAmount);
+  const [currency, setCurrency] = useState<string>(invoiceCurrencyOff ? '' : defaultCurrency);
+  const [amount, setAmount] = useState(suggestedAmount);
   const [method, setMethod] = useState<PaymentMethod>('bank_transfer');
   const [receivedOn, setReceivedOn] = useState(today);
   const [bankReference, setBankReference] = useState('');
@@ -159,8 +164,10 @@ export function PaymentForm({
           label="Currency"
           hint={
             invoiceCurrencyOff
-              ? `This invoice is in ${defaultCurrency}, which is switched off for the company. Choose another currency.`
-              : undefined
+              ? `This invoice is in ${defaultCurrency}, which is switched off for the company. Payments in it are still accepted.${suggestedAmount === '' ? '' : ` The amount filled in is in ${defaultCurrency}.`}`
+              : isOff(currency)
+                ? `${currency} is switched off for the company. Payments in it are still accepted.`
+                : undefined
           }
           error={fe.currency}
         >
@@ -172,9 +179,10 @@ export function PaymentForm({
               onChange={(e) => setCurrency(e.target.value)}
               {...control}
             >
+              <option value="">Choose a currency</option>
               {options.map((o) => (
-                <option key={o.code} value={o.code} disabled={o.disabled}>
-                  {o.code}
+                <option key={o.code} value={o.code}>
+                  {o.off ? `${o.code}, switched off` : o.code}
                 </option>
               ))}
             </Select>

@@ -21,7 +21,8 @@ const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
  * Submit a payment, optionally from an invoice (`?invoice=<id>`). From an invoice, the currency and
  * the amount still open are the server's figures. A bad invoice id, a 404 and a 403 all show the
  * invoice not-found page, so this URL cannot be used to probe for invoices that are not the
- * customer's. The currency list is the company's enabled currencies, read once per request.
+ * customer's. The company's enabled currencies, read once per request, mark which currencies are
+ * switched off; a payment is accepted in any of them.
  */
 export default async function NewPaymentPage({
   searchParams,
