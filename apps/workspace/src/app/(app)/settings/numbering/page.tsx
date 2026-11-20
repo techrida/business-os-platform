@@ -7,8 +7,9 @@ import { Table, Td, Th } from '@/components/ui/table';
 import { listNumberSeries } from '@/lib/api-admin';
 
 import { BackToSettings } from '../_components/back-link';
-import { cardKey, loadFields } from '../_components/load-fields';
+import { loadFields } from '../_components/load-fields';
 import { SettingCard } from '../_components/setting-card';
+import { SettingsForm } from '../_components/settings-form';
 import styles from '../_components/settings.module.css';
 import admin from '../admin.module.css';
 import { requireSection } from '../guard';
@@ -35,12 +36,9 @@ export default async function NumberingPage() {
       <div className={styles.column}>
         {fields.ok ? (
           <div className={styles.narrow}>
-            <SettingCard
-              key={cardKey(fields.data)}
-              section="numbering"
-              title="Memos"
-              fields={fields.data}
-            />
+            <SettingsForm section="numbering" fields={fields.data}>
+              <SettingCard title="Memos" fields={fields.data} />
+            </SettingsForm>
           </div>
         ) : (
           <SectionError message={fields.message} />

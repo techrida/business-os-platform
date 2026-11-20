@@ -20,8 +20,9 @@ import { userNames } from '@/lib/business-labels';
 
 import adminStyles from '../admin.module.css';
 import { BackToSettings } from '../_components/back-link';
-import { cardKey, loadFields } from '../_components/load-fields';
+import { loadFields } from '../_components/load-fields';
 import { SettingCard } from '../_components/setting-card';
+import { SettingsForm } from '../_components/settings-form';
 import { formatInstant } from '../format';
 import { requireSection } from '../guard';
 import { section } from '../section';
@@ -177,13 +178,21 @@ export default async function WorkflowsPage() {
       {/* ---- default reminder and escalation times -------------------------------------------- */}
       <div id="timing" className={styles.section}>
         {timing.ok ? (
-          <SettingCard
-            key={cardKey(timing.data)}
-            section="workflows"
-            title="Default reminder and escalation times"
-            description="Used by a workflow that does not set its own times."
-            fields={timing.data.map((field) => ({ ...field, label: 'Default timing' }))}
-          />
+          (() => {
+            const timingFields = timing.data.map((field) => ({
+              ...field,
+              label: 'Default timing',
+            }));
+            return (
+              <SettingsForm section="workflows" fields={timingFields}>
+                <SettingCard
+                  title="Default reminder and escalation times"
+                  description="Used by a workflow that does not set its own times."
+                  fields={timingFields}
+                />
+              </SettingsForm>
+            );
+          })()
         ) : (
           <SectionError message={timing.message} />
         )}

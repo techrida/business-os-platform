@@ -23,14 +23,14 @@ const putSetting =
       key: string,
       value: unknown,
       expectedVersion?: number | null,
-    ) => Promise<unknown>
+    ) => Promise<{ version: number }>
   >();
 vi.mock('@/lib/api-admin', () => ({
   putSetting: (session: Session, key: string, value: unknown, expectedVersion?: number | null) =>
     putSetting(session, key, value, expectedVersion),
 }));
 
-const { resetSettingAction } = await import('./actions');
+const { resetSettingAction, saveSettingsPageAction } = await import('./actions');
 
 const session = (roles: string[], orgKind: Session['orgKind'] = 'staff'): Session =>
   ({ accessToken: 't', orgKind, roles }) as Session;
@@ -40,6 +40,193 @@ beforeEach(() => {
   putSetting.mockReset();
   putSetting.mockResolvedValue({ version: 2 });
   revalidatePath.mockReset();
+});
+
+describe('saveSettingsPageAction', () => {
+  it('validates every changed key before writing anything', async () => {
+    getSession.mockResolvedValue(session(['founder']));
+
+    const result = await saveSettingsPageAction('purchasing', [
+      { key: 'procurement.min_quotes', value: { kind: 'text', value: '5' }, expectedVersion: 1 },
+      {
+        key: 'procurement.match.qty_pct',
+        value: { kind: 'text', value: '100.123' },
+        expectedVersion: 2,
+      },
+    ]);
+
+    expect(result.status).toBe('error');
+    expect(result.saved).toEqual([]);
+    expect(result.fieldErrors['procurement.match.qty_pct']).toBeTruthy();
+    expect(putSetting).not.toHaveBeenCalled();
+    expect(revalidatePath).not.toHaveBeenCalled();
+  });
+
+  it('writes changed keys sequentially with each key expectedVersion and returns updated baselines', async () => {
+    const founder = session(['founder']);
+    getSession.mockResolvedValue(founder);
+    putSetting.mockResolvedValueOnce({ version: 6 }).mockResolvedValueOnce({ version: 1 });
+
+    const result = await saveSettingsPageAction('sales', [
+      {
+        key: 'quotation.validity_days',
+        value: { kind: 'text', value: '30' },
+        expectedVersion: 5,
+      },
+      {
+        key: 'sales.default_schedule',
+        value: {
+          kind: 'schedule',
+          rows: [
+            { label: 'Advance', percent: '50', trigger: 'advance' },
+            { label: 'Delivery', percent: '50', trigger: 'delivery' },
+          ],
+        },
+        expectedVersion: null,
+      },
+    ]);
+
+    expect(result.status).toBe('ok');
+    expect(putSetting).toHaveBeenNthCalledWith(1, founder, 'quotation.validity_days', 30, 5);
+    expect(putSetting).toHaveBeenNthCalledWith(
+      2,
+      founder,
+      'sales.default_schedule',
+      [
+        { label: 'Advance', percent: '50', trigger: 'advance' },
+        { label: 'Delivery', percent: '50', trigger: 'delivery' },
+      ],
+      null,
+    );
+    expect(result.saved).toEqual([
+      {
+        key: 'quotation.validity_days',
+        value: { kind: 'text', value: '30' },
+        version: 6,
+      },
+      {
+        key: 'sales.default_schedule',
+        value: {
+          kind: 'schedule',
+          rows: [
+            { label: 'Advance', percent: '50', trigger: 'advance' },
+            { label: 'Delivery', percent: '50', trigger: 'delivery' },
+          ],
+        },
+        version: 1,
+      },
+    ]);
+    expect(revalidatePath).toHaveBeenCalledWith('/settings/sales', undefined);
+    expect(revalidatePath).toHaveBeenCalledWith('/', 'layout');
+  });
+
+  it('reports saved, failed and remaining keys on a mid-way failure and stops writing', async () => {
+    getSession.mockResolvedValue(session(['founder']));
+    putSetting.mockResolvedValueOnce({ version: 4 }).mockRejectedValueOnce({
+      status: 409,
+      body: { error: { code: 'stale_setting', message: 'stale', correlationId: 'cid-1' } },
+    });
+
+    const result = await saveSettingsPageAction('purchasing', [
+      { key: 'procurement.min_quotes', value: { kind: 'text', value: '4' }, expectedVersion: 3 },
+      {
+        key: 'procurement.match.qty_pct',
+        value: { kind: 'text', value: '5' },
+        expectedVersion: 1,
+      },
+      {
+        key: 'procurement.match.price_pct',
+        value: { kind: 'text', value: '3' },
+        expectedVersion: 2,
+      },
+    ]);
+
+    expect(result.status).toBe('partial');
+    expect(putSetting).toHaveBeenCalledTimes(2);
+    expect(result.saved).toEqual([
+      { key: 'procurement.min_quotes', value: { kind: 'text', value: '4' }, version: 4 },
+    ]);
+    expect(result.fieldErrors['procurement.match.qty_pct']).toBe(STALE_SETTING_MESSAGE);
+    expect(result.staleKeys).toEqual(['procurement.match.qty_pct']);
+    expect(result.message).toContain('Saved Quotes needed before a recommendation.');
+    expect(result.message).toContain('Could not save Quantity tolerance (%).');
+    expect(result.message).toContain('Price tolerance (%) was not saved.');
+    expect(result.message).not.toContain('procurement.');
+    expect(revalidatePath).toHaveBeenCalledWith('/settings/purchasing', undefined);
+  });
+
+  it('returns error with staleKeys and revalidates nothing when the first write is stale', async () => {
+    getSession.mockResolvedValue(session(['founder']));
+    putSetting.mockRejectedValueOnce({
+      status: 409,
+      body: { error: { code: 'stale_setting', message: 'stale', correlationId: 'cid-2' } },
+    });
+
+    const result = await saveSettingsPageAction('numbering', [
+      { key: 'numbering.memo_prefix', value: { kind: 'text', value: 'DOC' }, expectedVersion: 2 },
+    ]);
+
+    expect(result.status).toBe('error');
+    expect(result.saved).toEqual([]);
+    expect(result.staleKeys).toEqual(['numbering.memo_prefix']);
+    expect(result.fieldErrors['numbering.memo_prefix']).toBe(STALE_SETTING_MESSAGE);
+    expect(revalidatePath).not.toHaveBeenCalled();
+  });
+
+  it('refuses unknown sections, cross-section keys, duplicate keys, bad versions and unauthorised roles', async () => {
+    getSession.mockResolvedValue(session(['founder']));
+    expect((await saveSettingsPageAction('users', [])).status).toBe('error');
+    expect(
+      (
+        await saveSettingsPageAction('sales', [
+          {
+            key: 'procurement.min_quotes',
+            value: { kind: 'text', value: '3' },
+            expectedVersion: 1,
+          },
+        ])
+      ).status,
+    ).toBe('error');
+    expect(
+      (
+        await saveSettingsPageAction('sales', [
+          {
+            key: 'quotation.validity_days',
+            value: { kind: 'text', value: '20' },
+            expectedVersion: 1,
+          },
+          {
+            key: 'quotation.validity_days',
+            value: { kind: 'text', value: '25' },
+            expectedVersion: 1,
+          },
+        ])
+      ).status,
+    ).toBe('error');
+    expect(
+      (
+        await saveSettingsPageAction('sales', [
+          {
+            key: 'quotation.validity_days',
+            value: { kind: 'text', value: '20' },
+            expectedVersion: 1.5,
+          },
+        ])
+      ).status,
+    ).toBe('error');
+    expect(putSetting).not.toHaveBeenCalled();
+
+    getSession.mockResolvedValue(session(['sales']));
+    await expect(
+      saveSettingsPageAction('sales', [
+        {
+          key: 'quotation.validity_days',
+          value: { kind: 'text', value: '20' },
+          expectedVersion: 1,
+        },
+      ]),
+    ).rejects.toThrow('REDIRECT:/settings/denied');
+  });
 });
 
 describe('resetSettingAction', () => {

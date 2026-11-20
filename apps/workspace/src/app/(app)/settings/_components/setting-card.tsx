@@ -1,136 +1,190 @@
 'use client';
 
-import { CURRENCIES, ROLE_KEYS, type SettingKey } from '@bos/contracts';
-import { useActionState, useId, useState, type ReactNode } from 'react';
+import {
+  CURRENCIES,
+  ROLE_KEYS,
+  type Currency,
+  type RoleKey,
+  type ScheduleTrigger,
+} from '@bos/contracts';
+import { useId, useRef, useState, type ReactNode } from 'react';
 
-import { ResetToDefaultButton } from '@/components/settings/reset-to-default';
 import { Button } from '@/components/ui/button';
 import { Field, Input, Select } from '@/components/ui/field';
+import { Icon } from '@/components/ui/icon';
 import { Panel } from '@/components/ui/panel';
-import { toast } from '@/components/ui/toast';
 import type { SettingsSectionId } from '@/lib/settings-nav';
 
-import { IDLE, type ActionState } from '../action-state';
 import { roleLabel } from '../users/role-checkboxes';
-import { FormStatus } from '../ui';
-import { saveCardAction } from './actions';
-import type { FieldSpec } from './setting-fields';
+import {
+  TRIGGER_OPTIONS,
+  scheduleSummary,
+  type FieldSpec,
+  type ScheduleRowValue,
+  type SettingFieldValue,
+  type SlaFieldValue,
+} from './setting-fields';
+import { SettingsForm, useSettingsFormContext, type SaveSettingsPageAction } from './settings-form';
 import styles from './settings.module.css';
 
-type Values = Record<string, string[]>;
-
-const TRIGGER_LABEL: Record<string, string> = {
-  advance: 'Advance',
-  milestone: 'Milestone',
-  uat: 'After acceptance',
-  delivery: 'On delivery',
-  date: 'On a date',
-  manual: 'Manual',
-};
-
-interface ScheduleLine {
-  label: string;
-  percent: string;
-  trigger: string;
-}
-
-function parseJson<T>(text: string, fallback: T): T {
-  try {
-    return JSON.parse(text) as T;
-  } catch {
-    return fallback;
-  }
+export interface SettingCardProps {
+  /** Required only when rendered standalone outside `<SettingsForm>`. */
+  section?: SettingsSectionId;
+  title: string;
+  description?: string;
+  fields: readonly FieldSpec[];
+  /** Optional save action override when rendered standalone in tests. */
+  saveAction?: SaveSettingsPageAction;
 }
 
 /**
- * One card, one decision, one Save. Typed controls per setting; Save is enabled only while the card
- * differs from what is saved. Success is a toast (FormStatus); a refused field keeps its input and
- * shows its message at the field. The page remounts the card (new `key`) after a save, so the saved
- * values become the new baseline. A setting that differs from its default shows an undo icon beside
- * its label (D32); pressing it saves that one default immediately, apart from this card's Save, and
- * the remount drops any unsaved edits in the card's other fields.
+ * Distinct counter-clockwise circle arrow icon for Reset to default, so it is visually separate
+ * from Undo change (`undo-2`). Decorative: the enclosing button carries the accessible label.
  */
-export function SettingCard({
-  section,
+function ResetDefaultIcon() {
+  return (
+    <svg
+      xmlns="http://www.w3.org/2000/svg"
+      width={16}
+      height={16}
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth={2}
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden="true"
+      focusable="false"
+    >
+      <path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8" />
+      <path d="M3 3v5h5" />
+    </svg>
+  );
+}
+
+/**
+ * Per-setting Undo (restores saved value, shown only when dirty) and Reset to default (stages the
+ * built-in default in the form, shown only when current value differs from default).
+ * Always rendered as siblings of `<label>`, never inside it, so inputs keep their exact name.
+ */
+function FieldActions({
+  spec,
+  dirty,
+  atDefault,
+  onUndo,
+  onResetToDefault,
+  className,
+}: {
+  spec: FieldSpec;
+  dirty: boolean;
+  atDefault: boolean;
+  onUndo: () => void;
+  onResetToDefault: () => void;
+  className?: string | undefined;
+}) {
+  if (!dirty && atDefault) return null;
+  return (
+    <span className={[styles.fieldActions, className].filter(Boolean).join(' ')}>
+      {dirty ? (
+        <button
+          type="button"
+          className={styles.iconButton}
+          aria-label={`Undo change to ${spec.label}`}
+          title="Undo change"
+          onClick={onUndo}
+        >
+          <Icon name="undo-2" size={16} />
+        </button>
+      ) : null}
+      {!atDefault ? (
+        <button
+          type="button"
+          className={styles.iconButton}
+          aria-label={`Reset ${spec.label} to default`}
+          title={`Back to default (${spec.defaultText})`}
+          onClick={onResetToDefault}
+        >
+          <ResetDefaultIcon />
+        </button>
+      ) : null}
+    </span>
+  );
+}
+
+/**
+ * Renders one settings panel with always-editable typed controls.
+ * Inside `<SettingsForm>`, participates in the single page-level Save/Discard bar.
+ * When rendered standalone with a `section`, wraps itself in a `<SettingsForm>`.
+ */
+export function SettingCard({ section, title, description, fields, saveAction }: SettingCardProps) {
+  const form = useSettingsFormContext();
+  if (form === null) {
+    if (!section) {
+      throw new Error('SettingCard must be rendered inside SettingsForm or be given a section.');
+    }
+    return (
+      <SettingsForm section={section} fields={fields} {...(saveAction ? { saveAction } : {})}>
+        <SettingCardPanel title={title} description={description} fields={fields} />
+      </SettingsForm>
+    );
+  }
+  return <SettingCardPanel title={title} description={description} fields={fields} />;
+}
+
+function SettingCardPanel({
   title,
   description,
   fields,
 }: {
-  section: SettingsSectionId;
   title: string;
-  description?: string;
+  description?: string | undefined;
   fields: readonly FieldSpec[];
 }) {
-  const initial: Values = Object.fromEntries(
-    fields.map((f) => [f.key, f.kind === 'currencies' ? f.current.split(/,\s*/) : [f.current]]),
-  );
-  const [values, setValues] = useState<Values>(initial);
-  // A saved change gives the card new current values, so the page remounts it and drops the effect that would
-  // announce the result: the success toast is raised here, from the action itself.
-  const [state, formAction, pending] = useActionState(
-    async (previous: ActionState, formData: FormData): Promise<ActionState> => {
-      const result = await saveCardAction(previous, formData);
-      if (result.status === 'ok') toast.success(result.message, { id: 'setting-card-saved' });
-      return result;
-    },
-    IDLE,
-  );
-  const dirty = fields.some(
-    (f) => (values[f.key] ?? []).join(',') !== (initial[f.key] ?? []).join(','),
-  );
-  const set = (key: SettingKey, next: string[]) => setValues((v) => ({ ...v, [key]: next }));
+  const form = useSettingsFormContext();
+  if (form === null) return null;
 
   return (
     <Panel title={title} description={description}>
-      <form action={formAction} className={styles.form} noValidate>
-        <input type="hidden" name="section" value={section} />
-        <div className={styles.fields}>
-          {fields.map((f) => (
+      <div className={styles.fields}>
+        {fields.map((spec) => {
+          const state = form.getFieldState(spec);
+          const isGroup =
+            spec.kind === 'currencies' || spec.kind === 'schedule' || spec.kind === 'sla';
+          const actionCount = (state.dirty ? 1 : 0) + (state.atDefault ? 0 : 1);
+          const actions = (
+            <FieldActions
+              spec={spec}
+              dirty={state.dirty}
+              atDefault={state.atDefault}
+              onUndo={() => form.undoField(spec.key)}
+              onResetToDefault={() => form.resetFieldToDefault(spec)}
+              className={isGroup ? undefined : styles.fieldActionsOverlay}
+            />
+          );
+
+          return (
             <div
-              key={f.key}
-              className={
-                [
-                  f.kind === 'currencies' || f.kind === 'schedule' || f.kind === 'sla'
-                    ? styles.wide
-                    : undefined,
-                  // Makes room beside the label for the undo icon, only while there is one.
-                  f.isDefault ? undefined : styles.resettable,
-                ]
-                  .filter(Boolean)
-                  .join(' ') || undefined
-              }
+              key={spec.key}
+              className={[
+                isGroup ? styles.wide : styles.fieldItem,
+                !isGroup && actionCount > 0 ? styles.hasActions : undefined,
+              ]
+                .filter(Boolean)
+                .join(' ')}
+              data-actions={!isGroup && actionCount > 0 ? String(actionCount) : undefined}
             >
-              <input type="hidden" name="key" value={f.key} />
-              <input type="hidden" name={`i:${f.key}`} value={(initial[f.key] ?? []).join(',')} />
               <Control
-                spec={f}
-                value={values[f.key] ?? []}
-                onChange={(next) => set(f.key, next)}
-                error={state.status === 'error' ? state.fieldErrors?.[f.key] : undefined}
+                spec={spec}
+                value={state.value}
+                onChange={(next) => form.setFieldValue(spec.key, next)}
+                error={state.error}
+                groupActions={isGroup ? actions : undefined}
               />
-              {/* A sibling of the control, never inside its label: the control keeps its own name.
-                  A reset saves the default straight away, so the page remounts the card with it. */}
-              <ResetToDefaultButton
-                className={styles.resetSlot}
-                section={section}
-                settingKey={f.key}
-                label={f.label}
-                isDefault={f.isDefault}
-                defaultText={f.defaultText}
-                loadedVersion={f.version}
-              />
+              {!isGroup ? actions : null}
             </div>
-          ))}
-        </div>
-        <div className={styles.foot}>
-          <div className={styles.status}>
-            <FormStatus state={state} pending={pending} successToast={false} />
-          </div>
-          <Button type="submit" disabled={!dirty || pending}>
-            Save
-          </Button>
-        </div>
-      </form>
+          );
+        })}
+      </div>
     </Panel>
   );
 }
@@ -140,39 +194,58 @@ function Control({
   value,
   onChange,
   error,
+  groupActions,
 }: {
   spec: FieldSpec;
-  value: string[];
-  onChange: (next: string[]) => void;
+  value: SettingFieldValue;
+  onChange: (next: SettingFieldValue) => void;
   error: string | undefined;
+  groupActions?: ReactNode;
 }): ReactNode {
-  const name = `v:${spec.key}`;
-  const first = value[0] ?? '';
   switch (spec.kind) {
     case 'currencies':
-      return <Currencies spec={spec} name={name} value={value} onChange={onChange} error={error} />;
+      return (
+        <CurrenciesControl
+          spec={spec}
+          values={value.kind === 'currencies' ? value.values : ['NPR']}
+          onChange={(values) => onChange({ kind: 'currencies', values })}
+          error={error}
+          actions={groupActions}
+        />
+      );
     case 'sla':
       return (
-        <Sla spec={spec} name={name} text={first} onChange={(t) => onChange([t])} error={error} />
+        <SlaControl
+          spec={spec}
+          value={
+            value.kind === 'sla'
+              ? value.value
+              : { remindAfterHours: '24', escalateAfterHours: '72', escalateToRole: 'founder' }
+          }
+          onChange={(next) => onChange({ kind: 'sla', value: next })}
+          error={error}
+          actions={groupActions}
+        />
       );
     case 'schedule':
       return (
-        <Schedule
+        <ScheduleControl
           spec={spec}
-          name={name}
-          text={first}
-          onChange={(t) => onChange([t])}
+          rows={value.kind === 'schedule' ? value.rows : []}
+          onChange={(rows) => onChange({ kind: 'schedule', rows })}
           error={error}
+          actions={groupActions}
         />
       );
-    case 'select':
+    case 'select': {
+      const textValue = value.kind === 'text' ? value.value : '';
       return (
         <Field label={spec.label} hint={spec.help} error={error}>
           {(control) => (
             <Select
-              name={name}
-              value={first}
-              onChange={(e) => onChange([e.currentTarget.value])}
+              name={`v:${spec.key}`}
+              value={textValue}
+              onChange={(e) => onChange({ kind: 'text', value: e.currentTarget.value })}
               {...control}
             >
               {(spec.options ?? []).map((o) => (
@@ -184,22 +257,19 @@ function Control({
           )}
         </Field>
       );
-    default:
+    }
+    case 'prefix': {
+      const textValue = value.kind === 'text' ? value.value : '';
       return (
         <Field label={spec.label} hint={spec.help} error={error}>
           {(control) => (
             <Input
-              name={name}
-              value={first}
+              name={`v:${spec.key}`}
+              type="text"
+              maxLength={10}
+              value={textValue}
               onChange={(e) =>
-                onChange([
-                  spec.kind === 'prefix'
-                    ? e.currentTarget.value.toUpperCase()
-                    : e.currentTarget.value,
-                ])
-              }
-              inputMode={
-                spec.kind === 'integer' ? 'numeric' : spec.kind === 'prefix' ? 'text' : 'decimal'
+                onChange({ kind: 'text', value: e.currentTarget.value.toUpperCase() })
               }
               autoComplete="off"
               spellCheck={false}
@@ -208,41 +278,89 @@ function Control({
           )}
         </Field>
       );
+    }
+    case 'integer':
+    case 'percent':
+    case 'money': {
+      const textValue = value.kind === 'text' ? value.value : '';
+      const bounds = spec.numberBounds;
+      return (
+        <Field label={spec.label} hint={spec.help} error={error}>
+          {(control) => (
+            <Input
+              name={`v:${spec.key}`}
+              type="number"
+              min={bounds?.min}
+              max={bounds?.max}
+              step={bounds?.step ?? (spec.kind === 'integer' ? '1' : '0.01')}
+              inputMode={spec.kind === 'integer' ? 'numeric' : 'decimal'}
+              value={textValue}
+              onChange={(e) => onChange({ kind: 'text', value: e.currentTarget.value })}
+              autoComplete="off"
+              spellCheck={false}
+              {...control}
+            />
+          )}
+        </Field>
+      );
+    }
+    default: {
+      const _exhaustive: never = spec.kind;
+      return _exhaustive;
+    }
   }
 }
 
-function Currencies({
+function CurrenciesControl({
   spec,
-  name,
-  value,
+  values,
   onChange,
   error,
+  actions,
 }: {
   spec: FieldSpec;
-  name: string;
-  value: string[];
-  onChange: (next: string[]) => void;
+  values: readonly Currency[];
+  onChange: (next: readonly Currency[]) => void;
   error: string | undefined;
+  actions?: ReactNode;
 }) {
   const id = useId();
+  const labelId = `${id}-label`;
+
+  const toggle = (currency: Currency, checked: boolean) => {
+    const picked = new Set<Currency>(values);
+    picked.add('NPR');
+    if (checked) picked.add(currency);
+    else if (currency !== 'NPR') picked.delete(currency);
+    onChange(CURRENCIES.filter((c) => picked.has(c)));
+  };
+
   return (
-    <fieldset className={styles.fieldset} aria-invalid={error ? true : undefined}>
-      <legend className={styles.legend}>{spec.label}</legend>
+    <div
+      role="group"
+      aria-labelledby={labelId}
+      className={styles.group}
+      data-invalid={error ? 'true' : undefined}
+    >
+      <div className={styles.groupHeader}>
+        <p id={labelId} className={styles.groupLabel}>
+          {spec.label}
+        </p>
+        {actions}
+      </div>
       {spec.help ? <p className={styles.help}>{spec.help}</p> : null}
       <div className={styles.checkGrid}>
         {CURRENCIES.map((currency) =>
           currency === 'NPR' ? (
             <label key={currency} className={styles.checkLabel} htmlFor={`${id}-NPR`}>
-              {/* NPR is the books currency and cannot be switched off. A disabled box is not sent,
-                  so the hidden field carries the value. */}
               <input
                 id={`${id}-NPR`}
                 className={styles.checkbox}
                 type="checkbox"
+                value="NPR"
                 checked
                 disabled
               />
-              <input type="hidden" name={name} value="NPR" />
               NPR (always on)
             </label>
           ) : (
@@ -251,73 +369,64 @@ function Currencies({
                 id={`${id}-${currency}`}
                 className={styles.checkbox}
                 type="checkbox"
-                name={name}
                 value={currency}
-                checked={value.includes(currency)}
-                onChange={(e) =>
-                  onChange(
-                    e.currentTarget.checked
-                      ? [...value, currency]
-                      : value.filter((c) => c !== currency),
-                  )
-                }
+                checked={values.includes(currency)}
+                onChange={(e) => toggle(currency, e.currentTarget.checked)}
               />
               {currency}
             </label>
           ),
         )}
       </div>
-      {error ? <p className={styles.fieldError}>{error}</p> : null}
-    </fieldset>
+      {error ? (
+        <p className={styles.fieldError} role="alert">
+          {error}
+        </p>
+      ) : null}
+    </div>
   );
 }
 
-/** Reminder and escalation times: three typed fields that serialise to the one JSON value. */
-function Sla({
+/** Reminder and escalation defaults: three flat typed controls with no JSON state. */
+function SlaControl({
   spec,
-  name,
-  text,
+  value,
   onChange,
   error,
+  actions,
 }: {
   spec: FieldSpec;
-  name: string;
-  text: string;
-  onChange: (text: string) => void;
+  value: SlaFieldValue;
+  onChange: (next: SlaFieldValue) => void;
   error: string | undefined;
+  actions?: ReactNode;
 }) {
-  const sla = parseJson<{
-    remindAfterHours?: number | string;
-    escalateAfterHours?: number | string;
-    escalateTo?: { role?: string };
-  }>(text, {});
-  const remind = String(sla.remindAfterHours ?? '');
-  const escalate = String(sla.escalateAfterHours ?? '');
-  const role = sla.escalateTo?.role ?? 'founder';
-  // An unfinished number stays a string, so the Server Action's schema reports it at the field.
-  const emit = (next: { remind?: string; escalate?: string; role?: string }) => {
-    const num = (s: string) => (/^[0-9]+$/.test(s) ? Number(s) : s);
-    onChange(
-      JSON.stringify({
-        remindAfterHours: num(next.remind ?? remind),
-        escalateAfterHours: num(next.escalate ?? escalate),
-        escalateTo: { role: next.role ?? role },
-      }),
-    );
-  };
+  const labelId = useId();
   return (
-    <fieldset className={styles.fieldset} aria-invalid={error ? true : undefined}>
-      <legend className={styles.legend}>{spec.label}</legend>
+    <div
+      role="group"
+      aria-labelledby={labelId}
+      className={styles.group}
+      data-invalid={error ? 'true' : undefined}
+    >
+      <div className={styles.groupHeader}>
+        <p id={labelId} className={styles.groupLabel}>
+          {spec.label}
+        </p>
+        {actions}
+      </div>
       {spec.help ? <p className={styles.help}>{spec.help}</p> : null}
-      <input type="hidden" name={name} value={text} />
       <div className={styles.fields}>
         <Field label="Remind after (hours)">
           {(c) => (
             <Input
-              value={remind}
+              type="number"
+              min={1}
+              step={1}
               inputMode="numeric"
+              value={value.remindAfterHours}
               autoComplete="off"
-              onChange={(e) => emit({ remind: e.currentTarget.value })}
+              onChange={(e) => onChange({ ...value, remindAfterHours: e.currentTarget.value })}
               {...c}
             />
           )}
@@ -325,17 +434,27 @@ function Sla({
         <Field label="Escalate after (hours)">
           {(c) => (
             <Input
-              value={escalate}
+              type="number"
+              min={1}
+              step={1}
               inputMode="numeric"
+              value={value.escalateAfterHours}
               autoComplete="off"
-              onChange={(e) => emit({ escalate: e.currentTarget.value })}
+              onChange={(e) => onChange({ ...value, escalateAfterHours: e.currentTarget.value })}
               {...c}
             />
           )}
         </Field>
         <Field label="Escalate to">
           {(c) => (
-            <Select value={role} onChange={(e) => emit({ role: e.currentTarget.value })} {...c}>
+            <Select
+              name={`v:${spec.key}:role`}
+              value={value.escalateToRole}
+              onChange={(e) =>
+                onChange({ ...value, escalateToRole: e.currentTarget.value as RoleKey })
+              }
+              {...c}
+            >
               {ROLE_KEYS.map((r) => (
                 <option key={r} value={r}>
                   {roleLabel(r)}
@@ -345,43 +464,76 @@ function Sla({
           )}
         </Field>
       </div>
-      {error ? <p className={styles.fieldError}>{error}</p> : null}
-    </fieldset>
+      {error ? (
+        <p className={styles.fieldError} role="alert">
+          {error}
+        </p>
+      ) : null}
+    </div>
   );
 }
 
-/** Billing slices as rows (label, percent, trigger) with a running total that must read 100%. */
-function Schedule({
+/** Billing schedule rows (label, percent 0–100, trigger from contract enum) with exact running total. */
+function ScheduleControl({
   spec,
-  name,
-  text,
+  rows,
   onChange,
   error,
+  actions,
 }: {
   spec: FieldSpec;
-  name: string;
-  text: string;
-  onChange: (text: string) => void;
+  rows: readonly ScheduleRowValue[];
+  onChange: (next: readonly ScheduleRowValue[]) => void;
   error: string | undefined;
+  actions?: ReactNode;
 }) {
-  const lines = parseJson<ScheduleLine[]>(text, []);
-  const write = (next: ScheduleLine[]) => onChange(JSON.stringify(next));
-  const patch = (index: number, change: Partial<ScheduleLine>) =>
-    write(lines.map((line, i) => (i === index ? { ...line, ...change } : line)));
-  const total = lines.reduce((sum, l) => sum + (Number(l.percent) || 0), 0);
-  const rounded = Math.round(total * 10000) / 10000;
+  const labelId = useId();
+  const nextRowIdRef = useRef(rows.length);
+  const [rowKeys, setRowKeys] = useState<string[]>(() => rows.map((_, i) => `row-${i}`));
+
+  const patch = (index: number, change: Partial<ScheduleRowValue>) => {
+    onChange(rows.map((row, i) => (i === index ? { ...row, ...change } : row)));
+  };
+
+  const addRow = () => {
+    if (rows.length >= 12) return;
+    nextRowIdRef.current += 1;
+    const nextId = `row-${nextRowIdRef.current}`;
+    setRowKeys((prev) => [...prev.slice(0, rows.length), nextId]);
+    onChange([...rows, { label: '', percent: '', trigger: 'milestone' }]);
+  };
+
+  const removeRow = (index: number) => {
+    if (rows.length <= 1) return;
+    setRowKeys((prev) => prev.filter((_, i) => i !== index));
+    onChange(rows.filter((_, i) => i !== index));
+  };
+
+  const summary = scheduleSummary(rows);
+  const isOff = summary.status !== 'ok';
+
   return (
-    <fieldset className={styles.fieldset} aria-invalid={error ? true : undefined}>
-      <legend className={styles.legend}>{spec.label}</legend>
+    <div
+      role="group"
+      aria-labelledby={labelId}
+      className={styles.group}
+      data-invalid={error ? 'true' : undefined}
+    >
+      <div className={styles.groupHeader}>
+        <p id={labelId} className={styles.groupLabel}>
+          {spec.label}
+        </p>
+        {actions}
+      </div>
       {spec.help ? <p className={styles.help}>{spec.help}</p> : null}
-      <input type="hidden" name={name} value={text} />
       <ul className={styles.scheduleRows}>
-        {lines.map((line, index) => (
-          <li key={index} className={styles.scheduleRow}>
+        {rows.map((row, index) => (
+          <li key={rowKeys[index] ?? `row-idx-${index}`} className={styles.scheduleRow}>
             <Field label="Label">
               {(c) => (
                 <Input
-                  value={line.label}
+                  type="text"
+                  value={row.label}
                   autoComplete="off"
                   maxLength={100}
                   onChange={(e) => patch(index, { label: e.currentTarget.value })}
@@ -392,8 +544,12 @@ function Schedule({
             <Field label="Percent">
               {(c) => (
                 <Input
-                  value={line.percent}
+                  type="number"
+                  min={0}
+                  max={100}
+                  step="0.01"
                   inputMode="decimal"
+                  value={row.percent}
                   autoComplete="off"
                   onChange={(e) => patch(index, { percent: e.currentTarget.value })}
                   {...c}
@@ -403,13 +559,16 @@ function Schedule({
             <Field label="Billed when">
               {(c) => (
                 <Select
-                  value={line.trigger}
-                  onChange={(e) => patch(index, { trigger: e.currentTarget.value })}
+                  name={`v:${spec.key}:trigger:${index}`}
+                  value={row.trigger}
+                  onChange={(e) =>
+                    patch(index, { trigger: e.currentTarget.value as ScheduleTrigger })
+                  }
                   {...c}
                 >
-                  {Object.entries(TRIGGER_LABEL).map(([value, label]) => (
-                    <option key={value} value={value}>
-                      {label}
+                  {TRIGGER_OPTIONS.map((option) => (
+                    <option key={option.value} value={option.value}>
+                      {option.label}
                     </option>
                   ))}
                 </Select>
@@ -418,8 +577,8 @@ function Schedule({
             <Button
               variant="ghost"
               size="small"
-              disabled={lines.length <= 1}
-              onClick={() => write(lines.filter((_, i) => i !== index))}
+              disabled={rows.length <= 1}
+              onClick={() => removeRow(index)}
             >
               Remove<span className="sr-only"> row {index + 1}</span>
             </Button>
@@ -427,19 +586,23 @@ function Schedule({
         ))}
       </ul>
       <div className={styles.actions}>
-        <Button
-          variant="secondary"
-          size="small"
-          disabled={lines.length >= 12}
-          onClick={() => write([...lines, { label: '', percent: '', trigger: 'milestone' }])}
-        >
+        <Button variant="secondary" size="small" disabled={rows.length >= 12} onClick={addRow}>
           Add row
         </Button>
-        <p className={styles.scheduleTotal} data-off={rounded !== 100} role="status">
-          Total {rounded}% of 100%
+        <p className={styles.scheduleTotal} data-off={isOff} role="status">
+          Total {summary.totalText}% of 100%
+          {summary.status === 'short' || summary.status === 'over'
+            ? ` — ${summary.actionText}`
+            : summary.status === 'invalid'
+              ? ' — Enter 0 to 100 for each row'
+              : ''}
         </p>
       </div>
-      {error ? <p className={styles.fieldError}>{error}</p> : null}
-    </fieldset>
+      {error ? (
+        <p className={styles.fieldError} role="alert">
+          {error}
+        </p>
+      ) : null}
+    </div>
   );
 }
