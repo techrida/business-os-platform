@@ -449,7 +449,15 @@ export class PaymentRequestsService {
           }
           await this.lockVendor(tx, scope, vendorId);
           const snapshot = await this.bank.activeVerifiedAccount(scope, vendorId, tx);
-          await this.checkLines(tx, scope, vendorId, body.currency, body.allocations, null);
+          await this.checkLines(
+            tx,
+            scope,
+            principal,
+            vendorId,
+            body.currency,
+            body.allocations,
+            null,
+          );
 
           const id = randomUUID();
           const [row] = await tx
@@ -535,6 +543,7 @@ export class PaymentRequestsService {
             const checked = await this.checkLines(
               tx,
               scope,
+              principal,
               request.vendorId,
               request.currency,
               lines,
@@ -695,6 +704,7 @@ export class PaymentRequestsService {
   private async checkLines(
     tx: DbTransaction,
     scope: TxScope,
+    principal: Principal,
     vendorId: string,
     currency: string,
     lines: readonly { openItemId: string; amount: string }[],
@@ -715,7 +725,13 @@ export class PaymentRequestsService {
         : await tx
             .select()
             .from(vendorBills)
-            .where(scoped(scope).where(vendorBills, inArray(vendorBills.id, billIds)));
+            .where(
+              and(
+                scoped(scope).where(vendorBills, inArray(vendorBills.id, billIds)),
+                // The entry list's rule (listItems): a bill outside the caller's bill read is not requested.
+                scopeWhereFor(principal, vendorBills, 'payables.bill.read'),
+              ),
+            );
     const billById = new Map(bills.map((b) => [b.id, b]));
     const open = await this.ledger.openAmounts(tx, scope, ids);
     const claimed = await this.claims(tx, scope, ids, requestId);
@@ -724,6 +740,8 @@ export class PaymentRequestsService {
       const item = itemById.get(line.openItemId);
       if (item === undefined) throw notFound('Open item');
       const bill = item.sourceType === 'vendor_bill' ? billById.get(item.sourceId) : undefined;
+      // An item of a bill the caller may not read is answered as one that does not exist.
+      if (item.sourceType === 'vendor_bill' && bill === undefined) throw notFound('Open item');
       if (
         item.side !== 'payable' ||
         item.direction !== 'credit' ||
