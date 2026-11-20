@@ -5,7 +5,6 @@ import type { NumberSystems } from '@bos/locale';
 
 import { getCustomer } from '@/components/p2/customers/api';
 import { isGuid } from '@/components/p2/customers/format';
-import { hasPermission } from '@/components/p2/customers/permissions';
 import { Alert } from '@/components/ui/alert';
 import { Badge } from '@/components/ui/badge';
 import { LinkButton } from '@/components/ui/button';
@@ -19,6 +18,7 @@ import { getCustomerAdvance, getCustomerStatement } from '@/lib/api-receivables'
 import { requireStaffSession } from '@/lib/bff';
 import { getNumberSystems } from '@/lib/display-settings';
 import { money, when } from '@/lib/kernel-format';
+import { getPermissionCheck } from '@/lib/live-permissions';
 
 import { isZeroAmount } from '../../_lib/aging';
 import { settlementMeta } from '../../_lib/settlement';
@@ -181,7 +181,9 @@ export default async function CustomerStatementPage({
   const numberSystems = await getNumberSystems();
 
   // A person without ar.read is told so without the page fetching anything for them.
-  if (!hasPermission(session.roles, 'ar.read')) {
+  // The live grants decide (Settings > Access), not the role defaults.
+  const can = await getPermissionCheck(session);
+  if (!can('ar.read')) {
     return (
       <Problem
         tone="info"
@@ -241,7 +243,7 @@ export default async function CustomerStatementPage({
             <LinkButton href="/payments" variant="secondary">
               View payments
             </LinkButton>
-            {customer?.mergedIntoId === null && hasPermission(session.roles, 'payment.record') && (
+            {customer?.mergedIntoId === null && can('payment.record') && (
               <LinkButton href={`/payments/new?customerId=${encodeURIComponent(id)}`}>
                 Record payment
               </LinkButton>
