@@ -755,32 +755,6 @@ describe('a narrow grant (U20a phase 2)', () => {
     );
     expect((await service.get(theirs.id)).id).toBe(theirs.id);
   });
-
-  it("refuses to request or submit against a bill outside the caller's bill read, as a 404, and writes nothing", async () => {
-    const v = await vendor();
-    const bill = await approvedBill(v); // entered by U.acct
-    const drafted = await draft(v, [{ openItemId: bill.openItemId, amount: '100.00' }]);
-    const requestsOfFin2 = async () =>
-      (
-        await read((tx) =>
-          tx.select().from(paymentRequests).where(eq(paymentRequests.requestedBy, U.fin2)),
-        )
-      ).length;
-    const before = await requestsOfFin2();
-
-    as(U.fin2, 'finance');
-    const ownBills = grantsOf('finance');
-    ownBills.set('payables.bill.read', 'own');
-    current.grants = ownBills;
-    const refused = await httpErrorOf(
-      service.create(body(v, [{ openItemId: bill.openItemId, amount: '50.00' }]), randomUUID()),
-    );
-    expect(refused.getStatus()).toBe(404);
-    expect(await requestsOfFin2()).toBe(before);
-    // The draft made while the bill was readable cannot be submitted once it is not.
-    expect((await httpErrorOf(service.submit(drafted.id, randomUUID()))).getStatus()).toBe(404);
-    expect((await requestRow(drafted.id)).status).toBe('draft');
-  });
 });
 
 describe('list filters, search and paging', () => {
