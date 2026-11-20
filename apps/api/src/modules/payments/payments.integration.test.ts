@@ -492,6 +492,20 @@ describe('reverseVerified', () => {
   });
 });
 
+describe('list totals', () => {
+  it('count a payment as money received only once it is verified', async () => {
+    const w = await newWorld();
+    const p = await submit(w);
+    expect((await service.list(w.scope)).totals).toEqual([
+      { currency: p.currency, amount: '0.00' },
+    ]);
+    await service.verify(w.scope, w.verifier, p.id, { expectedVersion: 1 }, randomUUID());
+    expect((await service.list(w.scope)).totals).toEqual([
+      { currency: p.currency, amount: p.amount },
+    ]);
+  });
+});
+
 describe('one legal entity at a time', () => {
   it('answers 404 for a payment of another entity of the same tenant', async () => {
     const w = await newWorld();
