@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 
 import type { Grants } from '@/lib/grants';
 
-import { hasPermission, isLiveGrants, permissionChecker } from './permissions';
+import { grantsFrom, hasPermission, isLiveGrants, permissionChecker } from './permissions';
 
 describe('hasPermission', () => {
   it('denies a permission no role grants (deny by default), whatever the role', () => {
@@ -50,7 +50,22 @@ describe('hasPermission with live grants', () => {
     expect(permissionChecker(live)('customer.write')).toBe(false);
   });
 
-  it('denies everything when no grants came back (a failed /v1/me)', () => {
+  it('grantsFrom reads the /v1/me grants, and falls back to the roles only when there are none', () => {
+    const live = grantsFrom(
+      { permissions: [{ permission: 'procurement.pr.read', scope: 'all' }] },
+      ['sales'],
+    );
+    expect(isLiveGrants(live)).toBe(true);
+    expect(hasPermission(live, 'procurement.pr.read')).toBe(true);
+    // A removed grant stays removed even though the sales defaults carry it.
+    expect(hasPermission(live, 'customer.write')).toBe(false);
+    expect(hasPermission(grantsFrom({ permissions: [] }, ['sales']), 'customer.write')).toBe(false);
+    // A failed read (null) or a response without the list stands in the role defaults.
+    expect(grantsFrom(null, ['sales'])).toEqual(['sales']);
+    expect(grantsFrom({}, ['sales'])).toEqual(['sales']);
+  });
+
+  it('denies everything when the live grants are empty', () => {
     const none: Grants = new Map();
     expect(hasPermission(none, 'customer.read')).toBe(false);
     expect(isLiveGrants(none)).toBe(true);
