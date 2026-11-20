@@ -64,5 +64,7 @@ export const AdminUsersSummarySchema = z.object({
   deactivated: z.number().int().nonnegative(),
   departments: z.array(DepartmentSchema),
   canSendPasswordReset: z.boolean(),
+  /** Whether the caller may deactivate, reactivate, lock and unlock people (F1-Q5); absent from an older API. */
+  canChangeStatus: z.boolean().optional(),
 });
 export type AdminUsersSummary = z.infer<typeof AdminUsersSummarySchema>;

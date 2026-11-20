@@ -4,7 +4,13 @@ import { AccessLevelSchema, RoleKeySchema, type RoleKey } from '@bos/contracts';
 import { revalidatePath } from 'next/cache';
 import { z } from 'zod';
 
-import { inviteUser, sendPasswordReset, setUserRoles } from '@/lib/api-admin';
+import {
+  changeUserStatus,
+  inviteUser,
+  sendPasswordReset,
+  setUserRoles,
+  type UserStatusAction,
+} from '@/lib/api-admin';
 
 import { describeError } from '../admin-errors';
 import { fail, ok, type ActionState } from '../action-state';
@@ -113,4 +119,26 @@ export async function sendPasswordResetAction(userId: string): Promise<ActionSta
   } catch (error) {
     return fail(describeError(error, 'send password reset emails'));
   }
+}
+
+const STATUS_DONE: Record<UserStatusAction, { done: string; action: string }> = {
+  deactivate: { done: 'User deactivated.', action: 'deactivate users' },
+  reactivate: { done: 'User reactivated.', action: 'reactivate users' },
+};
+
+export async function changeUserStatusAction(
+  userId: string,
+  action: UserStatusAction,
+): Promise<ActionState> {
+  const session = await requireSection('users');
+  const parsed = z.uuid().safeParse(userId);
+  if (!parsed.success || !Object.hasOwn(STATUS_DONE, action)) return fail('Missing user.');
+
+  try {
+    await changeUserStatus(session, parsed.data, action);
+  } catch (error) {
+    return fail(describeError(error, STATUS_DONE[action].action));
+  }
+  revalidatePath(PATH);
+  return ok(STATUS_DONE[action].done);
 }

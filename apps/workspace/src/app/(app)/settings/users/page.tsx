@@ -4,6 +4,7 @@ import {
   RoleKeySchema,
   ROLE_KEYS,
   UserStatusSchema,
+  type AdminUser,
   type AdminUsersQuery,
 } from '@bos/contracts';
 import type { Metadata } from 'next';
@@ -24,7 +25,7 @@ import {
   readList,
   type RawParams,
 } from '@/lib/list-params';
-import { getPermissionCheck } from '@/lib/live-permissions';
+import { getMeOrNull, getPermissionCheck } from '@/lib/live-permissions';
 
 import admin from '../admin.module.css';
 import { BackToSettings } from '../_components/back-link';
@@ -38,6 +39,7 @@ import { PageSize } from './page-size';
 import { PictureEditor } from './picture-editor';
 import { roleLabel } from './role-checkboxes';
 import { RolesEditor } from './roles-editor';
+import { StatusAction } from './status-actions';
 import styles from './users.module.css';
 
 export const metadata: Metadata = { title: 'Users · Business OS' };
@@ -54,6 +56,12 @@ const SPEC = {
   single: { departmentId: GUID, sort: AdminUserSortSchema.options },
   rows: { allowed: USER_PAGE_SIZES, default: DEFAULT_SIZE },
 } as const;
+
+const STATUS_LABELS: Record<AdminUser['status'], string> = {
+  active: 'Active',
+  invited: 'Invited',
+  inactive: 'Deactivated',
+};
 
 /** Up to five page numbers around the current one. */
 function pageNumbers(current: number, count: number): number[] {
@@ -87,10 +95,14 @@ export default async function UsersPage({ searchParams }: { searchParams: Promis
   const session = await requireSection('users', href(page));
   // "Check access" opens Settings > Access, which needs the access read permission.
   const canCheckAccess = (await getPermissionCheck(session))('admin.roles.read');
-  const [users, summary] = await Promise.all([
+  const [users, summary, me] = await Promise.all([
     section('view users', () => listUsers(session, query)),
     section('view user totals', () => summarizeUsers(session)),
+    getMeOrNull(session.accessToken),
   ]);
+  // F1-Q5: account actions need the company-wide grant (the summary says so); never on the caller's own row, and
+  // only when the caller's own row is known, since the API refuses it anyway.
+  const canChangeStatus = summary.ok && summary.data.canChangeStatus === true && Boolean(me?.id);
   const items = users.ok ? users.data.items : [];
   const next = users.ok ? users.data.nextPage : null;
   const departments = summary.ok ? summary.data.departments : [];
@@ -280,7 +292,7 @@ export default async function UsersPage({ searchParams }: { searchParams: Promis
                             }
                             className={styles.status ?? ''}
                           >
-                            {user.status}
+                            {STATUS_LABELS[user.status]}
                           </Badge>
                         </Td>
                         <Td align="end">
@@ -307,6 +319,16 @@ export default async function UsersPage({ searchParams }: { searchParams: Promis
                               user.email &&
                               user.status === 'active' && (
                                 <PasswordReset userId={user.id} label={label} email={user.email} />
+                              )}
+                            {canChangeStatus &&
+                              user.id !== me?.id &&
+                              (user.status === 'active' || user.status === 'inactive') && (
+                                <StatusAction
+                                  userId={user.id}
+                                  name={name}
+                                  label={label}
+                                  action={user.status === 'active' ? 'deactivate' : 'reactivate'}
+                                />
                               )}
                           </div>
                         </Td>

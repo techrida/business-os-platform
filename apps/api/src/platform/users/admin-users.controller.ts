@@ -34,6 +34,7 @@ import { RoleCache } from '../authz/role-cache';
 import { DB, type Db } from '../db/db.module';
 import { requestTx, withTx } from '../db/tx';
 import { type HeaderTarget, setTotalCount } from '../list';
+import { type UserStatusAction, UserStatusService } from './user-status';
 import { UsersService } from './users.service';
 import { UsersStore } from './users.store';
 import { ZitadelNotConfiguredError } from './zitadel-admin.client';
@@ -45,6 +46,15 @@ const RESET_PERMISSION = 'admin.roles.write';
 function canSendPasswordReset(): boolean {
   const caller = principal();
   return caller.orgKind === 'staff' && caller.grants.get(RESET_PERMISSION) === 'all';
+}
+
+// F1-Q5: deactivating and reactivating people is account administration too, so it takes the same Founder-only
+// grant at company scope as password resets: no new permission, so no deployment gains it implicitly.
+const STATUS_PERMISSION = 'admin.roles.write';
+
+function canChangeStatus(): boolean {
+  const caller = principal();
+  return caller.orgKind === 'staff' && caller.grants.get(STATUS_PERMISSION) === 'all';
 }
 
 const Roles = z.array(RoleKeySchema).max(20);
@@ -96,6 +106,7 @@ export class AdminUsersController {
     private readonly authz: AuthzService,
     store: UsersStore,
     roleCache: RoleCache,
+    private readonly status: UserStatusService,
   ) {
     this.liveGrants = {
       users: store,
@@ -126,7 +137,45 @@ export class AdminUsersController {
   @Can('admin.users.read')
   async summary() {
     const { scope } = requestTx();
-    return { ...(await this.users.summary(scope)), canSendPasswordReset: canSendPasswordReset() };
+    return {
+      ...(await this.users.summary(scope)),
+      canSendPasswordReset: canSendPasswordReset(),
+      canChangeStatus: canChangeStatus(),
+    };
+  }
+
+  /**
+   * POST /v1/admin/users/:id/deactivate and /reactivate (F1-Q5). 204 on success; 409 for the caller's own account, the
+   * last Founder of an entity, a status the action does not fit, or a change ZITADEL refused; 404 for anyone who is
+   * not a staff user of the tenant.
+   */
+  @Post(':id/deactivate')
+  @HttpCode(204)
+  @Can(STATUS_PERMISSION)
+  deactivate(@Param('id', ParseUUIDPipe) id: string): Promise<void> {
+    return this.runStatusAction(id, 'deactivate');
+  }
+
+  @Post(':id/reactivate')
+  @HttpCode(204)
+  @Can(STATUS_PERMISSION)
+  reactivate(@Param('id', ParseUUIDPipe) id: string): Promise<void> {
+    return this.runStatusAction(id, 'reactivate');
+  }
+
+  private async runStatusAction(id: string, action: UserStatusAction): Promise<void> {
+    if (!canChangeStatus()) throw new ForbiddenException('Forbidden');
+    const { scope, actor } = requestTx();
+    await zitadelCall(() =>
+      withTx(this.db, scope, actor, async (tx) => {
+        // As for role writes: the lock first, then the caller's CURRENT grant, so a Founder demoted a moment ago
+        // cannot still shut people out on an old token, and two last-Founder checks cannot interleave.
+        await lockAccessRevision(tx, scope.tenantId);
+        await assertLiveGrant(tx, this.liveGrants, scope, actor, STATUS_PERMISSION);
+        await this.status.apply(tx, actor, id, action);
+      }),
+    );
+    await this.authz.invalidate(scope.tenantId, scope.organizationId);
   }
 
   @Post(':id/password-reset')
