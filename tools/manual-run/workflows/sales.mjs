@@ -404,7 +404,10 @@ export function workflow(cfg) {
     await s.goto('/payments/new', (p) => h1(p, 'Record payment'));
     await s.page.waitForLoadState('networkidle', { timeout: 15000 }).catch(() => {});
     await s.choose('Customer', C);
-    if (await s.select('Currency').count()) await s.choose('Currency', 'NPR').catch(() => {});
+    // Round 3 preselects NPR; picking the selected option again left the list open over the form.
+    const currency = s.select('Currency');
+    if ((await currency.count()) && !/NPR/.test(await currency.first().innerText()))
+      await s.choose('Currency', 'NPR').catch(() => {});
     await s.fill('Amount received', '67800.00');
     await s.choose('Payment method', 'Bank transfer');
     await s.fill('Bank reference', ref);
