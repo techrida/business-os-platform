@@ -791,16 +791,69 @@ describe('Retiring a department with invited members', () => {
     expect(can(principal, 'crm.lead.read', leadIn(dest.id)).allowed).toBe(true);
   });
 
-  it('gives no department reach from a membership still pointing at a retired department', async () => {
+  it('unassigns inactive members on retire without a destination', async () => {
     const dept = AdminDepartmentDetailSchema.parse(
       (await request(baseUrl).post('/v1/admin/departments').send({ name: 'Dormant Desk' })).body,
     );
-    // Inactive members are left in place by the retire; one coming back must not regain the reach.
     const dormant = await seedMember(dept.id, 'manager', 'inactive');
+
+    // Only inactive people: no destination is required, and none is left behind.
     const retired = await request(baseUrl)
       .post(`/v1/admin/departments/${dept.id}/retire`)
       .send({ expectedVersion: dept.version });
     expect(retired.status, JSON.stringify(retired.body)).toBe(200);
+    expect(await membershipRow(dormant.userId)).toEqual({ department_id: null, level: 'staff' });
+    const events = await auditEventsOf(scope1A, dept.id);
+    expect(
+      events.some(
+        (e) => e.action === 'department.member.removed' && e.meta?.userId === dormant.userId,
+      ),
+    ).toBe(true);
+  });
+
+  it('unassigns inactive members instead of moving them to the destination department', async () => {
+    const dest = AdminDepartmentDetailSchema.parse(
+      (await request(baseUrl).post('/v1/admin/departments').send({ name: 'Dormant Landing' }))
+        .body,
+    );
+    const dept = AdminDepartmentDetailSchema.parse(
+      (await request(baseUrl).post('/v1/admin/departments').send({ name: 'Dormant Source' })).body,
+    );
+    const dormant = await seedMember(dept.id, 'manager', 'inactive');
+    const invited = await seedMember(dept.id, 'staff', 'invited');
+
+    const retired = await request(baseUrl)
+      .post(`/v1/admin/departments/${dept.id}/retire`)
+      .send({ expectedVersion: dept.version, moveMembersTo: dest.id });
+    expect(retired.status, JSON.stringify(retired.body)).toBe(200);
+    expect(await membershipRow(dormant.userId)).toEqual({ department_id: null, level: 'staff' });
+    expect(await membershipRow(invited.userId)).toEqual({ department_id: dest.id, level: 'staff' });
+
+    // Coming back later gives no reach over either department.
+    await withTx(db, scope1A, systemActor('test-seed'), (tx) =>
+      tx.execute(
+        sql`UPDATE app.users SET status = 'invited'
+             WHERE tenant_id = ${tenant1.tenantId}::uuid AND id = ${dormant.userId}::uuid`,
+      ),
+    );
+    const principal = await principalAtLogin(dormant.zitadelUserId);
+    expect(principal.departmentId).toBeNull();
+    expect(can(principal, 'crm.lead.read', leadIn(dept.id)).allowed).toBe(false);
+    expect(can(principal, 'crm.lead.read', leadIn(dest.id)).allowed).toBe(false);
+  });
+
+  it('gives no department reach from a membership still pointing at a retired department', async () => {
+    const dept = AdminDepartmentDetailSchema.parse(
+      (await request(baseUrl).post('/v1/admin/departments').send({ name: 'Stale Desk' })).body,
+    );
+    const retired = await request(baseUrl)
+      .post(`/v1/admin/departments/${dept.id}/retire`)
+      .send({ expectedVersion: dept.version });
+    expect(retired.status, JSON.stringify(retired.body)).toBe(200);
+
+    // A row written before retire unassigned inactive members (repaired by migration 0093): one coming back
+    // must not regain the reach.
+    const dormant = await seedMember(dept.id, 'manager', 'inactive');
     expect(await membershipRow(dormant.userId)).toEqual({
       department_id: dept.id,
       level: 'manager',
