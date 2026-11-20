@@ -8,6 +8,7 @@ import {
   normalizeEmail,
   normalizeName,
   normalizePan,
+  panMatchKey,
   searchTerms,
 } from './customers.normalize';
 
@@ -31,6 +32,18 @@ describe('normalizeName (parity with the workspace)', () => {
 describe('normalizePan', () => {
   it('trims and upper-cases, the form the unique index holds', () => {
     expect(normalizePan(' ab-123456 ')).toBe('AB-123456');
+  });
+});
+
+describe('panMatchKey (parity with the workspace duplicate check)', () => {
+  it('drops spaces and hyphens and upper-cases, so the hyphenated form matches the plain one', () => {
+    expect(panMatchKey('123-456-789')).toBe('123456789');
+    expect(panMatchKey(' ab 12-34 ')).toBe('AB1234');
+    expect(panMatchKey('123-456-789')).toBe(panMatchKey('123456789'));
+  });
+
+  it('is null when nothing is left', () => {
+    expect(panMatchKey(' - ')).toBeNull();
   });
 });
 
