@@ -50,7 +50,7 @@ import { withTx, type Actor, type TxScope } from '../../platform/db/tx';
 import { CurrencyEnabledService } from '../../platform/settings/currency-enabled';
 import { LedgerService } from '../ledger/ledger.service';
 import { loadTaxCodePeriods } from '../quotations/pricing/tax-codes.resolver';
-import { toInvoiceDetail, toInvoiceListItem } from './invoice-mapping';
+import { invoiceCan, toInvoiceDetail, toInvoiceListItem } from './invoice-mapping';
 import { priceInvoice, priceSlice, type PricedInvoice } from './invoice-pricing';
 import {
   assertStaff,
@@ -192,7 +192,13 @@ export class InvoiceDraftingService {
           return row?.n ?? 0;
         },
       });
-      return { rows: rows.map((r) => toInvoiceListItem(r.invoice, r.customerName)), total };
+      return {
+        rows: rows.map((r) => ({
+          ...toInvoiceListItem(r.invoice, r.customerName),
+          can: invoiceCan(principal, scope, r.invoice),
+        })),
+        total,
+      };
     });
   }
 
@@ -273,12 +279,12 @@ export class InvoiceDraftingService {
     const visible = scopeWhereFor(principal, invoices, 'invoice.read');
     return withTx(this.db, scope, actor, async (tx) => {
       const [row] = await tx
-        .select({ id: invoices.id })
+        .select({ createdBy: invoices.createdBy, customerPartyId: invoices.customerPartyId })
         .from(invoices)
         .where(and(visible, eq(invoices.id, id)))
         .limit(1);
       if (row === undefined) throw invoiceNotFound();
-      return this.loadDetail(tx, scope, id);
+      return { ...(await this.loadDetail(tx, scope, id)), can: invoiceCan(principal, scope, row) };
     });
   }
 

@@ -575,6 +575,7 @@ describe('match (check 6, AD6 defaults from settings)', () => {
     as(U.acct, 'accountant');
     const expectedKeys = [
       'approvalRequestId',
+      'can',
       'currency',
       'documentId',
       'enteredBy',
@@ -1315,6 +1316,43 @@ describe('saved reach on bills (U20a phase 2)', () => {
     }
     expect((await service.get(theirs.id)).status).toBe('draft');
     expect((await service.discard(mine.id, randomUUID())).status).toBe('discarded');
+  });
+
+  it('row can flags follow the enter grant per bill: own offers only own bills, all offers every bill, and the commands agree', async () => {
+    as(U.acct, 'accountant');
+    const mine = await billWithoutPo(await doc());
+    as(U.acct2, 'accountant');
+    const theirs = await billWithoutPo(await doc());
+    const flagsOf = async (id: string) => ({
+      row: (await service.list({ ...PAGE })).rows.find((r) => r.id === id)?.can,
+      detail: (await service.get(id)).can,
+    });
+    const yes = { match: true, submit: true, void: true };
+    const no = { match: false, submit: false, void: false };
+
+    // A stored grant narrowed to `own`; read stays at the role's reach, so both bills are listed.
+    as(U.acct, 'accountant');
+    current.grants = narrowed([['payables.bill.enter', 'own']]);
+    expect(await flagsOf(mine.id)).toEqual({ row: yes, detail: yes });
+    expect(await flagsOf(theirs.id)).toEqual({ row: no, detail: no });
+    // The flags never offer what the route refuses: every command on the other bill is 403 and changes nothing.
+    for (const write of [
+      () => service.match(theirs.id, randomUUID()),
+      () => service.submit(theirs.id, randomUUID()),
+      () => service.void(theirs.id, { reason: 'Entered twice' }, randomUUID()),
+    ]) {
+      expect(await httpErrorOf(write())).toBeInstanceOf(ForbiddenException);
+    }
+    expect((await service.get(theirs.id)).status).toBe('draft');
+
+    // An `all` grant reaches every bill of the entity.
+    current.grants = narrowed([['payables.bill.enter', 'all']]);
+    expect(await flagsOf(mine.id)).toEqual({ row: yes, detail: yes });
+    expect(await flagsOf(theirs.id)).toEqual({ row: yes, detail: yes });
+
+    // A reader without bill entry (Finance) sees the bills with every flag off.
+    as(U.fin, 'finance');
+    expect(await flagsOf(theirs.id)).toEqual({ row: no, detail: no });
   });
 
   it('a command on a bill outside the read scope is a 404, as on get', async () => {
