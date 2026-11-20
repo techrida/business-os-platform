@@ -17,7 +17,7 @@ import { ActivityList, LoadProblem, StageBadge } from '@/components/p2/crm/serve
 import { StageConfirmDialog } from '@/components/p2/crm/stage-confirm-dialog';
 import { resolvedMoves, resumeMove, stageLabel } from '@/components/p2/crm/stages';
 import { Alert } from '@/components/ui/alert';
-import { Button, LinkButton } from '@/components/ui/button';
+import { LinkButton } from '@/components/ui/button';
 import { Card } from '@/components/ui/card';
 import { Icon } from '@/components/ui/icon';
 import { Breadcrumb, Page, PageHeader } from '@/components/ui/page';
@@ -250,10 +250,18 @@ export default async function LeadPage({ params }: { params: Promise<{ id: strin
   const resume = resumeMove(lead.stage, moves);
   const canResume = resume !== null;
   const canReopen = lead.stage === 'lost' && hasMove('contacted');
+  // Convert is its own action, not a stage move: the qualified lead's editors get it in the header.
+  const canConvert = lead.stage === 'qualified' && canEdit;
   const canPutOnHold = hasMove('on_hold');
   const canMarkLost = hasMove('lost');
   const hasHeaderActions =
-    canMarkContacted || canQualify || canResume || canReopen || canPutOnHold || canMarkLost;
+    canMarkContacted ||
+    canQualify ||
+    canConvert ||
+    canResume ||
+    canReopen ||
+    canPutOnHold ||
+    canMarkLost;
   // The options Mark lost offers (D49). Only asked for when the action is shown; a failure leaves the dialog able to add one.
   const lostReasons = canMarkLost ? await listLeadLostReasonChoices(session).catch(() => []) : [];
   const reasonLabel = lead.lostReason?.label ?? lead.stageReason;
@@ -289,6 +297,25 @@ export default async function LeadPage({ params }: { params: Promise<{ id: strin
                   number={lead.number}
                   version={lead.version}
                   variant="primary"
+                />
+              ) : null}
+              {canConvert ? (
+                <ConvertDialog
+                  action={convertLeadAction}
+                  lead={{
+                    id: lead.id,
+                    version: lead.version,
+                    number: lead.number,
+                    title: lead.title,
+                    companyName: lead.companyName,
+                    contactName: lead.contactName,
+                    email: lead.email ?? '',
+                    phone: lead.phone ?? '',
+                    requirement: lead.requirement,
+                    value: moneyOrNull(lead.expectedValue, lead.currency, numberSystems),
+                    probability: lead.probability,
+                    expectedClose: lead.expectedClose ? when(lead.expectedClose, 'date') : null,
+                  }}
                 />
               ) : null}
               {resume ? (
@@ -416,51 +443,18 @@ export default async function LeadPage({ params }: { params: Promise<{ id: strin
         </div>
 
         <div className={styles.detailStack}>
-          <Panel
-            id="lead-conversion"
-            title={lead.convertedOpportunityId ? 'Opportunity' : 'Convert to opportunity'}
-            className={styles.detailPanel}
-            as="aside"
-          >
-            {lead.stage === 'qualified' ? (
-              canEdit ? (
-                <>
-                  <p className={styles.quiet}>
-                    Create an opportunity using this lead’s details. The lead will link to the new
-                    opportunity.
-                  </p>
-                  <ConvertDialog
-                    action={convertLeadAction}
-                    lead={{
-                      id: lead.id,
-                      version: lead.version,
-                      number: lead.number,
-                      title: lead.title,
-                      companyName: lead.companyName,
-                      contactName: lead.contactName,
-                      email: lead.email ?? '',
-                      phone: lead.phone ?? '',
-                      requirement: lead.requirement,
-                      value: moneyOrNull(lead.expectedValue, lead.currency, numberSystems),
-                      probability: lead.probability,
-                      expectedClose: lead.expectedClose ? when(lead.expectedClose, 'date') : null,
-                    }}
-                  />
-                </>
-              ) : (
-                <p className={styles.quiet}>You have read-only access to this lead.</p>
-              )
-            ) : lead.convertedOpportunityId ? (
+          {lead.convertedOpportunityId ? (
+            <Panel
+              id="lead-conversion"
+              title="Opportunity"
+              className={styles.detailPanel}
+              as="aside"
+            >
               <LinkButton href={`/opportunities/${lead.convertedOpportunityId}`}>
                 Open the opportunity <Icon name="chevron-right" size={16} />
               </LinkButton>
-            ) : (
-              <>
-                <p className={styles.quiet}>Qualify this lead to unlock conversion.</p>
-                <Button disabled>Convert to opportunity</Button>
-              </>
-            )}
-          </Panel>
+            </Panel>
+          ) : null}
 
           {plannedProblem !== null ? (
             // An empty card would claim nothing is planned; say the list did not load instead.
