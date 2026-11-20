@@ -39,8 +39,8 @@ export interface AuditListQuery {
 const READ_EVENTS_MAX = 500;
 
 /**
- * How many id-only pages a newest-first read may walk before it refuses (200 x 500 = 100,000 matching
- * events). A larger result needs a narrower filter (`from`, `entityId`) instead of an ever longer scan.
+ * How many id-only pages a newest-first read may walk before it refuses (200 x 500: 100,000 or more
+ * matching events). A larger result needs a narrower filter (`from`, `entityId`) instead of an ever longer scan.
  */
 export const NEWEST_FIRST_MAX_PAGES = 200;
 
@@ -48,7 +48,7 @@ export const NEWEST_FIRST_MAX_PAGES = 200;
 export class AuditNewestFirstTooLargeError extends Error {
   constructor() {
     super(
-      `More than ${NEWEST_FIRST_MAX_PAGES * READ_EVENTS_MAX} audit events match; narrow the list with from or entityId.`,
+      `${NEWEST_FIRST_MAX_PAGES * READ_EVENTS_MAX} or more audit events match; narrow the list with from or entityId.`,
     );
     this.name = 'AuditNewestFirstTooLargeError';
   }
@@ -141,7 +141,8 @@ export class AuditService {
     let cursor: string | null = null;
     for (let page = 0; ; page += 1) {
       if (page === NEWEST_FIRST_MAX_PAGES) throw new AuditNewestFirstTooLargeError();
-      const result = await this.db.execute<{ id: string }>(sql`
+      // Annotated: `cursor` feeds this query and is set from its rows, which TypeScript cannot infer.
+      const result: { rows: { id: string }[] } = await this.db.execute<{ id: string }>(sql`
         SELECT id
           FROM audit.read_events(
             ${scope.tenantId}::uuid, ${scope.organizationId}::uuid,
