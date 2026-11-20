@@ -20,6 +20,7 @@ export const HISTORY_ACTIONS: ReadonlySet<string> = new Set([
   'access.level_rule.changed',
   'access.assignment_rule.changed',
   'department.member.level_changed',
+  'department.member.job_title_changed',
   'department.created',
   'department.renamed',
   'department.retired',
@@ -87,8 +88,9 @@ export function describeChange(event: AuditEventDto, labels: HistoryLabels): str
     const key = text(value);
     return (key === undefined ? undefined : labels.role(key)) ?? 'A role';
   };
+  // A rule row's entity id is its area key: used to look up the label, never shown.
   const areaName = (value: unknown) => {
-    const key = text(value);
+    const key = text(value) ?? text(event.entityId);
     return (key === undefined ? undefined : labels.area(key)) ?? 'An area';
   };
 
@@ -137,14 +139,24 @@ export function describeChange(event: AuditEventDto, labels: HistoryLabels): str
       return 'A department was retired.';
     case 'department.restored':
       return 'A department was restored.';
-    case 'department.head.changed':
-      return 'A department head changed.';
-    case 'department.member.added':
-      return 'A member joined a department.';
-    case 'department.member.moved':
-      return 'A member moved to another department.';
-    case 'department.member.removed':
-      return 'A member left a department.';
+    case 'department.head.changed': {
+      const name = text(after.departmentName) ?? text(before.departmentName);
+      return name ? `${name}: department head changed.` : 'A department head changed.';
+    }
+    case 'department.member.added': {
+      const name = text(after.departmentName);
+      return name ? `A member joined ${name}.` : 'A member joined a department.';
+    }
+    case 'department.member.moved': {
+      const name = text(after.departmentName);
+      return name ? `A member moved to ${name}.` : 'A member moved to another department.';
+    }
+    case 'department.member.removed': {
+      const name = text(before.departmentName);
+      return name ? `A member left ${name}.` : 'A member left a department.';
+    }
+    case 'department.member.job_title_changed':
+      return "A member's job title changed.";
     default:
       return 'Access changed.';
   }
