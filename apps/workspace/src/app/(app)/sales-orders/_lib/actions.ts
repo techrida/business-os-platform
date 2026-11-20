@@ -60,6 +60,7 @@ function failed(err: unknown, key: string): ActionState {
 async function creditHoldOf(
   session: Session,
   err: unknown,
+  quotationVersionId: string,
 ): Promise<ActionState['creditHold'] | undefined> {
   if (describeBillingFailure(err).kind !== 'credit_hold') return undefined;
   const id = apiDetailOf(err, 'opportunityId');
@@ -71,7 +72,13 @@ async function creditHoldOf(
       () => false,
     ),
   ]);
-  return { opportunityId: id, number: deal?.number ?? null, canOpen: deal !== null, canOverride };
+  return {
+    opportunityId: id,
+    number: deal?.number ?? null,
+    canOpen: deal !== null,
+    canOverride,
+    quotationVersionId,
+  };
 }
 
 /**
@@ -131,7 +138,7 @@ export async function confirmOrderAction(_prev: ActionState, form: FormData): Pr
   } catch (err) {
     const own = confirmRefusalText(err);
     if (own !== undefined) return { key: keyAfterFailure(err, key), error: own };
-    const creditHold = await creditHoldOf(session, err);
+    const creditHold = await creditHoldOf(session, err, parsed.body.quotationVersionId);
     return { ...failed(err, key), ...(creditHold ? { creditHold } : {}) };
   }
   revalidatePath('/sales-orders');
