@@ -201,9 +201,7 @@ function extendTx(rfq: ReturnType<typeof rfqRow>) {
     where: () => invited,
     orderBy: () => Promise.resolve([{ id: VENDOR, name: 'Everest Supplies Pvt Ltd' }]),
   };
-  const select = vi
-    .fn<() => unknown>(() => invited)
-    .mockImplementationOnce(() => locked(rfq));
+  const select = vi.fn<() => unknown>(() => invited).mockImplementationOnce(() => locked(rfq));
   const update = vi.fn(() => {
     const chain = {
       set: (values: Record<string, unknown>) => {
@@ -226,11 +224,7 @@ describe('SourcingService.extendDeadline (F1-Q47)', () => {
     const { service, audit } = setup(now);
     const { tx, sets } = extendTx(rfqRow());
     TX = tx;
-    const dto = await service.extendDeadline(
-      RFQ,
-      { deadline: '2026-11-25T10:00:00+05:45' },
-      'k6',
-    );
+    const dto = await service.extendDeadline(RFQ, { deadline: '2026-11-25T10:00:00+05:45' }, 'k6');
     expect(sets).toHaveLength(1);
     expect((sets[0]!.deadline as Date).toISOString()).toBe('2026-11-25T04:15:00.000Z');
     expect(dto.deadline).toBe('2026-11-25T04:15:00.000Z');

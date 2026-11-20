@@ -191,9 +191,10 @@ describe('extendDeadlineVerdict (F1-Q47)', () => {
   });
   it('refuses a new deadline that is not after the current one', () => {
     const future = new Date('2026-12-10T00:00:00Z');
-    expect(
-      extendDeadlineVerdict({ status: 'open', current: future, next: future, now }),
-    ).toEqual({ ok: false, refusal: 'not_later' });
+    expect(extendDeadlineVerdict({ status: 'open', current: future, next: future, now })).toEqual({
+      ok: false,
+      refusal: 'not_later',
+    });
     expect(
       extendDeadlineVerdict({
         status: 'open',
@@ -207,9 +208,9 @@ describe('extendDeadlineVerdict (F1-Q47)', () => {
 
 describe('ExtendRfqDeadlineBodySchema', () => {
   it('takes a zoned instant and nothing else', () => {
-    expect(ExtendRfqDeadlineBodySchema.safeParse({ deadline: '2026-11-25T10:00:00+05:45' }).success).toBe(
-      true,
-    );
+    expect(
+      ExtendRfqDeadlineBodySchema.safeParse({ deadline: '2026-11-25T10:00:00+05:45' }).success,
+    ).toBe(true);
     expect(ExtendRfqDeadlineBodySchema.safeParse({ deadline: '2026-11-25' }).success).toBe(false);
     expect(
       ExtendRfqDeadlineBodySchema.safeParse({ deadline: '2026-11-25T10:00:00Z', status: 'open' })
