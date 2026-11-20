@@ -399,6 +399,8 @@ export const leads = appSchema.table(
     stageNote: text('stage_note'),
     /** 0071 (D49): the lost reason option; set with stage = 'lost' (leads_lost_reason_fk). */
     lostReasonId: uuid('lost_reason_id'),
+    /** 0100 (F1-Q53): the stage an on_hold lead was held at; resuming returns there. NULL for older holds. */
+    heldFromStage: text('held_from_stage', { enum: LEAD_STAGES }),
     /** Set exactly when stage = 'converted' (leads_converted_check). */
     convertedOpportunityId: uuid('converted_opportunity_id'),
     version: integer('version').notNull().default(1),
@@ -460,6 +462,10 @@ export const leads = appSchema.table(
       sql`${t.stage} in ('new', 'contacted', 'qualified', 'converted', 'lost', 'on_hold')`,
     ),
     check(
+      'leads_held_from_stage_check',
+      sql`${t.heldFromStage} IS NULL OR (${t.stage} = 'on_hold' AND ${t.heldFromStage} in ('new', 'contacted', 'qualified'))`,
+    ),
+    check(
       'leads_source_check',
       sql`${t.source} in ('website', 'referral', 'cold_outreach', 'event', 'partner', 'social', 'walk_in', 'campaign', 'other')`,
     ),
@@ -515,6 +521,8 @@ export const opportunities = appSchema.table(
     stageNote: text('stage_note'),
     /** 0090 (D54-3): the lost reason option; set with stage = 'lost' (opportunities_lost_reason_fk). */
     lostReasonId: uuid('lost_reason_id'),
+    /** 0100 (F1-Q53): the stage an on_hold opportunity was held at; resuming returns there. NULL for older holds. */
+    heldFromStage: text('held_from_stage', { enum: OPPORTUNITY_STAGES }),
     /** The expected deal value. */
     value: numeric('value', { precision: 18, scale: 2 }),
     currency: char('currency', { length: 3 }).notNull().default('NPR'),
@@ -575,6 +583,10 @@ export const opportunities = appSchema.table(
     check(
       'opportunities_stage_check',
       sql`${t.stage} in ('qualified', 'requirement_received', 'proposal_sent', 'quotation_sent', 'negotiation', 'won', 'lost', 'on_hold')`,
+    ),
+    check(
+      'opportunities_held_from_stage_check',
+      sql`${t.heldFromStage} IS NULL OR (${t.stage} = 'on_hold' AND ${t.heldFromStage} in ('qualified', 'requirement_received', 'proposal_sent', 'quotation_sent', 'negotiation'))`,
     ),
     check('opportunities_currency_check', sql`${t.currency} in ('NPR', 'INR', 'USD')`),
     check('opportunities_value_check', sql`${t.value} >= 0`),

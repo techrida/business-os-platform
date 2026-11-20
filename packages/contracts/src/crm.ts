@@ -266,6 +266,10 @@ function edges<S extends string>(
 /**
  * The lead state machine, edge for edge (A2 section 2.2). Converted comes only from Qualified and is
  * its own action (`ConvertLeadBodySchema`), not a stage change.
+ *
+ * Resuming from On hold (F1-Q53): the table has an edge back to every stage a lead can be held at, but a
+ * held lead takes only ONE of them, the stage it was held at (`heldFromStage`, see `resumeTarget`). A lead
+ * held before that was recorded resumes to Contacted, as it always did.
  */
 export const LEAD_TRANSITIONS: readonly StageTransition<LeadStage>[] = edges<LeadStage>([
   ['new', 'contacted'],
@@ -276,7 +280,9 @@ export const LEAD_TRANSITIONS: readonly StageTransition<LeadStage>[] = edges<Lea
   ['new', 'on_hold'],
   ['contacted', 'on_hold'],
   ['qualified', 'on_hold'],
+  ['on_hold', 'new'],
   ['on_hold', 'contacted'],
+  ['on_hold', 'qualified'],
   ['qualified', 'converted'],
   ['lost', 'contacted', 'manager'],
 ]);
@@ -306,6 +312,22 @@ export const OPPORTUNITY_TRANSITIONS: readonly StageTransition<OpportunityStage>
     ['on_hold', 'negotiation'],
     ['lost', 'qualified', 'manager'],
   ]);
+
+/** Where a held record resumes when no held stage was recorded (a hold from before F1-Q53). */
+export const LEGACY_RESUME_STAGE = { lead: 'contacted', opportunity: 'negotiation' } as const;
+
+/**
+ * The one stage a held record may resume to (F1-Q53): the stage it was held at, or the legacy fixed stage
+ * when the hold predates that record. Every other `on_hold` edge is refused for this record.
+ */
+export function resumeTarget(kind: 'lead', heldFromStage: LeadStage | null): LeadStage;
+export function resumeTarget(
+  kind: 'opportunity',
+  heldFromStage: OpportunityStage | null,
+): OpportunityStage;
+export function resumeTarget(kind: RecordKind, heldFromStage: string | null): string {
+  return heldFromStage ?? LEGACY_RESUME_STAGE[kind];
+}
 
 /** The edge from one stage to another, or undefined when the machine has none. */
 export function findTransition(
@@ -641,6 +663,8 @@ export const LeadDtoSchema = z.object({
   lostReason: LeadLostReasonRefSchema.nullable(),
   stageNote: z.string().nullable(),
   convertedOpportunityId: z.guid().nullable(),
+  /** On hold only (F1-Q53): the stage the lead was held at and will resume to; null for a hold older than that. */
+  heldFromStage: LeadStageSchema.nullable().optional(),
   allowedMoves: z.array(LeadStageSchema).optional(),
   canEdit: z.boolean().optional(),
   version: z.number().int().min(1),
@@ -713,6 +737,8 @@ export const OpportunityDtoSchema = z.object({
   expectedClose: isoDate.nullable(),
   /** Set by the system when a version is accepted. */
   wonQuotationVersionId: z.guid().nullable(),
+  /** On hold only (F1-Q53): the stage the deal was held at and will resume to; null for a hold older than that. */
+  heldFromStage: OpportunityStageSchema.nullable().optional(),
   allowedMoves: z.array(OpportunityStageSchema).optional(),
   canEdit: z.boolean().optional(),
   version: z.number().int().min(1),

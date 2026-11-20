@@ -1,5 +1,6 @@
 import {
   findTransition,
+  LEGACY_RESUME_STAGE,
   LEAD_STAGES,
   LEAD_TRANSITIONS,
   OPPORTUNITY_STAGES,
@@ -63,6 +64,9 @@ export function userMoves(kind: RecordKind, from: string): Move[] {
         kind === 'lead'
           ? findTransition('lead', from as LeadStage, to as LeadStage)
           : findTransition('opportunity', from as OpportunityStage, to as OpportunityStage);
+      // Without the record's held stage (F1-Q53) only the old fixed resume stage is safe to offer; the API's
+      // `allowedMoves` names the real one.
+      if (from === 'on_hold' && to !== LEGACY_RESUME_STAGE[kind]) return false;
       return edge !== undefined && edge.by === 'user' && !isSetBySystem(kind, to);
     })
     .map((to) => ({

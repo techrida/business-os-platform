@@ -403,6 +403,7 @@ export class LeadsService {
         reason: body.stage === 'lost' ? 'probe' : body.reason,
         note: body.note,
         expectedVersion: body.expectedVersion,
+        heldFromStage: row.heldFromStage,
       });
       if (!planProbe.ok) throw refusalToException(planProbe.kind, planProbe.message);
       if (body.stage === 'lost') {
@@ -418,6 +419,7 @@ export class LeadsService {
         reason,
         note: body.note,
         expectedVersion: body.expectedVersion,
+        heldFromStage: row.heldFromStage,
       });
       if (!plan.ok) throw refusalToException(plan.kind, plan.message);
 
@@ -449,7 +451,14 @@ export class LeadsService {
         entityId: id,
         before: { stage: row.stage, version: row.version },
         after: { stage: updated.stage, version: updated.version },
-        meta: { reason: plan.set.stageReason, note: plan.set.stageNote, lostReasonId },
+        meta: {
+          reason: plan.set.stageReason,
+          note: plan.set.stageNote,
+          lostReasonId,
+          ...(row.stage === 'on_hold' || updated.stage === 'on_hold'
+            ? { heldFromStage: row.heldFromStage ?? plan.set.heldFromStage }
+            : {}),
+        },
       });
       if (body.contactActivity !== undefined) {
         const [actRow] = await tx

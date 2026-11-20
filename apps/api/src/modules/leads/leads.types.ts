@@ -149,6 +149,7 @@ export function toLeadDto(
     lostReason,
     stageNote: row.stageNote,
     convertedOpportunityId: row.convertedOpportunityId,
+    heldFromStage: row.heldFromStage,
     ...(principal === undefined
       ? {}
       : {
