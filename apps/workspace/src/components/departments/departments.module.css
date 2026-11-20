@@ -151,46 +151,6 @@
   background: var(--surface-subtle);
 }
 
-/* ---- "More" menu ---- */
-
-.menuContent {
-  z-index: 110;
-  min-width: 180px;
-  max-width: min(260px, calc(100vw - 32px));
-  padding: 4px;
-  border: var(--border-width-thin) solid var(--border-default);
-  border-radius: var(--radius-lg);
-  background: var(--surface-elevated);
-  box-shadow: var(--shadow-section, var(--toast-shadow));
-}
-
-.menuList {
-  display: grid;
-  margin: 0;
-  padding: 0;
-  list-style: none;
-}
-
-.menuItem {
-  display: block;
-  width: 100%;
-  min-height: 44px;
-  padding: 8px 12px;
-  border: 0;
-  border-radius: var(--radius-lg);
-  background: transparent;
-  color: var(--text-primary);
-  font: inherit;
-  font-size: var(--font-size-body-small);
-  text-align: start;
-  cursor: pointer;
-}
-
-.menuItem:hover,
-.menuItem:focus-visible {
-  background: var(--interactive-hover);
-}
-
 /* ---- Dialog bodies ---- */
 
 .form {

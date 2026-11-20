@@ -10,33 +10,11 @@
   }
 }
 
-.toolbar,
-.toolbarActions,
 .pageSize {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
   gap: 8px 16px;
-}
-
-.toolbar {
-  justify-content: space-between;
-  margin-top: 12px;
-}
-
-.search {
-  flex: 1 1 230px;
-  max-width: 280px;
-}
-
-.toolbarActions {
-  flex: 0 1 auto;
-  font-size: var(--font-size-body-small);
-}
-
-.toolbarActions .filter {
-  border-color: var(--button-primary-border);
-  color: var(--action-primary);
 }
 
 .results {
