@@ -263,6 +263,7 @@ export class QuotationOutcomeService {
     this.assertPolicyMet(policy, input.evidenceKinds);
     const documentIds = [...new Set(input.evidenceDocumentIds)];
     await this.assertDocumentsLive(tx, scope, documentIds);
+    await assertNotInfected(tx, scope, documentIds);
     const [row] = await tx
       .insert(quotationEvidenceConfirmations)
       .values({
