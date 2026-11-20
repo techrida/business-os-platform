@@ -339,6 +339,69 @@ describe('quotation detail page', () => {
     expect(html).not.toContain('>Send to customer</button>');
   });
 
+  it('hides Send while the opportunity is On Hold and says why on the page', async () => {
+    const approved = detail({
+      capabilities: { canEdit: false, canRevise: true, canSend: true, canRecordOutcome: true },
+    });
+    approved.quotation.status = 'approved';
+    approved.versions[1]!.status = 'approved';
+    mocks.getQuotation.mockResolvedValue(approved);
+    mocks.getOpportunity.mockResolvedValue({
+      number: 'DEAL-2026-0095',
+      stage: 'on_hold',
+      wonQuotationVersionId: null,
+    });
+    const html = await render();
+    expect(html).not.toContain('>Send to customer</button>');
+    expect(html).toContain('>Revise</button>');
+    expect(html).toContain(
+      'This quotation cannot be sent while its opportunity is On Hold. Move the opportunity back to Negotiation first.',
+    );
+
+    // Back in Negotiation the API would send it, so the button returns and the notice goes.
+    mocks.getOpportunity.mockResolvedValue({
+      number: 'DEAL-2026-0095',
+      stage: 'negotiation',
+      wonQuotationVersionId: null,
+    });
+    const negotiating = await render();
+    expect(negotiating).toContain('>Send to customer</button>');
+    expect(negotiating).not.toContain('cannot be sent while');
+  });
+
+  it('offers only Rejected while the opportunity is On Hold, and names the revision the outcome is for', async () => {
+    mocks.getQuotation.mockResolvedValue(
+      detail({
+        capabilities: { canEdit: false, canRevise: true, canSend: true, canRecordOutcome: true },
+      }),
+    );
+    mocks.getOpportunity.mockResolvedValue({
+      number: 'DEAL-2026-0095',
+      stage: 'on_hold',
+      wonQuotationVersionId: null,
+    });
+    const html = await render();
+    expect(html).toContain('>Record outcome</button>');
+    expect(html).toContain('Record outcome for revision 2');
+    expect(html).toContain(
+      'This quotation cannot be recorded as accepted while its opportunity is On Hold.',
+    );
+    expect(html).toContain('value="rejected"');
+    expect(html).not.toContain('value="accepted"');
+  });
+
+  it('holds nothing back when the opportunity cannot be read: the API decides', async () => {
+    const approved = detail({
+      capabilities: { canEdit: false, canRevise: true, canSend: true, canRecordOutcome: true },
+    });
+    approved.quotation.status = 'approved';
+    approved.versions[1]!.status = 'approved';
+    mocks.getQuotation.mockResolvedValue(approved);
+    const html = await render();
+    expect(html).toContain('>Send to customer</button>');
+    expect(html).not.toContain('cannot be sent while');
+  });
+
   it('hides Send to customer and Record outcome when live grants or server capabilities withhold them', async () => {
     mocks.getMe.mockResolvedValue({
       permissions: [{ permission: 'quotation.read', scope: 'all' }],
