@@ -465,7 +465,7 @@
       "breakpoints": true
     },
     {
-     "idx": 65,
+      "idx": 65,
       "version": "7",
       "when": 1783000000088,
       "tag": "0088_access_phase2_grants",
@@ -511,6 +511,20 @@
       "version": "7",
       "when": 1783000000121,
       "tag": "0121_crm_reopen_permissions",
+      "breakpoints": true
+    },
+    {
+      "idx": 71,
+      "version": "7",
+      "when": 1783000000093,
+      "tag": "0093_retired_department_members_repair",
+      "breakpoints": true
+    },
+    {
+      "idx": 74,
+      "version": "7",
+      "when": 1783000000122,
+      "tag": "0122_level_write_rows_for_department_reach",
       "breakpoints": true
     }
   ]
