@@ -49,6 +49,20 @@ export interface RecordReach {
   creator?: AnyPgColumn;
   /** The assignment rows naming this table's records in `subject`. */
   assignment?: { table: AssignmentTable; subject: AnyPgColumn };
+  /**
+   * A second owner, held on a parent row (U20a2-Q1): `own` (and so `department`) also matches the records whose
+   * `key` names a `parent` row the caller owns. Like `owner`, it counts for every permission on the table.
+   */
+  ownerVia?: OwnerVia;
+}
+
+/** "The owner of the parent row this record points at": see `RecordReach.ownerVia`. */
+export interface OwnerVia {
+  parent: ScopableTable;
+  /** This table's column that holds the parent's id. */
+  key: AnyPgColumn;
+  parentId: AnyPgColumn;
+  parentOwner: AnyPgColumn;
 }
 
 /** What `can()` needs to know about a read permission, without a table at hand. */
@@ -100,6 +114,21 @@ export function assignedToSql(table: ScopableTable, reach: RecordReach, userId: 
       and ${subject} = ${reach.id}
       and ${a.assigneeUserId} = ${userId}
       and ${a.cancelledAt} is null
+  )`;
+}
+
+/**
+ * "`userId` owns the parent row this row points at", correlated to the outer query's row of `table`. Tenant and
+ * entity are matched too, so a parent of another entity never hands a record over.
+ */
+export function ownedViaSql(table: ScopableTable, via: OwnerVia, userId: string): SQL {
+  const { parent } = via;
+  return sql`exists (
+    select 1 from ${parent}
+    where ${parent.tenantId} = ${table.tenantId}
+      and ${parent.organizationId} = ${table.organizationId}
+      and ${via.parentId} = ${via.key}
+      and ${via.parentOwner} = ${userId}
   )`;
 }
 
@@ -215,7 +244,18 @@ defineRecordReach(quotations, {
 // so `department` reaches the same rows as `own` (spec review R2).
 defineRecordReach(invoices, { id: invoices.id, owner: invoices.createdBy });
 defineRecordReach(vendorBills, { id: vendorBills.id, owner: vendorBills.enteredBy });
-defineRecordReach(salesOrders, { id: salesOrders.id, owner: salesOrders.createdBy });
+// U20a2-Q1: an order is also its source quotation's owner's (SalesOrdersService's own rule, "records they created
+// or own"), so the list and the service read the same reach. A record check passes that owner as a second ref.
+defineRecordReach(salesOrders, {
+  id: salesOrders.id,
+  owner: salesOrders.createdBy,
+  ownerVia: {
+    parent: quotations,
+    key: salesOrders.quotationId,
+    parentId: quotations.id,
+    parentOwner: quotations.ownerUserId,
+  },
+});
 // The requester owns a payment request; it has no department column either.
 defineRecordReach(paymentRequests, { id: paymentRequests.id, owner: paymentRequests.requestedBy });
 

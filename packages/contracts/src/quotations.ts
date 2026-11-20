@@ -126,7 +126,8 @@ function edge(
 /**
  * The version state machine of A2 section 2.2. Approval steps are not states: a Submitted version
  * stays Submitted while the kernel request runs (A2 C3). `cascade_reject` is the Lost-opportunity
- * cascade; a Submitted version is first withdrawn to Returned, then cancelled.
+ * cascade. `cancel` ends a quotation that has not been approved yet (Kuu, F1-Q27: Cancel only, no
+ * Recall): a Draft, a Returned one, or a Submitted one, whose open approval request is cancelled with it.
  */
 export const QUOTATION_TRANSITIONS: readonly QuotationTransition[] = [
   edge('submit', 'draft', 'submitted'),
@@ -146,6 +147,7 @@ export const QUOTATION_TRANSITIONS: readonly QuotationTransition[] = [
   edge('revise', 'sent', 'superseded', true),
   edge('cancel', 'draft', 'cancelled', true),
   edge('cancel', 'returned', 'cancelled', true),
+  edge('cancel', 'submitted', 'cancelled', true),
 ];
 
 export function quotationTransitionsFrom(status: QuotationStatus): QuotationTransition[] {
@@ -179,6 +181,9 @@ export const isQuotationEditable = (s: QuotationStatus): boolean =>
   (QUOTATION_REVISION_RULES.editableStatuses as readonly QuotationStatus[]).includes(s);
 export const canReviseQuotation = (s: QuotationStatus): boolean =>
   (QUOTATION_REVISION_RULES.reviseFrom as readonly QuotationStatus[]).includes(s);
+/** A version in `s` may be cancelled (QUOTATION_TRANSITIONS: Draft, Returned or Submitted). */
+export const canCancelQuotation = (s: QuotationStatus): boolean =>
+  QUOTATION_TRANSITIONS.some((t) => t.action === 'cancel' && t.from === s);
 
 // ---------------------------------------------------------------------------------------------
 // Lines, discount, payment schedule
@@ -359,9 +364,15 @@ export const ReviseQuotationBodySchema = z.strictObject({
 });
 export type ReviseQuotationBody = z.infer<typeof ReviseQuotationBodySchema>;
 
+/**
+ * End the current version (F1-Q27). The reason is kept on the version and in its history. A Submitted
+ * version's open approval request is cancelled in the same transaction.
+ */
 export const CancelQuotationBodySchema = z.strictObject({
   reason: text(1000),
   expectedVersion,
+  /** The revision the caller looked at. A stale page whose revision is no longer current gets 409, not the new revision cancelled. */
+  versionId: z.guid().optional(),
 });
 export type CancelQuotationBody = z.infer<typeof CancelQuotationBodySchema>;
 
@@ -654,6 +665,11 @@ export const QuotationCapabilitiesSchema = z.object({
   canSend: z.boolean().optional(),
   /** Record the customer's outcome on a sent version: `quotation.record_acceptance` on this record. */
   canRecordOutcome: z.boolean().optional(),
+  /**
+   * Cancel the current version (`POST /v1/quotations/:id/cancel`): Draft, Returned or Submitted, and
+   * `quotation.draft` on this record. Treat an omitted value as false.
+   */
+  canCancel: z.boolean().optional(),
 });
 export type QuotationCapabilities = z.infer<typeof QuotationCapabilitiesSchema>;
 

@@ -1,5 +1,9 @@
 // Turns an API failure into words and a kind the builder can act on. Pure (no server-only import),
 // so it can be tested and used from the actions.
+import {
+  isZeroInstalmentRefusal,
+  ZERO_INSTALMENT_MESSAGE,
+} from '@/components/p2/quotations/lifecycle-contract';
 
 export type FailureKind =
   | 'stale' // the row version moved: reload
@@ -13,6 +17,8 @@ export type FailureKind =
 export interface QuoteFailure {
   kind: FailureKind;
   message: string;
+  /** The builder field the refusal is about, when it is about one (shown beside it, not only in a toast). */
+  field?: 'paymentSchedule';
 }
 
 interface ErrorLike {
@@ -187,6 +193,29 @@ export function describeQuoteFailure(
     return {
       kind: 'invalid',
       message: `${code ?? 'This currency'} is not enabled for your company. Choose another currency, or ask an administrator to switch it on in Settings.${nothing[action] ?? ''}`,
+    };
+  }
+  if (
+    (status === 400 || status === 409 || status === 422) &&
+    isZeroInstalmentRefusal(f.code, f.message)
+  ) {
+    // FR-4: a total so small that a milestone rounds to 0.00. The sales order would refuse it later.
+    // The API names the milestone in `details.label`; it is the user's own text, shown only when short.
+    const label =
+      typeof f.details.label === 'string' && f.details.label.trim() !== ''
+        ? f.details.label.trim()
+        : undefined;
+    const named =
+      label !== undefined && label.length <= 80
+        ? ZERO_INSTALMENT_MESSAGE.replace(
+            'At least one payment milestone',
+            `The payment milestone "${label}"`,
+          )
+        : ZERO_INSTALMENT_MESSAGE;
+    return {
+      kind: 'invalid',
+      message: action === 'submit' ? named : named.replace(' Nothing was submitted.', ''),
+      field: 'paymentSchedule',
     };
   }
   if (status === 422 && isIdempotency(f)) {

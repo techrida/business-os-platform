@@ -878,6 +878,15 @@ describe('BFF contract P3: billing, receivables and portal clients against the r
   }, 150_000);
 
   it('11. sales orders: confirm through the client, then list (with filters) and detail', async () => {
+    // F1-Q28: Sales confirm the portal acceptance's evidence before the order is confirmed (raw HTTP: the workspace
+    // client has no call for it yet).
+    const evidence = await t
+      .http()
+      .post(`/v1/quotations/${p3.quotationId}/versions/${p3.versionId}/evidence-confirmation`)
+      .set('authorization', await bearer('sales'))
+      .set('idempotency-key', randomUUID())
+      .send({ evidenceKinds: ['signed_quote'] });
+    expect(evidence.status, show(evidence)).toBe(201);
     const preparer = await session('preparer');
     const confirmed = await seen(() =>
       bff.billing.confirmSalesOrder(

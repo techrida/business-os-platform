@@ -221,6 +221,22 @@ describe('edit quotation page', () => {
     expect(mocks.builderProps).not.toHaveBeenCalled();
   });
 
+  it('after a submit, promises no pull-back or recall: Cancel is the only way to end a quotation', async () => {
+    const d = detail();
+    mocks.getQuotation.mockResolvedValue({
+      ...d,
+      versions: d.versions.map((v) => (v.id === V2 ? { ...v, status: 'submitted' as const } : v)),
+    });
+    const page = await EditQuotationPage({
+      params: Promise.resolve({ id: ID }),
+      searchParams: Promise.resolve({ submitted: '1' }),
+    });
+    const html = renderToStaticMarkup(page);
+    expect(html).toContain('Approval pending');
+    expect(html).not.toMatch(/recall|pull it back/i);
+    expect(html).toContain('If the approver returns it, you can change it and submit again.');
+  });
+
   it('answers 404 for a quotation the API cannot find', async () => {
     mocks.getQuotation.mockRejectedValue(new ApiError(404, 'missing'));
     await expect(render()).rejects.toThrow('NEXT_NOT_FOUND');

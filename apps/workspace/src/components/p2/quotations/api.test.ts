@@ -4,7 +4,13 @@ import { ApiError } from '@/lib/api';
 import { __resetEnvForTests } from '@/lib/env';
 import type { Session } from '@/lib/session';
 
-import { getQuotation, getQuotationsSummary, listQuotations, listQuotationsPage } from './api';
+import {
+  getEvidence,
+  getQuotation,
+  getQuotationsSummary,
+  listQuotations,
+  listQuotationsPage,
+} from './api';
 
 // `server-only` throws outside the react-server condition, which Vitest does not use.
 vi.mock('server-only', () => ({}));
@@ -255,9 +261,66 @@ describe('getQuotation', () => {
     expect(got.contacts[0]?.email).toBeNull();
   });
 
+  it('keeps capabilities.canCancel from the contract, and leaves it out when the API does', async () => {
+    fetchMock.mockResolvedValue(
+      reply(200, { ...detail, capabilities: { ...detail.capabilities, canCancel: true } }),
+    );
+    expect((await getQuotation(session, ID_A)).capabilities.canCancel).toBe(true);
+    fetchMock.mockResolvedValue(reply(200, detail));
+    expect((await getQuotation(session, ID_A)).capabilities.canCancel).toBeUndefined();
+  });
+
   it('turns a detail without history into a 502', async () => {
     const { statusHistory: _omitted, ...broken } = detail;
     fetchMock.mockResolvedValue(reply(200, broken));
     await expect(getQuotation(session, ID_A)).rejects.toMatchObject({ status: 502 });
+  });
+});
+
+describe('getEvidence (F1-Q28)', () => {
+  const evidence = {
+    quotationId: ID_A,
+    versionId: ID_B,
+    status: 'pending',
+    policy: 'both',
+    missing: ['purchase_order'],
+    acceptance: {
+      actorKind: 'customer_user',
+      decidedOn: '2026-11-20',
+      acceptedByName: 'Jules',
+      evidenceKinds: ['contract'],
+      evidenceDocumentIds: [],
+    },
+    confirmation: null,
+    can: { confirm: true },
+  };
+
+  it('reads the evidence of the version from its own endpoint', async () => {
+    fetchMock.mockResolvedValue(reply(200, evidence));
+    const got = await getEvidence(session, ID_A, ID_B);
+    expect(calledUrl().pathname).toBe(`/v1/quotations/${ID_A}/versions/${ID_B}/evidence`);
+    expect(got).toMatchObject({
+      status: 'pending',
+      missing: ['purchase_order'],
+      acceptance: { evidenceKinds: ['contract'] },
+      can: { confirm: true },
+    });
+  });
+
+  it('is null for an answer off the contract, so the page leaves the row out instead of failing', async () => {
+    fetchMock.mockResolvedValue(
+      reply(200, {
+        ...evidence,
+        acceptance: { ...evidence.acceptance, evidenceKinds: ['contract', 'fax'] },
+      }),
+    );
+    expect(await getEvidence(session, ID_A, ID_B)).toBeNull();
+  });
+
+  it('is null when there is no acceptance to show (404) or the body is not evidence', async () => {
+    fetchMock.mockResolvedValue(reply(404, { error: { code: 'not_found' } }));
+    expect(await getEvidence(session, ID_A, ID_B)).toBeNull();
+    fetchMock.mockResolvedValue(reply(200, { unexpected: true }));
+    expect(await getEvidence(session, ID_A, ID_B)).toBeNull();
   });
 });

@@ -101,6 +101,7 @@ describe('capabilitiesOf (the detail and list answer the same rules as the comma
       canRevise: false,
       canSend: false,
       canRecordOutcome: false,
+      canCancel: false,
     });
     expect(capabilitiesOf(sales, quotationOf(COLLEAGUE), 'approved').canRevise).toBe(false);
     expect(capabilitiesOf(sales, quotationOf(COLLEAGUE), 'approved').canSend).toBe(false);
@@ -125,18 +126,21 @@ describe('capabilitiesOf (the detail and list answer the same rules as the comma
       canRevise: true,
       canSend: true,
       canRecordOutcome: false,
+      canCancel: false,
     });
     expect(capabilitiesOf(sales, quotationOf(ME), 'expired')).toEqual({
       canEdit: false,
       canRevise: true,
       canSend: true,
       canRecordOutcome: false,
+      canCancel: false,
     });
     expect(capabilitiesOf(sales, quotationOf(ME), 'sent')).toEqual({
       canEdit: false,
       canRevise: true,
       canSend: false,
       canRecordOutcome: true,
+      canCancel: false,
     });
     for (const status of [
       'draft',
@@ -155,6 +159,26 @@ describe('capabilitiesOf (the detail and list answer the same rules as the comma
     expect(capabilitiesOf(pmo, quotationOf(ME), 'sent').canRecordOutcome).toBe(false);
   });
 
+  it('offers cancel to whoever may edit the quotation, while it is a draft, returned or submitted (F1-Q27)', () => {
+    const sales = principalOf('sales');
+    for (const status of ['draft', 'returned', 'submitted'] as const) {
+      expect(capabilitiesOf(sales, quotationOf(ME), status).canCancel, status).toBe(true);
+      expect(capabilitiesOf(sales, quotationOf(COLLEAGUE), status).canCancel, status).toBe(false);
+    }
+    for (const status of [
+      'approved',
+      'sent',
+      'accepted',
+      'rejected',
+      'expired',
+      'cancelled',
+      'superseded',
+    ] as const) {
+      expect(capabilitiesOf(sales, quotationOf(ME), status).canCancel, status).toBe(false);
+    }
+    expect(capabilitiesOf(principalOf('pmo'), quotationOf(ME), 'submitted').canCancel).toBe(true);
+  });
+
   it('gives an inactive user nothing', () => {
     const inactive = principalOf('sales', { status: 'inactive' });
     expect(capabilitiesOf(inactive, quotationOf(ME), 'draft')).toEqual({
@@ -162,6 +186,7 @@ describe('capabilitiesOf (the detail and list answer the same rules as the comma
       canRevise: false,
       canSend: false,
       canRecordOutcome: false,
+      canCancel: false,
     });
     expect(capabilitiesOf(inactive, quotationOf(ME), 'approved').canRevise).toBe(false);
     expect(capabilitiesOf(inactive, quotationOf(ME), 'approved').canSend).toBe(false);

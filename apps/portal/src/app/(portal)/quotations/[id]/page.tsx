@@ -5,6 +5,7 @@ import { notFound, redirect } from 'next/navigation';
 
 import { Alert } from '@/components/portal/alert';
 import styles from '@/components/portal/page.module.css';
+import { QuotationNextStep } from '@/components/portal/quotation-next-step';
 import { canRespond, todayInKathmandu } from '@/components/portal/quotation-status';
 import { QuotationView } from '@/components/portal/quotation-view';
 import { RespondPanel } from '@/components/portal/respond-panel';
@@ -17,7 +18,7 @@ export const dynamic = 'force-dynamic';
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 const RESPONDED: Record<string, string> = {
-  accepted: 'Thank you. Your acceptance is recorded, and we will be in touch about next steps.',
+  accepted: 'Thank you. Your acceptance is recorded.',
   rejected: 'Your response is recorded. Thank you for letting us know.',
 };
 
@@ -64,6 +65,9 @@ export default async function QuotationPage({
         <Alert tone="success" role="status" className={styles.confirmation}>
           {confirmation}
         </Alert>
+      ) : null}
+      {view.status === 'accepted' && view.afterAcceptance ? (
+        <QuotationNextStep after={view.afterAcceptance} className={styles.confirmation} />
       ) : null}
       <QuotationView
         view={view}

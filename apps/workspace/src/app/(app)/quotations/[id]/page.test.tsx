@@ -1,6 +1,7 @@
 import {
   QuotationDetailSchema,
   type QuotationDetail,
+  type QuotationEvidenceDto,
   type QuotationVersionDto,
 } from '@bos/contracts';
 import type { ComponentProps, ReactNode } from 'react';
@@ -22,6 +23,7 @@ vi.mock('server-only', () => ({}));
 const mocks = vi.hoisted(() => ({
   requireStaffSession: vi.fn(),
   getQuotation: vi.fn(),
+  getEvidence: vi.fn(),
   listSalesOrders: vi.fn(),
   listPaymentTerms: vi.fn(),
   getOpportunity: vi.fn(),
@@ -37,7 +39,10 @@ const mocks = vi.hoisted(() => ({
 
 vi.mock('@/lib/api-billing', () => ({ listSalesOrders: mocks.listSalesOrders }));
 vi.mock('@/lib/bff', () => ({ requireStaffSession: mocks.requireStaffSession }));
-vi.mock('@/components/p2/quotations/api', () => ({ getQuotation: mocks.getQuotation }));
+vi.mock('@/components/p2/quotations/api', () => ({
+  getQuotation: mocks.getQuotation,
+  getEvidence: mocks.getEvidence,
+}));
 vi.mock('@/components/p2/quote-builder/api', () => ({
   listPaymentTerms: mocks.listPaymentTerms,
   getOpportunity: mocks.getOpportunity,
@@ -242,6 +247,7 @@ async function render(id: string = ID, rev?: string | string[]): Promise<string>
 beforeEach(() => {
   mocks.requireStaffSession.mockReset().mockResolvedValue({ accessToken: 'tok', roles: ['sales'] });
   mocks.getQuotation.mockReset().mockResolvedValue(detail());
+  mocks.getEvidence.mockReset().mockResolvedValue(null);
   mocks.notFound.mockClear();
   mocks.listSalesOrders.mockReset().mockResolvedValue([]);
   mocks.listPaymentTerms.mockReset().mockResolvedValue([]);
@@ -281,6 +287,145 @@ describe('quotation detail page', () => {
 
     mocks.listSalesOrders.mockResolvedValue([]);
     expect(await render()).not.toContain('href="/sales-orders/');
+  });
+
+  const pendingEvidence: QuotationEvidenceDto = {
+    quotationId: CUSTOMER,
+    versionId: V2,
+    status: 'pending',
+    policy: 'both',
+    missing: ['purchase_order'],
+    acceptance: {
+      actorKind: 'customer_user',
+      decidedOn: '2026-11-20',
+      acceptedByName: 'Jules',
+      evidenceKinds: ['contract'],
+      evidenceDocumentIds: [],
+    },
+    confirmation: null,
+    can: { confirm: true },
+  };
+
+  it('shows a portal acceptance awaiting confirmation, with Confirm evidence, then confirmed (F1-Q28)', async () => {
+    const quote = detail();
+    quote.quotation.status = 'accepted';
+    quote.versions[1]!.status = 'accepted';
+    mocks.getQuotation.mockResolvedValue(quote);
+    mocks.getEvidence.mockResolvedValue(pendingEvidence);
+    const awaiting = await render();
+    expect(mocks.getEvidence).toHaveBeenCalledWith(expect.anything(), quote.quotation.id, V2);
+    expect(awaiting).toContain('After acceptance');
+    expect(awaiting).toContain('Awaiting confirmation');
+    expect(awaiting).toContain('confirms a contract and a purchase order before the sales order');
+    expect(awaiting).toContain('>Confirm evidence</button>');
+    expect(awaiting).toContain('Confirm acceptance evidence for revision 2');
+    expect(awaiting).toContain('Your company asks for a contract and a purchase order.');
+
+    mocks.getQuotation.mockResolvedValue({
+      ...quote,
+      people: [{ userId: CUSTOMER, name: 'Asha Accountant' }],
+    });
+    mocks.getEvidence.mockResolvedValue({
+      ...pendingEvidence,
+      status: 'confirmed',
+      missing: [],
+      confirmation: {
+        evidenceKinds: ['contract', 'purchase_order'],
+        comment: null,
+        confirmedBy: CUSTOMER,
+        confirmedAt: WHEN,
+      },
+      can: { confirm: false },
+    });
+    const confirmed = await render();
+    expect(confirmed).toContain('Confirmed');
+    expect(confirmed).toContain('Contract, Purchase order by Asha Accountant on');
+    expect(confirmed).not.toContain('>Confirm evidence</button>');
+  });
+
+  it('offers no Confirm evidence when the API says the caller may not, and no evidence row without an answer', async () => {
+    const quote = detail();
+    quote.quotation.status = 'accepted';
+    quote.versions[1]!.status = 'accepted';
+    mocks.getQuotation.mockResolvedValue(quote);
+    mocks.getEvidence.mockResolvedValue({ ...pendingEvidence, can: { confirm: false } });
+    const denied = await render();
+    expect(denied).toContain('Awaiting confirmation');
+    expect(denied).not.toContain('>Confirm evidence</button>');
+
+    mocks.getEvidence.mockResolvedValue(null);
+    expect(await render()).not.toContain('Customer evidence');
+  });
+
+  it('says a staff-recorded acceptance was checked when it was recorded', async () => {
+    const quote = detail();
+    quote.quotation.status = 'accepted';
+    quote.versions[1]!.status = 'accepted';
+    mocks.getQuotation.mockResolvedValue(quote);
+    mocks.getEvidence.mockResolvedValue({
+      ...pendingEvidence,
+      status: 'confirmed',
+      acceptance: { ...pendingEvidence.acceptance, actorKind: 'staff' },
+      can: { confirm: false },
+    });
+    const html = await render();
+    expect(html).toContain('Checked when the acceptance was recorded.');
+    expect(html).not.toContain('Awaiting confirmation');
+  });
+
+  it('offers Cancel quotation on a submitted quotation when the API says canCancel (F1-Q27)', async () => {
+    const quote = detail();
+    quote.quotation.status = 'submitted';
+    quote.versions[1]!.status = 'submitted';
+    mocks.getQuotation.mockResolvedValue({
+      ...quote,
+      capabilities: { ...quote.capabilities, canCancel: true },
+    });
+    const html = await render();
+    expect(html).toContain('>Cancel quotation</button>');
+    expect(html).toContain('Cancelling ends this quotation and its approval request');
+
+    mocks.getQuotation.mockResolvedValue(quote);
+    expect(await render()).not.toContain('>Cancel quotation</button>');
+  });
+
+  it('asks for no evidence on a quotation that is not accepted', async () => {
+    mocks.getQuotation.mockResolvedValue(detail());
+    await render();
+    expect(mocks.getEvidence).not.toHaveBeenCalled();
+  });
+
+  it('links the sales order once, in the After acceptance panel, not again in Linked records', async () => {
+    const quote = detail();
+    quote.quotation.status = 'accepted';
+    quote.versions[1]!.status = 'accepted';
+    mocks.getQuotation.mockResolvedValue(quote);
+    mocks.listSalesOrders.mockResolvedValue([
+      { id: CUSTOMER, number: 'SO-2082-0007', status: 'confirmed' },
+    ]);
+    const html = await render();
+    expect(html.split(`href="/sales-orders/${CUSTOMER}"`).length - 1).toBe(1);
+    const linked = /Linked records(.*?)<\/ul>/s.exec(html)?.[1] ?? '';
+    expect(linked).not.toContain('/sales-orders/');
+  });
+
+  it('shows the draft sales order created from the accepted revision, waiting for Accounts (F1-Q25)', async () => {
+    const quote = detail();
+    quote.quotation.status = 'accepted';
+    quote.versions[1]!.status = 'accepted';
+    mocks.getQuotation.mockResolvedValue(quote);
+    mocks.listSalesOrders.mockResolvedValue([
+      { id: CUSTOMER, number: 'SO-2082-0007', status: 'draft' },
+    ]);
+    const html = await render();
+    const panel = html.slice(html.indexOf('After acceptance'));
+    expect(panel).toContain(`href="/sales-orders/${CUSTOMER}"`);
+    expect(panel).toContain('SO-2082-0007');
+    expect(panel).toContain('Draft');
+    expect(panel).toContain('Accounts confirms it before billing starts.');
+
+    mocks.listSalesOrders.mockResolvedValue([]);
+    expect(await render()).toContain('Not created yet');
   });
 
   it('lists the superseded revision in the dialog, with its own total', async () => {
@@ -340,6 +485,69 @@ describe('quotation detail page', () => {
     expect(header).toContain('>Revise</button>');
     expect(html).not.toContain('Record client decision');
     expect(html).not.toContain('>Send to customer</button>');
+  });
+
+  it('hides Send while the opportunity is On Hold and says why on the page', async () => {
+    const approved = detail({
+      capabilities: { canEdit: false, canRevise: true, canSend: true, canRecordOutcome: true },
+    });
+    approved.quotation.status = 'approved';
+    approved.versions[1]!.status = 'approved';
+    mocks.getQuotation.mockResolvedValue(approved);
+    mocks.getOpportunity.mockResolvedValue({
+      number: 'DEAL-2026-0095',
+      stage: 'on_hold',
+      wonQuotationVersionId: null,
+    });
+    const html = await render();
+    expect(html).not.toContain('>Send to customer</button>');
+    expect(html).toContain('>Revise</button>');
+    expect(html).toContain(
+      'This quotation cannot be sent while its opportunity is On Hold. Move the opportunity back to Negotiation first.',
+    );
+
+    // Back in Negotiation the API would send it, so the button returns and the notice goes.
+    mocks.getOpportunity.mockResolvedValue({
+      number: 'DEAL-2026-0095',
+      stage: 'negotiation',
+      wonQuotationVersionId: null,
+    });
+    const negotiating = await render();
+    expect(negotiating).toContain('>Send to customer</button>');
+    expect(negotiating).not.toContain('cannot be sent while');
+  });
+
+  it('offers only Rejected while the opportunity is On Hold, and names the revision the outcome is for', async () => {
+    mocks.getQuotation.mockResolvedValue(
+      detail({
+        capabilities: { canEdit: false, canRevise: true, canSend: true, canRecordOutcome: true },
+      }),
+    );
+    mocks.getOpportunity.mockResolvedValue({
+      number: 'DEAL-2026-0095',
+      stage: 'on_hold',
+      wonQuotationVersionId: null,
+    });
+    const html = await render();
+    expect(html).toContain('>Record outcome</button>');
+    expect(html).toContain('Record outcome for revision 2');
+    expect(html).toContain(
+      'This quotation cannot be recorded as accepted while its opportunity is On Hold.',
+    );
+    expect(html).toContain('value="rejected"');
+    expect(html).not.toContain('value="accepted"');
+  });
+
+  it('holds nothing back when the opportunity cannot be read: the API decides', async () => {
+    const approved = detail({
+      capabilities: { canEdit: false, canRevise: true, canSend: true, canRecordOutcome: true },
+    });
+    approved.quotation.status = 'approved';
+    approved.versions[1]!.status = 'approved';
+    mocks.getQuotation.mockResolvedValue(approved);
+    const html = await render();
+    expect(html).toContain('>Send to customer</button>');
+    expect(html).not.toContain('cannot be sent while');
   });
 
   it('hides Send to customer and Record outcome when live grants or server capabilities withhold them', async () => {
