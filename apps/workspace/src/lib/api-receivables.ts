@@ -1,6 +1,7 @@
 import 'server-only';
 
 import {
+  type MoneyTotals,
   type AllocatePaymentBody,
   AllocationDtoSchema,
   ArAgingReportSchema,
@@ -21,6 +22,7 @@ import {
 import { z } from 'zod';
 
 import { ApiError, apiFetch } from './api';
+import { readMoneyTotals } from './money-totals';
 import type { Session } from './session';
 
 /**
@@ -124,7 +126,7 @@ function paymentQuery(filter: PaymentPageFilter, withStatus: boolean): URLSearch
 export async function listPaymentsPage(
   session: Session,
   filter: PaymentPageFilter = {},
-): Promise<{ items: PaymentListItem[]; total: number }> {
+): Promise<{ items: PaymentListItem[]; total: number; totals: MoneyTotals | null }> {
   const query = paymentQuery(filter, true);
   if (filter.limit !== undefined) query.set('limit', String(Math.max(1, Math.floor(filter.limit))));
   if (filter.offset !== undefined) {
@@ -144,7 +146,7 @@ export async function listPaymentsPage(
   if (!Number.isSafeInteger(total)) {
     throw new ApiError(502, 'GET /v1/payments returned no valid X-Total-Count', header);
   }
-  return { items: parsed.data, total };
+  return { items: parsed.data, total, totals: readMoneyTotals(res) };
 }
 
 const PaymentsSummarySchema = z.object({

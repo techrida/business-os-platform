@@ -14,7 +14,7 @@ const OTHER = '44444444-4444-4444-8444-444444444444';
 
 function setup() {
   const drafting = {
-    list: vi.fn().mockResolvedValue({ rows: [], total: 0 }),
+    list: vi.fn().mockResolvedValue({ rows: [], total: 0, totals: [] }),
     summary: vi.fn().mockResolvedValue({ total: 0, byStatus: {}, customers: [] }),
   };
   const controller = new InvoicesController(drafting as never, {} as never, {} as never);
@@ -49,10 +49,21 @@ describe('GET /v1/invoices query', () => {
 
   it('answers a bare array with the total of all matches in X-Total-Count', async () => {
     const { drafting, res, list } = setup();
-    drafting.list.mockResolvedValue({ rows: [{ id: 'a' }], total: 41 });
+    drafting.list.mockResolvedValue({
+      rows: [{ id: 'a' }],
+      total: 41,
+      totals: [
+        { currency: 'NPR', amount: '2018180.00' },
+        { currency: 'USD', amount: '25.00' },
+      ],
+    });
     await expect(list({ limit: '10', offset: '30' })).resolves.toEqual([{ id: 'a' }]);
     expect(drafting.list).toHaveBeenCalledWith({ limit: 10, offset: 30 });
     expect(res.setHeader).toHaveBeenCalledWith('X-Total-Count', '41');
+    expect(res.setHeader).toHaveBeenCalledWith(
+      'X-Money-Totals',
+      '[{"currency":"NPR","amount":"2018180.00"},{"currency":"USD","amount":"25.00"}]',
+    );
   });
 
   it('treats a one-character q as no search', async () => {

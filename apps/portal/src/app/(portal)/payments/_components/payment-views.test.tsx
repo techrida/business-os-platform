@@ -107,22 +107,22 @@ describe('PaymentForm', () => {
     expect(html).toContain(`name="invoice" value="${INVOICE.id}"`);
     expect(html).toContain('value="1000000.00"');
     expect(html).toContain('<input type="hidden" name="currency" value="USD"/>');
-    expect(html).not.toContain('switched off');
+    expect(html).not.toContain('Payments in it are still accepted');
   });
 
-  it('from an invoice in a switched-off currency, starts on NPR with a note and no open amount', () => {
+  it('from an invoice in a switched-off currency, starts blank with a note and the open amount', () => {
     const html = render({
       invoice: INVOICE,
       defaultCurrency: 'INR',
       enabledCurrencies: ['NPR', 'USD'],
       suggestedAmount: '1000000.00',
     });
-    expect(html).toContain('<input type="hidden" name="currency" value="NPR"/>');
+    // Old code started on NPR and dropped the open amount.
+    expect(html).toContain('<input type="hidden" name="currency" value=""/>');
     expect(html).toContain(
-      'This invoice is in INR, which is switched off for the company. Choose another currency.',
+      'This invoice is in INR, which is switched off for the company. Payments in it are still accepted. The amount filled in is in INR.',
     );
-    // The open amount is in INR, so it is not offered against NPR.
-    expect(html).not.toContain('value="1000000.00"');
+    expect(html).toContain('name="amount" value="1000000.00"');
   });
 });
 

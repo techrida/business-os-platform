@@ -22,6 +22,7 @@ import { randomUUID } from 'node:crypto';
 
 import {
   WorkflowSpecSchema,
+  type MoneyTotals,
   type PaymentRequestStatus,
   type RequestPaymentBody,
 } from '@bos/contracts';
@@ -59,7 +60,7 @@ import { withIdempotency } from '../../../platform/db/idempotency';
 import { withTx, type TxScope } from '../../../platform/db/tx';
 import { CurrencyEnabledService } from '../../../platform/settings/currency-enabled';
 import { SettingsService } from '../../../platform/settings/settings.service';
-import { searchPage } from '../../../platform/list';
+import { searchPage, sumByCurrency } from '../../../platform/list';
 import { ApprovalsService } from '../../approvals/requests.service';
 import { LedgerError, LedgerService } from '../../ledger/ledger.service';
 import { VENDOR_BILL_DOCUMENT_TYPE } from '../bills/vendor-bill.rules';
@@ -125,6 +126,15 @@ export interface PaymentRequestDto {
   cancelReason: string | null;
   version: number;
   lines: PaymentRequestLineDto[];
+}
+
+/**
+ * One row of the list (U15b-Q4): the request without its lines, its vendor named under the request's own read, and
+ * whether the caller may open that vendor's page (their live grants), so the row never links to a refused page.
+ */
+export interface PaymentRequestListRowDto extends Omit<PaymentRequestDto, 'lines'> {
+  vendorName: string;
+  can: { readVendor: boolean };
 }
 
 /** One request as its page reads it: the vendor named under the request's own read, and what the caller may open. */
@@ -300,14 +310,15 @@ export class PaymentRequestsService {
 
   /**
    * One page of the entity's payment requests, newest first, optionally of some statuses and a search over the
-   * request number and the vendor name, with the total of all matches. The id closes the order so requests created
-   * in the same instant never swap between pages.
+   * request number and the vendor name, with the total of all matches and their amounts summed per currency
+   * (U15b-Q4). The id closes the order so requests created in the same instant never swap between pages.
    */
   async list(
     query: ListPaymentRequestsQuery,
-  ): Promise<{ rows: Omit<PaymentRequestDto, 'lines'>[]; total: number }> {
+  ): Promise<{ rows: PaymentRequestListRowDto[]; total: number; totals: MoneyTotals }> {
     const { scope, actor, principal } = this.caller.current();
     return withTx(this.db, scope, actor, async (tx) => {
+      let totals: MoneyTotals = [];
       const vendorJoin = and(
         eq(vendors.tenantId, paymentRequests.tenantId),
         eq(vendors.id, paymentRequests.vendorId),
@@ -329,28 +340,45 @@ export class PaymentRequestsService {
         offset: query.offset,
         rows: (reader, p) =>
           reader
-            .select({ request: paymentRequests })
+            .select({ request: paymentRequests, vendor: vendors })
             .from(paymentRequests)
             .innerJoin(vendors, vendorJoin)
             .where(p.where)
             .orderBy(...p.orderBy)
             .limit(p.limit)
             .offset(p.offset),
+        // searchPage may count twice (exact, then close matches); the last call is the set the rows come from.
         count: async (reader, where) => {
-          const [row] = await reader
-            .select({ n: sql<number>`count(*)::int` })
+          const groups = await reader
+            .select({
+              currency: paymentRequests.currency,
+              n: sql<number>`count(*)::int`,
+              amount: sql<string>`sum(${paymentRequests.totalAmount})::text`,
+            })
             .from(paymentRequests)
             .innerJoin(vendors, vendorJoin)
-            .where(where);
-          return row?.n ?? 0;
+            .where(where)
+            .groupBy(paymentRequests.currency);
+          const summed = sumByCurrency(groups);
+          totals = summed.totals;
+          return summed.total;
         },
       });
       return {
-        rows: page.rows.map(({ request }) => {
+        rows: page.rows.map(({ request, vendor }) => {
           const { lines: _lines, ...rest } = toDto(request, []);
-          return rest;
+          return {
+            ...rest,
+            vendorName: vendor.legalName,
+            can: {
+              readVendor:
+                principal.orgKind === 'staff' &&
+                can(principal, 'vendor.read', vendorRef(vendor, principal)).allowed,
+            },
+          };
         }),
         total: page.total,
+        totals,
       };
     });
   }

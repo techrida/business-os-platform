@@ -13,7 +13,12 @@ import {
   AllocationDtoSchema,
   ArAgingReportSchema,
   CustomerAdvanceSchema,
+  DEFAULT_ROLE_PERMISSIONS,
+  InvoiceListItemSchema,
   InvoiceSettlementSchema,
+  type Permission,
+  type Scope,
+  SETTLEMENT_STATUSES,
 } from '@bos/contracts';
 import {
   createParty,
@@ -36,8 +41,10 @@ import { type Db } from '../../platform/db/db.module';
 import { type Actor, type TxScope, systemActor, withTx } from '../../platform/db/tx';
 import { MoneyService } from '../../platform/settings/money.service';
 import { NumberingService } from '../../platform/settings/numbering.service';
-import type { CurrencyEnabledService } from '../../platform/settings/currency-enabled';
 import type { SettingsService } from '../../platform/settings/settings.service';
+import type { CurrencyEnabledService } from '../../platform/settings/currency-enabled';
+import { InvoiceDraftingService } from '../invoices/invoice-drafting.service';
+import type { InvoiceCaller } from '../invoices/invoice-support';
 import { LedgerService } from '../ledger/ledger.service';
 import { PAYMENT_INTAKE_OWNER_TYPE } from '../payments/payment-owner.policy';
 import { PaymentsService } from '../payments/payments.service';
@@ -272,10 +279,6 @@ beforeAll(async () => {
   const settings = { get: () => Promise.resolve(7) } as unknown as SettingsService;
   const authz = { assert: () => undefined } as unknown as AuthzService;
   const audit = new AuditService(db);
-  // Every currency passes here; the refusal of a disabled one is unit-tested in payments.currency.test.ts.
-  const currencies = {
-    assertEnabled: () => Promise.resolve(),
-  } as unknown as CurrencyEnabledService;
   payments = new PaymentsService(
     db,
     authz,
@@ -283,7 +286,6 @@ beforeAll(async () => {
     new NumberingService(),
     audit,
     ledger,
-    currencies,
     () => NOW,
   );
   allocations = new AllocationsService(db, authz, audit, ledger);
@@ -564,5 +566,90 @@ describe('one legal entity at a time', () => {
     await expect(
       allocations.reverse(w.scope, w.verifier, p2, a!.id, { reason: 'x' }, randomUUID()),
     ).rejects.toMatchObject({ status: 404 });
+  });
+});
+
+describe("the invoice list carries each row's paid state (U15b-Q2)", () => {
+  /** The real invoice list, read by a finance user of `w`'s entity on the Kathmandu day of `at`. */
+  function invoiceList(w: World, at: Date): InvoiceDraftingService {
+    const caller = {
+      current: () => ({
+        scope: w.scope,
+        actor: w.verifier,
+        principal: {
+          userId: w.verifier.id,
+          zitadelUserId: `z-${w.verifier.id}`,
+          ...w.scope,
+          orgKind: 'staff' as const,
+          partyId: null,
+          idpOrgId: 'unused',
+          roles: ['finance'],
+          departmentId: null,
+          status: 'active' as const,
+          grants: new Map(Object.entries(DEFAULT_ROLE_PERMISSIONS.finance)) as Map<
+            Permission,
+            Scope
+          >,
+        },
+      }),
+    } as unknown as InvoiceCaller;
+    return new InvoiceDraftingService(
+      db,
+      { assert: () => undefined } as unknown as AuthzService,
+      new AuditService(db),
+      caller,
+      ledger,
+      { assertEnabled: () => Promise.resolve() } as unknown as CurrencyEnabledService,
+      () => at,
+    );
+  }
+
+  it('matches the Payment filter and the statement for unpaid, partly paid, paid, overdue and proforma rows', async () => {
+    const w = await newWorld();
+    const unpaid = await issuedInvoice(w.scope, w.customer, '1000.00');
+    const partly = await issuedInvoice(w.scope, w.customer, '1000.00');
+    const paid = await issuedInvoice(w.scope, w.customer, '500.00');
+    const proforma = await issuedInvoice(w.scope, w.customer, '300.00', 'proforma');
+    await allocate(w, await verified(w, '600.00'), [{ invoiceId: partly, amount: '600.00' }]);
+    await allocate(w, await verified(w, '500.00'), [{ invoiceId: paid, amount: '500.00' }]);
+
+    // Before the due date (2026-12-01), then after it.
+    for (const [at, expected] of [
+      [NOW, { [unpaid]: 'unpaid', [partly]: 'partly_paid', [paid]: 'paid' }],
+      [
+        new Date('2026-12-15T06:00:00Z'),
+        { [unpaid]: 'overdue', [partly]: 'overdue', [paid]: 'paid' },
+      ],
+    ] as const) {
+      const list = invoiceList(w, at);
+      const rows = z.array(InvoiceListItemSchema).parse((await list.list()).rows);
+      const state = Object.fromEntries(rows.map((r) => [r.id, r.settlement]));
+      const open = Object.fromEntries(rows.map((r) => [r.id, r.openAmount]));
+      // Old code sent no paid state on a list row.
+      expect(state).toEqual({ ...expected, [proforma]: null });
+      expect(open).toEqual({
+        [unpaid]: '1000.00',
+        [partly]: '400.00',
+        [paid]: '0.00',
+        [proforma]: null,
+      });
+      // Each row's state is the one the Payment filter puts it under.
+      for (const settlement of SETTLEMENT_STATUSES) {
+        const filtered = (await list.list({ settlement: [settlement] })).rows.map((r) => r.id);
+        const named = rows.filter((r) => r.settlement === settlement).map((r) => r.id);
+        expect(filtered.sort()).toEqual(named.sort());
+      }
+    }
+    // The Total column summed over every match, per currency (U15b-Q4), and over a filter's matches only.
+    const list = invoiceList(w, NOW);
+    expect((await list.list()).totals).toEqual([{ currency: 'NPR', amount: '2800.00' }]);
+    expect((await list.list({ settlement: ['paid'] })).totals).toEqual([
+      { currency: 'NPR', amount: '500.00' },
+    ]);
+    // The statement (as of NOW) agrees with the list.
+    expect(await statementOf(w, partly)).toMatchObject({
+      settlement: 'partly_paid',
+      openAmount: '400.00',
+    });
   });
 });
