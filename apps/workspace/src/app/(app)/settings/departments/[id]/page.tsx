@@ -4,12 +4,12 @@ import { notFound } from 'next/navigation';
 
 import { DepartmentActions } from '@/components/departments/department-actions';
 import { PeopleCard } from '@/components/departments/people-card';
-import { permissionChecker } from '@/components/p2/customers/permissions';
 import { Alert } from '@/components/ui/alert';
 import { Badge } from '@/components/ui/badge';
 import { LinkButton } from '@/components/ui/button';
 import { Breadcrumb, Page, PageHeader } from '@/components/ui/page';
 import { getDepartment, listActiveStaff, listDepartments } from '@/lib/api-departments';
+import { getPermissionCheck } from '@/lib/live-permissions';
 
 import admin from '../../admin.module.css';
 import { BackToSettings } from '../../_components/back-link';
@@ -26,7 +26,7 @@ export default async function DepartmentPage({ params }: { params: Promise<{ id:
   const { id } = await params;
   const here = `${PATH}/${encodeURIComponent(id)}`;
   const session = await requireSection('departments', here);
-  const canWrite = permissionChecker(session.roles)('admin.roles.write');
+  const canWrite = (await getPermissionCheck(session))('admin.roles.write');
 
   let detail: AdminDepartmentDetail | null;
   let loadError: string | null = null;
@@ -83,24 +83,17 @@ export default async function DepartmentPage({ params }: { params: Promise<{ id:
         title={detail.name}
         status={retired ? <Badge>Retired</Badge> : <Badge tone="success">Active</Badge>}
         actions={
-          canWrite && !retired ? (
+          canWrite ? (
             <DepartmentActions department={record} destinations={destinations} variant="header" />
           ) : null
         }
       />
       {retired ? (
-        <Alert
-          tone="info"
-          actions={
-            canWrite ? (
-              <DepartmentActions department={record} destinations={destinations} variant="header" />
-            ) : null
-          }
-        >
+        <Alert tone="info">
           {`${detail.name} is retired. Its past records stay under ${detail.name}.`}
         </Alert>
       ) : !canWrite ? (
-        <Alert tone="info">Only a Founder can change departments.</Alert>
+        <Alert tone="info">You do not have permission to change departments.</Alert>
       ) : null}
       {staff !== null && !staff.ok && <Alert tone="warning">{staff.message}</Alert>}
       <PeopleCard

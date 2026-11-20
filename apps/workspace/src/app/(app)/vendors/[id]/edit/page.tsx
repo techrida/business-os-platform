@@ -7,10 +7,11 @@ import { Alert } from '@/components/ui/alert';
 import { Breadcrumb, Page } from '@/components/ui/page';
 import { getVendor } from '@/lib/api-vendors';
 import { requireStaffSession } from '@/lib/bff';
+import { getPermissionCheck } from '@/lib/live-permissions';
 
 import { VendorForm } from '../../_components/vendor-form';
 import { vendorFailure } from '../../_lib/failure';
-import { identityLocked, isEditable, vendorGrants } from '../../_lib/model';
+import { identityLocked, isEditable } from '../../_lib/model';
 import { updateVendorAction } from '../../actions';
 
 export const metadata: Metadata = { title: 'Edit vendor · Business OS' };
@@ -22,9 +23,10 @@ export default async function EditVendorPage({ params }: { params: Promise<{ id:
   const here = `/vendors/${id}/edit`;
   const back = `/vendors/${id}`;
   const session = await requireStaffSession(here);
+  const allowed = await getPermissionCheck(session);
 
   // A person who cannot write is told so without the page fetching anything for them.
-  if (!vendorGrants(session.roles).write) {
+  if (!allowed('vendor.write')) {
     return (
       <Page width="narrow">
         <Breadcrumb

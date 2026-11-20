@@ -9,9 +9,11 @@ vi.mock('../../guard', () => ({
   requireSection: () => Promise.resolve({ accessToken: 'test-token', roles: ['founder'] }),
 }));
 const flags = vi.hoisted(() => ({ canWrite: true }));
-vi.mock('@/components/p2/customers/permissions', () => ({
-  permissionChecker: () => (permission: string) =>
-    permission === 'admin.roles.write' ? flags.canWrite : true,
+vi.mock('@/lib/live-permissions', () => ({
+  getPermissionCheck: () =>
+    Promise.resolve((permission: string) =>
+      permission === 'admin.roles.write' ? flags.canWrite : true,
+    ),
 }));
 vi.mock('../actions', () => ({
   createDepartmentAction: vi.fn(),
@@ -105,17 +107,37 @@ it('renders the not-found page for an unknown or malformed department id', async
   expect(seen).toHaveLength(0);
 });
 
-it('shows a retired department as read only with Restore', async () => {
+it('shows a retired department as read only with Restore in the page header', async () => {
   stubApi({ ...detail, status: 'retired', retiredAt: '2026-11-01T00:00:00.000Z' });
   const html = renderToStaticMarkup(
     await DepartmentPage({ params: Promise.resolve({ id: SALES }) }),
   );
+  const alertStart = html.indexOf('Sales is retired.');
+  expect(alertStart).toBeGreaterThan(-1);
+  expect(html.slice(0, alertStart)).toContain('aria-label="Restore Sales"');
+  expect(html.slice(alertStart)).not.toContain('aria-label="Restore Sales"');
   expect(html).toContain('Sales is retired. Its past records stay under Sales.');
-  expect(html).toContain('aria-label="Restore Sales"');
   expect(html).toContain('Department head: ');
   expect(html).not.toContain('Review changes');
   expect(html).not.toContain('Add people');
   expect(html).not.toContain('Rename Sales');
+});
+
+it('hides department actions when live admin.roles.write is revoked even for a founder', async () => {
+  flags.canWrite = false;
+  stubApi(detail);
+  const activeHtml = renderToStaticMarkup(
+    await DepartmentPage({ params: Promise.resolve({ id: SALES }) }),
+  );
+  expect(activeHtml).not.toContain('Rename Sales');
+  expect(activeHtml).not.toContain('Retire Sales');
+  expect(activeHtml).toContain('You do not have permission to change departments.');
+
+  stubApi({ ...detail, status: 'retired', retiredAt: '2026-11-01T00:00:00.000Z' });
+  const retiredHtml = renderToStaticMarkup(
+    await DepartmentPage({ params: Promise.resolve({ id: SALES }) }),
+  );
+  expect(retiredHtml).not.toContain('aria-label="Restore Sales"');
 });
 
 it('says the department could not be found and links back to the list', () => {

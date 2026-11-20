@@ -644,6 +644,10 @@ export const QuotationCapabilitiesSchema = z.object({
   canEdit: z.boolean(),
   /** Start a revision: a revisable status, and `quotation.revise` on this record. */
   canRevise: z.boolean(),
+  /** Send an approved or expired version: `quotation.send` on this record. */
+  canSend: z.boolean().optional(),
+  /** Record the customer's outcome on a sent version: `quotation.record_acceptance` on this record. */
+  canRecordOutcome: z.boolean().optional(),
 });
 export type QuotationCapabilities = z.infer<typeof QuotationCapabilitiesSchema>;
 

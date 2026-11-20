@@ -210,7 +210,7 @@ export class PurchaseRequestsService {
     const rfqId = (await this.liveRfqIds(this.db, scope, [row.id])).get(row.id) ?? null;
     const names = await this.namesOf(scope, [row]);
     return {
-      ...toDto(row, await this.linesOf(this.db, row.tenantId, row.id), rfqId),
+      ...toDto(row, await this.linesOf(this.db, row.tenantId, row.id), rfqId, principal),
       ...names(row),
       purchaseOrders: await this.linkedOrdersOf(scope, principal, row),
     };
@@ -393,7 +393,7 @@ export class PurchaseRequestsService {
         { command: 'procurement.pr.create', key: idempotencyKey, body },
         async () => ({
           status: 201,
-          response: await this.createInTx(tx, scope, principal.userId, body, now),
+          response: await this.createInTx(tx, scope, principal, body, now),
         }),
       );
       return done.response;
@@ -403,7 +403,7 @@ export class PurchaseRequestsService {
   private async createInTx(
     tx: DbTransaction,
     scope: TxScope,
-    requesterUserId: string,
+    principal: Principal,
     body: CreatePurchaseRequestBody,
     now: Date,
   ): Promise<PurchaseRequestDto> {
@@ -417,7 +417,7 @@ export class PurchaseRequestsService {
       .values({
         ...scope,
         ...headerColumnsOf(body),
-        requesterUserId,
+        requesterUserId: principal.userId,
         status: 'draft',
         estimatedTotal: total,
         createdAt: now,
@@ -435,7 +435,7 @@ export class PurchaseRequestsService {
       after: { status: 'draft', departmentId: row!.departmentId, estimatedTotal: total },
     });
     // A request that was just created has no RFQ.
-    return toDto(row!, lines, null);
+    return toDto(row!, lines, null, principal);
   }
 
   // ------------------------------------------------------------------------------------------------- update
@@ -451,7 +451,7 @@ export class PurchaseRequestsService {
     expectedVersion: number | undefined,
     idempotencyKey: string,
   ): Promise<PurchaseRequestDto> {
-    const { scope, actor } = this.caller.current();
+    const { scope, actor, principal } = this.caller.current();
     const now = this.clock();
     return withTx(this.db, scope, actor, async (tx) => {
       const done = await withIdempotency(
@@ -464,7 +464,7 @@ export class PurchaseRequestsService {
         },
         async () => ({
           status: 200,
-          response: await this.updateInTx(tx, scope, id, body, expectedVersion, now),
+          response: await this.updateInTx(tx, scope, principal, id, body, expectedVersion, now),
         }),
       );
       return done.response;
@@ -474,6 +474,7 @@ export class PurchaseRequestsService {
   private async updateInTx(
     tx: DbTransaction,
     scope: TxScope,
+    principal: Principal,
     id: string,
     body: CreatePurchaseRequestBody,
     expectedVersion: number | undefined,
@@ -523,7 +524,7 @@ export class PurchaseRequestsService {
       before: { status: pr.status, estimatedTotal: pr.estimatedTotal },
       after: { status: row.status, estimatedTotal: total },
     });
-    return toDto(row, lines, await this.liveRfqIdOf(tx, scope, id));
+    return toDto(row, lines, await this.liveRfqIdOf(tx, scope, id), principal);
   }
 
   // ------------------------------------------------------------------------------------------------- cancel
@@ -534,7 +535,7 @@ export class PurchaseRequestsService {
     expectedVersion: number | undefined,
     idempotencyKey: string,
   ): Promise<PurchaseRequestDto> {
-    const { scope, actor } = this.caller.current();
+    const { scope, actor, principal } = this.caller.current();
     const now = this.clock();
     return withTx(this.db, scope, actor, async (tx) => {
       const done = await withIdempotency(
@@ -562,6 +563,7 @@ export class PurchaseRequestsService {
               row,
               await this.linesOf(tx, scope.tenantId, id),
               await this.liveRfqIdOf(tx, scope, id),
+              principal,
             ),
           };
         },
@@ -591,7 +593,7 @@ export class PurchaseRequestsService {
           { command: 'procurement.pr.submit', key: idempotencyKey, body: { id, expectedVersion } },
           async () => ({
             status: 200,
-            response: await this.submitInTx(tx, scope, principal.userId, id, expectedVersion, now),
+            response: await this.submitInTx(tx, scope, principal, id, expectedVersion, now),
           }),
         );
         return done.response;
@@ -612,11 +614,12 @@ export class PurchaseRequestsService {
   private async submitInTx(
     tx: DbTransaction,
     scope: TxScope,
-    callerUserId: string,
+    principal: Principal,
     id: string,
     expectedVersion: number | undefined,
     now: Date,
   ): Promise<PurchaseRequestDto> {
+    const callerUserId = principal.userId;
     const pr = await this.lockEditable(tx, scope, id, expectedVersion, 'submitted');
     const lines = await this.linesOf(tx, scope.tenantId, id);
     if (lines.length === 0) throw conflict('A purchase request without lines cannot be submitted');
@@ -709,7 +712,7 @@ export class PurchaseRequestsService {
         isEmergency: pr.isEmergency,
       },
     });
-    return toDto(row, lines, await this.liveRfqIdOf(tx, scope, id));
+    return toDto(row, lines, await this.liveRfqIdOf(tx, scope, id), principal);
   }
 
   // ------------------------------------------------------------------------------------------------- helpers

@@ -12,6 +12,7 @@ import type { Server } from 'node:http';
 import type { AddressInfo } from 'node:net';
 
 import {
+  type AccessLevel,
   DEFAULT_ROLE_PERMISSIONS,
   ErrorBodySchema,
   OpportunityDtoSchema,
@@ -82,13 +83,22 @@ const U: Record<'salesA' | 'salesB' | 'boss' | 'viewer', string> = {
 
 const grantsOf = (role: RoleKey) =>
   new Map(Object.entries(DEFAULT_ROLE_PERMISSIONS[role])) as Map<Permission, Scope>;
-const current: { userId: string; grants: Map<Permission, Scope> } = {
+const current: {
+  userId: string;
+  roles: RoleKey[];
+  level: AccessLevel;
+  grants: Map<Permission, Scope>;
+} = {
   userId: U.salesA,
+  roles: ['sales'],
+  level: 'staff',
   grants: grantsOf('sales'),
 };
 /** sales: own scope, may write. founder: all scope, so a manager. management: reads all, cannot write. */
-const as = (userId: string, role: RoleKey) => {
+const as = (userId: string, role: RoleKey, level: AccessLevel = 'staff') => {
   current.userId = userId;
+  current.roles = [role];
+  current.level = level;
   current.grants = grantsOf(role);
 };
 
@@ -99,8 +109,9 @@ const principalNow = (): Principal => ({
   orgKind: 'staff',
   partyId: null,
   idpOrgId: staffIdpOrgId,
-  roles: [],
+  roles: current.roles,
   departmentId: null,
+  level: current.level,
   status: 'active',
   grants: current.grants,
 });
@@ -689,17 +700,30 @@ describe('PATCH /v1/opportunities/:id/stage', () => {
     expect(same.status).toBe(409);
   });
 
-  it('refuses the reopen of a lost opportunity over HTTP, for a founder as well as for sales', async () => {
+  it('refuses reopen of a lost opportunity for staff-level sales, and allows manager, head or founder with write scope', async () => {
     const id = await seed({ stage: 'lost' });
-    for (const [userId, role] of [
-      [U.salesA, 'sales'],
-      [U.boss, 'founder'],
-    ] as const) {
-      as(userId, role);
-      const res = await patchStage(id, { stage: 'qualified', expectedVersion: 1 });
-      expect(res.status, role).toBe(403);
-    }
+    // Staff-level sales gets 403.
+    as(U.salesA, 'sales', 'staff');
+    const staffRes = await patchStage(id, { stage: 'qualified', expectedVersion: 1 });
+    expect(staffRes.status).toBe(403);
     expect(await rowOf(id)).toMatchObject({ stage: 'lost', version: 1 });
+
+    // Read-only management gets 403 even at head level.
+    as(U.viewer, 'management', 'head');
+    expect((await patchStage(id, { stage: 'qualified', expectedVersion: 1 })).status).toBe(403);
+
+    // Manager-level sales with write scope on their own opportunity succeeds.
+    as(U.salesA, 'sales', 'manager');
+    const mgrRes = await patchStage(id, { stage: 'qualified', expectedVersion: 1 });
+    expect(mgrRes.status, JSON.stringify(mgrRes.body)).toBe(200);
+    expect(await rowOf(id)).toMatchObject({ stage: 'qualified', version: 2 });
+
+    // Founder succeeds on any lost opportunity in the entity.
+    const id2 = await seed({ stage: 'lost' });
+    as(U.boss, 'founder');
+    const bossRes = await patchStage(id2, { stage: 'qualified', expectedVersion: 1 });
+    expect(bossRes.status, JSON.stringify(bossRes.body)).toBe(200);
+    expect(await rowOf(id2)).toMatchObject({ stage: 'qualified', version: 2 });
   });
 
   it('answers 404 for another entity and for a colleague own record, and 403 without write', async () => {

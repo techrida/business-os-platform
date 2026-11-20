@@ -74,6 +74,14 @@ export type AgingBucket = z.infer<typeof AgingBucketSchema>;
 // DTOs
 // ---------------------------------------------------------------------------------------------
 
+export const PaymentCapabilitiesSchema = z.object({
+  verify: z.boolean(),
+  reject: z.boolean(),
+  reverse: z.boolean(),
+  verifyBlockedBySod: z.boolean().optional(),
+});
+export type PaymentCapabilities = z.infer<typeof PaymentCapabilitiesSchema>;
+
 export const PaymentDtoSchema = z
   .object({
     id: z.guid(),
@@ -104,6 +112,7 @@ export const PaymentDtoSchema = z
     proofDocumentIds: z.array(z.guid()),
     /** The credit not yet allocated to an invoice (the customer's advance), derived from allocations. */
     unallocatedAmount: NonNegativeDecimalString,
+    can: PaymentCapabilitiesSchema.optional(),
     version: expectedVersion,
     createdAt: isoDateTime,
     updatedAt: isoDateTime,

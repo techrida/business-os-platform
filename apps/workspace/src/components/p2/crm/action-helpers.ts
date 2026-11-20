@@ -70,5 +70,13 @@ export async function runStageMove(
   }
   revalidatePath(base);
   revalidatePath(`${base}/${id}`);
+  if (
+    kind === 'lead' &&
+    parsed.data.stage === 'contacted' &&
+    'contactActivity' in parsed.data &&
+    parsed.data.contactActivity !== undefined
+  ) {
+    revalidatePath('/activities');
+  }
   return { ok: true, movedTo: stageLabel(kind, parsed.data.stage) };
 }

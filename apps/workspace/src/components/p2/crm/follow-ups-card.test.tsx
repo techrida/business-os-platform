@@ -240,3 +240,23 @@ it('cancels only after the confirm dialog, whose buttons do not both say Cancel'
   expect(mocks.success).toHaveBeenCalledWith('Follow-up cancelled.');
   await mounted.unmount();
 });
+
+it('without write access, offers only Complete on a follow-up assigned to the caller', async () => {
+  const mounted = await mountForm(
+    <FollowUpsCard
+      leadId={LEAD}
+      items={[overdue, soon]}
+      ownerUserId={OWNER}
+      owners={owners}
+      canEdit={false}
+      currentUserId={OWNER}
+      now={NOW}
+    />,
+  );
+  expect(button(mounted.container, 'Complete Call about the site')).not.toBeNull();
+  expect(button(mounted.container, 'Reschedule Call about the site')).toBeNull();
+  expect(button(mounted.container, 'Cancel Call about the site')).toBeNull();
+  // Assigned to someone else: nothing at all.
+  expect(button(mounted.container, 'Complete Plan the meeting')).toBeNull();
+  await mounted.unmount();
+});

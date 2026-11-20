@@ -1,6 +1,6 @@
 'use client';
 
-import { useActionState, useId } from 'react';
+import { useActionState, useId, useState } from 'react';
 
 import { Alert } from '@/components/ui/alert';
 import { Button } from '@/components/ui/button';
@@ -17,10 +17,13 @@ type Action = (prev: CommandState, form: FormData) => Promise<CommandState>;
  * A success revalidates the page, which then stops offering the form that sent it, so the toast is
  * raised where the result arrives rather than from an effect in a form that may already be gone.
  */
-function toastOnSuccess(action: Action): Action {
+function toastOnSuccess(action: Action, onSuccess?: () => void): Action {
   return async (prev, form) => {
     const next = await action(prev, form);
-    if (next.saved) toast.success(next.saved);
+    if (next.saved) {
+      toast.success(next.saved);
+      onSuccess?.();
+    }
     return next;
   };
 }
@@ -52,14 +55,16 @@ function Outcome({ state, reloadHref }: { state: CommandState; reloadHref: strin
 }
 
 /**
- * Sends a draft or returned request to its approvers. The platform refuses (422) when a step has
- * nobody who may decide it, and nothing is submitted; the reason is shown as the platform wrote it.
+ * Sends a draft or returned request to its approvers from a fixed-footer confirmation dialog.
+ * The platform refuses (422) when a step has nobody who may decide it, and nothing is submitted;
+ * the reason is shown as the platform wrote it.
  */
 export function SubmitForm({
   prId,
   version,
   idempotencyKey,
   emergency,
+  resubmit = false,
   reloadHref,
   action = submitPrAction,
 }: {
@@ -67,28 +72,48 @@ export function SubmitForm({
   version: number;
   idempotencyKey: string;
   emergency: boolean;
+  resubmit?: boolean;
   reloadHref: string;
   action?: Action;
 }) {
+  const [open, setOpen] = useState(false);
   const [state, formAction, pending] = useActionState<CommandState, FormData>(
-    toastOnSuccess(action),
+    toastOnSuccess(action, () => setOpen(false)),
     commandStart(idempotencyKey),
   );
+  const formId = useId();
+  const label = resubmit ? 'Resubmit' : 'Submit for approval';
+  const description = emergency
+    ? 'Submitting sends it to the department head, then to Management because it is an emergency.'
+    : 'Submitting sends it to the department head for a decision. You cannot edit it while it waits.';
   return (
-    <form action={formAction} className={styles.panelForm}>
-      <Hidden prId={prId} version={version} state={state} />
-      <p className={styles.note}>
-        {emergency
-          ? 'Submitting sends it to the department head, then to Management because it is an emergency.'
-          : 'Submitting sends it to the department head for a decision. You cannot edit it while it waits.'}
-      </p>
-      <Outcome state={state} reloadHref={reloadHref} />
-      <div className={styles.actions}>
-        <Button type="submit" disabled={pending}>
-          {pending ? 'Submitting' : 'Submit for approval'}
-        </Button>
-      </div>
-    </form>
+    <Dialog
+      open={open}
+      onOpenChange={setOpen}
+      trigger={<Button variant="primary">{label}</Button>}
+      title={resubmit ? 'Resubmit for approval?' : 'Submit for approval?'}
+      description={description}
+      size="small"
+      locked={pending}
+      closeOnOutsideClick={false}
+      footer={
+        <>
+          <DialogClose asChild>
+            <Button variant="secondary" disabled={pending}>
+              Cancel
+            </Button>
+          </DialogClose>
+          <Button type="submit" form={formId} disabled={pending}>
+            {pending ? 'Submitting' : label}
+          </Button>
+        </>
+      }
+    >
+      <form id={formId} action={formAction} className={styles.panelForm}>
+        <Hidden prId={prId} version={version} state={state} />
+        <Outcome state={state} reloadHref={reloadHref} />
+      </form>
+    </Dialog>
   );
 }
 
@@ -106,13 +131,16 @@ export function CancelForm({
   reloadHref: string;
   action?: Action;
 }) {
+  const [open, setOpen] = useState(false);
   const [state, formAction, pending] = useActionState<CommandState, FormData>(
-    toastOnSuccess(action),
+    toastOnSuccess(action, () => setOpen(false)),
     commandStart(idempotencyKey),
   );
   const formId = useId();
   return (
     <Dialog
+      open={open}
+      onOpenChange={setOpen}
       trigger={<Button variant="secondary">Cancel request</Button>}
       title="Cancel this draft?"
       description="It cannot be reopened afterwards."

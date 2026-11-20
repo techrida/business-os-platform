@@ -14,15 +14,15 @@ import {
   updatePurchaseRequest,
 } from '@/lib/api-procurement';
 import { requireStaffSession } from '@/lib/bff';
+import { getPermissionCheck } from '@/lib/live-permissions';
 
 import { prFailure, type PrOp } from './_lib/failure';
 import { parsePrValues, valuesFromForm } from './_lib/forms';
-import { prGrants } from './_lib/model';
 import type { CommandState, PrFormState } from './_lib/state';
 
 /**
  * Server actions for the purchase request screens. Each one asks `requireStaffSession` first,
- * checks the permission it needs (deny by default: the API still decides every call), validates
+ * checks the live permission it needs (deny by default: the API still decides every call), validates
  * with the contracts' schema, and words any refusal for a person through `prFailure`. The browser
  * never sees the API URL or a token.
  *
@@ -58,7 +58,8 @@ function versionOf(form: FormData): number | 'bad' {
 export async function createPrAction(_prev: PrFormState, form: FormData): Promise<PrFormState> {
   const session = await requireStaffSession('/procurement/requests/new');
   const key = keyOf(form);
-  if (!prGrants(session.roles).create) return { key, errors: {}, error: NO_CREATE };
+  const allowed = await getPermissionCheck(session);
+  if (!allowed('procurement.pr.create')) return { key, errors: {}, error: NO_CREATE };
   const parsed = parsePrValues(valuesFromForm(form));
   if (!parsed.ok) return { key, errors: parsed.errors };
 
@@ -79,7 +80,8 @@ export async function updatePrAction(_prev: PrFormState, form: FormData): Promis
   const seen = versionOf(form);
   if (!isGuid(id) || seen === 'bad') return { key, errors: {}, error: INCOMPLETE, reload: true };
   const session = await requireStaffSession(`/procurement/requests/${id}/edit`);
-  if (!prGrants(session.roles).create) return { key, errors: {}, error: NO_CREATE };
+  const allowed = await getPermissionCheck(session);
+  if (!allowed('procurement.pr.create')) return { key, errors: {}, error: NO_CREATE };
   const parsed = parsePrValues(valuesFromForm(form));
   if (!parsed.ok) return { key, errors: parsed.errors };
 
@@ -115,7 +117,8 @@ async function runCommand(
     return { key, count: prev.count, error: INCOMPLETE, reload: true };
   }
   const session = await requireStaffSession(`/procurement/requests/${id}`);
-  if (!prGrants(session.roles).create) return { key, count: prev.count, error: NO_CREATE };
+  const allowed = await getPermissionCheck(session);
+  if (!allowed('procurement.pr.create')) return { key, count: prev.count, error: NO_CREATE };
 
   try {
     if (op === 'submit') await submitPurchaseRequest(session, id, key, seen);

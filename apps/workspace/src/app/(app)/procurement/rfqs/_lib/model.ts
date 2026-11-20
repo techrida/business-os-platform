@@ -31,18 +31,24 @@ export interface RfqGrants {
   sourcing: boolean;
 }
 
-/** The sourcing permission the session's roles hold by default. Server-side only. */
-export function rfqGrants(roles: readonly string[]): RfqGrants {
-  return { sourcing: hasPermission(roles, 'procurement.sourcing') };
+export type RfqGrantSource = readonly string[] | ((permission: string) => boolean);
+
+function allows(source: RfqGrantSource, permission: string): boolean {
+  return typeof source === 'function' ? source(permission) : hasPermission(source, permission);
+}
+
+/** The sourcing permission from live grants (`getPermissionCheck`) or role defaults. Server-side only. */
+export function rfqGrants(source: RfqGrantSource): RfqGrants {
+  return { sourcing: allows(source, 'procurement.sourcing') };
 }
 
 /** "Start RFQ" on a purchase request: department-approved, no RFQ yet, and the person may source. */
 export function canStartRfq(
   status: PrStatus,
   rfqId: string | null | undefined,
-  roles: readonly string[],
+  source: RfqGrantSource,
 ): boolean {
-  return status === 'dept_approved' && !rfqId && rfqGrants(roles).sourcing;
+  return status === 'dept_approved' && !rfqId && rfqGrants(source).sourcing;
 }
 
 /** Quotations are entered and converted only while the RFQ is open (the API answers 409 otherwise). */
@@ -131,9 +137,9 @@ export interface CommitOffer {
  */
 export function canCommit(
   rfq: { status: RfqStatus; recommendedQuotationId: string | null; prStatus: string | null },
-  roles: readonly string[],
+  source: RfqGrantSource,
 ): CommitOffer {
-  if (!rfqGrants(roles).sourcing) return { show: false };
+  if (!rfqGrants(source).sourcing) return { show: false };
   if (rfq.status !== 'recommended' || rfq.recommendedQuotationId === null) return { show: false };
   if (rfq.prStatus === null) {
     return {

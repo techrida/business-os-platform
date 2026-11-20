@@ -871,12 +871,16 @@ describe('demo feedback guards', () => {
     expect((await service.detail(created.id)).capabilities).toEqual({
       canEdit: true,
       canRevise: false,
+      canSend: false,
+      canRecordOutcome: false,
     });
 
     await approve(created.currentVersionId);
     expect((await service.detail(created.id)).capabilities).toEqual({
       canEdit: false,
       canRevise: true,
+      canSend: true,
+      canRecordOutcome: false,
     });
 
     // PMO reads all and drafts its own, but holds no quotation.revise: Revise would answer 403, so it is not offered.
@@ -884,6 +888,8 @@ describe('demo feedback guards', () => {
       expect((await service.detail(created.id)).capabilities).toEqual({
         canEdit: false,
         canRevise: false,
+        canSend: false,
+        canRecordOutcome: false,
       });
     });
   });
@@ -1743,6 +1749,8 @@ describe('saved reach on quotations (U20a phase 2)', () => {
     expect((await service.detail(theirs.id)).capabilities).toEqual({
       canEdit: false,
       canRevise: false,
+      canSend: false,
+      canRecordOutcome: false,
     });
     expect(await statusOf(service.detail(other.id))).toBe(404);
     expect(await statusOf(edit(theirs))).toBe(403);

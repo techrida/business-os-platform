@@ -99,8 +99,12 @@ describe('capabilitiesOf (the detail and list answer the same rules as the comma
     expect(capabilitiesOf(sales, quotationOf(COLLEAGUE), 'returned')).toEqual({
       canEdit: false,
       canRevise: false,
+      canSend: false,
+      canRecordOutcome: false,
     });
     expect(capabilitiesOf(sales, quotationOf(COLLEAGUE), 'approved').canRevise).toBe(false);
+    expect(capabilitiesOf(sales, quotationOf(COLLEAGUE), 'approved').canSend).toBe(false);
+    expect(capabilitiesOf(sales, quotationOf(COLLEAGUE), 'sent').canRecordOutcome).toBe(false);
   });
 
   it('offers revise only for a revisable status the caller may revise', () => {
@@ -114,12 +118,53 @@ describe('capabilitiesOf (the detail and list answer the same rules as the comma
     expect(capabilitiesOf(pmo, quotationOf(ME), 'draft').canEdit).toBe(true);
   });
 
+  it('offers send on approved/expired and record outcome on sent only with the live grant', () => {
+    const sales = principalOf('sales');
+    expect(capabilitiesOf(sales, quotationOf(ME), 'approved')).toEqual({
+      canEdit: false,
+      canRevise: true,
+      canSend: true,
+      canRecordOutcome: false,
+    });
+    expect(capabilitiesOf(sales, quotationOf(ME), 'expired')).toEqual({
+      canEdit: false,
+      canRevise: true,
+      canSend: true,
+      canRecordOutcome: false,
+    });
+    expect(capabilitiesOf(sales, quotationOf(ME), 'sent')).toEqual({
+      canEdit: false,
+      canRevise: true,
+      canSend: false,
+      canRecordOutcome: true,
+    });
+    for (const status of [
+      'draft',
+      'submitted',
+      'returned',
+      'accepted',
+      'rejected',
+      'cancelled',
+    ] as const) {
+      expect(capabilitiesOf(sales, quotationOf(ME), status).canSend, status).toBe(false);
+      expect(capabilitiesOf(sales, quotationOf(ME), status).canRecordOutcome, status).toBe(false);
+    }
+
+    const pmo = principalOf('pmo');
+    expect(capabilitiesOf(pmo, quotationOf(ME), 'approved').canSend).toBe(false);
+    expect(capabilitiesOf(pmo, quotationOf(ME), 'sent').canRecordOutcome).toBe(false);
+  });
+
   it('gives an inactive user nothing', () => {
     const inactive = principalOf('sales', { status: 'inactive' });
     expect(capabilitiesOf(inactive, quotationOf(ME), 'draft')).toEqual({
       canEdit: false,
       canRevise: false,
+      canSend: false,
+      canRecordOutcome: false,
     });
     expect(capabilitiesOf(inactive, quotationOf(ME), 'approved').canRevise).toBe(false);
+    expect(capabilitiesOf(inactive, quotationOf(ME), 'approved').canSend).toBe(false);
+    expect(capabilitiesOf(inactive, quotationOf(ME), 'sent').canRecordOutcome).toBe(false);
   });
 });

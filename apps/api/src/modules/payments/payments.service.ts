@@ -16,6 +16,7 @@ import { createHash } from 'node:crypto';
 
 import {
   type AllocationDto,
+  type PaymentCapabilities,
   type PaymentChannel,
   type PaymentDto,
   type PaymentListItem,
@@ -54,9 +55,11 @@ import { and, asc, count, desc, eq, inArray, isNull, lte, or, type SQL } from 'd
 
 import { AuditService } from '../../platform/audit/audit.service';
 import { AuthzService } from '../../platform/authz/authz.service';
+import { can, type Principal } from '../../platform/authz/can';
 import { DB, type Db, type DbTransaction } from '../../platform/db/db.module';
 import { updateVersioned, withIdempotency } from '../../platform/db/idempotency';
 import { withTx, type Actor, type TxScope } from '../../platform/db/tx';
+import { currentPrincipal } from '../../platform/tenancy/request-context';
 import { CurrencyEnabledService } from '../../platform/settings/currency-enabled';
 import { NO_LIMIT, searchPage } from '../../platform/list';
 import { MoneyService } from '../../platform/settings/money.service';
@@ -119,6 +122,32 @@ export function reversalSourceId(paymentId: string): string {
 
 function money2(value: string | Decimal): string {
   return new Decimal(value).toFixed(2);
+}
+
+/** What `principal` may do on `row` now, by the same `payment.verify` and SoD rules the commands enforce. */
+export function paymentCapabilities(
+  principal: Principal,
+  row: Pick<PaymentRow, 'tenantId' | 'organizationId' | 'customerPartyId' | 'status'> & {
+    submittedBy: string | null;
+  },
+): PaymentCapabilities {
+  const mayVerify = can(
+    principal,
+    'payment.verify',
+    paymentRef({
+      tenantId: row.tenantId,
+      organizationId: row.organizationId,
+      customerPartyId: row.customerPartyId,
+      submittedBy: row.submittedBy ?? '',
+    }),
+  ).allowed;
+  const isSelf = row.submittedBy !== null && row.submittedBy === principal.userId;
+  return {
+    verify: row.status === 'submitted' && mayVerify && !isSelf,
+    reject: row.status === 'submitted' && mayVerify,
+    reverse: row.status === 'verified' && mayVerify,
+    verifyBlockedBySod: row.status === 'submitted' && mayVerify && isSelf,
+  };
 }
 
 @Injectable()
@@ -981,6 +1010,7 @@ export class PaymentsService {
             rateDate:
               row.fxDate ?? (row.verifiedAt ? kathmanduDay(row.verifiedAt) : row.receivedOn),
           };
+    const caller = currentPrincipal();
     return {
       id: row.id,
       customerId: row.customerPartyId ?? '',
@@ -1003,6 +1033,7 @@ export class PaymentsService {
       fiscalYear: row.fiscalYear,
       proofDocumentIds: await this.proofIds(tx, scope, row.id),
       unallocatedAmount: money2(open ?? '0'),
+      ...(caller === undefined ? {} : { can: paymentCapabilities(caller, row) }),
       version: row.version,
       createdAt: row.createdAt.toISOString(),
       updatedAt: row.updatedAt.toISOString(),

@@ -19,6 +19,9 @@ import { UnprocessableEntityException } from '@nestjs/common';
 import Decimal from 'decimal.js';
 import { z } from 'zod';
 
+import { can } from '../../../platform/authz/can';
+import type { Principal, ResourceRef } from '../../../platform/authz/principal';
+
 /** approval_requests.document_type of a purchase request; the document id is the request id. */
 export const PURCHASE_REQUEST_DOCUMENT_TYPE = 'purchase_request';
 
@@ -314,10 +317,52 @@ export interface LinkedPurchaseOrderDto {
   can: { receiveService: boolean };
 }
 
+export interface PurchaseRequestCapabilities {
+  edit: boolean;
+  submit: boolean;
+  cancel: boolean;
+  startRfq: boolean;
+  openRfq: boolean;
+}
+
+/**
+ * What `principal` may do on `row` now, by the same `procurement.pr.create` and `procurement.sourcing` rules
+ * the commands enforce. Pure, so screens and tests need no database.
+ */
+export function purchaseRequestCapabilities(
+  principal: Principal,
+  row: Pick<
+    PurchaseRequestRow,
+    'tenantId' | 'organizationId' | 'requesterUserId' | 'departmentId' | 'status'
+  >,
+  rfqId: string | null,
+): PurchaseRequestCapabilities {
+  const isStaff = principal.orgKind === 'staff';
+  const ref: ResourceRef = {
+    tenantId: row.tenantId,
+    organizationId: row.organizationId,
+    ownerUserId: row.requesterUserId,
+    departmentId: row.departmentId,
+    sodUserIds: [],
+  };
+  const mayWrite = isStaff && can(principal, 'procurement.pr.create', ref).allowed;
+  // SourcingController checks route-level `procurement.sourcing` (buyers source PRs across departments).
+  const maySource = isStaff && can(principal, 'procurement.sourcing').allowed;
+  const editable = isPrEditable(row.status);
+  return {
+    edit: editable && mayWrite,
+    submit: editable && mayWrite,
+    cancel: row.status === 'draft' && mayWrite,
+    startRfq: row.status === 'dept_approved' && rfqId === null && maySource,
+    openRfq: rfqId !== null && maySource,
+  };
+}
+
 export interface PurchaseRequestDto extends PurchaseRequestListItem {
   lines: PurchaseRequestLineDto[];
   /** The request's purchase orders other than drafts, by number. Sent by the detail read only. */
   purchaseOrders?: LinkedPurchaseOrderDto[];
+  can?: PurchaseRequestCapabilities;
 }
 
 export function toListItem(row: PurchaseRequestRow, rfqId: string | null): PurchaseRequestListItem {
@@ -355,6 +400,7 @@ export function toDto(
   row: PurchaseRequestRow,
   lines: readonly PurchaseRequestLineRow[],
   rfqId: string | null,
+  principal?: Principal,
 ): PurchaseRequestDto {
   return {
     ...toListItem(row, rfqId),
@@ -371,6 +417,7 @@ export function toDto(
         estimatedUnitPrice: l.estimatedUnitPrice,
         estimatedAmount: l.estimatedAmount,
       })),
+    ...(principal === undefined ? {} : { can: purchaseRequestCapabilities(principal, row, rfqId) }),
   };
 }
 

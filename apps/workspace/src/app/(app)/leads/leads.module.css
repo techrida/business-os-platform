@@ -178,6 +178,10 @@
   box-shadow: none;
 }
 
+.timelineReason {
+  margin-block-start: 16px;
+}
+
 .overviewFacts.overviewFacts {
   grid-template-columns: repeat(auto-fit, minmax(min(100%, 125px), 1fr));
 }

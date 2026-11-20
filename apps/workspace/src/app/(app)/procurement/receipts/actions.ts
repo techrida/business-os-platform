@@ -18,6 +18,7 @@ import {
   type Receipt,
 } from '@/lib/api-purchase-orders';
 import { requireStaffSession } from '@/lib/bff';
+import { getPermissionCheck } from '@/lib/live-permissions';
 import type { Session } from '@/lib/session';
 
 import { parseReason } from '../orders/_lib/forms';
@@ -28,7 +29,7 @@ import { mayHandleKind, receiptGrants } from './_lib/model';
 
 /**
  * Server actions of the receipt screens: create a draft, confirm it, reverse it. Each one checks
- * the id, asks `requireStaffSession`, checks the kind against the person's grant (goods need
+ * the id, asks `requireStaffSession`, checks the kind against the person's live grant (goods need
  * `procurement.receipt.confirm`; a service is offered to everyone because its requester may also
  * confirm it, and the API's 403 is worded for that), validates, and words any refusal.
  *
@@ -69,7 +70,7 @@ export async function createReceiptAction(prev: ActionState, form: FormData): Pr
 
   const kind = ReceiptKindSchema.safeParse(text(form, 'kind'));
   if (!kind.success) return { key, errors: { kind: 'Choose whether this is goods or a service.' } };
-  if (!mayHandleKind(kind.data, receiptGrants(session.roles))) {
+  if (!mayHandleKind(kind.data, receiptGrants(await getPermissionCheck(session)))) {
     return { key, error: noPermission(kind.data) };
   }
 
@@ -139,7 +140,7 @@ async function open(
   } catch (err) {
     return { ok: false, state: refused(key, err, 'load') };
   }
-  if (!mayHandleKind(receipt.kind, receiptGrants(session.roles))) {
+  if (!mayHandleKind(receipt.kind, receiptGrants(await getPermissionCheck(session)))) {
     return { ok: false, state: { key, error: noPermission(receipt.kind) } };
   }
   return { ok: true, o: { id, session, key, receipt } };

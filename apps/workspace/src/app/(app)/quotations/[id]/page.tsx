@@ -4,13 +4,12 @@ import type { Metadata } from 'next';
 import Link from 'next/link';
 import { notFound } from 'next/navigation';
 
-import { hasPermission } from '@/components/p2/customers/permissions';
 import { stageLabel } from '@/components/p2/crm/stages';
 import { getOpportunity, listPaymentTerms } from '@/components/p2/quote-builder/api';
 import { getQuotation } from '@/components/p2/quotations/api';
 import { QuotationContents } from '@/components/p2/quotations/contents';
 import styles from '@/components/p2/quotations/detail.module.css';
-import { ClientDecision, DetailActions } from '@/components/p2/quotations/detail-actions';
+import { DetailActions, hasDetailActions } from '@/components/p2/quotations/detail-actions';
 import { pdfLinkFor } from '@/components/p2/quotations/document-link';
 import { PreparingRefresh } from '@/components/p2/quotations/preparing-refresh';
 import { QuotationStatusBadge } from '@/components/p2/quotations/status-badge';
@@ -26,6 +25,7 @@ import { failureOf } from '@/lib/api-kernel';
 import { requireStaffSession } from '@/lib/bff';
 import { getDateFormat, getNumberSystems } from '@/lib/display-settings';
 import { money, when } from '@/lib/kernel-format';
+import { getPermissionCheck } from '@/lib/live-permissions';
 
 export const metadata: Metadata = { title: 'Quotation · Business OS' };
 export const dynamic = 'force-dynamic';
@@ -194,12 +194,16 @@ export default async function QuotationDetailPage({
 
   const { quotation, versions, customerName, contacts } = detail;
   const current = versions.find((v) => v.id === quotation.currentVersionId) ?? null;
+  const allowed = await getPermissionCheck(session);
   const orders =
-    current?.status === 'accepted' && hasPermission(session.roles, 'sales_order.read')
+    current?.status === 'accepted' && allowed('sales_order.read')
       ? await listSalesOrders(session, { quotationVersionId: current.id }).catch(() => [])
       : [];
   const order = orders.find((item) => item.status !== 'cancelled');
-  const mayRetryPdf = hasPermission(session.roles, 'quotation.send');
+  const mayRetryPdf = allowed('quotation.send');
+  const maySend = detail.capabilities.canSend ?? allowed('quotation.send');
+  const mayRecordOutcome =
+    detail.capabilities.canRecordOutcome ?? allowed('quotation.record_acceptance');
 
   // The revision on screen: the one `?rev=` names, else the current one. Actions and the client
   // decision always act on the current revision.
@@ -308,7 +312,14 @@ export default async function QuotationDetailPage({
           </span>
         }
         actions={
-          current ? (
+          current &&
+          hasDetailActions({
+            status: current.status,
+            capabilities: detail.capabilities,
+            includeOutcome: true,
+            maySend,
+            mayRecordOutcome,
+          }) ? (
             <DetailActions
               quotationId={quotation.id}
               number={quotation.number}
@@ -316,7 +327,9 @@ export default async function QuotationDetailPage({
               contacts={contacts}
               capabilities={detail.capabilities}
               reloadHref={path}
-              includeOutcome={false}
+              includeOutcome={true}
+              maySend={maySend}
+              mayRecordOutcome={mayRecordOutcome}
             />
           ) : null
         }
@@ -343,14 +356,6 @@ export default async function QuotationDetailPage({
         <div className={`${styles.stack} ${styles.revisionStack}`}>
           {view !== null ? (
             <>
-              {current !== null && !earlier ? (
-                <ClientDecision
-                  quotationId={quotation.id}
-                  number={quotation.number}
-                  current={current}
-                  reloadHref={path}
-                />
-              ) : null}
               <Panel
                 className={styles.detailPanel}
                 title={earlier ? `Revision ${view.revisionNo}` : 'Current revision'}

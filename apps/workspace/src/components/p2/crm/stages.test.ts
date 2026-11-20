@@ -6,6 +6,7 @@ import {
   boardMoves,
   groupByStage,
   isSetBySystem,
+  resolvedMoves,
   stageLabel,
   userMoves,
 } from './stages';
@@ -49,6 +50,47 @@ describe('userMoves', () => {
   it('offers nothing from a terminal stage', () => {
     expect(codes('lead', 'converted')).toEqual([]);
     expect(codes('opportunity', 'won')).toEqual([]);
+  });
+});
+
+describe('resolvedMoves', () => {
+  it('maps server allowedMoves into Move objects, preserving manager reopen edges', () => {
+    expect(resolvedMoves('lead', 'lost', ['contacted'])).toEqual([
+      { stage: 'contacted', label: 'Contacted', needsReason: false },
+    ]);
+    expect(resolvedMoves('opportunity', 'lost', ['qualified'])).toEqual([
+      { stage: 'qualified', label: 'Qualified', needsReason: false },
+    ]);
+    expect(resolvedMoves('lead', 'new', ['contacted', 'on_hold', 'lost'])).toEqual([
+      { stage: 'contacted', label: 'Contacted', needsReason: false },
+      { stage: 'on_hold', label: 'On Hold', needsReason: true },
+      { stage: 'lost', label: 'Lost', needsReason: true },
+    ]);
+  });
+
+  it('filters out system-only stages even if present in allowedMoves', () => {
+    expect(resolvedMoves('lead', 'qualified', ['converted', 'on_hold'])).toEqual([
+      { stage: 'on_hold', label: 'On Hold', needsReason: true },
+    ]);
+    expect(
+      resolvedMoves('opportunity', 'negotiation', ['won', 'quotation_sent', 'on_hold', 'lost']),
+    ).toEqual([
+      { stage: 'on_hold', label: 'On Hold', needsReason: true },
+      { stage: 'lost', label: 'Lost', needsReason: true },
+    ]);
+  });
+
+  it('returns an empty list when the server explicitly sends []', () => {
+    expect(resolvedMoves('lead', 'new', [])).toEqual([]);
+    expect(resolvedMoves('opportunity', 'qualified', [])).toEqual([]);
+  });
+
+  it('falls back to userMoves when allowedMoves is undefined', () => {
+    expect(resolvedMoves('lead', 'new', undefined)).toEqual(userMoves('lead', 'new'));
+    expect(resolvedMoves('opportunity', 'qualified', undefined)).toEqual(
+      userMoves('opportunity', 'qualified'),
+    );
+    expect(resolvedMoves('lead', 'lost')).toEqual([]);
   });
 });
 

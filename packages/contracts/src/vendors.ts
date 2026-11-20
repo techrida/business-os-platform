@@ -103,6 +103,20 @@ export const CreateVendorBodySchema = z
   });
 export type CreateVendorBody = z.infer<typeof CreateVendorBodySchema>;
 
+export const VendorCapabilitiesSchema = z.strictObject({
+  write: z.boolean(),
+  activate: z.boolean(),
+  suspend: z.boolean(),
+  block: z.boolean(),
+  archive: z.boolean(),
+  activateBlockedBySod: z.boolean().optional(),
+  activateBlockedByKyb: z.boolean().optional(),
+  activateBlockedByKycExpired: z.boolean().optional(),
+  proposeBank: z.boolean().optional(),
+  verifyBank: z.boolean().optional(),
+});
+export type VendorCapabilities = z.infer<typeof VendorCapabilitiesSchema>;
+
 export const VendorDtoSchema = z.strictObject({
   /** The party id. */
   id: z.guid(),
@@ -117,6 +131,7 @@ export const VendorDtoSchema = z.strictObject({
   approvedAt: isoDateTime.nullable(),
   /** The vendor's logo (`app.vendors.logo_document_id`); null or absent shows initials. */
   logoDocumentId: z.guid().nullable().optional(),
+  can: VendorCapabilitiesSchema.optional(),
 });
 export type VendorDto = z.infer<typeof VendorDtoSchema>;
 

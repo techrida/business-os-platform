@@ -32,6 +32,7 @@ const mocks = vi.hoisted(() => ({
   }),
   getSession: vi.fn(),
   apiFetch: vi.fn(),
+  getMe: vi.fn(),
 }));
 
 vi.mock('@/lib/api-billing', () => ({ listSalesOrders: mocks.listSalesOrders }));
@@ -57,6 +58,7 @@ vi.mock('@/lib/session', async (original) => ({
 vi.mock('@/lib/api', async (original) => ({
   ...(await original<typeof import('@/lib/api')>()),
   apiFetch: mocks.apiFetch,
+  getMe: mocks.getMe,
 }));
 
 // Open the revision drawer and render its portal inline for assertions on server-provided rows.
@@ -83,13 +85,10 @@ vi.mock('@/components/p2/quotations/contents', async (importOriginal) => {
 vi.mock('@/components/p2/quotations/detail-actions', async (importOriginal) => {
   const real = await importOriginal<typeof import('@/components/p2/quotations/detail-actions')>();
   return {
+    hasDetailActions: real.hasDetailActions,
     DetailActions: (props: ComponentProps<typeof real.DetailActions>) => {
       mocks.seen.push({ component: 'DetailActions', version: props.current });
       return real.DetailActions(props);
-    },
-    ClientDecision: (props: ComponentProps<typeof real.ClientDecision>) => {
-      mocks.seen.push({ component: 'ClientDecision', version: props.current });
-      return real.ClientDecision(props);
     },
   };
 });
@@ -251,6 +250,7 @@ beforeEach(() => {
   mocks.seen.length = 0;
   mocks.getSession.mockReset().mockResolvedValue(null);
   mocks.apiFetch.mockReset().mockRejectedValue(new Error('no API in this test'));
+  mocks.getMe.mockReset().mockRejectedValue(new Error('offline'));
 });
 
 describe('quotation detail page', () => {
@@ -332,9 +332,46 @@ describe('quotation detail page', () => {
   it('puts the actions of the current status in the action slot', async () => {
     // The fixture is Sent: record the outcome, or revise. Send is for an approved quotation.
     const html = await render();
-    expect(html).toMatch(/Record client decision.*<button[^>]*>Record outcome<\/button>/);
-    expect(html).toContain('>Revise</button>');
+    const header = html.slice(0, html.indexOf('<section'));
+    expect(header).toContain('>Record outcome</button>');
+    expect(header).toContain('>Revise</button>');
+    expect(html).not.toContain('Record client decision');
     expect(html).not.toContain('>Send to customer</button>');
+  });
+
+  it('hides Send to customer and Record outcome when live grants or server capabilities withhold them', async () => {
+    mocks.getMe.mockResolvedValue({
+      permissions: [{ permission: 'quotation.read', scope: 'all' }],
+    });
+    const sentHtml = await render();
+    expect(sentHtml).not.toContain('>Record outcome</button>');
+    expect(sentHtml).toContain('>Revise</button>');
+
+    const approved = detail({ capabilities: { canEdit: false, canRevise: true, canSend: false } });
+    approved.quotation.status = 'approved';
+    approved.versions[1]!.status = 'approved';
+    mocks.getQuotation.mockResolvedValue(approved);
+    mocks.getMe.mockRejectedValue(new Error('offline'));
+    const approvedHtml = await render();
+    expect(approvedHtml).not.toContain('>Send to customer</button>');
+    expect(approvedHtml).toContain('>Revise</button>');
+
+    mocks.getMe.mockResolvedValue({
+      permissions: [{ permission: 'quotation.read', scope: 'all' }],
+    });
+    mocks.getQuotation.mockResolvedValue(
+      detail({
+        capabilities: { canEdit: false, canRevise: false, canSend: false, canRecordOutcome: false },
+      }),
+    );
+    const readOnlyHtml = await render();
+    const h1Start = readOnlyHtml.indexOf('<h1');
+    const bodyStart = readOnlyHtml.indexOf('<section', h1Start);
+    expect(h1Start).toBeGreaterThan(-1);
+    expect(bodyStart).toBeGreaterThan(h1Start);
+    const header = readOnlyHtml.slice(h1Start, bodyStart);
+    expect(header).not.toContain('<button');
+    expect(header).not.toMatch(/class="[^"]*actions/);
   });
 
   it('answers a 404 with notFound, and a non-UUID id without calling the API', async () => {

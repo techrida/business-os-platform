@@ -435,6 +435,18 @@ export function lostReasonsToken(
   return (4294967296 * (2097151 & h2) + (h1 >>> 0)).toString(16).padStart(14, '0');
 }
 
+/** The kinds of contact activity logged when moving a new lead to contacted (D48). */
+export const CONTACT_ACTIVITY_KINDS = ['call', 'email'] as const;
+export const ContactActivityKindSchema = z.enum(CONTACT_ACTIVITY_KINDS);
+export type ContactActivityKind = z.infer<typeof ContactActivityKindSchema>;
+
+export const ContactActivityBodySchema = z.strictObject({
+  kind: ContactActivityKindSchema,
+  subject: text(200).optional(),
+  body: text(10000),
+});
+export type ContactActivityBody = z.infer<typeof ContactActivityBodySchema>;
+
 /**
  * A lead's stage change. Lost carries a reference to an option (`lostReasonId`) or a new option to add in the same
  * step (`newLostReason`), plus the required note; On Hold keeps its free-text `reason` and note. The server derives
@@ -447,12 +459,16 @@ export const LeadStageChangeBodySchema = z
     lostReasonId: z.guid().optional(),
     newLostReason: LostReasonLabelSchema.optional(),
     note: text(2000).optional(),
+    contactActivity: ContactActivityBodySchema.optional(),
     /** The row version the client saw; a different current version means 409. */
     expectedVersion: z.number().int().min(1),
   })
   .superRefine((body, ctx) => {
     const issue = (path: string, message: string) =>
       ctx.addIssue({ code: 'custom', path: [path], message });
+    if (body.contactActivity !== undefined && body.stage !== 'contacted') {
+      issue('contactActivity', 'only for a move to contacted');
+    }
     if (body.stage === 'lost') {
       if ((body.lostReasonId === undefined) === (body.newLostReason === undefined)) {
         issue('lostReasonId', 'choose a lost reason, or add a new one');
@@ -625,6 +641,8 @@ export const LeadDtoSchema = z.object({
   lostReason: LeadLostReasonRefSchema.nullable(),
   stageNote: z.string().nullable(),
   convertedOpportunityId: z.guid().nullable(),
+  allowedMoves: z.array(LeadStageSchema).optional(),
+  canEdit: z.boolean().optional(),
   version: z.number().int().min(1),
   createdAt: isoDateTime,
   updatedAt: isoDateTime,
@@ -695,6 +713,8 @@ export const OpportunityDtoSchema = z.object({
   expectedClose: isoDate.nullable(),
   /** Set by the system when a version is accepted. */
   wonQuotationVersionId: z.guid().nullable(),
+  allowedMoves: z.array(OpportunityStageSchema).optional(),
+  canEdit: z.boolean().optional(),
   version: z.number().int().min(1),
   createdAt: isoDateTime,
   updatedAt: isoDateTime,

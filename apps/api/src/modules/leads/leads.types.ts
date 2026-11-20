@@ -14,6 +14,9 @@ import {
 import { type leads } from '@bos/db';
 import { z } from 'zod';
 
+import { can, type Principal } from '../../platform/authz/can';
+import { allowedLeadMoves, leadRef } from './lead-stage';
+
 /**
  * `GET /v1/leads?q&stage&source&ownerUserId&limit&offset`. The three filters may repeat (any selected value
  * matches). The board view asks for up to 200 rows at once, so the cap stays at 200 and the default at 50.
@@ -119,6 +122,7 @@ export function toLeadDto(
   nextFollowUp: Date | null,
   ownerName: string | null,
   lostReason: LeadLostReasonRef | null,
+  principal?: Principal,
 ): LeadDto {
   return {
     id: row.id,
@@ -145,6 +149,12 @@ export function toLeadDto(
     lostReason,
     stageNote: row.stageNote,
     convertedOpportunityId: row.convertedOpportunityId,
+    ...(principal === undefined
+      ? {}
+      : {
+          allowedMoves: allowedLeadMoves(principal, row),
+          canEdit: can(principal, 'crm.lead.write', leadRef(row)).allowed,
+        }),
     version: row.version,
     createdAt: row.createdAt.toISOString(),
     updatedAt: row.updatedAt.toISOString(),

@@ -75,6 +75,29 @@ export function userMoves(kind: RecordKind, from: string): Move[] {
 }
 
 /**
+ * The moves a record allows for the current caller. When the API returns `allowedMoves`, trust it
+ * (preserving manager reopen edges like `lost -> contacted` / `lost -> qualified`, and returning
+ * `[]` when the server returns `[]`), filtering out system-only stages. When `allowedMoves` is
+ * absent (older payloads or fixtures), fall back to `userMoves`.
+ */
+export function resolvedMoves(
+  kind: RecordKind,
+  from: string,
+  allowedMoves?: readonly string[],
+): Move[] {
+  if (allowedMoves === undefined) return userMoves(kind, from);
+  return allowedMoves
+    .filter((to) => !isSetBySystem(kind, to))
+    .map((to) => ({
+      stage: to,
+      label: stageLabel(kind, to),
+      needsReason: STAGE_CATALOGUE.some(
+        (s) => s.recordKind === kind && s.code === to && s.needsReason,
+      ),
+    }));
+}
+
+/**
  * The moves a card offers on the board: `userMoves` without `lost`, because Lost needs a choice
  * from the tenant's lost-reason list on the record page (D49, D54-3).
  */

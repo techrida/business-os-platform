@@ -12,6 +12,7 @@ import { EmptyState } from '@/components/ui/empty-state';
 import { Breadcrumb, Page, PageHeader } from '@/components/ui/page';
 import { getPoProgress, type PoProgress } from '@/lib/api-purchase-orders';
 import { requireStaffSession } from '@/lib/bff';
+import { getPermissionCheck } from '@/lib/live-permissions';
 
 import layout from '../../procurement.module.css';
 import { isReceivable, PO_STATUS_LABEL, qtyText } from '../../orders/_lib/model';
@@ -51,7 +52,7 @@ export default async function NewReceiptPage({
   if (!isGuid(po)) redirect('/procurement/receipts');
 
   const session = await requireStaffSession(`/procurement/receipts/new?po=${po}`);
-  const grants = receiptGrants(session.roles);
+  const grants = receiptGrants(await getPermissionCheck(session));
   const back = `/procurement/receipts?po=${encodeURIComponent(po)}`;
 
   let progress: PoProgress;

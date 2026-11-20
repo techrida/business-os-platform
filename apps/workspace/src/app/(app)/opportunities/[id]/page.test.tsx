@@ -1,3 +1,4 @@
+// @vitest-environment jsdom
 import type { OpportunityDto, QuotationListItem } from '@bos/contracts';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
@@ -17,7 +18,6 @@ const mocks = vi.hoisted(() => ({
   getCustomer: vi.fn(),
   listQuotations: vi.fn(),
   listOpportunityLostReasonChoices: vi.fn(),
-  moveForm: vi.fn(),
   userNames: vi.fn(),
 }));
 
@@ -25,16 +25,6 @@ vi.mock('@/lib/bff', () => ({ requireStaffSession: mocks.requireStaffSession }))
 vi.mock('@/lib/api-lead-lost-reasons', () => ({
   listOpportunityLostReasonChoices: mocks.listOpportunityLostReasonChoices,
 }));
-vi.mock('@/components/p2/crm/move-form', async (importOriginal) => {
-  const actual = await importOriginal<typeof import('@/components/p2/crm/move-form')>();
-  return {
-    ...actual,
-    MoveForm: (props: Parameters<typeof actual.MoveForm>[0]) => {
-      mocks.moveForm(props);
-      return actual.MoveForm(props);
-    },
-  };
-});
 vi.mock('@/components/p2/crm/crm-api', () => ({
   getOpportunity: mocks.getOpportunity,
   listActivities: mocks.listActivities,
@@ -63,6 +53,17 @@ const Q1 = '55555555-5555-4555-8555-555555555551';
 const Q2 = '55555555-5555-4555-8555-555555555552';
 const WHEN = '2026-11-08T05:45:00.000Z';
 
+const DEFAULT_MOVES: Record<OpportunityDto['stage'], OpportunityDto['stage'][]> = {
+  qualified: ['requirement_received', 'lost'],
+  requirement_received: ['proposal_sent', 'lost'],
+  proposal_sent: ['lost'],
+  quotation_sent: ['negotiation', 'lost'],
+  negotiation: ['on_hold', 'lost'],
+  on_hold: ['negotiation'],
+  lost: [],
+  won: [],
+};
+
 const opportunity = (
   stage: OpportunityDto['stage'] = 'qualified',
   over: Partial<OpportunityDto> = {},
@@ -84,6 +85,8 @@ const opportunity = (
   probability: null,
   expectedClose: null,
   wonQuotationVersionId: null,
+  allowedMoves: DEFAULT_MOVES[stage],
+  canEdit: true,
   version: 1,
   createdAt: WHEN,
   updatedAt: WHEN,
@@ -106,11 +109,22 @@ async function render(): Promise<string> {
   return renderToStaticMarkup(await OpportunityPage({ params: Promise.resolve({ id: OPP }) }));
 }
 
+function parse(html: string): Document {
+  return new DOMParser().parseFromString(html, 'text/html');
+}
+
 /** Every link-button in the page header, as [label, href]. */
 function headerLinks(html: string): [string, string][] {
   return [...html.matchAll(/<a[^>]*href="([^"]+)"[^>]*>([^<]+)<\/a>/g)]
     .map((m) => [m[2] ?? '', (m[1] ?? '').replaceAll('&amp;', '&')] as [string, string])
     .filter(([label]) => /quotation|draft/i.test(label));
+}
+
+/** Stage action buttons in the page header, by label. */
+function headerStageButtons(doc: Document): string[] {
+  const header = doc.querySelector('h1')?.parentElement?.parentElement?.parentElement;
+  if (!header) throw new Error('PageHeader container not found');
+  return [...header.querySelectorAll('button')].map((b) => b.textContent?.trim() ?? '');
 }
 
 beforeEach(() => {
@@ -121,7 +135,6 @@ beforeEach(() => {
   mocks.getCustomer.mockReset().mockResolvedValue(null);
   mocks.listQuotations.mockReset().mockResolvedValue([]);
   mocks.listOpportunityLostReasonChoices.mockReset().mockResolvedValue([]);
-  mocks.moveForm.mockReset();
   mocks.userNames.mockReset().mockResolvedValue(new Map());
 });
 
@@ -264,32 +277,229 @@ describe('opportunity follow-ups (migrated open tasks on the deal)', () => {
   });
 });
 
-describe('opportunity Mark lost and lost reason display (D54-3)', () => {
+describe('opportunity stage action buttons, timeline and read-only hygiene', () => {
   const LOST_REASON = '88888888-8888-4888-8888-888888888888';
 
+  it('renders no Move to dropdown or stage select anywhere on the page', async () => {
+    const doc = parse(await render());
+    expect(doc.body.textContent).not.toContain('Move to');
+    expect(doc.querySelector('select[name="stage"]')).toBeNull();
+    expect(doc.querySelector('input[name="stage"]')).toBeNull();
+  });
+
   it.each([
-    ['qualified', true],
-    ['requirement_received', true],
-    ['proposal_sent', true],
-    ['quotation_sent', true],
-    ['negotiation', true],
-    ['on_hold', false],
-    ['lost', false],
-    ['won', false],
-  ] as const)(
-    'shows Mark lost and reads choices only when the %s stage allows moving to lost',
-    async (stage, allowed) => {
-      mocks.getOpportunity.mockResolvedValue(opportunity(stage));
+    [
+      'qualified',
+      ['requirement_received', 'lost'] as OpportunityDto['stage'][],
+      ['Requirement received', 'Mark lost'],
+      'Sending and accepting quotations update the stage automatically.',
+    ],
+    [
+      'requirement_received',
+      ['proposal_sent', 'lost'] as OpportunityDto['stage'][],
+      ['Proposal sent', 'Mark lost'],
+      'Sending and accepting quotations update the stage automatically.',
+    ],
+    [
+      'proposal_sent',
+      ['lost'] as OpportunityDto['stage'][],
+      ['Mark lost'],
+      'Sending and accepting quotations update the stage automatically.',
+    ],
+    [
+      'quotation_sent',
+      ['negotiation', 'lost'] as OpportunityDto['stage'][],
+      ['Move to negotiation', 'Mark lost'],
+      'Sending and accepting quotations update the stage automatically.',
+    ],
+    [
+      'negotiation',
+      ['on_hold', 'lost'] as OpportunityDto['stage'][],
+      ['Put on hold', 'Mark lost'],
+      'Sending and accepting quotations update the stage automatically.',
+    ],
+    [
+      'on_hold',
+      ['negotiation'] as OpportunityDto['stage'][],
+      ['Resume'],
+      'This opportunity is on hold. Use Resume in the header to return it to Negotiation.',
+    ],
+    ['lost', [] as OpportunityDto['stage'][], [], 'Only a manager can reopen a lost opportunity.'],
+    [
+      'lost',
+      ['qualified'] as OpportunityDto['stage'][],
+      ['Reopen'],
+      'This opportunity is lost. Use Reopen in the header to return it to Qualified.',
+    ],
+    ['won', [] as OpportunityDto['stage'][], [], 'This opportunity is won. Its stage is final.'],
+  ])(
+    'renders header stage buttons and Stage card guidance for %s with allowedMoves %j',
+    async (stage, allowedMoves, expectedButtons, expectedText) => {
+      mocks.getOpportunity.mockResolvedValue(
+        opportunity(stage as OpportunityDto['stage'], { allowedMoves }),
+      );
       const html = await render();
-      if (allowed) {
-        expect(html).toContain('>Mark lost</button>');
+      const doc = parse(html);
+      expect(headerStageButtons(doc)).toEqual(expectedButtons);
+      expect(doc.querySelector('[aria-label="Stage"]')?.textContent).toContain(expectedText);
+
+      if (allowedMoves.includes('lost')) {
         expect(mocks.listOpportunityLostReasonChoices).toHaveBeenCalledOnce();
       } else {
-        expect(html).not.toContain('>Mark lost</button>');
         expect(mocks.listOpportunityLostReasonChoices).not.toHaveBeenCalled();
       }
     },
   );
+
+  it('demotes the quotation CTA to secondary when a primary stage button is present, and keeps it primary otherwise', async () => {
+    mocks.getOpportunity.mockResolvedValue(
+      opportunity('qualified', { allowedMoves: ['requirement_received', 'lost'] }),
+    );
+    const qualifiedDoc = parse(await render());
+    const qualifiedHeader =
+      qualifiedDoc.querySelector('h1')?.parentElement?.parentElement?.parentElement;
+    const newQuoteWhenPrimaryStage = [...(qualifiedHeader?.querySelectorAll('a') ?? [])].find(
+      (a) => a.textContent?.trim() === 'New quotation',
+    );
+    const reqButton = [...(qualifiedHeader?.querySelectorAll('button') ?? [])].find(
+      (b) => b.textContent?.trim() === 'Requirement received',
+    );
+    expect(newQuoteWhenPrimaryStage?.className).toContain('secondary');
+    expect(reqButton?.className).toContain('primary');
+
+    mocks.getOpportunity.mockResolvedValue(
+      opportunity('proposal_sent', { allowedMoves: ['lost'] }),
+    );
+    const proposalDoc = parse(await render());
+    const proposalHeader =
+      proposalDoc.querySelector('h1')?.parentElement?.parentElement?.parentElement;
+    const newQuoteWhenNoPrimaryStage = [...(proposalHeader?.querySelectorAll('a') ?? [])].find(
+      (a) => a.textContent?.trim() === 'New quotation',
+    );
+    expect(newQuoteWhenNoPrimaryStage?.className).toContain('primary');
+  });
+
+  it('renders timeline done, current, upcoming, warning (on_hold) and error (lost) tones', async () => {
+    // Linear stage: quotation_sent
+    mocks.getOpportunity.mockResolvedValue(opportunity('quotation_sent'));
+    const linearDoc = parse(await render());
+    const linearSteps = [...linearDoc.querySelectorAll('[aria-label="Opportunity stages"] > li')];
+    expect(linearSteps.map((li) => li.className)).toEqual([
+      expect.stringContaining('done'),
+      expect.stringContaining('done'),
+      expect.stringContaining('done'),
+      expect.stringContaining('current'),
+      expect.stringContaining('upcoming'),
+      expect.stringContaining('upcoming'),
+    ]);
+    expect(linearSteps[0]?.textContent).toContain('Reached');
+    expect(linearSteps[3]?.textContent).toContain('Current');
+    expect(linearSteps[4]?.textContent).toContain('Not yet');
+
+    // Won: all linear steps done, final status Won
+    mocks.getOpportunity.mockResolvedValue(opportunity('won'));
+    const wonDoc = parse(await render());
+    const wonSteps = [...wonDoc.querySelectorAll('[aria-label="Opportunity stages"] > li')];
+    expect(wonSteps.every((li) => li.className.includes('done'))).toBe(true);
+    expect(wonSteps[5]?.textContent).toContain('Won');
+
+    // On hold: qualified..negotiation done, won upcoming, On Hold warning
+    mocks.getOpportunity.mockResolvedValue(
+      opportunity('on_hold', { stageReason: 'Budget pause', stageNote: 'Resume next month.' }),
+    );
+    const holdDoc = parse(await render());
+    const holdSteps = [...holdDoc.querySelectorAll('[aria-label="Opportunity stages"] > li')];
+    expect(holdSteps.map((li) => li.className)).toEqual([
+      expect.stringContaining('done'),
+      expect.stringContaining('done'),
+      expect.stringContaining('done'),
+      expect.stringContaining('done'),
+      expect.stringContaining('done'),
+      expect.stringContaining('upcoming'),
+      expect.stringContaining('warning'),
+    ]);
+    expect(holdSteps[6]?.textContent).toContain('On Hold');
+    expect(holdSteps[6]?.textContent).toContain('Current');
+
+    // Lost with a quotation: qualified and quotation_sent done, Lost error
+    mocks.getOpportunity.mockResolvedValue(opportunity('lost', { stageReason: 'Price' }));
+    mocks.listQuotations.mockResolvedValue([quote(Q1, { status: 'sent', canEdit: false })]);
+    const lostDoc = parse(await render());
+    const lostSteps = [...lostDoc.querySelectorAll('[aria-label="Opportunity stages"] > li')];
+    expect(lostSteps.map((li) => li.className)).toEqual([
+      expect.stringContaining('done'),
+      expect.stringContaining('upcoming'),
+      expect.stringContaining('upcoming'),
+      expect.stringContaining('done'),
+      expect.stringContaining('upcoming'),
+      expect.stringContaining('upcoming'),
+      expect.stringContaining('error'),
+    ]);
+    expect(lostSteps[6]?.textContent).toContain('Lost');
+  });
+
+  it('enforces read-only mode when canEdit is false and allowedMoves is empty', async () => {
+    mocks.getOpportunity.mockResolvedValue(
+      opportunity('qualified', { allowedMoves: [], canEdit: false }),
+    );
+    mocks.listQuotations.mockResolvedValue([quote(Q1)]);
+    mocks.listActivities.mockImplementation((_s: unknown, opts: { status?: string }) =>
+      Promise.resolve(
+        opts.status === 'planned'
+          ? [
+              {
+                id: '66666666-6666-4666-8666-666666666667',
+                kind: 'call',
+                subject: 'Follow up on quote',
+                body: null,
+                leadId: null,
+                opportunityId: OPP,
+                customerId: null,
+                contactId: null,
+                quotationId: null,
+                dueAt: '2099-01-02T04:00:00.000Z',
+                assigneeUserId: null,
+                assigneeName: null,
+                completedAt: null,
+                cancelledAt: null,
+                planned: true,
+                createdByUserId: null,
+                createdByName: null,
+                occurredAt: WHEN,
+                version: 1,
+              },
+            ]
+          : [],
+      ),
+    );
+
+    const html = await render();
+    const doc = parse(html);
+    expect(headerStageButtons(doc)).toEqual([]);
+    // Quotations follow quotation.draft, which the sales role holds without opportunity write access.
+    expect(headerLinks(html).map(([label]) => label)).toContain('View quotations');
+    expect(headerLinks(html).map(([label]) => label)).toContain('Edit quotation');
+    expect(doc.querySelector('[aria-label="Stage"]')?.textContent).toContain(
+      'You have read-only access to this opportunity.',
+    );
+    expect(html).not.toContain('Add activity');
+    expect(html).not.toContain('aria-label="Complete Follow up on quote"');
+    expect(html).not.toContain('aria-label="Reschedule Follow up on quote"');
+    expect(html).not.toContain('aria-label="Cancel Follow up on quote"');
+  });
+
+  it('fails closed when canEdit and allowedMoves are omitted for a read-only role', async () => {
+    mocks.requireStaffSession.mockResolvedValue({ accessToken: 'tok', roles: ['management'] });
+    mocks.getOpportunity.mockResolvedValue(
+      opportunity('qualified', { allowedMoves: undefined, canEdit: undefined }),
+    );
+    const html = await render();
+    const doc = parse(html);
+    expect(headerStageButtons(doc)).toEqual([]);
+    expect(doc.querySelector('[aria-label="Stage"]')?.textContent).toContain(
+      'You have read-only access to this opportunity.',
+    );
+  });
 
   it('still shows Mark lost when the lost-reasons list fails to load', async () => {
     mocks.listOpportunityLostReasonChoices.mockRejectedValue(new Error('down'));
@@ -329,22 +539,5 @@ describe('opportunity Mark lost and lost reason display (D54-3)', () => {
     const html = await render();
     expect(html).toContain('<strong>Budget freeze</strong>');
     expect(html).not.toContain('no longer offered');
-  });
-
-  it('does not promise a reopen on a lost opportunity, which the API refuses for every caller', async () => {
-    mocks.getOpportunity.mockResolvedValue(opportunity('lost', { stageReason: 'Timing' }));
-    const html = await render();
-    expect(html).toContain('No further moves from here.');
-    expect(html).not.toContain('reopen');
-  });
-
-  it('excludes lost from MoveForm so Lost is only reached through the Mark lost dialog', async () => {
-    mocks.getOpportunity.mockResolvedValue(opportunity('qualified'));
-    await render();
-    const call = mocks.moveForm.mock.calls.at(-1)?.[0] as
-      { moves: { stage: string }[]; exclude?: readonly string[] } | undefined;
-    expect(call?.exclude).toContain('lost');
-    const offered = (call?.moves ?? []).filter((m) => !(call?.exclude ?? []).includes(m.stage));
-    expect(offered.map((m) => m.stage)).not.toContain('lost');
   });
 });

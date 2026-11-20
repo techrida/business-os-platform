@@ -18,7 +18,17 @@ const STATE: Record<Exclude<InvoiceStatus, 'discarded'>, string> = {
 
 export function InvoiceProgress({ invoice }: { invoice: Pick<InvoiceDto, 'kind' | 'status'> }) {
   const { kind, status } = invoice;
-  if (status === 'discarded') return null;
+  if (status === 'discarded') {
+    return (
+      <StatusTimeline
+        label="Invoice progress"
+        steps={[
+          { key: 'draft', title: 'Draft', status: 'Prepared', tone: 'done' },
+          { key: 'discarded', title: 'Discarded', status: 'Discarded', tone: 'error' },
+        ]}
+      />
+    );
+  }
   const stages =
     kind === 'proforma' ? STAGES.filter(({ key }) => key === 'draft' || key === 'issued') : STAGES;
   const current = stages.findIndex(
