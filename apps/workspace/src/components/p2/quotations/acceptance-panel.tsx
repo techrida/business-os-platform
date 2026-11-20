@@ -10,9 +10,10 @@ import { Icon } from '@/components/ui/icon';
 import { FactList, Panel, type Fact } from '@/components/ui/panel';
 import { when } from '@/lib/kernel-format';
 
-import { ConfirmAcceptanceDialog } from './confirm-acceptance-dialog';
+import { ConfirmEvidenceDialog } from './confirm-evidence-dialog';
 import styles from './detail.module.css';
-import type { AcceptanceConfirmation } from './lifecycle-contract';
+import { EVIDENCE_LABELS } from './eligibility';
+import { policyKinds, type QuotationEvidence } from './lifecycle-contract';
 
 /**
  * What follows a customer's acceptance, on the accepted revision: the staff check of the customer's
@@ -24,9 +25,8 @@ export function AcceptancePanel({
   quotationId,
   number,
   version,
-  confirmation,
+  evidence,
   confirmedByName,
-  mayConfirm,
   order,
   mayReadOrders,
   reloadHref,
@@ -36,10 +36,10 @@ export function AcceptancePanel({
   number: string;
   /** The accepted current revision. */
   version: QuotationVersionDto;
-  /** Undefined when the platform sent no confirmation state for this revision. */
-  confirmation: AcceptanceConfirmation | null | undefined;
+  /** Where the acceptance evidence stands; null when the platform has none to show. */
+  evidence: QuotationEvidence | null | undefined;
+  /** The name of whoever confirmed it, when the quotation names them. */
   confirmedByName?: string | undefined;
-  mayConfirm: boolean;
   /** The revision's sales order that is not cancelled, if any. */
   order: SalesOrderListItem | undefined;
   mayReadOrders: boolean;
@@ -47,9 +47,15 @@ export function AcceptancePanel({
   dateFormat?: CustomerDateFormat | undefined;
 }) {
   const facts: Fact[] = [];
-  const awaiting = confirmation != null && confirmation.status === 'awaiting';
+  const awaiting = evidence?.status === 'pending';
+  const wanted = evidence ? policyKinds(evidence.policy) : [];
+  const policyText =
+    wanted.length > 0
+      ? wanted.map((k) => `a ${EVIDENCE_LABELS[k].toLowerCase()}`).join(' and ')
+      : undefined;
+  const confirmation = evidence?.confirmation ?? null;
 
-  if (confirmation != null) {
+  if (evidence) {
     facts.push({
       key: 'evidence',
       label: 'Customer evidence',
@@ -60,7 +66,9 @@ export function AcceptancePanel({
             Awaiting confirmation
           </Badge>
           <span className={styles.recordNote}>
-            A staff member checks the signed copy or purchase order.
+            {policyText
+              ? `Accepted in the portal. A staff member confirms ${policyText} before the sales order.`
+              : 'Accepted in the portal. A staff member confirms the evidence before the sales order.'}
           </span>
         </span>
       ) : (
@@ -69,18 +77,17 @@ export function AcceptancePanel({
             <Icon name="check-circle" size={12} />
             Confirmed
           </Badge>
-          {confirmedByName || confirmation.confirmedAt ? (
-            <span className={styles.recordNote}>
-              {[
-                confirmedByName ? `by ${confirmedByName}` : null,
-                confirmation.confirmedAt
-                  ? `on ${when(confirmation.confirmedAt, 'date', dateFormat)}`
-                  : null,
-              ]
-                .filter(Boolean)
-                .join(' ')}
-            </span>
-          ) : null}
+          <span className={styles.recordNote}>
+            {confirmation
+              ? [
+                  confirmation.evidenceKinds.map((k) => EVIDENCE_LABELS[k]).join(', '),
+                  confirmedByName ? `by ${confirmedByName}` : null,
+                  `on ${when(confirmation.confirmedAt, 'date', dateFormat)}`,
+                ]
+                  .filter(Boolean)
+                  .join(' ')
+              : 'Checked when the acceptance was recorded.'}
+          </span>
         </span>
       ),
       wide: true,
@@ -117,13 +124,14 @@ export function AcceptancePanel({
       title="After acceptance"
       className={styles.detailPanel}
       actions={
-        awaiting && mayConfirm ? (
-          <ConfirmAcceptanceDialog
+        awaiting && evidence.can.confirm ? (
+          <ConfirmEvidenceDialog
             quotationId={quotationId}
             versionId={version.id}
-            version={version.version}
             number={number}
             revisionNo={version.revisionNo}
+            policyText={policyText}
+            initialKinds={evidence.acceptance.evidenceKinds}
             idempotencyKey={randomUUID()}
             reloadHref={reloadHref}
           />

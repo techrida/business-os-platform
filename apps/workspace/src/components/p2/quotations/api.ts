@@ -13,7 +13,13 @@ import { z } from 'zod';
 import { ApiError, apiFetch } from '@/lib/api';
 import type { Session } from '@/lib/session';
 
-import { readLifecycle, type QuotationDetailWithLifecycle } from './lifecycle-contract';
+import {
+  lifecyclePaths,
+  QuotationEvidenceSchema,
+  readLifecycle,
+  type QuotationDetailWithLifecycle,
+  type QuotationEvidence,
+} from './lifecycle-contract';
 
 /**
  * Typed reads of the quotation endpoints, for the screens in this folder. Server-only: every call
@@ -188,4 +194,25 @@ export async function getQuotation(
 ): Promise<QuotationDetailWithLifecycle> {
   const { data, body } = await read(session, `/v1/quotations/${seg(id)}`, QuotationDetailSchema);
   return { ...data, lifecycle: readLifecycle(body) };
+}
+
+/**
+ * Where the evidence of an accepted version stands (F1-Q28), or null when the platform has none to show:
+ * no acceptance, out of scope (404), or an API without the evidence step yet. Any other failure is null too,
+ * so a failed read leaves out the evidence row instead of breaking the quotation page.
+ */
+export async function getEvidence(
+  session: Session,
+  quotationId: string,
+  versionId: string,
+): Promise<QuotationEvidence | null> {
+  try {
+    return await get(
+      session,
+      lifecyclePaths.evidence(quotationId, versionId),
+      QuotationEvidenceSchema,
+    );
+  } catch {
+    return null;
+  }
 }

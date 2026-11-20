@@ -6,7 +6,7 @@ import { notFound } from 'next/navigation';
 
 import { stageLabel } from '@/components/p2/crm/stages';
 import { getOpportunity, listPaymentTerms } from '@/components/p2/quote-builder/api';
-import { getQuotation } from '@/components/p2/quotations/api';
+import { getEvidence, getQuotation } from '@/components/p2/quotations/api';
 import { AcceptancePanel } from '@/components/p2/quotations/acceptance-panel';
 import { QuotationContents } from '@/components/p2/quotations/contents';
 import styles from '@/components/p2/quotations/detail.module.css';
@@ -201,10 +201,13 @@ export default async function QuotationDetailPage({
   const { quotation, versions, customerName, contacts } = detail;
   const current = versions.find((v) => v.id === quotation.currentVersionId) ?? null;
   const allowed = await getPermissionCheck(session);
-  const orders =
-    current?.status === 'accepted' && allowed('sales_order.read')
-      ? await listSalesOrders(session, { quotationVersionId: current.id }).catch(() => [])
-      : [];
+  const accepted = current?.status === 'accepted' ? current : null;
+  const [orders, evidence] = await Promise.all([
+    accepted && allowed('sales_order.read')
+      ? listSalesOrders(session, { quotationVersionId: accepted.id }).catch(() => [])
+      : [],
+    accepted ? getEvidence(session, quotation.id, accepted.id) : null,
+  ]);
   const order = orders.find((item) => item.status !== 'cancelled');
   const mayRetryPdf = allowed('quotation.send');
   const maySend = detail.capabilities.canSend ?? allowed('quotation.send');
@@ -441,12 +444,8 @@ export default async function QuotationDetailPage({
               quotationId={quotation.id}
               number={quotation.number}
               version={current}
-              confirmation={lifecycle.confirmations[current.id]}
-              confirmedByName={
-                people.get(lifecycle.confirmations[current.id]?.confirmedByUserId ?? '') ??
-                undefined
-              }
-              mayConfirm={lifecycle.canConfirmAcceptance ?? allowed('quotation.record_acceptance')}
+              evidence={evidence}
+              confirmedByName={people.get(evidence?.confirmation?.confirmedBy ?? '') ?? undefined}
               order={order}
               mayReadOrders={allowed('sales_order.read')}
               reloadHref={path}

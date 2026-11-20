@@ -402,7 +402,7 @@ describe('Cancel quotation (F1-Q27: Cancel only)', () => {
         capabilities={capabilities}
         reloadHref={`/quotations/${Q}`}
         today={TODAY}
-        lifecycle={{ confirmations: {}, ...lifecycle }}
+        lifecycle={{ ...lifecycle }}
       />,
     );
   }

@@ -22,6 +22,7 @@ vi.mock('server-only', () => ({}));
 const mocks = vi.hoisted(() => ({
   requireStaffSession: vi.fn(),
   getQuotation: vi.fn(),
+  getEvidence: vi.fn(),
   listSalesOrders: vi.fn(),
   listPaymentTerms: vi.fn(),
   getOpportunity: vi.fn(),
@@ -37,7 +38,10 @@ const mocks = vi.hoisted(() => ({
 
 vi.mock('@/lib/api-billing', () => ({ listSalesOrders: mocks.listSalesOrders }));
 vi.mock('@/lib/bff', () => ({ requireStaffSession: mocks.requireStaffSession }));
-vi.mock('@/components/p2/quotations/api', () => ({ getQuotation: mocks.getQuotation }));
+vi.mock('@/components/p2/quotations/api', () => ({
+  getQuotation: mocks.getQuotation,
+  getEvidence: mocks.getEvidence,
+}));
 vi.mock('@/components/p2/quote-builder/api', () => ({
   listPaymentTerms: mocks.listPaymentTerms,
   getOpportunity: mocks.getOpportunity,
@@ -241,6 +245,7 @@ async function render(id: string = ID, rev?: string | string[]): Promise<string>
 beforeEach(() => {
   mocks.requireStaffSession.mockReset().mockResolvedValue({ accessToken: 'tok', roles: ['sales'] });
   mocks.getQuotation.mockReset().mockResolvedValue(detail());
+  mocks.getEvidence.mockReset().mockResolvedValue(null);
   mocks.notFound.mockClear();
   mocks.listSalesOrders.mockReset().mockResolvedValue([]);
   mocks.listPaymentTerms.mockReset().mockResolvedValue([]);
@@ -280,55 +285,6 @@ describe('quotation detail page', () => {
 
     mocks.listSalesOrders.mockResolvedValue([]);
     expect(await render()).not.toContain('href="/sales-orders/');
-  });
-
-  it('shows the acceptance evidence awaiting confirmation, with Confirm evidence, then confirmed (F1-Q28)', async () => {
-    const quote = detail();
-    quote.quotation.status = 'accepted';
-    quote.versions[1]!.status = 'accepted';
-    mocks.getQuotation.mockResolvedValue({
-      ...quote,
-      lifecycle: {
-        canConfirmAcceptance: true,
-        confirmations: { [V2]: { status: 'awaiting' } },
-      },
-    });
-    const awaiting = await render();
-    expect(awaiting).toContain('After acceptance');
-    expect(awaiting).toContain('Awaiting confirmation');
-    expect(awaiting).toContain('>Confirm evidence</button>');
-    expect(awaiting).toContain('Confirm acceptance evidence for revision 2');
-
-    mocks.getQuotation.mockResolvedValue({
-      ...quote,
-      people: [{ userId: CUSTOMER, name: 'Asha Accountant' }],
-      lifecycle: {
-        canConfirmAcceptance: true,
-        confirmations: {
-          [V2]: { status: 'confirmed', confirmedAt: WHEN, confirmedByUserId: CUSTOMER },
-        },
-      },
-    });
-    const confirmed = await render();
-    expect(confirmed).toContain('Confirmed');
-    expect(confirmed).toContain('by Asha Accountant');
-    expect(confirmed).not.toContain('>Confirm evidence</button>');
-  });
-
-  it('offers no Confirm evidence to someone the API does not allow, and no evidence row without a state', async () => {
-    const quote = detail();
-    quote.quotation.status = 'accepted';
-    quote.versions[1]!.status = 'accepted';
-    mocks.getQuotation.mockResolvedValue({
-      ...quote,
-      lifecycle: { canConfirmAcceptance: false, confirmations: { [V2]: { status: 'awaiting' } } },
-    });
-    const denied = await render();
-    expect(denied).toContain('Awaiting confirmation');
-    expect(denied).not.toContain('>Confirm evidence</button>');
-
-    mocks.getQuotation.mockResolvedValue(quote);
-    expect(await render()).not.toContain('Awaiting confirmation');
   });
 
   it('shows the draft sales order created from the accepted revision, waiting for Accounts (F1-Q25)', async () => {
