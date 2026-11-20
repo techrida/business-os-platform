@@ -759,6 +759,24 @@ describe('issue guards', () => {
     expect(resubmitted.approvalRequestId).not.toBe(decided);
   });
 
+  it('a reopened invoice can be discarded, freeing the way to a new draft', async () => {
+    const id = await draftManual();
+    await approveFully(id);
+    as(U.fin, 'finance');
+    const reopened = await submitting.reopen(
+      id,
+      { expectedVersion: (await invoiceRow(id)).version, reason: 'Due date passed' },
+      key(),
+    );
+    as(U.acc, 'accountant');
+    const discarded = await drafting.discard(
+      id,
+      { expectedVersion: reopened.invoice.version, reason: 'Redrafting with a new due date' },
+      key(),
+    );
+    expect(discarded.invoice.status).toBe('discarded');
+  });
+
   it('reopen refuses a draft or submitted invoice (409) and leaves it, and a caller without invoice.issue (403)', async () => {
     const id = await draftManual();
     as(U.fin, 'finance');
