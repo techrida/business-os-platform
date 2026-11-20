@@ -222,7 +222,7 @@ beforeAll(async () => {
     name: 'Emergency purchase review',
     spec: EMERGENCY_REVIEW_WORKFLOW_SPEC,
   });
-  await admin.publish(EMERGENCY_REVIEW_DOCUMENT_TYPE, 1);
+  await adminPublisher.publish(EMERGENCY_REVIEW_DOCUMENT_TYPE, 1, SKIP_LIVE_PUBLISHER_CHECK);
 
   approvals = new ApprovalsService(db, audit, notify, directory, caller, () => now);
   approvals.registerSubject(new PoAmendmentSubject(audit, approvals, () => now));
