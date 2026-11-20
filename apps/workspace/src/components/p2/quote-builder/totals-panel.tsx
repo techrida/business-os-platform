@@ -124,6 +124,14 @@ export function TotalsPanel({
           }
         >
           {message ?? 'The totals could not be worked out. Try again in a moment.'}
+          {/* Try again is a server action, and Next runs those one at a time: behind a request that
+              hangs it waits too. A full reload is the way out, so the error offers one. */}
+          {reloadHref ? (
+            <>
+              {' '}
+              If that does not help, <a href={reloadHref}>reload the page</a>.
+            </>
+          ) : null}
         </Alert>
       ) : state === 'starting' ? (
         <p className={styles.muted}>
