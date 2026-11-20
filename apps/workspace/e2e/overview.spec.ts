@@ -14,11 +14,16 @@ test('overview shows an assigned approval to the approver and excludes it for th
     await createDraftMemo(sales.page, {
       title: subject,
       recommenders: [],
-      approver: 'Dev Accountant',
+      approver: 'Dev Founder',
     });
     const approvalId = await submitMemo(sales.page);
     await sales.page.goto('/');
-    await expect(sales.page.getByRole('heading', { name: 'Welcome back' })).toBeVisible();
+    // The greeting uses the display name from /v1/me (`Good morning, Dev`); `Welcome back` when no name is known.
+    await expect(
+      sales.page.getByRole('heading', {
+        name: /^(Welcome back|Good (morning|afternoon|evening)(, .+)?)$/,
+      }),
+    ).toBeVisible();
     await expect(
       sales.page
         .getByRole('table', { name: 'Pending approvals' })
@@ -26,9 +31,10 @@ test('overview shows an assigned approval to the approver and excludes it for th
     ).toHaveCount(0);
     await expect(sales.page.getByText('Unread notifications', { exact: true })).toBeVisible();
 
-    const accountant = await signInAs(browser, app, 'accountant');
+    // "Approved by" lists only the people the Memo approver rule allows; for a Sales author that is the Founder.
+    const founder = await signInAs(browser, app, 'founder');
     try {
-      const page = accountant.page;
+      const page = founder.page;
       const row = page
         .getByRole('table', { name: 'Pending approvals' })
         .getByRole('link', { name: subject });
@@ -38,7 +44,7 @@ test('overview shows an assigned approval to the approver and excludes it for th
       await expect(page).toHaveURL(new RegExp(`/inbox/${approvalId}$`));
       await expect(page.getByRole('heading', { level: 1, name: subject })).toBeVisible();
     } finally {
-      await accountant.context.close();
+      await founder.context.close();
     }
   } finally {
     await sales.context.close();

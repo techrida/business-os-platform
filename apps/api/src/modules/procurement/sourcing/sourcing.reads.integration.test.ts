@@ -34,6 +34,7 @@ import { systemActor, withTx, type TxScope } from '../../../platform/db/tx';
 import { MoneyService } from '../../../platform/settings/money.service';
 import { NumberingService } from '../../../platform/settings/numbering.service';
 import { ApprovalsAdminService } from '../../approvals/admin.service';
+import { asSecondPerson, SKIP_LIVE_PUBLISHER_CHECK } from '../../../../test/support/second-person';
 import { ApprovalsService } from '../../approvals/requests.service';
 import { PrCommitmentSubject } from './pr-commitment.subject';
 import { PR_COMMITMENT_DOCUMENT_TYPE, PR_COMMITMENT_WORKFLOW_SPEC } from './sourcing.rules';
@@ -186,12 +187,13 @@ beforeAll(async () => {
   audit = new AuditService(db);
   as(U.founder, 'founder');
   const admin = new ApprovalsAdminService(db, audit, caller, () => now);
+  const adminPublisher = new ApprovalsAdminService(db, audit, asSecondPerson(caller), () => now);
   await admin.createWorkflow({
     key: PR_COMMITMENT_DOCUMENT_TYPE,
     name: 'Purchase commitment',
     spec: PR_COMMITMENT_WORKFLOW_SPEC,
   });
-  await admin.publish(PR_COMMITMENT_DOCUMENT_TYPE, 1);
+  await adminPublisher.publish(PR_COMMITMENT_DOCUMENT_TYPE, 1, SKIP_LIVE_PUBLISHER_CHECK);
 
   numbering = new NumberingService();
   approvals = new ApprovalsService(db, audit, notify, directory, caller, () => now);

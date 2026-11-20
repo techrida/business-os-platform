@@ -37,13 +37,14 @@ export class MeController {
   /**
    * Who the caller is, straight from the request context, and what the caller may do: the effective grants of the
    * principal, which the interceptor built from the live role and level rows, with the membership's level and
-   * department they were built for. The only database read of its own is one small lookup of the caller's picture
-   * pointer on their own users row.
+   * department they were built for. The only database read of its own is one small lookup of the caller's name and
+   * picture pointer on their own users row.
    */
   @Get()
   async me(): Promise<MeResponse> {
     const c = ctx();
     const p = principal();
+    const own = await this.ownRow(c.tenantId);
     return {
       userId: c.userId,
       tenantId: c.tenantId,
@@ -54,7 +55,9 @@ export class MeController {
       roles: [...c.roles],
       correlationId: c.correlationId,
       id: p.userId,
-      avatarDocumentId: await this.avatarOf(c.tenantId),
+      avatarDocumentId: own?.avatarDocumentId ?? null,
+      // A blank name is no name: the shell then falls back to the role label and a plain greeting.
+      displayName: own?.displayName?.trim() || null,
       permissions: effectivePermissions(p),
       // The level and department the grants above were built for; a portal caller has neither (staff, null).
       level: p.level ?? 'staff',
@@ -63,14 +66,16 @@ export class MeController {
   }
 
   /** The caller's own row only (`app.users.id` from the principal, in the context's tenant). */
-  private async avatarOf(tenantId: string): Promise<string | null> {
+  private async ownRow(
+    tenantId: string,
+  ): Promise<{ avatarDocumentId: string | null; displayName: string | null } | null> {
     const appUserId = currentPrincipal()?.userId;
     if (!appUserId) return null;
     const [row] = await this.db
-      .select({ avatarDocumentId: users.avatarDocumentId })
+      .select({ avatarDocumentId: users.avatarDocumentId, displayName: users.displayName })
       .from(users)
       .where(and(eq(users.tenantId, tenantId), eq(users.id, appUserId)))
       .limit(1);
-    return row?.avatarDocumentId ?? null;
+    return row ?? null;
   }
 }

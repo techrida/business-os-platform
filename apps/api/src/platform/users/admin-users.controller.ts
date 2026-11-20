@@ -1,7 +1,12 @@
 // Admin routes for users: list, invite, set roles.
 // Serves the NFR "role assignment has one source of truth": every change goes to ZITADEL first, then
 // the mirror, then the authz cache is invalidated, so the token, the mirror and the cache agree.
-import { ADMIN_USERS_MAX_PAGE, AdminUsersQuerySchema, RoleKeySchema } from '@bos/contracts';
+import {
+  ADMIN_USERS_MAX_PAGE,
+  AccessLevelSchema,
+  AdminUsersQuerySchema,
+  RoleKeySchema,
+} from '@bos/contracts';
 import {
   BadRequestException,
   Body,
@@ -29,6 +34,7 @@ import { RoleCache } from '../authz/role-cache';
 import { DB, type Db } from '../db/db.module';
 import { requestTx, withTx } from '../db/tx';
 import { type HeaderTarget, setTotalCount } from '../list';
+import { type UserStatusAction, UserStatusService } from './user-status';
 import { UsersService } from './users.service';
 import { UsersStore } from './users.store';
 import { ZitadelNotConfiguredError } from './zitadel-admin.client';
@@ -42,12 +48,24 @@ function canSendPasswordReset(): boolean {
   return caller.orgKind === 'staff' && caller.grants.get(RESET_PERMISSION) === 'all';
 }
 
+// F1-Q5: deactivating and reactivating people is account administration too, so it takes the same Founder-only
+// grant at company scope as password resets: no new permission, so no deployment gains it implicitly.
+const STATUS_PERMISSION = 'admin.roles.write';
+
+function canChangeStatus(): boolean {
+  const caller = principal();
+  return caller.orgKind === 'staff' && caller.grants.get(STATUS_PERMISSION) === 'all';
+}
+
 const Roles = z.array(RoleKeySchema).max(20);
 const InviteBody = z.object({
   email: z.email().max(320),
   givenName: z.string().trim().min(1).max(200),
   familyName: z.string().trim().min(1).max(200),
   roles: Roles,
+  /** F1-Q50: optional, both. Without them the person lands in no department at level staff, as before. */
+  departmentId: z.guid().optional(),
+  level: AccessLevelSchema.optional(),
 });
 const RolesBody = z.object({ roles: Roles });
 
@@ -88,6 +106,7 @@ export class AdminUsersController {
     private readonly authz: AuthzService,
     store: UsersStore,
     roleCache: RoleCache,
+    private readonly status: UserStatusService,
   ) {
     this.liveGrants = {
       users: store,
@@ -118,7 +137,59 @@ export class AdminUsersController {
   @Can('admin.users.read')
   async summary() {
     const { scope } = requestTx();
-    return { ...(await this.users.summary(scope)), canSendPasswordReset: canSendPasswordReset() };
+    return {
+      ...(await this.users.summary(scope)),
+      canSendPasswordReset: canSendPasswordReset(),
+      canChangeStatus: canChangeStatus(),
+    };
+  }
+
+  /**
+   * POST /v1/admin/users/:id/deactivate, /reactivate, /lock and /unlock (F1-Q5, F1-Q4). 204 on success; 409 for the
+   * caller's own account, the last Founder of an entity, a status or lock the action does not fit, or a change ZITADEL
+   * refused; 404 for anyone who is not a staff user of the tenant.
+   */
+  @Post(':id/deactivate')
+  @HttpCode(204)
+  @Can(STATUS_PERMISSION)
+  deactivate(@Param('id', ParseUUIDPipe) id: string): Promise<void> {
+    return this.runStatusAction(id, 'deactivate');
+  }
+
+  @Post(':id/reactivate')
+  @HttpCode(204)
+  @Can(STATUS_PERMISSION)
+  reactivate(@Param('id', ParseUUIDPipe) id: string): Promise<void> {
+    return this.runStatusAction(id, 'reactivate');
+  }
+
+  @Post(':id/lock')
+  @HttpCode(204)
+  @Can(STATUS_PERMISSION)
+  lock(@Param('id', ParseUUIDPipe) id: string): Promise<void> {
+    return this.runStatusAction(id, 'lock');
+  }
+
+  @Post(':id/unlock')
+  @HttpCode(204)
+  @Can(STATUS_PERMISSION)
+  unlock(@Param('id', ParseUUIDPipe) id: string): Promise<void> {
+    return this.runStatusAction(id, 'unlock');
+  }
+
+  private async runStatusAction(id: string, action: UserStatusAction): Promise<void> {
+    if (!canChangeStatus()) throw new ForbiddenException('Forbidden');
+    const { scope, actor } = requestTx();
+    await zitadelCall(() =>
+      withTx(this.db, scope, actor, async (tx) => {
+        // As for role writes: the lock first, then the caller's CURRENT grant, so a Founder demoted a moment ago
+        // cannot still shut people out on an old token, and two last-Founder checks cannot interleave.
+        await lockAccessRevision(tx, scope.tenantId);
+        await assertLiveGrant(tx, this.liveGrants, scope, actor, STATUS_PERMISSION);
+        await this.status.apply(tx, actor, id, action);
+      }),
+    );
+    await this.authz.invalidate(scope.tenantId, scope.organizationId);
   }
 
   @Post(':id/password-reset')
@@ -133,23 +204,34 @@ export class AdminUsersController {
   @Post('invite')
   @Can('admin.users.invite')
   async invite(@Body() body: unknown): Promise<{ userId: string }> {
-    const b = parse(InviteBody, body, 'invite');
+    const { departmentId, level, ...invite } = parse(InviteBody, body, 'invite');
+    const placement =
+      departmentId !== undefined || (level !== undefined && level !== 'staff')
+        ? { departmentId: departmentId ?? null, level: level ?? 'staff' }
+        : null;
     // An invite grants roles, so it is a role assignment too: `admin.users.invite` alone must not be
     // a way to hand out `founder`. There is no default low role in the invite flow, so any role needs it.
-    if (b.roles.length > 0) this.authz.assert('admin.roles.write');
+    // A department or level shapes access the same way (D50), so it needs the same grant as a Departments save.
+    const assignsAccess = invite.roles.length > 0 || placement !== null;
+    if (assignsAccess) this.authz.assert('admin.roles.write');
     const { scope, actor } = requestTx();
     const result = await zitadelCall(() =>
       withTx(this.db, scope, actor, async (tx) => {
-        if (b.roles.length > 0) {
+        if (assignsAccess) {
           // The access-revision lock first, as an access save takes it: a Founder removed by a concurrent
           // write cannot finish this one on a check made before it.
           await lockAccessRevision(tx, scope.tenantId);
           await assertLiveGrant(tx, this.liveGrants, scope, actor, 'admin.roles.write');
         }
-        return this.users.invite(tx, b);
+        // Checked before ZITADEL is written, under the access-revision lock every department write takes, so a
+        // department retired or given a head meanwhile cannot leave a ZITADEL invite with roles behind.
+        if (placement !== null) await this.users.assertPlacement(tx, placement);
+        const invited = await this.users.invite(tx, invite);
+        if (placement !== null) await this.users.placeInvitee(tx, invited, placement);
+        return { userId: invited.userId };
       }),
     );
-    if (b.roles.length > 0) await this.authz.invalidate(scope.tenantId, scope.organizationId);
+    if (assignsAccess) await this.authz.invalidate(scope.tenantId, scope.organizationId);
     return result;
   }
 

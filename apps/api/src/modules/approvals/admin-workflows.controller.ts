@@ -8,6 +8,7 @@ import {
   Delete,
   Get,
   HttpCode,
+  Inject,
   Param,
   ParseIntPipe,
   ParseUUIDPipe,
@@ -17,7 +18,17 @@ import {
 import { z } from 'zod';
 
 import { Can } from '../../platform/authz/decorators';
-import { ApprovalsAdminService, type WorkflowDto, type WorkflowVersionDto } from './admin.service';
+import { type LiveGrantDeps, assertLiveGrant } from '../../platform/authz/live-grants';
+import { RoleCache } from '../../platform/authz/role-cache';
+import { DB, type Db } from '../../platform/db/db.module';
+import { SqlUsersStore } from '../../platform/users/users.store';
+import { lockAccessRevision } from '../access-settings/access-revision';
+import {
+  ApprovalsAdminService,
+  type PublisherCheck,
+  type WorkflowDto,
+  type WorkflowVersionDto,
+} from './admin.service';
 import { parseOr400 } from './approvals.controller';
 
 const PeopleQuery = z.strictObject({
@@ -47,7 +58,28 @@ const CreateDelegationSchema = z.strictObject({
 
 @Controller('v1/admin/workflows')
 export class AdminWorkflowsController {
-  constructor(private readonly admin: ApprovalsAdminService) {}
+  /** The publisher's CURRENT roles from the user mirror, as the user-role routes read them (U20b-Q3). */
+  private readonly liveGrants: LiveGrantDeps;
+
+  constructor(
+    private readonly admin: ApprovalsAdminService,
+    @Inject(DB) db: Db,
+    roleCache: RoleCache,
+  ) {
+    this.liveGrants = {
+      users: new SqlUsersStore(db),
+      grants: { grantsFor: (...args) => roleCache.grantsFor(...args) },
+    };
+  }
+
+  /**
+   * Publishing re-checks the publisher's live grant inside the publish transaction: the access-revision lock first,
+   * as an access save takes it, so a demotion committed meanwhile cannot slip past a check made before it.
+   */
+  private readonly livePublisher: PublisherCheck = async (tx, scope, actor) => {
+    await lockAccessRevision(tx, scope.tenantId);
+    await assertLiveGrant(tx, this.liveGrants, scope, actor, 'approvals.definitions.publish');
+  };
 
   @Get('people')
   @Can('approvals.definitions.write')
@@ -73,14 +105,18 @@ export class AdminWorkflowsController {
     return this.admin.addVersion(key, parseOr400(AddVersionSchema, body).spec);
   }
 
+  /**
+   * 200 with the published version. 403 to whoever saved that draft (a second person publishes, F1-Q11), and to
+   * anyone who no longer holds approvals.definitions.publish, whatever their sign-in token says.
+   */
   @Post(':key/versions/:v/publish')
   @HttpCode(200)
-  @Can('approvals.definitions.write')
+  @Can('approvals.definitions.publish')
   publish(
     @Param('key') key: string,
     @Param('v', ParseIntPipe) v: number,
   ): Promise<WorkflowVersionDto> {
-    return this.admin.publish(key, v);
+    return this.admin.publish(key, v, this.livePublisher);
   }
 }
 

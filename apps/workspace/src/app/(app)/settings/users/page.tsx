@@ -4,6 +4,7 @@ import {
   RoleKeySchema,
   ROLE_KEYS,
   UserStatusSchema,
+  type AdminUser,
   type AdminUsersQuery,
 } from '@bos/contracts';
 import type { Metadata } from 'next';
@@ -24,7 +25,7 @@ import {
   readList,
   type RawParams,
 } from '@/lib/list-params';
-import { getPermissionCheck } from '@/lib/live-permissions';
+import { getMeOrNull, getPermissionCheck } from '@/lib/live-permissions';
 
 import admin from '../admin.module.css';
 import { BackToSettings } from '../_components/back-link';
@@ -38,6 +39,7 @@ import { PageSize } from './page-size';
 import { PictureEditor } from './picture-editor';
 import { roleLabel } from './role-checkboxes';
 import { RolesEditor } from './roles-editor';
+import { StatusAction, type StatusActionKind } from './status-actions';
 import styles from './users.module.css';
 
 export const metadata: Metadata = { title: 'Users · Business OS' };
@@ -54,6 +56,25 @@ const SPEC = {
   single: { departmentId: GUID, sort: AdminUserSortSchema.options },
   rows: { allowed: USER_PAGE_SIZES, default: DEFAULT_SIZE },
 } as const;
+
+const STATUS_LABELS: Record<AdminUser['status'], string> = {
+  active: 'Active',
+  invited: 'Invited',
+  inactive: 'Deactivated',
+};
+
+/**
+ * The account actions a row offers (F1-Q5, F1-Q4): an active person can be locked or deactivated; a locked person
+ * unlocked (ZITADEL holds them LOCKED, so reactivate would not fit) or deactivated, and one locked after failed
+ * sign-ins also kept locked for good; a deactivated person reactivated; an open invite nothing.
+ */
+function statusActions(user: AdminUser): StatusActionKind[] {
+  if (user.lockReason === 'failed_sign_ins') return ['unlock', 'keepLocked', 'deactivate'];
+  if (user.lockReason) return ['unlock', 'deactivate'];
+  if (user.status === 'active') return ['lock', 'deactivate'];
+  if (user.status === 'inactive') return ['reactivate'];
+  return [];
+}
 
 /** Up to five page numbers around the current one. */
 function pageNumbers(current: number, count: number): number[] {
@@ -87,10 +108,14 @@ export default async function UsersPage({ searchParams }: { searchParams: Promis
   const session = await requireSection('users', href(page));
   // "Check access" opens Settings > Access, which needs the access read permission.
   const canCheckAccess = (await getPermissionCheck(session))('admin.roles.read');
-  const [users, summary] = await Promise.all([
+  const [users, summary, me] = await Promise.all([
     section('view users', () => listUsers(session, query)),
     section('view user totals', () => summarizeUsers(session)),
+    getMeOrNull(session.accessToken),
   ]);
+  // F1-Q5: account actions need the company-wide grant (the summary says so); never on the caller's own row, and
+  // only when the caller's own row is known, since the API refuses it anyway.
+  const canChangeStatus = summary.ok && summary.data.canChangeStatus === true && Boolean(me?.id);
   const items = users.ok ? users.data.items : [];
   const next = users.ok ? users.data.nextPage : null;
   const departments = summary.ok ? summary.data.departments : [];
@@ -270,18 +295,35 @@ export default async function UsersPage({ searchParams }: { searchParams: Promis
                           )}
                         </Td>
                         <Td>
-                          <Badge
-                            tone={
-                              user.status === 'active'
-                                ? 'success'
-                                : user.status === 'invited'
-                                  ? 'pending'
-                                  : 'neutral'
-                            }
-                            className={styles.status ?? ''}
-                          >
-                            {user.status}
-                          </Badge>
+                          {user.lockReason ? (
+                            <>
+                              <Badge tone="error" className={styles.status ?? ''}>
+                                Locked
+                              </Badge>
+                              {user.lockedUntil && (
+                                <span className={styles.muted}>
+                                  {' '}
+                                  until{' '}
+                                  <time dateTime={user.lockedUntil}>
+                                    {formatInstant(user.lockedUntil)}
+                                  </time>
+                                </span>
+                              )}
+                            </>
+                          ) : (
+                            <Badge
+                              tone={
+                                user.status === 'active'
+                                  ? 'success'
+                                  : user.status === 'invited'
+                                    ? 'pending'
+                                    : 'neutral'
+                              }
+                              className={styles.status ?? ''}
+                            >
+                              {STATUS_LABELS[user.status]}
+                            </Badge>
+                          )}
                         </Td>
                         <Td align="end">
                           <div className={styles.rowActions}>
@@ -308,6 +350,17 @@ export default async function UsersPage({ searchParams }: { searchParams: Promis
                               user.status === 'active' && (
                                 <PasswordReset userId={user.id} label={label} email={user.email} />
                               )}
+                            {canChangeStatus &&
+                              user.id !== me?.id &&
+                              statusActions(user).map((action) => (
+                                <StatusAction
+                                  key={action}
+                                  userId={user.id}
+                                  name={name}
+                                  label={label}
+                                  action={action}
+                                />
+                              ))}
                           </div>
                         </Td>
                       </tr>

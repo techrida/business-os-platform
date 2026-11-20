@@ -36,7 +36,8 @@ export function initialTemplateFields(
     closing: template?.closing ?? DEFAULT_CLOSING,
     // A new memo starts with two blank rows; an edit keeps exactly what was saved.
     recommenders: initialRecommenders(template?.recommenders.map((p) => p.userId)),
-    approvedBy: template?.approvedBy.userId ?? '',
+    // A new memo starts with the approver the Memo approver rule names (the department head), when it names one.
+    approvedBy: template?.approvedBy.userId ?? directory?.approverRule?.defaultUserId ?? '',
   };
 }
 

@@ -318,6 +318,17 @@
   line-height: var(--line-height-caption);
 }
 
+/* A group's error line stays mounted as a live region; empty, it leaves the grid and takes no space
+   but stays in the accessibility tree, so the message is announced when it arrives. */
+.fieldError:empty {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+
 /* ---- billing schedule rows --------------------------------------------------------------------- */
 
 .scheduleRows {

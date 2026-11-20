@@ -38,13 +38,17 @@ test('P0 shell keeps its fixed edges and exposes real session facts without hydr
 
   await page.goto('/');
   await signInOnZitadel(page, who, appOrigin);
-  await expect(page.getByRole('heading', { name: 'Welcome back', exact: true })).toBeVisible();
+  // The greeting uses the display name from /v1/me (`Good morning, Dev`); `Welcome back` when no name is known.
+  const greeting = page.getByRole('heading', {
+    name: /^(Welcome back|Good (morning|afternoon|evening)(, .+)?)$/,
+  });
+  await expect(greeting).toBeVisible();
   const devPill = page.getByRole('button', { name: 'Dev menu', exact: true });
   await expect(devPill).toBeVisible();
 
   // Exercise a fresh document too: the dev widget must not mutate the body during hydration.
   await page.reload();
-  await expect(page.getByRole('heading', { name: 'Welcome back', exact: true })).toBeVisible();
+  await expect(greeting).toBeVisible();
   await expect(devPill).toBeVisible();
 
   await test.step('only the nav scrolls at a 520px viewport height', async () => {
@@ -54,8 +58,9 @@ test('P0 shell keeps its fixed edges and exposes real session facts without hydr
     const footer = sidebar.locator(':scope > div').last();
     await expect(brand).toBeVisible();
     await expect(brand).toBeInViewport({ ratio: 1 });
-    await expect(footer).toContainText(new RegExp(who.role.replace(/[_-]/g, ' '), 'i'));
-    await expect(footer.getByText('staff', { exact: true })).toBeVisible();
+    // The user card is the person's name with their roles under it (accountLabel: `Founder`, or `Sales, Finance`).
+    const role = who.role.replace(/[_-]+/g, ' ');
+    await expect(footer.getByText(new RegExp(`^(.+, )?${role}(, .+)?$`, 'i'))).toBeVisible();
     await expect(footer).toBeInViewport({ ratio: 1 });
     const before = { brand: await brand.boundingBox(), footer: await footer.boundingBox() };
     expect(before.brand).not.toBeNull();

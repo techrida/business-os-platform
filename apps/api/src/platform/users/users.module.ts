@@ -8,6 +8,7 @@ import { AuditModule } from '../audit/audit.module';
 import { UserDirectory } from '../authz/user-directory';
 import { AdminUsersController } from './admin-users.controller';
 import { HooksController } from './hooks.controller';
+import { UserStatusService } from './user-status';
 import { UsersCoreModule } from './users.core.module';
 import { UsersService } from './users.service';
 
@@ -15,7 +16,11 @@ import { UsersService } from './users.service';
 @Module({
   imports: [UsersCoreModule, AuditModule],
   controllers: [HooksController, AdminUsersController],
-  providers: [UsersService, { provide: UserDirectory, useExisting: UsersService }],
+  providers: [
+    UsersService,
+    UserStatusService,
+    { provide: UserDirectory, useExisting: UsersService },
+  ],
   exports: [UsersService, UserDirectory],
 })
 export class UsersModule {}
