@@ -66,6 +66,11 @@ export function lapsedTaxClearance(items: readonly KycItem[], today: string): bo
 /** The calendar day (`YYYY-MM-DD`) in Asia/Kathmandu at `instant`: the business date a tax clearance is read against. */
 export const isoDay = kathmanduDay;
 
+/** A KYB case in one of these statuses lets a pending_kyc vendor go under review (409 `kyb_not_submitted` otherwise). */
+export function kybReadyForReview(caseStatus: string | undefined): boolean {
+  return caseStatus === 'submitted' || caseStatus === 'approved';
+}
+
 /**
  * The move `submit-kyc` makes from `current`, checked against the status the caller's button was drawn for. One
  * endpoint makes two moves (draft -> pending_kyc, pending_kyc -> under_review), so a stale "Start KYB review" from a

@@ -54,6 +54,7 @@ import { kybCaseOf, lockVendor, type VendorRow } from './vendors.queries';
 import {
   isoDay,
   kindCountryProblem,
+  kybReadyForReview,
   kindFromRow,
   kindToRow,
   lapsedTaxClearance,
@@ -70,6 +71,7 @@ import {
   type UpdateVendorContactBody,
   type VendorContactDto,
   type VendorList,
+  type VendorReviewReadiness,
 } from './vendors.types';
 
 type ContactRow = typeof vendorContacts.$inferSelect;
@@ -293,6 +295,20 @@ export class VendorsService {
     return toVendorDto(row, principal, { approved, kycExpired });
   }
 
+  /**
+   * Whether the vendor's KYB case is submitted or approved: the same check `submitKyc` makes before pending_kyc ->
+   * under_review, so "Send for review" is drawn only when the API would take it. Needs `vendor.read` on the vendor.
+   */
+  async reviewReadiness(id: string): Promise<VendorReviewReadiness> {
+    const { scope, principal } = this.caller.current();
+    this.assertStaff(principal);
+    const row = await this.find(this.db, scope.tenantId, id);
+    if (row === undefined) throw vendorNotFound();
+    this.assertVisible('vendor.read', row, principal);
+    const kyb = await kybCaseOf(this.db, scope.tenantId, id);
+    return { kybSubmitted: kybReadyForReview(kyb?.status) };
+  }
+
   // ------------------------------------------------------------------------------------------------- create
 
   /**
@@ -475,7 +491,7 @@ export class VendorsService {
           const to: VendorStatus = move.to;
           if (to === 'under_review') {
             const kyb = await kybCaseOf(tx, scope.tenantId, id);
-            if (kyb?.status !== 'submitted' && kyb?.status !== 'approved') {
+            if (!kybReadyForReview(kyb?.status)) {
               throw new ConflictException({
                 code: 'kyb_not_submitted',
                 message: 'The KYB case must be submitted before the vendor goes under review',

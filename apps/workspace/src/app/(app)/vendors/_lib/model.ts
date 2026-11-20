@@ -82,7 +82,7 @@ const SUBMIT_DRAFT: LifecycleOption = {
 const SUBMIT_PENDING: LifecycleOption = {
   command: 'submit_kyc',
   label: 'Send for review',
-  help: 'Needs the KYB case to be submitted first.',
+  help: 'The KYB case is submitted. Someone with approval access then approves the vendor.',
   needsReason: false,
   tone: 'primary',
 };
@@ -123,6 +123,8 @@ const ARCHIVE: LifecycleOption = {
 /**
  * The lifecycle buttons for this status and these grants. `vendor.write` starts and sends the KYB
  * review; `vendor.activate` approves, suspends, blocks and archives (the API's own split).
+ * "Send for review" also needs the KYB case submitted (`kybSubmitted`, read from the API's
+ * review-readiness, the state the API checks); unknown counts as not submitted.
  */
 export function lifecycleOptions(
   status: VendorStatus,
@@ -133,12 +135,13 @@ export function lifecycleOptions(
     block?: boolean;
     archive?: boolean;
   },
+  kybSubmitted?: boolean,
 ): LifecycleOption[] {
   switch (status) {
     case 'draft':
       return can.write ? [SUBMIT_DRAFT] : [];
     case 'pending_kyc':
-      return can.write ? [SUBMIT_PENDING] : [];
+      return can.write && kybSubmitted === true ? [SUBMIT_PENDING] : [];
     case 'under_review':
       return can.activate ? [ACTIVATE] : [];
     case 'approved': {
@@ -163,4 +166,20 @@ export function lifecycleOptions(
 /** The portal grant is for approved vendors and ones waiting for KYC (the API answers 409 otherwise). */
 export function mayGrantPortal(status: VendorStatus, canWrite: boolean): boolean {
   return canWrite && (status === 'approved' || status === 'pending_kyc');
+}
+
+/**
+ * Why a writer sees no "Send for review" on a pending_kyc vendor: the KYB case is not submitted
+ * yet (`false`), or its state could not be read (`undefined`). Null when the button is there or
+ * does not apply.
+ */
+export function sendForReviewHint(
+  status: VendorStatus,
+  canWrite: boolean,
+  kybSubmitted: boolean | undefined,
+): string | null {
+  if (status !== 'pending_kyc' || !canWrite || kybSubmitted === true) return null;
+  return kybSubmitted === false
+    ? 'The vendor can be sent for review once its KYB case is submitted. Collect the vendor documents in the KYB case and submit it there.'
+    : 'We could not check the KYB case, so the vendor cannot be sent for review from here right now. Reload the page to try again.';
 }

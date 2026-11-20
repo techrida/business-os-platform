@@ -7,6 +7,7 @@ import type { Session } from '@/lib/session';
 import {
   createBankEvidence,
   createVendor,
+  getVendorReviewReadiness,
   grantVendorPortalAccess,
   listBankAccounts,
   listVendorContacts,
@@ -211,6 +212,14 @@ describe('writes carry the Idempotency-Key', () => {
     expect(init.method).toBe('PATCH');
     expect(headers.get('idempotency-key')).toBeNull();
     expect(JSON.parse(init.body as string)).toEqual({ expectedVersion: 3, vatRegistered: false });
+  });
+
+  it('reads the KYB review readiness and refuses a body that drifts from it', async () => {
+    answer(reply({ kybSubmitted: true }));
+    expect(await getVendorReviewReadiness(session, ID_A)).toEqual({ kybSubmitted: true });
+    expect(lastCall().url).toBe(`http://api:3001/v1/vendors/${ID_A}/review-readiness`);
+    answer(reply({ kybSubmitted: 'yes' }));
+    await expect(getVendorReviewReadiness(session, ID_A)).rejects.toThrow();
   });
 
   it('encodes an id so it cannot climb out of the route', async () => {
