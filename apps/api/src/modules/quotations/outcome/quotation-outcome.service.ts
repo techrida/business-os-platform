@@ -16,6 +16,9 @@
 //   see evidence-policy.ts), so it is confirmed as it is recorded. A portal acceptance is recorded whatever the
 //   policy (F1-Q28, F1 bug 32: the portal no longer dead-ends) and waits for staff to confirm the evidence
 //   (`confirmEvidence`, evidence-state.ts); rejecting needs a comment (the table's CHECK refuses one without).
+// An acceptance also drafts the sales order for the Accountant to confirm (F1-Q25, sales-orders/draft-order.ts), in
+// the same transaction. When the version cannot become an order (a schedule that cannot be split), the acceptance
+// still stands: the refusal is audited and the quotation's owner is told, and the manual confirm stays available.
 import {
   type AcceptanceDto,
   type ActorKindSchema,
@@ -51,6 +54,7 @@ import { readTxContext } from '../../../platform/documents/tx-context';
 import { NotifyService } from '../../../platform/notify/notify.service';
 import { SettingsService } from '../../../platform/settings/settings.service';
 import { OpportunitiesService } from '../../opportunities/opportunities.service';
+import { draftOrderOnAcceptance } from '../../sales-orders/draft-order';
 import { kathmanduDay } from '../reference/reference.types';
 import { missingEvidence } from './evidence-policy';
 import { type EvidenceState, evidenceStateOf, readEvidenceState } from './evidence-state';
@@ -121,8 +125,8 @@ export class QuotationOutcomeService {
 
   /**
    * Accepts a Sent version inside the caller's `tx`: the acceptance row, the version to Accepted, history, audit,
-   * the opportunity to Won (with this version) and a notice to the quotation's owner. The caller must call
-   * `NotifyService.nudge()` after its transaction commits.
+   * the opportunity to Won (with this version), the draft sales order (F1-Q25) and a notice to the quotation's
+   * owner. The caller must call `NotifyService.nudge()` after its transaction commits.
    */
   async accept(tx: DbTransaction, input: AcceptQuotationInput): Promise<AcceptanceDto> {
     const { scope } = await readTxContext(tx);
@@ -156,6 +160,24 @@ export class QuotationOutcomeService {
       },
     });
     await this.opportunities.markWon(tx, quotation.opportunityId, version.id);
+    // Nobody is the draft's creator: the Accountant who confirms it becomes one. Its quotation's owner reaches it.
+    const draft = await draftOrderOnAcceptance(
+      tx,
+      scope,
+      { settings: this.settings, audit: this.audit },
+      quotation,
+      version,
+      null,
+    );
+    if (!draft.drafted && draft.reason === 'refused' && quotation.ownerUserId !== null) {
+      await this.notify.notifyUser(tx, {
+        userId: quotation.ownerUserId,
+        title: `No draft sales order for ${quotation.number}`,
+        body: `${quotation.number} was accepted, but its sales order could not be drafted: ${draft.refusal.message}`,
+        link: `/quotations/${quotation.id}`,
+        dedupeKey: `sales_order.draft_refused:${version.id}`,
+      });
+    }
     if (quotation.ownerUserId !== null) {
       const customerName = await this.customerName(tx, scope, quotation.customerPartyId);
       const linkPath = `/quotations/${quotation.id}`;
