@@ -20,9 +20,14 @@ const mocks = vi.hoisted(() => ({
   listQuotations: vi.fn(),
   listOpportunityLostReasonChoices: vi.fn(),
   userNames: vi.fn(),
+  getMeOrNull: vi.fn(),
 }));
 
 vi.mock('@/lib/bff', () => ({ requireStaffSession: mocks.requireStaffSession }));
+vi.mock('@/lib/live-permissions', async (importOriginal) => ({
+  ...(await importOriginal<object>()),
+  getMeOrNull: mocks.getMeOrNull,
+}));
 vi.mock('@/lib/api-lead-lost-reasons', () => ({
   listOpportunityLostReasonChoices: mocks.listOpportunityLostReasonChoices,
 }));
@@ -147,6 +152,7 @@ beforeEach(() => {
   mocks.listQuotations.mockReset().mockResolvedValue([]);
   mocks.listOpportunityLostReasonChoices.mockReset().mockResolvedValue([]);
   mocks.userNames.mockReset().mockResolvedValue(new Map());
+  mocks.getMeOrNull.mockReset().mockResolvedValue(null);
 });
 
 describe('opportunity quotation actions (demo feedback: New quotation made four quotations)', () => {
@@ -274,18 +280,61 @@ describe('opportunity follow-ups (migrated open tasks on the deal)', () => {
     );
   });
 
-  it('lists planned rows on a Follow-ups card with Complete, Reschedule and Cancel, and no Schedule', async () => {
-    const html = await render();
+  /** The Activities panel's section under the heading `name` (Planned or History). */
+  const section = (doc: Document, name: string) =>
+    [...doc.querySelectorAll('section')].find((s) => s.querySelector('h3')?.textContent === name) ??
+    null;
+
+  it('lists planned rows under Activities, apart from History, with no Follow-ups card (U16-Q6)', async () => {
+    const doc = parse(await render());
     expect(mocks.listActivities).toHaveBeenCalledWith(
       expect.anything(),
       expect.objectContaining({ opportunityId: OPP, status: 'planned' }),
     );
-    expect(html).toContain('>Follow-ups</h2>');
-    expect(html).toContain('Chase the signed scope');
+    expect([...doc.querySelectorAll('h2')].map((h) => h.textContent)).not.toContain('Follow-ups');
+    const plannedSection = section(doc, 'Planned');
+    expect(plannedSection?.textContent).toContain('Chase the signed scope');
     for (const action of ['Complete', 'Reschedule', 'Cancel']) {
-      expect(html).toContain(`aria-label="${action} Chase the signed scope"`);
+      expect(
+        plannedSection?.querySelector(`[aria-label="${action} Chase the signed scope"]`),
+      ).not.toBeNull();
     }
-    expect(html).not.toContain('Schedule follow-up');
+    expect(section(doc, 'History')?.textContent).not.toContain('Chase the signed scope');
+  });
+
+  it('offers Schedule follow-up and Log activity to an editor in the Activities header', async () => {
+    const SITA = '66666666-6666-4666-8666-666666666661';
+    mocks.getOpportunity.mockResolvedValue(
+      opportunity('negotiation', { ownerUserId: SITA, ownerName: 'Sita Rai' }),
+    );
+    mocks.listOpportunityOwners.mockResolvedValue([
+      { userId: SITA, displayName: 'Sita Rai', email: '' },
+      { userId: ASSIGNEE, displayName: 'Mira Thapa', email: '' },
+    ]);
+    const html = await render();
+    expect(html).toContain('Schedule follow-up');
+    expect(html).toContain('Log activity');
+  });
+
+  it("shows a lead's follow-up carried at convert, and lets its assignee complete it without edit access", async () => {
+    const carried = { ...planned, subject: 'Send the revised scope', assigneeUserId: ASSIGNEE };
+    mocks.listActivities.mockImplementation((_s: unknown, opts: { status?: string }) =>
+      Promise.resolve(opts.status === 'planned' ? [carried] : []),
+    );
+    mocks.getOpportunity.mockResolvedValue(
+      opportunity('negotiation', { canEdit: false, allowedMoves: [] }),
+    );
+    mocks.getMeOrNull.mockResolvedValue({ id: ASSIGNEE });
+    const doc = parse(await render());
+    const plannedSection = section(doc, 'Planned');
+    expect(plannedSection?.textContent).toContain('Send the revised scope');
+    expect(
+      plannedSection?.querySelector('[aria-label="Complete Send the revised scope"]'),
+    ).not.toBeNull();
+    expect(
+      plannedSection?.querySelector('[aria-label="Reschedule Send the revised scope"]'),
+    ).toBeNull();
+    expect(doc.body.textContent).not.toContain('Schedule follow-up');
   });
 
   it('names the assignee from the activity itself, never by id or directory', async () => {
@@ -295,9 +344,12 @@ describe('opportunity follow-ups (migrated open tasks on the deal)', () => {
     expect(html).not.toContain(`>${ASSIGNEE}<`);
   });
 
-  it('does not ask for lead owners without crm.lead.write, and still renders', async () => {
-    mocks.requireStaffSession.mockResolvedValue({ accessToken: 'tok', roles: ['no-such-role'] });
+  it('does not ask for the owners list without edit access, and still renders', async () => {
+    mocks.getOpportunity.mockResolvedValue(
+      opportunity('negotiation', { canEdit: false, allowedMoves: [] }),
+    );
     const html = await render();
+    expect(mocks.listOpportunityOwners).not.toHaveBeenCalled();
     expect(mocks.listLeadOwners).not.toHaveBeenCalled();
     expect(html).toContain('Chase the signed scope');
     expect(html).toContain('Mira Thapa');
@@ -308,9 +360,9 @@ describe('opportunity follow-ups (migrated open tasks on the deal)', () => {
     mocks.listActivities.mockImplementation((_s: unknown, opts: { status?: string }) =>
       opts.status === 'planned' ? Promise.reject(new ApiError(503, 'down')) : Promise.resolve([]),
     );
-    const html = await render();
-    expect(html).toContain('Follow-ups did not load');
-    expect(html).not.toContain('No follow-ups planned');
+    const doc = parse(await render());
+    expect(section(doc, 'Planned')?.textContent).toContain('Follow-ups did not load');
+    expect(doc.body.textContent).not.toContain('Nothing planned.');
   });
 });
 
@@ -535,7 +587,8 @@ describe('opportunity stage action buttons, timeline and read-only hygiene', () 
     expect(doc.querySelector('[aria-label="Stage"]')?.textContent).toContain(
       'You have read-only access to this opportunity.',
     );
-    expect(html).not.toContain('Add activity');
+    expect(html).not.toContain('Log activity');
+    expect(html).not.toContain('Schedule follow-up');
     expect(html).not.toContain('aria-label="Complete Follow up on quote"');
     expect(html).not.toContain('aria-label="Reschedule Follow up on quote"');
     expect(html).not.toContain('aria-label="Cancel Follow up on quote"');
@@ -640,7 +693,6 @@ describe("the deal's owner (F1-Q51)", () => {
     const fact = ownerFact(parse(await render()));
     expect(fact?.textContent).toContain('No owner');
     expect(fact?.textContent).not.toContain('Change owner');
-    expect(mocks.listOpportunityOwners).not.toHaveBeenCalled();
   });
 
   it('still renders the name when the owners list is refused', async () => {

@@ -1,7 +1,7 @@
 'use client';
 
 import type { ActivityDto, LeadOwnerOption } from '@bos/contracts';
-import { useTransition } from 'react';
+import { useTransition, type ReactNode } from 'react';
 
 import {
   cancelFollowUpAction,
@@ -234,6 +234,48 @@ function FollowUpRow({
 }
 
 /**
+ * A record's planned follow-ups, earliest first, each with the actions the caller may take: all of
+ * them with edit access, Complete alone on their own follow-up without it. `empty` shows when
+ * nothing is planned. Used by the lead's Follow-ups card and the opportunity's Activities panel.
+ */
+export function FollowUpList({
+  items,
+  owners,
+  canEdit = true,
+  currentUserId,
+  now,
+  empty,
+  label,
+}: {
+  items: readonly ActivityDto[];
+  owners: readonly LeadOwnerOption[];
+  canEdit?: boolean | undefined;
+  currentUserId?: string | null | undefined;
+  now?: Date | undefined;
+  empty: ReactNode;
+  /** An accessible name for the list, when no heading names it. */
+  label?: string | undefined;
+}) {
+  const planned = sortFollowUps(items);
+  if (planned.length === 0) return <>{empty}</>;
+  const at = now ?? new Date();
+  return (
+    <ol className={styles.list} aria-label={label}>
+      {planned.map((item) => (
+        <FollowUpRow
+          key={item.id}
+          item={item}
+          owners={owners}
+          now={at}
+          canEdit={canEdit}
+          currentUserId={currentUserId}
+        />
+      ))}
+    </ol>
+  );
+}
+
+/**
  * A record's Follow-ups card (D39): planned calls, meetings and emails, earliest first, overdue
  * ones marked with the warning tone and the word "Overdue". Each can be completed (it moves to
  * History), rescheduled or cancelled; on a lead the header button schedules a new one.
@@ -249,7 +291,6 @@ export function FollowUpsCard({
   now,
   className,
 }: FollowUpsCardProps) {
-  const planned = sortFollowUps(items);
   const at = now ?? new Date();
   const scheduleFor = schedule === false || !canEdit ? undefined : leadId;
   return (
@@ -260,33 +301,27 @@ export function FollowUpsCard({
       actions={
         scheduleFor !== undefined ? (
           <ScheduleFollowUpDialog
-            leadId={scheduleFor}
+            subjectId={scheduleFor}
             ownerUserId={ownerUserId ?? null}
             owners={owners}
           />
         ) : undefined
       }
     >
-      {planned.length === 0 ? (
-        <EmptyState title="No follow-ups planned" icon="calendar-days" headingLevel={3}>
-          {scheduleFor !== undefined
-            ? 'Schedule the next call, meeting or email so this lead does not go quiet.'
-            : null}
-        </EmptyState>
-      ) : (
-        <ol className={styles.list}>
-          {planned.map((item) => (
-            <FollowUpRow
-              key={item.id}
-              item={item}
-              owners={owners}
-              now={at}
-              canEdit={canEdit}
-              currentUserId={currentUserId}
-            />
-          ))}
-        </ol>
-      )}
+      <FollowUpList
+        items={items}
+        owners={owners}
+        canEdit={canEdit}
+        currentUserId={currentUserId}
+        now={at}
+        empty={
+          <EmptyState title="No follow-ups planned" icon="calendar-days" headingLevel={3}>
+            {scheduleFor !== undefined
+              ? 'Schedule the next call, meeting or email so this lead does not go quiet.'
+              : null}
+          </EmptyState>
+        }
+      />
     </Panel>
   );
 }
