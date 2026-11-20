@@ -6,8 +6,13 @@ import { describe, expect, it } from 'vitest';
 import { buildDirectory, route, type DirectoryData } from '../../approvals/router';
 import {
   CreateRfqBodySchema,
+  ExtendRfqDeadlineBodySchema,
   PR_COMMITMENT_WORKFLOW_SPEC,
+  RFQ_DEADLINE_PASSED,
+  RFQ_DEADLINE_PASSED_MESSAGE,
   commitmentFactsOf,
+  extendDeadlineVerdict,
+  isLateQuotation,
   poBandOf,
   quotationLineAmounts,
   quoteCountVerdict,
@@ -149,5 +154,80 @@ describe('CreateRfqBodySchema', () => {
       vendorIds: [id, id],
     });
     expect(r.success).toBe(false);
+  });
+});
+
+describe('isLateQuotation (F1-Q47)', () => {
+  const deadline = new Date('2026-11-20T10:00:00+05:45');
+  it('takes a quotation that arrives at the deadline itself', () => {
+    expect(isLateQuotation(deadline, new Date('2026-11-20T04:15:00.000Z'))).toBe(false);
+  });
+  it('refuses one a millisecond after the deadline', () => {
+    expect(isLateQuotation(deadline, new Date('2026-11-20T04:15:00.001Z'))).toBe(true);
+  });
+  it('takes one before the deadline', () => {
+    expect(isLateQuotation(deadline, new Date('2026-11-19T23:59:00+05:45'))).toBe(false);
+  });
+});
+
+describe('extendDeadlineVerdict (F1-Q47)', () => {
+  const now = new Date('2026-11-21T00:00:00Z');
+  const current = new Date('2026-11-20T04:15:00Z');
+  const later = new Date('2026-11-25T04:15:00Z');
+  it('extends an open RFQ, also one whose deadline has passed', () => {
+    expect(extendDeadlineVerdict({ status: 'open', current, next: later, now })).toEqual({
+      ok: true,
+    });
+  });
+  it.each(['closed', 'recommended', 'cancelled'])('refuses a %s RFQ', (status) => {
+    expect(extendDeadlineVerdict({ status, current, next: later, now })).toEqual({
+      ok: false,
+      refusal: 'not_open',
+    });
+  });
+  it('refuses a new deadline that is not after now', () => {
+    expect(extendDeadlineVerdict({ status: 'open', current, next: now, now })).toEqual({
+      ok: false,
+      refusal: 'deadline_in_past',
+    });
+  });
+  it('refuses a new deadline that is not after the current one', () => {
+    const future = new Date('2026-12-10T00:00:00Z');
+    expect(extendDeadlineVerdict({ status: 'open', current: future, next: future, now })).toEqual({
+      ok: false,
+      refusal: 'not_later',
+    });
+    expect(
+      extendDeadlineVerdict({
+        status: 'open',
+        current: future,
+        next: new Date('2026-12-01T00:00:00Z'),
+        now,
+      }),
+    ).toEqual({ ok: false, refusal: 'not_later' });
+  });
+});
+
+describe('ExtendRfqDeadlineBodySchema', () => {
+  it('takes a zoned instant and nothing else', () => {
+    expect(
+      ExtendRfqDeadlineBodySchema.safeParse({ deadline: '2026-11-25T10:00:00+05:45' }).success,
+    ).toBe(true);
+    expect(ExtendRfqDeadlineBodySchema.safeParse({ deadline: '2026-11-25' }).success).toBe(false);
+    expect(
+      ExtendRfqDeadlineBodySchema.safeParse({ deadline: '2026-11-25T10:00:00Z', status: 'open' })
+        .success,
+    ).toBe(false);
+  });
+});
+
+describe('the late-quotation refusal the clients recognise (F1-Q47)', () => {
+  // The workspace (rfqs/_lib/failure.ts) and the vendor portal (rfqs/[id]/quote/actions.ts) match this code and,
+  // while the error filter does not pass it, this exact sentence. Change all three copies together.
+  it('keeps its code and sentence word for word', () => {
+    expect(RFQ_DEADLINE_PASSED).toBe('rfq_deadline_passed');
+    expect(RFQ_DEADLINE_PASSED_MESSAGE).toBe(
+      'The quotation deadline of this RFQ has passed. Procurement can extend it to take more quotations.',
+    );
   });
 });

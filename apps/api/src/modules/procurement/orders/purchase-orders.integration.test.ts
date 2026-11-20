@@ -44,6 +44,11 @@ import { NumberingService } from '../../../platform/settings/numbering.service';
 import { ApprovalsAdminService } from '../../approvals/admin.service';
 import { asSecondPerson, SKIP_LIVE_PUBLISHER_CHECK } from '../../../../test/support/second-person';
 import { ApprovalsService } from '../../approvals/requests.service';
+import {
+  EMERGENCY_REVIEW_DOCUMENT_TYPE,
+  EMERGENCY_REVIEW_WORKFLOW_SPEC,
+  EmergencyReviewSubject,
+} from '../receipts/emergency-review';
 import { ReceiptsService } from '../receipts/receipts.service';
 import { quotationLineAmounts } from '../sourcing/sourcing.rules';
 import { PoAmendmentSubject } from './po-amendment.subject';
@@ -81,10 +86,17 @@ const resetRoles = () => {
 
 const grantsOf = (role: RoleKey) =>
   new Map(Object.entries(DEFAULT_ROLE_PERMISSIONS[role])) as Map<Permission, Scope>;
-const current: { userId: string; role: RoleKey; scope: TxScope | null } = {
+const current: {
+  userId: string;
+  role: RoleKey;
+  scope: TxScope | null;
+  /** Replaces the role's default grants, as an admin's edit of the live grants would. */
+  grants: Map<Permission, Scope> | null;
+} = {
   userId: '',
   role: 'procurement',
   scope: null,
+  grants: null,
 };
 const as = (userId: string, role: RoleKey) => {
   current.userId = userId;
@@ -101,7 +113,7 @@ const principalNow = (): Principal => ({
   roles: [current.role],
   departmentId: null,
   status: 'active',
-  grants: grantsOf(current.role),
+  grants: current.grants ?? grantsOf(current.role),
 });
 const caller = {
   current: () => ({
@@ -205,8 +217,16 @@ beforeAll(async () => {
   });
   await adminPublisher.publish(PO_AMENDMENT_DOCUMENT_TYPE, 1, SKIP_LIVE_PUBLISHER_CHECK);
 
+  await admin.createWorkflow({
+    key: EMERGENCY_REVIEW_DOCUMENT_TYPE,
+    name: 'Emergency purchase review',
+    spec: EMERGENCY_REVIEW_WORKFLOW_SPEC,
+  });
+  await adminPublisher.publish(EMERGENCY_REVIEW_DOCUMENT_TYPE, 1, SKIP_LIVE_PUBLISHER_CHECK);
+
   approvals = new ApprovalsService(db, audit, notify, directory, caller, () => now);
-  approvals.registerSubject(new PoAmendmentSubject(audit, () => now));
+  approvals.registerSubject(new PoAmendmentSubject(audit, approvals, () => now));
+  approvals.registerSubject(new EmergencyReviewSubject(audit));
   service = new PurchaseOrdersService(db, approvals, audit, caller, () => now);
   receiptsService = new ReceiptsService(
     db,
@@ -215,6 +235,7 @@ beforeAll(async () => {
     new NumberingService(),
     caller,
     () => now,
+    approvals,
   );
 });
 
@@ -228,6 +249,7 @@ beforeEach(() => {
   vi.clearAllMocks();
   resetRoles();
   current.scope = null;
+  current.grants = null;
   as(U.proc, 'procurement');
 });
 
@@ -279,7 +301,15 @@ let poSeq = 0;
  * `quantity` x `unitPrice` + 13% VAT. Default 1 x 79,646.02 = 90,000.00 incl. VAT, band base.
  */
 async function draftPo(
-  opts: { vendorId?: string; scope?: TxScope; quantity?: string; unitPrice?: string } = {},
+  opts: {
+    vendorId?: string;
+    scope?: TxScope;
+    quantity?: string;
+    unitPrice?: string;
+    emergency?: boolean;
+    /** Who raised the purchase request; the requester by default. */
+    requester?: string;
+  } = {},
 ): Promise<{ id: string; prId: string; lineId: string }> {
   const scope = opts.scope ?? scopeA;
   const vendorId = opts.vendorId ?? (await vendor('approved', { accountIn: [scopeA, scopeB] }));
@@ -292,7 +322,7 @@ async function draftPo(
     sql`INSERT INTO app.purchase_requests (id, tenant_id, organization_id, request_type, department_id,
           requester_user_id, cost_center_id, justification, required_by, budget_code, currency)
         VALUES (${prId}, ${scope.tenantId}, ${scope.organizationId}, 'goods',
-                ${scope === scopeA ? deptA : deptB}, ${U.req}, ${(await createCostCenter(appPool, scope)).costCenterId}, 'Laptops', '2026-12-01',
+                ${scope === scopeA ? deptA : deptB}, ${opts.requester ?? U.req}, ${(await createCostCenter(appPool, scope)).costCenterId}, 'Laptops', '2026-12-01',
                 'IT-2083', 'NPR')`,
   );
   await exec(
@@ -300,6 +330,13 @@ async function draftPo(
     sql`UPDATE app.purchase_requests SET status = 'approved', fx_rate = 1, estimated_total = ${a.lineTotal},
           estimated_total_npr = ${a.lineTotal}, number = ${`PR-T-${prId.slice(0, 8)}`} WHERE id = ${prId}`,
   );
+  if (opts.emergency === true) {
+    await exec(
+      scope,
+      sql`UPDATE app.purchase_requests SET is_emergency = true, emergency_reason = 'The server room is flooding'
+          WHERE id = ${prId}`,
+    );
+  }
   const id = randomUUID();
   poSeq += 1;
   await exec(
@@ -470,12 +507,12 @@ describe('issue', () => {
 
 // ---------------------------------------------------------------------------------------- amend (AD7)
 
-describe('amend (done check 2)', () => {
-  it('90,000 -> 99,000 issues v2 at once, with no approval and an audit row', async () => {
+describe('amend (done check 2, F1-Q40)', () => {
+  it('90,000 -> 81,000 issues v2 at once, with no approval and an audit row', async () => {
     const po = await issued();
     const r = await service.amend(
       po.id,
-      { reason, lines: [{ poLineId: po.lineId, unitPrice: '87610.62' }] },
+      { reason, lines: [{ poLineId: po.lineId, unitPrice: '71681.42' }] },
       randomUUID(),
     );
     expect(r.outcome).toBe('applied');
@@ -485,11 +522,11 @@ describe('amend (done check 2)', () => {
       currentVersion: 2,
       approvedBand: 'base',
     });
-    expect(r.purchaseOrder.lines[0]).toMatchObject({ id: po.lineId, lineTotal: '99000.00' });
+    expect(r.purchaseOrder.lines[0]).toMatchObject({ id: po.lineId, lineTotal: '81000.00' });
     const versions = await service.versions(po.id);
     expect(versions.map((v) => [v.version, v.total, v.band, v.approvalRequestId])).toEqual([
       [1, '90000.00', 'base', null],
-      [2, '99000.00', 'base', null],
+      [2, '81000.00', 'base', null],
     ]);
     const requests = await read((tx) =>
       tx
@@ -510,6 +547,52 @@ describe('amend (done check 2)', () => {
       limit: 100,
     });
     expect(events.map((e) => e.action)).toContain('procurement.po.amended');
+  });
+
+  it('90,000 -> 99,000 rises inside the base band and waits for Accountant and Finance (F1-Q40)', async () => {
+    const po = await issued();
+    const r = await service.amend(
+      po.id,
+      { reason, lines: [{ poLineId: po.lineId, unitPrice: '87610.62' }] },
+      randomUUID(),
+    );
+    expect(r.outcome).toBe('pending_approval');
+    expect(r.purchaseOrder).toMatchObject({ status: 'amendment_pending', currentVersion: 1 });
+    expect(await stepRoles(r.approvalRequestId!)).toEqual(['accountant', 'finance']);
+    const request = await approvals.get(r.approvalRequestId!);
+    expect(request.snapshot).toMatchObject({ approvalReasons: ['value_rises'] });
+
+    await decide(U.acct, 'accountant', r.approvalRequestId!);
+    await decide(U.fin, 'finance', r.approvalRequestId!);
+    expect(await service.get(po.id)).toMatchObject({
+      status: 'issued',
+      currentVersion: 2,
+      approvedTotal: '99000.00',
+      approvedBand: 'base',
+    });
+  });
+
+  it('sends a change of payment terms alone for approval, and refuses an amendment of nothing (F1-Q40)', async () => {
+    const po = await issued();
+    const nothing = await httpErrorOf(
+      service.amend(po.id, { reason, paymentTermsDays: 30, lines: [] }, randomUUID()),
+    );
+    expect(nothing.getStatus()).toBe(422);
+    expect(codeOf(nothing)).toBe('PO_AMENDMENT_INVALID');
+
+    const r = await service.amend(po.id, { reason, paymentTermsDays: 45, lines: [] }, randomUUID());
+    expect(r.outcome).toBe('pending_approval');
+    expect((await approvals.get(r.approvalRequestId!)).snapshot).toMatchObject({
+      approvalReasons: ['terms_change'],
+    });
+    await decide(U.acct, 'accountant', r.approvalRequestId!);
+    await decide(U.fin, 'finance', r.approvalRequestId!);
+    expect(await service.get(po.id)).toMatchObject({
+      status: 'issued',
+      currentVersion: 2,
+      paymentTermsDays: 45,
+      approvedTotal: '90000.00',
+    });
   });
 
   it('90,000 -> 1,50,000 routes to Management and writes v2 only on approval', async () => {
@@ -593,6 +676,201 @@ describe('amend (done check 2)', () => {
       ),
     );
     expect(d.getStatus()).toBe(409);
+  });
+});
+
+describe('receiving more than ordered (F1-Q39)', () => {
+  it('refuses the extra unit, then takes it once Procurement amended the order up', async () => {
+    const po = await issued({ quantity: '5', unitPrice: '100.00' });
+    await receive(po, '5');
+    expect((await service.get(po.id)).status).toBe('fully_received');
+
+    // The warehouse is told to ask for an amendment, and nothing is written.
+    as(U.wh, 'warehouse');
+    const refused = await httpErrorOf(
+      receiptsService.create(
+        {
+          purchaseOrderId: po.id,
+          kind: 'goods',
+          receivedAt: '2026-11-09',
+          lines: [{ poLineId: po.lineId, quantity: '1' }],
+        },
+        randomUUID(),
+      ),
+    );
+    as(U.proc, 'procurement');
+    expect(refused.getStatus()).toBe(409);
+    expect((refused.getResponse() as { message?: string }).message).toBe(
+      'Everything ordered on this purchase order has been received. To receive more, ask Procurement to amend the purchase order first.',
+    );
+    expect(await receiptsService.list(po.id)).toHaveLength(1);
+
+    // Procurement amends the fully received order from 5 to 6.
+    const amended = await service.amend(
+      po.id,
+      { reason: 'One more arrived', lines: [{ poLineId: po.lineId, quantity: '6' }] },
+      randomUUID(),
+    );
+    // The total rises, so the amendment is approved first (F1-Q40).
+    expect(amended.outcome).toBe('pending_approval');
+    await decide(U.acct, 'accountant', amended.approvalRequestId!);
+    await decide(U.fin, 'finance', amended.approvalRequestId!);
+    const after = await service.get(po.id);
+    expect(after).toMatchObject({ status: 'partially_received', currentVersion: 2 });
+    expect(after.lines[0]).toMatchObject({ orderedQuantity: '6.0000' });
+
+    // The same warehouse user now receives the sixth unit.
+    await receive(po, '1');
+    expect((await service.get(po.id)).status).toBe('fully_received');
+    const progress = await receiptsService.progress(po.id);
+    expect(progress.lines[0]).toMatchObject({ receivedQuantity: '6.0000', openQuantity: '0.0000' });
+  });
+
+  it('answers a partly received order with the amend-first sentence', async () => {
+    const po = await issued({ quantity: '5', unitPrice: '100.00' });
+    await receive(po, '3');
+    const e = await httpErrorOf(receive(po, '3'));
+    expect(e.getStatus()).toBe(422);
+    expect(codeOf(e)).toBe('over_receipt');
+    expect((e.getResponse() as { message?: string }).message).toBe(
+      'Line 1 has only 2 still open on the purchase order. To receive more, ask Procurement to amend the purchase order first.',
+    );
+  });
+});
+
+describe('review of an emergency purchase after receipt (F1-Q41)', () => {
+  const reviewsOf = (poId: string) =>
+    read((tx) =>
+      tx
+        .select()
+        .from(approvalRequests)
+        .where(
+          sql`${approvalRequests.documentType} = ${EMERGENCY_REVIEW_DOCUMENT_TYPE}
+              AND ${approvalRequests.documentId} = ${poId}`,
+        ),
+    );
+
+  it('asks Management once, when the order first has everything, and audits the decision', async () => {
+    const po = await issued({ quantity: '5', unitPrice: '100.00', emergency: true });
+    await receive(po, '3');
+    expect(await reviewsOf(po.id)).toEqual([]);
+    await receive(po, '2');
+
+    const [review] = await reviewsOf(po.id);
+    expect(review).toMatchObject({ status: 'pending', requesterUserId: U.req });
+    expect(review!.sodUserIds).toEqual(expect.arrayContaining([U.req, U.wh]));
+    expect(await stepRoles(review!.id)).toEqual(['management']);
+    expect(review!.snapshot).toMatchObject({
+      purchaseOrderId: po.id,
+      emergencyReason: 'The server room is flooding',
+    });
+
+    // A reversal and a second full receipt do not ask again.
+    as(U.wh, 'warehouse');
+    const [last] = await receiptsService.list(po.id);
+    await receiptsService.reverse(last!.id, { reason: 'Wrong box' }, randomUUID());
+    as(U.proc, 'procurement');
+    await receive(po, '2');
+    expect(await reviewsOf(po.id)).toHaveLength(1);
+
+    await decide(U.mgmt, 'management', review!.id);
+    const events = await audit.list(scopeA, {
+      entityType: 'purchase_orders',
+      entityId: po.id,
+      limit: 100,
+    });
+    expect(events.map((e) => e.action)).toEqual(
+      expect.arrayContaining([
+        'procurement.emergency_review.requested',
+        'procurement.emergency_review.approved',
+      ]),
+    );
+  });
+
+  it('asks nothing for an ordinary purchase', async () => {
+    const po = await issued({ quantity: '2', unitPrice: '100.00' });
+    await receive(po, '2');
+    expect((await service.get(po.id)).status).toBe('fully_received');
+    expect(await reviewsOf(po.id)).toEqual([]);
+  });
+
+  it('asks Management once when the rest of an emergency order is short-closed', async () => {
+    const po = await issued({ quantity: '5', unitPrice: '100.00', emergency: true });
+    await receive(po, '2');
+    expect(await reviewsOf(po.id)).toEqual([]);
+
+    const dto = await service.shortClose(po.id, { reason: 'Vendor out of stock' }, randomUUID());
+    expect(dto.status).toBe('short_closed');
+    const reviews = await reviewsOf(po.id);
+    expect(reviews).toHaveLength(1);
+    expect(reviews[0]).toMatchObject({ status: 'pending', requesterUserId: U.req });
+    // Who short-closed the order does not review it.
+    expect(reviews[0]!.sodUserIds).toEqual(expect.arrayContaining([U.req, U.proc]));
+    expect(await stepRoles(reviews[0]!.id)).toEqual(['management']);
+  });
+
+  it('asks nothing when an ordinary order is short-closed', async () => {
+    const po = await issued({ quantity: '5', unitPrice: '100.00' });
+    await receive(po, '2');
+    await service.shortClose(po.id, { reason: 'Vendor out of stock' }, randomUUID());
+    expect(await reviewsOf(po.id)).toEqual([]);
+  });
+
+  it('asks Management once when an amendment applied at once lowers the order to what arrived', async () => {
+    const po = await issued({ quantity: '5', unitPrice: '100.00', emergency: true });
+    await receive(po, '3');
+
+    // The total falls, so the amendment applies at once (F1-Q40).
+    const r = await service.amend(
+      po.id,
+      { reason: 'Only three will come', lines: [{ poLineId: po.lineId, quantity: '3' }] },
+      randomUUID(),
+    );
+    expect(r.outcome).toBe('applied');
+    expect(r.purchaseOrder.status).toBe('fully_received');
+    const reviews = await reviewsOf(po.id);
+    expect(reviews).toHaveLength(1);
+    expect(reviews[0]).toMatchObject({ status: 'pending', requesterUserId: U.req });
+    expect(reviews[0]!.sodUserIds).toEqual(expect.arrayContaining([U.req, U.proc]));
+  });
+
+  it('asks Management once an approved amendment leaves the order fully received, not while it waits', async () => {
+    const po = await issued({ quantity: '5', unitPrice: '100.00', emergency: true });
+    await receive(po, '3');
+
+    // Three at a higher price: the total rises from 565.00 to 678.00, so the amendment is approved first.
+    const r = await service.amend(
+      po.id,
+      {
+        reason: 'Only three will come, at a higher price',
+        lines: [{ poLineId: po.lineId, quantity: '3', unitPrice: '200.00' }],
+      },
+      randomUUID(),
+    );
+    expect(r.outcome).toBe('pending_approval');
+    expect(await reviewsOf(po.id)).toEqual([]);
+
+    await decide(U.acct, 'accountant', r.approvalRequestId!);
+    await decide(U.fin, 'finance', r.approvalRequestId!);
+    expect((await service.get(po.id)).status).toBe('fully_received');
+    const reviews = await reviewsOf(po.id);
+    expect(reviews).toHaveLength(1);
+    // Whoever proposed the amendment does not review it; the approver of the amendment is not excluded.
+    expect(reviews[0]!.sodUserIds).toEqual(expect.arrayContaining([U.req, U.proc]));
+    expect(reviews[0]!.sodUserIds).not.toContain(U.fin);
+    expect(await stepRoles(reviews[0]!.id)).toEqual(['management']);
+  });
+
+  it('asks nothing when an ordinary order is amended down to what arrived', async () => {
+    const po = await issued({ quantity: '5', unitPrice: '100.00' });
+    await receive(po, '3');
+    const r = await service.amend(
+      po.id,
+      { reason: 'Only three will come', lines: [{ poLineId: po.lineId, quantity: '3' }] },
+      randomUUID(),
+    );
+    expect(r.purchaseOrder.status).toBe('fully_received');
+    expect(await reviewsOf(po.id)).toEqual([]);
   });
 });
 
@@ -737,6 +1015,85 @@ describe('list filters, search and paging', () => {
     const inOther = await service.list({ ...PAGE, q: name });
     expect(inOther.rows[0]?.id).toBe(inB.id);
     expect(inOther.rows.map((p) => p.id)).not.toContain(inA.id);
+  });
+});
+
+// ---------------------------------------------------------------------------------------- read-only readers
+
+describe('a read-only purchase order view for accountant, finance and warehouse (F1-Q52)', () => {
+  it('lets each of them open the list, the detail, its versions and its progress, and offers only their own action', async () => {
+    const po = await issued();
+    const readers: Array<[string, RoleKey]> = [
+      [U.acct, 'accountant'],
+      [U.fin, 'finance'],
+      [U.wh, 'warehouse'],
+    ];
+    for (const [userId, role] of readers) {
+      as(userId, role);
+      expect(grantsOf(role).has('procurement.po.issue')).toBe(false);
+      const page = await service.list(PAGE);
+      expect(page.rows.map((p) => p.id)).toContain(po.id);
+      expect(page.total).toBeGreaterThanOrEqual(page.rows.length);
+      expect(await service.get(po.id)).toMatchObject({
+        id: po.id,
+        status: 'issued',
+        // Enter bill for whoever enters bills, Receive goods for the warehouse; nobody else gets either.
+        can: { enterBill: role === 'accountant', receive: role === 'warehouse' },
+      });
+      expect(await service.versions(po.id)).toHaveLength(1);
+      await expect(receiptsService.progress(po.id)).resolves.toMatchObject({
+        purchaseOrderId: po.id,
+      });
+    }
+  });
+
+  it('still refuses roles that hold none of those grants: management and a requester', async () => {
+    const po = await issued();
+    const refused: Array<[string, RoleKey]> = [
+      [U.mgmt, 'management'],
+      [U.req, 'operations_officer'],
+    ];
+    for (const [userId, role] of refused) {
+      as(userId, role);
+      expect((await httpErrorOf(service.list(PAGE))).getStatus()).toBe(403);
+      expect((await httpErrorOf(service.get(po.id))).getStatus()).toBe(403);
+      expect((await httpErrorOf(service.versions(po.id))).getStatus()).toBe(403);
+    }
+  });
+
+  it('follows a narrower grant: the list and the detail agree on which orders it reaches', async () => {
+    const mine = await issued({ requester: U.acct });
+    const theirs = await issued();
+    as(U.acct, 'accountant');
+    current.grants = new Map([
+      ...grantsOf('accountant'),
+      ['payables.bill.enter', 'own'],
+      ['payables.bill.read', 'own'],
+    ]);
+
+    const page = await service.list(PAGE);
+    expect(page.rows.map((p) => p.id)).toContain(mine.id);
+    expect(page.rows.map((p) => p.id)).not.toContain(theirs.id);
+    expect(page.total).toBe(page.rows.length);
+    expect((await service.get(mine.id)).id).toBe(mine.id);
+    expect((await httpErrorOf(service.get(theirs.id))).getStatus()).toBe(404);
+    expect((await httpErrorOf(service.versions(theirs.id))).getStatus()).toBe(404);
+  });
+
+  it("links an amendment's approval to the order for an accountant approver, and still not for management (TR-Q2)", async () => {
+    const po = await issued();
+    const r = await service.amend(
+      po.id,
+      { reason, lines: [{ poLineId: po.lineId, unitPrice: '132743.36' }] },
+      randomUUID(),
+    );
+    expect(r.outcome).toBe('pending_approval');
+    as(U.acct, 'accountant');
+    expect((await approvals.get(r.approvalRequestId!)).context?.href).toBe(
+      `/procurement/orders/${po.id}`,
+    );
+    as(U.mgmt, 'management');
+    expect((await approvals.get(r.approvalRequestId!)).context?.href).toBeNull();
   });
 });
 

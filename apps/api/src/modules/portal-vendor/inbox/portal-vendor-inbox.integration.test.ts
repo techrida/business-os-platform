@@ -247,7 +247,7 @@ async function rfq(invited: string[]): Promise<string> {
   await exec(
     sql`INSERT INTO app.rfqs (id, tenant_id, organization_id, purchase_request_id, number, deadline, created_by)
         VALUES (${id}, ${scope.tenantId}, ${scope.organizationId}, ${prId}, ${`RFQ-${(rfqSeq += 1)}`},
-                '2026-12-15T00:00:00Z', ${staffId})`,
+                '2030-12-15T00:00:00Z', ${staffId})`,
   );
   for (const vendorId of invited) {
     await exec(
@@ -579,6 +579,28 @@ describe('quotation submissions', () => {
     expect(res.status).toBe(409);
     expect(res.body).toMatchObject({ code: 'document_infected' });
     expect(await count('vendor_quotation_submissions', `rfq_id = '${rfqId}'`)).toBe(0);
+  });
+
+  it('refuses a quotation after the RFQ deadline with 409 rfq_deadline_passed, and takes it once extended (F1-Q47)', async () => {
+    const a = await vendor('approved');
+    const rfqId = await rfq([a.partyId]);
+    const f = await quotationFile(a);
+    await exec(sql`UPDATE app.rfqs SET deadline = now() - interval '1 minute' WHERE id = ${rfqId}`);
+
+    const res = await errorOf(
+      as(a, (who) =>
+        service.submitQuotation(who, quotationBody(rfqId, f.documentId), randomUUID()),
+      ),
+    );
+    expect(res.status).toBe(409);
+    expect(res.body).toMatchObject({ code: 'rfq_deadline_passed' });
+    expect(await count('vendor_quotation_submissions', `rfq_id = '${rfqId}'`)).toBe(0);
+
+    await exec(sql`UPDATE app.rfqs SET deadline = now() + interval '1 day' WHERE id = ${rfqId}`);
+    await as(a, (who) =>
+      service.submitQuotation(who, quotationBody(rfqId, f.documentId), randomUUID()),
+    );
+    expect(await count('vendor_quotation_submissions', `rfq_id = '${rfqId}'`)).toBe(1);
   });
 });
 

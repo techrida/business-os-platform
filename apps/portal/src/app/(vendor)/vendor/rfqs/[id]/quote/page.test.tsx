@@ -3,7 +3,7 @@ import { isValidElement, type ReactElement } from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { RFQ_ID, sampleRfq } from '@/components/vendor/rfq-fixtures';
+import { BEFORE_DEADLINE, RFQ_ID, sampleRfq } from '@/components/vendor/rfq-fixtures';
 import { sampleOnboarding } from '@/components/vendor/vendor-fixtures';
 import { ApiError } from '@/lib/api';
 
@@ -49,6 +49,9 @@ const render = async (id: string = RFQ_ID, search: { sent?: string } = {}) =>
   );
 
 beforeEach(() => {
+  // The page compares the sample deadline with now (F1-Q47): pin now before it.
+  vi.useFakeTimers({ toFake: ['Date'] });
+  vi.setSystemTime(BEFORE_DEADLINE);
   for (const f of Object.values(m)) f.mockReset();
   m.getSession.mockResolvedValue(vendorSession());
   m.getVendorOnboarding.mockResolvedValue(
@@ -62,6 +65,7 @@ beforeEach(() => {
 });
 
 afterEach(() => {
+  vi.useRealTimers();
   vi.unstubAllGlobals();
   vi.unstubAllEnvs();
 });
@@ -133,10 +137,18 @@ describe('submit a quotation page', () => {
     expect(text(await render())).toContain('cannot use this page');
   });
 
-  it('warns about a past deadline and still shows the form', async () => {
+  it('after the deadline says it passed and shows no form (F1-Q47)', async () => {
     m.getVendorRfq.mockResolvedValue(sampleRfq({ deadline: '2020-01-01T00:00:00.000Z' }));
     const html = await render();
     expect(text(html)).toContain('The deadline for this request has passed');
+    expect(text(html)).toContain('We can no longer take a quotation for this request.');
+    expect(text(html)).not.toContain('You can still try to send one');
+    expect(html).not.toContain('name="total"');
+  });
+
+  it('shows the form while the deadline is ahead', async () => {
+    m.getVendorRfq.mockResolvedValue(sampleRfq({ deadline: '2999-01-01T00:00:00.000Z' }));
+    const html = await render();
     expect(html).toContain('name="total"');
     expect(html).not.toContain('disabled=""');
   });

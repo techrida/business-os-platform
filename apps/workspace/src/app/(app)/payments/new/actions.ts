@@ -7,6 +7,7 @@ import { revalidatePath } from 'next/cache';
 import { redirect } from 'next/navigation';
 
 import { todayInKathmandu } from '@/app/(app)/settings/format';
+import { findPaymentReferenceMatches } from '@/lib/api-payments';
 import { submitPayment } from '@/lib/api-receivables';
 import { requireStaffSession } from '@/lib/bff';
 import { getPermissionCheck } from '@/lib/live-permissions';
@@ -145,6 +146,24 @@ export async function recordPaymentAction(
   if (!parsed.success || Object.keys(fieldErrors).length > 0) {
     // Nothing reached the API, so the same key is still unused.
     return { key, fieldErrors };
+  }
+
+  // A bank reference already on file is a warning, never a refusal (TR-Q12d): the person sees the
+  // earlier payments and confirms. The confirm box names the payments it was shown, so a payment
+  // recorded since then warns again. If the check cannot be read, the payment is recorded anyway.
+  if (parsed.data.bankReference !== undefined) {
+    const confirmed = new Set(
+      text(form, 'referenceConfirmed')
+        .split(',')
+        .filter((id) => UUID.test(id)),
+    );
+    const matches = await findPaymentReferenceMatches(session, parsed.data.bankReference).catch(
+      () => [],
+    );
+    if (matches.some((m) => !confirmed.has(m.id))) {
+      // Nothing reached the record route, so the same key is still unused.
+      return { key, referenceMatches: matches };
+    }
   }
 
   let paymentId: string;

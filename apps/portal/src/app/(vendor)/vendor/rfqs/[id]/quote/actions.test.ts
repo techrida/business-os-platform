@@ -129,6 +129,28 @@ describe('submitQuoteAction', () => {
     expect(fetchMock).not.toHaveBeenCalled();
   });
 
+  it.each([
+    ['its code', { code: 'rfq_deadline_passed', message: 'x' }],
+    [
+      'its sentence while the filter says conflict',
+      {
+        code: 'conflict',
+        message:
+          'The quotation deadline of this RFQ has passed. Procurement can extend it to take more quotations.',
+      },
+    ],
+  ])(
+    'says the deadline passed on the 409 read by %s, and rotates the key (F1-Q47)',
+    async (_, error) => {
+      fetchMock.mockResolvedValueOnce(json({ error }, 409));
+      const state = await send();
+      expect(state.error).toBe(
+        'The deadline for this request has passed. We can no longer take a quotation for this request. If we extend the deadline, the new date will show here.',
+      );
+      expect(state.key).not.toBe(IDEM);
+    },
+  );
+
   it('keeps the key across the in-progress 409 and a 5xx, so the retry reuses it', async () => {
     fetchMock.mockResolvedValueOnce(json({ error: { code: 'idempotency_in_progress' } }, 409));
     const first = await send();

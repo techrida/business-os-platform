@@ -37,7 +37,7 @@ export function BillForm({
 }: {
   /** A UUID the server generated for this render. */
   idempotencyKey: string;
-  /** Today in Kathmandu, as `YYYY-MM-DD`: the latest date an invoice can have. */
+  /** Today in Kathmandu, as `YYYY-MM-DD`: where the invoice date starts, and the latest it can be. */
   today: string;
   orders: readonly PoChoice[];
   initialOrderId: string;
@@ -54,7 +54,8 @@ export function BillForm({
 
   // Controlled: React 19 resets uncontrolled fields after every action.
   const [invoiceNo, setInvoiceNo] = useState('');
-  const [invoiceDate, setInvoiceDate] = useState('');
+  // Starts at today in Kathmandu, as the staff bill form does; the vendor can change it.
+  const [invoiceDate, setInvoiceDate] = useState(today);
   const [currency, setCurrency] = useState<string>(
     () => currencyOptions(currencies)[0]?.code ?? 'NPR',
   );

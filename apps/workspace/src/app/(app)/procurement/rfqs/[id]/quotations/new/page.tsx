@@ -20,7 +20,13 @@ import layout from '../../../../procurement.module.css';
 import { recordQuotationAction } from '../../../actions';
 import { QuoteForm, type SubmissionInfo } from '../../../_components/quote-form';
 import { rfqFailure } from '../../../_lib/failure';
-import { rfqGrants, submissionConvertibility, takesQuotations } from '../../../_lib/model';
+import {
+  arrivedLate,
+  deadlinePassed,
+  rfqGrants,
+  submissionConvertibility,
+  takesQuotations,
+} from '../../../_lib/model';
 
 export const metadata: Metadata = { title: 'Enter a quotation · Business OS' };
 export const dynamic = 'force-dynamic';
@@ -122,6 +128,15 @@ export default async function NewQuotationPage({
     );
   }
 
+  // F1-Q47: a quotation typed in now arrives now, so after the deadline it is refused; an upload
+  // that arrived by the deadline can still be converted.
+  if (!convert && deadlinePassed(rfq.deadline, new Date())) {
+    return blocked(
+      'The quotation deadline has passed',
+      `Quotations closed on ${when(rfq.deadline)}. Extend the deadline on the RFQ to enter more.`,
+    );
+  }
+
   let submission: SubmissionInfo | undefined;
   if (convert) {
     let found;
@@ -136,7 +151,10 @@ export default async function NewQuotationPage({
         'It may already be converted, rejected or withdrawn, or it belongs to another RFQ.',
       );
     }
-    const c = submissionConvertibility(found.scanStatus);
+    const c = submissionConvertibility(
+      found.scanStatus,
+      arrivedLate(found.submittedAt, rfq.deadline),
+    );
     if (!c.convertible) {
       return blocked(`The file from ${found.vendorName} cannot be converted yet`, c.reason);
     }

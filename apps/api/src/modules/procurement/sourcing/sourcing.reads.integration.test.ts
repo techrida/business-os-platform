@@ -291,7 +291,9 @@ async function doc(): Promise<string> {
   return (rows[0] as { id: string }).id;
 }
 
-const deadline = '2026-11-20T10:00:00+05:45';
+// Far ahead: an inbox submission is received at the database's own time, which must stay before the deadline
+// (F1-Q47 refuses a later one).
+const deadline = '2030-11-20T10:00:00+05:45';
 
 /** An open RFQ inviting `count` approved vendors; nobody has quoted yet. */
 async function openRfq(count: number) {

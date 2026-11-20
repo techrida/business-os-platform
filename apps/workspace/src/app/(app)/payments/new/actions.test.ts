@@ -20,6 +20,7 @@ const mocks = vi.hoisted(() => ({
   requireStaffSession: vi.fn(),
   apiFetch: vi.fn(),
   getMe: vi.fn(),
+  findPaymentReferenceMatches: vi.fn(),
   revalidatePath: vi.fn(),
   redirect: vi.fn((url: string) => {
     throw new Error(`REDIRECT:${url}`);
@@ -31,6 +32,9 @@ vi.mock('@/lib/api', async (importOriginal) => ({
   ...(await importOriginal<typeof import('@/lib/api')>()),
   apiFetch: mocks.apiFetch,
   getMe: mocks.getMe,
+}));
+vi.mock('@/lib/api-payments', () => ({
+  findPaymentReferenceMatches: mocks.findPaymentReferenceMatches,
 }));
 vi.mock('next/cache', () => ({ revalidatePath: mocks.revalidatePath }));
 vi.mock('next/navigation', () => ({ redirect: mocks.redirect }));
@@ -90,6 +94,8 @@ beforeEach(() => {
   mocks.requireStaffSession.mockResolvedValue({ accessToken: 't', roles: ['accountant'] });
   // Without a live answer the gate falls back to the role defaults.
   mocks.getMe.mockRejectedValue(new Error('GET /v1/me failed'));
+  // No earlier payment carries the reference unless a test says so.
+  mocks.findPaymentReferenceMatches.mockResolvedValue([]);
 });
 
 describe('recordPaymentAction', () => {
@@ -297,5 +303,61 @@ describe('recordPaymentAction', () => {
     expect(out.to).toBeNull();
     expect(out.state?.key).toBe(KEY);
     expect(out.state?.error).toBeTruthy();
+  });
+});
+
+describe('recordPaymentAction with a bank reference already on file (TR-Q12d)', () => {
+  const EARLIER = '55555555-5555-4555-8555-555555555555';
+  const LATER = '66666666-6666-4666-8666-666666666666';
+  const earlier = {
+    id: EARLIER,
+    number: 'RCPT-2026-00012',
+    customerName: 'Everest Foods',
+    receivedOn: '2026-11-05',
+    amount: '250.50',
+    currency: 'NPR',
+    status: 'verified',
+  };
+
+  it('checks the trimmed reference, shows the earlier payments and records nothing, keeping the key', async () => {
+    mocks.findPaymentReferenceMatches.mockResolvedValue([earlier]);
+    const out = await run(form({ bankReference: '  NIC-77812 ' }));
+    expect(mocks.findPaymentReferenceMatches).toHaveBeenCalledWith(
+      expect.objectContaining({ accessToken: 't' }),
+      'NIC-77812',
+    );
+    expect(out.state).toEqual({ key: KEY, referenceMatches: [earlier] });
+    expect(mocks.apiFetch).not.toHaveBeenCalled();
+  });
+
+  it('records the payment once the person confirms it is a different one', async () => {
+    mocks.findPaymentReferenceMatches.mockResolvedValue([earlier]);
+    mocks.apiFetch.mockImplementation(() => answer(201, payment()));
+    const out = await run(form({ referenceConfirmed: EARLIER }));
+    expect(out.to).toBe(`/payments/${PAYMENT_ID}`);
+    expect(sentKey(0)).toBe(KEY);
+    expect(sentBody(0)).toMatchObject({ bankReference: 'NIC-77812' });
+    expect(sentBody(0)).not.toHaveProperty('referenceConfirmed');
+  });
+
+  it('warns again when a payment the person was not shown has the reference', async () => {
+    mocks.findPaymentReferenceMatches.mockResolvedValue([{ ...earlier, id: LATER }, earlier]);
+    const out = await run(form({ referenceConfirmed: `${EARLIER},not-an-id` }));
+    expect(out.state?.referenceMatches?.map((m) => m.id)).toEqual([LATER, EARLIER]);
+    expect(mocks.apiFetch).not.toHaveBeenCalled();
+  });
+
+  it('still records the payment when the check cannot be read', async () => {
+    mocks.findPaymentReferenceMatches.mockRejectedValue(new Error('GET failed with 503'));
+    mocks.apiFetch.mockImplementation(() => answer(201, payment()));
+    const out = await run(form());
+    expect(out.to).toBe(`/payments/${PAYMENT_ID}`);
+  });
+
+  it('does not check a payment with no bank reference, or a form with a wrong field', async () => {
+    mocks.apiFetch.mockImplementation(() => answer(201, payment()));
+    await run(form({ bankReference: '   ' }));
+    await run(form({ amount: '0' }));
+    expect(mocks.findPaymentReferenceMatches).not.toHaveBeenCalled();
   });
 });

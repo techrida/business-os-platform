@@ -208,7 +208,12 @@ export const NAV_GROUPS: readonly NavGroup[] = [
         href: '/procurement/orders',
         icon: 'file-text',
         phase: 'P4',
-        permission: 'procurement.po.issue',
+        permission: [
+          'procurement.po.issue',
+          'payables.bill.enter',
+          'payables.bill.read',
+          'procurement.receipt.confirm',
+        ],
       },
       {
         label: 'Receipts',

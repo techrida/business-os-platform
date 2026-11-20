@@ -81,8 +81,12 @@ export const PurchaseOrderSchema = z.object({
   lines: z.array(PoLineSchema),
   /** A draft with no lines yet: the approved quotation's lines that issue will copy in. Read-only. */
   proposedLines: z.array(PoLineSchema).optional(),
-  /** What the caller may do from this order, from their live grants. Sent by the detail read only. */
-  can: z.object({ enterBill: z.boolean() }).optional(),
+  /**
+   * What the caller may do from this order, from their live grants. Sent by the detail read only: `enterBill` on an
+   * order a bill can be entered against, `receive` on one that still takes receipts (the warehouse, or the requester
+   * of a service). A read-only reader gets false for both.
+   */
+  can: z.object({ enterBill: z.boolean(), receive: z.boolean() }).optional(),
 });
 export type PurchaseOrder = z.infer<typeof PurchaseOrderSchema>;
 
@@ -130,6 +134,8 @@ export const PoProgressSchema = z.object({
   number: Text,
   status: PoStatusSchema,
   lines: z.array(PoProgressLineSchema),
+  /** Which kinds of receipt the person may make on this order, from their live grants on it. */
+  can: z.object({ goods: z.boolean(), service: z.boolean() }).optional(),
 });
 export type PoProgress = z.infer<typeof PoProgressSchema>;
 
@@ -141,7 +147,6 @@ export const ReceiptLineSchema = z.object({
   reversesReceiptLineId: z.guid().nullable(),
   inspection: Text.nullable(),
   discrepancyNote: Text.nullable(),
-  overReceiptExceptionId: z.guid().nullable(),
   serials: z.array(
     z.object({ serialNo: Text, batchNo: Text.nullable(), warrantyUntil: Text.nullable() }),
   ),
@@ -163,6 +168,11 @@ export const ReceiptSchema = z.object({
   version: z.number().int(),
   createdAt: Text,
   lines: z.array(ReceiptLineSchema),
+  /**
+   * What the person may do with this receipt, from their live grants on the order and its statuses. Sent by the list
+   * and detail reads; the write routes leave it out.
+   */
+  can: z.object({ confirm: z.boolean(), discard: z.boolean(), reverse: z.boolean() }).optional(),
 });
 export type Receipt = z.infer<typeof ReceiptSchema>;
 
@@ -181,6 +191,21 @@ export const ReceivableOrderSchema = z.strictObject({
   openQuantity: Text,
 });
 export type ReceivableOrder = z.infer<typeof ReceivableOrderSchema>;
+
+/**
+ * A row of the warehouse's recently received list (apps/api receivable-orders.service.ts, U18-Q3): an order that is
+ * fully received, closed or short-closed. Strict: a field the DTO does not have fails the parse.
+ */
+export const ReceivedOrderSchema = z.strictObject({
+  id: z.guid(),
+  number: Text,
+  vendorId: z.guid(),
+  vendorName: Text,
+  kind: z.enum(['goods', 'service', 'mixed']),
+  status: z.enum(['fully_received', 'closed', 'short_closed']),
+  lastReceivedAt: Text.optional(),
+});
+export type ReceivedOrder = z.infer<typeof ReceivedOrderSchema>;
 
 /** One purchase order raised from the caller's own purchase requests: the receipts picker of a requester. */
 export const RequestedOrderSchema = z.strictObject({
@@ -355,6 +380,11 @@ export function listReceivableOrders(session: Session, limit?: number): Promise<
       ? '/v1/procurement/receivable-orders'
       : `/v1/procurement/receivable-orders?limit=${encodeURIComponent(String(limit))}`;
   return call(session, path, z.array(ReceivableOrderSchema));
+}
+
+/** The orders the warehouse has finished with (needs procurement.receipt.confirm), most recently received first. */
+export function listReceivedOrders(session: Session): Promise<ReceivedOrder[]> {
+  return call(session, '/v1/procurement/received-orders', z.array(ReceivedOrderSchema));
 }
 
 /** The purchase orders of the caller's own purchase requests (needs procurement.pr.read), newest first. */
