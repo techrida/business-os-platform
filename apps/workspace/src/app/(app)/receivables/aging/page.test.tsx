@@ -198,7 +198,7 @@ describe('receivables aging', () => {
   });
 
   it('opens the report for a role whose saved grants add ar.read, though its defaults lack it', async () => {
-    mocks.requireStaffSession.mockResolvedValue({ accessToken: 't', roles: ['sales'] });
+    mocks.requireStaffSession.mockResolvedValue({ accessToken: 'live-1', roles: ['sales'] });
     mocks.getMe.mockResolvedValue(liveGrants('customer.read', 'ar.read'));
     mocks.getAging.mockResolvedValue(agingReport());
     const html = await render();
@@ -207,6 +207,7 @@ describe('receivables aging', () => {
   });
 
   it('closes the report for a role whose saved grants removed ar.read, though its defaults hold it', async () => {
+    mocks.requireStaffSession.mockResolvedValue({ accessToken: 'live-2', roles: ['finance'] });
     mocks.getMe.mockResolvedValue(liveGrants('customer.read'));
     const html = await render();
     expect(html).toContain('Your roles do not include receivables');

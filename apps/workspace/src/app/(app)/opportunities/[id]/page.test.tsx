@@ -280,13 +280,14 @@ describe('opportunity follow-ups (migrated open tasks on the deal)', () => {
   });
 
   it('asks for lead owners when the saved grants add crm.lead.write to a role without it', async () => {
-    mocks.requireStaffSession.mockResolvedValue({ accessToken: 'tok', roles: ['management'] });
+    mocks.requireStaffSession.mockResolvedValue({ accessToken: 'live-1', roles: ['management'] });
     mocks.getMe.mockResolvedValue(liveGrants('crm.opportunity.read', 'crm.lead.write'));
     await render();
     expect(mocks.listLeadOwners).toHaveBeenCalledTimes(1);
   });
 
   it('skips lead owners when the saved grants removed crm.lead.write from sales', async () => {
+    mocks.requireStaffSession.mockResolvedValue({ accessToken: 'live-2', roles: ['sales'] });
     mocks.getMe.mockResolvedValue(liveGrants('crm.opportunity.read', 'crm.opportunity.write'));
     const html = await render();
     expect(mocks.listLeadOwners).not.toHaveBeenCalled();

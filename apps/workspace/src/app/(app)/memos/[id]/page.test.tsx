@@ -128,8 +128,8 @@ const fetchMock = vi.fn<typeof fetch>((input) => {
 const auditCalls = () =>
   fetchMock.mock.calls.filter(([url]) => new URL(url as URL | string).pathname === '/v1/audit');
 
-async function render(roles: string[]): Promise<string> {
-  mocks.requireStaffSession.mockResolvedValue({ accessToken: 'tok', roles, userId: OWNER });
+async function render(roles: string[], accessToken = 'tok'): Promise<string> {
+  mocks.requireStaffSession.mockResolvedValue({ accessToken, roles, userId: OWNER });
   return renderToStaticMarkup(
     await MemoDetailPage({
       params: Promise.resolve({ id: MEMO }),
@@ -174,7 +174,7 @@ describe('memo detail page audit timeline', () => {
   it('loads the audit trail for a role whose saved grants add audit.read, though its defaults lack it', async () => {
     auditAllowed = true;
     liveGrants = ['audit.read'];
-    const html = await render(['sales']);
+    const html = await render(['sales'], 'live-1');
     expect(auditCalls()).toHaveLength(2);
     expect(html).not.toContain('only open to roles with audit access');
   });
@@ -182,7 +182,7 @@ describe('memo detail page audit timeline', () => {
   it('asks nothing of the audit trail when the saved grants removed audit.read, though the defaults hold it', async () => {
     auditAllowed = true;
     liveGrants = ['memo.read'];
-    const html = await render(['finance']);
+    const html = await render(['finance'], 'live-2');
     expect(auditCalls()).toHaveLength(0);
     expect(html).toContain('only open to roles with audit access');
   });

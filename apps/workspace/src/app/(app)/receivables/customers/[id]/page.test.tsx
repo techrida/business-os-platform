@@ -203,14 +203,14 @@ describe('customer statement', () => {
 
   it('follows the saved grants over the role defaults for the statement and Record payment', async () => {
     // Sales lacks both by default; the Founder granted them in Settings > Access.
-    mocks.requireStaffSession.mockResolvedValue({ accessToken: 't', roles: ['sales'] });
+    mocks.requireStaffSession.mockResolvedValue({ accessToken: 'live-1', roles: ['sales'] });
     mocks.getMe.mockResolvedValue(liveGrants('ar.read', 'payment.record'));
     const granted = await render();
     expect(mocks.getCustomerStatement).toHaveBeenCalledTimes(1);
     expect(granted).toContain(`href="/payments/new?customerId=${CUSTOMER_ID}"`);
 
     // Accountant holds both by default; payment.record was removed from the saved rows.
-    mocks.requireStaffSession.mockResolvedValue({ accessToken: 't', roles: ['accountant'] });
+    mocks.requireStaffSession.mockResolvedValue({ accessToken: 'live-2', roles: ['accountant'] });
     mocks.getMe.mockResolvedValue(liveGrants('ar.read'));
     const removed = await render();
     expect(removed).toContain('href="/payments"');
@@ -218,6 +218,7 @@ describe('customer statement', () => {
   });
 
   it('closes the statement when the saved grants removed ar.read, fetching nothing', async () => {
+    mocks.requireStaffSession.mockResolvedValue({ accessToken: 'live-3', roles: ['accountant'] });
     mocks.getMe.mockResolvedValue(liveGrants('payment.record'));
     const html = await render();
     expect(html).toContain('Your roles do not include receivables');
