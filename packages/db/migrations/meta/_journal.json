@@ -554,6 +554,13 @@
       "when": 1783000000125,
       "tag": "0127_workflow_publish",
       "breakpoints": true
+    },
+    {
+      "idx": 79,
+      "version": "7",
+      "when": 1783000000128,
+      "tag": "0128_email_delivery_resend",
+      "breakpoints": true
     }
   ]
 }
