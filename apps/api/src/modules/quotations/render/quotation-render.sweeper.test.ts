@@ -278,17 +278,17 @@ describe('QuotationRenderSweeper', () => {
       orphansRemoved: 0,
       failures: [],
     });
-    expect(
-      calls.filter((x) => !x.startsWith('candidates') && !x.startsWith('abandoned(')),
-    ).toEqual([
-      `claim:${c.versionId}`,
-      `load:${c.versionId}`,
-      `style:${c.versionId}`,
-      'pdf:html',
-      `create:${c.versionId}`,
-      'receive',
-      `rendered:${c.versionId}`,
-    ]);
+    expect(calls.filter((x) => !x.startsWith('candidates') && !x.startsWith('abandoned('))).toEqual(
+      [
+        `claim:${c.versionId}`,
+        `load:${c.versionId}`,
+        `style:${c.versionId}`,
+        'pdf:html',
+        `create:${c.versionId}`,
+        'receive',
+        `rendered:${c.versionId}`,
+      ],
+    );
     expect(documents.createGenerated).toHaveBeenCalledWith(
       TX,
       { ownerType: 'quotation_version', ownerId: c.versionId },
