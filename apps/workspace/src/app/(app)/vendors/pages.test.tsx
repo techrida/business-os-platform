@@ -290,10 +290,10 @@ describe('vendor detail', () => {
     expect(out).toContain('No contacts yet.');
     expect(out).toContain('No terms set yet.');
     expect(out).toContain('No bank account yet.');
-    // PageHeader carries the single page h1 and header actions; the profile card uses h2.
+    // PageHeader carries the single page h1 and header actions; the profile card uses h2 without repeating the title.
     expect(out.match(/<h1\b/g)).toHaveLength(1);
     expect(out).toMatch(/<h1[^>]*>Himal Traders Pvt. Ltd.<\/h1>/);
-    expect(out).toMatch(/<h2 id="vendor-name"[^>]*>Himal Traders Pvt. Ltd.<\/h2>/);
+    expect(out).toMatch(/<h2 id="vendor-name"[^>]*>Vendor details<\/h2>/);
     expect(out).toContain(`href="/vendors/${ID}/edit"`);
     expect(out).toContain('Edit Details');
     // The h1 comes before every panel heading.
@@ -357,7 +357,7 @@ describe('vendor detail', () => {
     expect(approved).toContain('Block vendor');
   });
 
-  it('hides Approve vendor and explains separation of duties when activateBlockedBySod is set', async () => {
+  it('hides Approve/Reinstate and explains SoD, KYB, and expired tax clearance blocks prominently', async () => {
     session.roles = ['founder'];
     api.getVendor.mockResolvedValue(
       vendor({
@@ -372,11 +372,66 @@ describe('vendor detail', () => {
         },
       }),
     );
-    const out = await detail();
-    expect(out).not.toContain('Approve vendor');
-    expect(out).toContain(
+    const sodApprove = await detail();
+    expect(sodApprove).not.toContain('Approve vendor');
+    expect(sodApprove).toContain('Approval requires another approver');
+    expect(sodApprove).toContain(
       'You created this vendor, so another person with approval access must approve it.',
     );
+
+    api.getVendor.mockResolvedValue(
+      vendor({
+        status: 'suspended',
+        can: {
+          write: true,
+          activate: false,
+          suspend: false,
+          block: true,
+          archive: false,
+          activateBlockedBySod: true,
+        },
+      }),
+    );
+    const sodReinstate = await detail();
+    expect(sodReinstate).not.toContain('Reinstate vendor');
+    expect(sodReinstate).toContain('Reinstatement requires another approver');
+    expect(sodReinstate).toContain(
+      'You created this vendor, so another person with approval access must reinstate it.',
+    );
+
+    api.getVendor.mockResolvedValue(
+      vendor({
+        status: 'under_review',
+        can: {
+          write: true,
+          activate: false,
+          suspend: false,
+          block: false,
+          archive: false,
+          activateBlockedByKyb: true,
+        },
+      }),
+    );
+    const kybBlocked = await detail();
+    expect(kybBlocked).not.toContain('Approve vendor');
+    expect(kybBlocked).toContain('KYB review must be approved first');
+
+    api.getVendor.mockResolvedValue(
+      vendor({
+        status: 'suspended',
+        can: {
+          write: true,
+          activate: false,
+          suspend: false,
+          block: true,
+          archive: false,
+          activateBlockedByKycExpired: true,
+        },
+      }),
+    );
+    const kycExpired = await detail();
+    expect(kycExpired).not.toContain('Reinstate vendor');
+    expect(kycExpired).toContain('Tax clearance has expired');
   });
 
   it('respects live permissions over static role defaults', async () => {

@@ -131,7 +131,7 @@ it('hides department actions when live admin.roles.write is revoked even for a f
   );
   expect(activeHtml).not.toContain('Rename Sales');
   expect(activeHtml).not.toContain('Retire Sales');
-  expect(activeHtml).toContain('Only a Founder can change departments.');
+  expect(activeHtml).toContain('You do not have permission to change departments.');
 
   stubApi({ ...detail, status: 'retired', retiredAt: '2026-11-01T00:00:00.000Z' });
   const retiredHtml = renderToStaticMarkup(

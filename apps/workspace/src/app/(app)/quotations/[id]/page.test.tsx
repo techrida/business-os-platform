@@ -85,13 +85,10 @@ vi.mock('@/components/p2/quotations/contents', async (importOriginal) => {
 vi.mock('@/components/p2/quotations/detail-actions', async (importOriginal) => {
   const real = await importOriginal<typeof import('@/components/p2/quotations/detail-actions')>();
   return {
+    hasDetailActions: real.hasDetailActions,
     DetailActions: (props: ComponentProps<typeof real.DetailActions>) => {
       mocks.seen.push({ component: 'DetailActions', version: props.current });
       return real.DetailActions(props);
-    },
-    ClientDecision: (props: ComponentProps<typeof real.ClientDecision>) => {
-      mocks.seen.push({ component: 'ClientDecision', version: props.current });
-      return real.ClientDecision(props);
     },
   };
 });
@@ -358,6 +355,23 @@ describe('quotation detail page', () => {
     const approvedHtml = await render();
     expect(approvedHtml).not.toContain('>Send to customer</button>');
     expect(approvedHtml).toContain('>Revise</button>');
+
+    mocks.getMe.mockResolvedValue({
+      permissions: [{ permission: 'quotation.read', scope: 'all' }],
+    });
+    mocks.getQuotation.mockResolvedValue(
+      detail({
+        capabilities: { canEdit: false, canRevise: false, canSend: false, canRecordOutcome: false },
+      }),
+    );
+    const readOnlyHtml = await render();
+    const h1Start = readOnlyHtml.indexOf('<h1');
+    const bodyStart = readOnlyHtml.indexOf('<section', h1Start);
+    expect(h1Start).toBeGreaterThan(-1);
+    expect(bodyStart).toBeGreaterThan(h1Start);
+    const header = readOnlyHtml.slice(h1Start, bodyStart);
+    expect(header).not.toContain('<button');
+    expect(header).not.toMatch(/class="[^"]*actions/);
   });
 
   it('answers a 404 with notFound, and a non-UUID id without calling the API', async () => {

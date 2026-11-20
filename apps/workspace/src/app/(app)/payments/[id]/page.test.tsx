@@ -135,8 +135,13 @@ describe('payment detail', () => {
     expect(html).not.toContain('Verify payment');
     expect(html).not.toContain('>Reject<');
     expect(html).not.toContain('Reverse payment');
-    const header = html.slice(html.indexOf('<header'), html.indexOf('</header>'));
+    const h1Start = html.indexOf('<h1');
+    const bodyStart = html.indexOf('<section', h1Start);
+    expect(h1Start).toBeGreaterThan(-1);
+    expect(bodyStart).toBeGreaterThan(h1Start);
+    const header = html.slice(h1Start, bodyStart);
     expect(header).not.toContain('<button');
+    expect(header).not.toMatch(/class="[^"]*actions/);
   });
 
   it('respects payment.can and explains separation of duties when verifyBlockedBySod is true', async () => {
