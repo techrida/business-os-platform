@@ -1,5 +1,5 @@
 // Workflow 2 · Lead → quotation → sales order → invoice → payment (guide steps sales-1 … sales-15).
-// Exact values: docs/testrun-2026-11-19/steps/sales-*.md plus the "Update 19 Nov" boxes:
+// Exact values: the test-run guide steps sales-* plus the "Update 19 Nov" boxes:
 // Qualify → Qualify lead; per-document Upload (native chooser) + Save, status "Virus free";
 // per-document Approve then Approve customer (reason + confirm); one 100% Advance milestone
 // (total NPR 135,600); payments are 67,800.00 twice; Dev Founder confirms the order.

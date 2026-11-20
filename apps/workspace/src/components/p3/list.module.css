@@ -4,29 +4,6 @@
   gap: var(--spacing-content-gap);
 }
 
-.toolbar {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 12px;
-}
-
-.search {
-  flex: 1 1 220px;
-  max-width: 320px;
-  margin-inline-end: auto;
-}
-
-.toolbar .select {
-  width: auto;
-  max-width: min(100%, 18rem);
-  min-height: 40px;
-  padding-inline-start: 12px;
-  border-color: var(--button-primary-border);
-  color: var(--action-primary);
-  text-overflow: ellipsis;
-}
-
 .results {
   min-width: 0;
 }
@@ -52,11 +29,6 @@
   .stats {
     grid-template-columns: repeat(2, minmax(0, 1fr));
     gap: 12px;
-  }
-
-  .search {
-    flex-basis: 100%;
-    max-width: none;
   }
 
   .results tbody > tr {

@@ -39,7 +39,6 @@ export const PurchaseRequestLineSchema = z.object({
   estimatedUnitPrice: money,
   estimatedAmount: money,
 });
-export type PurchaseRequestLine = z.infer<typeof PurchaseRequestLineSchema>;
 
 export const PurchaseRequestListItemSchema = z.object({
   id: z.guid(),

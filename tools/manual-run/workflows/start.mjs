@@ -1,5 +1,5 @@
 // Workflow 1 · Sign in and follow one memo (guide steps start-1 … start-6).
-// Exact values come from docs/testrun-2026-11-19/steps/start-*.md and the "Update 19 Nov" boxes:
+// Exact values come from the test-run guide steps start-* and the "Update 19 Nov" boxes:
 // the new-memo button is Next (autosave), draft buttons are "Download preview as PDF" / "Print preview".
 /* global window, document, MutationObserver -- referenced inside page.evaluate callbacks, which run in the browser */
 import { navLayout, runMatch } from '../lib/config.mjs';

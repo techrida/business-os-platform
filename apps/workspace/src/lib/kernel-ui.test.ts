@@ -10,7 +10,6 @@ import {
   needsPolling,
   safeLocalPath,
   scanLabel,
-  shortId,
 } from './kernel-ui';
 
 describe('describeFailure', () => {
@@ -145,7 +144,6 @@ describe('small formatters', () => {
     expect(guessMime('a.bin', 'application/x-foo')).toBe('application/x-foo');
   });
   it('shortens ids and labels scans', () => {
-    expect(shortId('11111111-1111-4111-8111-abcdefghijkl')).toBe('efghijkl'.padStart(8));
     expect(scanLabel('clean').tone).toBe('good');
     expect(scanLabel('quarantined').tone).toBe('wait');
     expect(scanLabel('infected').tone).toBe('bad');

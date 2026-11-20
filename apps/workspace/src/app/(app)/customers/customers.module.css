@@ -16,17 +16,12 @@
   line-height: 1;
 }
 
-.search,
 .tableFooter,
 .rows {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
   gap: 8px;
-}
-
-.searchField {
-  flex: 0 1 280px;
 }
 
 .directory {
@@ -126,11 +121,5 @@
 @media (max-width: 1023.98px) {
   .directory .table td {
     height: 72px;
-  }
-}
-
-@media (max-width: 767.98px) {
-  .searchField {
-    flex-basis: 100%;
   }
 }

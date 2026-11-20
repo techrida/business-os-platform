@@ -1,15 +1,5 @@
 import { DEFAULT_ROLE_PERMISSIONS } from '@bos/contracts';
 
-/**
- * The P2 permissions the customer and verification screens ask about. They are plain strings, not
- * the contracts' `Permission` type: K3 adds them to the contracts, and until it lands on this
- * branch they are not in `DEFAULT_ROLE_PERMISSIONS`, so every check below answers "no" (deny by
- * default). The nav and the write and review buttons stay hidden until then; the API still
- * decides every call.
- */
-export type P2Permission =
-  'customer.read' | 'customer.write' | 'verification.read' | 'verification.review';
-
 type Grants = Record<string, Record<string, unknown> | undefined>;
 
 /**

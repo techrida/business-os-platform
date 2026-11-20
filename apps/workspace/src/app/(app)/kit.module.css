@@ -1,25 +1,6 @@
 /* Layout and small pieces that belong to the memo screens only. Everything else comes from
    components/ui. Colours, type sizes and radii are Figma tokens from styles/tokens.css. */
 
-/* ---- Forms: the memo form ---- */
-
-.form {
-  display: grid;
-  gap: 20px;
-}
-
-.formActions {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 8px 12px;
-}
-
-/* A memo id is data, so it is set in the monospace face. */
-.mono {
-  font-family: var(--font-family-mono);
-  font-size: var(--font-size-body-small);
-}
-
 .note {
   color: var(--text-secondary);
   font-size: var(--font-size-body-small);
@@ -32,32 +13,6 @@
   font-weight: var(--font-weight-medium);
   line-height: var(--line-height-body-small);
   text-underline-offset: 0.2em;
-}
-
-/* ---- Detail: main column and the 373px approval route card ---- */
-
-.columns {
-  display: grid;
-  gap: 24px;
-  align-items: start;
-}
-
-.main {
-  display: grid;
-  gap: 24px;
-  min-width: 0;
-}
-
-@media (min-width: 1200px) {
-  .columns {
-    grid-template-columns: minmax(0, 1fr) 373px;
-  }
-
-  /* The header is sticky too, so the card stops below it. */
-  .side {
-    position: sticky;
-    top: calc(var(--bos-header-height) + 16px);
-  }
 }
 
 .amount {
@@ -155,15 +110,6 @@
   font-size: var(--font-size-body-small);
   line-height: var(--line-height-body-small);
   overflow-wrap: anywhere;
-}
-
-.submit {
-  display: grid;
-  gap: 12px;
-}
-
-.submit > button {
-  width: 100%;
 }
 
 /* ---- Attachments (read-only, from P1) ---- */
@@ -266,42 +212,7 @@
   font-variant-numeric: tabular-nums;
 }
 
-/* ---- Memos list: status filter links, pager and loading rows ---- */
-
-.filters {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 8px;
-}
-
-.filter {
-  display: inline-flex;
-  align-items: center;
-  min-height: 36px;
-  padding: 0 14px;
-  border: 1px solid var(--input-border);
-  border-radius: var(--radius-lg);
-  color: var(--text-primary);
-  font-size: var(--font-size-body-small);
-  font-weight: var(--font-weight-medium);
-  text-decoration: none;
-}
-
-.filter:hover {
-  background: var(--input-hover-bg, var(--input-bg));
-}
-
-.filter[aria-current='page'] {
-  border-color: var(--text-primary);
-  background: var(--input-bg);
-}
-
-.pager {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 8px 12px;
-  justify-content: flex-end;
-}
+/* ---- Memos list: loading rows ---- */
 
 .listSkeleton {
   display: grid;

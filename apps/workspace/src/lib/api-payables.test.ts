@@ -9,7 +9,6 @@ import {
   getBill,
   listBillSubmissions,
   listBillSubmissionsPage,
-  listBills,
   listBillsPage,
   matchBill,
   rejectBillSubmission,
@@ -179,22 +178,6 @@ describe('bill pages', () => {
 });
 
 describe('bill reads', () => {
-  it('lists with only the status the API accepts, and parses a row without lines', async () => {
-    answer(reply([header]));
-    const out = await listBills(session, 'variance');
-    expect(out[0]?.vendorInvoiceNo).toBe('INV-001');
-    expect(lastCall().url).toBe('http://api:3001/v1/payables/bills?status=variance');
-    expect(lastCall().headers.get('authorization')).toBe('Bearer eyJ.secret-access-token.sig');
-    answer(reply([]));
-    await listBills(session);
-    expect(lastCall().url).toBe('http://api:3001/v1/payables/bills');
-  });
-
-  it('refuses a status the API would not take, before any call', () => {
-    expect(() => listBills(session, 'bogus' as never)).toThrow();
-    expect(fetchMock).not.toHaveBeenCalled();
-  });
-
   it('keeps money as the server sent it and tolerates a line match with no received quantity', async () => {
     answer(reply(bill));
     const out = await getBill(session, BILL);

@@ -1,7 +1,6 @@
 import type { ReactNode } from 'react';
 
 import { Alert } from '@/components/ui/alert';
-import { PageHeader } from '@/components/ui/page';
 
 export { FormStatus } from './form-status';
 
@@ -17,11 +16,6 @@ export function Notice({
   children: ReactNode;
 }) {
   return <Alert tone={kind === 'ok' ? 'success' : kind}>{children}</Alert>;
-}
-
-/** The page's `h1` with a one-line description. Render it inside the page's `Page`. */
-export function PageHead({ title, children }: { title: string; children?: ReactNode }) {
-  return <PageHeader title={title} description={children} />;
 }
 
 /** Shown in place of a section's content when its request failed (for example a 403). */

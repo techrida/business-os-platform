@@ -31,15 +31,3 @@ export function isSessionUnavailable(error: unknown): boolean {
     (error as { digest?: unknown }).digest === SESSION_UNAVAILABLE_DIGEST
   );
 }
-
-/**
- * 503 for a Route Handler whose session check could not reach the store. The browser keeps its
- * cookie and may retry. The body carries a readable message, and `reload: false` tells a client
- * not to reload the page for it.
- */
-export function sessionUnavailableResponse(): Response {
-  return Response.json(
-    { error: { message: SESSION_UNAVAILABLE_MESSAGE, reload: false } },
-    { status: 503, headers: { 'cache-control': 'no-store', 'retry-after': '1' } },
-  );
-}

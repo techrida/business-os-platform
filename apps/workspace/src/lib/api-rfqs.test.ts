@@ -10,7 +10,6 @@ import {
   createRfq,
   getComparison,
   getRfq,
-  listRfqs,
   listRfqsPage,
   listSubmissions,
   recommendQuotation,
@@ -126,13 +125,6 @@ afterEach(() => {
 });
 
 describe('reads', () => {
-  it('lists with only status and limit and parses the bare array', async () => {
-    answer(reply([listItem]));
-    const out = await listRfqs(session, { status: 'open', limit: 100 });
-    expect(out[0]?.quotationCount).toBe(1);
-    expect(lastCall().url).toBe('http://api:3001/v1/procurement/rfqs?status=open&limit=100');
-  });
-
   it('lists a page with repeated statuses, a search and an offset, and reads the total', async () => {
     fetchMock.mockImplementation(() =>
       Promise.resolve(
@@ -157,14 +149,11 @@ describe('reads', () => {
     ).toThrow();
   });
 
-  it('refuses a status that is not an RFQ status before calling the API', () => {
-    expect(() => listRfqs(session, { status: 'bogus' as never })).toThrow();
-    expect(fetchMock).not.toHaveBeenCalled();
-  });
-
   it('turns a list row that breaks the contract into a 502', async () => {
     answer(reply([{ ...listItem, quotationCount: 'many' }]));
-    await expect(listRfqs(session, {})).rejects.toMatchObject({ status: 502 });
+    await expect(listRfqsPage(session, { limit: 25, offset: 0 })).rejects.toMatchObject({
+      status: 502,
+    });
   });
 
   it('gets one RFQ, encoding the id so it cannot climb out of the route', async () => {
