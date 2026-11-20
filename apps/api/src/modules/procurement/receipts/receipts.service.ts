@@ -48,6 +48,7 @@ import { updateVersioned, withIdempotency } from '../../../platform/db/idempoten
 import { withTx, type TxScope } from '../../../platform/db/tx';
 import { NumberingService } from '../../../platform/settings/numbering.service';
 import { ApprovalsService } from '../../approvals/requests.service';
+import { holdsPoRead, mayReadPo } from '../orders/po-read-access';
 import { requestEmergencyReview } from './emergency-review';
 import {
   RECEIPT_AUDIT_ENTITY,
@@ -198,10 +199,14 @@ export class ReceiptsService {
     return this.dtoOf(this.db, scope, row);
   }
 
-  /** Ordered, received (confirmed, net of reversals), still open and billed per PO line. */
+  /**
+   * Ordered, received (confirmed, net of reversals), still open and billed per PO line. Also open to whoever may read
+   * the order itself (F1-Q52: the read-only purchase order page shows it to finance, who reads bills).
+   */
   async progress(purchaseOrderId: string): Promise<PoProgress> {
-    this.assertStaffWithAccess(true);
-    const { scope } = this.caller.current();
+    const { scope, principal } = this.caller.current();
+    const readsOrders = holdsPoRead(principal);
+    if (!readsOrders) this.assertStaffWithAccess(true);
     const [row] = await this.db
       .select({ po: purchaseOrders, vendorName: vendors.legalName })
       .from(purchaseOrders)
@@ -213,7 +218,8 @@ export class ReceiptsService {
       .limit(1);
     if (row === undefined) throw notFound('Purchase order');
     const { po, vendorName } = row;
-    this.assertMayRead(await this.requestOf(this.db, scope, po), true);
+    const request = await this.requestOf(this.db, scope, po);
+    if (!readsOrders || !mayReadPo(principal, request)) this.assertMayRead(request, true);
     const lines = await this.db
       .select()
       .from(purchaseOrderLines)
