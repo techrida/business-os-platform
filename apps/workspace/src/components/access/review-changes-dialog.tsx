@@ -509,7 +509,7 @@ function CheckWithChanges({
       </div>
       {result.status === 'idle' ? (
         <p className={styles.muted}>
-          Pick a person to see what they could open after these changes.
+          Pick a person to see what this person could open after these changes.
         </p>
       ) : null}
       {result.status === 'loading' ? <PreviewSkeleton /> : null}
