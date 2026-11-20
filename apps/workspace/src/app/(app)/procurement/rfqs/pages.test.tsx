@@ -691,14 +691,24 @@ describe('scoring, recommending and committing on the detail', () => {
   });
 
   it('respects live permissions and hides RFQ actions when procurement.sourcing is revoked', async () => {
-    rfqApi.getRfq.mockResolvedValue(rfq({ status: 'recommended', recommendedQuotationId: Q1 }));
     session.roles = ['procurement'];
-    me.getMe.mockResolvedValue({
-      permissions: [{ permission: 'procurement.rfq.read', scope: 'all' }],
-    });
-    const out = await detail();
-    expect(out).not.toContain('Submit for commitment approval');
-    expect(out).not.toContain('Record quotation');
+    const granted = { permissions: [{ permission: 'procurement.sourcing', scope: 'all' }] };
+    const revoked = { permissions: [{ permission: 'procurement.rfq.read', scope: 'all' }] };
+    // An open RFQ: with the live grant the header offers entry and the deadline extension.
+    me.getMe.mockResolvedValue(granted);
+    const open = await detail();
+    expect(open).toContain('>Enter a quotation<');
+    expect(open).toContain('>Extend deadline<');
+    me.getMe.mockResolvedValue(revoked);
+    const openRevoked = await detail();
+    expect(openRevoked).not.toContain('>Enter a quotation<');
+    expect(openRevoked).not.toContain('>Extend deadline<');
+    // A recommended RFQ: the commitment submit follows the same grant.
+    rfqApi.getRfq.mockResolvedValue(rfq({ status: 'recommended', recommendedQuotationId: Q1 }));
+    me.getMe.mockResolvedValue(granted);
+    expect(await detail()).toContain('Submit for commitment approval');
+    me.getMe.mockResolvedValue(revoked);
+    expect(await detail()).not.toContain('Submit for commitment approval');
   });
 
   it('confirms a recommendation after the redirect', async () => {
