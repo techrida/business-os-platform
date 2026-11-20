@@ -7,7 +7,7 @@ import { notFound, redirect } from 'next/navigation';
 import { Alert } from '@/components/portal/alert';
 import pageStyles from '@/components/portal/page.module.css';
 import { todayInKathmandu } from '@/components/portal/quotation-status';
-import { formatDeadline, isPastDeadline } from '@/components/vendor/rfq-list';
+import { DEADLINE_PASSED_TEXT, formatDeadline, isPastDeadline } from '@/components/vendor/rfq-list';
 import { trimQuantity } from '@/components/vendor/vendor-status';
 import { VendorNoAccess } from '@/components/vendor/vendor-no-access';
 import { getVendorOnboarding, getVendorRfq } from '@/lib/api.vendor';
@@ -24,9 +24,9 @@ export const dynamic = 'force-dynamic';
 /**
  * Submit a quotation for one request. A bad id is not-found before any API call, and so is every
  * 404 on the request (foreign, closed, unknown). Needs a full vendor account: any other, or a 403,
- * shows the no-access notice, and the request is not read for a vendor who cannot quote. A
- * deadline that has passed adds a warning but never blocks the form: the API decides whether a
- * late quotation is taken. The currency picker offers only the currencies the company has switched
+ * shows the no-access notice, and the request is not read for a vendor who cannot quote. Once the
+ * deadline has passed the form is replaced by a notice (F1-Q47: the API refuses a late quotation;
+ * it checks again on submit). The currency picker offers only the currencies the company has switched
  * on (D44), read once from the portal display.
  */
 export default async function QuotePage({
@@ -78,10 +78,9 @@ export default async function QuotePage({
           request.
         </Alert>
       ) : null}
-      {past ? (
+      {past && sent !== '1' ? (
         <Alert tone="warning" title="The deadline for this request has passed">
-          Quotations closed on {formatDeadline(rfq.deadline)} (Nepal time). You can still try to
-          send one, but we may not be able to consider it.
+          Quotations closed on {formatDeadline(rfq.deadline)} (Nepal time). {DEADLINE_PASSED_TEXT}
         </Alert>
       ) : null}
       <section aria-labelledby="quote-items-heading" className={styles.summary}>
@@ -108,13 +107,15 @@ export default async function QuotePage({
           </ul>
         )}
       </section>
-      <QuoteForm
-        key={key}
-        idempotencyKey={key}
-        rfqId={id}
-        today={todayInKathmandu()}
-        currencies={currencies}
-      />
+      {past ? null : (
+        <QuoteForm
+          key={key}
+          idempotencyKey={key}
+          rfqId={id}
+          today={todayInKathmandu()}
+          currencies={currencies}
+        />
+      )}
     </main>
   );
 }
