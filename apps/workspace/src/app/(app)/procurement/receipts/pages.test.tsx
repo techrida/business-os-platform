@@ -31,6 +31,7 @@ vi.mock('./actions', () => ({
 }));
 const api = vi.hoisted(() => ({
   listReceivableOrders: vi.fn(),
+  listReceivedOrders: vi.fn(),
   listRequestedOrders: vi.fn(),
   listReceipts: vi.fn(),
   getReceipt: vi.fn(),
@@ -101,7 +102,6 @@ const receipt = (over: Record<string, unknown> = {}) => ({
       reversesReceiptLineId: null,
       inspection: 'Boxes sealed',
       discrepancyNote: null,
-      overReceiptExceptionId: null,
       serials: [
         { serialNo: 'SN-0001', batchNo: null, warrantyUntil: null },
         { serialNo: 'SN-0002', batchNo: null, warrantyUntil: null },
@@ -136,6 +136,7 @@ beforeEach(() => {
   me.getMe.mockReset().mockRejectedValue(new Error('offline'));
   for (const fn of Object.values(api)) fn.mockReset();
   api.listReceivableOrders.mockResolvedValue([waiting()]);
+  api.listReceivedOrders.mockResolvedValue([]);
   api.listRequestedOrders.mockResolvedValue([]);
   api.getPoProgress.mockResolvedValue(progress());
   api.listReceipts.mockResolvedValue([receipt()]);
@@ -231,6 +232,57 @@ describe('the receipts of one purchase order', () => {
     expect(out).not.toContain('Purchase order ID');
   });
 
+  it('lists the orders the warehouse has finished with, read-only, each opening its receipts (U18-Q3)', async () => {
+    api.listReceivedOrders.mockResolvedValue([
+      {
+        id: SERVICE,
+        number: 'PO-2082-0003',
+        vendorId: USER,
+        vendorName: 'Everest Cleaners',
+        kind: 'goods',
+        status: 'fully_received',
+        lastReceivedAt: '2026-11-08T20:30:00.000Z',
+      },
+      {
+        id: REVERSAL,
+        number: 'PO-2082-0004',
+        vendorId: USER,
+        vendorName: 'Himal Traders Pvt. Ltd.',
+        kind: 'service',
+        status: 'closed',
+      },
+    ]);
+    const out = await list({});
+    expect(api.listReceivedOrders).toHaveBeenCalledTimes(1);
+    expect(out).toContain('Recently received');
+    expect(out).toContain('PO-2082-0003');
+    expect(out).toContain('Fully received');
+    expect(out).toContain('9 Nov 2026');
+    expect(out).toContain('Closed');
+    expect(out).toContain('Nothing received');
+    expect(out).toContain(`href="/procurement/receipts?po=${SERVICE}"`);
+    expect(out).toContain(`href="/procurement/receipts?po=${REVERSAL}"`);
+    expect(out).not.toContain(`href="/procurement/receipts/new?po=${SERVICE}"`);
+    expect(out).not.toContain(`href="/procurement/receipts/new?po=${REVERSAL}"`);
+  });
+
+  it('says nothing was fully received yet, and offers the list to the warehouse only', async () => {
+    let out = await list({});
+    expect(out).toContain('Nothing has been fully received yet');
+    session.roles = ['operations_officer'];
+    out = await list({});
+    expect(out).not.toContain('Recently received');
+    expect(api.listReceivedOrders).toHaveBeenCalledTimes(1);
+  });
+
+  it('words a failed recently received list', async () => {
+    api.listReceivedOrders.mockRejectedValue(apiError(500));
+    const out = await list({});
+    expect(out).toContain('The recently received orders did not load');
+    expect(out).toContain('Waiting to be received');
+    expect(out).not.toContain('internal wording');
+  });
+
   it('says no purchase order is waiting', async () => {
     api.listReceivableOrders.mockResolvedValue([]);
     const out = await list({});
@@ -240,10 +292,14 @@ describe('the receipts of one purchase order', () => {
 
   it('leaves the waiting list out when it is forbidden', async () => {
     api.listReceivableOrders.mockRejectedValue(apiError(403, 'forbidden'));
+    api.listReceivedOrders.mockRejectedValue(apiError(403, 'forbidden'));
     const out = await list({});
     expect(out).not.toContain('Waiting to be received');
+    expect(out).not.toContain('Recently received');
     expect(out).not.toContain('role="alert"');
-    expect(out).toContain('No purchase orders to open');
+    // The warehouse still opens purchase orders read-only (F1-Q52), so it is pointed at the order list.
+    expect(out).toContain('href="/procurement/orders"');
+    expect(out).not.toContain('No purchase orders to open');
   });
 
   it('shows an error alert on a failed list', async () => {
@@ -337,6 +393,23 @@ describe('the new receipt form', () => {
     expect(out).toContain(`name="purchaseOrderId" value="${PO}"`);
     expect(out).toMatch(/name="idempotencyKey" value="[0-9a-f-]{36}"/);
     expect(api.getReceipt).not.toHaveBeenCalled();
+  });
+
+  it('offers no receipt form when the order says the person may receive neither kind on it', async () => {
+    session.roles = ['procurement'];
+    // A service line: the old screen offered it to anyone.
+    const serviceLine = { ...progressLine({}), kind: 'service', requiresSerials: false };
+    api.getPoProgress.mockResolvedValue({
+      ...progress({}, [serviceLine]),
+      can: { goods: false, service: false },
+    });
+    const out = await newPage();
+    expect(out).not.toContain('Save draft receipt');
+    api.getPoProgress.mockResolvedValue({
+      ...progress({}, [serviceLine]),
+      can: { goods: false, service: true },
+    });
+    expect(await newPage()).toContain('Save draft receipt');
   });
 
   it('lays each line out as a table row, with the same field names and a per-line name per input', async () => {
@@ -444,6 +517,24 @@ describe('one receipt', () => {
     expect(out).not.toContain('Confirming goods is for the warehouse');
   });
 
+  // The receipt's own can flags (the API's answer for this person on this order) win over the grant guess.
+  it('offers a read-only buyer no Confirm or Discard on a service draft, and says who confirms it', async () => {
+    session.roles = ['procurement'];
+    api.getReceipt.mockResolvedValue(
+      receipt({ kind: 'service', can: { confirm: false, discard: false, reverse: false } }),
+    );
+    const out = await detail();
+    expect(out).not.toContain('Confirm receipt');
+    expect(out).not.toContain('Discard draft');
+    expect(out).toContain('Confirming a service is for whoever asked for it');
+    api.getReceipt.mockResolvedValue(
+      receipt({ kind: 'service', can: { confirm: true, discard: true, reverse: false } }),
+    );
+    const requester = await detail();
+    expect(requester).toContain('Confirm receipt');
+    expect(requester).toContain('Discard draft');
+  });
+
   it('shows Reverse, with a reason dialog, on a confirmed receipt and no Confirm', async () => {
     api.getReceipt.mockResolvedValue(
       receipt({ status: 'confirmed', confirmedAt: '2026-11-08T06:00:00.000Z', confirmedBy: USER }),
@@ -514,8 +605,12 @@ describe('one receipt', () => {
     expect(out).toContain('Purchase order line');
     expect(out).toContain('The order&#x27;s details did not load');
     expect(out).toContain(`href="/procurement/receipts?po=${PO}"`);
+    // F1-Q52: the warehouse opens the order read-only; a requester still cannot.
+    expect(out).toContain(`href="/procurement/orders/${PO}"`);
     session.roles = ['procurement'];
     expect(await detail()).toContain(`href="/procurement/orders/${PO}"`);
+    session.roles = ['operations_officer'];
+    expect(await detail()).not.toContain(`href="/procurement/orders/${PO}"`);
   });
 
   it('shows not-found for a bad id or another entity, and words a 403 and a 500', async () => {

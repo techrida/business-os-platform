@@ -372,25 +372,67 @@ describe('the purchase order page', () => {
     expect(out).not.toContain('Cancel order');
   });
 
-  it('offers no action to a role without procurement.po.issue', async () => {
+  it('offers no order action to a role without procurement.po.issue', async () => {
     session.roles = ['warehouse'];
-    api.getPurchaseOrder.mockResolvedValue(order());
+    api.getPurchaseOrder.mockResolvedValue(order({ can: { enterBill: false, receive: true } }));
     const out = await detail();
     expect(out).not.toContain('Amend order');
     expect(out).not.toContain('Cancel order');
     expect(out).toContain('Receive goods');
   });
 
+  // F1-Q52: finance, the accountant and the warehouse open the order read-only. The order's own `can` flags decide
+  // Receive goods and Enter bill; on the old page any viewer of a service order was offered Receive goods.
+  it('shows finance a read-only order: no action button, and the vendor named without a link it cannot open', async () => {
+    session.roles = ['finance'];
+    api.getPurchaseOrder.mockResolvedValue(
+      order({
+        lines: [{ ...line, kind: 'service', requiresSerials: false }],
+        can: { enterBill: false, receive: false },
+      }),
+    );
+    const out = await detail();
+    expect(out).toContain('PO-2082-0001');
+    for (const label of [
+      'Issue purchase order',
+      'Amend order',
+      'Short-close',
+      'Cancel order',
+      'Receive goods',
+      'Enter bill',
+    ]) {
+      expect(out).not.toContain(label);
+    }
+    expect(out).not.toContain('/procurement/receipts/new');
+    // Finance reads vendors, so the name links; the warehouse does not, so it is plain text.
+    expect(out).toContain(`/vendors/${VENDOR}`);
+    session.roles = ['warehouse'];
+    const warehouse = await detail();
+    expect(warehouse).toContain('Himal Traders Pvt. Ltd.');
+    expect(warehouse).not.toContain(`/vendors/${VENDOR}`);
+  });
+
+  it('offers the accountant Enter bill from the read-only order, and nothing else', async () => {
+    session.roles = ['accountant'];
+    api.getPurchaseOrder.mockResolvedValue(order({ can: { enterBill: true, receive: false } }));
+    const out = await detail();
+    expect(out).toContain(`/payables/bills/new?po=${ID}`);
+    for (const label of ['Amend order', 'Cancel order', 'Receive goods']) {
+      expect(out).not.toContain(label);
+    }
+  });
+
   it('makes the next step the one primary button, and Receipts a secondary button', async () => {
     const classOf = (out: string, label: string) =>
       new RegExp(`<a[^>]*class="([^"]*)"[^>]*>${label}</a>`).exec(out)?.[1] ?? '';
     session.roles = ['warehouse'];
-    api.getPurchaseOrder.mockResolvedValue(order({ can: { enterBill: true } }));
+    api.getPurchaseOrder.mockResolvedValue(order({ can: { enterBill: true, receive: true } }));
     let out = await detail();
     expect(classOf(out, 'Receive goods')).toMatch(/primary/);
     expect(classOf(out, 'Enter bill')).toMatch(/secondary/);
     expect(classOf(out, 'Receipts')).toMatch(/secondary/);
     session.roles = ['accountant'];
+    api.getPurchaseOrder.mockResolvedValue(order({ can: { enterBill: true, receive: false } }));
     out = await detail();
     expect(out).not.toContain('Receive goods');
     expect(classOf(out, 'Enter bill')).toMatch(/primary/);
@@ -411,11 +453,11 @@ describe('the purchase order page', () => {
 
   it('offers Enter bill only when the order says the caller may enter a bill on it', async () => {
     session.roles = ['accountant'];
-    api.getPurchaseOrder.mockResolvedValue(order({ can: { enterBill: true } }));
+    api.getPurchaseOrder.mockResolvedValue(order({ can: { enterBill: true, receive: false } }));
     const out = await detail();
     expect(out).toContain('Enter bill');
     expect(out).toContain(`/payables/bills/new?po=${ID}`);
-    for (const can of [{ enterBill: false }, undefined]) {
+    for (const can of [{ enterBill: false, receive: false }, undefined]) {
       api.getPurchaseOrder.mockResolvedValue(order({ can }));
       const without = await detail();
       expect(without).not.toContain('Enter bill');

@@ -36,7 +36,6 @@ export const RECEIPT_DERIVED_PO_STATUSES: readonly PoStatus[] = [
 /** Machine-readable causes of a 422 from this module (the HTTP filter's whitelist is the lead's wiring). */
 export const RECEIPT_ERROR_CODES = [
   'over_receipt',
-  'over_receipt_exception_unknown',
   'po_line_unknown',
   'duplicate_po_line',
   'receipt_kind_mismatch',
@@ -58,9 +57,8 @@ const violation = (code: ReceiptErrorCode, message: string): ReceiptViolation =>
 // ------------------------------------------------------------------------------------------------- body
 
 /**
- * The create body is the contract's confirm body: one PO, kind, date, and lines with serials and an optional
- * `overReceiptExceptionId`. There is no exceptions table yet, so only null is accepted (validateDraftLines answers
- * 422 `over_receipt_exception_unknown` for an id). Still strict.
+ * The create body is the contract's confirm body: one PO, kind, date, and lines with serials. Strict, and no line
+ * names an over-receipt exception (F1-Q39: more than is open needs a PO amendment first).
  */
 export const CreateReceiptBodySchema = ConfirmReceiptBodySchema;
 export type CreateReceiptBody = ConfirmReceiptBody;
@@ -90,6 +88,14 @@ export interface LineQuantities {
 }
 
 const qty = (value: string | number | Decimal) => new Decimal(value).toFixed(4);
+
+/**
+ * F1-Q39 (Kuu, 2026-11-20): a receipt never takes more than is still open on a PO line. The sentence tells the
+ * receiver what to do: Procurement amends the order first.
+ */
+export function overReceiptMessage(lineNo: number, open: string | Decimal): string {
+  return `Line ${lineNo} has only ${new Decimal(open).toFixed()} still open on the purchase order. To receive more, ask Procurement to amend the purchase order first.`;
+}
 
 /** What a PO line has room for: ordered - cancelled - net received (drafts reserve their quantity). */
 export function openQuantity(line: PoLineFacts, net: string | undefined): Decimal {
@@ -126,6 +132,30 @@ export function serialViolation(
   return null;
 }
 
+/**
+ * TR-Q12b (Kuu, 2026-11-20): a serial number names one physical item, so it may appear only once in a whole
+ * receipt, across its lines as well as within one. Returns the first repeated serial number, or null.
+ */
+export function repeatedSerialAcrossLines(
+  lines: readonly { serialNos: readonly string[] }[],
+): string | null {
+  const seen = new Set<string>();
+  for (const line of lines) {
+    for (const serialNo of new Set(line.serialNos)) {
+      if (seen.has(serialNo)) return serialNo;
+      seen.add(serialNo);
+    }
+  }
+  return null;
+}
+
+/** The answer when one serial number is on two lines of the same receipt. */
+export const serialOnTwoLines = (serialNo: string): ReceiptViolation =>
+  violation(
+    'serial_duplicate',
+    `Serial number ${serialNo} is on two lines of this receipt. Each item has its own serial number, so enter it once.`,
+  );
+
 // ------------------------------------------------------------------------------------------------- draft
 
 /**
@@ -158,18 +188,9 @@ export function validateDraftLines(
         `PO line ${po.lineNo} is a ${po.kind} line; a ${kind} receipt cannot take it`,
       );
     }
-    if (l.overReceiptExceptionId !== undefined && l.overReceiptExceptionId !== null) {
-      return violation(
-        'over_receipt_exception_unknown',
-        'There are no over-receipt exceptions yet, so overReceiptExceptionId must be null',
-      );
-    }
     const open = openQuantity(po, netByLine.get(po.id));
     if (new Decimal(l.quantity).greaterThan(open)) {
-      return violation(
-        'over_receipt',
-        `PO line ${po.lineNo}: receiving ${qty(l.quantity)} is more than the ${qty(Decimal.max(open, 0))} still open`,
-      );
+      return violation('over_receipt', overReceiptMessage(po.lineNo, Decimal.max(open, 0)));
     }
     const serials = l.serials ?? [];
     const bad = serialViolation(
@@ -180,7 +201,10 @@ export function validateDraftLines(
     );
     if (bad !== null) return { ...bad, message: `PO line ${po.lineNo}: ${bad.message}` };
   }
-  return null;
+  const repeated = repeatedSerialAcrossLines(
+    lines.map((l) => ({ serialNos: (l.serials ?? []).map((s) => s.serialNo) })),
+  );
+  return repeated === null ? null : serialOnTwoLines(repeated);
 }
 
 // ------------------------------------------------------------------------------------------------- PO status
@@ -236,7 +260,7 @@ export interface PoProgressLine {
   receivedQuantity: string;
   /** Taken by drafts that are not confirmed yet. */
   pendingQuantity: string;
-  /** ordered - cancelled - received. Can be negative after an over-receipt exception. */
+  /** ordered - cancelled - received. Never below zero: an over-receipt is refused (F1-Q39). */
   openQuantity: string;
   /** Always 0.0000 until vendor bills exist (P4 unit A1). */
   billedQuantity: string;
@@ -249,6 +273,11 @@ export interface PoProgress {
   number: string;
   status: PoStatus;
   lines: PoProgressLine[];
+  /**
+   * Which kinds of receipt the caller may make and confirm on this order, from their live grants (mayReceiveKind):
+   * the warehouse both, the request's requester a service, anyone else neither (they only read).
+   */
+  can?: { goods: boolean; service: boolean };
 }
 
 export function progressRowsOf(
@@ -293,8 +322,35 @@ export interface ReceiptLineDto {
   reversesReceiptLineId: string | null;
   inspection: string | null;
   discrepancyNote: string | null;
-  overReceiptExceptionId: string | null;
   serials: { serialNo: string; batchNo: string | null; warrantyUntil: string | null }[];
+}
+
+/**
+ * What the caller may do with one receipt, from their live grants (mayReceiveKind, the rule each command enforces)
+ * and the statuses each command needs: confirm a draft while the order takes receipts, discard a draft, reverse a
+ * confirmed receipt that is not itself a reversal while the order's status comes from its receipts. A read-only
+ * reader (procurement on a service, the accountant, finance) gets none.
+ */
+export interface ReceiptCan {
+  confirm: boolean;
+  discard: boolean;
+  reverse: boolean;
+}
+
+export function receiptCan(
+  mayReceive: boolean,
+  receipt: { status: ReceiptDto['status']; reversesReceiptId: string | null },
+  poStatus: PoStatus,
+): ReceiptCan {
+  return {
+    confirm: mayReceive && receipt.status === 'draft' && RECEIVING_PO_STATUSES.includes(poStatus),
+    discard: mayReceive && receipt.status === 'draft',
+    reverse:
+      mayReceive &&
+      receipt.status === 'confirmed' &&
+      receipt.reversesReceiptId === null &&
+      RECEIPT_DERIVED_PO_STATUSES.includes(poStatus),
+  };
 }
 
 export interface ReceiptDto {
@@ -313,6 +369,8 @@ export interface ReceiptDto {
   version: number;
   createdAt: string;
   lines: ReceiptLineDto[];
+  /** Set by the list and detail reads; the write routes leave it out. */
+  can?: ReceiptCan;
 }
 
 export function toReceiptDto(
@@ -345,7 +403,6 @@ export function toReceiptDto(
         reversesReceiptLineId: l.reversesReceiptLineId,
         inspection: l.inspection,
         discrepancyNote: l.discrepancyNote,
-        overReceiptExceptionId: l.overReceiptExceptionId,
         serials: serials
           .filter((s) => s.receiptLineId === l.id)
           .map((s) => ({
