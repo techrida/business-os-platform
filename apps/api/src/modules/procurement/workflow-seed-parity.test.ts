@@ -6,6 +6,7 @@ import { WorkflowSpecSchema } from '@bos/contracts';
 import { describe, expect, it } from 'vitest';
 
 import {
+  EMERGENCY_REVIEW_WORKFLOW_SPEC as SEEDED_EMERGENCY_REVIEW_SPEC,
   MATCH_EXCEPTION_WORKFLOW_SPEC as SEEDED_MATCH_EXCEPTION_SPEC,
   PAYMENT_REQUEST_WORKFLOW_SPEC as SEEDED_PAYMENT_REQUEST_SPEC,
   PO_AMENDMENT_WORKFLOW_SPEC as SEEDED_PO_AMENDMENT_SPEC,
@@ -23,6 +24,10 @@ import {
   PAYMENT_REQUEST_DOCUMENT_TYPE,
   PAYMENT_REQUEST_WORKFLOW_SPEC,
 } from '../payables/payment-requests/payment-request.rules';
+import {
+  EMERGENCY_REVIEW_DOCUMENT_TYPE,
+  EMERGENCY_REVIEW_WORKFLOW_SPEC,
+} from './receipts/emergency-review';
 import {
   PO_AMENDMENT_DOCUMENT_TYPE,
   PO_AMENDMENT_WORKFLOW_SPEC,
@@ -65,6 +70,13 @@ describe('seed workflow parity', () => {
     );
     expect(WorkflowSpecSchema.parse(SEEDED_PO_AMENDMENT_SPEC).documentType).toBe(
       PO_AMENDMENT_DOCUMENT_TYPE,
+    );
+  });
+
+  it('seeds emergency_review with exactly the spec the API publishes', () => {
+    expect(SEEDED_EMERGENCY_REVIEW_SPEC).toStrictEqual(EMERGENCY_REVIEW_WORKFLOW_SPEC);
+    expect(WorkflowSpecSchema.parse(SEEDED_EMERGENCY_REVIEW_SPEC).documentType).toBe(
+      EMERGENCY_REVIEW_DOCUMENT_TYPE,
     );
   });
 

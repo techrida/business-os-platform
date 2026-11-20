@@ -171,7 +171,12 @@ describe('NAV_GROUPS', () => {
         label: 'Purchase orders',
         href: '/procurement/orders',
         phase: 'P4',
-        permission: 'procurement.po.issue',
+        permission: [
+          'procurement.po.issue',
+          'payables.bill.enter',
+          'payables.bill.read',
+          'procurement.receipt.confirm',
+        ],
       }),
       expect.objectContaining({
         label: 'Receipts',
