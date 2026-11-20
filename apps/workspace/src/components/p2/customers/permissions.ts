@@ -1,4 +1,4 @@
-import { DEFAULT_ROLE_PERMISSIONS, type Permission } from '@bos/contracts';
+import { DEFAULT_ROLE_PERMISSIONS, type MeResponse, type Permission } from '@bos/contracts';
 
 import type { Grants as LiveGrants } from '@/lib/grants';
 
@@ -10,6 +10,19 @@ export type PermissionSource = readonly string[] | LiveGrants;
 /** Whether `source` is the live grants map rather than a list of role keys. */
 export function isLiveGrants(source: PermissionSource): source is LiveGrants {
   return !Array.isArray(source);
+}
+
+/**
+ * The source to gate on from one `/v1/me` answer (`getMeOrNull` in `lib/live-permissions`): the live grants it
+ * reports, the rows Settings > Access edits. Only when that read failed or sent no list do the role keys stand
+ * in (built-in defaults), the same outage rule as `permissionsFrom`, so an outage does not shut everyone out.
+ */
+export function grantsFrom(
+  me: Pick<MeResponse, 'permissions'> | null,
+  roles: readonly string[],
+): PermissionSource {
+  if (me?.permissions === undefined) return roles;
+  return new Map(me.permissions.map((grant) => [grant.permission, grant.scope]));
 }
 
 /**
