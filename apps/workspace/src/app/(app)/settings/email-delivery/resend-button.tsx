@@ -27,9 +27,20 @@ export function ResendButton({
       description={`"${subject}" goes to ${recipient} again, with a fresh set of attempts.`}
       confirmLabel="Resend email"
       onConfirm={async () => {
-        const result = await resendEmailAction(id);
-        if (result.status === 'ok') toast.success(result.message);
-        else toast.error('Could not resend the email', { description: result.message });
+        try {
+          const result = await resendEmailAction(id);
+          if (result.status === 'ok') {
+            toast.success(result.message);
+            return true;
+          }
+          toast.error('Could not resend the email', { description: result.message });
+        } catch {
+          // The action never answered (a dropped connection, a server restart): say so, and keep the dialog open.
+          toast.error('Could not resend the email', {
+            description: 'Check your connection and try again.',
+          });
+        }
+        return false;
       }}
     />
   );
