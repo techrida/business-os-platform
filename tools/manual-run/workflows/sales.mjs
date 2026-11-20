@@ -1093,8 +1093,25 @@ export function workflow(cfg) {
               name: 'Submit this quotation for approval?',
             });
             await s.pause();
-            await confirm.getByRole('button', { name: 'Submit quotation' }).click();
-            await s.page.waitForURL(/[?&]submitted=1/, { timeout: cfg.navTimeout });
+            // Through s.click (hydration wait): on round 3 a raw click on the freshly opened dialog
+            // left the quotation in Draft with no submit reaching the API; by hand it submits.
+            await s.click(
+              confirm.getByRole('button', { name: 'Submit quotation' }),
+              'Submit quotation',
+            );
+            const submitted = await s.page
+              .waitForURL(/[?&]submitted=1/, { timeout: cfg.navTimeout })
+              .then(() => true)
+              .catch(() => false);
+            if (!submitted) {
+              const said = await s.page
+                .locator('[role="dialog"], [role="alert"]')
+                .allInnerTexts()
+                .catch(() => []);
+              throw new StepFailure(
+                `Submit quotation did not submit; the page says: ${said.join(' | ').replace(/\s+/g, ' ').slice(0, 300) || '(nothing)'}`,
+              );
+            }
             await s.see(status(s, 'Approval pending'), 'Approval pending');
             number = QT.exec(await main(s))?.[0];
             s.expect(number, 'the quotation has a number');
