@@ -752,11 +752,14 @@ export function workflow(cfg) {
               await s.see(status(s, 'Converted'), 'lead stage Converted after Convert');
               await toOpportunity();
             }
-            await s.see(h1(s.page, L), 'the linked opportunity');
-            await s.see(status(s, 'Qualified'), 'opportunity stage Qualified');
-            const text = await main(s);
-            s.expect(C.test(text), 'the opportunity names the new customer');
           }
+          // Checked on every attempt, also when an earlier attempt converted the lead.
+          if (new URL(s.page.url()).pathname !== s.state.opportunityUrl)
+            await openUrl(s, 'opportunityUrl', (p) => h1(p, L));
+          await s.see(h1(s.page, L), 'the linked opportunity');
+          await s.see(status(s, 'Qualified'), 'opportunity stage Qualified');
+          const text = await main(s);
+          s.expect(C.test(text), 'the opportunity names the new customer');
           await s.caption('sales-2 — the lead is Converted');
           await openUrl(s, 'leadUrl', (p) => h1(p, L));
           await s.see(status(s, 'Converted'), 'lead stage Converted');
