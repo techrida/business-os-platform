@@ -151,7 +151,9 @@ describe('reads', () => {
 
   it('turns a list row that breaks the contract into a 502', async () => {
     answer(reply([{ ...listItem, quotationCount: 'many' }]));
-    await expect(listRfqsPage(session, { limit: 25, offset: 0 })).rejects.toMatchObject({ status: 502 });
+    await expect(listRfqsPage(session, { limit: 25, offset: 0 })).rejects.toMatchObject({
+      status: 502,
+    });
   });
 
   it('gets one RFQ, encoding the id so it cannot climb out of the route', async () => {

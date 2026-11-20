@@ -116,9 +116,7 @@ describe('historyMeta', () => {
   });
 
   it('leaves the actor out for older rows that name no author', () => {
-    expect(
-      historyMeta(activity({ createdByUserId: null, createdByName: null })).actor,
-    ).toBeNull();
+    expect(historyMeta(activity({ createdByUserId: null, createdByName: null })).actor).toBeNull();
   });
 });
 
