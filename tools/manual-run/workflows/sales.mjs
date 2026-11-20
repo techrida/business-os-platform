@@ -542,7 +542,8 @@ export function workflow(cfg) {
             s.page.getByRole('textbox', { name: 'Lead title', exact: true }),
             v.leadTitle,
           );
-          await s.choose(s.select('source', { byName: true }), 'Referral');
+          // Round 3: the trigger is labelled by its value and the field ("Choose a source Lead source").
+          await s.choose(s.select(/(^| )Lead source$/), 'Referral');
           await s.fill(
             s.page.getByRole('textbox', { name: 'Company or organization', exact: true }),
             v.company,
