@@ -434,6 +434,14 @@ export function workflow(cfg) {
     // Let the rebuild's reload of the current page pass before the form is opened.
     await s.page.waitForTimeout(3000);
     const uploaded = s.page.getByRole('list', { name: 'Uploaded proof' });
+    // A fresh Record payment form, as a reload leaves it: the heading shows and the bank reference
+    // this step typed is gone. Read only as evidence of a reload, never as a reason to submit again.
+    const formReset = async () =>
+      (await visible(h1(s.page, 'Record payment'))) &&
+      (await s.page
+        .getByLabel('Bank reference', { exact: true })
+        .inputValue()
+        .catch(() => ref)) !== ref;
     // Nothing is recorded before the Record payment click, so a form a reload emptied is filled
     // once more (noted).
     for (let attempt = 1; ; attempt++) {
@@ -460,14 +468,16 @@ export function workflow(cfg) {
         .waitFor({ state: 'visible', timeout: 90000 })
         .then(() => true)
         .catch(() => false);
-      const emptied =
-        (await s.page
-          .getByLabel('Bank reference', { exact: true })
-          .inputValue()
-          .catch(() => '')) !== ref;
+      const emptied = await formReset();
       if (shown && !emptied) break;
-      if (attempt === 2 || !emptied)
+      if (!emptied) {
         await s.see(uploaded.getByText('payment-proof.pdf'), 'payment-proof.pdf in Uploaded proof');
+        break;
+      }
+      if (attempt === 2)
+        throw new StepFailure(
+          'The payment form was emptied by a page reload again after one refill',
+        );
       s.checks.push('note: the payment form was emptied by a page reload; filling it again');
     }
     s.checks.push('saw: payment-proof.pdf in Uploaded proof');
@@ -491,8 +501,14 @@ export function workflow(cfg) {
           .catch(() => 'timeout'),
       ]);
       if (outcome === 'created') break;
-      // Unconfirmed: the caller looks the payment up instead of submitting again.
-      if (outcome !== 'not-ready') return null;
+      if (outcome !== 'not-ready') {
+        // Only a form a reload reset is handed back to the caller's lookup (never submitted
+        // again); a form still holding the values is a real failure.
+        if (!(await formReset()))
+          throw new StepFailure('Record payment neither opened the payment nor said why');
+        s.checks.push('note: Record payment was sent, then the form came back reset (page reload)');
+        return null;
+      }
       await s.page.waitForTimeout(5000);
     }
     await s.page.waitForURL(created, { timeout: 30000 });
