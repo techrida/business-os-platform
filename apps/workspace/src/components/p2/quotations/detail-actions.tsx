@@ -61,7 +61,7 @@ export function hasDetailActions({
     (capabilities.canRecordOutcome ?? mayRecordOutcome ?? false);
   const showEdit = capabilities.canEdit && isQuotationEditable(status);
   const showRevise = capabilities.canRevise && canReviseQuotation(status);
-  const showCancel = mayCancel(status, capabilities, lifecycle);
+  const showCancel = mayCancel(status, lifecycle);
   return showEdit || showSend || showOutcome || showRevise || showCancel;
 }
 
@@ -127,7 +127,7 @@ export function DetailActions({
   // Draft and Returned are changed in place in the quote builder; every later change is a revision.
   const showEdit = capabilities.canEdit && isQuotationEditable(status);
   const showRevise = capabilities.canRevise && canReviseQuotation(status);
-  const showCancel = mayCancel(status, capabilities, lifecycle);
+  const showCancel = mayCancel(status, lifecycle);
 
   return (
     <>
@@ -166,7 +166,13 @@ export function DetailActions({
           idempotencyKey={randomUUID()}
         />
       ) : null}
-      {showCancel ? <CancelDialog {...ids} idempotencyKey={randomUUID()} /> : null}
+      {showCancel ? (
+        <CancelDialog
+          {...ids}
+          awaitingApproval={status === 'submitted'}
+          idempotencyKey={randomUUID()}
+        />
+      ) : null}
     </>
   );
 }

@@ -4,20 +4,21 @@
 // wiring is adjusted here once the API lands. Pure (no server-only import): the page, the server actions
 // and the tests all read it.
 //
-// Assumptions, until the API is merged:
-// - Cancel is `POST /v1/quotations/:id/cancel` with the contract's `CancelQuotationBody`
-//   (`{ reason, expectedVersion }`), where `expectedVersion` is the current version row's `version`,
-//   the same guard Revise uses. Allowed on a Draft or Returned version (QUOTATION_TRANSITIONS).
-// - The detail answer may carry `capabilities.canCancel` and `capabilities.canConfirmAcceptance`. When
-//   `canCancel` is absent, the record-level edit answer (`canEdit`) stands in for it: whoever may change
-//   the draft may end it. When `canConfirmAcceptance` is absent, the live `quotation.record_acceptance`
-//   grant stands in.
+// Cancel and the zero-instalment refusal follow the API as built (round 4, unit A):
+// - Cancel is `POST /v1/quotations/:id/cancel` with an Idempotency-Key and `{ reason, expectedVersion }`,
+//   where `expectedVersion` is the current version row's `version`, the same guard Revise uses. Allowed
+//   on a Draft, Returned or Submitted version; cancelling a Submitted one also cancels its open approval
+//   request. The detail answer's optional `capabilities.canCancel` decides the button; absent means no.
+// - Submit refuses a schedule whose instalment would be 0.00 with 422 `PAYMENT_INSTALMENT_ZERO`,
+//   `details: { label, total }`.
+// Still assumed, until the acceptance work lands:
+// - The detail answer may carry `capabilities.canConfirmAcceptance`; when absent, the live
+//   `quotation.record_acceptance` grant stands in.
 // - An accepted version may carry `acceptanceConfirmation: { status: 'awaiting' | 'confirmed',
 //   confirmedAt, confirmedByUserId }`. Absent means the API has no confirmation step yet, and the screen
 //   shows nothing about it.
 // - Confirming is `POST /v1/quotations/:id/versions/:vid/acceptance/confirm` with `{ expectedVersion }`.
-// - Submit refuses a schedule whose instalment would be 0.00 with 422 and one of ZERO_INSTALMENT_CODES.
-import type { QuotationCapabilities, QuotationDetail, QuotationStatus } from '@bos/contracts';
+import type { QuotationDetail, QuotationStatus } from '@bos/contracts';
 import { z } from 'zod';
 
 const q = (id: string): string => `/v1/quotations/${encodeURIComponent(id)}`;
@@ -31,13 +32,14 @@ export const lifecyclePaths = {
 } as const;
 
 /** The statuses Cancel quotation is offered on: the `cancel` edges of the version state machine. */
-export const CANCELLABLE_STATUSES: readonly QuotationStatus[] = ['draft', 'returned'];
+export const CANCELLABLE_STATUSES: readonly QuotationStatus[] = ['draft', 'returned', 'submitted'];
 
 export const isCancellable = (status: QuotationStatus): boolean =>
   CANCELLABLE_STATUSES.includes(status);
 
 /** The API codes for "an instalment would round to 0.00" on submit (FR-4). */
 export const ZERO_INSTALMENT_CODES: readonly string[] = [
+  'PAYMENT_INSTALMENT_ZERO',
   'PAYMENT_SCHEDULE_ZERO_INSTALMENT',
   'payment_schedule_zero_instalment',
   'ZERO_INSTALMENT',
@@ -116,11 +118,10 @@ export function lifecycleOf(detail: QuotationDetailWithLifecycle): QuotationLife
   return detail.lifecycle ?? NONE;
 }
 
-/** Cancel quotation is offered on a Draft or Returned version to whoever the API says may cancel it. */
-export function mayCancel(
-  status: QuotationStatus,
-  capabilities: Pick<QuotationCapabilities, 'canEdit'>,
-  lifecycle: QuotationLifecycle,
-): boolean {
-  return isCancellable(status) && (lifecycle.canCancel ?? capabilities.canEdit);
+/**
+ * Cancel quotation is offered on a Draft, Returned or Submitted version only when the API says this caller
+ * may cancel it (`capabilities.canCancel`). An answer without the field offers nothing.
+ */
+export function mayCancel(status: QuotationStatus, lifecycle: QuotationLifecycle): boolean {
+  return isCancellable(status) && lifecycle.canCancel === true;
 }
