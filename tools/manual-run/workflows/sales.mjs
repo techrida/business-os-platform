@@ -984,7 +984,33 @@ export function workflow(cfg) {
           s.record('quotationEditUrl', s.page.url().split('?')[0].replace(cfg.appUrl, ''));
           s.record('quotationUrl', s.state.quotationEditUrl.replace(/\/edit$/, ''));
           const totals = s.page.getByRole('complementary', { name: 'Totals' });
-          await s.see(totals.getByText('Grand total', { exact: true }), 'server totals');
+          const grand = totals.getByText('Grand total', { exact: true });
+          // r3s1: after the first Save draft the panel stayed on "Updating totals" (the preview
+          // request had answered 200), while a fresh load showed the totals. The step keeps
+          // failing then; the reload only tells the finding which of the two it was.
+          const priced = await grand
+            .first()
+            .waitFor({ state: 'visible', timeout: cfg.navTimeout })
+            .then(() => true)
+            .catch(() => false);
+          if (!priced) {
+            const stuck = await visible(totals.getByText('Updating totals', { exact: true }));
+            await s.page.reload({ waitUntil: 'domcontentloaded' }).catch(() => {});
+            const afterReload = await grand
+              .first()
+              .waitFor({ state: 'visible', timeout: cfg.navTimeout })
+              .then(() => true)
+              .catch(() => false);
+            s.finding(
+              `After the first Save draft the Totals panel ${stuck ? 'stayed on "Updating totals"' : 'showed no totals'} ` +
+                `for ${cfg.navTimeout / 1000} s; after a reload the totals ${afterReload ? 'appeared' : 'were still missing'}`,
+              'normal',
+            );
+            throw new StepFailure(
+              'The quotation builder did not show the server totals after saving',
+            );
+          }
+          s.checks.push('saw: server totals');
           const t = await s.text(totals);
           s.expect(hasAmount(t, 120000), 'subtotal NPR 120,000', t);
           s.expect(hasAmount(t, 15600), 'VAT NPR 15,600', t);
