@@ -1,5 +1,5 @@
 // Pure unit tests for the Access Settings catalogue and plain-language summaries:
-// covers all 68 PERMISSIONS, all 13 ROLE_KEYS, all 9 areas, scope filtering rules (R2, R3),
+// covers all 72 PERMISSIONS, all 13 ROLE_KEYS, all 9 areas, scope filtering rules (R2, R3),
 // default-grant validity, and Spec section 9 plain-language vocabulary rules.
 import {
   ACCESS_SETTING_AREA_KEYS,
@@ -18,6 +18,7 @@ import { describe, expect, it } from 'vitest';
 import {
   ACCESS_AREA_CATALOGUE,
   ACCESS_CONFLICTS,
+  ADMIN_CONFIRM_PERMISSIONS,
   ACCESS_PERMISSION_CATALOGUE,
   ACCESS_PERMISSION_GROUPS,
   ACCESS_ROLE_CATALOGUE,
@@ -27,6 +28,7 @@ import {
   impliedLevelRows,
   isScopeAllowedForRole,
   levelRulePermissions,
+  levelSwitchWidens,
   reachLabel,
 } from './access-catalogue';
 import { buildAreaSummaries, buildAssignmentSummaries } from './access-summaries';
@@ -185,6 +187,65 @@ describe('department-reach switches agree with the contracts', () => {
     // The intake roles start leads for Sales but never edit them, so no switch widens their write.
     expect(implied).not.toContain('finance crm.lead.write manager department');
     expect(implied).toContain('sales crm.lead.write manager department');
+  });
+});
+
+describe('reopen and company settings permissions (K2, K3)', () => {
+  it('lists each reopen after its write in the leads and opportunities areas and groups', () => {
+    const area = (key: string) => ACCESS_AREA_CATALOGUE.find((a) => a.key === key)!;
+    expect(area('leads').actionPermissions).toEqual(['crm.lead.write', 'crm.lead.reopen']);
+    expect(area('opportunities').actionPermissions).toEqual([
+      'crm.opportunity.write',
+      'crm.opportunity.reopen',
+    ]);
+    const group = (key: string) => ACCESS_PERMISSION_GROUPS.find((g) => g.key === key)!;
+    expect(group('leads').permissions).toContain('crm.lead.reopen');
+    expect(group('opportunities').permissions).toContain('crm.opportunity.reopen');
+  });
+
+  it('says in the label Check a person shows that reopening also needs a manager or head', () => {
+    for (const key of ['crm.lead.reopen', 'crm.opportunity.reopen'] as const) {
+      const info = PERMISSION_BY_KEY.get(key)!;
+      expect(info.kind).toBe('record');
+      expect(info.label).toMatch(/^Reopen lost /);
+      expect(info.label).toContain('managers and heads only');
+      expect(info.risk).toContain('managers, heads, and Founders');
+      expect(info.scopesFor.staff).toEqual(['own', 'department', 'all']);
+      expect(isScopeAllowedForRole('sales', key, 'department')).toBe(true);
+      expect(isScopeAllowedForRole('founder', key, 'department')).toBe(false);
+    }
+  });
+
+  it('keeps reopen out of the department switches, so no level row widens it', () => {
+    for (const area of ['leads', 'opportunities'] as const) {
+      expect(levelRulePermissions(area).some((p) => p.endsWith('.reopen'))).toBe(false);
+    }
+    expect(levelSwitchWidens('sales', 'crm.lead.reopen', 'own')).toBe(false);
+    expect(levelSwitchWidens('sales', 'crm.opportunity.reopen', 'own')).toBe(false);
+  });
+
+  it('lists both settings writes under Administration as switches that ask to confirm', () => {
+    const admin = ACCESS_PERMISSION_GROUPS.find((g) => g.key === 'administration')!;
+    for (const key of ['settings.finance.write', 'settings.fx_rate.write'] as const) {
+      expect(admin.permissions).toContain(key);
+      const info = PERMISSION_BY_KEY.get(key)!;
+      expect(info.kind).toBe('onOff');
+      expect(info.scopesFor.staff).toEqual(['all']);
+      expect(ADMIN_CONFIRM_PERMISSIONS.has(key)).toBe(true);
+    }
+    expect(PERMISSION_BY_KEY.get('settings.fx_rate.write')?.label).toBe('Change exchange rates');
+    expect(PERMISSION_BY_KEY.get('settings.finance.write')?.label).toBe(
+      'Change tax, numbering, and terms settings',
+    );
+  });
+
+  it('defaults the settings writes to Finance and the Accountant at Everything', () => {
+    expect(defaultScopeFor('finance', 'settings.fx_rate.write')).toBe('all');
+    expect(defaultScopeFor('finance', 'settings.finance.write')).toBe('all');
+    expect(defaultScopeFor('accountant', 'settings.finance.write')).toBe('all');
+    expect(defaultScopeFor('accountant', 'settings.fx_rate.write')).toBeNull();
+    expect(defaultScopeFor('sales', 'settings.finance.write')).toBeNull();
+    expect(defaultScopeFor('finance', 'admin.settings.write')).toBeNull();
   });
 });
 
