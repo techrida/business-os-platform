@@ -73,9 +73,10 @@ export class AdminWorkflowsController {
     return this.admin.addVersion(key, parseOr400(AddVersionSchema, body).spec);
   }
 
+  /** 200 with the published version. 403 to whoever saved that draft: a second person publishes (F1-Q11). */
   @Post(':key/versions/:v/publish')
   @HttpCode(200)
-  @Can('approvals.definitions.write')
+  @Can('approvals.definitions.publish')
   publish(
     @Param('key') key: string,
     @Param('v', ParseIntPipe) v: number,

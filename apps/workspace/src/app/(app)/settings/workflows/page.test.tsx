@@ -1,6 +1,6 @@
 import { avatarColour } from '@bos/contracts';
 import { renderToStaticMarkup } from 'react-dom/server';
-import { beforeEach, expect, it, vi } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { apiFetch } from '@/lib/api';
 import { listApprovalPeople } from '@/lib/api-admin';
@@ -16,6 +16,17 @@ vi.mock('@/lib/api', async (original) => ({
   apiFetch: vi.fn(),
 }));
 vi.mock('../guard', () => ({ requireSection: () => Promise.resolve(session) }));
+/** The live grants the page gates on (`/v1/me`); by default a workflow editor who also manages groups and delegations. */
+let held: Set<string>;
+const EDITOR = [
+  'approvals.definitions.read',
+  'approvals.definitions.write',
+  'approvals.groups.write',
+  'approvals.delegations.write',
+];
+vi.mock('@/lib/live-permissions', () => ({
+  getPermissionCheck: () => Promise.resolve((permission: string) => held.has(permission)),
+}));
 vi.mock('next/cache', () => ({ revalidatePath: vi.fn() }));
 let session: Session;
 const first = '11111111-1111-4111-8111-000000000200';
@@ -46,6 +57,7 @@ function jsonBody(body: unknown): unknown {
 
 beforeEach(() => {
   vi.resetAllMocks();
+  held = new Set(EDITOR);
   session = { accessToken: 'caller-token', orgKind: 'staff', roles: ['management'] } as Session;
   const respond = (caller: Session, path: string, init?: RequestInit): Response => {
     expect(caller).toBe(session);
@@ -334,4 +346,76 @@ it('rejects a failed second page rather than exposing partial assignment choices
     ),
   );
   await expect(listApprovalPeople(session, 'workflows')).rejects.toThrow();
+});
+
+describe('publishing needs a second person (F1-Q11)', () => {
+  const MANAGEMENT = ['approvals.definitions.read', 'approvals.definitions.publish'];
+  const draft = (over: Record<string, unknown>) => ({
+    id: group,
+    key: 'memo',
+    name: 'Memo review',
+    documentType: 'test_memo',
+    currentVersionId: null,
+    versions: [
+      {
+        ...version({ documentType: 'test_memo', steps: [], rules: [] }),
+        createdBy: first,
+        createdByName: 'Sita Editor',
+        publishedBy: null,
+        savedByCaller: false,
+        ...over,
+      },
+    ],
+  });
+  function answer(workflow: unknown) {
+    const respond = vi.mocked(apiFetch).getMockImplementation()!;
+    vi.mocked(apiFetch).mockImplementation((caller, path, init) =>
+      path === '/v1/admin/workflows'
+        ? Promise.resolve(Response.json([workflow]))
+        : respond(caller, path, init),
+    );
+  }
+  const workflowsPart = (html: string) => html.slice(html.indexOf('id="workflows"'));
+
+  it('lets a Management member publish a draft someone else saved, and shows only what they can use', async () => {
+    held = new Set(MANAGEMENT);
+    answer(draft({}));
+    const html = renderToStaticMarkup(await WorkflowsPage());
+    expect(workflowsPart(html)).toMatch(/>Publish</);
+    expect(html).toContain('a Management member other than that person publishes it');
+    // The editor's name comes from the workflow list: Management cannot read the user directory.
+    expect(html).toContain('Saved by Sita Editor');
+    // No editors, groups, delegations or reminder times for a role that cannot change them.
+    expect(html).not.toContain('Edit as a new draft');
+    expect(html).not.toContain('New workflow');
+    expect(html).not.toContain('id="groups"');
+    expect(html).not.toContain('id="delegations"');
+    expect(html).not.toContain('id="timing"');
+    const paths = vi.mocked(apiFetch).mock.calls.map(([, path]) => path);
+    expect(paths.some((p) => p.startsWith('/v1/admin/approval-groups'))).toBe(false);
+    expect(paths.some((p) => p.startsWith('/v1/admin/delegations'))).toBe(false);
+  });
+
+  it('explains instead of offering Publish to the person who saved the draft', async () => {
+    held = new Set([...EDITOR, 'approvals.definitions.publish']);
+    answer(draft({ savedByCaller: true }));
+    const html = workflowsPart(renderToStaticMarkup(await WorkflowsPage()));
+    expect(html).not.toMatch(/>Publish</);
+    expect(html).toContain('You saved this draft, so another Management member publishes it.');
+  });
+
+  it('explains instead of offering Publish to an editor without the publish permission', async () => {
+    answer(draft({}));
+    const html = workflowsPart(renderToStaticMarkup(await WorkflowsPage()));
+    expect(html).not.toMatch(/>Publish</);
+    expect(html).toContain('Waiting for a Management member other than its editor to publish it.');
+  });
+
+  it('asks for a draft with no recorded editor to be saved again', async () => {
+    held = new Set(MANAGEMENT);
+    answer(draft({ createdBy: null }));
+    const html = workflowsPart(renderToStaticMarkup(await WorkflowsPage()));
+    expect(html).not.toMatch(/>Publish</);
+    expect(html).toContain('Save it again as a new draft to publish it.');
+  });
 });

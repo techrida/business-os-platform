@@ -57,6 +57,7 @@ import type { MoneyService } from '../../../platform/settings/money.service';
 import { NumberingService } from '../../../platform/settings/numbering.service';
 import { SettingsService } from '../../../platform/settings/settings.service';
 import { ApprovalsAdminService } from '../../approvals/admin.service';
+import { asSecondPerson } from '../../../../test/support/second-person';
 import type { ApprovalEmailTemplate } from '../../approvals/ports';
 import { ApprovalsService } from '../../approvals/requests.service';
 import { CancelService } from '../drafting/cancel.service';
@@ -285,12 +286,13 @@ beforeAll(async () => {
   // The seed's workflow, published in entity A as an admin would.
   as(U.admin, 'founder');
   const admin = new ApprovalsAdminService(db, audit, caller, () => now);
+  const adminPublisher = new ApprovalsAdminService(db, audit, asSecondPerson(caller), () => now);
   await admin.createWorkflow({
     key: 'quotation_version',
     name: 'Quotation',
     spec: QUOTATION_VERSION_WORKFLOW_SPEC,
   });
-  await admin.publish('quotation_version', 1);
+  await adminPublisher.publish('quotation_version', 1);
 
   approvals = new ApprovalsService(db, audit, notify, directory, caller, () => now);
   approvals.registerSubject(new QuotationVersionSubject(() => now));
