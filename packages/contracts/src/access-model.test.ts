@@ -621,3 +621,70 @@ describe('API matrix (phase 2)', () => {
   );
   it.todo('reseeding keeps a Founder-made grant and refreshes a seeded one');
 });
+
+describe('reopen and company settings defaults (K2, K3)', () => {
+  const staffRoles = ROLE_KEYS.filter((role) => role !== 'founder');
+
+  it('gives each reopen at the department to exactly the roles holding the matching write', () => {
+    const pairs = [
+      ['crm.lead.reopen', 'crm.lead.write'],
+      ['crm.opportunity.reopen', 'crm.opportunity.write'],
+    ] as const;
+    for (const [reopen, write] of pairs) {
+      expect(DEFAULT_ROLE_PERMISSIONS.founder[reopen]).toBe('all');
+      for (const role of staffRoles) {
+        const writes = DEFAULT_ROLE_PERMISSIONS[role][write] !== undefined;
+        expect(DEFAULT_ROLE_PERMISSIONS[role][reopen], `${role} ${reopen}`).toBe(
+          writes ? 'department' : undefined,
+        );
+      }
+    }
+  });
+
+  it('names the roles that reopen leads and opportunities by default', () => {
+    const holders = (permission: Permission) =>
+      ROLE_KEYS.filter((role) => DEFAULT_ROLE_PERMISSIONS[role][permission] !== undefined);
+    expect(holders('crm.lead.reopen')).toEqual([
+      'founder',
+      'finance',
+      'accountant',
+      'sales',
+      'marketing',
+      'pmo',
+    ]);
+    expect(holders('crm.opportunity.reopen')).toEqual(['founder', 'sales']);
+  });
+
+  it('adds no level row on reopen, so the frozen 0088 copy stays exact', () => {
+    for (const role of ROLE_KEYS) {
+      const reopenRows = DEFAULT_ROLE_PERMISSION_LEVELS[role].filter((row) =>
+        row.permission.endsWith('.reopen'),
+      );
+      expect(reopenRows, role).toEqual([]);
+    }
+  });
+
+  it('gives Finance both settings writes and the Accountant the finance settings only', () => {
+    const holders = (permission: Permission) =>
+      ROLE_KEYS.filter((role) => DEFAULT_ROLE_PERMISSIONS[role][permission] !== undefined);
+    expect(holders('settings.fx_rate.write')).toEqual(['founder', 'finance']);
+    expect(holders('settings.finance.write')).toEqual(['founder', 'finance', 'accountant']);
+    expect(holders('admin.settings.write')).toEqual(['founder']);
+    for (const permission of ['settings.fx_rate.write', 'settings.finance.write'] as const) {
+      for (const role of holders(permission)) {
+        expect(DEFAULT_ROLE_PERMISSIONS[role][permission], `${role} ${permission}`).toBe('all');
+      }
+    }
+  });
+
+  it('lists the four new permissions once each', () => {
+    for (const permission of [
+      'settings.fx_rate.write',
+      'settings.finance.write',
+      'crm.lead.reopen',
+      'crm.opportunity.reopen',
+    ] as const) {
+      expect(PERMISSIONS.filter((p) => p === permission), permission).toHaveLength(1);
+    }
+  });
+});
