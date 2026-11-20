@@ -99,10 +99,10 @@ function InvoiceRow({
       <Td align="end" nowrap>
         <span className={styles.amount}>{money(item.total, item.currency, numberSystems)}</span>
       </Td>
-      <Td nowrap>
+      <Td nowrap pinned>
         <ListStatusBadge item={item} />
       </Td>
-      <Td nowrap>
+      <Td nowrap pinned>
         <span className={styles.rowActions}>
           {pay !== null ? (
             <LinkButton
@@ -329,8 +329,8 @@ export default async function InvoicesPage({ searchParams }: { searchParams: Pro
                 <Th>Issued on</Th>
                 <Th>Due</Th>
                 <Th align="end">Total</Th>
-                <Th>Status</Th>
-                <Th>Action</Th>
+                <Th pinned>Status</Th>
+                <Th pinned>Action</Th>
               </tr>
             </thead>
             <tbody>
