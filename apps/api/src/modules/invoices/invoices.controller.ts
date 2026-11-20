@@ -14,6 +14,7 @@ import {
   IssueInvoiceBodySchema,
   MAX_ROWS,
   multi,
+  ReopenInvoiceBodySchema,
   searchParam,
   SettlementStatusSchema,
   SubmitInvoiceBodySchema,
@@ -178,6 +179,23 @@ export class InvoicesController {
   ): Promise<InvoiceDetail> {
     const key = requireIdempotencyKey(idempotencyKey);
     return this.approval.submit(id, parseOr400(SubmitInvoiceBodySchema, body), key);
+  }
+
+  /**
+   * 200 with the InvoiceDetail back in draft: an approved invoice that can no longer be issued as approved (its due
+   * date passed). 404 outside the entity, 409 for any other status or a stale `expectedVersion`. It needs a new
+   * approval before issue.
+   */
+  @Post(':id/reopen')
+  @HttpCode(200)
+  @Can('invoice.issue')
+  reopen(
+    @Param('id', ParseUUIDPipe) id: string,
+    @Headers('idempotency-key') idempotencyKey: string | undefined,
+    @Body() body: unknown,
+  ): Promise<InvoiceDetail> {
+    const key = requireIdempotencyKey(idempotencyKey);
+    return this.approval.reopen(id, parseOr400(ReopenInvoiceBodySchema, body), key);
   }
 
   /**
