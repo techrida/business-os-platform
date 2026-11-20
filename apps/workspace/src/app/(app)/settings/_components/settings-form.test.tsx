@@ -1,5 +1,6 @@
 // @vitest-environment jsdom
 import { act } from 'react';
+import { createRoot } from 'react-dom/client';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import type { SettingsSectionId } from '@/lib/settings-nav';
@@ -469,7 +470,59 @@ describe('SettingsForm discard dialog rule', () => {
   });
 });
 
+describe('SettingsForm stale protection', () => {
+  it('keeps the version the person saw when the server value changes under an unsaved edit', async () => {
+    saveSettingsPageAction.mockReset();
+    const container = document.createElement('div');
+    document.body.append(container);
+    const root = createRoot(container);
+    const render = (spec: FieldSpec) =>
+      act(() =>
+        Promise.resolve(
+          root.render(
+            <SettingsForm section="sales" fields={[spec]}>
+              <SettingCard title="Quotations" fields={[spec]} />
+            </SettingsForm>,
+          ),
+        ),
+      );
+    await render(validitySpec('15', 2));
+    await fill(container.querySelector<HTMLInputElement>('input'), '90');
+    // Someone else saved 30 (version 5) and the page refreshed: the edit stays, the version does not move.
+    await render(validitySpec('30', 5));
+    expect(container.querySelector<HTMLInputElement>('input')?.value).toBe('90');
+    saveSettingsPageAction.mockResolvedValueOnce({
+      status: 'ok',
+      message: 'Changes saved.',
+      saved: [{ key: 'quotation.validity_days', value: { kind: 'text', value: '90' }, version: 6 }],
+    } as never);
+    await click(buttonByText(container, 'Save'));
+    expect(saveSettingsPageAction.mock.calls[0]?.[1]?.[0]?.expectedVersion).toBe(2);
+    await act(() => Promise.resolve(root.unmount()));
+    container.remove();
+  });
+});
+
 describe('SettingsForm unsaved-leave guard', () => {
+  it('does not open the leave dialog when Back only undoes an in-page hash jump', async () => {
+    const validity = validitySpec('15', 2);
+    const mounted = await mountForm(
+      <SettingsForm section="sales" fields={[validity]}>
+        <SettingCard title="Quotations" fields={[validity]} />
+      </SettingsForm>,
+    );
+    const input = mounted.container.querySelector<HTMLInputElement>('input');
+    await fill(input, '90');
+    window.history.replaceState(null, '', '#timing');
+    await act(() => {
+      window.dispatchEvent(new PopStateEvent('popstate'));
+      return Promise.resolve();
+    });
+    expect(document.querySelector('[role="dialog"]')).toBeNull();
+    window.history.replaceState(null, '', window.location.pathname);
+    await mounted.unmount();
+  });
+
   it('blocks beforeunload, in-app link clicks, and popstate while dirty via ConfirmDialog', async () => {
     const validity = validitySpec('15', 2);
 
@@ -518,6 +571,8 @@ describe('SettingsForm unsaved-leave guard', () => {
 
     // Clicking Back (popstate) while dirty opens ConfirmDialog; confirming calls history.go(-2).
     const goSpy = vi.spyOn(window.history, 'go').mockImplementation(() => {});
+    // Back lands on the page's own entry, not on the sentinel.
+    window.history.replaceState(null, '', window.location.pathname);
     await act(() => {
       window.dispatchEvent(new PopStateEvent('popstate'));
       return Promise.resolve();

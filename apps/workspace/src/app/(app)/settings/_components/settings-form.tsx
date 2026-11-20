@@ -83,7 +83,7 @@ function buildDrafts(fields: readonly FieldSpec[]): Partial<Record<SettingKey, S
 }
 
 /** Mounted only when a stale save needs a Reload button so SSR without App Router never calls useRouter. */
-function StaleReloadButton() {
+function StaleReloadButton({ onReload }: { onReload: () => void }) {
   const router = useRouter();
   const [reloading, startReload] = useTransition();
   return (
@@ -91,7 +91,10 @@ function StaleReloadButton() {
       variant="secondary"
       size="small"
       disabled={reloading}
-      onClick={() => startReload(() => router.refresh())}
+      onClick={() => {
+        onReload();
+        startReload(() => router.refresh());
+      }}
     >
       {reloading ? 'Reloading…' : 'Reload'}
     </Button>
@@ -195,24 +198,36 @@ export function SettingsForm({
     for (const field of changedFromServer) {
       const currentBaseline = baselines[field.key];
       const currentDraft = drafts[field.key];
-      // Keep the user's unsaved edit; only advance drafts that were clean or newly mounted.
-      if (
-        !currentBaseline ||
-        !currentDraft ||
-        sameFieldValue(currentDraft, currentBaseline.value)
-      ) {
+      const clean =
+        !currentBaseline || !currentDraft || sameFieldValue(currentDraft, currentBaseline.value);
+      // A clean field follows the server. An edited field keeps its draft AND its old baseline
+      // version, so a later Save still sends the version the person saw and a newer save by
+      // someone else is refused, never silently overwritten. Reload (below) is how they accept it.
+      if (clean) {
         nextDrafts[field.key] = field.current;
+        nextBaselines[field.key] = { value: field.current, version: field.version };
       }
-      nextBaselines[field.key] = { value: field.current, version: field.version };
     }
     setDrafts(nextDrafts);
     setBaselines(nextBaselines);
-    if (staleKeys.length > 0) {
-      setStaleKeys(
-        staleKeys.filter((key) => !changedFromServer.some((field) => field.key === key)),
-      );
-    }
   }
+
+  /** Reload on a stale refusal: take the server's newer value for the refused keys, drop those edits. */
+  const reloadStale = () => {
+    const stale = fields.filter((field) => staleKeys.includes(field.key));
+    setDrafts((prev) => ({ ...prev, ...Object.fromEntries(stale.map((f) => [f.key, f.current])) }));
+    setBaselines((prev) => ({
+      ...prev,
+      ...Object.fromEntries(stale.map((f) => [f.key, { value: f.current, version: f.version }])),
+    }));
+    setFieldErrors((prev) => {
+      const next = { ...prev };
+      for (const f of stale) delete next[f.key];
+      return next;
+    });
+    setStaleKeys([]);
+    setBanner(null);
+  };
 
   const dirtyFields = useMemo(
     () =>
@@ -368,7 +383,13 @@ export function SettingsForm({
         setDrafts((prev) => {
           const next = { ...prev };
           for (const entry of result.saved) {
-            next[entry.key] = entry.value;
+            // An edit typed while the request was in flight stays as a new, unsaved change.
+            const sent = drafts[entry.key];
+            const now = prev[entry.key];
+            next[entry.key] =
+              sent !== undefined && now !== undefined && !sameFieldValue(now, sent)
+                ? now
+                : entry.value;
           }
           return next;
         });
@@ -422,7 +443,9 @@ export function SettingsForm({
           <Alert
             tone={banner.tone}
             role="alert"
-            actions={staleKeys.length > 0 ? <StaleReloadButton /> : undefined}
+            actions={
+              staleKeys.length > 0 ? <StaleReloadButton onReload={reloadStale} /> : undefined
+            }
           >
             {banner.message}
           </Alert>

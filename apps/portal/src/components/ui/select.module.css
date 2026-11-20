@@ -24,7 +24,7 @@
 
 .trigger[data-focus-visible] {
   border-color: var(--select-focus-border);
-  box-shadow: var(--bos-field-focus-shadow);
+  box-shadow: inset 0 0 0 1px var(--select-focus-border);
   outline: 2px solid var(--focus-ring);
   outline-offset: 1px;
 }
@@ -57,7 +57,7 @@
 
 .select[data-open] .trigger {
   border-color: var(--select-focus-border);
-  box-shadow: var(--bos-field-focus-shadow);
+  box-shadow: inset 0 0 0 1px var(--select-focus-border);
 }
 
 .select.invalid .trigger,

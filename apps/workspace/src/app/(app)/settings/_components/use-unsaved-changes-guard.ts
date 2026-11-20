@@ -99,6 +99,8 @@ export function useUnsavedChangesGuard(dirty: boolean): {
   useEffect(() => {
     const onPopState = () => {
       if (bypassRef.current) return;
+      // A hash jump inside the page, or landing on our own sentinel, is not leaving the page.
+      if (window.location.hash !== '' || isGuardState(window.history.state)) return;
       if (dirty) {
         pushGuardEntry();
         hasGuardRef.current = true;

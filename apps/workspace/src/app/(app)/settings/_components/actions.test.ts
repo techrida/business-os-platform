@@ -62,6 +62,21 @@ describe('saveSettingsPageAction', () => {
     expect(revalidatePath).not.toHaveBeenCalled();
   });
 
+  it('refuses a version below 1 before writing anything', async () => {
+    getSession.mockResolvedValue(session(['founder']));
+    putSetting.mockReset();
+    const result = await saveSettingsPageAction('sales', [
+      { key: 'quotation.validity_days', value: { kind: 'text', value: '30' }, expectedVersion: 1 },
+      {
+        key: 'sales.evidence_policy',
+        value: { kind: 'text', value: 'contract' },
+        expectedVersion: 0,
+      },
+    ]);
+    expect(result.status).toBe('error');
+    expect(putSetting).not.toHaveBeenCalled();
+  });
+
   it('writes changed keys sequentially with each key expectedVersion and returns updated baselines', async () => {
     const founder = session(['founder']);
     getSession.mockResolvedValue(founder);

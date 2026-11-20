@@ -505,7 +505,12 @@ function ScheduleControl({
 
   const removeRow = (index: number) => {
     if (rows.length <= 1) return;
-    setRowKeys((prev) => prev.filter((_, i) => i !== index));
+    // Undo, reset and discard replace the rows without telling this list, so rebuild the keys first.
+    setRowKeys((prev) =>
+      rows
+        .map((_, i) => prev[i] ?? `row-pad-${(nextRowIdRef.current += 1)}`)
+        .filter((_, i) => i !== index),
+    );
     onChange(rows.filter((_, i) => i !== index));
   };
 

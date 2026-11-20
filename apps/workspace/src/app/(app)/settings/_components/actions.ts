@@ -102,7 +102,10 @@ export async function saveSettingsPageAction(
       };
     }
     seen.add(parsedKey.data);
-    if (change.expectedVersion !== null && !Number.isInteger(change.expectedVersion)) {
+    if (
+      change.expectedVersion !== null &&
+      (!Number.isInteger(change.expectedVersion) || change.expectedVersion < 1)
+    ) {
       return {
         status: 'error',
         message: 'Reload the page and try again.',
@@ -194,59 +197,6 @@ export async function saveSettingsPageAction(
   };
 }
 
-const text = (formData: FormData, name: string): string => {
-  const value = formData.get(name);
-  return typeof value === 'string' ? value : '';
-};
-
-/** Legacy single-card FormData action kept for compatibility with existing callers/tests. */
-export async function saveCardAction(
-  _previous: ActionState,
-  formData: FormData,
-): Promise<ActionState> {
-  const id = text(formData, 'section') as SettingsSectionId;
-  const allowed: readonly SettingKey[] | undefined = Object.hasOwn(CARD_KEYS, id)
-    ? CARD_KEYS[id as keyof typeof CARD_KEYS]
-    : undefined;
-  if (allowed === undefined) return fail('Unknown settings section.');
-  const session = await requireSection(id);
-
-  const keys = formData.getAll('key').filter((k): k is string => typeof k === 'string');
-  const parsedKeys = keys.map((k) => SettingKeySchema.safeParse(k));
-  if (parsedKeys.some((k) => !k.success)) return fail('Unknown setting.');
-  const wanted = parsedKeys.flatMap((k) => (k.success ? [k.data] : []));
-  if (wanted.some((key) => !allowed.includes(key))) return fail('Unknown setting.');
-
-  const raw = (key: SettingKey) =>
-    formData.getAll(`v:${key}`).filter((v): v is string => typeof v === 'string');
-  // Only what the person changed is written: every save appends a version.
-  const changed = wanted.filter((key) => raw(key).join(',') !== text(formData, `i:${key}`));
-  if (changed.length === 0) return ok('No changes to save.');
-
-  const fields = Object.fromEntries(wanted.map((key) => [key, raw(key).join(',')]));
-  const fieldErrors: Record<string, string> = {};
-  const values: [SettingKey, unknown][] = [];
-  for (const key of changed) {
-    const input = parseSettingInput(key, raw(key));
-    if (input.ok) values.push([key, input.value]);
-    else fieldErrors[key] = input.message;
-  }
-  if (Object.keys(fieldErrors).length > 0) {
-    return { ...fail('Check the highlighted fields and try again.', fields), fieldErrors };
-  }
-
-  for (const [key, value] of values) {
-    try {
-      await putSetting(session, key, value);
-    } catch (error) {
-      revalidatePath(settingsSection(id).href);
-      return fail(describeError(error, 'change settings'), fields);
-    }
-  }
-  revalidatePath(settingsSection(id).href);
-  return ok('Changes saved.');
-}
-
 /**
  * Puts one setting back to its default (D32). A reset is a normal save of the default value, so it
  * appends a version and lands in the audit trail like any other change. One setting only, and only a
@@ -270,7 +220,7 @@ export async function resetSettingAction(
 
   const parsed = SettingKeySchema.safeParse(key);
   if (!parsed.success || !allowed.includes(parsed.data)) return fail('Unknown setting.');
-  if (loadedVersion !== null && !Number.isInteger(loadedVersion)) {
+  if (loadedVersion !== null && (!Number.isInteger(loadedVersion) || loadedVersion < 1)) {
     return fail('Reload the page and try again.');
   }
 
