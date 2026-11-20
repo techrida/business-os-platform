@@ -19,7 +19,14 @@ import {
 const ACCOUNTANT = ['accountant'];
 const FINANCE = ['finance'];
 const NOBODY = ['sales'];
-const NONE = { submit: false, issue: false, discard: false, notes: false, issueBlocker: null };
+const NONE = {
+  submit: false,
+  issue: false,
+  discard: false,
+  reopen: false,
+  notes: false,
+  issueBlocker: null,
+};
 
 const gates = (kind: InvoiceKind, status: InvoiceStatus, roles: string[]) =>
   invoiceGates({ kind, status }, permissionChecker(roles));
@@ -49,6 +56,7 @@ describe('invoiceGates follow canTransitionInvoice and the role', () => {
       submit: true,
       issue: false,
       discard: true,
+      reopen: false,
       notes: false,
       issueBlocker: null,
     });
@@ -61,6 +69,7 @@ describe('invoiceGates follow canTransitionInvoice and the role', () => {
         submit: true,
         issue: false,
         discard: true,
+        reopen: false,
         notes: false,
         issueBlocker: null,
       });
@@ -71,6 +80,27 @@ describe('invoiceGates follow canTransitionInvoice and the role', () => {
     expect(gates('tax_invoice', 'approved', FINANCE).issue).toBe(true);
     expect(gates('tax_invoice', 'approved', ACCOUNTANT).issue).toBe(false);
     expect(gates('tax_invoice', 'submitted', FINANCE).issue).toBe(false);
+  });
+
+  it('offers Back to draft on an approved invoice only, to whoever may issue it', () => {
+    expect(gates('tax_invoice', 'approved', FINANCE).reopen).toBe(true);
+    expect(gates('debit_note', 'approved', FINANCE).reopen).toBe(true);
+    expect(gates('tax_invoice', 'approved', ACCOUNTANT).reopen).toBe(false);
+    for (const status of INVOICE_STATUSES.filter((s) => s !== 'approved')) {
+      expect(gates('tax_invoice', status, ['accountant', 'finance']).reopen).toBe(false);
+    }
+    expect(gates('proforma', 'approved', FINANCE).reopen).toBe(false);
+    // The per-invoice issue flag decides it too: an own-scoped grant on another person's invoice.
+    expect(
+      invoiceGates(
+        {
+          kind: 'tax_invoice',
+          status: 'approved',
+          can: { submit: true, issue: false, discard: true, notes: true, recordPayment: true },
+        },
+        permissionChecker(FINANCE),
+      ).reopen,
+    ).toBe(false);
   });
 
   it('goes straight from a draft proforma to Issue, with no Submit', () => {
@@ -103,6 +133,7 @@ describe('invoiceGates follow canTransitionInvoice and the role', () => {
       submit: true,
       issue: false,
       discard: true,
+      reopen: false,
       notes: false,
       issueBlocker: null,
     });

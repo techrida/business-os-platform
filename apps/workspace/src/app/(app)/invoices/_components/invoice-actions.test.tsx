@@ -148,6 +148,9 @@ describe('a note its viewer created (TR-Q12f)', () => {
     expect(html).toContain(
       `title="You created this note, so someone else with issue access must issue it."`,
     );
-    expect(html).not.toContain('name="idempotencyKey"');
+    // The only form is Back to draft (the creator may still take their approved note back); no issue form.
+    expect(html).not.toContain('<h2>Issue ');
+    expect(html.match(/name="idempotencyKey"/g)).toHaveLength(1);
+    expect(html).toContain('<h2>Move debit note back to draft</h2>');
   });
 });
