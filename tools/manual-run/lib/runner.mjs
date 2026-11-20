@@ -84,6 +84,8 @@ export async function runWorkflow(cfg, workflow, opts = {}) {
   // Checked by run.mjs before any launch; repeated here for direct callers.
   const fromIndex = opts.from ? workflow.steps.findIndex((s) => s.id === opts.from) : 0;
   if (fromIndex < 0) throw new Error(`--from ${opts.from}: no such step in ${workflow.name}`);
+  if (opts.from && workflow.steps[fromIndex]?.exploratory)
+    throw new Error(`--from ${opts.from}: exploratory step (not scripted)`);
 
   // Ctrl-C or a kill: save the steps finished so far (saveResults is synchronous, so it completes
   // before the process exits) and the records. Registered once the browser is up, so (cleanup runs
@@ -139,6 +141,12 @@ export async function runWorkflow(cfg, workflow, opts = {}) {
         records: {},
       };
       result.steps.push(entry);
+      // An exploratory step has no script: one exploratory agent pass per release covers it.
+      if (step.exploratory) {
+        entry.status = 'SKIPPED';
+        entry.note = step.note ?? 'Exploratory step: not scripted';
+        continue;
+      }
       if (skipping) {
         entry.status = 'SKIPPED';
         continue;
@@ -483,6 +491,7 @@ export function renderMarkdown(all) {
     for (const s of wf.steps) {
       const notes = [
         s.fromEarlierRun && '(from the earlier segment)',
+        s.note,
         s.error,
         ...s.findings.map((f) => `FINDING (${f.severity}): ${f.text}`),
         s.screenshot && `shot: ${s.screenshot}`,

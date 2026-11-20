@@ -10,6 +10,8 @@ import {
   TAX_INVOICE_WORKFLOW_SPEC,
   QUOTATION_VERSION_WORKFLOW_SPEC,
   TEST_MEMO_WORKFLOW_SPEC,
+  DEV_CUSTOMER_NAME_NORM,
+  DEV_CUSTOMER_PARTY_CODE,
   DEV_DEPARTMENTS,
   DEV_VENDOR_PARTY_CODE,
   type DevPersona,
@@ -587,7 +589,11 @@ describe('seedKernelRows: dev vendor and department (SEED-2)', () => {
           rows: Object.entries(userIds).map(([zitadel, id]) => ({ id, zitadel_user_id: zitadel })),
         };
       }
-      if (text.startsWith('SELECT id FROM app.parties')) return { rows: [{ id: 'party-vend' }] };
+      if (text.startsWith('SELECT id FROM app.parties')) {
+        return {
+          rows: [{ id: text.includes("kind = 'customer'") ? 'party-cust' : 'party-vend' }],
+        };
+      }
       // Keyed by name, so a member filed into the wrong department shows up as the wrong id.
       if (text.startsWith('SELECT id FROM app.departments')) {
         return { rows: [{ id: `dept-${String(call.values[2])}` }] };
@@ -599,14 +605,24 @@ describe('seedKernelRows: dev vendor and department (SEED-2)', () => {
       (c) => c.text.includes(`INTO app.${table} `) || c.text.startsWith(`UPDATE app.${table} `),
     );
 
-  it('looks the vendor up by the party code the tenancy step creates', () => {
+  it('looks the vendor and customer up by the party codes the tenancy step creates', () => {
     expect(DEV_VENDOR_PARTY_CODE).toBe(SEED_PARTIES.vendor.code);
+    expect(DEV_CUSTOMER_PARTY_CODE).toBe(SEED_PARTIES.customer.code);
   });
 
-  it('writes nothing for people, departments or vendors when no personas are passed', async () => {
+  it('writes nothing for people, departments, vendors or customers when no personas are passed', async () => {
     const { client, calls } = fakeClient(withLookups(firstRun));
     await seedKernelRows(client, scope);
-    for (const table of ['users', 'user_entities', 'departments', 'vendors', 'vendor_accounts']) {
+    for (const table of [
+      'users',
+      'user_entities',
+      'departments',
+      'vendors',
+      'vendor_accounts',
+      'customers',
+      'customer_contacts',
+      'party_accounts',
+    ]) {
       expect(writesTo(calls, table)).toEqual([]);
     }
   });
@@ -757,9 +773,61 @@ describe('seedKernelRows: dev vendor and department (SEED-2)', () => {
     expect(vendor?.text).toContain("'approved'");
     expect(vendor?.text).toContain('ON CONFLICT (id) DO NOTHING');
     // The party it hangs on is the VEND-DEV vendor party, found by code and kind.
-    const party = calls.find((c) => c.text.startsWith('SELECT id FROM app.parties'));
+    const party = calls.find(
+      (c) => c.text.startsWith('SELECT id FROM app.parties') && c.text.includes("kind = 'vendor'"),
+    );
     expect(party?.values).toEqual(['tenant-1', 'VEND-DEV']);
     expect(party?.text).toContain("kind = 'vendor'");
+  });
+
+  it('seeds CUST-DEV (Dev Customer Co) as an active NPR customer owned by sales, with primary contact and TR account', async () => {
+    const { client, calls } = fakeClient(withLookups(firstRun));
+    await seedKernelRows(client, scope, personas);
+
+    const party = calls.find(
+      (c) =>
+        c.text.startsWith('SELECT id FROM app.parties') && c.text.includes("kind = 'customer'"),
+    );
+    expect(party?.values).toEqual(['tenant-1', 'CUST-DEV']);
+
+    const customer = calls.find((c) => c.text.includes('INTO app.customers'));
+    expect(customer?.values.slice(0, 4)).toEqual([
+      'tenant-1',
+      'party-cust',
+      DEV_CUSTOMER_NAME_NORM,
+      'u-sales',
+    ]);
+    expect(JSON.parse(String(customer?.values[4]))).toEqual({
+      line1: 'Durbar Marg 1',
+      city: 'Kathmandu',
+      country: 'NP',
+    });
+    expect(customer?.text).toContain("'active'");
+    expect(customer?.text).toContain("'NPR'");
+    expect(customer?.text).toContain('ON CONFLICT (id) DO NOTHING');
+
+    const contact = calls.find((c) => c.text.includes('INTO app.customer_contacts'));
+    expect(contact?.values).toEqual([
+      'tenant-1',
+      'party-cust',
+      'Dev Customer',
+      'customer@dev.bos.test',
+    ]);
+    expect(contact?.text).toContain('WHERE NOT EXISTS');
+    expect(contact?.text).toContain('is_primary');
+
+    const account = calls.find((c) => c.text.includes('INTO app.party_accounts'));
+    expect(account?.values).toEqual(['tenant-1', 'org-1', 'party-cust', 'u-sales', 'NET30']);
+    expect(account?.text).toContain("'NPR'");
+    expect(account?.text).toContain(
+      'ON CONFLICT (tenant_id, organization_id, party_id) DO NOTHING',
+    );
+
+    const at = (needle: string) => calls.findIndex((c) => c.text.includes(needle));
+    expect(at('INTO app.customers')).toBeGreaterThan(at('INTO app.user_entities'));
+    expect(at('INTO app.customer_contacts')).toBeGreaterThan(at('INTO app.customers'));
+    expect(at('INTO app.party_accounts')).toBeGreaterThan(at('INTO app.customers'));
+    expect(at('INTO app.party_accounts')).toBeGreaterThan(at('INTO app.payment_terms'));
   });
 
   it('gives VEND-DEV an NPR account in TR on the NET30 term, after the payment terms exist', async () => {
@@ -841,15 +909,28 @@ describe('seedKernelRows: dev vendor and department (SEED-2)', () => {
     expect(calls.at(-1)?.text).toBe('ROLLBACK');
   });
 
-  it('fails clearly, and rolls back, when the VEND-DEV party or the staff IdP org is missing', async () => {
+  it('fails clearly, and rolls back, when the VEND-DEV party, CUST-DEV party or staff IdP org is missing', async () => {
     const missing =
-      (needle: string): Script =>
+      (predicate: (call: Call) => boolean): Script =>
       (call) =>
-        call.text.startsWith(needle) ? { rows: [] } : withLookups(firstRun)(call);
-    const noParty = fakeClient(missing('SELECT id FROM app.parties'));
-    await expect(seedKernelRows(noParty.client, scope, personas)).rejects.toThrow(/VEND-DEV/);
-    expect(noParty.calls.at(-1)?.text).toBe('ROLLBACK');
-    const noOrg = fakeClient(missing('SELECT id FROM app.idp_orgs'));
+        predicate(call) ? { rows: [] } : withLookups(firstRun)(call);
+    const noVendor = fakeClient(
+      missing(
+        (c) =>
+          c.text.startsWith('SELECT id FROM app.parties') && c.text.includes("kind = 'vendor'"),
+      ),
+    );
+    await expect(seedKernelRows(noVendor.client, scope, personas)).rejects.toThrow(/VEND-DEV/);
+    expect(noVendor.calls.at(-1)?.text).toBe('ROLLBACK');
+    const noCustomer = fakeClient(
+      missing(
+        (c) =>
+          c.text.startsWith('SELECT id FROM app.parties') && c.text.includes("kind = 'customer'"),
+      ),
+    );
+    await expect(seedKernelRows(noCustomer.client, scope, personas)).rejects.toThrow(/CUST-DEV/);
+    expect(noCustomer.calls.at(-1)?.text).toBe('ROLLBACK');
+    const noOrg = fakeClient(missing((c) => c.text.startsWith('SELECT id FROM app.idp_orgs')));
     await expect(seedKernelRows(noOrg.client, scope, personas)).rejects.toThrow(/staff/);
     expect(noOrg.calls.at(-1)?.text).toBe('ROLLBACK');
   });
@@ -1157,7 +1238,11 @@ describe('PgTenancyStore (R5, ADR 0027 section 11)', () => {
             ...departmentPeople.map((key) => ({ id: `u-${key}`, zitadel_user_id: `z-${key}` })),
           ],
         };
-      if (call.text.startsWith('SELECT id FROM app.parties')) return { rows: [{ id: 'party-1' }] };
+      if (call.text.startsWith('SELECT id FROM app.parties')) {
+        return {
+          rows: [{ id: call.text.includes("kind = 'customer'") ? 'party-cust-1' : 'party-1' }],
+        };
+      }
       if (call.text.startsWith('SELECT id FROM app.departments')) {
         return { rows: [{ id: `d-${String(call.values[2])}` }] };
       }
@@ -1180,6 +1265,10 @@ describe('PgTenancyStore (R5, ADR 0027 section 11)', () => {
     const vendor = calls.find((c) => c.text.includes('INTO app.vendors'));
     expect(vendor?.values[0]).toBe('tenant-uuid');
     expect(calls.some((c) => c.text.includes('INTO app.vendor_accounts'))).toBe(true);
+    const customer = calls.find((c) => c.text.includes('INTO app.customers'));
+    expect(customer?.values[0]).toBe('tenant-uuid');
+    expect(calls.some((c) => c.text.includes('INTO app.customer_contacts'))).toBe(true);
+    expect(calls.some((c) => c.text.includes('INTO app.party_accounts'))).toBe(true);
     expect(
       calls.find((c) => c.text.includes('INTO app.user_entities') && c.values[2] === 'u-4')?.values,
     ).toEqual(['tenant-uuid', 'org-uuid', 'u-4', ['warehouse']]);
