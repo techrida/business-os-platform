@@ -4,7 +4,7 @@ import { existsSync, mkdirSync, renameSync, rmSync, writeFileSync } from 'node:f
 import path from 'node:path';
 
 import { launch, newRecordedContext } from './browser.mjs';
-import { onCleanup } from './cleanup.mjs';
+import { isStopping, onCleanup } from './cleanup.mjs';
 import { configuredOrigins } from './origins.mjs';
 import { redactDeep, redactText, redactUrl } from './redact.mjs';
 import { Session, StepFailure } from './session.mjs';
@@ -83,10 +83,12 @@ export async function runWorkflow(cfg, workflow, opts = {}) {
   if (fromIndex < 0) throw new Error(`--from ${opts.from}: no such step in ${workflow.name}`);
 
   // Ctrl-C or a kill: save the steps finished so far (saveResults is synchronous, so it completes
-  // before the process exits) and the records, then the browser closes.
+  // before the process exits) and the records. Registered once the browser is up, so (cleanup runs
+  // newest first) it is saved before the browser closes and before the folder lock is released.
   let finalSaved = false;
   let inFlight = null; // the step entry whose body is running
-  const unregister = onCleanup(() => {
+  let unregister = () => {};
+  const checkpoint = () => {
     if (finalSaved) return;
     try {
       persist();
@@ -103,7 +105,9 @@ export async function runWorkflow(cfg, workflow, opts = {}) {
       { ...result, steps, status: 'RUNNING', interrupted: true, wallMs: Date.now() - t0 },
       earlier,
     );
-  });
+  };
+  // After the checkpoint, the step that was cut off must not overwrite it with a FAIL.
+  const save = (r) => (isStopping() ? null : saveResults(cfg, r, earlier));
 
   let browser = null;
   let context = null;
@@ -115,6 +119,7 @@ export async function runWorkflow(cfg, workflow, opts = {}) {
     session.persist = persist;
     session.dirs = { shots: shotsDir, files: filesDir, video: videoTmp };
     session.browser = browser;
+    unregister = onCleanup(checkpoint);
   } catch (error) {
     // Nothing ran: record why, so the summary and results.json show it instead of a crash.
     result.status = 'FAIL';
@@ -133,7 +138,7 @@ export async function runWorkflow(cfg, workflow, opts = {}) {
     let blocked = null;
     for (const [index, step] of workflow.steps.entries()) {
       // Saved before every step, so a run that is killed keeps the results of the steps it finished.
-      saveResults(cfg, { ...result, status: 'RUNNING', wallMs: Date.now() - t0 }, earlier);
+      save({ ...result, status: 'RUNNING', wallMs: Date.now() - t0 });
       const skipping = index < fromIndex || (opts.only && !opts.only.includes(step.id));
       const entry = {
         id: step.id,
@@ -203,7 +208,7 @@ export async function runWorkflow(cfg, workflow, opts = {}) {
       persist();
       log(`${entry.status} ${step.id} (${(entry.durationMs / 1000).toFixed(1)} s)`);
       // Saved again as soon as the step ends, so a stop between steps loses nothing.
-      saveResults(cfg, { ...result, status: 'RUNNING', wallMs: Date.now() - t0 }, earlier);
+      save({ ...result, status: 'RUNNING', wallMs: Date.now() - t0 });
     }
   } catch (error) {
     // A driver error outside a step (e.g. saving results): keep what ran and report it.
@@ -217,7 +222,7 @@ export async function runWorkflow(cfg, workflow, opts = {}) {
   result.wallMs = Date.now() - t0;
   if (result.status !== 'FAIL' && result.steps.every((s) => s.status === 'SKIPPED'))
     result.status = 'SKIPPED';
-  saveResults(cfg, result, earlier);
+  save(result);
   finalSaved = true;
   unregister();
   try {
@@ -228,7 +233,7 @@ export async function runWorkflow(cfg, workflow, opts = {}) {
     result.status = 'FAIL';
     log(result.videoError);
   }
-  return saveResults(cfg, result, earlier);
+  return save(result) ?? result;
 }
 
 /**

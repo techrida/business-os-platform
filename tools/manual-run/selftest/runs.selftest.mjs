@@ -400,6 +400,67 @@ try {
   });
 });
 
+describe('stopping with a signal', () => {
+  /** Runs a child that registers lock, browser and checkpoint callbacks, then signals itself. */
+  const stopChild = (body) =>
+    new Promise((resolve, reject) => {
+      const script = path.join(tmp, `stop-${Math.random().toString(36).slice(2)}.mjs`);
+      writeFileSync(
+        script,
+        `import { configureCleanup, isStopping, onCleanup } from ${JSON.stringify(pathToFileURL(path.resolve(here, '../lib/cleanup.mjs')).href)};
+const say = (t) => process.stdout.write(t + '\\n');
+const wait = (ms) => new Promise((r) => setTimeout(r, ms));
+${body}
+setInterval(() => {}, 1000);
+`,
+      );
+      const child = spawn(process.execPath, [script]);
+      let out = '';
+      child.stdout.on('data', (d) => (out += d));
+      child.on('error', reject);
+      child.on('close', (code) => resolve({ code, lines: out.trim().split('\n') }));
+    });
+
+  test('callbacks run newest first, each awaited, the lock last; a quick second signal is ignored', async () => {
+    const { code, lines } = await stopChild(`
+onCleanup(() => say('lock released'));
+onCleanup(async (sync) => { say('browser closing ' + sync); await wait(300); say('browser closed'); });
+onCleanup(() => say('checkpoint saved, stopping=' + isStopping()));
+setTimeout(() => process.kill(process.pid, 'SIGINT'), 50);
+setTimeout(() => process.kill(process.pid, 'SIGINT'), 150);
+`);
+    assert.equal(code, 130);
+    assert.deepEqual(lines, [
+      'checkpoint saved, stopping=true',
+      'browser closing false',
+      'browser closed',
+      'lock released',
+    ]);
+  });
+
+  test('a hung callback is cut off, and the forced exit still runs the synchronous rest', async () => {
+    const { code, lines } = await stopChild(`
+configureCleanup({ taskMs: 5000, forceMs: 300 });
+onCleanup((sync) => say('lock released ' + sync));
+onCleanup((sync) => (sync ? undefined : new Promise(() => say('browser hangs'))));
+setTimeout(() => process.kill(process.pid, 'SIGTERM'), 50);
+`);
+    assert.equal(code, 143);
+    assert.deepEqual(lines, ['browser hangs', 'lock released true']);
+  });
+
+  test('each callback gets its own time limit, so a hung one cannot starve the lock release', async () => {
+    const { code, lines } = await stopChild(`
+configureCleanup({ taskMs: 100, forceMs: 5000 });
+onCleanup((sync) => say('lock released ' + sync));
+onCleanup(() => new Promise(() => say('browser hangs')));
+setTimeout(() => process.kill(process.pid, 'SIGINT'), 50);
+`);
+    assert.equal(code, 130);
+    assert.deepEqual(lines, ['browser hangs', 'lock released false']);
+  });
+});
+
 describe('a folder belongs to one stack and one run key', () => {
   test('state.json keeps the appUrl and run key it was created with', () => {
     const dir = freshDir();
