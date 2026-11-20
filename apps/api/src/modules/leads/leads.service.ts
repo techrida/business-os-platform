@@ -677,7 +677,12 @@ export class LeadsService {
     }
     const self = actorParty(principal);
     const decision = decideAssignment(self, self, 'create');
-    if (decision.allowed) return principal.userId;
+    if (decision.allowed) {
+      // Keeping the lead must pass what naming yourself passes: a caller whose lead read does not reach what they
+      // own would lose the lead the moment it is created.
+      await assertAssignable(tx, principal, scope, principal.userId, 'ownerUserId', check);
+      return principal.userId;
+    }
     if (decision.reason === 'sales_owner_required') {
       const owner = defaultSalesOwner(await assignableParties(tx, principal, scope, check));
       if (owner !== null) return owner;
