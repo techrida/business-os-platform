@@ -1,5 +1,6 @@
 import type { Metadata } from 'next';
 
+import { listLeadOwners } from '@/components/p2/crm/crm-api';
 import { LostReasonsCard } from '@/components/settings/lost-reasons/lost-reasons-card';
 import { Page, PageHeader } from '@/components/ui/page';
 import { Panel } from '@/components/ui/panel';
@@ -19,7 +20,9 @@ export const metadata: Metadata = { title: 'Sales · Business OS' };
 
 export default async function SalesSettingsPage() {
   const session = await requireSection('sales');
-  const [quotations, evidence, schedule, deliveryHold] = await Promise.all([
+  const [leadOwner, quotations, evidence, schedule, deliveryHold] = await Promise.all([
+    // The people a new lead may be handed to, as the new-lead form offers them (F1-Q21).
+    loadFields(session, ['crm.default_lead_owner'], () => listLeadOwners(session, 'create')),
     loadFields(session, ['quotation.validity_days']),
     loadFields(session, ['sales.evidence_policy']),
     loadFields(session, ['sales.default_schedule']),
@@ -27,6 +30,7 @@ export default async function SalesSettingsPage() {
   ]);
   const lostReasons = await section('view lost reasons', () => listLeadLostReasons(session));
   const cards = [
+    { title: 'Lead owner', result: leadOwner },
     { title: 'Quotations', description: 'Applies to new quotations.', result: quotations },
     { title: 'Winning a deal', result: evidence },
     {
@@ -60,7 +64,7 @@ export default async function SalesSettingsPage() {
       <BackToSettings />
       <PageHeader
         title="Sales"
-        description="Defaults for quotations and the deals they win, who releases a held delivery, and the reasons a lead or opportunity can be lost. Every change is recorded in the audit trail."
+        description="Who owns new leads, defaults for quotations and the deals they win, who releases a held delivery, and the reasons a lead or opportunity can be lost. Every change is recorded in the audit trail."
       />
       <div className={`${styles.column} ${styles.narrow}`}>
         {allFields.length > 0 ? (

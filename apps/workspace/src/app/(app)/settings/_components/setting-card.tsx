@@ -17,6 +17,7 @@ import type { SettingsSectionId } from '@/lib/settings-nav';
 
 import { roleLabel } from '../users/role-checkboxes';
 import {
+  PERSON_DEFAULT_OPTION,
   TRIGGER_OPTIONS,
   scheduleSummary,
   type FieldSpec,
@@ -271,6 +272,28 @@ function Control({
               onChange={(e) => onChange({ kind: 'text', value: e.currentTarget.value })}
               {...control}
             >
+              {(spec.options ?? []).map((o) => (
+                <option key={o.value} value={o.value}>
+                  {o.label}
+                </option>
+              ))}
+            </Select>
+          )}
+        </Field>
+      );
+    }
+    case 'person': {
+      const textValue = value.kind === 'text' ? value.value : '';
+      return (
+        <Field label={spec.label} hint={spec.help} error={error}>
+          {(control) => (
+            <Select
+              name={`v:${spec.key}`}
+              value={textValue}
+              onChange={(e) => onChange({ kind: 'text', value: e.currentTarget.value })}
+              {...control}
+            >
+              <option value="">{PERSON_DEFAULT_OPTION}</option>
               {(spec.options ?? []).map((o) => (
                 <option key={o.value} value={o.value}>
                   {o.label}
