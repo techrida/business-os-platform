@@ -701,6 +701,63 @@ describe('match (check 6, AD6 defaults from settings)', () => {
     ).toHaveLength(0);
   });
 
+  it.each([
+    [
+      'a removed file',
+      async (vendorId: string) => {
+        const documentId = await doc(['clean'], vendorId);
+        await exec(
+          scopeA,
+          sql`UPDATE app.documents SET removed_at = now() WHERE id = ${documentId}`,
+        );
+        return documentId;
+      },
+    ],
+    [
+      "another entity's file",
+      async (vendorId: string) => {
+        const { rows } = await exec(
+          scopeB,
+          sql`INSERT INTO app.documents (tenant_id, organization_id, owner_type, owner_id)
+              VALUES (${scopeB.tenantId}, ${scopeB.organizationId}, 'vendor_bill_intake', ${vendorId})
+              RETURNING id`,
+        );
+        const documentId = (rows[0] as { id: string }).id;
+        await exec(
+          scopeB,
+          sql`INSERT INTO app.document_versions (tenant_id, organization_id, document_id, version, filename,
+                declared_mime, size_bytes, storage_key, status)
+              VALUES (${scopeB.tenantId}, ${scopeB.organizationId}, ${documentId}, 1, 'evidence.pdf',
+                      'application/pdf', 1024, ${`${scopeB.tenantId}/${randomUUID()}`}, 'clean')`,
+        );
+        return documentId;
+      },
+    ],
+  ])(
+    'refuses a match exception whose evidence is %s with 422 DOCUMENT_NOT_FOUND and writes no exception',
+    async (_label, evidenceOf) => {
+      const po = await receivedPo('1', '10000.00', '1');
+      const bill = await billFor(po, '1', '11000.00');
+      expect(bill.status).toBe('variance');
+      const evidence = await evidenceOf(po.vendorId);
+      const refused = await httpErrorOf(
+        service.requestException(
+          bill.id,
+          { reason: 'Vendor raised the price', evidenceDocumentId: evidence },
+          randomUUID(),
+        ),
+      );
+      expect(refused.getStatus()).toBe(422);
+      expect(codeOf(refused)).toBe('DOCUMENT_NOT_FOUND');
+      expect((await service.get(bill.id)).status).toBe('variance');
+      expect(
+        await read((tx) =>
+          tx.select().from(matchExceptions).where(eq(matchExceptions.vendorBillId, bill.id)),
+        ),
+      ).toHaveLength(0);
+    },
+  );
+
   it('a bill 10% over price shows variance, submit is 409, an approved exception unblocks it', async () => {
     const po = await receivedPo('1', '10000.00', '1');
     const bill = await billFor(po, '1', '11000.00');
