@@ -18,7 +18,12 @@ test('overview shows an assigned approval to the approver and excludes it for th
     });
     const approvalId = await submitMemo(sales.page);
     await sales.page.goto('/');
-    await expect(sales.page.getByRole('heading', { name: 'Welcome back' })).toBeVisible();
+    // The greeting uses the display name from /v1/me (`Good morning, Dev`); `Welcome back` when no name is known.
+    await expect(
+      sales.page.getByRole('heading', {
+        name: /^(Welcome back|Good (morning|afternoon|evening)(, .+)?)$/,
+      }),
+    ).toBeVisible();
     await expect(
       sales.page
         .getByRole('table', { name: 'Pending approvals' })

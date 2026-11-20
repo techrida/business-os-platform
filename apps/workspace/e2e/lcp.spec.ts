@@ -13,6 +13,8 @@ import { signInOnZitadel } from './helpers/zitadel-login';
  * BASE_URL the prod project serves `localhost:3100`, where login cannot complete.
  */
 const LCP_BUDGET_MS = 1500;
+/** The greeting uses the display name from /v1/me (`Good morning, Dev`); `Welcome back` when no name is known. */
+const GREETING = /^(Welcome back|Good (morning|afternoon|evening)(, .+)?)$/;
 
 test.skip(
   !process.env.BASE_URL,
@@ -35,11 +37,11 @@ test('signed-in staff shell: LCP is under 1500 ms', async ({ page, baseURL }) =>
   // Sign in first, outside the measurement: login pages and OIDC redirects are not the shell.
   await page.goto('/');
   await signInOnZitadel(page, persona('founder'), appOrigin);
-  await expect(page.getByRole('heading', { name: 'Welcome back' })).toBeVisible();
+  await expect(page.getByRole('heading', { name: GREETING })).toBeVisible();
 
   // A fresh load of `/` with the session cookie already set: this is the page being gated.
   await page.goto('/', { waitUntil: 'load' });
-  await expect(page.getByRole('heading', { name: 'Welcome back' })).toBeVisible();
+  await expect(page.getByRole('heading', { name: GREETING })).toBeVisible();
   await page.waitForFunction(() => (window as unknown as { __lcp: number[] }).__lcp.length > 0);
   // The browser keeps reporting new candidates until the user interacts, so a click freezes the
   // value the same way a real visitor's first input does.
