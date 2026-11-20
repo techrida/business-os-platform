@@ -106,14 +106,16 @@ describe('payment detail', () => {
     expect(html).toContain('Awaiting verification');
   });
 
-  it('offers verify and reject while submitted, and not reverse', async () => {
+  it('offers verify and reject while submitted to payment.verify holders, and not reverse', async () => {
+    mocks.getMe.mockResolvedValue(liveGrants('payment.verify'));
     const html = await render();
     expect(html).toContain('Verify payment');
     expect(html).toContain('>Reject<');
     expect(html).not.toContain('Reverse payment');
   });
 
-  it('offers only reverse once verified, and shows the NPR snapshot and the advance', async () => {
+  it('offers only reverse once verified to payment.verify holders, and shows the NPR snapshot and the advance', async () => {
+    mocks.getMe.mockResolvedValue(liveGrants('payment.verify'));
     mocks.getPayment.mockResolvedValue(verifiedPayment());
     mocks.listPaymentAllocations.mockResolvedValue([allocationRow()]);
     const html = await render();
@@ -127,7 +129,32 @@ describe('payment detail', () => {
     expect(html).not.toContain('Customer advance (not yet allocated)');
   });
 
+  it('hides review buttons and omits the header actions slot without payment.verify', async () => {
+    mocks.getMe.mockResolvedValue(liveGrants('payment.read'));
+    const html = await render();
+    expect(html).not.toContain('Verify payment');
+    expect(html).not.toContain('>Reject<');
+    expect(html).not.toContain('Reverse payment');
+    const header = html.slice(html.indexOf('<header'), html.indexOf('</header>'));
+    expect(header).not.toContain('<button');
+  });
+
+  it('respects payment.can and explains separation of duties when verifyBlockedBySod is true', async () => {
+    mocks.getMe.mockResolvedValue(liveGrants('payment.verify'));
+    mocks.getPayment.mockResolvedValue(
+      payment({
+        can: { verify: false, reject: true, reverse: false, verifyBlockedBySod: true },
+      }),
+    );
+    const html = await render();
+    expect(html).not.toContain('Verify payment');
+    expect(html).toContain('>Reject<');
+    expect(html).toContain('Verification requires another reviewer');
+    expect(html).toContain('You recorded this payment, so someone else must verify it.');
+  });
+
   it('offers no action on a rejected payment and shows the reason', async () => {
+    mocks.getMe.mockResolvedValue(liveGrants('payment.verify'));
     mocks.getPayment.mockResolvedValue(
       payment({ status: 'rejected', rejectionReason: 'Slip does not match the amount' }),
     );

@@ -10,8 +10,13 @@ vi.mock('@/components/p4/success-notice', () => ({
   SuccessNotice: ({ message }: { message: string }) => <output>{message}</output>,
 }));
 const session = vi.hoisted(() => ({ roles: ['procurement'] as string[] }));
+const me = vi.hoisted(() => ({ getMe: vi.fn() }));
+vi.mock('@/lib/api', async (orig) => ({
+  ...(await orig<typeof import('@/lib/api')>()),
+  getMe: me.getMe,
+}));
 vi.mock('@/lib/bff', () => ({
-  requireStaffSession: () => Promise.resolve({ roles: session.roles }),
+  requireStaffSession: () => Promise.resolve({ roles: session.roles, accessToken: 'tok' }),
 }));
 vi.mock('next/navigation', () => ({
   notFound: () => {
@@ -184,6 +189,7 @@ const quotePage = async (sp: Record<string, string> = {}) =>
 beforeEach(() => {
   vi.clearAllMocks();
   session.roles = ['procurement'];
+  me.getMe.mockReset().mockRejectedValue(new Error('offline'));
   currencies.loadEnabledCurrencies.mockResolvedValue(['NPR', 'INR', 'USD']);
   rfqApi.getRfq.mockResolvedValue(rfq());
   rfqApi.getComparison.mockResolvedValue([quotation]);
@@ -622,6 +628,17 @@ describe('scoring, recommending and committing on the detail', () => {
     rfqApi.getRfq.mockResolvedValue(rfq({ status: 'recommended', recommendedQuotationId: Q1 }));
     session.roles = ['viewer'];
     expect(await detail()).not.toContain('Submit for commitment approval');
+  });
+
+  it('respects live permissions and hides RFQ actions when procurement.sourcing is revoked', async () => {
+    rfqApi.getRfq.mockResolvedValue(rfq({ status: 'recommended', recommendedQuotationId: Q1 }));
+    session.roles = ['procurement'];
+    me.getMe.mockResolvedValue({
+      permissions: [{ permission: 'procurement.rfq.read', scope: 'all' }],
+    });
+    const out = await detail();
+    expect(out).not.toContain('Submit for commitment approval');
+    expect(out).not.toContain('Record quotation');
   });
 
   it('confirms a recommendation after the redirect', async () => {

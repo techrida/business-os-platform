@@ -176,6 +176,56 @@ describe('Revise follows the server capability (demo feedback: Revise answered 4
   });
 });
 
+describe('Send and Record outcome respect server capabilities and live fallbacks', () => {
+  it('hides Send to customer when capabilities.canSend is false', () => {
+    const html = render({ status: 'approved' }, contacts, {
+      canEdit: false,
+      canRevise: true,
+      canSend: false,
+    });
+    expect(triggers(html)).toEqual(['Revise']);
+  });
+
+  it('hides Record outcome when capabilities.canRecordOutcome is false', () => {
+    const html = render({ status: 'sent' }, contacts, {
+      canEdit: false,
+      canRevise: true,
+      canRecordOutcome: false,
+    });
+    expect(triggers(html)).toEqual(['Revise']);
+  });
+
+  it('uses maySend and mayRecordOutcome when capabilities omit the flags', () => {
+    const noSend = renderToStaticMarkup(
+      <DetailActions
+        quotationId={Q}
+        number="QT-2082-0042"
+        current={current({ status: 'approved' })}
+        contacts={contacts}
+        capabilities={{ canEdit: false, canRevise: false }}
+        reloadHref={`/quotations/${Q}`}
+        today={TODAY}
+        maySend={false}
+      />,
+    );
+    expect(noSend).toBe('');
+
+    const noOutcome = renderToStaticMarkup(
+      <DetailActions
+        quotationId={Q}
+        number="QT-2082-0042"
+        current={current({ status: 'sent' })}
+        contacts={contacts}
+        capabilities={{ canEdit: false, canRevise: false }}
+        reloadHref={`/quotations/${Q}`}
+        today={TODAY}
+        mayRecordOutcome={false}
+      />,
+    );
+    expect(noOutcome).toBe('');
+  });
+});
+
 it.each([
   ['approved', 'Send to customer'],
   ['sent', 'Record outcome'],
