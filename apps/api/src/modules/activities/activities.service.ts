@@ -453,10 +453,10 @@ export class ActivitiesService {
     id: string,
     mode: 'read' | 'write',
     notFound: () => NotFoundException = subjectNotFound,
-    lockLead = false,
+    lockOwned = false,
   ): Promise<ResourceRef> {
     const { scope, principal } = this.caller.current();
-    const ref = await this.refOf(q, key, id, scope, principal, mode === 'read', lockLead);
+    const ref = await this.refOf(q, key, id, scope, principal, mode === 'read', lockOwned);
     if (ref === undefined) throw notFound();
     const action: Permission = SUBJECT_PERMISSION[key][mode];
     try {
@@ -475,9 +475,10 @@ export class ActivitiesService {
   /**
    * The ResourceRef of the subject, undefined when it is not in this entity (tenant, for a customer). With
    * `readers`, a lead, opportunity or quotation ref also names its creator and assignees (record-reach.ts): only a
-   * read permission looks at them, so a write check skips the query. `lockLead` reads a lead FOR SHARE until the
-   * transaction ends: a follow-up planned on it then waits out an owner change in flight (which moves the old
-   * owner's follow-ups, leads.service.ts) and goes to the new owner, instead of landing on the old one unmoved.
+   * read permission looks at them, so a write check skips the query. `lockOwned` reads a lead or opportunity FOR
+   * SHARE until the transaction ends: a follow-up planned on it then waits out an owner change in flight (which locks
+   * the row FOR UPDATE and moves the old owner's follow-ups: leads.service.ts, opportunity-owner-change.service.ts)
+   * and goes to the new owner, instead of landing on the old one unmoved.
    */
   private async refOf(
     q: Q,
@@ -486,7 +487,7 @@ export class ActivitiesService {
     scope: TxScope,
     principal: Principal,
     readers: boolean,
-    lockLead = false,
+    lockOwned = false,
   ): Promise<ResourceRef | undefined> {
     switch (key) {
       case 'leadId': {
@@ -494,15 +495,16 @@ export class ActivitiesService {
           .select()
           .from(leads)
           .where(scoped(scope).where(leads, eq(leads.id, id)));
-        const [row] = lockLead ? await select.for('share') : await select;
+        const [row] = lockOwned ? await select.for('share') : await select;
         if (row === undefined) return undefined;
         return leadRef(row, readers ? await loadRecordReaders(q, scope, leads, id) : undefined);
       }
       case 'opportunityId': {
-        const [row] = await q
+        const select = q
           .select()
           .from(opportunities)
           .where(scoped(scope).where(opportunities, eq(opportunities.id, id)));
+        const [row] = lockOwned ? await select.for('share') : await select;
         if (row === undefined) return undefined;
         return opportunityRef(
           row,
