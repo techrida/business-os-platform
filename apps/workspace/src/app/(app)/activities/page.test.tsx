@@ -169,7 +169,48 @@ it('asks for the owners list only with crm.lead.write, so a reader gets no 403',
   mocks.requireStaffSession.mockResolvedValue({ accessToken: 't', roles: ['no-such-role'] });
   const html = await render();
   expect(mocks.listLeadOwners).not.toHaveBeenCalled();
-  expect(html).toContain('aria-label="Reschedule Call back next month"');
+  // Neither the lead's writer nor its assignee: no action the API would refuse.
+  expect(html).toContain('Call back next month');
+  expect(html).not.toContain('aria-label="Complete Call back next month"');
+  expect(html).not.toContain('aria-label="Reschedule Call back next month"');
+});
+
+// U20a2-Q7: an assignee may complete a follow-up on a subject they cannot write (a customer they do not
+// own), but Reschedule and Cancel need the subject's write, so they are not offered.
+it('offers Complete alone to the assignee who cannot write the subject', async () => {
+  const ME = '99999999-9999-4999-8999-999999999999';
+  const onCustomer = activity('55555555-5555-4555-8555-555555555555', {
+    subject: 'Call the customer back',
+    leadId: null,
+    customerId: '66666666-6666-4666-8666-666666666666',
+    dueAt: '2099-02-01T04:00:00.000Z',
+    planned: true,
+    assigneeUserId: ME,
+    assigneeName: 'Me',
+  });
+  const someoneElses = activity('77777777-7777-4777-8777-777777777777', {
+    subject: 'Visit the customer',
+    leadId: null,
+    customerId: '66666666-6666-4666-8666-666666666666',
+    dueAt: '2099-02-02T04:00:00.000Z',
+    planned: true,
+    assigneeUserId: '88888888-8888-4888-8888-888888888888',
+  });
+  byStatus([onCustomer, someoneElses, LATER], []);
+  mocks.getMe.mockResolvedValue({
+    id: ME,
+    ...liveGrants('customer.read', 'crm.lead.read', 'crm.lead.write'),
+  });
+  const html = await render();
+  expect(html).toContain('aria-label="Complete Call the customer back"');
+  expect(html).not.toContain('aria-label="Reschedule Call the customer back"');
+  expect(html).not.toContain('aria-label="Cancel Call the customer back"');
+  expect(html).toContain('Visit the customer');
+  expect(html).not.toContain('aria-label="Complete Visit the customer"');
+  // The lead's writer keeps every action.
+  for (const action of ['Complete', 'Reschedule', 'Cancel']) {
+    expect(html).toContain(`aria-label="${action} Call back next month"`);
+  }
 });
 
 it('asks for the owners list when the saved grants add crm.lead.write to a role without it', async () => {
@@ -186,7 +227,9 @@ it('skips the owners list when the saved grants removed crm.lead.write from sale
   mocks.getMe.mockResolvedValue(liveGrants('crm.lead.read'));
   const html = await render();
   expect(mocks.listLeadOwners).not.toHaveBeenCalled();
-  expect(html).toContain('aria-label="Reschedule Call back next month"');
+  // Without the lead write the row stays listed, and offers nothing the API would refuse.
+  expect(html).toContain('Call back next month');
+  expect(html).not.toContain('aria-label="Reschedule Call back next month"');
 });
 
 it('shows one empty state when there is nothing at all', async () => {

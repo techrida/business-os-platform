@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import type { OpportunityDto, QuotationListItem } from '@bos/contracts';
+import { CreditHoldDtoSchema, type OpportunityDto, type QuotationListItem } from '@bos/contracts';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
@@ -15,14 +15,24 @@ const mocks = vi.hoisted(() => ({
   getOpportunity: vi.fn(),
   listActivities: vi.fn(),
   listLeadOwners: vi.fn(),
+  listOpportunityOwners: vi.fn(),
+  listOpportunityFollowUpAssignees: vi.fn(),
   getCustomer: vi.fn(),
   listQuotations: vi.fn(),
   listOpportunityLostReasonChoices: vi.fn(),
   userNames: vi.fn(),
+  getMeOrNull: vi.fn(),
+  getPermissionCheck: vi.fn(),
+  getCreditHold: vi.fn(),
   getMe: vi.fn(),
 }));
 
 vi.mock('@/lib/bff', () => ({ requireStaffSession: mocks.requireStaffSession }));
+vi.mock('@/lib/live-permissions', async (importOriginal) => ({
+  ...(await importOriginal<object>()),
+  getMeOrNull: mocks.getMeOrNull,
+  getPermissionCheck: mocks.getPermissionCheck,
+}));
 // The live grants come from GET /v1/me; when it fails the page falls back to the role defaults.
 vi.mock('@/lib/api', async (importOriginal) => ({
   ...(await importOriginal<object>()),
@@ -35,6 +45,9 @@ vi.mock('@/components/p2/crm/crm-api', () => ({
   getOpportunity: mocks.getOpportunity,
   listActivities: mocks.listActivities,
   listLeadOwners: mocks.listLeadOwners,
+  listOpportunityOwners: mocks.listOpportunityOwners,
+  listOpportunityFollowUpAssignees: mocks.listOpportunityFollowUpAssignees,
+  getCreditHold: mocks.getCreditHold,
 }));
 vi.mock('@/components/p2/customers/api', () => ({ getCustomer: mocks.getCustomer }));
 vi.mock('@/components/p2/quotations/api', () => ({ listQuotations: mocks.listQuotations }));
@@ -49,8 +62,16 @@ vi.mock('@/app/(app)/leads/actions', () => ({
   scheduleFollowUpAction: vi.fn(),
 }));
 vi.mock('../../activities/actions', () => ({ logActivityAction: vi.fn() }));
-vi.mock('../actions', () => ({ moveOpportunityStageAction: vi.fn() }));
-vi.mock('next/navigation', () => ({ notFound: vi.fn(), redirect: vi.fn() }));
+vi.mock('../actions', () => ({
+  moveOpportunityStageAction: vi.fn(),
+  updateOpportunityOwnerAction: vi.fn(),
+  overrideCreditHoldAction: vi.fn(),
+}));
+vi.mock('next/navigation', () => ({
+  notFound: vi.fn(),
+  redirect: vi.fn(),
+  useRouter: () => ({ push: vi.fn(), replace: vi.fn(), refresh: vi.fn() }),
+}));
 vi.mock('next/cache', () => ({ revalidatePath: vi.fn() }));
 
 const OPP = '11111111-1111-4111-8111-111111111111';
@@ -93,6 +114,7 @@ const opportunity = (
   wonQuotationVersionId: null,
   allowedMoves: DEFAULT_MOVES[stage],
   canEdit: true,
+  canDraftQuotation: true,
   version: 1,
   createdAt: WHEN,
   updatedAt: WHEN,
@@ -138,10 +160,22 @@ beforeEach(() => {
   mocks.getOpportunity.mockReset().mockResolvedValue(opportunity());
   mocks.listActivities.mockReset().mockResolvedValue([]);
   mocks.listLeadOwners.mockReset().mockResolvedValue([]);
+  mocks.listOpportunityOwners.mockReset().mockResolvedValue([]);
+  mocks.listOpportunityFollowUpAssignees.mockReset().mockResolvedValue([]);
   mocks.getCustomer.mockReset().mockResolvedValue(null);
   mocks.listQuotations.mockReset().mockResolvedValue([]);
   mocks.listOpportunityLostReasonChoices.mockReset().mockResolvedValue([]);
   mocks.userNames.mockReset().mockResolvedValue(new Map());
+  mocks.getMeOrNull.mockReset().mockResolvedValue(null);
+  mocks.getPermissionCheck
+    .mockReset()
+    .mockImplementation(
+      async (...args: Parameters<typeof import('@/lib/live-permissions').getPermissionCheck>) =>
+        (
+          await vi.importActual<typeof import('@/lib/live-permissions')>('@/lib/live-permissions')
+        ).getPermissionCheck(...args),
+    );
+  mocks.getCreditHold.mockReset();
   mocks.getMe.mockReset().mockRejectedValue(new Error('down'));
 });
 
@@ -187,6 +221,32 @@ describe('opportunity quotation actions (demo feedback: New quotation made four 
     expect(headerLinks(await render())).toContainEqual([
       'New quotation',
       `/quotations/new?opportunityId=${OPP}`,
+    ]);
+  });
+
+  it('shows only View quotations when the server says the caller may not quote on this deal (FX-Q2)', async () => {
+    // A colleague who only holds a follow-up on the deal: they hold quotation.draft, but not the reach.
+    mocks.getOpportunity.mockResolvedValue(opportunity('qualified', { canDraftQuotation: false }));
+    mocks.listQuotations.mockResolvedValue([quote(Q1)]);
+    expect(headerLinks(await render())).toEqual([
+      ['View quotations', `/quotations?opportunityId=${OPP}`],
+    ]);
+  });
+
+  it('fails closed to View quotations when canDraftQuotation is omitted', async () => {
+    const { canDraftQuotation: _omitted, ...rest } = opportunity('qualified');
+    mocks.getOpportunity.mockResolvedValue(rest);
+    expect(headerLinks(await render()).map(([label]) => label)).toEqual(['View quotations']);
+  });
+
+  it("offers New quotation to the lead's creator the server lets quote, without deal write access (FX-Q1)", async () => {
+    mocks.requireStaffSession.mockResolvedValue({ accessToken: 'tok', roles: ['finance'] });
+    mocks.getOpportunity.mockResolvedValue(
+      opportunity('qualified', { canEdit: false, allowedMoves: [], canDraftQuotation: true }),
+    );
+    expect(headerLinks(await render()).map(([label]) => label)).toEqual([
+      'View quotations',
+      'New quotation',
     ]);
   });
 
@@ -249,18 +309,82 @@ describe('opportunity follow-ups (migrated open tasks on the deal)', () => {
     );
   });
 
-  it('lists planned rows on a Follow-ups card with Complete, Reschedule and Cancel, and no Schedule', async () => {
-    const html = await render();
+  /** The Activities panel's section under the heading `name` (Planned or History). */
+  const section = (doc: Document, name: string) =>
+    [...doc.querySelectorAll('section')].find((s) => s.querySelector('h3')?.textContent === name) ??
+    null;
+
+  it('lists planned rows under Activities, apart from History, with no Follow-ups card (U16-Q6)', async () => {
+    const doc = parse(await render());
     expect(mocks.listActivities).toHaveBeenCalledWith(
       expect.anything(),
       expect.objectContaining({ opportunityId: OPP, status: 'planned' }),
     );
-    expect(html).toContain('>Follow-ups</h2>');
-    expect(html).toContain('Chase the signed scope');
+    expect([...doc.querySelectorAll('h2')].map((h) => h.textContent)).not.toContain('Follow-ups');
+    const plannedSection = section(doc, 'Planned');
+    expect(plannedSection?.textContent).toContain('Chase the signed scope');
     for (const action of ['Complete', 'Reschedule', 'Cancel']) {
-      expect(html).toContain(`aria-label="${action} Chase the signed scope"`);
+      expect(
+        plannedSection?.querySelector(`[aria-label="${action} Chase the signed scope"]`),
+      ).not.toBeNull();
     }
-    expect(html).not.toContain('Schedule follow-up');
+    expect(section(doc, 'History')?.textContent).not.toContain('Chase the signed scope');
+  });
+
+  it('offers Schedule follow-up and Log activity to an editor in the Activities header', async () => {
+    const SITA = '66666666-6666-4666-8666-666666666661';
+    mocks.getOpportunity.mockResolvedValue(
+      opportunity('negotiation', { ownerUserId: SITA, ownerName: 'Sita Rai' }),
+    );
+    mocks.listOpportunityOwners.mockResolvedValue([
+      { userId: SITA, displayName: 'Sita Rai', email: '' },
+      { userId: ASSIGNEE, displayName: 'Mira Thapa', email: '' },
+    ]);
+    const html = await render();
+    expect(html).toContain('Schedule follow-up');
+    expect(html).toContain('Log activity');
+  });
+
+  // F1-Q51: an owner must write deals, a follow-up's assignee need only read them, so the follow-ups
+  // take their own list and a read-only assignee keeps their place (and picture) there.
+  it('gives follow-ups their own assignee list, apart from the owner choices', async () => {
+    const SITA = '66666666-6666-4666-8666-666666666661';
+    const AVATAR = '88888888-8888-4888-8888-888888888888';
+    mocks.getOpportunity.mockResolvedValue(
+      opportunity('negotiation', { ownerUserId: SITA, ownerName: 'Sita Rai' }),
+    );
+    const sita = { userId: SITA, displayName: 'Sita Rai', email: '', avatarDocumentId: null };
+    mocks.listOpportunityOwners.mockResolvedValue([sita]);
+    mocks.listOpportunityFollowUpAssignees.mockResolvedValue([
+      sita,
+      { userId: ASSIGNEE, displayName: 'Mira Thapa', email: '', avatarDocumentId: AVATAR },
+    ]);
+    const doc = parse(await render());
+    expect(mocks.listOpportunityOwners).toHaveBeenCalledTimes(1);
+    expect(mocks.listOpportunityFollowUpAssignees).toHaveBeenCalledTimes(1);
+    const images = [...(section(doc, 'Planned')?.querySelectorAll('img') ?? [])];
+    expect(images.map((img) => img.getAttribute('src'))).toEqual([expect.stringContaining(AVATAR)]);
+  });
+
+  it("shows a lead's follow-up carried at convert, and lets its assignee complete it without edit access", async () => {
+    const carried = { ...planned, subject: 'Send the revised scope', assigneeUserId: ASSIGNEE };
+    mocks.listActivities.mockImplementation((_s: unknown, opts: { status?: string }) =>
+      Promise.resolve(opts.status === 'planned' ? [carried] : []),
+    );
+    mocks.getOpportunity.mockResolvedValue(
+      opportunity('negotiation', { canEdit: false, allowedMoves: [] }),
+    );
+    mocks.getMeOrNull.mockResolvedValue({ id: ASSIGNEE });
+    const doc = parse(await render());
+    const plannedSection = section(doc, 'Planned');
+    expect(plannedSection?.textContent).toContain('Send the revised scope');
+    expect(
+      plannedSection?.querySelector('[aria-label="Complete Send the revised scope"]'),
+    ).not.toBeNull();
+    expect(
+      plannedSection?.querySelector('[aria-label="Reschedule Send the revised scope"]'),
+    ).toBeNull();
+    expect(doc.body.textContent).not.toContain('Schedule follow-up');
   });
 
   it('names the assignee from the activity itself, never by id or directory', async () => {
@@ -270,26 +394,36 @@ describe('opportunity follow-ups (migrated open tasks on the deal)', () => {
     expect(html).not.toContain(`>${ASSIGNEE}<`);
   });
 
-  it('does not ask for lead owners without crm.lead.write, and still renders', async () => {
-    mocks.requireStaffSession.mockResolvedValue({ accessToken: 'tok', roles: ['no-such-role'] });
+  it('does not ask for the owners list without edit access, and still renders', async () => {
+    mocks.getOpportunity.mockResolvedValue(
+      opportunity('negotiation', { canEdit: false, allowedMoves: [] }),
+    );
     const html = await render();
+    expect(mocks.listOpportunityOwners).not.toHaveBeenCalled();
+    expect(mocks.listOpportunityFollowUpAssignees).not.toHaveBeenCalled();
     expect(mocks.listLeadOwners).not.toHaveBeenCalled();
     expect(html).toContain('Chase the signed scope');
     expect(html).toContain('Mira Thapa');
     expect(html).not.toContain('Another teammate');
   });
 
-  it('asks for lead owners when the saved grants add crm.lead.write to a role without it', async () => {
+  // The deal's owners list (F1-Q51) is asked for with edit access. When the deal carries no canEdit, that comes
+  // from the saved grants `/v1/me` reports, not the role defaults.
+  it("asks for the deal's owners when the saved grants add crm.opportunity.write to a role without it", async () => {
     mocks.requireStaffSession.mockResolvedValue({ accessToken: 'live-1', roles: ['management'] });
-    mocks.getMe.mockResolvedValue(liveGrants('crm.opportunity.read', 'crm.lead.write'));
+    mocks.getMe.mockResolvedValue(liveGrants('crm.opportunity.read', 'crm.opportunity.write'));
+    mocks.getOpportunity.mockResolvedValue(opportunity('negotiation', { canEdit: undefined }));
     await render();
-    expect(mocks.listLeadOwners).toHaveBeenCalledTimes(1);
+    expect(mocks.listOpportunityOwners).toHaveBeenCalledTimes(1);
+    expect(mocks.listLeadOwners).not.toHaveBeenCalled();
   });
 
-  it('skips lead owners when the saved grants removed crm.lead.write from sales', async () => {
+  it("skips the deal's owners when the saved grants removed crm.opportunity.write from sales", async () => {
     mocks.requireStaffSession.mockResolvedValue({ accessToken: 'live-2', roles: ['sales'] });
-    mocks.getMe.mockResolvedValue(liveGrants('crm.opportunity.read', 'crm.opportunity.write'));
+    mocks.getMe.mockResolvedValue(liveGrants('crm.opportunity.read', 'crm.lead.write'));
+    mocks.getOpportunity.mockResolvedValue(opportunity('negotiation', { canEdit: undefined }));
     const html = await render();
+    expect(mocks.listOpportunityOwners).not.toHaveBeenCalled();
     expect(mocks.listLeadOwners).not.toHaveBeenCalled();
     expect(html).toContain('Chase the signed scope');
   });
@@ -298,9 +432,9 @@ describe('opportunity follow-ups (migrated open tasks on the deal)', () => {
     mocks.listActivities.mockImplementation((_s: unknown, opts: { status?: string }) =>
       opts.status === 'planned' ? Promise.reject(new ApiError(503, 'down')) : Promise.resolve([]),
     );
-    const html = await render();
-    expect(html).toContain('Follow-ups did not load');
-    expect(html).not.toContain('No follow-ups planned');
+    const doc = parse(await render());
+    expect(section(doc, 'Planned')?.textContent).toContain('Follow-ups did not load');
+    expect(doc.body.textContent).not.toContain('Nothing planned.');
   });
 });
 
@@ -351,7 +485,12 @@ describe('opportunity stage action buttons, timeline and read-only hygiene', () 
       ['Resume'],
       'This opportunity is on hold. Use Resume in the header to return it to Negotiation.',
     ],
-    ['lost', [] as OpportunityDto['stage'][], [], 'Only a manager can reopen a lost opportunity.'],
+    [
+      'lost',
+      [] as OpportunityDto['stage'][],
+      [],
+      'This opportunity is lost. Reopening needs reopen access.',
+    ],
     [
       'lost',
       ['qualified'] as OpportunityDto['stage'][],
@@ -406,63 +545,79 @@ describe('opportunity stage action buttons, timeline and read-only hygiene', () 
     expect(newQuoteWhenNoPrimaryStage?.className).toContain('primary');
   });
 
-  it('renders timeline done, current, upcoming, warning (on_hold) and error (lost) tones', async () => {
-    // Linear stage: quotation_sent
-    mocks.getOpportunity.mockResolvedValue(opportunity('quotation_sent'));
-    const linearDoc = parse(await render());
-    const linearSteps = [...linearDoc.querySelectorAll('[aria-label="Opportunity stages"] > li')];
-    expect(linearSteps.map((li) => li.className)).toEqual([
-      expect.stringContaining('done'),
-      expect.stringContaining('done'),
-      expect.stringContaining('done'),
-      expect.stringContaining('current'),
-      expect.stringContaining('upcoming'),
-      expect.stringContaining('upcoming'),
-    ]);
-    expect(linearSteps[0]?.textContent).toContain('Reached');
-    expect(linearSteps[3]?.textContent).toContain('Current');
-    expect(linearSteps[4]?.textContent).toContain('Not yet');
-
-    // Won: all linear steps done, final status Won
-    mocks.getOpportunity.mockResolvedValue(opportunity('won'));
-    const wonDoc = parse(await render());
-    const wonSteps = [...wonDoc.querySelectorAll('[aria-label="Opportunity stages"] > li')];
-    expect(wonSteps.every((li) => li.className.includes('done'))).toBe(true);
-    expect(wonSteps[5]?.textContent).toContain('Won');
-
-    // On hold: qualified..negotiation done, won upcoming, On Hold warning
-    mocks.getOpportunity.mockResolvedValue(
-      opportunity('on_hold', { stageReason: 'Budget pause', stageNote: 'Resume next month.' }),
+  /** Each timeline step as "class: text", so the tone and the words are checked together. */
+  const timeline = async () =>
+    [...parse(await render()).querySelectorAll('[aria-label="Opportunity stages"] > li')].map(
+      (li) =>
+        `${/(done|current|upcoming|muted|warning|error)/.exec(li.className)?.[1]}: ${(
+          li.textContent ?? ''
+        ).replace(/^Step \d+: /, '')}`,
     );
-    const holdDoc = parse(await render());
-    const holdSteps = [...holdDoc.querySelectorAll('[aria-label="Opportunity stages"] > li')];
-    expect(holdSteps.map((li) => li.className)).toEqual([
-      expect.stringContaining('done'),
-      expect.stringContaining('done'),
-      expect.stringContaining('done'),
-      expect.stringContaining('done'),
-      expect.stringContaining('done'),
-      expect.stringContaining('upcoming'),
-      expect.stringContaining('warning'),
-    ]);
-    expect(holdSteps[6]?.textContent).toContain('On Hold');
-    expect(holdSteps[6]?.textContent).toContain('Current');
 
-    // Lost with a quotation: qualified and quotation_sent done, Lost error
+  it('marks only the stages a deal is known to have reached, never by position', async () => {
+    // Quotation Sent can come straight from Qualified, so the two stages between are unknown.
+    mocks.getOpportunity.mockResolvedValue(opportunity('quotation_sent'));
+    expect(await timeline()).toEqual([
+      'done: QualifiedReached',
+      'muted: Requirement ReceivedNot recorded',
+      'muted: Proposal SentNot recorded',
+      'current: Quotation SentCurrent',
+      'upcoming: NegotiationNot yet',
+      'upcoming: WonNot yet',
+    ]);
+
+    // Proposal Sent has one way in, so Requirement Received was reached.
+    mocks.getOpportunity.mockResolvedValue(opportunity('proposal_sent'));
+    expect((await timeline()).slice(0, 3)).toEqual([
+      'done: QualifiedReached',
+      'done: Requirement ReceivedReached',
+      'current: Proposal SentCurrent',
+    ]);
+
+    // Won: a quotation was sent and accepted; whether it went through Negotiation is not known.
+    mocks.getOpportunity.mockResolvedValue(opportunity('won'));
+    const won = await timeline();
+    expect(won[3]).toBe('done: Quotation SentReached');
+    expect(won[4]).toBe('muted: NegotiationNot recorded');
+    expect(won[5]).toBe('done: WonWon');
+  });
+
+  it('marks the held stage and what led to it, with On Hold as the current step', async () => {
+    mocks.getOpportunity.mockResolvedValue(
+      opportunity('on_hold', {
+        heldFromStage: 'negotiation',
+        stageReason: 'Budget pause',
+        stageNote: 'Resume next month.',
+      }),
+    );
+    expect(await timeline()).toEqual([
+      'done: QualifiedReached',
+      'muted: Requirement ReceivedNot recorded',
+      'muted: Proposal SentNot recorded',
+      'done: Quotation SentReached',
+      'done: NegotiationReached',
+      'upcoming: WonNot yet',
+      'warning: On HoldCurrent',
+    ]);
+    // A hold from before heldFromStage was recorded was always at Negotiation.
+    mocks.getOpportunity.mockResolvedValue(opportunity('on_hold'));
+    expect((await timeline())[4]).toBe('done: NegotiationReached');
+  });
+
+  it('counts a sent quotation, not a draft, as reaching Quotation Sent on a lost deal', async () => {
     mocks.getOpportunity.mockResolvedValue(opportunity('lost', { stageReason: 'Price' }));
     mocks.listQuotations.mockResolvedValue([quote(Q1, { status: 'sent', canEdit: false })]);
-    const lostDoc = parse(await render());
-    const lostSteps = [...lostDoc.querySelectorAll('[aria-label="Opportunity stages"] > li')];
-    expect(lostSteps.map((li) => li.className)).toEqual([
-      expect.stringContaining('done'),
-      expect.stringContaining('upcoming'),
-      expect.stringContaining('upcoming'),
-      expect.stringContaining('done'),
-      expect.stringContaining('upcoming'),
-      expect.stringContaining('upcoming'),
-      expect.stringContaining('error'),
+    expect(await timeline()).toEqual([
+      'done: QualifiedReached',
+      'muted: Requirement ReceivedNot recorded',
+      'muted: Proposal SentNot recorded',
+      'done: Quotation SentReached',
+      'upcoming: NegotiationNot yet',
+      'upcoming: WonNot yet',
+      'error: LostCurrent',
     ]);
-    expect(lostSteps[6]?.textContent).toContain('Lost');
+    mocks.listQuotations.mockResolvedValue([quote(Q1, { status: 'draft' })]);
+    expect((await timeline())[3]).toBe('upcoming: Quotation SentNot yet');
   });
 
   it('enforces read-only mode when canEdit is false and allowedMoves is empty', async () => {
@@ -509,7 +664,8 @@ describe('opportunity stage action buttons, timeline and read-only hygiene', () 
     expect(doc.querySelector('[aria-label="Stage"]')?.textContent).toContain(
       'You have read-only access to this opportunity.',
     );
-    expect(html).not.toContain('Add activity');
+    expect(html).not.toContain('Log activity');
+    expect(html).not.toContain('Schedule follow-up');
     expect(html).not.toContain('aria-label="Complete Follow up on quote"');
     expect(html).not.toContain('aria-label="Reschedule Follow up on quote"');
     expect(html).not.toContain('aria-label="Cancel Follow up on quote"');
@@ -566,5 +722,169 @@ describe('opportunity stage action buttons, timeline and read-only hygiene', () 
     const html = await render();
     expect(html).toContain('<strong>Budget freeze</strong>');
     expect(html).not.toContain('no longer offered');
+  });
+});
+
+describe("the deal's owner (F1-Q51)", () => {
+  const SITA = '66666666-6666-4666-8666-666666666661';
+  const RAM = '66666666-6666-4666-8666-666666666662';
+  /** `GET /v1/opportunities/owners` as the API sends it: emails always empty. */
+  const owners = [
+    { userId: SITA, displayName: 'Sita Rai', email: '' },
+    { userId: RAM, displayName: 'Ram Thapa', email: '' },
+  ];
+  const ownerFact = (doc: Document) =>
+    [...doc.querySelectorAll('dt')].find((dt) => dt.textContent === 'Owner')?.nextElementSibling;
+
+  it('names the owner and offers Change owner to an editor, saying follow-ups move', async () => {
+    mocks.getOpportunity.mockResolvedValue(
+      opportunity('negotiation', { ownerUserId: SITA, ownerName: 'Sita Rai' }),
+    );
+    mocks.listOpportunityOwners.mockResolvedValue(owners);
+    const fact = ownerFact(parse(await render()));
+    expect(fact?.textContent).toContain('Sita Rai');
+    expect(fact?.textContent).toContain('Change owner');
+    expect(fact?.querySelector('input[name="ownerUserId"]')?.getAttribute('value')).toBe(SITA);
+    expect(fact?.querySelector('input[name="opportunityId"]')?.getAttribute('value')).toBe(OPP);
+    expect(fact?.textContent).toContain(
+      "The previous owner's open follow-ups move to the new owner.",
+    );
+  });
+
+  it('shows the name alone to someone who cannot edit, without asking for the owners list', async () => {
+    mocks.getOpportunity.mockResolvedValue(
+      opportunity('negotiation', {
+        ownerUserId: SITA,
+        ownerName: 'Sita Rai',
+        canEdit: false,
+        allowedMoves: [],
+      }),
+    );
+    const fact = ownerFact(parse(await render()));
+    expect(fact?.textContent).toContain('Sita Rai');
+    expect(fact?.textContent).not.toContain('Change owner');
+    expect(mocks.listOpportunityOwners).not.toHaveBeenCalled();
+  });
+
+  it('offers no hand-over on a won deal, and says No owner when there is none', async () => {
+    mocks.getOpportunity.mockResolvedValue(opportunity('won'));
+    mocks.listOpportunityOwners.mockResolvedValue(owners);
+    const fact = ownerFact(parse(await render()));
+    expect(fact?.textContent).toContain('No owner');
+    expect(fact?.textContent).not.toContain('Change owner');
+  });
+
+  it('still renders the name when the owners list is refused', async () => {
+    mocks.getOpportunity.mockResolvedValue(
+      opportunity('qualified', { ownerUserId: SITA, ownerName: 'Sita Rai' }),
+    );
+    mocks.listOpportunityOwners.mockRejectedValue(new ApiError(403, 'forbidden'));
+    const fact = ownerFact(parse(await render()));
+    expect(fact?.textContent).toContain('Sita Rai');
+    expect(fact?.textContent).not.toContain('Change owner');
+  });
+});
+
+describe('credit hold on the deal (F1-Q20)', () => {
+  const held = () =>
+    opportunity('won', { creditHold: { held: true, overridden: false }, number: 'DEAL-0042' });
+  /** `GET /v1/opportunities/:id/credit-hold` as the API sends it. */
+  const position = CreditHoldDtoSchema.parse({
+    opportunityId: OPP,
+    customerId: CUSTOMER,
+    currency: 'NPR',
+    creditLimit: '500000.00',
+    exposure: '512345.50',
+    held: true,
+    override: null,
+  });
+  const grants = (...held: string[]) =>
+    mocks.getPermissionCheck.mockResolvedValue((p: string) => held.includes(p));
+  const metadata = (doc: Document) => doc.querySelector('h1')?.parentElement?.parentElement;
+  const banner = (doc: Document) =>
+    [...doc.querySelectorAll('[role="status"]')].find((el) =>
+      el.textContent?.startsWith('Credit hold'),
+    ) ?? null;
+
+  it('marks the header and says who can override, with no Override button, to someone without credit.override', async () => {
+    mocks.getOpportunity.mockResolvedValue(held());
+    grants('crm.opportunity.read');
+    const doc = parse(await render());
+    expect(metadata(doc)?.textContent).toContain('Credit hold');
+    expect(banner(doc)?.textContent).toContain('over its credit limit');
+    expect(banner(doc)?.textContent).toContain(
+      'Someone with credit override access can override the hold.',
+    );
+    expect(banner(doc)?.textContent).not.toMatch(/Management|Finance/);
+    expect(doc.body.textContent).not.toContain('Override credit hold');
+    expect(banner(doc)?.textContent).not.toMatch(/500,000|5,00,000/);
+    expect(mocks.getCreditHold).not.toHaveBeenCalled();
+  });
+
+  it('shows the amounts and the Override action to a credit.override holder', async () => {
+    mocks.getOpportunity.mockResolvedValue(held());
+    mocks.getCreditHold.mockResolvedValue(position);
+    grants('crm.opportunity.read', 'credit.override');
+    const doc = parse(await render());
+    expect(mocks.getCreditHold).toHaveBeenCalledWith(expect.anything(), OPP);
+    const text = banner(doc)?.textContent ?? '';
+    expect(text).toMatch(/owes .*5,12,345\.50.* against a limit of .*5,00,000\.00/);
+    expect(
+      [...(banner(doc)?.querySelectorAll('button') ?? [])].map((b) => b.textContent),
+    ).toContain('Override credit hold');
+  });
+
+  it('keeps the Override action when the amounts do not load', async () => {
+    mocks.getOpportunity.mockResolvedValue(held());
+    mocks.getCreditHold.mockRejectedValue(new ApiError(503, 'down'));
+    grants('credit.override');
+    const doc = parse(await render());
+    expect(banner(doc)?.textContent).toContain('over its credit limit');
+    expect(banner(doc)?.textContent).not.toContain('owes');
+    expect(doc.body.textContent).toContain('Override credit hold');
+  });
+
+  it('flags an open deal before any quotation is accepted, in words true for it', async () => {
+    mocks.getOpportunity.mockResolvedValue(
+      opportunity('negotiation', { creditHold: { held: true, overridden: false, ordered: false } }),
+    );
+    grants('crm.opportunity.read', 'credit.override');
+    mocks.getCreditHold.mockResolvedValue(position);
+    const doc = parse(await render());
+    expect(metadata(doc)?.textContent).toContain('Credit hold');
+    const text = banner(doc)?.textContent ?? '';
+    expect(text).toContain('an accepted quotation on this deal cannot become a sales order');
+    expect(text).not.toContain('the accepted quotation');
+    expect(doc.body.textContent).toContain('Override credit hold');
+  });
+
+  it('shows no hold and no override on a lost deal, or a won one whose sales order went ahead', async () => {
+    grants('crm.opportunity.read', 'credit.override');
+    for (const deal of [
+      opportunity('lost', { creditHold: { held: true, overridden: false, ordered: false } }),
+      opportunity('won', { creditHold: { held: true, overridden: false, ordered: true } }),
+    ]) {
+      mocks.getOpportunity.mockResolvedValue(deal);
+      const doc = parse(await render());
+      expect(metadata(doc)?.textContent).not.toContain('Credit hold');
+      expect(banner(doc)).toBeNull();
+      expect(doc.body.textContent).not.toContain('Override credit hold');
+    }
+    expect(mocks.getCreditHold).not.toHaveBeenCalled();
+  });
+
+  it('shows nothing once the hold is overridden, or when the flag is absent', async () => {
+    grants('credit.override');
+    mocks.getOpportunity.mockResolvedValue(
+      opportunity('won', { creditHold: { held: true, overridden: true } }),
+    );
+    let doc = parse(await render());
+    expect(metadata(doc)?.textContent).not.toContain('Credit hold');
+    expect(banner(doc)).toBeNull();
+
+    mocks.getOpportunity.mockResolvedValue(opportunity('won'));
+    doc = parse(await render());
+    expect(banner(doc)).toBeNull();
+    expect(mocks.getCreditHold).not.toHaveBeenCalled();
   });
 });

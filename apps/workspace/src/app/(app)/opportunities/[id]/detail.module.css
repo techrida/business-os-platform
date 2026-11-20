@@ -10,6 +10,17 @@
   gap: 4px 8px;
 }
 
+.holdBadge {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.overrideForm {
+  display: grid;
+  gap: 16px;
+}
+
 .stageCard,
 .summary,
 .records {
@@ -114,8 +125,43 @@
   padding: 12px var(--section-inset);
 }
 
-.activityForm:not([hidden]) + .activityList > ol {
+.activityActions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+/* Planned, then History: one heading each, separated by a rule, never by colour alone. */
+.activitySection {
+  display: grid;
+  min-width: 0;
+}
+
+.activityForm:not([hidden]) + .activitySection,
+.activitySection + .activitySection {
   border-top: var(--border-width-thin) solid var(--border-default);
+}
+
+.sectionTitle {
+  margin: 0;
+  padding: 16px var(--section-inset) 8px;
+  color: var(--text-secondary);
+  font-size: var(--font-size-body-small);
+  font-weight: var(--font-weight-semibold);
+  line-height: var(--line-height-body-small);
+}
+
+.plannedList {
+  padding: 0 var(--section-inset) 16px;
+}
+
+.plannedList > p {
+  margin: 0;
+}
+
+.plannedList > [role='alert'] {
+  margin: 0;
 }
 
 .activityList > [role='alert'] {

@@ -1,3 +1,4 @@
+import { OpportunityDtoSchema } from '@bos/contracts';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { confirmOrderAction, draftInvoiceAction, markBillableAction } from './actions';
@@ -14,6 +15,8 @@ const mocks = vi.hoisted(() => ({
   redirect: vi.fn((to: string) => {
     throw new Error(`NEXT_REDIRECT ${to}`);
   }),
+  getOpportunity: vi.fn(),
+  getPermissionCheck: vi.fn(),
 }));
 
 vi.mock('@/lib/bff', () => ({ requireStaffSession: mocks.requireStaffSession }));
@@ -22,9 +25,38 @@ vi.mock('@/lib/api', async (importOriginal) => ({
   apiFetch: mocks.apiFetch,
 }));
 vi.mock('next/cache', () => ({ revalidatePath: mocks.revalidatePath }));
+vi.mock('@/components/p2/crm/crm-api', () => ({ getOpportunity: mocks.getOpportunity }));
+vi.mock('@/lib/live-permissions', () => ({ getPermissionCheck: mocks.getPermissionCheck }));
 vi.mock('next/navigation', () => ({ redirect: mocks.redirect }));
 
 const KEY = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa';
+const OPP = '11111111-1111-4111-8111-111111111111';
+
+/** A deal as `GET /v1/opportunities/:id` sends it, through the contract (optional fields omitted). */
+const dealDto = (over: Record<string, unknown> = {}) =>
+  OpportunityDtoSchema.parse({
+    id: OPP,
+    number: 'DEAL-0042',
+    name: 'Bridge works',
+    customerId: '33333333-3333-4333-8333-333333333333',
+    contactId: null,
+    leadId: null,
+    ownerUserId: null,
+    ownerName: null,
+    stage: 'negotiation',
+    stageReason: null,
+    lostReason: null,
+    stageNote: null,
+    value: null,
+    currency: 'NPR',
+    probability: null,
+    expectedClose: null,
+    wonQuotationVersionId: null,
+    version: 1,
+    createdAt: '2026-11-08T05:45:00.000Z',
+    updatedAt: '2026-11-08T05:45:00.000Z',
+    ...over,
+  });
 const prev: ActionState = { key: KEY };
 
 function form(entries: Record<string, string>): FormData {
@@ -146,6 +178,66 @@ describe('confirmOrderAction', () => {
 
     await redirectTarget(confirmOrderAction(second, confirmForm({ idempotencyKey: second.key })));
     expect(mocks.apiFetch.mock.calls.map((c) => keyOf(c as Call))).toEqual([KEY, KEY, KEY]);
+  });
+
+  describe('a credit hold (409 credit_hold, F1-Q20)', () => {
+    const deal = '11111111-1111-4111-8111-111111111111';
+    const held = (opportunityId: string = deal) =>
+      answer(409, {
+        error: {
+          code: 'credit_hold',
+          message: 'm',
+          correlationId: 'c',
+          details: { opportunityId },
+        },
+      });
+    const grants = (...held: string[]) =>
+      mocks.getPermissionCheck.mockResolvedValue((p: string) => held.includes(p));
+
+    beforeEach(() => {
+      mocks.getOpportunity.mockReset();
+      mocks.getPermissionCheck.mockReset();
+    });
+
+    it('lets a credit.override holder who cannot open the deal override it from the refusal', async () => {
+      mocks.apiFetch.mockImplementation(() => held());
+      mocks.getOpportunity.mockRejectedValue(new Error('404'));
+      grants('sales_order.confirm', 'credit.override');
+      const state = await confirmOrderAction(prev, confirmForm());
+      expect(state.error).toMatch(/over its credit limit/);
+      expect(state.reload).toBeUndefined();
+      expect(state.creditHold).toEqual({
+        opportunityId: deal,
+        number: null,
+        canOpen: false,
+        canOverride: true,
+        quotationVersionId: IDS.version,
+      });
+      expect(mocks.getOpportunity).toHaveBeenCalledWith(expect.anything(), deal);
+      expect(mocks.redirect).not.toHaveBeenCalled();
+    });
+
+    it('names the deal for someone who can open it, without an override they do not hold', async () => {
+      mocks.apiFetch.mockImplementation(() => held());
+      mocks.getOpportunity.mockResolvedValue(dealDto({ id: deal }));
+      grants('sales_order.confirm');
+      const state = await confirmOrderAction(prev, confirmForm());
+      expect(state.creditHold).toEqual({
+        opportunityId: deal,
+        number: 'DEAL-0042',
+        canOpen: true,
+        canOverride: false,
+        quotationVersionId: IDS.version,
+      });
+    });
+
+    it('carries no deal when the refusal names no usable id', async () => {
+      mocks.apiFetch.mockImplementation(() => held('../x'));
+      const state = await confirmOrderAction(prev, confirmForm());
+      expect(state.error).toMatch(/over its credit limit/);
+      expect(state).not.toHaveProperty('creditHold');
+      expect(mocks.getOpportunity).not.toHaveBeenCalled();
+    });
   });
 
   it('says plainly when the customer evidence is not confirmed yet (422 evidence_not_confirmed)', async () => {

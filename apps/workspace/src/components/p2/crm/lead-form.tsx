@@ -119,6 +119,7 @@ export function LeadForm({
   owners,
   enabledCurrencies,
   defaultOwnerId,
+  callerUnplaced = false,
   idempotencyKey,
 }: {
   action: FormAction;
@@ -129,6 +130,12 @@ export function LeadForm({
   owners: readonly OwnerOption[];
   /** The signed-in user when they are in `owners`; the select starts there. */
   defaultOwnerId?: string | undefined;
+  /**
+   * The signed-in user is known and not in `owners` (Finance, Accountant or PMO entering a lead for Sales): leaving
+   * the owner empty gives the lead to the entity's default lead owner, not to them. False when who they are did
+   * not load, so the empty choice keeps saying the API makes it theirs.
+   */
+  callerUnplaced?: boolean | undefined;
   /** Made once per page render on the server; the action hands back the key the next try uses. */
   idempotencyKey: string;
 }) {
@@ -139,7 +146,8 @@ export function LeadForm({
   const [values, setValues] = useState<Record<string, string>>(() => ({
     ...EMPTY,
     // Never preselect someone else: when the signed-in user is not placed in the list, the empty
-    // "You" choice posts nothing and the API makes the lead the caller's.
+    // choice posts nothing and the API picks the owner (the default lead owner for a role that enters
+    // leads for Sales, the caller otherwise).
     ownerUserId: defaultOwnerId ?? (owners.length === 1 ? (owners[0]?.value ?? '') : ''),
   }));
   const [followUpKind, setFollowUpKind] = useState<FollowUpKind>('call');
@@ -253,7 +261,7 @@ export function LeadForm({
                 hint={owners.length === 1 ? 'You can create leads for yourself only.' : undefined}
                 error={err['ownerUserId']}
                 options={owners}
-                emptyLabel={unplaced ? 'You' : undefined}
+                emptyLabel={unplaced ? (callerUnplaced ? 'Default owner' : 'You') : undefined}
                 value={values['ownerUserId'] ?? ''}
                 onChange={(value) => update('ownerUserId', value)}
               />

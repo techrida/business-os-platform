@@ -208,6 +208,27 @@ describe('0015_crm and src/schema/crm.ts', () => {
       'utf8',
     ),
   );
+  // 0100 adds leads.held_from_stage and opportunities.held_from_stage (with their checks).
+  applyAlters(
+    parsed,
+    readFileSync(new URL('../migrations/0100_crm_held_from_stage.sql', import.meta.url), 'utf8'),
+  );
+  // 0101 adds opportunities.lead_creator_user_id (with its FK to users and its index).
+  applyAlters(
+    parsed,
+    readFileSync(
+      new URL('../migrations/0101_opportunity_lead_creator.sql', import.meta.url),
+      'utf8',
+    ),
+  );
+  // 0103 adds the credit override columns of opportunities (with their FK to users and their check).
+  applyAlters(
+    parsed,
+    readFileSync(
+      new URL('../migrations/0103_opportunity_credit_override.sql', import.meta.url),
+      'utf8',
+    ),
+  );
 
   it('create the same nine tables', () => {
     expect([...parsed.keys()].sort()).toEqual(Object.keys(DRIZZLE).sort());

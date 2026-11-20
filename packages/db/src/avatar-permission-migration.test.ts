@@ -248,7 +248,9 @@ describe('0053 profile.avatar.write, applied in journal order (before 0081 and 0
 
 describe('0053 profile.avatar.write, applied late on a database that already ran 0081 and 0083', () => {
   it('gives own to marketing and the other staff roles, and all to founder and the user manager', async () => {
-    // On this path 0088 has already given marketing its own picture, so 0053's NOT EXISTS skips that role.
+    // On this path 0088 has already given marketing its own picture, so 0053's NOT EXISTS skips that role. 0104
+    // (credit.override) has also given management its first row here, so management is a staff role with rows when
+    // 0053 runs and gets its own picture too, as the code defaults give it.
     const grants = await avatarGrants(ahead, aheadTenant);
     expect(Object.fromEntries(Object.entries(grants).map(([role, g]) => [role, g.scope]))).toEqual({
       founder: 'all',
@@ -262,6 +264,7 @@ describe('0053 profile.avatar.write, applied late on a database that already ran
   });
 
   it('marks every new row seeded, the same end state as the journal-order path', async () => {
+    // Plus management (see above): on the journal-order path 0053 ran before 0104 gave management a row.
     expect(await avatarGrants(ahead, aheadTenant)).toEqual({
       founder: { scope: 'all', seeded: true },
       user_admin: { scope: 'all', seeded: true },

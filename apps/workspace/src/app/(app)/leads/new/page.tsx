@@ -32,6 +32,8 @@ export default async function NewLeadPage() {
       : [];
   const meId = me.status === 'fulfilled' ? me.value.userId : undefined;
   const defaultOwnerId = owners.some((o) => o.value === meId) ? meId : undefined;
+  // Known, and not someone the lead may go to: the API gives it to the default lead owner instead.
+  const callerUnplaced = meId !== undefined && defaultOwnerId === undefined && owners.length > 0;
   return (
     <Page>
       <Breadcrumb items={[{ label: 'Leads', href: '/leads' }, { label: 'Create Lead' }]} />
@@ -41,6 +43,7 @@ export default async function NewLeadPage() {
         owners={owners}
         enabledCurrencies={enabledCurrencies}
         defaultOwnerId={defaultOwnerId}
+        callerUnplaced={callerUnplaced}
         idempotencyKey={randomUUID()}
       />
     </Page>

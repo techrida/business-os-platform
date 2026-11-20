@@ -25,7 +25,13 @@ const plan = (
   from: LeadStage,
   to: LeadStage,
   by: LeadStageCaller,
-  extra: { reason?: string; note?: string; expectedVersion?: number; version?: number } = {},
+  extra: {
+    reason?: string;
+    note?: string;
+    expectedVersion?: number;
+    version?: number;
+    heldFromStage?: LeadStage | null;
+  } = {},
 ) =>
   planLeadStageChange({
     current: from,
@@ -35,12 +41,15 @@ const plan = (
     reason: extra.reason,
     note: extra.note,
     expectedVersion: extra.expectedVersion,
+    heldFromStage: extra.heldFromStage,
   });
 
 describe('planLeadStageChange', () => {
   it('lets a user take every user edge except the one into converted', () => {
     for (const t of LEAD_TRANSITIONS.filter((e) => e.by === 'user' && e.to !== 'converted')) {
-      const result = plan(t.from, t.to, 'user', { reason: 'r', note: 'n' });
+      // A resume edge is taken by a lead held at its target (F1-Q53).
+      const heldFromStage = t.from === 'on_hold' ? t.to : null;
+      const result = plan(t.from, t.to, 'user', { reason: 'r', note: 'n', heldFromStage });
       expect(result.ok, `${t.from} -> ${t.to}`).toBe(true);
     }
   });
@@ -78,7 +87,12 @@ describe('planLeadStageChange', () => {
       });
       expect(plan('new', to, 'user', { reason: 'r', note: 'n' })).toEqual({
         ok: true,
-        set: { stage: to, stageReason: 'r', stageNote: 'n' },
+        set: {
+          stage: to,
+          stageReason: 'r',
+          stageNote: 'n',
+          heldFromStage: to === 'on_hold' ? 'new' : null,
+        },
       });
     }
   });
@@ -86,7 +100,35 @@ describe('planLeadStageChange', () => {
   it('clears the reason and note when a lead leaves lost or on_hold', () => {
     expect(plan('on_hold', 'contacted', 'user')).toEqual({
       ok: true,
-      set: { stage: 'contacted', stageReason: null, stageNote: null },
+      set: { stage: 'contacted', stageReason: null, stageNote: null, heldFromStage: null },
+    });
+  });
+
+  it('remembers the stage a lead is held at, and resumes it there only (F1-Q53)', () => {
+    for (const at of ['new', 'contacted', 'qualified'] as const) {
+      expect(plan(at, 'on_hold', 'user', { reason: 'r', note: 'n' })).toMatchObject({
+        ok: true,
+        set: { stage: 'on_hold', heldFromStage: at },
+      });
+      for (const to of ['new', 'contacted', 'qualified'] as const) {
+        const result = plan('on_hold', to, 'manager', { heldFromStage: at });
+        if (to === at) {
+          expect(result, `${at} -> ${to}`).toEqual({
+            ok: true,
+            set: { stage: to, stageReason: null, stageNote: null, heldFromStage: null },
+          });
+        } else {
+          expect(result, `${at} -> ${to}`).toMatchObject({ ok: false, kind: 'no_edge' });
+        }
+      }
+    }
+    // A hold recorded before F1-Q53 resumes to contacted, as it always did.
+    expect(plan('on_hold', 'contacted', 'user', { heldFromStage: null })).toMatchObject({
+      ok: true,
+    });
+    expect(plan('on_hold', 'qualified', 'user', { heldFromStage: null })).toMatchObject({
+      ok: false,
+      kind: 'no_edge',
     });
   });
 
@@ -125,12 +167,17 @@ function principalOf(
   };
 }
 
-const leadRow = (stage: LeadStage, ownerUserId: string | null = ME) => ({
+const leadRow = (
+  stage: LeadStage,
+  ownerUserId: string | null = ME,
+  heldFromStage: LeadStage | null = null,
+) => ({
   tenantId: TENANT,
   organizationId: ENTITY,
   ownerUserId,
   departmentId: null,
   stage,
+  heldFromStage,
 });
 
 describe('isStageManager and allowedLeadMoves', () => {
@@ -149,6 +196,8 @@ describe('isStageManager and allowedLeadMoves', () => {
     expect(allowedLeadMoves(sales, leadRow('contacted'))).toEqual(['qualified', 'lost', 'on_hold']);
     expect(allowedLeadMoves(sales, leadRow('qualified'))).toEqual(['lost', 'on_hold']);
     expect(allowedLeadMoves(sales, leadRow('on_hold'))).toEqual(['contacted']);
+    expect(allowedLeadMoves(sales, leadRow('on_hold', ME, 'new'))).toEqual(['new']);
+    expect(allowedLeadMoves(sales, leadRow('on_hold', ME, 'qualified'))).toEqual(['qualified']);
     expect(allowedLeadMoves(sales, leadRow('converted'))).toEqual([]);
     expect(allowedLeadMoves(sales, leadRow('lost'))).toEqual([]);
   });

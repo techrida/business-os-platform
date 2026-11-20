@@ -7,6 +7,8 @@ import {
   type CancelActivityBody,
   type CompleteActivityBody,
   type ConvertLeadBody,
+  CreditHoldDtoSchema,
+  type CreditOverrideBody,
   type CreateActivityBody,
   type CreateLeadBody,
   type LeadStageChangeBody,
@@ -14,6 +16,7 @@ import {
   LeadOwnerOptionSchema,
   type RescheduleActivityBody,
   type UpdateLeadBody,
+  type OpportunityOwnerChangeBody,
   type OpportunityStage,
   type OpportunityStageChangeBody,
   OpportunityDtoSchema,
@@ -194,6 +197,58 @@ export function listOpportunities(
 
 export function getOpportunity(session: Session, id: string) {
   return call(session, `/v1/opportunities/${seg(id)}`, OpportunityDtoSchema);
+}
+
+/**
+ * Hand a deal to someone else (`PATCH /v1/opportunities/:id/owner`, F1-Q51). Answers the updated
+ * opportunity; the owner's open follow-ups on it move to the new owner in the same change.
+ */
+export function changeOpportunityOwner(
+  session: Session,
+  id: string,
+  body: OpportunityOwnerChangeBody,
+) {
+  return call(
+    session,
+    `/v1/opportunities/${seg(id)}/owner`,
+    OpportunityDtoSchema,
+    json('PATCH', body),
+  );
+}
+
+/**
+ * The people the caller may hand a deal to (`GET /v1/opportunities/owners`): exactly whom the
+ * owner PATCH accepts. Emails come back empty, so name people by `displayName`.
+ */
+export function listOpportunityOwners(session: Session) {
+  return call(session, '/v1/opportunities/owners', listOf(LeadOwnerOptionSchema));
+}
+
+/**
+ * The people a follow-up on a deal may be assigned to (`crm.opportunity.write`): the owner select's rule, but
+ * reading opportunities is enough, so a read-only colleague the owner list leaves out can still be given the work.
+ * Emails come back empty.
+ */
+export function listOpportunityFollowUpAssignees(session: Session) {
+  return call(session, '/v1/opportunities/follow-up-assignees', listOf(LeadOwnerOptionSchema));
+}
+
+/**
+ * A deal's credit position (F1-Q20): limit, exposure and any override. Only for `credit.override`
+ * holders; anyone else gets 403 and reads the booleans on the deal instead.
+ */
+export function getCreditHold(session: Session, id: string) {
+  return call(session, `/v1/opportunities/${seg(id)}/credit-hold`, CreditHoldDtoSchema);
+}
+
+/** Override a deal's credit hold with a reason (`credit.override`). A second override is a no-op. */
+export function overrideCreditHold(session: Session, id: string, body: CreditOverrideBody) {
+  return call(
+    session,
+    `/v1/opportunities/${seg(id)}/credit-override`,
+    CreditHoldDtoSchema,
+    json('POST', body),
+  );
 }
 
 /** The stage route answers the updated opportunity. */

@@ -646,6 +646,40 @@ describe('D50: who a lead may be handed to, under the entity rule and live grant
     expect(await ownerIds()).toEqual([finance]);
   });
 
+  it("hands Finance's unowned lead to the entity's default lead owner when one is set (F1-Q21)", async () => {
+    const settings = new SettingsService(h.db);
+    const setDefault = (value: string | null) =>
+      withTx(h.db, h.scopeA, systemActor('test'), (tx) =>
+        settings.set(tx, 'crm.default_lead_owner', value),
+      );
+    try {
+      await h.actAs(finance);
+      // Unset (the default): the Sales head, as before.
+      expect((await seed()).ownerUserId).toBe(salesHead);
+
+      await setDefault(salesPeer);
+      const lead = await seed();
+      expect(lead.ownerUserId).toBe(salesPeer);
+      expect((await assignedNotices(lead.id)).map((n) => n.to_user_id)).toEqual([salesPeer]);
+      // A named owner still wins.
+      const named = LeadDtoSchema.parse(
+        await service.create(CreateLeadBodySchema.parse({ ...BODY, ownerUserId: salesStaff })),
+      );
+      expect(named.ownerUserId).toBe(salesStaff);
+
+      // Someone the lead may not be handed to (no lead read) is skipped: back to the Sales head.
+      await setDefault(warehouse);
+      expect((await seed()).ownerUserId).toBe(salesHead);
+
+      // A caller who may own the lead keeps it: the setting is only for leads nobody would own.
+      await setDefault(salesPeer);
+      await h.actAs(salesStaff);
+      expect((await seed()).ownerUserId).toBe(salesStaff);
+    } finally {
+      await setDefault(null);
+    }
+  });
+
   it('offers in the owner select exactly the people PATCH accepts', async () => {
     const everyone = [
       salesStaff,
@@ -765,6 +799,66 @@ describe('D50: who a lead may be handed to, under the entity rule and live grant
     const own = await seed();
     expect(await assignedNotices(lead.id)).toHaveLength(2);
     expect(await assignedNotices(own.id)).toEqual([]);
+  });
+
+  it('tells the assignee of the first follow-up at create (U20a2-Q8), but not the creator or the told owner', async () => {
+    const followUpNotices = async (leadId: string) => {
+      const { rows } = await h.ownerPool.query(
+        `SELECT o.to_user_id,
+                (SELECT n.link FROM app.notifications n
+                  WHERE n.tenant_id = o.tenant_id AND n.dedupe_key LIKE 'crm.assigned:activity:' || a.id || ':%') AS link
+           FROM app.outbox o
+           JOIN app.activities a ON o.dedupe_key LIKE 'crm.assigned:activity:' || a.id || ':%'
+          WHERE o.tenant_id = $1 AND o.template = 'crm.assigned' AND a.lead_id = $2`,
+        [h.tenantId, leadId],
+      );
+      return rows as { to_user_id: string; link: string }[];
+    };
+    const followUp = (assigneeUserId?: string) => ({
+      kind: 'call' as const,
+      dueAt: '2030-01-01T09:00:00.000Z',
+      subject: 'Call the buyer',
+      ...(assigneeUserId === undefined ? {} : { assigneeUserId }),
+    });
+
+    await h.actAs(salesStaff);
+    const handed = LeadDtoSchema.parse(
+      await service.create(
+        CreateLeadBodySchema.parse({ ...BODY, title: 'Q8 handed', followUp: followUp(salesPeer) }),
+      ),
+    );
+    expect(await followUpNotices(handed.id)).toEqual([
+      { to_user_id: salesPeer, link: `/leads/${handed.id}` },
+    ]);
+    expect(await assignedNotices(handed.id)).toEqual([]);
+
+    // Assigned to themselves, or left to the owner: no follow-up notice.
+    const mine = LeadDtoSchema.parse(
+      await service.create(
+        CreateLeadBodySchema.parse({ ...BODY, title: 'Q8 mine', followUp: followUp(salesStaff) }),
+      ),
+    );
+    const byDefault = LeadDtoSchema.parse(
+      await service.create(
+        CreateLeadBodySchema.parse({ ...BODY, title: 'Q8 default', followUp: followUp() }),
+      ),
+    );
+    expect(await followUpNotices(mine.id)).toEqual([]);
+    expect(await followUpNotices(byDefault.id)).toEqual([]);
+
+    // Started for another owner who also takes the follow-up: the owner's lead notice is the only one.
+    const forPeer = LeadDtoSchema.parse(
+      await service.create(
+        CreateLeadBodySchema.parse({
+          ...BODY,
+          title: 'Q8 for peer',
+          ownerUserId: salesPeer,
+          followUp: followUp(salesPeer),
+        }),
+      ),
+    );
+    expect((await assignedNotices(forPeer.id)).map((n) => n.to_user_id)).toEqual([salesPeer]);
+    expect(await followUpNotices(forPeer.id)).toEqual([]);
   });
 
   it('refuses an owner who cannot read leads (cannot_read_subject), and never offers them', async () => {

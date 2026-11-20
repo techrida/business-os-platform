@@ -64,6 +64,7 @@ function leadRow(over: Partial<LeadRow> = {}): LeadRow {
     stageReason: null,
     stageNote: null,
     lostReasonId: null,
+    heldFromStage: null,
     createdByUserId: null,
     convertedOpportunityId: null,
     version: 1,

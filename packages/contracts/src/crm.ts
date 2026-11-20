@@ -89,6 +89,13 @@ export type ContactWithEmailBody = z.infer<typeof ContactWithEmailBodySchema>;
  */
 export const CreateCustomerBodySchema = CustomerFieldsSchema.extend({
   contact: ContactWithEmailBodySchema.omit({ isPrimary: true }),
+  /**
+   * F1-Q55: why this customer is created although a possible duplicate already exists ("Create anyway"). Optional
+   * until the name, or the PAN/VAT number without spaces and hyphens, matches a live customer the caller can read;
+   * then it is required (400, reason `duplicate_reason_required`) and written to the audit trail
+   * (`customer.duplicate_override`, with the rules each match met).
+   */
+  duplicateOverrideReason: text(500).optional(),
 });
 export type CreateCustomerBody = z.infer<typeof CreateCustomerBodySchema>;
 
@@ -108,6 +115,11 @@ export const CustomerDtoSchema = z.object({
   industry: z.string().nullable(),
   relationship: CustomerRelationshipSchema,
   ownerUserId: z.guid().nullable(),
+  /**
+   * U15a-Q3: the owner's display name (D46: a name only, "Unnamed user" without one, null without an owner). Sent
+   * on the staff list (`GET /v1/customers`); absent elsewhere and for portal callers.
+   */
+  ownerName: z.string().nullable().optional(),
   defaultCurrency: CurrencySchema.nullable(),
   address: AddressSchema,
   /** The customer's logo (`app.customers.logo_document_id`); null or absent shows initials. */
@@ -266,6 +278,10 @@ function edges<S extends string>(
 /**
  * The lead state machine, edge for edge (A2 section 2.2). Converted comes only from Qualified and is
  * its own action (`ConvertLeadBodySchema`), not a stage change.
+ *
+ * Resuming from On hold (F1-Q53): the table has an edge back to every stage a lead can be held at, but a
+ * held lead takes only ONE of them, the stage it was held at (`heldFromStage`, see `resumeTarget`). A lead
+ * held before that was recorded resumes to Contacted, as it always did.
  */
 export const LEAD_TRANSITIONS: readonly StageTransition<LeadStage>[] = edges<LeadStage>([
   ['new', 'contacted'],
@@ -276,7 +292,9 @@ export const LEAD_TRANSITIONS: readonly StageTransition<LeadStage>[] = edges<Lea
   ['new', 'on_hold'],
   ['contacted', 'on_hold'],
   ['qualified', 'on_hold'],
+  ['on_hold', 'new'],
   ['on_hold', 'contacted'],
+  ['on_hold', 'qualified'],
   ['qualified', 'converted'],
   ['lost', 'contacted', 'manager'],
 ]);
@@ -306,6 +324,22 @@ export const OPPORTUNITY_TRANSITIONS: readonly StageTransition<OpportunityStage>
     ['on_hold', 'negotiation'],
     ['lost', 'qualified', 'manager'],
   ]);
+
+/** Where a held record resumes when no held stage was recorded (a hold from before F1-Q53). */
+export const LEGACY_RESUME_STAGE = { lead: 'contacted', opportunity: 'negotiation' } as const;
+
+/**
+ * The one stage a held record may resume to (F1-Q53): the stage it was held at, or the legacy fixed stage
+ * when the hold predates that record. Every other `on_hold` edge is refused for this record.
+ */
+export function resumeTarget(kind: 'lead', heldFromStage: LeadStage | null): LeadStage;
+export function resumeTarget(
+  kind: 'opportunity',
+  heldFromStage: OpportunityStage | null,
+): OpportunityStage;
+export function resumeTarget(kind: RecordKind, heldFromStage: string | null): string {
+  return heldFromStage ?? LEGACY_RESUME_STAGE[kind];
+}
 
 /** The edge from one stage to another, or undefined when the machine has none. */
 export function findTransition(
@@ -523,6 +557,46 @@ export const OpportunityStageChangeBodySchema = z
   });
 export type OpportunityStageChangeBody = z.infer<typeof OpportunityStageChangeBodySchema>;
 
+/** `POST /v1/opportunities/:id/credit-override` (F1-Q20/F1-Q26): why the deal may go ahead over the limit. */
+export const CreditOverrideBodySchema = z.strictObject({ reason: text(500) });
+export type CreditOverrideBody = z.infer<typeof CreditOverrideBodySchema>;
+
+/**
+ * A deal's credit position (F1-Q20/F1-Q26), for holders of `credit.override`. Amounts are NPR with two decimals
+ * (D22). `exposure` is what the customer owes the acting entity now: its open receivable debits less its open
+ * credits (unapplied payments, credit notes), each at its own NPR rate. `held` is `exposure > creditLimit`; never
+ * held without a limit. The override, once given, lets the deal's accepted quotation become a sales order.
+ */
+export const CreditHoldDtoSchema = z.object({
+  opportunityId: z.guid(),
+  customerId: z.guid(),
+  currency: z.literal('NPR'),
+  creditLimit: DecimalString.nullable(),
+  exposure: z.string().regex(/^-?\d+\.\d{2}$/),
+  held: z.boolean(),
+  override: z
+    .object({
+      reason: z.string(),
+      byUserId: z.guid(),
+      byName: z.string(),
+      at: isoDateTime,
+    })
+    .nullable(),
+});
+export type CreditHoldDto = z.infer<typeof CreditHoldDtoSchema>;
+
+/**
+ * `PATCH /v1/opportunities/:id/owner` (F1-Q51): hand the deal to another person. The same assignment rule as a
+ * lead's owner (D38/D50, the entity's stored rule for opportunities); the old owner's open follow-ups on the deal
+ * move with it (D45).
+ */
+export const OpportunityOwnerChangeBodySchema = z.strictObject({
+  ownerUserId: z.guid(),
+  /** The row version the client saw; a different current version means 409. */
+  expectedVersion: z.number().int().min(1),
+});
+export type OpportunityOwnerChangeBody = z.infer<typeof OpportunityOwnerChangeBodySchema>;
+
 // ---------------------------------------------------------------------------------------------
 // Leads
 // ---------------------------------------------------------------------------------------------
@@ -641,6 +715,8 @@ export const LeadDtoSchema = z.object({
   lostReason: LeadLostReasonRefSchema.nullable(),
   stageNote: z.string().nullable(),
   convertedOpportunityId: z.guid().nullable(),
+  /** On hold only (F1-Q53): the stage the lead was held at and will resume to; null for a hold older than that. */
+  heldFromStage: LeadStageSchema.nullable().optional(),
   allowedMoves: z.array(LeadStageSchema).optional(),
   canEdit: z.boolean().optional(),
   version: z.number().int().min(1),
@@ -713,8 +789,25 @@ export const OpportunityDtoSchema = z.object({
   expectedClose: isoDate.nullable(),
   /** Set by the system when a version is accepted. */
   wonQuotationVersionId: z.guid().nullable(),
+  /** On hold only (F1-Q53): the stage the deal was held at and will resume to; null for a hold older than that. */
+  heldFromStage: OpportunityStageSchema.nullable().optional(),
   allowedMoves: z.array(OpportunityStageSchema).optional(),
   canEdit: z.boolean().optional(),
+  /**
+   * The caller may create a quotation on this deal (FX-Q1, FX-Q2): `quotation.draft`, and opportunity read that
+   * reaches it as owner, department, lead creator or a broader scope. An assigned follow-up alone does not count.
+   */
+  canDraftQuotation: z.boolean().optional(),
+  /**
+   * F1-Q20/F1-Q26, on the detail (`GET /v1/opportunities/:id`) only: whether the customer owes the acting entity more
+   * than its credit limit, so an accepted quotation cannot become a sales order (409 `credit_hold`), whether someone
+   * with `credit.override` overrode that, and whether the deal already has a confirmed or completed sales order
+   * (`ordered`; then the hold no longer stands in its way). Amounts are on `GET /v1/opportunities/:id/credit-hold`
+   * (credit.override).
+   */
+  creditHold: z
+    .object({ held: z.boolean(), overridden: z.boolean(), ordered: z.boolean().optional() })
+    .optional(),
   version: z.number().int().min(1),
   createdAt: isoDateTime,
   updatedAt: isoDateTime,

@@ -493,6 +493,7 @@ export const ACCESS_PERMISSION_GROUPS: readonly AccessPermissionGroup[] = [
       'payment.verify',
       'payment.allocate',
       'ar.read',
+      'credit.override',
     ],
   },
   {
@@ -564,7 +565,7 @@ function perm(
   };
 }
 
-/** Catalogue entry for every one of the 72 permissions in PERMISSIONS. */
+/** Catalogue entry for every one of the 73 permissions in PERMISSIONS. */
 export const ACCESS_PERMISSION_CATALOGUE: readonly AccessPermissionInfo[] = [
   // Leads
   perm('crm.lead.read', 'See leads', 'record', RECORD_CRM_READ, []),
@@ -721,6 +722,14 @@ export const ACCESS_PERMISSION_CATALOGUE: readonly AccessPermissionInfo[] = [
   ),
   perm('payment.allocate', 'Allocate payments to invoices', 'onOff', ON_OFF_STAFF, []),
   perm('ar.read', 'See receivables aging', 'onOff', ON_OFF_STAFF, []),
+  perm(
+    'credit.override',
+    'Override a credit hold',
+    'onOff',
+    ON_OFF_STAFF,
+    [],
+    'Lets a deal go ahead to a sales order although the customer owes more than its credit limit.',
+  ),
   // Vendors
   perm('vendor.read', 'See vendors', 'onOff', ON_OFF_STAFF, []),
   perm('vendor.write', 'Create and edit vendors', 'onOff', ON_OFF_STAFF, []),

@@ -679,12 +679,100 @@ describe('PATCH /v1/leads/:id/stage', () => {
       note: 'next year',
       expectedVersion: 1,
     });
-    const back = await patchStage(lead.id, { stage: 'contacted', expectedVersion: 2 });
+    // Held at new, so it resumes to new (F1-Q53).
+    const back = await patchStage(lead.id, { stage: 'new', expectedVersion: 2 });
+    expect(back.status, JSON.stringify(back.body)).toBe(200);
     expect(dto(back.body)).toMatchObject({
-      stage: 'contacted',
+      stage: 'new',
       stageReason: null,
       stageNote: null,
+      heldFromStage: null,
     });
+  });
+
+  it('resumes a held lead to the stage it was held at, and to nothing else (F1-Q53)', async () => {
+    const lead = await seed();
+    await patchStage(lead.id, { stage: 'contacted', expectedVersion: 1 });
+    await patchStage(lead.id, { stage: 'qualified', expectedVersion: 2 });
+    const held = await patchStage(lead.id, {
+      stage: 'on_hold',
+      reason: 'budget',
+      note: 'next quarter',
+      expectedVersion: 3,
+    });
+    expect(held.status, JSON.stringify(held.body)).toBe(200);
+    expect(dto(held.body)).toMatchObject({
+      stage: 'on_hold',
+      heldFromStage: 'qualified',
+      allowedMoves: ['qualified'],
+    });
+    // The detail read agrees with the change's answer.
+    const read = await request(baseUrl).get(`/v1/leads/${lead.id}`);
+    expect(dto(read.body)).toMatchObject({
+      heldFromStage: 'qualified',
+      allowedMoves: ['qualified'],
+    });
+
+    // The old fixed stage (contacted) and any other edge out of on_hold are refused, and nothing changes.
+    for (const stage of ['contacted', 'new']) {
+      const wrong = await patchStage(lead.id, { stage, expectedVersion: 4 });
+      expect(wrong.status, stage).toBe(409);
+      expect(errorOf(wrong.body).message).toContain('resumes to qualified only');
+    }
+    const [still] = await h.db.select().from(leads).where(eq(leads.id, lead.id));
+    expect(still).toMatchObject({ stage: 'on_hold', heldFromStage: 'qualified', version: 4 });
+
+    const back = await patchStage(lead.id, { stage: 'qualified', expectedVersion: 4 });
+    expect(back.status, JSON.stringify(back.body)).toBe(200);
+    expect(dto(back.body)).toMatchObject({ stage: 'qualified', heldFromStage: null });
+
+    // Stage history stays honest: one move from on_hold straight back to qualified.
+    const history = await h.db
+      .select({ subject: activities.subject })
+      .from(activities)
+      .where(eq(activities.leadId, lead.id));
+    expect(history.map((r) => r.subject)).toContain('Stage changed from on_hold to qualified');
+    expect(history.map((r) => r.subject)).not.toContain('Stage changed from on_hold to contacted');
+  });
+
+  it('resumes a lead held before F1-Q53 (no held stage recorded) to contacted, as before', async () => {
+    const lead = await seed();
+    await patchStage(lead.id, { stage: 'contacted', expectedVersion: 1 });
+    await patchStage(lead.id, { stage: 'qualified', expectedVersion: 2 });
+    await patchStage(lead.id, {
+      stage: 'on_hold',
+      reason: 'budget',
+      note: 'next quarter',
+      expectedVersion: 3,
+    });
+    // What a row held before migration 0100 looks like.
+    await withTx(h.db, h.scopeA, systemActor('test'), (tx) =>
+      tx.update(leads).set({ heldFromStage: null }).where(eq(leads.id, lead.id)),
+    );
+    const read = dto((await request(baseUrl).get(`/v1/leads/${lead.id}`)).body);
+    expect(read).toMatchObject({ heldFromStage: null, allowedMoves: ['contacted'] });
+    expect((await patchStage(lead.id, { stage: 'qualified', expectedVersion: 4 })).status).toBe(
+      409,
+    );
+    const back = await patchStage(lead.id, { stage: 'contacted', expectedVersion: 4 });
+    expect(back.status, JSON.stringify(back.body)).toBe(200);
+    expect(dto(back.body).stage).toBe('contacted');
+  });
+
+  it('keeps board moves in stage order (FR-6): no jump from new to qualified, held-at-new cannot skip ahead', async () => {
+    const lead = await seed();
+    expect((await patchStage(lead.id, { stage: 'qualified', expectedVersion: 1 })).status).toBe(
+      409,
+    );
+    await patchStage(lead.id, { stage: 'on_hold', reason: 'r', note: 'n', expectedVersion: 1 });
+    for (const stage of ['contacted', 'qualified']) {
+      expect((await patchStage(lead.id, { stage, expectedVersion: 2 })).status, stage).toBe(409);
+    }
+    // FR-6: moving new to contacted needs no logged call or email (order only).
+    const resumed = await patchStage(lead.id, { stage: 'new', expectedVersion: 2 });
+    expect(resumed.status).toBe(200);
+    const contacted = await patchStage(lead.id, { stage: 'contacted', expectedVersion: 3 });
+    expect(contacted.status, JSON.stringify(contacted.body)).toBe(200);
   });
 
   it('answers 404 for another entity lead and a colleague lead, and 403 for a read-only role', async () => {

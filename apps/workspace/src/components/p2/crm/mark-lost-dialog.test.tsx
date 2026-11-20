@@ -106,6 +106,16 @@ async function open(reasons: readonly LeadLostReason[] = REASONS) {
   return mounted;
 }
 
+it('promises nothing about reopening a lead it marks lost (U22-Q1)', async () => {
+  const mounted = await open();
+  try {
+    expect(dialog()?.textContent).toContain('LEAD-1 will move to Lost.');
+    expect(dialog()?.textContent).not.toMatch(/reopen|manager/i);
+  } finally {
+    await mounted.unmount();
+  }
+});
+
 it('refuses a missing reason and note with field errors and sends nothing', async () => {
   const mounted = await open();
   await click(footerButton('Mark lost'));

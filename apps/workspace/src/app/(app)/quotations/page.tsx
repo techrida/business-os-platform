@@ -8,6 +8,7 @@ import type { NumberSystems } from '@bos/locale';
 import type { Metadata } from 'next';
 import Link from 'next/link';
 
+import { getOpportunity } from '@/components/p2/crm/crm-api';
 import { listCustomers } from '@/components/p2/customers/api';
 import {
   getQuotationsSummary,
@@ -196,7 +197,7 @@ export default async function QuotationsPage({
 
   // The three reads do not depend on each other. Only the quotations decide whether the page works:
   // without the customers the filter drops that field, without the summary the cards are left out.
-  const [list, customers, summary] = await Promise.all([
+  const [list, customers, summary, canDraft] = await Promise.all([
     readPage(state.page).then(
       (result) => ({ result, problem: null }),
       (err: unknown) => {
@@ -212,6 +213,14 @@ export default async function QuotationsPage({
       (result) => result,
       () => null,
     ),
+    // New quotation for one deal follows the deal's own answer (FX-Q1, FX-Q2), as on the deal page:
+    // an open deal the caller may quote on. A failed read offers nothing rather than a refusal.
+    opportunityId === undefined
+      ? false
+      : getOpportunity(session, opportunityId).then(
+          (o) => o.canDraftQuotation === true && o.stage !== 'won' && o.stage !== 'lost',
+          () => false,
+        ),
   ]);
   const { problem } = list;
   let result = list.result;
@@ -256,7 +265,7 @@ export default async function QuotationsPage({
         title={opportunityId !== undefined ? 'Quotations for this opportunity' : 'Quotations'}
         description="Track drafts, approvals, and customer decisions."
         actions={
-          opportunityId !== undefined ? (
+          opportunityId !== undefined && canDraft ? (
             <LinkButton href={newQuotationHref(opportunityId, { another: true })}>
               New quotation
             </LinkButton>

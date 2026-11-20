@@ -399,6 +399,8 @@ export const leads = appSchema.table(
     stageNote: text('stage_note'),
     /** 0071 (D49): the lost reason option; set with stage = 'lost' (leads_lost_reason_fk). */
     lostReasonId: uuid('lost_reason_id'),
+    /** 0100 (F1-Q53): the stage an on_hold lead was held at; resuming returns there. NULL for older holds. */
+    heldFromStage: text('held_from_stage', { enum: LEAD_STAGES }),
     /** Set exactly when stage = 'converted' (leads_converted_check). */
     convertedOpportunityId: uuid('converted_opportunity_id'),
     version: integer('version').notNull().default(1),
@@ -460,6 +462,10 @@ export const leads = appSchema.table(
       sql`${t.stage} in ('new', 'contacted', 'qualified', 'converted', 'lost', 'on_hold')`,
     ),
     check(
+      'leads_held_from_stage_check',
+      sql`${t.heldFromStage} IS NULL OR (${t.stage} = 'on_hold' AND ${t.heldFromStage} in ('new', 'contacted', 'qualified'))`,
+    ),
+    check(
       'leads_source_check',
       sql`${t.source} in ('website', 'referral', 'cold_outreach', 'event', 'partner', 'social', 'walk_in', 'campaign', 'other')`,
     ),
@@ -515,6 +521,17 @@ export const opportunities = appSchema.table(
     stageNote: text('stage_note'),
     /** 0090 (D54-3): the lost reason option; set with stage = 'lost' (opportunities_lost_reason_fk). */
     lostReasonId: uuid('lost_reason_id'),
+    /** 0100 (F1-Q53): the stage an on_hold opportunity was held at; resuming returns there. NULL for older holds. */
+    heldFromStage: text('held_from_stage', { enum: OPPORTUNITY_STAGES }),
+    /** 0101 (FX-Q1): who entered the lead this opportunity came from; creator reach covers the opportunity too. */
+    leadCreatorUserId: uuid('lead_creator_user_id'),
+    /**
+     * 0103 (F1-Q20/F1-Q26): the override of the deal's credit hold, set together (opportunities_credit_override_check).
+     * The hold itself is derived from the ledger, never stored.
+     */
+    creditOverrideReason: text('credit_override_reason'),
+    creditOverrideByUserId: uuid('credit_override_by_user_id'),
+    creditOverrideAt: timestamp('credit_override_at', { withTimezone: true }),
     /** The expected deal value. */
     value: numeric('value', { precision: 18, scale: 2 }),
     currency: char('currency', { length: 3 }).notNull().default('NPR'),
@@ -564,6 +581,25 @@ export const opportunities = appSchema.table(
       columns: [t.tenantId, t.lostReasonId],
       foreignColumns: [leadLostReasons.tenantId, leadLostReasons.id],
     }),
+    foreignKey({
+      name: 'opportunities_lead_creator_user_fk',
+      columns: [t.tenantId, t.leadCreatorUserId],
+      foreignColumns: [users.tenantId, users.id],
+    }),
+    foreignKey({
+      name: 'opportunities_credit_override_by_user_fk',
+      columns: [t.tenantId, t.creditOverrideByUserId],
+      foreignColumns: [users.tenantId, users.id],
+    }),
+    check(
+      'opportunities_credit_override_check',
+      sql`(${t.creditOverrideReason} IS NULL AND ${t.creditOverrideByUserId} IS NULL AND ${t.creditOverrideAt} IS NULL) OR (${t.creditOverrideReason} IS NOT NULL AND length(btrim(${t.creditOverrideReason})) > 0 AND ${t.creditOverrideByUserId} IS NOT NULL AND ${t.creditOverrideAt} IS NOT NULL)`,
+    ),
+    index('opportunities_tenant_lead_creator_idx').on(
+      t.tenantId,
+      t.organizationId,
+      t.leadCreatorUserId,
+    ),
     index('opportunities_tenant_org_department_idx').on(
       t.tenantId,
       t.organizationId,
@@ -575,6 +611,10 @@ export const opportunities = appSchema.table(
     check(
       'opportunities_stage_check',
       sql`${t.stage} in ('qualified', 'requirement_received', 'proposal_sent', 'quotation_sent', 'negotiation', 'won', 'lost', 'on_hold')`,
+    ),
+    check(
+      'opportunities_held_from_stage_check',
+      sql`${t.heldFromStage} IS NULL OR (${t.stage} = 'on_hold' AND ${t.heldFromStage} in ('qualified', 'requirement_received', 'proposal_sent', 'quotation_sent', 'negotiation'))`,
     ),
     check('opportunities_currency_check', sql`${t.currency} in ('NPR', 'INR', 'USD')`),
     check('opportunities_value_check', sql`${t.value} >= 0`),

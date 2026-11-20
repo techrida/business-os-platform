@@ -1,3 +1,4 @@
+// @vitest-environment jsdom
 import type { CustomerDto } from '@bos/contracts';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
@@ -78,6 +79,28 @@ beforeEach(() => {
 });
 
 describe('customers list page', () => {
+  it('names each owner in an Owner column from the list row, and no one without an owner (U15a-Q3)', async () => {
+    const OWNER = '33333333-3333-4333-8333-333333333333';
+    mocks.listCustomers.mockResolvedValue({
+      items: [
+        { ...customer, ownerUserId: OWNER, ownerName: 'Anil Karki' },
+        // An older payload without the field reads as no owner, never an id.
+        { ...customer, id: MERGED, legalName: 'Kathmandu Steel', ownerUserId: OWNER },
+      ],
+      total: 2,
+    });
+    const doc = new DOMParser().parseFromString(await render(), 'text/html');
+    const headers = [...doc.querySelectorAll('thead th')].map((th) => th.textContent?.trim());
+    const column = headers.indexOf('Owner');
+    expect(column).toBeGreaterThan(-1);
+    const owners = [...doc.querySelectorAll('tbody tr')].map((tr) =>
+      tr.querySelectorAll('td')[column]?.textContent?.trim(),
+    );
+    expect(owners[0]).toContain('Anil Karki');
+    expect(owners[1]).toBe('No owner');
+    expect(doc.body.innerHTML).not.toContain(OWNER);
+  });
+
   it('draws the four cards from the relationship counts, the total being their sum', async () => {
     const html = await render();
     expect(html).toContain('aria-label="Organizations by relationship"');

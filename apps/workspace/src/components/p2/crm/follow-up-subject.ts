@@ -42,3 +42,32 @@ export function followUpPaths(subject: FollowUpSubject | null): string[] {
               : [];
   return [...own, '/activities'];
 }
+
+/**
+ * The permission that moves or calls off a follow-up on each kind of subject: the subject's write, as the API's
+ * `SUBJECT_PERMISSION` asks (activities.types.ts). Completing your own follow-up needs only the read.
+ */
+export const FOLLOW_UP_WRITE: Readonly<Record<FollowUpSubjectKind, string>> = {
+  leadId: 'crm.lead.write',
+  opportunityId: 'crm.opportunity.write',
+  customerId: 'customer.write',
+  contactId: 'customer.write',
+  quotationId: 'quotation.draft',
+};
+
+/**
+ * Which actions a planned follow-up offers outside its record's page (the /activities list), the record page's
+ * rule (FollowUpList): `all` with the subject's write, `complete` for the caller's own follow-up without it
+ * (U20a2-Q7: an assignee finishes their work), `none` for anyone else, so no button is shown that the API
+ * would only refuse. Only permission names are known here, not their scope.
+ */
+export function followUpActionsFor(
+  item: Pick<ActivityDto, FollowUpSubjectKind | 'assigneeUserId'>,
+  can: (permission: string) => boolean,
+  currentUserId: string | null | undefined,
+): 'all' | 'complete' | 'none' {
+  const subject = subjectOf(item);
+  if (subject !== null && can(FOLLOW_UP_WRITE[subject.kind])) return 'all';
+  if (currentUserId != null && item.assigneeUserId === currentUserId) return 'complete';
+  return 'none';
+}

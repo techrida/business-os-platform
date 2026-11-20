@@ -11,7 +11,7 @@ import { randomUUID } from 'node:crypto';
 import type { Server } from 'node:http';
 import type { AddressInfo } from 'node:net';
 
-import { ErrorBodySchema, LeadDtoSchema } from '@bos/contracts';
+import { ErrorBodySchema, LeadDtoSchema, OpportunityDtoSchema } from '@bos/contracts';
 import { activities, customerContacts, customers, leads, opportunities } from '@bos/db';
 import { type INestApplication } from '@nestjs/common';
 import { Test } from '@nestjs/testing';
@@ -27,7 +27,10 @@ import type { AuthzService } from '../../../platform/authz/authz.service';
 import { systemActor, withTx } from '../../../platform/db/tx';
 import { NumberingService } from '../../../platform/settings/numbering.service';
 import { ErrorBodyFilter } from '../../../platform/tenancy/error-body.filter';
+import { ActivitiesService } from '../../activities/activities.service';
+import { ListActivitiesQuerySchema } from '../../activities/activities.types';
 import { CustomersService } from '../../customers/customers.service';
+import { OpportunitiesService } from '../../opportunities/opportunities.service';
 import { LeadsController } from '../leads.controller';
 import { LeadsService } from '../leads.service';
 import { LeadLostReasonsService } from '../lost-reasons.service';
@@ -42,6 +45,8 @@ vi.setConfig({ testTimeout: 60_000, hookTimeout: 180_000 });
 let h: Harness;
 let app: INestApplication;
 let baseUrl: string;
+let opportunitiesService: OpportunitiesService;
+let activitiesService: ActivitiesService;
 
 beforeAll(async () => {
   h = await startHarness({ Pool, drizzle });
@@ -59,7 +64,7 @@ beforeAll(async () => {
     h.roleCache,
     h.notify,
   );
-  const customersService = new CustomersService(h.db, numbering, authz, h.caller);
+  const customersService = new CustomersService(h.db, numbering, authz, h.caller, audit);
   const convertService = new LeadConvertService(
     h.db,
     authz,
@@ -67,7 +72,16 @@ beforeAll(async () => {
     numbering,
     customersService,
     h.caller,
+    h.roleCache,
   );
+  opportunitiesService = new OpportunitiesService(
+    h.db,
+    authz,
+    audit,
+    h.caller,
+    new LeadLostReasonsService(h.db, audit, h.caller),
+  );
+  activitiesService = new ActivitiesService(h.db, authz, audit, h.caller, h.roleCache, h.notify);
   const moduleRef = await Test.createTestingModule({
     controllers: [LeadsController, LeadConvertController],
     providers: [
@@ -526,5 +540,351 @@ describe('POST /v1/leads/:id/convert', () => {
     const denied = await convert(lead.id, createCustomerBody());
     expect(denied.status).toBe(403);
     expect(await leadRow(lead.id)).toMatchObject({ stage: 'qualified' });
+  });
+});
+
+describe('the lead creator on the opportunity (FX-Q1)', () => {
+  let salesStaff: string;
+  let pmo: string;
+  let colleague: string;
+
+  beforeAll(async () => {
+    const salesDept = await h.department('Sales FX');
+    salesStaff = await h.member({ roles: ['sales'], departmentId: salesDept, displayName: 'Sam' });
+    colleague = await h.member({ roles: ['sales'], departmentId: salesDept, displayName: 'Cora' });
+    // PMO reads opportunities at `own` only, with no department in common with Sales: the lead creator is the
+    // one way it reaches a deal. (Finance and Accountant read every deal since 0123, so they cannot show it.)
+    pmo = await h.member({ roles: ['pmo'], displayName: 'Pia PMO' });
+  });
+
+  it('records who entered the lead, so PMO opens the deal it became and may quote on it', async () => {
+    // A deal PMO had no part in, the control: Sales enters and converts the lead itself.
+    await h.actAs(salesStaff);
+    const other = await qualifiedLead();
+    const otherRes = await convert(other.id, createCustomerBody());
+    expect(otherRes.status, JSON.stringify(otherRes.body)).toBe(201);
+    const { opportunityId: controlId } = otherRes.body as { opportunityId: string };
+
+    // PMO enters the lead for a Sales owner (D50) ...
+    await h.actAs(pmo);
+    const created = await request(baseUrl).post('/v1/leads').send({
+      title: 'PMO referral',
+      source: 'referral',
+      companyName: 'Acme Pvt. Ltd.',
+      contactName: 'Sita Rai',
+      ownerUserId: salesStaff,
+    });
+    expect(created.status, JSON.stringify(created.body)).toBe(201);
+    const lead = LeadDtoSchema.parse(created.body);
+    // ... and reaches no deal it did not originate.
+    await expect(opportunitiesService.get(controlId)).rejects.toMatchObject({ status: 404 });
+    const before = await opportunitiesService.list({ limit: 50, offset: 0 });
+    expect(before.items.map((o) => o.id)).not.toContain(controlId);
+
+    // The owner qualifies and converts it.
+    await h.actAs(salesStaff);
+    for (const [stage, expectedVersion] of [
+      ['contacted', 1],
+      ['qualified', 2],
+    ] as const) {
+      const moved = await request(baseUrl)
+        .patch(`/v1/leads/${lead.id}/stage`)
+        .send({ stage, expectedVersion });
+      expect(moved.status, JSON.stringify(moved.body)).toBe(200);
+    }
+    const res = await convert(lead.id, createCustomerBody());
+    expect(res.status, JSON.stringify(res.body)).toBe(201);
+    const { opportunityId } = res.body as { opportunityId: string };
+
+    // PMO holds crm.opportunity.read `own`: the creator reach now covers this deal, read only, and still not the
+    // control.
+    await h.actAs(pmo);
+    const seen = OpportunityDtoSchema.parse(await opportunitiesService.get(opportunityId));
+    expect(seen).toMatchObject({
+      id: opportunityId,
+      ownerUserId: salesStaff,
+      canEdit: false,
+      canDraftQuotation: true,
+      allowedMoves: [],
+    });
+    const listed = await opportunitiesService.list({ limit: 50, offset: 0 });
+    expect(listed.items.map((o) => o.id)).toContain(opportunityId);
+    expect(listed.items.map((o) => o.id)).not.toContain(controlId);
+    await expect(opportunitiesService.get(controlId)).rejects.toMatchObject({ status: 404 });
+    expect(await opportunityRow(opportunityId)).toMatchObject({
+      ownerUserId: salesStaff,
+      leadCreatorUserId: pmo,
+    });
+    // Reading is not changing the deal (D55-3): PMO holds no opportunity write at all.
+    await expect(
+      opportunitiesService.changeStage(opportunityId, {
+        stage: 'requirement_received',
+        expectedVersion: 1,
+      }),
+    ).rejects.toMatchObject({ status: 403 });
+
+    // A colleague with only an assigned follow-up reads the deal but may not quote on it (FX-Q2).
+    await withTx(h.db, h.scopeA, systemActor('test'), (tx) =>
+      tx.insert(activities).values({
+        ...h.scopeA,
+        kind: 'call',
+        subject: 'Call the buyer',
+        opportunityId,
+        dueAt: new Date(Date.now() + 86_400_000),
+        assigneeUserId: colleague,
+        createdByUserId: salesStaff,
+      }),
+    );
+    await h.actAs(colleague);
+    expect(OpportunityDtoSchema.parse(await opportunitiesService.get(opportunityId))).toMatchObject(
+      {
+        canEdit: false,
+        canDraftQuotation: false,
+      },
+    );
+    // The owner may.
+    await h.actAs(salesStaff);
+    expect(OpportunityDtoSchema.parse(await opportunitiesService.get(opportunityId))).toMatchObject(
+      {
+        canEdit: true,
+        canDraftQuotation: true,
+      },
+    );
+  });
+
+  it('leaves the lead creator empty for a lead without a known creator', async () => {
+    const lead = await qualifiedLead();
+    await withTx(h.db, h.scopeA, systemActor('test'), (tx) =>
+      tx.update(leads).set({ createdByUserId: null }).where(eq(leads.id, lead.id)),
+    );
+    const res = await convert(lead.id, createCustomerBody());
+    expect(res.status, JSON.stringify(res.body)).toBe(201);
+    const { opportunityId } = res.body as { opportunityId: string };
+    expect(await opportunityRow(opportunityId)).toMatchObject({ leadCreatorUserId: null });
+  });
+});
+
+describe("a lead's open follow-ups carry to the opportunity (U16-Q6)", () => {
+  let salesStaff: string;
+  let peer: string;
+  let marketing: string;
+
+  beforeAll(async () => {
+    const salesDept = await h.department('Sales Carry');
+    salesStaff = await h.member({ roles: ['sales'], departmentId: salesDept, displayName: 'Sam' });
+    peer = await h.member({ roles: ['sales'], departmentId: salesDept, displayName: 'Pia' });
+    marketing = await h.member({ roles: ['marketing'], displayName: 'Maya Marketing' });
+  });
+
+  const activityRow = async (id: string) =>
+    (await h.db.select().from(activities).where(eq(activities.id, id)))[0]!;
+
+  async function onLead(
+    leadId: string,
+    assigneeUserId: string | null,
+    extra: { subject: string; body?: string; due?: boolean; completed?: boolean },
+  ) {
+    const [row] = await withTx(h.db, h.scopeA, systemActor('test'), (tx) =>
+      tx
+        .insert(activities)
+        .values({
+          ...h.scopeA,
+          kind: 'call',
+          subject: extra.subject,
+          body: extra.body ?? null,
+          leadId,
+          dueAt: extra.due === false ? null : new Date('2026-12-01T09:30:00Z'),
+          assigneeUserId,
+          createdByUserId: salesStaff,
+          completedAt: extra.completed === true ? new Date() : null,
+        })
+        .returning(),
+    );
+    return row!;
+  }
+
+  it('moves the planned follow-ups, with assignee, due time and text, and keeps the history on the lead', async () => {
+    await h.actAs(salesStaff);
+    const lead = await qualifiedLead();
+    const mine = await onLead(lead.id, salesStaff, {
+      subject: 'Send proposal',
+      body: 'Bring pricing',
+    });
+    const peers = await onLead(lead.id, peer, { subject: 'Site visit' });
+    const done = await onLead(lead.id, salesStaff, { subject: 'First call', completed: true });
+    const logged = await onLead(lead.id, salesStaff, { subject: 'Logged call', due: false });
+
+    const res = await convert(lead.id, createCustomerBody());
+    expect(res.status, JSON.stringify(res.body)).toBe(201);
+    const { opportunityId } = res.body as { opportunityId: string };
+
+    for (const before of [mine, peers]) {
+      const after = await activityRow(before.id);
+      expect(after).toMatchObject({
+        leadId: null,
+        opportunityId,
+        assigneeUserId: before.assigneeUserId,
+        dueAt: before.dueAt,
+        subject: before.subject,
+        body: before.body,
+        kind: before.kind,
+        completedAt: null,
+        cancelledAt: null,
+        version: before.version + 1,
+      });
+    }
+    for (const kept of [done, logged]) {
+      expect(await activityRow(kept.id)).toMatchObject({ leadId: lead.id, opportunityId: null });
+    }
+    const { rows } = await h.ownerPool.query(
+      `SELECT entity_id, before, after FROM audit.audit_events
+        WHERE tenant_id = $1 AND action = 'activity.carried_to_opportunity' ORDER BY entity_id`,
+      [h.tenantId],
+    );
+    const carried = (rows as { entity_id: string; before: unknown; after: unknown }[]).filter(
+      (r) => r.entity_id === mine.id || r.entity_id === peers.id,
+    );
+    expect(carried).toHaveLength(2);
+    for (const r of carried) {
+      expect(r.before).toEqual({ leadId: lead.id });
+      expect(r.after).toEqual({ opportunityId });
+    }
+
+    // The owner lists them as the deal's planned activities, and plans a new one through the same API.
+    const planned = ListActivitiesQuerySchema.parse({ opportunityId, status: 'planned' });
+    expect((await activitiesService.list(planned)).items.map((a) => a.id).sort()).toEqual(
+      [mine.id, peers.id].sort(),
+    );
+    const added = await activitiesService.create({
+      kind: 'meeting',
+      subject: 'Negotiation meeting',
+      dueAt: '2026-12-05T10:00:00.000Z',
+      opportunityId,
+    });
+    expect(added).toMatchObject({ opportunityId, planned: true, assigneeUserId: salesStaff });
+    expect((await activitiesService.list(planned)).items.map((a) => a.id)).toContain(added.id);
+
+    // The peer still holds their follow-up on the deal and completes it there (D55-5).
+    await h.actAs(peer);
+    const theirs = (await activitiesService.list(planned)).items.find((a) => a.id === peers.id);
+    expect(theirs).toBeDefined();
+    expect(
+      await activitiesService.complete(peers.id, { expectedVersion: theirs!.version }),
+    ).toMatchObject({ id: peers.id, planned: false, opportunityId });
+  });
+
+  /**
+   * A colleague's change to a follow-up, held uncommitted on a second connection (raw SQL standing in for the
+   * complete and reschedule routes) while the lead converts; committed once the convert waits on it. Returns the
+   * wait the convert was in, whether it was still pending at the commit, and its response.
+   *
+   * These pin a serialization the carry relies on rather than test a lock of its own: every audited write takes the
+   * tenant's audit chain lock until COMMIT (audit.append, 0008_audit_hardening.sql), and the convert's first
+   * statement is its audited Idempotency-Key row. So a colleague's change lands wholly before the convert reads the
+   * lead's follow-ups, or after it commits, never between the read and the move. They go red if that is loosened.
+   */
+  async function convertWhileHeld(leadId: string, change: string, params: unknown[]) {
+    // The harness types its pools by the calls it makes; this one is a real pg Pool.
+    const client = await (h.ownerPool as unknown as Pool).connect();
+    let converting: Promise<request.Response> | undefined;
+    try {
+      await client.query('BEGIN');
+      // What withTx sets first: the audit trigger on activities names the actor.
+      const actor = systemActor('test');
+      await client.query(
+        `SELECT set_config('bos.tenant_id', $1, true), set_config('bos.organization_id', $2, true),
+                set_config('bos.actor_kind', $3, true), set_config('bos.actor_id', $4, true),
+                set_config('bos.correlation_id', $5, true)`,
+        [h.scopeA.tenantId, h.scopeA.organizationId, actor.kind, actor.id, actor.correlationId],
+      );
+      await client.query(change, params);
+      let settled = false;
+      converting = convert(leadId, createCustomerBody()).then((res) => {
+        settled = true;
+        return res;
+      });
+      // Wait for a signal, not a clock: either the convert is blocked on a lock, or it finished.
+      let blocked: { query: string; wait_event: string } | undefined;
+      while (blocked === undefined && !settled) {
+        const { rows } = await h.appPool.query(
+          `SELECT query, wait_event FROM pg_stat_activity
+            WHERE datname = current_database() AND wait_event_type = 'Lock'`,
+        );
+        blocked = (rows as { query: string; wait_event: string }[])[0];
+        if (blocked === undefined) await new Promise((resolve) => setImmediate(resolve));
+      }
+      const pendingAtCommit = !settled;
+      await client.query('COMMIT');
+      return { blocked, pendingAtCommit, res: await converting };
+    } finally {
+      await client.query('ROLLBACK').catch(() => undefined);
+      await converting?.catch(() => undefined);
+      client.release();
+    }
+  }
+
+  it('leaves a follow-up completed while the lead converts on the lead, as its history', async () => {
+    await h.actAs(salesStaff);
+    const lead = await qualifiedLead();
+    const call = await onLead(lead.id, salesStaff, { subject: 'Call back' });
+    const { blocked, pendingAtCommit, res } = await convertWhileHeld(
+      lead.id,
+      `UPDATE app.activities SET completed_at = now(), version = version + 1 WHERE id = $1`,
+      [call.id],
+    );
+    expect(res.status, JSON.stringify(res.body)).toBe(201);
+    expect(pendingAtCommit, 'the convert did not wait for the colleague').toBe(true);
+    // It waits at its first audited write, before it reads the lead's follow-ups.
+    expect(blocked).toMatchObject({ wait_event: 'advisory' });
+    expect(blocked?.query).toMatch(/insert into "app"\."idempotency_keys"/i);
+    const after = await activityRow(call.id);
+    expect(after).toMatchObject({ leadId: lead.id, opportunityId: null });
+    expect(after.completedAt).not.toBeNull();
+  });
+
+  it('leaves a follow-up on the lead when it is handed, while the lead converts, to someone who cannot open deals', async () => {
+    await h.actAs(salesStaff);
+    const lead = await qualifiedLead();
+    const call = await onLead(lead.id, salesStaff, { subject: 'Send the brochure' });
+    const { blocked, pendingAtCommit, res } = await convertWhileHeld(
+      lead.id,
+      `UPDATE app.activities SET assignee_user_id = $2, version = version + 1 WHERE id = $1`,
+      [call.id, marketing],
+    );
+    expect(res.status, JSON.stringify(res.body)).toBe(201);
+    expect(pendingAtCommit, 'the convert did not wait for the colleague').toBe(true);
+    expect(blocked).toMatchObject({ wait_event: 'advisory' });
+    expect(await activityRow(call.id)).toMatchObject({
+      leadId: lead.id,
+      opportunityId: null,
+      assigneeUserId: marketing,
+      completedAt: null,
+    });
+  });
+
+  it('leaves a follow-up on the lead when its assignee cannot open deals (Marketing)', async () => {
+    await h.actAs(salesStaff);
+    const lead = await qualifiedLead();
+    const theirs = await onLead(lead.id, marketing, { subject: 'Send the brochure' });
+    const mine = await onLead(lead.id, salesStaff, { subject: 'Book the demo' });
+    const res = await convert(lead.id, createCustomerBody());
+    expect(res.status, JSON.stringify(res.body)).toBe(201);
+    const { opportunityId } = res.body as { opportunityId: string };
+    expect(await activityRow(mine.id)).toMatchObject({ leadId: null, opportunityId });
+    expect(await activityRow(theirs.id)).toMatchObject({
+      leadId: lead.id,
+      opportunityId: null,
+      assigneeUserId: marketing,
+      version: theirs.version,
+    });
+    // Still theirs to finish, on the converted lead they can open.
+    await h.actAs(marketing);
+    const listed = await activitiesService.list(
+      ListActivitiesQuerySchema.parse({ status: 'planned' }),
+    );
+    expect(listed.items.map((a) => a.id)).toContain(theirs.id);
+    expect(
+      await activitiesService.complete(theirs.id, { expectedVersion: theirs.version }),
+    ).toMatchObject({ id: theirs.id, planned: false });
   });
 });

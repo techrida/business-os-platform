@@ -15,9 +15,9 @@ import { loadPeople } from '@/components/p2/crm/people';
 import { PutOnHoldDialog } from '@/components/p2/crm/put-on-hold-dialog';
 import { ActivityList, LoadProblem, StageBadge } from '@/components/p2/crm/server-bits';
 import { StageConfirmDialog } from '@/components/p2/crm/stage-confirm-dialog';
-import { resolvedMoves, stageLabel } from '@/components/p2/crm/stages';
+import { resolvedMoves, resumeMove, stageLabel, stagesBefore } from '@/components/p2/crm/stages';
 import { Alert } from '@/components/ui/alert';
-import { Button, LinkButton } from '@/components/ui/button';
+import { LinkButton } from '@/components/ui/button';
 import { Card } from '@/components/ui/card';
 import { Icon } from '@/components/ui/icon';
 import { Breadcrumb, Page, PageHeader } from '@/components/ui/page';
@@ -138,13 +138,32 @@ function latestStageChange(
   return latest;
 }
 
-function leadTimeline(lead: LeadDto, activity: readonly ActivityDto[]): TimelineStep[] {
-  const current = milestones.findIndex((stage) => stage === lead.stage);
-  const steps = milestones.map((stage, index): TimelineStep => {
-    const change = latestStageChange(activity, stage);
+/**
+ * The stages this lead has actually reached (D48, F1-Q53): New (it was created there), the stage it
+ * stands at or was held at, every stage it recorded a move into, and the stages the state machine
+ * says it passed through on the way (`stagesBefore`). Nothing is marked by position alone.
+ */
+function reachedLeadStages(lead: LeadDto, history: readonly ActivityDto[] | null): Set<string> {
+  const reached = new Set<string>(['new']);
+  const add = (stage: string) => {
+    reached.add(stage);
+    for (const before of stagesBefore('lead', stage)) reached.add(before);
+  };
+  add(lead.stage);
+  if (lead.stage === 'on_hold' && lead.heldFromStage) add(lead.heldFromStage);
+  for (const stage of milestones) {
+    if (history && latestStageChange(history, stage)) add(stage);
+  }
+  return reached;
+}
+
+function leadTimeline(lead: LeadDto, history: readonly ActivityDto[] | null): TimelineStep[] {
+  const reached = reachedLeadStages(lead, history);
+  const steps = milestones.map((stage): TimelineStep => {
+    const change = history ? latestStageChange(history, stage) : undefined;
     const date = stage === 'new' ? lead.createdAt : change?.occurredAt;
     const isCurrent = stage === lead.stage;
-    const done = index < current || date !== undefined;
+    const done = reached.has(stage);
     return {
       key: stage,
       title: stageLabel('lead', stage),
@@ -154,7 +173,7 @@ function leadTimeline(lead: LeadDto, activity: readonly ActivityDto[]): Timeline
   });
 
   if (lead.stage === 'on_hold' || lead.stage === 'lost') {
-    const change = latestStageChange(activity, lead.stage);
+    const change = history ? latestStageChange(history, lead.stage) : undefined;
     steps.push({
       key: lead.stage,
       title: stageLabel('lead', lead.stage),
@@ -165,7 +184,12 @@ function leadTimeline(lead: LeadDto, activity: readonly ActivityDto[]): Timeline
   return steps;
 }
 
-function leadStageMessage(stage: LeadDto['stage'], canEdit: boolean, canReopen: boolean): string {
+function leadStageMessage(
+  stage: LeadDto['stage'],
+  canEdit: boolean,
+  canReopen: boolean,
+  resumeLabel: string | null,
+): string {
   if (!canEdit) return 'You have read-only access to this lead.';
   if (stage === 'new') {
     return 'Log a call or email with Mark contacted to move this lead to Contacted.';
@@ -177,12 +201,14 @@ function leadStageMessage(stage: LeadDto['stage'], canEdit: boolean, canReopen: 
     return 'Qualifying is complete. Convert this lead to an opportunity, put it on hold, or mark it lost.';
   }
   if (stage === 'on_hold') {
-    return 'This lead is on hold. Use Resume in the header to move it back to Contacted.';
+    return resumeLabel
+      ? `This lead is on hold. Use Resume in the header to move it back to ${resumeLabel}.`
+      : 'This lead is on hold.';
   }
   if (stage === 'lost') {
     return canReopen
       ? 'This lead is lost. Use Reopen in the header to return it to Contacted.'
-      : 'Only a manager can reopen a lost lead.';
+      : 'This lead is lost. Reopening needs reopen access.';
   }
   return 'This lead is converted. Its stage is final.';
 }
@@ -193,12 +219,15 @@ export default async function LeadPage({ params }: { params: Promise<{ id: strin
   const session = await requireStaffSession(`/leads/${id}`);
   const numberSystems = await getNumberSystems();
 
-  const [leadResult, plannedResult, loggedResult, peopleResult] = await Promise.allSettled([
-    getLead(session, id),
-    listActivities(session, { leadId: id, status: 'planned', limit: 100 }),
-    listActivities(session, { leadId: id, status: 'logged', limit: 100 }),
-    loadPeople(session),
-  ]);
+  const [leadResult, plannedResult, loggedResult, historyResult, peopleResult] =
+    await Promise.allSettled([
+      getLead(session, id),
+      listActivities(session, { leadId: id, status: 'planned', limit: 100 }),
+      listActivities(session, { leadId: id, status: 'logged', limit: 100 }),
+      // The stage history on its own, so a busy lead's 100 newest activities cannot crowd it out.
+      listActivities(session, { leadId: id, kind: 'stage_change', limit: 100 }),
+      loadPeople(session),
+    ]);
 
   if (leadResult.status === 'rejected') {
     const f = failureOf(leadResult.reason);
@@ -218,7 +247,12 @@ export default async function LeadPage({ params }: { params: Promise<{ id: strin
   const lead = leadResult.value;
   const canEdit = lead.canEdit ?? (await getPermissionCheck(session))('crm.lead.write');
   const currentUserId = (await getMeOrNull(session.accessToken))?.id ?? null;
-  const moves = resolvedMoves('lead', lead.stage, lead.allowedMoves ?? (canEdit ? undefined : []));
+  const moves = resolvedMoves(
+    'lead',
+    lead.stage,
+    lead.allowedMoves ?? (canEdit ? undefined : []),
+    lead.heldFromStage,
+  );
   const planned = plannedResult.status === 'fulfilled' ? plannedResult.value : null;
   const plannedProblem =
     plannedResult.status === 'rejected' ? failureOf(plannedResult.reason).message : null;
@@ -234,12 +268,22 @@ export default async function LeadPage({ params }: { params: Promise<{ id: strin
   const hasMove = (stage: string) => moves.some((move) => move.stage === stage);
   const canMarkContacted = lead.stage === 'new' && hasMove('contacted');
   const canQualify = lead.stage === 'contacted' && hasMove('qualified');
-  const canResume = lead.stage === 'on_hold' && hasMove('contacted');
+  // A held lead resumes only to the stage it was held at (F1-Q53): the server sends that one move.
+  const resume = resumeMove(lead.stage, moves);
+  const canResume = resume !== null;
   const canReopen = lead.stage === 'lost' && hasMove('contacted');
+  // Convert is its own action, not a stage move: the qualified lead's editors get it in the header.
+  const canConvert = lead.stage === 'qualified' && canEdit;
   const canPutOnHold = hasMove('on_hold');
   const canMarkLost = hasMove('lost');
   const hasHeaderActions =
-    canMarkContacted || canQualify || canResume || canReopen || canPutOnHold || canMarkLost;
+    canMarkContacted ||
+    canQualify ||
+    canConvert ||
+    canResume ||
+    canReopen ||
+    canPutOnHold ||
+    canMarkLost;
   // The options Mark lost offers (D49). Only asked for when the action is shown; a failure leaves the dialog able to add one.
   const lostReasons = canMarkLost ? await listLeadLostReasonChoices(session).catch(() => []) : [];
   const reasonLabel = lead.lostReason?.label ?? lead.stageReason;
@@ -277,18 +321,37 @@ export default async function LeadPage({ params }: { params: Promise<{ id: strin
                   variant="primary"
                 />
               ) : null}
-              {canResume ? (
+              {canConvert ? (
+                <ConvertDialog
+                  action={convertLeadAction}
+                  lead={{
+                    id: lead.id,
+                    version: lead.version,
+                    number: lead.number,
+                    title: lead.title,
+                    companyName: lead.companyName,
+                    contactName: lead.contactName,
+                    email: lead.email ?? '',
+                    phone: lead.phone ?? '',
+                    requirement: lead.requirement,
+                    value: moneyOrNull(lead.expectedValue, lead.currency, numberSystems),
+                    probability: lead.probability,
+                    expectedClose: lead.expectedClose ? when(lead.expectedClose, 'date') : null,
+                  }}
+                />
+              ) : null}
+              {resume ? (
                 <StageConfirmDialog
                   action={moveLeadStageAction}
                   id={lead.id}
                   version={lead.version}
-                  stage="contacted"
+                  stage={resume.stage}
                   triggerLabel="Resume"
                   triggerVariant="primary"
                   title="Resume this lead?"
-                  description={`${lead.number} will move from On Hold back to Contacted.`}
+                  description={`${lead.number} will move from On Hold back to ${resume.label}.`}
                   confirmLabel="Resume lead"
-                  successMessage="Moved to Contacted."
+                  successMessage={`Moved to ${resume.label}.`}
                   errorMessage="The lead could not be resumed."
                 />
               ) : null}
@@ -332,7 +395,13 @@ export default async function LeadPage({ params }: { params: Promise<{ id: strin
       />
 
       <Card className={styles.timelineCard}>
-        <StatusTimeline label="Lead progression" steps={leadTimeline(lead, logged ?? [])} />
+        <StatusTimeline
+          label="Lead progression"
+          steps={leadTimeline(
+            lead,
+            historyResult.status === 'fulfilled' ? historyResult.value : null,
+          )}
+        />
         {hasReasonDetail ? (
           <div className={styles.timelineReason}>
             <Alert
@@ -402,51 +471,18 @@ export default async function LeadPage({ params }: { params: Promise<{ id: strin
         </div>
 
         <div className={styles.detailStack}>
-          <Panel
-            id="lead-conversion"
-            title={lead.convertedOpportunityId ? 'Opportunity' : 'Convert to opportunity'}
-            className={styles.detailPanel}
-            as="aside"
-          >
-            {lead.stage === 'qualified' ? (
-              canEdit ? (
-                <>
-                  <p className={styles.quiet}>
-                    Create an opportunity using this lead’s details. The lead will link to the new
-                    opportunity.
-                  </p>
-                  <ConvertDialog
-                    action={convertLeadAction}
-                    lead={{
-                      id: lead.id,
-                      version: lead.version,
-                      number: lead.number,
-                      title: lead.title,
-                      companyName: lead.companyName,
-                      contactName: lead.contactName,
-                      email: lead.email ?? '',
-                      phone: lead.phone ?? '',
-                      requirement: lead.requirement,
-                      value: moneyOrNull(lead.expectedValue, lead.currency, numberSystems),
-                      probability: lead.probability,
-                      expectedClose: lead.expectedClose ? when(lead.expectedClose, 'date') : null,
-                    }}
-                  />
-                </>
-              ) : (
-                <p className={styles.quiet}>You have read-only access to this lead.</p>
-              )
-            ) : lead.convertedOpportunityId ? (
+          {lead.convertedOpportunityId ? (
+            <Panel
+              id="lead-conversion"
+              title="Opportunity"
+              className={styles.detailPanel}
+              as="aside"
+            >
               <LinkButton href={`/opportunities/${lead.convertedOpportunityId}`}>
                 Open the opportunity <Icon name="chevron-right" size={16} />
               </LinkButton>
-            ) : (
-              <>
-                <p className={styles.quiet}>Qualify this lead to unlock conversion.</p>
-                <Button disabled>Convert to opportunity</Button>
-              </>
-            )}
-          </Panel>
+            </Panel>
+          ) : null}
 
           {plannedProblem !== null ? (
             // An empty card would claim nothing is planned; say the list did not load instead.
@@ -478,7 +514,9 @@ export default async function LeadPage({ params }: { params: Promise<{ id: strin
             <div>
               <StageBadge kind="lead" stage={lead.stage} />
             </div>
-            <p className={styles.quiet}>{leadStageMessage(lead.stage, canEdit, canReopen)}</p>
+            <p className={styles.quiet}>
+              {leadStageMessage(lead.stage, canEdit, canReopen, resume?.label ?? null)}
+            </p>
           </Panel>
         </div>
       </div>

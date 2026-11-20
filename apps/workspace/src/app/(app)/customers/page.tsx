@@ -32,6 +32,8 @@ import {
   type RawParams,
 } from '@/lib/list-params';
 
+import { OwnerCell } from '../leads/lead-cells';
+
 import { companyLogo } from './_lib/company-logo';
 import { CustomerFilters, RELATIONSHIP_LABEL } from './customer-filters';
 import styles from './customers.module.css';
@@ -108,6 +110,10 @@ function Row({
       </Td>
       <Td>{c.industry ?? <span className={styles.quiet}>Not set</span>}</Td>
       <Td nowrap>{c.panVatNo ?? <span className={styles.quiet}>Not set</span>}</Td>
+      <Td nowrap>
+        {/* U15a-Q3, D46: the owner's name as the list sends it; no directory lookup. */}
+        <OwnerCell name={c.ownerName ?? null} seedId={c.ownerUserId} />
+      </Td>
       <Td nowrap>
         <time dateTime={c.updatedAt}>{when(c.updatedAt, 'date')}</time>
       </Td>
@@ -274,12 +280,13 @@ export default async function CustomersPage({
             </Alert>
           ) : null}
           <div className={styles.directory}>
-            <Table caption="Organizations" minWidth={740} className={styles.table ?? ''}>
+            <Table caption="Organizations" minWidth={900} className={styles.table ?? ''}>
               <thead>
                 <tr>
                   <Th className={styles.organizationColumn}>Organization</Th>
                   <Th>Industry</Th>
                   <Th>PAN/VAT</Th>
+                  <Th>Owner</Th>
                   <Th>Updated</Th>
                   <Th>Relationship</Th>
                   {mayWrite ? (

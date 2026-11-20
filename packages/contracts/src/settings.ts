@@ -120,6 +120,12 @@ export const SETTINGS = {
   'format.date': DateFormatSchema,
   /** Saved wording the quotation form offers for payment terms, scope and the like. */
   'quotation.term_presets': TermPresetListSchema,
+  /**
+   * F1-Q21: who owns a new lead when its creator may not own it and names no owner (Finance, Accountant and PMO
+   * starting leads for Sales; the intended home of website leads). Per entity. A user id; null (the default) keeps
+   * today's choice, the Sales head. A user who could not be handed the lead then is skipped the same way.
+   */
+  'crm.default_lead_owner': z.guid().nullable(),
   ...P4_SETTINGS,
   ...DELIVERY_HOLD_SETTINGS,
 } as const;
@@ -160,6 +166,11 @@ export const P2_SETTING_DEFAULTS = {
   ]: z.infer<(typeof SETTINGS)[K]>;
 };
 
+/** Defaults of the CRM keys (F1-Q21). Null keeps today's behaviour: the Sales head owns a lead nobody would. */
+export const CRM_SETTING_DEFAULTS = {
+  'crm.default_lead_owner': null,
+} as const satisfies { [K in 'crm.default_lead_owner']: z.infer<(typeof SETTINGS)[K]> };
+
 /** Defaults of the P3 keys. The API's SETTING_DEFAULTS spreads these in beside the P2 ones. */
 export const P3_SETTING_DEFAULTS = {
   'sales.default_schedule': DEFAULT_SALES_SCHEDULE,
@@ -181,6 +192,7 @@ export const SETTING_DEFAULTS: { readonly [K in SettingKey]: SettingValue<K> } =
   'approvals.sla_defaults': SlaSpecSchema.parse({}),
   ...P2_SETTING_DEFAULTS,
   ...P3_SETTING_DEFAULTS,
+  ...CRM_SETTING_DEFAULTS,
   ...P4_SETTING_DEFAULTS,
   ...DELIVERY_HOLD_SETTING_DEFAULTS,
   ...DOCUMENT_SETTING_DEFAULTS,
