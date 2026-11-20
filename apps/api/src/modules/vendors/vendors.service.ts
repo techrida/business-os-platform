@@ -14,6 +14,7 @@ import {
   type CreateVendorBody,
   type Permission,
   type VendorAccountDto,
+  type VendorCapabilities,
   type VendorContactBody,
   type VendorDto,
   type VendorStatus,
@@ -41,7 +42,7 @@ import { randomUUID } from 'node:crypto';
 
 import { AuditService } from '../../platform/audit/audit.service';
 import { AuthzService } from '../../platform/authz/authz.service';
-import { type Principal, type ResourceRef } from '../../platform/authz/can';
+import { can, type Principal, type ResourceRef } from '../../platform/authz/can';
 import { DB, type Db, type DbTransaction } from '../../platform/db/db.module';
 import { updateVersioned, withIdempotency } from '../../platform/db/idempotency';
 import { withTx } from '../../platform/db/tx';
@@ -84,7 +85,33 @@ const ACCOUNT_UNIQUE = 'vendor_accounts_tenant_org_vendor_unique';
 const vendorNotFound = () =>
   new NotFoundException({ code: 'not_found', message: 'Vendor not found' });
 
-export function toVendorDto(row: VendorRow): VendorDto {
+/**
+ * What `principal` may do on `row` now, by the same live grants, lifecycle transitions and creator SoD
+ * rules the service enforces. Pure, so screens and tests need no database.
+ */
+export function vendorCapabilities(
+  principal: Principal,
+  row: Pick<VendorRow, 'id' | 'tenantId' | 'ownerUserId' | 'createdBy' | 'status'>,
+): VendorCapabilities {
+  const isStaff = principal.orgKind === 'staff';
+  const ref = vendorRef(row, principal);
+  const mayWrite = isStaff && can(principal, 'vendor.write', ref).allowed;
+  const mayActivate = isStaff && can(principal, 'vendor.activate', ref).allowed;
+  const isCreator = row.createdBy !== null && row.createdBy === principal.userId;
+  const canActivateStatus = lifecycleAllowed('activate', row.status);
+  return {
+    write: mayWrite,
+    activate: canActivateStatus && mayActivate && !isCreator,
+    suspend: lifecycleAllowed('suspend', row.status) && mayActivate,
+    block: lifecycleAllowed('block', row.status) && mayActivate,
+    archive: lifecycleAllowed('archive', row.status) && mayActivate,
+    activateBlockedBySod: canActivateStatus && mayActivate && isCreator,
+    proposeBank: isStaff && can(principal, 'vendor.bank.propose', ref).allowed,
+    verifyBank: isStaff && can(principal, 'vendor.bank.verify', ref).allowed,
+  };
+}
+
+export function toVendorDto(row: VendorRow, principal?: Principal): VendorDto {
   return {
     id: row.id,
     legalName: row.legalName,
@@ -98,6 +125,7 @@ export function toVendorDto(row: VendorRow): VendorDto {
     version: row.version,
     approvedAt: null,
     logoDocumentId: row.logoDocumentId,
+    ...(principal === undefined ? {} : { can: vendorCapabilities(principal, row) }),
   };
 }
 
@@ -129,7 +157,10 @@ export function toAccountDto(row: AccountRow, netDays: number | null): VendorAcc
  * What authz decides on for one vendor. A vendor is tenant-level, so the entity of the ref is the caller's acting
  * entity (every entity of the tenant sees every vendor); `vendorPartyId` is the vendor's own party id.
  */
-export function vendorRef(row: VendorRow, p: Principal): ResourceRef {
+export function vendorRef(
+  row: Pick<VendorRow, 'id' | 'tenantId' | 'ownerUserId'>,
+  p: Principal,
+): ResourceRef {
   return {
     tenantId: row.tenantId,
     organizationId: p.organizationId,
@@ -222,7 +253,7 @@ export class VendorsService {
         return count?.n ?? 0;
       },
     });
-    return { items: rows.map(toVendorDto), total };
+    return { items: rows.map((row) => toVendorDto(row, principal)), total };
   }
 
   // --------------------------------------------------------------------------------------------------- read
@@ -232,7 +263,7 @@ export class VendorsService {
     const row = await this.find(this.db, scope.tenantId, id);
     if (row === undefined) throw vendorNotFound();
     this.assertVisible('vendor.read', row, principal);
-    return toVendorDto(row);
+    return toVendorDto(row, principal);
   }
 
   // ------------------------------------------------------------------------------------------------- create
@@ -295,7 +326,7 @@ export class VendorsService {
               createdAt: now,
               updatedAt: now,
             });
-            return { status: 201, response: toVendorDto(row!) };
+            return { status: 201, response: toVendorDto(row!, principal) };
           } catch (error) {
             // Two creates with the same PAN can both pass the pre-check; the unique index decides.
             if (pan !== null && isUnique(error, PAN_INDEX)) throw duplicatePan(pan);
@@ -366,7 +397,7 @@ export class VendorsService {
             .set({ name: fields.legalName, updatedAt: now })
             .where(and(eq(parties.tenantId, scope.tenantId), eq(parties.id, id)));
         }
-        return toVendorDto(updated);
+        return toVendorDto(updated, principal);
       } catch (error) {
         if (fields.pan !== undefined && isUnique(error, PAN_INDEX)) throw duplicatePan(fields.pan);
         throw error;
@@ -432,7 +463,7 @@ export class VendorsService {
             before: { status: row.status },
             after: { status: to },
           });
-          return { status: 200, response: toVendorDto(updated) };
+          return { status: 200, response: toVendorDto(updated, principal) };
         },
       );
       return done.response;
@@ -500,7 +531,7 @@ export class VendorsService {
             before: { status: row.status },
             after: { status: to, ...(reason === undefined ? {} : { reason }) },
           });
-          return { status: 200, response: toVendorDto(updated) };
+          return { status: 200, response: toVendorDto(updated, principal) };
         },
       );
       return done.response;

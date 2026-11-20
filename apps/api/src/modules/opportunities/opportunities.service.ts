@@ -26,7 +26,6 @@ import { and, desc, eq, inArray, sql, type SQL } from 'drizzle-orm';
 
 import { AuditService } from '../../platform/audit/audit.service';
 import { AuthzService, scopeWhereFor } from '../../platform/authz/authz.service';
-import { type ResourceRef } from '../../platform/authz/can';
 import { loadRecordReaders, type RecordReaders } from '../../platform/authz/record-reach';
 import { DB, type Db } from '../../platform/db/db.module';
 import { updateVersioned } from '../../platform/db/idempotency';
@@ -42,32 +41,20 @@ import {
   type OpportunityRow,
   toOpportunityDto,
 } from './opportunities.types';
-import { planStageChange, type StageCaller, type StageChangeRefusal } from './opportunity-stage';
+import {
+  isStageManager,
+  opportunityRef,
+  planStageChange,
+  type StageCaller,
+  type StageChangeRefusal,
+} from './opportunity-stage';
+
+export { allowedOpportunityMoves, opportunityRef } from './opportunity-stage';
 
 const AUDIT_ENTITY = 'opportunities';
 
 const notFound = () =>
   new NotFoundException({ code: 'not_found', message: 'Opportunity not found' });
-
-/**
- * What authz decides on for one opportunity: its entity, owner and department (stamped from the owner, migration
- * 0080), so a department grant reaches it. `readers` (its assignees, record-reach.ts) only for a read: assigned
- * reach never lets anyone change a deal (D55-3). No party column: a portal grant reaches no opportunity.
- */
-export function opportunityRef(
-  row: Pick<OpportunityRow, 'tenantId' | 'organizationId' | 'ownerUserId' | 'departmentId'>,
-  readers?: RecordReaders,
-): ResourceRef {
-  return {
-    tenantId: row.tenantId,
-    organizationId: row.organizationId,
-    ownerUserId: row.ownerUserId,
-    departmentId: row.departmentId,
-    ...(readers === undefined
-      ? {}
-      : { creatorUserId: readers.creatorUserId, assigneeUserIds: readers.assigneeUserIds }),
-  };
-}
 
 function refusalToException(kind: StageChangeRefusal, message: string): Error {
   switch (kind) {
@@ -165,6 +152,7 @@ export class OpportunitiesService {
           r.opportunity,
           nameIn(names, r.opportunity.ownerUserId),
           refs.get(r.opportunity.lostReasonId ?? '') ?? null,
+          principal,
         ),
       ),
       total,
@@ -172,7 +160,7 @@ export class OpportunitiesService {
   }
 
   async get(id: string): Promise<OpportunityDto> {
-    const { scope } = this.caller.current();
+    const { scope, principal } = this.caller.current();
     const [row] = await this.db
       .select()
       .from(opportunities)
@@ -188,21 +176,24 @@ export class OpportunitiesService {
       row,
       await this.ownerNameOf(this.db, row),
       await this.lostReasonOf(this.db, row),
+      principal,
     );
   }
 
   // ------------------------------------------------------------------------------------------ stage change
 
   /**
-   * A user's move. Over HTTP `by` is always `'user'`, so won, quotation_sent and the manager reopen are refused.
-   * Lost carries an option of the shared tenant list (D49, D54-3), or a new one added in the same step.
+   * A user's move. Over HTTP, won and quotation_sent are still refused; a manager, head or founder with write
+   * scope may also take the manager edge (reopening a lost opportunity). Lost carries an option of the shared
+   * tenant list (D49, D54-3), or a new one added in the same step.
    */
   async changeStage(
     id: string,
     body: OpportunityStageChangeBody,
-    by: StageCaller = 'user',
+    by?: StageCaller,
   ): Promise<OpportunityDto> {
-    const { scope, actor } = this.caller.current();
+    const { scope, actor, principal } = this.caller.current();
+    const callerBy: StageCaller = by ?? (isStageManager(principal) ? 'manager' : 'user');
     return withTx(this.db, scope, actor, async (tx) => {
       const row = await this.lock(tx, scope, id);
       // Scope first (404), then state (409): someone who may not edit learns nothing about the stage.
@@ -216,7 +207,7 @@ export class OpportunitiesService {
         current: row.stage,
         currentVersion: row.version,
         to: body.stage,
-        by,
+        by: callerBy,
         reason: body.stage === 'lost' ? 'probe' : body.reason,
         note: body.note,
         expectedVersion: body.expectedVersion,
@@ -231,7 +222,7 @@ export class OpportunitiesService {
         current: row.stage,
         currentVersion: row.version,
         to: body.stage,
-        by,
+        by: callerBy,
         reason,
         note: body.note,
         expectedVersion: body.expectedVersion,
@@ -267,6 +258,7 @@ export class OpportunitiesService {
         updated,
         await this.ownerNameOf(tx, updated),
         await this.lostReasonOf(tx, updated),
+        principal,
       );
     });
   }

@@ -45,7 +45,7 @@ import {
 
 import { AuditService } from '../../platform/audit/audit.service';
 import { AuthzService, scopeWhereFor } from '../../platform/authz/authz.service';
-import { can, type Principal, type ResourceRef } from '../../platform/authz/can';
+import { can, type Principal } from '../../platform/authz/can';
 import { loadRecordReaders, type RecordReaders } from '../../platform/authz/record-reach';
 import { RoleCache } from '../../platform/authz/role-cache';
 import { DB, type Db } from '../../platform/db/db.module';
@@ -76,7 +76,15 @@ import {
   type ListLeadsQuery,
   toLeadDto,
 } from './leads.types';
-import { planLeadStageChange, type LeadStageCaller, type LeadStageRefusal } from './lead-stage';
+import {
+  isStageManager,
+  leadRef,
+  planLeadStageChange,
+  type LeadStageCaller,
+  type LeadStageRefusal,
+} from './lead-stage';
+
+export { allowedLeadMoves, isStageManager, leadRef } from './lead-stage';
 
 const AUDIT_ENTITY = 'leads';
 
@@ -104,28 +112,6 @@ const shownName = (displayName: string | null): string => displayName?.trim() ||
 /** Picker order: by name, then id, so two people of one name keep a stable order. */
 const byName = (a: LeadOwnerOption, b: LeadOwnerOption): number =>
   a.displayName.localeCompare(b.displayName) || a.userId.localeCompare(b.userId);
-
-/**
- * What authz decides on for one lead. No party column: a portal grant reaches no lead. The department (stamped by
- * the database from the owner, D55-4) lets a department grant reach the lead. `readers` (record-reach.ts
- * `loadRecordReaders`) add the creator and the follow-up assignees, which only a read permission honours: pass them
- * on a read so the record check agrees with the list query, and leave them out of a write.
- */
-export function leadRef(
-  row: Pick<LeadRow, 'tenantId' | 'organizationId' | 'ownerUserId'> &
-    Partial<Pick<LeadRow, 'departmentId'>>,
-  readers?: RecordReaders,
-): ResourceRef {
-  return {
-    tenantId: row.tenantId,
-    organizationId: row.organizationId,
-    ownerUserId: row.ownerUserId,
-    departmentId: row.departmentId ?? null,
-    ...(readers === undefined
-      ? {}
-      : { creatorUserId: readers.creatorUserId, assigneeUserIds: readers.assigneeUserIds }),
-  };
-}
 
 /** Searchable text of a lead: what the table shows plus what a salesperson types from an inbound email or call. */
 const SEARCH_COLUMNS = [
@@ -168,7 +154,7 @@ export class LeadsService {
   // -------------------------------------------------------------------------------------------------- read
 
   async list(q: ListLeadsQuery): Promise<{ rows: LeadDto[]; total: number }> {
-    const { scope } = this.caller.current();
+    const { scope, principal } = this.caller.current();
     const where = this.listWhere(q, q.stage);
     const { rows, total } = await searchPage(this.db, {
       q: q.q,
@@ -206,6 +192,7 @@ export class LeadsService {
           nextFollowUp,
           nameIn(names, row.ownerUserId),
           refs.get(row.lostReasonId ?? '') ?? null,
+          principal,
         ),
       ),
       total,
@@ -240,7 +227,7 @@ export class LeadsService {
   }
 
   async get(id: string): Promise<LeadDto> {
-    const { scope } = this.caller.current();
+    const { scope, principal } = this.caller.current();
     const [found] = await this.db
       .select(leadWithNextFollowUp())
       .from(leads)
@@ -258,6 +245,7 @@ export class LeadsService {
       nextFollowUp,
       await this.ownerNameOf(this.db, row),
       await this.lostReasonOf(this.db, row),
+      principal,
     );
   }
 
@@ -350,7 +338,7 @@ export class LeadsService {
           sent.notice = true;
         }
         const ownerName = await this.ownerNameOf(tx, row!);
-        if (followUp === undefined) return toLeadDto(row!, null, ownerName, null);
+        if (followUp === undefined) return toLeadDto(row!, null, ownerName, null, principal);
         const dueAt = new Date(followUp.dueAt);
         const [planned] = await tx
           .insert(activities)
@@ -372,7 +360,7 @@ export class LeadsService {
           after: { kind: followUp.kind, leadId: row!.id, dueAt: followUp.dueAt, assigneeUserId },
         });
         // The only planned activity of a new lead, so it is the next follow-up.
-        return toLeadDto(row!, dueAt, ownerName, null);
+        return toLeadDto(row!, dueAt, ownerName, null, principal);
       };
       if (idempotencyKey === undefined) return run();
       const done = await withIdempotency(
@@ -391,12 +379,13 @@ export class LeadsService {
 
   /**
    * A user's move along LEAD_TRANSITIONS. Converted is refused (the schema already keeps it out of the body, and
-   * the planner refuses it for a caller that skips the controller). The manager edge (reopening a lost lead) stays
-   * closed over HTTP until the product names who a manager is, as for opportunities.
+   * the planner refuses it for a caller that skips the controller). A manager, head or founder with write scope
+   * may also take the manager edge (reopening a lost lead). Moving a new lead to contacted may atomically log an
+   * initial call or email activity (D48).
    */
   async changeStage(id: string, body: LeadStageChangeBody): Promise<LeadDto> {
     const { scope, actor, principal } = this.caller.current();
-    const by: LeadStageCaller = 'user';
+    const by: LeadStageCaller = isStageManager(principal) ? 'manager' : 'user';
     return withTx(this.db, scope, actor, async (tx) => {
       const row = await this.lock(tx, scope, id);
       // Scope first (404), then state (409): someone who may not edit learns nothing about the stage.
@@ -432,11 +421,19 @@ export class LeadsService {
       });
       if (!plan.ok) throw refusalToException(plan.kind, plan.message);
 
+      if (body.contactActivity !== undefined && row.stage !== 'new') {
+        throw new BadRequestException({
+          code: 'bad_request',
+          message: 'A contact activity can only be logged when moving a new lead to contacted',
+        });
+      }
+
+      const now = new Date();
       // Leaving lost (or any move that is not to lost) clears the reference with the text.
       const updated = await updateVersioned(tx, leads, id, body.expectedVersion, {
         ...plan.set,
         lostReasonId,
-        updatedAt: new Date(),
+        updatedAt: now,
       });
       await this.audit.record(tx, {
         action: 'lead.stage_changed',
@@ -446,6 +443,28 @@ export class LeadsService {
         after: { stage: updated.stage, version: updated.version },
         meta: { reason: plan.set.stageReason, note: plan.set.stageNote, lostReasonId },
       });
+      if (body.contactActivity !== undefined) {
+        const [actRow] = await tx
+          .insert(activities)
+          .values({
+            ...scope,
+            kind: body.contactActivity.kind,
+            subject:
+              body.contactActivity.subject ??
+              (body.contactActivity.kind === 'call' ? 'Initial call' : 'Initial email'),
+            body: body.contactActivity.body,
+            leadId: id,
+            createdByUserId: principal.userId,
+            occurredAt: now,
+          })
+          .returning({ id: activities.id });
+        await this.audit.record(tx, {
+          action: 'activity.created',
+          entityType: 'activities',
+          entityId: actRow!.id,
+          after: { kind: body.contactActivity.kind, leadId: id },
+        });
+      }
       await tx.insert(activities).values({
         ...scope,
         kind: 'stage_change',
@@ -453,12 +472,14 @@ export class LeadsService {
         body: plan.set.stageNote,
         leadId: id,
         createdByUserId: principal.userId,
+        occurredAt: body.contactActivity !== undefined ? new Date(now.getTime() + 1) : now,
       });
       return toLeadDto(
         updated,
         await this.nextFollowUpOf(tx, id),
         await this.ownerNameOf(tx, updated),
         await this.lostReasonOf(tx, updated),
+        principal,
       );
     });
   }
@@ -550,6 +571,7 @@ export class LeadsService {
         await this.nextFollowUpOf(tx, id),
         await this.ownerNameOf(tx, updated),
         await this.lostReasonOf(tx, updated),
+        principal,
       );
     });
     if (sent.notice) await this.notify.nudge();

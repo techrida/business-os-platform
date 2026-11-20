@@ -4,13 +4,66 @@
 // move to Lost or On Hold always carries its reason and note.
 import {
   findTransition,
+  OPPORTUNITY_TRANSITIONS,
   type OpportunityStage,
   type StageTransition,
   type TransitionActor,
 } from '@bos/contracts';
 
+import { can, type Principal, type ResourceRef } from '../../platform/authz/can';
+import type { RecordReaders } from '../../platform/authz/record-reach';
+import { isStageManager } from '../leads/lead-stage';
+
+export { isStageManager } from '../leads/lead-stage';
+
 /** Who is asking: a user, a manager (may also reopen a lost opportunity), or the system (a side effect). */
 export type StageCaller = TransitionActor;
+
+/**
+ * What authz decides on for one opportunity: its entity, owner and department (stamped from the owner, migration
+ * 0080), so a department grant reaches it. `readers` (its assignees, record-reach.ts) only for a read: assigned
+ * reach never lets anyone change a deal (D55-3). No party column: a portal grant reaches no opportunity.
+ */
+export function opportunityRef(
+  row: {
+    tenantId: string;
+    organizationId: string;
+    ownerUserId: string | null;
+    departmentId: string | null;
+  },
+  readers?: RecordReaders,
+): ResourceRef {
+  return {
+    tenantId: row.tenantId,
+    organizationId: row.organizationId,
+    ownerUserId: row.ownerUserId,
+    departmentId: row.departmentId,
+    ...(readers === undefined
+      ? {}
+      : { creatorUserId: readers.creatorUserId, assigneeUserIds: readers.assigneeUserIds }),
+  };
+}
+
+/** The stage targets `principal` may move `row` to over HTTP. Pure, using live `crm.opportunity.write`. */
+export function allowedOpportunityMoves(
+  principal: Principal,
+  row: {
+    tenantId: string;
+    organizationId: string;
+    ownerUserId: string | null;
+    departmentId: string | null;
+    stage: OpportunityStage;
+  },
+): OpportunityStage[] {
+  if (!can(principal, 'crm.opportunity.write', opportunityRef(row)).allowed) return [];
+  const manager = isStageManager(principal);
+  return OPPORTUNITY_TRANSITIONS.filter(
+    (t) =>
+      t.from === row.stage &&
+      t.by !== 'system' &&
+      (t.by === 'user' || (t.by === 'manager' && manager)),
+  ).map((t) => t.to);
+}
 
 export interface StageChangeInput {
   current: OpportunityStage;
