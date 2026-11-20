@@ -56,6 +56,7 @@ export type ErrorCode =
   | 'decided_on_in_future'
   // P3 sales orders, payments and invoices.
   | 'quotation_not_accepted'
+  | 'credit_hold'
   | 'sales_order_not_open'
   | 'schedule_line_not_planned'
   | 'SCHEDULE_LINE_TAKEN'
@@ -181,6 +182,7 @@ const GENERIC_MESSAGE: Record<ErrorCode, string> = {
   evidence_policy_unmet: 'The evidence given does not meet the policy',
   decided_on_in_future: 'The decision date is in the future',
   quotation_not_accepted: 'Only an accepted quotation can be confirmed',
+  credit_hold: 'The customer is over its credit limit; the deal needs a credit override first',
   sales_order_not_open: 'This sales order is not open for this change',
   schedule_line_not_planned: 'This schedule line is no longer planned',
   SCHEDULE_LINE_TAKEN: 'This billing schedule line already has an invoice',
@@ -315,6 +317,9 @@ const CONFLICT_CODES: readonly ErrorCode[] = [
   // U8 sales orders: only an accepted quotation confirms, only a confirmed order marks a line, only a planned
   // line becomes billable.
   'quotation_not_accepted',
+  // F1-Q20/F1-Q26: the customer owes more than its credit limit and the deal has no override (`details`: limit,
+  // exposure, opportunity).
+  'credit_hold',
   'sales_order_not_open',
   'schedule_line_not_planned',
   // U10 invoices: the line already has a live invoice; a tax invoice, credit or debit note needs approval first.
