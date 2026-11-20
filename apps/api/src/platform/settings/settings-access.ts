@@ -25,10 +25,11 @@ export const FINANCE_SETTINGS_EDITORS: readonly Permission[] = ['settings.financ
 export const ADMIN_SETTINGS_EDITORS: readonly Permission[] = [ADMIN];
 
 /** Key prefixes (ending in '.') and exact keys open to more than the admin. A key matching none is admin only. */
-const KEY_PREFIX_EDITORS: ReadonlyArray<readonly [prefix: string, editors: readonly Permission[]]> = [
-  ['tax.', FINANCE_SETTINGS_EDITORS],
-  ['numbering.', FINANCE_SETTINGS_EDITORS],
-];
+const KEY_PREFIX_EDITORS: ReadonlyArray<readonly [prefix: string, editors: readonly Permission[]]> =
+  [
+    ['tax.', FINANCE_SETTINGS_EDITORS],
+    ['numbering.', FINANCE_SETTINGS_EDITORS],
+  ];
 const KEY_EDITORS: Readonly<Partial<Record<SettingKey, readonly Permission[]>>> = {
   'quotation.term_presets': FINANCE_SETTINGS_EDITORS,
 };

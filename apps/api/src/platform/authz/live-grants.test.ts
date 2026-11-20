@@ -46,28 +46,30 @@ function deps(
   return {
     calls,
     users: {
-      findById: async (_q, scope, userId) =>
-        status === null || scope.tenantId !== TENANT || userId !== ME
-          ? null
-          : ({
-              id: ME,
-              tenantId: TENANT,
-              idpOrgId: 'idp',
-              zitadelUserId: 'z',
-              email: null,
-              displayName: null,
-              status,
-            } as UserRow),
-      rolesOf: async () => world.roles ?? ['founder'],
-      membershipsOf: async () => world.memberships ?? [membership()],
+      findById: (_q, scope, userId) =>
+        Promise.resolve(
+          status === null || scope.tenantId !== TENANT || userId !== ME
+            ? null
+            : {
+                id: ME,
+                tenantId: TENANT,
+                idpOrgId: 'idp',
+                zitadelUserId: 'z',
+                email: null,
+                displayName: null,
+                status,
+              },
+        ),
+      rolesOf: () => Promise.resolve(world.roles ?? ['founder']),
+      membershipsOf: () => Promise.resolve(world.memberships ?? [membership()]),
     },
     grants: {
-      grantsFor: async (_tenant, _org, roles, level) => {
+      grantsFor: (_tenant, _org, roles, level) => {
         calls.push(level === undefined ? { roles: [...roles] } : { roles: [...roles], level });
         const out = new Map<Permission, AccessScope>();
         if (roles.includes('founder')) out.set('admin.roles.write', 'all');
         if (roles.includes('sales')) out.set('admin.roles.read', 'all');
-        return out;
+        return Promise.resolve(out);
       },
     },
   };

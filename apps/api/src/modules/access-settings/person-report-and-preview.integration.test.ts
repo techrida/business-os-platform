@@ -234,9 +234,7 @@ describe('Access dry run refuses what the save refuses (real Postgres)', () => {
         ],
       }),
     );
-    expect(Object.keys(mixed.fieldErrors as Record<string, string>)).toEqual([
-      'changes.1.userId',
-    ]);
+    expect(Object.keys(mixed.fieldErrors as Record<string, string>)).toEqual(['changes.1.userId']);
   });
 
   it('still previews a valid head change and still returns blocked warnings in the response', async () => {

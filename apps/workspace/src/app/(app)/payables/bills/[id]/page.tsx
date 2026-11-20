@@ -331,19 +331,13 @@ export default async function BillPage({
             : 'A vendor invoice, matched before it goes for approval.'
         }
         actions={
-          can.match ||
-          can.submit ||
-          can.void ||
-          canException ||
-          canDiscard ? (
+          can.match || can.submit || can.void || canException || canDiscard ? (
             <div className={styles.headActions}>
               {can.match ? <MatchDialog {...common} idempotencyKey={randomUUID()} /> : null}
               {can.submit ? <SubmitDialog {...common} idempotencyKey={randomUUID()} /> : null}
               {canException ? <ExceptionDialog {...common} idempotencyKey={randomUUID()} /> : null}
               {can.void ? <VoidDialog {...common} idempotencyKey={randomUUID()} /> : null}
-              {canDiscard ? (
-                <DiscardBillDialog {...common} idempotencyKey={randomUUID()} />
-              ) : null}
+              {canDiscard ? <DiscardBillDialog {...common} idempotencyKey={randomUUID()} /> : null}
             </div>
           ) : null
         }

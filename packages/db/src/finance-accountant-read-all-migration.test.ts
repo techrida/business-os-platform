@@ -157,9 +157,13 @@ async function authzVersion(tenantId: string): Promise<number | undefined> {
 /** The four department level rows 0088 seeded for one role on leads and opportunities. */
 const departmentRows = (role: string, seeded = true): Level[] =>
   [LEAD, OPP].flatMap((permission) =>
-    (['manager', 'head'] as const).map(
-      (minLevel): Level => [role, permission, minLevel, 'department', seeded],
-    ),
+    (['manager', 'head'] as const).map((minLevel): Level => [
+      role,
+      permission,
+      minLevel,
+      'department',
+      seeded,
+    ]),
   );
 
 const levelKey = ([role, permission, minLevel, scope, seeded]: Level): string =>
