@@ -99,6 +99,7 @@ class FakeDbModule {}
       useValue: {
         grantsFor: () => Promise.resolve(new Map()),
         epoch: () => Promise.resolve('0:0'),
+        current: () => Promise.resolve({ epoch: '0:0', grantsFor: () => new Map() }),
       },
     },
   ],

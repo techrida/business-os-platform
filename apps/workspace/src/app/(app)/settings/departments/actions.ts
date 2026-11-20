@@ -31,6 +31,7 @@ import type {
   DepartmentRecordResult,
   PeoplePreviewResult,
   PeopleSaveResult,
+  RetireMembersResult,
   RevisionResult,
 } from './action-types';
 
@@ -47,6 +48,7 @@ const Name = z
   .trim()
   .min(DEPARTMENT_NAME_MIN, `Enter a name of at least ${DEPARTMENT_NAME_MIN} characters.`)
   .max(DEPARTMENT_NAME_MAX, `Use at most ${DEPARTMENT_NAME_MAX} characters.`);
+const MemberIds = z.array(z.guid()).max(10_000);
 const Changes = z.array(DepartmentChangeSchema).min(1).max(DEPARTMENT_PEOPLE_MAX_CHANGES);
 const UNREADABLE = 'These changes could not be read. Reload and try again.';
 
@@ -112,14 +114,32 @@ export async function renameDepartmentAction(
   }
 }
 
+const MEMBERS_UNREADABLE = 'The people in this department could not be loaded. Try again.';
+
+/** The active members the retire dialog shows, loaded when it opens and after a refusal. */
+export async function loadRetireMembersAction(id: string): Promise<RetireMembersResult> {
+  const session = await requireSection('departments');
+  const parsedId = Id.safeParse(id);
+  if (!parsedId.success) return { ok: false, message: 'This department could not be found.' };
+  try {
+    const detail = await getDepartment(session, parsedId.data);
+    if (detail === null) return { ok: false, message: 'This department could not be found.' };
+    return { ok: true, memberIds: detail.members.map((member) => member.userId) };
+  } catch {
+    return { ok: false, message: MEMBERS_UNREADABLE };
+  }
+}
+
 /**
  * `moveMembersTo`: an id moves the members there, `null` leaves them with no department, and
- * `undefined` is only for a department with no members.
+ * `undefined` is only for a department with no members. `expectedMemberIds` are the members the
+ * dialog showed; when they no longer match, the result is `membersChanged` and nobody moves.
  */
 export async function retireDepartmentAction(
   id: string,
   expectedVersion: number,
   moveMembersTo: string | null | undefined,
+  expectedMemberIds?: readonly string[],
 ): Promise<DepartmentRecordResult> {
   const session = await requireSection('departments');
   const parsedId = Id.safeParse(id);
@@ -128,11 +148,14 @@ export async function retireDepartmentAction(
   if (typeof moveMembersTo === 'string' && !Id.safeParse(moveMembersTo).success) {
     return invalid('Choose where the people go.', 'moveMembersTo');
   }
+  const members = expectedMemberIds === undefined ? null : MemberIds.safeParse(expectedMemberIds);
+  if (members !== null && !members.success) return invalid(UNREADABLE);
 
   try {
     const retired = await retireDepartment(session, parsedId.data, {
       expectedVersion: version.data,
       ...(moveMembersTo !== undefined ? { moveMembersTo } : {}),
+      ...(members !== null ? { expectedMemberIds: members.data } : {}),
     });
     revalidate(retired.id);
     if (typeof moveMembersTo === 'string') revalidate(moveMembersTo);

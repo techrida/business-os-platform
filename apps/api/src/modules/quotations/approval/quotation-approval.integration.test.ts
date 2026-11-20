@@ -59,6 +59,7 @@ import { SettingsService } from '../../../platform/settings/settings.service';
 import { ApprovalsAdminService } from '../../approvals/admin.service';
 import type { ApprovalEmailTemplate } from '../../approvals/ports';
 import { ApprovalsService } from '../../approvals/requests.service';
+import { CancelService } from '../drafting/cancel.service';
 import { DraftingService } from '../drafting/drafting.service';
 import {
   GOLDEN_ISSUE_DATE,
@@ -142,6 +143,7 @@ let scopeB: TxScope;
 let approvals: ApprovalsService;
 let drafting: DraftingService;
 let submitter: QuotationSubmitService;
+let canceller: CancelService;
 
 /** Real staff users of entity A, one per approver role, plus the admin who publishes the workflow. */
 const U = { acc: '', fin: '', mgmt: '', founder: '', admin: '' };
@@ -310,6 +312,15 @@ beforeAll(async () => {
     notify,
     audit,
     new QuotationSubmitStore(),
+    caller,
+    new SettingsService(db),
+    () => now,
+  );
+  canceller = new CancelService(
+    db,
+    approvals,
+    authz as unknown as AuthzService,
+    audit,
     caller,
     () => now,
   );
@@ -590,6 +601,62 @@ describe('quotation approval: submit', () => {
     );
   });
 
+  it('refuses a few-paisa total whose schedule would bill a 0.00 instalment, writing nothing (FR-4)', async () => {
+    const tiny = async (unitPrice: string) => {
+      const created = await drafting.create(
+        {
+          opportunityId: f.opportunityId,
+          currency: 'NPR',
+          issueDate: GOLDEN_ISSUE_DATE,
+          validUntil: '2026-12-09',
+          paymentSchedule: [
+            { label: 'Advance', percent: '50' },
+            { label: 'On delivery', percent: '50' },
+          ],
+          lines: [
+            {
+              description: 'Token item',
+              uom: 'each',
+              quantity: '1',
+              unitPrice,
+              taxCodeId: f.taxCodeExemptId,
+            },
+          ],
+        },
+        randomUUID(),
+      );
+      const version = await drafting.getVersion(created.id, created.currentVersionId);
+      return {
+        quotationId: created.id,
+        versionId: created.currentVersionId,
+        rowVersion: version.version,
+        schedule: version.paymentSchedule,
+      };
+    };
+
+    // NPR 0.01 over 50/50: the first share rounds half up to 0.01, so the last row is 0.00.
+    const d = await tiny('0.01');
+    expect(d.schedule.map((m) => m.amount)).toEqual(['0.01', '0.00']);
+    const error = await httpErrorOf(submit(d, d.rowVersion));
+    expect(error.getStatus()).toBe(422);
+    const body = error.getResponse() as { message: string };
+    expect(body).toMatchObject({
+      code: 'PAYMENT_INSTALMENT_ZERO',
+      details: { label: 'On delivery', total: '0.01' },
+    });
+    expect(body.message).toContain('"On delivery" would be NPR 0.00');
+    expect(await versionRow(d.versionId)).toMatchObject({
+      status: 'draft',
+      approvalRequestId: null,
+      version: d.rowVersion,
+    });
+    expect(await requestsOf(d.versionId)).toHaveLength(0);
+
+    // NPR 0.03 over the same schedule bills 0.02 and 0.01: submitted as usual.
+    const ok = await tiny('0.03');
+    expect((await submit(ok, ok.rowVersion)).status).toBe('submitted');
+  });
+
   it('answers 404 for a version of another entity', async () => {
     const d = await draft('50000.00');
     current.scope = scopeB;
@@ -678,6 +745,54 @@ describe('quotation approval: decisions', () => {
     const error = await httpErrorOf(act(f.ownerUserId, 'accountant', request!.id, 'approve'));
     expect(error.getStatus()).toBe(403);
     expect(error.getResponse()).toMatchObject({ reason: 'separation_of_duties' });
+  });
+});
+
+describe('quotation approval: cancel while waiting (F1-Q27)', () => {
+  it('the owner cancels a submitted quotation: the request leaves the inbox and can no longer be decided', async () => {
+    const d = await draft('50000.00');
+    const submitted = await submit(d, d.rowVersion);
+    const [request] = await requestsOf(d.versionId);
+    as(U.acc, 'accountant');
+    try {
+      expect((await approvals.inbox()).map((i) => i.requestId)).toContain(request!.id);
+    } finally {
+      as(f.ownerUserId, 'sales');
+    }
+
+    // The detail offers Cancel to the owner while it waits.
+    expect((await drafting.detail(d.quotationId)).capabilities).toMatchObject({
+      canEdit: false,
+      canCancel: true,
+    });
+
+    const cancelled = await canceller.cancel(
+      d.quotationId,
+      { reason: 'Customer withdrew the enquiry', expectedVersion: submitted.version },
+      randomUUID(),
+    );
+    expect(cancelled).toMatchObject({
+      status: 'cancelled',
+      cancelReason: 'Customer withdrew the enquiry',
+    });
+
+    const [after] = await requestsOf(d.versionId);
+    expect(after!.status).toBe('cancelled');
+    as(U.acc, 'accountant');
+    try {
+      expect((await approvals.inbox()).map((i) => i.requestId)).not.toContain(request!.id);
+    } finally {
+      as(f.ownerUserId, 'sales');
+    }
+    expect((await httpErrorOf(act(U.acc, 'accountant', request!.id, 'approve'))).getStatus()).toBe(
+      409,
+    );
+    expect(await versionRow(d.versionId)).toMatchObject({ status: 'cancelled' });
+    expect((await drafting.detail(d.quotationId)).capabilities).toMatchObject({
+      canEdit: false,
+      canRevise: false,
+      canCancel: false,
+    });
   });
 });
 
@@ -1099,6 +1214,40 @@ describe('quotation approval: the author names the first-step approver', () => {
     expect((await drafting.getVersion(named.quotationId, named.versionId)).id).toBe(
       named.versionId,
     );
+  });
+
+  it('lets a past approver look back at the request they approved, with its live context, after the last step (U18-Q8)', async () => {
+    const d = await draft('50000.00');
+    await submitNaming(d, X.mate);
+    const [request] = await requestsOf(d.versionId);
+    await act(X.mate, 'sales', request!.id, 'approve');
+    const final = await act(U.fin, 'finance', request!.id, 'approve');
+    expect(final.status).toBe('approved');
+    expect((await versionRow(d.versionId)).status).toBe('approved');
+
+    // Their own-scope request read does not reach someone else's request, and nothing waits on them: only having
+    // decided a step lets them read it, the context showing the version as it stands now.
+    expect(await inboxIds(X.mate, 'sales')).not.toContain(request!.id);
+    as(X.mate, 'sales');
+    try {
+      const dto = await approvals.get(request!.id);
+      expect(dto).toMatchObject({ requestId: request!.id, status: 'approved' });
+      expect(dto.steps[0]).toMatchObject({ status: 'approved', decidedBy: X.mate });
+      expect(dto.context).toMatchObject({ href: null, documents: [] });
+      expect(dto.context!.fields).toEqual(
+        expect.arrayContaining([expect.objectContaining({ key: 'status', value: 'approved' })]),
+      );
+    } finally {
+      as(f.ownerUserId, 'sales');
+    }
+
+    // A colleague who took no part still cannot read it.
+    as(X.warehouse, 'warehouse');
+    try {
+      expect((await httpErrorOf(approvals.get(request!.id))).getStatus()).toBe(404);
+    } finally {
+      as(f.ownerUserId, 'sales');
+    }
   });
 
   it('admits only the original Sales decision for replay after the Finance step activates', async () => {

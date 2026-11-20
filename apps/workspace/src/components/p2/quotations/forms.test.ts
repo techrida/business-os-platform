@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { parseOutcome, parseRevise, parseSend } from './forms';
+import { parseCancel, parseOutcome, parseRevise, parseSend } from './forms';
 
 const CONTACT = '44444444-4444-4444-8444-444444444444';
 const TODAY = '2026-11-08';
@@ -157,5 +157,21 @@ describe('parseRevise', () => {
       ]),
     );
     expect(!got.ok && got.errors.reason).toMatch(/1000/);
+  });
+});
+
+describe('parseCancel', () => {
+  it('sends the revision the person looked at, so a stale page cannot cancel a newer one', () => {
+    const got = parseCancel(
+      form([
+        ['reason', ' No longer needed '],
+        ['expectedVersion', '1'],
+        ['versionId', CONTACT],
+      ]),
+    );
+    expect(got).toEqual({
+      ok: true,
+      body: { reason: 'No longer needed', expectedVersion: 1, versionId: CONTACT },
+    });
   });
 });

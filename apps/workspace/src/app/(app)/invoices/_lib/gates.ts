@@ -1,5 +1,6 @@
 import {
   canTransitionInvoice,
+  type InvoiceCan,
   type InvoiceKind,
   type InvoiceStatus,
   type Permission,
@@ -8,6 +9,17 @@ import {
 
 /** Whether the person holds a permission: their live grants on the pages, a plain predicate in tests. */
 export type Can = (permission: Permission) => boolean;
+
+/**
+ * The API's per-invoice answer (list rows and detail): whether the person's grant scope reaches this invoice for
+ * each action (an `own` grant does not reach another person's draft). A false flag hides the action; no `can` at
+ * all (an older API, a command response) leaves the decision to the grants alone.
+ */
+type Reach = { can?: InvoiceCan | undefined };
+
+function reaches(invoice: Reach, action: keyof InvoiceCan): boolean {
+  return invoice.can?.[action] !== false;
+}
 
 export interface InvoiceGates {
   /** Send for approval (also resubmits a returned invoice). Never for a proforma. */
@@ -30,17 +42,32 @@ export interface InvoiceGates {
  *  - discard `invoice.draft` (Accountant or Finance)
  *  - notes   `invoice.credit_note` (Finance), for credit and debit notes alike (there is no
  *    separate debit permission). A proforma is not corrected by a note: it opens no open item.
+ *
+ * Each also needs `invoice.can` to allow it when the API sent one.
  */
 export function invoiceGates(
-  invoice: { kind: InvoiceKind; status: InvoiceStatus },
+  invoice: { kind: InvoiceKind; status: InvoiceStatus } & Reach,
   can: Can,
 ): InvoiceGates {
   const { kind, status } = invoice;
   return {
-    submit: canTransitionInvoice(kind, status, 'submitted') && can('invoice.submit'),
-    issue: canTransitionInvoice(kind, status, 'issued') && can('invoice.issue'),
-    discard: canTransitionInvoice(kind, status, 'discarded') && can('invoice.draft'),
-    notes: kind === 'tax_invoice' && status === 'issued' && can('invoice.credit_note'),
+    submit:
+      canTransitionInvoice(kind, status, 'submitted') &&
+      can('invoice.submit') &&
+      reaches(invoice, 'submit'),
+    issue:
+      canTransitionInvoice(kind, status, 'issued') &&
+      can('invoice.issue') &&
+      reaches(invoice, 'issue'),
+    discard:
+      canTransitionInvoice(kind, status, 'discarded') &&
+      can('invoice.draft') &&
+      reaches(invoice, 'discard'),
+    notes:
+      kind === 'tax_invoice' &&
+      status === 'issued' &&
+      can('invoice.credit_note') &&
+      reaches(invoice, 'notes'),
   };
 }
 
@@ -63,16 +90,17 @@ export function settlementMayOwe(selected: readonly string[]): boolean {
  *
  * `settlement` is the server's derived state when the caller has read it (the detail page): a settled invoice, or one
  * whose state did not load (null), offers nothing. Left out (the list, whose rows carry no paid state), the button is
- * offered on every issued tax invoice and debit note.
+ * offered on every issued tax invoice and debit note. A `can.recordPayment` of false (the grant does not reach this
+ * customer) offers nothing.
  */
 export function recordPaymentHref(
-  invoice: { kind: InvoiceKind; status: InvoiceStatus; customerId: string },
+  invoice: { kind: InvoiceKind; status: InvoiceStatus; customerId: string } & Reach,
   can: Can,
   settlement?: SettlementStatus | null,
 ): string | null {
   const { kind, status, customerId } = invoice;
   if (status !== 'issued' || (kind !== 'tax_invoice' && kind !== 'debit_note')) return null;
-  if (!can('payment.record')) return null;
+  if (!can('payment.record') || !reaches(invoice, 'recordPayment')) return null;
   if (settlement !== undefined && (settlement === null || !PAYABLE.has(settlement))) return null;
   return `/payments/new?customerId=${encodeURIComponent(customerId)}`;
 }

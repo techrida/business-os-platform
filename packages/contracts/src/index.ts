@@ -22,6 +22,7 @@ export * from './portal.js';
 export * from './portal-vendor.js';
 export * from './procurement.js';
 export * from './quotations.js';
+export * from './quotation-evidence.js';
 export * from './receivables.js';
 export * from './sales.js';
 export * from './settings.js';

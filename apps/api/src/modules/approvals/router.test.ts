@@ -606,6 +606,58 @@ describe('resolveActor: which approver a delegate acts for (R12)', () => {
   });
 });
 
+describe('route: an amount after a currency code in a reason reads as money (U15b-Q7)', () => {
+  const amountSpec = (reason: string): WorkflowSpec =>
+    WorkflowSpecSchema.parse({
+      documentType: 'vendor_bill',
+      steps: [{ id: 'finance', kind: 'role', role: 'finance', reason: 'Finance' }],
+      rules: [
+        {
+          id: 'founder',
+          when: { field: 'amountNpr', op: 'gt', value: '1000000' },
+          add: { id: 'founder', kind: 'role', role: 'founder', reason: 'Founder' },
+          position: 'end',
+          reason,
+        },
+      ],
+    });
+  const reasonOf = (reason: string, facts: Record<string, unknown>) =>
+    route(amountSpec(reason), facts, dir, []).steps[1]?.reason;
+  const billReason = 'Non-PO bill of NPR {amountNpr} is above NPR 1,000,000.00';
+
+  it('groups the digits and keeps two decimals, as the limit beside it is written', () => {
+    expect(reasonOf(billReason, { amountNpr: '139506172.14' })).toBe(
+      'Non-PO bill of NPR 139,506,172.14 is above NPR 1,000,000.00',
+    );
+    expect(reasonOf(billReason, { amountNpr: '1000000.1' })).toBe(
+      'Non-PO bill of NPR 1,000,000.10 is above NPR 1,000,000.00',
+    );
+  });
+
+  it('rounds an unrounded fact half up to two decimals in the text only (D22)', () => {
+    const facts = { amountNpr: '1234567.125' };
+    expect(reasonOf(billReason, facts)).toBe(
+      'Non-PO bill of NPR 1,234,567.13 is above NPR 1,000,000.00',
+    );
+    expect(facts.amountNpr).toBe('1234567.125');
+    expect(reasonOf('Paid USD {amount} today', { amountNpr: '2000000', amount: 1500000.5 })).toBe(
+      'Paid USD 1,500,000.50 today',
+    );
+  });
+
+  it('leaves a placeholder without a currency code, or an unknown one, as before', () => {
+    expect(reasonOf('Total {amountNpr} in NPR', { amountNpr: '1500000.00' })).toBe(
+      'Total 1500000.00 in NPR',
+    );
+    expect(reasonOf('Bill of NPR {missing}', { amountNpr: '1500000.00' })).toBe(
+      'Bill of NPR {missing}',
+    );
+    expect(reasonOf('Bill of NPR {note}', { amountNpr: '1500000.00', note: 'n/a' })).toBe(
+      'Bill of NPR n/a',
+    );
+  });
+});
+
 describe('route: reasons fill {fact} placeholders from the request facts', () => {
   const discountSpec: WorkflowSpec = WorkflowSpecSchema.parse({
     documentType: 'quotation',

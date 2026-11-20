@@ -12,6 +12,7 @@
 import {
   CurrencySchema,
   isQuotationEditable,
+  PaymentMilestoneSchema,
   type Discount,
   type Permission,
   type QuotationVersionDto,
@@ -43,9 +44,11 @@ import { type ResourceRef } from '../../../platform/authz/can';
 import { DB, type Db, type DbTransaction } from '../../../platform/db/db.module';
 import { updateVersioned, withIdempotency } from '../../../platform/db/idempotency';
 import { withTx, type Actor, type TxScope } from '../../../platform/db/tx';
+import { SettingsService } from '../../../platform/settings/settings.service';
 import { ApprovalsNotify } from '../../approvals/ports';
 import { ApprovalsService } from '../../approvals/requests.service';
 import { versionVisibleTo } from '../drafting/cost-visibility';
+import { paymentScheduleAmounts } from '../drafting/payment-schedule';
 import {
   toQuotationVersionDto,
   type QuotationLineRow,
@@ -140,6 +143,33 @@ export function storedPricingInput(
         unitCost: l.unitCost,
       })),
   };
+}
+
+/**
+ * 422 PAYMENT_INSTALMENT_ZERO when the payment schedule split of `total` gives any instalment of 0.00 (Kuu, FR-4):
+ * a sales order refuses a zero billing line, so a quotation that would hit that dead end is not submitted. A tiny
+ * total (a few paisa) split over several milestones, or a 0% milestone, does it. D22 rounding is unchanged: the
+ * split is the one every screen shows (paymentScheduleAmounts).
+ */
+export function assertNoZeroInstalment(
+  total: string,
+  currency: string,
+  paymentSchedule: unknown,
+  /** The company's default schedule (`sales.default_schedule`): what an order bills on when the quotation has none. */
+  fallbackSchedule: readonly { label: string; percent: string }[] = [],
+): void {
+  const own = PaymentMilestoneSchema.array().parse(paymentSchedule);
+  const instalments = paymentScheduleAmounts(
+    total,
+    own.length > 0 ? own : fallbackSchedule.map((l) => ({ label: l.label, percent: l.percent })),
+  );
+  const zero = instalments.find((m) => /^0\.00$/.test(m.amount));
+  if (zero === undefined) return;
+  throw new UnprocessableEntityException({
+    code: 'PAYMENT_INSTALMENT_ZERO',
+    message: `The payment milestone "${zero.label}" would be ${currency} 0.00 at this total, and an order cannot bill nothing. Raise the total, or remove or merge that milestone, then submit again.`,
+    details: { label: zero.label, total },
+  });
 }
 
 /** The database reads and writes of a submit, apart from the service so its unit test needs no Postgres. */
@@ -264,6 +294,7 @@ export class QuotationSubmitService {
     private readonly audit: AuditService,
     private readonly store: QuotationSubmitStore,
     private readonly caller: QuotationSubmitCaller,
+    private readonly settings: SettingsService,
     @Optional()
     @Inject(QUOTATION_SUBMIT_CLOCK)
     private readonly clock: () => Date = () => new Date(),
@@ -367,6 +398,14 @@ export class QuotationSubmitService {
       tx,
       scope,
       storedPricingInput(version, storedLines),
+    );
+    // FR-4: refused before any write, like a blocked route.
+    // A quotation without its own schedule bills on the company default, so that is split too.
+    assertNoZeroInstalment(
+      priced.columns.total,
+      version.currency,
+      version.paymentSchedule,
+      await this.settings.get(scope, 'sales.default_schedule'),
     );
     const facts = approvalFactsOf(priced.facts);
     const ownerUserId = quotation.ownerUserId ?? callerUserId;

@@ -8,7 +8,6 @@ import {
   UpdateQuotationDraftBodySchema,
 } from '@bos/contracts';
 import { revalidatePath } from 'next/cache';
-import { redirect } from 'next/navigation';
 import { z } from 'zod';
 
 import { ApiError } from '@/lib/api';
@@ -129,9 +128,14 @@ export type SaveInput =
   | { mode: 'create'; opportunityId: string; idempotencyKey: string; values: BuilderValues }
   | (Ref & { mode: 'update'; expectedVersion: number; values: BuilderValues });
 
-export async function saveDraftAction(
-  input: SaveInput,
-): Promise<{ ok: true; version: number } | ActionFailure> {
+/**
+ * A saved draft. A create also returns the new quotation's id, and the builder moves to its editor once
+ * with `router.replace`. The action does not `redirect()` itself: a redirect thrown out of a click handler's
+ * promise reached Next's unhandled-rejection path and navigated a second time (TR-Q8).
+ */
+export type SaveResult = { ok: true; version: number; createdId?: string | undefined };
+
+export async function saveDraftAction(input: SaveInput): Promise<SaveResult | ActionFailure> {
   const returnTo =
     input.mode === 'create'
       ? `/quotations/new?opportunityId=${encodeURIComponent(input.opportunityId)}`
@@ -162,15 +166,15 @@ export async function saveDraftAction(
         ),
       );
     }
-    let id: string;
+    let created: { id: string; version: number };
     try {
-      id = (await api.createQuotation(session, parsed.data, key)).id;
+      created = await api.createQuotation(session, parsed.data, key);
     } catch (err) {
       const f = describeQuoteFailure(err, 'save');
       return { ok: false, kind: f.kind, message: f.message, key: nextKey(err, key) };
     }
     revalidatePath('/quotations');
-    redirect(`/quotations/${id}/edit?saved=1`);
+    return { ok: true, version: created.version, createdId: created.id };
   }
 
   const parsed = UpdateQuotationDraftBodySchema.safeParse({
@@ -229,7 +233,13 @@ export async function submitQuoteAction(
     );
   } catch (err) {
     const f = describeQuoteFailure(err, 'submit');
-    return { ok: false, kind: f.kind, message: f.message, key: nextKey(err, key) };
+    return {
+      ok: false,
+      kind: f.kind,
+      message: f.message,
+      ...(f.field ? { fieldErrors: { [f.field]: f.message } } : {}),
+      key: nextKey(err, key),
+    };
   }
   revalidatePath(`/quotations/${input.quotationId}/edit`);
   return { ok: true };

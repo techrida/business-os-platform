@@ -93,10 +93,14 @@ for (const name of workflowNames) {
 let plan;
 try {
   plan = planRuns(
-    workflowNames.map((name) => ({
-      name,
-      stepIds: modules[name] ? modules[name].workflow(configs[0]).steps.map((s) => s.id) : null,
-    })),
+    workflowNames.map((name) => {
+      const wf = modules[name]?.workflow(configs[0]) ?? null;
+      return {
+        name,
+        stepIds: wf ? wf.steps.filter((s) => !s.exploratory).map((s) => s.id) : null,
+        exploratoryIds: wf ? wf.steps.filter((s) => s.exploratory).map((s) => s.id) : [],
+      };
+    }),
     { from: args.from, only: args.only },
   );
 } catch (error) {

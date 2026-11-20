@@ -43,13 +43,19 @@ beforeEach(() => vi.clearAllMocks());
 
 describe('saveDraftAction terms and conditions', () => {
   it('sends the typed terms and conditions on create, and nothing when blank', async () => {
-    api.createQuotation.mockResolvedValue({ id: QID });
+    api.createQuotation.mockResolvedValue({ id: QID, version: 1 });
     const v = { ...values(), termsAndConditions: ' Net 30. ' };
-    await expect(saveDraftAction({ ...create, values: v })).rejects.toThrow('NEXT_REDIRECT');
+    await expect(saveDraftAction({ ...create, values: v })).resolves.toMatchObject({
+      ok: true,
+      createdId: QID,
+    });
     expect(api.createQuotation.mock.calls[0]?.[1]).toMatchObject({ termsAndConditions: 'Net 30.' });
 
     api.createQuotation.mockClear();
-    await expect(saveDraftAction({ ...create, values: values() })).rejects.toThrow('NEXT_REDIRECT');
+    await expect(saveDraftAction({ ...create, values: values() })).resolves.toMatchObject({
+      ok: true,
+      createdId: QID,
+    });
     expect(api.createQuotation.mock.calls[0]?.[1]).not.toHaveProperty('termsAndConditions');
   });
 

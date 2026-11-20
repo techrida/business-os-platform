@@ -202,7 +202,7 @@ describe('notices and filters', () => {
     staged = movePeople(staged, [CHANDRA], { id: MARKETING, name: 'Marketing' });
     staged = removePeople(staged, [BIBEK]);
     expect(recordNotices(staged)).toEqual([
-      'Records Bibek R. owns stay with them and stay under Sales.',
+      'Records Bibek R. owns stay under Sales.',
       'Records Chandra T. owns stay with Sales. Reassign them if Marketing should have them.',
       'Records Dipa S. owns stay with Marketing. Reassign them if Sales should have them.',
     ]);

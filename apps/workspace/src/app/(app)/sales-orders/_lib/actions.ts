@@ -18,6 +18,7 @@ import { requireStaffSession } from '@/lib/bff';
 import { getPermissionCheck } from '@/lib/live-permissions';
 import type { Session } from '@/lib/session';
 
+import { confirmRefusalText } from './confirm-refusal';
 import { parseConfirm, parseDraft, parseMarkBillable, type FieldErrors } from './forms';
 import { isGuid } from './status';
 import type { ActionState } from './state';
@@ -128,6 +129,8 @@ export async function confirmOrderAction(_prev: ActionState, form: FormData): Pr
   try {
     orderId = (await confirmSalesOrder(session, parsed.body, key)).order.id;
   } catch (err) {
+    const own = confirmRefusalText(err);
+    if (own !== undefined) return { key: keyAfterFailure(err, key), error: own };
     const creditHold = await creditHoldOf(session, err);
     return { ...failed(err, key), ...(creditHold ? { creditHold } : {}) };
   }

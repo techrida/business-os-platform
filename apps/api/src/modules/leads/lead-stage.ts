@@ -45,7 +45,28 @@ export function leadRef(
   };
 }
 
-/** The stage targets `principal` may move `row` to over HTTP. Pure, using live `crm.lead.write`. */
+/**
+ * May `principal` reopen this lost lead (the manager edge)? Two rules, both required: the code rule (Founder, or a
+ * manager or head, `isStageManager`) and the live `crm.lead.reopen` grant reaching the lead's department, which the
+ * Founder narrows or widens per role in Settings > Access. Staff never reopen, whatever they are granted. The ref
+ * carries no readers: reopening is a change, so creator and assignee reach never count.
+ */
+export function mayReopenLead(
+  principal: Principal,
+  row: {
+    tenantId: string;
+    organizationId: string;
+    ownerUserId: string | null;
+    departmentId?: string | null;
+  },
+): boolean {
+  return isStageManager(principal) && can(principal, 'crm.lead.reopen', leadRef(row)).allowed;
+}
+
+/**
+ * The stage targets `principal` may move `row` to over HTTP. Pure, using live `crm.lead.write`, and for the reopen
+ * edge also `mayReopenLead`.
+ */
 export function allowedLeadMoves(
   principal: Principal,
   row: {
@@ -58,7 +79,7 @@ export function allowedLeadMoves(
   },
 ): LeadStage[] {
   if (!can(principal, 'crm.lead.write', leadRef(row)).allowed) return [];
-  const manager = isStageManager(principal);
+  const manager = mayReopenLead(principal, row);
   return LEAD_TRANSITIONS.filter(
     (t) =>
       t.from === row.stage &&

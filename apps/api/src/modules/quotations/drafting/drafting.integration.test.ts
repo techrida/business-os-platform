@@ -410,7 +410,7 @@ describe('DraftingService.create', () => {
         .values({
           ...scopeA,
           number: `DEAL-${randomUUID().slice(0, 8)}`,
-          name: 'Deal from a Finance lead',
+          name: 'Deal from a PMO lead',
           customerId: f.customerPartyId,
           ownerUserId: f.ownerUserId,
           leadCreatorUserId: creatorUserId,
@@ -418,8 +418,9 @@ describe('DraftingService.create', () => {
         })
         .returning({ id: opportunities.id }),
     );
-    // Finance's default grants: crm.opportunity.read and quotation.draft at `own`.
-    const created = await asCaller({ userId: creatorUserId, grants: grantsOf('finance') }, () =>
+    // PMO's default grants: crm.opportunity.read and quotation.draft at `own` (Finance and Accountant read every
+    // opportunity since U20a2-Q4, so they would reach the deal without the lead creator).
+    const created = await asCaller({ userId: creatorUserId, grants: grantsOf('pmo') }, () =>
       service.create(goldenCreateBody(f, { opportunityId: deal!.id }), 'create-lead-creator'),
     );
     expect(created).toMatchObject({ opportunityId: deal!.id, ownerUserId: creatorUserId });
@@ -437,7 +438,7 @@ describe('DraftingService.create', () => {
         })
         .returning({ id: opportunities.id }),
     );
-    await asCaller({ userId: creatorUserId, grants: grantsOf('finance') }, async () => {
+    await asCaller({ userId: creatorUserId, grants: grantsOf('pmo') }, async () => {
       await expect(
         service.create(goldenCreateBody(f, { opportunityId: other!.id }), 'create-not-creator'),
       ).rejects.toBeInstanceOf(NotFoundException);
@@ -970,6 +971,7 @@ describe('demo feedback guards', () => {
       canRevise: false,
       canSend: false,
       canRecordOutcome: false,
+      canCancel: true,
     });
 
     await approve(created.currentVersionId);
@@ -978,6 +980,7 @@ describe('demo feedback guards', () => {
       canRevise: true,
       canSend: true,
       canRecordOutcome: false,
+      canCancel: false,
     });
 
     // PMO reads all and drafts its own, but holds no quotation.revise: Revise would answer 403, so it is not offered.
@@ -987,6 +990,7 @@ describe('demo feedback guards', () => {
         canRevise: false,
         canSend: false,
         canRecordOutcome: false,
+        canCancel: false,
       });
     });
   });
@@ -1848,6 +1852,7 @@ describe('saved reach on quotations (U20a phase 2)', () => {
       canRevise: false,
       canSend: false,
       canRecordOutcome: false,
+      canCancel: false,
     });
     expect(await statusOf(service.detail(other.id))).toBe(404);
     expect(await statusOf(edit(theirs))).toBe(403);

@@ -132,7 +132,7 @@ export const ACCESS_AREA_CATALOGUE: readonly AccessAreaInfo[] = [
     key: 'leads',
     label: 'Leads',
     seePermission: 'crm.lead.read',
-    actionPermissions: ['crm.lead.write'],
+    actionPermissions: ['crm.lead.write', 'crm.lead.reopen'],
     hasAssignment: true,
     supportsDepartment: true,
   },
@@ -140,7 +140,7 @@ export const ACCESS_AREA_CATALOGUE: readonly AccessAreaInfo[] = [
     key: 'opportunities',
     label: 'Opportunities',
     seePermission: 'crm.opportunity.read',
-    actionPermissions: ['crm.opportunity.write'],
+    actionPermissions: ['crm.opportunity.write', 'crm.opportunity.reopen'],
     hasAssignment: true,
     supportsDepartment: true,
   },
@@ -398,11 +398,15 @@ export function impliedLevelRows(
  * The nine area groups come first, followed by the remaining operational, admin, and portal groups.
  */
 export const ACCESS_PERMISSION_GROUPS: readonly AccessPermissionGroup[] = [
-  { key: 'leads', label: 'Leads', permissions: ['crm.lead.read', 'crm.lead.write'] },
+  {
+    key: 'leads',
+    label: 'Leads',
+    permissions: ['crm.lead.read', 'crm.lead.write', 'crm.lead.reopen'],
+  },
   {
     key: 'opportunities',
     label: 'Opportunities',
-    permissions: ['crm.opportunity.read', 'crm.opportunity.write'],
+    permissions: ['crm.opportunity.read', 'crm.opportunity.write', 'crm.opportunity.reopen'],
   },
   {
     key: 'quotations',
@@ -512,6 +516,8 @@ export const ACCESS_PERMISSION_GROUPS: readonly AccessPermissionGroup[] = [
       'admin.roles.read',
       'admin.roles.write',
       'admin.settings.write',
+      'settings.finance.write',
+      'settings.fx_rate.write',
       'audit.read',
     ],
   },
@@ -555,14 +561,31 @@ function perm(
   };
 }
 
-/** Catalogue entry for every one of the 69 permissions in PERMISSIONS. */
+/** Catalogue entry for every one of the 73 permissions in PERMISSIONS. */
 export const ACCESS_PERMISSION_CATALOGUE: readonly AccessPermissionInfo[] = [
   // Leads
   perm('crm.lead.read', 'See leads', 'record', RECORD_CRM_READ, []),
   perm('crm.lead.write', 'Create and edit leads', 'record', RECORD_DEPT, []),
+  // Check a person lists actions by label, so the label says the level the code also requires.
+  perm(
+    'crm.lead.reopen',
+    'Reopen lost leads (managers and heads only)',
+    'record',
+    RECORD_DEPT,
+    [],
+    'Only managers, heads, and Founders can reopen, even when their role has this.',
+  ),
   // Opportunities
   perm('crm.opportunity.read', 'See opportunities', 'record', RECORD_CRM_READ, []),
   perm('crm.opportunity.write', 'Create and edit opportunities', 'record', RECORD_DEPT, []),
+  perm(
+    'crm.opportunity.reopen',
+    'Reopen lost opportunities (managers and heads only)',
+    'record',
+    RECORD_DEPT,
+    [],
+    'Only managers, heads, and Founders can reopen, even when their role has this.',
+  ),
   // Quotations
   perm('quotation.read', 'See quotations', 'record', RECORD_DEPT, []),
   perm('quotation.draft', 'Draft quotations', 'record', RECORD_DEPT, []),
@@ -748,6 +771,22 @@ export const ACCESS_PERMISSION_CATALOGUE: readonly AccessPermissionInfo[] = [
     'Edits company profile, tax, and numbering settings.',
   ),
   perm(
+    'settings.finance.write',
+    'Change tax, numbering, and terms settings',
+    'onOff',
+    ON_OFF_STAFF,
+    [],
+    'Edits tax and numbering settings, number series, and the saved terms.',
+  ),
+  perm(
+    'settings.fx_rate.write',
+    'Change exchange rates',
+    'onOff',
+    ON_OFF_STAFF,
+    [],
+    'Sets the exchange rates used to convert foreign-currency amounts.',
+  ),
+  perm(
     'audit.read',
     'Read the audit trail',
     'onOff',
@@ -809,6 +848,8 @@ export const ACCESS_CONFLICTS: readonly AccessConflictRule[] = MAKER_CHECKER_CON
 export const ADMIN_CONFIRM_PERMISSIONS: ReadonlySet<Permission> = new Set<Permission>([
   'admin.users.invite',
   'admin.settings.write',
+  'settings.finance.write',
+  'settings.fx_rate.write',
   'audit.read',
 ]);
 

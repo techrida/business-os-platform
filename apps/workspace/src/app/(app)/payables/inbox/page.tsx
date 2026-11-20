@@ -13,6 +13,7 @@ import { Table, Td, Th } from '@/components/ui/table';
 import layout from '@/components/p3/list.module.css';
 import { listBillSubmissionsPage, type BillSubmission } from '@/lib/api-payables';
 import { requireStaffSession } from '@/lib/bff';
+import { getGrants } from '@/lib/grants';
 import { when } from '@/lib/kernel-format';
 import { activeFilterLabels, clearFiltersHref, hrefWith, readList } from '@/lib/list-params';
 
@@ -51,7 +52,7 @@ export default async function BillInboxPage({
   const session = await requireStaffSession(PATH);
   const params = await searchParams;
   const list = readList(params, LIST);
-  const grants = billGrants(session.roles);
+  const grants = billGrants(await getGrants(session));
 
   const header = (
     <PageHeader

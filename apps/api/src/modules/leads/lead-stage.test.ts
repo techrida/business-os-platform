@@ -16,6 +16,7 @@ import type { Principal } from '../../platform/authz/can';
 import {
   allowedLeadMoves,
   isStageManager,
+  mayReopenLead,
   planLeadStageChange,
   type LeadStageCaller,
 } from './lead-stage';
@@ -220,5 +221,88 @@ describe('isStageManager and allowedLeadMoves', () => {
       [],
     );
     expect(allowedLeadMoves(principalOf('sales'), leadRow('new', COLLEAGUE))).toEqual([]);
+  });
+});
+
+// Reopening a lost lead needs both the code rule (Founder, manager or head) and the live crm.lead.reopen grant
+// reaching the lead's department. Write is held at `all` here so only the reopen grant decides.
+describe('mayReopenLead: the crm.lead.reopen grant on the lead department', () => {
+  const SALES_DEPT = '00000000-0000-4000-8000-0000000000a1';
+  const OTHER_DEPT = '00000000-0000-4000-8000-0000000000b2';
+
+  const withReopen = (
+    reopen: Scope | undefined,
+    over: Partial<Principal> & { level?: AccessLevel } = {},
+  ): Principal => {
+    const grants = new Map<Permission, Scope>([['crm.lead.write', 'all']]);
+    if (reopen !== undefined) grants.set('crm.lead.reopen', reopen);
+    return principalOf('sales', { level: 'manager', departmentId: SALES_DEPT, grants, ...over });
+  };
+  const lostIn = (departmentId: string | null, ownerUserId: string | null = COLLEAGUE) => ({
+    tenantId: TENANT,
+    organizationId: ENTITY,
+    ownerUserId,
+    departmentId,
+    stage: 'lost' as const,
+  });
+
+  it('lets a department manager reopen a colleague lead in the same department', () => {
+    const manager = withReopen('department');
+    expect(mayReopenLead(manager, lostIn(SALES_DEPT))).toBe(true);
+    expect(allowedLeadMoves(manager, lostIn(SALES_DEPT))).toEqual(['contacted']);
+    expect(mayReopenLead(withReopen('department', { level: 'head' }), lostIn(SALES_DEPT))).toBe(
+      true,
+    );
+  });
+
+  it('refuses a department manager on another department lead, though write reaches it', () => {
+    const manager = withReopen('department');
+    expect(mayReopenLead(manager, lostIn(OTHER_DEPT))).toBe(false);
+    expect(allowedLeadMoves(manager, lostIn(OTHER_DEPT))).toEqual([]);
+    // Write still reaches it: the user edges of an open lead there stay available.
+    expect(allowedLeadMoves(manager, { ...lostIn(OTHER_DEPT), stage: 'new' })).toEqual([
+      'contacted',
+      'lost',
+      'on_hold',
+    ]);
+  });
+
+  it('refuses staff even with the reopen grant at all', () => {
+    const staff = withReopen('all', { level: 'staff' });
+    expect(mayReopenLead(staff, lostIn(SALES_DEPT))).toBe(false);
+    expect(allowedLeadMoves(staff, lostIn(SALES_DEPT))).toEqual([]);
+    const { level: _omitted, ...noLevel } = staff;
+    expect(mayReopenLead(noLevel, lostIn(SALES_DEPT))).toBe(false);
+  });
+
+  it('reaches every department of the entity when the Founder widens the grant to all', () => {
+    const manager = withReopen('all');
+    expect(mayReopenLead(manager, lostIn(OTHER_DEPT))).toBe(true);
+    expect(allowedLeadMoves(manager, lostIn(OTHER_DEPT))).toEqual(['contacted']);
+    // No department and no owner on the lead: only a grant at `all` reaches it.
+    expect(mayReopenLead(manager, lostIn(null, null))).toBe(true);
+    expect(mayReopenLead(withReopen('department'), lostIn(null, null))).toBe(false);
+    // `all` is the acting entity, never another tenant.
+    expect(mayReopenLead(manager, { ...lostIn(OTHER_DEPT), tenantId: COLLEAGUE })).toBe(false);
+  });
+
+  it('refuses everyone, the Founder included, when the grant is removed', () => {
+    expect(mayReopenLead(withReopen(undefined), lostIn(SALES_DEPT, ME))).toBe(false);
+    expect(allowedLeadMoves(withReopen(undefined), lostIn(SALES_DEPT, ME))).toEqual([]);
+    const founder = withReopen(undefined, { roles: ['founder'], level: 'staff' });
+    expect(mayReopenLead(founder, lostIn(SALES_DEPT, ME))).toBe(false);
+  });
+
+  it('honours a narrowed Founder grant like any other role', () => {
+    const founder = withReopen('department', { roles: ['founder'], level: 'staff' });
+    expect(mayReopenLead(founder, lostIn(SALES_DEPT))).toBe(true);
+    expect(mayReopenLead(founder, lostIn(OTHER_DEPT))).toBe(false);
+  });
+
+  it('counts the caller own lead anywhere, never an unset owner outside the department', () => {
+    const noDept = withReopen('department', { departmentId: null });
+    expect(mayReopenLead(noDept, lostIn(null, ME))).toBe(true);
+    expect(mayReopenLead(noDept, lostIn(null, null))).toBe(false);
+    expect(mayReopenLead(noDept, lostIn(SALES_DEPT, null))).toBe(false);
   });
 });

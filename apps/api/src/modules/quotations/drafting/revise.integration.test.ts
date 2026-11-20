@@ -71,8 +71,10 @@ const APP_PW = 'app-test-pw';
 /** 20 Nov 2026 20:00 UTC is already 21 Nov in Kathmandu (UTC+05:45): the new issue date is the Nepal day. */
 const NOW = new Date('2026-11-20T20:00:00Z');
 const NEW_ISSUE_DATE = '2026-11-21';
-/** NEW_ISSUE_DATE plus the default quotation.validity_days (15). */
+/** NEW_ISSUE_DATE plus the default quotation.validity_days (15): a revision's date once the old one has passed. */
 const NEW_VALID_UNTIL = '2026-12-06';
+/** The golden version's valid-until date, still ahead on NEW_ISSUE_DATE, so a revision keeps it (TR-Q12g). */
+const KEPT_VALID_UNTIL = '2026-12-09';
 const REASON = 'Customer asked for a second phase';
 
 let container: StartedPostgreSqlContainer;
@@ -221,8 +223,11 @@ async function statusOf(promise: Promise<unknown>): Promise<number> {
   throw new Error('expected the call to fail');
 }
 
-const createQuotation = (): Promise<QuotationDto> =>
-  drafting.create(goldenCreateBody(f), `create-${randomUUID()}`);
+const createQuotation = (validUntil?: string): Promise<QuotationDto> =>
+  drafting.create(
+    { ...goldenCreateBody(f), ...(validUntil === undefined ? {} : { validUntil }) },
+    `create-${randomUUID()}`,
+  );
 
 const versionRow = async (id: string) => {
   const [row] = await db.select().from(quotationVersions).where(eq(quotationVersions.id, id));
@@ -313,7 +318,7 @@ describe('ReviseService.revise', () => {
       customerId: f.customerPartyId,
       currency: 'NPR',
       issueDate: NEW_ISSUE_DATE,
-      validUntil: NEW_VALID_UNTIL,
+      validUntil: KEPT_VALID_UNTIL,
       supersedesVersionId: oldId,
       supersededByVersionId: null,
       revisionReason: REASON,
@@ -361,6 +366,31 @@ describe('ReviseService.revise', () => {
       [f.tenantId, q.id],
     );
     expect(audit.map((r) => r.action)).toContain('quotation.revised');
+  });
+
+  it('keeps the previous valid-until date while it has not passed, the issue day itself included (TR-Q12g)', async () => {
+    for (const validUntil of [KEPT_VALID_UNTIL, NEW_ISSUE_DATE]) {
+      const q = await createQuotation(validUntil);
+      const expectedVersion = await advance(q.currentVersionId, 'sent');
+      const dto = await service.revise(
+        q.id,
+        { reason: REASON, expectedVersion },
+        `revise-${randomUUID()}`,
+      );
+      expect(dto).toMatchObject({ issueDate: NEW_ISSUE_DATE, validUntil });
+      expect((await versionRow(dto.id)).validUntil).toBe(validUntil);
+    }
+  });
+
+  it('gives the configured default once the previous valid-until date has passed (TR-Q12g)', async () => {
+    const q = await createQuotation('2026-11-20');
+    const expectedVersion = await advance(q.currentVersionId, 'approved');
+    const dto = await service.revise(
+      q.id,
+      { reason: REASON, expectedVersion },
+      `revise-${randomUUID()}`,
+    );
+    expect(dto).toMatchObject({ issueDate: NEW_ISSUE_DATE, validUntil: NEW_VALID_UNTIL });
   });
 
   it('returns the first answer to a retry with the same Idempotency-Key, and revises once', async () => {

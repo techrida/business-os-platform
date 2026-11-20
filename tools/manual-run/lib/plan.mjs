@@ -2,8 +2,9 @@
 // mistyped --from or --only stops the run with a clear message instead of failing mid-run.
 
 /**
- * @param {{ name: string, stepIds: string[] | null }[]} workflows in run order; stepIds is null for
- *   a workflow that is not implemented yet
+ * @param {{ name: string, stepIds: string[] | null, exploratoryIds?: string[] }[]} workflows in run
+ *   order; stepIds is null for a workflow that is not implemented yet, and exploratoryIds lists any
+ *   steps left unscripted on purpose (reported as SKIPPED, with a note).
  * @param {{ from?: string, only?: string }} args
  * @returns {{ name: string, mode: 'full' | 'from' | 'only' | 'skip' | 'not-implemented',
  *   from?: string, only?: string[], reason?: string }[]}
@@ -20,11 +21,16 @@ export function planRuns(workflows, { from, only } = {}) {
   if (from !== undefined && only !== undefined)
     throw new Error('Use either --from or --only, not both.');
   const known = workflows
-    .filter((w) => w.stepIds)
+    .filter((w) => w.stepIds?.length)
     .map((w) => `${w.name}: ${w.stepIds.join(', ')}`)
     .join('; ');
 
   if (from !== undefined) {
+    const expOwner = workflows.find((w) => w.exploratoryIds?.includes(from));
+    if (expOwner)
+      throw new Error(
+        `--from ${from} is an exploratory step (not scripted; runnable steps for ${expOwner.name}: ${expOwner.stepIds?.join(', ') || 'none'}).`,
+      );
     const owner = workflows.findIndex((w) => w.stepIds?.includes(from));
     if (owner < 0)
       throw new Error(`--from ${from} is not a step of the selected workflows (${known}).`);
@@ -45,6 +51,11 @@ export function planRuns(workflows, { from, only } = {}) {
       .map((s) => s.trim())
       .filter(Boolean);
     if (!ids.length) throw new Error('--only needs at least one step id');
+    const exploratory = ids.filter((id) => workflows.some((w) => w.exploratoryIds?.includes(id)));
+    if (exploratory.length)
+      throw new Error(
+        `--only ${exploratory.join(',')}: exploratory step(s), not scripted (runnable: ${known}).`,
+      );
     const unknown = ids.filter((id) => !workflows.some((w) => w.stepIds?.includes(id)));
     if (unknown.length)
       throw new Error(
@@ -63,5 +74,7 @@ export function planRuns(workflows, { from, only } = {}) {
 }
 
 function full(w) {
-  return w.stepIds ? { name: w.name, mode: 'full' } : { name: w.name, mode: 'not-implemented' };
+  return w.stepIds?.length
+    ? { name: w.name, mode: 'full' }
+    : { name: w.name, mode: 'not-implemented' };
 }

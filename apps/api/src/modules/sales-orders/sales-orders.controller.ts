@@ -82,8 +82,9 @@ export class SalesOrdersController {
 
   /**
    * 201 with the SalesOrderDetail. 400 without an Idempotency-Key or with a bad body; 404 for a version outside
-   * the entity; 409 not accepted; 422 evidence the entity's policy does not accept, or a schedule that cannot be
-   * split. A second confirm of the same quotation answers the existing order.
+   * the entity; 409 not accepted; 422 `evidence_not_confirmed` while a portal acceptance waits for staff to confirm
+   * its evidence, evidence the entity's policy does not accept, or a schedule that cannot be split. A second
+   * confirm of the same quotation answers the existing order.
    */
   @Post()
   @Can('sales_order.confirm')

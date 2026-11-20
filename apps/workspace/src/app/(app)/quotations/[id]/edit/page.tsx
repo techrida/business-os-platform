@@ -100,7 +100,7 @@ export default async function EditQuotationPage({
           }
         >
           {justSubmitted
-            ? 'You will get a notification when it is decided. You can pull it back to Returned if it needs a change.'
+            ? 'You will get a notification when it is decided. If the approver returns it, you can change it and submit again.'
             : 'Only a draft or a returned quotation can be edited. To change this one, revise it, which starts a new draft.'}
         </Alert>
       </Page>
