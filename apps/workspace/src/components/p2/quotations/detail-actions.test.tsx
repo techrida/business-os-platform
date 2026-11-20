@@ -407,36 +407,39 @@ describe('Cancel quotation (F1-Q27: Cancel only)', () => {
     );
   }
 
-  it.each(['draft', 'returned'] as const)(
-    'is offered on a %s quotation the caller may edit',
+  it.each(['draft', 'returned', 'submitted'] as const)(
+    'is offered on a %s quotation the API says the caller may cancel',
     (s) => {
-      const html = renderWith(s, ALLOWED);
+      const html = renderWith(s, ALLOWED, { canCancel: true });
       expect(cancelTriggers(html)).toBeGreaterThan(0);
       expect(html).toContain('Why are you cancelling it?');
     },
   );
 
-  it.each([
-    'submitted',
-    'approved',
-    'sent',
-    'accepted',
-    'rejected',
-    'expired',
-    'cancelled',
-  ] as const)('is not offered on a %s quotation, which the state machine cannot cancel', (s) => {
-    expect(cancelTriggers(renderWith(s, ALLOWED))).toBe(0);
+  it('says a Submitted quotation leaves the approver too', () => {
+    expect(renderWith('submitted', ALLOWED, { canCancel: true })).toContain(
+      'Cancelling ends this quotation and its approval request',
+    );
+    expect(renderWith('draft', ALLOWED, { canCancel: true })).not.toContain('approval request');
   });
 
-  it('follows the API answer when it gives one, over the edit right', () => {
+  it.each(['approved', 'sent', 'accepted', 'rejected', 'expired', 'cancelled'] as const)(
+    'is not offered on a %s quotation, which the API cannot cancel',
+    (s) => {
+      expect(cancelTriggers(renderWith(s, ALLOWED, { canCancel: true }))).toBe(0);
+    },
+  );
+
+  it('follows the API answer, not the edit right', () => {
     expect(cancelTriggers(renderWith('draft', ALLOWED, { canCancel: false }))).toBe(0);
     expect(
       cancelTriggers(renderWith('draft', { ...ALLOWED, canEdit: false }, { canCancel: true })),
     ).toBeGreaterThan(0);
   });
 
-  it('is not offered to a caller who may not edit the draft when the API says nothing', () => {
-    expect(cancelTriggers(renderWith('draft', { ...ALLOWED, canEdit: false }))).toBe(0);
+  it('is not offered when the API answer has no canCancel at all', () => {
+    expect(cancelTriggers(renderWith('draft', ALLOWED))).toBe(0);
+    expect(cancelTriggers(renderWith('submitted', ALLOWED))).toBe(0);
   });
 });
 
