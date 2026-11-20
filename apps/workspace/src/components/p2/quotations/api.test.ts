@@ -255,6 +255,32 @@ describe('getQuotation', () => {
     expect(got.contacts[0]?.email).toBeNull();
   });
 
+  it('keeps the lifecycle fields the contract does not describe yet, from the same body', async () => {
+    fetchMock.mockResolvedValue(
+      reply(200, {
+        ...detail,
+        capabilities: { ...detail.capabilities, canCancel: false, canConfirmAcceptance: true },
+      }),
+    );
+    const got = await getQuotation(session, ID_A);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(got.lifecycle).toEqual({
+      canCancel: false,
+      canConfirmAcceptance: true,
+      confirmations: {},
+    });
+  });
+
+  it('reads no lifecycle answers from a body that has none', async () => {
+    fetchMock.mockResolvedValue(reply(200, detail));
+    const got = await getQuotation(session, ID_A);
+    expect(got.lifecycle).toEqual({
+      canCancel: undefined,
+      canConfirmAcceptance: undefined,
+      confirmations: {},
+    });
+  });
+
   it('turns a detail without history into a 502', async () => {
     const { statusHistory: _omitted, ...broken } = detail;
     fetchMock.mockResolvedValue(reply(200, broken));

@@ -383,3 +383,59 @@ describe('Revise', () => {
     expect(out).toContain('The current one stays in the revision list as a record.');
   });
 });
+
+describe('Cancel quotation (F1-Q27: Cancel only)', () => {
+  const cancelTriggers = (html: string): number =>
+    [...html.matchAll(/<button[^>]*>Cancel quotation<\/button>/g)].length;
+
+  function renderWith(
+    status: QuotationStatus,
+    capabilities: QuotationCapabilities,
+    lifecycle?: { canCancel?: boolean },
+  ): string {
+    return renderToStaticMarkup(
+      <DetailActions
+        quotationId={Q}
+        number="QT-2082-0042"
+        current={current({ status, rejectionSource: status === 'rejected' ? 'customer' : null })}
+        contacts={contacts}
+        capabilities={capabilities}
+        reloadHref={`/quotations/${Q}`}
+        today={TODAY}
+        lifecycle={{ confirmations: {}, ...lifecycle }}
+      />,
+    );
+  }
+
+  it.each(['draft', 'returned'] as const)(
+    'is offered on a %s quotation the caller may edit',
+    (s) => {
+      const html = renderWith(s, ALLOWED);
+      expect(cancelTriggers(html)).toBeGreaterThan(0);
+      expect(html).toContain('Why are you cancelling it?');
+    },
+  );
+
+  it.each([
+    'submitted',
+    'approved',
+    'sent',
+    'accepted',
+    'rejected',
+    'expired',
+    'cancelled',
+  ] as const)('is not offered on a %s quotation, which the state machine cannot cancel', (s) => {
+    expect(cancelTriggers(renderWith(s, ALLOWED))).toBe(0);
+  });
+
+  it('follows the API answer when it gives one, over the edit right', () => {
+    expect(cancelTriggers(renderWith('draft', ALLOWED, { canCancel: false }))).toBe(0);
+    expect(
+      cancelTriggers(renderWith('draft', { ...ALLOWED, canEdit: false }, { canCancel: true })),
+    ).toBeGreaterThan(0);
+  });
+
+  it('is not offered to a caller who may not edit the draft when the API says nothing', () => {
+    expect(cancelTriggers(renderWith('draft', { ...ALLOWED, canEdit: false }))).toBe(0);
+  });
+});
