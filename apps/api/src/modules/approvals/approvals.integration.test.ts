@@ -35,7 +35,10 @@ import { systemActor, withTx } from '../../platform/db/tx';
 import { buildLink, renderEmail } from '../../platform/notify/templates';
 import { SettingsService } from '../../platform/settings/settings.service';
 import { SqlUsersStore } from '../../platform/users/users.store';
+import { RoleCache } from '../../platform/authz/role-cache';
 import { ApprovalsAdminService } from './admin.service';
+import { AdminWorkflowsController } from './admin-workflows.controller';
+import { SKIP_LIVE_PUBLISHER_CHECK } from '../../../test/support/second-person';
 import { canonicalSha256 } from '../../platform/hashing/canonical-json';
 import type { ApprovalEmailTemplate, Caller } from './ports';
 import { ApprovalsService, type SubmitInput } from './requests.service';
@@ -167,7 +170,7 @@ async function publishSeconded(key: string, version: number, svc = admin) {
   const editor = me;
   me = editor === U.mgmt ? U.founder : U.mgmt;
   try {
-    return await svc.publish(key, version);
+    return await svc.publish(key, version, SKIP_LIVE_PUBLISHER_CHECK);
   } finally {
     me = editor;
   }
@@ -822,7 +825,9 @@ describe('admin: publishing a workflow needs a second person (F1-Q11)', () => {
     await admin.createWorkflow({ key: 'second_person', name: 'Second person', spec });
     audit.record.mockClear();
 
-    await expect(admin.publish('second_person', 1)).rejects.toMatchObject({
+    await expect(
+      admin.publish('second_person', 1, SKIP_LIVE_PUBLISHER_CHECK),
+    ).rejects.toMatchObject({
       status: 403,
       response: { reason: 'separation_of_duties' },
     });
@@ -847,7 +852,7 @@ describe('admin: publishing a workflow needs a second person (F1-Q11)', () => {
     });
 
     me = U.mgmt;
-    const published = await admin.publish('second_person', 1);
+    const published = await admin.publish('second_person', 1, SKIP_LIVE_PUBLISHER_CHECK);
     expect(published).toMatchObject({
       status: 'published',
       createdBy: U.founder,
@@ -863,14 +868,58 @@ describe('admin: publishing a workflow needs a second person (F1-Q11)', () => {
 
     // Management saves the next draft: now the Founder is the second person, and Management may not publish it.
     await admin.addVersion('second_person', spec);
-    await expect(admin.publish('second_person', 2)).rejects.toMatchObject({ status: 403 });
+    await expect(
+      admin.publish('second_person', 2, SKIP_LIVE_PUBLISHER_CHECK),
+    ).rejects.toMatchObject({ status: 403 });
     me = U.founder;
-    await admin.publish('second_person', 2);
+    await admin.publish('second_person', 2, SKIP_LIVE_PUBLISHER_CHECK);
     [wf] = (await admin.listWorkflows()).filter((w) => w.key === 'second_person');
     expect(wf?.versions.map((v) => [v.version, v.status, v.createdBy, v.publishedBy])).toEqual([
       [1, 'retired', U.founder, U.mgmt],
       [2, 'published', U.mgmt, U.founder],
     ]);
+  });
+
+  it("re-checks the publisher's live grant: Management demoted after sign-in cannot publish on the old token", async () => {
+    me = U.founder;
+    await admin.createWorkflow({
+      key: 'demoted',
+      name: 'Demoted publisher',
+      spec: { ...spec, documentType: 'demoted' },
+    });
+    // The HTTP route, as the app builds it: the live check runs inside the publish transaction.
+    const routes = new AdminWorkflowsController(admin, db, new RoleCache(db));
+    const mirrorRoles = (roleKeys: RoleKey[]) =>
+      withTx(db, scope, systemActor('test-seed'), async (tx) => {
+        await tx.execute(
+          sql`DELETE FROM app.user_roles WHERE tenant_id = ${scope.tenantId} AND user_id = ${U.mgmt}`,
+        );
+        for (const role of roleKeys) {
+          await tx.execute(
+            sql`INSERT INTO app.user_roles (tenant_id, user_id, role_key) VALUES (${scope.tenantId}, ${U.mgmt}, ${role})`,
+          );
+        }
+      });
+    // Management is taken away; the person keeps another role and the entity membership. Their token (the
+    // principal below) still says Management until it expires.
+    await mirrorRoles(['finance']);
+    me = U.mgmt;
+    try {
+      await expect(routes.publish('demoted', 1)).rejects.toMatchObject({
+        status: 403,
+        response: { reason: 'no_permission' },
+      });
+      expect(
+        (await admin.listWorkflows()).find((w) => w.key === 'demoted')?.versions[0]?.status,
+      ).toBe('draft');
+    } finally {
+      await mirrorRoles(['management']);
+    }
+    // With Management back in the mirror, the same route publishes.
+    await expect(routes.publish('demoted', 1)).resolves.toMatchObject({
+      status: 'published',
+      publishedBy: U.mgmt,
+    });
   });
 
   it('refuses a draft whose editor was never recorded, whoever publishes it', async () => {
@@ -889,7 +938,9 @@ describe('admin: publishing a workflow needs a second person (F1-Q11)', () => {
       ),
     );
     me = U.mgmt;
-    const refusal: unknown = await admin.publish('no_editor', 1).catch((e: unknown) => e);
+    const refusal: unknown = await admin
+      .publish('no_editor', 1, SKIP_LIVE_PUBLISHER_CHECK)
+      .catch((e: unknown) => e);
     expect(refusal).toMatchObject({ status: 403 });
     expect(JSON.stringify((refusal as { getResponse(): unknown }).getResponse())).toContain(
       'Save it again',

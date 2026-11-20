@@ -47,7 +47,7 @@ import { systemActor, withTx, type TxScope } from '../../../platform/db/tx';
 import { NumberingService } from '../../../platform/settings/numbering.service';
 import { SettingsService } from '../../../platform/settings/settings.service';
 import { ApprovalsAdminService } from '../../approvals/admin.service';
-import { asSecondPerson } from '../../../../test/support/second-person';
+import { asSecondPerson, SKIP_LIVE_PUBLISHER_CHECK } from '../../../../test/support/second-person';
 import { ApprovalsService } from '../../approvals/requests.service';
 import { LedgerService } from '../../ledger/ledger.service';
 import { PurchaseOrdersService } from '../../procurement/orders/purchase-orders.service';
@@ -210,7 +210,7 @@ beforeAll(async () => {
     name: 'Vendor bill',
     spec: VENDOR_BILL_WORKFLOW_SPEC,
   });
-  await adminPublisher.publish(VENDOR_BILL_DOCUMENT_TYPE, 1);
+  await adminPublisher.publish(VENDOR_BILL_DOCUMENT_TYPE, 1, SKIP_LIVE_PUBLISHER_CHECK);
 
   approvals = new ApprovalsService(db, audit, notify, directory, caller, () => now);
   subject = new VendorBillSubject(audit, () => now, new LedgerService());
