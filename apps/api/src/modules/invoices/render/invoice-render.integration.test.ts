@@ -954,4 +954,37 @@ describe('a render that keeps failing (R4c2: TR-Q4, F1-Q13)', () => {
       'clean',
     ]);
   });
+
+  it('removes a stored PDF whose print 1 could not be recorded, so the next try prints and freezes print 1', async () => {
+    const scope = await newScope();
+    const inv = await seedInvoice(scope);
+    let clock = new Date();
+    const noPrintLog = {
+      ...store,
+      recordPrint: vi.fn().mockRejectedValue(new Error('print log down')),
+    };
+    const worker = new InvoiceRenderSweeper(
+      noPrintLog,
+      runTx,
+      documents,
+      settings,
+      { htmlToPdf: vi.fn().mockResolvedValue(PDF) },
+      () => clock,
+      NO_LOGOS,
+      renderAudit,
+    );
+    expect(await worker.renderOne(inv)).toBe('failed');
+    const [doc] = await documentRows(inv.invoiceId);
+    expect(doc?.status).toBe('clean');
+    expect(doc?.removed_at).not.toBeNull();
+    expect(await printFormats(inv.invoiceId)).toEqual([]);
+    const row = await failureRow(inv.invoiceId);
+    expect(row).toMatchObject({ attempts: 1 });
+    clock = new Date((row?.next_attempt_at ?? new Date()).getTime() + 1);
+    expect(ids(await store.candidates(clock, 1_000))).toContain(inv.invoiceId);
+    expect(await sweeper.renderOne(inv)).toBe('rendered');
+    const prints = await printFormats(inv.invoiceId);
+    expect(prints.map((p) => p.print_no)).toEqual([1]);
+    expect(prints[0]?.render_format).not.toBeNull();
+  });
 });
