@@ -329,6 +329,30 @@ describe('PurchaseOrderRenderSweeper.sweep', () => {
     expect(f.store.clearFailure).not.toHaveBeenCalled();
   });
 
+  it('counts the failure even when the document of the failed try cannot be removed', async () => {
+    const f = fixture();
+    f.documents.receiveGenerated.mockRejectedValue(new Error('disk full'));
+    f.store.discardUnfilled.mockRejectedValue(new Error('db hiccup'));
+    await expect(f.sweeper.renderOne(candidate(1))).resolves.toBe('failed');
+    expect(f.store.recordFailure).toHaveBeenCalledWith(TX, candidate(1), 'error', NOW);
+  });
+
+  it('removes the document of the failed try even when the failure cannot be counted', async () => {
+    const f = fixture();
+    f.documents.receiveGenerated.mockRejectedValue(new Error('disk full'));
+    f.store.recordFailure.mockRejectedValue(new Error('db hiccup'));
+    await expect(f.sweeper.renderOne(candidate(1))).resolves.toBe('failed');
+    expect(f.store.discardUnfilled).toHaveBeenCalledWith(TX, candidate(1), 'doc-1', NOW);
+  });
+
+  it('is rendered, not a failed try, when the earlier failures of a stored PDF cannot be forgotten', async () => {
+    const f = fixture();
+    f.store.clearFailure.mockRejectedValue(new Error('db hiccup'));
+    await expect(f.sweeper.renderOne(candidate(1))).resolves.toBe('rendered');
+    expect(f.store.recordFailure).not.toHaveBeenCalled();
+    expect(f.store.discardUnfilled).not.toHaveBeenCalled();
+  });
+
   it('logs, and does not throw, when the failure itself cannot be recorded', async () => {
     const f = fixture({ candidates: [candidate(1), candidate(2)] });
     f.pdf.htmlToPdf.mockRejectedValueOnce(new GotenbergError('boom', 'timeout'));
