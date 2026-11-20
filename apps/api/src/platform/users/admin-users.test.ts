@@ -1531,4 +1531,76 @@ describe('SqlUsersStore against migration 0013 (ADR 0027: tenant-scoped users)',
     ).toBe(true);
     expect(await audit.list(first.scope, { limit: 100 })).toHaveLength(countBefore);
   }, 60_000);
+
+  it('stores, lists, expires and clears a lock on the real columns and checks (0125, F1-Q4)', async () => {
+    const f = await directoryFixture('L');
+    const write = (update: Parameters<SqlUsersStore['updateUser']>[2]) =>
+      withTx(db, f.scope, systemActor('test'), (tx) => sqlStore.updateUser(tx, f.inactive, update));
+    const base = { email: 'inactive@example.test', displayName: null, status: 'inactive' as const };
+    const lockedAt = new Date('2026-11-20T10:00:00.000Z');
+    const until = new Date('2026-11-20T10:15:00.000Z');
+    const expiredHere = async (now: Date) =>
+      (await sqlStore.expiredLocks(db, now, 1000)).filter((l) => l.tenantId === f.scope.tenantId);
+
+    await write({ ...base, lock: { reason: 'failed_sign_ins', lockedAt, until } });
+
+    expect(await sqlStore.findById(db, f.scope, f.inactive)).toMatchObject({
+      lockReason: 'failed_sign_ins',
+      lockedUntil: '2026-11-20T10:15:00.000000Z',
+    });
+    const listed = await listRows(f.scope, { limit: 10, status: ['inactive'] });
+    expect(listed.find((r) => r.id === f.inactive)).toMatchObject({
+      lockReason: 'failed_sign_ins',
+    });
+    expect(await expiredHere(new Date('2026-11-20T10:14:59.000Z'))).toEqual([]);
+    expect(await expiredHere(until)).toEqual([{ id: f.inactive, tenantId: f.scope.tenantId }]);
+
+    // An admin lock never ends by itself: the shape check refuses one with an end time.
+    const refused: unknown = await withTx(db, f.scope, systemActor('test'), (tx) =>
+      tx.execute(
+        sql`UPDATE app.users SET lock_reason = 'admin', locked_until = now() WHERE id = ${f.inactive}`,
+      ),
+    ).then(
+      () => null,
+      (error: unknown) => error,
+    );
+    const failure = refused as { constraint?: string; cause?: { constraint?: string } } | null;
+    expect(failure?.cause?.constraint ?? failure?.constraint).toBe('users_lock_shape_check');
+
+    // No lock in the update keeps the stored one; a status that lets the person in clears it.
+    await write({ ...base, displayName: 'Renamed' });
+    expect(await sqlStore.findById(db, f.scope, f.inactive)).toMatchObject({
+      displayName: 'Renamed',
+      lockReason: 'failed_sign_ins',
+    });
+    await write({ ...base, status: 'active' });
+    expect(await sqlStore.findById(db, f.scope, f.inactive)).toMatchObject({
+      status: 'active',
+      lockReason: null,
+      lockedUntil: null,
+    });
+    expect(await expiredHere(until)).toEqual([]);
+  }, 60_000);
+
+  it('places an invitee in a department at a level on the real membership row (F1-Q50)', async () => {
+    const f = await directoryFixture('P');
+    await withTx(db, f.scope, systemActor('test'), async (tx) => {
+      expect(
+        await sqlStore.departmentForPlacement(tx, f.scope.tenantId, f.departmentId),
+      ).toMatchObject({
+        organizationId: f.scope.organizationId,
+        status: 'active',
+        headUserId: null,
+      });
+      await sqlStore.ensureDefaultMembership(tx, f.scope.tenantId, f.scope.organizationId, f.alpha);
+      await sqlStore.placeMembership(tx, f.scope.tenantId, f.scope.organizationId, f.alpha, {
+        departmentId: f.departmentId,
+        level: 'manager',
+      });
+    });
+
+    expect(await sqlStore.membershipsOf(db, f.scope.tenantId, f.alpha)).toEqual([
+      expect.objectContaining({ departmentId: f.departmentId, level: 'manager' }),
+    ]);
+  }, 60_000);
 });

@@ -300,3 +300,39 @@ describe('ensureOrgLoginPolicy', () => {
     expect(sent).toHaveLength(1);
   });
 });
+
+describe('user lock state (F1-Q4)', () => {
+  it('reads a LOCKED user as inactive and locked, with the date ZITADEL last changed it', async () => {
+    answers.push({
+      status: 200,
+      body: {
+        user: {
+          userId: 'u-1',
+          state: 'USER_STATE_LOCKED',
+          details: { resourceOwner: 'o-1', changeDate: '2026-11-20T10:00:00Z' },
+        },
+      },
+    });
+
+    await expect(client().getUser('u-1')).resolves.toMatchObject({
+      status: 'inactive',
+      locked: true,
+      changedAt: new Date('2026-11-20T10:00:00Z'),
+    });
+  });
+
+  it('reads a deactivated user as inactive but not locked', async () => {
+    answers.push({
+      status: 200,
+      body: {
+        user: { userId: 'u-1', state: 'USER_STATE_INACTIVE', details: { resourceOwner: 'o-1' } },
+      },
+    });
+
+    await expect(client().getUser('u-1')).resolves.toMatchObject({
+      status: 'inactive',
+      locked: false,
+      changedAt: null,
+    });
+  });
+});

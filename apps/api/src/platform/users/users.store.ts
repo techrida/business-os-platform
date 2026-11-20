@@ -15,6 +15,7 @@ import type {
   AdminUsersQuery,
   AdminUsersSummary,
   RoleKey,
+  UserLockReason,
 } from '@bos/contracts';
 import { idpOrgs, organizations } from '@bos/db';
 import { Inject, Injectable } from '@nestjs/common';
@@ -44,6 +45,31 @@ export interface UserRow {
   email: string | null;
   displayName: string | null;
   status: MirroredStatus;
+  /** Why the user is locked (0125); null = not locked. The SQL store always returns it; fakes may leave it out. */
+  lockReason?: UserLockReason | null;
+  /** When a `failed_sign_ins` lock ends, as an ISO timestamp; null otherwise. */
+  lockedUntil?: string | null;
+}
+
+/** A lock to write (F1-Q4): `until` is null for an admin lock, which never ends by itself. */
+export interface UserLock {
+  reason: UserLockReason;
+  lockedAt: Date;
+  until: Date | null;
+}
+
+/**
+ * The fields updateUser writes. `lock` undefined keeps the stored lock, null clears it. Whatever it says, a status
+ * other than 'inactive' clears the lock: only an inactive (LOCKED in ZITADEL) person can be locked.
+ */
+export type UserUpdate = Omit<UserFields, 'zitadelUserId' | 'idpOrgId'> & {
+  lock?: UserLock | null;
+};
+
+/** A `failed_sign_ins` lock whose time is up, for the lock-expiry job. */
+export interface ExpiredLock {
+  id: string;
+  tenantId: string;
 }
 
 /** One app.user_entities row: an entity the staff user may act for (ADR 0027 section 3). */
@@ -124,12 +150,10 @@ export abstract class UsersStore {
   ): Promise<UserRow | null>;
   /** Inserts, or returns the existing row's id when a concurrent insert won. */
   abstract insertUser(tx: DbTransaction, scope: TxScope, u: UserFields): Promise<string>;
-  abstract updateUser(
-    tx: DbTransaction,
-    userId: string,
-    u: Omit<UserFields, 'zitadelUserId' | 'idpOrgId'>,
-  ): Promise<void>;
+  abstract updateUser(tx: DbTransaction, userId: string, u: UserUpdate): Promise<void>;
   abstract notInactiveInIdpOrg(q: Queryable, org: IdpOrgRow): Promise<UserRow[]>;
+  /** Up to `limit` `failed_sign_ins` locks that ended by `now`, across tenants, oldest first (the lock-expiry job). */
+  abstract expiredLocks(q: Queryable, now: Date, limit: number): Promise<ExpiredLock[]>;
 
   abstract membershipsOf(q: Queryable, tenantId: string, userId: string): Promise<MembershipRow[]>;
   /**
@@ -205,7 +229,9 @@ async function rows<T extends Record<string, unknown>>(q: Queryable, query: SQL)
 }
 
 const USER_COLUMNS = sql`u.id, u.tenant_id AS "tenantId", u.idp_org_id AS "idpOrgId",
-  u.zitadel_user_id AS "zitadelUserId", u.email, u.display_name AS "displayName", u.status`;
+  u.zitadel_user_id AS "zitadelUserId", u.email, u.display_name AS "displayName", u.status,
+  u.lock_reason AS "lockReason",
+  to_char(u.locked_until AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"') AS "lockedUntil"`;
 
 const STAFF_USERS = sql`FROM app.users u
   JOIN app.idp_orgs io ON io.id = u.idp_org_id AND io.tenant_id = u.tenant_id AND io.kind = 'staff'`;
@@ -326,15 +352,29 @@ export class SqlUsersStore extends UsersStore {
     return existing.id;
   }
 
-  async updateUser(
-    tx: DbTransaction,
-    userId: string,
-    u: Omit<UserFields, 'zitadelUserId' | 'idpOrgId'>,
-  ): Promise<void> {
+  async updateUser(tx: DbTransaction, userId: string, u: UserUpdate): Promise<void> {
+    const lock = u.status === 'inactive' ? u.lock : null;
+    const lockSet =
+      lock === undefined
+        ? sql``
+        : lock === null
+          ? sql`, lock_reason = NULL, locked_at = NULL, locked_until = NULL`
+          : sql`, lock_reason = ${lock.reason}, locked_at = ${lock.lockedAt.toISOString()}::timestamptz,
+              locked_until = ${lock.until?.toISOString() ?? null}::timestamptz`;
     await tx.execute(
       sql`UPDATE app.users SET email = ${u.email}, display_name = ${u.displayName},
-            status = ${u.status}, last_synced_at = now(), updated_at = now()
+            status = ${u.status}, last_synced_at = now(), updated_at = now() ${lockSet}
           WHERE id = ${userId}`,
+    );
+  }
+
+  expiredLocks(q: Queryable, now: Date, limit: number): Promise<ExpiredLock[]> {
+    return rows<ExpiredLock & Record<string, unknown>>(
+      q,
+      sql`SELECT u.id, u.tenant_id AS "tenantId" FROM app.users u
+          WHERE u.lock_reason = 'failed_sign_ins' AND u.locked_until <= ${now.toISOString()}::timestamptz
+          ORDER BY u.locked_until, u.id
+          LIMIT ${limit}`,
     );
   }
 
