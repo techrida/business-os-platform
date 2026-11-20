@@ -2,6 +2,7 @@
 // AUTH_URL). These checks run at run time, on every navigation and request, so a misconfigured
 // redirect cannot carry the seeded credentials (or anything else) to another site, also with
 // network isolation off (NETNS=0).
+import { REDACTED, redactUrl } from './redact.mjs';
 
 /** Every configured origin, normalised (`https://host[:port]`). */
 export function configuredOrigins(cfg) {
@@ -43,13 +44,25 @@ export class OriginError extends Error {}
 
 /**
  * Throws unless `url` is on one of `allowed` (exact origin: scheme, host and port). `what` names
- * the action in the message. The URL in the message carries no query or fragment.
+ * the action in the message. The URL in the message carries no user info, query or fragment.
  */
 export function requireOrigin(url, allowed, what) {
   const origin = originOf(url);
   if (origin === null || !allowed.includes(origin))
     throw new OriginError(
-      `${what}: ${String(url).replace(/[?#].*$/s, '')} is not on ${allowed.join(' or ')}; refusing.`,
+      `${what}: ${describeUrl(url)} is not on ${allowed.join(' or ')}; refusing.`,
     );
   return origin;
+}
+
+/** A URL for a message, built from its parsed parts: never its user info, query or fragment. */
+function describeUrl(url) {
+  let u;
+  try {
+    u = new URL(String(url));
+  } catch {
+    return 'a value that is not a URL';
+  }
+  if (!u.host) return redactUrl(u.href); // data:, about: and the like have no user info
+  return `${u.protocol}//${u.username || u.password ? `${REDACTED}@` : ''}${u.host}${u.pathname}`;
 }

@@ -2,6 +2,7 @@
 // passes through redactText:
 // - URLs lose their query string and fragment: a sign-in callback carries `?code=…&state=…`, and
 //   nothing the driver reports needs either part;
+// - a user name and password inside a URL (`https://user:pw@host`) become `[redacted]@`;
 // - every registered secret (persona passwords, TOTP secrets, one-time codes) becomes `[redacted]`.
 //   Playwright puts the typed value into the message of a failed fill/pressSequentially and into its
 //   call log, so a failed input action could otherwise copy a password into the results.
@@ -72,15 +73,29 @@ export function redactSecrets(text) {
   return out;
 }
 
-/** `https://h/p?code=1#x` → `https://h/p`. Non-URL text is returned unchanged. */
+// `scheme://` then everything up to the last `@` before the first `/` or space: the URL's user
+// info. Quotes, `?` and `#` typed into a password do not end it (URL.href keeps `'` as typed);
+// over-redacting text that holds an `@` is the safe side.
+const USERINFO = /\b([a-z][a-z0-9+.-]*:\/\/)[^\s/]*@/gi;
+
+/** `https://u:pw@h/p?code=1#x` → `https://[redacted]@h/p`. Non-URL text is returned unchanged. */
 export function redactUrl(url) {
-  return redactSecrets(String(url ?? '').replace(/[?#].*$/s, ''));
+  return redactSecrets(
+    String(url ?? '')
+      .replace(USERINFO, `$1${REDACTED}@`)
+      .replace(/[?#].*$/s, ''),
+  );
 }
 
-/** Strips the query and fragment of every http(s) URL inside free text, and every secret. */
+/**
+ * Strips the user info of every URL inside free text, the query and fragment of every
+ * http(s)/ws(s) URL, and every secret.
+ */
 export function redactText(text) {
   return redactSecrets(
-    String(text ?? '').replace(/\b(https?:\/\/[^\s?#'"<>]*)[?#][^\s'"<>]*/g, '$1'),
+    String(text ?? '')
+      .replace(USERINFO, `$1${REDACTED}@`)
+      .replace(/\b((?:https?|wss?):\/\/[^\s?#'"<>]*)[?#][^\s'"<>]*/gi, '$1'),
   );
 }
 

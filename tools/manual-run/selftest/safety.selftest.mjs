@@ -7,7 +7,7 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { after, afterEach, describe, test } from 'node:test';
 
-import { scrubDebugEnv } from '../lib/config.mjs';
+import { checkOrigin, scrubDebugEnv } from '../lib/config.mjs';
 import { assertShellSafePath, netnsWanted, shq } from '../lib/netns.mjs';
 import { originAllowed, originOf, requireOrigin } from '../lib/origins.mjs';
 import {
@@ -65,6 +65,72 @@ describe('URL redaction', () => {
     assert.match(out, /http:\/\/x\.localhost\/a and/);
     assert.match(out, /"https:\/\/app\.localhost\/p"/);
     assert.match(out, /\(3 = 3\?\)$/);
+  });
+});
+
+describe('a user name and password inside a URL never print', () => {
+  // Synthetic and never registered with the redactor: only the URL rules may remove it. `^` and
+  // `|` are percent-encoded in URL.href, so both forms are checked.
+  const USER = 'probeuser';
+  const PASS = 'Zq9^pw|x';
+  const leaks = (text) =>
+    [USER, PASS, encodeURIComponent(PASS), 'Zq9'].filter((v) => String(text).includes(v));
+  const URL_WITH_PASSWORD = `https://${USER}:${PASS}@evil.example/login?token=abc#f`;
+  afterEach(clearSecrets);
+
+  test('the redactor drops the user info of http(s) and ws(s) URLs, in URLs and in free text', () => {
+    clearSecrets();
+    assert.equal(redactUrl(URL_WITH_PASSWORD), 'https://[redacted]@evil.example/login');
+    assert.equal(
+      redactUrl(`wss://${USER}:${PASS}@h.localhost/ws?x=1`),
+      'wss://[redacted]@h.localhost/ws',
+    );
+    const text = redactText(
+      `goto ${new URL(URL_WITH_PASSWORD).href} failed; ws ws://${USER}:${PASS}@h/x?q=1 too`,
+    );
+    assert.deepEqual(leaks(text), [], text);
+    assert.match(
+      text,
+      /goto https:\/\/\[redacted\]@evil\.example\/login failed; ws ws:\/\/\[redacted\]@h\/x too/,
+    );
+    // A `?`, `#` or quote typed into the password does not end the user info.
+    assert.deepEqual(leaks(redactText(`https://${USER}:Zq9?a#b@h.example/`)), []);
+    for (const pw of ["Zq9'x", 'Zq9"x', 'Zq9<x>'])
+      assert.deepEqual(leaks(redactUrl(new URL(`https://${USER}:${pw}@h.example/`).href)), [], pw);
+  });
+
+  test('the origin guard, a refused navigation and the probe line never echo the user info', () => {
+    clearSecrets();
+    assert.throws(
+      () => requireOrigin(URL_WITH_PASSWORD, [CFG.authUrl], 'Navigation'),
+      (e) =>
+        leaks(e.message).length === 0 &&
+        /\[redacted\]@evil\.example\/login is not on/.test(e.message),
+    );
+    // probe --url: Session.goto → resolve → StepFailure → `probe: …` through redactText.
+    const s = new Session({ context: null, page: null, cfg: CFG, state: {}, log: () => {} });
+    let line = '';
+    try {
+      s.resolve(URL_WITH_PASSWORD);
+    } catch (error) {
+      assert.ok(error instanceof StepFailure);
+      line = redactText(`probe: ${error.message.split('\n')[0]}`);
+    }
+    assert.match(line, /^probe: Navigation: https:\/\/\[redacted\]@evil\.example\/login is not on/);
+    assert.throws(
+      () => s.resolve(`https://${USER}:Zq9'x@evil.example/`),
+      (e) => leaks(e.message).length === 0,
+    );
+    assert.deepEqual(leaks(line), [], line);
+    // A configured origin that does not parse is quoted without its user info.
+    assert.throws(
+      () => checkOrigin('APP_URL', `https://${USER}:${PASS}@[bad`),
+      (e) => /APP_URL is not a URL/.test(e.message) && leaks(e.message).length === 0,
+    );
+    assert.throws(
+      () => checkOrigin('APP_URL', `https://${USER}:Zq9 a/b@[bad`),
+      (e) => leaks(e.message).length === 0,
+    );
   });
 });
 

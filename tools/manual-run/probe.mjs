@@ -1,8 +1,9 @@
 #!/usr/bin/env node
 // Step-authoring helper: sign in as a persona through the Dev switcher, open a page and list its
 // visible controls by accessible role and name (what getByRole/getByLabel will match), plus the
-// page text. Nothing is recorded. Output is redacted like the runner's: URLs lose their query and
-// fragment, password, code and hidden inputs print `[hidden]`, and registered secrets are replaced.
+// page text. Nothing is recorded. Output is redacted like the runner's: URLs lose their user info,
+// query and fragment, password, code and hidden inputs print `[hidden]`, and registered secrets are
+// replaced.
 // `--origins` lists the origins the page requested; requests outside the configured origins are
 // blocked and listed either way.
 //

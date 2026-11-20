@@ -63,7 +63,7 @@ Step authoring helper (records nothing):
 node tools/manual-run/probe.mjs --persona "Dev Sales" --url /leads/new --text --shot /tmp/x.png
 ```
 
-It lists every visible control with the role and accessible name that `getByRole` and `getByLabel` will match. Its output is redacted like the runner's: URLs and links lose their query and fragment, and password, one-time-code and hidden inputs print `[hidden]` instead of their value. `--origins` lists the origins the page requested; a request outside the configured origins is blocked and printed as `BLOCKED <url>`.
+It lists every visible control with the role and accessible name that `getByRole` and `getByLabel` will match. Its output is redacted like the runner's: URLs and links lose their query and fragment, a user name and password inside a URL print as `[redacted]@`, and password, one-time-code and hidden inputs print `[hidden]` instead of their value. `--origins` lists the origins the page requested; a request outside the configured origins is blocked and printed as `BLOCKED <url>`.
 
 ## Self-tests
 

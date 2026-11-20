@@ -53,7 +53,8 @@ export function checkOrigin(name, value, { allowNonLocal = false } = {}) {
   try {
     u = new URL(String(value));
   } catch {
-    throw new Error(`${name} is not a URL: ${JSON.stringify(value)}`);
+    // Not quoted: a value that does not parse may still hold a user name and password.
+    throw new Error(`${name} is not a URL.`);
   }
   if (u.protocol !== 'https:')
     throw new Error(
