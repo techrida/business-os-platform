@@ -2,11 +2,12 @@
 
 import { DEPARTMENT_NAME_MAX, DEPARTMENT_NAME_MIN } from '@bos/contracts';
 import { useRouter } from 'next/navigation';
-import { useId, useState, type FormEvent } from 'react';
+import { useEffect, useId, useState, type FormEvent } from 'react';
 
 import type { DepartmentRecordResult } from '@/app/(app)/settings/departments/action-types';
 import {
   createDepartmentAction,
+  loadRetireMembersAction,
   renameDepartmentAction,
   restoreDepartmentAction,
   retireDepartmentAction,
@@ -70,6 +71,13 @@ function Problem({
   onReload: () => void;
 }) {
   if (result === null || result.ok || result.fieldErrors !== undefined) return null;
+  if (result.kind === 'membersChanged') {
+    return (
+      <Alert tone="warning" role="alert">
+        {result.message}
+      </Alert>
+    );
+  }
   if (result.kind === 'stale') {
     return (
       <Alert
@@ -314,29 +322,63 @@ export function RetireDepartmentDialog({
   const [destination, setDestination] = useState('');
   const [pending, setPending] = useState(false);
   const [result, setResult] = useState<DepartmentRecordResult | null>(null);
-  const hasMembers = department.members > 0;
+  // The active member ids this dialog shows and sends back, so nobody who joins after it opened is
+  // moved unseen. Null while loading; reloaded after the API reports a changed list.
+  const [memberIds, setMemberIds] = useState<readonly string[] | null>(null);
+  const [loadProblem, setLoadProblem] = useState<string | null>(null);
+  const [loads, setLoads] = useState(0);
+  const memberCount = memberIds?.length ?? department.members;
+  const hasMembers = memberCount > 0;
   const fieldError = result !== null && !result.ok ? result.fieldErrors?.moveMembersTo : undefined;
-  const ready = !hasMembers || destination !== '';
+  const ready = memberIds !== null && (!hasMembers || destination !== '');
+
+  useEffect(() => {
+    if (!open) return;
+    let live = true;
+    void loadRetireMembersAction(department.id).then((loaded) => {
+      if (!live) return;
+      if (loaded.ok) {
+        setMemberIds(loaded.memberIds);
+        setLoadProblem(null);
+      } else {
+        setLoadProblem(loaded.message);
+      }
+    });
+    return () => {
+      live = false;
+    };
+  }, [open, department.id, loads]);
 
   function change(next: boolean) {
     if (next) {
       setDestination('');
       setResult(null);
+    } else {
+      setMemberIds(null);
+      setLoadProblem(null);
     }
     onOpenChange(next);
   }
 
   async function retire() {
-    if (!ready) return;
+    if (!ready || memberIds === null) return;
     setPending(true);
     const moveTo = !hasMembers ? undefined : destination === NO_DEPARTMENT ? null : destination;
-    const outcome = await retireDepartmentAction(department.id, department.version, moveTo);
+    const outcome = await retireDepartmentAction(
+      department.id,
+      department.version,
+      moveTo,
+      memberIds,
+    );
     setPending(false);
     setResult(outcome);
     if (outcome.ok) {
       toast.success(`${outcome.name} retired.`);
       onOpenChange(false);
       router.refresh();
+    } else if (outcome.kind === 'membersChanged') {
+      setMemberIds(null);
+      setLoads((count) => count + 1);
     } else if (outcome.fieldErrors === undefined && outcome.kind !== 'stale') {
       toast.error(outcome.message);
     }
@@ -371,7 +413,7 @@ export function RetireDepartmentDialog({
       <div className={styles.stack}>
         {hasMembers ? (
           <Field
-            label={`Move ${people(department.members)} to`}
+            label={`Move ${people(memberCount)} to`}
             hint="A retired department keeps no members."
             error={fieldError}
           >
@@ -399,6 +441,11 @@ export function RetireDepartmentDialog({
           <p>No one is in {department.name}.</p>
         )}
         <p>Records stay under {department.name}. You can restore it later.</p>
+        {loadProblem !== null && (
+          <Alert tone="error" role="alert">
+            {loadProblem}
+          </Alert>
+        )}
         <Problem result={result} onReload={() => router.refresh()} />
       </div>
     </Dialog>
