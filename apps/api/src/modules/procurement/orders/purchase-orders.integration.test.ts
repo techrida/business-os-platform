@@ -791,6 +791,28 @@ describe('review of an emergency purchase after receipt (F1-Q41)', () => {
     expect((await service.get(po.id)).status).toBe('fully_received');
     expect(await reviewsOf(po.id)).toEqual([]);
   });
+
+  it('asks Management once when the rest of an emergency order is short-closed', async () => {
+    const po = await issued({ quantity: '5', unitPrice: '100.00', emergency: true });
+    await receive(po, '2');
+    expect(await reviewsOf(po.id)).toEqual([]);
+
+    const dto = await service.shortClose(po.id, { reason: 'Vendor out of stock' }, randomUUID());
+    expect(dto.status).toBe('short_closed');
+    const reviews = await reviewsOf(po.id);
+    expect(reviews).toHaveLength(1);
+    expect(reviews[0]).toMatchObject({ status: 'pending', requesterUserId: U.req });
+    // Who short-closed the order does not review it.
+    expect(reviews[0]!.sodUserIds).toEqual(expect.arrayContaining([U.req, U.proc]));
+    expect(await stepRoles(reviews[0]!.id)).toEqual(['management']);
+  });
+
+  it('asks nothing when an ordinary order is short-closed', async () => {
+    const po = await issued({ quantity: '5', unitPrice: '100.00' });
+    await receive(po, '2');
+    await service.shortClose(po.id, { reason: 'Vendor out of stock' }, randomUUID());
+    expect(await reviewsOf(po.id)).toEqual([]);
+  });
 });
 
 // ---------------------------------------------------------------------------------------- versions
