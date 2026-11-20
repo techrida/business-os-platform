@@ -53,6 +53,7 @@ import { can } from '../../platform/authz/can';
 import { DB, type Db, type DbTransaction } from '../../platform/db/db.module';
 import { type TxScope, withTx } from '../../platform/db/tx';
 import { searchPage } from '../../platform/list';
+import { lockAccessRevision } from '../access-settings/access-revision';
 import { ACCESS_REVISION_PORT, type AccessRevisionPort } from './access-revision.port';
 import { DepartmentsCaller } from './departments.caller';
 
@@ -161,6 +162,16 @@ export class DepartmentsAdminService {
     await tx.execute(
       sql`SELECT pg_advisory_xact_lock(hashtextextended(${departmentLockKey(scope)}::text, 0))`,
     );
+  }
+
+  /**
+   * Every department write takes the tenant's access revision lock first, then this entity's
+   * department lock. The access save also takes the access revision lock first, so a department
+   * write and an access save never wait on each other in a cycle.
+   */
+  private async lockForDepartmentWrite(tx: DbTransaction, scope: TxScope): Promise<void> {
+    await lockAccessRevision(tx, scope.tenantId);
+    await this.lockEntityDepartments(tx, scope);
   }
 
   private async assertUniqueActiveName(
@@ -511,7 +522,7 @@ export class DepartmentsAdminService {
     let detail: AdminDepartmentDetail;
     try {
       detail = await withTx(this.db, scope, actor, async (tx) => {
-        await this.lockEntityDepartments(tx, scope);
+        await this.lockForDepartmentWrite(tx, scope);
         await this.assertUniqueActiveName(tx, scope, body.name);
 
         let headBefore: {
@@ -663,7 +674,7 @@ export class DepartmentsAdminService {
 
     try {
       return await withTx(this.db, scope, actor, async (tx) => {
-        await this.lockEntityDepartments(tx, scope);
+        await this.lockForDepartmentWrite(tx, scope);
 
         const [dept] = await tx
           .select({
@@ -730,7 +741,7 @@ export class DepartmentsAdminService {
     const { scope, actor } = this.caller.tx();
 
     const { detail, shouldInvalidate } = await withTx(this.db, scope, actor, async (tx) => {
-      await this.lockEntityDepartments(tx, scope);
+      await this.lockForDepartmentWrite(tx, scope);
 
       const [dept] = await tx
         .select({
@@ -1009,7 +1020,7 @@ export class DepartmentsAdminService {
 
     try {
       return await withTx(this.db, scope, actor, async (tx) => {
-        await this.lockEntityDepartments(tx, scope);
+        await this.lockForDepartmentWrite(tx, scope);
 
         const [dept] = await tx
           .select({
