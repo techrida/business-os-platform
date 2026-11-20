@@ -4,7 +4,6 @@ import Link from 'next/link';
 import { notFound } from 'next/navigation';
 
 import { Alert } from '@/components/ui/alert';
-import { hasPermission } from '@/components/p2/customers/permissions';
 import { Badge } from '@/components/ui/badge';
 import { Breadcrumb, Page, PageHeader } from '@/components/ui/page';
 import { Disclosure } from '@/components/ui/disclosure';
@@ -23,6 +22,7 @@ import { requireStaffSession } from '@/lib/bff';
 import { getNumberSystems } from '@/lib/display-settings';
 import { money, when } from '@/lib/kernel-format';
 import { auditEventLabel, toAttachmentView } from '@/lib/kernel-ui';
+import { getPermissionCheck } from '@/lib/live-permissions';
 import { memoDraftAccount } from '@/lib/memo-working-draft';
 
 import styles from '../../kit.module.css';
@@ -123,7 +123,7 @@ export default async function MemoPage({
   // it shows what submit will create: for an internal memo, the people the author selected, in order.
   // `GET /v1/audit` needs `audit.read`. Without it the page asks nothing (as the directory
   // lookup once did), so the API logs no 403 per view; a 403 from a grant revoked later still reads as hidden.
-  const mayReadAudit = hasPermission(session.roles, 'audit.read');
+  const mayReadAudit = (await getPermissionCheck(session))('audit.read');
   const entityIds = mayReadAudit
     ? [memo.id, ...(memo.approval ? [memo.approval.requestId] : [])]
     : [];

@@ -67,7 +67,11 @@ describe('withholding registry access', () => {
     await expect(service().listWithholdingCodes()).rejects.toBeInstanceOf(ForbiddenException);
     expect(select).not.toHaveBeenCalled();
   });
-  it('refuses staff without the bill-entry grant', async () => {
+  it('returns the codes to staff holding only settings.finance.write (the Tax settings page, F1-Q48)', async () => {
+    state.principal = { ...state.principal, grants: new Map([['settings.finance.write', 'all']]) };
+    await expect(service().listWithholdingCodes()).resolves.toEqual(rows);
+  });
+  it('refuses staff without the bill-entry or finance-settings grant', async () => {
     state.principal = { ...state.principal, grants: new Map([['payables.bill.read', 'all']]) };
     await expect(service().listWithholdingCodes()).rejects.toBeInstanceOf(ForbiddenException);
     expect(select).not.toHaveBeenCalled();

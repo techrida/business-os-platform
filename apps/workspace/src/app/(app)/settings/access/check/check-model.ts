@@ -7,7 +7,7 @@ import { z } from 'zod';
 import { LEVEL_LABEL, peopleText } from '../roles/_lib/reach';
 
 export const CHECK_PATH = '/settings/access/check';
-export const PICK_PROMPT = 'Pick a person to see what they can open.';
+export const PICK_PROMPT = 'Pick a person to see what this person can open.';
 export const PERSON_NOT_FOUND = 'This person could not be found. Pick someone else.';
 
 type Person = CheckPersonReport['person'];
@@ -41,10 +41,17 @@ export function headerLine(person: Person): string {
 
 /** The notice above the report, when the person's state needs one (spec 6.2 "States"). */
 export function personNotice(person: Person): string | null {
-  if (person.roles.length === 0)
-    return `${person.name} has no roles, so they cannot open anything.`;
+  // Name the person, never "they": the notice reads as one person's state.
+  const name = person.name.trim();
+  if (person.roles.length === 0) {
+    return name
+      ? `${name} has no roles, so ${name} cannot open anything.`
+      : 'This person has no roles, so this person cannot open anything.';
+  }
   if (person.status === 'inactive') {
-    return `${person.name} is disabled and cannot sign in. This shows what their roles would allow.`;
+    return name
+      ? `${name} is disabled and cannot sign in. This shows what ${name}'s roles would allow.`
+      : "This person is disabled and cannot sign in. This shows what this person's roles would allow.";
   }
   return null;
 }

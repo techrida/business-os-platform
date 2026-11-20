@@ -44,7 +44,31 @@ export function opportunityRef(
   };
 }
 
-/** The stage targets `principal` may move `row` to over HTTP. Pure, using live `crm.opportunity.write`. */
+/**
+ * May `principal` reopen this lost opportunity (the manager edge)? Both rules are required: the code rule (Founder,
+ * or a manager or head, `isStageManager`) and the live `crm.opportunity.reopen` grant reaching the opportunity's
+ * department, which the Founder narrows or widens per role in Settings > Access. Staff never reopen, whatever they
+ * are granted. The ref carries no readers: reopening is a change, so assignee reach never counts (D55-3).
+ */
+export function mayReopenOpportunity(
+  principal: Principal,
+  row: {
+    tenantId: string;
+    organizationId: string;
+    ownerUserId: string | null;
+    departmentId: string | null;
+  },
+): boolean {
+  return (
+    isStageManager(principal) &&
+    can(principal, 'crm.opportunity.reopen', opportunityRef(row)).allowed
+  );
+}
+
+/**
+ * The stage targets `principal` may move `row` to over HTTP. Pure, using live `crm.opportunity.write`, and for the
+ * reopen edge also `mayReopenOpportunity`.
+ */
 export function allowedOpportunityMoves(
   principal: Principal,
   row: {
@@ -56,7 +80,7 @@ export function allowedOpportunityMoves(
   },
 ): OpportunityStage[] {
   if (!can(principal, 'crm.opportunity.write', opportunityRef(row)).allowed) return [];
-  const manager = isStageManager(principal);
+  const manager = mayReopenOpportunity(principal, row);
   return OPPORTUNITY_TRANSITIONS.filter(
     (t) =>
       t.from === row.stage &&

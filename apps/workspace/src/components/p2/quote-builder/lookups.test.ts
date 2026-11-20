@@ -11,8 +11,27 @@ const presets = vi.hoisted(() => ({ listTermPresets: vi.fn() }));
 vi.mock('./api', () => api);
 vi.mock('@/lib/api-tax-codes', () => tax);
 vi.mock('@/lib/api-term-presets', () => presets);
+const getMe = vi.hoisted(() =>
+  vi.fn<(token: string) => Promise<{ permissions?: { permission: string; scope: string }[] }>>(),
+);
+vi.mock('@/lib/api', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@/lib/api')>()),
+  getMe: (session: { accessToken: string }) => getMe(session.accessToken),
+}));
 
-const session = { roles: ['sales'] } as Session;
+const session = { accessToken: 'sales', roles: ['sales'] } as Session;
+
+/** A session whose roles disagree with the live grants `/v1/me` reports for its token. */
+const persona = (token: string, roles: string[], ...permissions: string[]): Session => {
+  getMe.mockImplementation((asked) =>
+    Promise.resolve(
+      asked === token
+        ? { permissions: permissions.map((permission) => ({ permission, scope: 'all' })) }
+        : {},
+    ),
+  );
+  return { accessToken: token, roles } as Session;
+};
 const code = { id: '11111111-1111-4111-8111-111111111111', label: 'VAT 13%', rate: '13' };
 
 beforeEach(() => {
@@ -20,6 +39,8 @@ beforeEach(() => {
   api.listPaymentTerms.mockResolvedValue([]);
   api.listContacts.mockResolvedValue([]);
   presets.listTermPresets.mockResolvedValue([]);
+  // Unless a test says otherwise /v1/me is down, so the role defaults decide.
+  getMe.mockRejectedValue(new Error('upstream down'));
 });
 
 describe('loadLookups', () => {
@@ -66,14 +87,28 @@ describe('loadLookups', () => {
     expect(result.paymentTerms).toEqual([]);
   });
 
-  it('offers "Add more" to a session with admin.settings.write (the Founder) and to nobody else', async () => {
+  it('offers "Add more" for a live finance-settings or admin.settings.write grant, whatever the roles', async () => {
     tax.listTaxCodes.mockResolvedValue([]);
-    expect((await loadLookups({ roles: ['founder'] } as Session, 'customer')).canAddTerms).toBe(
-      true,
-    );
+    const finance = persona('finance-live', ['sales'], 'settings.finance.write');
+    expect((await loadLookups(finance, 'customer')).canAddTerms).toBe(true);
+    const founder = persona('founder-live', ['sales'], 'admin.settings.write');
+    expect((await loadLookups(founder, 'customer')).canAddTerms).toBe(true);
+  });
+
+  it('withholds "Add more" when the live grants lack both, even from a Founder role', async () => {
+    tax.listTaxCodes.mockResolvedValue([]);
+    const narrowed = persona('founder-narrowed', ['founder'], 'settings.fx_rate.write');
+    expect((await loadLookups(narrowed, 'customer')).canAddTerms).toBe(false);
+    const sales = persona('sales-live', ['sales'], 'quotation.draft');
+    expect((await loadLookups(sales, 'customer')).canAddTerms).toBe(false);
+  });
+
+  it('falls back to the role defaults when /v1/me is down', async () => {
+    tax.listTaxCodes.mockResolvedValue([]);
+    const founder = { accessToken: 'founder', roles: ['founder'] } as Session;
+    expect((await loadLookups(founder, 'customer')).canAddTerms).toBe(true);
     expect((await loadLookups(session, 'customer')).canAddTerms).toBe(false);
-    expect((await loadLookups({ roles: [] } as unknown as Session, 'customer')).canAddTerms).toBe(
-      false,
-    );
+    const none = { accessToken: 'none', roles: [] } as unknown as Session;
+    expect((await loadLookups(none, 'customer')).canAddTerms).toBe(false);
   });
 });

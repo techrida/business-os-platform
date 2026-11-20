@@ -1,7 +1,7 @@
 // Display helpers for Server Components that need @bos/locale or contract constants (kept out of
 // kernel-ui.ts so Client Components do not pull in decimal.js and the Nepali calendar).
 // Serves the NFR "amounts are exact and dates are Kathmandu time" for every kernel screen.
-import { DEFAULT_ROLE_PERMISSIONS, richTextToPlain } from '@bos/contracts';
+import { richTextToPlain } from '@bos/contracts';
 import {
   formatCustomerDate,
   formatKathmandu,
@@ -244,17 +244,4 @@ export function snapshotEntries(
       }
       return { key, label, value: JSON.stringify(raw, null, 2), block: true };
     });
-}
-
-/**
- * Whether the nav shows Admin. `session.roles` holds role keys, not permissions, so this reads the
- * default grants: any role whose defaults include an `admin.*` permission. A custom grant added
- * later in the admin screens does not show here; the admin pages and the API still enforce it.
- */
-export function canSeeAdmin(roles: readonly string[]): boolean {
-  return roles.some((role) => {
-    const grants = (DEFAULT_ROLE_PERMISSIONS as Record<string, object | undefined>)[role] as
-      Record<string, unknown> | undefined;
-    return grants !== undefined && Object.keys(grants).some((p) => p.startsWith('admin.'));
-  });
 }

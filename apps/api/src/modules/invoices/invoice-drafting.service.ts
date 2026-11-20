@@ -52,7 +52,7 @@ import { CurrencyEnabledService } from '../../platform/settings/currency-enabled
 import { LedgerService } from '../ledger/ledger.service';
 import { invoiceSettlements } from '../receivables/invoice-settlements';
 import { loadTaxCodePeriods } from '../quotations/pricing/tax-codes.resolver';
-import { toInvoiceDetail, toInvoiceListItem } from './invoice-mapping';
+import { invoiceCan, toInvoiceDetail, toInvoiceListItem } from './invoice-mapping';
 import { priceInvoice, priceSlice, type PricedInvoice } from './invoice-pricing';
 import {
   assertStaff,
@@ -226,6 +226,7 @@ export class InvoiceDraftingService {
             ...toInvoiceListItem(r.invoice, r.customerName),
             settlement: state?.settlement ?? null,
             openAmount: state?.openAmount ?? null,
+            can: invoiceCan(principal, scope, r.invoice),
           };
         }),
         total,
@@ -314,16 +315,23 @@ export class InvoiceDraftingService {
     const visible = scopeWhereFor(principal, invoices, 'invoice.read');
     return withTx(this.db, scope, actor, async (tx) => {
       const [row] = await tx
-        .select({ id: invoices.id, kind: invoices.kind, createdBy: invoices.createdBy })
+        .select({
+          id: invoices.id,
+          kind: invoices.kind,
+          createdBy: invoices.createdBy,
+          customerPartyId: invoices.customerPartyId,
+        })
         .from(invoices)
         .where(and(visible, eq(invoices.id, id)))
         .limit(1);
       if (row === undefined) throw invoiceNotFound();
       const detail = await this.loadDetail(tx, scope, id);
       // The issue route refuses the note's creator (TR-Q12f); the page says so before the click.
-      return createdThisNote(row, principal.userId)
-        ? { ...detail, issueBlockedBySod: true }
-        : detail;
+      return {
+        ...detail,
+        can: invoiceCan(principal, scope, row),
+        ...(createdThisNote(row, principal.userId) ? { issueBlockedBySod: true } : {}),
+      };
     });
   }
 

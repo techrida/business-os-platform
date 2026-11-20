@@ -9,7 +9,11 @@ import { PgDialect } from 'drizzle-orm/pg-core';
 import { describe, expect, it, vi } from 'vitest';
 
 import type { Db } from '../db/db.module';
-import { AuditService } from './audit.service';
+import {
+  AuditNewestFirstTooLargeError,
+  AuditService,
+  NEWEST_FIRST_MAX_PAGES,
+} from './audit.service';
 
 const TENANT = '11111111-1111-4111-8111-111111111111';
 const dialect = new PgDialect();
@@ -206,5 +210,81 @@ describe('AuditService.list actor names', () => {
     const [e] = await new AuditService(db).list(scope, { limit: 10 });
     expect(execute).toHaveBeenCalledTimes(1);
     expect(e).toMatchObject({ actorId: 'system:seal', hash: 'ab', prevHash: '00' });
+  });
+});
+
+describe('AuditService.list order=desc', () => {
+  const scope = { tenantId: TENANT, organizationId: TENANT };
+  const fullRow = (id: number) => ({
+    id: String(id),
+    tenant_id: TENANT,
+    organization_id: TENANT,
+    chain_month: '2026-11-01',
+    seq: String(id),
+    occurred_at: '2026-11-08T10:00:00.000001Z',
+    actor_kind: 'system',
+    actor_id: 'system:test',
+    action: 'x.y',
+    entity_type: 'x',
+    entity_id: String(id),
+    before: null,
+    after: null,
+    meta: null,
+    before_text: null,
+    after_text: null,
+    meta_text: null,
+    ip: null,
+    user_agent: null,
+    correlation_id: 'c',
+    prev_hash: Buffer.from('00', 'hex'),
+    hash: Buffer.from('ab', 'hex'),
+  });
+
+  /**
+   * Behaves like audit.read_events over events 1..total: ascending ids after the cursor, at most `lim`.
+   * The cursor and limit are the 7th and 8th parameters, as the service passes them.
+   */
+  function readEventsDb(total: number) {
+    const execute = vi.fn((query: SQL) => {
+      const { sql: text, params } = dialect.sqlToQuery(query);
+      const after = params[6] === null ? 0 : Number(params[6]);
+      const lim = Number(params[7]);
+      const ids: number[] = [];
+      for (let id = after + 1; id <= total && ids.length < lim; id += 1) ids.push(id);
+      const idOnly = !text.includes('to_char');
+      return Promise.resolve({
+        rows: ids.map((id) => (idOnly ? { id: String(id) } : fullRow(id))),
+      });
+    });
+    return { db: { execute } as unknown as Db, execute };
+  }
+
+  it('returns the newest events, newest first, past several 500-row pages', async () => {
+    const { db, execute } = readEventsDb(1234);
+    const events = await new AuditService(db).list(scope, { limit: 50, order: 'desc' });
+
+    expect(events.map((e) => e.id)).toEqual(Array.from({ length: 50 }, (_, i) => String(1234 - i)));
+    // Three id-only pages (500, 500, 234), then one full read of the tail.
+    expect(execute).toHaveBeenCalledTimes(4);
+  });
+
+  it('returns every event, newest first, when fewer than the limit match', async () => {
+    const { db } = readEventsDb(3);
+    const events = await new AuditService(db).list(scope, { limit: 50, order: 'desc' });
+    expect(events.map((e) => e.id)).toEqual(['3', '2', '1']);
+  });
+
+  it('returns the oldest events, oldest first, when the order is left out', async () => {
+    const { db } = readEventsDb(1234);
+    const events = await new AuditService(db).list(scope, { limit: 50 });
+    expect(events.map((e) => e.id)).toEqual(Array.from({ length: 50 }, (_, i) => String(i + 1)));
+  });
+
+  it('refuses instead of returning a truncated tail when too many events match', async () => {
+    const { db, execute } = readEventsDb(NEWEST_FIRST_MAX_PAGES * 500 + 1);
+    await expect(
+      new AuditService(db).list(scope, { limit: 50, order: 'desc' }),
+    ).rejects.toBeInstanceOf(AuditNewestFirstTooLargeError);
+    expect(execute).toHaveBeenCalledTimes(NEWEST_FIRST_MAX_PAGES);
   });
 });

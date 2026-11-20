@@ -20,9 +20,11 @@ import { requireStaffSession } from '@/lib/bff';
 import { getNumberSystems } from '@/lib/display-settings';
 import { money, when } from '@/lib/kernel-format';
 
+import { ConfirmDraftDialog } from '../_components/confirm-draft-dialog';
 import { DraftInvoiceForm } from '../_components/draft-invoice-form';
 import { MarkBillableDialog, type EvidenceOption } from '../_components/mark-billable-dialog';
 import local from '../_components/sales-orders.module.css';
+import { draftBlockerText } from '../_lib/confirm-refusal';
 import {
   evidenceKindLabel,
   heldInvoiceLabel,
@@ -391,6 +393,8 @@ export default async function SalesOrderPage({
     mark: data.can?.markBillable ?? false,
     draft: data.can?.draftInvoice ?? false,
   };
+  // Why Confirm is not offered on a draft, when the API says something blocks it.
+  const blocker = order.status === 'draft' ? draftBlockerText(data.draft) : null;
   const evidence: EvidenceOption[] = data.evidence.map((item, index) => ({
     documentId: item.documentId,
     label: `${evidenceKindLabel(item.kind)} · Document ${index + 1}`,
@@ -408,14 +412,34 @@ export default async function SalesOrderPage({
         title={<span className={detail.wrap}>{order.number ?? 'Draft sales order'}</span>}
         status={<Badge tone={tone}>{label}</Badge>}
         description={`Sales order · ${money(order.totals.total, order.currency, numberSystems)}`}
+        actions={
+          order.status === 'draft' && data.can?.confirm === true ? (
+            <ConfirmDraftDialog
+              quotationVersionId={order.quotationVersionId}
+              idempotencyKey={randomUUID()}
+              reloadHref={path}
+            />
+          ) : null
+        }
       />
       {justDrafted ? (
         <SuccessNotice message="The invoice draft was created. It is listed on its billing step below." />
       ) : null}
 
       {order.status === 'draft' ? (
-        <Alert tone="info" title="This order is a draft.">
+        <Alert
+          tone={blocker !== null ? 'warning' : 'info'}
+          title="This order is a draft."
+          actions={
+            blocker !== null ? (
+              <Link href={`/quotations/${encodeURIComponent(order.quotationId)}`}>
+                Open the quotation
+              </Link>
+            ) : null
+          }
+        >
           It has no number yet and cannot be billed until it is confirmed.
+          {blocker !== null ? ` ${blocker}` : null}
         </Alert>
       ) : null}
 

@@ -55,7 +55,7 @@ export default async function OverviewPage() {
     getUnreadCount(session),
     listNotifications(session, { limit: 5 }),
     getMe(session),
-    loadPeople(session, { owners: canAssignFollowUps(session) }),
+    canAssignFollowUps(session).then((owners) => loadPeople(session, { owners })),
     listCustomers(session, { limit: 1 }),
     getLeadSummary(session),
     listOpportunitiesPage(session, { stage: ACTIVE_OPPORTUNITY_STAGES, limit: 1 }),

@@ -83,14 +83,16 @@ function service(): ReferenceService {
 }
 
 describe('ReferenceService.listTaxCodes grant', () => {
-  it.each(['quotation.read', 'procurement.sourcing', 'payables.bill.enter'] as const)(
-    'returns the list to a caller holding only %s',
-    async (permission) => {
-      const list = await asCaller(principalWith([permission]), () => service().listTaxCodes());
-      expect(list).toHaveLength(1);
-      expect(list[0]).toMatchObject({ id: ROW.id, code: 'VAT13', rateBp: 1300 });
-    },
-  );
+  it.each([
+    'quotation.read',
+    'procurement.sourcing',
+    'payables.bill.enter',
+    'settings.finance.write',
+  ] as const)('returns the list to a caller holding only %s', async (permission) => {
+    const list = await asCaller(principalWith([permission]), () => service().listTaxCodes());
+    expect(list).toHaveLength(1);
+    expect(list[0]).toMatchObject({ id: ROW.id, code: 'VAT13', rateBp: 1300 });
+  });
 
   it('refuses a caller holding none of them with 403 forbidden, before any read', async () => {
     const s = service();

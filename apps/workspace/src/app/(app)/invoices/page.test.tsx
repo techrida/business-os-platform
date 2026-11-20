@@ -389,6 +389,23 @@ describe('record payment row action', () => {
     );
     expect(await render({ settlement: ['unpaid'] })).not.toContain('Record payment');
   });
+
+  it("follows each row's can: hidden where the grant does not reach, kept where can is missing", async () => {
+    // Finance holds payment.record; only the API's per-row answer tells the rows apart.
+    const can = { submit: false, issue: false, discard: false, notes: false };
+    mocks.listInvoicesPage.mockResolvedValue(
+      page([
+        item({ can: { ...can, recordPayment: true } }),
+        item({ id: OTHER, number: 'INV-2083/84-00002', can: { ...can, recordPayment: false } }),
+        item({ id: '55555555-5555-4555-8555-555555555555', number: 'INV-2083/84-00003' }),
+      ]),
+    );
+    const html = await render({ settlement: ['unpaid'] });
+    expect(html).toContain('Record payment for INV-2083/84-00001');
+    expect(html).toContain('INV-2083/84-00002');
+    expect(html).not.toContain('Record payment for INV-2083/84-00002');
+    expect(html).toContain('Record payment for INV-2083/84-00003');
+  });
 });
 
 describe('total row', () => {

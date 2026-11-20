@@ -65,6 +65,18 @@
   grid-template-columns: repeat(auto-fit, minmax(min(100%, 9rem), 1fr));
 }
 
+.stateLine {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  overflow-wrap: anywhere;
+}
+
+.quiet {
+  color: var(--text-secondary);
+}
+
 .records {
   display: grid;
   gap: 12px;

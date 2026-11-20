@@ -1,14 +1,14 @@
 import 'server-only';
 
-import { hasPermission } from '@/components/p2/customers/permissions';
-
 import { listUsers } from './api-admin';
+import { getPermissionCheck } from './live-permissions';
 import type { Session } from './session';
 
 /** Names are a courtesy: denied or failed directory reads must not block business records. */
 export async function userNames(session: Session): Promise<Map<string, string>> {
   const names = new Map<string, string>();
-  if (!hasPermission(session.roles, 'admin.users.read')) return names;
+  // The live grants decide, so a directory grant added or removed in Settings > Access applies at once.
+  if (!(await getPermissionCheck(session))('admin.users.read')) return names;
   try {
     let after: string | undefined;
     const seen = new Set<string>();

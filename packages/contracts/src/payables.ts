@@ -61,6 +61,20 @@ export const BILL_KINDS = ['bill', 'vendor_credit_note'] as const;
 export const BillKindSchema = z.enum(BILL_KINDS);
 export type BillKind = z.infer<typeof BillKindSchema>;
 
+/**
+ * What the caller may do on one bill, from their live grants on that bill (GET list and detail rows): each is
+ * payables.bill.enter reaching the bill's enterer, the check the match, submit, void, discard and exception commands make. The
+ * bill's status is not part of it; the client still decides whether the status allows the move.
+ */
+export const VendorBillCanSchema = z.object({
+  match: z.boolean(),
+  submit: z.boolean(),
+  void: z.boolean(),
+  discard: z.boolean(),
+  exception: z.boolean(),
+});
+export type VendorBillCan = z.infer<typeof VendorBillCanSchema>;
+
 export const MATCH_STATUSES = [
   'not_required',
   'pending',

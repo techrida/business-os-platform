@@ -1,5 +1,6 @@
 import type { AccessCatalogueResponse } from '@bos/contracts';
 import type { Metadata } from 'next';
+import Link from 'next/link';
 
 import { AreaCards } from '@/components/access/area-cards';
 import type { DepartmentOption } from '@/components/access/hand-overs-editor';
@@ -14,11 +15,13 @@ import {
   listAccessPeople,
   listActiveDepartmentsForAccess,
 } from '@/lib/api-access';
+import { getPermissionCheck } from '@/lib/live-permissions';
 import type { Session } from '@/lib/session';
 
 import { formatInstant } from '../format';
 import { requireSection } from '../guard';
 import { checkWithChangesAction, previewAccessAction, saveAccessAction } from './actions';
+import { HISTORY_HREF } from './history/describe';
 import styles from './access.module.css';
 
 export const metadata: Metadata = { title: 'Access · Business OS' };
@@ -71,10 +74,11 @@ export default async function AccessByAreaPage({
   const { area } = await searchParams;
   const session = await requireSection('roles');
   const canEdit = permissionChecker(session.roles)('admin.roles.write');
-  const [loaded, departments, people] = await Promise.all([
+  const [loaded, departments, people, can] = await Promise.all([
     loadCatalogue(session),
     loadDepartments(session),
     canEdit ? loadPeople(session) : Promise.resolve([]),
+    getPermissionCheck(session),
   ]);
 
   if (!loaded.ok) {
@@ -101,6 +105,13 @@ export default async function AccessByAreaPage({
         <p className={styles.lastChanged}>
           Last changed {formatInstant(catalogue.lastChanged.at)}
           {catalogue.lastChanged.byName ? ` by ${catalogue.lastChanged.byName}` : ''}
+          {/* Spec 4: the history link is hidden without the live audit.read grant. */}
+          {can('audit.read') ? (
+            <>
+              {' · '}
+              <Link href={HISTORY_HREF}>View history</Link>
+            </>
+          ) : null}
         </p>
       ) : null}
       <AreaCards

@@ -57,6 +57,15 @@ vi.mock('../../db/tx', () => ({
   withTx: (_db: unknown, _scope: unknown, _actor: unknown, fn: (tx: unknown) => unknown) => fn(TX),
 }));
 
+/** `role`'s default grants plus `extra` (for a grant the role may or may not hold by default). */
+function principalWith(role: RoleKey, extra: Partial<Record<Permission, 'all'>>): Principal {
+  const base = principalOf(role);
+  return {
+    ...base,
+    grants: new Map([...base.grants, ...(Object.entries(extra) as [Permission, never][])]),
+  };
+}
+
 /** A principal holding exactly what `role` holds by default (the seed copies these into the live table). */
 function principalOf(role: RoleKey, over: Partial<Principal> = {}): Principal {
   const orgKind: OrgKind =
@@ -440,8 +449,8 @@ describe('POST / PATCH / DELETE term presets', () => {
     expect(service.set).not.toHaveBeenCalled();
   });
 
-  it.each(['sales', 'accountant', 'management', 'procurement'] as const)(
-    'the service itself refuses a write from %s even when the route guard is skipped (defence in depth)',
+  it.each(['sales', 'management', 'procurement'] as const)(
+    'the service itself refuses a write from %s, who holds neither settings.finance.write nor admin.settings.write',
     async (role) => {
       currentPrincipal = principalOf(role);
       const { documentSettings, service } = build([preset()]);
@@ -534,12 +543,67 @@ describe('term set bodies and who may change them (real write path, fake setting
   it('a founder without admin.settings.write (grant removed) is refused like anyone else', async () => {
     const grants = new Map(currentPrincipal.grants);
     grants.delete('admin.settings.write');
+    grants.delete('settings.finance.write');
     currentPrincipal = principalOf('founder', { grants });
     const { documentSettings, service } = build([preset()]);
     await expect(
       documentSettings.create({ kind: 'scope', name: 'n', body: 'b' }),
     ).rejects.toBeInstanceOf(ForbiddenException);
     expect(service.set).not.toHaveBeenCalled();
+  });
+});
+
+describe('term preset writes by Finance and Accountant (F1-Q48: settings.finance.write)', () => {
+  const editors = [
+    ['finance', principalWith('finance', { 'settings.finance.write': 'all' })],
+    ['accountant', principalWith('accountant', { 'settings.finance.write': 'all' })],
+  ] as const;
+
+  it.each(editors)('%s may create, rename and delete a preset (200)', async (_role, caller) => {
+    expect(caller.grants.has('admin.settings.write')).toBe(false);
+    currentPrincipal = caller;
+    const { documentSettings, state } = build([preset()]);
+    const created = await documentSettings.create({ kind: 'scope', name: 'New', body: 'b' });
+    expect(state.list.map((p) => p.id)).toContain(created.id);
+    await expect(documentSettings.update(ID_A, { name: 'Renamed' })).resolves.toMatchObject({
+      name: 'Renamed',
+    });
+    await expect(documentSettings.remove(ID_A)).resolves.toBeUndefined();
+    expect(state.list.map((p) => p.id)).toEqual([created.id]);
+    // The Terms page lists them too.
+    await expect(documentSettings.list({})).resolves.toHaveLength(1);
+  });
+
+  it.each(editors)('%s is refused when inactive (403, nothing read)', async (_role, caller) => {
+    currentPrincipal = { ...caller, status: 'inactive' };
+    const { documentSettings, service } = build([preset()]);
+    await expect(
+      documentSettings.create({ kind: 'scope', name: 'n', body: 'b' }),
+    ).rejects.toBeInstanceOf(ForbiddenException);
+    expect(service.getLocked).not.toHaveBeenCalled();
+  });
+
+  it('a portal user holding settings.finance.write is still refused (staff only)', async () => {
+    currentPrincipal = principalWith('customer_user', { 'settings.finance.write': 'all' });
+    const { documentSettings, service } = build([preset()]);
+    await expect(documentSettings.remove(ID_A)).rejects.toBeInstanceOf(ForbiddenException);
+    expect(service.set).not.toHaveBeenCalled();
+  });
+
+  it('settings.fx_rate.write alone does not open the presets', async () => {
+    currentPrincipal = principalWith('procurement', { 'settings.fx_rate.write': 'all' });
+    const { documentSettings } = build([preset()]);
+    await expect(
+      documentSettings.create({ kind: 'scope', name: 'n', body: 'b' }),
+    ).rejects.toBeInstanceOf(ForbiddenException);
+  });
+
+  it('Finance with settings.finance.write still gets 403 on the document preview (Founder only)', async () => {
+    currentPrincipal = principalWith('finance', { 'settings.finance.write': 'all' });
+    const { documentSettings } = build([preset()]);
+    await expect(
+      documentSettings.previewDocument({ layout: 'classic', primaryColour: '#1F4E79' }),
+    ).rejects.toBeInstanceOf(ForbiddenException);
   });
 });
 
@@ -555,8 +619,8 @@ describe('route guards (what the tenancy interceptor enforces before a handler r
     return false;
   }
 
-  const writes = [
-    ['POST admin/settings/documents/preview', proto.preview],
+  const writes = [['POST admin/settings/documents/preview', proto.preview]] as const;
+  const presetWrites = [
     ['POST admin/term-presets', proto.create],
     ['PATCH admin/term-presets/:id', proto.update],
     ['DELETE admin/term-presets/:id', proto.remove],
@@ -565,6 +629,15 @@ describe('route guards (what the tenancy interceptor enforces before a handler r
   it.each(writes)('%s is gated by admin.settings.write', (_name, handler) => {
     expect(Reflect.getMetadata(CAN_KEY, handler)).toBe('admin.settings.write');
   });
+
+  it.each(presetWrites)(
+    '%s lets an active user in and leaves the any-of check to the service',
+    (_name, handler) => {
+      expect(Reflect.getMetadata(CAN_KEY, handler)).toBeUndefined();
+      expect(Reflect.getMetadata(ANY_AUTHENTICATED_KEY, handler)).toBe(true);
+      expect(routeAllows(handler, principalOf('sales', { status: 'inactive' }))).toBe(false);
+    },
+  );
 
   it.each(writes)(
     '%s: the Founder passes; every other role and a portal user are refused',
@@ -597,7 +670,8 @@ describe('route guards (what the tenancy interceptor enforces before a handler r
     currentPrincipal = sales;
     const { documentSettings } = build([preset()]);
     await expect(documentSettings.list({})).resolves.toHaveLength(1);
-    expect(routeAllows(proto.create, sales)).toBe(false);
+    // The write route lets the active user in too; the service refuses (no settings.finance.write).
+    expect(routeAllows(proto.create, sales)).toBe(true);
     await expect(
       documentSettings.create({ kind: 'scope', name: 'n', body: 'b' }),
     ).rejects.toBeInstanceOf(ForbiddenException);

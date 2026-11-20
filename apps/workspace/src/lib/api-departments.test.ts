@@ -5,6 +5,7 @@ import {
   createDepartment,
   DEPARTMENT_ACCESS_STALE_MESSAGE,
   DEPARTMENT_FORBIDDEN_MESSAGE,
+  DEPARTMENT_MEMBERS_CHANGED_MESSAGE,
   DEPARTMENT_STALE_MESSAGE,
   getDepartment,
   listActiveStaff,
@@ -229,6 +230,22 @@ describe('departments writes', () => {
     expect(lastCall().body).toEqual({ expectedVersion: 3, moveMembersTo: DEPT_B });
     expect(lastCall().url.pathname).toBe(`/v1/admin/departments/${DEPT_A}/retire`);
   });
+
+  it('sends the member ids the dialog showed only when given, an empty list included', async () => {
+    fetchMock.mockImplementation(() => Promise.resolve(json(detail)));
+    await retireDepartment(session, DEPT_A, {
+      expectedVersion: 3,
+      moveMembersTo: DEPT_B,
+      expectedMemberIds: [USER_A],
+    });
+    expect(lastCall().body).toEqual({
+      expectedVersion: 3,
+      moveMembersTo: DEPT_B,
+      expectedMemberIds: [USER_A],
+    });
+    await retireDepartment(session, DEPT_A, { expectedVersion: 3, expectedMemberIds: [] });
+    expect(lastCall().body).toEqual({ expectedVersion: 3, expectedMemberIds: [] });
+  });
 });
 
 describe('mapDepartmentWriteError', () => {
@@ -242,6 +259,18 @@ describe('mapDepartmentWriteError', () => {
     expect(mapDepartmentWriteError(access)).toEqual({
       kind: 'stale',
       message: DEPARTMENT_ACCESS_STALE_MESSAGE,
+    });
+  });
+
+  it('keeps a retire refused for changed members apart from stale', () => {
+    const changed = new ApiError(
+      409,
+      'x',
+      errorBody('members_changed', 'People in Sales changed.'),
+    );
+    expect(mapDepartmentWriteError(changed)).toEqual({
+      kind: 'membersChanged',
+      message: DEPARTMENT_MEMBERS_CHANGED_MESSAGE,
     });
   });
 

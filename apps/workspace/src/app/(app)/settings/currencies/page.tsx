@@ -5,6 +5,7 @@ import { Page, PageHeader } from '@/components/ui/page';
 import { Panel } from '@/components/ui/panel';
 import { Table, Td, Th } from '@/components/ui/table';
 import { listFxRates } from '@/lib/api-admin';
+import { getPermissionCheck } from '@/lib/live-permissions';
 
 import { BackToSettings } from '../_components/back-link';
 import { loadFields } from '../_components/load-fields';
@@ -22,8 +23,15 @@ export const metadata: Metadata = { title: 'Currencies and exchange rates · Bus
 
 export default async function CurrenciesPage() {
   const session = await requireSection('currencies');
+  // Finance opens this page to enter rates (settings.fx_rate.write). Which currencies are enabled
+  // and how old a rate may be stay with the Founder (admin.settings.write), so that card is neither
+  // read nor shown without the live grant.
+  const can = await getPermissionCheck(session);
+  const canChangeCurrencies = can('admin.settings.write');
   const [fields, rates] = await Promise.all([
-    loadFields(session, ['currency.enabled', 'fx.max_rate_age_days']),
+    canChangeCurrencies
+      ? loadFields(session, ['currency.enabled', 'fx.max_rate_age_days'])
+      : Promise.resolve(null),
     section('view exchange rates', () => listFxRates(session, { limit: 50 })),
   ]);
 
@@ -35,7 +43,7 @@ export default async function CurrenciesPage() {
         description="How much NPR each foreign currency is worth, and how old a rate may be. Every change is recorded in the audit trail."
       />
       <div className={styles.column}>
-        {fields.ok ? (
+        {fields === null ? null : fields.ok ? (
           <div className={styles.narrow}>
             <SettingsForm section="currencies" fields={fields.data}>
               <SettingCard title="Currencies" fields={fields.data} />

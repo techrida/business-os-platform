@@ -81,6 +81,19 @@ export function addDays(day: string, days: number): string {
   return d.toISOString().slice(0, 10);
 }
 
+/**
+ * The valid-until date of a new revision (Kuu, TR-Q12g): the customer was promised the previous date, so a revision
+ * keeps it unless it has already passed on the new issue date; then the configured default (`issueDate` plus
+ * `validityDays`). A date equal to the issue date has not passed: the offer still holds that day.
+ */
+export function revisedValidUntil(
+  previousValidUntil: string,
+  issueDate: string,
+  validityDays: number,
+): string {
+  return previousValidUntil >= issueDate ? previousValidUntil : addDays(issueDate, validityDays);
+}
+
 /** The pricing input of a copied version: its lines and discount, at the new issue date. */
 export function revisedPricingInput(
   old: Pick<QuotationVersionRow, 'currency' | 'discountMode' | 'discountInput'>,
@@ -214,14 +227,15 @@ export class ReviseService {
       await this.updateOld(tx, scope, old, { status: 'superseded', updatedAt: now });
     }
 
-    // (3) The new draft: the old content, issued today in Kathmandu, valid for the configured days, re-priced.
+    // (3) The new draft: the old content, issued today in Kathmandu, re-priced; it keeps the old valid-until date
+    // unless that has passed (then the configured days from today).
     const lines = await tx
       .select()
       .from(quotationLines)
       .where(and(eq(quotationLines.tenantId, scope.tenantId), eq(quotationLines.versionId, old.id)))
       .orderBy(asc(quotationLines.lineNo));
     const issueDate = kathmanduDay(now);
-    const validUntil = addDays(issueDate, validityDays);
+    const validUntil = revisedValidUntil(old.validUntil, issueDate, validityDays);
     const priced = await this.pricing.priceVersion(
       tx,
       scope,

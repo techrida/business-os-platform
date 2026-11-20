@@ -198,6 +198,25 @@ export const SETTLEMENT_STATUSES = [
 export const SettlementStatusSchema = z.enum(SETTLEMENT_STATUSES);
 export type SettlementStatus = z.infer<typeof SettlementStatusSchema>;
 
+/**
+ * What the caller may do on one invoice, from its live grants judged on that record (the drafter owns it for `own`),
+ * the same record checks the commands make. Whether the status allows the move is the transition table's answer, not
+ * this one. Optional so an older API answer still parses.
+ */
+export const InvoiceCanSchema = z.object({
+  /** `invoice.submit`: send for approval, or resubmit a returned invoice. */
+  submit: z.boolean(),
+  /** `invoice.issue`. */
+  issue: z.boolean(),
+  /** `invoice.draft`: discard a draft. */
+  discard: z.boolean(),
+  /** `invoice.credit_note`: credit and debit notes alike. */
+  notes: z.boolean(),
+  /** `payment.record` for the invoice's customer; false when the invoice names none. */
+  recordPayment: z.boolean(),
+});
+export type InvoiceCan = z.infer<typeof InvoiceCanSchema>;
+
 /** One row of `GET /v1/invoices`. */
 export const InvoiceListItemSchema = z.object({
   id: z.guid(),
@@ -218,6 +237,7 @@ export const InvoiceListItemSchema = z.object({
   settlement: SettlementStatusSchema.nullable().optional(),
   /** What is still owed, in the invoice's currency; null exactly when `settlement` is. */
   openAmount: DecimalString.nullable().optional(),
+  can: InvoiceCanSchema.optional(),
 });
 export type InvoiceListItem = z.infer<typeof InvoiceListItemSchema>;
 
@@ -251,6 +271,8 @@ export const InvoiceDetailSchema = z.object({
    * so an older API answer still parses.
    */
   issueBlockedBySod: z.boolean().optional(),
+  /** Set by `GET /v1/invoices/:id`; the command answers leave it out. */
+  can: InvoiceCanSchema.optional(),
 });
 export type InvoiceDetail = z.infer<typeof InvoiceDetailSchema>;
 
