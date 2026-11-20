@@ -395,6 +395,23 @@ describe('the new receipt form', () => {
     expect(api.getReceipt).not.toHaveBeenCalled();
   });
 
+  it('offers no receipt form when the order says the person may receive neither kind on it', async () => {
+    session.roles = ['procurement'];
+    // A service line: the old screen offered it to anyone.
+    const serviceLine = { ...progressLine({}), kind: 'service', requiresSerials: false };
+    api.getPoProgress.mockResolvedValue({
+      ...progress({}, [serviceLine]),
+      can: { goods: false, service: false },
+    });
+    const out = await newPage();
+    expect(out).not.toContain('Save draft receipt');
+    api.getPoProgress.mockResolvedValue({
+      ...progress({}, [serviceLine]),
+      can: { goods: false, service: true },
+    });
+    expect(await newPage()).toContain('Save draft receipt');
+  });
+
   it('lays each line out as a table row, with the same field names and a per-line name per input', async () => {
     const out = await newPage();
     expect(out).toMatch(/aria-hidden="true"[^>]*><span>#<\/span>/);
@@ -498,6 +515,24 @@ describe('one receipt', () => {
     expect(out).toContain('Confirm receipt');
     expect(out).toContain('Service confirmation');
     expect(out).not.toContain('Confirming goods is for the warehouse');
+  });
+
+  // The receipt's own can flags (the API's answer for this person on this order) win over the grant guess.
+  it('offers a read-only buyer no Confirm or Discard on a service draft, and says who confirms it', async () => {
+    session.roles = ['procurement'];
+    api.getReceipt.mockResolvedValue(
+      receipt({ kind: 'service', can: { confirm: false, discard: false, reverse: false } }),
+    );
+    const out = await detail();
+    expect(out).not.toContain('Confirm receipt');
+    expect(out).not.toContain('Discard draft');
+    expect(out).toContain('Confirming a service is for whoever asked for it');
+    api.getReceipt.mockResolvedValue(
+      receipt({ kind: 'service', can: { confirm: true, discard: true, reverse: false } }),
+    );
+    const requester = await detail();
+    expect(requester).toContain('Confirm receipt');
+    expect(requester).toContain('Discard draft');
   });
 
   it('shows Reverse, with a reason dialog, on a confirmed receipt and no Confirm', async () => {

@@ -537,7 +537,7 @@ export default async function ReceiptsPage({
   const mayStart =
     order === undefined
       ? true
-      : isReceivable(order.status) && kindsOffered(order.lines, grants).length > 0;
+      : isReceivable(order.status) && kindsOffered(order.lines, grants, order.can).length > 0;
   const newHref = `/procurement/receipts/new?po=${encodeURIComponent(po)}`;
 
   return (
