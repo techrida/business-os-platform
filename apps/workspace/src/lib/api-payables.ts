@@ -461,6 +461,16 @@ export function listPaymentRequestItems(session: Session): Promise<PaymentReques
 }
 
 /**
+ * Approved bill balances the server holds back only because the vendor has no active verified bank account. Same
+ * shape and scope as `listPaymentRequestItems`; the entry screen uses it to say what to fix.
+ */
+export function listPaymentRequestItemsWithoutBankAccount(
+  session: Session,
+): Promise<PaymentRequestItem[]> {
+  return call(session, `${REQUESTS}/items/without-bank-account`, z.array(PaymentRequestItemSchema));
+}
+
+/**
  * One page of `GET .../payment-requests` with several statuses, a search over number and vendor name, and
  * `offset`, plus the total of all matches from `X-Total-Count`.
  */
