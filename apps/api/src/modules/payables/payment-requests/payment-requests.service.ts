@@ -213,9 +213,12 @@ export class PaymentRequestsService {
 
   // ------------------------------------------------------------------------------------------------- reads
 
-  /** Approved bill credits with a balance left after pending and approved payment requests. */
+  /**
+   * Approved bill credits with a balance left after pending and approved payment requests, of the bills the caller
+   * may read (`payables.bill.read` scope, as the bills list), so a narrowed grant never lists another person's bill.
+   */
   async listItems(): Promise<PaymentRequestItemDto[]> {
-    const { scope, actor } = this.caller.current();
+    const { scope, actor, principal } = this.caller.current();
     return withTx(this.db, scope, actor, async (tx) => {
       const rows = await tx
         .select({
@@ -268,6 +271,7 @@ export class PaymentRequestsService {
               eq(openItems.sourceType, 'vendor_bill'),
               eq(vendorBills.kind, 'bill'),
               inArray(vendorBills.status, [...PAYABLE_BILL_STATUSES]),
+              scopeWhereFor(principal, vendorBills, 'payables.bill.read'),
             ),
           ),
         )
