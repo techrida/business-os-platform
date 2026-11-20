@@ -45,6 +45,7 @@ import { DiskStorageAdapter } from '../../platform/documents/storage.adapter';
 import type { NotifyService } from '../../platform/notify/notify.service';
 import { SettingsService } from '../../platform/settings/settings.service';
 import { OpportunitiesService } from '../opportunities/opportunities.service';
+import { readEvidenceState } from '../quotations/outcome/evidence-state';
 import { QuotationOutcomeService } from '../quotations/outcome/quotation-outcome.service';
 import { QUOTATION_OWNER_TYPE } from '../quotations/quotation-owner.policy';
 import { PortalRespondService } from './portal-respond.service';
@@ -575,6 +576,33 @@ describe('portal accept and reject on a real database', () => {
     expect(
       await failure(respond.reject(sent.versionId, `again-${randomUUID()}`, { comment: 'No' })),
     ).toEqual({ status: 409, code: 'quotation_not_sent' });
+  });
+
+  it('accepts under a contract policy instead of dead-ending, and leaves the evidence for staff (F1-Q28)', async () => {
+    const w = await seedWorld();
+    const scopeA: TxScope = { tenantId: w.tenantId, organizationId: w.entityA };
+    await withTx(db, scopeA, seedActor(), (tx) =>
+      settings.set(tx, 'sales.evidence_policy', 'both'),
+    );
+    const sent = await seedQuotation(w, w.entityA, w.partyP, 'sent');
+    const respond = respondFor(await portalCustomer(w));
+
+    await expect(respond.accept(sent.versionId, `accept-${randomUUID()}`, SIGNED)).resolves.toEqual(
+      { id: sent.versionId, status: 'accepted', decidedOn: '2026-11-10' },
+    );
+    expect(await versionState(sent.versionId)).toMatchObject({ status: 'accepted' });
+    const evidence = await withTx(db, scopeA, seedActor(), (tx) =>
+      readEvidenceState(tx, scopeA, sent.versionId),
+    );
+    expect(evidence).toMatchObject({
+      status: 'pending',
+      kinds: ['signed_quote'],
+      confirmation: null,
+    });
+    expect(evidence?.acceptance).toMatchObject({
+      actorKind: 'customer_user',
+      acceptedByName: 'Ram Thapa',
+    });
   });
 
   it('answers 404 for another party, another entity, a draft and an unknown id, and changes nothing', async () => {
