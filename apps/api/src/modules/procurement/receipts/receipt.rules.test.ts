@@ -1,12 +1,14 @@
 // Table tests of the pure receipt rules (P4 unit P4r): what a draft may take in, the serial counts, the status a PO
 // derives from what was received, the reversal lines and the progress rows.
 // Run: pnpm --filter @bos/api exec vitest run src/modules/procurement/receipts/receipt.rules.test.ts
+import { PO_STATUSES } from '@bos/contracts';
 import { describe, expect, it } from 'vitest';
 
 import {
   CreateReceiptBodySchema,
   derivePoStatus,
   progressRowsOf,
+  receiptCan,
   repeatedSerialAcrossLines,
   reversalLinesOf,
   serialViolation,
@@ -259,5 +261,44 @@ describe('progressRowsOf', () => {
       billedQuantity: '0.0000',
     });
     expect(rows[1]).toMatchObject({ receivedQuantity: '0.0000', openQuantity: '1.0000' });
+  });
+});
+
+describe('receiptCan', () => {
+  const draft = { status: 'draft' as const, reversesReceiptId: null };
+  const confirmed = { status: 'confirmed' as const, reversesReceiptId: null };
+
+  it('offers nothing to a caller who may not receive this kind, whatever the statuses', () => {
+    for (const poStatus of PO_STATUSES) {
+      for (const r of [draft, confirmed]) {
+        expect(receiptCan(false, r, poStatus)).toEqual({
+          confirm: false,
+          discard: false,
+          reverse: false,
+        });
+      }
+    }
+  });
+
+  it('confirms a draft while the order takes receipts, discards any draft, reverses a confirmed original', () => {
+    expect(receiptCan(true, draft, 'issued')).toEqual({
+      confirm: true,
+      discard: true,
+      reverse: false,
+    });
+    expect(receiptCan(true, draft, 'amendment_pending')).toMatchObject({
+      confirm: false,
+      discard: true,
+    });
+    expect(receiptCan(true, confirmed, 'fully_received')).toEqual({
+      confirm: false,
+      discard: false,
+      reverse: true,
+    });
+    expect(receiptCan(true, confirmed, 'closed').reverse).toBe(false);
+    // A reversal is never reversed.
+    expect(receiptCan(true, { ...confirmed, reversesReceiptId: 'r-1' }, 'issued').reverse).toBe(
+      false,
+    );
   });
 });

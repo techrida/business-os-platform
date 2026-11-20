@@ -273,6 +273,11 @@ export interface PoProgress {
   number: string;
   status: PoStatus;
   lines: PoProgressLine[];
+  /**
+   * Which kinds of receipt the caller may make and confirm on this order, from their live grants (mayReceiveKind):
+   * the warehouse both, the request's requester a service, anyone else neither (they only read).
+   */
+  can?: { goods: boolean; service: boolean };
 }
 
 export function progressRowsOf(
@@ -320,6 +325,34 @@ export interface ReceiptLineDto {
   serials: { serialNo: string; batchNo: string | null; warrantyUntil: string | null }[];
 }
 
+/**
+ * What the caller may do with one receipt, from their live grants (mayReceiveKind, the rule each command enforces)
+ * and the statuses each command needs: confirm a draft while the order takes receipts, discard a draft, reverse a
+ * confirmed receipt that is not itself a reversal while the order's status comes from its receipts. A read-only
+ * reader (procurement on a service, the accountant, finance) gets none.
+ */
+export interface ReceiptCan {
+  confirm: boolean;
+  discard: boolean;
+  reverse: boolean;
+}
+
+export function receiptCan(
+  mayReceive: boolean,
+  receipt: { status: ReceiptDto['status']; reversesReceiptId: string | null },
+  poStatus: PoStatus,
+): ReceiptCan {
+  return {
+    confirm: mayReceive && receipt.status === 'draft' && RECEIVING_PO_STATUSES.includes(poStatus),
+    discard: mayReceive && receipt.status === 'draft',
+    reverse:
+      mayReceive &&
+      receipt.status === 'confirmed' &&
+      receipt.reversesReceiptId === null &&
+      RECEIPT_DERIVED_PO_STATUSES.includes(poStatus),
+  };
+}
+
 export interface ReceiptDto {
   id: string;
   number: string;
@@ -336,6 +369,8 @@ export interface ReceiptDto {
   version: number;
   createdAt: string;
   lines: ReceiptLineDto[];
+  /** Set by the list and detail reads; the write routes leave it out. */
+  can?: ReceiptCan;
 }
 
 export function toReceiptDto(
