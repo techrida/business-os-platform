@@ -5,12 +5,14 @@
 // Versions are joined to their quotation on tenant, entity and id, so a version is reachable only through a
 // quotation the caller may read. Which version a customer may see is the service's rule; the status filter in the
 // list query is only a narrowing, never the authority.
-import { CUSTOMER_VISIBLE_STATUSES } from '@bos/contracts';
+import { CUSTOMER_VISIBLE_STATUSES, type EvidenceKind } from '@bos/contracts';
 import {
   customerContacts,
   customers,
   organizations,
   paymentTerms,
+  quotationAcceptances,
+  quotationEvidenceConfirmations,
   quotationLines,
   quotations,
   quotationTaxSummary,
@@ -63,6 +65,18 @@ export interface PortalQuotationStore {
   loadView(p: Principal, versionId: string): Promise<PortalViewSource | undefined>;
   /** The document head of one version of a quotation `p` may read, whatever its status; undefined when out of reach. */
   loadDocumentHead(p: Principal, versionId: string): Promise<PortalDocumentHead | undefined>;
+  /**
+   * The acceptance of one version of a quotation `p` may read and whether staff confirmed its evidence (F1-Q28);
+   * undefined when out of reach or not accepted.
+   */
+  loadAcceptance(p: Principal, versionId: string): Promise<PortalAcceptance | undefined>;
+}
+
+export interface PortalAcceptance {
+  actorKind: 'staff' | 'customer_user';
+  evidenceKinds: EvidenceKind[];
+  /** A staff confirmation row exists (quotation_evidence_confirmations). */
+  confirmed: boolean;
 }
 
 export const PORTAL_QUOTATION_STORE = Symbol('PORTAL_QUOTATION_STORE');
@@ -157,6 +171,45 @@ export class DrizzlePortalQuotationStore implements PortalQuotationStore {
       .where(and(scopeWhereFor(p, quotations, ACTION), eq(quotationVersions.id, versionId)))
       .limit(1);
     return head;
+  }
+
+  async loadAcceptance(p: Principal, versionId: string): Promise<PortalAcceptance | undefined> {
+    const [row] = await this.db
+      .select({
+        actorKind: quotationAcceptances.actorKind,
+        evidenceKinds: quotationAcceptances.evidenceKinds,
+        confirmationId: quotationEvidenceConfirmations.id,
+      })
+      .from(quotationAcceptances)
+      .innerJoin(
+        quotationVersions,
+        and(
+          eq(quotationVersions.tenantId, quotationAcceptances.tenantId),
+          eq(quotationVersions.id, quotationAcceptances.versionId),
+        ),
+      )
+      .innerJoin(quotations, versionOfQuotation)
+      .leftJoin(
+        quotationEvidenceConfirmations,
+        and(
+          eq(quotationEvidenceConfirmations.tenantId, quotationAcceptances.tenantId),
+          eq(quotationEvidenceConfirmations.versionId, quotationAcceptances.versionId),
+        ),
+      )
+      .where(
+        and(
+          scopeWhereFor(p, quotations, ACTION),
+          eq(quotationAcceptances.versionId, versionId),
+          eq(quotationAcceptances.outcome, 'accepted'),
+        ),
+      )
+      .limit(1);
+    if (row === undefined) return undefined;
+    return {
+      actorKind: row.actorKind,
+      evidenceKinds: row.evidenceKinds,
+      confirmed: row.confirmationId !== null,
+    };
   }
 
   async loadView(p: Principal, versionId: string): Promise<PortalViewSource | undefined> {
