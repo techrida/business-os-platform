@@ -3,7 +3,7 @@ import { act } from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { click, mountForm } from '@/test/form-interactions';
+import { click, fill, mountForm } from '@/test/form-interactions';
 
 import { emptyValues, type BuilderValues } from './model';
 import { PREVIEW_TIMEOUT_MS, QuoteBuilder, type BuilderTarget } from './quote-builder';
@@ -170,5 +170,57 @@ describe('quotation totals when the reply never comes (TR-Q8)', () => {
         (b) => b.textContent?.trim() === 'Try again',
       ),
     ).toBe(true);
+  });
+});
+
+describe('quotation totals when the inputs change and change back (TR-Q8)', () => {
+  it('shows a reply that answers the inputs on screen, even if its request was cleaned up meanwhile', async () => {
+    vi.useFakeTimers();
+    let answer: (r: unknown) => void = () => {};
+    mocks.previewQuoteAction
+      .mockReturnValueOnce(new Promise((resolve) => (answer = resolve)))
+      .mockResolvedValue({ ok: true, preview });
+    mounted = await mountForm(builder());
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(0);
+    });
+    expect(mocks.previewQuoteAction).toHaveBeenCalledTimes(1);
+
+    const discountType = Array.from(document.querySelectorAll('select')).find((s) =>
+      Array.from(s.options).some((o) => o.value === 'pct'),
+    );
+    await fill(discountType ?? null, 'pct');
+    await fill(discountType ?? null, 'none');
+    expect(totalsPanel()).toContain('Updating totals');
+
+    // The first reply arrives before the next request would even be asked (600 ms after a change).
+    await act(async () => {
+      answer({ ok: true, preview });
+      await vi.advanceTimersByTimeAsync(0);
+    });
+    expect(mocks.previewQuoteAction).toHaveBeenCalledTimes(1);
+    expect(totalsPanel()).not.toContain('Updating totals');
+    expect(totalsPanel()).toContain('1,35,600.00');
+  });
+
+  it('ignores a reply for inputs that have since changed', async () => {
+    vi.useFakeTimers();
+    let answer: (r: unknown) => void = () => {};
+    mocks.previewQuoteAction
+      .mockReturnValueOnce(new Promise((resolve) => (answer = resolve)))
+      .mockReturnValue(new Promise(() => {}));
+    mounted = await mountForm(builder());
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(0);
+    });
+    const discountType = Array.from(document.querySelectorAll('select')).find((s) =>
+      Array.from(s.options).some((o) => o.value === 'pct'),
+    );
+    await fill(discountType ?? null, 'pct');
+    await act(async () => {
+      answer({ ok: true, preview });
+      await vi.advanceTimersByTimeAsync(0);
+    });
+    expect(totalsPanel()).toContain('Updating totals');
   });
 });
