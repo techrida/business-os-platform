@@ -8,6 +8,7 @@ import { redirect } from 'next/navigation';
 import { kathmanduToday } from '@/components/p2/quotations/eligibility';
 import {
   parseCancel,
+  parseConfirmAcceptance,
   parseOutcome,
   parseRevise,
   parseSend,
@@ -178,5 +179,20 @@ export async function cancelAction(prev: ActionState, form: FormData): Promise<A
     revalidatePath(`/quotations/${text(form, 'quotationId')}`);
     revalidatePath('/quotations');
   }
+  return state;
+}
+
+/**
+ * Confirm acceptance evidence (F1-Q28): a staff member records that the customer's evidence for an
+ * accepted revision was checked. Path and body: `lifecycle-contract.ts`.
+ */
+export async function confirmAcceptanceAction(
+  prev: ActionState,
+  form: FormData,
+): Promise<ActionState> {
+  const state = await run(prev, form, parseConfirmAcceptance, (c, key) =>
+    post(c.session, lifecyclePaths.confirmAcceptance(c.quotationId, c.versionId), c.body, key),
+  );
+  if (state.done === true) revalidatePath(`/quotations/${text(form, 'quotationId')}`);
   return state;
 }

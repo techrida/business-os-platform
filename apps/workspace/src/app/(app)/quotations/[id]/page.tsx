@@ -7,6 +7,7 @@ import { notFound } from 'next/navigation';
 import { stageLabel } from '@/components/p2/crm/stages';
 import { getOpportunity, listPaymentTerms } from '@/components/p2/quote-builder/api';
 import { getQuotation } from '@/components/p2/quotations/api';
+import { AcceptancePanel } from '@/components/p2/quotations/acceptance-panel';
 import { QuotationContents } from '@/components/p2/quotations/contents';
 import styles from '@/components/p2/quotations/detail.module.css';
 import { DetailActions, hasDetailActions } from '@/components/p2/quotations/detail-actions';
@@ -435,6 +436,22 @@ export default async function QuotationDetailPage({
         </div>
 
         <div className={`${styles.stack} ${styles.historyStack}`}>
+          {current?.status === 'accepted' ? (
+            <AcceptancePanel
+              quotationId={quotation.id}
+              number={quotation.number}
+              version={current}
+              confirmation={lifecycle.confirmations[current.id]}
+              confirmedByName={
+                people.get(lifecycle.confirmations[current.id]?.confirmedByUserId ?? '') ??
+                undefined
+              }
+              mayConfirm={lifecycle.canConfirmAcceptance ?? allowed('quotation.record_acceptance')}
+              reloadHref={path}
+              dateFormat={dateFormat}
+            />
+          ) : null}
+
           <StatusHistory
             history={detail.statusHistory}
             versions={versions}
