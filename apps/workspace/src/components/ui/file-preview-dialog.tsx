@@ -5,6 +5,7 @@ import { useEffect, useRef, useState, type ReactNode, type RefObject } from 'rea
 
 import { Button, LinkButton } from './button';
 import { Dialog, DialogClose } from './dialog';
+import { DownloadButton } from './download-button';
 import { Icon } from './icon';
 import {
   isSameOriginUrl,
@@ -13,7 +14,9 @@ import {
   previewKind,
 } from './file-preview-model';
 import styles from './file-preview-dialog.module.css';
+import { requestPdfRetry } from './pdf-retry';
 import { toast } from './toast';
+import { usePreparePoll } from './use-prepare-poll';
 
 export interface FilePreviewDialogProps {
   /** Display name. It is the dialog title and the image's alt text, so use the real file name. */
@@ -34,6 +37,17 @@ export interface FilePreviewDialogProps {
    * failed PDF shows its message and no Retry, because loading it again would fail the same way.
    */
   retryUrl?: string | undefined;
+  /**
+   * For a generated PDF whose route answers 409 while it is being prepared (the quotation, invoice and purchase order
+   * PDFs): keep checking on the shared schedule (use-prepare-poll.ts) and show the file as soon as it is there. Such a
+   * route refuses before it issues a signed link, so a check costs no link. Leave it off for other files.
+   */
+  pollWhilePreparing?: boolean | undefined;
+  /**
+   * Download fetches the file and saves it, so a refusal is a toast in the app instead of an error page in the tab.
+   * A PDF must come back as `application/pdf`.
+   */
+  downloadInApp?: boolean | undefined;
   /** The element that opens the preview (a button or a file-name button). Not a link to the file. */
   trigger?: ReactNode | undefined;
   open?: boolean | undefined;
@@ -57,11 +71,13 @@ export interface FilePreviewDialogProps {
  * The shared document viewer (UIP-FORM-003). Images are fitted to the box and keep their aspect ratio. A PDF is
  * fetched from `previewUrl` once each time the dialog opens and drawn by `PdfPages`, never in an iframe. While the
  * file is still being prepared (HTTP 409 or 425) or fails to load, the dialog shows a message and a Retry button; Retry
- * makes one new request per click and nothing polls, because every call to such a route issues a single-use signed
- * link. A PDF that could not be prepared (424) offers Retry only when `retryUrl` is given (staff), and Retry asks
- * that route to queue the render again before loading the file. A missing PDF (404 or 410) says so and offers no
- * Retry. Download is a secondary action in the footer. Any other type or an unsafe URL shows a short message and
- * makes Download the main action.
+ * makes one new request per click. Nothing polls unless `pollWhilePreparing` says the route refuses a file that is
+ * being prepared before it issues a signed link; then the dialog checks again by itself on the shared schedule and
+ * offers "Check again" when that runs out. A PDF that could not be prepared (424) offers Retry only when `retryUrl`
+ * is given (staff), and Retry asks that route to queue the render again before loading the file. A missing PDF (404
+ * or 410) says so and offers no Retry. Download is a secondary action in the footer; with `downloadInApp` it fetches
+ * the file and a refusal stays in the app. Any other type or an unsafe URL shows a short message and makes Download
+ * the main action.
  *
  * Safety: HTML, SVG and unknown types are never framed, and only same-origin URLs are loaded. The route behind
  * `previewUrl` must answer with the stored type, `X-Content-Type-Options: nosniff` and `Content-Disposition: inline`.
@@ -84,6 +100,8 @@ export function FilePreviewDialog({
   previewUrl,
   downloadUrl,
   retryUrl,
+  pollWhilePreparing,
+  downloadInApp,
   trigger,
   open,
   defaultOpen,
@@ -105,6 +123,7 @@ export function FilePreviewDialog({
       mimeType={mimeType}
       previewUrl={previewUrl}
       retryUrl={retryUrl}
+      poll={pollWhilePreparing === true}
       failed={failed}
       onFail={() => setFailedUrl(previewUrl)}
     />
@@ -131,7 +150,9 @@ export function FilePreviewDialog({
       initialFocusRef={actions === undefined ? closeRef : undefined}
       footer={
         <Footer
+          name={name}
           mimeType={mimeType}
+          downloadInApp={downloadInApp === true}
           previewUrl={previewUrl}
           downloadUrl={downloadUrl}
           failed={failed}
@@ -156,7 +177,9 @@ export function FilePreviewDialog({
 
 /** Footer and Stage read `window.location.origin`. They only render inside the dialog portal, which mounts on the client. */
 function Footer({
+  name,
   mimeType,
+  downloadInApp,
   previewUrl,
   downloadUrl,
   failed,
@@ -165,8 +188,9 @@ function Footer({
   actions,
 }: Pick<
   FilePreviewDialogProps,
-  'mimeType' | 'previewUrl' | 'downloadUrl' | 'onDownload' | 'actions'
+  'name' | 'mimeType' | 'previewUrl' | 'downloadUrl' | 'onDownload' | 'actions'
 > & {
+  downloadInApp: boolean;
   failed: boolean;
   closeRef: RefObject<HTMLButtonElement | null>;
 }) {
@@ -181,7 +205,18 @@ function Footer({
           </Button>
         </DialogClose>
       ) : null}
-      {isSameOriginUrl(downloadUrl, origin) ? (
+      {!isSameOriginUrl(downloadUrl, origin) ? null : downloadInApp ? (
+        <DownloadButton
+          url={downloadUrl}
+          name={name}
+          expectType={previewKind(mimeType) === 'pdf' ? 'application/pdf' : undefined}
+          variant={canPreview || actions !== undefined ? 'secondary' : 'primary'}
+          onDownload={onDownload}
+        >
+          <DownloadIcon />
+          Download
+        </DownloadButton>
+      ) : (
         <LinkButton
           variant={canPreview || actions !== undefined ? 'secondary' : 'primary'}
           href={downloadUrl}
@@ -190,7 +225,7 @@ function Footer({
           <DownloadIcon />
           Download
         </LinkButton>
-      ) : null}
+      )}
       {actions}
     </>
   );
@@ -201,6 +236,7 @@ function Stage({
   mimeType,
   previewUrl,
   retryUrl,
+  poll,
   failed,
   onFail,
 }: {
@@ -208,6 +244,7 @@ function Stage({
   mimeType: string;
   previewUrl: string;
   retryUrl: string | undefined;
+  poll: boolean;
   failed: boolean;
   onFail: () => void;
 }) {
@@ -229,7 +266,15 @@ function Stage({
   }
 
   if (kind === 'pdf')
-    return <PdfStage key={previewUrl} name={name} previewUrl={previewUrl} retryUrl={retryUrl} />;
+    return (
+      <PdfStage
+        key={previewUrl}
+        name={name}
+        previewUrl={previewUrl}
+        retryUrl={retryUrl}
+        poll={poll}
+      />
+    );
 
   return (
     <div className={styles.stage}>
@@ -249,18 +294,21 @@ type PdfState =
   | { status: 'error' };
 
 /**
- * Fetches the PDF once when it mounts (it mounts when the dialog opens) and once more per Retry click. The `requested`
- * ref makes React's development double-effect issue one request, and a microtask check on cleanup aborts the request
- * only when the stage really unmounts.
+ * Fetches the PDF once when it mounts (it mounts when the dialog opens) and once more per Retry click, and, with
+ * `poll`, on the shared schedule while the route answers "being prepared". The `requested` ref makes React's
+ * development double-effect issue one request, and a microtask check on cleanup aborts the request only when the stage
+ * really unmounts.
  */
 function PdfStage({
   name,
   previewUrl,
   retryUrl,
+  poll,
 }: {
   name: string;
   previewUrl: string;
   retryUrl: string | undefined;
+  poll: boolean;
 }) {
   const [attempt, setAttempt] = useState(0);
   const [asking, setAsking] = useState(false);
@@ -305,23 +353,17 @@ function PdfStage({
     setState({ status: 'loading' });
     setAttempt((current) => current + 1);
   };
+  // While the route says "being prepared", check again by itself; the words stay until the answer changes.
+  const watch = usePreparePoll(poll && state.status === 'preparing', () =>
+    setAttempt((current) => current + 1),
+  );
 
   /** Failed render: ask the API to queue it again once, then load the file again. A second click while asking is ignored. */
   const retryFailed = async () => {
     if (asked.current || retryUrl === undefined) return;
     asked.current = true;
     setAsking(true);
-    let outcome: 'queued' | 'not-needed' | 'failed';
-    try {
-      const response = await fetch(retryUrl, {
-        method: 'POST',
-        credentials: 'same-origin',
-        cache: 'no-store',
-      });
-      outcome = response.ok ? 'queued' : response.status === 409 ? 'not-needed' : 'failed';
-    } catch {
-      outcome = 'failed';
-    }
+    const outcome = await requestPdfRetry(retryUrl);
     asked.current = false;
     if (!mounted.current) return;
     setAsking(false);
@@ -354,27 +396,35 @@ function PdfStage({
     );
   }
   const message =
-    state.status === 'preparing'
-      ? { title: 'Preparing…', text: 'This PDF is still being prepared.', retry: retry }
-      : state.status === 'failed'
-        ? {
-            title: 'Could not prepare',
-            text: 'The PDF could not be prepared.',
-            retry: retryUrl === undefined ? null : ('ask' as const),
-          }
-        : state.status === 'unavailable'
-          ? { title: 'Not available', text: 'This PDF is not available.', retry: null }
-          : state.status === 'denied'
-            ? {
-                title: 'No access',
-                text: 'You no longer have access to this file.',
-                retry: null,
-              }
-            : {
-                title: 'Could not load the PDF',
-                text: 'Something went wrong while loading it.',
-                retry: 'load' as const,
-              };
+    state.status === 'preparing' && poll
+      ? {
+          title: 'Preparing PDF',
+          text: watch.expired
+            ? 'This PDF is taking longer than usual.'
+            : 'It opens here as soon as it is ready.',
+          retry: watch.expired ? ('check' as const) : null,
+        }
+      : state.status === 'preparing'
+        ? { title: 'Preparing…', text: 'This PDF is still being prepared.', retry: retry }
+        : state.status === 'failed'
+          ? {
+              title: 'Could not prepare',
+              text: 'The PDF could not be prepared.',
+              retry: retryUrl === undefined ? null : ('ask' as const),
+            }
+          : state.status === 'unavailable'
+            ? { title: 'Not available', text: 'This PDF is not available.', retry: null }
+            : state.status === 'denied'
+              ? {
+                  title: 'No access',
+                  text: 'You no longer have access to this file.',
+                  retry: null,
+                }
+              : {
+                  title: 'Could not load the PDF',
+                  text: 'Something went wrong while loading it.',
+                  retry: 'load' as const,
+                };
   return (
     <div className={styles.fallback} role="status">
       <Icon name="file-text" size={40} className={styles.fallbackIcon} />
@@ -385,9 +435,15 @@ function PdfStage({
           variant="secondary"
           size="small"
           disabled={asking}
-          onClick={() => void (message.retry === 'ask' ? retryFailed() : retry())}
+          onClick={() => {
+            if (message.retry === 'ask') void retryFailed();
+            else if (message.retry === 'check') {
+              watch.restart();
+              setAttempt((current) => current + 1);
+            } else retry();
+          }}
         >
-          Retry
+          {message.retry === 'check' ? 'Check again' : 'Retry'}
         </Button>
       ) : null}
     </div>

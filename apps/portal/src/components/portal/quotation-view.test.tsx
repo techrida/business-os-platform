@@ -1,6 +1,6 @@
 import { CUSTOMER_VIEW_FORBIDDEN_WORDS } from '@bos/contracts';
 import { renderToStaticMarkup } from 'react-dom/server';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 
 import { sampleListItem, sampleView } from './quotation-fixtures';
 import { QuotationList } from './quotation-list';
@@ -20,6 +20,20 @@ function forbiddenIn(markup: string): string[] {
   const words = wordsOf(markup);
   return CUSTOMER_VIEW_FORBIDDEN_WORDS.filter((w) => words.has(w));
 }
+
+// The real viewer, with the download route it was given written beside it: its Download is a button that fetches
+// (R4c2, TR-Q4), so the route no longer shows as a link.
+vi.mock('@/components/ui/document-viewer', async (importOriginal) => {
+  const real = await importOriginal<typeof import('@/components/ui/document-viewer')>();
+  return {
+    ...real,
+    ViewDocument: (props: Parameters<typeof real.ViewDocument>[0]) => (
+      <span data-download-url={props.downloadUrl}>
+        <real.ViewDocument {...props} />
+      </span>
+    ),
+  };
+});
 
 const TODAY = '2026-11-10';
 
@@ -107,11 +121,13 @@ describe('QuotationView markup', () => {
     expect(html).not.toContain('2,034.00');
   });
 
-  it('renders View PDF and a plain Download link to the BFF route, and neither without a file', () => {
+  it('renders View PDF and a Download button for the BFF route, and neither without a file', () => {
     const html = renderToStaticMarkup(<QuotationView view={sampleView()} today={TODAY} />);
     expect(html).toContain('View PDF');
     expect(html).not.toContain('Download PDF');
-    expect(html).toContain(`href="/quotations/${sampleView().id}/document"`);
+    expect(html).toContain(`data-download-url="/quotations/${sampleView().id}/document"`);
+    expect(html).not.toContain(`href="/quotations/${sampleView().id}/document"`);
+    expect(html).toMatch(/<button[^>]*>.*Download<\/button>/);
     // The preview route is fetched by the dialog on open; nothing links to it or requests it at render.
     expect(html).not.toContain('/document/preview');
     expect(html).not.toContain('download=');

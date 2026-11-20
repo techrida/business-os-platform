@@ -163,6 +163,23 @@ describe('ImageUpload', () => {
     );
   });
 
+  // U12-Q4: the customer profile card asks for the larger picture; every other caller keeps 40 px.
+  it('shows the picture at the size asked for, 40 px (large) by default, initials included', async () => {
+    const avatarClass = () =>
+      document.querySelector<HTMLElement>('[role="group"] span[aria-hidden="true"]')?.className ??
+      '';
+    mounted = await mountForm(picker({ imageDocumentId: null }));
+    expect(avatarClass()).toMatch(/(^|[\s_])large_/);
+    expect(avatarClass()).not.toMatch(/xlarge/);
+    await mounted.unmount();
+    mounted = undefined;
+    mounted = await mountForm(picker({ imageDocumentId: null, size: 'xlarge' }));
+    expect(avatarClass()).toMatch(/xlarge/);
+    expect(document.querySelector('[role="group"] span[aria-hidden="true"]')?.textContent).toBe(
+      'AL',
+    );
+  });
+
   it('offers an upload, and no preview or remove, while there is no picture', async () => {
     mounted = await mountForm(picker({ imageDocumentId: null }));
     const input = document.querySelector<HTMLInputElement>('input[type="file"]')!;

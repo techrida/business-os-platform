@@ -8,22 +8,22 @@ let pathname = '/';
 vi.mock('next/navigation', () => ({ usePathname: () => pathname }));
 
 describe('TopBar across customer and vendor portals', () => {
-  it.each(['/invoices/invoice-1', '/payments/new'])(
-    'keeps the customer billing navigation and active area at %s',
-    (path) => {
-      pathname = path;
-      const html = renderToStaticMarkup(<TopBar />);
-      expect(html).toContain('aria-label="Customer portal"');
-      for (const label of ['Quotations', 'Invoices', 'Payments']) {
-        expect(html).toContain(`>${label}</a>`);
-      }
-      const active = path.startsWith('/invoices') ? 'Invoices' : 'Payments';
-      expect(html).toMatch(new RegExp(`aria-current="page"[^>]*>${active}</a>`));
-      expect(html).not.toContain('aria-label="Vendor portal"');
-      expect(html).not.toContain('href="/vendor');
-      expect(html).toMatch(/<form(?=[^>]*method="post")(?=[^>]*action="\/auth\/logout")/);
-    },
-  );
+  it.each([
+    ['/invoices/invoice-1', 'Invoices'],
+    ['/payments/new', 'Payments'],
+    ['/milestones/order-1', 'Milestones'],
+  ])('keeps the customer billing navigation and active area at %s', (path, active) => {
+    pathname = path;
+    const html = renderToStaticMarkup(<TopBar />);
+    expect(html).toContain('aria-label="Customer portal"');
+    for (const label of ['Quotations', 'Milestones', 'Invoices', 'Payments']) {
+      expect(html).toContain(`>${label}</a>`);
+    }
+    expect(html).toMatch(new RegExp(`aria-current="page"[^>]*>${active}</a>`));
+    expect(html).not.toContain('aria-label="Vendor portal"');
+    expect(html).not.toContain('href="/vendor');
+    expect(html).toMatch(/<form(?=[^>]*method="post")(?=[^>]*action="\/auth\/logout")/);
+  });
 
   it.each<{ capability: VendorPortalCapability; links: string[] }>([
     {
@@ -41,7 +41,7 @@ describe('TopBar across customer and vendor portals', () => {
       expect(html.includes(`>${label}</a>`)).toBe(links.includes(label));
     }
     expect(html).not.toContain('aria-label="Customer portal"');
-    for (const href of ['/', '/invoices', '/payments']) {
+    for (const href of ['/', '/milestones', '/invoices', '/payments']) {
       expect(html).not.toContain(`href="${href}"`);
     }
     if (links.includes('Bills')) {

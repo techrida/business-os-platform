@@ -67,6 +67,7 @@ import { type Decision, type Principal } from '../../platform/authz/principal';
 import { DB, type Db, type DbTransaction } from '../../platform/db/db.module';
 import { updateVersioned, withIdempotency } from '../../platform/db/idempotency';
 import { withTx, type Actor, type TxScope } from '../../platform/db/tx';
+import { assertNotInfected } from '../../platform/documents/documents.service';
 import { searchPage, type SearchColumn } from '../../platform/list';
 import { NumberingService } from '../../platform/settings/numbering.service';
 import { SettingsService } from '../../platform/settings/settings.service';
@@ -752,6 +753,8 @@ export class SalesOrdersService {
     await this.assertDocumentsUsable(tx, scope, namedIds);
     const acceptedIds = [...new Set(accepted)].filter((id) => !namedIds.includes(id));
     const live = await this.liveDocuments(tx, scope, acceptedIds);
+    // A file that passed the acceptance while still scanning may have been found infected since (TR-Q12e).
+    await assertNotInfected(tx, scope, [...live]);
     return [...namedIds, ...acceptedIds.filter((id) => live.has(id))];
   }
 
@@ -773,7 +776,10 @@ export class SalesOrdersService {
     return new Set(rows.map((r) => r.id));
   }
 
-  /** A foreign or removed document id would otherwise surface as a composite-FK 500. */
+  /**
+   * A foreign or removed document id would otherwise surface as a composite-FK 500. An infected file is refused
+   * (409 document_infected, TR-Q12e).
+   */
   private async assertDocumentsUsable(
     tx: DbTransaction,
     scope: TxScope,
@@ -788,6 +794,7 @@ export class SalesOrdersService {
         { documentIds: bad },
       );
     }
+    await assertNotInfected(tx, scope, ids);
   }
 
   /** The order, its lines, schedule and evidence, as the workspace parses them. 404 outside the entity. */

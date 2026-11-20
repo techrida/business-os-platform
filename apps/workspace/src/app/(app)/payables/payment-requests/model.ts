@@ -12,6 +12,19 @@ export const PAYMENT_STATUS: Record<PaymentRequestStatus, { text: string; tone: 
   cancelled: { text: 'Cancelled', tone: 'neutral' },
 };
 
+/**
+ * A request's name: its number, else words that follow its status. Requests are not numbered yet, so a submitted,
+ * approved or rejected one must not still read as a draft.
+ */
+export function requestTitle(request: {
+  number: string | null;
+  status: PaymentRequestStatus;
+}): string {
+  return (
+    request.number ?? (request.status === 'draft' ? 'Draft payment request' : 'Payment request')
+  );
+}
+
 /** The new request page's heading: drawn by the page, or by the entry form when it holds the actions. */
 export const NEW_REQUEST_HEADING = {
   title: 'New payment request',

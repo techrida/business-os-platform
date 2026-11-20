@@ -90,13 +90,13 @@ function QuotationRow({
           <span className={styles.quiet}>Unassigned</span>
         )}
       </Td>
-      <Td nowrap className={styles.statusColumn}>
+      <Td nowrap pinned>
         <QuotationStatusBadge status={item.status} />
       </Td>
-      <Td nowrap className={styles.actionColumn}>
+      <Td nowrap pinned>
         <time dateTime={item.validUntil}>{when(item.validUntil, 'date')}</time>
       </Td>
-      <Td className={styles.actionColumn}>
+      <Td pinned>
         {item.canEdit ? (
           <LinkButton
             size="small"
@@ -343,9 +343,9 @@ export default async function QuotationsPage({
                 <Th>Quotation</Th>
                 <Th>Organization</Th>
                 <Th>Owner</Th>
-                <Th className={styles.statusColumn}>Status</Th>
-                <Th className={styles.actionColumn}>Valid until</Th>
-                <Th className={styles.actionColumn}>Action</Th>
+                <Th pinned>Status</Th>
+                <Th pinned>Valid until</Th>
+                <Th pinned>Action</Th>
               </tr>
             </thead>
             <tbody>

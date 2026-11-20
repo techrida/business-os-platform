@@ -21,11 +21,14 @@ type AvatarProps = HTMLAttributes<HTMLSpanElement> & {
   seedId?: string | null;
   /** The current image document; its picture covers the initials once it loads. */
   imageDocumentId?: string | null;
-  size?: 'small' | 'medium' | 'large';
+  /** 24, 32 and 40 px; `xlarge` (76 px) is the picture at the head of a record's profile card. */
+  size?: AvatarSize;
   shape?: 'square' | 'circle';
   /** `cover` fills the shape (profile pictures); `contain` fits a logo whole on white with a hairline border. */
   fit?: 'cover' | 'contain';
 };
+
+export type AvatarSize = 'small' | 'medium' | 'large' | 'xlarge';
 
 const IMAGE_READY_EVENT = 'bos:image-ready';
 

@@ -24,6 +24,8 @@ export function agingRow(over: Record<string, unknown> = {}) {
     currency: 'NPR',
     buckets: { ...zero, current: '100000.00', d1_30: '250000.00', d91_plus: '7.00' },
     totalOpen: '999999.00',
+    promiseMissed: false,
+    promiseMissedOn: null,
     ...over,
   };
 }

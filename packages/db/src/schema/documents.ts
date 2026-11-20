@@ -18,7 +18,7 @@ import {
   uuid,
 } from 'drizzle-orm/pg-core';
 
-import { appSchema, organizations } from './platform.js';
+import { appSchema, organizations, tenants } from './platform.js';
 
 /** Postgres bytea as a Node Buffer (used for the SHA-256 of the content). */
 const bytea = customType<{ data: Buffer; driverData: Buffer }>({
@@ -129,5 +129,57 @@ export const documentVersions = appSchema.table(
     }),
     index('document_versions_document_idx').on(t.tenantId, t.organizationId, t.documentId),
     check('document_versions_size_check', sql`${t.sizeBytes} >= 0 AND ${t.sizeBytes} <= 26214400`),
+  ],
+);
+
+/** Mirrors the owner types the invoice and purchase-order render sweepers use (the quotation keeps its own state). */
+export const DOCUMENT_RENDER_FAILURE_OWNER_TYPES = ['invoice', 'purchase_order_version'] as const;
+
+/**
+ * Migration 0115. A PDF render of an invoice or a purchase-order version that failed since its last success: how many
+ * tries failed, the last failure's fixed kind word, and when the sweeper may try again (`next_attempt_at`), or that it
+ * gave up (`exhausted_at`; exactly one of the two is set). The render sweepers write it; the Retry routes delete it.
+ */
+export const documentRenderFailures = appSchema.table(
+  'document_render_failures',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    tenantId: uuid('tenant_id')
+      .notNull()
+      .references(() => tenants.id),
+    organizationId: uuid('organization_id').notNull(),
+    ownerType: text('owner_type', { enum: DOCUMENT_RENDER_FAILURE_OWNER_TYPES }).notNull(),
+    ownerId: uuid('owner_id').notNull(),
+    attempts: integer('attempts').notNull(),
+    lastFailureKind: text('last_failure_kind').notNull(),
+    nextAttemptAt: timestamp('next_attempt_at', { withTimezone: true }),
+    exhaustedAt: timestamp('exhausted_at', { withTimezone: true }),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t): PgTableExtraConfigValue[] => [
+    unique('document_render_failures_tenant_id_unique').on(t.tenantId, t.id),
+    unique('document_render_failures_owner_unique').on(
+      t.tenantId,
+      t.organizationId,
+      t.ownerType,
+      t.ownerId,
+    ),
+    foreignKey({
+      name: 'document_render_failures_tenant_org_fk',
+      columns: [t.tenantId, t.organizationId],
+      foreignColumns: [organizations.tenantId, organizations.id],
+    }),
+    check(
+      'document_render_failures_owner_type_check',
+      sql`${t.ownerType} IN ('invoice', 'purchase_order_version')`,
+    ),
+    check('document_render_failures_attempts_check', sql`${t.attempts} >= 1`),
+    check('document_render_failures_kind_check', sql`${t.lastFailureKind} ~ '^[a-z0-9_]{1,64}$'`),
+    check(
+      'document_render_failures_state_check',
+      sql`(${t.exhaustedAt} IS NULL) <> (${t.nextAttemptAt} IS NULL)`,
+    ),
+    index('document_render_failures_due_idx').on(t.ownerType, t.nextAttemptAt),
   ],
 );

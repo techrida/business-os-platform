@@ -16,6 +16,20 @@ import { TopBar } from '../portal/top-bar';
 let pathname = '/vendor';
 vi.mock('next/navigation', () => ({ usePathname: () => pathname }));
 
+// The real viewer, with the download route it was given written beside it: its Download is a button that fetches
+// (R4c2, TR-Q4), so the route no longer shows as a link.
+vi.mock('@/components/ui/document-viewer', async (importOriginal) => {
+  const real = await importOriginal<typeof import('@/components/ui/document-viewer')>();
+  return {
+    ...real,
+    ViewDocument: (props: Parameters<typeof real.ViewDocument>[0]) => (
+      <span data-download-url={props.downloadUrl}>
+        <real.ViewDocument {...props} />
+      </span>
+    ),
+  };
+});
+
 const text = (html: string) => html.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ');
 
 describe('fixtures', () => {
@@ -103,7 +117,7 @@ describe('PurchaseOrderList', () => {
 });
 
 describe('PurchaseOrderView', () => {
-  it('shows the issued version, server totals, lines with received quantity, and a plain PDF anchor', () => {
+  it('shows the issued version, server totals, lines with received quantity, and a PDF Download that stays in the portal', () => {
     const html = renderToStaticMarkup(<PurchaseOrderView view={samplePo()} capability="full" />);
     const t = text(html);
     expect(t).toContain('PO-2082-0007');
@@ -117,12 +131,16 @@ describe('PurchaseOrderView', () => {
     expect(t).toContain('2.5');
     expect(t).toContain('NPR 11,96,000.25');
     expect(html).toContain(
+      'data-download-url="/vendor/purchase-orders/0f8fad5b-d9cb-469f-a165-70867728950e/pdf"',
+    );
+    expect(html).not.toContain(
       'href="/vendor/purchase-orders/0f8fad5b-d9cb-469f-a165-70867728950e/pdf"',
     );
+    expect(html).toMatch(/<button[^>]*>.*Download<\/button>/);
     expect(html).toContain('View PDF');
     expect(html).not.toContain('Download PDF');
     expect(html).not.toContain('/pdf/preview');
-    // No `download` attribute and no prefetching client link: an error must read as text.
+    // No `download` attribute and no prefetching client link: the Download button fetches and keeps an error in the page.
     expect(html).not.toContain('download=');
     expect(t).toContain('PO-2082-0007-v2.pdf');
   });

@@ -68,26 +68,31 @@ afterEach(async () => {
 });
 
 describe('PaymentForm currency picker', () => {
-  it('offers only the enabled currencies', async () => {
+  it('offers every currency, choosable, and names the switched-off ones', async () => {
     await mount('NPR', ['NPR', 'USD']);
+    // Old code left INR out: a payment sent in INR could not be submitted.
     expect(await currencyChoices()).toEqual([
       { code: 'NPR', disabled: false },
+      { code: 'INR, switched off', disabled: false },
       { code: 'USD', disabled: false },
     ]);
     expect(submitted()).toBe('NPR');
   });
 
-  it("keeps an invoice's switched-off currency visible but disabled, and starts on NPR", async () => {
+  it("starts blank on an invoice's switched-off currency, with the open amount filled in", async () => {
     await mount('INR', ['NPR', 'USD']);
     expect(container.textContent).toContain(
-      'This invoice is in INR, which is switched off for the company. Choose another currency.',
+      'This invoice is in INR, which is switched off for the company. Payments in it are still accepted. The amount filled in is in INR.',
     );
-    expect(submitted()).toBe('NPR');
-    expect(container.querySelector<HTMLInputElement>('input[name="amount"]')!.value).toBe('');
+    // Old code started on NPR and left the amount empty.
+    expect(submitted()).toBe('');
+    expect(container.querySelector<HTMLInputElement>('input[name="amount"]')!.value).toBe(
+      '1000000.00',
+    );
     expect(await currencyChoices()).toEqual([
       { code: 'NPR', disabled: false },
+      { code: 'INR, switched off', disabled: false },
       { code: 'USD', disabled: false },
-      { code: 'INR', disabled: true },
     ]);
   });
 
@@ -97,6 +102,6 @@ describe('PaymentForm currency picker', () => {
     expect(container.querySelector<HTMLInputElement>('input[name="amount"]')!.value).toBe(
       '1000000.00',
     );
-    expect(container.textContent).not.toContain('switched off');
+    expect(container.textContent).not.toContain('Payments in it are still accepted');
   });
 });

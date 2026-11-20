@@ -797,7 +797,13 @@ export const ACCESS_PERMISSION_CATALOGUE: readonly AccessPermissionInfo[] = [
   // Portal access
   perm('portal.quotation.read', 'View company quotations in portal', 'portal', [], PORTAL_ONLY),
   perm('portal.quotation.respond', 'Respond to quotations in portal', 'portal', [], PORTAL_ONLY),
-  perm('portal.invoice.read', 'View company invoices in portal', 'portal', [], PORTAL_ONLY),
+  perm(
+    'portal.invoice.read',
+    'View company invoices and milestones in portal',
+    'portal',
+    [],
+    PORTAL_ONLY,
+  ),
   perm('portal.payment.submit', 'Submit payment proof in portal', 'portal', [], PORTAL_ONLY),
   perm('portal.vendor.read', 'View purchase orders and bills in portal', 'portal', [], PORTAL_ONLY),
   perm('portal.vendor.submit', 'Submit bills in portal', 'portal', [], PORTAL_ONLY),

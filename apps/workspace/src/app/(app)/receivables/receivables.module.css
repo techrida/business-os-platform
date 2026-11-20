@@ -81,6 +81,12 @@
   color: var(--status-error);
 }
 
+/* F1-Q33: a customer with a missed promise to pay on an invoice that is still open. */
+.promiseMissed {
+  color: var(--status-error);
+  font-weight: var(--font-weight-medium);
+}
+
 .stack {
   display: grid;
   gap: 24px;

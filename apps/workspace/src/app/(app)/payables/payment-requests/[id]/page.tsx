@@ -24,7 +24,7 @@ import { ApprovalHistory, loadApproval } from '../../_components/approval-histor
 import styles from '../../payables.module.css';
 import { paymentRequestFailure } from '../failure';
 import { PaymentRequestCommand } from '../forms';
-import { PAYMENT_STATUS } from '../model';
+import { PAYMENT_STATUS, requestTitle } from '../model';
 
 export const metadata: Metadata = { title: 'Payment request · Business OS' };
 export const dynamic = 'force-dynamic';
@@ -77,11 +77,11 @@ export default async function PaymentRequestPage({ params }: { params: Promise<{
       <Breadcrumb
         items={[
           { label: 'Payment requests', href: '/payables/payment-requests' },
-          { label: request.number ?? 'Draft request' },
+          { label: requestTitle(request) },
         ]}
       />
       <PageHeader
-        title={request.number ?? 'Draft payment request'}
+        title={requestTitle(request)}
         status={<Badge tone={status.tone}>{status.text}</Badge>}
         description="An instruction to pay approved vendor bills. Approval does not send money."
         actions={

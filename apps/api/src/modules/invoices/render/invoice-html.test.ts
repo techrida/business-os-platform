@@ -91,7 +91,8 @@ describe('renderInvoiceHtml', () => {
     expect(html).toContain('PAN/VAT 301234567');
     expect(html).toContain('PAN/VAT ABC-12345');
     expect(html).toContain('Himal Traders Pvt. Ltd.');
-    expect(html).toContain('2083-07-24 BS');
+    expect(html).toContain('(24 Kartik 2083 BS)');
+    expect(html).not.toContain('2083-07-24');
     expect(html).toContain('Due date');
     expect(html).toContain('VAT 13% (13%) on NPR 17,86,000.00');
     expect(html).not.toContain('Proforma');
@@ -206,5 +207,50 @@ describe('renderInvoiceHtml', () => {
       expect(html).toBe(renderInvoiceHtml(sample()));
       expect(html).not.toContain('<img');
     });
+  });
+});
+
+describe('renderInvoiceHtml: words, signatory and contact (U16-Q4)', () => {
+  const contact = {
+    phones: ['01-4000000'],
+    email: 'billing@techrida.example',
+    signatoryName: 'Sita <Sharma>',
+    signatoryTitle: 'Finance Manager',
+  };
+
+  it('spells the total in the number system of the print', () => {
+    expect(renderInvoiceHtml(sample())).toContain(
+      'Amount in words: Twenty Lakh Eighteen Thousand One Hundred Eighty Rupees Only',
+    );
+    expect(
+      renderInvoiceHtml(sample(), {
+        numberSystems: { NPR: 'international', INR: 'international', USD: 'international' },
+      }),
+    ).toContain('Amount in words: Two Million Eighteen Thousand One Hundred Eighty Rupees Only');
+  });
+
+  it('prints the signatory and the contact lines, escaped, in the footer order of the screens', () => {
+    const html = renderInvoiceHtml(sample(), { sellerContact: contact });
+    expect(html).toContain('<span class="name">Sita &lt;Sharma&gt;</span>');
+    expect(html).toContain('<span>Finance Manager</span>');
+    const foot = html.slice(html.indexOf('<footer'));
+    const order = [
+      'Techrida Pvt. Ltd.',
+      'Phone 01-4000000',
+      'Durbar Marg 1',
+      'Email billing@',
+      'PAN/VAT 301234567',
+    ];
+    const at = order.map((t) => foot.indexOf(t));
+    expect(at.every((i) => i >= 0)).toBe(true);
+    expect([...at].sort((a, b) => a - b)).toEqual(at);
+  });
+
+  it('keeps the signatory label, with no name, phone or email, when there is no contact', () => {
+    const html = renderInvoiceHtml(sample());
+    expect(html).toContain('Authorised signatory');
+    expect(html).not.toContain('class="name"');
+    expect(html).not.toContain('Email ');
+    expect(html).not.toContain('Phone ');
   });
 });

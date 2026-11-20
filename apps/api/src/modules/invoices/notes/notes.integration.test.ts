@@ -67,6 +67,7 @@ const APP_PW = 'app-test-pw';
 const NOW = new Date('2026-11-09T06:00:00Z');
 
 // The seed's invoiceApprovalSpec (tools/seed-zitadel/src/db-seed.ts), one per approvable type; keep the two in step.
+// The seed's tax_invoice route now depends on the source (F1-Q30); these tests never submit a tax invoice.
 const approvalSpec = (documentType: string, what: string): unknown => ({
   documentType,
   steps: [
@@ -717,5 +718,192 @@ describe('saved reach on credit notes (U20a phase 2)', () => {
     current.grants = new Map([...grantsOf('accountant'), ['invoice.credit_note', 'own']]);
     const note = await notes.draftCreditNote(creditBody(original, '1'), key());
     expect(note.invoice.kind).toBe('credit_note');
+  });
+});
+
+describe("debit notes fall due on the customer's payment terms (TR-Q12c)", () => {
+  /**
+   * The customer's account with entity A on a term of `netDays`, written as the dev seed writes it (the seed is the only
+   * producer of party_accounts today); null removes the account.
+   */
+  async function setCustomerTerm(netDays: number | null): Promise<void> {
+    await withTx(db, scopeA, systemActor('note-fixture'), async (tx) => {
+      await tx.execute(
+        sql`DELETE FROM app.party_accounts
+            WHERE tenant_id = ${f.tenantId} AND organization_id = ${f.entityId} AND party_id = ${f.customerPartyId}`,
+      );
+      if (netDays === null) return;
+      await tx.execute(
+        sql`INSERT INTO app.payment_terms (tenant_id, code, name, net_days)
+            VALUES (${f.tenantId}, ${`NET${netDays}`}, ${`Net ${netDays}`}, ${netDays})
+            ON CONFLICT (tenant_id, code) DO NOTHING`,
+      );
+      await tx.execute(
+        sql`INSERT INTO app.party_accounts (tenant_id, organization_id, party_id, default_currency, payment_term_id)
+            SELECT ${f.tenantId}, ${f.entityId}, ${f.customerPartyId}, 'NPR', pt.id
+            FROM app.payment_terms pt WHERE pt.tenant_id = ${f.tenantId} AND pt.code = ${`NET${netDays}`}`,
+      );
+    });
+  }
+
+  /** A manual tax invoice issued by U.fin with `dueDate`, so it has a credit period of its own. */
+  async function issuedInvoiceDue(dueDate: string): Promise<string> {
+    as(U.acc, 'accountant');
+    const id = (
+      await drafting.draftManual(
+        {
+          customerId: f.customerPartyId,
+          currency: 'NPR',
+          manualReason: 'Consulting on 30 days credit',
+          dueDate,
+          lines: [typedLine('Implementation', '1', '250.00', f.taxCodeVat13Id)],
+        },
+        key(),
+      )
+    ).invoice.id;
+    await withTx(db, scopeA, systemActor('note-fixture'), (tx) =>
+      tx.execute(
+        sql`UPDATE app.invoices SET status = 'approved', version = version + 1 WHERE id = ${id}`,
+      ),
+    );
+    as(U.fin, 'finance');
+    await issuing.issue(id, { expectedVersion: (await invoiceRow(id)).version }, key());
+    return id;
+  }
+
+  /** A debit note on `original` (a fresh issued invoice by default): drafted by U.fin, approved, issued by U.fin2. */
+  async function issuedDebitNote(original?: string) {
+    original ??= await issuedInvoice();
+    as(U.fin, 'finance');
+    const id = (await notes.draftDebitNote(debitBody(original), key())).invoice.id;
+    expect((await invoiceRow(id)).dueDate).toBeNull();
+    await withTx(db, scopeA, systemActor('note-fixture'), (tx) =>
+      tx.execute(
+        sql`UPDATE app.invoices SET status = 'approved', version = version + 1 WHERE id = ${id}`,
+      ),
+    );
+    as(U.fin2, 'finance');
+    await issuing.issue(id, { expectedVersion: (await invoiceRow(id)).version }, key());
+    const row = await invoiceRow(id);
+    expect(row.status).toBe('issued');
+    const [item] = await db.select().from(openItems).where(eq(openItems.sourceId, id));
+    return { row, item: item! };
+  }
+
+  afterAll(async () => {
+    await setCustomerTerm(null);
+  });
+
+  it('a customer on Net 15 gets a debit note due 15 days after issue, on the note and its open item', async () => {
+    await setCustomerTerm(15);
+    const { row, item } = await issuedDebitNote();
+    expect(row.issueDate).toBe('2026-11-09');
+    expect(row.dueDate).toBe('2026-11-24');
+    expect(item.dueDate).toBe('2026-11-24');
+  });
+
+  it('a 0-day term is due on the issue date', async () => {
+    await setCustomerTerm(0);
+    const { row, item } = await issuedDebitNote();
+    expect(row.dueDate).toBe('2026-11-09');
+    expect(item.dueDate).toBe('2026-11-09');
+  });
+
+  it('a customer with no term here gets the credit period of the original invoice (R2-022)', async () => {
+    await setCustomerTerm(null);
+    const original = await issuedInvoiceDue('2026-12-09');
+    expect((await invoiceRow(original)).dueDate).toBe('2026-12-09');
+    const { row, item } = await issuedDebitNote(original);
+    expect(row.dueDate).toBe('2026-12-09');
+    expect(item.dueDate).toBe('2026-12-09');
+  });
+
+  it('a customer with no term and an original due on receipt: the note is due on its issue date', async () => {
+    await setCustomerTerm(null);
+    const { row } = await issuedDebitNote();
+    expect(row.dueDate).toBe('2026-11-09');
+  });
+
+  it('a tax invoice ignores the customer term (it keeps its own due date rule)', async () => {
+    await setCustomerTerm(15);
+    const id = await issuedInvoice();
+    expect((await invoiceRow(id)).dueDate).toBe('2026-11-09');
+  });
+});
+
+describe('the creator of a note may not issue it (TR-Q12f)', () => {
+  async function approved(id: string): Promise<number> {
+    await withTx(db, scopeA, systemActor('note-fixture'), (tx) =>
+      tx.execute(
+        sql`UPDATE app.invoices SET status = 'approved', version = version + 1 WHERE id = ${id}`,
+      ),
+    );
+    return (await invoiceRow(id)).version;
+  }
+  const noteSeq = async (kind: 'credit_note' | 'debit_note') =>
+    (
+      await db.execute<{ last: number | null }>(
+        sql`SELECT max(seq)::int AS last FROM app.invoices
+            WHERE tenant_id = ${f.tenantId} AND organization_id = ${f.entityId} AND kind = ${kind}`,
+      )
+    ).rows[0]?.last ?? 0;
+
+  it.each(['credit_note', 'debit_note'] as const)(
+    'a %s: its creator gets 403 separation_of_duties and no number; another Finance user issues it',
+    async (kind) => {
+      const original = await issuedInvoice();
+      as(U.fin, 'finance');
+      const id = (
+        kind === 'credit_note'
+          ? await notes.draftCreditNote(creditBody(original, '1'), key())
+          : await notes.draftDebitNote(debitBody(original), key())
+      ).invoice.id;
+      const version = await approved(id);
+      const before = await noteSeq(kind);
+
+      // The page says so before the click: the detail flags the note for its creator only.
+      expect((await drafting.detail(id)).issueBlockedBySod).toBe(true);
+      const err = await issuing
+        .issue(id, { expectedVersion: version }, key())
+        .catch((e: unknown) => e);
+      expect(statusOf(err)).toBe(403);
+      expect(responseOf(err)).toMatchObject({
+        code: 'forbidden',
+        reason: 'separation_of_duties',
+        message: 'The creator of a credit or debit note cannot issue it',
+      });
+      const row = await invoiceRow(id);
+      expect([row.status, row.number]).toEqual(['approved', null]);
+      expect(await noteSeq(kind)).toBe(before);
+
+      as(U.fin2, 'finance');
+      expect((await drafting.detail(id)).issueBlockedBySod).toBeUndefined();
+      const result = IssueInvoiceResultSchema.parse(
+        await issuing.issue(id, { expectedVersion: version }, key()),
+      );
+      expect(result.kind).toBe('issued');
+      expect((await invoiceRow(id)).issuedBy).toBe(U.fin2);
+    },
+  );
+
+  it('a tax invoice is not covered: its drafter may still issue it', async () => {
+    as(U.fin, 'finance');
+    const id = (
+      await drafting.draftManual(
+        {
+          customerId: f.customerPartyId,
+          currency: 'NPR',
+          manualReason: 'Drafted and issued by Finance',
+          lines: [typedLine('Support', '1', '100.00', f.taxCodeVat13Id)],
+        },
+        key(),
+      )
+    ).invoice.id;
+    const version = await approved(id);
+    expect((await drafting.detail(id)).issueBlockedBySod).toBeUndefined();
+    const result = IssueInvoiceResultSchema.parse(
+      await issuing.issue(id, { expectedVersion: version }, key()),
+    );
+    expect(result.kind).toBe('issued');
   });
 });

@@ -59,6 +59,20 @@ vi.mock('next/link', () => ({
   ),
 }));
 
+// The real viewer, with the routes it was given written beside its trigger, so a test can see whether Retry is
+// offered (the dialog only asks for it once opened).
+vi.mock('@/components/ui/file-preview-dialog', async (importOriginal) => {
+  const real = await importOriginal<typeof import('@/components/ui/file-preview-dialog')>();
+  return {
+    ...real,
+    FilePreviewDialog: (props: Parameters<typeof real.FilePreviewDialog>[0]) => (
+      <span data-download-url={props.downloadUrl} data-retry-url={props.retryUrl}>
+        <real.FilePreviewDialog {...props} />
+      </span>
+    ),
+  };
+});
+
 async function render(id: string = ID): Promise<string> {
   return renderToStaticMarkup(await InvoiceDetailPage({ params: Promise.resolve({ id }) }));
 }
@@ -97,10 +111,35 @@ const withFormat = (detail: InvoiceDetail, format: unknown): InvoiceDetail =>
 const textOf = (html: string) => html.replace(/<[^>]*>/g, ' ').replace(/\s+/g, ' ');
 
 describe('invoice detail page', () => {
+  it("shows a note's creator Issue off with the reason, from the API's issueBlockedBySod (TR-Q12f)", async () => {
+    const note = (blocked: boolean) =>
+      InvoiceDetailSchema.parse({
+        ...invoiceDetail({
+          kind: 'debit_note',
+          status: 'approved',
+          salesOrderId: null,
+          originalInvoiceId: APPROVAL,
+          noteReason: 'Extra support day',
+        }),
+        ...(blocked ? { issueBlockedBySod: true } : {}),
+      });
+    mocks.getInvoice.mockResolvedValue(note(true));
+    const blocked = await render();
+    expect(blocked).toMatch(/<button[^>]*aria-disabled="true"[^>]*>Issue debit note<\/button>/);
+    expect(blocked).toContain(
+      'You created this note, so someone else with issue access must issue it.',
+    );
+
+    mocks.getInvoice.mockResolvedValue(note(false));
+    const open = await render();
+    expect(open).not.toContain('aria-disabled="true"');
+    expect(open).not.toContain('You created this note');
+  });
+
   it('shows number, issue date (AD and BS) and the buyer, all as read-only text', async () => {
     const html = await render();
     expect(html).toContain('INV-2083/84-00001');
-    expect(html).toContain('2083-07-23');
+    expect(html).toContain('23 Kartik 2083 BS');
     expect(html).toContain('Himalayan Agro Foods');
     expect(html).not.toMatch(/<input[^>]*(number|issueDate)/i);
   });
@@ -324,6 +363,32 @@ describe('invoice detail page', () => {
     expect(html).not.toMatch(/<a[^>]+href="\/invoices\/[^"]+\/document"/);
   });
 
+  // R4c2 (TR-Q4): a PDF whose render was given up offers Retry to who may issue the invoice, and to no one else.
+  it('offers Retry on the PDF to Finance, who may issue the invoice', async () => {
+    const html = await render();
+    expect(html).toContain(`data-retry-url="/invoices/${ID}/document/retry"`);
+    expect(html).toContain(`data-download-url="/invoices/${ID}/document"`);
+  });
+
+  // `can` is what the API sends for this invoice: the issue grant judged on the record (an `own` grant only on the
+  // invoices the caller drafted), not the invoice's state, so it stays true on an issued invoice.
+  it('offers Retry when the API says the caller may issue this invoice, and not when it says no', async () => {
+    const can = { submit: false, issue: true, discard: false, notes: true, recordPayment: true };
+    mocks.getInvoice.mockResolvedValue({ ...issued(), can });
+    expect(await render()).toContain(`data-retry-url="/invoices/${ID}/document/retry"`);
+    mocks.getInvoice.mockResolvedValue({ ...issued(), can: { ...can, issue: false } });
+    const html = await render();
+    expect(html).toMatch(/View PDF/);
+    expect(html).not.toContain('data-retry-url');
+  });
+
+  it('offers no Retry on the PDF to the Accountant, who may not issue', async () => {
+    mocks.requireStaffSession.mockResolvedValue({ accessToken: 't', roles: ['accountant'] });
+    const html = await render();
+    expect(html).toMatch(/View PDF/);
+    expect(html).not.toContain('data-retry-url');
+  });
+
   it.each(['draft', 'submitted', 'returned', 'approved'])(
     'offers no PDF link while the invoice is %s',
     async (status) => {
@@ -488,7 +553,9 @@ describe('invoice detail page: the document', () => {
 
   it('prints the issue date with its frozen BS form and the due date with its converted BS form', async () => {
     const text = textOf(await render());
-    expect(text).toContain('(2083-07-23 BS)');
+    // One long BS form on the document (U16-Q5); the compact form stays out.
+    expect(text).toContain('(23 Kartik 2083 BS)');
+    expect(text).not.toContain('2083-07-23');
     expect(text).toMatch(/\(\d{2} [A-Za-z]+ 2083 BS\)/);
     expect(text).toMatch(/Due 08 Dec 2026 · 30 days/);
   });

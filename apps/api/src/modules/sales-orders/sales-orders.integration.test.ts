@@ -30,6 +30,7 @@ import {
 import {
   billingScheduleLines,
   documents,
+  documentVersions,
   invoices,
   opportunities,
   partyAccounts,
@@ -299,6 +300,24 @@ async function seedDocument(scope: TxScope = scopeA): Promise<string> {
       .returning({ id: documents.id }),
   );
   return row!.id;
+}
+
+/** `seedDocument` whose only version the virus scan found infected (TR-Q12e). */
+async function infectedDocument(): Promise<string> {
+  const id = await seedDocument();
+  await withTx(db, scopeA, systemActor('test'), (tx) =>
+    tx.insert(documentVersions).values({
+      ...scopeA,
+      documentId: id,
+      version: 1,
+      filename: 'evidence.pdf',
+      declaredMime: 'application/pdf',
+      sizeBytes: 1024,
+      storageKey: `${scopeA.tenantId}/${randomUUID()}`,
+      status: 'infected',
+    }),
+  );
+  return id;
 }
 
 async function draftQuotation(
@@ -591,6 +610,15 @@ describe('SalesOrdersService.confirmFromQuotation', () => {
     expect(rows).toHaveLength(1);
   });
 
+  it('refuses an evidence file the scan found infected with 409 document_infected and leaves the order a draft (TR-Q12e)', async () => {
+    const q = await acceptedQuotation();
+    expect(await statusOf(confirm(q, [await infectedDocument()]))).toEqual({
+      status: 409,
+      code: 'document_infected',
+    });
+    expect(await orderStatuses(q.id)).toEqual(['draft']);
+  });
+
   it('takes consecutive SO numbers for consecutive orders', async () => {
     const first = await confirm(await acceptedQuotation());
     const second = await confirm(await acceptedQuotation());
@@ -797,6 +825,38 @@ describe('evidence confirmation before the order (F1-Q28)', () => {
     const order = parsed(await confirm(q));
     expect(order.order.status).toBe('confirmed');
     expect(order.evidence).toEqual([{ documentId: contract, kind: 'contract' }]);
+  });
+
+  it('refuses to confirm evidence that names an infected file, and refuses the order once a recorded file turns infected (TR-Q12e)', async () => {
+    await setPolicy('contract');
+    const q = await portalAcceptedQuotation();
+    expect(
+      await statusOf(
+        confirmEvidence(q, {
+          evidenceKinds: ['contract'],
+          evidenceDocumentIds: [await infectedDocument()],
+        }),
+      ),
+    ).toEqual({ status: 409, code: 'document_infected' });
+
+    // A file that was clean (or still scanning) when staff confirmed it is found infected afterwards.
+    const contract = await seedDocument();
+    await confirmEvidence(q, { evidenceKinds: ['contract'], evidenceDocumentIds: [contract] });
+    await withTx(db, scopeA, systemActor('test'), (tx) =>
+      tx.insert(documentVersions).values({
+        ...scopeA,
+        documentId: contract,
+        version: 1,
+        filename: 'contract.pdf',
+        declaredMime: 'application/pdf',
+        sizeBytes: 1024,
+        storageKey: `${scopeA.tenantId}/${randomUUID()}`,
+        status: 'infected',
+      }),
+    );
+    current.grants = grantsOf('accountant');
+    expect(await statusOf(confirm(q))).toEqual({ status: 409, code: 'document_infected' });
+    expect(await orderStatuses(q.id)).toEqual(['draft']);
   });
 
   it('counts a staff entry as confirmed, and hides the evidence from a caller who cannot read the quotation', async () => {
@@ -1103,6 +1163,11 @@ describe('SalesOrdersService.markBillable', () => {
     expect(
       await statusOf(mark(detail, 2, { evidenceDocumentId: foreign, expectedVersion: 2 })),
     ).toEqual({ status: 422, code: 'invalid_evidence_document' });
+    expect(
+      await statusOf(
+        mark(detail, 2, { evidenceDocumentId: await infectedDocument(), expectedVersion: 2 }),
+      ),
+    ).toEqual({ status: 409, code: 'document_infected' });
     expect(
       await statusOf(mark(detail, 1, { evidenceDocumentId: doc, expectedVersion: 2 })),
     ).toEqual({ status: 409, code: 'schedule_line_not_planned' });

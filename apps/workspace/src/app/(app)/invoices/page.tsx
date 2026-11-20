@@ -6,6 +6,7 @@ import {
   type InvoiceKind,
   type InvoiceListItem,
   type InvoiceStatus,
+  type MoneyTotals,
   pageWindow,
   ROWS_OPTIONS,
   SETTLEMENT_STATUSES,
@@ -23,6 +24,7 @@ import { Icon } from '@/components/ui/icon';
 import { Page, PageHeader } from '@/components/ui/page';
 import { StatCard } from '@/components/ui/stat-card';
 import { Table, Td, Th } from '@/components/ui/table';
+import { MoneyTotalRows } from '@/components/p3/money-total-rows';
 import {
   getInvoicesSummary,
   type InvoicePageFilter,
@@ -44,10 +46,10 @@ import {
 } from '@/lib/list-params';
 
 import { InvoiceFilters } from './_components/invoice-filters';
-import { InvoiceStatusBadge } from './_components/badges';
 import styles from './_components/invoice.module.css';
 import { ListPager } from './_components/list-pager';
-import { type Can, recordPaymentHref, settlementMayOwe } from './_lib/gates';
+import { ListStatusBadge } from './_components/list-status';
+import { type Can, recordPaymentHref } from './_lib/gates';
 import { kindMeta, settlementLabel, statusMeta } from './_lib/meta';
 
 export const metadata: Metadata = { title: 'Invoices · Business OS' };
@@ -57,17 +59,16 @@ function InvoiceRow({
   item,
   numberSystems,
   can,
-  mayOwe,
 }: {
   item: InvoiceListItem;
   numberSystems: NumberSystems;
   can: Can;
-  mayOwe: boolean;
 }) {
   const kind = kindMeta(item.kind).label;
   const name = item.number ?? `${kind} (${statusMeta(item.status).label.toLowerCase()})`;
   const href = `/invoices/${encodeURIComponent(item.id)}`;
-  const pay = mayOwe ? recordPaymentHref(item, can) : null;
+  // The row's own derived settlement decides the button, whatever the Payment filter (U15b-Q2).
+  const pay = recordPaymentHref(item, can, item.settlement);
   return (
     <tr>
       <Th scope="row">
@@ -98,10 +99,10 @@ function InvoiceRow({
       <Td align="end" nowrap>
         <span className={styles.amount}>{money(item.total, item.currency, numberSystems)}</span>
       </Td>
-      <Td nowrap>
-        <InvoiceStatusBadge status={item.status} />
+      <Td nowrap pinned>
+        <ListStatusBadge item={item} />
       </Td>
-      <Td nowrap>
+      <Td nowrap pinned>
         <span className={styles.rowActions}>
           {pay !== null ? (
             <LinkButton
@@ -210,6 +211,7 @@ export default async function InvoicesPage({ searchParams }: { searchParams: Pro
 
   let items: InvoiceListItem[] | null = null;
   let total = 0;
+  let totals: MoneyTotals | null = null;
   let window = pageWindow(state.page, rows);
   let summary: InvoicesSummary | null = null;
   let problem: { message: string; status: number } | null = null;
@@ -229,6 +231,7 @@ export default async function InvoicesPage({ searchParams }: { searchParams: Pro
     window = pageWindow(state.page, rows, page.total);
     items = page.items;
     total = page.total;
+    totals = page.totals;
     // A page past the end (rows changed, or rows deleted) shows the last page instead of nothing.
     if (items.length === 0 && total > 0) {
       items = (
@@ -326,21 +329,22 @@ export default async function InvoicesPage({ searchParams }: { searchParams: Pro
                 <Th>Issued on</Th>
                 <Th>Due</Th>
                 <Th align="end">Total</Th>
-                <Th>Status</Th>
-                <Th>Action</Th>
+                <Th pinned>Status</Th>
+                <Th pinned>Action</Th>
               </tr>
             </thead>
             <tbody>
               {items.map((item) => (
-                <InvoiceRow
-                  numberSystems={numberSystems}
-                  key={item.id}
-                  item={item}
-                  can={can}
-                  mayOwe={settlementMayOwe(multi.settlement)}
-                />
+                <InvoiceRow numberSystems={numberSystems} key={item.id} item={item} can={can} />
               ))}
             </tbody>
+            <MoneyTotalRows
+              totals={totals}
+              column={5}
+              columns={8}
+              allPages={total > items.length}
+              format={(amount, currency) => money(amount, currency, numberSystems)}
+            />
           </Table>
           <ListPager
             pathname="/invoices"
