@@ -1,4 +1,4 @@
-// The list and summary routes of PaymentsController: query parsing (repeated filters, unknown values), the total
+// The list, summary and reference-matches routes of PaymentsController: query parsing (repeated filters, unknown values), the total
 // header and the route order. The SQL is covered by payments.integration.test.ts.
 import 'reflect-metadata';
 
@@ -15,6 +15,7 @@ function setup() {
   const payments = {
     list: vi.fn().mockResolvedValue({ rows: [], total: 0, totals: [] }),
     summary: vi.fn().mockResolvedValue({ total: 0, byStatus: {} }),
+    referenceMatches: vi.fn().mockResolvedValue({ matches: [] }),
   };
   const caller = { current: () => ({ scope: SCOPE, actor: {} }) };
   const controller = new PaymentsController(payments as never, caller as never);
@@ -81,5 +82,33 @@ describe('GET /v1/payments/summary', () => {
     const names = Object.getOwnPropertyNames(PaymentsController.prototype);
     expect(names.indexOf('summary')).toBeLessThan(names.indexOf('get'));
     expect(Reflect.getMetadata(CAN_KEY, PaymentsController.prototype.summary)).toBe('payment.read');
+  });
+});
+
+describe('GET /v1/payments/reference-matches', () => {
+  it('passes the trimmed reference and refuses a missing, blank, long or extra parameter', () => {
+    const { payments, controller } = setup();
+    void controller.referenceMatches({ bankReference: '  NIC 77812 ' });
+    expect(payments.referenceMatches).toHaveBeenCalledWith(SCOPE, { bankReference: 'NIC 77812' });
+    for (const query of [
+      {},
+      { bankReference: '   ' },
+      { bankReference: 'x'.repeat(101) },
+      { bankReference: ['a', 'b'] },
+      { bankReference: 'a', q: 'b' },
+    ]) {
+      expect(() => controller.referenceMatches(query), JSON.stringify(query)).toThrow(
+        BadRequestException,
+      );
+    }
+    expect(payments.referenceMatches).toHaveBeenCalledTimes(1);
+  });
+
+  it('is declared before /:id and needs payment.read', () => {
+    const names = Object.getOwnPropertyNames(PaymentsController.prototype);
+    expect(names.indexOf('referenceMatches')).toBeLessThan(names.indexOf('get'));
+    expect(Reflect.getMetadata(CAN_KEY, PaymentsController.prototype.referenceMatches)).toBe(
+      'payment.read',
+    );
   });
 });
