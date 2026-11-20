@@ -100,7 +100,7 @@ describe('invoice detail page', () => {
   it('shows number, issue date (AD and BS) and the buyer, all as read-only text', async () => {
     const html = await render();
     expect(html).toContain('INV-2083/84-00001');
-    expect(html).toContain('2083-07-23');
+    expect(html).toContain('23 Kartik 2083 BS');
     expect(html).toContain('Himalayan Agro Foods');
     expect(html).not.toMatch(/<input[^>]*(number|issueDate)/i);
   });
@@ -488,7 +488,9 @@ describe('invoice detail page: the document', () => {
 
   it('prints the issue date with its frozen BS form and the due date with its converted BS form', async () => {
     const text = textOf(await render());
-    expect(text).toContain('(2083-07-23 BS)');
+    // One long BS form on the document (U16-Q5); the compact form stays out.
+    expect(text).toContain('(23 Kartik 2083 BS)');
+    expect(text).not.toContain('2083-07-23');
     expect(text).toMatch(/\(\d{2} [A-Za-z]+ 2083 BS\)/);
     expect(text).toMatch(/Due 08 Dec 2026 · 30 days/);
   });
