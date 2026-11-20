@@ -660,6 +660,31 @@ describe('PATCH /v1/opportunities/:id/stage', () => {
     });
   });
 
+  it('records the stage a deal is held at and resumes it there; an older hold resumes to negotiation (F1-Q53)', async () => {
+    const id = await seed({ stage: 'negotiation' });
+    const held = await patchStage(id, {
+      stage: 'on_hold',
+      reason: 'budget',
+      note: 'revisit in Q3',
+      expectedVersion: 1,
+    });
+    expect(held.status, JSON.stringify(held.body)).toBe(200);
+    expect(dto(held.body)).toMatchObject({
+      heldFromStage: 'negotiation',
+      allowedMoves: ['negotiation'],
+    });
+    expect(await rowOf(id)).toMatchObject({ stage: 'on_hold', heldFromStage: 'negotiation' });
+    const back = await patchStage(id, { stage: 'negotiation', expectedVersion: 2 });
+    expect(dto(back.body)).toMatchObject({ stage: 'negotiation', heldFromStage: null });
+    expect(await rowOf(id)).toMatchObject({ heldFromStage: null });
+
+    // A row put on hold before 0100 has no held stage and resumes to the old fixed stage.
+    const legacy = await seed({ stage: 'on_hold' });
+    expect(await rowOf(legacy)).toMatchObject({ heldFromStage: null });
+    const resumed = await patchStage(legacy, { stage: 'negotiation', expectedVersion: 1 });
+    expect(resumed.status, JSON.stringify(resumed.body)).toBe(200);
+  });
+
   it('answers 409 for a stale version, before it judges the move', async () => {
     const id = await seed();
     expect(

@@ -56,6 +56,7 @@ export function toOpportunityDto(
     probability: row.probability,
     expectedClose: row.expectedClose,
     wonQuotationVersionId: row.wonQuotationVersionId,
+    heldFromStage: row.heldFromStage,
     ...(principal === undefined
       ? {}
       : {

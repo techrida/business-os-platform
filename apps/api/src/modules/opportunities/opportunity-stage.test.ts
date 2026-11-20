@@ -82,7 +82,12 @@ describe('planStageChange', () => {
       });
       expect(plan(from, to, 'user', { reason: 'r', note: 'n' })).toEqual({
         ok: true,
-        set: { stage: to, stageReason: 'r', stageNote: 'n' },
+        set: {
+          stage: to,
+          stageReason: 'r',
+          stageNote: 'n',
+          heldFromStage: to === 'on_hold' ? from : null,
+        },
       });
     }
   });
@@ -101,11 +106,11 @@ describe('planStageChange', () => {
   it('clears the reason and note when the move leaves lost or on_hold, and for a system move', () => {
     expect(plan('on_hold', 'negotiation', 'user')).toEqual({
       ok: true,
-      set: { stage: 'negotiation', stageReason: null, stageNote: null },
+      set: { stage: 'negotiation', stageReason: null, stageNote: null, heldFromStage: null },
     });
     expect(plan('quotation_sent', 'won', 'system')).toEqual({
       ok: true,
-      set: { stage: 'won', stageReason: null, stageNote: null },
+      set: { stage: 'won', stageReason: null, stageNote: null, heldFromStage: null },
     });
   });
 

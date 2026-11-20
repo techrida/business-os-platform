@@ -6,6 +6,7 @@ import {
   findTransition,
   OPPORTUNITY_TRANSITIONS,
   type OpportunityStage,
+  resumeTarget,
   type StageTransition,
   type TransitionActor,
 } from '@bos/contracts';
@@ -53,6 +54,7 @@ export function allowedOpportunityMoves(
     ownerUserId: string | null;
     departmentId: string | null;
     stage: OpportunityStage;
+    heldFromStage?: OpportunityStage | null;
   },
 ): OpportunityStage[] {
   if (!can(principal, 'crm.opportunity.write', opportunityRef(row)).allowed) return [];
@@ -61,7 +63,8 @@ export function allowedOpportunityMoves(
     (t) =>
       t.from === row.stage &&
       t.by !== 'system' &&
-      (t.by === 'user' || (t.by === 'manager' && manager)),
+      (t.by === 'user' || (t.by === 'manager' && manager)) &&
+      (row.stage !== 'on_hold' || t.to === resumeTarget('opportunity', row.heldFromStage ?? null)),
   ).map((t) => t.to);
 }
 
@@ -74,12 +77,16 @@ export interface StageChangeInput {
   note?: string | undefined;
   /** The version the caller saw. Left out for a system move, which acts on the row as it finds it. */
   expectedVersion?: number | undefined;
+  /** The stage an on_hold opportunity was held at (F1-Q53); null or absent for a hold older than that. */
+  heldFromStage?: OpportunityStage | null | undefined;
 }
 
 export interface StageFields {
   stage: OpportunityStage;
   stageReason: string | null;
   stageNote: string | null;
+  /** Set to the stage left when moving to on_hold, and cleared by every other move. */
+  heldFromStage: OpportunityStage | null;
 }
 
 export type StageChangeRefusal =
@@ -128,6 +135,15 @@ export function planStageChange(input: StageChangeInput): StagePlan {
   if (edge === undefined) {
     return refuse('no_edge', `An opportunity cannot move from ${input.current} to ${input.to}`);
   }
+  if (input.current === 'on_hold') {
+    const back = resumeTarget('opportunity', input.heldFromStage ?? null);
+    if (input.to !== back) {
+      return refuse(
+        'no_edge',
+        `This opportunity was put on hold at ${back} and resumes to ${back} only`,
+      );
+    }
+  }
   const refusal = mayTake(input.by, edge);
   if (refusal === 'system_only') {
     return refuse(refusal, `Moving to ${input.to} is done by the system, not by a user`);
@@ -144,7 +160,10 @@ export function planStageChange(input: StageChangeInput): StagePlan {
 
   if (input.by === 'system') {
     // A system move comes from the quotation lifecycle: no user reason, and none left over from an earlier stage.
-    return { ok: true, set: { stage: input.to, stageReason: null, stageNote: null } };
+    return {
+      ok: true,
+      set: { stage: input.to, stageReason: null, stageNote: null, heldFromStage: null },
+    };
   }
   if (edge.needsReason && (input.reason === undefined || input.note === undefined)) {
     return refuse('reason_required', `A reason and a note are required to move to ${input.to}`);
@@ -157,6 +176,7 @@ export function planStageChange(input: StageChangeInput): StagePlan {
       stage: input.to,
       stageReason: input.reason ?? null,
       stageNote: input.note ?? null,
+      heldFromStage: input.to === 'on_hold' ? input.current : null,
     },
   };
 }

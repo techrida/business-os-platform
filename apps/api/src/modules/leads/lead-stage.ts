@@ -2,7 +2,7 @@
 // LEAD_TRANSITIONS is unit-testable without a database. Serves the NFR "the pipeline is auditable": a stage
 // moves only along the table, Converted is reached by the convert action alone, and a move to Lost or On Hold
 // always carries its reason and note.
-import { findTransition, LEAD_TRANSITIONS, type LeadStage } from '@bos/contracts';
+import { findTransition, LEAD_TRANSITIONS, type LeadStage, resumeTarget } from '@bos/contracts';
 
 import { can, type Principal, type ResourceRef } from '../../platform/authz/can';
 import type { RecordReaders } from '../../platform/authz/record-reach';
@@ -54,6 +54,7 @@ export function allowedLeadMoves(
     ownerUserId: string | null;
     departmentId?: string | null;
     stage: LeadStage;
+    heldFromStage?: LeadStage | null;
   },
 ): LeadStage[] {
   if (!can(principal, 'crm.lead.write', leadRef(row)).allowed) return [];
@@ -62,7 +63,8 @@ export function allowedLeadMoves(
     (t) =>
       t.from === row.stage &&
       t.to !== 'converted' &&
-      (t.by === 'user' || (t.by === 'manager' && manager)),
+      (t.by === 'user' || (t.by === 'manager' && manager)) &&
+      (row.stage !== 'on_hold' || t.to === resumeTarget('lead', row.heldFromStage ?? null)),
   ).map((t) => t.to);
 }
 
@@ -75,12 +77,16 @@ export interface LeadStageInput {
   note?: string | undefined;
   /** The version the caller saw. */
   expectedVersion?: number | undefined;
+  /** The stage an on_hold lead was held at (F1-Q53); null or absent for a hold older than that. */
+  heldFromStage?: LeadStage | null | undefined;
 }
 
 export interface LeadStageFields {
   stage: LeadStage;
   stageReason: string | null;
   stageNote: string | null;
+  /** Set to the stage left when moving to on_hold, and cleared by every other move. */
+  heldFromStage: LeadStage | null;
 }
 
 export type LeadStageRefusal =
@@ -119,6 +125,12 @@ export function planLeadStageChange(input: LeadStageInput): LeadStagePlan {
   if (edge === undefined) {
     return refuse('no_edge', `A lead cannot move from ${input.current} to ${input.to}`);
   }
+  if (input.current === 'on_hold') {
+    const back = resumeTarget('lead', input.heldFromStage ?? null);
+    if (input.to !== back) {
+      return refuse('no_edge', `This lead was put on hold at ${back} and resumes to ${back} only`);
+    }
+  }
   if (edge.by === 'manager' && input.by !== 'manager') {
     return refuse(
       'manager_only',
@@ -132,6 +144,11 @@ export function planLeadStageChange(input: LeadStageInput): LeadStagePlan {
   // this request says (null when it says nothing).
   return {
     ok: true,
-    set: { stage: input.to, stageReason: input.reason ?? null, stageNote: input.note ?? null },
+    set: {
+      stage: input.to,
+      stageReason: input.reason ?? null,
+      stageNote: input.note ?? null,
+      heldFromStage: input.to === 'on_hold' ? input.current : null,
+    },
   };
 }
