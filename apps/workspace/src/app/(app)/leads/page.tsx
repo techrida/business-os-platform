@@ -17,8 +17,8 @@ import {
   boardColumns,
   boardMoves,
   groupByStage,
+  resolvedMoves,
   stageLabel,
-  userMoves,
 } from '@/components/p2/crm/stages';
 import type { BoardColumnData } from '@/components/p2/crm/types';
 import { Avatar } from '@/components/ui/avatar';
@@ -73,7 +73,7 @@ function columnsFor(leads: LeadDto[], numberSystems: NumberSystems): BoardColumn
       subtitle: `${lead.companyName} · ${lead.contactName}`,
       value: moneyOrNull(lead.expectedValue, lead.currency, numberSystems),
       version: lead.version,
-      moves: boardMoves('lead', lead.stage),
+      moves: boardMoves('lead', lead),
     })),
   }));
 }
@@ -270,9 +270,12 @@ export default async function LeadsPage({ searchParams }: { searchParams: Promis
                 {matches.map((lead) => {
                   const leadHref = `/leads/${lead.id}`;
                   const value = moneyOrNull(lead.expectedValue, lead.currency, numberSystems);
-                  const canQualify = userMoves('lead', lead.stage).some(
-                    (move) => move.stage === 'qualified',
-                  );
+                  const canQualify = resolvedMoves(
+                    'lead',
+                    lead.stage,
+                    lead.allowedMoves,
+                    lead.heldFromStage,
+                  ).some((move) => move.stage === 'qualified');
                   return (
                     <tr key={lead.id}>
                       <Td>

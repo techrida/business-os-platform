@@ -70,7 +70,7 @@ function columnsFor(items: OpportunityDto[], numberSystems: NumberSystems): Boar
       subtitle: o.expectedClose ? `Expected close ${when(o.expectedClose, 'date')}` : '',
       value: moneyOrNull(o.value, o.currency, numberSystems),
       version: o.version,
-      moves: boardMoves('opportunity', o.stage),
+      moves: boardMoves('opportunity', o),
     })),
   }));
 }

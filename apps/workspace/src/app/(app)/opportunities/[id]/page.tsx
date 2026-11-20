@@ -12,7 +12,7 @@ import { canAssignFollowUps, loadPeople } from '@/components/p2/crm/people';
 import { PutOnHoldDialog } from '@/components/p2/crm/put-on-hold-dialog';
 import { ActivityList, LoadProblem, StageBadge } from '@/components/p2/crm/server-bits';
 import { StageConfirmDialog } from '@/components/p2/crm/stage-confirm-dialog';
-import { resolvedMoves, stageLabel, type Move } from '@/components/p2/crm/stages';
+import { resolvedMoves, resumeMove, stageLabel, type Move } from '@/components/p2/crm/stages';
 import { listQuotations } from '@/components/p2/quotations/api';
 import {
   editQuotationHref,
@@ -103,14 +103,16 @@ function primaryOpportunityMove(
       errorMessage: 'The opportunity stage could not be updated.',
     };
   }
-  if (opp.stage === 'on_hold' && has('negotiation')) {
+  // A held deal resumes only to the stage it was held at (F1-Q53): the server sends that one move.
+  const resume = resumeMove(opp.stage, moves);
+  if (resume) {
     return {
-      stage: 'negotiation',
+      stage: resume.stage,
       triggerLabel: 'Resume',
       title: 'Resume this opportunity?',
-      description: `${opp.number} will move from On Hold back to Negotiation.`,
+      description: `${opp.number} will move from On Hold back to ${resume.label}.`,
       confirmLabel: 'Resume opportunity',
-      successMessage: 'Moved to Negotiation.',
+      successMessage: `Moved to ${resume.label}.`,
       errorMessage: 'The opportunity could not be resumed.',
     };
   }
@@ -202,6 +204,7 @@ function opportunityStageMessage(
   stage: OpportunityDto['stage'],
   canEdit: boolean,
   canReopen: boolean,
+  resumeLabel: string | null,
 ): string {
   if (!canEdit) return 'You have read-only access to this opportunity.';
   if (stage === 'won') return 'This opportunity is won. Its stage is final.';
@@ -211,7 +214,9 @@ function opportunityStageMessage(
       : 'Only a manager can reopen a lost opportunity.';
   }
   if (stage === 'on_hold') {
-    return 'This opportunity is on hold. Use Resume in the header to return it to Negotiation.';
+    return resumeLabel
+      ? `This opportunity is on hold. Use Resume in the header to return it to ${resumeLabel}.`
+      : 'This opportunity is on hold.';
   }
   return 'Sending and accepting quotations update the stage automatically.';
 }
@@ -303,6 +308,7 @@ export default async function OpportunityPage({ params }: { params: Promise<{ id
     'opportunity',
     opp.stage,
     opp.allowedMoves ?? (canEdit ? undefined : []),
+    opp.heldFromStage,
   );
   const activityProblem =
     activityResult.status === 'rejected' ? failureOf(activityResult.reason) : null;
@@ -457,6 +463,7 @@ export default async function OpportunityPage({ params }: { params: Promise<{ id
               opp.stage,
               canEdit,
               moves.some((move) => move.stage === 'qualified'),
+              resumeMove(opp.stage, moves)?.label ?? null,
             )}
           </p>
         </div>
