@@ -214,7 +214,8 @@ export class PaymentsService {
           .select({
             currency: payments.currency,
             n: count(),
-            amount: sql<string>`sum(${payments.amount})::text`,
+            // Money received: verified payments only; submitted, rejected, withdrawn and reversed add nothing.
+            amount: sql<string>`sum(CASE WHEN ${payments.status} = 'verified' THEN ${payments.amount} ELSE 0 END)::text`,
           })
           .from(payments)
           .innerJoin(parties, customerJoin())

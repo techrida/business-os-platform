@@ -569,8 +569,11 @@ describe('list and cross-entity isolation', () => {
       key(),
     );
 
-    const { rows: all, total } = await drafting.list();
+    const { rows: all, total, totals } = await drafting.list();
     expect(total).toBe(all.length);
+    // Drafts and proformas are rows but not money: only issued tax invoices, debit notes and credit notes count.
+    expect(totals.length).toBeGreaterThan(0);
+    expect(totals.every((t) => t.amount === '0.00')).toBe(true);
     expect(all.every((i) => InvoiceListItemSchema.safeParse(i).success)).toBe(true);
     expect(all.map((i) => i.id)).toEqual(
       expect.arrayContaining([drafted.invoice.id, proforma.invoice.id]),
