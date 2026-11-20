@@ -27,7 +27,9 @@
 // refusal is the unchanged grant check, and `createVersion` and `remove` never ask the hook.
 // The grant checked for an upload is `documents.upload` unless the owner policy names its own `uploadPermission`
 // (payment proof: `payment.record`; a list means any one of them). A staff read needs `documents.read` or the
-// owner policy's `readPermission`, on the owner ref.
+// owner policy's `readPermission`, on the owner ref. An owning module's route may also name the action the upload
+// belongs to (`UploadAction`, U20a2-Q3); when the policy lists it in `uploadActions`, that action on the uploader's
+// own file is enough (an `own` bill enterer uploads their own invoice), and the usual check still runs otherwise.
 import { randomUUID } from 'node:crypto';
 import { Readable } from 'node:stream';
 
@@ -143,6 +145,14 @@ export interface DocumentDto {
 /** What a new version needs from the client: the owner and the document already exist. */
 export type NewVersionBody = Pick<CreateDocumentBody, 'filename' | 'declaredMime' | 'sizeBytes'>;
 
+/**
+ * The owning module's action an upload belongs to (U20a2-Q3), passed by that module's own route and never read from
+ * a request body. Only an action the owner policy lists in `uploadActions` counts; see that field.
+ */
+export interface UploadAction {
+  action?: Permission | undefined;
+}
+
 /** A file a job generated: its bytes are in memory, so the size is known and nothing is declared by a client. */
 export interface GeneratedFile {
   filename: string;
@@ -229,8 +239,9 @@ export class DocumentsService {
   async create(
     tx: DbTransaction,
     b: CreateDocumentBody,
+    opts: UploadAction = {},
   ): Promise<{ documentId: string; versionId: string; uploadPath: string }> {
-    return this.createDocument(tx, b, false);
+    return this.createDocument(tx, b, false, opts.action);
   }
 
   /**
@@ -250,18 +261,21 @@ export class DocumentsService {
     tx: DbTransaction,
     b: CreateDocumentBody,
     refuseImages: boolean,
+    action?: Permission,
   ): Promise<{ documentId: string; versionId: string; uploadPath: string }> {
     const who = await readTxContext(tx);
     if (!this.owners.has(b.ownerType)) {
       throw new BadRequestException(`Unknown owner type: ${b.ownerType}`);
     }
     // Permission first: someone who may not upload learns nothing about types or limits.
+    // A new file is the uploader's own: it is created with created_by = them.
     await this.assertUploader(
       who.scope,
       b.ownerType,
       b.ownerId,
       { kind: who.actorKind, id: who.actorId },
       tx,
+      { action, uploaderUserId: actorUuid(who) },
     );
     if (refuseImages && isImageOwnerType(b.ownerType)) throw picturesUploadedElsewhere();
     // Before anything is written: a record that stopped taking attachments gets no row and no file.
@@ -498,13 +512,21 @@ export class DocumentsService {
     tx: DbTransaction,
     documentId: string,
     b: NewVersionBody,
+    opts: UploadAction = {},
   ): Promise<{ documentId: string; versionId: string; uploadPath: string }> {
     const who = await readTxContext(tx);
     const s = scoped(who.scope);
     // Lock the owning records before the document, matching submit's owner -> document order.
     // The document lock then serializes version numbers: 1, 2, 3, ...
     const doc = await this.loadDocument(tx, who.scope, documentId);
-    await this.assertOwner(who.scope, doc.ownerType, doc.ownerId, 'documents.upload');
+    // A new version of a file is its creator's own.
+    const byAction = await this.passesUploadAction(who.scope, doc.ownerType, doc.ownerId, {
+      action: opts.action,
+      uploaderUserId: doc.createdBy,
+    });
+    if (!byAction) {
+      await this.assertOwner(who.scope, doc.ownerType, doc.ownerId, 'documents.upload');
+    }
     await this.assertCanAttach(who.scope, doc.ownerType, doc.ownerId, tx, documentId);
     if (isImageOwnerType(doc.ownerType)) throw picturesUploadedElsewhere();
     await this.loadDocument(tx, who.scope, documentId, true);
@@ -660,7 +682,7 @@ export class DocumentsService {
     versionId: string,
     src: Readable,
     contentLength: number,
-    opts: { documentId?: string; who?: { scope: TxScope; actor: Actor } } = {},
+    opts: { documentId?: string; who?: { scope: TxScope; actor: Actor } } & UploadAction = {},
   ): Promise<DocumentVersionDto> {
     return this.receiveInternal(versionId, src, contentLength, opts, { skipScan: false });
   }
@@ -674,7 +696,7 @@ export class DocumentsService {
     versionId: string,
     src: Readable,
     contentLength: number,
-    opts: { documentId?: string; who?: { scope: TxScope; actor: Actor } },
+    opts: { documentId?: string; who?: { scope: TxScope; actor: Actor } } & UploadAction,
     flags: { skipScan: boolean },
   ): Promise<DocumentVersionDto> {
     if (!Number.isInteger(contentLength) || contentLength < 0) {
@@ -698,7 +720,11 @@ export class DocumentsService {
         // A generated file: the owner's system policy decides, never the request principal (there is none).
         await this.assertSystemOwner(who.scope, found.ownerType, found.ownerId, who.actor, tx);
       } else {
-        await this.assertUploader(who.scope, found.ownerType, found.ownerId, who.actor, tx);
+        // The bytes of a version are its uploader's own.
+        await this.assertUploader(who.scope, found.ownerType, found.ownerId, who.actor, tx, {
+          action: opts.action,
+          uploaderUserId: found.version.uploadedBy,
+        });
         // The memo may have been submitted since the document was created: no bytes are written then.
         await this.assertCanAttach(
           who.scope,
@@ -1185,7 +1211,9 @@ export class DocumentsService {
     ownerId: string,
     actor: { kind: string; id: string },
     tx: DbTransaction,
+    asAction?: { action: Permission | undefined; uploaderUserId: string | null },
   ): Promise<void> {
+    if (await this.passesUploadAction(scope, ownerType, ownerId, asAction)) return;
     const policy = this.owners.get(ownerType);
     const counterparty =
       policy?.allowsCounterparty === undefined
@@ -1200,6 +1228,33 @@ export class DocumentsService {
     // Called as a method, not detached: a policy class may use `this`.
     if (await policy.allowsCounterparty(counterparty, ownerId, tx)) return;
     this.assertAnyOf(uploadPermissionsOf(policy), ref);
+  }
+
+  /**
+   * True when the owning module named an action the owner policy lists in `uploadActions` (U20a2-Q3) and the caller
+   * may do it on the uploader's own file (`ownerUserId: uploaderUserId`). False for no action, an action the policy
+   * does not list, a file with no user uploader, or a refusal: the caller then takes the usual check. The owner must
+   * exist in this scope either way: 404 otherwise, the same answer as the usual check.
+   */
+  private async passesUploadAction(
+    scope: TxScope,
+    ownerType: string,
+    ownerId: string,
+    asAction?: { action: Permission | undefined; uploaderUserId: string | null },
+  ): Promise<boolean> {
+    const action = asAction?.action;
+    const policy = this.owners.get(ownerType);
+    if (action === undefined || policy?.uploadActions?.includes(action) !== true) return false;
+    const ref: ResourceRef | null = await policy.resource(scope, ownerId);
+    if (ref === null) throw new NotFoundException('Owner record not found');
+    if (asAction?.uploaderUserId == null) return false;
+    try {
+      this.authz.assert(action, { ...scope, ownerUserId: asAction.uploaderUserId });
+      return true;
+    } catch (error) {
+      if (error instanceof ForbiddenException) return false;
+      throw error;
+    }
   }
 
   /**
@@ -1256,7 +1311,13 @@ export class DocumentsService {
     documentId: string,
     lock = false,
     tenantWideImages = false,
-  ): Promise<{ id: string; ownerType: string; ownerId: string; organizationId: string }> {
+  ): Promise<{
+    id: string;
+    ownerType: string;
+    ownerId: string;
+    organizationId: string;
+    createdBy: string | null;
+  }> {
     const s = scoped(scope);
     const live = and(eq(documents.id, documentId), isNull(documents.removedAt));
     const query = tx
@@ -1265,6 +1326,7 @@ export class DocumentsService {
         ownerType: documents.ownerType,
         ownerId: documents.ownerId,
         organizationId: documents.organizationId,
+        createdBy: documents.createdBy,
       })
       .from(documents)
       .where(
