@@ -1224,13 +1224,37 @@ export function workflow(cfg) {
         title: 'Confirm the sales order',
         async run(s) {
           await as(s, 'Dev Founder');
+          // Round 3: Confirm order stays on the Sales orders list; this run's order is the row
+          // whose Quotation cell is exactly this run's quotation number.
+          const qt = s.need('quotationNumber');
+          const orderRow = s.page
+            .getByRole('row')
+            .filter({ has: s.page.getByRole('cell', { name: qt, exact: true }) });
+          const openOrder = async () => {
+            const n = await orderRow.count();
+            if (n !== 1)
+              throw new StepFailure(`${n} sales orders list quotation ${qt}; expected exactly one`);
+            await s.click(
+              orderRow.getByRole('link', { name: SO }).first(),
+              'this run’s sales order',
+            );
+            await s.page.waitForURL(/\/sales-orders\/[0-9a-f-]{36}/, { timeout: cfg.navTimeout });
+            s.record('salesOrderUrl', s.page.url().split('?')[0].replace(cfg.appUrl, ''));
+          };
+          if (!s.state.salesOrderUrl) {
+            await s.goto('/sales-orders', (p) =>
+              p.getByRole('button', { name: 'Confirm from quotation' }),
+            );
+            if (await visible(orderRow)) {
+              // An earlier attempt confirmed the order before recording it.
+              s.checks.push(`note: the order for ${qt} was confirmed by an earlier attempt`);
+              await openOrder();
+            }
+          }
           if (s.state.salesOrderUrl) {
             // Retry after the order was already confirmed: open it instead of confirming twice.
             await openUrl(s, 'salesOrderUrl', (p) => h1(p, 'Sales order'));
           } else {
-            await s.goto('/sales-orders', (p) =>
-              p.getByRole('button', { name: 'Confirm from quotation' }),
-            );
             await s.click(s.button('Confirm from quotation'), 'Confirm from quotation');
             const d = s.page.getByRole('dialog', { name: 'Confirm a sales order' });
             await s.choose(
@@ -1238,9 +1262,23 @@ export function workflow(cfg) {
               runMatch(s.need('quotationNumber')),
             );
             await s.pause(400);
-            await d.getByRole('button', { name: 'Confirm order' }).click();
-            await s.page.waitForURL(/\/sales-orders\/[0-9a-f-]{36}/, { timeout: cfg.navTimeout });
-            s.record('salesOrderUrl', s.page.url().split('?')[0].replace(cfg.appUrl, ''));
+            await s.click(d.getByRole('button', { name: 'Confirm order' }), 'Confirm order');
+            const outcome = await Promise.race([
+              s.page
+                .waitForURL(/\/sales-orders\/[0-9a-f-]{36}/, { timeout: cfg.navTimeout })
+                .then(() => 'order')
+                .catch(() => 'timeout'),
+              orderRow
+                .first()
+                .waitFor({ state: 'visible', timeout: cfg.navTimeout })
+                .then(() => 'list')
+                .catch(() => 'timeout'),
+            ]);
+            if (outcome === 'timeout')
+              throw new StepFailure('Confirm order neither opened the order nor listed it');
+            if (outcome === 'order')
+              s.record('salesOrderUrl', s.page.url().split('?')[0].replace(cfg.appUrl, ''));
+            else await openOrder();
           }
           await s.see(status(s, 'Confirmed'), 'order Confirmed');
           const text = await main(s);
