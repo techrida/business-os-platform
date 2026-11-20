@@ -491,6 +491,8 @@ export function workflow(cfg) {
           await s.see(s.page.getByRole('heading', { level: 1, name: mine }), 'the memo');
           await s.see(s.page.getByText('Approved', { exact: true }), 'status Approved for Sales');
 
+          // Leave the memo first, so landing on it can only come from the notification click.
+          await s.goto('/', (p) => p.getByRole('button', { name: 'Dev menu' }));
           await s.caption('start-5 — notification bell: opening the panel must not mark all read');
           const bell = s.page.getByRole('button', { name: /^Notifications/ });
           const before = await bell.first().getAttribute('aria-label');
@@ -552,8 +554,15 @@ export function workflow(cfg) {
             await openPanel();
           }
           await s.click(link, 'the matching notification');
-          await s.page.waitForURL((u) => u.pathname !== '/', { timeout: cfg.navTimeout });
-          s.checks.push(`notification opened ${s.page.url()}`);
+          const memo = new URL(s.need('memoUrl'), cfg.appUrl);
+          const reached = await s.page
+            .waitForURL((u) => u.origin === memo.origin && u.pathname === memo.pathname, {
+              timeout: cfg.navTimeout,
+            })
+            .then(() => true)
+            .catch(() => false);
+          s.expect(reached, `the notification opened this memo (${memo.pathname})`, s.page.url());
+          await s.see(s.page.getByRole('heading', { level: 1, name: mine }), 'the memo heading');
 
           await s.caption('start-5 — Test mail: the message for this memo');
           const mail = await findMail(cfg, `subject:"${s.state.memoNumber ?? subject}"`, 90000, {
