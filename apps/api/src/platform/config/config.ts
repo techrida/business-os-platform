@@ -201,12 +201,14 @@ const apiShape = {
   // [OIDC_CLIENT_ID]; with neither, the config is refused.
   OIDC_ALLOWED_AZP: z.string().optional(),
   // API-only secrets (the worker neither signs links nor receives the ZITADEL webhook).
-  // At least 32 characters when present; required in production (kernelProblems).
-  DOCS_LINK_SECRET: z.string().min(32).optional(),
-  ZITADEL_ACTIONS_SIGNING_KEY: z.string().min(1).optional(),
+  // At least 32 characters when present; blank counts as unset (as in .env.example or compose `${VAR:-}`);
+  // required in production (kernelProblems).
+  DOCS_LINK_SECRET: blankAsUnset.pipe(z.string().min(32).optional()),
+  ZITADEL_ACTIONS_SIGNING_KEY: blankAsUnset,
   // Shared secret for the Postal bounce webhook (HMAC-SHA256 of the raw body). Optional on purpose,
   // like the ZITADEL key: with no secret the hook answers 401 to everyone (deny by default).
-  POSTAL_WEBHOOK_SECRET: z.string().min(32).optional(),
+  // Blank counts as unset so an empty `POSTAL_WEBHOOK_SECRET=` line (as in .env.example) does not block startup.
+  POSTAL_WEBHOOK_SECRET: blankAsUnset.pipe(z.string().min(32).optional()),
   // Field-level encryption keyring (M20), see parseFieldKeyring for the format. Required in production;
   // blank counts as unset. Parsed into a FieldKeyring, so the raw string never stays on the config.
   FIELD_ENC_KEYS: blankAsUnset,

@@ -6,7 +6,7 @@
 import { DEFAULT_ROLE_PERMISSIONS, WorkflowSpecSchema, type WorkflowSpec } from '@bos/contracts';
 import type pg from 'pg';
 
-import { PERSONAS } from './personas.js';
+import { PERSONAS, personaUsername } from './personas.js';
 import {
   MATCH_EXCEPTION_WORKFLOW_SPEC,
   PAYMENT_REQUEST_WORKFLOW_SPEC,
@@ -435,6 +435,19 @@ const DEV_VENDOR_PAN = '123456789';
 /** The vendor party the tenancy step creates (SEED_PARTIES.vendor in index.ts; a test pins the two together). */
 export const DEV_VENDOR_PARTY_CODE = 'VEND-DEV';
 const DEV_VENDOR_TERM = 'NET30';
+/** The customer party the tenancy step creates (SEED_PARTIES.customer in index.ts; a test pins the two together). */
+export const DEV_CUSTOMER_PARTY_CODE = 'CUST-DEV';
+/** Normalised legal name of "Dev Customer Co" (matches apps/api customers.normalize.ts: lower-case, form word "co" dropped). */
+export const DEV_CUSTOMER_NAME_NORM = 'dev customer';
+const DEV_CUSTOMER_OWNER_KEY = 'sales';
+const DEV_CUSTOMER_TERM = 'NET30';
+const DEV_CUSTOMER_CONTACT_NAME = 'Dev Customer';
+const DEV_CUSTOMER_CONTACT_EMAIL = personaUsername('customer');
+const DEV_CUSTOMER_ADDRESS = JSON.stringify({
+  line1: 'Durbar Marg 1',
+  city: 'Kathmandu',
+  country: 'NP',
+});
 
 /** The personas the dev people step needs, in a fixed order; a missing one is an error, not a skip. */
 function devPeople(personas: readonly DevPersona[]): (DevPersona & { role: string })[] {
@@ -552,6 +565,59 @@ async function seedDevPeopleAndVendor(
     [scope.tenantId, scope.organizationId, partyId, DEV_VENDOR_TERM],
   );
   changed += account.rowCount ?? 0;
+
+  // CUST-DEV: the party exists already (the tenancy step upserts it). The customer row takes its id, code and legal name,
+  // with a primary contact and a TR party account so staff CRM screens and customer portal flows find Dev Customer Co.
+  const customerParty = await client.query<{ id: string }>(
+    `SELECT id FROM app.parties WHERE tenant_id = $1 AND code = $2 AND kind = 'customer'`,
+    [scope.tenantId, DEV_CUSTOMER_PARTY_CODE],
+  );
+  const customerPartyId = customerParty.rows[0]?.id;
+  if (!customerPartyId) {
+    throw new Error(`dev seed: customer party ${DEV_CUSTOMER_PARTY_CODE} not found`);
+  }
+  const customerOwnerId = userIdOf(DEV_CUSTOMER_OWNER_KEY);
+  const customer = await client.query(
+    `INSERT INTO app.customers
+       (id, tenant_id, number, legal_name, name_norm, relationship, owner_user_id, default_currency, address)
+     SELECT p.id, p.tenant_id, p.code, p.name, $3, 'active', $4::uuid, 'NPR', $5::jsonb
+     FROM app.parties p
+     WHERE p.tenant_id = $1::uuid AND p.id = $2::uuid
+     ON CONFLICT (id) DO NOTHING`,
+    [
+      scope.tenantId,
+      customerPartyId,
+      DEV_CUSTOMER_NAME_NORM,
+      customerOwnerId,
+      DEV_CUSTOMER_ADDRESS,
+    ],
+  );
+  changed += customer.rowCount ?? 0;
+  const contact = await client.query(
+    `INSERT INTO app.customer_contacts (tenant_id, customer_id, full_name, email_norm, is_primary)
+     SELECT $1::uuid, $2::uuid, $3, $4, true
+     WHERE NOT EXISTS (
+       SELECT 1 FROM app.customer_contacts
+       WHERE tenant_id = $1::uuid AND customer_id = $2::uuid AND is_primary
+     )`,
+    [scope.tenantId, customerPartyId, DEV_CUSTOMER_CONTACT_NAME, DEV_CUSTOMER_CONTACT_EMAIL],
+  );
+  changed += contact.rowCount ?? 0;
+  const customerAccount = await client.query(
+    `INSERT INTO app.party_accounts (tenant_id, organization_id, party_id, owner_user_id, default_currency, payment_term_id)
+     SELECT $1::uuid, $2::uuid, $3::uuid, $4::uuid, 'NPR', pt.id
+     FROM app.payment_terms pt
+     WHERE pt.tenant_id = $1::uuid AND pt.code = $5
+     ON CONFLICT (tenant_id, organization_id, party_id) DO NOTHING`,
+    [
+      scope.tenantId,
+      scope.organizationId,
+      customerPartyId,
+      customerOwnerId,
+      DEV_CUSTOMER_TERM,
+    ],
+  );
+  changed += customerAccount.rowCount ?? 0;
   return changed;
 }
 
