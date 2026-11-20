@@ -6,7 +6,7 @@ import Link from 'next/link';
 import { notFound } from 'next/navigation';
 import type { NumberSystems } from '@bos/locale';
 
-import { addContactAction } from '@/components/p2/customers/actions';
+import { addContactAction, invitePortalAdminAction } from '@/components/p2/customers/actions';
 import {
   customerCan,
   getCustomerDetail,
@@ -17,6 +17,7 @@ import {
 } from '@/components/p2/customers/api';
 import { ContactForm } from '@/components/p2/customers/contact-form';
 import { CustomerAddress } from '@/components/p2/customers/customer-address';
+import { PortalInviteForm } from '@/components/p2/customers/portal-invite-form';
 import {
   checklistProgress,
   isGuid,
@@ -336,6 +337,61 @@ function Verification({
 }
 
 /**
+ * Portal access (F1-Q31). The first portal admin is invited by the account owner, and only from the customer's
+ * existing contacts; once the portal has a user, anyone who may change the customer can invite more. Shown to
+ * those who may change the customer; the API decides every invite.
+ */
+function PortalAccess({
+  customerId,
+  access,
+  contacts,
+  ownerLabel,
+}: {
+  customerId: string;
+  access: { hasUser: boolean; canInvite: boolean };
+  contacts: PromiseSettledResult<Listing<ContactDto>>;
+  /** The account owner by name, or null when the customer has none. */
+  ownerLabel: string | null;
+}) {
+  const options =
+    contacts.status === 'fulfilled'
+      ? contacts.value.items.map((c) => ({
+          id: c.id,
+          label: c.email !== null ? `${c.fullName} (${c.email})` : c.fullName,
+          hasEmail: c.email !== null && c.email !== '',
+        }))
+      : [];
+  const note = access.hasUser
+    ? 'This customer can sign in to the customer portal.'
+    : access.canInvite
+      ? 'No one from this customer can sign in to the portal yet. Invite one of its contacts as the portal admin.'
+      : ownerLabel !== null
+        ? `No one from this customer can sign in to the portal yet. The account owner, ${ownerLabel}, invites the first portal admin.`
+        : 'No one from this customer can sign in to the portal yet. Assign an account owner; the owner invites the first portal admin.';
+  return (
+    <Panel title="Portal access" as="aside">
+      <div className={styles.cases}>
+        <p className={styles.note}>{note}</p>
+        {access.canInvite ? (
+          options.length > 0 ? (
+            <PortalInviteForm
+              action={invitePortalAdminAction}
+              customerId={customerId}
+              contacts={options}
+              // One key per render, so retrying names the same request.
+              idempotencyKey={randomUUID()}
+              first={!access.hasUser}
+            />
+          ) : contacts.status === 'fulfilled' ? (
+            <p className={styles.note}>Add a contact with an email first.</p>
+          ) : null
+        ) : null}
+      </div>
+    </Panel>
+  );
+}
+
+/**
  * The account owner's name: from the record itself first (the API sends it to every staff reader), then from the
  * admin directory, which only administrators can read.
  */
@@ -546,6 +602,14 @@ export default async function CustomerPage({
                   : null
               }
             />
+            {mayWrite && !merged && customer.portalAccess !== undefined ? (
+              <PortalAccess
+                customerId={customer.id}
+                access={customer.portalAccess}
+                contacts={contacts}
+                ownerLabel={customer.ownerUserId !== null ? ownerName(customer, people) : null}
+              />
+            ) : null}
           </div>
         </div>
       </Tabs>

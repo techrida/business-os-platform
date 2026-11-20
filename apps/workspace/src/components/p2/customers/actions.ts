@@ -10,9 +10,16 @@ import { failureOf } from '@/lib/api-kernel';
 import { requireStaffSession } from '@/lib/bff';
 import { getGrants, hasGrant } from '@/lib/grants';
 
-import { createContact, createCustomer, getCustomer, listCustomers, updateCustomer } from './api';
+import {
+  createContact,
+  createCustomer,
+  getCustomer,
+  grantCustomerPortalAccess,
+  listCustomers,
+  updateCustomer,
+} from './api';
 import { duplicateQueries, matchDuplicates, type DuplicateMatch } from './duplicate-check';
-import type { ContactFormState, CustomerFormState } from './form-state';
+import type { ContactFormState, CustomerFormState, PortalInviteState } from './form-state';
 import {
   CONTACT_EMAIL_REQUIRED,
   CUSTOMER_FIELDS,
@@ -224,6 +231,73 @@ export async function addContactAction(
     key: randomUUID(),
     errors: {},
     saved: `${parsed.data.fullName} was added.`,
+    savedCount: prev.savedCount + 1,
+  };
+}
+
+/** What a refused invite says, by the API's code (F1-Q31 and the K8 grant rules). */
+const PORTAL_REFUSAL: Record<string, string> = {
+  first_admin_owner_only: "Only this customer's account owner can invite its first portal admin.",
+  account_owner_missing:
+    'This customer has no account owner. Assign one first; the owner invites the first portal admin.',
+  kyb_not_verified:
+    "Portal access needs an approved KYB verification. Finish this customer's verification first.",
+  customer_merged:
+    'This customer was merged into another. Invite from the customer it was merged into.',
+};
+
+/**
+ * Invite one of the customer's existing contacts as a portal admin (`POST /v1/customers/:id/portal-access`).
+ * The form offers only existing contacts; the API decides who may invite (the account owner for the first admin).
+ */
+export async function invitePortalAdminAction(
+  prev: PortalInviteState,
+  form: FormData,
+): Promise<PortalInviteState> {
+  const customerId = text(form, 'customerId');
+  const key = keyOf(form);
+  const same = { savedCount: prev.savedCount };
+  if (!isGuid(customerId)) return { key, errors: {}, error: INCOMPLETE, ...same };
+  const session = await requireStaffSession(`/customers/${customerId}`);
+  if (!hasGrant(await getGrants(session), 'customer.write')) {
+    return { key, errors: {}, error: NO_WRITE, ...same };
+  }
+  const contactId = text(form, 'contactId');
+  if (!isGuid(contactId)) {
+    return { key, errors: { contactId: 'Choose which contact gets portal access.' }, ...same };
+  }
+
+  let email: string;
+  let inviteSent: boolean;
+  try {
+    ({ email, inviteSent } = await grantCustomerPortalAccess(session, customerId, contactId, key));
+  } catch (err) {
+    const failure = failureOf(err);
+    const next = failure.definite ? randomUUID() : key;
+    const code = apiCodeOf(err);
+    const known = code === undefined ? undefined : PORTAL_REFUSAL[code];
+    if (known !== undefined) {
+      revalidatePath(`/customers/${customerId}`);
+      return { key: next, errors: {}, error: known, ...same };
+    }
+    if (failure.status === 404) {
+      revalidatePath(`/customers/${customerId}`);
+      return {
+        key: next,
+        errors: { contactId: 'This contact is no longer on this customer. Choose another one.' },
+        ...same,
+      };
+    }
+    return { key: next, errors: {}, error: failure.message, ...same };
+  }
+
+  revalidatePath(`/customers/${customerId}`);
+  return {
+    key: randomUUID(),
+    errors: {},
+    saved: inviteSent
+      ? `Portal access granted. An invitation was sent to ${email}.`
+      : `Portal access granted to ${email}. No invitation email was sent.`,
     savedCount: prev.savedCount + 1,
   };
 }

@@ -23,12 +23,14 @@ const api = vi.hoisted(() => ({
   createContact: vi.fn(),
   createCustomer: vi.fn(),
   getCustomer: vi.fn(),
+  grantCustomerPortalAccess: vi.fn(),
   listCustomers: vi.fn(),
   updateCustomer: vi.fn(),
 }));
 vi.mock('./api', () => api);
 
-const { addContactAction, createCustomerAction, updateCustomerAction } = await import('./actions');
+const { addContactAction, createCustomerAction, invitePortalAdminAction, updateCustomerAction } =
+  await import('./actions');
 
 const ID = '11111111-1111-4111-8111-111111111111';
 const IDEM = '7c9e6679-7425-40de-944b-e07fc1f90ae7';
@@ -183,5 +185,66 @@ describe('updateCustomerAction', () => {
     const res = await updateCustomerAction({ key: IDEM, errors: {} }, editForm());
     expect(res.error).toMatch(/Someone else changed this customer/);
     expect(res.reload).toBe(true);
+  });
+});
+
+describe('invitePortalAdminAction (F1-Q31)', () => {
+  const CONTACT = '33333333-3333-4333-8333-333333333333';
+  const start = { key: IDEM, errors: {}, savedCount: 0 };
+  const invite = (fields: Record<string, string> = {}) =>
+    invitePortalAdminAction(
+      start,
+      form({ customerId: ID, contactId: CONTACT, idempotencyKey: IDEM, ...fields }),
+    );
+
+  it('sends the chosen contact id (never an email) under the page key, and confirms with a toast', async () => {
+    api.grantCustomerPortalAccess.mockResolvedValue({ email: 'ana@acme.test', inviteSent: true });
+    const out = await invite();
+    expect(api.grantCustomerPortalAccess).toHaveBeenCalledWith(
+      expect.anything(),
+      ID,
+      CONTACT,
+      IDEM,
+    );
+    expect(out).toMatchObject({
+      saved: 'Portal access granted. An invitation was sent to ana@acme.test.',
+      savedCount: 1,
+    });
+    expect(revalidatePath).toHaveBeenCalledWith(`/customers/${ID}`);
+  });
+
+  it('asks for a contact before calling the API', async () => {
+    const out = await invite({ contactId: '' });
+    expect(out.errors.contactId).toBe('Choose which contact gets portal access.');
+    expect(api.grantCustomerPortalAccess).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    [
+      'first_admin_owner_only',
+      "Only this customer's account owner can invite its first portal admin.",
+    ],
+    ['account_owner_missing', 'This customer has no account owner.'],
+    ['kyb_not_verified', 'Portal access needs an approved KYB verification.'],
+  ])('words the %s refusal for a person', async (code, words) => {
+    api.grantCustomerPortalAccess.mockRejectedValue(apiError(409, code));
+    const out = await invite();
+    expect(out.error).toContain(words);
+    expect(out.error).not.toContain('internal wording');
+    expect(out.savedCount).toBe(0);
+  });
+
+  it('puts a contact that is no longer on the customer (404) on the contact field', async () => {
+    api.grantCustomerPortalAccess.mockRejectedValue(apiError(404, 'not_found'));
+    const out = await invite();
+    expect(out.errors.contactId).toContain('no longer on this customer');
+  });
+
+  it('refuses without customer.write and calls nothing', async () => {
+    grants.live = new Map();
+    const out = await invite();
+    expect(out.error).toContain('Your roles do not include changing customers');
+    expect(api.grantCustomerPortalAccess).not.toHaveBeenCalled();
+    grants.live = new Map([['customer.write', 'all']]);
   });
 });
