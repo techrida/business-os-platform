@@ -173,6 +173,16 @@ export interface RenderStore {
     documentId: string,
     now: Date,
   ): Promise<void>;
+  /**
+   * Soft-removes the invoice's document `documentId` although it got its bytes: its print could not be recorded, so it
+   * is not print 1 yet. Only the failure path of the try that created it calls this.
+   */
+  discardUnprinted(
+    tx: DbTransaction,
+    c: RenderCandidate,
+    documentId: string,
+    now: Date,
+  ): Promise<void>;
   /** Counts one failed try (render-failures.ts). */
   recordFailure(
     tx: DbTransaction,
@@ -271,6 +281,8 @@ export class InvoiceRenderSweeper {
     const actor = systemActor(INVOICE_RENDER_JOB_PREFIX);
     /** The document this try created, if it got that far: a failure after it must not leave it blocking the next. */
     let created: { documentId: string } | undefined;
+    /** Whether its bytes were stored: then only the print row is missing, and the document goes even with its bytes. */
+    let received = false;
     try {
       const source = await this.runTx(scope, actor, (tx) => this.store.load(tx, c));
       if (source === undefined) throw new RenderSourceMissingError();
@@ -305,8 +317,11 @@ export class InvoiceRenderSweeper {
       created = generated;
       // After the commit above: the content step opens its own transactions and the scan worker reads the row.
       await this.documents.receiveGenerated(generated, file, { scope, actor });
+      received = true;
 
-      // The bytes are in and queued for the scan: now the print is real, and earlier failures are forgotten.
+      // The bytes are in and queued for the scan: now the print is real, and earlier failures are forgotten. If this
+      // fails, the document is removed with the failure: a PDF without its print row would keep print 1's format
+      // unsaved for good (its invoice is never a candidate again), so the next try renders print 1 again.
       await this.runTx(scope, actor, async (tx) => {
         await this.store.recordPrint(
           tx,
@@ -321,26 +336,42 @@ export class InvoiceRenderSweeper {
     } catch (error) {
       const kind = failureKind(error);
       this.logger.warn(`invoice render failed: invoice=${c.invoiceId} kind=${kind}`);
-      await this.noteFailure(c, scope, kind, created);
+      await this.noteFailure(c, scope, kind, created, received);
       return { outcome: 'failed', kind };
     }
   }
 
   /**
-   * Records a failed try, in one transaction: removes the document this try created if it never got its bytes, counts
-   * the failure, and, when that used up the last try, writes the admin entry. A failure here is logged and left to
-   * the next sweep (the in-flight state is then as before this try).
+   * Records a failed try. First, in its own transaction, removes the document this try created: if it never got its
+   * bytes, or if it got them but its print was not recorded (`received`). Then, in another, counts the failure and,
+   * when that used up the last try, writes the admin entry. Apart, so that one failing does not undo the other: a
+   * document left live would keep the invoice out of the candidates until the orphan cleanup. A failure of either is
+   * logged and left to the next sweep (an unfilled document left behind is removed as an orphan).
    */
   private async noteFailure(
     c: RenderCandidate,
     scope: TxScope,
     kind: string,
     created: { documentId: string } | undefined,
+    received: boolean,
   ): Promise<void> {
+    const actor = systemActor(INVOICE_RENDER_JOB_PREFIX);
+    if (created !== undefined) {
+      try {
+        await this.runTx(scope, actor, (tx) =>
+          received
+            ? this.store.discardUnprinted(tx, c, created.documentId, this.clock())
+            : this.store.discardUnfilled(tx, c, created.documentId, this.clock()),
+        );
+      } catch (error) {
+        this.logger.error(
+          `invoice render: could not remove the failed try's document: invoice=${c.invoiceId} kind=${failureKind(error)}`,
+        );
+      }
+    }
     try {
-      await this.runTx(scope, systemActor(INVOICE_RENDER_JOB_PREFIX), async (tx) => {
+      await this.runTx(scope, actor, async (tx) => {
         const now = this.clock();
-        if (created !== undefined) await this.store.discardUnfilled(tx, c, created.documentId, now);
         const recorded = await this.store.recordFailure(tx, c, kind, now);
         if (!recorded.givenUp) return;
         await this.audit.record(tx, {
@@ -617,6 +648,22 @@ export function drizzleInvoiceRenderStore(db: Db): RenderStore {
 
     discardUnfilled(tx, c, documentId, now) {
       return discardUnfilledDocument(tx, ownerOf(c), documentId, now);
+    },
+
+    async discardUnprinted(tx, c, documentId, now) {
+      await tx
+        .update(documents)
+        .set({ removedAt: now, updatedAt: now })
+        .where(
+          and(
+            eq(documents.tenantId, c.tenantId),
+            eq(documents.organizationId, c.organizationId),
+            eq(documents.ownerType, INVOICE_OWNER_TYPE),
+            eq(documents.ownerId, c.invoiceId),
+            eq(documents.id, documentId),
+            isNull(documents.removedAt),
+          ),
+        );
     },
 
     recordFailure(tx, c, kind, now) {

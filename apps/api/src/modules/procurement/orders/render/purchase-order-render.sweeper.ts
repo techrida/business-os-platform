@@ -305,7 +305,15 @@ export class PurchaseOrderRenderSweeper {
       created = generated;
       // After the commit above: the content step opens its own transactions and the scan worker reads the row.
       await this.documents.receiveGenerated(generated, file, { scope, actor });
-      await this.runTx(scope, actor, (tx) => this.store.clearFailure(tx, c));
+      // The PDF is stored: the render succeeded even if its earlier failures cannot be forgotten now. Counting that as
+      // a failed try could give up a render whose PDF exists; a leftover row is harmless behind a live document.
+      try {
+        await this.runTx(scope, actor, (tx) => this.store.clearFailure(tx, c));
+      } catch (error) {
+        this.logger.error(
+          `purchase order render: could not forget earlier failures: version=${c.versionId} kind=${failureKind(error)}`,
+        );
+      }
       return { outcome: 'rendered' };
     } catch (error) {
       const kind = failureKind(error);
@@ -316,9 +324,10 @@ export class PurchaseOrderRenderSweeper {
   }
 
   /**
-   * Records a failed try, in one transaction: removes the document this try created if it never got its bytes, counts
-   * the failure, and, when that used up the last try, writes the admin entry on the purchase order. A failure here is
-   * logged and left to the next sweep.
+   * Records a failed try. First, in its own transaction, removes the document this try created if it never got its
+   * bytes. Then, in another, counts the failure and, when that used up the last try, writes the admin entry on the
+   * purchase order. Apart, so that one failing does not undo the other: a document left live would keep the version
+   * out of the candidates until the orphan cleanup. A failure of either is logged and left to the next sweep.
    */
   private async noteFailure(
     c: RenderCandidate,
@@ -326,10 +335,21 @@ export class PurchaseOrderRenderSweeper {
     kind: string,
     created: { documentId: string } | undefined,
   ): Promise<void> {
+    const actor = systemActor(PO_RENDER_JOB_PREFIX);
+    if (created !== undefined) {
+      try {
+        await this.runTx(scope, actor, (tx) =>
+          this.store.discardUnfilled(tx, c, created.documentId, this.clock()),
+        );
+      } catch (error) {
+        this.logger.error(
+          `purchase order render: could not remove the failed try's document: version=${c.versionId} kind=${failureKind(error)}`,
+        );
+      }
+    }
     try {
-      await this.runTx(scope, systemActor(PO_RENDER_JOB_PREFIX), async (tx) => {
+      await this.runTx(scope, actor, async (tx) => {
         const now = this.clock();
-        if (created !== undefined) await this.store.discardUnfilled(tx, c, created.documentId, now);
         const recorded = await this.store.recordFailure(tx, c, kind, now);
         if (!recorded.givenUp) return;
         await this.audit.record(tx, {
