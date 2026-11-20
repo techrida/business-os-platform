@@ -161,6 +161,14 @@ function parseTypedField(key: SettingKey, input: SettingFieldValue): SettingInpu
       }
       return result;
     }
+    case 'crm.default_lead_owner': {
+      // The empty choice is the Sales head: the API stores it as null.
+      if (input.kind !== 'text') return { ok: false, message: 'Choose a person from the list.' };
+      const trimmed = input.value.trim();
+      if (trimmed === '') return validateAgainstSchema(key, null);
+      const result = validateAgainstSchema(key, trimmed);
+      return result.ok ? result : { ok: false, message: 'Choose a person from the list.' };
+    }
     case 'entity.pan_vat_no': {
       if (input.kind !== 'text') return { ok: false, message: 'Enter a valid PAN or VAT number.' };
       const trimmed = input.value.trim();

@@ -376,3 +376,31 @@ describe('SettingsService.set with expectedVersion (stale-edit guard)', () => {
     expect(inserts).toEqual([4]);
   });
 });
+
+describe('SettingsService.set with crm.default_lead_owner (the Settings > Sales lead owner card, F1-Q21)', () => {
+  // The workspace card sends a picked user id, or null for its "Sales head (default)" choice.
+  const KEY = 'crm.default_lead_owner' as const;
+  const PERSON = '3f0c5a52-7c2e-4d0b-9a55-0e8d1d6a3b11';
+
+  it.each([
+    ['a picked person', PERSON],
+    ['the Sales head choice (null)', null],
+  ])('stores %s', async (_label, value) => {
+    const { tx, statements } = fakeTx({ current: 2 });
+    await expect(service.set(tx, KEY, value, { expectedVersion: 2 })).resolves.toEqual({
+      version: 4,
+    });
+    const insert = statements.filter(insertStatement);
+    expect(insert).toHaveLength(1);
+    expect(insert[0]?.params).toContain(JSON.stringify(value));
+  });
+
+  it.each([['Ram Thapa'], [''], [42]])(
+    'refuses %j with 400 before any statement runs',
+    async (value) => {
+      const { tx, statements } = fakeTx();
+      await expect(service.set(tx, KEY, value)).rejects.toBeInstanceOf(BadRequestException);
+      expect(statements).toEqual([]);
+    },
+  );
+});

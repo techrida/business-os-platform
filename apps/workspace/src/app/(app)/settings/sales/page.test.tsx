@@ -4,9 +4,10 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import type { Session } from '@/lib/session';
 
-// F1-Q32: the delivery-hold threshold (`sales.delivery_hold.management_npr`) is edited on Settings > Sales. The API
-// lets only admin.settings.write change it (settingEditors in apps/api settings-access.ts), and the Sales section is
-// gated on the same permission, so a finance-settings grant alone does not open it.
+// F1-Q32 and F1-Q21: the delivery-hold threshold (`sales.delivery_hold.management_npr`) and the default lead owner
+// (`crm.default_lead_owner`) are edited on Settings > Sales. The API lets only admin.settings.write change either
+// (settingEditors in apps/api settings-access.ts), and the Sales section is gated on the same permission, so a
+// finance-settings grant alone does not open it.
 
 vi.mock('server-only', () => ({}));
 vi.mock('next/navigation', () => ({
@@ -28,11 +29,21 @@ vi.mock('@/lib/api', async (importOriginal) => ({
 const admin = vi.hoisted(() => ({ getSetting: vi.fn(), putSetting: vi.fn() }));
 vi.mock('@/lib/api-admin', () => admin);
 vi.mock('@/lib/api-lead-lost-reasons', () => ({ listLeadLostReasons: vi.fn(() => []) }));
+const crm = vi.hoisted(() => ({ listLeadOwners: vi.fn() }));
+vi.mock('@/components/p2/crm/crm-api', () => crm);
 
 const { default: SalesPage } = await import('./page');
 const { saveSettingsPageAction } = await import('../_components/actions');
 
 const KEY = 'sales.delivery_hold.management_npr' as const;
+const OWNER_KEY = 'crm.default_lead_owner' as const;
+const RAM = '3f0c5a52-7c2e-4d0b-9a55-0e8d1d6a3b11';
+const GITA = '7a1e2b3c-4d5e-4f60-8a7b-8c9d0e1f2a3b';
+/** GET /v1/leads/owners?context=create as the API answers it (LeadOwnerOption[]). */
+const OWNERS = [
+  { userId: RAM, displayName: 'Ram Thapa', email: 'ram@example.test', avatarDocumentId: null },
+  { userId: GITA, displayName: '', email: 'gita@example.test' },
+];
 
 function persona(token: string, roles: string[], ...permissions: string[]): void {
   getMe.mockImplementation((asked) =>
@@ -54,11 +65,23 @@ const SAVED: Record<string, unknown> = {
 
 const render = async () => renderToStaticMarkup((await SalesPage()) as ReactElement);
 
+/** GET /v1/admin/settings/:key's DTO. The lead owner was never saved: its default, null, with version null. */
+function settingDto(
+  key: string,
+  ownerValue: string | null = null,
+  ownerVersion: number | null = null,
+) {
+  return key === OWNER_KEY
+    ? { key, value: ownerValue, version: ownerVersion }
+    : { key, value: SAVED[key], version: 4 };
+}
+
 beforeEach(() => {
   vi.clearAllMocks();
   admin.getSetting.mockImplementation((_session: unknown, key: string) =>
-    Promise.resolve({ key, value: SAVED[key], version: 4 }),
+    Promise.resolve(settingDto(key)),
   );
+  crm.listLeadOwners.mockResolvedValue(OWNERS);
 });
 
 describe('the delivery hold card', () => {
@@ -126,6 +149,119 @@ describe('saving the delivery-hold threshold', () => {
   it('refuses a finance-settings grant before any write', async () => {
     persona('accountant-live', ['accountant'], 'settings.finance.write');
     await expect(saveSettingsPageAction('sales', [change])).rejects.toThrow('REDIRECT:');
+    expect(admin.putSetting).not.toHaveBeenCalled();
+  });
+});
+
+describe('the lead owner card (F1-Q21)', () => {
+  /** The owner field's markup, from its wrapper to the end of its card. */
+  const ownerField = (html: string) => {
+    const start = html.indexOf('data-setting="crm.default_lead_owner"');
+    expect(start).toBeGreaterThan(-1);
+    return html.slice(start, html.indexOf('</section>', start));
+  };
+  /** What the form submits for the key: the picker's named hidden field. */
+  const submitted = (field: string) =>
+    field.match(/<input type="hidden" name="v:crm\.default_lead_owner" value="([^"]*)"/)?.[1];
+  /** What the closed picker shows. */
+  const shown = (field: string) => field.match(/<span class="_label_[^"]*">([^<]*)<\/span>/)?.[1];
+
+  it('offers the people a new lead may be handed to, with the Sales head first, to the Founder', async () => {
+    persona('founder-live', ['sales'], 'admin.settings.write');
+    const html = await render();
+    expect(crm.listLeadOwners).toHaveBeenCalledWith(expect.anything(), 'create');
+    expect(admin.getSetting).toHaveBeenCalledWith(expect.anything(), OWNER_KEY);
+    expect(html).toContain('Lead owner');
+    expect(html).toContain('Default owner');
+    expect(html).toContain(
+      'New leads that have no owner of their own, such as website leads, go to this person.',
+    );
+    const field = ownerField(html);
+    // The hidden native select React Aria renders leads with a blank option of its own.
+    const labels = [...field.matchAll(/<option[^>]*>([^<]*)<\/option>/g)]
+      .map((m) => m[1]!)
+      .filter((label) => label.trim() !== '');
+    expect(labels).toEqual(['Sales head (default)', 'Ram Thapa', 'gita@example.test']);
+    expect(shown(field)).toBe('Sales head (default)');
+    expect(submitted(field)).toBe('');
+  });
+
+  it('shows the saved person as chosen', async () => {
+    persona('founder-live', ['sales'], 'admin.settings.write');
+    admin.getSetting.mockImplementation((_session: unknown, key: string) =>
+      Promise.resolve(settingDto(key, RAM, 2)),
+    );
+    const field = ownerField(await render());
+    expect(shown(field)).toBe('Ram Thapa');
+    expect(submitted(field)).toBe(RAM);
+  });
+
+  it('keeps a saved person the list no longer holds, so the field does not claim the Sales head', async () => {
+    persona('founder-live', ['sales'], 'admin.settings.write');
+    const gone = 'c0ffee00-0000-4000-8000-000000000009';
+    admin.getSetting.mockImplementation((_session: unknown, key: string) =>
+      Promise.resolve(settingDto(key, gone, 3)),
+    );
+    const field = ownerField(await render());
+    expect(submitted(field)).toBe(gone);
+    expect(shown(field)).toBe('Unavailable person (Sales head is used)');
+  });
+
+  it('costs only its own card when the people cannot be read', async () => {
+    persona('founder-live', ['sales'], 'admin.settings.write');
+    crm.listLeadOwners.mockRejectedValue(new Error('down'));
+    const html = await render();
+    expect(html).not.toContain('Default owner');
+    expect(html).toContain('Quotation validity (days)');
+    expect(html).toContain('Management releases holds above (NPR)');
+  });
+
+  it('is not shown to a finance-settings grant: the API keeps this key with admin.settings.write', async () => {
+    persona('accountant-live', ['accountant'], 'settings.finance.write');
+    await expect(render()).rejects.toThrow('REDIRECT:/settings/terms');
+    expect(crm.listLeadOwners).not.toHaveBeenCalled();
+  });
+});
+
+describe('saving the default lead owner', () => {
+  it('writes the picked user id with the loaded version for the Founder', async () => {
+    persona('founder-live', ['sales'], 'admin.settings.write');
+    admin.putSetting.mockResolvedValue({ version: 1 });
+    const result = await saveSettingsPageAction('sales', [
+      { key: OWNER_KEY, value: { kind: 'text', value: RAM }, expectedVersion: null },
+    ]);
+    expect(result).toMatchObject({ status: 'ok', saved: [{ key: OWNER_KEY, version: 1 }] });
+    expect(admin.putSetting).toHaveBeenCalledWith(expect.anything(), OWNER_KEY, RAM, null);
+  });
+
+  it('writes null for the Sales head choice', async () => {
+    persona('founder-live', ['sales'], 'admin.settings.write');
+    admin.putSetting.mockResolvedValue({ version: 3 });
+    await expect(
+      saveSettingsPageAction('sales', [
+        { key: OWNER_KEY, value: { kind: 'text', value: '' }, expectedVersion: 2 },
+      ]),
+    ).resolves.toMatchObject({ status: 'ok' });
+    expect(admin.putSetting).toHaveBeenCalledWith(expect.anything(), OWNER_KEY, null, 2);
+  });
+
+  it('refuses a value that is not a user id next to the field, before any write', async () => {
+    persona('founder-live', ['sales'], 'admin.settings.write');
+    const result = await saveSettingsPageAction('sales', [
+      { key: OWNER_KEY, value: { kind: 'text', value: 'Ram Thapa' }, expectedVersion: 2 },
+    ]);
+    expect(result.status).toBe('error');
+    expect(result.fieldErrors[OWNER_KEY]).toBe('Choose a person from the list.');
+    expect(admin.putSetting).not.toHaveBeenCalled();
+  });
+
+  it('refuses a finance-settings grant before any write', async () => {
+    persona('accountant-live', ['accountant'], 'settings.finance.write');
+    await expect(
+      saveSettingsPageAction('sales', [
+        { key: OWNER_KEY, value: { kind: 'text', value: RAM }, expectedVersion: null },
+      ]),
+    ).rejects.toThrow('REDIRECT:');
     expect(admin.putSetting).not.toHaveBeenCalled();
   });
 });
