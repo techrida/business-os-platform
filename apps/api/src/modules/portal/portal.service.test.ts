@@ -6,6 +6,7 @@
 // covers it against a real database.
 import {
   CUSTOMER_VIEW_FORBIDDEN_WORDS,
+  CustomerQuotationViewSchema,
   DEFAULT_DOCUMENT_STYLE,
   EMPTY_SNAPSHOT_COMPANY_PROFILE,
   PortalDisplaySchema,
@@ -58,6 +59,8 @@ interface Seed {
   rendered?: boolean;
   /** The version's stored document_style; absent means never rendered (null). */
   documentStyle?: unknown;
+  /** On an accepted seed: staff have confirmed the portal acceptance's evidence (F1-Q28). */
+  evidenceConfirmed?: boolean;
 }
 
 /** A whole internal source; internal columns ride along so a leak shows up in the output. */
@@ -168,6 +171,19 @@ function fakeStore(seeds: Seed[]) {
             },
       );
     }),
+    // F1-Q28: an accepted seed was accepted in the portal with a signed quote, unless it says otherwise.
+    loadAcceptance: vi.fn((p: Principal, versionId: string) => {
+      const s = mine(p).find((x) => x.versionId === versionId && x.status === 'accepted');
+      return Promise.resolve(
+        s === undefined
+          ? undefined
+          : {
+              actorKind: 'customer_user' as const,
+              evidenceKinds: ['signed_quote' as const],
+              confirmed: s.evidenceConfirmed === true,
+            },
+      );
+    }),
   };
   return store;
 }
@@ -179,6 +195,7 @@ function setup(
     docStatus?: string;
     address?: unknown;
     live?: { numberSystems?: unknown; dateFormat?: unknown; enabledCurrencies?: unknown };
+    evidencePolicy?: string;
   } = {},
 ) {
   const store = fakeStore(seeds);
@@ -211,6 +228,9 @@ function setup(
             ? opts.live.enabledCurrencies
             : LIVE_CURRENCIES,
         );
+      }
+      if (key === 'sales.evidence_policy') {
+        return Promise.resolve(opts.evidencePolicy ?? 'signed_quote');
       }
       return Promise.resolve('301234567');
     }),
@@ -489,6 +509,39 @@ describe('PortalService.get', () => {
       code: 'issuer_incomplete',
       message: 'This quotation cannot be shown right now',
     });
+  });
+});
+
+describe('PortalService.get: after the customer accepted (F1-Q28)', () => {
+  const ACCEPTED: Seed = { ...SENT, versionId: vid(7), status: 'accepted' };
+
+  it('says the acceptance waits for staff and which documents the policy still needs', async () => {
+    const { service } = setup([ACCEPTED], { evidencePolicy: 'both' });
+    const view = CustomerQuotationViewSchema.parse(await service.get(ACCEPTED.versionId));
+    expect(view.afterAcceptance).toEqual({
+      status: 'pending',
+      needs: ['contract', 'purchase_order'],
+    });
+  });
+
+  it('needs nothing more under the signed-quote policy, and nothing once staff confirmed', async () => {
+    const { service } = setup(
+      [ACCEPTED, { ...ACCEPTED, versionId: vid(8), evidenceConfirmed: true }],
+      {
+        evidencePolicy: 'contract',
+      },
+    );
+    expect((await service.get(vid(8))).afterAcceptance).toEqual({ status: 'confirmed', needs: [] });
+    const { service: signedQuote } = setup([ACCEPTED]);
+    expect((await signedQuote.get(ACCEPTED.versionId)).afterAcceptance).toEqual({
+      status: 'pending',
+      needs: [],
+    });
+  });
+
+  it('leaves the field out of a version that is not accepted', async () => {
+    const { service } = setup([SENT]);
+    expect(await service.get(SENT.versionId)).not.toHaveProperty('afterAcceptance');
   });
 });
 

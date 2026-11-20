@@ -9,8 +9,17 @@ import ReceivablesAgingPage from './page';
 // `server-only` throws outside the react-server condition, which Vitest does not use.
 vi.mock('server-only', () => ({}));
 
-const mocks = vi.hoisted(() => ({ requireStaffSession: vi.fn(), getAging: vi.fn() }));
+const mocks = vi.hoisted(() => ({
+  requireStaffSession: vi.fn(),
+  getAging: vi.fn(),
+  getMe: vi.fn(),
+}));
 vi.mock('@/lib/bff', () => ({ requireStaffSession: mocks.requireStaffSession }));
+// The live grants come from GET /v1/me; when it fails the page falls back to the role defaults.
+vi.mock('@/lib/api', async (importOriginal) => ({
+  ...(await importOriginal<object>()),
+  getMe: mocks.getMe,
+}));
 vi.mock('@/lib/api-receivables', () => ({ getAging: mocks.getAging }));
 
 async function render(): Promise<string> {
@@ -22,6 +31,12 @@ const ZERO = { current: '0.00', d1_30: '0.00', d31_60: '0.00', d61_90: '0.00', d
 beforeEach(() => {
   vi.clearAllMocks();
   mocks.requireStaffSession.mockResolvedValue({ accessToken: 't', roles: ['finance'] });
+  mocks.getMe.mockRejectedValue(new Error('down'));
+});
+
+/** The live grants `/v1/me` reports, each at `all`. */
+const liveGrants = (...permissions: string[]) => ({
+  permissions: permissions.map((permission) => ({ permission, scope: 'all' })),
 });
 
 afterEach(() => {
@@ -177,6 +192,23 @@ describe('receivables aging', () => {
 
   it('does not call the API at all for a role without ar.read', async () => {
     mocks.requireStaffSession.mockResolvedValue({ accessToken: 't', roles: ['sales'] });
+    const html = await render();
+    expect(html).toContain('Your roles do not include receivables');
+    expect(mocks.getAging).not.toHaveBeenCalled();
+  });
+
+  it('opens the report for a role whose saved grants add ar.read, though its defaults lack it', async () => {
+    mocks.requireStaffSession.mockResolvedValue({ accessToken: 'live-1', roles: ['sales'] });
+    mocks.getMe.mockResolvedValue(liveGrants('customer.read', 'ar.read'));
+    mocks.getAging.mockResolvedValue(agingReport());
+    const html = await render();
+    expect(mocks.getAging).toHaveBeenCalledTimes(1);
+    expect(html).not.toContain('Your roles do not include receivables');
+  });
+
+  it('closes the report for a role whose saved grants removed ar.read, though its defaults hold it', async () => {
+    mocks.requireStaffSession.mockResolvedValue({ accessToken: 'live-2', roles: ['finance'] });
+    mocks.getMe.mockResolvedValue(liveGrants('customer.read'));
     const html = await render();
     expect(html).toContain('Your roles do not include receivables');
     expect(mocks.getAging).not.toHaveBeenCalled();

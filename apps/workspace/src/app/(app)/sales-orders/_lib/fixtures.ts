@@ -49,6 +49,7 @@ export function salesOrderDetail(
     lines?: SalesOrderDetail['lines'];
     deliveryReleased?: boolean;
     can?: SalesOrderDetail['can'];
+    draft?: SalesOrderDetail['draft'];
   } = {},
 ): SalesOrderDetail {
   return SalesOrderDetailSchema.parse({
@@ -115,6 +116,7 @@ export function salesOrderDetail(
     ],
     deliveryReleased: over.deliveryReleased ?? false,
     can: over.can ?? { markBillable: true, draftInvoice: true },
+    ...(over.draft !== undefined ? { draft: over.draft } : {}),
   });
 }
 

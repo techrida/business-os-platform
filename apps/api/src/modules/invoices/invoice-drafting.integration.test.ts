@@ -677,4 +677,56 @@ describe('saved reach on invoices (U20a phase 2)', () => {
     delete current.grants;
     expect((await drafting.detail(theirs.invoice.id)).invoice.status).toBe('draft');
   });
+
+  it("offers an own grant's actions only on the caller's invoices in list and detail, and the commands still refuse", async () => {
+    const other = await seedOtherStaffUser(db, f);
+    current.userId = other;
+    const theirs = await drafting.draftManual(manualBody(), key());
+    current.userId = undefined;
+    const mine = await drafting.draftManual(manualBody(), key());
+    const writes: Permission[] = [
+      'invoice.draft',
+      'invoice.submit',
+      'invoice.issue',
+      'invoice.credit_note',
+    ];
+    const listCan = async (id: string) =>
+      (await drafting.list({})).rows.find((r) => r.id === id)?.can;
+    const detailCan = async (id: string) => (await drafting.detail(id)).can;
+    const allOf = (v: boolean) => ({ submit: v, issue: v, discard: v, notes: v });
+
+    // Read stays `all`, so both rows are listed; every write is narrowed to the drafter.
+    current.grants = narrowed(writes.map((p): [Permission, Scope] => [p, 'own']));
+    expect(await listCan(mine.invoice.id)).toMatchObject(allOf(true));
+    expect(await listCan(theirs.invoice.id)).toMatchObject(allOf(false));
+    expect(await detailCan(mine.invoice.id)).toMatchObject(allOf(true));
+    expect(await detailCan(theirs.invoice.id)).toMatchObject(allOf(false));
+    // A payment is judged on the customer, as the payment command checks it, not on the drafter.
+    expect((await listCan(theirs.invoice.id))?.recordPayment).toBe(true);
+
+    // The API still refuses what the row does not offer.
+    await expect(
+      drafting.discard(
+        theirs.invoice.id,
+        { expectedVersion: theirs.invoice.version, reason: 'Not mine' },
+        key(),
+      ),
+    ).rejects.toBeInstanceOf(ForbiddenException);
+    await expect(
+      issuing.issue(theirs.invoice.id, { expectedVersion: theirs.invoice.version }, key()),
+    ).rejects.toBeInstanceOf(ForbiddenException);
+    expect((await drafting.detail(theirs.invoice.id)).invoice.status).toBe('draft');
+
+    // `all` reaches every drafter's invoice.
+    current.grants = narrowed(writes.map((p): [Permission, Scope] => [p, 'all']));
+    expect(await listCan(theirs.invoice.id)).toMatchObject(allOf(true));
+    expect(await detailCan(theirs.invoice.id)).toMatchObject(allOf(true));
+
+    // Without the grant the row offers nothing.
+    const without = narrowed([]);
+    for (const p of [...writes, 'payment.record' as const]) without.delete(p);
+    current.grants = without;
+    expect(await listCan(theirs.invoice.id)).toEqual({ ...allOf(false), recordPayment: false });
+    expect(await detailCan(mine.invoice.id)).toEqual({ ...allOf(false), recordPayment: false });
+  });
 });

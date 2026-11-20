@@ -134,7 +134,10 @@ function serviceWith(saved: readonly string[] | null, stored: LeadRow = leadRow(
     userId: USER,
     roles: ['sales'],
     departmentId: null,
-    grants: new Map([['crm.lead.read', 'own']]),
+    grants: new Map([
+      ['crm.lead.read', 'own'],
+      ['crm.lead.write', 'own'],
+    ]),
   } as unknown as Principal;
   const caller = {
     current: () => ({

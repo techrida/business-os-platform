@@ -56,10 +56,14 @@ export interface SettingsGroup {
   sections: readonly SettingsSection[];
 }
 
-// The four Company sections are built in parallel with this shell. They use `admin.settings.write`
-// for now; plan section 4 splits them into admin.settings.{company,documents,formats,terms}.write
-// once those permissions exist in the contracts.
+// Company profile, document templates and formats stay with `admin.settings.write` (the Founder).
 const COMPANY_PERMISSION = 'admin.settings.write';
+// Exchange rates are entered by Finance (`settings.fx_rate.write`). The Founder keeps the page too,
+// and alone changes which currencies are enabled and how old a rate may be (F1-Q48).
+const FX_RATE_PERMISSION = ['settings.fx_rate.write', 'admin.settings.write'] as const;
+// Tax, document numbering and saved terms: Finance or Accountant (`settings.finance.write`), or the
+// Founder (F1-Q48).
+const FINANCE_SETTINGS_PERMISSION = ['settings.finance.write', 'admin.settings.write'] as const;
 
 export const SETTINGS_GROUPS: readonly SettingsGroup[] = [
   {
@@ -102,7 +106,7 @@ export const SETTINGS_GROUPS: readonly SettingsGroup[] = [
         href: '/settings/terms',
         icon: 'bookmark',
         description: 'Ready-made wording for scope, delivery and payment terms.',
-        permission: COMPANY_PERMISSION,
+        permission: FINANCE_SETTINGS_PERMISSION,
         ready: true,
       },
     ],
@@ -170,7 +174,7 @@ export const SETTINGS_GROUPS: readonly SettingsGroup[] = [
         href: '/settings/currencies',
         icon: 'repeat',
         description: 'Which currencies documents may use, and the NPR rate for each.',
-        permission: 'admin.settings.write',
+        permission: FX_RATE_PERMISSION,
         ready: true,
       },
       {
@@ -179,7 +183,7 @@ export const SETTINGS_GROUPS: readonly SettingsGroup[] = [
         href: '/settings/tax',
         icon: 'receipt',
         description: 'VAT and withholding codes documents can use.',
-        permission: 'admin.settings.write',
+        permission: FINANCE_SETTINGS_PERMISSION,
         ready: true,
       },
       {
@@ -188,7 +192,7 @@ export const SETTINGS_GROUPS: readonly SettingsGroup[] = [
         href: '/settings/numbering',
         icon: 'hash',
         description: 'The numbers quotations, invoices and memos are given.',
-        permission: 'admin.settings.write',
+        permission: FINANCE_SETTINGS_PERMISSION,
         ready: true,
       },
     ],

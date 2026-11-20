@@ -5,6 +5,7 @@ import { sql } from 'drizzle-orm';
 
 import type { Db, DbTransaction } from '../../platform/db/db.module';
 import type { TxScope } from '../../platform/db/tx';
+import { personLabel } from '../../platform/users/person-names';
 
 export type AccessQueryable = Db | DbTransaction;
 
@@ -31,7 +32,11 @@ export async function lockAccessRevision(tx: DbTransaction, tenantId: string): P
   await tx.execute(sql`SELECT pg_advisory_xact_lock(hashtext('access_revisions:' || ${tenantId}))`);
 }
 
-/** Reads the tenant's current access revision, last-changed metadata, and level-rule flag. */
+/**
+ * Reads the tenant's current access revision, last-changed metadata, and level-rule flag. "Last changed by" is the
+ * updater's display name, or "Unnamed user" when they have none (D54-2): never their address. Null when no person is
+ * recorded.
+ */
 export async function readAccessRevision(
   q: AccessQueryable,
   tenantId: string,
@@ -41,13 +46,15 @@ export async function readAccessRevision(
     levelRulesMaterialized: boolean;
     updatedAt: string;
     updatedByUserId: string | null;
-    updatedByName: string | null;
+    updatedByDisplayName: string | null;
+    updaterFound: boolean;
   }>(sql`
     SELECT ar.revision::text AS revision,
            ar.level_rules_materialized AS "levelRulesMaterialized",
            to_char(ar.updated_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"') AS "updatedAt",
            ar.updated_by_user_id AS "updatedByUserId",
-           coalesce(u.display_name, u.email) AS "updatedByName"
+           u.display_name AS "updatedByDisplayName",
+           (u.id IS NOT NULL) AS "updaterFound"
       FROM app.access_revisions ar
       LEFT JOIN app.users u
         ON u.tenant_id = ar.tenant_id AND u.id = ar.updated_by_user_id
@@ -64,7 +71,13 @@ export async function readAccessRevision(
       updatedByName: null,
     };
   }
-  return row;
+  return {
+    revision: row.revision,
+    levelRulesMaterialized: row.levelRulesMaterialized,
+    updatedAt: row.updatedAt,
+    updatedByUserId: row.updatedByUserId,
+    updatedByName: row.updaterFound ? personLabel(row.updatedByDisplayName) : null,
+  };
 }
 
 /**

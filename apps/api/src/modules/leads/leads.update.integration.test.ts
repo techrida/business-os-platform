@@ -293,13 +293,12 @@ describe('GET /v1/leads/owners', () => {
     expect(list[0]).toHaveProperty('avatarDocumentId', null);
   });
 
-  it('offers the Founder every active staff member whose live grants read leads, and nobody else', async () => {
+  it('offers the Founder every active staff member whose live grants read and write leads, and nobody else', async () => {
     h.as('boss', 'founder');
     const ids = (await owners()).map((o) => o.userId);
-    // Management reads every lead, so the rule lets the Founder hand it one (the owner must read, D50 #21).
-    expect(new Set(ids)).toEqual(
-      new Set([h.users.boss, h.users.salesA, h.users.salesB, h.users.viewer]),
-    );
+    // Management reads every lead but writes none, so it never owns one (the owner must read, D50 #21, and write).
+    expect(new Set(ids)).toEqual(new Set([h.users.boss, h.users.salesA, h.users.salesB]));
+    expect(ids).not.toContain(h.users.viewer);
     // An inactive user, a portal user and another tenant's user are never offered.
     expect(ids).not.toContain(inactiveSales);
     expect(ids).not.toContain(portalUser);
@@ -873,6 +872,37 @@ describe('D50: who a lead may be handed to, under the entity rule and live grant
     expect(await reassign(lead.id, warehouse)).toBe('cannot_read_subject');
     expect(await ownerIds()).not.toContain(warehouse);
     expect(await rowOf(lead.id)).toMatchObject({ ownerUserId: h.users.boss, version: 1 });
+  });
+
+  it('never makes Management a lead owner: it reads every lead and writes none, until its live grants write leads', async () => {
+    h.as('boss', 'founder');
+    const lead = await seed();
+    const res = await patch(lead.id, { ownerUserId: h.users.viewer, expectedVersion: 1 });
+    expect(res.status, JSON.stringify(res.body)).toBe(400);
+    expect(await reassign(lead.id, h.users.viewer)).toBe('cannot_read_subject');
+    expect(await ownerIds()).not.toContain(h.users.viewer);
+    expect(await ownerIds('?context=create')).not.toContain(h.users.viewer);
+    expect(await rowOf(lead.id)).toMatchObject({ ownerUserId: h.users.boss, version: 1 });
+
+    // The check reads live grants, not role names: once Management's grants write leads, it may own one.
+    const live = h.roleCache.grantsFor.bind(h.roleCache);
+    const spy = vi
+      .spyOn(h.roleCache, 'grantsFor')
+      .mockImplementation(async (tenantId, organizationId, roles, level) => {
+        const grants = await live(tenantId, organizationId, roles, level);
+        if (!roles.includes('management')) return grants;
+        const widened = new Map(grants);
+        widened.set('crm.lead.write', 'all');
+        return widened;
+      });
+    try {
+      expect(await ownerIds()).toContain(h.users.viewer);
+      const moved = await patch(lead.id, { ownerUserId: h.users.viewer, expectedVersion: 1 });
+      expect(moved.status, JSON.stringify(moved.body)).toBe(200);
+      expect(await rowOf(lead.id)).toMatchObject({ ownerUserId: h.users.viewer, version: 2 });
+    } finally {
+      spy.mockRestore();
+    }
   });
 
   it('never makes the caller the owner of a new lead their read would not show them, named or by default', async () => {

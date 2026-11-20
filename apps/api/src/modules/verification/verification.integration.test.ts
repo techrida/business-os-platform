@@ -973,6 +973,11 @@ describe('POST /v1/verification-cases/:id/decision', () => {
 
 describe('reading', () => {
   it('lists as a bare array, filtered by status and partyId', async () => {
+    // Earlier tests in this file create >25 cases at the default clock (2026-11-08T04:00:00Z).
+    // Listing orders by (created_at DESC, id DESC) with default limit 25, so cases sharing that
+    // timestamp compete by random UUID and can fall off page 1. Advance the clock past every
+    // other fixture in this file so `a` and `b` deterministically sort to the top of page 1.
+    clock = new Date('2026-11-25T00:00:00Z');
     const a = await openCase();
     const b = await submittedCase();
     const all = await api().get('/v1/verification-cases');

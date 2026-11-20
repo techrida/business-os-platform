@@ -301,12 +301,21 @@ export class UserMirror {
       await tx.execute(
         sql`SELECT pg_advisory_xact_lock(hashtext('access_revisions:' || ${scope.tenantId}))`,
       );
-      const activeFounders = await this.store.activeRoleHolderIds(tx, scope.tenantId, 'founder');
-      if (activeFounders.filter((id) => id !== userId).length === 0) {
-        const name = user.displayName?.trim() || user.email || 'This user';
+      // Per legal entity, not company-wide: an entity whose only effective Founder is this user would
+      // be left with none, even when other entities still have Founders.
+      const founders = await this.store.effectiveRoleHolders(tx, scope.tenantId, 'founder');
+      const orphaned = founders.filter(
+        (f) =>
+          f.userId === userId &&
+          !founders.some((o) => o.organizationId === f.organizationId && o.userId !== userId),
+      );
+      if (orphaned.length > 0) {
+        // Never the email: the address is not a name (U20a2-Q10).
+        const name = user.displayName?.trim() || 'This person';
+        const entities = orphaned.map((f) => f.entityName).join(', ');
         throw new ConflictException({
           code: 'last_founder',
-          message: `${name} is the only Founder. Make someone else a Founder first.`,
+          message: `${name} is the only Founder of ${entities}. Make someone else a Founder there first.`,
         });
       }
     }
@@ -348,6 +357,7 @@ export class UserMirror {
         changed = true;
       } else {
         userId = existing.id;
+        const statusChanged = existing.status !== status;
         if (
           existing.email !== user.email ||
           existing.displayName !== user.displayName ||
@@ -358,6 +368,9 @@ export class UserMirror {
             displayName: user.displayName,
             status,
           });
+          // A status change (disabled, re-enabled) reaches every request at once: the per-request user cache
+          // is keyed on the authz version, so without a bump a disabled user stays active for up to 60 s.
+          if (statusChanged) await this.store.bumpAuthzVersion(tx, scope);
           changed = true;
         }
       }
@@ -438,13 +451,16 @@ export class UserMirror {
   }
 
   private async deactivate(user: UserRow): Promise<void> {
-    await withTx(this.db, await this.entityScope(user.tenantId), zitadelActor(), (tx) =>
-      this.store.updateUser(tx, user.id, {
+    const scope = await this.entityScope(user.tenantId);
+    await withTx(this.db, scope, zitadelActor(), async (tx) => {
+      await this.store.updateUser(tx, user.id, {
         email: user.email,
         displayName: user.displayName,
         status: 'inactive',
-      }),
-    );
+      });
+      // Bump the authz version so the per-request user cache drops the user at once (see apply).
+      await this.store.bumpAuthzVersion(tx, scope);
+    });
   }
 
   /** The tenant's staff IdP org: invites are created and grants are set there. */

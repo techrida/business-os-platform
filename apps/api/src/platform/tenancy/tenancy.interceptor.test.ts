@@ -6,7 +6,7 @@
 import 'reflect-metadata';
 
 import type { AccessLevel, Permission, RoleKey, Scope } from '@bos/contracts';
-import { idpOrgs, organizations } from '@bos/db';
+import { authzVersions, idpOrgs, organizations } from '@bos/db';
 import {
   BadRequestException,
   type CallHandler,
@@ -21,7 +21,7 @@ import type { AuthIdentity } from '../auth/claims';
 import { CustomersController } from '../../modules/customers/customers.controller';
 import { AnyAuthenticated, Can } from '../authz/decorators';
 import { type Principal, principal } from '../authz/principal';
-import type { RoleCache } from '../authz/role-cache';
+import { RoleCache } from '../authz/role-cache';
 import type { EntityMembership, ResolvedUser, UserDirectory } from '../authz/user-directory';
 import type { Db } from '../db/db.module';
 import { IdpOrgResolver, type ResolvedIdpOrg } from './idp-org-resolver';
@@ -158,7 +158,7 @@ let now = 1_000_000;
 let resolveCalls: number;
 let resolveArgs: { zitadelUserId: string; tenantId: string; idpOrgId: string }[];
 let status: Principal['status'];
-let grantRequests: { organizationId: string; roles: readonly RoleKey[]; level: AccessLevel }[];
+let grantRequests: { roles: readonly RoleKey[]; level: AccessLevel }[];
 /** The IdP org the token resolves to. */
 let tokenOrg: ResolvedIdpOrg;
 /** The user row the directory returns: its tenant, IdP org and memberships. */
@@ -166,18 +166,21 @@ let row: { tenantId: string; idpOrgId: string; memberships: EntityMembership[] }
 /** The role cache epoch; a test moves it to model `AuthzService.invalidate`. */
 let epoch = '0:0';
 
+/** How many times the interceptor asked the role cache for a tenant view (one per request). */
+let viewCalls = 0;
+
 const roleCache = {
-  epoch: () => Promise.resolve(epoch),
-  grantsFor: (
-    _t: string,
-    organizationId: string,
-    roles: readonly RoleKey[],
-    level: AccessLevel = 'staff',
-  ) => {
-    grantRequests.push({ organizationId, roles, level });
-    const merged = new Map<Permission, Scope>();
-    for (const role of roles) for (const [p, s] of TABLE[role] ?? []) merged.set(p, s);
-    return Promise.resolve(merged);
+  current: (_t: string) => {
+    viewCalls += 1;
+    return Promise.resolve({
+      epoch,
+      grantsFor: (roles: readonly RoleKey[], level: AccessLevel = 'staff') => {
+        grantRequests.push({ roles, level });
+        const merged = new Map<Permission, Scope>();
+        for (const role of roles) for (const [p, s] of TABLE[role] ?? []) merged.set(p, s);
+        return merged;
+      },
+    });
   },
 } as unknown as RoleCache;
 
@@ -293,6 +296,7 @@ describe('TenancyInterceptor', () => {
   beforeEach(() => {
     now = 1_000_000;
     epoch = '0:0';
+    viewCalls = 0;
     resolveCalls = 0;
     resolveArgs = [];
     status = 'active';
@@ -551,7 +555,7 @@ describe('TenancyInterceptor', () => {
       const { context, bound } = await run(interceptor, auth(finance), Routes, Routes.prototype.me);
       expect(context.organizationId).toBe(ENTITY_A);
       expect(bound.organizationId).toBe(ENTITY_A);
-      expect(grantRequests[0]?.organizationId).toBe(ENTITY_A);
+      expect(grantRequests).toHaveLength(1);
     });
 
     it('uses the only membership when none is marked default', async () => {
@@ -596,9 +600,7 @@ describe('TenancyInterceptor', () => {
         Routes.prototype.me,
         ENTITY_B,
       );
-      expect(grantRequests).toEqual([
-        { organizationId: ENTITY_B, roles: ['sales'], level: 'manager' },
-      ]);
+      expect(grantRequests).toEqual([{ roles: ['sales'], level: 'manager' }]);
       expect(bound).toMatchObject({ departmentId: DEPT_B, level: 'manager' });
     });
 
@@ -606,9 +608,7 @@ describe('TenancyInterceptor', () => {
       // A level widens a grant to the department; with none there is nothing to widen to (Check a person agrees).
       row.memberships = [{ ...MEMBERSHIP_A, level: 'manager' }, MEMBERSHIP_B];
       const { bound } = await run(interceptor, auth(finance), Routes, Routes.prototype.me);
-      expect(grantRequests).toEqual([
-        { organizationId: ENTITY_A, roles: ['finance'], level: 'staff' },
-      ]);
+      expect(grantRequests).toEqual([{ roles: ['finance'], level: 'staff' }]);
       expect(bound).toMatchObject({ departmentId: null, level: 'manager' });
     });
 
@@ -683,9 +683,7 @@ describe('TenancyInterceptor', () => {
       );
       expect(bound.roles).toEqual(['sales']);
       expect(roles).toEqual(['sales']);
-      expect(grantRequests).toEqual([
-        { organizationId: ENTITY_B, roles: ['sales'], level: 'staff' },
-      ]);
+      expect(grantRequests).toEqual([{ roles: ['sales'], level: 'staff' }]);
       // Narrowed away: finance's admin.users.read is not granted in entity B.
       const body = await denial(
         run(interceptor, auth(financeAndSales), Routes, Routes.prototype.readUsers, ENTITY_B),
@@ -767,7 +765,7 @@ describe('TenancyInterceptor', () => {
     });
   });
 
-  it('makes zero database or directory calls on a warm request (real IdpOrgResolver)', async () => {
+  it('makes no IdP org or directory call on a warm request, and asks the role cache once (real IdpOrgResolver)', async () => {
     let dbQueries = 0;
     const db = {
       select: () => ({
@@ -810,8 +808,10 @@ describe('TenancyInterceptor', () => {
     await run(warm, auth(financeAndSales), Routes, Routes.prototype.me);
     const coldQueries = dbQueries;
     const coldResolves = resolveCalls;
+    const coldViews = viewCalls;
     expect(coldQueries).toBe(2);
     expect(coldResolves).toBe(1);
+    expect(coldViews).toBe(1);
 
     now += 1_000;
     const { context } = await run(
@@ -824,6 +824,103 @@ describe('TenancyInterceptor', () => {
     expect(context.organizationId).toBe(ENTITY_B);
     expect(dbQueries - coldQueries).toBe(0);
     expect(resolveCalls - coldResolves).toBe(0);
+    // The role cache's one `authz_versions` read per request (U20a2-Q10) happens inside `current`.
+    expect(viewCalls - coldViews).toBe(1);
+  });
+
+  describe('a removed grant with the real RoleCache (U20a2-Q10)', () => {
+    /** The tenant's `authz_versions` row and `role_permissions` rows, as another api instance leaves them. */
+    let version: number;
+    let rows: { roleKey: RoleKey; permission: string; scope: string }[];
+    let versionReads: number;
+    let rowLoads: number;
+    /** The version read fails, as when the database is unreachable. */
+    let versionDown: boolean;
+
+    /** A RoleCache over a fake database; the cache's own version check and merge run. */
+    function realCache(): RoleCache {
+      const db = {
+        select: () => ({
+          from: (table: unknown) => ({
+            where: () => {
+              if (table !== authzVersions) throw new Error('unexpected table');
+              versionReads += 1;
+              const result = versionDown
+                ? Promise.reject(new Error('database down'))
+                : Promise.resolve([{ version }]);
+              return Object.assign(result, { limit: () => result });
+            },
+          }),
+        }),
+        execute: () => {
+          rowLoads += 1;
+          return Promise.resolve({
+            rows: rows.map((r) => ({ kind: 'base', minLevel: null, ...r })),
+          });
+        },
+      } as unknown as Db;
+      // The cache's clock never moves: nothing here may wait for the 5 s window.
+      return new RoleCache(db, () => now);
+    }
+
+    function withCache(cache: RoleCache): TenancyInterceptor {
+      const orgs = { resolve: () => Promise.resolve(tokenOrg) } as unknown as IdpOrgResolver;
+      return new TenancyInterceptor(orgs, new Reflector(), fakeDirectory(), cache, () => now);
+    }
+
+    beforeEach(() => {
+      version = 1;
+      rows = [{ roleKey: 'finance', permission: 'admin.users.read', scope: 'all' }];
+      versionReads = 0;
+      rowLoads = 0;
+      versionDown = false;
+    });
+
+    it('refuses the next request once an access save on another instance removed the grant', async () => {
+      const live = withCache(realCache());
+      const allowed = await run(live, auth(finance), Routes, Routes.prototype.readUsers);
+      expect(allowed.result).toBe('handled');
+
+      // Another instance saves access: the grant is gone and the version row bumped. No time passes.
+      rows = [{ roleKey: 'finance', permission: 'audit.read', scope: 'all' }];
+      version = 2;
+
+      const body = await denial(run(live, auth(finance), Routes, Routes.prototype.readUsers));
+      expect(body).toMatchObject({ reason: 'no_permission' });
+    });
+
+    it('asks the directory again at once when the version moved, so a removed role or level shows', async () => {
+      const live = withCache(realCache());
+      await run(live, auth(finance), Routes, Routes.prototype.me);
+      version = 2;
+      await run(live, auth(finance), Routes, Routes.prototype.me);
+      expect(resolveCalls).toBe(2);
+    });
+
+    it('serves an unchanged version from memory: one version read per request, no row reload', async () => {
+      const live = withCache(realCache());
+      await run(live, auth(finance), Routes, Routes.prototype.readUsers);
+      expect(versionReads).toBe(1);
+      expect(rowLoads).toBe(1);
+
+      for (let i = 0; i < 5; i += 1) {
+        await run(live, auth(finance), Routes, Routes.prototype.readUsers);
+      }
+      expect(versionReads).toBe(6);
+      expect(rowLoads).toBe(1);
+      expect(resolveCalls).toBe(1);
+    });
+
+    it('fails the request, never serving the cached grants, when the version cannot be read', async () => {
+      const live = withCache(realCache());
+      const allowed = await run(live, auth(finance), Routes, Routes.prototype.readUsers);
+      expect(allowed.result).toBe('handled');
+
+      versionDown = true;
+      await expect(run(live, auth(finance), Routes, Routes.prototype.readUsers)).rejects.toThrow(
+        'database down',
+      );
+    });
   });
 
   it('builds a principal from warm caches in under 1 ms', async () => {

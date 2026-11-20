@@ -69,8 +69,8 @@ import {
   toLeadDto,
 } from './leads.types';
 import {
-  isStageManager,
   leadRef,
+  mayReopenLead,
   planLeadStageChange,
   type LeadStageCaller,
   type LeadStageRefusal,
@@ -383,11 +383,12 @@ export class LeadsService {
    */
   async changeStage(id: string, body: LeadStageChangeBody): Promise<LeadDto> {
     const { scope, actor, principal } = this.caller.current();
-    const by: LeadStageCaller = isStageManager(principal) ? 'manager' : 'user';
     return withTx(this.db, scope, actor, async (tx) => {
       const row = await this.lock(tx, scope, id);
       // Scope first (404), then state (409): someone who may not edit learns nothing about the stage.
       this.assertVisible('crm.lead.write', row);
+      // The reopen edge needs the live crm.lead.reopen grant on this lead's department as well as the level.
+      const by: LeadStageCaller = mayReopenLead(principal, row) ? 'manager' : 'user';
 
       // Lost carries an option of the tenant's list (D49), or a new one added in this same step. The planner still
       // sees a `reason`: the option's words, which the lead keeps as a snapshot beside the reference.
@@ -605,8 +606,8 @@ export class LeadsService {
    * The people the caller may hand a lead to (the owner select, and the follow-up assignee select): exactly whom
    * create and PATCH accept, so the select never offers a 400. That is the assignment rule's targets under the
    * entity's stored rule (`assignableTargets`), among the active staff of the acting entity, kept only when their
-   * live grants read leads. `create` lists whom a new lead may be started for: for Finance, Accountant and PMO the
-   * Sales users, not themselves.
+   * live grants read and write leads (Management reads every lead and owns none). `create` lists whom a new lead
+   * may be started for: for Finance, Accountant and PMO the Sales users, not themselves.
    */
   async owners(context: AssignmentContext = 'reassign'): Promise<LeadOwnerOption[]> {
     const { scope, actor, principal } = this.caller.current();
@@ -689,7 +690,10 @@ export class LeadsService {
     return and(...filters);
   }
 
-  /** How a lead's owner is checked in this transaction: the leads area's stored rule, and lead read for the target. */
+  /**
+   * How a lead's owner is checked in this transaction: the leads area's stored rule, lead read for the target, and
+   * lead write for an owner (a role that never edits leads never owns one).
+   */
   private assignmentCheck(
     tx: DbTransaction,
     scope: TxScope,
@@ -700,6 +704,7 @@ export class LeadsService {
       context,
       rule: storedAssignmentRule(tx, scope, 'leads'),
       subjectRead: 'crm.lead.read',
+      ownerWrite: 'crm.lead.write',
     };
   }
 

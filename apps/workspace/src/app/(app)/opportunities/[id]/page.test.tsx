@@ -23,6 +23,7 @@ const mocks = vi.hoisted(() => ({
   getMeOrNull: vi.fn(),
   getPermissionCheck: vi.fn(),
   getCreditHold: vi.fn(),
+  getMe: vi.fn(),
 }));
 
 vi.mock('@/lib/bff', () => ({ requireStaffSession: mocks.requireStaffSession }));
@@ -30,6 +31,11 @@ vi.mock('@/lib/live-permissions', async (importOriginal) => ({
   ...(await importOriginal<object>()),
   getMeOrNull: mocks.getMeOrNull,
   getPermissionCheck: mocks.getPermissionCheck,
+}));
+// The live grants come from GET /v1/me; when it fails the page falls back to the role defaults.
+vi.mock('@/lib/api', async (importOriginal) => ({
+  ...(await importOriginal<object>()),
+  getMe: mocks.getMe,
 }));
 vi.mock('@/lib/api-lead-lost-reasons', () => ({
   listOpportunityLostReasonChoices: mocks.listOpportunityLostReasonChoices,
@@ -167,6 +173,12 @@ beforeEach(() => {
         ).getPermissionCheck(...args),
     );
   mocks.getCreditHold.mockReset();
+  mocks.getMe.mockReset().mockRejectedValue(new Error('down'));
+});
+
+/** The live grants `/v1/me` reports, each at `all`. */
+const liveGrants = (...permissions: string[]) => ({
+  permissions: permissions.map((permission) => ({ permission, scope: 'all' })),
 });
 
 describe('opportunity quotation actions (demo feedback: New quotation made four quotations)', () => {
@@ -368,6 +380,27 @@ describe('opportunity follow-ups (migrated open tasks on the deal)', () => {
     expect(html).toContain('Chase the signed scope');
     expect(html).toContain('Mira Thapa');
     expect(html).not.toContain('Another teammate');
+  });
+
+  // The deal's owners list (F1-Q51) is asked for with edit access. When the deal carries no canEdit, that comes
+  // from the saved grants `/v1/me` reports, not the role defaults.
+  it("asks for the deal's owners when the saved grants add crm.opportunity.write to a role without it", async () => {
+    mocks.requireStaffSession.mockResolvedValue({ accessToken: 'live-1', roles: ['management'] });
+    mocks.getMe.mockResolvedValue(liveGrants('crm.opportunity.read', 'crm.opportunity.write'));
+    mocks.getOpportunity.mockResolvedValue(opportunity('negotiation', { canEdit: undefined }));
+    await render();
+    expect(mocks.listOpportunityOwners).toHaveBeenCalledTimes(1);
+    expect(mocks.listLeadOwners).not.toHaveBeenCalled();
+  });
+
+  it("skips the deal's owners when the saved grants removed crm.opportunity.write from sales", async () => {
+    mocks.requireStaffSession.mockResolvedValue({ accessToken: 'live-2', roles: ['sales'] });
+    mocks.getMe.mockResolvedValue(liveGrants('crm.opportunity.read', 'crm.lead.write'));
+    mocks.getOpportunity.mockResolvedValue(opportunity('negotiation', { canEdit: undefined }));
+    const html = await render();
+    expect(mocks.listOpportunityOwners).not.toHaveBeenCalled();
+    expect(mocks.listLeadOwners).not.toHaveBeenCalled();
+    expect(html).toContain('Chase the signed scope');
   });
 
   it('says the follow-ups did not load instead of showing an empty card', async () => {

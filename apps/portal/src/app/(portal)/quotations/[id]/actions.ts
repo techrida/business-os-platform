@@ -69,13 +69,6 @@ async function prepare(
   return { ok: true, id, key: KEY.test(submitted) ? submitted : randomUUID(), session };
 }
 
-/** The API's machine code (`error.code`), or '' when the body has none. Only the code is read, never its message. */
-function codeOf(err: unknown): string {
-  if (!(err instanceof ApiError)) return '';
-  const e = (err.body as { error?: { code?: unknown } } | null | undefined)?.error;
-  return typeof e?.code === 'string' ? e.code : '';
-}
-
 /** Words for a refused or failed call. `definite` refusals rotate the key; unknown outcomes keep it. */
 function failed(err: unknown, key: string, id: string): RespondState {
   const status = err instanceof ApiError ? err.status : 0;
@@ -89,12 +82,6 @@ function failed(err: unknown, key: string, id: string): RespondState {
     };
   }
   if (status === 404 || status === 403) return { key: randomUUID(), error: 'Quotation not found.' };
-  if (status === 422 && codeOf(err) === 'evidence_policy_unmet') {
-    return {
-      key: randomUUID(),
-      error: 'We need a signed contract or purchase order to accept this. Please contact us.',
-    };
-  }
   if (status >= 400 && status < 500) {
     return {
       key: randomUUID(),

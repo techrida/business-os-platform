@@ -1,7 +1,8 @@
 // The one enforcement point for every authenticated route: it completes the request context, builds
 // the caller's `Principal` and applies the route's `@Can` / `@AnyAuthenticated` marker. Serves the
 // NFRs "authorization is deny-by-default" and "< 5 ms per decision" (P1 plan §1, k-authz; §6.2;
-// findings 3 and 4): a route with no marker is refused, and a warm request touches no database.
+// findings 3 and 4): a route with no marker is refused, and a warm request makes one indexed read
+// (the tenant's `authz_versions` row, so a removed grant is refused on the next request, U20a2-Q10).
 import {
   type AccessLevel,
   type OrgKind,
@@ -164,10 +165,11 @@ function effectiveRoles(
 
 /**
  * Completes the request context and enforces the route-level permission (ADR 0027 §4), in this
- * order: resolve the IdP org (cached 60 s) → token roles of that org's kind → UserDirectory.resolve
- * (cached 60 s) → the row must belong to that tenant and IdP org (R26) → the acting entity from
- * `X-Entity-Id` or the default → effective roles → grants from RoleCache → bindIdentity and
- * bindPrincipal → `@Can` / `@AnyAuthenticated` / deny.
+ * order: resolve the IdP org (cached 60 s) → token roles of that org's kind → the tenant's role
+ * view from RoleCache (its `authz_versions` row read every request) → UserDirectory.resolve (cached
+ * 60 s while that view's epoch is unchanged) → the row must belong to that tenant and IdP org (R26)
+ * → the acting entity from `X-Entity-Id` or the default → effective roles → grants from the view →
+ * bindIdentity and bindPrincipal → `@Can` / `@AnyAuthenticated` / deny.
  *
  * Why an interceptor and not a second APP_GUARD (finding 3): Nest runs all guards before any
  * interceptor, so this always sees `req.auth` after AuthGuard whatever order modules are imported
@@ -212,7 +214,10 @@ export class TenancyInterceptor implements NestInterceptor {
     if (idp.kind === 'staff' && tokenRoles.length === 0) throw noRole();
     const requested = requestedEntity(req);
 
-    const user = await this.resolveUser(auth.userId, idp.tenantId, idp.idpOrgId);
+    // One `authz_versions` read per request (U20a2-Q10): the grants below and the user cache's epoch both
+    // come from this confirmed view, so a removed grant, role or level is refused on the next request.
+    const access = await this.roleCache.current(idp.tenantId);
+    const user = await this.resolveUser(auth.userId, idp.tenantId, idp.idpOrgId, access.epoch);
     // The directory finds the row by ZITADEL id alone, and a cached answer is keyed by tenant only,
     // so the row may live in another tenant or IdP org than the token resolved to. Acting as that
     // row here would cross the boundary, so refuse before any principal exists (review R26).
@@ -229,12 +234,7 @@ export class TenancyInterceptor implements NestInterceptor {
 
     // A level widens a grant to the member's department; with no department there is nothing to widen
     // to, so the grants are the staff ones (the same rule as Check a person in Access Settings).
-    const grants = await this.roleCache.grantsFor(
-      idp.tenantId,
-      entityId,
-      roles,
-      departmentId === null ? 'staff' : level,
-    );
+    const grants = access.grantsFor(roles, departmentId === null ? 'staff' : level);
     // `ctx().roles` carries the same effective list as the principal, so `/v1/me` cannot show a
     // role granted in another org, or one the membership narrowed away.
     bindIdentity({
@@ -301,16 +301,16 @@ export class TenancyInterceptor implements NestInterceptor {
   }
 
   /**
-   * `UserDirectory.resolve()`, reused for 60 s per tenant and ZITADEL user. Only answers are
-   * cached; a failed lookup is retried on the next request.
+   * `UserDirectory.resolve()`, reused for 60 s per tenant and ZITADEL user while the role cache
+   * `epoch` is unchanged. Only answers are cached; a failed lookup is retried on the next request.
    */
   private async resolveUser(
     zitadelUserId: string,
     tenantId: string,
     idpOrgId: string,
+    epoch: string,
   ): Promise<ResolvedUser> {
     const key = `${tenantId}:${zitadelUserId}`;
-    const epoch = await this.roleCache.epoch(tenantId);
     const cached = this.users.get(key);
     if (cached !== undefined && cached.expiresAt > this.now() && cached.epoch === epoch) {
       return cached.user;

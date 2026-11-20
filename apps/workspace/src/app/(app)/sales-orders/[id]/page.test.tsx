@@ -174,6 +174,82 @@ describe('sales order detail', () => {
     expect(html).not.toContain('Draft invoice');
   });
 
+  describe('a draft order waiting for confirmation (F1-Q25, F1-Q28)', () => {
+    const DRAFT = { number: null, status: 'draft', confirmedAt: null, fiscalYear: null };
+    const ready = {
+      evidenceStatus: 'confirmed' as const,
+      policy: 'both' as const,
+      missing: [],
+      evidenceKinds: ['contract' as const, 'purchase_order' as const],
+      evidenceDocumentIds: [],
+      blocker: null,
+    };
+
+    it('offers Confirm order when the API says the caller may confirm it now', async () => {
+      mocks.getSalesOrder.mockResolvedValue(
+        salesOrderDetail({
+          order: DRAFT,
+          draft: ready,
+          can: { markBillable: false, draftInvoice: false, confirm: true },
+        }),
+      );
+      const html = await render();
+      expect(html).toContain('>Confirm order</button>');
+      expect(html).toContain('Confirm this sales order?');
+      expect(html).toContain(`name="quotationVersionId" value="${IDS.version}"`);
+      expect(html).not.toContain('It cannot be confirmed yet');
+    });
+
+    it('says the customer evidence must be confirmed first, links the quotation, and offers no Confirm', async () => {
+      mocks.getSalesOrder.mockResolvedValue(
+        salesOrderDetail({
+          order: DRAFT,
+          draft: { ...ready, evidenceStatus: 'pending', blocker: 'evidence_not_confirmed' },
+          can: { markBillable: false, draftInvoice: false, confirm: false },
+        }),
+      );
+      const html = await render();
+      expect(html).not.toContain('>Confirm order</button>');
+      expect(html).toContain(
+        'a staff member has to confirm their evidence on the quotation first.',
+      );
+      expect(html).toMatch(
+        new RegExp(`href="/quotations/${IDS.quotation}"[^>]*>Open the quotation`),
+      );
+    });
+
+    it('names what the evidence policy still needs', async () => {
+      mocks.getSalesOrder.mockResolvedValue(
+        salesOrderDetail({
+          order: DRAFT,
+          draft: { ...ready, missing: ['purchase_order'], blocker: 'evidence_policy_unmet' },
+          can: { markBillable: false, draftInvoice: false, confirm: false },
+        }),
+      );
+      expect(await render()).toContain('evidence policy also needs the customer purchase order.');
+    });
+
+    it('offers no Confirm to someone the API does not allow, though nothing blocks the order', async () => {
+      mocks.getSalesOrder.mockResolvedValue(
+        salesOrderDetail({
+          order: DRAFT,
+          draft: ready,
+          can: { markBillable: false, draftInvoice: false, confirm: false },
+        }),
+      );
+      const html = await render();
+      expect(html).not.toContain('>Confirm order</button>');
+      expect(html).not.toContain('It cannot be confirmed yet');
+    });
+
+    it('offers no Confirm on a confirmed order, whatever the flag says', async () => {
+      mocks.getSalesOrder.mockResolvedValue(
+        salesOrderDetail({ can: { markBillable: true, draftInvoice: true, confirm: true } }),
+      );
+      expect(await render()).not.toContain('>Confirm order</button>');
+    });
+  });
+
   it('wraps a very long description instead of widening the page', async () => {
     const long = 'Integration '.repeat(60).trim();
     mocks.getSalesOrder.mockResolvedValue(

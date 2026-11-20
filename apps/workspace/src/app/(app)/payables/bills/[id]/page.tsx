@@ -240,9 +240,13 @@ export default async function BillPage({
     label: bill.number ?? `invoice ${bill.vendorInvoiceNo}`,
     reloadHref: here,
   };
+  const canDiscard = bill.status === 'draft' && grants.enter && bill.can?.discard !== false;
   const inVariance = bill.status === 'variance' || bill.matchStatus === 'variance';
   const canException =
-    grants.enter && bill.status === 'variance' && bill.matchStatus === 'variance';
+    grants.enter &&
+    bill.can?.exception !== false &&
+    bill.status === 'variance' &&
+    bill.matchStatus === 'variance';
 
   const facts: Fact[] = [
     {
@@ -327,19 +331,13 @@ export default async function BillPage({
             : 'A vendor invoice, matched before it goes for approval.'
         }
         actions={
-          can.match ||
-          can.submit ||
-          can.void ||
-          canException ||
-          (bill.status === 'draft' && grants.enter) ? (
+          can.match || can.submit || can.void || canException || canDiscard ? (
             <div className={styles.headActions}>
               {can.match ? <MatchDialog {...common} idempotencyKey={randomUUID()} /> : null}
               {can.submit ? <SubmitDialog {...common} idempotencyKey={randomUUID()} /> : null}
               {canException ? <ExceptionDialog {...common} idempotencyKey={randomUUID()} /> : null}
               {can.void ? <VoidDialog {...common} idempotencyKey={randomUUID()} /> : null}
-              {bill.status === 'draft' && grants.enter ? (
-                <DiscardBillDialog {...common} idempotencyKey={randomUUID()} />
-              ) : null}
+              {canDiscard ? <DiscardBillDialog {...common} idempotencyKey={randomUUID()} /> : null}
             </div>
           ) : null
         }
@@ -360,7 +358,7 @@ export default async function BillPage({
               The invoice must scan clean before this bill can be submitted. If a scan is in
               progress, wait and reload the bill to check it.
             </p>
-            {grants.enter ? (
+            {canDiscard ? (
               <InvoiceReplacement documentId={bill.documentId} reloadHref={here} />
             ) : null}
           </Panel>

@@ -793,6 +793,65 @@ export const quotationAcceptances = appSchema.table(
   ],
 );
 
+/**
+ * Staff confirm the evidence behind a customer's portal acceptance (migration 0107, F1-Q28): the kinds they hold,
+ * the files and a note. One row per accepted version, append-only. An acceptance staff recorded themselves needs
+ * none (it met the policy when recorded).
+ */
+export const quotationEvidenceConfirmations = appSchema.table(
+  'quotation_evidence_confirmations',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    tenantId: uuid('tenant_id')
+      .notNull()
+      .references(() => tenants.id),
+    organizationId: uuid('organization_id').notNull(),
+    versionId: uuid('version_id').notNull(),
+    evidenceKinds: text('evidence_kinds', { enum: QUOTATION_EVIDENCE_KINDS }).array().notNull(),
+    evidenceDocumentIds: uuid('evidence_document_ids')
+      .array()
+      .notNull()
+      .default(sql`'{}'::uuid[]`),
+    comment: text('comment'),
+    confirmedBy: uuid('confirmed_by').notNull(),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    unique('quotation_evidence_confirmations_tenant_id_unique').on(t.tenantId, t.id),
+    unique('quotation_evidence_confirmations_tenant_version_unique').on(t.tenantId, t.versionId),
+    foreignKey({
+      name: 'quotation_evidence_confirmations_tenant_org_fk',
+      columns: [t.tenantId, t.organizationId],
+      foreignColumns: [organizations.tenantId, organizations.id],
+    }),
+    foreignKey({
+      name: 'quotation_evidence_confirmations_version_fk',
+      columns: [t.tenantId, t.organizationId, t.versionId],
+      foreignColumns: [
+        quotationVersions.tenantId,
+        quotationVersions.organizationId,
+        quotationVersions.id,
+      ],
+    }),
+    foreignKey({
+      name: 'quotation_evidence_confirmations_confirmed_by_user_fk',
+      columns: [t.tenantId, t.confirmedBy],
+      foreignColumns: [users.tenantId, users.id],
+    }),
+    check(
+      'quotation_evidence_confirmations_evidence_kinds_check',
+      sql`${t.evidenceKinds} <@ ARRAY['contract', 'purchase_order', 'signed_quote']::text[] AND array_position(${t.evidenceKinds}, NULL) IS NULL AND cardinality(${t.evidenceKinds}) >= 1`,
+    ),
+    check(
+      'quotation_evidence_confirmations_evidence_document_ids_check',
+      sql`array_position(${t.evidenceDocumentIds}, NULL) IS NULL`,
+    ),
+    check(
+      'quotation_evidence_confirmations_comment_check',
+      sql`${t.comment} IS NULL OR char_length(${t.comment}) <= 2000`,
+    ),
+  ],
+);
 /** Every status change of a version. Append-only. `actorId` null = the system. */
 export const quotationStatusHistory = appSchema.table(
   'quotation_status_history',

@@ -2,18 +2,29 @@
 // QuotationOutcomeService's; this class adds what only the staff route has: a staff principal, the
 // `quotation.record_acceptance` permission on the quotation itself (own scope means the quotation's owner), the
 // Idempotency-Key, and the nudge after commit. A quotation outside the acting entity or the caller's scope is a 404.
-import { type AcceptanceDto, type Permission, type RecordOutcomeBody } from '@bos/contracts';
-import { quotations, scoped } from '@bos/db';
+// F1-Q28 adds the staff confirmation of a portal acceptance's evidence (same permission: staff record what the
+// customer gave them) and its read, which follows `quotation.read` like the quotation itself.
+import {
+  type AcceptanceDto,
+  type ConfirmEvidenceBody,
+  type Permission,
+  type QuotationEvidenceDto,
+  type RecordOutcomeBody,
+} from '@bos/contracts';
+import { quotations, quotationVersions, scoped } from '@bos/db';
 import { ForbiddenException, Inject, Injectable, NotFoundException } from '@nestjs/common';
-import { eq } from 'drizzle-orm';
+import { and, eq } from 'drizzle-orm';
 
-import { AuthzService } from '../../../platform/authz/authz.service';
+import { AuthzService, scopeWhereFor } from '../../../platform/authz/authz.service';
+import { can } from '../../../platform/authz/can';
+import { type Principal } from '../../../platform/authz/principal';
 import { DB, type Db } from '../../../platform/db/db.module';
 import { withIdempotency } from '../../../platform/db/idempotency';
 import { withTx } from '../../../platform/db/tx';
 import { NotifyService } from '../../../platform/notify/notify.service';
 import { DraftingCaller } from '../drafting/drafting.caller';
 import { quotationRef } from '../preview/quotation-preview.service';
+import { readEvidenceState } from './evidence-state';
 import { QuotationOutcomeService } from './quotation-outcome.service';
 
 const RECORD_ACTION: Permission = 'quotation.record_acceptance';
@@ -43,14 +54,7 @@ export class RecordOutcomeService {
   ): Promise<AcceptanceDto> {
     const { scope, actor, principal } = this.caller.current();
     // Decided before any read: a portal caller holding the key by mistake learns nothing.
-    if (principal.orgKind !== 'staff' || actor.kind !== 'user') {
-      throw new ForbiddenException({
-        code: 'forbidden',
-        message: 'Forbidden',
-        reason: 'no_permission',
-      });
-    }
-    const actorUserId = actor.id;
+    const actorUserId = this.staffUserId(principal, actor);
     const done = await withTx(this.db, scope, actor, (tx) =>
       withIdempotency(
         tx,
@@ -92,6 +96,105 @@ export class RecordOutcomeService {
     );
     if (!done.replayed && body.outcome === 'accepted') await this.notify.nudge();
     return done.response;
+  }
+
+  /**
+   * `POST /v1/quotations/:id/versions/:vid/evidence-confirmation` (F1-Q28): staff confirm the evidence they hold
+   * for a portal acceptance. 404 outside the entity or scope; 409 `quotation_not_accepted` or
+   * `evidence_already_confirmed`; 422 `evidence_policy_unmet` or `invalid_evidence_document`.
+   */
+  async confirmEvidence(
+    quotationId: string,
+    versionId: string,
+    body: ConfirmEvidenceBody,
+    idempotencyKey: string,
+  ): Promise<QuotationEvidenceDto> {
+    const { scope, actor, principal } = this.caller.current();
+    const actorUserId = this.staffUserId(principal, actor);
+    const done = await withTx(this.db, scope, actor, (tx) =>
+      withIdempotency(
+        tx,
+        {
+          command: 'quotation.confirm_evidence',
+          key: idempotencyKey,
+          body: { id: quotationId, vid: versionId, ...body },
+        },
+        async () => {
+          const [quotation] = await tx
+            .select()
+            .from(quotations)
+            .where(scoped(scope).where(quotations, eq(quotations.id, quotationId)))
+            .for('update');
+          if (quotation === undefined) throw notFound();
+          this.assertMayRecord(quotation);
+          const state = await this.outcomes.confirmEvidence(tx, {
+            quotationId,
+            versionId,
+            actorUserId,
+            evidenceKinds: body.evidenceKinds,
+            evidenceDocumentIds: body.evidenceDocumentIds,
+            comment: body.comment,
+          });
+          return {
+            status: 201,
+            response: await this.outcomes.evidenceView(tx, quotationId, state, false),
+          };
+        },
+      ),
+    );
+    return done.response;
+  }
+
+  /**
+   * `GET /v1/quotations/:id/versions/:vid/evidence`: where the evidence of an accepted version stands. 404 for a
+   * quotation the caller may not read, a version of another quotation, or one with no acceptance.
+   */
+  async evidence(quotationId: string, versionId: string): Promise<QuotationEvidenceDto> {
+    const { scope, actor, principal } = this.caller.current();
+    this.staffUserId(principal, actor);
+    return withTx(this.db, scope, actor, async (tx) => {
+      const [quotation] = await tx
+        .select()
+        .from(quotations)
+        .where(
+          and(
+            scopeWhereFor(principal, quotations, 'quotation.read'),
+            eq(quotations.id, quotationId),
+          ),
+        );
+      if (quotation === undefined) throw notFound();
+      const [version] = await tx
+        .select({ status: quotationVersions.status })
+        .from(quotationVersions)
+        .where(
+          scoped(scope).where(
+            quotationVersions,
+            and(
+              eq(quotationVersions.id, versionId),
+              eq(quotationVersions.quotationId, quotationId),
+            ),
+          ),
+        );
+      const state =
+        version === undefined ? undefined : await readEvidenceState(tx, scope, versionId);
+      if (version === undefined || state === undefined) throw notFound();
+      const mayConfirm =
+        version.status === 'accepted' &&
+        can(principal, RECORD_ACTION, quotationRef(quotation)).allowed;
+      return this.outcomes.evidenceView(tx, quotationId, state, mayConfirm);
+    });
+  }
+
+  /** The staff user behind the call, or 403 before any read: a portal caller holding the key learns nothing. */
+  private staffUserId(principal: Principal, actor: { kind: string; id?: string }): string {
+    if (principal.orgKind !== 'staff' || actor.kind !== 'user' || actor.id === undefined) {
+      throw new ForbiddenException({
+        code: 'forbidden',
+        message: 'Forbidden',
+        reason: 'no_permission',
+      });
+    }
+    return actor.id;
   }
 
   /**

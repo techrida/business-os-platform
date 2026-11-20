@@ -1,4 +1,10 @@
-import { BILL_STATUSES, MATCH_STATUSES } from '@bos/contracts';
+import {
+  BILL_STATUSES,
+  DEFAULT_ROLE_PERMISSIONS,
+  MATCH_STATUSES,
+  type AccessScope,
+  type Permission,
+} from '@bos/contracts';
 import { describe, expect, it } from 'vitest';
 
 import {
@@ -33,10 +39,29 @@ describe('labels', () => {
 });
 
 describe('grants', () => {
-  it('lets accountants enter and read, finance read only, procurement neither', () => {
-    expect(billGrants(['accountant'])).toEqual({ enter: true, read: true });
-    expect(billGrants(['finance'])).toEqual({ enter: false, read: true });
-    expect(billGrants(['procurement'])).toEqual({ enter: false, read: false });
+  // A stand-in for the live saved grants GET /v1/me reports (`getGrants`).
+  const live = (g: Partial<Record<Permission, string>>): Map<Permission, AccessScope> =>
+    new Map(Object.entries(g) as [Permission, AccessScope][]);
+
+  it('follows a live grant the role lacks by default: Procurement given bill entry', () => {
+    expect(DEFAULT_ROLE_PERMISSIONS.procurement['payables.bill.enter']).toBeUndefined();
+    const g = live({ ...DEFAULT_ROLE_PERMISSIONS.procurement, 'payables.bill.enter': 'all' });
+    expect(billGrants(g)).toEqual({ enter: true, read: false });
+  });
+
+  it('follows a removed grant the role holds by default: an accountant without bill entry', () => {
+    expect(DEFAULT_ROLE_PERMISSIONS.accountant['payables.bill.enter']).toBe('all');
+    const g = live(DEFAULT_ROLE_PERMISSIONS.accountant);
+    g.delete('payables.bill.enter');
+    expect(billGrants(g)).toEqual({ enter: false, read: true });
+  });
+
+  it('allows nothing when there are no live grants (a failed read), whatever the roles', () => {
+    expect(billGrants(live({}))).toEqual({ enter: false, read: false });
+  });
+
+  it('counts a grant at any scope', () => {
+    expect(billGrants(live({ 'payables.bill.read': 'own' }))).toEqual({ enter: false, read: true });
   });
 });
 
@@ -106,5 +131,72 @@ describe('billActions', () => {
     expect(
       billActions({ status: 'voided', matchStatus: 'matched', purchaseOrderId: po }, can).void,
     ).toBe(false);
+  });
+});
+
+describe('billActions with the per-bill can flags', () => {
+  // The person holds payables.bill.enter at some scope (an `own` grant counts for `enter`), so only the API's
+  // per-bill answer can tell another person's bill from their own.
+  const enter = { enter: true };
+  const po = 'po-1';
+  const matching = { status: 'matching', matchStatus: 'matched', purchaseOrderId: po } as const;
+  const approved = { status: 'approved', matchStatus: 'matched', purchaseOrderId: po } as const;
+  const OTHERS = { match: false, submit: false, void: false, discard: false, exception: false };
+  const OWN = { match: true, submit: true, void: true, discard: true, exception: true };
+
+  it("hides Match, Submit and Void on another person's bill under an own grant", () => {
+    expect(billActions({ ...matching, can: OTHERS }, enter)).toEqual({
+      match: false,
+      submit: false,
+      void: false,
+    });
+    expect(billActions({ ...approved, can: OTHERS }, enter).void).toBe(false);
+  });
+
+  it("offers them on the person's own bill as the status allows", () => {
+    expect(billActions({ ...matching, can: OWN }, enter)).toEqual({
+      match: true,
+      submit: true,
+      void: false,
+    });
+    expect(billActions({ ...approved, can: OWN }, enter).void).toBe(true);
+  });
+
+  it('decides each action by its own flag', () => {
+    expect(
+      billActions(
+        {
+          ...matching,
+          can: { match: false, submit: true, void: true, discard: true, exception: true },
+        },
+        enter,
+      ),
+    ).toEqual({ match: false, submit: true, void: false });
+    expect(
+      billActions(
+        {
+          ...approved,
+          can: { match: true, submit: true, void: false, discard: true, exception: true },
+        },
+        enter,
+      ).void,
+    ).toBe(false);
+  });
+
+  it('keeps the grant-only behaviour when the response has no can', () => {
+    expect(billActions(matching, enter)).toEqual({ match: true, submit: true, void: false });
+    expect(billActions({ ...matching, can: undefined }, enter).submit).toBe(true);
+    expect(billActions(approved, enter).void).toBe(true);
+  });
+
+  it('never lets a true flag stand in for a missing grant or a status that refuses', () => {
+    expect(billActions({ ...matching, can: OWN }, { enter: false })).toEqual({
+      match: false,
+      submit: false,
+      void: false,
+    });
+    expect(
+      billActions({ status: 'paid', matchStatus: 'matched', purchaseOrderId: po, can: OWN }, enter),
+    ).toEqual({ match: false, submit: false, void: false });
   });
 });

@@ -238,6 +238,22 @@ describe('confirmOrderAction', () => {
     });
   });
 
+  it('says plainly when the customer evidence is not confirmed yet (422 evidence_not_confirmed)', async () => {
+    mocks.apiFetch.mockImplementation(() => refusal(422, 'evidence_not_confirmed'));
+    const state = await confirmOrderAction(prev, confirmForm());
+    expect(state.error).toMatch(/evidence for the accepted quotation has not been confirmed/);
+    expect(state.error).not.toMatch(/did not accept this/);
+    expect(state.key).not.toBe(KEY);
+    expect(mocks.redirect).not.toHaveBeenCalled();
+  });
+
+  it('points to the waiting draft of another revision (409 draft_of_other_revision)', async () => {
+    mocks.apiFetch.mockImplementation(() => refusal(409, 'draft_of_other_revision'));
+    const state = await confirmOrderAction(prev, confirmForm());
+    expect(state.error).toMatch(/draft order from another revision/);
+    expect(state.reload).toBeUndefined();
+  });
+
   it('words a 403 and does not reload', async () => {
     mocks.apiFetch.mockImplementation(() => refusal(403, 'forbidden'));
     const state = await confirmOrderAction(prev, confirmForm());

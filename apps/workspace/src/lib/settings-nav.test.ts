@@ -87,9 +87,9 @@ describe('SETTINGS_GROUPS', () => {
     }
   });
 
-  it('keeps the four Company sub-tabs gated on admin.settings.write', () => {
+  it('keeps company profile, templates and formats gated on admin.settings.write alone', () => {
     const company = SETTINGS_SECTIONS.filter((s) =>
-      ['company', 'documents', 'formats', 'terms'].includes(s.id),
+      ['company', 'documents', 'formats'].includes(s.id),
     );
     expect(company.every((s) => s.permission === 'admin.settings.write')).toBe(true);
     for (const section of company.filter((s) => !s.ready)) {
@@ -120,6 +120,46 @@ describe('visibleSettingsGroups', () => {
     const section = settingsSection('tax');
     expect(canOpenSection(section, founder)).toBe(true);
     expect(canOpenSection({ ...section, permission: [] }, founder)).toBe(false);
+  });
+});
+
+describe('finance settings opened by live grants (F1-Q48)', () => {
+  const live =
+    (...held: string[]) =>
+    (permission: string) =>
+      held.includes(permission);
+  // Live grants as Settings > Access stores them; deliberately not the role defaults.
+  const finance = live('settings.fx_rate.write', 'settings.finance.write', 'quotation.read');
+  const accountant = live('settings.finance.write', 'invoice.read');
+  const founderOnly = live('admin.settings.write');
+
+  it('opens Currencies for an exchange-rate grant, and Tax, Numbering and Saved terms for a finance-settings grant', () => {
+    expect(labels(finance)).toEqual([
+      'Saved terms',
+      'Currencies and exchange rates',
+      'Tax',
+      'Document numbering',
+    ]);
+    expect(canOpenSection(settingsSection('company'), finance)).toBe(false);
+    expect(canOpenSection(settingsSection('sales'), finance)).toBe(false);
+  });
+
+  it('opens Numbering and Saved terms but not Currencies for the Accountant', () => {
+    expect(labels(accountant)).toEqual(['Saved terms', 'Tax', 'Document numbering']);
+    expect(canOpenSection(settingsSection('currencies'), accountant)).toBe(false);
+    expect(firstAllowedSection(accountant)?.href).toBe('/settings/terms');
+    expect(firstAllowedInGroup('finance', accountant)?.href).toBe('/settings/tax');
+  });
+
+  it('opens Currencies alone for an exchange-rate grant without the finance-settings grant', () => {
+    expect(labels(live('settings.fx_rate.write'))).toEqual(['Currencies and exchange rates']);
+  });
+
+  it('still opens all four for admin.settings.write, and none for a role granted neither', () => {
+    for (const id of ['currencies', 'tax', 'numbering', 'terms'] as const) {
+      expect(canOpenSection(settingsSection(id), founderOnly), id).toBe(true);
+      expect(canOpenSection(settingsSection(id), live('quotation.read')), id).toBe(false);
+    }
   });
 });
 

@@ -10,21 +10,25 @@
 // - "a saved reach is the reach enforced" (U20a phase 2): an order is the caller's own when they confirmed it
 //   (`created_by`, the column record-reach.ts registers) or own the quotation it was confirmed from, so a
 //   salesperson keeps seeing the orders of their deals (ACCESS-SETTINGS-UX-SPEC 3.2: "Records they created or
-//   own"). Orders carry no department, so `department` reaches what `own` does. The list, the summary, the detail
-//   and mark billable read the same rule (`readWhere` in SQL, `canOnOrder` on a row), so they always agree.
+//   own"). record-reach.ts registers both (`owner` and `ownerVia`, U20a2-Q1), so every `scopeWhereFor` on orders
+//   reads the rule. Orders carry no department, so `department` reaches what `own` does. The list, the summary,
+//   the detail and mark billable read the same rule (`readWhere` in SQL, `canOnOrder` on a row).
 //
 // Confirm, in one transaction (plan section 2, money command shape): withTx -> withIdempotency -> lock the
-// quotation, then its version (the order QuotationOutcomeService.lockSent uses) -> checks -> insert the order as a
-// draft with lines, tax summary, evidence and schedule -> NumberingService.issue (last row lock) -> draft to
-// confirmed. Mark billable: withTx -> withIdempotency -> sales order, then schedule line locks
+// quotation, then its version (the order QuotationOutcomeService.lockSent uses) -> checks (evidence confirmed and
+// meeting the policy, F1-Q28) -> the draft the acceptance made (F1-Q25), or a new draft with lines, tax summary and
+// schedule (draft-order.ts) -> evidence, the advance line billable -> NumberingService.issue (last row lock) ->
+// draft to confirmed. Mark billable: withTx -> withIdempotency -> sales order, then schedule line locks
 // (LedgerService.lockForMoneyCommand) -> conditional updates.
 import {
   trimPercent,
   type ConfirmSalesOrderBody,
   type EvidenceKind,
+  type EvidencePolicy,
   type MarkBillableBody,
   type Permission,
   type SalesOrderDetail,
+  type SalesOrderDraftState,
   type SalesOrderListItem,
   SALES_ORDER_STATUSES,
   type SalesOrderStatus,
@@ -37,16 +41,11 @@ import {
   invoices,
   openItems,
   opportunities,
-  paymentTerms,
-  quotationAcceptances,
-  quotationLines,
   quotations,
-  quotationTaxSummary,
   quotationVersions,
   salesOrderEvidence,
   salesOrderLines,
   salesOrders,
-  salesOrderTaxSummary,
   scoped,
 } from '@bos/db';
 import { Dec } from '@bos/money-rules';
@@ -59,7 +58,7 @@ import {
   Optional,
   UnprocessableEntityException,
 } from '@nestjs/common';
-import { and, asc, count, desc, eq, exists, inArray, isNull, ne, or, type SQL } from 'drizzle-orm';
+import { and, asc, count, desc, eq, inArray, isNull, sql, type SQL } from 'drizzle-orm';
 
 import { AuditService } from '../../platform/audit/audit.service';
 import { scopeWhereFor } from '../../platform/authz/authz.service';
@@ -73,8 +72,9 @@ import { NumberingService } from '../../platform/settings/numbering.service';
 import { SettingsService } from '../../platform/settings/settings.service';
 import { LedgerService } from '../ledger/ledger.service';
 import { creditPosition } from '../opportunities/credit-hold';
-import { evidenceSatisfies, missingEvidence } from '../quotations/outcome/evidence-policy';
-import { planSchedule, ScheduleRuleError, scheduleTemplateOf } from './rules';
+import { missingEvidence } from '../quotations/outcome/evidence-policy';
+import { readEvidenceState } from '../quotations/outcome/evidence-state';
+import { insertDraftOrder, liveOrderOf, planDraftOrder } from './draft-order';
 import { SalesOrdersCaller } from './sales-orders.caller';
 
 /** Injection token for a test clock; production falls back to the system time. */
@@ -271,7 +271,7 @@ export class SalesOrdersService {
     principal: Principal,
     filter: SalesOrderListFilter,
   ): SQL {
-    const conditions = [this.readWhere(tx, scope, principal)];
+    const conditions = [this.readWhere(principal)];
     if (filter.status !== undefined && filter.status.length > 0) {
       conditions.push(inArray(salesOrders.status, filter.status));
     }
@@ -289,39 +289,16 @@ export class SalesOrdersService {
     const { scope, actor, principal } = this.caller.current();
     this.assertStaff(principal);
     return withTx(this.db, scope, actor, (tx) =>
-      this.loadDetail(tx, scope, id, this.readWhere(tx, scope, principal)),
+      this.loadDetail(tx, scope, id, this.readWhere(principal)),
     );
   }
 
   /**
-   * The orders the caller may read. `scopeWhereFor` gives the registered reach (the entity for `all`, the orders
-   * the caller confirmed for `own` and `department`); `own` and `department` also reach the orders of the
-   * quotations the caller owns now, resolved inside the same tenant and entity.
+   * The orders the caller may read: the registered reach (record-reach.ts), which for `own` and `department` is
+   * the orders the caller confirmed or whose quotation they own now, and the entity for `all`.
    */
-  private readWhere(tx: DbTransaction, scope: TxScope, principal: Principal): SQL {
-    const registered = scopeWhereFor(principal, salesOrders, 'sales_order.read');
-    const decision = can(principal, 'sales_order.read');
-    if (!decision.allowed || (decision.scope !== 'own' && decision.scope !== 'department')) {
-      return registered;
-    }
-    const ofMyQuotation = scoped(scope).where(
-      salesOrders,
-      exists(
-        tx
-          .select({ id: quotations.id })
-          .from(quotations)
-          .where(
-            scoped(scope).where(
-              quotations,
-              and(
-                eq(quotations.id, salesOrders.quotationId),
-                eq(quotations.ownerUserId, principal.userId),
-              ),
-            ),
-          ),
-      ),
-    );
-    return or(registered, ofMyQuotation) ?? registered;
+  private readWhere(principal: Principal): SQL {
+    return scopeWhereFor(principal, salesOrders, 'sales_order.read');
   }
 
   /** The current owner of the order's quotation, in the acting entity; null when it has none. */
@@ -342,8 +319,8 @@ export class SalesOrdersService {
 
   /**
    * `POST /v1/sales-orders`: confirms the accepted quotation version as a sales order. 404 for a version outside
-   * the entity; 409 `quotation_not_accepted`; 422 `evidence_policy_unmet` when the accepted evidence does not meet
-   * the entity's policy now, `invalid_evidence_document` for a document of another entity or one removed, and
+   * the entity; 409 `quotation_not_accepted`; 422 `evidence_not_confirmed` while a portal acceptance's evidence
+   * waits for staff, `evidence_policy_unmet` when the accepted evidence does not meet the entity's policy now, `invalid_evidence_document` for a document of another entity or one removed, and
    * `invalid_payment_schedule` for a schedule that cannot be split. A second confirm of the same quotation
    * returns the existing order.
    */
@@ -392,17 +369,10 @@ export class SalesOrdersService {
       .for('update');
     if (version === undefined) throw notFound();
 
-    // The quotation lock serialises two confirms: the second one finds the first one's order here.
-    const [live] = await tx
-      .select({ id: salesOrders.id })
-      .from(salesOrders)
-      .where(
-        scoped(scope).where(
-          salesOrders,
-          and(eq(salesOrders.quotationId, quotation.id), ne(salesOrders.status, 'cancelled')),
-        ),
-      );
-    if (live !== undefined) return this.loadDetail(tx, scope, live.id);
+    // The quotation lock serialises two confirms: the second one finds the first one's order here. A draft (made
+    // when the quotation was accepted, F1-Q25) is confirmed below, through every check a new order passes.
+    const live = await liveOrderOf(tx, scope, quotation.id);
+    if (live !== undefined && live.status !== 'draft') return this.loadDetail(tx, scope, live.id);
 
     if (version.status !== 'accepted') {
       throw conflict(
@@ -432,131 +402,42 @@ export class SalesOrdersService {
       }
     }
 
-    const [acceptance] = await tx
-      .select()
-      .from(quotationAcceptances)
-      .where(
-        scoped(scope).where(
-          quotationAcceptances,
-          and(
-            eq(quotationAcceptances.versionId, version.id),
-            eq(quotationAcceptances.outcome, 'accepted'),
-          ),
-        ),
-      );
-    const acceptedKinds: EvidenceKind[] = acceptance?.evidenceKinds ?? [];
-    const policy = await this.settings.get(scope, 'sales.evidence_policy');
-    if (!evidenceSatisfies(policy, acceptedKinds)) {
-      const missing = missingEvidence(policy, acceptedKinds);
-      throw unprocessable(
-        'evidence_policy_unmet',
-        `This entity's evidence policy (${policy}) also needs: ${missing.join(', ')}`,
-        { policy, missing },
+    if (live !== undefined && live.quotationVersionId !== version.id) {
+      throw conflict(
+        'draft_of_other_revision',
+        'This quotation already has a draft sales order of another revision',
       );
     }
+
+    const {
+      policy,
+      kinds: acceptedKinds,
+      documentIds: acceptedDocuments,
+    } = await this.assertEvidenceReady(tx, scope, version.id);
     const documentIds = await this.evidenceDocuments(
       tx,
       scope,
       body.evidenceDocumentIds,
-      acceptance?.evidenceDocumentIds ?? [],
+      acceptedDocuments,
     );
-
-    // Totals, lines and tax are the accepted version's, copied as they are.
-    const [lines, taxRows] = await Promise.all([
-      tx
-        .select()
-        .from(quotationLines)
-        .where(scoped(scope).where(quotationLines, eq(quotationLines.versionId, version.id)))
-        .orderBy(asc(quotationLines.lineNo)),
-      tx
-        .select()
-        .from(quotationTaxSummary)
-        .where(
-          scoped(scope).where(quotationTaxSummary, eq(quotationTaxSummary.versionId, version.id)),
-        ),
-    ]);
-    const isNpr = version.currency === 'NPR';
-    const fxRate = version.fxRate ?? (isNpr ? '1' : null);
-    const amountNpr = version.amountNpr ?? (isNpr ? version.total : null);
-    if (fxRate === null || amountNpr === null) {
-      throw new Error(`accepted quotation version ${version.id} has no NPR snapshot`);
-    }
-    const defaultSchedule = await this.settings.get(scope, 'sales.default_schedule');
-    let schedule;
-    try {
-      schedule = planSchedule(
-        scheduleTemplateOf(version.paymentSchedule, defaultSchedule),
-        version.total,
-        amountNpr,
-      );
-    } catch (error) {
-      if (error instanceof ScheduleRuleError) {
-        throw unprocessable('invalid_payment_schedule', error.message);
-      }
-      throw error;
-    }
-    const creditDays = await this.creditDaysOf(tx, version.paymentTermId);
 
     const now = this.clock();
     const userId = userIdOf(actor);
-    const [created] = await tx
-      .insert(salesOrders)
-      .values({
-        tenantId: scope.tenantId,
-        organizationId: scope.organizationId,
-        customerPartyId,
-        quotationId: quotation.id,
-        quotationVersionId: version.id,
-        status: 'draft',
-        currency: version.currency as OrderRow['currency'],
-        subtotal: version.subtotal,
-        discountAmount: version.discountAmount,
-        taxableAmount: version.taxableAmount,
-        taxAmount: version.taxAmount,
-        total: version.total,
-        fxRate,
-        fxSource: version.fxSource,
-        fxDate: version.fxDate,
-        amountNpr,
-        calcVersion: version.calcVersion,
-        creditDays,
-        createdBy: userId,
-      })
-      .returning({ id: salesOrders.id });
-    const orderId = created!.id;
+    let orderId: string;
+    if (live !== undefined) {
+      orderId = live.id;
+    } else {
+      const planned = await planDraftOrder(tx, scope, this.settings, quotation, version);
+      if (!planned.ok) {
+        // Data the accepted version should always carry (no customer, no NPR snapshot) is a server error.
+        if (planned.refusal.code !== 'invalid_payment_schedule') {
+          throw new Error(`quotation version ${version.id}: ${planned.refusal.message}`);
+        }
+        throw unprocessable(planned.refusal.code, planned.refusal.message);
+      }
+      orderId = await insertDraftOrder(tx, scope, quotation, version, planned.plan, userId);
+    }
 
-    if (lines.length > 0) {
-      await tx.insert(salesOrderLines).values(
-        lines.map((l) => ({
-          tenantId: scope.tenantId,
-          organizationId: scope.organizationId,
-          salesOrderId: orderId,
-          lineNo: l.lineNo,
-          description: l.description,
-          uom: l.uom,
-          quantity: l.quantity,
-          unitPrice: l.unitPrice,
-          taxCodeId: l.taxCodeId,
-          gross: l.gross,
-          discountAlloc: l.discountAlloc,
-          taxable: l.taxable,
-        })),
-      );
-    }
-    if (taxRows.length > 0) {
-      await tx.insert(salesOrderTaxSummary).values(
-        taxRows.map((t) => ({
-          tenantId: scope.tenantId,
-          organizationId: scope.organizationId,
-          salesOrderId: orderId,
-          taxCodeId: t.taxCodeId,
-          label: t.label,
-          rate: t.rate,
-          base: t.base,
-          tax: t.tax,
-        })),
-      );
-    }
     if (documentIds.length > 0) {
       // The accepted evidence says which kinds exist, not which file is which: every file is filed under the first
       // kind the policy asks for that the acceptance carries (else the first kind it carries).
@@ -572,22 +453,20 @@ export class SalesOrdersService {
         })),
       );
     }
-    await tx.insert(billingScheduleLines).values(
-      schedule.map((l) => ({
-        tenantId: scope.tenantId,
-        organizationId: scope.organizationId,
-        salesOrderId: orderId,
-        seq: l.seq,
-        label: l.label,
-        trigger: l.trigger,
-        percent: l.percent,
-        amount: l.amount,
-        amountNpr: l.amountNpr,
-        status: l.status,
-        // An advance line is billable from the moment the order is confirmed.
-        ...(l.status === 'billable' ? { billableMarkedBy: userId, billableMarkedAt: now } : {}),
-      })),
-    );
+    // An advance line is billable from the moment the order is confirmed (never on a draft).
+    await tx
+      .update(billingScheduleLines)
+      .set({ status: 'billable', billableMarkedBy: userId, billableMarkedAt: now, updatedAt: now })
+      .where(
+        scoped(scope).where(
+          billingScheduleLines,
+          and(
+            eq(billingScheduleLines.salesOrderId, orderId),
+            eq(billingScheduleLines.trigger, 'advance'),
+            eq(billingScheduleLines.status, 'planned'),
+          ),
+        ),
+      );
 
     // The number is the last lock of the transaction (plan section 2): nothing is locked after this.
     const issued = await this.numbering.issue(tx, SO_SERIES, now);
@@ -600,6 +479,8 @@ export class SalesOrdersService {
         fiscalYear: issued.fiscalYear,
         confirmedAt: now,
         confirmedBy: userId,
+        // A drafted order was made by the acceptance; whoever confirms it is its creator for `own` reach.
+        createdBy: sql`coalesce(${salesOrders.createdBy}, ${userId}::uuid)`,
         updatedAt: now,
       })
       .where(
@@ -611,11 +492,18 @@ export class SalesOrdersService {
       .returning({ id: salesOrders.id });
     if (confirmed.length === 0) throw new Error(`sales order ${orderId} left draft during confirm`);
 
+    const schedule = await tx
+      .select()
+      .from(billingScheduleLines)
+      .where(
+        scoped(scope).where(billingScheduleLines, eq(billingScheduleLines.salesOrderId, orderId)),
+      )
+      .orderBy(asc(billingScheduleLines.seq));
     await this.audit.record(tx, {
       action: 'sales_order.confirmed',
       entityType: AUDIT_ENTITY,
       entityId: orderId,
-      before: null,
+      before: live === undefined ? null : { status: 'draft' },
       after: {
         number: issued.number,
         quotationId: quotation.id,
@@ -627,6 +515,62 @@ export class SalesOrdersService {
       },
     });
     return this.loadDetail(tx, scope, orderId);
+  }
+
+  /**
+   * The evidence gate of confirm (F1-Q28): a portal acceptance's evidence must be confirmed by staff (422
+   * `evidence_not_confirmed`), and what the version stands on must meet the policy now (422 `evidence_policy_unmet`).
+   */
+  private async assertEvidenceReady(
+    tx: DbTransaction,
+    scope: TxScope,
+    versionId: string,
+  ): Promise<{ policy: EvidencePolicy; kinds: EvidenceKind[]; documentIds: string[] }> {
+    const readiness = await this.draftReadiness(tx, scope, versionId);
+    if (readiness.blocker === 'evidence_not_confirmed') {
+      throw unprocessable(
+        'evidence_not_confirmed',
+        'The customer accepted in the portal; confirm the evidence on the quotation first',
+      );
+    }
+    if (readiness.blocker === 'evidence_policy_unmet') {
+      throw unprocessable(
+        'evidence_policy_unmet',
+        `This entity's evidence policy (${readiness.policy}) also needs: ${readiness.missing.join(', ')}`,
+        { policy: readiness.policy, missing: readiness.missing },
+      );
+    }
+    return {
+      policy: readiness.policy,
+      kinds: readiness.evidenceKinds,
+      documentIds: readiness.evidenceDocumentIds,
+    };
+  }
+
+  /** What stands between an accepted version and its order: the confirm gate and a draft's detail read this. */
+  private async draftReadiness(
+    tx: DbTransaction,
+    scope: TxScope,
+    versionId: string,
+  ): Promise<SalesOrderDraftState> {
+    const evidence = await readEvidenceState(tx, scope, versionId);
+    const kinds: EvidenceKind[] = evidence?.kinds ?? [];
+    const policy = await this.settings.get(scope, 'sales.evidence_policy');
+    const missing = missingEvidence(policy, kinds);
+    const evidenceStatus = evidence?.status ?? 'pending';
+    return {
+      evidenceStatus,
+      policy,
+      missing,
+      evidenceKinds: kinds,
+      evidenceDocumentIds: evidence?.documentIds ?? [],
+      blocker:
+        evidenceStatus === 'pending' && evidence !== undefined
+          ? 'evidence_not_confirmed'
+          : missing.length > 0
+            ? 'evidence_policy_unmet'
+            : null,
+    };
   }
 
   // ----------------------------------------------------------------------------------- mark billable
@@ -845,15 +789,6 @@ export class SalesOrdersService {
     }
   }
 
-  private async creditDaysOf(tx: DbTransaction, paymentTermId: string | null): Promise<number> {
-    if (paymentTermId === null) return 0;
-    const [term] = await tx
-      .select({ netDays: paymentTerms.netDays })
-      .from(paymentTerms)
-      .where(eq(paymentTerms.id, paymentTermId));
-    return term?.netDays ?? 0;
-  }
-
   /** The order, its lines, schedule and evidence, as the workspace parses them. 404 outside the entity. */
   private async loadDetail(
     tx: DbTransaction,
@@ -886,6 +821,10 @@ export class SalesOrdersService {
     const { principal } = this.caller.current();
     const held = await this.heldInvoices(tx, scope, principal, schedule);
     const staff = principal.orgKind === 'staff';
+    const draft =
+      order.status === 'draft'
+        ? await this.draftReadiness(tx, scope, order.quotationVersionId)
+        : null;
     const owners = {
       ...order,
       quotationOwnerUserId: await this.quotationOwnerOf(tx, scope, order.quotationId),
@@ -950,7 +889,14 @@ export class SalesOrdersService {
       })),
       evidence: evidence.map((e) => ({ documentId: e.documentId, kind: e.evidenceKind })),
       deliveryReleased: await this.deliveryReleased(tx, scope, schedule),
+      draft,
       can: {
+        confirm:
+          staff &&
+          draft !== null &&
+          draft.blocker === null &&
+          can(principal, 'sales_order.confirm', { ...scope, ownerUserId: principal.userId })
+            .allowed,
         // The same record checks the commands make: mark billable on this order, and a draft invoice that the
         // caller would own as its drafter.
         markBillable: staff && canOnOrder(principal, 'sales_order.mark_billable', owners).allowed,

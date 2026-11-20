@@ -738,12 +738,20 @@ describe('0013 data move on a database that already has rows (K1-U1b)', () => {
         WHERE tenant_id = $1 AND role_key <> 'marketing' ORDER BY role_key, permission`,
       [tenantId],
     );
-    // The credit.override rows are 0104's (Founder, Management and Finance in every tenant with rows).
+    // 0120 and 0121 add the settings and reopen rows to a tenant that stores grants; the credit.override rows are
+    // 0104's (Founder, Management and Finance in every tenant with rows).
     expect(rp.rows).toEqual([
+      { role_key: 'accountant', permission: 'settings.finance.write', scope: 'all' },
       { role_key: 'finance', permission: 'credit.override', scope: 'all' },
       { role_key: 'finance', permission: 'memo.read', scope: 'all' },
       { role_key: 'finance', permission: 'profile.avatar.write', scope: 'own' },
+      { role_key: 'finance', permission: 'settings.finance.write', scope: 'all' },
+      { role_key: 'finance', permission: 'settings.fx_rate.write', scope: 'all' },
       { role_key: 'founder', permission: 'credit.override', scope: 'all' },
+      { role_key: 'founder', permission: 'crm.lead.reopen', scope: 'all' },
+      { role_key: 'founder', permission: 'crm.opportunity.reopen', scope: 'all' },
+      { role_key: 'founder', permission: 'settings.finance.write', scope: 'all' },
+      { role_key: 'founder', permission: 'settings.fx_rate.write', scope: 'all' },
       { role_key: 'management', permission: 'credit.override', scope: 'all' },
       { role_key: 'portal', permission: 'memo.read', scope: 'customer_org' },
     ]);
@@ -752,8 +760,8 @@ describe('0013 data move on a database that already has rows (K1-U1b)', () => {
     ]);
     // 5 after the 0013 dedupe, plus one when 0053 grants profile.avatar.write to the finance role in the seeded
     // tenant, plus one when 0083 gives the tenant its Marketing rows, plus one when 0088 widens the access model,
-    // plus one when 0104 adds credit.override.
-    expect(av.rows).toEqual([{ version: '9' }]);
+    // plus one each when 0120 and 0121 seed the settings and reopen rows, plus one when 0104 adds credit.override.
+    expect(av.rows).toEqual([{ version: '11' }]);
     const ur = await pool.query(
       'SELECT user_id, role_key FROM app.user_roles WHERE tenant_id = $1 ORDER BY role_key',
       [tenantId],

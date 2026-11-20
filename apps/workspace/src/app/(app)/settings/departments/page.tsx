@@ -13,7 +13,6 @@ import {
 } from '@/components/departments/department-actions';
 import { DepartmentFilters } from '@/components/departments/department-filters';
 import styles from '@/components/departments/departments.module.css';
-import { permissionChecker } from '@/components/p2/customers/permissions';
 import { Alert } from '@/components/ui/alert';
 import { Avatar } from '@/components/ui/avatar';
 import { Badge } from '@/components/ui/badge';
@@ -22,6 +21,7 @@ import { EmptyState } from '@/components/ui/empty-state';
 import { Page, PageHeader } from '@/components/ui/page';
 import { listActiveStaff, listDepartments } from '@/lib/api-departments';
 import { hrefWith, readList, type RawParams } from '@/lib/list-params';
+import { getPermissionCheck } from '@/lib/live-permissions';
 
 import admin from '../admin.module.css';
 import { BackToSettings } from '../_components/back-link';
@@ -63,7 +63,8 @@ export default async function DepartmentsPage({
   const here = hrefWith(PATH, params, {});
 
   const session = await requireSection('departments', here);
-  const canWrite = permissionChecker(session.roles)('admin.roles.write');
+  // The live saved grants (Settings > Access), not the role defaults: granting it opens the actions at once.
+  const canWrite = (await getPermissionCheck(session))('admin.roles.write');
   const [list, staff, active] = await Promise.all([
     section('view departments', () => listDepartments(session, { q, status: statuses })),
     canWrite ? section('list people', () => listActiveStaff(session)) : null,

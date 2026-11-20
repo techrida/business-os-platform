@@ -13,7 +13,12 @@ import {
 import { describe, expect, it } from 'vitest';
 
 import type { Principal } from '../../platform/authz/can';
-import { allowedOpportunityMoves, planStageChange, type StageCaller } from './opportunity-stage';
+import {
+  allowedOpportunityMoves,
+  mayReopenOpportunity,
+  planStageChange,
+  type StageCaller,
+} from './opportunity-stage';
 
 const plan = (
   from: OpportunityStage,
@@ -201,5 +206,76 @@ describe('allowedOpportunityMoves', () => {
     expect(allowedOpportunityMoves(principalOf('sales'), oppRow('qualified', COLLEAGUE))).toEqual(
       [],
     );
+  });
+});
+
+// Reopening a lost opportunity needs both the code rule (Founder, manager or head) and the live
+// crm.opportunity.reopen grant reaching its department. Write is held at `all` so only the reopen grant decides.
+describe('mayReopenOpportunity: the crm.opportunity.reopen grant on the deal department', () => {
+  const SALES_DEPT = '00000000-0000-4000-8000-0000000000a1';
+  const OTHER_DEPT = '00000000-0000-4000-8000-0000000000b2';
+
+  const withReopen = (
+    reopen: Scope | undefined,
+    over: Partial<Principal> & { level?: AccessLevel } = {},
+  ): Principal => {
+    const grants = new Map<Permission, Scope>([['crm.opportunity.write', 'all']]);
+    if (reopen !== undefined) grants.set('crm.opportunity.reopen', reopen);
+    return principalOf('sales', { level: 'manager', departmentId: SALES_DEPT, grants, ...over });
+  };
+  const lostIn = (departmentId: string | null, ownerUserId: string | null = COLLEAGUE) => ({
+    tenantId: TENANT,
+    organizationId: ENTITY,
+    ownerUserId,
+    departmentId,
+    stage: 'lost' as const,
+  });
+
+  it('lets a department manager reopen a colleague deal in the same department', () => {
+    const manager = withReopen('department');
+    expect(mayReopenOpportunity(manager, lostIn(SALES_DEPT))).toBe(true);
+    expect(allowedOpportunityMoves(manager, lostIn(SALES_DEPT))).toEqual(['qualified']);
+    expect(
+      mayReopenOpportunity(withReopen('department', { level: 'head' }), lostIn(SALES_DEPT)),
+    ).toBe(true);
+  });
+
+  it('refuses a department manager on another department deal, though write reaches it', () => {
+    const manager = withReopen('department');
+    expect(mayReopenOpportunity(manager, lostIn(OTHER_DEPT))).toBe(false);
+    expect(allowedOpportunityMoves(manager, lostIn(OTHER_DEPT))).toEqual([]);
+    expect(
+      allowedOpportunityMoves(manager, { ...lostIn(OTHER_DEPT), stage: 'negotiation' }),
+    ).toEqual(['lost', 'on_hold']);
+  });
+
+  it('refuses staff even with the reopen grant at all', () => {
+    const staff = withReopen('all', { level: 'staff' });
+    expect(mayReopenOpportunity(staff, lostIn(SALES_DEPT))).toBe(false);
+    expect(allowedOpportunityMoves(staff, lostIn(SALES_DEPT))).toEqual([]);
+  });
+
+  it('reaches every department of the entity when the Founder widens the grant to all', () => {
+    const manager = withReopen('all');
+    expect(mayReopenOpportunity(manager, lostIn(OTHER_DEPT))).toBe(true);
+    expect(allowedOpportunityMoves(manager, lostIn(OTHER_DEPT))).toEqual(['qualified']);
+    expect(mayReopenOpportunity(manager, lostIn(null, null))).toBe(true);
+    expect(mayReopenOpportunity(withReopen('department'), lostIn(null, null))).toBe(false);
+    expect(mayReopenOpportunity(manager, { ...lostIn(OTHER_DEPT), tenantId: COLLEAGUE })).toBe(
+      false,
+    );
+  });
+
+  it('refuses everyone, the Founder included, when the grant is removed', () => {
+    expect(mayReopenOpportunity(withReopen(undefined), lostIn(SALES_DEPT, ME))).toBe(false);
+    expect(allowedOpportunityMoves(withReopen(undefined), lostIn(SALES_DEPT, ME))).toEqual([]);
+    const founder = withReopen(undefined, { roles: ['founder'], level: 'staff' });
+    expect(mayReopenOpportunity(founder, lostIn(SALES_DEPT, ME))).toBe(false);
+  });
+
+  it('honours a narrowed Founder grant like any other role', () => {
+    const founder = withReopen('department', { roles: ['founder'], level: 'staff' });
+    expect(mayReopenOpportunity(founder, lostIn(SALES_DEPT))).toBe(true);
+    expect(mayReopenOpportunity(founder, lostIn(OTHER_DEPT))).toBe(false);
   });
 });
