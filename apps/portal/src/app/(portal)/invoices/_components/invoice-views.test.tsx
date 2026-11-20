@@ -280,6 +280,36 @@ describe('InvoiceView as the printed invoice', () => {
     expect(bare).not.toContain('signatory');
   });
 
+  it('prints the contact the original PDF froze, not the profile as it is now', () => {
+    const html = renderToStaticMarkup(
+      <InvoiceView
+        view={sampleInvoice({
+          format: sampleFormat({
+            sellerContact: {
+              phones: ['+977 1 4440000'],
+              email: 'frozen@techrida.example',
+              signatoryName: 'Sita Sharma',
+              signatoryTitle: 'Director',
+            },
+          }),
+        })}
+        settlement={sampleSettlement()}
+      />,
+    );
+    expect(html).toContain('Sita Sharma');
+    expect(html).toContain('mailto:frozen@techrida.example');
+    expect(html).not.toContain('Amanda Vance');
+    expect(html).not.toContain('5551234');
+    const none = renderToStaticMarkup(
+      <InvoiceView
+        view={sampleInvoice({ format: sampleFormat({ sellerContact: null }) })}
+        settlement={sampleSettlement()}
+      />,
+    );
+    expect(none).not.toContain('Amanda Vance');
+    expect(none).not.toContain('mailto:');
+  });
+
   it('gives the due date its Bikram Sambat date, and the Gregorian date alone out of range', () => {
     const html = renderToStaticMarkup(
       <InvoiceView view={sampleInvoice()} settlement={sampleSettlement()} />,

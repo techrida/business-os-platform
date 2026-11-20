@@ -21,7 +21,7 @@ import type { Session } from '@/lib/session';
 
 import { InvoiceKindBadge, InvoiceStatusBadge } from '../_components/badges';
 import { LineBreakdown, NprSnapshot } from '../_components/detail-parts';
-import { documentFormat } from '../_components/document/format';
+import { documentContact, documentFormat } from '../_components/document/format';
 import { InvoiceDocument } from '../_components/document/invoice-document';
 import { InvoiceActions } from '../_components/invoice-actions';
 import { InvoicePreview } from '../_components/invoice-preview';
@@ -252,7 +252,7 @@ export default async function InvoiceDetailPage({ params }: { params: Promise<{ 
             detail={detail}
             customerName={customerName}
             format={format}
-            sellerContact={display.sellerContact}
+            sellerContact={documentContact(detail.format, display.sellerContact)}
           />
         </div>
         <div className={styles.side}>
