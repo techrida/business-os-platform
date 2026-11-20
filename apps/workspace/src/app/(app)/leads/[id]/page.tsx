@@ -15,7 +15,7 @@ import { loadPeople } from '@/components/p2/crm/people';
 import { PutOnHoldDialog } from '@/components/p2/crm/put-on-hold-dialog';
 import { ActivityList, LoadProblem, StageBadge } from '@/components/p2/crm/server-bits';
 import { StageConfirmDialog } from '@/components/p2/crm/stage-confirm-dialog';
-import { resolvedMoves, resumeMove, stageLabel } from '@/components/p2/crm/stages';
+import { resolvedMoves, resumeMove, stageLabel, stagesBefore } from '@/components/p2/crm/stages';
 import { Alert } from '@/components/ui/alert';
 import { LinkButton } from '@/components/ui/button';
 import { Card } from '@/components/ui/card';
@@ -138,13 +138,32 @@ function latestStageChange(
   return latest;
 }
 
-function leadTimeline(lead: LeadDto, activity: readonly ActivityDto[]): TimelineStep[] {
-  const current = milestones.findIndex((stage) => stage === lead.stage);
-  const steps = milestones.map((stage, index): TimelineStep => {
-    const change = latestStageChange(activity, stage);
+/**
+ * The stages this lead has actually reached (D48, F1-Q53): New (it was created there), the stage it
+ * stands at or was held at, every stage it recorded a move into, and the stages the state machine
+ * says it passed through on the way (`stagesBefore`). Nothing is marked by position alone.
+ */
+function reachedLeadStages(lead: LeadDto, history: readonly ActivityDto[] | null): Set<string> {
+  const reached = new Set<string>(['new']);
+  const add = (stage: string) => {
+    reached.add(stage);
+    for (const before of stagesBefore('lead', stage)) reached.add(before);
+  };
+  add(lead.stage);
+  if (lead.stage === 'on_hold' && lead.heldFromStage) add(lead.heldFromStage);
+  for (const stage of milestones) {
+    if (history && latestStageChange(history, stage)) add(stage);
+  }
+  return reached;
+}
+
+function leadTimeline(lead: LeadDto, history: readonly ActivityDto[] | null): TimelineStep[] {
+  const reached = reachedLeadStages(lead, history);
+  const steps = milestones.map((stage): TimelineStep => {
+    const change = history ? latestStageChange(history, stage) : undefined;
     const date = stage === 'new' ? lead.createdAt : change?.occurredAt;
     const isCurrent = stage === lead.stage;
-    const done = index < current || date !== undefined;
+    const done = reached.has(stage);
     return {
       key: stage,
       title: stageLabel('lead', stage),
@@ -154,7 +173,7 @@ function leadTimeline(lead: LeadDto, activity: readonly ActivityDto[]): Timeline
   });
 
   if (lead.stage === 'on_hold' || lead.stage === 'lost') {
-    const change = latestStageChange(activity, lead.stage);
+    const change = history ? latestStageChange(history, lead.stage) : undefined;
     steps.push({
       key: lead.stage,
       title: stageLabel('lead', lead.stage),
@@ -200,12 +219,15 @@ export default async function LeadPage({ params }: { params: Promise<{ id: strin
   const session = await requireStaffSession(`/leads/${id}`);
   const numberSystems = await getNumberSystems();
 
-  const [leadResult, plannedResult, loggedResult, peopleResult] = await Promise.allSettled([
-    getLead(session, id),
-    listActivities(session, { leadId: id, status: 'planned', limit: 100 }),
-    listActivities(session, { leadId: id, status: 'logged', limit: 100 }),
-    loadPeople(session),
-  ]);
+  const [leadResult, plannedResult, loggedResult, historyResult, peopleResult] =
+    await Promise.allSettled([
+      getLead(session, id),
+      listActivities(session, { leadId: id, status: 'planned', limit: 100 }),
+      listActivities(session, { leadId: id, status: 'logged', limit: 100 }),
+      // The stage history on its own, so a busy lead's 100 newest activities cannot crowd it out.
+      listActivities(session, { leadId: id, kind: 'stage_change', limit: 100 }),
+      loadPeople(session),
+    ]);
 
   if (leadResult.status === 'rejected') {
     const f = failureOf(leadResult.reason);
@@ -373,7 +395,13 @@ export default async function LeadPage({ params }: { params: Promise<{ id: strin
       />
 
       <Card className={styles.timelineCard}>
-        <StatusTimeline label="Lead progression" steps={leadTimeline(lead, logged ?? [])} />
+        <StatusTimeline
+          label="Lead progression"
+          steps={leadTimeline(
+            lead,
+            historyResult.status === 'fulfilled' ? historyResult.value : null,
+          )}
+        />
         {hasReasonDetail ? (
           <div className={styles.timelineReason}>
             <Alert

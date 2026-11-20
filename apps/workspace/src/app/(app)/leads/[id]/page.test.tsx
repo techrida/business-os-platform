@@ -158,13 +158,15 @@ beforeEach(() => {
   mocks.getLead.mockReset().mockResolvedValue(lead());
   mocks.listActivities
     .mockReset()
-    .mockImplementation((_session: unknown, opts: { status?: string }) =>
+    .mockImplementation((_session: unknown, opts: { status?: string; kind?: string }) =>
       Promise.resolve(
         opts.status === 'planned'
           ? [PLANNED]
           : opts.status === 'logged'
             ? [LOGGED, STAGE_CHANGE]
-            : [],
+            : opts.kind === 'stage_change'
+              ? [STAGE_CHANGE]
+              : [],
       ),
     );
   mocks.listLeadOwners.mockReset().mockResolvedValue(OWNERS);
@@ -341,8 +343,13 @@ describe('lead detail page composition (U14 D39, D41, D48)', () => {
         stageNote: 'Re-engage after fiscal close.',
       }),
     );
-    mocks.listActivities.mockImplementation((_s: unknown, opts: { status?: string }) =>
-      Promise.resolve(opts.status === 'logged' ? [holdChange, STAGE_CHANGE, LOGGED] : []),
+    mocks.listActivities.mockImplementation(
+      (_s: unknown, opts: { status?: string; kind?: string }) =>
+        Promise.resolve(
+          opts.status === 'logged' || opts.kind === 'stage_change'
+            ? [holdChange, STAGE_CHANGE, LOGGED]
+            : [],
+        ),
     );
 
     const doc = await render();
@@ -397,8 +404,9 @@ describe('lead detail page composition (U14 D39, D41, D48)', () => {
         convertedOpportunityId: '44444444-4444-4444-8444-444444444444',
       }),
     );
-    mocks.listActivities.mockImplementation((_s: unknown, opts: { status?: string }) =>
-      Promise.resolve(opts.status === 'logged' ? [olderContacted, newerContacted] : []),
+    mocks.listActivities.mockImplementation(
+      (_s: unknown, opts: { status?: string; kind?: string }) =>
+        Promise.resolve(opts.kind === 'stage_change' ? [olderContacted, newerContacted] : []),
     );
     const doc = await render();
     expect(card(doc, 'Lead overview').textContent).not.toContain('Save owner');
@@ -512,11 +520,59 @@ describe('lead detail page composition (U14 D39, D41, D48)', () => {
     ).toBeTruthy();
   });
 
-  it('reads stage-change dates for the progression from the logged list', async () => {
+  it('reads the progression from the stage history, asked for on its own', async () => {
     const doc = await render();
+    expect(mocks.listActivities).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ leadId: LEAD, kind: 'stage_change' }),
+    );
     const timeline = doc.querySelector('[aria-label="Lead progression"]');
     expect(timeline?.textContent).toContain('Contacted');
     expect(timeline?.textContent).not.toMatch(/Contacted\s*Not yet/);
+  });
+
+  /** Each timeline step's title and status, in order. */
+  const steps = (doc: Document) =>
+    [...doc.querySelectorAll('[aria-label="Lead progression"] > li')].map((li) => li.textContent);
+
+  it('marks a lost lead reached only where it went, never by position', async () => {
+    // Lost straight from New: nothing between New and Lost happened.
+    const lostChange = activity('33333333-3333-4333-8333-333333333337', {
+      kind: 'stage_change',
+      subject: 'Stage changed from new to lost',
+      occurredAt: '2026-11-10T05:45:00.000Z',
+    });
+    mocks.getLead.mockResolvedValue(lead({ stage: 'lost', allowedMoves: [] }));
+    mocks.listActivities.mockImplementation((_s: unknown, opts: { kind?: string }) =>
+      Promise.resolve(opts.kind === 'stage_change' ? [lostChange] : []),
+    );
+    const timeline = steps(await render());
+    expect(timeline[1]).toMatch(/Contacted\s*Not yet/);
+    expect(timeline[2]).toMatch(/Qualified\s*Not yet/);
+    expect(timeline.at(-1)).toMatch(/Lost/);
+  });
+
+  it('marks the stage a lead was held at, and what came before it, without a recorded move (F1-Q53)', async () => {
+    mocks.getLead.mockResolvedValue(
+      lead({ stage: 'on_hold', heldFromStage: 'qualified', allowedMoves: ['qualified'] }),
+    );
+    mocks.listActivities.mockResolvedValue([]);
+    const timeline = steps(await render());
+    expect(timeline[1]).toMatch(/Contacted\s*Reached/);
+    expect(timeline[2]).toMatch(/Qualified\s*Reached/);
+    expect(timeline[3]).toMatch(/Converted\s*Not yet/);
+  });
+
+  it('still draws what the lead itself proves when the stage history fails to load', async () => {
+    mocks.getLead.mockResolvedValue(lead({ stage: 'qualified', allowedMoves: ['on_hold'] }));
+    mocks.listActivities.mockImplementation((_s: unknown, opts: { kind?: string }) =>
+      opts.kind === 'stage_change'
+        ? Promise.reject(new ApiError(500, 'Server error'))
+        : Promise.resolve([]),
+    );
+    const timeline = steps(await render());
+    expect(timeline[1]).toMatch(/Contacted\s*Reached/);
+    expect(timeline[2]).toMatch(/Qualified\s*Current/);
   });
 });
 
