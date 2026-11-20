@@ -719,3 +719,79 @@ describe('saved reach on credit notes (U20a phase 2)', () => {
     expect(note.invoice.kind).toBe('credit_note');
   });
 });
+
+describe("debit notes fall due on the customer's payment terms (TR-Q12c)", () => {
+  /**
+   * The customer's account with entity A on a term of `netDays`, written as the dev seed writes it (the seed is the only
+   * producer of party_accounts today); null removes the account.
+   */
+  async function setCustomerTerm(netDays: number | null): Promise<void> {
+    await withTx(db, scopeA, systemActor('note-fixture'), async (tx) => {
+      await tx.execute(
+        sql`DELETE FROM app.party_accounts
+            WHERE tenant_id = ${f.tenantId} AND organization_id = ${f.entityId} AND party_id = ${f.customerPartyId}`,
+      );
+      if (netDays === null) return;
+      await tx.execute(
+        sql`INSERT INTO app.payment_terms (tenant_id, code, name, net_days)
+            VALUES (${f.tenantId}, ${`NET${netDays}`}, ${`Net ${netDays}`}, ${netDays})
+            ON CONFLICT (tenant_id, code) DO NOTHING`,
+      );
+      await tx.execute(
+        sql`INSERT INTO app.party_accounts (tenant_id, organization_id, party_id, default_currency, payment_term_id)
+            SELECT ${f.tenantId}, ${f.entityId}, ${f.customerPartyId}, 'NPR', pt.id
+            FROM app.payment_terms pt WHERE pt.tenant_id = ${f.tenantId} AND pt.code = ${`NET${netDays}`}`,
+      );
+    });
+  }
+
+  /** A debit note on a fresh issued invoice: drafted by U.fin, approved, issued by U.fin2. Returns its row. */
+  async function issuedDebitNote() {
+    const original = await issuedInvoice();
+    as(U.fin, 'finance');
+    const id = (await notes.draftDebitNote(debitBody(original), key())).invoice.id;
+    expect((await invoiceRow(id)).dueDate).toBeNull();
+    await withTx(db, scopeA, systemActor('note-fixture'), (tx) =>
+      tx.execute(
+        sql`UPDATE app.invoices SET status = 'approved', version = version + 1 WHERE id = ${id}`,
+      ),
+    );
+    as(U.fin2, 'finance');
+    await issuing.issue(id, { expectedVersion: (await invoiceRow(id)).version }, key());
+    const row = await invoiceRow(id);
+    expect(row.status).toBe('issued');
+    const [item] = await db.select().from(openItems).where(eq(openItems.sourceId, id));
+    return { row, item: item! };
+  }
+
+  afterAll(async () => {
+    await setCustomerTerm(null);
+  });
+
+  it('a customer on Net 15 gets a debit note due 15 days after issue, on the note and its open item', async () => {
+    await setCustomerTerm(15);
+    const { row, item } = await issuedDebitNote();
+    expect(row.issueDate).toBe('2026-11-09');
+    expect(row.dueDate).toBe('2026-11-24');
+    expect(item.dueDate).toBe('2026-11-24');
+  });
+
+  it('a 0-day term is due on the issue date', async () => {
+    await setCustomerTerm(0);
+    const { row, item } = await issuedDebitNote();
+    expect(row.dueDate).toBe('2026-11-09');
+    expect(item.dueDate).toBe('2026-11-09');
+  });
+
+  it('a customer with no account here keeps the old rule: due on the issue date for a manual original', async () => {
+    await setCustomerTerm(null);
+    const { row } = await issuedDebitNote();
+    expect(row.dueDate).toBe('2026-11-09');
+  });
+
+  it('a tax invoice ignores the customer term (it keeps its own due date rule)', async () => {
+    await setCustomerTerm(15);
+    const id = await issuedInvoice();
+    expect((await invoiceRow(id)).dueDate).toBe('2026-11-09');
+  });
+});
