@@ -224,7 +224,7 @@ export function CustomerForm({
           role="alert"
           title={
             state.duplicates.length === 0
-              ? 'An organization with this name already exists'
+              ? 'An organization with this name or PAN/VAT number already exists'
               : state.duplicates.length === 1
                 ? 'This may be an organization you already have'
                 : 'These may be organizations you already have'
