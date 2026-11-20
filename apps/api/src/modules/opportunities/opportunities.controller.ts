@@ -48,6 +48,16 @@ export class OpportunitiesController {
     return this.owners.ownerFilter();
   }
 
+  /**
+   * 200 with the LeadOwnerOption[] a deal may be handed to (F1-Q51): exactly whom PATCH :id/owner accepts, without
+   * addresses. Needs write, as the change does. Declared before ':id' so "owners" is never read as an id.
+   */
+  @Get('owners')
+  @Can('crm.opportunity.write')
+  ownerOptions(): Promise<LeadOwnerOption[]> {
+    return this.owners.owners();
+  }
+
   /** 200 with the OpportunityDto. 404 for a record of another entity or outside the caller's scope. */
   @Get(':id')
   @Can('crm.opportunity.read')

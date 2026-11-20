@@ -31,6 +31,32 @@ export class OpportunityOwnersService {
   ) {}
 
   /**
+   * The people the caller may hand an opportunity to (F1-Q51, the owner select): exactly whom
+   * `PATCH /v1/opportunities/:id/owner` accepts, so the select never offers a 400. The assignment rule's targets
+   * under the entity's stored rule for opportunities, among the active staff of the acting entity who can read
+   * opportunities. Names only, no address.
+   */
+  async owners(): Promise<LeadOwnerOption[]> {
+    const { scope, actor, principal } = this.caller.current();
+    return withTx(this.db, scope, actor, async (tx) => {
+      const people = await assignableParties(tx, principal, scope, {
+        roleCache: this.roleCache,
+        context: 'reassign',
+        rule: storedAssignmentRule(tx, scope, 'opportunities'),
+        subjectRead: 'crm.opportunity.read',
+      });
+      return people
+        .map((c) => ({
+          userId: c.userId,
+          displayName: c.displayName?.trim() || 'Unnamed user',
+          email: '',
+          avatarDocumentId: c.avatarDocumentId,
+        }))
+        .sort(byName);
+    });
+  }
+
+  /**
    * The filter's people, by name. The owners come from the list's own scope SQL, so the filter names nobody whose
    * deal the list would hide. Hand-over targets are added only for a caller who may work opportunities at all.
    * Names are the records' person names ("Unnamed user" without a display name) and no address is sent

@@ -40,7 +40,6 @@ import {
   inArray,
   isNotNull,
   type SQL,
-  sql,
 } from 'drizzle-orm';
 
 import { AuditService } from '../../platform/audit/audit.service';
@@ -56,7 +55,8 @@ import { CurrencyEnabledService } from '../../platform/settings/currency-enabled
 import { searchPage } from '../../platform/list';
 import { NumberingService } from '../../platform/settings/numbering.service';
 import { nameIn, personNameMap, personNames } from '../../platform/users/person-names';
-import { isPlannedSql, nextFollowUpSql } from '../activities/activities.types';
+import { nextFollowUpSql } from '../activities/activities.types';
+import { moveOpenFollowUps } from '../activities/follow-ups';
 import {
   actorParty,
   type AssignmentCheck,
@@ -577,7 +577,13 @@ export class LeadsService {
           before: { ownerUserId: row.ownerUserId },
           after: { ownerUserId: newOwner },
         });
-        await this.moveFollowUps(tx, scope, id, row.ownerUserId, newOwner);
+        await moveOpenFollowUps(tx, scope, this.audit, {
+          subject: 'leadId',
+          subjectId: id,
+          from: row.ownerUserId,
+          to: newOwner,
+          reason: 'lead_owner_changed',
+        });
         if (newOwner !== principal.userId) {
           await this.notifyAssigned(tx, principal, updated);
           sent.notice = true;
@@ -785,42 +791,6 @@ export class LeadsService {
       .for('update');
     if (row === undefined) throw notFound();
     return row;
-  }
-
-  /**
-   * D45: follow-ups follow the owner. The lead's open planned activities assigned to the old owner move to the new
-   * one, in the owner change's own transaction; one by one so each gets its own audit row. Follow-ups assigned to
-   * anyone else (or to no one), and completed or cancelled ones, stay as they are. The version moves with the
-   * assignee, so a form open on the old assignee gets a 409 instead of silently putting it back.
-   */
-  private async moveFollowUps(
-    tx: DbTransaction,
-    scope: TxScope,
-    leadId: string,
-    from: string | null,
-    to: string,
-  ): Promise<void> {
-    if (from === null || from === to) return;
-    const moved = await tx
-      .update(activities)
-      .set({ assigneeUserId: to, updatedAt: new Date(), version: sql`${activities.version} + 1` })
-      .where(
-        scoped(scope).where(
-          activities,
-          and(eq(activities.leadId, leadId), eq(activities.assigneeUserId, from), isPlannedSql),
-        ),
-      )
-      .returning({ id: activities.id });
-    for (const { id } of moved) {
-      await this.audit.record(tx, {
-        action: 'activity.reassigned',
-        entityType: 'activities',
-        entityId: id,
-        before: { assigneeUserId: from },
-        after: { assigneeUserId: to },
-        meta: { reason: 'lead_owner_changed', leadId },
-      });
-    }
   }
 
   /** The lost reason option of a lead, by its current label (D49); null for a lead without one. */
