@@ -22,7 +22,7 @@ import { authzVersions } from '@bos/db';
 import { Inject, Injectable, Optional } from '@nestjs/common';
 import { eq, sql } from 'drizzle-orm';
 
-import { DB, type Db } from '../db/db.module';
+import { DB, type Db, type DbTransaction } from '../db/db.module';
 
 /**
  * How long `grantsFor`, `rolesGranting` and `epoch` trust a confirmed `authz_versions.version` before reading
@@ -227,7 +227,11 @@ export class RoleCache {
     _organizationId: string,
     roles: readonly RoleKey[],
     level: AccessLevel = 'staff',
+    on?: Db | DbTransaction,
   ): Promise<ReadonlyMap<Permission, AccessScope>> {
+    // `on`: a caller already inside a transaction that holds a lock (an access or role write) reads the rows on
+    // that connection, fresh and uncached, instead of taking a second pool connection while it holds the lock.
+    if (on !== undefined) return merge(await this.readRows(tenantId, on), roles, level);
     const entry = await this.entryFor(tenantId);
     return merge(entry.byRole, roles, level);
   }
@@ -400,8 +404,11 @@ export class RoleCache {
    *   level switch was turned off. Otherwise `DEFAULT_ROLE_PERMISSION_LEVELS`. The same rule as Access Settings'
    *   `deriveLevelRules`, so Check a person and the request agree.
    */
-  private async readRows(tenantId: string): Promise<ReadonlyMap<string, LeveledGrants>> {
-    const result = await this.db.execute<LoadRow>(sql`
+  private async readRows(
+    tenantId: string,
+    on: Db | DbTransaction = this.db,
+  ): Promise<ReadonlyMap<string, LeveledGrants>> {
+    const result = await on.execute<LoadRow>(sql`
       SELECT 'base' AS "kind", role_key AS "roleKey", permission, NULL::text AS "minLevel", scope
         FROM app.role_permissions WHERE tenant_id = ${tenantId}
       UNION ALL

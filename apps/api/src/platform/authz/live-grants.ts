@@ -29,6 +29,7 @@ export interface LiveGrantTable {
     organizationId: string,
     roles: readonly RoleKey[],
     level?: AccessLevel,
+    on?: DbTransaction,
   ): Promise<ReadonlyMap<Permission, AccessScope>>;
 }
 
@@ -89,6 +90,7 @@ export async function liveGrantsOf(
           scope.organizationId,
           roles,
           departmentId === null ? 'staff' : level,
+          q,
         );
   return { status: user.status, roles, departmentId, level, grants };
 }

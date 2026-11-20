@@ -20,6 +20,7 @@ import {
 } from '@nestjs/common';
 import { z } from 'zod';
 
+import { lockAccessRevision } from '../../modules/access-settings/access-revision';
 import { AuthzService } from '../authz/authz.service';
 import { Can } from '../authz/decorators';
 import { type LiveGrantDeps, assertLiveGrant } from '../authz/live-grants';
@@ -140,6 +141,9 @@ export class AdminUsersController {
     const result = await zitadelCall(() =>
       withTx(this.db, scope, actor, async (tx) => {
         if (b.roles.length > 0) {
+          // The access-revision lock first, as an access save takes it: a Founder removed by a concurrent
+          // write cannot finish this one on a check made before it.
+          await lockAccessRevision(tx, scope.tenantId);
           await assertLiveGrant(tx, this.liveGrants, scope, actor, 'admin.roles.write');
         }
         return this.users.invite(tx, b);
@@ -157,6 +161,7 @@ export class AdminUsersController {
     const { scope, actor } = requestTx();
     await zitadelCall(() =>
       withTx(this.db, scope, actor, async (tx) => {
+        await lockAccessRevision(tx, scope.tenantId);
         await assertLiveGrant(tx, this.liveGrants, scope, actor, 'admin.roles.write');
         await this.users.setRoles(tx, id, roles);
       }),
