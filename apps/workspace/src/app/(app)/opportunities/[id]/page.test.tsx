@@ -87,6 +87,7 @@ const opportunity = (
   wonQuotationVersionId: null,
   allowedMoves: DEFAULT_MOVES[stage],
   canEdit: true,
+  canDraftQuotation: true,
   version: 1,
   createdAt: WHEN,
   updatedAt: WHEN,
@@ -175,6 +176,32 @@ describe('opportunity quotation actions (demo feedback: New quotation made four 
     expect(headerLinks(await render())).toContainEqual([
       'New quotation',
       `/quotations/new?opportunityId=${OPP}`,
+    ]);
+  });
+
+  it('shows only View quotations when the server says the caller may not quote on this deal (FX-Q2)', async () => {
+    // A colleague who only holds a follow-up on the deal: they hold quotation.draft, but not the reach.
+    mocks.getOpportunity.mockResolvedValue(opportunity('qualified', { canDraftQuotation: false }));
+    mocks.listQuotations.mockResolvedValue([quote(Q1)]);
+    expect(headerLinks(await render())).toEqual([
+      ['View quotations', `/quotations?opportunityId=${OPP}`],
+    ]);
+  });
+
+  it('fails closed to View quotations when canDraftQuotation is omitted', async () => {
+    const { canDraftQuotation: _omitted, ...rest } = opportunity('qualified');
+    mocks.getOpportunity.mockResolvedValue(rest);
+    expect(headerLinks(await render()).map(([label]) => label)).toEqual(['View quotations']);
+  });
+
+  it("offers New quotation to the lead's creator the server lets quote, without deal write access (FX-Q1)", async () => {
+    mocks.requireStaffSession.mockResolvedValue({ accessToken: 'tok', roles: ['finance'] });
+    mocks.getOpportunity.mockResolvedValue(
+      opportunity('qualified', { canEdit: false, allowedMoves: [], canDraftQuotation: true }),
+    );
+    expect(headerLinks(await render()).map(([label]) => label)).toEqual([
+      'View quotations',
+      'New quotation',
     ]);
   });
 
