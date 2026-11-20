@@ -262,7 +262,7 @@ describe('access-summaries', () => {
       }
     }
     expect(before.leads.join(' ')).toContain(
-      'Finance, Accountant, Sales, Marketing, and PMO see their own leads.',
+      'Founders, Management, Finance, and Accountant see all leads. Sales, Marketing, and PMO see their own leads.',
     );
     expect(before.leads.join(' ')).toContain('Their managers and heads see their department.');
 

@@ -683,7 +683,7 @@ describe('ledger errors on the HTTP boundary', () => {
 });
 
 describe('access settings errors on the HTTP boundary', () => {
-  it.each(['stale_access', 'confirmation_required', 'last_founder'])(
+  it.each(['stale_access', 'confirmation_required', 'last_founder', 'members_changed'])(
     'keeps %s on a 409, and only on a 409',
     (code) => {
       const out = filter(new ConflictException({ code, message: 'Refused' }));

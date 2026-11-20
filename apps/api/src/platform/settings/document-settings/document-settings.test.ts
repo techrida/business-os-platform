@@ -543,6 +543,7 @@ describe('term set bodies and who may change them (real write path, fake setting
   it('a founder without admin.settings.write (grant removed) is refused like anyone else', async () => {
     const grants = new Map(currentPrincipal.grants);
     grants.delete('admin.settings.write');
+    grants.delete('settings.finance.write');
     currentPrincipal = principalOf('founder', { grants });
     const { documentSettings, service } = build([preset()]);
     await expect(

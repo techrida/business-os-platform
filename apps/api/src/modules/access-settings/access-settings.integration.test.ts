@@ -774,8 +774,8 @@ describe('Access Settings level rules match the run-time grants (real Postgres)'
       expect(await liveScope(env, ['sales'], level, 'crm.opportunity.write')).toBe('department');
     }
     expect(await liveScope(env, ['sales'], 'staff', 'crm.lead.write')).toBe('own');
-    // Finance only starts leads: its managers see the department's but edit none.
-    expect(await liveScope(env, ['finance'], 'manager', 'crm.lead.read')).toBe('department');
+    // Finance reads every lead (U20a2-Q4) and only starts leads: its managers edit none.
+    expect(await liveScope(env, ['finance'], 'manager', 'crm.lead.read')).toBe('all');
     expect(await liveScope(env, ['finance'], 'manager', 'crm.lead.write')).toBe('own');
   });
 
