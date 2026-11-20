@@ -33,7 +33,7 @@ import type { Response } from 'express';
 import { z } from 'zod';
 
 import { Can } from '../../platform/authz/decorators';
-import { setTotalCount } from '../../platform/list';
+import { setMoneyTotals, setTotalCount } from '../../platform/list';
 import { parseOr400 } from '../approvals/approvals.controller';
 import { requireIdempotencyKey } from '../customers/customers.types';
 import { PaymentsCaller } from './payments.caller';
@@ -64,18 +64,22 @@ export class PaymentsController {
     private readonly caller: PaymentsCaller,
   ) {}
 
-  /** 200 with a bare array of the acting entity's payments, newest first; X-Total-Count is all matches. */
+  /**
+   * 200 with a bare array of the acting entity's payments, newest first; X-Total-Count is all matches and
+   * X-Money-Totals their amounts summed per currency.
+   */
   @Get()
   @Can('payment.read')
   async list(
     @Query() query: unknown,
     @Res({ passthrough: true }) res: Response,
   ): Promise<PaymentListItem[]> {
-    const { rows, total } = await this.payments.list(
+    const { rows, total, totals } = await this.payments.list(
       this.caller.current().scope,
       parseOr400(ListPaymentsQuerySchema, query),
     );
     setTotalCount(res, total);
+    setMoneyTotals(res, totals);
     return rows;
   }
 
