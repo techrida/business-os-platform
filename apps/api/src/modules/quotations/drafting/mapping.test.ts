@@ -22,6 +22,7 @@ import {
   toQuotationListItem,
   toQuotationVersionDto,
 } from './mapping';
+import { MAX_RENDER_ATTEMPTS } from '../render/render-retry';
 
 type QuotationRow = typeof quotations.$inferSelect;
 type VersionRow = typeof quotationVersions.$inferSelect;
@@ -235,6 +236,21 @@ describe('toQuotationVersionDto', () => {
       createdAt: '2026-11-01T08:00:00.000Z',
       submittedAt: null,
     });
+  });
+
+  it('says the PDF render was given up only for an approved version failed on its last try (R4c2)', () => {
+    const at = (over: Partial<VersionRow>) =>
+      toQuotationVersionDto(draftParts({ version: version(over) })).renderFailed;
+    const failed = { renderState: 'failed', renderAttempts: MAX_RENDER_ATTEMPTS } as const;
+    expect(at({ ...failed, status: 'approved' })).toBe(true);
+    // Still being retried: "Preparing PDF", not an error.
+    expect(at({ ...failed, status: 'approved', renderAttempts: MAX_RENDER_ATTEMPTS - 1 })).toBe(
+      false,
+    );
+    // A version that left approved is never rendered or retried again.
+    expect(at({ ...failed, status: 'superseded' })).toBe(false);
+    expect(at({ renderState: 'rendered', renderAttempts: 0, status: 'approved' })).toBe(false);
+    expect(toQuotationVersionDto(draftParts()).renderFailed).toBe(false);
   });
 
   it('carries the terms and conditions, and null when there are none', () => {
