@@ -1643,7 +1643,10 @@ export class ApprovalsService {
     ];
 
     const roleMembers = new Map<string, readonly string[]>();
-    for (const role of roles) roleMembers.set(role, await this.users.userIdsWithRole(scope, role));
+    // On `q`: inside submit or a decision it is the transaction, and a pool read there takes a second connection.
+    for (const role of roles) {
+      roleMembers.set(role, await this.users.userIdsWithRole(scope, role, q));
+    }
 
     const groups = new Map<string, { id: string; memberIds: string[] }>();
     if (groupKeys.length > 0) {

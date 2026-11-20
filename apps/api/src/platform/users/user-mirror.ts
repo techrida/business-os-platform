@@ -233,12 +233,12 @@ export class UserMirror {
       .catch((error: Error) => this.logger.warn(`users.sync enqueue failed: ${error.message}`));
   }
 
-  userIdsWithRole(scope: TxScope, role: RoleKey): Promise<string[]> {
-    return this.store.userIdsWithRole(scope, role);
+  userIdsWithRole(scope: TxScope, role: RoleKey, q?: Db | DbTransaction): Promise<string[]> {
+    return this.store.userIdsWithRole(scope, role, q);
   }
 
-  emailOf(userId: string): Promise<string | null> {
-    return this.store.emailOf(userId);
+  emailOf(userId: string, q?: Db | DbTransaction): Promise<string | null> {
+    return this.store.emailOf(userId, q);
   }
 
   list(scope: TxScope, q: AdminUsersQuery): Promise<ListedUsers> {
