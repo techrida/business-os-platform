@@ -15,6 +15,11 @@ vi.mock('next/navigation', () => ({
 vi.mock('next/cache', () => ({ revalidatePath: vi.fn() }));
 const getSession = vi.fn<() => Promise<Session | null>>();
 vi.mock('@/lib/session', () => ({ getSession: () => getSession() }));
+const getMe = vi.fn<() => Promise<{ permissions?: { permission: string; scope: string }[] }>>();
+vi.mock('@/lib/api', async (original) => ({
+  ...(await original<typeof import('@/lib/api')>()),
+  getMe: () => getMe(),
+}));
 vi.mock('@/lib/api-admin', () => ({
   getSetting: vi.fn(),
   putSetting: vi.fn(),
@@ -39,7 +44,16 @@ const { IDLE } = await import('./action-state');
 const session = (roles: string[]): Session =>
   ({ accessToken: 't', orgKind: 'staff', roles }) as Session;
 
-beforeEach(() => getSession.mockReset());
+const live = (...permissions: string[]) => ({
+  permissions: permissions.map((permission) => ({ permission, scope: 'all' })),
+});
+
+beforeEach(() => {
+  getSession.mockReset();
+  getMe.mockReset();
+  // Unless a test says otherwise /v1/me is down, so the role defaults decide.
+  getMe.mockRejectedValue(new Error('upstream down'));
+});
 
 describe('settings pages deny by default', () => {
   it.each([
@@ -113,6 +127,30 @@ describe('the settings layout', () => {
       expect(html).not.toContain('aria-label="Settings"');
       expect(html).toContain('<p>page</p>');
     }
+  });
+
+  it('lists the sections a sales role was granted in Settings > Access, and only those', async () => {
+    getMe.mockResolvedValue(live('admin.settings.write'));
+    const html = await nav(['sales']);
+    expect(html).toContain('<nav aria-label="Settings"');
+    expect(html).toContain('href="/settings/tax"');
+    expect(html).not.toContain('href="/settings/users"');
+  });
+});
+
+describe('the settings index with live grants', () => {
+  it('shows a sales role the section it was granted', async () => {
+    getSession.mockResolvedValue(session(['sales']));
+    getMe.mockResolvedValue(live('customer.read', 'admin.users.read'));
+    const html = renderToStaticMarkup((await SettingsIndex()) as ReactElement);
+    expect(html).toContain('href="/settings/users"');
+    expect(html).not.toContain('href="/settings/tax"');
+  });
+
+  it('sends that role to the denied page without the grant', async () => {
+    getSession.mockResolvedValue(session(['sales']));
+    getMe.mockResolvedValue(live('customer.read'));
+    await expect(SettingsIndex()).rejects.toThrow('REDIRECT:/settings/denied');
   });
 });
 
