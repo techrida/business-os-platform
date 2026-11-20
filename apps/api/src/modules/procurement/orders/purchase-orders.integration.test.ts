@@ -85,10 +85,17 @@ const resetRoles = () => {
 
 const grantsOf = (role: RoleKey) =>
   new Map(Object.entries(DEFAULT_ROLE_PERMISSIONS[role])) as Map<Permission, Scope>;
-const current: { userId: string; role: RoleKey; scope: TxScope | null } = {
+const current: {
+  userId: string;
+  role: RoleKey;
+  scope: TxScope | null;
+  /** Replaces the role's default grants, as an admin's edit of the live grants would. */
+  grants: Map<Permission, Scope> | null;
+} = {
   userId: '',
   role: 'procurement',
   scope: null,
+  grants: null,
 };
 const as = (userId: string, role: RoleKey) => {
   current.userId = userId;
@@ -105,7 +112,7 @@ const principalNow = (): Principal => ({
   roles: [current.role],
   departmentId: null,
   status: 'active',
-  grants: grantsOf(current.role),
+  grants: current.grants ?? grantsOf(current.role),
 });
 const caller = {
   current: () => ({
@@ -240,6 +247,7 @@ beforeEach(() => {
   vi.clearAllMocks();
   resetRoles();
   current.scope = null;
+  current.grants = null;
   as(U.proc, 'procurement');
 });
 
@@ -297,6 +305,8 @@ async function draftPo(
     quantity?: string;
     unitPrice?: string;
     emergency?: boolean;
+    /** Who raised the purchase request; the requester by default. */
+    requester?: string;
   } = {},
 ): Promise<{ id: string; prId: string; lineId: string }> {
   const scope = opts.scope ?? scopeA;
@@ -310,7 +320,7 @@ async function draftPo(
     sql`INSERT INTO app.purchase_requests (id, tenant_id, organization_id, request_type, department_id,
           requester_user_id, cost_center_id, justification, required_by, budget_code, currency)
         VALUES (${prId}, ${scope.tenantId}, ${scope.organizationId}, 'goods',
-                ${scope === scopeA ? deptA : deptB}, ${U.req}, ${(await createCostCenter(appPool, scope)).costCenterId}, 'Laptops', '2026-12-01',
+                ${scope === scopeA ? deptA : deptB}, ${opts.requester ?? U.req}, ${(await createCostCenter(appPool, scope)).costCenterId}, 'Laptops', '2026-12-01',
                 'IT-2083', 'NPR')`,
   );
   await exec(
@@ -924,6 +934,85 @@ describe('list filters, search and paging', () => {
     const inOther = await service.list({ ...PAGE, q: name });
     expect(inOther.rows[0]?.id).toBe(inB.id);
     expect(inOther.rows.map((p) => p.id)).not.toContain(inA.id);
+  });
+});
+
+// ---------------------------------------------------------------------------------------- read-only readers
+
+describe('a read-only purchase order view for accountant, finance and warehouse (F1-Q52)', () => {
+  it('lets each of them open the list, the detail, its versions and its progress, and offers only their own action', async () => {
+    const po = await issued();
+    const readers: Array<[string, RoleKey]> = [
+      [U.acct, 'accountant'],
+      [U.fin, 'finance'],
+      [U.wh, 'warehouse'],
+    ];
+    for (const [userId, role] of readers) {
+      as(userId, role);
+      expect(grantsOf(role).has('procurement.po.issue')).toBe(false);
+      const page = await service.list(PAGE);
+      expect(page.rows.map((p) => p.id)).toContain(po.id);
+      expect(page.total).toBeGreaterThanOrEqual(page.rows.length);
+      expect(await service.get(po.id)).toMatchObject({
+        id: po.id,
+        status: 'issued',
+        // Enter bill for whoever enters bills, Receive goods for the warehouse; nobody else gets either.
+        can: { enterBill: role === 'accountant', receive: role === 'warehouse' },
+      });
+      expect(await service.versions(po.id)).toHaveLength(1);
+      await expect(receiptsService.progress(po.id)).resolves.toMatchObject({
+        purchaseOrderId: po.id,
+      });
+    }
+  });
+
+  it('still refuses roles that hold none of those grants: management and a requester', async () => {
+    const po = await issued();
+    const refused: Array<[string, RoleKey]> = [
+      [U.mgmt, 'management'],
+      [U.req, 'operations_officer'],
+    ];
+    for (const [userId, role] of refused) {
+      as(userId, role);
+      expect((await httpErrorOf(service.list(PAGE))).getStatus()).toBe(403);
+      expect((await httpErrorOf(service.get(po.id))).getStatus()).toBe(403);
+      expect((await httpErrorOf(service.versions(po.id))).getStatus()).toBe(403);
+    }
+  });
+
+  it('follows a narrower grant: the list and the detail agree on which orders it reaches', async () => {
+    const mine = await issued({ requester: U.acct });
+    const theirs = await issued();
+    as(U.acct, 'accountant');
+    current.grants = new Map([
+      ...grantsOf('accountant'),
+      ['payables.bill.enter', 'own'],
+      ['payables.bill.read', 'own'],
+    ]);
+
+    const page = await service.list(PAGE);
+    expect(page.rows.map((p) => p.id)).toContain(mine.id);
+    expect(page.rows.map((p) => p.id)).not.toContain(theirs.id);
+    expect(page.total).toBe(page.rows.length);
+    expect((await service.get(mine.id)).id).toBe(mine.id);
+    expect((await httpErrorOf(service.get(theirs.id))).getStatus()).toBe(404);
+    expect((await httpErrorOf(service.versions(theirs.id))).getStatus()).toBe(404);
+  });
+
+  it("links an amendment's approval to the order for an accountant approver, and still not for management (TR-Q2)", async () => {
+    const po = await issued();
+    const r = await service.amend(
+      po.id,
+      { reason, lines: [{ poLineId: po.lineId, unitPrice: '132743.36' }] },
+      randomUUID(),
+    );
+    expect(r.outcome).toBe('pending_approval');
+    as(U.acct, 'accountant');
+    expect((await approvals.get(r.approvalRequestId!)).context?.href).toBe(
+      `/procurement/orders/${po.id}`,
+    );
+    as(U.mgmt, 'management');
+    expect((await approvals.get(r.approvalRequestId!)).context?.href).toBeNull();
   });
 });
 

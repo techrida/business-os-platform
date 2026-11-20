@@ -24,8 +24,9 @@ import type { AuditService } from '../../../platform/audit/audit.service';
 import type { Principal } from '../../../platform/authz/principal';
 import type { Db, DbTransaction } from '../../../platform/db/db.module';
 import type { TxScope } from '../../../platform/db/tx';
-import { fact, hrefFor } from '../../approvals/context';
+import { fact } from '../../approvals/context';
 import type { ApprovalSubject, ApprovalsService } from '../../approvals/requests.service';
+import { mayReadPo, requestFactsColumns, requestOf } from '../orders/po-read-access';
 import { idAt, procurementReferenceNames } from '../reference-names';
 
 /** approval_requests.document_type of the review; the document id is the purchase order's id. */
@@ -159,7 +160,10 @@ export class EmergencyReviewSubject implements ApprovalSubject {
     });
   }
 
-  /** The order as it stands now, with why it was an emergency. Linked only for a reader of purchase orders. */
+  /**
+   * The order as it stands now, with why it was an emergency. Linked only for a viewer the order's detail route lets
+   * in (po-read-access.ts); Management, who reviews, reads everything it needs here and gets no link by default.
+   */
   async context(
     q: Db,
     scope: TxScope,
@@ -175,20 +179,14 @@ export class EmergencyReviewSubject implements ApprovalSubject {
         approvedTotal: purchaseOrders.approvedTotal,
         vendorName: vendors.legalName,
         emergencyReason: purchaseRequests.emergencyReason,
+        request: requestFactsColumns,
       })
       .from(purchaseOrders)
       .leftJoin(
         vendors,
         and(eq(vendors.tenantId, purchaseOrders.tenantId), eq(vendors.id, purchaseOrders.vendorId)),
       )
-      .leftJoin(
-        purchaseRequests,
-        and(
-          eq(purchaseRequests.tenantId, purchaseOrders.tenantId),
-          eq(purchaseRequests.organizationId, purchaseOrders.organizationId),
-          eq(purchaseRequests.id, purchaseOrders.purchaseRequestId),
-        ),
-      )
+      .innerJoin(purchaseRequests, requestOf(purchaseOrders))
       .where(scoped(scope).where(purchaseOrders, eq(purchaseOrders.id, request.documentId)));
     if (po === undefined) return null;
     return {
@@ -200,7 +198,7 @@ export class EmergencyReviewSubject implements ApprovalSubject {
         ...fact.status(po.status),
       ],
       documents: [],
-      href: hrefFor(viewer, `/procurement/orders/${po.id}`, 'procurement.po.issue'),
+      href: mayReadPo(viewer, po.request) ? `/procurement/orders/${po.id}` : null,
     };
   }
 
