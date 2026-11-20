@@ -1,4 +1,10 @@
-import { BILL_STATUSES, MATCH_STATUSES } from '@bos/contracts';
+import {
+  BILL_STATUSES,
+  DEFAULT_ROLE_PERMISSIONS,
+  MATCH_STATUSES,
+  type AccessScope,
+  type Permission,
+} from '@bos/contracts';
 import { describe, expect, it } from 'vitest';
 
 import {
@@ -33,10 +39,29 @@ describe('labels', () => {
 });
 
 describe('grants', () => {
-  it('lets accountants enter and read, finance read only, procurement neither', () => {
-    expect(billGrants(['accountant'])).toEqual({ enter: true, read: true });
-    expect(billGrants(['finance'])).toEqual({ enter: false, read: true });
-    expect(billGrants(['procurement'])).toEqual({ enter: false, read: false });
+  // A stand-in for the live saved grants GET /v1/me reports (`getGrants`).
+  const live = (g: Partial<Record<Permission, string>>): Map<Permission, AccessScope> =>
+    new Map(Object.entries(g) as [Permission, AccessScope][]);
+
+  it('follows a live grant the role lacks by default: Procurement given bill entry', () => {
+    expect(DEFAULT_ROLE_PERMISSIONS.procurement['payables.bill.enter']).toBeUndefined();
+    const g = live({ ...DEFAULT_ROLE_PERMISSIONS.procurement, 'payables.bill.enter': 'all' });
+    expect(billGrants(g)).toEqual({ enter: true, read: false });
+  });
+
+  it('follows a removed grant the role holds by default: an accountant without bill entry', () => {
+    expect(DEFAULT_ROLE_PERMISSIONS.accountant['payables.bill.enter']).toBe('all');
+    const g = live(DEFAULT_ROLE_PERMISSIONS.accountant);
+    g.delete('payables.bill.enter');
+    expect(billGrants(g)).toEqual({ enter: false, read: true });
+  });
+
+  it('allows nothing when there are no live grants (a failed read), whatever the roles', () => {
+    expect(billGrants(live({}))).toEqual({ enter: false, read: false });
+  });
+
+  it('counts a grant at any scope', () => {
+    expect(billGrants(live({ 'payables.bill.read': 'own' }))).toEqual({ enter: false, read: true });
   });
 });
 
