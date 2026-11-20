@@ -813,6 +813,63 @@ describe('review of an emergency purchase after receipt (F1-Q41)', () => {
     await service.shortClose(po.id, { reason: 'Vendor out of stock' }, randomUUID());
     expect(await reviewsOf(po.id)).toEqual([]);
   });
+
+  it('asks Management once when an amendment applied at once lowers the order to what arrived', async () => {
+    const po = await issued({ quantity: '5', unitPrice: '100.00', emergency: true });
+    await receive(po, '3');
+
+    // The total falls, so the amendment applies at once (F1-Q40).
+    const r = await service.amend(
+      po.id,
+      { reason: 'Only three will come', lines: [{ poLineId: po.lineId, quantity: '3' }] },
+      randomUUID(),
+    );
+    expect(r.outcome).toBe('applied');
+    expect(r.purchaseOrder.status).toBe('fully_received');
+    const reviews = await reviewsOf(po.id);
+    expect(reviews).toHaveLength(1);
+    expect(reviews[0]).toMatchObject({ status: 'pending', requesterUserId: U.req });
+    expect(reviews[0]!.sodUserIds).toEqual(expect.arrayContaining([U.req, U.proc]));
+  });
+
+  it('asks Management once an approved amendment leaves the order fully received, not while it waits', async () => {
+    const po = await issued({ quantity: '5', unitPrice: '100.00', emergency: true });
+    await receive(po, '3');
+
+    // Three at a higher price: the total rises from 565.00 to 678.00, so the amendment is approved first.
+    const r = await service.amend(
+      po.id,
+      {
+        reason: 'Only three will come, at a higher price',
+        lines: [{ poLineId: po.lineId, quantity: '3', unitPrice: '200.00' }],
+      },
+      randomUUID(),
+    );
+    expect(r.outcome).toBe('pending_approval');
+    expect(await reviewsOf(po.id)).toEqual([]);
+
+    await decide(U.acct, 'accountant', r.approvalRequestId!);
+    await decide(U.fin, 'finance', r.approvalRequestId!);
+    expect((await service.get(po.id)).status).toBe('fully_received');
+    const reviews = await reviewsOf(po.id);
+    expect(reviews).toHaveLength(1);
+    // Whoever proposed the amendment does not review it; the approver of the amendment is not excluded.
+    expect(reviews[0]!.sodUserIds).toEqual(expect.arrayContaining([U.req, U.proc]));
+    expect(reviews[0]!.sodUserIds).not.toContain(U.fin);
+    expect(await stepRoles(reviews[0]!.id)).toEqual(['management']);
+  });
+
+  it('asks nothing when an ordinary order is amended down to what arrived', async () => {
+    const po = await issued({ quantity: '5', unitPrice: '100.00' });
+    await receive(po, '3');
+    const r = await service.amend(
+      po.id,
+      { reason: 'Only three will come', lines: [{ poLineId: po.lineId, quantity: '3' }] },
+      randomUUID(),
+    );
+    expect(r.purchaseOrder.status).toBe('fully_received');
+    expect(await reviewsOf(po.id)).toEqual([]);
+  });
 });
 
 // ---------------------------------------------------------------------------------------- versions
