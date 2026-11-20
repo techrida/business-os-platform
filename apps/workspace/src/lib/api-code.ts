@@ -12,3 +12,14 @@ export function apiCodeOf(err: unknown): string | undefined {
   const parsed = ErrorBodySchema.safeParse(err.body);
   return parsed.success ? parsed.data.error.code : undefined;
 }
+
+/**
+ * The allow-listed refusal reason (`duplicate_reason_required`, ...) an API answer carries in
+ * `error.reason`, beside its generic `code`. A screen switches on it where the code alone
+ * (`bad_request`) says too little.
+ */
+export function apiReasonOf(err: unknown): string | undefined {
+  if (!(err instanceof ApiError)) return undefined;
+  const parsed = ErrorBodySchema.safeParse(err.body);
+  return parsed.success ? parsed.data.error.reason : undefined;
+}
