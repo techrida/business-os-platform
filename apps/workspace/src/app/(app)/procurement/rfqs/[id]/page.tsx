@@ -261,7 +261,7 @@ export default async function RfqPage({
           status={<Badge tone={status.tone}>{status.text}</Badge>}
           description={RFQ_STATUS_NOTE[rfq.status]}
           actions={
-            entersQuotations || extend ? (
+            entersQuotations || extend || commit.show ? (
               <>
                 {entersQuotations ? (
                   <LinkButton href={`${self}/quotations/new`}>Enter a quotation</LinkButton>
@@ -274,6 +274,14 @@ export default async function RfqPage({
                     deadline={rfq.deadline}
                     deadlineText={when(rfq.deadline)}
                     passed={passed}
+                    reloadHref={self}
+                  />
+                ) : null}
+                {commit.show ? (
+                  <CommitForm
+                    action={commitRfqAction}
+                    idempotencyKey={randomUUID()}
+                    rfqId={rfq.id}
                     reloadHref={self}
                   />
                 ) : null}
@@ -308,19 +316,7 @@ export default async function RfqPage({
           <Panel as="aside" title="Linked records" className={layout.linkedRecords}>
             <FactList facts={facts.filter((fact) => fact.key === 'pr')} />
           </Panel>
-          {commit.show ? (
-            <Panel
-              title="Commitment"
-              description="Send the recommended quotation to be approved before a purchase order."
-            >
-              <CommitForm
-                action={commitRfqAction}
-                idempotencyKey={randomUUID()}
-                rfqId={rfq.id}
-                reloadHref={self}
-              />
-            </Panel>
-          ) : commit.why !== undefined ? (
+          {commit.why !== undefined ? (
             <Alert tone="warning" role="status" title="Commitment cannot be submitted yet">
               {commit.why}
             </Alert>
