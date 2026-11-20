@@ -1156,6 +1156,40 @@ describe('quotation approval: the author names the first-step approver', () => {
     );
   });
 
+  it('lets a past approver look back at the request they approved, with its live context, after the last step (U18-Q8)', async () => {
+    const d = await draft('50000.00');
+    await submitNaming(d, X.mate);
+    const [request] = await requestsOf(d.versionId);
+    await act(X.mate, 'sales', request!.id, 'approve');
+    const final = await act(U.fin, 'finance', request!.id, 'approve');
+    expect(final.status).toBe('approved');
+    expect((await versionRow(d.versionId)).status).toBe('approved');
+
+    // Their own-scope request read does not reach someone else's request, and nothing waits on them: only having
+    // decided a step lets them read it, the context showing the version as it stands now.
+    expect(await inboxIds(X.mate, 'sales')).toEqual([]);
+    as(X.mate, 'sales');
+    try {
+      const dto = await approvals.get(request!.id);
+      expect(dto).toMatchObject({ requestId: request!.id, status: 'approved' });
+      expect(dto.steps[0]).toMatchObject({ status: 'approved', decidedBy: X.mate });
+      expect(dto.context).toMatchObject({ href: null, documents: [] });
+      expect(dto.context!.fields).toEqual(
+        expect.arrayContaining([expect.objectContaining({ key: 'status', value: 'approved' })]),
+      );
+    } finally {
+      as(f.ownerUserId, 'sales');
+    }
+
+    // A colleague who took no part still cannot read it.
+    as(X.warehouse, 'warehouse');
+    try {
+      expect((await httpErrorOf(approvals.get(request!.id))).getStatus()).toBe(404);
+    } finally {
+      as(f.ownerUserId, 'sales');
+    }
+  });
+
   it('admits only the original Sales decision for replay after the Finance step activates', async () => {
     const draftQuote = await draft('50000.00');
     await submitNaming(draftQuote, X.mate);
