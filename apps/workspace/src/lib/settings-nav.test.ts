@@ -24,7 +24,7 @@ const labels = (can: ((p: string) => boolean) | undefined) =>
   visibleSettingsGroups(can).flatMap((g) => g.sections.map((s) => s.label));
 
 describe('SETTINGS_GROUPS', () => {
-  it('lists the thirteen sub-tabs across four left-hand sections in order', () => {
+  it('lists the fourteen sub-tabs across four left-hand sections in order', () => {
     expect(SETTINGS_GROUPS.map((g) => [g.id, g.label, g.href])).toEqual([
       ['company-setup', 'Company', '/settings/company-setup'],
       ['organisation', 'Organisation', '/settings/organisation'],
@@ -40,6 +40,7 @@ describe('SETTINGS_GROUPS', () => {
       '/settings/departments',
       '/settings/access',
       '/settings/workflows',
+      '/settings/email-delivery',
       '/settings/currencies',
       '/settings/tax',
       '/settings/numbering',
