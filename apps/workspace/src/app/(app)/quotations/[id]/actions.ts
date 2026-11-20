@@ -7,12 +7,14 @@ import { redirect } from 'next/navigation';
 
 import { kathmanduToday } from '@/components/p2/quotations/eligibility';
 import {
+  parseCancel,
   parseOutcome,
   parseRevise,
   parseSend,
   type FieldErrors,
   type Parsed,
 } from '@/components/p2/quotations/forms';
+import { lifecyclePaths } from '@/components/p2/quotations/lifecycle-contract';
 import { ApiError, apiFetch } from '@/lib/api';
 import { failureOf } from '@/lib/api-kernel';
 import { requireStaffSession } from '@/lib/bff';
@@ -162,4 +164,19 @@ export async function reviseAction(prev: ActionState, form: FormData): Promise<A
   revalidatePath(`/quotations/${quotationId}`);
   // `redirect` throws, so it stays outside any try block.
   redirect(`/quotations/${encodeURIComponent(quotationId)}/edit`);
+}
+
+/**
+ * Cancel quotation: ends a Draft or Returned quotation, with a mandatory reason. The path and body are
+ * the ones `lifecycle-contract.ts` names. The dialog says it is done and reloads the page when closed.
+ */
+export async function cancelAction(prev: ActionState, form: FormData): Promise<ActionState> {
+  const state = await run(prev, form, parseCancel, (c, key) =>
+    post(c.session, lifecyclePaths.cancel(c.quotationId), c.body, key),
+  );
+  if (state.done === true) {
+    revalidatePath(`/quotations/${text(form, 'quotationId')}`);
+    revalidatePath('/quotations');
+  }
+  return state;
 }

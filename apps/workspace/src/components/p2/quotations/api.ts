@@ -2,7 +2,6 @@ import 'server-only';
 
 import {
   QUOTATION_STATUSES,
-  type QuotationDetail,
   QuotationDetailSchema,
   type QuotationListItem,
   QuotationListItemSchema,
@@ -13,6 +12,8 @@ import { z } from 'zod';
 
 import { ApiError, apiFetch } from '@/lib/api';
 import type { Session } from '@/lib/session';
+
+import { readLifecycle, type QuotationDetailWithLifecycle } from './lifecycle-contract';
 
 /**
  * Typed reads of the quotation endpoints, for the screens in this folder. Server-only: every call
@@ -35,7 +36,7 @@ async function read<T>(
   session: Session,
   path: string,
   schema: z.ZodType<T>,
-): Promise<{ data: T; res: Response }> {
+): Promise<{ data: T; res: Response; body: unknown }> {
   const res = await apiFetch(session, path, { method: 'GET' });
   const body = await readBody(res);
   const label = `GET ${path.split('?')[0] ?? path}`;
@@ -45,7 +46,7 @@ async function read<T>(
     // 502: the upstream answered, but not with the shape the contract promises.
     throw new ApiError(502, `${label} returned an invalid body`, parsed.error.issues);
   }
-  return { data: parsed.data, res };
+  return { data: parsed.data, res, body };
 }
 
 async function get<T>(session: Session, path: string, schema: z.ZodType<T>): Promise<T> {
@@ -177,7 +178,14 @@ export function getQuotationsSummary(
   );
 }
 
-/** `GET /v1/quotations/:id`: the parent, every version, the status history and the contacts. */
-export function getQuotation(session: Session, id: string): Promise<QuotationDetail> {
-  return get(session, `/v1/quotations/${seg(id)}`, QuotationDetailSchema);
+/**
+ * `GET /v1/quotations/:id`: the parent, every version, the status history and the contacts, plus the
+ * lifecycle fields the contract does not describe yet (`lifecycle-contract.ts`), read from the same body.
+ */
+export async function getQuotation(
+  session: Session,
+  id: string,
+): Promise<QuotationDetailWithLifecycle> {
+  const { data, body } = await read(session, `/v1/quotations/${seg(id)}`, QuotationDetailSchema);
+  return { ...data, lifecycle: readLifecycle(body) };
 }

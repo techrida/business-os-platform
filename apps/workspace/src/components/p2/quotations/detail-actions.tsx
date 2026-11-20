@@ -12,7 +12,9 @@ import {
 
 import { LinkButton } from '@/components/ui/button';
 
+import { CancelDialog } from './cancel-dialog';
 import { canRecordOutcome, kathmanduToday, preselectedContactId, sendGate } from './eligibility';
+import { mayCancel, type QuotationLifecycle } from './lifecycle-contract';
 import { OutcomeDialog } from './outcome-dialog';
 import { ReviseForm } from './revise-form';
 import { SendDialog } from './send-dialog';
@@ -23,7 +25,11 @@ export interface DetailActionVisibility {
   includeOutcome?: boolean;
   maySend?: boolean;
   mayRecordOutcome?: boolean;
+  /** The lifecycle answers the contract does not carry yet (Cancel quotation). */
+  lifecycle?: QuotationLifecycle;
 }
+
+const NO_LIFECYCLE: QuotationLifecycle = { confirmations: {} };
 
 /** Whether `DetailActions` will render at least one button for this quotation and caller. */
 export function hasDetailActions({
@@ -32,6 +38,7 @@ export function hasDetailActions({
   includeOutcome = true,
   maySend,
   mayRecordOutcome,
+  lifecycle = NO_LIFECYCLE,
 }: DetailActionVisibility): boolean {
   const showSend =
     (status === 'approved' || status === 'expired') && (capabilities.canSend ?? maySend ?? false);
@@ -41,12 +48,13 @@ export function hasDetailActions({
     (capabilities.canRecordOutcome ?? mayRecordOutcome ?? false);
   const showEdit = capabilities.canEdit && isQuotationEditable(status);
   const showRevise = capabilities.canRevise && canReviseQuotation(status);
-  return showEdit || showSend || showOutcome || showRevise;
+  const showCancel = mayCancel(status, capabilities, lifecycle);
+  return showEdit || showSend || showOutcome || showRevise || showCancel;
 }
 
 /**
  * The actions on one quotation, for the detail page's action slot: Edit, Send to customer, Record
- * outcome and Revise, each only where its rule allows. Edit and Revise also need the server's
+ * outcome, Revise and Cancel quotation, each only where its rule allows. Edit and Revise also need the server's
  * record-level answer (`capabilities`), so a caller who would get 403 is never offered them.
  * Server Component: it decides from the current version, generates one Idempotency-Key per action
  * for this render (the forms send it, and keep it after an unknown outcome so a landed call cannot
@@ -64,6 +72,7 @@ export function DetailActions({
   includeOutcome = true,
   maySend,
   mayRecordOutcome,
+  lifecycle = NO_LIFECYCLE,
 }: {
   quotationId: string;
   number: string;
@@ -80,6 +89,8 @@ export function DetailActions({
   maySend?: boolean;
   /** Live permission fallback when `capabilities.canRecordOutcome` is omitted. */
   mayRecordOutcome?: boolean;
+  /** The lifecycle answers the contract does not carry yet (Cancel quotation). */
+  lifecycle?: QuotationLifecycle;
 }) {
   const { status } = current;
   const ids = { quotationId, versionId: current.id, version: current.version, number, reloadHref };
@@ -96,6 +107,7 @@ export function DetailActions({
   // Draft and Returned are changed in place in the quote builder; every later change is a revision.
   const showEdit = capabilities.canEdit && isQuotationEditable(status);
   const showRevise = capabilities.canRevise && canReviseQuotation(status);
+  const showCancel = mayCancel(status, capabilities, lifecycle);
 
   return (
     <>
@@ -126,6 +138,7 @@ export function DetailActions({
           idempotencyKey={randomUUID()}
         />
       ) : null}
+      {showCancel ? <CancelDialog {...ids} idempotencyKey={randomUUID()} /> : null}
     </>
   );
 }
