@@ -402,7 +402,26 @@ export function workflow(cfg) {
         `Not recording payment ${ref}: ${decision.reason}. Check the payments by hand, or use a new label.`,
       );
     s.checks.push(`the payments lookup shows no payment ${ref} yet`);
-    return recordPayment(s, ref);
+    const url = await recordPayment(s, ref);
+    if (url) return url;
+    // The submit went out but the payment never opened: in next dev, compiling the payment page
+    // reloads the form first (r3s2 sales-12). Look once more; only exactly this payment is adopted.
+    const after = paymentDecision({
+      lookup: await customerPayments(s, known),
+      ref,
+      knownUrls: known,
+    });
+    if (after.action !== 'adopt')
+      throw new StepFailure(
+        `Record payment neither opened the payment nor said why, and the lookup ${
+          after.action === 'record' ? 'shows no payment' : `is unclear (${after.reason})`
+        } for ${ref}`,
+      );
+    s.checks.push(
+      `note: Record payment saved ${ref} but the page reloaded before it opened; opening it from the list`,
+    );
+    await s.goto(after.url, (p) => p.getByRole('heading', { level: 1 }));
+    return after.url;
   };
 
   const recordPayment = async (s, ref) => {
@@ -472,8 +491,8 @@ export function workflow(cfg) {
           .catch(() => 'timeout'),
       ]);
       if (outcome === 'created') break;
-      if (outcome !== 'not-ready')
-        throw new StepFailure('Record payment neither opened the payment nor said why');
+      // Unconfirmed: the caller looks the payment up instead of submitting again.
+      if (outcome !== 'not-ready') return null;
       await s.page.waitForTimeout(5000);
     }
     await s.page.waitForURL(created, { timeout: 30000 });
