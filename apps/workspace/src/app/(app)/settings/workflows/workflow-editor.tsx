@@ -158,6 +158,8 @@ export function WorkflowEditor({
   const [form, setForm] = useState<SpecForm>(initial.form);
   const [json, setJson] = useState(initial.json);
   const [notes, setNotes] = useState<string[]>(initial.notes);
+  // Until a rule builder exists, raw JSON is offered only for a saved spec the form cannot show (Kuu, U23-Q4).
+  const jsonAvailable = initial.mode === 'json';
   const [key, setKey] = useState('');
   const [name, setName] = useState('');
   const [issues, setIssues] = useState<string[]>([]);
@@ -393,29 +395,31 @@ export function WorkflowEditor({
       {workflowKey ? <input type="hidden" name="key" value={workflowKey} /> : null}
       <input type="hidden" name="spec" value={built.ok ? JSON.stringify(built.spec) : ''} />
 
-      <div className={styles.toolbar}>
-        <span className={styles.toolbarLabel} id={viewLabelId}>
-          Editing as
-        </span>
-        <span role="group" aria-labelledby={viewLabelId} className={styles.toggle}>
-          <Button
-            size="small"
-            variant={view === 'form' ? 'secondary' : 'ghost'}
-            aria-pressed={view === 'form'}
-            onClick={() => (view === 'form' ? undefined : switchToForm())}
-          >
-            Form
-          </Button>
-          <Button
-            size="small"
-            variant={view === 'json' ? 'secondary' : 'ghost'}
-            aria-pressed={view === 'json'}
-            onClick={() => (view === 'json' ? undefined : switchToJson())}
-          >
-            JSON (advanced)
-          </Button>
-        </span>
-      </div>
+      {jsonAvailable ? (
+        <div className={styles.toolbar}>
+          <span className={styles.toolbarLabel} id={viewLabelId}>
+            Editing as
+          </span>
+          <span role="group" aria-labelledby={viewLabelId} className={styles.toggle}>
+            <Button
+              size="small"
+              variant={view === 'form' ? 'secondary' : 'ghost'}
+              aria-pressed={view === 'form'}
+              onClick={() => (view === 'form' ? undefined : switchToForm())}
+            >
+              Form
+            </Button>
+            <Button
+              size="small"
+              variant={view === 'json' ? 'secondary' : 'ghost'}
+              aria-pressed={view === 'json'}
+              onClick={() => (view === 'json' ? undefined : switchToJson())}
+            >
+              JSON (advanced)
+            </Button>
+          </span>
+        </div>
+      ) : null}
 
       {notes.length > 0 ? (
         <Alert
@@ -567,7 +571,11 @@ export function WorkflowEditor({
             number={3}
             label="The conditions"
             title="Threshold rules"
-            hint="A rule adds one more step when the amount in NPR meets a condition. More complex conditions (several fields, lists) can be written in the JSON editor."
+            hint={
+              jsonAvailable
+                ? 'A rule adds one more step when the amount in NPR meets a condition. More complex conditions (several fields, lists) can be written in the JSON editor.'
+                : 'A rule adds one more step when the amount in NPR meets a condition.'
+            }
           >
             <div className={styles.rows}>
               {form.rules.length === 0 ? (
