@@ -498,6 +498,13 @@
       "when": 1783000000092,
       "tag": "0092_lead_creator_backfill",
       "breakpoints": true
+    },
+    {
+      "idx": 72,
+      "version": "7",
+      "when": 1783000000120,
+      "tag": "0120_finance_settings_permissions",
+      "breakpoints": true
     }
   ]
 }
