@@ -772,7 +772,8 @@ export class DepartmentsAdminService {
         )
         .for('update');
 
-      // Invited members count too: on first login they would otherwise keep this department's reach.
+      // Invited and inactive members count too: on first login or reactivation they would otherwise keep this
+      // department's reach.
       const members = await tx
         .select({
           userId: userEntities.userId,
@@ -794,7 +795,6 @@ export class DepartmentsAdminService {
             eq(userEntities.organizationId, scope.organizationId),
             eq(userEntities.departmentId, dept.id),
             eq(idpOrgs.kind, 'staff'),
-            ne(users.status, 'inactive'),
           ),
         );
 
@@ -818,6 +818,10 @@ export class DepartmentsAdminService {
         const destinationId = body.moveMembersTo ?? null;
 
         const memberIds = members.map((m) => m.userId);
+        // Inactive members are unassigned whatever the destination, so reactivating one later grants no
+        // department reach that nobody chose.
+        const inactiveMembers = members.filter((m) => m.status === 'inactive');
+        const movingMembers = members.filter((m) => m.status !== 'inactive');
         if (destinationId !== null) {
           if (destinationId === dept.id) {
             const message =
@@ -845,8 +849,8 @@ export class DepartmentsAdminService {
 
           // Demote any moved head to manager so migration 0079's trigger does not replace the
           // destination department's head.
-          const movedHeadIds = members.filter((m) => m.level === 'head').map((m) => m.userId);
-          const movedOtherIds = members.filter((m) => m.level !== 'head').map((m) => m.userId);
+          const movedHeadIds = movingMembers.filter((m) => m.level === 'head').map((m) => m.userId);
+          const movedOtherIds = movingMembers.filter((m) => m.level !== 'head').map((m) => m.userId);
           if (movedHeadIds.length > 0) {
             await tx
               .update(userEntities)
@@ -872,7 +876,7 @@ export class DepartmentsAdminService {
               );
           }
 
-          for (const member of members) {
+          for (const member of movingMembers) {
             const nextLevel: AccessLevel = member.level === 'head' ? 'manager' : member.level;
             await this.audit.record(tx, {
               action: 'department.member.moved',
@@ -883,8 +887,31 @@ export class DepartmentsAdminService {
               meta: { userId: member.userId, reason: 'department_retired' },
             });
           }
+
+          if (inactiveMembers.length > 0) {
+            await tx
+              .update(userEntities)
+              .set({ departmentId: null, level: 'staff' })
+              .where(
+                and(
+                  eq(userEntities.tenantId, scope.tenantId),
+                  eq(userEntities.organizationId, scope.organizationId),
+                  inArray(userEntities.userId, inactiveMembers.map((m) => m.userId)),
+                ),
+              );
+            for (const member of inactiveMembers) {
+              await this.audit.record(tx, {
+                action: 'department.member.removed',
+                entityType: 'departments',
+                entityId: dept.id,
+                before: { departmentId: dept.id, level: member.level },
+                after: { departmentId: null, level: 'staff' },
+                meta: { userId: member.userId, reason: 'department_retired' },
+              });
+            }
+          }
         } else {
-          // Explicit null: unassign all active and invited members and reset level to staff (0079 check).
+          // Explicit null: unassign all active, invited and inactive members and reset level to staff (0079 check).
           await tx
             .update(userEntities)
             .set({ departmentId: null, level: 'staff' })
