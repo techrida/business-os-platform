@@ -1,5 +1,6 @@
 'use client';
 
+import type { VendorStatus } from '@bos/contracts';
 import { useRouter } from 'next/navigation';
 import { useActionState, useEffect, useId, useRef, useState, type ReactNode } from 'react';
 
@@ -183,6 +184,10 @@ function useLifecycle(idempotencyKey: string, onSaved?: () => void) {
     if (next.saved) {
       toast.success(next.saved);
       onSaved?.();
+    } else if (next.refreshed && next.error) {
+      // A stale button: the page now shows the vendor's current status, and this dialog's button may be gone.
+      toast.error(next.error);
+      onSaved?.();
     }
     return next;
   }, panelStart(idempotencyKey));
@@ -227,10 +232,13 @@ function ReasonField({
 /** Every lifecycle action confirms in a fixed-footer dialog (UIP-DLG-001) with toast feedback. */
 export function LifecycleForm({
   vendorId,
+  status,
   option,
   idempotencyKey,
 }: {
   vendorId: string;
+  /** The vendor's status this button was drawn for; the API refuses a KYB move from any other. */
+  status: VendorStatus;
   option: LifecycleOption;
   idempotencyKey: string;
 }) {
@@ -269,6 +277,7 @@ export function LifecycleForm({
       <form id={formId} ref={formRef} action={formAction} noValidate className={styles.lifecycle}>
         <input type="hidden" name="vendorId" value={vendorId} />
         <input type="hidden" name="command" value={option.command} />
+        <input type="hidden" name="expectedStatus" value={status} />
         <input type="hidden" name="idempotencyKey" value={state.key} />
         <Notice
           state={state}

@@ -65,3 +65,27 @@ export function lapsedTaxClearance(items: readonly KycItem[], today: string): bo
 
 /** The calendar day (`YYYY-MM-DD`) in Asia/Kathmandu at `instant`: the business date a tax clearance is read against. */
 export const isoDay = kathmanduDay;
+
+/**
+ * The move `submit-kyc` makes from `current`, checked against the status the caller's button was drawn for. One
+ * endpoint makes two moves (draft -> pending_kyc, pending_kyc -> under_review), so a stale "Start KYB review" from a
+ * second tab would otherwise run "Send for review". `expected` absent means the caller did not say (older callers).
+ * The KYB case check of pending_kyc -> under_review needs the database and stays in the service.
+ */
+export function submitKycMove(
+  current: VendorStatus,
+  expected: VendorStatus | undefined,
+):
+  | { ok: true; to: 'pending_kyc' | 'under_review' }
+  | { ok: false; kind: 'stale' | 'invalid'; message: string } {
+  if (expected !== undefined && expected !== current) {
+    return {
+      ok: false,
+      kind: 'stale',
+      message: 'This vendor was changed by someone else; reload it and try again',
+    };
+  }
+  if (current === 'draft') return { ok: true, to: 'pending_kyc' };
+  if (current === 'pending_kyc') return { ok: true, to: 'under_review' };
+  return { ok: false, kind: 'invalid', message: `A vendor in status ${current} cannot submit KYC` };
+}

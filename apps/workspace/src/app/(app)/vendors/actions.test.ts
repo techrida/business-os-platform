@@ -264,14 +264,79 @@ describe('lifecycleAction', () => {
     expect(r.savedCount).toBe(1);
   });
 
-  it('start KYB review is open to vendor.write and sends the key', async () => {
+  it('start KYB review is open to vendor.write and sends the key and the status its button saw', async () => {
     api.submitVendorKyc.mockResolvedValue({});
     const r = await lifecycleAction(
       panel,
-      form({ vendorId: ID, command: 'submit_kyc', idempotencyKey: KEY }),
+      form({ vendorId: ID, command: 'submit_kyc', expectedStatus: 'draft', idempotencyKey: KEY }),
     );
-    expect(api.submitVendorKyc).toHaveBeenCalledWith(expect.anything(), ID, KEY);
+    expect(api.submitVendorKyc).toHaveBeenCalledWith(expect.anything(), ID, KEY, 'draft');
     expect(r.saved).toBe('KYB review started.');
+  });
+
+  it('send for review says so', async () => {
+    api.submitVendorKyc.mockResolvedValue({});
+    const r = await lifecycleAction(
+      panel,
+      form({
+        vendorId: ID,
+        command: 'submit_kyc',
+        expectedStatus: 'pending_kyc',
+        idempotencyKey: KEY,
+      }),
+    );
+    expect(api.submitVendorKyc).toHaveBeenCalledWith(expect.anything(), ID, KEY, 'pending_kyc');
+    expect(r.saved).toBe('The vendor was sent for review.');
+  });
+
+  it('a KYB move without the status its button saw is an incomplete form, never sent', async () => {
+    for (const expectedStatus of [undefined, 'approved', 'nope']) {
+      const r = await lifecycleAction(
+        panel,
+        form({
+          vendorId: ID,
+          command: 'submit_kyc',
+          idempotencyKey: KEY,
+          ...(expectedStatus === undefined ? {} : { expectedStatus }),
+        }),
+      );
+      expect(r.error).toMatch(/incomplete/);
+    }
+    expect(api.submitVendorKyc).not.toHaveBeenCalled();
+  });
+
+  it('a stale KYB button (409) is worded plainly and redraws the vendor page', async () => {
+    const { revalidatePath } = await import('next/cache');
+    api.submitVendorKyc.mockRejectedValue(apiError(409, 'conflict'));
+    const r = await lifecycleAction(
+      panel,
+      form({ vendorId: ID, command: 'submit_kyc', expectedStatus: 'draft', idempotencyKey: KEY }),
+    );
+    expect(r.error).toBe('This vendor changed since you opened it. Reload and try again.');
+    expect(r.error).not.toMatch(/internal wording/);
+    expect(r.reload).toBe(true);
+    expect(r.refreshed).toBe(true);
+    expect(r.saved).toBeUndefined();
+    expect(revalidatePath).toHaveBeenCalledWith(`/vendors/${ID}`);
+    // A definite answer: the next try is a new decision with a new key.
+    expect(r.key).not.toBe(KEY);
+  });
+
+  it('a refusal that does not mean the page is stale leaves the page as it is', async () => {
+    const { revalidatePath } = await import('next/cache');
+    api.submitVendorKyc.mockRejectedValue(apiError(409, 'kyb_not_submitted'));
+    const r = await lifecycleAction(
+      panel,
+      form({
+        vendorId: ID,
+        command: 'submit_kyc',
+        expectedStatus: 'pending_kyc',
+        idempotencyKey: KEY,
+      }),
+    );
+    expect(r.error).toMatch(/KYB case has not been submitted/);
+    expect(r.refreshed).toBeUndefined();
+    expect(revalidatePath).not.toHaveBeenCalled();
   });
 
   it('an unknown command is refused as an incomplete form', async () => {
