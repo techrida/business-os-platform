@@ -160,6 +160,93 @@ describe('parseStageMove', () => {
     expect(r.ok).toBe(false);
     if (!r.ok) expect(r.fieldErrors.expectedVersion).toMatch(/reload/i);
   });
+
+  it('parses contactActivity on a lead move to contacted (D48)', () => {
+    const withSubject = parseStageMove(
+      'lead',
+      form({
+        stage: 'contacted',
+        expectedVersion: '3',
+        contactKind: 'email',
+        contactSubject: '  Intro email  ',
+        contactBody: '  Sent overview deck.  ',
+      }),
+    );
+    expect(withSubject).toEqual({
+      ok: true,
+      data: {
+        stage: 'contacted',
+        expectedVersion: 3,
+        contactActivity: {
+          kind: 'email',
+          subject: 'Intro email',
+          body: 'Sent overview deck.',
+        },
+      },
+    });
+
+    const withoutSubject = parseStageMove(
+      'lead',
+      form({
+        stage: 'contacted',
+        expectedVersion: '3',
+        contactKind: 'call',
+        contactSubject: '   ',
+        contactBody: 'Spoke with Sunita.',
+      }),
+    );
+    expect(withoutSubject).toEqual({
+      ok: true,
+      data: {
+        stage: 'contacted',
+        expectedVersion: 3,
+        contactActivity: {
+          kind: 'call',
+          body: 'Spoke with Sunita.',
+        },
+      },
+    });
+  });
+
+  it('maps contactActivity validation errors to contactKind, contactSubject and contactBody', () => {
+    const noBody = parseStageMove(
+      'lead',
+      form({ stage: 'contacted', expectedVersion: '3', contactKind: 'call', contactBody: '  ' }),
+    );
+    expect(noBody.ok).toBe(false);
+    if (!noBody.ok) {
+      expect(noBody.fieldErrors['contactBody']).toMatch(/call or email/i);
+    }
+
+    const badKind = parseStageMove(
+      'lead',
+      form({
+        stage: 'contacted',
+        expectedVersion: '3',
+        contactKind: 'meeting',
+        contactBody: 'Met them.',
+      }),
+    );
+    expect(badKind.ok).toBe(false);
+    if (!badKind.ok) {
+      expect(badKind.fieldErrors['contactKind']).toBe('Choose call or email.');
+    }
+
+    const longSubject = parseStageMove(
+      'lead',
+      form({
+        stage: 'contacted',
+        expectedVersion: '3',
+        contactKind: 'call',
+        contactSubject: 'x'.repeat(201),
+        contactBody: 'Called.',
+      }),
+    );
+    expect(longSubject.ok).toBe(false);
+    if (!longSubject.ok) {
+      expect(longSubject.fieldErrors['contactSubject']).toMatch(/200 characters/);
+    }
+  });
 });
 
 describe('parseLead', () => {

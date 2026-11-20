@@ -16,7 +16,6 @@ const mocks = vi.hoisted(() => ({
   listActivities: vi.fn(),
   listLeadOwners: vi.fn(),
   listLeadLostReasonChoices: vi.fn(),
-  moveForm: vi.fn(),
   userNames: vi.fn(),
 }));
 
@@ -28,14 +27,6 @@ vi.mock('@/components/p2/crm/crm-api', () => ({
   getLead: mocks.getLead,
   listActivities: mocks.listActivities,
   listLeadOwners: mocks.listLeadOwners,
-}));
-// The Move-to options live in a closed listbox, so the stub records what the page asks it to offer.
-vi.mock('@/components/p2/crm/move-form', () => ({
-  MoveForm: (props: unknown) => {
-    mocks.moveForm(props);
-    return null;
-  },
-  toastMoveResult: vi.fn(),
 }));
 vi.mock('@/lib/business-labels', async (importOriginal) => ({
   ...(await importOriginal<object>()),
@@ -86,6 +77,8 @@ const lead = (over: Partial<LeadDto> = {}): LeadDto => ({
   lostReason: null,
   stageNote: null,
   convertedOpportunityId: null,
+  allowedMoves: ['contacted', 'on_hold', 'lost'],
+  canEdit: true,
   version: 3,
   createdAt: WHEN,
   updatedAt: WHEN,
@@ -145,7 +138,6 @@ async function render(): Promise<Document> {
 
 /** The card (section or aside) whose heading reads `title`. */
 function card(doc: Document, title: string): Element {
-  // A card heading may carry a decorative eyebrow before its title.
   const heading = [...doc.querySelectorAll('h2')].find((h) =>
     h.textContent?.trim().endsWith(title),
   );
@@ -156,7 +148,6 @@ function card(doc: Document, title: string): Element {
 
 /** The page header's action buttons, by label. */
 function headerButtons(doc: Document): string[] {
-  // PageHeader: h1 > title row > head text > header (whose last child holds the actions).
   const header = doc.querySelector('h1')?.parentElement?.parentElement?.parentElement;
   return [...(header?.querySelectorAll('button, a') ?? [])].map((b) => b.textContent?.trim() ?? '');
 }
@@ -176,12 +167,11 @@ beforeEach(() => {
       ),
     );
   mocks.listLeadOwners.mockReset().mockResolvedValue(OWNERS);
-  mocks.moveForm.mockReset();
   mocks.userNames.mockReset().mockResolvedValue(new Map());
   mocks.listLeadLostReasonChoices.mockReset().mockResolvedValue([]);
 });
 
-describe('lead detail page composition (U14 D39, D41)', () => {
+describe('lead detail page composition (U14 D39, D41, D48)', () => {
   it('asks for planned and logged activities separately', async () => {
     await render();
     expect(mocks.listActivities).toHaveBeenCalledWith(
@@ -194,6 +184,13 @@ describe('lead detail page composition (U14 D39, D41)', () => {
     );
   });
 
+  it('renders no Move to dropdown or stage select anywhere on the page', async () => {
+    const doc = await render();
+    expect(doc.body.textContent).not.toContain('Move to');
+    expect(doc.querySelector('select[name="stage"]')).toBeNull();
+    expect(doc.querySelector('input[name="stage"]')).toBeNull();
+  });
+
   it('shows planned follow-ups only on the Follow-ups card and logged rows only in History', async () => {
     const doc = await render();
     const followUps = card(doc, 'Follow-ups').textContent ?? '';
@@ -202,7 +199,6 @@ describe('lead detail page composition (U14 D39, D41)', () => {
     expect(followUps).not.toContain('Intro call with Sunita');
     expect(history).toContain('Intro call with Sunita');
     expect(history).not.toContain('Book requirement workshop');
-    // History names the actor through the owners list.
     expect(history).toContain('Anil Karki');
   });
 
@@ -249,32 +245,122 @@ describe('lead detail page composition (U14 D39, D41)', () => {
   });
 
   it.each([
-    // The stage rules have no user move from New straight to Qualified, so New offers Mark lost only.
-    ['new', ['Mark lost']],
-    ['contacted', ['Qualify', 'Mark lost']],
-    ['lost', []],
-    ['converted', []],
-  ] as const)('header actions for a %s lead: %j', async (stage, expected) => {
+    [
+      'new',
+      ['contacted', 'on_hold', 'lost'] as LeadDto['stage'][],
+      ['Mark contacted', 'Put on hold', 'Mark lost'],
+      'Log a call or email with Mark contacted to move this lead to Contacted.',
+    ],
+    [
+      'contacted',
+      ['qualified', 'on_hold', 'lost'] as LeadDto['stage'][],
+      ['Qualify', 'Put on hold', 'Mark lost'],
+      'Use the header actions to qualify this lead, put it on hold, or mark it lost.',
+    ],
+    [
+      'qualified',
+      ['on_hold', 'lost'] as LeadDto['stage'][],
+      ['Put on hold', 'Mark lost'],
+      'Qualifying is complete. Convert this lead to an opportunity, put it on hold, or mark it lost.',
+    ],
+    [
+      'on_hold',
+      ['contacted'] as LeadDto['stage'][],
+      ['Resume'],
+      'This lead is on hold. Use Resume in the header to move it back to Contacted.',
+    ],
+    ['lost', [] as LeadDto['stage'][], [], 'Only a manager can reopen a lost lead.'],
+    [
+      'lost',
+      ['contacted'] as LeadDto['stage'][],
+      ['Reopen'],
+      'This lead is lost. Use Reopen in the header to return it to Contacted.',
+    ],
+    ['converted', [] as LeadDto['stage'][], [], 'This lead is converted. Its stage is final.'],
+  ])(
+    'header actions and Stage panel text for %s with allowedMoves %j',
+    async (stage, allowedMoves, expectedButtons, expectedStageText) => {
+      mocks.getLead.mockResolvedValue(
+        lead({
+          stage: stage as LeadDto['stage'],
+          allowedMoves,
+          ...(stage === 'lost'
+            ? {
+                stageReason: 'No budget',
+                lostReason: { id: LOST_REASON, label: 'No budget', retired: false },
+                stageNote: 'No budget this year.',
+              }
+            : {}),
+          ...(stage === 'on_hold'
+            ? {
+                stageReason: 'Waiting on Q2 budget',
+                stageNote: 'Check back in April.',
+              }
+            : {}),
+          ...(stage === 'converted'
+            ? { convertedOpportunityId: '44444444-4444-4444-8444-444444444444' }
+            : {}),
+        }),
+      );
+      const doc = await render();
+      expect(headerButtons(doc)).toEqual(expectedButtons);
+      // Without actions the header draws no empty actions slot: head text is its only child.
+      const header = doc.querySelector('h1')?.parentElement?.parentElement?.parentElement;
+      expect(header?.children.length).toBe(expectedButtons.length ? 2 : 1);
+      expect(card(doc, 'Stage').textContent).toContain(expectedStageText);
+    },
+  );
+
+  it('shows On Hold in the timeline with its stage-change date, reason and note', async () => {
+    const holdChange = activity('33333333-3333-4333-8333-333333333334', {
+      kind: 'stage_change',
+      subject: 'Moved from contacted to on_hold',
+      occurredAt: '2026-11-12T05:45:00.000Z',
+    });
     mocks.getLead.mockResolvedValue(
       lead({
-        stage,
-        ...(stage === 'lost'
-          ? {
-              stageReason: 'No budget',
-              lostReason: { id: LOST_REASON, label: 'No budget', retired: false },
-              stageNote: 'No budget this year.',
-            }
-          : {}),
-        ...(stage === 'converted'
-          ? { convertedOpportunityId: '44444444-4444-4444-8444-444444444444' }
-          : {}),
+        stage: 'on_hold',
+        allowedMoves: ['contacted'],
+        stageReason: 'Waiting on Q2 budget',
+        stageNote: 'Re-engage after fiscal close.',
       }),
     );
+    mocks.listActivities.mockImplementation((_s: unknown, opts: { status?: string }) =>
+      Promise.resolve(opts.status === 'logged' ? [holdChange, STAGE_CHANGE, LOGGED] : []),
+    );
+
     const doc = await render();
-    expect(headerButtons(doc)).toEqual(expected);
-    // Without actions the header draws no empty actions slot: head text is its only child.
-    const header = doc.querySelector('h1')?.parentElement?.parentElement?.parentElement;
-    expect(header?.children.length).toBe(expected.length ? 2 : 1);
+    const timeline = doc.querySelector('[aria-label="Lead progression"]');
+    const timelineCard = timeline?.parentElement;
+    expect(timeline?.textContent).toContain('On Hold');
+    expect(timeline?.textContent).not.toMatch(/On Hold\s*Current/);
+    expect(timelineCard?.textContent).toContain('Waiting on Q2 budget');
+    expect(timelineCard?.textContent).toContain('Re-engage after fiscal close.');
+  });
+
+  it('enforces read-only mode when canEdit is false and allowedMoves is empty', async () => {
+    mocks.getLead.mockResolvedValue(
+      lead({
+        stage: 'qualified',
+        allowedMoves: [],
+        canEdit: false,
+      }),
+    );
+
+    const doc = await render();
+    expect(headerButtons(doc)).toEqual([]);
+    expect(mocks.listLeadLostReasonChoices).not.toHaveBeenCalled();
+    expect(card(doc, 'Stage').textContent).toContain('You have read-only access to this lead.');
+    expect(card(doc, 'Convert to opportunity').textContent).toContain(
+      'You have read-only access to this lead.',
+    );
+    expect(card(doc, 'Convert to opportunity').querySelector('button')).toBeNull();
+    expect(card(doc, 'Log activity').textContent).toContain(
+      'You have read-only access to this lead.',
+    );
+    expect(card(doc, 'Log activity').querySelector('form')).toBeNull();
+    expect(card(doc, 'Lead overview').textContent).not.toContain('Save owner');
+    expect(card(doc, 'Follow-ups').textContent).not.toContain('Schedule follow-up');
   });
 
   it('reads the lost reasons only when Mark lost is offered, and shows the reason by its option label (D49)', async () => {
@@ -295,6 +381,7 @@ describe('lead detail page composition (U14 D39, D41)', () => {
     mocks.getLead.mockResolvedValue(
       lead({
         stage: 'lost',
+        allowedMoves: [],
         stageReason: 'Timing',
         lostReason: { id: LOST_REASON, label: 'Bad timing', retired: true },
         stageNote: 'Next year.',
@@ -302,7 +389,6 @@ describe('lead detail page composition (U14 D39, D41)', () => {
     );
     const doc = await render();
     expect(mocks.listLeadLostReasonChoices).not.toHaveBeenCalled();
-    // The option's current label wins over the words saved when the lead was lost, and a retired option still shows.
     const text = doc.body.textContent ?? '';
     expect(text).toContain('Bad timing');
     expect(text).toContain('This reason is no longer offered for new leads.');
@@ -311,7 +397,13 @@ describe('lead detail page composition (U14 D39, D41)', () => {
 
   it('still shows the saved words for a lead lost before the list existed', async () => {
     mocks.getLead.mockResolvedValue(
-      lead({ stage: 'lost', stageReason: 'Budget', lostReason: null, stageNote: 'Gone quiet.' }),
+      lead({
+        stage: 'lost',
+        allowedMoves: [],
+        stageReason: 'Budget',
+        lostReason: null,
+        stageNote: 'Gone quiet.',
+      }),
     );
     const text = (await render()).body.textContent ?? '';
     expect(text).toContain('Budget');
@@ -331,18 +423,10 @@ describe('lead detail page composition (U14 D39, D41)', () => {
     expect(doc.querySelector('a[href="#lead-activity-form"]')).toBeNull();
     const logPanel = card(doc, 'Log activity');
     const history = card(doc, 'History');
-    // Same column as History, after it.
     expect(logPanel.parentElement).toBe(history.parentElement);
     expect(
       history.compareDocumentPosition(logPanel) & Node.DOCUMENT_POSITION_FOLLOWING,
     ).toBeTruthy();
-  });
-
-  it('leaves Qualify, Lost and Converted out of the Move-to panel', async () => {
-    await render();
-    expect(mocks.moveForm).toHaveBeenCalledWith(
-      expect.objectContaining({ exclude: ['qualified', 'lost', 'converted'] }),
-    );
   });
 
   it('reads stage-change dates for the progression from the logged list', async () => {
@@ -355,7 +439,6 @@ describe('lead detail page composition (U14 D39, D41)', () => {
 
 describe('lead detail names (D46: each record carries its own names)', () => {
   it('names an assignee outside an own-scope owners list from the activity', async () => {
-    // An own-scope caller only gets themselves as an owner option.
     mocks.listLeadOwners.mockResolvedValue([OWNERS[0]]);
     mocks.listActivities.mockImplementation((_s: unknown, opts: { status?: string }) =>
       Promise.resolve(

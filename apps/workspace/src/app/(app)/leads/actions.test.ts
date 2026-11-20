@@ -15,6 +15,7 @@ vi.mock('@/lib/bff', () => ({
 }));
 
 const api = vi.hoisted(() => ({
+  changeLeadStage: vi.fn(),
   createLead: vi.fn(),
   convertLead: vi.fn(),
   createActivity: vi.fn(),
@@ -30,6 +31,7 @@ import {
   completeFollowUpAction,
   convertLeadAction,
   createLeadAction,
+  moveLeadStageAction,
   rescheduleFollowUpAction,
   scheduleFollowUpAction,
   updateLeadOwnerAction,
@@ -434,5 +436,67 @@ describe('updateLeadOwnerAction', () => {
     const tampered = await updateLeadOwnerAction({}, ownerForm({ leadId: 'nope' }));
     expect(tampered.reload).toBe(true);
     expect(api.updateLead).not.toHaveBeenCalled();
+  });
+});
+
+describe('moveLeadStageAction with contactActivity', () => {
+  const stageForm = (fields: Record<string, string>) => {
+    const f = new FormData();
+    for (const [k, v] of Object.entries({ recordId: LEAD, expectedVersion: '3', ...fields })) {
+      f.set(k, v);
+    }
+    return f;
+  };
+
+  it('sends contactActivity to changeLeadStage when moving a new lead to contacted', async () => {
+    api.changeLeadStage.mockResolvedValue({});
+    const res = await moveLeadStageAction(
+      {},
+      stageForm({
+        stage: 'contacted',
+        contactKind: 'call',
+        contactSubject: 'Discovery call',
+        contactBody: 'Confirmed scope and timeline.',
+      }),
+    );
+    expect(res).toEqual({ ok: true, movedTo: 'Contacted' });
+    expect(api.changeLeadStage).toHaveBeenCalledExactlyOnceWith(expect.anything(), LEAD, {
+      stage: 'contacted',
+      expectedVersion: 3,
+      contactActivity: {
+        kind: 'call',
+        subject: 'Discovery call',
+        body: 'Confirmed scope and timeline.',
+      },
+    });
+    expect(cache.revalidatePath).toHaveBeenCalledWith('/leads');
+    expect(cache.revalidatePath).toHaveBeenCalledWith(`/leads/${LEAD}`);
+  });
+
+  it('omits subject when left empty and returns contactBody field error when body is blank', async () => {
+    api.changeLeadStage.mockResolvedValue({});
+    const ok = await moveLeadStageAction(
+      {},
+      stageForm({
+        stage: 'contacted',
+        contactKind: 'email',
+        contactSubject: '',
+        contactBody: 'Sent introduction.',
+      }),
+    );
+    expect(ok).toEqual({ ok: true, movedTo: 'Contacted' });
+    expect(api.changeLeadStage).toHaveBeenCalledExactlyOnceWith(expect.anything(), LEAD, {
+      stage: 'contacted',
+      expectedVersion: 3,
+      contactActivity: { kind: 'email', body: 'Sent introduction.' },
+    });
+
+    api.changeLeadStage.mockClear();
+    const invalid = await moveLeadStageAction(
+      {},
+      stageForm({ stage: 'contacted', contactKind: 'call', contactBody: '   ' }),
+    );
+    expect(invalid.fieldErrors?.['contactBody']).toMatch(/call or email/i);
+    expect(api.changeLeadStage).not.toHaveBeenCalled();
   });
 });
