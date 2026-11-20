@@ -19,7 +19,7 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 
 import { planRuns } from '../lib/plan.mjs';
 import { clearSecrets, registerSecret } from '../lib/redact.mjs';
-import { saveDriverError, saveResults } from '../lib/runner.mjs';
+import { finishVideos, saveDriverError, saveResults } from '../lib/runner.mjs';
 import {
   acquireLock,
   claimPath,
@@ -174,6 +174,98 @@ describe('no overwrites', () => {
     const saved = JSON.parse(readFileSync(path.join(outDir, 'results.json'), 'utf8'));
     assert.equal(saved.history.sales[0].runId, 'r1');
     assert.ok(existsSync(path.join(outDir, 'results.md')));
+  });
+});
+
+describe('a merged result is green only when every kept step is', () => {
+  const cfgFor = () => ({
+    outDir: freshDir(),
+    label: 'scr1',
+    viewportText: '1440x900',
+    appUrl: 'https://a.localhost',
+  });
+  const step = (id, status) => ({
+    id,
+    title: id,
+    status,
+    durationMs: 0,
+    checks: [],
+    findings: [],
+    records: {},
+  });
+  const run = (runId, steps, extra = {}) => ({
+    name: 'start',
+    title: 't',
+    runId,
+    status: 'PASS',
+    wallMs: 1,
+    videos: [],
+    steps,
+    ...extra,
+  });
+  // Stopped while start-2 ran: start-2 INTERRUPTED, start-3 never reached.
+  const stopped = run('r1', [step('start-1', 'PASS'), step('start-2', 'INTERRUPTED')], {
+    status: 'RUNNING',
+    interrupted: true,
+  });
+
+  test('resuming only start-1 leaves start-2 INTERRUPTED and the workflow not PASS', () => {
+    const cfg = cfgFor();
+    saveResults(cfg, stopped);
+    const merged = saveResults(
+      cfg,
+      run('r2', [step('start-1', 'PASS'), step('start-2', 'SKIPPED'), step('start-3', 'SKIPPED')]),
+      stopped,
+    );
+    assert.equal(merged.steps[1].status, 'INTERRUPTED');
+    assert.equal(merged.status, 'INTERRUPTED');
+  });
+
+  test('a segment that reruns the interrupted step can be PASS again', () => {
+    const cfg = cfgFor();
+    const merged = saveResults(
+      cfg,
+      run('r2', [step('start-1', 'SKIPPED'), step('start-2', 'PASS'), step('start-3', 'PASS')]),
+      stopped,
+    );
+    assert.equal(merged.status, 'PASS');
+  });
+
+  test('a video error makes the merged result FAIL even when every step passed', () => {
+    const cfg = cfgFor();
+    const earlier = run('r1', [step('start-1', 'PASS'), step('start-2', 'PASS')]);
+    const merged = saveResults(
+      cfg,
+      run('r2', [step('start-1', 'SKIPPED'), step('start-2', 'PASS')], {
+        status: 'FAIL',
+        videoError: 'Videos not finalised: the video of the main window is missing',
+      }),
+      earlier,
+    );
+    assert.equal(merged.status, 'FAIL');
+    assert.match(readFileSync(path.join(cfg.outDir, 'results.md'), 'utf8'), /video of the main/);
+  });
+
+  test('finishVideos reports a missing source video instead of staying silent', async () => {
+    const cfg = cfgFor();
+    const page = (file) => ({ video: () => ({ path: async () => file }) });
+    const kept = path.join(cfg.outDir, 'kept.webm');
+    writeFileSync(kept, 'webm');
+    const closer = { close: async () => {} };
+    const result = { videos: [] };
+    await assert.rejects(
+      finishVideos(
+        cfg,
+        result,
+        { ...closer, pages: () => [] },
+        { closedPages: [page(kept), page(path.join(cfg.outDir, 'gone.webm'))] },
+        closer,
+        'start',
+      ),
+      /the video of tab 2 is missing/,
+    );
+    // The main window's video was still placed, under the claimed name.
+    assert.deepEqual(result.videos, [path.join(cfg.outDir, 'start.webm')]);
   });
 });
 

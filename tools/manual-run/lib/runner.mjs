@@ -223,7 +223,9 @@ export async function runWorkflow(cfg, workflow, opts = {}) {
   try {
     await finishVideos(cfg, result, context, session, browser, base);
   } catch (error) {
+    // The steps stay as they ran, but the run is not green: its video is part of the evidence.
     result.videoError = redactText(`Videos not finalised: ${error.message.split('\n')[0]}`);
+    result.status = 'FAIL';
     log(result.videoError);
   }
   return saveResults(cfg, result, earlier);
@@ -234,8 +236,9 @@ export async function runWorkflow(cfg, workflow, opts = {}) {
  * claimed name for the run's main video (sales.webm, then sales-2.webm …); extra pages and windows
  * take its stem too, and no file is ever replaced.
  */
-async function finishVideos(cfg, result, context, session, browser, base) {
-  const pages = context.pages();
+export async function finishVideos(cfg, result, context, session, browser, base) {
+  // A step that timed out closed its windows already; their pages were kept for this.
+  const pages = session?.closedPages ?? context.pages();
   const extra = session.extraContexts ?? [];
   await context.close().catch(() => {});
   for (const c of extra) await c.context.close().catch(() => {});
@@ -247,35 +250,45 @@ async function finishVideos(cfg, result, context, session, browser, base) {
     main ??= claimPath(cfg.outDir, base, '.webm');
     return path.basename(main, '.webm');
   };
-  const place = async (page, claim) => {
-    const v = await page
-      .video()
-      ?.path()
-      .catch(() => null);
-    if (!v || !existsSync(v)) return false;
+  const place = async (page, claim, what) => {
+    const video = page.video();
+    if (!video) return false; // a page of a context that does not record
+    const v = await video.path().catch(() => null);
+    if (!v || !existsSync(v)) {
+      failures.push(`the video of ${what} is missing`);
+      return false;
+    }
     const dest = claim();
     try {
       renameSync(v, dest);
       result.videos.push(dest);
     } catch (error) {
-      failures.push(`${path.basename(v)}: ${error.message.split('\n')[0]}`);
+      failures.push(
+        `could not move ${path.basename(v)} out of .video-tmp: ${error.message.split('\n')[0]}`,
+      );
       rmSync(dest, { force: true }); // the empty claimed name
     }
     return true;
   };
   let n = 0;
   for (const p of pages) {
-    const placed = await place(p, () =>
-      n === 0 ? (stem(), main) : claimPath(cfg.outDir, `${stem()}-page${n + 1}`, '.webm'),
+    const placed = await place(
+      p,
+      () => (n === 0 ? (stem(), main) : claimPath(cfg.outDir, `${stem()}-page${n + 1}`, '.webm')),
+      n === 0 ? 'the main window' : `tab ${n + 1}`,
     );
     if (placed) n++;
   }
   for (const c of extra)
     for (const p of c.pages)
-      await place(p, () => claimPath(cfg.outDir, `${stem()}-${c.name}`, '.webm'));
+      await place(
+        p,
+        () => claimPath(cfg.outDir, `${stem()}-${c.name}`, '.webm'),
+        `the ${c.name} window`,
+      );
   // Only extra windows recorded: the main name was claimed for its stem but holds nothing.
   if (main && !result.videos.includes(main)) rmSync(main, { force: true });
-  if (failures.length) throw new Error(`could not move ${failures.join('; ')} out of .video-tmp`);
+  if (failures.length) throw new Error(failures.join('; '));
 }
 
 /**
@@ -328,14 +341,18 @@ function mergeResumed(prev, next) {
       )
     : prev.steps.map((st) => ({ ...st, fromEarlierRun: true }));
   const has = (status) => steps.some((st) => st.status === status);
+  // A step kept from an earlier segment counts as much as one of this segment: an INTERRUPTED one
+  // left behind by a stopped run keeps the workflow unfinished until a later segment runs it.
   const status =
-    next.error || has('FAIL')
+    next.error || next.videoError || next.status === 'FAIL' || has('FAIL')
       ? 'FAIL'
       : has('BLOCKED')
         ? 'BLOCKED'
-        : steps.every((st) => st.status === 'PASS')
-          ? 'PASS'
-          : next.status;
+        : has('INTERRUPTED')
+          ? 'INTERRUPTED'
+          : steps.every((st) => st.status === 'PASS')
+            ? 'PASS'
+            : next.status;
   const videos = [...new Set([...(prev.videos ?? []), ...next.videos])];
   return { ...next, steps, status, videos, wallMs: (prev.wallMs ?? 0) + next.wallMs };
 }
@@ -401,6 +418,7 @@ export function renderMarkdown(all) {
         .join(', ')}`,
     );
     if (wf.error) lines.push('', `**${wf.error}**`);
+    if (wf.videoError) lines.push('', `**${wf.videoError}**`);
     for (const v of wf.videos) lines.push(`- video: ${v}`);
     lines.push('', '| step | status | s | notes |', '|---|---|---|---|');
     for (const s of wf.steps) {
