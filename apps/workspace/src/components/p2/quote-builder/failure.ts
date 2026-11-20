@@ -3,6 +3,7 @@
 import {
   isZeroInstalmentRefusal,
   ZERO_INSTALMENT_MESSAGE,
+  ZERO_INSTALMENT_NPR_MESSAGE,
 } from '@/components/p2/quotations/lifecycle-contract';
 
 export type FailureKind =
@@ -205,13 +206,15 @@ export function describeQuoteFailure(
       typeof f.details.label === 'string' && f.details.label.trim() !== ''
         ? f.details.label.trim()
         : undefined;
+    // Only the NPR conversion splits to 0.00: the builder's own amounts are all above it, so say so.
+    const base = f.details.converted === true ? ZERO_INSTALMENT_NPR_MESSAGE : ZERO_INSTALMENT_MESSAGE;
     const named =
       label !== undefined && label.length <= 80
-        ? ZERO_INSTALMENT_MESSAGE.replace(
+        ? base.replace(
             'At least one payment milestone',
             `The payment milestone "${label}"`,
           )
-        : ZERO_INSTALMENT_MESSAGE;
+        : base;
     return {
       kind: 'invalid',
       message: action === 'submit' ? named : named.replace(' Nothing was submitted.', ''),
