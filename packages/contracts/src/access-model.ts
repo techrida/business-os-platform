@@ -2,7 +2,7 @@
 // the Founder will switch, the target default reach of every role on leads, and the vocabulary of the assignment
 // rule. Pure data and types: no I/O, so the API, the pickers and the tests read one definition.
 // The rule itself is `apps/api/src/modules/leads/lead-assignment-rule.ts`; the SQL half is migrations
-// 0079 to 0083 and 0088.
+// 0079 to 0083, 0088 and 0123.
 import { z } from 'zod';
 
 import {
@@ -119,7 +119,7 @@ export interface AccessArea {
 
 export type AccessAreaKey = (typeof ACCESS_AREAS)[number]['key'];
 
-// --- Default level grants (D50, D51). Migration 0088 writes exactly these rows. ---
+// --- Default level grants (D50, D51). Migration 0088 wrote them; 0123 removed the Finance and Accountant rows. ---
 
 /**
  * One area's department-reach switches, as Settings > Access (U20b) models them: a manager or head reaches the
@@ -242,7 +242,8 @@ function editsArea(role: RoleKey): boolean {
  * every area with department reach, a manager row when the area's managers see the department and a head row when
  * its heads do, on the area's see permission and, for a role that edits the area, its edit permission. Each
  * permission gets rows only where the role's base grant on it exists and is narrower than the department, the same
- * test migration 0088 applies per tenant row.
+ * test migrations 0088 and 0123 apply per tenant row. Finance and Accountant read every lead and opportunity
+ * (U20a2-Q4), so they get no row; PMO reads its own, so its managers and heads see the department (D51).
  */
 function defaultLevelGrants(role: RoleKey): LevelGrant[] {
   if (!LEVEL_STAFF_ROLE_KEYS.includes(role)) return [];
@@ -279,7 +280,7 @@ export const DEFAULT_ROLE_PERMISSION_LEVELS: Readonly<Record<RoleKey, readonly L
 
 /**
  * How much of an area a role reaches. `created` is the records the caller entered (leads.created_by_user_id),
- * which is what Finance, Accountant and PMO keep after the owner becomes a Sales user.
+ * which is what PMO keeps after the owner becomes a Sales user.
  */
 export const ACCESS_REACHES = ['none', 'created', 'own', 'department', 'all'] as const;
 export type AccessReach = (typeof ACCESS_REACHES)[number];
@@ -326,6 +327,11 @@ const intakeOnly: Record<AccessLevel, AccessCell> = {
   manager: { create: true, read: 'department', write: 'none', assigned: false },
   head: { create: true, read: 'department', write: 'none', assigned: false },
 };
+/**
+ * Starts leads for Sales and reads every lead and opportunity at every level, but edits none (U20a2-Q4: Finance and
+ * Accountant see everything). This partly reverses D50 for the two roles; PMO stays `intakeOnly`.
+ */
+const intakeReadAll: AccessCell = { create: true, read: 'all', write: 'none', assigned: false };
 
 /**
  * What each role reaches on leads by default, per membership level. Opportunities and quotations follow their
@@ -337,8 +343,8 @@ export const TARGET_LEAD_ACCESS: Readonly<Record<RoleKey, Record<AccessLevel, Ac
   management: forEveryLevel({ create: false, read: 'all', write: 'none', assigned: false }),
   sales: workOwnThenDepartment,
   marketing: workOwnThenDepartment,
-  finance: intakeOnly,
-  accountant: intakeOnly,
+  finance: forEveryLevel(intakeReadAll),
+  accountant: forEveryLevel(intakeReadAll),
   pmo: intakeOnly,
   operations_head: forEveryLevel(NO_ACCESS),
   procurement: forEveryLevel(NO_ACCESS),
