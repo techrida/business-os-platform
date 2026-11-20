@@ -22,6 +22,20 @@ function wordsOf(markup: string): Set<string> {
 }
 
 /** "NPR" here is the invoice's own currency, which the customer must see; the forbidden word means an NPR equivalent of a foreign amount. */
+// The real viewer, with the download route it was given written beside it: its Download is a button that fetches
+// (R4c2, TR-Q4), so the route no longer shows as a link.
+vi.mock('@/components/ui/document-viewer', async (importOriginal) => {
+  const real = await importOriginal<typeof import('@/components/ui/document-viewer')>();
+  return {
+    ...real,
+    ViewDocument: (props: Parameters<typeof real.ViewDocument>[0]) => (
+      <span data-download-url={props.downloadUrl}>
+        <real.ViewDocument {...props} />
+      </span>
+    ),
+  };
+});
+
 const forbiddenIn = (markup: string): string[] => {
   const words = wordsOf(markup.replace(/\bNPR\b/g, ''));
   return CUSTOMER_VIEW_FORBIDDEN_WORDS.filter((w) => words.has(w));
@@ -66,13 +80,16 @@ describe('InvoiceView', () => {
     for (const word of STAFF_ONLY) expect(html).not.toContain(word);
   });
 
-  it('offers View PDF and a plain Download link to the BFF route, and says so when it is not ready', () => {
+  it('offers View PDF and a Download button for the BFF route, and says so when it is not ready', () => {
     const html = renderToStaticMarkup(
       <InvoiceView view={sampleInvoice()} settlement={sampleSettlement()} />,
     );
     expect(html).toContain('View PDF');
     expect(html).not.toContain('Download PDF');
-    expect(html).toContain(`href="/invoices/${INVOICE_ID}/document"`);
+    expect(html).toContain(`data-download-url="/invoices/${INVOICE_ID}/document"`);
+    // A refused download stays in the portal: no link that would replace the page (R4c2, TR-Q4).
+    expect(html).not.toContain(`href="/invoices/${INVOICE_ID}/document"`);
+    expect(html).toMatch(/<button[^>]*>.*Download<\/button>/);
     expect(html).not.toContain('/document/preview');
     const none = renderToStaticMarkup(
       <InvoiceView view={sampleInvoice({ file: null })} settlement={sampleSettlement()} />,
@@ -278,6 +295,36 @@ describe('InvoiceView as the printed invoice', () => {
     expect(bare).not.toContain('mailto:');
     expect(bare).not.toContain('tel:');
     expect(bare).not.toContain('signatory');
+  });
+
+  it('prints the contact the original PDF froze, not the profile as it is now', () => {
+    const html = renderToStaticMarkup(
+      <InvoiceView
+        view={sampleInvoice({
+          format: sampleFormat({
+            sellerContact: {
+              phones: ['+977 1 4440000'],
+              email: 'frozen@techrida.example',
+              signatoryName: 'Sita Sharma',
+              signatoryTitle: 'Director',
+            },
+          }),
+        })}
+        settlement={sampleSettlement()}
+      />,
+    );
+    expect(html).toContain('Sita Sharma');
+    expect(html).toContain('mailto:frozen@techrida.example');
+    expect(html).not.toContain('Amanda Vance');
+    expect(html).not.toContain('5551234');
+    const none = renderToStaticMarkup(
+      <InvoiceView
+        view={sampleInvoice({ format: sampleFormat({ sellerContact: null }) })}
+        settlement={sampleSettlement()}
+      />,
+    );
+    expect(none).not.toContain('Amanda Vance');
+    expect(none).not.toContain('mailto:');
   });
 
   it('gives the due date its Bikram Sambat date, and the Gregorian date alone out of range', () => {

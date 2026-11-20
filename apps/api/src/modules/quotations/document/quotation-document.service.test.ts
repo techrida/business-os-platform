@@ -1,8 +1,9 @@
 // Unit tests of QuotationDocumentService with the database and DocumentsService faked: who may ask (staff only),
 // the 404 for a version the store does not return (another entity, another owner, another quotation), the three
-// answers for a PDF that cannot be served (409 quotation_pdf_not_ready, 424 quotation_pdf_failed, 404
-// quotation_pdf_unavailable), the happy path that issues the link through issueLinkForOwner, and the retry of a
-// failed render (202 only from `failed`, audited, 409 quotation_pdf_retry_not_needed otherwise). The SQL scope and a link that redeems run on Postgres in
+// answers for a PDF that cannot be served (409 quotation_pdf_not_ready, also for a failed render with tries left; 424
+// quotation_pdf_failed once it was given up; 404 quotation_pdf_unavailable), the happy path that issues the link
+// through issueLinkForOwner, and the retry of a given-up render (202 only from `failed` at the try limit, audited, 409
+// quotation_pdf_retry_not_needed otherwise). The SQL scope and a link that redeems run on Postgres in
 // quotation-document.integration.test.ts.
 import type { DocumentVersionDto, Permission, Scope } from '@bos/contracts';
 import { ForbiddenException, HttpException, NotFoundException } from '@nestjs/common';
@@ -11,6 +12,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { Principal } from '../../../platform/authz/principal';
 import type { DbTransaction } from '../../../platform/db/db.module';
 import { QUOTATION_OWNER_TYPE } from '../quotation-owner.policy';
+import { MAX_RENDER_ATTEMPTS } from '../render/render-retry';
 import { QuotationDocumentService, type QuotationDocumentHead } from './quotation-document.service';
 
 const TX = { fake: 'tx' } as unknown as DbTransaction;
@@ -51,9 +53,18 @@ const head = (over: Partial<QuotationDocumentHead> = {}): QuotationDocumentHead 
   organizationId: ORG,
   renderedDocumentId: DOCUMENT,
   renderState: 'rendered',
+  renderAttempts: 0,
   status: 'approved',
   ...over,
 });
+/** A version whose render failed on its last try. */
+const givenUp = (over: Partial<QuotationDocumentHead> = {}) =>
+  head({
+    renderState: 'failed',
+    renderAttempts: MAX_RENDER_ATTEMPTS,
+    renderedDocumentId: null,
+    ...over,
+  });
 
 const upload = (over: Partial<DocumentVersionDto> = {}): DocumentVersionDto => ({
   id: id(41),
@@ -188,9 +199,22 @@ describe('QuotationDocumentService.link', () => {
     },
   );
 
-  it('is a 424 quotation_pdf_failed when the render failed, with its message and no link', async () => {
+  it('is a 409 quotation_pdf_not_ready, never "failed", while a failed render still has tries left', async () => {
     const { service, store, documents } = setup();
-    store.head.mockResolvedValue(head({ renderState: 'failed', renderedDocumentId: null }));
+    for (let attempts = 0; attempts < MAX_RENDER_ATTEMPTS; attempts += 1) {
+      store.head.mockResolvedValue(
+        head({ renderState: 'failed', renderAttempts: attempts, renderedDocumentId: null }),
+      );
+      const { status, body } = await answerOf(service.link(QID, VID));
+      expect(status).toBe(409);
+      expect(body).toMatchObject({ code: 'quotation_pdf_not_ready' });
+    }
+    expect(documents.issueLinkForOwner).not.toHaveBeenCalled();
+  });
+
+  it('is a 424 quotation_pdf_failed when the render was given up, with its message and no link', async () => {
+    const { service, store, documents } = setup();
+    store.head.mockResolvedValue(givenUp());
 
     const { status, body } = await answerOf(service.link(QID, VID));
 
@@ -264,9 +288,9 @@ describe('QuotationDocumentService.link', () => {
 });
 
 describe('QuotationDocumentService.retry', () => {
-  it('requeues a failed render in the caller transaction, audits it and answers queued', async () => {
+  it('requeues a given-up render in the caller transaction, audits it and answers queued', async () => {
     const { service, store, audit } = setup();
-    store.head.mockResolvedValue(head({ renderState: 'failed', renderedDocumentId: null }));
+    store.head.mockResolvedValue(givenUp());
 
     await expect(service.retry(QID, VID)).resolves.toEqual({ state: 'queued' });
 
@@ -290,8 +314,8 @@ describe('QuotationDocumentService.retry', () => {
         action: 'quotation.pdf_retry_requested',
         entityType: 'quotations',
         entityId: QID,
-        before: { versionId: VID, renderState: 'failed' },
-        after: { versionId: VID, renderState: 'none' },
+        before: { versionId: VID, renderState: 'failed', renderAttempts: MAX_RENDER_ATTEMPTS },
+        after: { versionId: VID, renderState: 'none', renderAttempts: 0 },
       }),
     );
   });
@@ -311,6 +335,20 @@ describe('QuotationDocumentService.retry', () => {
     },
   );
 
+  it('is a 409 quotation_pdf_retry_not_needed while a failed render still has tries left, and changes nothing', async () => {
+    const { service, store, audit } = setup();
+    store.head.mockResolvedValue(
+      head({ renderState: 'failed', renderAttempts: MAX_RENDER_ATTEMPTS - 1 }),
+    );
+
+    const { status, body } = await answerOf(service.retry(QID, VID));
+
+    expect(status).toBe(409);
+    expect(body).toMatchObject({ code: 'quotation_pdf_retry_not_needed' });
+    expect(store.requeueFailed).not.toHaveBeenCalled();
+    expect(audit.record).not.toHaveBeenCalled();
+  });
+
   it.each([
     'draft',
     'submitted',
@@ -325,7 +363,7 @@ describe('QuotationDocumentService.retry', () => {
     'is a 409 quotation_pdf_retry_not_needed for a failed render of a %s version (the sweeper renders only approved), and changes nothing',
     async (status) => {
       const { service, store, audit } = setup();
-      store.head.mockResolvedValue(head({ renderState: 'failed', status }));
+      store.head.mockResolvedValue(givenUp({ status }));
 
       const { status: http, body } = await answerOf(service.retry(QID, VID));
 
@@ -338,7 +376,7 @@ describe('QuotationDocumentService.retry', () => {
 
   it('is a 409 and writes no audit row when another click or the sweeper moved the version first', async () => {
     const { service, store, audit } = setup();
-    store.head.mockResolvedValue(head({ renderState: 'failed' }));
+    store.head.mockResolvedValue(givenUp());
     store.requeueFailed.mockResolvedValue(false);
 
     const { status, body } = await answerOf(service.retry(QID, VID));

@@ -15,15 +15,21 @@
 //   the settings in force when the copy is printed.
 //   Print 1 also freezes the company logo's bytes into that format (U12, see frozen-logo.ts), so a copy printed after
 //   the logo changed or was removed still shows the original's logo. A copy of a print made before logos were frozen
-//   prints without one, and a copy never resolves the logo.
+//   prints without one, and a copy never resolves the logo. The seller's phones, email and signatory are frozen the
+//   same way (U16-Q4, see invoice-html.ts).
 //
 // Claiming: the slow part (Chromium) runs with no transaction and no lock. The write is then serialised per invoice by
 // a transaction advisory lock and a re-check for a live document, so two workers that raced both render but only one
-// stores a file; the other answers `skipped`. Failure backoff has no durable home (no column, and the log is for
-// prints), so a failed invoice is remembered in this process for FAILED_RETRY_MS and left out of the candidate query.
-// A rotating cursor keeps expired failures from filling every batch; a restart forgets both backoff and cursor. A
-// document that never got its bytes (a crash between the two steps) is soft-removed after ORPHAN_AFTER_MS, which makes
-// its invoice a candidate again.
+// stores a file; the other answers `skipped`.
+//
+// Failures (round 4, R4c2; render-retry.ts, render-failures.ts): a failed render is recorded in
+// `document_render_failures` and tried again after a pause that grows, until the tries run out. Then the render is
+// given up, one admin (audit) entry `invoice.pdf_render_failed` is written in the same transaction, the candidate
+// query leaves the invoice alone, and the download answers 424 so staff see the error and a Retry (the Retry route
+// deletes the row). A success deletes the row. A rotating cursor keeps the oldest invoices from filling every batch; a
+// restart forgets only the cursor. A document created by a render that failed before its bytes were stored is removed
+// in the same failure path, so the next try is not blocked by it; one left by a crash between the two steps is
+// soft-removed after ORPHAN_AFTER_MS, which makes its invoice a candidate again.
 //
 // The tests drive the sweeper through a RenderStore fake; the drizzle store below is checked by the integration test.
 import { InjectQueue, Processor, WorkerHost } from '@nestjs/bullmq';
@@ -31,6 +37,7 @@ import {
   DEFAULT_DATE_FORMAT,
   DEFAULT_NUMBER_SYSTEMS,
   DocumentFormatSnapshotSchema,
+  documentSellerContact,
   SETTINGS,
   type DocumentFormatSnapshot,
 } from '@bos/contracts';
@@ -51,7 +58,7 @@ import {
   type OnApplicationBootstrap,
 } from '@nestjs/common';
 import { type Job, Queue } from 'bullmq';
-import { and, asc, desc, eq, inArray, isNull, lt, notExists, notInArray, sql } from 'drizzle-orm';
+import { and, asc, desc, eq, inArray, isNull, lt, not, notExists, sql } from 'drizzle-orm';
 
 import type { Db, DbTransaction } from '../../../platform/db/db.module';
 import { systemActor, type TxScope } from '../../../platform/db/tx';
@@ -61,13 +68,23 @@ import type {
   Clock,
   PdfRenderer,
   RenderDocuments,
+  RenderAudit,
   RenderLogos,
   RenderSettings,
   RunInTx,
 } from '../../quotations/render/quotation-render.sweeper';
+import { RENDER_GIVEN_UP_ACTION } from '../../quotations/render/render-retry';
 import { INVOICE_OWNER_TYPE, INVOICE_RENDER_JOB_PREFIX } from '../invoice-owner.policy';
 import { freezeEntityLogo } from './frozen-logo';
 import { renderInvoiceHtml } from './invoice-html';
+import {
+  clearRenderFailure,
+  discardUnfilledDocument,
+  recordRenderFailure,
+  renderHeldBack,
+  type RecordedFailure,
+  type RenderFailureOwner,
+} from './render-failures';
 import {
   InvoiceNotRenderableError,
   invoicePdfFilename,
@@ -79,8 +96,6 @@ import {
 export const INVOICE_RENDER_QUEUE = 'invoice.render';
 export const INVOICE_RENDER_SWEEP_JOB = 'invoice.render.sweep';
 export const SWEEP_EVERY_MS = 60_000;
-/** A failed invoice is left alone this long (in this process), so a permanent fault does not hammer Gotenberg. */
-export const FAILED_RETRY_MS = 5 * 60_000;
 /** A generated document still awaiting its bytes after this long was left by a render that crashed midway. */
 export const ORPHAN_AFTER_MS = 60 * 60_000;
 /** Invoices handled per tick; the rest wait a minute. Keeps one tick bounded (each render has its own deadline). */
@@ -95,6 +110,8 @@ export const INVOICE_RENDER_PDF = Symbol('INVOICE_RENDER_PDF');
 export const INVOICE_RENDER_CLOCK = Symbol('INVOICE_RENDER_CLOCK');
 /** DocumentLogoResolverFactory in the worker: turns the profile's logo document into the bytes print 1 freezes. */
 export const INVOICE_RENDER_LOGOS = Symbol('INVOICE_RENDER_LOGOS');
+/** AuditService in the worker: writes the admin entry when a render is given up. */
+export const INVOICE_RENDER_AUDIT = Symbol('INVOICE_RENDER_AUDIT');
 
 export interface RenderCandidate {
   tenantId: string;
@@ -119,8 +136,11 @@ export interface OrphanDocument {
 
 /** The sweeper's database access, as a port. `tx` is the transaction `INVOICE_RENDER_TX` opened for the invoice's scope. */
 export interface RenderStore {
-  /** Issued invoices with no live document, oldest first after `after`, wrapping when exhausted, except `exclude`. */
-  candidates(limit: number, exclude: readonly string[], after?: string): Promise<RenderCandidate[]>;
+  /**
+   * Issued invoices with no live document that may be tried at `now` (not waiting out a failure's pause, not given
+   * up), oldest first after `after`, wrapping when exhausted.
+   */
+  candidates(now: Date, limit: number, after?: string): Promise<RenderCandidate[]>;
   load(tx: DbTransaction, c: RenderCandidate): Promise<RenderSource | undefined>;
   /**
    * Takes this invoice's render lock for the rest of `tx` and answers whether it already has a live document. The lock
@@ -140,6 +160,25 @@ export interface RenderStore {
   ): Promise<void>;
   orphans(cutoff: Date, limit: number): Promise<OrphanDocument[]>;
   removeOrphan(tx: DbTransaction, o: OrphanDocument, now: Date): Promise<void>;
+  /**
+   * Soft-removes the invoice's document `documentId` when none of its versions got bytes (still awaiting_content):
+   * the render that created it failed before storing them. A document that got its bytes is left alone.
+   */
+  discardUnfilled(
+    tx: DbTransaction,
+    c: RenderCandidate,
+    documentId: string,
+    now: Date,
+  ): Promise<void>;
+  /** Counts one failed try (render-failures.ts). */
+  recordFailure(
+    tx: DbTransaction,
+    c: RenderCandidate,
+    kind: string,
+    now: Date,
+  ): Promise<RecordedFailure>;
+  /** Forgets the invoice's failures after a success. */
+  clearFailure(tx: DbTransaction, c: RenderCandidate): Promise<void>;
 }
 
 export type RenderOutcome = 'rendered' | 'failed' | 'skipped';
@@ -184,8 +223,6 @@ export function failureKind(error: unknown): string {
 @Injectable()
 export class InvoiceRenderSweeper {
   private readonly logger = new Logger(InvoiceRenderSweeper.name);
-  /** invoice id -> when it last failed. In memory on purpose: see the file header. */
-  private readonly failedAt = new Map<string, number>();
   /** The last attempted row's immutable position; one cursor rather than an unbounded attempt history. */
   private after: string | undefined;
 
@@ -197,6 +234,7 @@ export class InvoiceRenderSweeper {
     @Inject(INVOICE_RENDER_PDF) private readonly pdf: PdfRenderer,
     @Inject(INVOICE_RENDER_CLOCK) private readonly clock: Clock,
     @Inject(INVOICE_RENDER_LOGOS) private readonly logos: RenderLogos,
+    @Inject(INVOICE_RENDER_AUDIT) private readonly audit: RenderAudit,
   ) {}
 
   /** One pass over every tenant: render what is due, then clean up what crashed renders left behind. */
@@ -208,7 +246,7 @@ export class InvoiceRenderSweeper {
       orphansRemoved: 0,
       failures: [],
     };
-    const candidates = await this.store.candidates(BATCH, this.backedOff(), this.after);
+    const candidates = await this.store.candidates(this.clock(), BATCH, this.after);
     // One at a time: Chromium is the scarce resource, and an invoice's failure must not touch the next one.
     for (const c of candidates) {
       const { outcome, kind } = await this.attempt(c);
@@ -224,17 +262,12 @@ export class InvoiceRenderSweeper {
     return (await this.attempt(c)).outcome;
   }
 
-  /** The invoices that failed less than FAILED_RETRY_MS ago. Older entries are forgotten here. */
-  private backedOff(): string[] {
-    const cutoff = this.clock().getTime() - FAILED_RETRY_MS;
-    for (const [id, at] of this.failedAt) if (at <= cutoff) this.failedAt.delete(id);
-    return [...this.failedAt.keys()];
-  }
-
   /** One invoice: its outcome and, for a failure, the kind that was logged. */
   private async attempt(c: RenderCandidate): Promise<{ outcome: RenderOutcome; kind?: string }> {
     const scope: TxScope = { tenantId: c.tenantId, organizationId: c.organizationId };
     const actor = systemActor(INVOICE_RENDER_JOB_PREFIX);
+    /** The document this try created, if it got that far: a failure after it must not leave it blocking the next. */
+    let created: { documentId: string } | undefined;
     try {
       const source = await this.runTx(scope, actor, (tx) => this.store.load(tx, c));
       if (source === undefined) throw new RenderSourceMissingError();
@@ -246,6 +279,7 @@ export class InvoiceRenderSweeper {
           numberSystems: format.numberSystems,
           dateFormat: format.dateFormat,
           logoDataUrl: format.logoDataUrl ?? null,
+          sellerContact: format.sellerContact ?? null,
         }),
       );
       const file = {
@@ -255,7 +289,7 @@ export class InvoiceRenderSweeper {
       };
 
       // The lock and the re-check make "no live document yet" true until this commits, so only one racer stores.
-      const created = await this.runTx(scope, actor, async (tx) =>
+      const generated = await this.runTx(scope, actor, async (tx) =>
         (await this.store.lockAndHasDocument(tx, c))
           ? undefined
           : this.documents.createGenerated(
@@ -264,29 +298,70 @@ export class InvoiceRenderSweeper {
               file,
             ),
       );
-      if (created === undefined) return { outcome: 'skipped' };
+      if (generated === undefined) return { outcome: 'skipped' };
+      created = generated;
       // After the commit above: the content step opens its own transactions and the scan worker reads the row.
-      await this.documents.receiveGenerated(created, file, { scope, actor });
+      await this.documents.receiveGenerated(generated, file, { scope, actor });
 
-      // The bytes are in and queued for the scan: now the print is real.
-      await this.runTx(scope, actor, (tx) =>
-        this.store.recordPrint(tx, c, nextPrintNo, this.clock(), nextPrintNo === 1 ? format : null),
-      );
-      this.failedAt.delete(c.invoiceId);
+      // The bytes are in and queued for the scan: now the print is real, and earlier failures are forgotten.
+      await this.runTx(scope, actor, async (tx) => {
+        await this.store.recordPrint(
+          tx,
+          c,
+          nextPrintNo,
+          this.clock(),
+          nextPrintNo === 1 ? format : null,
+        );
+        await this.store.clearFailure(tx, c);
+      });
       return { outcome: 'rendered' };
     } catch (error) {
       const kind = failureKind(error);
-      this.failedAt.set(c.invoiceId, this.clock().getTime());
       this.logger.warn(`invoice render failed: invoice=${c.invoiceId} kind=${kind}`);
+      await this.noteFailure(c, scope, kind, created);
       return { outcome: 'failed', kind };
+    }
+  }
+
+  /**
+   * Records a failed try, in one transaction: removes the document this try created if it never got its bytes, counts
+   * the failure, and, when that used up the last try, writes the admin entry. A failure here is logged and left to
+   * the next sweep (the in-flight state is then as before this try).
+   */
+  private async noteFailure(
+    c: RenderCandidate,
+    scope: TxScope,
+    kind: string,
+    created: { documentId: string } | undefined,
+  ): Promise<void> {
+    try {
+      await this.runTx(scope, systemActor(INVOICE_RENDER_JOB_PREFIX), async (tx) => {
+        const now = this.clock();
+        if (created !== undefined) await this.store.discardUnfilled(tx, c, created.documentId, now);
+        const recorded = await this.store.recordFailure(tx, c, kind, now);
+        if (!recorded.givenUp) return;
+        await this.audit.record(tx, {
+          action: RENDER_GIVEN_UP_ACTION.invoice,
+          entityType: 'invoices',
+          entityId: c.invoiceId,
+          after: { attempts: recorded.attempts, failureKind: kind },
+        });
+        this.logger.error(
+          `invoice render given up: invoice=${c.invoiceId} attempts=${recorded.attempts} kind=${kind}`,
+        );
+      });
+    } catch (error) {
+      this.logger.error(
+        `invoice render: could not record the failure: invoice=${c.invoiceId} kind=${failureKind(error)}`,
+      );
     }
   }
 
   /**
    * The grouping, date pattern and logo this print uses. A copy reuses what print 1 stored; print 1, or a copy of a
    * print made before 0051 (or one whose stored value no longer parses), reads the settings in force now. An invalid
-   * setting (a hand-edited row) prints the default; it never fails the render. Only print 1 resolves the logo: a copy
-   * without a usable stored format prints none, as its original did.
+   * setting (a hand-edited row) prints the default; it never fails the render. Only print 1 resolves the logo and the
+   * seller contact: a copy without a usable stored format prints neither, as its original did.
    */
   private async formatFor(
     scope: TxScope,
@@ -307,6 +382,11 @@ export class InvoiceRenderSweeper {
       numberSystems: numberSystems.success ? numberSystems.data : DEFAULT_NUMBER_SYSTEMS,
       dateFormat: dateFormat.success ? dateFormat.data : DEFAULT_DATE_FORMAT,
       logoDataUrl: printNo === 1 ? await freezeEntityLogo(this.settings, this.logos, scope) : null,
+      // The phones, email and signatory, frozen like the logo: only print 1 reads the profile (U16-Q4).
+      sellerContact:
+        printNo === 1
+          ? documentSellerContact(await this.settings.get(scope, 'entity.profile'))
+          : null,
       capturedAt: this.clock().toISOString(),
     };
   }
@@ -336,10 +416,17 @@ export class InvoiceRenderSweeper {
   }
 }
 
+const ownerOf = (c: RenderCandidate): RenderFailureOwner => ({
+  tenantId: c.tenantId,
+  organizationId: c.organizationId,
+  ownerType: INVOICE_OWNER_TYPE,
+  ownerId: c.invoiceId,
+});
+
 /** The store on the real tables. Every query names the tenant and the acting entity. */
 export function drizzleInvoiceRenderStore(db: Db): RenderStore {
   return {
-    async candidates(limit, exclude, after) {
+    async candidates(now, limit, after) {
       const hasLiveDocument = db
         .select({ one: sql`1` })
         .from(documents)
@@ -365,11 +452,22 @@ export function drizzleInvoiceRenderStore(db: Db): RenderStore {
               eq(invoices.status, 'issued'),
               inArray(invoices.kind, [...RENDERABLE_INVOICE_KINDS]),
               notExists(hasLiveDocument),
+              not(
+                renderHeldBack(
+                  db,
+                  INVOICE_OWNER_TYPE,
+                  {
+                    tenantId: invoices.tenantId,
+                    organizationId: invoices.organizationId,
+                    id: invoices.id,
+                  },
+                  now,
+                ),
+              ),
               cursor === undefined
                 ? undefined
                 : sql`(${invoices.issuedAt}, ${invoices.id}) >
                     (SELECT issued_at, id FROM ${invoices} WHERE id = ${cursor})`,
-              exclude.length === 0 ? undefined : notInArray(invoices.id, [...exclude]),
             ),
           )
           .orderBy(asc(invoices.issuedAt), asc(invoices.id))
@@ -519,6 +617,18 @@ export function drizzleInvoiceRenderStore(db: Db): RenderStore {
         )
         .orderBy(asc(documents.createdAt))
         .limit(limit);
+    },
+
+    discardUnfilled(tx, c, documentId, now) {
+      return discardUnfilledDocument(tx, ownerOf(c), documentId, now);
+    },
+
+    recordFailure(tx, c, kind, now) {
+      return recordRenderFailure(tx, ownerOf(c), kind, now);
+    },
+
+    clearFailure(tx, c) {
+      return clearRenderFailure(tx, ownerOf(c));
     },
 
     async removeOrphan(tx, o, now) {

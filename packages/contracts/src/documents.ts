@@ -74,6 +74,14 @@ export const DocumentVersionDtoSchema = z.object({
 });
 export type DocumentVersionDto = z.infer<typeof DocumentVersionDtoSchema>;
 
+/**
+ * How long a screen waits on a generated PDF that is "being prepared" before it stops checking by itself (round 4,
+ * R4c2: TR-Q4). Every render sweeper (quotation, invoice, purchase order) either stores the PDF or gives up within this
+ * time, so a screen that polls this long sees the outcome; the API's retry policy (render-retry.ts) is tested against
+ * it. 15 minutes.
+ */
+export const PDF_PREPARE_WITHIN_MS = 15 * 60_000;
+
 export const SignedLinkDtoSchema = z.object({
   url: z.string().min(1),
   expiresAt: isoDateTime,

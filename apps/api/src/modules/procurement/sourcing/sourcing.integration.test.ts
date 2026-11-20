@@ -486,6 +486,42 @@ describe('RFQ', () => {
     current.scope = scopeB;
     expect((await httpErrorOf(service.getRfq(rfqId))).getStatus()).toBe(404);
   });
+
+  it('refuses to record a quotation on a file the scan found infected, and writes no quotation (TR-Q12e)', async () => {
+    const p = await deptApprovedPr();
+    const v = await vendor('approved');
+    const rfq = await service.createRfq(
+      { purchaseRequestId: p.id, deadline: '2026-11-20T10:00:00+05:45', vendorIds: [v] },
+      randomUUID(),
+    );
+    const documentId = await doc();
+    await exec(
+      scopeA,
+      sql`INSERT INTO app.document_versions (tenant_id, organization_id, document_id, version, filename,
+            declared_mime, size_bytes, storage_key, status)
+          VALUES (${scopeA.tenantId}, ${scopeA.organizationId}, ${documentId}, 1, 'quote.pdf',
+                  'application/pdf', 1024, ${`${scopeA.tenantId}/${randomUUID()}`}, 'infected')`,
+    );
+    const e = await httpErrorOf(
+      service.recordQuotation(
+        rfq.id,
+        {
+          vendorId: v,
+          documentId,
+          currency: 'NPR',
+          lines: [{ prLineId: p.lineId, quantity: '1', unitPrice: '1000.00', taxCodeId: vatCode }],
+        },
+        randomUUID(),
+      ),
+    );
+    expect(e.getStatus()).toBe(409);
+    expect(e.getResponse()).toMatchObject({ code: 'document_infected' });
+    const { rows } = await exec(
+      scopeA,
+      sql`SELECT count(*)::int AS n FROM app.vendor_quotations WHERE rfq_id = ${rfq.id}`,
+    );
+    expect(rows[0]).toEqual({ n: 0 });
+  });
 });
 
 // ---------------------------------------------------------------------------------------- recommendation (AD13)

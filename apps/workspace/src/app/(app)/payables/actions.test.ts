@@ -200,6 +200,21 @@ describe('create a standalone bill', () => {
     expect((await createBillAction(prev, form(fields))).error).toMatch(/roles/i);
     expect(api.createBill).not.toHaveBeenCalled();
   });
+
+  // TR-Q12e: the API refuses an invoice the scan found infected; the form says so with the file's name.
+  it('shows the infected-file refusal in the form and closes the attempt', async () => {
+    const message =
+      'A virus was found in “eicar.pdf”. Remove it or upload a clean copy, then try again.';
+    api.createBill.mockRejectedValue(
+      new ApiError(409, 'x', {
+        error: { code: 'document_infected', message, correlationId: 'corr-12345678' },
+      }),
+    );
+    const out = await createBillAction(prev, form(fields));
+    expect(out.error).toBe(message);
+    expect(out.reload).toBeUndefined();
+    expect(out.key).not.toBe(KEY);
+  });
 });
 
 const apiError = (status: number, code: string) =>
