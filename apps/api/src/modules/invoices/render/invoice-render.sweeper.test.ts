@@ -365,6 +365,33 @@ describe('InvoiceRenderSweeper.sweep', () => {
     expect(f.store.recordPrint).not.toHaveBeenCalled();
   });
 
+  it('records print 1 on a second try, with the same format, when the first print write fails after the PDF was stored', async () => {
+    const f = fixture();
+    const c = candidate(1);
+    const format = {
+      numberSystems: SOUTH_ASIAN,
+      dateFormat: 'dd MMM yyyy',
+      logoDataUrl: null,
+      sellerContact: null,
+      capturedAt: NOW.toISOString(),
+    };
+    // The settings change while the first write fails: the retry must still store what the stored PDF printed with.
+    f.store.recordPrint.mockImplementationOnce(() => {
+      f.live['format.number_systems'] = INTERNATIONAL;
+      return Promise.reject(new Error('db hiccup'));
+    });
+    await expect(f.sweeper.renderOne(c)).resolves.toBe('rendered');
+    expect(f.store.recordPrint).toHaveBeenCalledTimes(2);
+    expect(f.store.recordPrint).toHaveBeenNthCalledWith(1, TX, c, 1, NOW, format);
+    expect(f.store.recordPrint).toHaveBeenNthCalledWith(2, TX, c, 1, NOW, format);
+    expect(f.store.clearFailure).toHaveBeenCalledWith(TX, c);
+    // One render, one document: the stored PDF is the original, never removed or rendered again.
+    expect(f.pdf.htmlToPdf).toHaveBeenCalledOnce();
+    expect(f.documents.createGenerated).toHaveBeenCalledOnce();
+    expect(f.store.discardUnfilled).not.toHaveBeenCalled();
+    expect(f.store.recordFailure).not.toHaveBeenCalled();
+  });
+
   it('counts the failure even when the document of the failed try cannot be removed', async () => {
     const f = fixture();
     f.documents.receiveGenerated.mockRejectedValue(new Error('disk full'));
