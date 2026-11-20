@@ -200,12 +200,21 @@ export function describeQuoteFailure(
     isZeroInstalmentRefusal(f.code, f.message)
   ) {
     // FR-4: a total so small that a milestone rounds to 0.00. The sales order would refuse it later.
+    // The API names the milestone in `details.label`; it is the user's own text, shown only when short.
+    const label =
+      typeof f.details.label === 'string' && f.details.label.trim() !== ''
+        ? f.details.label.trim()
+        : undefined;
+    const named =
+      label !== undefined && label.length <= 80
+        ? ZERO_INSTALMENT_MESSAGE.replace(
+            'At least one payment milestone',
+            `The payment milestone "${label}"`,
+          )
+        : ZERO_INSTALMENT_MESSAGE;
     return {
       kind: 'invalid',
-      message:
-        action === 'submit'
-          ? ZERO_INSTALMENT_MESSAGE
-          : ZERO_INSTALMENT_MESSAGE.replace(' Nothing was submitted.', ''),
+      message: action === 'submit' ? named : named.replace(' Nothing was submitted.', ''),
       field: 'paymentSchedule',
     };
   }
