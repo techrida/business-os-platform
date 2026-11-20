@@ -387,6 +387,31 @@ describe('CancelService.cancel (F1-Q27)', () => {
     expect(onCancelled).not.toHaveBeenCalled();
   });
 
+  it('answers 409 when the revision the caller looked at is no longer the current one, and cancels nothing', async () => {
+    const q = await createQuotation();
+    const { version } = await versionRow(q.currentVersionId);
+    const staleVersionId = randomUUID();
+    const status = await statusOf(
+      service.cancel(
+        q.id,
+        { reason: REASON, expectedVersion: version, versionId: staleVersionId },
+        `cancel-${randomUUID()}`,
+      ),
+    );
+    expect(status).toBe(409);
+    expect(await versionRow(q.currentVersionId)).toMatchObject({
+      status: 'draft',
+      cancelReason: null,
+    });
+    // The same call naming the real current revision goes through.
+    const ok = await service.cancel(
+      q.id,
+      { reason: REASON, expectedVersion: version, versionId: q.currentVersionId },
+      `cancel-${randomUUID()}`,
+    );
+    expect(QuotationVersionDtoSchema.parse(ok).status).toBe('cancelled');
+  });
+
   it('returns the first answer to a retry with the same Idempotency-Key, and cancels once', async () => {
     const q = await createQuotation();
     const { version } = await versionRow(q.currentVersionId);

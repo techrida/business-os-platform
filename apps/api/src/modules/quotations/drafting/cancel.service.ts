@@ -143,6 +143,8 @@ export class CancelService {
     }
     // Checked before any write, so a stale caller changes nothing.
     if (old.version !== body.expectedVersion) throw changed();
+    // Revision 1 and revision 2 both start at row version 1: the id says which one the caller meant.
+    if (body.versionId !== undefined && body.versionId !== old.id) throw changed();
     if (!canCancelQuotation(old.status)) {
       throw conflict(
         `A ${old.status} quotation cannot be cancelled; only a draft, returned or submitted one can`,

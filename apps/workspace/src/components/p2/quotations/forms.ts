@@ -143,6 +143,7 @@ export function parseCancel(form: FormData): Parsed<CancelQuotationBody> {
   const parsed = CancelQuotationBodySchema.safeParse({
     reason: text(form, 'reason'),
     ...version(form),
+    ...optional(form, 'versionId'),
   });
   if (parsed.success) return { ok: true, body: parsed.data };
   const errors = errorsOf(parsed.error.issues);

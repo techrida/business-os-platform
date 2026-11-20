@@ -371,6 +371,8 @@ export type ReviseQuotationBody = z.infer<typeof ReviseQuotationBodySchema>;
 export const CancelQuotationBodySchema = z.strictObject({
   reason: text(1000),
   expectedVersion,
+  /** The revision the caller looked at. A stale page whose revision is no longer current gets 409, not the new revision cancelled. */
+  versionId: z.guid().optional(),
 });
 export type CancelQuotationBody = z.infer<typeof CancelQuotationBodySchema>;
 
