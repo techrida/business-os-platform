@@ -718,7 +718,9 @@ describe('assertNoZeroInstalment (FR-4)', () => {
     expect((error as UnprocessableEntityException).getResponse()).toMatchObject({
       code: 'PAYMENT_INSTALMENT_ZERO',
     });
-    expect(() => assertNoZeroInstalment(npr('100.00'), 'NPR', [], DEFAULT_SALES_SCHEDULE)).not.toThrow();
+    expect(() =>
+      assertNoZeroInstalment(npr('100.00'), 'NPR', [], DEFAULT_SALES_SCHEDULE),
+    ).not.toThrow();
   });
 });
 

@@ -207,13 +207,11 @@ export function describeQuoteFailure(
         ? f.details.label.trim()
         : undefined;
     // Only the NPR conversion splits to 0.00: the builder's own amounts are all above it, so say so.
-    const base = f.details.converted === true ? ZERO_INSTALMENT_NPR_MESSAGE : ZERO_INSTALMENT_MESSAGE;
+    const base =
+      f.details.converted === true ? ZERO_INSTALMENT_NPR_MESSAGE : ZERO_INSTALMENT_MESSAGE;
     const named =
       label !== undefined && label.length <= 80
-        ? base.replace(
-            'At least one payment milestone',
-            `The payment milestone "${label}"`,
-          )
+        ? base.replace('At least one payment milestone', `The payment milestone "${label}"`)
         : base;
     return {
       kind: 'invalid',
