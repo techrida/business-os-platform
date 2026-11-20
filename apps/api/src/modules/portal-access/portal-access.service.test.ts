@@ -105,6 +105,8 @@ class FakeZitadel {
 
 class FakeStore extends PortalAccessStore {
   kybStatus: string | null = 'approved';
+  /** The customer's account owner: the default caller (staff-1), so a first grant passes F1-Q31. */
+  ownerUserId: string | null = 'staff-1';
   contact: PortalTarget['contact'] = {
     id: CONTACT,
     fullName: 'Ana Maria Bista',
@@ -123,12 +125,14 @@ class FakeStore extends PortalAccessStore {
         id: CUSTOMER,
         tenantId: TENANT,
         legalName: 'Acme Traders',
-        ownerUserId: null,
+        ownerUserId: this.ownerUserId,
         mergedIntoId: null,
       } as CustomerRow,
       contact: this.contact,
       kybStatus: this.kybStatus,
       idpOrg: org ? { idpOrgId: org.idpOrgId, zitadelOrgId: org.zitadelOrgId } : null,
+      hasPortalUser:
+        org !== undefined && [...this.users.values()].some((u) => u.idpOrgId === org.idpOrgId),
     });
   }
   idpOrgByZitadelId(zitadelOrgId: string): Promise<IdpOrgOwner | null> {
@@ -248,6 +252,17 @@ describe('refusals (nothing reaches ZITADEL)', () => {
     await expect(grant()).rejects.toBeInstanceOf(NotFoundException);
   });
 
+  it('names the rule when the contact is not one of this customer’s', async () => {
+    store.contact = null;
+    const error = await grant().catch((e: unknown) => e);
+    expect((error as NotFoundException).getResponse()).toMatchObject({
+      code: 'not_found',
+      message: expect.stringContaining("must be one of the customer's existing contacts"),
+    });
+    expect(zitadel.calls).toEqual([]);
+    expect(store.audit).toEqual([]);
+  });
+
   it.each([null, 'draft', 'submitted', 'rejected', 'expired'])(
     'answers 409 kyb_not_verified when the KYB case is %s',
     async (status) => {
@@ -269,6 +284,50 @@ describe('refusals (nothing reaches ZITADEL)', () => {
       code: 'contact_email_missing',
     });
     expect(zitadel.calls).toEqual([]);
+  });
+});
+
+describe('first portal admin (F1-Q31): the account owner invites it', () => {
+  it('refuses 409 first_admin_owner_only when a staff caller with customer.write is not the owner', async () => {
+    store.ownerUserId = 'staff-other';
+    const error = await grant().catch((e: unknown) => e);
+    expect(error).toBeInstanceOf(ConflictException);
+    expect((error as ConflictException).getResponse()).toMatchObject({
+      code: 'first_admin_owner_only',
+    });
+    expect(zitadel.calls).toEqual([]);
+    expect(store.audit).toEqual([]);
+  });
+
+  it('refuses 409 account_owner_missing when the customer has no account owner', async () => {
+    store.ownerUserId = null;
+    const error = await grant().catch((e: unknown) => e);
+    expect(error).toBeInstanceOf(ConflictException);
+    expect((error as ConflictException).getResponse()).toMatchObject({
+      code: 'account_owner_missing',
+    });
+    expect(zitadel.calls).toEqual([]);
+  });
+
+  it('lets another customer.write holder grant once the customer has a portal user', async () => {
+    await grant('key-owner');
+    store.ownerUserId = 'staff-other';
+    const again = await grant('key-other');
+    expect(again.status).toBe(201);
+  });
+
+  it('still counts as first while the org exists but nobody was mirrored (a grant that died midway)', async () => {
+    store.idpOrgs.push({
+      idpOrgId: 'idp-1',
+      tenantId: TENANT,
+      kind: 'customer',
+      partyId: CUSTOMER,
+      zitadelOrgId: 'z-org-1',
+    });
+    store.ownerUserId = 'staff-other';
+    await expect(grant()).rejects.toMatchObject({
+      response: { code: 'first_admin_owner_only' },
+    });
   });
 });
 
