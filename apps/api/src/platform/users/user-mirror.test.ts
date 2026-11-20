@@ -72,6 +72,25 @@ describe('UserMirror.syncUser', () => {
     expect(store.users[0]?.status).toBe('active');
   });
 
+  it('bumps authz when a status change disables or re-enables a user, so the per-request user cache drops it at once (U20a2-Q10)', async () => {
+    zitadel.users.set('z1', zUser('z1'));
+    await mirror.syncUser('z1');
+    const base = store.authzBumps;
+
+    zitadel.users.set('z1', zUser('z1', { status: 'inactive' }));
+    await mirror.syncUser('z1');
+    expect(store.authzBumps).toBe(base + 1);
+
+    // A rename alone does not bump: only a status change reaches request authorisation.
+    zitadel.users.set('z1', zUser('z1', { status: 'inactive', displayName: 'Renamed' }));
+    await mirror.syncUser('z1');
+    expect(store.authzBumps).toBe(base + 1);
+
+    zitadel.users.set('z1', zUser('z1', { status: 'active', displayName: 'Renamed' }));
+    await mirror.syncUser('z1');
+    expect(store.authzBumps).toBe(base + 2);
+  });
+
   it('skips a user whose org has no app.idp_orgs row', async () => {
     zitadel.users.set('z9', zUser('z9', { orgId: 'z-unknown' }));
     expect(await mirror.syncUser('z9')).toBe(false);
@@ -213,6 +232,15 @@ describe('UserMirror.reconcile deactivation safeguards (R8, R18)', () => {
     // The next pass picks up the rest.
     await mirror.reconcile({ maxDeactivations: 2 });
     expect(HIDDEN.filter((z) => statusOf(z) === 'inactive')).toHaveLength(4);
+  });
+
+  it('bumps authz once for each user it deactivates (U20a2-Q10)', async () => {
+    zitadel.users.set('live', zUser('live'));
+    await unlistedLocals(['off']);
+    const before = store.authzBumps;
+    await mirror.reconcile();
+    expect(statusOf('off')).toBe('inactive');
+    expect(store.authzBumps).toBeGreaterThan(before);
   });
 
   it('deactivates only on a definite inactive answer from getUser', async () => {

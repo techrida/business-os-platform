@@ -1,7 +1,8 @@
 // The in-memory role → permission → scope table for each tenant, and the merge that turns a user's
 // roles and level into `Principal.grants`. Serves the NFR "< 5 ms per decision" (P1 plan §1, k-authz): a
-// request reads its grants from memory, and the database is touched at most once per tenant every
-// 5 s to check that the rows are still current (risk R11, staleness across api instances).
+// request reads its grants from memory. The tenancy interceptor confirms the tenant's `authz_versions` row
+// once per request (`current`, one read on its unique index), so a grant removed on any api instance is
+// refused on the next request (U20a2-Q10). Other callers trust a confirmed version for 5 s (risk R11).
 // What a role may do is company policy, so `role_permissions`, `role_permission_levels` and `authz_versions`
 // are tenant-scoped and every entity of a tenant shares one entry (ADR 0027 §7). Membership narrows the roles
 // per entity, and gives the level, before they reach `grantsFor` (the tenancy interceptor).
@@ -21,10 +22,25 @@ import { authzVersions } from '@bos/db';
 import { Inject, Injectable, Optional } from '@nestjs/common';
 import { eq, sql } from 'drizzle-orm';
 
-import { DB, type Db } from '../db/db.module';
+import { DB, type Db, type DbTransaction } from '../db/db.module';
 
-/** How long a confirmed `authz_versions.version` is trusted before it is read again (R11). */
+/**
+ * How long `grantsFor`, `rolesGranting` and `epoch` trust a confirmed `authz_versions.version` before reading
+ * it again (R11). `current`, the request path, never waits for it.
+ */
 export const VERSION_CHECK_TTL_MS = 5_000;
+
+/** One request's view of a tenant's role table: the epoch and the grants, from one confirmed entry. */
+export interface RoleView {
+  /** The same value `epoch()` gives for this entry: the tenancy interceptor keys its user cache to it. */
+  readonly epoch: string;
+  /** As `RoleCache.grantsFor`, from this view's rows. */
+  grantsFor(roles: readonly RoleKey[], level?: AccessLevel): ReadonlyMap<Permission, AccessScope>;
+}
+
+/** True when an entry read at `have` is older than the version `seen` in the database. */
+const behind = (have: number | null, seen: number | null): boolean =>
+  seen !== null && (have === null || have < seen);
 
 /** Milliseconds since some fixed point. Injected so tests can move time forward. */
 export type Clock = () => number;
@@ -211,7 +227,11 @@ export class RoleCache {
     _organizationId: string,
     roles: readonly RoleKey[],
     level: AccessLevel = 'staff',
+    on?: Db | DbTransaction,
   ): Promise<ReadonlyMap<Permission, AccessScope>> {
+    // `on`: a caller already inside a transaction that holds a lock (an access or role write) reads the rows on
+    // that connection, fresh and uncached, instead of taking a second pool connection while it holds the lock.
+    if (on !== undefined) return merge(await this.readRows(tenantId, on), roles, level);
     const entry = await this.entryFor(tenantId);
     return merge(entry.byRole, roles, level);
   }
@@ -232,14 +252,41 @@ export class RoleCache {
 
   /**
    * Changes whenever this instance forgets the tenant or sees a newer `authz_versions` row. The tenancy
-   * interceptor keys its user cache (department and level of each membership) to it, so a membership
-   * change saved with `AuthzService.invalidate` shows on the next request, not after the cache's 60 s.
+   * interceptor keys its user cache (department and level of each membership) to the same value, read
+   * through `current()`, so a membership change saved with `AuthzService.invalidate` or a version bump
+   * shows on the next request, not after the cache's 60 s.
    */
   async epoch(tenantId: string): Promise<string> {
     const entry = await this.entryFor(tenantId);
     return `${this.generations.get(tenantId) ?? 0}:${entry.version}`;
   }
 
+  /**
+   * The request path (U20a2-Q10). Reads the tenant's `authz_versions` row on every call, one read on its
+   * unique index, and reloads the rows only when the version moved, so a grant, role or level that an access
+   * save on any api instance removed (it bumps the row) is refused on the next request, not after the 5 s
+   * window. A warm request with no change makes exactly that one read. A burst after a bump shares one reload,
+   * but never one that started before the version this call saw. A failed read fails the request: a cached
+   * entry is never served without its version confirmed.
+   */
+  async current(tenantId: string): Promise<RoleView> {
+    const key = tenantId;
+    const generation = this.generations.get(key) ?? 0;
+    const version = await this.readVersion(tenantId);
+    const cached = this.entries.get(key);
+    let entry: TenantEntry;
+    if (cached !== undefined && cached.version === version) {
+      entry = { ...cached, checkedAt: this.clock() };
+      this.store(key, entry, generation);
+    } else {
+      entry = await this.loadAt(tenantId, version, generation);
+    }
+    const { byRole } = entry;
+    return {
+      epoch: `${generation}:${entry.version}`,
+      grantsFor: (roles, level = 'staff') => merge(byRole, roles, level),
+    };
+  }
   /**
    * Drops this instance's entry for the tenant, so the next `grantsFor` reloads, for every entity.
    * `AuthzService.invalidate` calls it. `_organizationId` is ignored, as in `grantsFor`.
@@ -298,8 +345,40 @@ export class RoleCache {
     return loaded;
   }
 
+  /**
+   * The rows as of at least `version`, which the caller has just read. Joins a load already in flight when it
+   * is not older than that; otherwise reads the rows itself. Version before rows, as in `refresh`.
+   */
+  private async loadAt(
+    tenantId: string,
+    version: number | null,
+    generation: number,
+  ): Promise<TenantEntry> {
+    const key = tenantId;
+    const pending = this.inFlight.get(key);
+    if (pending !== undefined) {
+      const joined = await pending;
+      if (!behind(joined.version, version)) return joined;
+    }
+    const load = this.readRows(tenantId)
+      .then((byRole) => {
+        const loaded: TenantEntry = { version, checkedAt: this.clock(), byRole };
+        this.store(key, loaded, generation);
+        return loaded;
+      })
+      .finally(() => {
+        if (this.inFlight.get(key) === load) this.inFlight.delete(key);
+      });
+    this.inFlight.set(key, load);
+    return load;
+  }
+
+  /** Caches `entry` unless a `forget()` happened since its load began, or a newer version is already cached. */
   private store(key: string, entry: TenantEntry, generation: number): void {
-    if ((this.generations.get(key) ?? 0) === generation) this.entries.set(key, entry);
+    if ((this.generations.get(key) ?? 0) !== generation) return;
+    const held = this.entries.get(key);
+    if (held !== undefined && behind(entry.version, held.version)) return;
+    this.entries.set(key, entry);
   }
 
   /** One read on the `(tenant_id)` unique index; null when the tenant has no version row. */
@@ -325,8 +404,11 @@ export class RoleCache {
    *   level switch was turned off. Otherwise `DEFAULT_ROLE_PERMISSION_LEVELS`. The same rule as Access Settings'
    *   `deriveLevelRules`, so Check a person and the request agree.
    */
-  private async readRows(tenantId: string): Promise<ReadonlyMap<string, LeveledGrants>> {
-    const result = await this.db.execute<LoadRow>(sql`
+  private async readRows(
+    tenantId: string,
+    on: Db | DbTransaction = this.db,
+  ): Promise<ReadonlyMap<string, LeveledGrants>> {
+    const result = await on.execute<LoadRow>(sql`
       SELECT 'base' AS "kind", role_key AS "roleKey", permission, NULL::text AS "minLevel", scope
         FROM app.role_permissions WHERE tenant_id = ${tenantId}
       UNION ALL

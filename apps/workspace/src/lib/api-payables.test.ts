@@ -275,3 +275,26 @@ describe('bill submissions', () => {
     expect(sentBody()).toEqual({ reason: 'Not ours' });
   });
 });
+
+describe('the per-bill can flags', () => {
+  const can = { match: false, submit: true, void: false, discard: true, exception: false };
+
+  it('keeps the can the API sends on a bill and on each list row', async () => {
+    answer(reply({ ...bill, can }));
+    expect((await getBill(session, BILL)).can).toEqual(can);
+
+    fetchMock.mockImplementation(() =>
+      Promise.resolve(withTotal([{ ...header, can }, header], '2')),
+    );
+    const out = await listBillsPage(session, { status: [], limit: 25, offset: 0 });
+    expect(out.items[0]?.can).toEqual(can);
+    expect(out.items[1]?.can).toBeUndefined();
+  });
+
+  it('accepts a bill without can, as a command response or an older API sends it', async () => {
+    answer(reply(bill));
+    expect((await getBill(session, BILL)).can).toBeUndefined();
+    answer(reply(bill));
+    expect((await matchBill(session, BILL, KEY)).can).toBeUndefined();
+  });
+});

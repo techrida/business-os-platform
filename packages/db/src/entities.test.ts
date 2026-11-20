@@ -735,20 +735,28 @@ describe('0013 data move on a database that already has rows (K1-U1b)', () => {
   it('dedupes the re-keyed tenant tables, keeping the staff org rows', async () => {
     const rp = await pool.query(
       `SELECT role_key, permission, scope FROM app.role_permissions
-        WHERE tenant_id = $1 AND role_key <> 'marketing' ORDER BY role_key`,
+        WHERE tenant_id = $1 AND role_key <> 'marketing' ORDER BY role_key, permission`,
       [tenantId],
     );
+    // 0120 and 0121 add the settings and reopen rows to a tenant that stores grants.
     expect(rp.rows).toEqual([
+      { role_key: 'accountant', permission: 'settings.finance.write', scope: 'all' },
       { role_key: 'finance', permission: 'memo.read', scope: 'all' },
       { role_key: 'finance', permission: 'profile.avatar.write', scope: 'own' },
+      { role_key: 'finance', permission: 'settings.finance.write', scope: 'all' },
+      { role_key: 'finance', permission: 'settings.fx_rate.write', scope: 'all' },
+      { role_key: 'founder', permission: 'crm.lead.reopen', scope: 'all' },
+      { role_key: 'founder', permission: 'crm.opportunity.reopen', scope: 'all' },
+      { role_key: 'founder', permission: 'settings.finance.write', scope: 'all' },
+      { role_key: 'founder', permission: 'settings.fx_rate.write', scope: 'all' },
       { role_key: 'portal', permission: 'memo.read', scope: 'customer_org' },
     ]);
     const av = await pool.query('SELECT version FROM app.authz_versions WHERE tenant_id = $1', [
       tenantId,
     ]);
     // 5 after the 0013 dedupe, plus one when 0053 grants profile.avatar.write to the finance role in the seeded
-    // tenant, plus one when 0083 gives the tenant its Marketing rows, plus one when 0088 widens the access model.
-    expect(av.rows).toEqual([{ version: '8' }]);
+    // tenant, plus one when 0083 gives the tenant its Marketing rows, plus one when 0088 widens the access model, plus one each when 0120 and 0121 seed the settings and reopen rows.
+    expect(av.rows).toEqual([{ version: '10' }]);
     const ur = await pool.query(
       'SELECT user_id, role_key FROM app.user_roles WHERE tenant_id = $1 ORDER BY role_key',
       [tenantId],

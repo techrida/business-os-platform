@@ -111,7 +111,7 @@ describe('Check a person', () => {
   it('asks for a person when none, or no valid one, is in the address', async () => {
     for (const params of [{}, { person: 'asha' }]) {
       const page = await render(params);
-      expect(page).toContain('Pick a person to see what they can open.');
+      expect(page).toContain('Pick a person to see what this person can open.');
     }
     expect(api.checkPersonAccess).not.toHaveBeenCalled();
   });
@@ -139,12 +139,12 @@ describe('Check a person', () => {
   it('says when the person is disabled, and when they have no roles shows no rows', async () => {
     api.checkPersonAccess.mockResolvedValue(report({ status: 'inactive' }));
     expect(await render({ person: ASHA })).toContain(
-      'Asha K. is disabled and cannot sign in. This shows what their roles would allow.',
+      'Asha K. is disabled and cannot sign in. This shows what Asha K.&#x27;s roles would allow.',
     );
 
     api.checkPersonAccess.mockResolvedValue(report({ roles: [] }));
     const page = await render({ person: ASHA });
-    expect(page).toContain('Asha K. has no roles, so they cannot open anything.');
+    expect(page).toContain('Asha K. has no roles, so Asha K. cannot open anything.');
     expect(page).not.toContain('48 of 120');
   });
 

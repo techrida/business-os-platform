@@ -15,6 +15,7 @@ import { randomUUID } from 'node:crypto';
 
 import {
   DEFAULT_ROLE_PERMISSIONS,
+  QuotationEvidenceDtoSchema,
   SalesOrderDetailSchema,
   SalesOrderListItemSchema,
   type EvidencePolicy,
@@ -45,7 +46,7 @@ import { Pool } from 'pg';
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { AuditService } from '../../platform/audit/audit.service';
-import type { AuthzService } from '../../platform/authz/authz.service';
+import { scopeWhereFor, type AuthzService } from '../../platform/authz/authz.service';
 import { can } from '../../platform/authz/can';
 import type { Principal } from '../../platform/authz/principal';
 import { systemActor, withTx, type TxScope } from '../../platform/db/tx';
@@ -91,6 +92,7 @@ let scopeA: TxScope;
 let scopeB: TxScope;
 let drafting: DraftingService;
 let recorder: RecordOutcomeService;
+let outcomes: QuotationOutcomeService;
 let settings: SettingsService;
 let opportunitiesService: OpportunitiesService;
 let service: SalesOrdersService;
@@ -196,7 +198,7 @@ beforeAll(async () => {
     caller,
     new LeadLostReasonsService(db, audit, caller),
   );
-  const outcomes = new QuotationOutcomeService(
+  outcomes = new QuotationOutcomeService(
     settings,
     opportunitiesService,
     notify as unknown as NotifyService,
@@ -297,6 +299,7 @@ async function seedDocument(scope: TxScope = scopeA): Promise<string> {
 
 async function draftQuotation(
   paymentSchedule?: { label: string; percent: string }[],
+  unitPrice = '4465000.00',
 ): Promise<QuotationDto> {
   const opportunityId = await seedOpportunity();
   return drafting.create(
@@ -310,7 +313,7 @@ async function draftQuotation(
           description: 'Platform build',
           uom: 'lot',
           quantity: '1',
-          unitPrice: '4465000.00',
+          unitPrice,
           taxCodeId: f.taxCodeVat13Id,
         },
       ],
@@ -375,6 +378,34 @@ async function acceptedQuotation(
   return q;
 }
 
+/** A sent quotation accepted the way the portal accepts it: as the customer, with the typed name as a signed quote. */
+async function portalAcceptedQuotation(): Promise<QuotationDto> {
+  const held = current.grants;
+  current.grants = grantsOf('sales');
+  const q = await draftQuotation();
+  await sendQuotation(q);
+  const customerUser = await seedOtherStaffUser(db, f);
+  await withTx(db, scopeA, { kind: 'user', id: customerUser, correlationId: 'portal' }, (tx) =>
+    outcomes.accept(tx, {
+      versionId: q.currentVersionId,
+      quotationId: q.id,
+      actorKind: 'customer_user',
+      actorUserId: customerUser,
+      decidedOn: DECIDED_ON,
+      acceptedByName: 'Ram Thapa',
+      evidenceKinds: ['signed_quote'],
+    }),
+  );
+  current.grants = held;
+  return q;
+}
+
+const confirmEvidence = (
+  q: QuotationDto,
+  body: { evidenceKinds: EvidenceKindName[]; evidenceDocumentIds?: string[]; comment?: string },
+  key = `evidence-${randomUUID()}`,
+) => recorder.confirmEvidence(q.id, q.currentVersionId, { evidenceDocumentIds: [], ...body }, key);
+
 const confirm = (q: QuotationDto, evidenceDocumentIds: string[] = [], key = `so-${randomUUID()}`) =>
   service.confirmFromQuotation(
     { quotationVersionId: q.currentVersionId, evidenceDocumentIds },
@@ -386,6 +417,10 @@ const parsed = (detail: SalesOrderDetail) => SalesOrderDetailSchema.parse(detail
 
 const liveOrders = (quotationId: string) =>
   db.select().from(salesOrders).where(eq(salesOrders.quotationId, quotationId));
+
+/** The order statuses of a quotation: an accepted one has its draft (F1-Q25) until it is confirmed. */
+const orderStatuses = async (quotationId: string) =>
+  (await liveOrders(quotationId)).map((o) => o.status);
 
 // ------------------------------------------------------------------------------------------ confirm
 
@@ -513,7 +548,7 @@ describe('SalesOrdersService.confirmFromQuotation', () => {
 
     const failure = await statusOf(confirm(q));
     expect(failure).toEqual({ status: 422, code: 'evidence_policy_unmet' });
-    expect(await liveOrders(q.id)).toHaveLength(0);
+    expect(await orderStatuses(q.id)).toEqual(['draft']);
 
     // The same quotation confirms once the policy is one its evidence meets.
     await setPolicy('signed_quote');
@@ -540,7 +575,7 @@ describe('SalesOrdersService.confirmFromQuotation', () => {
       status: 422,
       code: 'invalid_evidence_document',
     });
-    expect(await liveOrders(q.id)).toHaveLength(0);
+    expect(await orderStatuses(q.id)).toEqual(['draft']);
 
     const doc = await seedDocument();
     const detail = parsed(await confirm(q, [doc]));
@@ -561,6 +596,230 @@ describe('SalesOrdersService.confirmFromQuotation', () => {
 });
 
 // ------------------------------------------------------------------------------------ list and detail
+
+describe('draft sales order on acceptance (F1-Q25)', () => {
+  const auditActions = async (entityId: string) =>
+    (
+      await ownerPool.query<{ action: string; after: Record<string, unknown> }>(
+        'SELECT action, after FROM audit.audit_events WHERE entity_id = $1 ORDER BY occurred_at, id',
+        [entityId],
+      )
+    ).rows;
+
+  it('drafts the order when the quotation is accepted, and the Accountant confirms that same order', async () => {
+    const q = await acceptedQuotation();
+    const [draftRow] = await liveOrders(q.id);
+    expect(draftRow).toMatchObject({
+      status: 'draft',
+      number: null,
+      quotationVersionId: q.currentVersionId,
+      total: GOLDEN_TOTAL,
+      createdBy: null,
+    });
+    const draftLines = await db
+      .select()
+      .from(billingScheduleLines)
+      .where(eq(billingScheduleLines.salesOrderId, draftRow!.id));
+    // Nothing is billable before the Accountant confirms, not even the advance.
+    expect(draftLines.map((l) => l.status)).toEqual(['planned', 'planned', 'planned']);
+    expect((await auditActions(draftRow!.id)).map((a) => a.action)).toContain(
+      'sales_order.drafted',
+    );
+
+    // The quotation's owner (Sales, own) reads the draft; nothing blocks it, but Sales cannot confirm.
+    const asOwner = parsed(await service.detail(draftRow!.id));
+    expect(asOwner.order).toMatchObject({ status: 'draft', number: null, confirmedAt: null });
+    expect(asOwner.draft).toMatchObject({
+      evidenceStatus: 'confirmed',
+      policy: 'signed_quote',
+      missing: [],
+      blocker: null,
+    });
+    expect(asOwner.can?.confirm).toBe(false);
+    const listed = (await service.list({ status: ['draft'] })).rows.map((r) =>
+      SalesOrderListItemSchema.parse(r),
+    );
+    expect(listed.map((r) => r.id)).toContain(draftRow!.id);
+
+    current.grants = grantsOf('accountant');
+    current.userId = await seedOtherStaffUser(db, f);
+    expect(parsed(await service.detail(draftRow!.id)).can?.confirm).toBe(true);
+    const confirmed = parsed(await confirm(q));
+    expect(confirmed.order).toMatchObject({ id: draftRow!.id, status: 'confirmed', version: 1 });
+    expect(confirmed.order.number).toMatch(/^SO-\d{4}\/\d{2}-\d{5}$/);
+    expect(confirmed.draft).toBeNull();
+    expect(confirmed.schedule.map((l) => l.status)).toEqual(['billable', 'planned', 'planned']);
+    const [after] = await liveOrders(q.id);
+    // Whoever confirms a drafted order becomes its creator, as when the order was made at confirm.
+    expect(after).toMatchObject({ createdBy: current.userId, confirmedBy: current.userId });
+    expect(await liveOrders(q.id)).toHaveLength(1);
+  });
+
+  it('makes one draft when two people record the acceptance at once, and none again on a replay', async () => {
+    const q = await draftQuotation();
+    const expectedVersion = await sendQuotation(q);
+    const record = (key: string) =>
+      recorder.record(
+        q.id,
+        q.currentVersionId,
+        {
+          outcome: 'accepted',
+          decidedOn: DECIDED_ON,
+          evidenceKinds: ['signed_quote'],
+          expectedVersion,
+        },
+        key,
+      );
+    const results = await Promise.allSettled([record('race-a'), record('race-b')]);
+    expect(results.filter((r) => r.status === 'fulfilled')).toHaveLength(1);
+    await record(results[0].status === 'fulfilled' ? 'race-a' : 'race-b');
+    expect(await orderStatuses(q.id)).toEqual(['draft']);
+  });
+
+  it('keeps the acceptance when the order cannot be drafted, audits why and tells the owner', async () => {
+    notify.notifyUser.mockClear();
+    // 0.01 + 13% VAT is 0.01: the 60/20/20 default schedule would bill 0.00 twice.
+    const q = await draftQuotation(undefined, '0.01');
+    const expectedVersion = await sendQuotation(q);
+    await recorder.record(
+      q.id,
+      q.currentVersionId,
+      {
+        outcome: 'accepted',
+        decidedOn: DECIDED_ON,
+        evidenceKinds: ['signed_quote'],
+        expectedVersion,
+      },
+      `accept-${randomUUID()}`,
+    );
+    expect((await versionRow(q.currentVersionId)).status).toBe('accepted');
+    expect(await liveOrders(q.id)).toHaveLength(0);
+    const refused = (await auditActions(q.id)).find(
+      (a) => a.action === 'sales_order.draft_refused',
+    );
+    expect(refused?.after).toMatchObject({
+      versionId: q.currentVersionId,
+      code: 'invalid_payment_schedule',
+    });
+    expect(notify.notifyUser).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({
+        userId: f.ownerUserId,
+        dedupeKey: `sales_order.draft_refused:${q.currentVersionId}`,
+      }),
+    );
+    // The manual route answers the same refusal until the schedule is fixed.
+    current.grants = grantsOf('accountant');
+    expect(await statusOf(confirm(q))).toEqual({ status: 422, code: 'invalid_payment_schedule' });
+  });
+
+  it('drafts a portal acceptance its quotation owner can read, blocked until staff confirm the evidence', async () => {
+    const q = await portalAcceptedQuotation();
+    const [draftRow] = await liveOrders(q.id);
+    expect(draftRow).toMatchObject({ status: 'draft', createdBy: null });
+
+    // Sales reads at `own`: the order reaches its quotation's owner (U20a2-Q1), list and detail alike.
+    expect((await service.list({})).rows.map((r) => r.id)).toContain(draftRow!.id);
+    expect(parsed(await service.detail(draftRow!.id)).draft).toMatchObject({
+      evidenceStatus: 'pending',
+      blocker: 'evidence_not_confirmed',
+    });
+
+    current.grants = grantsOf('accountant');
+    expect(parsed(await service.detail(draftRow!.id)).can?.confirm).toBe(false);
+    current.grants = grantsOf('sales');
+    await confirmEvidence(q, { evidenceKinds: ['signed_quote'] });
+    current.grants = grantsOf('accountant');
+    const ready = parsed(await service.detail(draftRow!.id));
+    expect(ready.draft?.blocker).toBeNull();
+    expect(ready.can?.confirm).toBe(true);
+    expect((await confirm(q)).order.id).toBe(draftRow!.id);
+  });
+});
+
+describe('evidence confirmation before the order (F1-Q28)', () => {
+  it('holds a portal acceptance until staff confirm evidence that meets the policy, then confirms the order on it', async () => {
+    await setPolicy('contract');
+    const q = await portalAcceptedQuotation();
+
+    expect(await statusOf(confirm(q))).toEqual({ status: 422, code: 'evidence_not_confirmed' });
+    const pending = QuotationEvidenceDtoSchema.parse(
+      await recorder.evidence(q.id, q.currentVersionId),
+    );
+    expect(pending).toMatchObject({
+      status: 'pending',
+      policy: 'contract',
+      missing: ['contract'],
+      acceptance: { actorKind: 'customer_user', acceptedByName: 'Ram Thapa' },
+      confirmation: null,
+      can: { confirm: true },
+    });
+
+    expect(await statusOf(confirmEvidence(q, { evidenceKinds: ['signed_quote'] }))).toEqual({
+      status: 422,
+      code: 'evidence_policy_unmet',
+    });
+    const foreign = await seedDocument(scopeB);
+    expect(
+      await statusOf(
+        confirmEvidence(q, { evidenceKinds: ['contract'], evidenceDocumentIds: [foreign] }),
+      ),
+    ).toEqual({ status: 422, code: 'invalid_evidence_document' });
+
+    const contract = await seedDocument();
+    const key = `evidence-${randomUUID()}`;
+    const body = {
+      evidenceKinds: ['contract'] as EvidenceKindName[],
+      evidenceDocumentIds: [contract],
+    };
+    const confirmed = QuotationEvidenceDtoSchema.parse(await confirmEvidence(q, body, key));
+    expect(confirmed).toMatchObject({
+      status: 'confirmed',
+      missing: [],
+      confirmation: { evidenceKinds: ['contract'], evidenceDocumentIds: [contract] },
+      can: { confirm: false },
+    });
+    expect(confirmed.confirmation?.confirmedBy).toBe(f.ownerUserId);
+    // A retry replays; a second confirmation is refused.
+    expect(await confirmEvidence(q, body, key)).toEqual(confirmed);
+    expect(await statusOf(confirmEvidence(q, body))).toEqual({
+      status: 409,
+      code: 'evidence_already_confirmed',
+    });
+    // The same reader sees what they confirmed.
+    expect((await recorder.evidence(q.id, q.currentVersionId)).status).toBe('confirmed');
+
+    current.grants = grantsOf('accountant');
+    const order = parsed(await confirm(q));
+    expect(order.order.status).toBe('confirmed');
+    expect(order.evidence).toEqual([{ documentId: contract, kind: 'contract' }]);
+  });
+
+  it('counts a staff entry as confirmed, and hides the evidence from a caller who cannot read the quotation', async () => {
+    const q = await acceptedQuotation();
+    const evidence = await recorder.evidence(q.id, q.currentVersionId);
+    expect(evidence).toMatchObject({
+      status: 'confirmed',
+      confirmation: null,
+      acceptance: { actorKind: 'staff' },
+      can: { confirm: false },
+    });
+    expect(await statusOf(confirmEvidence(q, { evidenceKinds: ['signed_quote'] }))).toEqual({
+      status: 409,
+      code: 'evidence_already_confirmed',
+    });
+
+    current.userId = await seedOtherStaffUser(db, f);
+    expect(await statusOf(recorder.evidence(q.id, q.currentVersionId))).toEqual({
+      status: 404,
+      code: 'not_found',
+    });
+    expect(await statusOf(confirmEvidence(q, { evidenceKinds: ['signed_quote'] }))).toEqual({
+      status: 404,
+      code: 'not_found',
+    });
+  });
+});
 
 describe('SalesOrdersService.list and detail', () => {
   it('lists the order with its customer name, filters by status and customer, and parses as the UI does', async () => {
@@ -786,7 +1045,7 @@ describe('SalesOrdersService.list and detail', () => {
     current.scope = scopeB;
     expect(await statusOf(confirm(q))).toEqual({ status: 404, code: 'not_found' });
     current.scope = scopeA;
-    expect(await liveOrders(q.id)).toHaveLength(0);
+    expect(await orderStatuses(q.id)).toEqual(['draft']);
   });
 });
 
@@ -926,7 +1185,7 @@ describe('SalesOrdersService.detail held invoices (audit #7)', () => {
     expect(held.can).toEqual({ openInvoice: false });
     expect(asSales.schedule[1]!.invoice).toBeNull();
     expect(asSales.schedule[1]!.can).toEqual({ openInvoice: false });
-    expect(asSales.can).toEqual({ markBillable: false, draftInvoice: false });
+    expect(asSales.can).toEqual({ markBillable: false, draftInvoice: false, confirm: false });
   });
 
   it('lets a role that reads invoices open it, and follows a live grant given to Sales', async () => {
@@ -936,12 +1195,16 @@ describe('SalesOrdersService.detail held invoices (audit #7)', () => {
     current.grants = grantsOf('accountant');
     const asAccountant = parsed(await service.detail(detail.order.id));
     expect(asAccountant.schedule[0]!.can).toEqual({ openInvoice: true });
-    expect(asAccountant.can).toEqual({ markBillable: true, draftInvoice: true });
+    expect(asAccountant.can).toEqual({ markBillable: true, draftInvoice: true, confirm: false });
 
     current.grants = new Map([...grantsOf('sales'), ['invoice.read', 'all']]);
     const asEditedSales = parsed(await service.detail(detail.order.id));
     expect(asEditedSales.schedule[0]!.can).toEqual({ openInvoice: true });
-    expect(asEditedSales.can).toEqual({ markBillable: false, draftInvoice: false });
+    expect(asEditedSales.can).toEqual({
+      markBillable: false,
+      draftInvoice: false,
+      confirm: false,
+    });
   });
 });
 
@@ -989,6 +1252,27 @@ describe('saved reach on sales orders (U20a phase 2)', () => {
     current.grants = grantsOf('accountant');
     expect((await service.detail(neither.order.id)).order.id).toBe(neither.order.id);
     expect(ids((await service.list({})).rows)).toContain(neither.order.id);
+  });
+
+  it('the registry alone reaches an order through its quotation owner, so every scopeWhereFor agrees (U20a2-Q1)', async () => {
+    const otherOwner = await seedOtherStaffUser(db, f);
+    const mine = await acceptedQuotation();
+    const theirs = await acceptedQuotation();
+    current.userId = otherOwner;
+    const ofMyQuote = await confirm(mine);
+    const ofTheirQuote = await confirm(theirs);
+    current.userId = undefined;
+    await moveQuotation(theirs.id, otherOwner);
+
+    for (const reach of ['own', 'department'] as const) {
+      current.grants = new Map([...grantsOf('sales'), ['sales_order.read', reach]]);
+      const where = scopeWhereFor(principalNow(), salesOrders, 'sales_order.read');
+      const rows = await withTx(db, scopeA, userActor(), (tx) =>
+        tx.select({ id: salesOrders.id }).from(salesOrders).where(where),
+      );
+      expect(ids(rows), reach).toContain(ofMyQuote.order.id);
+      expect(ids(rows), reach).not.toContain(ofTheirQuote.order.id);
+    }
   });
 
   it('mark billable is a 404 outside the read and a 403 outside the mark-billable reach', async () => {

@@ -27,7 +27,7 @@ import { parseReason } from '../procurement/orders/_lib/forms';
 import type { ActionState } from '../procurement/orders/_lib/state';
 import { billFailure, type BillOp } from './_lib/failure';
 import { EMPTY_ROW, MAX_LINES, parseBillLines, type LineRow } from './_lib/forms';
-import { MATCH_STATUS_LABEL, billGrants } from './_lib/model';
+import { MATCH_STATUS_LABEL } from './_lib/model';
 
 /**
  * Server actions of the payables screens: match, submit and void a bill, convert an inbox
@@ -75,23 +75,20 @@ async function mayEnterBills(session: Session): Promise<boolean> {
 }
 
 /**
- * The id, the session and the key for a bill or submission action; refuses a person without the grant.
- * `live` checks the live grants (the new-bill page's actions); otherwise the role defaults the bill
- * screens are gated on.
+ * The id, the session and the key for a bill or submission action; refuses a person without the live
+ * `payables.bill.enter` grant, the same one the bill screens are gated on.
  */
 async function open(
   prev: ActionState,
   form: FormData,
   field: 'billId' | 'submissionId',
   back: (id: string) => string,
-  live = true,
 ): Promise<{ ok: true; o: Opened } | { ok: false; state: ActionState }> {
   const id = text(form, field);
   const key = keyOf(form);
   if (!isGuid(id)) return { ok: false, state: { key: prev.key, error: INCOMPLETE, reload: true } };
   const session = await requireStaffSession(back(id));
-  const may = live ? await mayEnterBills(session) : billGrants(session.roles).enter;
-  if (!may) return { ok: false, state: { key, error: NO_ENTER } };
+  if (!(await mayEnterBills(session))) return { ok: false, state: { key, error: NO_ENTER } };
   return { ok: true, o: { id, session, key } };
 }
 
@@ -220,13 +217,7 @@ export async function convertSubmissionAction(
   prev: ActionState,
   form: FormData,
 ): Promise<ActionState> {
-  const r = await open(
-    prev,
-    form,
-    'submissionId',
-    (id) => `/payables/bills/new?submission=${id}`,
-    true,
-  );
+  const r = await open(prev, form, 'submissionId', (id) => `/payables/bills/new?submission=${id}`);
   if (!r.ok) return r.state;
   const rows = rowsOf(form);
   if (rows === null) return { key: r.o.key, error: INCOMPLETE, reload: true };

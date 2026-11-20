@@ -47,7 +47,23 @@ interface LevelRow {
 let container: StartedPostgreSqlContainer;
 let admin: Pool;
 let owner: Pool;
+/** A copy of the migrations folder that stops after `tag`, so this test is not shifted by later migrations. */
+async function folderThrough(tag: string): Promise<string> {
+  const journal = JSON.parse(
+    await readFile(join(MIGRATIONS_FOLDER, 'meta/_journal.json'), 'utf8'),
+  ) as { entries: { tag: string }[] };
+  const entries = journal.entries.slice(0, journal.entries.findIndex((e) => e.tag === tag) + 1);
+  const dir = await mkdtemp(join(tmpdir(), `bos-through-${tag.slice(0, 4)}-`));
+  await mkdir(join(dir, 'meta'));
+  await writeFile(join(dir, 'meta/_journal.json'), JSON.stringify({ ...journal, entries }));
+  for (const entry of entries) {
+    await copyFile(join(MIGRATIONS_FOLDER, `${entry.tag}.sql`), join(dir, `${entry.tag}.sql`));
+  }
+  return dir;
+}
+
 let beforeFolder: string;
+let throughFolder: string;
 let sql0088: string[];
 let embeddedLevels: LevelRow[];
 
@@ -359,7 +375,8 @@ beforeAll(async () => {
   quotationWithoutOwner = await insertQuotation(oppWithoutOwner);
 
   // The real runner now applies 0088 and everything after it.
-  await runMigrations(ownerUrl);
+  throughFolder = await folderThrough(TAG);
+  await runMigrations(ownerUrl, throughFolder);
 }, 180_000);
 
 afterAll(async () => {
@@ -367,6 +384,7 @@ afterAll(async () => {
   await admin?.end();
   await container?.stop();
   if (beforeFolder) await rm(beforeFolder, { recursive: true, force: true });
+  if (throughFolder) await rm(throughFolder, { recursive: true, force: true });
 });
 
 describe('0088 Marketing defaults', () => {

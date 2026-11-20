@@ -8,7 +8,6 @@ import {
 import type { Metadata } from 'next';
 import Link from 'next/link';
 
-import { hasPermission } from '@/components/p2/customers/permissions';
 import { Alert } from '@/components/ui/alert';
 import { Badge } from '@/components/ui/badge';
 import { LinkButton } from '@/components/ui/button';
@@ -28,6 +27,7 @@ import {
 import { requireStaffSession } from '@/lib/bff';
 import { getNumberSystems } from '@/lib/display-settings';
 import { loadEnabledCurrencies } from '@/lib/enabled-currencies.server';
+import { getGrants, hasGrant } from '@/lib/grants';
 import { when } from '@/lib/kernel-format';
 import { activeFilterLabels, clearFiltersHref, hrefWith, readList } from '@/lib/list-params';
 
@@ -62,7 +62,7 @@ export default async function BillsPage({
   const session = await requireStaffSession(PATH);
 
   const numberSystems = await getNumberSystems();
-  const grants = billGrants(session.roles);
+  const grants = billGrants(await getGrants(session));
 
   const header = (
     <PageHeader
@@ -87,7 +87,7 @@ export default async function BillsPage({
   );
   // "Request payment" on a row: only for someone the payment request form lets in (the same check it makes), and
   // only on a bill with a balance still free to claim. If those reads fail the rows just go without it.
-  const mayRequest = hasPermission(session.roles, 'payables.payment.request');
+  const mayRequest = hasGrant(await getGrants(session), 'payables.payment.request');
   const requestable: Promise<{ items: PaymentRequestItem[]; currencies: string[] }> = mayRequest
     ? Promise.all([listPaymentRequestItems(session), loadEnabledCurrencies(session)]).then(
         ([items, currencies]) => ({ items, currencies }),

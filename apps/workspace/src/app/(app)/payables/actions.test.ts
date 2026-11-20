@@ -403,3 +403,34 @@ describe('reject a submission', () => {
     expect(out.reload).toBe(true);
   });
 });
+
+// Every bill and submission action decides on the live grants (GET /v1/me), not role defaults.
+describe.each([
+  ['match', matchBillAction, api.matchBill, { billId: BILL }],
+  ['submit', submitBillAction, api.submitBill, { billId: BILL }],
+  ['void', voidBillAction, api.voidBill, { billId: BILL, reason: 'Wrong vendor' }],
+  ['discard', discardBillAction, api.discardBill, { billId: BILL }],
+  [
+    'exception',
+    requestExceptionAction,
+    api.requestBillException,
+    { billId: BILL, reason: 'Agreed' },
+  ],
+  ['reject', rejectSubmissionAction, api.rejectBillSubmission, { submissionId: SUB, reason: 'x' }],
+] as const)('%s follows the live grants', (_name, action, call, fields) => {
+  it('lets Procurement act once an admin granted payables.bill.enter', async () => {
+    session.roles = ['procurement'];
+    grants.live = new Map([['payables.bill.enter', 'all']]);
+    call.mockResolvedValue({ id: BILL, matchStatus: 'matched', approvalRequestId: SUB });
+    const out = await action(prev, form({ ...fields, idempotencyKey: KEY }));
+    expect(out.error).toBeUndefined();
+    expect(call).toHaveBeenCalledTimes(1);
+  });
+
+  it('refuses an accountant whose payables.bill.enter was removed, before any call', async () => {
+    grants.live = new Map([['payables.bill.read', 'all']]);
+    const out = await action(prev, form({ ...fields, idempotencyKey: KEY }));
+    expect(out.error).toMatch(/roles/i);
+    expect(call).not.toHaveBeenCalled();
+  });
+});

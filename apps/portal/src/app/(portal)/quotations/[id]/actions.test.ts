@@ -126,7 +126,7 @@ describe('acceptAction', () => {
     expect(down.error).toBeTruthy();
   });
 
-  it('on 422 evidence_policy_unmet asks the customer to contact us, and rotates the key', async () => {
+  it('never answers an acceptance with "contact us": the API records it whatever the evidence policy (F1-Q28)', async () => {
     fetchMock.mockResolvedValueOnce(
       json(
         { error: { code: 'evidence_policy_unmet', message: 'policy 7 needs evidence kind x' } },
@@ -134,11 +134,8 @@ describe('acceptAction', () => {
       ),
     );
     const res = await acceptAction({ key: IDEM }, form({ acceptedByName: 'J', confirm: 'on' }));
-    expect(res.error).toBe(
-      'We need a signed contract or purchase order to accept this. Please contact us.',
-    );
-    expect(res.key).not.toBe(IDEM);
-    expect(res.reload).toBeUndefined();
+    expect(res.error).toBe('We could not record your response. Check the form and try again.');
+    expect(res.error).not.toMatch(/contact us/i);
   });
 
   it('keeps the generic wording for any other 422', async () => {

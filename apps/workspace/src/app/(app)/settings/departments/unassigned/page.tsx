@@ -3,7 +3,6 @@ import type { ReactNode } from 'react';
 
 import { AddToDepartment } from '@/components/departments/add-to-department';
 import styles from '@/components/departments/departments.module.css';
-import { permissionChecker } from '@/components/p2/customers/permissions';
 import { Alert } from '@/components/ui/alert';
 import { Avatar } from '@/components/ui/avatar';
 import { Badge } from '@/components/ui/badge';
@@ -13,6 +12,7 @@ import { FilterBar } from '@/components/ui/filter-bar';
 import { Breadcrumb, Page, PageHeader } from '@/components/ui/page';
 import { listDepartments, listUnassignedPeople } from '@/lib/api-departments';
 import { hrefWith, readList, type RawParams } from '@/lib/list-params';
+import { getPermissionCheck } from '@/lib/live-permissions';
 
 import admin from '../../admin.module.css';
 import { BackToSettings } from '../../_components/back-link';
@@ -34,7 +34,8 @@ export default async function UnassignedPeoplePage({
   const { q } = readList(params, {});
   const here = hrefWith(PATH, params, {});
   const session = await requireSection('departments', here);
-  const canWrite = permissionChecker(session.roles)('admin.roles.write');
+  // The live saved grants (Settings > Access), not the role defaults: granting it opens the actions at once.
+  const canWrite = (await getPermissionCheck(session))('admin.roles.write');
   const [people, active] = await Promise.all([
     section('view departments', () => listUnassignedPeople(session, q)),
     canWrite ? section('view departments', () => listDepartments(session)) : null,

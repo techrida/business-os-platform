@@ -9,6 +9,7 @@ import {
   type StepSpec,
   type WorkflowSpec,
 } from '@bos/contracts';
+import { formatMoney, type NumberSystems } from '@bos/locale';
 import Decimal from 'decimal.js';
 
 import { evaluate } from './conditions';
@@ -168,8 +169,20 @@ function firstUnassignable<S extends { eligibleUserIds: readonly string[] }>(
   return steps.find((_, i) => !assign(i, new Set()));
 }
 
-const PLACEHOLDER = /\{([A-Za-z_]\w*(?:\.\w+)*)\}/g;
+/** A placeholder, with the currency code written just before it when there is one ("NPR {amountNpr}"). */
+const PLACEHOLDER = /(?:\b(NPR|INR|USD) )?\{([A-Za-z_]\w*(?:\.\w+)*)\}/g;
 const DECIMAL_TEXT = /^-?\d+(\.\d+)?$/;
+
+/**
+ * How an amount in a reason groups its digits (U15b-Q7). Western grouping for every currency, so a filled
+ * amount reads like the limits the reason templates write next to it ("NPR 139,506,172.14 is above NPR
+ * 1,000,000.00").
+ */
+const REASON_NUMBER_SYSTEMS: NumberSystems = {
+  NPR: 'international',
+  INR: 'international',
+  USD: 'international',
+};
 
 /**
  * Fills `{fact}` placeholders in a reason ("Discount {effectiveDiscountPct}% exceeds permitted 12%")
@@ -178,29 +191,41 @@ const DECIMAL_TEXT = /^-?\d+(\.\d+)?$/;
  *   numbers and booleans are rendered: an object, array or null stays as the literal placeholder.
  * - An unknown placeholder stays literal rather than being rejected here: validating names needs the
  *   subject's fact list, which the frozen spec does not carry, and a typo must not stop an approval.
- * - Decimal facts are formatted with decimal.js, never through a float: a decimal string keeps its
+ * - A placeholder written right after a currency code ("NPR {amountNpr}") is an amount of money (U15b-Q7,
+ *   D22): it is shown grouped, rounded half up to two decimals ("NPR 139,506,172.14"). Only the text is
+ *   rounded; the facts the conditions compare stay exact.
+ * - Other decimal facts are formatted with decimal.js, never through a float: a decimal string keeps its
  *   written scale ("12.50" stays "12.50") and a number never turns into an exponent ("1e21").
  * - One pass over the template, so a fact value containing `{other}` is not expanded again. The text
  *   is plain, so nothing is escaped.
  */
 function fillReason(template: string, facts: Record<string, unknown>): string {
-  return template.replace(PLACEHOLDER, (literal, path: string) => {
-    let current: unknown = facts;
-    for (const part of path.split('.')) {
-      if (current === null || typeof current !== 'object') return literal;
-      if (!Object.prototype.hasOwnProperty.call(current, part)) return literal;
-      current = (current as Record<string, unknown>)[part];
-    }
-    if (typeof current === 'number') {
-      return Number.isFinite(current) ? new Decimal(current).toFixed() : literal;
-    }
-    if (typeof current === 'string') {
-      if (!DECIMAL_TEXT.test(current)) return current;
-      const scale = current.includes('.') ? current.length - current.indexOf('.') - 1 : 0;
-      return new Decimal(current).toFixed(scale);
-    }
-    return typeof current === 'boolean' ? String(current) : literal;
-  });
+  return template.replace(
+    PLACEHOLDER,
+    (literal, currency: 'NPR' | 'INR' | 'USD' | undefined, path: string) => {
+      const prefix = currency === undefined ? '' : `${currency} `;
+      let current: unknown = facts;
+      for (const part of path.split('.')) {
+        if (current === null || typeof current !== 'object') return literal;
+        if (!Object.prototype.hasOwnProperty.call(current, part)) return literal;
+        current = (current as Record<string, unknown>)[part];
+      }
+      let decimal: string | undefined;
+      if (typeof current === 'number') {
+        if (!Number.isFinite(current)) return literal;
+        decimal = new Decimal(current).toFixed();
+      } else if (typeof current === 'string' && DECIMAL_TEXT.test(current)) {
+        const scale = current.includes('.') ? current.length - current.indexOf('.') - 1 : 0;
+        decimal = new Decimal(current).toFixed(scale);
+      }
+      if (decimal !== undefined && currency !== undefined) {
+        return formatMoney(decimal, currency, { numberSystems: REASON_NUMBER_SYSTEMS });
+      }
+      if (decimal !== undefined) return `${prefix}${decimal}`;
+      if (typeof current === 'string') return `${prefix}${current}`;
+      return typeof current === 'boolean' ? `${prefix}${String(current)}` : literal;
+    },
+  );
 }
 
 /**

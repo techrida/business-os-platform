@@ -2,7 +2,7 @@
 // assignees are exactly `RECORD_REACH_READ_PERMISSIONS`, so a change on either side fails here
 // instead of in a service whose list and record check quietly disagree. No database.
 import { PERMISSIONS, RECORD_REACH_READ_PERMISSIONS } from '@bos/contracts';
-import { invoices, leads, opportunities, quotations } from '@bos/db';
+import { invoices, leads, opportunities, paymentRequests, quotations, salesOrders } from '@bos/db';
 import { describe, expect, it } from 'vitest';
 
 import type { Db } from '../db/db.module';
@@ -26,6 +26,24 @@ describe('record-reach registry', () => {
     expect(recordReachOf(opportunities)?.readPermission).toBe('crm.opportunity.read');
     expect(recordReachOf(quotations)?.readPermission).toBe('quotation.read');
     expect(recordReachOf(invoices)?.owner).toBe(invoices.createdBy);
+  });
+
+  it('reaches a sales order through its creator and its source quotation owner (U20a2-Q1)', () => {
+    const reach = recordReachOf(salesOrders);
+    expect(reach?.owner).toBe(salesOrders.createdBy);
+    expect(reach?.ownerVia).toEqual({
+      parent: quotations,
+      key: salesOrders.quotationId,
+      parentId: quotations.id,
+      parentOwner: quotations.ownerUserId,
+    });
+  });
+
+  it('registers the payment request reach here, without loading the payment requests service', () => {
+    // Registered by payment-requests.service.ts before; this file never imports it, so the old code fails here.
+    expect(recordReachOf(paymentRequests)?.owner).toBe(paymentRequests.requestedBy);
+    expect(recordReachOf(paymentRequests)?.department).toBeUndefined();
+    expect(recordReachOf(paymentRequests)?.readPermission).toBeUndefined();
   });
 
   it('refuses to load readers for a table without read reach', async () => {

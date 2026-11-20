@@ -96,10 +96,10 @@ export default async function NewQuotationPage({
     loadEnabledCurrencies(session),
   ]);
 
-  // The customer's or opportunity's currency, unless the company has since switched it off (D44):
-  // then the books currency, which is always enabled.
-  const preferred = customerResult?.defaultCurrency ?? opportunity.currency;
-  const currency = enabledCurrencies.includes(preferred) ? preferred : 'NPR';
+  // The customer's or opportunity's currency, as it is, even when the company has since switched it
+  // off (U16-Q7, D44): the builder then shows it as not enabled and refuses to save until another is
+  // chosen. A money document never changes currency without the person seeing it.
+  const currency = customerResult?.defaultCurrency ?? opportunity.currency;
   const initial = emptyValues({ currency, ...defaultDates() });
   initial.contactId = opportunity.contactId ?? '';
 

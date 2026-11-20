@@ -16,6 +16,13 @@ export interface OutcomeDialogProps {
   /** The `version` of the version row the person is looking at. */
   version: number;
   number: string;
+  /** The revision the outcome is recorded on: always the current one. */
+  revisionNo: number;
+  /**
+   * Why Accepted cannot be recorded now (the opportunity's stage), or null. When set, only Rejected is
+   * offered and the reason is shown in its place.
+   */
+  acceptBlocker?: string | null;
   /** Today in Kathmandu, `YYYY-MM-DD`: the default date, and the latest the form allows. */
   today: string;
   /** A UUID the server generated for this render. */
@@ -26,14 +33,14 @@ export interface OutcomeDialogProps {
 type Outcome = '' | 'accepted' | 'rejected';
 
 /** A fieldset of native radios or checkboxes, with the hint and error lines Field gives a single control. */
-function Choices({
+export function Choices({
   legend,
   hint,
   error,
   children,
 }: {
   legend: string;
-  hint?: string;
+  hint?: string | undefined;
   error?: string | undefined;
   children: ReactNode;
 }) {
@@ -66,6 +73,8 @@ function Choices({
 /** Record outcome: the customer accepted or rejected the sent quotation. */
 export function OutcomeDialog({
   number,
+  revisionNo,
+  acceptBlocker = null,
   quotationId,
   versionId,
   version,
@@ -94,8 +103,12 @@ export function OutcomeDialog({
   return (
     <ActionDialog
       triggerLabel="Record outcome"
-      title={`Record the outcome of ${number}`}
-      intro="Write down what the customer answered. Accepting needs at least one kind of evidence. Rejecting needs a comment."
+      title={`Record outcome for revision ${revisionNo}`}
+      intro={
+        acceptBlocker === null
+          ? `Write down what the customer answered to ${number}, revision ${revisionNo}. Accepting needs at least one kind of evidence. Rejecting needs a comment.`
+          : `Write down what the customer answered to ${number}, revision ${revisionNo}. Rejecting needs a comment.`
+      }
       formId={formId}
       submitLabel="Record outcome"
       pending={pending}
@@ -123,8 +136,15 @@ export function OutcomeDialog({
               summaryRef={summaryRef}
             />
 
-            <Choices legend="What did the customer say?" error={state.errors?.outcome}>
-              {(['accepted', 'rejected'] as const).map((value) => (
+            <Choices
+              legend="What did the customer say?"
+              hint={acceptBlocker ?? undefined}
+              error={state.errors?.outcome}
+            >
+              {(acceptBlocker === null
+                ? (['accepted', 'rejected'] as const)
+                : (['rejected'] as const)
+              ).map((value) => (
                 <label key={value} className={styles.choice}>
                   <input
                     type="radio"

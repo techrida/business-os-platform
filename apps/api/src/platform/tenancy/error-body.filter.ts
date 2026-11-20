@@ -31,6 +31,7 @@ export type ErrorCode =
   | 'not_found'
   | 'conflict'
   | 'stale_access'
+  | 'members_changed'
   | 'fx_rate_stale'
   | 'duplicate_pan_vat'
   | 'duplicate_found'
@@ -158,6 +159,7 @@ const GENERIC_MESSAGE: Record<ErrorCode, string> = {
   not_found: 'Not found',
   conflict: 'Conflict',
   stale_access: 'Access was changed by someone else. Reload to see the latest.',
+  members_changed: 'The people in this department changed. Check the list and try again.',
   fx_rate_stale: 'The exchange rate is too old',
   duplicate_pan_vat: 'Another customer already has this PAN/VAT number',
   duplicate_found: 'This looks like a record that already exists',
@@ -369,6 +371,8 @@ const CONFLICT_CODES: readonly ErrorCode[] = [
   'stale_access',
   'confirmation_required',
   'last_founder',
+  // U20b retire: someone joined or left the department after the dialog showed its people.
+  'members_changed',
 ];
 
 function conflictCodeOf(exception: HttpException): ErrorCode | undefined {

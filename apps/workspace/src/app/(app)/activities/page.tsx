@@ -224,7 +224,9 @@ export default async function ActivitiesPage({
   const [planned, logged, people] = await Promise.all([
     loadPlanned(),
     loadLogged(),
-    loadPeople(session, { owners: canAssignFollowUps(session) }).catch(() => null),
+    canAssignFollowUps(session)
+      .then((owners) => loadPeople(session, { owners }))
+      .catch(() => null),
   ]);
   const owners = people?.owners ?? [];
   const now = new Date();

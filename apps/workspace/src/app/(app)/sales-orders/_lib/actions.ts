@@ -15,6 +15,7 @@ import {
 import { requireStaffSession } from '@/lib/bff';
 import type { Session } from '@/lib/session';
 
+import { confirmRefusalText } from './confirm-refusal';
 import { parseConfirm, parseDraft, parseMarkBillable, type FieldErrors } from './forms';
 import { isGuid } from './status';
 import type { ActionState } from './state';
@@ -103,7 +104,8 @@ export async function confirmOrderAction(_prev: ActionState, form: FormData): Pr
   try {
     orderId = (await confirmSalesOrder(session, parsed.body, key)).order.id;
   } catch (err) {
-    return failed(err, key);
+    const own = confirmRefusalText(err);
+    return own !== undefined ? { key: keyAfterFailure(err, key), error: own } : failed(err, key);
   }
   revalidatePath('/sales-orders');
   // `redirect` throws, so it stays outside the try block.

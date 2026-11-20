@@ -1,5 +1,7 @@
 // Admin routes for settings, number series and FX rates. Serves the NFR "authorization is deny-by-default":
 // every route names the permission it needs, and every write goes through withTx so it is audited.
+// The routes several permissions may use (F1-Q48) carry @AnyAuthenticated and check settings-access.ts first,
+// before any key lookup or read: one @Can names one permission.
 import { RateString, SettingKeySchema, type SettingKey, type SettingValue } from '@bos/contracts';
 import { Dec } from '@bos/locale';
 import {
@@ -17,10 +19,17 @@ import {
 } from '@nestjs/common';
 import { z } from 'zod';
 
-import { Can } from '../authz/decorators';
+import { AnyAuthenticated, Can } from '../authz/decorators';
 import { DB, type Db } from '../db/db.module';
 import { requestTx, withTx } from '../db/tx';
 import { MoneyService } from './money.service';
+import {
+  ANY_SETTING_EDITORS,
+  FINANCE_SETTINGS_EDITORS,
+  FX_RATE_EDITORS,
+  assertAnyOf,
+  settingEditors,
+} from './settings-access';
 import { SettingsService } from './settings.service';
 
 const FxCurrency = z.enum(['INR', 'USD']);
@@ -50,11 +59,23 @@ function parse<S extends z.ZodType>(schema: S, value: unknown, what: string): z.
   return parsed.data;
 }
 
-/** An unknown key is a missing resource (404), not a malformed request. Checked before anything else. */
+/** An unknown key is a missing resource (404), not a malformed request. Checked before the body is parsed. */
 function settingKey(raw: string): SettingKey {
   const parsed = SettingKeySchema.safeParse(raw);
   if (!parsed.success) throw new NotFoundException(`Unknown setting: ${raw}`);
   return parsed.data;
+}
+
+/**
+ * The key, once the caller may edit it. A caller who may edit no setting at all is refused (403) before the key is
+ * looked at, so the 404 for an unknown key tells only an editor that it does not exist; then the key's own editors
+ * are checked (403 for, say, Accountant asking for currency.enabled).
+ */
+function editableKey(raw: string): SettingKey {
+  assertAnyOf(ANY_SETTING_EDITORS);
+  const key = settingKey(raw);
+  assertAnyOf(settingEditors(key));
+  return key;
 }
 
 /**
@@ -88,15 +109,16 @@ export class SettingsController {
     private readonly money: MoneyService,
   ) {}
 
+  /** The caller must hold one of settingEditors(key): the same rule as the write, so an editor can load its version. */
   @Get('settings/:key')
-  @Can('admin.settings.write')
+  @AnyAuthenticated()
   async getSetting(@Param('key') rawKey: string) {
-    return this.current(settingKey(rawKey));
+    return this.current(editableKey(rawKey));
   }
 
   /**
    * The default reminder and escalation times, for anyone who may edit approval workflows: a new
-   * workflow starts from them. Only this one key; every other setting stays behind admin.settings.write.
+   * workflow starts from them. Only this one key; every other setting follows settingEditors(key).
    */
   @Get('approval-sla-defaults')
   @Can('approvals.definitions.write')
@@ -112,12 +134,12 @@ export class SettingsController {
   }
 
   @Put('settings/:key')
-  @Can('admin.settings.write')
+  @AnyAuthenticated()
   async putSetting(
     @Param('key') rawKey: string,
     @Body() body: unknown,
   ): Promise<{ version: number }> {
-    const key = settingKey(rawKey);
+    const key = editableKey(rawKey);
     const { value, expectedVersion } = parse(SettingBody, body, 'setting');
     const { scope, actor } = requestTx();
     // The service validates `value` against SETTINGS[key] and answers 400 when it does not fit, and 409
@@ -134,15 +156,17 @@ export class SettingsController {
   }
 
   @Get('number-series')
-  @Can('admin.settings.write')
+  @AnyAuthenticated()
   async numberSeries() {
+    assertAnyOf(FINANCE_SETTINGS_EDITORS);
     const { scope } = requestTx();
     return { items: await this.settings.listNumberSeries(scope) };
   }
 
   @Get('fx-rates')
-  @Can('admin.settings.write')
+  @AnyAuthenticated()
   async listFxRates(@Query() query: unknown) {
+    assertAnyOf(FX_RATE_EDITORS);
     const q = parse(FxRateQuery, query, 'query');
     const { scope } = requestTx();
     return { items: await this.money.listRates(scope, q) };
@@ -150,8 +174,9 @@ export class SettingsController {
 
   @Post('fx-rates')
   @HttpCode(201)
-  @Can('admin.settings.write')
+  @AnyAuthenticated()
   async addFxRate(@Body() body: unknown): Promise<{ id: string }> {
+    assertAnyOf(FX_RATE_EDITORS);
     const b = parse(FxRateBody, body, 'fx rate');
     const { scope, actor } = requestTx();
     return withTx(this.db, scope, actor, (tx) =>

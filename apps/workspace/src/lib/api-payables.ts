@@ -17,6 +17,7 @@ import {
   type RequestPaymentBody,
   type RequestMatchExceptionBody,
   type VendorBillLineBody,
+  VendorBillCanSchema,
 } from '@bos/contracts';
 import { z } from 'zod';
 
@@ -94,6 +95,11 @@ const billFields = {
   enteredBy: z.guid(),
   approvalRequestId: z.guid().nullable(),
   version: z.number().int(),
+  /**
+   * What the caller may do on this bill under their live grant scope (GET list and detail only). Command responses
+   * and older APIs leave it out; kept here so the parse does not strip it.
+   */
+  can: VendorBillCanSchema.optional(),
 };
 
 /** A row of the list: the bill without its lines. */

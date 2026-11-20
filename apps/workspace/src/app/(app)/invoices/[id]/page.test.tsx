@@ -569,3 +569,70 @@ describe('invoice detail page: the document', () => {
     expect(textOf(html)).toContain('lot');
   });
 });
+
+describe('invoice detail under the per-invoice can flags', () => {
+  const OTHERS = {
+    submit: false,
+    issue: false,
+    discard: false,
+    notes: false,
+    recordPayment: false,
+  };
+  const OWN = { submit: true, issue: true, discard: true, notes: true, recordPayment: true };
+  const RECORD = `href="/payments/new?customerId=${CUSTOMER}"`;
+  const SUBMIT = />Submit for approval</;
+  const ISSUE = />Issue tax invoice</;
+  const NOTE = />Credit note</;
+  const owed = () =>
+    mocks.getCustomerStatement.mockResolvedValue([
+      InvoiceSettlementSchema.parse({
+        invoiceId: ID,
+        number: 'INV-2083/84-00001',
+        kind: 'tax_invoice',
+        customerId: CUSTOMER,
+        currency: 'NPR',
+        issueDate: '2026-11-08',
+        total: '2018180.00',
+        allocatedAmount: '0.00',
+        openAmount: '2018180.00',
+        dueDate: '2026-12-08',
+        daysOverdue: 0,
+        settlement: 'unpaid',
+      }),
+    ]);
+
+  it("hides Submit, Issue, the notes and Record payment on another person's invoice", async () => {
+    // Finance holds every one of these permissions; only the API's can says this invoice is out of reach.
+    mocks.getInvoice.mockResolvedValue({ ...invoiceDetail({ status: 'draft' }), can: OTHERS });
+    expect(await render()).not.toMatch(SUBMIT);
+    mocks.getInvoice.mockResolvedValue({ ...invoiceDetail({ status: 'approved' }), can: OTHERS });
+    expect(await render()).not.toMatch(ISSUE);
+    owed();
+    mocks.getInvoice.mockResolvedValue({ ...issued(), can: OTHERS });
+    const out = await render();
+    expect(out).not.toMatch(NOTE);
+    expect(out).not.toContain(RECORD);
+  });
+
+  it("offers them on the person's own invoice", async () => {
+    mocks.getInvoice.mockResolvedValue({ ...invoiceDetail({ status: 'draft' }), can: OWN });
+    expect(await render()).toMatch(SUBMIT);
+    mocks.getInvoice.mockResolvedValue({ ...invoiceDetail({ status: 'approved' }), can: OWN });
+    expect(await render()).toMatch(ISSUE);
+    owed();
+    mocks.getInvoice.mockResolvedValue({ ...issued(), can: OWN });
+    const out = await render();
+    expect(out).toMatch(NOTE);
+    expect(out).toContain(RECORD);
+  });
+
+  it('keeps the grant-only behaviour when the detail comes without can', async () => {
+    mocks.getInvoice.mockResolvedValue(invoiceDetail({ status: 'draft' }));
+    expect(await render()).toMatch(SUBMIT);
+    owed();
+    mocks.getInvoice.mockResolvedValue(issued());
+    const out = await render();
+    expect(out).toMatch(NOTE);
+    expect(out).toContain(RECORD);
+  });
+});
