@@ -425,7 +425,6 @@ describe('DeliveryLogService.list', () => {
     const failed = await asFounder(home, () => service.list({ filter: 'failed', limit: 50 }));
     expect(failed.items.map((i) => [i.id, i.state, i.canResend])).toEqual([
       [stopped, 'bounced', true],
-      [bounced, 'bounced', true],
       [dead, 'failed', true],
     ]);
     expect(failed.nextBefore).toBeNull();
@@ -435,7 +434,8 @@ describe('DeliveryLogService.list', () => {
       [waiting, 'queued', false],
       [delivered, 'delivered', false],
       [stopped, 'bounced', true],
-      [bounced, 'bounced', true],
+      // A soft bounce may still be delivered by the mail server: shown, but not resendable (no second copy).
+      [bounced, 'bounced', false],
       [dead, 'failed', true],
     ]);
   });
