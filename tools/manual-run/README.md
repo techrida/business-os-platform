@@ -194,11 +194,11 @@ Assert on something the action changes. For example, count the rows that carry a
     - 2: the inbox row by PR number, Approve with comment, Department approved, the RFQ form preselects the PR. It does not read the decider or the comment back.
     - 3: badge Open, "Invited vendors (1)", the RFQ links the PR, "No quotation has been recorded yet.". The deadline value is not read back.
     - 4: the portal's "We received your quotation" and the staff submission row with this run's reference. The vendor's typed total and delivery days are not compared on the staff side (run 2: not stored).
-    - 5: Scan passed, one Dev Vendor Co quotation of 113,000, Score 90, and the vendor RFQ page has no score text. It does not check the converted line's tax split.
+    - 5: Scan passed, one Dev Vendor Co quotation of 113,000, Score 90, and the vendor RFQ page (showing its RFQ number) has no score text. It does not check the converted line's tax split.
     - 6: the refusal names fewer quotations than the minimum, then Recommended, both reasons shown, three commitment steps with their route reasons. It does not see which role decides step 3 (the screen names the rule, not Management).
     - 7: three approvals in order, "Approval approved", one PO listed for the PR. It does not check that no other PO was created elsewhere.
     - 8: Issued, total 113,000, 2 pcs, version 1 Current with its PDF downloaded by staff and vendor; PDF text only when `pdftotext` exists. Does not compare the two PDFs byte for byte.
-    - 9: the empty-save validation, the order still Issued while the receipt is a draft, Confirmed with exactly this run's two serials, the order Fully received.
+    - 9: the empty-save validation, the order still Issued while the receipt is a draft, Confirmed with exactly this run's two serials, the order Fully received. The order's status is read on its receipts page (`/procurement/receipts?po=<id>`): the warehouse holds no purchase-order grant.
     - 10: the portal acknowledgement and the staff Bill inbox row. It does not prove the vendor cannot see the pending bill.
     - 11: Matched, payable 113,000 with net 100,000 and VAT 13,000, the order and vendor links, Awaiting approval, and the Founder's approval page offering no Approve.
     - 12: two approvals, Approved, payable 113,000; the portal bill shows Approved for payment and a Payments section without matching or approver text.

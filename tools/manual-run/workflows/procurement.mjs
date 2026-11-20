@@ -190,8 +190,23 @@ export function workflow(cfg) {
     return m[0];
   };
 
-  /** Reloads `page` (plain GETs) until `locator` shows, up to `tries` times `everyMs`. */
-  const reloadUntil = async (s, locator, tries = 12, everyMs = 10000, page = s.page) => {
+  /**
+   * Reloads `page` (plain GETs) until `locator` shows, up to `tries` times `everyMs`. With
+   * `waitFirstMs`, it first waits that long in place: right after a submit the page may still be
+   * saving, and a reload then could lose or repeat the action.
+   */
+  const reloadUntil = async (
+    s,
+    locator,
+    tries = 12,
+    everyMs = 10000,
+    { page = s.page, waitFirstMs = 0 } = {},
+  ) => {
+    if (waitFirstMs)
+      await locator
+        .first()
+        .waitFor({ state: 'visible', timeout: waitFirstMs })
+        .catch(() => {});
     for (let i = 0; i < tries && !(await visible(locator)); i++) {
       await s.pause(everyMs);
       await page.reload({ waitUntil: 'domcontentloaded' }).catch(() => {});
@@ -422,7 +437,12 @@ export function workflow(cfg) {
             await s.hydrated(serials);
             await serials.check();
             const type = s.select('requestType', { byName: true });
-            s.expect(/Goods/.test(await type.first().innerText()), 'Type keeps its default, Goods');
+            const typeText = await type.first().innerText();
+            s.expect(
+              /\bGoods\b/.test(typeText) && !/service/i.test(typeText),
+              'Type keeps its default, Goods',
+              typeText,
+            );
             s.expect(
               !(await s.page
                 .getByRole('checkbox', { name: 'This is an emergency purchase' })
@@ -500,6 +520,7 @@ export function workflow(cfg) {
             pr,
             'Two demo devices approved for Operations.',
             async (x) => {
+              await as(x, 'Dev Procurement');
               await openUrl(x, 'prUrl', (p) => h1(p, pr));
               return (await statusIn(x, ['Awaiting approval', 'Draft', 'Returned'])) === null;
             },
@@ -714,17 +735,25 @@ export function workflow(cfg) {
               .getByRole('row')
               .filter({ hasText: VENDOR })
               .filter({ hasText: /\b90(\.00)?\b/ });
-            s.expect(await reloadUntil(s, scored, 6, 5000), 'the Score column shows 90');
+            s.expect(
+              await reloadUntil(s, scored, 6, 5000, { waitFirstMs: 60000 }),
+              'the Score column shows 90',
+            );
           } else s.checks.push('note: the score was saved by an earlier attempt');
 
           await s.caption('procurement-5 — the vendor sees no comparison or score');
           const vp = await vendorPage(s);
           await s.goto(
             `${cfg.portalUrl}/vendor/rfqs/${idOf(s.state.rfqUrl)}`,
-            (p) => p.getByRole('heading', { level: 1 }),
+            (p) => h1(p, s.state.rfqNumber),
             { page: vp },
           );
           const portalText = await main(s, vp);
+          // A positive anchor first: an empty text would pass the negative check below.
+          s.expect(
+            portalText.includes(s.state.rfqNumber),
+            `the vendor page shows ${s.state.rfqNumber}`,
+          );
           s.expect(
             !/Delivery readiness|Recommended|Score/.test(portalText),
             'the vendor RFQ page shows no score, comparison or recommendation',
@@ -964,19 +993,29 @@ export function workflow(cfg) {
           await as(s, 'Dev Warehouse');
           const po = s.need('poNumber');
           const poId = idOf(s.need('poUrl'));
+          // The warehouse holds no purchase-order grant (procurement.po.issue), so the order's status
+          // is read on its receipts page, whose header carries the order's badge.
+          const orderReceipts = () =>
+            s.goto(`/procurement/receipts?po=${poId}`, (p) => h1(p, `Receipts for ${po}`));
           // Retry-safe: a receipt an earlier attempt saved is recorded at once; one it saved without
-          // recording is found on the order's receipts page (?po=), and two of them fail the step.
+          // recording is found on the order's receipts page, and two of them fail the step. The
+          // lookup counts only once that page shows its receipts table or its empty state.
           if (!s.state.receiptUrl) {
-            await s.goto(`/procurement/receipts?po=${poId}`, (p) => h1(p, 'Receipts'));
-            const found = [
-              ...new Set(
-                (
-                  await s.page
-                    .locator('main a[href^="/procurement/receipts/"]')
-                    .evaluateAll((links) => links.map((a) => a.getAttribute('href')))
-                ).filter((h) => new RegExp(`^/procurement/receipts/${UUID}$`).test(h)),
-              ),
-            ];
+            await orderReceipts();
+            const table = s.page.getByRole('table', { name: 'Receipts of this purchase order' });
+            const none = s.page.getByRole('heading', { name: 'Nothing has been received yet.' });
+            await s.see(table.or(none), `the receipts of ${po} loaded`);
+            const found = (await visible(table))
+              ? [
+                  ...new Set(
+                    (
+                      await table
+                        .locator('a[href^="/procurement/receipts/"]')
+                        .evaluateAll((links) => links.map((a) => a.getAttribute('href')))
+                    ).filter((h) => new RegExp(`^/procurement/receipts/${UUID}$`).test(h)),
+                  ),
+                ]
+              : [];
             if (found.length > 1)
               throw new StepFailure(
                 `${po} has ${found.length} receipts already (${found.join(', ')}); check them by hand`,
@@ -1014,7 +1053,7 @@ export function workflow(cfg) {
           s.record('receiptNumber', grn);
           if (await visible(status(s.page, 'Draft'))) {
             // A draft does not count as received: the order is still Issued.
-            await openUrl(s, 'poUrl', (p) => h1(p, po));
+            await orderReceipts();
             await s.see(
               status(s.page, 'Issued'),
               'the order is still Issued while the receipt is a draft',
@@ -1033,7 +1072,7 @@ export function workflow(cfg) {
           s.expect((await listed.count()) === 2, 'exactly two serials', `${await listed.count()}`);
           for (const serial of v.serials)
             await s.see(listed.filter({ hasText: serial }), `serial ${serial}`);
-          await openUrl(s, 'poUrl', (p) => h1(p, po));
+          await orderReceipts();
           await s.see(status(s.page, 'Fully received'), 'the order is Fully received');
         },
       },
@@ -1180,7 +1219,7 @@ export function workflow(cfg) {
           const text = await main(s);
           s.expect(hasAmount(text, 113000), 'the payable is NPR 113,000');
           s.expect(
-            hasAmount(text, 100000) && hasAmount(text, 13000),
+            /Net\s*NPR 1,?00,?000\.00/.test(text) && /\bVAT\s*NPR 13,000\.00/.test(text),
             'net NPR 100,000 and VAT NPR 13,000',
           );
           await s.see(
@@ -1260,6 +1299,7 @@ export function workflow(cfg) {
           await s.see(status(vp, 'Approved for payment'), 'the vendor sees Approved for payment');
           await s.see(vp.getByRole('heading', { name: 'Payments' }), 'the Payments section');
           const portalText = await main(s, vp);
+          s.expect(portalText.includes(v.invoiceNo), `the vendor page shows ${v.invoiceNo}`);
           s.expect(
             !/Match result|Matched|Dev Accountant|Dev Finance|Demo bill matches|Demo payable approved/.test(
               portalText,
@@ -1356,7 +1396,7 @@ export function workflow(cfg) {
             );
             const verified = mine().filter({ hasText: 'Verified, in use' });
             s.expect(
-              await reloadUntil(s, verified, 9, 10000),
+              await reloadUntil(s, verified, 6, 10000, { waitFirstMs: 90000 }),
               "this run's account is Verified, in use",
             );
           } else s.checks.push('note: the account was verified by an earlier attempt');
@@ -1504,7 +1544,7 @@ export function workflow(cfg) {
           const text = await s.text(row.first());
           s.expect(text.includes(VENDOR), `the row is ${VENDOR}'s`, text);
           s.expect(
-            hasAmount(text, 100000) && hasAmount(text, 13000),
+            /(^|[^\d,])1,?00,?000\.00/.test(text) && /(^|[^\d,])13,000\.00/.test(text),
             'taxable NPR 100,000 and VAT NPR 13,000',
             text,
           );
