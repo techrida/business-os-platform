@@ -38,19 +38,29 @@ vi.mock('next/navigation', () => ({
 const ID = '11111111-1111-4111-8111-111111111111';
 const CUSTOMER = '33333333-3333-4333-8333-333333333333';
 
+/**
+ * A list row as the API sends it: an issued tax invoice or debit note carries its derived settlement and open
+ * amount (unpaid and fully open unless the test says otherwise); every other row carries null for both.
+ */
 function item(over: Partial<InvoiceListItem> = {}): InvoiceListItem {
-  return {
+  const row = {
     id: ID,
-    kind: 'tax_invoice',
-    status: 'issued',
+    kind: 'tax_invoice' as const,
+    status: 'issued' as const,
     number: 'INV-2083/84-00001',
     customerId: CUSTOMER,
     customerName: 'Himalayan Agro Foods',
-    currency: 'NPR',
+    currency: 'NPR' as const,
     total: '2018180.00',
     issueDate: '2026-11-08',
     dueDate: '2026-12-08',
     ...over,
+  };
+  const owes = row.status === 'issued' && (row.kind === 'tax_invoice' || row.kind === 'debit_note');
+  return {
+    settlement: owes ? 'unpaid' : null,
+    openAmount: owes ? row.total : null,
+    ...row,
   };
 }
 
@@ -319,17 +329,43 @@ describe('outstanding balance card', () => {
 describe('record payment row action', () => {
   const RECORD = `href="/payments/new?customerId=${CUSTOMER}"`;
 
-  it('offers Record payment on an issued tax invoice when the filter selects owing states only', async () => {
+  it('offers Record payment on every row that still owes, with no Payment filter set', async () => {
     mocks.requireStaffSession.mockResolvedValue({ accessToken: 't', roles: ['accountant'] });
-    const html = await render({ settlement: ['unpaid', 'overdue'] });
+    mocks.listInvoicesPage.mockResolvedValue(
+      page([
+        item(),
+        item({ id: OTHER, number: 'INV-2083/84-00002', settlement: 'overdue' }),
+        item({
+          id: '55555555-5555-4555-8555-555555555555',
+          number: 'INV-2083/84-00003',
+          settlement: 'partly_paid',
+          openAmount: '18180.00',
+        }),
+      ]),
+    );
+    const html = await render();
     expect(html).toContain(RECORD);
+    // Old code offered it only when the Payment filter selected owing states.
     expect(html).toContain('Record payment for INV-2083/84-00001');
+    expect(html).toContain('Record payment for INV-2083/84-00002');
+    expect(html).toContain('Record payment for INV-2083/84-00003');
   });
 
-  it('offers nothing with no Payment filter, or one that includes settled invoices', async () => {
+  it('offers nothing on a paid or credited row, whatever the filter', async () => {
     mocks.requireStaffSession.mockResolvedValue({ accessToken: 't', roles: ['accountant'] });
+    mocks.listInvoicesPage.mockResolvedValue(
+      page([
+        item({ settlement: 'paid', openAmount: '0.00' }),
+        item({
+          id: OTHER,
+          number: 'INV-2083/84-00002',
+          settlement: 'credited',
+          openAmount: '0.00',
+        }),
+      ]),
+    );
     expect(await render()).not.toContain('Record payment');
-    expect(await render({ settlement: ['paid', 'overdue'] })).not.toContain('Record payment');
+    expect(await render({ settlement: ['unpaid'] })).not.toContain('Record payment');
   });
 
   it('hides it from a role without payment.record', async () => {
@@ -348,5 +384,39 @@ describe('record payment row action', () => {
       ]),
     );
     expect(await render({ settlement: ['unpaid'] })).not.toContain('Record payment');
+  });
+});
+
+describe('Status column', () => {
+  it('shows where an issued invoice’s payment stands, one word, and the approval status otherwise', async () => {
+    mocks.listInvoicesPage.mockResolvedValue(
+      page([
+        item({ settlement: 'paid', openAmount: '0.00' }),
+        item({ id: OTHER, number: 'INV-2083/84-00002', settlement: 'overdue' }),
+        item({
+          id: '55555555-5555-4555-8555-555555555555',
+          number: 'INV-2083/84-00003',
+          settlement: 'partly_paid',
+          openAmount: '18180.00',
+        }),
+        item({
+          id: '66666666-6666-4666-8666-666666666666',
+          status: 'draft',
+          number: null,
+          issueDate: null,
+        }),
+      ]),
+    );
+    const html = await render();
+    const statuses = [...html.matchAll(/<tr>.*?<\/tr>/gs)]
+      .slice(1)
+      .map(
+        (row) =>
+          /<td[^>]*><span class="[^"]*badge[^"]*"[^>]*>([^<]+)<\/span><\/td>(?![\s\S]*badge)/.exec(
+            row[0],
+          )?.[1],
+      );
+    // Old code showed "Issued" for all three issued rows.
+    expect(statuses).toEqual(['Paid', 'Overdue', 'Partial', 'Draft']);
   });
 });
