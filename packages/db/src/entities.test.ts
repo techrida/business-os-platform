@@ -747,11 +747,16 @@ describe('0013 data move on a database that already has rows (K1-U1b)', () => {
       { role_key: 'finance', permission: 'profile.avatar.write', scope: 'own' },
       { role_key: 'finance', permission: 'settings.finance.write', scope: 'all' },
       { role_key: 'finance', permission: 'settings.fx_rate.write', scope: 'all' },
+      { role_key: 'founder', permission: 'approvals.definitions.publish', scope: 'all' },
       { role_key: 'founder', permission: 'credit.override', scope: 'all' },
       { role_key: 'founder', permission: 'crm.lead.reopen', scope: 'all' },
       { role_key: 'founder', permission: 'crm.opportunity.reopen', scope: 'all' },
+      { role_key: 'founder', permission: 'email_delivery.read', scope: 'all' },
+      { role_key: 'founder', permission: 'email_delivery.resend', scope: 'all' },
       { role_key: 'founder', permission: 'settings.finance.write', scope: 'all' },
       { role_key: 'founder', permission: 'settings.fx_rate.write', scope: 'all' },
+      { role_key: 'management', permission: 'approvals.definitions.publish', scope: 'all' },
+      { role_key: 'management', permission: 'approvals.definitions.read', scope: 'all' },
       { role_key: 'management', permission: 'credit.override', scope: 'all' },
       { role_key: 'portal', permission: 'memo.read', scope: 'customer_org' },
     ]);
@@ -759,6 +764,8 @@ describe('0013 data move on a database that already has rows (K1-U1b)', () => {
       tenantId,
     ]);
     // 5 after the 0013 dedupe, plus one when 0053 grants profile.avatar.write to the finance role in the seeded
+    // tenant, plus one when 0083 gives the tenant its Marketing rows, plus one when 0088 widens the access model, plus one each when 0120 and 0121 seed the settings and reopen rows, plus one when 0127 seeds the workflow publish rows, plus one when 0128 seeds the email delivery rows.
+    expect(av.rows).toEqual([{ version: '12' }]);
     // tenant, plus one when 0083 gives the tenant its Marketing rows, plus one when 0088 widens the access model,
     // plus one each when 0120 and 0121 seed the settings and reopen rows, plus one when 0104 adds credit.override.
     expect(av.rows).toEqual([{ version: '11' }]);

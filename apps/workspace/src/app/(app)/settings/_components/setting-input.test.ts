@@ -197,6 +197,34 @@ describe('parseSettingInput: the P4 procurement keys', () => {
   });
 });
 
+describe('parseSettingInput: the delivery-hold threshold (F1-Q32)', () => {
+  const key = 'sales.delivery_hold.management_npr';
+  const MONEY_MESSAGE = 'Enter an amount of 0 or more with up to two decimal places.';
+
+  it('keeps a typed amount of 0 or more with up to two decimals as exact text', () => {
+    expect(parseSettingInput(key, { kind: 'text', value: ' 250000.50 ' })).toEqual({
+      ok: true,
+      value: '250000.50',
+    });
+    expect(parseSettingInput(key, { kind: 'text', value: '0' })).toEqual({ ok: true, value: '0' });
+  });
+
+  it.each(['-1', '100000.123', '1e5', '', 'abc'])(
+    'refuses %j with the money sentence, not the schema text',
+    (bad) => {
+      expect(parseSettingInput(key, { kind: 'text', value: bad })).toEqual({
+        ok: false,
+        message: MONEY_MESSAGE,
+      });
+    },
+  );
+
+  it('knows the NPR 100,000 default', () => {
+    expect(isFieldAtDefault(key, { kind: 'text', value: '100000' })).toBe(true);
+    expect(isFieldAtDefault(key, { kind: 'text', value: '150000' })).toBe(false);
+  });
+});
+
 describe('parseSettingInput: the P2 keys', () => {
   it.each(['fx.max_rate_age_days', 'quotation.validity_days'] as const)(
     'parses %s as a strict whole number',

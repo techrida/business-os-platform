@@ -333,6 +333,12 @@ describe('0123 Finance and Accountant base reads', () => {
       [`finance ${LEAD}`]: 'department true',
       [`finance ${OPP}`]: 'all false',
       [`accountant ${LEAD}`]: 'own false',
+      // 0127 and 0128 seed these rows to a tenant that stores grants.
+      'founder approvals.definitions.publish': 'all true',
+      'founder email_delivery.read': 'all true',
+      'founder email_delivery.resend': 'all true',
+      'management approvals.definitions.publish': 'all true',
+      'management approvals.definitions.read': 'all true',
     });
   });
 });
@@ -386,11 +392,11 @@ describe('0123 level rows', () => {
 });
 
 describe('0123 tenants and versions', () => {
-  it('bumps the authz version once for each tenant whose rows changed, and only those', async () => {
-    expect(await authzVersion(tenantSeeded.tenantId)).toBe(4);
-    expect(await authzVersion(tenantMaterialized.tenantId)).toBe(2);
-    expect(await authzVersion(tenantFounder.tenantId)).toBe(2);
-    expect(await authzVersion(tenantOtherRoles.tenantId)).toBe(5);
+  it('bumps the authz version once for each tenant whose rows changed, and only those (0127 and 0128 add two more bumps where they seed rows)', async () => {
+    expect(await authzVersion(tenantSeeded.tenantId)).toBe(6);
+    expect(await authzVersion(tenantMaterialized.tenantId)).toBe(4);
+    expect(await authzVersion(tenantFounder.tenantId)).toBe(4);
+    expect(await authzVersion(tenantOtherRoles.tenantId)).toBe(7);
   });
 
   it('leaves a tenant with no role rows on the code defaults: no grant, no level row, no version', async () => {

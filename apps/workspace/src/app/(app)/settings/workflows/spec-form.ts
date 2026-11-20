@@ -1,7 +1,7 @@
 // Converts between the workflow editor's form state and a WorkflowSpec. Serves the NFR "approvals are
 // auditable": whatever the form builds is validated with WorkflowWriteSpecSchema before it is sent, and a
-// spec the form cannot show faithfully (nested all/any, a field other than amountNpr) is never
-// flattened: the editor falls back to raw JSON for it, so saving a draft never drops a rule.
+// spec the form cannot show faithfully (nested all/any, a field other than amountNpr or the two facts in
+// FactCondition) is never flattened: the editor falls back to raw JSON for it, so saving a draft never drops a rule.
 import {
   DEFAULT_DEPARTMENT_HEAD_FALLBACK_ROLE,
   ROLE_KEYS,
@@ -36,10 +36,23 @@ export interface StepForm {
   reason: string;
 }
 
+/**
+ * A saved rule that tests a submit fact instead of the amount, in the one shape the form can write back exactly
+ * (U23-Q4). The tax invoice route (migration 0110, F1-Q30) uses both: `fromSchedule` equal to a boolean (the invoice
+ * was drafted from an approved billing schedule line) and `kind` equal to the document type (every request). New rules
+ * are never facts: a submit that does not send the fact fails the condition, so only saved rules carry one.
+ */
+export type FactCondition =
+  { field: 'fromSchedule'; value: boolean } | { field: 'kind'; value: string };
+
 export interface RuleForm {
   id: string;
+  /** For an amount rule; ignored when `fact` is set. */
   op: ThresholdOp;
+  /** For an amount rule; ignored when `fact` is set. */
   value: string;
+  /** Set when the rule tests a submit fact instead of the amount. */
+  fact?: FactCondition;
   step: StepForm;
   /** Id of the step this one goes after; '' means at the end. */
   afterStepId: string;
@@ -130,6 +143,18 @@ function thresholdOf(when: Condition): { op: ThresholdOp; value: string } | null
   return { op: when.op, value: String(when.value) };
 }
 
+/** Null unless `when` is exactly a FactCondition: `fromSchedule` eq a boolean, or `kind` eq a string. */
+function factOf(when: Condition): FactCondition | null {
+  if (!('field' in when) || when.op !== 'eq') return null;
+  if (when.field === 'fromSchedule' && typeof when.value === 'boolean') {
+    return { field: 'fromSchedule', value: when.value };
+  }
+  if (when.field === 'kind' && typeof when.value === 'string') {
+    return { field: 'kind', value: when.value };
+  }
+  return null;
+}
+
 /** Whether the spec fits the form without loss. If not, `reasons` says why (shown above the JSON). */
 export function specToForm(spec: WorkflowSpec): FormConversion {
   const reasons: string[] = [];
@@ -142,7 +167,8 @@ export function specToForm(spec: WorkflowSpec): FormConversion {
 
   const rules: RuleForm[] = [];
   for (const r of spec.rules) {
-    const threshold = thresholdOf(r.when);
+    const fact = factOf(r.when);
+    const threshold = fact ? { op: 'eq' as const, value: '' } : thresholdOf(r.when);
     if (!threshold) {
       reasons.push(
         `rule "${r.id}" tests something other than a single ${THRESHOLD_FIELD} comparison`,
@@ -158,6 +184,7 @@ export function specToForm(spec: WorkflowSpec): FormConversion {
       id: r.id,
       op: threshold.op,
       value: threshold.value,
+      ...(fact ? { fact } : {}),
       step,
       afterStepId: r.position === 'end' ? '' : r.position.after,
       reason: r.reason,
@@ -203,7 +230,9 @@ export function formToSpec(form: SpecForm): SpecBuild {
     steps: form.steps.map(stepFromForm),
     rules: form.rules.map((r) => ({
       id: r.id.trim(),
-      when: { field: THRESHOLD_FIELD, op: r.op, value: r.value.trim() },
+      when: r.fact
+        ? { field: r.fact.field, op: 'eq', value: r.fact.value }
+        : { field: THRESHOLD_FIELD, op: r.op, value: r.value.trim() },
       add: stepFromForm(r.step),
       position: r.afterStepId.trim() === '' ? 'end' : { after: r.afterStepId.trim() },
       reason: r.reason.trim(),

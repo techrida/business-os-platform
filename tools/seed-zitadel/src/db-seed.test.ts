@@ -117,9 +117,9 @@ describe('seedKernelRows', () => {
       index('INTO app.authz_versions'),
     );
     expect(index('INTO app.fx_rates')).toBeGreaterThan(index('INTO app.workflow_versions'));
-    // grants + authz bump + 11 x (definition + version + current_version_id) + fx peg
+    // grants + authz bump + 12 x (definition + version + current_version_id) + fx peg
     // + 3 tax codes + 2 payment terms + 2 withholding codes
-    expect(changed).toBe(grantCount + 1 + 11 * 3 + 1 + 3 + 2 + 2 + 3);
+    expect(changed).toBe(grantCount + 1 + 12 * 3 + 1 + 3 + 2 + 2 + 3);
   });
 
   it('rolls back and rethrows when a statement fails', async () => {
@@ -288,7 +288,7 @@ describe('seedKernelRows: P2 quotation reference data', () => {
       'quotation_version',
     ]);
     const versions = calls.filter((c) => c.text.includes('INTO app.workflow_versions'));
-    expect(versions).toHaveLength(11);
+    expect(versions).toHaveLength(12);
     const quotation = versions.find((c) => {
       const spec = JSON.parse(String(c.values[3])) as { documentType: string };
       return spec.documentType === 'quotation_version';
@@ -364,7 +364,7 @@ describe('seedKernelRows: P2 quotation reference data', () => {
     // 3 tax codes + 2 payment terms + 11 definitions (version rows share def-1 here, so 1 key)
     expect([...keys].filter((k) => k.startsWith('tax|'))).toHaveLength(3);
     expect([...keys].filter((k) => k.startsWith('term|'))).toHaveLength(2);
-    expect([...keys].filter((k) => k.startsWith('def|'))).toHaveLength(11);
+    expect([...keys].filter((k) => k.startsWith('def|'))).toHaveLength(12);
 
     const second = fakeClient(stateful);
     expect(await seedKernelRows(second.client, scope)).toBe(0);
@@ -485,7 +485,27 @@ describe('seedKernelRows: P4 purchasing', () => {
       'tax_invoice',
       'credit_note',
       'debit_note',
+      'memo_approver',
     ]);
+  });
+
+  it('seeds the Memo approver workflow: the department head, else the Founder (F1-Q9)', async () => {
+    const { client, calls } = fakeClient(firstRun);
+    await seedKernelRows(client, scope);
+    expect(specOf(calls, 'memo_approver')).toEqual(
+      WorkflowSpecSchema.parse({
+        documentType: 'memo_approver',
+        steps: [
+          {
+            id: 'approver',
+            kind: 'department_head',
+            fallbackRole: 'founder',
+            reason: "The head of the requester's department approves the memo",
+          },
+        ],
+        rules: [],
+      }),
+    );
   });
 
   it('keeps the withholding codes at 0 bp and inserts each only when absent', async () => {
@@ -1210,6 +1230,7 @@ describe('PgTenancyStore (R5, ADR 0027 section 11)', () => {
       ['tenant-uuid', 'org-uuid', 'tax_invoice', 'Tax invoice approval', 'tax_invoice'],
       ['tenant-uuid', 'org-uuid', 'credit_note', 'Credit note approval', 'credit_note'],
       ['tenant-uuid', 'org-uuid', 'debit_note', 'Debit note approval', 'debit_note'],
+      ['tenant-uuid', 'org-uuid', 'memo_approver', 'Memo approver', 'memo_approver'],
     ]);
     expect(first.closed()).toBe(1);
 

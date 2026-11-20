@@ -1,10 +1,16 @@
 'use server';
 
-import { RoleKeySchema, type RoleKey } from '@bos/contracts';
+import { AccessLevelSchema, RoleKeySchema, type RoleKey } from '@bos/contracts';
 import { revalidatePath } from 'next/cache';
 import { z } from 'zod';
 
-import { inviteUser, sendPasswordReset, setUserRoles } from '@/lib/api-admin';
+import {
+  changeUserStatus,
+  inviteUser,
+  sendPasswordReset,
+  setUserRoles,
+  type UserStatusAction,
+} from '@/lib/api-admin';
 
 import { describeError } from '../admin-errors';
 import { fail, ok, type ActionState } from '../action-state';
@@ -16,11 +22,19 @@ import { requireSection } from '../guard';
 
 const PATH = '/settings/users';
 
-const InviteSchema = z.object({
-  email: z.email('Enter a valid email address.').max(320),
-  givenName: z.string().trim().min(1, 'Enter a given name.').max(200),
-  familyName: z.string().trim().min(1, 'Enter a family name.').max(200),
-});
+const InviteSchema = z
+  .object({
+    email: z.email('Enter a valid email address.').max(320),
+    givenName: z.string().trim().min(1, 'Enter a given name.').max(200),
+    familyName: z.string().trim().min(1, 'Enter a family name.').max(200),
+    // F1-Q50: both optional. An empty department is "no department"; an empty level is staff.
+    departmentId: z.union([z.literal(''), z.guid('Choose a department from the list.')]),
+    level: z.union([z.literal(''), AccessLevelSchema]),
+  })
+  .refine((v) => v.level !== 'head' || v.departmentId !== '', {
+    path: ['departmentId'],
+    message: 'Choose a department for a department head.',
+  });
 
 function rolesFrom(formData: FormData): RoleKey[] {
   const roles: RoleKey[] = [];
@@ -46,6 +60,8 @@ export async function inviteUserAction(
     email: text(formData, 'email').trim(),
     givenName: text(formData, 'givenName'),
     familyName: text(formData, 'familyName'),
+    departmentId: text(formData, 'departmentId'),
+    level: text(formData, 'level'),
     roles: roles.join(','),
   };
 
@@ -59,8 +75,14 @@ export async function inviteUserAction(
     };
   }
 
+  const { departmentId, level, ...person } = parsed.data;
   try {
-    await inviteUser(session, { ...parsed.data, roles });
+    await inviteUser(session, {
+      ...person,
+      roles,
+      ...(departmentId !== '' ? { departmentId } : {}),
+      ...(level !== '' ? { level } : {}),
+    });
   } catch (error) {
     return fail(describeError(error, 'invite users'), fields);
   }
@@ -97,4 +119,28 @@ export async function sendPasswordResetAction(userId: string): Promise<ActionSta
   } catch (error) {
     return fail(describeError(error, 'send password reset emails'));
   }
+}
+
+const STATUS_DONE: Record<UserStatusAction, { done: string; action: string }> = {
+  deactivate: { done: 'User deactivated.', action: 'deactivate users' },
+  reactivate: { done: 'User reactivated.', action: 'reactivate users' },
+  lock: { done: 'User locked.', action: 'lock users' },
+  unlock: { done: 'User unlocked.', action: 'unlock users' },
+};
+
+export async function changeUserStatusAction(
+  userId: string,
+  action: UserStatusAction,
+): Promise<ActionState> {
+  const session = await requireSection('users');
+  const parsed = z.uuid().safeParse(userId);
+  if (!parsed.success || !Object.hasOwn(STATUS_DONE, action)) return fail('Missing user.');
+
+  try {
+    await changeUserStatus(session, parsed.data, action);
+  } catch (error) {
+    return fail(describeError(error, STATUS_DONE[action].action));
+  }
+  revalidatePath(PATH);
+  return ok(STATUS_DONE[action].done);
 }
