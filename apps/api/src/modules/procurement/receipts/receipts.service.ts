@@ -58,7 +58,9 @@ import {
   openQuantity,
   overReceiptMessage,
   progressRowsOf,
+  repeatedSerialAcrossLines,
   reversalLinesOf,
+  serialOnTwoLines,
   serialViolation,
   toReceiptDto,
   validateDraftLines,
@@ -452,6 +454,12 @@ export class ReceiptsService {
       if (bad !== null)
         throw unprocessable({ ...bad, message: `PO line ${poLine.lineNo}: ${bad.message}` });
     }
+    const repeated = repeatedSerialAcrossLines(
+      lines.map((l) => ({
+        serialNos: serials.filter((s) => s.receiptLineId === l.id).map((s) => s.serialNo),
+      })),
+    );
+    if (repeated !== null) throw unprocessable(serialOnTwoLines(repeated));
 
     const row = await updateVersioned(tx, receipts, id, receipt.version, {
       status: 'confirmed',
