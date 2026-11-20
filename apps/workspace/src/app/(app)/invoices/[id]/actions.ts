@@ -12,6 +12,7 @@ import {
   issueInvoice,
   issueOutcomeMessage,
   keyAfterFailure,
+  reopenInvoice,
   submitInvoice,
 } from '@/lib/api-billing';
 import { requireStaffSession } from '@/lib/bff';
@@ -176,5 +177,29 @@ export async function discardInvoiceAction(
   return run(prev, form, async (c, key) => {
     await discardInvoice(c.session, c.id, { expectedVersion: c.expectedVersion, reason }, key);
     return 'Discarded.';
+  });
+}
+
+/** `POST /v1/invoices/:id/reopen`: an approved invoice back to draft; the reason is required. */
+export async function reopenInvoiceAction(
+  prev: InvoiceActionState,
+  form: FormData,
+): Promise<InvoiceActionState> {
+  const reason = text(form, 'reason').trim();
+  if (reason === '' || reason.length > REASON_MAX) {
+    const submitted = text(form, 'idempotencyKey');
+    return {
+      key: KEY.test(submitted) ? submitted : prev.key,
+      errors: {
+        reason:
+          reason === ''
+            ? 'Say why this invoice goes back to draft.'
+            : `Keep the reason under ${REASON_MAX} characters.`,
+      },
+    };
+  }
+  return run(prev, form, async (c, key) => {
+    await reopenInvoice(c.session, c.id, { expectedVersion: c.expectedVersion, reason }, key);
+    return 'Back in draft.';
   });
 }

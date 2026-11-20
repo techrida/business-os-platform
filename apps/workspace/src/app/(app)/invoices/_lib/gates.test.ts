@@ -20,7 +20,14 @@ import {
 const ACCOUNTANT = ['accountant'];
 const FINANCE = ['finance'];
 const NOBODY = ['sales'];
-const NONE = { submit: false, issue: false, discard: false, notes: false, issueBlocker: null };
+const NONE = {
+  submit: false,
+  issue: false,
+  discard: false,
+  reopen: false,
+  notes: false,
+  issueBlocker: null,
+};
 
 const gates = (kind: InvoiceKind, status: InvoiceStatus, roles: string[]) =>
   invoiceGates({ kind, status }, permissionChecker(roles));
@@ -50,6 +57,7 @@ describe('invoiceGates follow canTransitionInvoice and the role', () => {
       submit: true,
       issue: false,
       discard: true,
+      reopen: false,
       notes: false,
       issueBlocker: null,
     });
@@ -62,6 +70,7 @@ describe('invoiceGates follow canTransitionInvoice and the role', () => {
         submit: true,
         issue: false,
         discard: true,
+        reopen: false,
         notes: false,
         issueBlocker: null,
       });
@@ -104,6 +113,7 @@ describe('invoiceGates follow canTransitionInvoice and the role', () => {
       submit: true,
       issue: false,
       discard: true,
+      reopen: false,
       notes: false,
       issueBlocker: null,
     });
