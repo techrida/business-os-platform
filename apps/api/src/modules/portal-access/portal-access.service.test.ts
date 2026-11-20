@@ -255,10 +255,9 @@ describe('refusals (nothing reaches ZITADEL)', () => {
   it('names the rule when the contact is not one of this customer’s', async () => {
     store.contact = null;
     const error = await grant().catch((e: unknown) => e);
-    expect((error as NotFoundException).getResponse()).toMatchObject({
-      code: 'not_found',
-      message: expect.stringContaining("must be one of the customer's existing contacts"),
-    });
+    const body = (error as NotFoundException).getResponse() as { code: string; message: string };
+    expect(body.code).toBe('not_found');
+    expect(body.message).toContain("must be one of the customer's existing contacts");
     expect(zitadel.calls).toEqual([]);
     expect(store.audit).toEqual([]);
   });

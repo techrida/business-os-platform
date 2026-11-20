@@ -316,9 +316,7 @@ export class PortalAccessService {
         message: 'This customer was merged into another; grant access on the surviving customer',
       });
     }
-    assertFirstAdminRule(
-      firstAdminRule(target.customer, principal.userId, target.hasPortalUser),
-    );
+    assertFirstAdminRule(firstAdminRule(target.customer, principal.userId, target.hasPortalUser));
     if (!target.contact) throw contactNotOnCustomer();
     if (target.kybStatus !== 'approved') {
       throw new ConflictException({
