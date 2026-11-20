@@ -191,6 +191,7 @@ describe('tenancy wiring (in-process)', () => {
       roles: ['founder'],
       correlationId: 'trace-abcdef12',
       avatarDocumentId: null,
+      displayName: null,
       level: 'staff',
       departmentId: null,
       // The stub RoleCache grants nothing, so the effective grants are empty.
