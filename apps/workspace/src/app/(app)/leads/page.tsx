@@ -34,6 +34,7 @@ import { CellTitle, Table, Td, Th } from '@/components/ui/table';
 import { failureOf } from '@/lib/api-kernel';
 import { requireStaffSession } from '@/lib/bff';
 import { getNumberSystems } from '@/lib/display-settings';
+import { getPermissionCheck } from '@/lib/live-permissions';
 import {
   activeFilterLabels,
   clearFiltersHref,
@@ -88,6 +89,8 @@ const summaryStages = [
 export default async function LeadsPage({ searchParams }: { searchParams: Promise<RawParams> }) {
   const session = await requireStaffSession(PATH);
   const numberSystems = await getNumberSystems();
+  // Add lead only for people who may create one (TR-Q3); the API still checks crm.lead.write.
+  const canCreate = (await getPermissionCheck(session))('crm.lead.write');
   const sp = await searchParams;
   const names = await ownerFilterNames(session, 'leads');
   const ownerOptions = [...names]
@@ -140,7 +143,10 @@ export default async function LeadsPage({ searchParams }: { searchParams: Promis
     const problem = failureOf(err);
     return (
       <Page>
-        <PageHeader title="Leads" actions={<LinkButton href="/leads/new">Add lead</LinkButton>} />
+        <PageHeader
+          title="Leads"
+          actions={canCreate ? <LinkButton href="/leads/new">Add lead</LinkButton> : undefined}
+        />
         <LoadProblem
           status={problem.status}
           message={problem.message}
@@ -186,9 +192,11 @@ export default async function LeadsPage({ searchParams }: { searchParams: Promis
         title="Leads"
         description="Track enquiries, follow up with contacts, and turn qualified leads into opportunities."
         actions={
-          <LinkButton href="/leads/new" size="large">
-            <span aria-hidden="true">+</span> Add lead
-          </LinkButton>
+          canCreate ? (
+            <LinkButton href="/leads/new" size="large">
+              <span aria-hidden="true">+</span> Add lead
+            </LinkButton>
+          ) : undefined
         }
       />
 
@@ -240,9 +248,11 @@ export default async function LeadsPage({ searchParams }: { searchParams: Promis
           ) : (
             <EmptyState
               title="No leads yet"
-              action={<LinkButton href="/leads/new">Add lead</LinkButton>}
+              action={canCreate ? <LinkButton href="/leads/new">Add lead</LinkButton> : undefined}
             >
-              Website enquiries appear here. Add a lead for a call or a walk-in.
+              {canCreate
+                ? 'Website enquiries appear here. Add a lead for a call or a walk-in.'
+                : 'Website enquiries appear here.'}
             </EmptyState>
           )
         ) : board ? (
