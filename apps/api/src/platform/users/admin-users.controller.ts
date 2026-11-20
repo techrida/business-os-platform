@@ -22,11 +22,14 @@ import { z } from 'zod';
 
 import { AuthzService } from '../authz/authz.service';
 import { Can } from '../authz/decorators';
+import { type LiveGrantDeps, assertLiveGrant } from '../authz/live-grants';
 import { principal } from '../authz/principal';
+import { RoleCache } from '../authz/role-cache';
 import { DB, type Db } from '../db/db.module';
 import { requestTx, withTx } from '../db/tx';
 import { type HeaderTarget, setTotalCount } from '../list';
 import { UsersService } from './users.service';
+import { UsersStore } from './users.store';
 import { ZitadelNotConfiguredError } from './zitadel-admin.client';
 
 // Password resets are account administration. Reuse the existing role administration grant
@@ -70,11 +73,26 @@ async function zitadelCall<T>(fn: () => Promise<T>): Promise<T> {
 
 @Controller('v1/admin/users')
 export class AdminUsersController {
+  /**
+   * Role writes re-read the caller's CURRENT roles inside their own transaction (U20b-Q3): the principal comes
+   * from the sign-in token, so a person whose Founder role was taken away would otherwise keep granting roles,
+   * Founder included, until the token expires. The roles are read from the mirror; the role -> permission table comes
+   * from the role cache, which re-checks the authz version every 5 s.
+   */
+  private readonly liveGrants: LiveGrantDeps;
+
   constructor(
     @Inject(DB) private readonly db: Db,
     private readonly users: UsersService,
     private readonly authz: AuthzService,
-  ) {}
+    store: UsersStore,
+    roleCache: RoleCache,
+  ) {
+    this.liveGrants = {
+      users: store,
+      grants: { grantsFor: (...args) => roleCache.grantsFor(...args) },
+    };
+  }
 
   /** X-Total-Count is every user matching the scope, filters and search, not just this page. */
   @Get()
@@ -120,7 +138,12 @@ export class AdminUsersController {
     if (b.roles.length > 0) this.authz.assert('admin.roles.write');
     const { scope, actor } = requestTx();
     const result = await zitadelCall(() =>
-      withTx(this.db, scope, actor, (tx) => this.users.invite(tx, b)),
+      withTx(this.db, scope, actor, async (tx) => {
+        if (b.roles.length > 0) {
+          await assertLiveGrant(tx, this.liveGrants, scope, actor, 'admin.roles.write');
+        }
+        return this.users.invite(tx, b);
+      }),
     );
     if (b.roles.length > 0) await this.authz.invalidate(scope.tenantId, scope.organizationId);
     return result;
@@ -133,7 +156,10 @@ export class AdminUsersController {
     const { roles } = parse(RolesBody, body, 'roles');
     const { scope, actor } = requestTx();
     await zitadelCall(() =>
-      withTx(this.db, scope, actor, (tx) => this.users.setRoles(tx, id, roles)),
+      withTx(this.db, scope, actor, async (tx) => {
+        await assertLiveGrant(tx, this.liveGrants, scope, actor, 'admin.roles.write');
+        await this.users.setRoles(tx, id, roles);
+      }),
     );
     // After commit: a cache refilled before commit would read the old roles.
     await this.authz.invalidate(scope.tenantId, scope.organizationId);
