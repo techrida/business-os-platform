@@ -432,6 +432,31 @@ export default async function VendorPage({
   const hasPrimaryMove = options.some((o) => o.tone === 'primary');
   const hasHeaderActions = options.length > 0 || canEdit;
   const contactList = contacts.status === 'fulfilled' ? contacts.value : [];
+  const activationBlock = vendor.can?.activateBlockedBySod
+    ? vendor.status === 'suspended'
+      ? {
+          title: 'Reinstatement requires another approver',
+          message:
+            'You created this vendor, so another person with approval access must reinstate it.',
+        }
+      : {
+          title: 'Approval requires another approver',
+          message:
+            'You created this vendor, so another person with approval access must approve it.',
+        }
+    : vendor.can?.activateBlockedByKyb
+      ? {
+          title: 'KYB review must be approved first',
+          message:
+            'Approve the vendor’s KYB case before this vendor can be approved or reinstated.',
+        }
+      : vendor.can?.activateBlockedByKycExpired
+        ? {
+            title: 'Tax clearance has expired',
+            message:
+              'Renew the vendor’s tax clearance before this vendor can be approved or reinstated.',
+          }
+        : null;
 
   const facts: Fact[] = [
     { key: 'kind', label: 'Kind', value: VENDOR_KIND_LABEL[vendor.kind] },
@@ -497,6 +522,12 @@ export default async function VendorPage({
         <SuccessNotice message="Changes saved." />
       ) : null}
 
+      {activationBlock !== null ? (
+        <Alert tone="info" role="status" title={activationBlock.title}>
+          {activationBlock.message}
+        </Alert>
+      ) : null}
+
       <div className={styles.columns}>
         <Card className={styles.profile} as="section" aria-labelledby="vendor-name">
           <div className={styles.profileIdentity}>
@@ -511,15 +542,8 @@ export default async function VendorPage({
               />
             </div>
             <h2 id="vendor-name" className={styles.profileName}>
-              {vendor.legalName}
+              Vendor details
             </h2>
-            <Badge tone={status.tone}>{status.text}</Badge>
-            {vendor.tradeName !== null ? (
-              <p className={styles.tradeName}>
-                <span className="sr-only">Trade name: </span>
-                {vendor.tradeName}
-              </p>
-            ) : null}
           </div>
           <Panel title="Profile" className={styles.info}>
             <FactList facts={facts} />
@@ -541,8 +565,8 @@ export default async function VendorPage({
             <p className={styles.note}>
               {vendor.status === 'archived'
                 ? 'This vendor is archived. Nothing more can be done.'
-                : vendor.can?.activateBlockedBySod
-                  ? 'You created this vendor, so another person with approval access must approve it.'
+                : activationBlock !== null
+                  ? activationBlock.message
                   : options.length === 0
                     ? 'No status action is open to your current permissions at this status.'
                     : 'Use the header actions to move this vendor to the next stage.'}

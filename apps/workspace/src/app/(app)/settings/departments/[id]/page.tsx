@@ -93,7 +93,7 @@ export default async function DepartmentPage({ params }: { params: Promise<{ id:
           {`${detail.name} is retired. Its past records stay under ${detail.name}.`}
         </Alert>
       ) : !canWrite ? (
-        <Alert tone="info">Only a Founder can change departments.</Alert>
+        <Alert tone="info">You do not have permission to change departments.</Alert>
       ) : null}
       {staff !== null && !staff.ok && <Alert tone="warning">{staff.message}</Alert>}
       <PeopleCard

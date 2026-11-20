@@ -20,6 +20,7 @@ import {
   verifyBankAccount,
 } from '@/lib/api-vendors';
 import { requireStaffSession } from '@/lib/bff';
+import { getPermissionCheck } from '@/lib/live-permissions';
 
 import { vendorFailure, type VendorFailure, type VendorOp } from './_lib/failure';
 import {
@@ -34,7 +35,7 @@ import {
   type ContactField,
   type VendorValues,
 } from './_lib/forms';
-import { vendorGrants, type LifecycleCommand } from './_lib/model';
+import type { LifecycleCommand } from './_lib/model';
 import type { PanelState, VendorFormState } from './_lib/state';
 
 /**
@@ -80,7 +81,7 @@ export async function createVendorAction(
 ): Promise<VendorFormState> {
   const session = await requireStaffSession('/vendors/new');
   const key = keyOf(form);
-  if (!vendorGrants(session.roles).write) {
+  if (!(await getPermissionCheck(session))('vendor.write')) {
     return { key, errors: {}, error: noPermission('adding vendors') };
   }
   const parsed = parseCreateVendor(vendorValues(form));
@@ -106,7 +107,7 @@ export async function updateVendorAction(
   const key = randomUUID();
   if (!isGuid(id)) return { key, errors: {}, error: INCOMPLETE, reload: true };
   const session = await requireStaffSession(`/vendors/${id}/edit`);
-  if (!vendorGrants(session.roles).write) {
+  if (!(await getPermissionCheck(session))('vendor.write')) {
     return { key, errors: {}, error: noPermission('editing vendors') };
   }
   // The version the person was looking at. A different current version is the API's 409.
@@ -188,7 +189,7 @@ export async function addContactAction(
 ): Promise<PanelState<ContactField>> {
   const o = await open(form, prev);
   if (!o.ok) return o.state;
-  if (!vendorGrants(o.session.roles).write) {
+  if (!(await getPermissionCheck(o.session))('vendor.write')) {
     return {
       savedCount: prev.savedCount,
       key: o.key,
@@ -238,8 +239,8 @@ export async function lifecycleAction(prev: PanelState, form: FormData): Promise
   if (!isCommand(command))
     return { savedCount: prev.savedCount, key: o.key, errors: {}, error: INCOMPLETE, reload: true };
 
-  const grants = vendorGrants(o.session.roles);
-  if (!(command === 'submit_kyc' ? grants.write : grants.activate)) {
+  const allowed = await getPermissionCheck(o.session);
+  if (!(command === 'submit_kyc' ? allowed('vendor.write') : allowed('vendor.activate'))) {
     return {
       ...prev,
       key: o.key,
@@ -272,7 +273,7 @@ export async function proposeBankAction(
 ): Promise<PanelState<BankField>> {
   const o = await open(form, prev);
   if (!o.ok) return o.state;
-  if (!vendorGrants(o.session.roles).propose) {
+  if (!(await getPermissionCheck(o.session))('vendor.bank.propose')) {
     return {
       savedCount: prev.savedCount,
       key: o.key,
@@ -315,7 +316,7 @@ export async function decideBankAction(prev: PanelState, form: FormData): Promis
   if (!isGuid(accountId) || (intent !== 'verify' && intent !== 'reject')) {
     return { savedCount: prev.savedCount, key: o.key, errors: {}, error: INCOMPLETE, reload: true };
   }
-  if (!vendorGrants(o.session.roles).verify) {
+  if (!(await getPermissionCheck(o.session))('vendor.bank.verify')) {
     return {
       savedCount: prev.savedCount,
       key: o.key,
@@ -361,7 +362,7 @@ export async function decideBankAction(prev: PanelState, form: FormData): Promis
 export async function grantPortalAction(prev: PanelState, form: FormData): Promise<PanelState> {
   const o = await open(form, prev);
   if (!o.ok) return o.state;
-  if (!vendorGrants(o.session.roles).write) {
+  if (!(await getPermissionCheck(o.session))('vendor.write')) {
     return {
       savedCount: prev.savedCount,
       key: o.key,

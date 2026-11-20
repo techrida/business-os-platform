@@ -28,6 +28,7 @@ import { failureOf } from '@/lib/api-kernel';
 import { requireStaffSession } from '@/lib/bff';
 import { getNumberSystems } from '@/lib/display-settings';
 import { when } from '@/lib/kernel-format';
+import { getPermissionCheck } from '@/lib/live-permissions';
 
 import { logActivityAction } from '../../activities/actions';
 import { convertLeadAction, moveLeadStageAction } from '../actions';
@@ -119,12 +120,28 @@ function facts(
 
 const milestones = ['new', 'contacted', 'qualified', 'converted'] as const;
 
+function latestStageChange(
+  activity: readonly ActivityDto[],
+  stage: LeadDto['stage'],
+): ActivityDto | undefined {
+  let latest: ActivityDto | undefined;
+  let latestTime = Number.NEGATIVE_INFINITY;
+  for (const item of activity) {
+    if (item.kind !== 'stage_change' || !item.subject.endsWith(` to ${stage}`)) continue;
+    const at = Date.parse(item.occurredAt);
+    const score = Number.isFinite(at) ? at : Number.NEGATIVE_INFINITY;
+    if (latest === undefined || score >= latestTime) {
+      latest = item;
+      latestTime = score;
+    }
+  }
+  return latest;
+}
+
 function leadTimeline(lead: LeadDto, activity: readonly ActivityDto[]): TimelineStep[] {
   const current = milestones.findIndex((stage) => stage === lead.stage);
   const steps = milestones.map((stage, index): TimelineStep => {
-    const change = activity.find(
-      (item) => item.kind === 'stage_change' && item.subject.endsWith(` to ${stage}`),
-    );
+    const change = latestStageChange(activity, stage);
     const date = stage === 'new' ? lead.createdAt : change?.occurredAt;
     const isCurrent = stage === lead.stage;
     const done = index < current || date !== undefined;
@@ -137,9 +154,7 @@ function leadTimeline(lead: LeadDto, activity: readonly ActivityDto[]): Timeline
   });
 
   if (lead.stage === 'on_hold' || lead.stage === 'lost') {
-    const change = activity.find(
-      (item) => item.kind === 'stage_change' && item.subject.endsWith(` to ${lead.stage}`),
-    );
+    const change = latestStageChange(activity, lead.stage);
     steps.push({
       key: lead.stage,
       title: stageLabel('lead', lead.stage),
@@ -201,8 +216,8 @@ export default async function LeadPage({ params }: { params: Promise<{ id: strin
     );
   }
   const lead = leadResult.value;
-  const moves = resolvedMoves('lead', lead.stage, lead.allowedMoves);
-  const canEdit = lead.canEdit ?? true;
+  const canEdit = lead.canEdit ?? (await getPermissionCheck(session))('crm.lead.write');
+  const moves = resolvedMoves('lead', lead.stage, lead.allowedMoves ?? (canEdit ? undefined : []));
   const planned = plannedResult.status === 'fulfilled' ? plannedResult.value : null;
   const plannedProblem =
     plannedResult.status === 'rejected' ? failureOf(plannedResult.reason).message : null;
@@ -349,7 +364,11 @@ export default async function LeadPage({ params }: { params: Promise<{ id: strin
             className={styles.detailPanel}
           >
             <FactList
-              facts={facts(lead, canEdit ? owners : [], numberSystems)}
+              facts={facts(
+                lead,
+                canEdit && lead.stage !== 'converted' ? owners : [],
+                numberSystems,
+              )}
               className={styles.overviewFacts ?? ''}
             />
           </Panel>
@@ -447,6 +466,7 @@ export default async function LeadPage({ params }: { params: Promise<{ id: strin
               ownerUserId={lead.ownerUserId}
               owners={owners}
               schedule={canEdit}
+              canEdit={canEdit}
               now={now}
               className={styles.detailPanel}
             />
