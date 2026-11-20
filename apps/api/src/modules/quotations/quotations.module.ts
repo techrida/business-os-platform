@@ -26,6 +26,8 @@ import {
 import { DraftingCaller } from './drafting/drafting.caller';
 import { DraftingController } from './drafting/drafting.controller';
 import { DraftingService } from './drafting/drafting.service';
+import { CancelController } from './drafting/cancel.controller';
+import { CancelService } from './drafting/cancel.service';
 import { ReviseController } from './drafting/revise.controller';
 import { ReviseService } from './drafting/revise.service';
 import { PricingService } from './pricing/pricing.service';
@@ -57,6 +59,7 @@ import { QuotationSendService, QuotationSendStore } from './send/quotation-send.
     ReferenceController,
     QuotationPreviewController,
     ReviseController,
+    CancelController,
     QuotationSubmitController,
     RecordOutcomeController,
     QuotationSendController,
@@ -71,6 +74,7 @@ import { QuotationSendService, QuotationSendStore } from './send/quotation-send.
     QuotationPreviewService,
     QuotationPreviewCaller,
     ReviseService,
+    CancelService,
     QuotationSubmitService,
     QuotationSubmitStore,
     QuotationSubmitCaller,

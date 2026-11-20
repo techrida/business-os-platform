@@ -12,6 +12,7 @@
 //   so a quotation of another entity, or of another owner under `own` scope, is a 404 and never in the list.
 // - updateDraft (Part 3) re-prices the merged draft content and guards the write with the row version.
 import {
+  canCancelQuotation,
   canReviseQuotation,
   type CreateQuotationBody,
   type DocumentVersionStatus,
@@ -262,7 +263,8 @@ export function draftRefOf(q: {
  * What `p` may do with a quotation whose current version has `status`, by the same rules the commands
  * enforce: updateDraft() (Draft or Returned, `quotation.draft` on the record), ReviseService.revise()
  * (a revisable status, `quotation.revise` on quotationRef()), QuotationSendService (`quotation.send` on
- * approved/expired) and RecordOutcomeService (`quotation.record_acceptance` on sent). Pure, so a screen
+ * approved/expired), RecordOutcomeService (`quotation.record_acceptance` on sent) and CancelService (`quotation.draft`
+ * on draft, returned or submitted). Pure, so a screen
  * can trust it and a test can check it without a database.
  */
 export function capabilitiesOf(
@@ -277,6 +279,7 @@ export function capabilitiesOf(
     canSend:
       (status === 'approved' || status === 'expired') && can(p, 'quotation.send', ref).allowed,
     canRecordOutcome: status === 'sent' && can(p, 'quotation.record_acceptance', ref).allowed,
+    canCancel: canCancelQuotation(status) && can(p, 'quotation.draft', draftRefOf(q)).allowed,
   };
 }
 
@@ -642,7 +645,13 @@ export class DraftingService {
         // No current version: toQuotationDetail refuses the answer anyway, so nothing is offered.
         capabilities:
           current === undefined
-            ? { canEdit: false, canRevise: false, canSend: false, canRecordOutcome: false }
+            ? {
+                canEdit: false,
+                canRevise: false,
+                canSend: false,
+                canRecordOutcome: false,
+                canCancel: false,
+              }
             : capabilitiesOf(principal, quotation, current.status),
         people,
         ...(lead === undefined ? {} : { lead }),
