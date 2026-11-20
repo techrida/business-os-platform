@@ -781,6 +781,34 @@ describe('D50: who a lead may be handed to, under the entity rule and live grant
     expect(await rowOf(lead.id)).toMatchObject({ ownerUserId: h.users.boss, version: 1 });
   });
 
+  it('never makes the caller the owner of a new lead their read would not show them, named or by default', async () => {
+    await h.actAs(salesStaff);
+    const me = h.caller.current();
+    // A stored lead read of `assigned` reaches only records with a follow-up for the caller, never what they own.
+    const grants = new Map(me.principal.grants);
+    grants.set('crm.lead.read', 'assigned');
+    const narrowed = { ...me, principal: { ...me.principal, grants } };
+    const spy = vi.spyOn(h.caller, 'current').mockReturnValue(narrowed);
+    const title = 'Out of my own reach';
+    try {
+      expect(
+        await refusal(() => service.create(CreateLeadBodySchema.parse({ ...BODY, title }))),
+      ).toBe('cannot_read_subject');
+      expect(
+        await refusal(() =>
+          service.create(CreateLeadBodySchema.parse({ ...BODY, title, ownerUserId: salesStaff })),
+        ),
+      ).toBe('cannot_read_subject');
+    } finally {
+      spy.mockRestore();
+    }
+    const made = await h.db
+      .select({ id: leads.id })
+      .from(leads)
+      .where(and(eq(leads.createdByUserId, salesStaff), eq(leads.title, title)));
+    expect(made).toEqual([]);
+  });
+
   it('the Owner filter lists the owners of the leads the caller reads, plus whom they may hand a lead to', async () => {
     const filter = async () => {
       const res = await request(baseUrl).get('/v1/leads/owner-filter');
