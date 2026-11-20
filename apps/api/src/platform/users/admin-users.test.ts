@@ -132,8 +132,12 @@ const NEW_USER = {
   familyName: 'Rai',
 };
 
+/** What the role cache says the stored admin may do now; asAdmin sets it to the permissions it binds. */
+let liveAdminGrants = new Map<Permission, 'all'>();
+
 /** Runs `fn` as an active admin holding exactly `permissions`, as the tenancy interceptor would bind it. */
 function asAdmin<T>(permissions: Permission[], fn: () => Promise<T>): Promise<T> {
+  liveAdminGrants = new Map(permissions.map((p) => [p, 'all' as const]));
   return runWithRequestStore('corr-12345678', () => {
     bindIdentity({
       tenantId: TENANT,
@@ -164,6 +168,7 @@ function asAdmin<T>(permissions: Permission[], fn: () => Promise<T>): Promise<T>
 }
 
 let store: FakeUsersStore;
+let liveStore: FakeUsersStore;
 let zitadel: RepairableZitadel;
 let authz: TestAuthz;
 let controller: AdminUsersController;
@@ -177,10 +182,34 @@ beforeEach(() => {
   const mirror = new UserMirror(db, store, client, fakeQueue() as unknown as Queue<UsersSyncData>);
   authz = new TestAuthz(db, {} as RoleCache);
   audit = new AuditService(db);
+  // The admin the tests act as is a stored, active Founder of the staff entity in its own store: the role writes re-read it.
+  liveStore = new FakeUsersStore();
+  liveStore.users.push({
+    id: ADMIN,
+    tenantId: TENANT,
+    idpOrgId: STAFF_IDP,
+    zitadelUserId: 'zitadel-admin',
+    email: 'admin@techrida.test',
+    displayName: 'Admin',
+    status: 'active',
+  });
+  liveStore.roles.set(ADMIN, ['founder']);
+  liveStore.memberships.push({
+    tenantId: TENANT,
+    userId: ADMIN,
+    organizationId: STAFF_ORG,
+    isDefault: true,
+    roleKeys: null,
+    departmentId: null,
+  });
+  liveAdminGrants = new Map();
+  const roleCache = { grantsFor: () => Promise.resolve(liveAdminGrants) } as unknown as RoleCache;
   controller = new AdminUsersController(
     db,
     new UsersService(mirror, store, client, db, audit),
     authz,
+    liveStore,
+    roleCache,
   );
 });
 
@@ -459,6 +488,65 @@ describe('inviting again after a half-finished invite', () => {
     // The existing user's grants were not touched.
     expect(zitadel.grants.has('z-active')).toBe(false);
     expect(store.users).toHaveLength(0);
+  });
+});
+
+describe('role writes re-check the current roles of the caller (U20b-Q3)', () => {
+  const TARGET = '00000000-0000-4000-9000-000000000201';
+
+  beforeEach(() => {
+    store.users.push({
+      id: TARGET,
+      tenantId: TENANT,
+      idpOrgId: STAFF_IDP,
+      zitadelUserId: 'z-target',
+      email: 'target@techrida.test',
+      displayName: 'Target',
+      status: 'active',
+    });
+    store.roles.set(TARGET, ['sales']);
+  });
+
+  /** The token still says admin.roles.write, but the mirror no longer holds the Founder role: the role cache
+   * (fed the mirror's roles) then returns no grants. Old code trusted the token and wrote the roles. */
+  const formerFounder = () => {
+    liveStore.roles.set(ADMIN, []);
+    liveAdminGrants = new Map();
+  };
+
+  it('refuses 403 a former Founder re-granting Founder with an old token (old code: 204)', async () => {
+    const error = await asAdmin(['admin.roles.write'], () => {
+      formerFounder();
+      return controller.setRoles(TARGET, { roles: ['founder'] });
+    }).catch((e: unknown) => e);
+
+    expect(error).toBeInstanceOf(ForbiddenException);
+    expect(store.roles.get(TARGET)).toEqual(['sales']);
+  });
+
+  it('refuses 403 a former Founder inviting someone with a role with an old token', async () => {
+    const error = await asAdmin(['admin.users.invite', 'admin.roles.write'], () => {
+      formerFounder();
+      return controller.invite({ ...NEW_USER, roles: ['founder'] });
+    }).catch((e: unknown) => e);
+
+    expect(error).toBeInstanceOf(ForbiddenException);
+    expect(zitadel.createCalls).toBe(0);
+    expect(store.users).toHaveLength(1);
+  });
+
+  it('still lets a current Founder set roles', async () => {
+    await asAdmin(['admin.roles.write'], () => controller.setRoles(TARGET, { roles: ['finance'] }));
+    expect(store.roles.get(TARGET)).toEqual(['finance']);
+  });
+
+  it('refuses an admin who was disabled after the token was issued', async () => {
+    liveStore.users[0] = { ...liveStore.users[0]!, status: 'inactive' };
+    const error = await asAdmin(['admin.roles.write'], () =>
+      controller.setRoles(TARGET, { roles: ['finance'] }),
+    ).catch((e: unknown) => e);
+    expect(error).toBeInstanceOf(ForbiddenException);
+    expect(store.roles.get(TARGET)).toEqual(['sales']);
   });
 });
 
