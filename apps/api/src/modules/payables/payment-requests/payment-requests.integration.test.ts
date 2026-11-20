@@ -781,7 +781,10 @@ describe('list filters, search and paging', () => {
       [name, true],
     ]);
     expect(byVendor.total).toBe(byVendor.rows.length);
-    const sum = byVendor.rows.reduce((acc, r) => acc + Math.round(Number(r.totalAmount) * 100), 0);
+    // Rejected and cancelled requests are rows that add nothing.
+    const sum = byVendor.rows
+      .filter((r) => r.status !== 'rejected' && r.status !== 'cancelled')
+      .reduce((acc, r) => acc + Math.round(Number(r.totalAmount) * 100), 0);
     expect(byVendor.totals).toEqual([{ currency: 'NPR', amount: (sum / 100).toFixed(2) }]);
     expect((await service.list({ ...PAGE, status: ['rejected'], q: name })).totals).toEqual([]);
 
