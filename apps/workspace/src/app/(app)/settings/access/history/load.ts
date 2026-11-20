@@ -17,6 +17,7 @@ export const ACCESS_HISTORY_ENTITY_TYPES = [
   'access_level_rule',
   'access_assignment_rule',
   'user_entity',
+  'department',
   'departments',
 ] as const;
 

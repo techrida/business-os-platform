@@ -103,6 +103,22 @@ const DEPARTMENT = event({
   actorDisplayName: 'Bibek R.',
   after: { name: 'Field ops', headUserId: null, status: 'active', version: 1 },
 });
+const ASSIGNMENT = event({
+  seq: 2,
+  action: 'access.assignment_rule.changed',
+  entityType: 'access_assignment_rule',
+  entityId: 'leads',
+  before: { area: 'leads', staff: 'same_level', managers: 'at_or_below', handOvers: [] },
+  after: { area: 'leads', staff: 'self', managers: 'at_or_below', handOvers: [] },
+});
+const HEAD = event({
+  seq: 1,
+  action: 'department.head.changed',
+  entityType: 'department',
+  entityId: FIELD_OPS,
+  before: { departmentId: FIELD_OPS, departmentName: 'Field ops', headUserId: null },
+  after: { departmentId: FIELD_OPS, departmentName: 'Field ops', headUserId: ASHA },
+});
 // A row-level audit of the departments table: same entity type, not an access change.
 const ROW_AUDIT = event({
   seq: 8,
@@ -115,6 +131,8 @@ const ROW_AUDIT = event({
 const BY_TYPE: Record<string, AuditEventDto[]> = {
   role_permission: [GRANT],
   access_level_rule: [LEVEL_RULE],
+  access_assignment_rule: [ASSIGNMENT],
+  department: [HEAD],
   departments: [ROW_AUDIT, DEPARTMENT],
 };
 
@@ -151,6 +169,8 @@ describe('Access history', () => {
       'Department Field ops added.',
       'Sales: Create and edit leads changed from Their own to Their department.',
       'Leads: managers now see their department.',
+      'Leads: who can assign changed.',
+      'Field ops: department head changed.',
     ];
     const at = rows.map((row) => page.indexOf(row));
     expect(at.every((i) => i >= 0)).toBe(true);
@@ -173,6 +193,7 @@ describe('Access history', () => {
       [
         'access_assignment_rule',
         'access_level_rule',
+        'department',
         'departments',
         'role_permission',
         'user_entity',
