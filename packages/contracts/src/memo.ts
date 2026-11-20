@@ -70,6 +70,46 @@ export const MemoDirectoryPersonSchema = MemoPersonSchema.extend({
   avatarDocumentId: z.guid().nullable().optional(),
 });
 export type MemoDirectoryPerson = z.infer<typeof MemoDirectoryPersonSchema>;
+/**
+ * Who may approve a memo (F1-Q9): the published "Memo approver" workflow in Settings > Workflows (documentType
+ * `memo_approver`), one step, by default the head of the requester's department. The author picks "Approved by"
+ * from `eligibleUserIds` only, and submit checks the pick again.
+ * - `department_head`: the requester's department head approves (`defaultUserId`).
+ * - `fallback`: the step falls back to `roleKey`, because the requester has no department, it has no active head,
+ *   or the head is the requester (or edited the memo); anyone eligible in that role may be picked.
+ * - `workflow`: an administrator set a role, group or person step instead of the department head.
+ * `eligibleUserIds` empty: nobody can approve; `blockReason` says what to fix (no one is picked automatically and
+ * no grant is widened).
+ */
+export const MEMO_APPROVER_DOCUMENT_TYPE = 'memo_approver';
+export const MemoApproverRuleSchema = z.object({
+  basis: z.enum(['department_head', 'fallback', 'workflow']),
+  /** The requester's department in this entity, null for "No department". */
+  departmentId: z.guid().nullable(),
+  departmentName: z.string().nullable(),
+  roleKey: z.string().optional(),
+  /** The role's display name, for the form's hint. */
+  roleName: z.string().optional(),
+  eligibleUserIds: z.array(z.guid()),
+  defaultUserId: z.guid().nullable(),
+  blockReason: z.string().optional(),
+});
+export type MemoApproverRule = z.infer<typeof MemoApproverRuleSchema>;
+
+/** The Memo approver workflow a new entity starts with: the department head, else the Founder (F1-Q9). */
+export const MEMO_APPROVER_DEFAULT_SPEC = {
+  documentType: MEMO_APPROVER_DOCUMENT_TYPE,
+  steps: [
+    {
+      id: 'approver',
+      kind: 'department_head',
+      fallbackRole: 'founder',
+      reason: "The head of the requester's department approves the memo",
+    },
+  ],
+  rules: [],
+} as const;
+
 export const MemoDirectorySchema = z.object({
   organizationId: z.guid(),
   organizationName: z.string(),
@@ -79,6 +119,8 @@ export const MemoDirectorySchema = z.object({
   departmentId: z.guid().nullable(),
   departments: z.array(z.object({ id: z.guid(), name: z.string() })),
   people: z.array(MemoDirectoryPersonSchema),
+  /** Who may approve a new memo of the caller (F1-Q9). Absent from an API that predates it. */
+  approverRule: MemoApproverRuleSchema.optional(),
 });
 export type MemoDirectory = z.infer<typeof MemoDirectorySchema>;
 

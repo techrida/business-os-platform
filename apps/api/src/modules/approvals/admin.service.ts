@@ -2,7 +2,11 @@
 // and their members, and delegations. Serves the NFR "approvals are auditable": a spec is edited only
 // as a draft, publishing freezes it (the DB trigger refuses later edits), and a new version affects
 // only requests submitted after it is published, because each request keeps its own version id.
-import { WorkflowWriteSpecSchema, type WorkflowSpec } from '@bos/contracts';
+import {
+  MEMO_APPROVER_DOCUMENT_TYPE,
+  WorkflowWriteSpecSchema,
+  type WorkflowSpec,
+} from '@bos/contracts';
 import {
   approvalGroupMembers,
   approvalGroups,
@@ -627,7 +631,21 @@ function parseSpec(input: unknown): WorkflowSpec {
       `Invalid workflow spec: ${parsed.error.issues.map((i) => `${i.path.join('.')}: ${i.message}`).join('; ')}`,
     );
   }
+  assertMemoApproverShape(parsed.data);
   return parsed.data;
+}
+
+/**
+ * The Memo approver workflow names the one person or role who signs "Approved by" (F1-Q9), so it has exactly one
+ * step and no rules; a spec that says more is refused rather than applied in part.
+ */
+function assertMemoApproverShape(spec: WorkflowSpec): void {
+  if (spec.documentType !== MEMO_APPROVER_DOCUMENT_TYPE) return;
+  if (spec.steps.length !== 1 || spec.rules.length !== 0) {
+    throw new BadRequestException(
+      'The memo approver workflow has exactly one step (who approves the memo) and no rules.',
+    );
+  }
 }
 
 function versionDto(

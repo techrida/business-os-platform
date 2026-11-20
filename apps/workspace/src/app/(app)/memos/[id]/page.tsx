@@ -224,7 +224,12 @@ export default async function MemoPage({
 
   const editor = showEditor ? (
     <MemoForm
-      directory={directory}
+      // The approver rule of the memo's owner (F1-Q9), not of whoever is viewing.
+      directory={
+        directory && memo.approverRule
+          ? { ...directory, approverRule: memo.approverRule }
+          : directory
+      }
       template={memo.template}
       action={updateMemoAction}
       memoId={memo.id}
