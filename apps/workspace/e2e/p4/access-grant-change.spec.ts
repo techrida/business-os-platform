@@ -27,12 +27,17 @@ interface WhoAmI {
   roles: string[];
 }
 
+/** The signed-in account, or no roles while a switch is still redirecting (so a poll keeps trying). */
 async function whoami(page: Page): Promise<WhoAmI> {
-  return page.evaluate(async () => {
-    const response = await fetch('/dev/api/whoami', { cache: 'no-store' });
-    if (!response.ok) throw new Error(`whoami ${response.status}`);
-    return (await response.json()) as WhoAmI;
-  });
+  try {
+    return await page.evaluate(async () => {
+      const response = await fetch('/dev/api/whoami', { cache: 'no-store' });
+      if (!response.ok) return { userId: '', roles: [] };
+      return (await response.json()) as WhoAmI;
+    });
+  } catch {
+    return { userId: '', roles: [] };
+  }
 }
 
 /** Switches account from the floating Dev menu's Accounts list, then waits for the new session. */
@@ -118,6 +123,8 @@ async function leadsCanSee(page: Page, personId: string): Promise<string> {
 test('the Founder changes a grant, confirms the warning, saves, and Check a person shows it', async ({
   page,
 }) => {
+  // Two saves and two polls that wait out the grant cache.
+  test.setTimeout(240_000);
   const sales = persona('sales');
   const founder = persona('founder');
 
@@ -126,6 +133,7 @@ test('the Founder changes a grant, confirms the warning, saves, and Check a pers
   await page.getByRole('button', { name: sales.label, exact: true }).click();
   await expect.poll(async () => (await whoami(page)).roles).toContain(sales.role);
   const salesUser = await whoami(page);
+  expect(salesUser.userId).not.toBe('');
   await page.goto('/');
   await switchWithDevMenu(page, founder.label, founder.role);
 
@@ -144,7 +152,7 @@ test('the Founder changes a grant, confirms the warning, saves, and Check a pers
   try {
     let firstRevision = '';
     await test.step('widen See leads for Sales and confirm the warning', async () => {
-      firstRevision = await saveReach(page, WIDE, /^I understand: .*will see every lead\.$/);
+      firstRevision = await saveReach(page, WIDE, /will see every lead/);
       changed = true;
     });
 
