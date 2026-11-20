@@ -67,6 +67,7 @@ import { MoneyService } from '../../platform/settings/money.service';
 import { SettingsService } from '../../platform/settings/settings.service';
 import { NumberingService } from '../../platform/settings/numbering.service';
 import { ApprovalsAdminService } from '../approvals/admin.service';
+import { asSecondPerson } from '../../../test/support/second-person';
 import { ApprovalsController } from '../approvals/approvals.controller';
 import { ApprovalsService } from '../approvals/requests.service';
 import { TestMemoController } from './test-memo.controller';
@@ -335,8 +336,9 @@ beforeAll(async () => {
   resetRoles();
   as(U.boss, 'founder');
   const adminSvc = new ApprovalsAdminService(db, audit, caller, () => now);
+  const adminSvcPublisher = new ApprovalsAdminService(db, audit, asSecondPerson(caller), () => now);
   await adminSvc.createWorkflow({ key: 'test_memo', name: 'Test memo', spec: seedSpec });
-  await adminSvc.publish('test_memo', 1);
+  await adminSvcPublisher.publish('test_memo', 1);
   await withTx(db, scope, systemActor('test'), (tx) =>
     money.setRate(tx, 'USD', '133.5', '2026-11-01', 'manual'),
   );

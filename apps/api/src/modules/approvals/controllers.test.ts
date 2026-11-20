@@ -394,7 +394,7 @@ describe('admin controllers', () => {
       'approvals.definitions.read',
     );
     expect(Reflect.getMetadata(CAN_KEY, AdminWorkflowsController.prototype.publish)).toBe(
-      'approvals.definitions.write',
+      'approvals.definitions.publish',
     );
   });
 

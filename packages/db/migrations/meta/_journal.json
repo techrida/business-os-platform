@@ -540,6 +540,13 @@
       "when": 1783000000123,
       "tag": "0107_quotation_evidence_confirmations",
       "breakpoints": true
+    },
+    {
+      "idx": 77,
+      "version": "7",
+      "when": 1783000000123,
+      "tag": "0127_workflow_publish_and_memo_approver",
+      "breakpoints": true
     }
   ]
 }
