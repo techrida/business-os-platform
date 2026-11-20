@@ -812,8 +812,8 @@ describe('bill detail under the per-bill can flags', () => {
   const open = () => html(BillPage({ params: Promise.resolve({ id: BILL }) }));
   const matching = { ...header, status: 'matching', matchStatus: 'matched', lines: [line] };
   const approved = { ...header, status: 'approved', matchStatus: 'matched', lines: [line] };
-  const OTHERS = { match: false, submit: false, void: false };
-  const OWN = { match: true, submit: true, void: true };
+  const OTHERS = { match: false, submit: false, void: false, discard: false, exception: false };
+  const OWN = { match: true, submit: true, void: true, discard: true, exception: true };
 
   it("hides Match, Submit and Void on another person's bill from someone whose grant is narrowed to own", async () => {
     // The live grant still holds payables.bill.enter (at `own`); only the API's can says this bill is not theirs.

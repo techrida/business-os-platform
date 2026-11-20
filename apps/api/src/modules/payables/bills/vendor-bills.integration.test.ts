@@ -1327,8 +1327,8 @@ describe('saved reach on bills (U20a phase 2)', () => {
       row: (await service.list({ ...PAGE })).rows.find((r) => r.id === id)?.can,
       detail: (await service.get(id)).can,
     });
-    const yes = { match: true, submit: true, void: true };
-    const no = { match: false, submit: false, void: false };
+    const yes = { match: true, submit: true, void: true, discard: true, exception: true };
+    const no = { match: false, submit: false, void: false, discard: false, exception: false };
 
     // A stored grant narrowed to `own`; read stays at the role's reach, so both bills are listed.
     as(U.acct, 'accountant');

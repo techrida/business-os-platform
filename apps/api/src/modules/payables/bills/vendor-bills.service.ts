@@ -232,7 +232,7 @@ function billCan(
   bill: Pick<BillRow, 'tenantId' | 'organizationId' | 'enteredBy'>,
 ): VendorBillCan {
   const enter = can(p, 'payables.bill.enter', billRef(bill)).allowed;
-  return { match: enter, submit: enter, void: enter };
+  return { match: enter, submit: enter, void: enter, discard: enter, exception: enter };
 }
 
 /**
