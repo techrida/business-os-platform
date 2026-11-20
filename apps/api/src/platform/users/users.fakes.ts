@@ -6,6 +6,7 @@ import type { RoleKey } from '@bos/contracts';
 import type { Db, DbTransaction } from '../db/db.module';
 import type { TxScope } from '../db/tx';
 import {
+  type EffectiveRoleHolder,
   type IdpOrgRow,
   type ListedUser,
   type ListedUsers,
@@ -45,6 +46,8 @@ export class FakeUsersStore extends UsersStore {
     { idpOrgId: CUST_IDP, tenantId: TENANT, zitadelOrgId: CUST_ZORG, kind: 'customer' },
   ];
   defaultEntities = new Map<string, string>([[TENANT, STAFF_ORG]]);
+  /** organizations.name by entity id, for the last-Founder message. */
+  entityNames = new Map<string, string>([[STAFF_ORG, 'Techrida Nepal']]);
   users: UserRow[] = [];
   memberships: (MembershipRow & { tenantId: string; userId: string })[] = [];
   roles = new Map<string, RoleKey[]>();
@@ -157,17 +160,19 @@ export class FakeUsersStore extends UsersStore {
         .map((u) => u.id),
     );
   }
-  activeRoleHolderIds(_q: Queryable, tenantId: string, role: RoleKey) {
-    return Promise.resolve(
-      this.users
-        .filter(
-          (u) =>
-            u.tenantId === tenantId &&
-            u.status === 'active' &&
-            (this.roles.get(u.id) ?? []).includes(role),
-        )
-        .map((u) => u.id),
-    );
+  effectiveRoleHolders(_q: Queryable, tenantId: string, role: RoleKey) {
+    const holders: EffectiveRoleHolder[] = [];
+    for (const m of this.memberships) {
+      if (m.tenantId !== tenantId || (m.roleKeys !== null && !m.roleKeys.includes(role))) continue;
+      const user = this.users.find((u) => u.id === m.userId && u.tenantId === tenantId);
+      if (user?.status !== 'active' || !(this.roles.get(user.id) ?? []).includes(role)) continue;
+      holders.push({
+        organizationId: m.organizationId,
+        entityName: this.entityNames.get(m.organizationId) ?? m.organizationId,
+        userId: user.id,
+      });
+    }
+    return Promise.resolve(holders);
   }
   emailOf(id: string) {
     return Promise.resolve(this.users.find((u) => u.id === id)?.email ?? null);
