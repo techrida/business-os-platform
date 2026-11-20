@@ -459,7 +459,31 @@ export function workflow(cfg) {
             `${before} → ${after}`,
           );
           await s.pause(400);
-          await s.click(item.first().getByRole('link').first(), 'the matching notification');
+          // A dev-server recompile can reload the page under the open panel (r2d: the memo page
+          // reloaded and the panel was gone before the click). Reopen it, at most twice; the
+          // "not marked read" check above stays tied to the first opening.
+          const link = item.first().getByRole('link').first();
+          for (let attempt = 0; ; attempt++) {
+            const shown = await link
+              .waitFor({ state: 'visible', timeout: 5000 })
+              .then(() => true)
+              .catch(() => false);
+            if (shown) {
+              const clicked = await s
+                .click(link, 'the matching notification')
+                .then(() => true)
+                .catch((e) => {
+                  if (attempt >= 2) throw e;
+                  return false;
+                });
+              if (clicked) break;
+            }
+            if (attempt >= 2)
+              throw new StepFailure('The notifications panel closed itself three times');
+            s.checks.push('note: the notifications panel closed (page reloaded); reopening it');
+            await s.click(bell, 'the notification bell again');
+            await s.see(item, 'a notification for this memo', 60000);
+          }
           await s.page.waitForURL((u) => u.pathname !== '/', { timeout: cfg.navTimeout });
           s.checks.push(`notification opened ${s.page.url()}`);
 
