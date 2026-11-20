@@ -509,7 +509,7 @@ export function QuoteBuilder({
                   open={confirming}
                   onOpenChange={openConfirmation}
                   title="Submit this quotation for approval?"
-                  description="Editing is locked while approval is pending. Recall the quotation if it needs changes."
+                  description="Editing is locked while approval is pending. If the approver returns it, you can change it and submit again."
                   confirmLabel="Submit quotation"
                   cancelLabel="Keep editing"
                   onConfirm={submit}
