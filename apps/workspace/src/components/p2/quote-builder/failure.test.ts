@@ -219,6 +219,29 @@ describe('describeQuoteFailure: a 0.00 instalment (FR-4)', () => {
     );
   });
 
+  it('names the NPR conversion when only the converted split has the 0.00 milestone', () => {
+    // The API's answer for INR 0.04 in four quarters: 0.01 each in INR, but NPR 0.06 splits to a 0.00 last line.
+    const f = describeQuoteFailure(
+      {
+        status: 422,
+        body: {
+          error: {
+            code: 'PAYMENT_INSTALMENT_ZERO',
+            message:
+              'The payment milestone "Handover" would be NPR 0.00 once this total is converted to NPR, and an order cannot bill nothing. Raise the total, or remove or merge that milestone, then submit again.',
+            details: { label: 'Handover', total: '0.04', amountNpr: '0.06', converted: true },
+          },
+        },
+      },
+      'submit',
+    );
+    expect(f.kind).toBe('invalid');
+    expect(f.field).toBe('paymentSchedule');
+    expect(f.message).toBe(
+      'The payment milestone "Handover" would come to NPR 0.00 once this total is converted to NPR. Remove that milestone or raise the total, then submit again. Nothing was submitted.',
+    );
+  });
+
   it('keeps the general wording when the milestone label is missing or too long to quote', () => {
     const long = 'x'.repeat(200);
     const f = describeQuoteFailure(
