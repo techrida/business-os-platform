@@ -541,8 +541,18 @@ export function workflow(cfg) {
           await openPanel();
           s.checks.push('saw: a notification for this memo');
           await s.page.waitForTimeout(1500);
-          const after = await bell.first().getAttribute('aria-label');
+          let after = await bell.first().getAttribute('aria-label');
           const unread = (t) => Number(/(\d+) unread/.exec(t ?? '')?.[1] ?? 0);
+          if (unread(after) < unread(before)) {
+            // The bell label can reset while the page remounts (r3g: "36 unread" -> "Notifications"
+            // with the dashboard still saying 36). Only a count that is still lower after a reload,
+            // read from the server, shows that opening the panel marked notifications read.
+            s.checks.push(
+              `note: the bell read "${after}" after opening; reloading to read it again`,
+            );
+            await s.goto('/', (p) => p.getByRole('button', { name: /^Notifications/ }));
+            after = await bell.first().getAttribute('aria-label');
+          }
           s.expect(
             unread(after) >= unread(before),
             'opening the panel alone did not mark anything read',
