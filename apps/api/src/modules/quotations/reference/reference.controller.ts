@@ -14,7 +14,7 @@ export class ReferenceController {
 
   /**
    * 200 with a bare array of TaxCode: the tenant's codes in force today in Asia/Kathmandu, by code. 403 unless the
-   * caller holds quotation.read, procurement.sourcing or payables.bill.enter.
+   * caller holds quotation.read, procurement.sourcing, payables.bill.enter or settings.finance.write.
    */
   @Get('tax-codes')
   @AnyAuthenticated()
@@ -22,9 +22,12 @@ export class ReferenceController {
     return this.reference.listTaxCodes();
   }
 
-  /** Current payable TDS codes for staff bill entry; tenant-level, like VAT codes. */
+  /**
+   * Current payable TDS codes for staff bill entry and the Tax settings page; tenant-level, like VAT codes. One @Can
+   * names one permission, so ReferenceService checks the any-of grant before reading.
+   */
   @Get('withholding-codes')
-  @Can('payables.bill.enter')
+  @AnyAuthenticated()
   withholdingCodes(): Promise<WithholdingCode[]> {
     return this.reference.listWithholdingCodes();
   }

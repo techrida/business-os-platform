@@ -33,9 +33,10 @@ describe('ReferenceController', () => {
   it('guards payment-terms with quotation.read, leaves tax-codes to the service any-of check, and leaves none unmarked', async () => {
     const { moduleRef } = await setup();
     expect(findUnmarkedRoutes(moduleRef)).toEqual([]);
-    expect(Reflect.getMetadata(CAN_KEY, ReferenceController.prototype.withholdingCodes)).toBe(
-      'payables.bill.enter',
-    );
+    // withholding-codes is read by bill entry and the Tax settings page: any-of, checked in the service.
+    expect(
+      Reflect.getMetadata(CAN_KEY, ReferenceController.prototype.withholdingCodes),
+    ).toBeUndefined();
     expect(Reflect.getMetadata(CAN_KEY, ReferenceController.prototype.paymentTerms)).toBe(
       'quotation.read',
     );

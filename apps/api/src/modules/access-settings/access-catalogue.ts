@@ -767,7 +767,7 @@ export const ACCESS_PERMISSION_CATALOGUE: readonly AccessPermissionInfo[] = [
     'onOff',
     ON_OFF_STAFF,
     [],
-    'Edits tax and numbering settings, number series, and payment terms.',
+    'Edits tax and numbering settings, number series, and the saved terms.',
   ),
   perm(
     'settings.fx_rate.write',
