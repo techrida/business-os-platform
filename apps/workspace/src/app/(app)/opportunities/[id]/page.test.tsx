@@ -812,7 +812,10 @@ describe('credit hold on the deal (F1-Q20)', () => {
     const doc = parse(await render());
     expect(metadata(doc)?.textContent).toContain('Credit hold');
     expect(banner(doc)?.textContent).toContain('over its credit limit');
-    expect(banner(doc)?.textContent).toContain('Management or Finance can override the hold.');
+    expect(banner(doc)?.textContent).toContain(
+      'Someone with credit override access can override the hold.',
+    );
+    expect(banner(doc)?.textContent).not.toMatch(/Management|Finance/);
     expect(doc.body.textContent).not.toContain('Override credit hold');
     expect(banner(doc)?.textContent).not.toMatch(/500,000|5,00,000/);
     expect(mocks.getCreditHold).not.toHaveBeenCalled();

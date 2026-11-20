@@ -52,7 +52,7 @@ const creditHold = () =>
           error: {
             code: 'credit_hold',
             message:
-              'The customer is over its credit limit; Management or Finance must override the credit hold on the deal first',
+              'The customer is over its credit limit; someone with credit override access must override the credit hold on the deal first',
             correlationId: 'corr-1',
             details: { opportunityId: DEAL },
           },
