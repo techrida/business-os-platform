@@ -31,11 +31,11 @@ test('the inbox shows the reason for each item, and excludes the requester’s m
     opened.push(sales);
 
     const reason =
-      await test.step('sales submits a memo naming Management as its approver', async () => {
+      await test.step('sales submits a memo naming the Founder as its approver', async () => {
         await createDraftMemo(sales.page, {
           title,
           recommenders: [],
-          approver: 'Dev Management',
+          approver: 'Dev Founder',
         });
         const steps = await readPreviewSteps(sales.page);
         await submitMemo(sales.page);
@@ -50,11 +50,12 @@ test('the inbox shows the reason for each item, and excludes the requester’s m
       await expect(inboxRow(sales.page, title)).toHaveCount(0);
     });
 
-    const management = await signInAs(browser, appBase, 'management');
-    opened.push(management);
+    // "Approved by" lists only the people the Memo approver rule allows; for a Sales author that is the Founder.
+    const founder = await signInAs(browser, appBase, 'founder');
+    opened.push(founder);
 
     await test.step('the named approver sees the reason, and rejecting needs a comment', async () => {
-      const page = management.page;
+      const page = founder.page;
       await openFromInbox(page, title, reason);
       await expect(page.getByRole('region', { name: 'Attachments', exact: true })).toHaveCount(0);
 

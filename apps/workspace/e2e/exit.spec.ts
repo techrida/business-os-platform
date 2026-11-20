@@ -23,15 +23,16 @@ import { persona } from './helpers/personas';
  *
  * What it proves, in order (one test, one `test.step` each, separate browser contexts per persona):
  *  1. Sales signs in with password + TOTP and saves a memo that names Management as the recommender and the
- *     Accountant as the approver (only people who can decide approvals are offered).
+ *     Founder as the approver ("Approved by" lists only the people the Memo approver rule allows: the Sales
+ *     department head cannot decide approvals, so the rule falls back to the Founder role).
  *  2. Before submitting, the route preview shows exactly those two people in that order, each with a reason.
  *     Sales submits, and the memo becomes "Submitted".
  *  3. No self-approval: the Sales inbox excludes the memo, and the
  *     request's own page (opened by URL) offers Sales no Approve button.
  *  4. Management signs in, sees the memo in the inbox with the same reason the preview gave, and approves
  *     (banner "Your approval was recorded.").
- *  5. The Accountant signs in, sees it (step 2 is now active), and approves. The memo page shows "Approved".
- *  6. Mailpit holds the "Approval needed" email to Management and to the Accountant, and the decided email to
+ *  5. The Founder signs in, sees it (step 2 is now active), and approves. The memo page shows "Approved".
+ *  6. Mailpit holds the "Approval needed" email to Management and to the Founder, and the decided email to
  *     Sales.
  *  7. Finance's Audit timeline on the memo page lists the memo being created and changed, the submit, and two
  *     approvals; Sales (no audit permission) is told the trail is hidden.
@@ -77,11 +78,11 @@ test('memo exit: a memo goes through the two approvals its author named, with em
     const sales = await signIn('sales');
     const { memoId, memoNumber } =
       await test.step('sales saves a memo naming two signers', async () => {
-        // Management recommends, the Accountant approves: neither order nor people come from an amount.
+        // Management recommends, the Founder approves: neither order nor people come from an amount.
         return createDraftMemo(sales, {
           title,
           recommenders: ['Dev Management'],
-          approver: 'Dev Accountant',
+          approver: 'Dev Founder',
         });
       });
 
@@ -91,7 +92,7 @@ test('memo exit: a memo goes through the two approvals its author named, with em
         const steps = await readPreviewSteps(sales);
         expect(steps, 'one step per named signer').toHaveLength(2);
         expect(steps[0]?.who).toContain('Dev Management');
-        expect(steps[1]?.who).toContain('Dev Accountant');
+        expect(steps[1]?.who).toContain('Dev Founder');
         return steps;
       });
     const stepOneReason = preview[0]?.reason ?? '';
@@ -131,29 +132,29 @@ test('memo exit: a memo goes through the two approvals its author named, with em
       await expect(inboxRow(management, title)).toHaveCount(0);
     });
 
-    // --------------------------------------------------------------------- 5. accountant approves
-    const accountant = await signIn('accountant');
+    // ------------------------------------------------------------------------ 5. founder approves
+    const founder = await signIn('founder');
     await test.step('the named approver sees step 2 and approves; the memo is approved', async () => {
-      const found = await openFromInbox(accountant, title, stepTwoReason);
+      const found = await openFromInbox(founder, title, stepTwoReason);
       expect(found.requestId).toBe(requestId);
-      await approve(accountant, 'Agreed. Step 2 approved by the exit spec.');
+      await approve(founder, 'Agreed. Step 2 approved by the exit spec.');
 
       // The memo status follows the request's decision; allow a moment, then reload to read it.
-      await accountant.goto(`/memos/${memoId}`);
+      await founder.goto(`/memos/${memoId}`);
       await expect(async () => {
-        await accountant.reload();
-        await expect(accountant.getByText('Approved', { exact: true })).toBeVisible({
+        await founder.reload();
+        await expect(founder.getByText('Approved', { exact: true })).toBeVisible({
           timeout: 3_000,
         });
       }).toPass({ timeout: 30_000 });
-      await expect(accountant.getByText('This memo was approved.')).toBeVisible();
+      await expect(founder.getByText('This memo was approved.')).toBeVisible();
     });
 
     // -------------------------------------------------------------------------- 6. the emails
     await test.step('Mailpit holds the pending emails and the decided email', async () => {
       const forThisMemo = (subject: string): boolean => subject.includes(memoNumber);
       const managementEmail = persona('management').username;
-      const accountantEmail = persona('accountant').username;
+      const founderEmail = persona('founder').username;
       const salesEmail = persona('sales').username;
 
       // approval.pending: "Approval needed: <type> <number>", one per step as it activates.
@@ -169,8 +170,8 @@ test('memo exit: a memo goes through the two approvals its author named, with em
         (m) =>
           forThisMemo(m.Subject) &&
           m.Subject.startsWith('Approval needed') &&
-          sentTo(m, accountantEmail),
-        `the "Approval needed" email to ${accountantEmail} for ${memoNumber}`,
+          sentTo(m, founderEmail),
+        `the "Approval needed" email to ${founderEmail} for ${memoNumber}`,
         MAIL_TIMEOUT_MS,
       );
       // approval.decided goes to the requester: "<type> <number>: <decision>".
