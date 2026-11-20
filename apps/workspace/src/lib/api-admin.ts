@@ -42,6 +42,13 @@ const WorkflowVersionSchema = z.object({
   status: z.enum(['draft', 'published', 'retired']),
   spec: z.unknown(),
   publishedAt: z.string().nullable(),
+  /** Who saved the version; null when it was saved before the editor was recorded. Optional for older APIs. */
+  createdBy: z.string().nullable().optional(),
+  /** The editor's display name from the API, for viewers who cannot read the user directory. */
+  createdByName: z.string().nullable().optional(),
+  publishedBy: z.string().nullable().optional(),
+  /** The caller saved it, so the caller cannot publish it: a second person does (F1-Q11). */
+  savedByCaller: z.boolean().optional(),
 });
 const WorkflowSchema = z.object({
   id: z.string(),

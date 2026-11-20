@@ -1,19 +1,26 @@
 'use client';
 
-import { useActionState, useEffect, useRef } from 'react';
+import { useActionState, useEffect, useRef, useState } from 'react';
 
 import { ConfirmDialog } from '@/components/ui/dialog';
 import { HeaderAction } from '@/components/ui/header-action';
 import { toast } from '@/components/ui/toast';
 
 import { submitMemoAction, type SubmitState } from '../actions';
-import { useMemoReviewNeeded } from '../memo-review-gate';
+import { UNSAVED_CHANGES_PILL, useMemoReviewNeeded, useMemoSaveStatus } from '../memo-review-gate';
+
+/** How long a Submit waits for a Done save that never reports back before it gives up visibly. */
+export const QUEUED_SUBMIT_TIMEOUT_MS = 20_000;
 
 /**
  * The page header's Submit button. The page decides what is still missing (`missing`, short pill labels);
  * `HeaderAction` shows them as red pills and explains them when a blocked button is tapped. The API's own
  * refusal arrives as a toast, because the action has no field to
  * blame. Confirming submits the form with the memo id.
+ *
+ * Done then Submit (R2-019): while the edit form's Done is still saving, a confirmed Submit waits. It goes ahead once
+ * the saved memo is on the page (so it sends the new version), and is dropped with a message if the save was refused
+ * or never finished. It never fails silently.
  */
 export function SubmitForm({
   memoId,
@@ -26,11 +33,46 @@ export function SubmitForm({
 }) {
   const form = useRef<HTMLFormElement>(null);
   const reviewNeeded = useMemoReviewNeeded();
+  const save = useMemoSaveStatus();
+  const [queued, setQueued] = useState(false);
   const [state, formAction, pending] = useActionState<SubmitState, FormData>(submitMemoAction, {});
 
   useEffect(() => {
     if (state.error) toast.error('Not submitted', { description: state.error });
   }, [state]);
+
+  // A waiting Submit settles during render when the save's outcome arrives (no effect-driven state); the effect
+  // below then acts once per outcome.
+  const [outcome, setOutcome] = useState<{ kind: 'saved' | 'failed' } | null>(null);
+  if (queued && (save === 'saved' || save === 'failed')) {
+    setQueued(false);
+    setOutcome({ kind: save });
+  }
+  useEffect(() => {
+    if (outcome?.kind === 'saved') form.current?.requestSubmit();
+    else if (outcome?.kind === 'failed') {
+      toast.error('Not submitted', {
+        description:
+          'Your changes were not saved, so the memo was not submitted. Fix them, press Done, then submit.',
+      });
+    }
+  }, [outcome]);
+
+  useEffect(() => {
+    if (!queued) return;
+    const timer = setTimeout(() => {
+      setQueued(false);
+      toast.error('Not submitted', {
+        description: 'Saving your changes did not finish. Check the memo, then submit again.',
+      });
+    }, QUEUED_SUBMIT_TIMEOUT_MS);
+    return () => clearTimeout(timer);
+  }, [queued]);
+
+  const saving = save === 'saving';
+  const busy = pending || queued;
+  // While Done is saving, the changes are on their way into the memo: Submit waits for them instead of blocking.
+  const blockers = reviewNeeded && !saving ? [UNSAVED_CHANGES_PILL, ...missing] : missing;
 
   return (
     <>
@@ -41,19 +83,22 @@ export function SubmitForm({
       <ConfirmDialog
         trigger={
           <HeaderAction
-            missing={reviewNeeded ? ['Review changes', ...missing] : missing}
+            missing={blockers}
             missingTitle="Cannot submit yet"
             missingLabel="Blocked by"
-            disabled={pending}
-            aria-busy={pending || undefined}
+            disabled={busy}
+            aria-busy={busy || undefined}
           >
-            {pending ? 'Submitting' : 'Submit for approval'}
+            {busy ? 'Submitting' : 'Submit for approval'}
           </HeaderAction>
         }
         title="Submit for approval?"
         description="The memo will be locked while it is in review."
         confirmLabel="Submit for approval"
-        onConfirm={() => form.current?.requestSubmit()}
+        onConfirm={() => {
+          if (saving) setQueued(true);
+          else form.current?.requestSubmit();
+        }}
       />
     </>
   );

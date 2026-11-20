@@ -37,3 +37,44 @@ it('retains a missing directory target instead of silently substituting a person
   );
   expect(html).toContain('&quot;user&quot;:&quot;' + id);
 });
+
+function renderSpec(initialSpec: unknown, mode: 'create' | 'version' = 'version') {
+  return renderToStaticMarkup(
+    <WorkflowEditor
+      action={() => Promise.resolve(IDLE)}
+      mode={mode}
+      documentType="test_memo"
+      initialSpec={initialSpec}
+      submitLabel="Save"
+      groupKeys={[]}
+      users={null}
+    />,
+  );
+}
+it('hides the JSON toggle for a new workflow and for a saved spec the form can show (U23-Q4)', () => {
+  for (const html of [renderSpec(undefined, 'create'), renderSpec(spec)]) {
+    expect(html).not.toContain('JSON (advanced)');
+    expect(html).not.toContain('JSON editor');
+  }
+});
+it('offers the JSON toggle for a saved spec the form cannot show (U23-Q4)', () => {
+  const unshowable = {
+    ...spec,
+    rules: [
+      {
+        id: 'multi',
+        when: {
+          all: [
+            { field: 'amountNpr', op: 'gt', value: '1' },
+            { field: 'x', op: 'eq', value: 'y' },
+          ],
+        },
+        add: { id: 'extra', kind: 'role', role: 'finance', reason: 'Extra' },
+        reason: 'Two fields',
+      },
+    ],
+  };
+  const html = renderSpec(unshowable);
+  expect(html).toContain('JSON (advanced)');
+  expect(html).toContain('The form cannot show this spec');
+});

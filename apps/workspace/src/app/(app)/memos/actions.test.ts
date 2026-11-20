@@ -148,7 +148,7 @@ describe('submitting approves the saved memo, so unreviewed working changes stop
       updatedAt: null,
     });
     expect(await submitMemoAction({}, form())).toEqual({
-      error: 'Review your changes before submitting.',
+      error: 'Your edits are not saved yet. Press Done, then submit.',
     });
     expect(mocks.submitMemo).not.toHaveBeenCalled();
     expect(mocks.readDraft).toHaveBeenCalledWith({ orgId: 'org-1', sub: 'user-1' }, MEMO);
