@@ -176,6 +176,11 @@ Assert on something the action changes. For example, count the rows that carry a
 
 ## Known limits
 
+- **What the checks do not prove (3 review notes, 20 Nov 2026).**
+  - start-6 proves the app is signed out (the logout POST succeeded, `/inbox` goes to the sign-in service and stays there). It does not prove the sign-in service's own session ended: its account chooser may still offer the remembered account, and choosing it was not tried.
+  - start-5 reads the bell's unread count from the server after a reload when the label first reads lower. A count that only the page cleared, with the server count intact, is not reported.
+  - sales-4, on a resumed run, checks each row's file name and the Virus free state, not the file's content. A different PDF with the same name from an earlier attempt of the same label would pass.
+
 - One uninterrupted `--workflow all --viewport 1440x900` run (start + sales) took 22 min on the shared omarchy machine (label SCR2, 20 Nov 2026). Most of that is waiting for the dev server to compile routes and render PDFs, not the driver.
 
 - `--from` and `--only` reload the workflow's records from `state.json`; skipped steps keep their earlier results. What re-running a step that already ran (fully or partly) does:
