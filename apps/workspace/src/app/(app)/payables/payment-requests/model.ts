@@ -37,9 +37,15 @@ export function requestableItem(
   );
 }
 
-/** What to do when a vendor has no verified bank account: the same people and order the vendor page describes. */
-export const ADD_BANK_ACCOUNT =
-  'Propose a bank account on the vendor’s page. Someone other than the proposer verifies it after a call-back to the bank, and then the bill can be requested.';
+/**
+ * What to do when a vendor has no verified bank account, worded for what the reader may do (live
+ * `vendor.bank.propose`): the same people and order the vendor page describes.
+ */
+export function addBankAccountText(mayPropose: boolean): string {
+  return mayPropose
+    ? 'Propose a bank account on the vendor’s page. Someone other than the proposer verifies it after a call-back to the bank, and then the bill can be requested.'
+    : 'Procurement proposes an account on the vendor’s page; finance verifies it after a call-back to the bank. Then the bill can be requested.';
+}
 
 /** The vendors, by name and in first-seen order, of the items held back for a missing verified bank account. */
 export function vendorsWithoutBankAccount(
