@@ -394,6 +394,20 @@ describe('quotation detail page', () => {
     expect(mocks.getEvidence).not.toHaveBeenCalled();
   });
 
+  it('links the sales order once, in the After acceptance panel, not again in Linked records', async () => {
+    const quote = detail();
+    quote.quotation.status = 'accepted';
+    quote.versions[1]!.status = 'accepted';
+    mocks.getQuotation.mockResolvedValue(quote);
+    mocks.listSalesOrders.mockResolvedValue([
+      { id: CUSTOMER, number: 'SO-2082-0007', status: 'confirmed' },
+    ]);
+    const html = await render();
+    expect(html.split(`href="/sales-orders/${CUSTOMER}"`).length - 1).toBe(1);
+    const linked = /Linked records(.*?)<\/ul>/s.exec(html)?.[1] ?? '';
+    expect(linked).not.toContain('/sales-orders/');
+  });
+
   it('shows the draft sales order created from the accepted revision, waiting for Accounts (F1-Q25)', async () => {
     const quote = detail();
     quote.quotation.status = 'accepted';
