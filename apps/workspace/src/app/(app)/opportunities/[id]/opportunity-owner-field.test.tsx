@@ -140,7 +140,8 @@ it('returns to the list when the hand-over takes the deal out of reach (404 on t
   await settle();
   expect(mocks.success).toHaveBeenCalledWith('Handed to Ram Thapa. Open follow-ups moved to them.');
   expect(mocks.push).toHaveBeenCalledWith('/opportunities');
-  expect(mocks.revalidatePath).not.toHaveBeenCalledWith(`/opportunities/${OPP}`);
+  // No revalidation: it would re-render this deal as not found before the move to the list.
+  expect(mocks.revalidatePath).not.toHaveBeenCalled();
 });
 
 it("words the assignment rule's refusal from details.assignmentReason, next to the control", async () => {

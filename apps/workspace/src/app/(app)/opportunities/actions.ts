@@ -60,15 +60,16 @@ export async function updateOpportunityOwnerAction(
     return { error: f.message, reload: f.reload };
   }
 
-  revalidatePath('/opportunities');
-  revalidatePath('/activities');
   try {
     await getOpportunity(session, id);
   } catch (err) {
-    // Saved, but the deal is now outside what the caller may read.
+    // Saved, but the deal is now outside what the caller may read. Nothing is revalidated: that would
+    // re-render this deal's page as not found before the client moves to the list, which loads fresh.
     if (err instanceof ApiError && err.status === 404) return { ok: true, handedAway: true };
   }
   revalidatePath(`/opportunities/${id}`);
+  revalidatePath('/opportunities');
+  revalidatePath('/activities');
   return { ok: true };
 }
 
