@@ -18,6 +18,8 @@ import {
   invoices,
   invoiceTaxSummary,
   organizations,
+  partyAccounts,
+  paymentTerms,
   salesOrders,
   scoped,
 } from '@bos/db';
@@ -343,7 +345,11 @@ export class InvoiceIssueService {
   }
 
   /**
-   * The due date at issue: issue date + the order's credit days when the invoice has a sales order; otherwise the
+   * The due date at issue. A debit note is a further charge, so it follows the customer's payment terms with this entity
+   * (TR-Q12c): issue date + the term's net days. A debit note whose customer has no account or no term here, and every
+   * other kind, falls through to the rule below.
+   *
+   * Issue date + the order's credit days when the invoice has a sales order; otherwise the
    * drafted due date (422 DUE_DATE_BEFORE_ISSUE when it is already past), or the issue date when none was drafted (due
    * on receipt).
    */
@@ -353,6 +359,23 @@ export class InvoiceIssueService {
     invoice: InvoiceRow,
     issueDate: string,
   ): Promise<string> {
+    if (invoice.kind === 'debit_note' && invoice.customerPartyId !== null) {
+      const [term] = await tx
+        .select({ netDays: paymentTerms.netDays })
+        .from(partyAccounts)
+        .innerJoin(
+          paymentTerms,
+          and(
+            eq(paymentTerms.tenantId, partyAccounts.tenantId),
+            eq(paymentTerms.id, partyAccounts.paymentTermId),
+          ),
+        )
+        .where(
+          scoped(scope).where(partyAccounts, eq(partyAccounts.partyId, invoice.customerPartyId)),
+        )
+        .limit(1);
+      if (term !== undefined) return addDays(issueDate, term.netDays);
+    }
     if (invoice.salesOrderId !== null) {
       const [order] = await tx
         .select({ creditDays: salesOrders.creditDays })
