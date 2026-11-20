@@ -31,6 +31,7 @@ import type {
   CreateVendorBillBody,
   MatchStatus,
   RequestMatchExceptionBody,
+  VendorBillCan,
   VoidVendorBillBody,
 } from '@bos/contracts';
 import {
@@ -163,6 +164,8 @@ export interface VendorBillDto {
   approvalRequestId: string | null;
   version: number;
   lines: VendorBillLineDto[];
+  /** The caller's moves on this bill from their live grants (GET list and detail only; see billCan). */
+  can?: VendorBillCan;
 }
 
 export interface MatchExceptionDto {
@@ -219,6 +222,18 @@ const billRef = (
   organizationId: bill.organizationId,
   ownerUserId: bill.enteredBy,
 });
+
+/**
+ * The caller's moves on a bill they can read: the same payables.bill.enter record check lockEnterable makes, so a
+ * row never offers a command the API refuses (an `own` grant reaches only the bills its holder entered).
+ */
+function billCan(
+  p: Principal,
+  bill: Pick<BillRow, 'tenantId' | 'organizationId' | 'enteredBy'>,
+): VendorBillCan {
+  const enter = can(p, 'payables.bill.enter', billRef(bill)).allowed;
+  return { match: enter, submit: enter, void: enter };
+}
 
 /**
  * A new bill belongs to the person entering it, so every `payables.bill.enter` grant that reaches a record at all
@@ -350,7 +365,7 @@ export class VendorBillsService {
             [],
             [],
           );
-          return rest;
+          return { ...rest, can: billCan(principal, row.bill) };
         }),
         total: page.total,
       };
@@ -362,14 +377,18 @@ export class VendorBillsService {
     const { scope, actor, principal } = this.caller.current();
     return withTx(this.db, scope, actor, async (tx) => {
       const [visible] = await tx
-        .select({ id: vendorBills.id })
+        .select({
+          tenantId: vendorBills.tenantId,
+          organizationId: vendorBills.organizationId,
+          enteredBy: vendorBills.enteredBy,
+        })
         .from(vendorBills)
         .where(
           and(scopeWhereFor(principal, vendorBills, 'payables.bill.read'), eq(vendorBills.id, id)),
         )
         .limit(1);
       if (visible === undefined) throw notFound('Bill');
-      return this.dto(tx, scope, id);
+      return { ...(await this.dto(tx, scope, id)), can: billCan(principal, visible) };
     });
   }
 
