@@ -716,7 +716,7 @@ describe('invoice render', () => {
     ).rejects.toBeInstanceOf(ForbiddenException);
   });
 
-  it('removes an orphan older than an hour and keeps a younger one', async () => {
+  it('removes an orphan older than ORPHAN_AFTER_MS and keeps a younger one', async () => {
     const scope = await newScope();
     const old = await seedInvoice(scope);
     const young = await seedInvoice(scope);

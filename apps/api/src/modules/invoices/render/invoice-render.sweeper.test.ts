@@ -384,7 +384,7 @@ describe('InvoiceRenderSweeper.sweep', () => {
     expect(f.store.candidates).toHaveBeenLastCalledWith(NOW, 10, candidate(2).invoiceId);
   });
 
-  it('removes orphans an hour old and counts them', async () => {
+  it('removes orphans ten minutes old and counts them', async () => {
     const f = fixture();
     f.store.orphans.mockResolvedValue([
       { tenantId: 'tenant-1', organizationId: 'org-1', documentId: 'doc-9' },
@@ -393,7 +393,7 @@ describe('InvoiceRenderSweeper.sweep', () => {
     expect(result.orphansRemoved).toBe(1);
     expect(f.store.removeOrphan).toHaveBeenCalledOnce();
     const cutoff = f.store.orphans.mock.calls[0]?.[0] as Date;
-    expect(NOW.getTime() - cutoff.getTime()).toBe(60 * 60_000);
+    expect(NOW.getTime() - cutoff.getTime()).toBe(10 * 60_000);
   });
 });
 
