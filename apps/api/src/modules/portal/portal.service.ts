@@ -34,6 +34,8 @@ import type { Principal } from '../../platform/authz/principal';
 import type { TxScope } from '../../platform/db/tx';
 import { DocumentsService } from '../../platform/documents/documents.service';
 import { SettingsService } from '../../platform/settings/settings.service';
+import { missingEvidence } from '../quotations/outcome/evidence-policy';
+import { evidenceStatusOf } from '../quotations/outcome/evidence-state';
 import { QUOTATION_OWNER_TYPE } from '../quotations/quotation-owner.policy';
 import {
   QuotationNotCustomerVisibleError,
@@ -203,8 +205,12 @@ export class PortalService {
       frozenDisplay(source.documentStyle) ?? (await liveDisplay(this.settings, scope));
 
     const { issuerLegalName: _legalName, documentStyle: _documentStyle, ...input } = source;
+    const afterAcceptance =
+      source.version.status === 'accepted'
+        ? await this.afterAcceptance(p, scope, versionId)
+        : undefined;
     try {
-      return toCustomerQuotationView(
+      const view = toCustomerQuotationView(
         {
           ...input,
           issuer,
@@ -213,10 +219,29 @@ export class PortalService {
         },
         { purpose: 'portal' },
       );
+      return afterAcceptance === undefined ? view : { ...view, afterAcceptance };
     } catch (error) {
       if (error instanceof QuotationNotCustomerVisibleError) throw notFound();
       throw error;
     }
+  }
+
+  /**
+   * F1-Q28: what the customer waits for after accepting. Pending until staff confirm the acceptance (one they
+   * recorded themselves is confirmed); `needs` is what the entity's evidence policy asks beyond what the customer
+   * gave, so the portal can say which document the team will ask for. Never a dead end: the acceptance stands.
+   */
+  private async afterAcceptance(
+    p: Principal,
+    scope: TxScope,
+    versionId: string,
+  ): Promise<CustomerQuotationView['afterAcceptance']> {
+    const acceptance = await this.store.loadAcceptance(p, versionId);
+    if (acceptance === undefined) return undefined;
+    const status = evidenceStatusOf(acceptance, acceptance.confirmed ? true : null);
+    if (status === 'confirmed') return { status, needs: [] };
+    const policy = await this.settings.get(scope, 'sales.evidence_policy');
+    return { status, needs: missingEvidence(policy, acceptance.evidenceKinds) };
   }
 
   /**
