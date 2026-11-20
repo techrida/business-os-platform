@@ -647,19 +647,45 @@ export function workflow(cfg) {
               );
             }
           }
+          // Logout is proven only by the app's own logout POST answering without an error.
+          const appHost = new URL(cfg.appUrl).host;
+          const logoutPosted = hops.some((h) => {
+            const [method, hostPath, status] = h.split(' ');
+            return (
+              method === 'POST' && hostPath === `${appHost}/auth/logout` && Number(status) < 400
+            );
+          });
+          s.expect(
+            logoutPosted,
+            `the Sign out click sent POST ${appHost}/auth/logout and it succeeded`,
+            hops.join(' → ') || '(no hops)',
+          );
           // A dev-server restart can answer one hop with 5xx; retry the plain GET, never the sign-out.
-          for (let i = 0; i < 4; i++) {
+          let probed = false;
+          for (let i = 0; i < 4 && !probed; i++) {
             const res = await page
               .goto(`${cfg.appUrl}/inbox`, { waitUntil: 'domcontentloaded' })
               .catch(() => null);
             await page.waitForLoadState('load').catch(() => {});
-            if (res && res.status() < 500 && !page.url().startsWith('chrome-error://')) break;
+            probed = Boolean(
+              res && res.status() < 500 && !page.url().startsWith('chrome-error://'),
+            );
+            if (probed) break;
             s.checks.push(`note: /inbox answered ${res?.status() ?? 'a network error'}; retrying`);
             await page.waitForTimeout(10000);
           }
+          if (!probed)
+            throw new StepFailure(
+              'Could not load /inbox after Sign out (four tries); signed-out state not proven',
+            );
+          const signInVisible = await page
+            .locator('input[name=loginName]')
+            .waitFor({ state: 'visible', timeout: cfg.navTimeout })
+            .then(() => true)
+            .catch(() => false);
           s.expect(
-            !page.url().startsWith(`${cfg.appUrl}/inbox`),
-            'signed out: /inbox sends you to sign-in',
+            new URL(page.url()).origin === new URL(cfg.authUrl).origin && signInVisible,
+            'signed out: /inbox sends you to the sign-in page with its login form',
             page.url(),
           );
           await page.waitForTimeout(cfg.pace);
