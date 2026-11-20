@@ -476,8 +476,12 @@ describe('quotation render candidates', () => {
     expect(picked).toContain(fresh.versionId);
     expect(picked).toContain(failedLongAgo.versionId);
     expect(picked).toContain(failedTwiceLongAgo.versionId);
-    expect(picked).toContain(pendingStale.versionId);
+    // A dead worker's claim is not taken again as it is: the sweep first counts it as a failed try (below).
+    const abandoned = await store.abandoned(new Date(Date.now() - PENDING_STALE_MS), 1_000);
+    expect(abandoned.map((c) => c.versionId)).toContain(pendingStale.versionId);
+    expect(abandoned.map((c) => c.versionId)).not.toContain(pendingRecently.versionId);
     for (const never of [
+      pendingStale,
       failedRecently,
       failedTwiceRecently,
       givenUp,
@@ -667,6 +671,57 @@ describe('a render that keeps failing (R4c2: TR-Q4, F1-Q13)', () => {
     expect(await sweeper.renderOne(v)).toBe('skipped');
     expect((await versionRow(v.versionId)).render_attempts).toBe(MAX_RENDER_ATTEMPTS);
     expect(await actions(scope, quotationId)).toEqual(['quotation.pdf_render_failed']);
+  });
+
+  it('counts a claim left by a dead worker as a failed try, and gives it up at the limit', async () => {
+    const scope = await newScope();
+    // A worker took the version and died mid-render, on the last try; another one took it and died too.
+    const lastTry = await seedVersion(scope, {
+      renderState: 'pending',
+      renderAttempts: MAX_RENDER_ATTEMPTS - 1,
+      idleMs: PENDING_STALE_MS + 60_000,
+    });
+    const firstTry = await seedVersion(scope, {
+      renderState: 'pending',
+      idleMs: PENDING_STALE_MS + 60_000,
+    });
+    // A live claim: its worker is still drawing the PDF.
+    const live = await seedVersion(scope, {
+      renderState: 'pending',
+      renderAttempts: 1,
+      idleMs: PENDING_STALE_MS - 60_000,
+    });
+
+    const result = await sweeper.sweep();
+    expect(result.failures).toEqual(
+      expect.arrayContaining([
+        { versionId: lastTry.versionId, kind: 'abandoned' },
+        { versionId: firstTry.versionId, kind: 'abandoned' },
+      ]),
+    );
+    expect(result.failures.map((f) => f.versionId)).not.toContain(live.versionId);
+    // Nothing was drawn for them in this sweep: each waits its pause, like any failure.
+    expect(gotenberg.requests).toHaveLength(0);
+
+    const givenUp = await versionRow(lastTry.versionId);
+    expect(givenUp).toMatchObject({ render_state: 'failed', render_attempts: MAX_RENDER_ATTEMPTS });
+    expect(await actions(scope, givenUp.quotation_id)).toEqual(['quotation.pdf_render_failed']);
+    const counted = await versionRow(firstTry.versionId);
+    expect(counted).toMatchObject({ render_state: 'failed', render_attempts: 1 });
+    expect(await actions(scope, counted.quotation_id)).toEqual([]);
+    expect(await versionRow(live.versionId)).toMatchObject({
+      render_state: 'pending',
+      render_attempts: 1,
+    });
+
+    // The given-up one is never taken again; the other is retried after its pause.
+    await waitOutPause(scope, lastTry.versionId);
+    await waitOutPause(scope, firstTry.versionId);
+    const due = (await store.candidates(new Date(), 1_000)).map((c) => c.versionId);
+    expect(due).not.toContain(lastTry.versionId);
+    expect(due).toContain(firstTry.versionId);
+    expect(await sweeper.renderOne(lastTry)).toBe('skipped');
+    expect(await actions(scope, givenUp.quotation_id)).toEqual(['quotation.pdf_render_failed']);
   });
 
   it('resets the attempts when a later try renders', async () => {
