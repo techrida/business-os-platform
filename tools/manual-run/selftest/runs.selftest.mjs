@@ -137,6 +137,33 @@ describe('no overwrites', () => {
     assert.equal(all.history.branches, undefined);
   });
 
+  test('a run saved before its videos are named is FINALIZING, never PASS, fresh or resumed', () => {
+    const outDir = freshDir();
+    const cfg = { outDir, label: 'scr1', viewportText: '1440x900', appUrl: 'https://a.localhost' };
+    const step = (id) => ({
+      id,
+      title: id,
+      status: 'PASS',
+      durationMs: 0,
+      checks: [],
+      findings: [],
+      records: {},
+    });
+    const run = (extra) => ({
+      name: 'sales',
+      title: 't',
+      runId: 'r1',
+      status: 'FINALIZING',
+      wallMs: 1,
+      videos: [],
+      steps: [step('sales-1')],
+      ...extra,
+    });
+    assert.equal(saveResults(cfg, run({})).status, 'FINALIZING');
+    const earlier = run({ status: 'PASS', videos: ['/v/a.webm'] });
+    assert.equal(saveResults(cfg, run({ runId: 'r2' }), earlier).status, 'FINALIZING');
+  });
+
   test('saveResults through results.json: an --only run never erases the full run', () => {
     const outDir = freshDir();
     const cfg = { outDir, label: 'scr1', viewportText: '1440x900', appUrl: 'https://a.localhost' };

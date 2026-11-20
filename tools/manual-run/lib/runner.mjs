@@ -7,6 +7,9 @@ import { launch, newRecordedContext } from './browser.mjs';
 import { isStopping, onCleanup } from './cleanup.mjs';
 import { configuredOrigins } from './origins.mjs';
 import { redactDeep, redactText, redactUrl } from './redact.mjs';
+
+/** The saved status of a run whose steps are done but whose videos are not named yet. Never green. */
+export const FINALIZING = 'FINALIZING';
 import { LAST_TIMEOUT_KEY, Session, StepFailure } from './session.mjs';
 import {
   claimPath,
@@ -223,7 +226,9 @@ export async function runWorkflow(cfg, workflow, opts = {}) {
   result.wallMs = Date.now() - t0;
   if (result.status !== 'FAIL' && result.steps.every((s) => s.status === 'SKIPPED'))
     result.status = 'SKIPPED';
-  save(result);
+  // Until the videos are named the run is not green: a stop while the recording context closes
+  // must leave a result that is not PASS (the final status is saved below).
+  save({ ...result, status: result.status === 'FAIL' ? 'FAIL' : FINALIZING });
   finalSaved = true;
   unregister();
   try {
@@ -421,7 +426,8 @@ export function saveResults(cfg, workflowResult, earlier = null) {
   // Every string that reaches the files passes the redactor (secrets, URL queries); numbers stay.
   const merged = redactDeep(earlier ? mergeResumed(earlier, workflowResult) : workflowResult);
   // An unfinished run stays RUNNING; if no later save replaces it, the run was interrupted.
-  if (workflowResult.status === 'RUNNING') merged.status = 'RUNNING';
+  if (workflowResult.status === 'RUNNING' || workflowResult.status === FINALIZING)
+    merged.status = workflowResult.status;
   placeResult(all, workflowResult.name, merged);
   all.updatedAt = now();
   writeJson(file, all);
