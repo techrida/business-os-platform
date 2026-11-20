@@ -8,8 +8,9 @@
  * When an item ships, give it an `href` and a phase in SHIPPED_PHASES; nav.test.ts keeps
  * the two in step.
  *
- * Items with `audience: 'admin'` are shown only to people who can see the admin screens. The
- * server decides that (canSeeAdmin in kernel-format.ts) and passes the answer to the sidebar:
+ * Items with `audience: 'admin'` are shown only to people who can open at least one settings
+ * section. The sidebar decides that from the live grants (`visibleSettingsGroups`, the same check
+ * the Settings page makes before it redirects to denied) and passes the answer in:
  * this file stays free of server code because client components (shell-nav.tsx, nav-link.tsx)
  * import it.
  *
