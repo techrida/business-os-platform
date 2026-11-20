@@ -590,6 +590,61 @@ describe('quotation approval: submit', () => {
     );
   });
 
+  it('refuses a few-paisa total whose schedule would bill a 0.00 instalment, writing nothing (FR-4)', async () => {
+    const tiny = async (unitPrice: string) => {
+      const created = await drafting.create(
+        {
+          opportunityId: f.opportunityId,
+          currency: 'NPR',
+          issueDate: GOLDEN_ISSUE_DATE,
+          validUntil: '2026-12-09',
+          paymentSchedule: [
+            { label: 'Advance', percent: '50' },
+            { label: 'On delivery', percent: '50' },
+          ],
+          lines: [
+            {
+              description: 'Token item',
+              uom: 'each',
+              quantity: '1',
+              unitPrice,
+              taxCodeId: f.taxCodeExemptId,
+            },
+          ],
+        },
+        randomUUID(),
+      );
+      const version = await drafting.getVersion(created.id, created.currentVersionId);
+      return {
+        quotationId: created.id,
+        versionId: created.currentVersionId,
+        rowVersion: version.version,
+        schedule: version.paymentSchedule,
+      };
+    };
+
+    // NPR 0.01 over 50/50: the first share rounds half up to 0.01, so the last row is 0.00.
+    const d = await tiny('0.01');
+    expect(d.schedule.map((m) => m.amount)).toEqual(['0.01', '0.00']);
+    const error = await httpErrorOf(submit(d, d.rowVersion));
+    expect(error.getStatus()).toBe(422);
+    expect(error.getResponse()).toMatchObject({
+      code: 'PAYMENT_INSTALMENT_ZERO',
+      message: expect.stringContaining('"On delivery" would be NPR 0.00'),
+      details: { label: 'On delivery', total: '0.01' },
+    });
+    expect(await versionRow(d.versionId)).toMatchObject({
+      status: 'draft',
+      approvalRequestId: null,
+      version: d.rowVersion,
+    });
+    expect(await requestsOf(d.versionId)).toHaveLength(0);
+
+    // NPR 0.03 over the same schedule bills 0.02 and 0.01: submitted as usual.
+    const ok = await tiny('0.03');
+    expect((await submit(ok, ok.rowVersion)).status).toBe('submitted');
+  });
+
   it('answers 404 for a version of another entity', async () => {
     const d = await draft('50000.00');
     current.scope = scopeB;
