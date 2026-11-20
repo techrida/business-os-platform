@@ -791,7 +791,19 @@ export class Session {
  * never logged.
  */
 export function readPersona(file, key) {
-  const list = JSON.parse(readFileSync(file, 'utf8'));
+  let list;
+  try {
+    list = JSON.parse(readFileSync(file, 'utf8'));
+  } catch (error) {
+    // A parse error quotes the text around the fault, which can be a password: never pass it on.
+    throw new StepFailure(
+      error instanceof SyntaxError
+        ? 'The personas file (PERSONAS_FILE) is not valid JSON'
+        : `The personas file (PERSONAS_FILE) could not be read (${error.code ?? 'error'})`,
+    );
+  }
+  if (!Array.isArray(list))
+    throw new StepFailure('The personas file (PERSONAS_FILE) is not a list of personas');
   for (const r of list) {
     registerSecret(r.password);
     registerTotpSecret(r.totpSecret);

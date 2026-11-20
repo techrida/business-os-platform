@@ -111,6 +111,28 @@ export const runMatch = (text) => new RegExp(escapeRe(text));
 const bool = (v, dflt) =>
   v === undefined || v === '' ? dflt : !/^(0|false|no|off)$/i.test(String(v));
 
+// Playwright's debug output (DEBUG=pw:api, PWDEBUG, DEBUG_FILE …) prints the raw values passed to
+// fill and pressSequentially, which include the seeded passwords and one-time codes.
+const DEBUG_ENV =
+  /^(DEBUG|DEBUG_FILE|PWDEBUG|PWDEBUGIMPL|PW_DEBUG_[A-Z_]*|(PW|PLAYWRIGHT)_[A-Z_]*(DEBUG|LOG|TRACE)[A-Z_]*)$/;
+
+/**
+ * Refuses a DEBUG value that turns on Playwright's logs (a `pw…` or `*…` pattern), then removes every
+ * debug variable from `e` (process.env by default, which the browser and its launcher inherit).
+ * Returns the names removed. Runs before Playwright is loaded.
+ */
+export function scrubDebugEnv(e = process.env) {
+  const patterns = String(e.DEBUG ?? '').split(/[\s,]+/);
+  if (patterns.some((p) => p.startsWith('pw') || p.startsWith('*')))
+    throw new Error(
+      'DEBUG turns on Playwright logging, which prints the typed passwords and one-time codes. ' +
+        'Unset DEBUG to run the manual-run driver.',
+    );
+  const removed = Object.keys(e).filter((k) => DEBUG_ENV.test(k));
+  for (const k of removed) delete e[k];
+  return removed;
+}
+
 export function loadConfig(args = {}) {
   // Node would then accept any certificate for the Mailpit API and the TLS checks.
   if (env.NODE_TLS_REJECT_UNAUTHORIZED === '0')

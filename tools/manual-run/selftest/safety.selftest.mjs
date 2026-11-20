@@ -7,6 +7,7 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { after, afterEach, describe, test } from 'node:test';
 
+import { scrubDebugEnv } from '../lib/config.mjs';
 import { assertShellSafePath, netnsWanted, shq } from '../lib/netns.mjs';
 import { originAllowed, originOf, requireOrigin } from '../lib/origins.mjs';
 import {
@@ -18,7 +19,7 @@ import {
   registerTotpSecret,
 } from '../lib/redact.mjs';
 import { withTimeout } from '../lib/runner.mjs';
-import { realLogin, Session, StepFailure, totp } from '../lib/session.mjs';
+import { readPersona, realLogin, Session, StepFailure, totp } from '../lib/session.mjs';
 import { findMail } from '../lib/support.mjs';
 
 const CFG = {
@@ -290,6 +291,52 @@ describe('the real sign-in', () => {
         e instanceof StepFailure && /Before typing the login name: .* is not on/.test(e.message),
     );
     assert.deepEqual(typed, []);
+  });
+});
+
+describe('debug output and the personas file', () => {
+  test('a DEBUG that turns on Playwright logging is refused', () => {
+    for (const DEBUG of ['pw:api', 'pw:*', '*', 'express:*,pw:protocol', 'x pw:browser'])
+      assert.throws(() => scrubDebugEnv({ DEBUG }), /Unset DEBUG/, DEBUG);
+  });
+
+  test('debug variables are removed; the tool and browser paths stay', () => {
+    const e = {
+      DEBUG: 'express:router',
+      DEBUG_FILE: '/tmp/x',
+      PWDEBUG: 'console',
+      PWDEBUGIMPL: '1',
+      PW_DEBUG_CONTROLLER_HEADLESS: '1',
+      PLAYWRIGHT_TRACE: '1',
+      PLAYWRIGHT_FROM: '/repo/apps/workspace/package.json',
+      PLAYWRIGHT_BROWSERS_PATH: '/browsers',
+      PATH: '/bin',
+    };
+    scrubDebugEnv(e);
+    assert.deepEqual(Object.keys(e).sort(), [
+      'PATH',
+      'PLAYWRIGHT_BROWSERS_PATH',
+      'PLAYWRIGHT_FROM',
+    ]);
+  });
+
+  test('a personas file that is not JSON fails without quoting any of it', () => {
+    const dir = mkdtempSync(path.join(tmpdir(), 'manual-run-personas-'));
+    const file = path.join(dir, 'personas.json');
+    writeFileSync(file, '[{"key":"a","password":"Hunter2-Leak"},, ]');
+    try {
+      assert.throws(
+        () => readPersona(file, 'a'),
+        (e) =>
+          e instanceof StepFailure &&
+          /is not valid JSON$/.test(e.message) &&
+          !/Hunter2|password|position/.test(e.message),
+      );
+      writeFileSync(file, '{"key":"a"}');
+      assert.throws(() => readPersona(file, 'a'), /not a list of personas/);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
   });
 });
 

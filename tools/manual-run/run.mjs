@@ -11,7 +11,14 @@ import { mkdirSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 
 import { onCleanup } from './lib/cleanup.mjs';
-import { WORKFLOWS, legacyRunKeyFor, loadConfig, parseArgs, parseViewport } from './lib/config.mjs';
+import {
+  WORKFLOWS,
+  legacyRunKeyFor,
+  loadConfig,
+  parseArgs,
+  parseViewport,
+  scrubDebugEnv,
+} from './lib/config.mjs';
 import { netnsWanted } from './lib/netns.mjs';
 import { configuredOrigins as origins } from './lib/origins.mjs';
 import { planRuns } from './lib/plan.mjs';
@@ -28,6 +35,14 @@ import {
 } from './lib/store.mjs';
 
 const ALL_VIEWPORTS = ['1440x900', '820x1180', '390x844'];
+
+// Before anything else, so Playwright and the browser never see a debug variable.
+try {
+  scrubDebugEnv();
+} catch (error) {
+  console.error(`manual-run: ${error.message}`);
+  process.exit(2);
+}
 
 const args = parseArgs(process.argv.slice(2));
 if (args.help || !args.workflow) {

@@ -8,6 +8,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import { onCleanup } from './cleanup.mjs';
+import { scrubDebugEnv } from './config.mjs';
 import { netnsWanted, prepareNetns } from './netns.mjs';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
@@ -15,6 +16,7 @@ const repoRoot = path.resolve(here, '../../..');
 
 /** The repository already depends on @playwright/test (apps/workspace); reuse that exact version. */
 export function loadPlaywright() {
+  scrubDebugEnv(); // also here: every entry point (run.mjs, probe.mjs) loads Playwright through this
   const from = process.env.PLAYWRIGHT_FROM || path.join(repoRoot, 'apps/workspace/package.json');
   const require = createRequire(from);
   try {

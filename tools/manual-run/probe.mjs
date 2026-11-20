@@ -8,7 +8,7 @@
 //
 //   node tools/manual-run/probe.mjs --persona "Dev Sales" --url /leads/new [--viewport 390x844] [--text] [--origins] [--shot file.png]
 /* global document, getComputedStyle, CSS -- referenced inside page.evaluate, which runs in the browser */
-import { loadConfig, parseArgs } from './lib/config.mjs';
+import { loadConfig, parseArgs, scrubDebugEnv } from './lib/config.mjs';
 import { launch } from './lib/browser.mjs';
 import { originOf } from './lib/origins.mjs';
 import { redactText, redactUrl } from './lib/redact.mjs';
@@ -17,6 +17,7 @@ import { Session } from './lib/session.mjs';
 
 const print = (line) => console.log(redactText(line));
 
+scrubDebugEnv(); // Playwright's debug logs would print typed values
 const args = parseArgs(process.argv.slice(2));
 const cfg = loadConfig({ label: 'probe', ...args, captions: 'false' });
 const browser = await launch(cfg, [cfg.appUrl], origins(cfg));
