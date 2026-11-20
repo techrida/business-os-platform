@@ -177,6 +177,19 @@ export function getVendor(session: Session, id: string): Promise<VendorDto> {
   return call(session, `/v1/vendors/${seg(id)}`, VendorDtoSchema);
 }
 
+const VendorReviewReadinessSchema = z.strictObject({ kybSubmitted: z.boolean() });
+
+/**
+ * `GET /v1/vendors/:id/review-readiness`: whether the vendor's KYB case is submitted (or approved), the
+ * state the API checks before "Send for review" (pending_kyc -> under_review).
+ */
+export function getVendorReviewReadiness(
+  session: Session,
+  id: string,
+): Promise<{ kybSubmitted: boolean }> {
+  return call(session, `/v1/vendors/${seg(id)}/review-readiness`, VendorReviewReadinessSchema);
+}
+
 /** `POST /v1/vendors` (needs `vendor.write`): a draft vendor. 409 `duplicate_pan_vat` for a PAN already held. */
 export function createVendor(
   session: Session,

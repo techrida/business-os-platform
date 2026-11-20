@@ -519,6 +519,31 @@ describe('lifecycle and activation', () => {
     expect(second.body.status).toBe('under_review');
   });
 
+  it('says the vendor is ready for review only once its KYB case is submitted, the state submit-kyc enforces', async () => {
+    const v = await newVendor();
+    as('procurement', 'procurement');
+    const ready = async () => {
+      const res = await api().get(`/v1/vendors/${v.id}/review-readiness`);
+      expect(res.status, JSON.stringify(res.body)).toBe(200);
+      return res.body as { kybSubmitted: boolean };
+    };
+    // A draft has no case yet.
+    expect(await ready()).toEqual({ kybSubmitted: false });
+    expect((await post(`/v1/vendors/${v.id}/submit-kyc`)).status).toBe(200);
+    // The case is open, not submitted: not ready, and the API refuses the move too.
+    expect(await ready()).toEqual({ kybSubmitted: false });
+    const early = await post(`/v1/vendors/${v.id}/submit-kyc`, { expectedStatus: 'pending_kyc' });
+    expect(early.status).toBe(409);
+    expect(early.body.error.code).toBe('kyb_not_submitted');
+    await setCase(v.id, 'submitted');
+    expect(await ready()).toEqual({ kybSubmitted: true });
+    expect(
+      (await post(`/v1/vendors/${v.id}/submit-kyc`, { expectedStatus: 'pending_kyc' })).status,
+    ).toBe(200);
+    // An unknown vendor is a 404.
+    expect((await api().get(`/v1/vendors/${randomUUID()}/review-readiness`)).status).toBe(404);
+  });
+
   it('refuses a stale "Start KYB review" with a plain 409 instead of sending the vendor for review', async () => {
     const v = await newVendor();
     as('procurement', 'procurement');

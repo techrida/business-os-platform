@@ -35,6 +35,7 @@ import {
   VendorReasonBodySchema,
   type VendorContactDto,
   type VendorList,
+  type VendorReviewReadiness,
 } from './vendors.types';
 
 @Controller('v1/vendors')
@@ -63,6 +64,13 @@ export class VendorsController {
   @Can('vendor.read')
   get(@Param('id', ParseUUIDPipe) id: string): Promise<VendorDto> {
     return this.vendors.get(id);
+  }
+
+  /** 200 `{ kybSubmitted }`: whether "Send for review" (pending_kyc -> under_review) would be taken now. */
+  @Get(':id/review-readiness')
+  @Can('vendor.read')
+  reviewReadiness(@Param('id', ParseUUIDPipe) id: string): Promise<VendorReviewReadiness> {
+    return this.vendors.reviewReadiness(id);
   }
 
   /** 200 with the updated VendorDto. 409 when `expectedVersion` is stale. Only the keys sent are changed. */

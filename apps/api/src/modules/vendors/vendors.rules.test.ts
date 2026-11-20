@@ -10,6 +10,7 @@ import { describe, expect, it } from 'vitest';
 import {
   isoDay,
   kindCountryProblem,
+  kybReadyForReview,
   kindFromRow,
   kindToRow,
   lapsedTaxClearance,
@@ -123,6 +124,16 @@ describe('submitKycMove (a stale KYB button never runs the other move)', () => {
     expect(submitKycMove('pending_kyc', undefined)).toEqual({ ok: true, to: 'under_review' });
     for (const s of VENDOR_STATUSES.filter((x) => x !== 'draft' && x !== 'pending_kyc')) {
       expect(submitKycMove(s, undefined)).toMatchObject({ ok: false, kind: 'invalid' });
+    }
+  });
+});
+
+describe('kybReadyForReview (the gate of "Send for review")', () => {
+  it('is true only for a submitted or approved KYB case', () => {
+    expect(kybReadyForReview('submitted')).toBe(true);
+    expect(kybReadyForReview('approved')).toBe(true);
+    for (const s of [undefined, 'open', 'draft', 'rejected', 'changes_requested', '']) {
+      expect(kybReadyForReview(s)).toBe(false);
     }
   });
 });

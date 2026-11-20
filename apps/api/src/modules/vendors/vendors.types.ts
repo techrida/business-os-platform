@@ -57,6 +57,13 @@ export const SubmitKycBodySchema = z.strictObject({
 });
 export type SubmitKycBody = z.infer<typeof SubmitKycBodySchema>;
 
+/**
+ * GET /v1/vendors/:id/review-readiness: whether the vendor's KYB case is submitted (or approved), the state
+ * `submit-kyc` checks before pending_kyc -> under_review. The screens draw "Send for review" only when it is true.
+ */
+export const VendorReviewReadinessSchema = z.strictObject({ kybSubmitted: z.boolean() });
+export type VendorReviewReadiness = z.infer<typeof VendorReviewReadinessSchema>;
+
 /** Body of suspend, block and archive: why, for the audit trail (the table has no reason column). */
 export const VendorReasonBodySchema = z.strictObject({ reason: text(500) });
 export type VendorReasonBody = z.infer<typeof VendorReasonBodySchema>;
