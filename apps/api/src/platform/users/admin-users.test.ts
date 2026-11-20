@@ -465,6 +465,21 @@ describe('PUT /v1/admin/users/:id/roles last-Founder guard', () => {
   const FOUNDER_TWO = '00000000-0000-4000-9000-000000000102';
   const INVITED_FOUNDER = '00000000-0000-4000-9000-000000000103';
 
+  /** A membership in `organizationId`; `roleKeys` null means every role the user holds. */
+  const joinEntity = (
+    userId: string,
+    organizationId = STAFF_ORG,
+    roleKeys: string[] | null = null,
+  ) =>
+    store.memberships.push({
+      tenantId: TENANT,
+      userId,
+      organizationId,
+      isDefault: organizationId === STAFF_ORG,
+      roleKeys,
+      departmentId: null,
+    });
+
   beforeEach(() => {
     store.users.push({
       id: FOUNDER_ONE,
@@ -476,6 +491,7 @@ describe('PUT /v1/admin/users/:id/roles last-Founder guard', () => {
       status: 'active',
     });
     store.roles.set(FOUNDER_ONE, ['founder']);
+    joinEntity(FOUNDER_ONE);
   });
 
   it('refuses removing Founder from the only active Founder and does not touch ZITADEL', async () => {
@@ -490,6 +506,7 @@ describe('PUT /v1/admin/users/:id/roles last-Founder guard', () => {
       status: 'invited',
     });
     store.roles.set(INVITED_FOUNDER, ['founder']);
+    joinEntity(INVITED_FOUNDER);
 
     let caught: unknown;
     try {
@@ -502,7 +519,8 @@ describe('PUT /v1/admin/users/:id/roles last-Founder guard', () => {
     expect(caught).toBeInstanceOf(ConflictException);
     expect((caught as ConflictException).getResponse()).toEqual({
       code: 'last_founder',
-      message: 'Kiran Thapa is the only Founder. Make someone else a Founder first.',
+      message:
+        'Kiran Thapa is the only Founder of Techrida Nepal. Make someone else a Founder there first.',
     });
     expect(zitadel.grants.has('z-founder-1')).toBe(false);
     expect(store.roles.get(FOUNDER_ONE)).toEqual(['founder']);
@@ -519,6 +537,7 @@ describe('PUT /v1/admin/users/:id/roles last-Founder guard', () => {
       status: 'active',
     });
     store.roles.set(FOUNDER_TWO, ['founder']);
+    joinEntity(FOUNDER_TWO);
 
     await asAdmin(['admin.roles.write'], () =>
       controller.setRoles(FOUNDER_ONE, { roles: ['management'] }),

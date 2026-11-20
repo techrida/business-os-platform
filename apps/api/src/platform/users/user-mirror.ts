@@ -301,12 +301,20 @@ export class UserMirror {
       await tx.execute(
         sql`SELECT pg_advisory_xact_lock(hashtext('access_revisions:' || ${scope.tenantId}))`,
       );
-      const activeFounders = await this.store.activeRoleHolderIds(tx, scope.tenantId, 'founder');
-      if (activeFounders.filter((id) => id !== userId).length === 0) {
+      // Per legal entity, not company-wide: an entity whose only effective Founder is this user would
+      // be left with none, even when other entities still have Founders.
+      const founders = await this.store.effectiveRoleHolders(tx, scope.tenantId, 'founder');
+      const orphaned = founders.filter(
+        (f) =>
+          f.userId === userId &&
+          !founders.some((o) => o.organizationId === f.organizationId && o.userId !== userId),
+      );
+      if (orphaned.length > 0) {
         const name = user.displayName?.trim() || user.email || 'This user';
+        const entities = orphaned.map((f) => f.entityName).join(', ');
         throw new ConflictException({
           code: 'last_founder',
-          message: `${name} is the only Founder. Make someone else a Founder first.`,
+          message: `${name} is the only Founder of ${entities}. Make someone else a Founder there first.`,
         });
       }
     }
