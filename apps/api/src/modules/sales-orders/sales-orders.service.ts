@@ -17,9 +17,11 @@
 // Confirm, in one transaction (plan section 2, money command shape): withTx -> withIdempotency -> lock the
 // quotation, then its version (the order QuotationOutcomeService.lockSent uses) -> checks (evidence confirmed and
 // meeting the policy, F1-Q28) -> the draft the acceptance made (F1-Q25), or a new draft with lines, tax summary and
-// schedule (draft-order.ts) -> evidence, the advance line billable -> NumberingService.issue (last row lock) ->
-// draft to confirmed. Mark billable: withTx -> withIdempotency -> sales order, then schedule line locks
-// (LedgerService.lockForMoneyCommand) -> conditional updates.
+// schedule (draft-order.ts) -> the order locked -> evidence, the advance line billable -> NumberingService.issue
+// (last row lock) -> draft to confirmed. Lock order: quotation, version, sales order, schedule line, number; the
+// sales order before its lines, as InvoiceDraftingService.draftFromSchedule takes them, so a confirm and a draft of
+// the advance line wait for each other instead of deadlocking. Mark billable: withTx -> withIdempotency -> sales
+// order, then schedule line locks (LedgerService.lockForMoneyCommand) -> conditional updates.
 import {
   trimPercent,
   type ConfirmSalesOrderBody,
@@ -414,6 +416,11 @@ export class SalesOrdersService {
       }
       orderId = await insertDraftOrder(tx, scope, quotation, version, planned.plan, userId);
     }
+    // The order before its schedule lines (the UPDATE below locks the advance line), the order draftFromSchedule
+    // takes them in.
+    await this.ledger.lockForMoneyCommand(tx, scope, [
+      { rank: 'sales_order', ids: [orderId], table: salesOrders },
+    ]);
 
     if (documentIds.length > 0) {
       // The accepted evidence says which kinds exist, not which file is which: every file is filed under the first
