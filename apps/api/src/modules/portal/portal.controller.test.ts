@@ -43,6 +43,7 @@ async function setup(caller: Principal) {
     listVersions: vi.fn().mockResolvedValue([]),
     loadView: vi.fn().mockResolvedValue(undefined),
     loadDocumentHead: vi.fn().mockResolvedValue(undefined),
+    loadAcceptance: vi.fn().mockResolvedValue(undefined),
   };
   const documents = { listForOwner: vi.fn(), issueLinkForOwner: vi.fn() };
   const settings = {

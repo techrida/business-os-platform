@@ -442,7 +442,17 @@ describe('P3 exit: quote to cash over HTTP', () => {
   }, 120_000);
 
   it('3. the accepted quote becomes a sales order split 60/20/20 (3,027,270.00 / 1,009,090.00 / 1,009,090.00)', async () => {
-    // The portal acceptance records a signed quote, which meets the default evidence policy: no extra file.
+    // F1-Q28: Sales confirm the evidence of the portal acceptance first. The typed name is a signed quote, which meets
+    // the default evidence policy: no extra file.
+    const evidence = await t
+      .http()
+      .post(`/v1/quotations/${s.quotationId}/versions/${s.versionId}/evidence-confirmation`)
+      .set('authorization', await auth('sales'))
+      .set('idempotency-key', randomUUID())
+      .send({ evidenceKinds: ['signed_quote'] });
+    expect(evidence.status, show(evidence)).toBe(201);
+    expect(evidence.body).toMatchObject({ status: 'confirmed' });
+    // F1-Q25: the acceptance drafted the order; the Accountant's confirm below promotes that draft.
     const res = await t
       .http()
       .post('/v1/sales-orders')

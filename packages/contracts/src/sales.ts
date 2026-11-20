@@ -189,6 +189,22 @@ export const SalesOrderListItemSchema = z.object({
 });
 export type SalesOrderListItem = z.infer<typeof SalesOrderListItemSchema>;
 
+/**
+ * A draft order's way to confirmation (F1-Q25, F1-Q28): the order is drafted when its quotation is accepted, and the
+ * Accountant confirms it once the evidence is confirmed (a portal acceptance waits for staff) and meets the policy.
+ */
+export const SalesOrderDraftStateSchema = z.object({
+  evidenceStatus: z.enum(['pending', 'confirmed']),
+  policy: z.enum([...SALES_EVIDENCE_KINDS, 'both']),
+  /** What the policy asks for that the evidence lacks. */
+  missing: z.array(z.enum(SALES_EVIDENCE_KINDS)),
+  evidenceKinds: z.array(z.enum(SALES_EVIDENCE_KINDS)),
+  evidenceDocumentIds: z.array(z.guid()),
+  /** Why confirm would be refused now (the 422 code it answers), or null when nothing blocks it. */
+  blocker: z.enum(['evidence_not_confirmed', 'evidence_policy_unmet']).nullable(),
+});
+export type SalesOrderDraftState = z.infer<typeof SalesOrderDraftStateSchema>;
+
 export const SalesOrderDetailSchema = z.object({
   order: SalesOrderDtoSchema,
   lines: z.array(SalesOrderLineDtoSchema),
@@ -196,8 +212,19 @@ export const SalesOrderDetailSchema = z.object({
   evidence: z.array(SalesOrderEvidenceDtoSchema),
   /** Plan A14: true when the advance invoice has an open amount of 0. P4's delivery module reads it. */
   deliveryReleased: z.boolean(),
-  /** What the caller may do on this order's schedule, from its live grants. */
-  can: z.object({ markBillable: z.boolean(), draftInvoice: z.boolean() }).optional(),
+  /** Set on a draft order (F1-Q25), null once confirmed. */
+  draft: SalesOrderDraftStateSchema.nullable().optional(),
+  /**
+   * What the caller may do on this order, from its live grants. `confirm`: a draft with nothing blocking it, and
+   * `sales_order.confirm` (`POST /v1/sales-orders` with the order's `quotationVersionId`).
+   */
+  can: z
+    .object({
+      markBillable: z.boolean(),
+      draftInvoice: z.boolean(),
+      confirm: z.boolean().optional(),
+    })
+    .optional(),
 });
 export type SalesOrderDetail = z.infer<typeof SalesOrderDetailSchema>;
 
