@@ -67,6 +67,7 @@ import { type Decision, type Principal } from '../../platform/authz/principal';
 import { DB, type Db, type DbTransaction } from '../../platform/db/db.module';
 import { updateVersioned, withIdempotency } from '../../platform/db/idempotency';
 import { withTx, type Actor, type TxScope } from '../../platform/db/tx';
+import { assertNotInfected } from '../../platform/documents/documents.service';
 import { searchPage, type SearchColumn } from '../../platform/list';
 import { NumberingService } from '../../platform/settings/numbering.service';
 import { SettingsService } from '../../platform/settings/settings.service';
@@ -807,7 +808,10 @@ export class SalesOrdersService {
     return new Set(rows.map((r) => r.id));
   }
 
-  /** A foreign or removed document id would otherwise surface as a composite-FK 500. */
+  /**
+   * A foreign or removed document id would otherwise surface as a composite-FK 500. An infected file is refused
+   * (409 document_infected, TR-Q12e).
+   */
   private async assertDocumentsUsable(
     tx: DbTransaction,
     scope: TxScope,
@@ -822,6 +826,7 @@ export class SalesOrdersService {
         { documentIds: bad },
       );
     }
+    await assertNotInfected(tx, scope, ids);
   }
 
   private async creditDaysOf(tx: DbTransaction, paymentTermId: string | null): Promise<number> {

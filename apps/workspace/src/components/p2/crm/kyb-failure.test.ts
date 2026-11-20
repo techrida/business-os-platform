@@ -51,6 +51,21 @@ describe('kybFailure', () => {
     expect(f.reload).toBe(true);
   });
 
+  it('shows the infected-file refusal of an attach with the file name, without a reload (TR-Q12e)', () => {
+    const f = kybFailure(
+      err(
+        409,
+        'document_infected',
+        'A virus was found in “eicar.pdf”. Remove it or upload a clean copy, then try again.',
+      ),
+      'attach',
+    );
+    expect(f.message).toBe(
+      'A virus was found in “eicar.pdf”. Remove it or upload a clean copy, then try again.',
+    );
+    expect(f.reload).toBe(false);
+  });
+
   it('words an attach to a frozen case and asks for a reload', () => {
     const f = kybFailure(
       err(409, 'conflict', 'A case in status approved cannot be changed'),

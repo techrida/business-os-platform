@@ -9,7 +9,7 @@
 import { IMAGE_ACCEPT, IMAGE_HINT, imagePath, type ImageOwnerType } from '@bos/contracts';
 import { useEffect, useId, useRef, useState, type ReactNode } from 'react';
 
-import { announceImageReady, Avatar } from './avatar';
+import { announceImageReady, Avatar, type AvatarSize } from './avatar';
 import { Button } from './button';
 import { ConfirmDialog, Dialog, DialogClose } from './dialog';
 import { Icon } from './icon';
@@ -70,6 +70,11 @@ export interface ImageUploadProps {
   disabled?: boolean | undefined;
   /** Only the picture and its preview: no drop zone, no remove button. */
   readOnly?: boolean | undefined;
+  /**
+   * The picture's size: `large` (40 px, the default, for settings rows) or `xlarge` (76 px) for the picture at the
+   * head of a record's profile card. Initials, preview and scanning state are the same at either size.
+   */
+  size?: Extract<AvatarSize, 'large' | 'xlarge'> | undefined;
 }
 
 /**
@@ -100,6 +105,7 @@ export function ImageUpload({
   onChange,
   disabled = false,
   readOnly = false,
+  size = 'large',
 }: ImageUploadProps) {
   const ids = useId();
   const titleId = `${ids}-title`;
@@ -266,7 +272,7 @@ export function ImageUpload({
       name={name}
       seedId={seedId}
       imageDocumentId={scanning ? null : imageDocumentId}
-      size="large"
+      size={size}
       shape={shape}
       fit={fit}
     />

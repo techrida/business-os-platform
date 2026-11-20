@@ -61,6 +61,16 @@ export function codeOf(err: unknown): string {
 
 export const NOT_A_VENDOR = 'Sign in with your vendor account to do this.';
 
+/** The API's words for a `document_infected` refusal (they name the file), or a fixed sentence without them. */
+function infectedMessage(err: unknown): string {
+  const e = (err instanceof ApiError ? err.body : undefined) as
+    { error?: { message?: unknown } } | null | undefined;
+  const message = e?.error?.message;
+  return typeof message === 'string' && message.trim() !== ''
+    ? message
+    : 'A virus was found in this file. Upload a clean copy, then submit again.';
+}
+
 /**
  * Words for a refused or failed call. A definite refusal rotates the key; an unknown outcome (a
  * timeout, a 5xx) and the in-progress 409 keep it, so the retry replays the first request instead
@@ -75,6 +85,10 @@ export function failed<Field extends string>(
   const status = err instanceof ApiError ? err.status : 0;
   if (status === 401) redirect(loginUrl(returnTo));
   if (status === 403) return { key: randomUUID(), error: what.forbidden };
+  if (status === 409 && codeOf(err) === 'document_infected') {
+    // TR-Q12e: the scan found a virus in the attached file; the API's message names it.
+    return { key: randomUUID(), error: infectedMessage(err) };
+  }
   if (status === 409) {
     return {
       key,

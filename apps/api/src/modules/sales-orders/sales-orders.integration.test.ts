@@ -27,6 +27,7 @@ import {
 import {
   billingScheduleLines,
   documents,
+  documentVersions,
   invoices,
   opportunities,
   quotationVersions,
@@ -295,6 +296,24 @@ async function seedDocument(scope: TxScope = scopeA): Promise<string> {
   return row!.id;
 }
 
+/** `seedDocument` whose only version the virus scan found infected (TR-Q12e). */
+async function infectedDocument(): Promise<string> {
+  const id = await seedDocument();
+  await withTx(db, scopeA, systemActor('test'), (tx) =>
+    tx.insert(documentVersions).values({
+      ...scopeA,
+      documentId: id,
+      version: 1,
+      filename: 'evidence.pdf',
+      declaredMime: 'application/pdf',
+      sizeBytes: 1024,
+      storageKey: `${scopeA.tenantId}/${randomUUID()}`,
+      status: 'infected',
+    }),
+  );
+  return id;
+}
+
 async function draftQuotation(
   paymentSchedule?: { label: string; percent: string }[],
 ): Promise<QuotationDto> {
@@ -550,6 +569,15 @@ describe('SalesOrdersService.confirmFromQuotation', () => {
       .from(salesOrderEvidence)
       .where(eq(salesOrderEvidence.salesOrderId, detail.order.id));
     expect(rows).toHaveLength(1);
+  });
+
+  it('refuses an evidence file the scan found infected with 409 document_infected and makes no order (TR-Q12e)', async () => {
+    const q = await acceptedQuotation();
+    expect(await statusOf(confirm(q, [await infectedDocument()]))).toEqual({
+      status: 409,
+      code: 'document_infected',
+    });
+    expect(await liveOrders(q.id)).toHaveLength(0);
   });
 
   it('takes consecutive SO numbers for consecutive orders', async () => {
@@ -840,6 +868,11 @@ describe('SalesOrdersService.markBillable', () => {
     expect(
       await statusOf(mark(detail, 2, { evidenceDocumentId: foreign, expectedVersion: 2 })),
     ).toEqual({ status: 422, code: 'invalid_evidence_document' });
+    expect(
+      await statusOf(
+        mark(detail, 2, { evidenceDocumentId: await infectedDocument(), expectedVersion: 2 }),
+      ),
+    ).toEqual({ status: 409, code: 'document_infected' });
     expect(
       await statusOf(mark(detail, 1, { evidenceDocumentId: doc, expectedVersion: 2 })),
     ).toEqual({ status: 409, code: 'schedule_line_not_planned' });

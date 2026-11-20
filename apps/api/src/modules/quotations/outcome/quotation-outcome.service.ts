@@ -42,6 +42,7 @@ import type { z } from 'zod';
 import { AuditService } from '../../../platform/audit/audit.service';
 import { type DbTransaction } from '../../../platform/db/db.module';
 import { type TxScope } from '../../../platform/db/tx';
+import { assertNotInfected } from '../../../platform/documents/documents.service';
 import { readTxContext } from '../../../platform/documents/tx-context';
 import { NotifyService } from '../../../platform/notify/notify.service';
 import { SettingsService } from '../../../platform/settings/settings.service';
@@ -268,6 +269,8 @@ export class QuotationOutcomeService {
       acceptedByName?: string;
     },
   ): Promise<AcceptanceDto> {
+    // TR-Q12e: an evidence file the scan found infected is not recorded with the decision.
+    await assertNotInfected(tx, scope, input.evidenceDocumentIds ?? []);
     const [row] = await tx
       .insert(quotationAcceptances)
       .values({
