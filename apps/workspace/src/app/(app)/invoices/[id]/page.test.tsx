@@ -59,6 +59,20 @@ vi.mock('next/link', () => ({
   ),
 }));
 
+// The real viewer, with the routes it was given written beside its trigger, so a test can see whether Retry is
+// offered (the dialog only asks for it once opened).
+vi.mock('@/components/ui/file-preview-dialog', async (importOriginal) => {
+  const real = await importOriginal<typeof import('@/components/ui/file-preview-dialog')>();
+  return {
+    ...real,
+    FilePreviewDialog: (props: Parameters<typeof real.FilePreviewDialog>[0]) => (
+      <span data-download-url={props.downloadUrl} data-retry-url={props.retryUrl}>
+        <real.FilePreviewDialog {...props} />
+      </span>
+    ),
+  };
+});
+
 async function render(id: string = ID): Promise<string> {
   return renderToStaticMarkup(await InvoiceDetailPage({ params: Promise.resolve({ id }) }));
 }
@@ -322,6 +336,20 @@ describe('invoice detail page', () => {
     const html = await render();
     expect(html).toMatch(/<button[^>]*aria-haspopup="dialog"[^>]*>.*View PDF<\/button>/);
     expect(html).not.toMatch(/<a[^>]+href="\/invoices\/[^"]+\/document"/);
+  });
+
+  // R4c2 (TR-Q4): a PDF whose render was given up offers Retry to who may issue the invoice, and to no one else.
+  it('offers Retry on the PDF to Finance, who may issue the invoice', async () => {
+    const html = await render();
+    expect(html).toContain(`data-retry-url="/invoices/${ID}/document/retry"`);
+    expect(html).toContain(`data-download-url="/invoices/${ID}/document"`);
+  });
+
+  it('offers no Retry on the PDF to the Accountant, who may not issue', async () => {
+    mocks.requireStaffSession.mockResolvedValue({ accessToken: 't', roles: ['accountant'] });
+    const html = await render();
+    expect(html).toMatch(/View PDF/);
+    expect(html).not.toContain('data-retry-url');
   });
 
   it.each(['draft', 'submitted', 'returned', 'approved'])(

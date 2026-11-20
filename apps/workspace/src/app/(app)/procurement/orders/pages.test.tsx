@@ -272,12 +272,14 @@ describe('the purchase order page', () => {
     const out = await detail();
     expect(out).toContain('PO-2082-0001');
     expect(out).toContain('Himal Traders Pvt. Ltd.');
-    expect(out).toContain(`/procurement/orders/${ID}/versions/1/document`);
-    expect(out).toContain(`/procurement/orders/${ID}/versions/2/document`);
     // Each version opens in the viewer (a dialog trigger), with Download beside it; the label is not "Download PDF".
+    // Download is a button that fetches the file in the app (R4c2), so no link to the document route is in the page.
     expect(
       out.match(/<button[^>]*aria-haspopup="dialog"[^>]*>[^]*?View PDF<\/button>/g),
     ).toHaveLength(2);
+    expect(out).toMatch(/<button[^>]*aria-label="Download of version 1"/);
+    expect(out).toMatch(/<button[^>]*aria-label="Download of version 2"/);
+    expect(out).not.toContain(`href="/procurement/orders/${ID}/versions/1/document"`);
     expect(out).toContain('of version 2');
     expect(out).not.toContain('Download PDF');
     expect(out).toContain('Total, version 2');

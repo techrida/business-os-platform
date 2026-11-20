@@ -6,9 +6,10 @@ const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const VERSION = /^[1-9]\d{0,8}$/;
 
 /**
- * Both endpoints read the PDF of one issued purchase order version. The API answers 404 while the
- * file is not rendered and scanned clean; that becomes a plain "not available". Every call issues a
- * new single-use link, so each request issues exactly one.
+ * Both endpoints read the PDF of one issued purchase order version. The API answers 409 while the
+ * file is being prepared (the viewer keeps checking), 424 once its render was given up (the viewer
+ * offers Retry) and 404 when there is none; each becomes a plain sentence. Each request asks for at
+ * most one single-use link.
  */
 export async function purchaseOrderFileResponse(
   id: string,
