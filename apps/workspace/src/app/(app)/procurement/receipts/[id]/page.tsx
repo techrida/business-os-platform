@@ -26,13 +26,7 @@ import layout from '../../procurement.module.css';
 import { isReceivable, PO_STATUS_LABEL, qtyText } from '../../orders/_lib/model';
 import { ConfirmDialog, ReverseDialog, DiscardReceiptDialog } from '../_components/receipt-actions';
 import { receiptFailure } from '../_lib/failure';
-import {
-  KIND_LABEL,
-  mayHandleKind,
-  receiptActions,
-  receiptGrants,
-  RECEIPT_STATUS_LABEL,
-} from '../_lib/model';
+import { KIND_LABEL, receiptActions, receiptGrants, RECEIPT_STATUS_LABEL } from '../_lib/model';
 import styles from '../receipts.module.css';
 
 export const metadata: Metadata = { title: 'Receipt · Business OS' };
@@ -240,7 +234,6 @@ export default async function ReceiptPage({
 
   const stuckDraft =
     receipt.status === 'draft' && order !== undefined && !isReceivable(order.status);
-  const canDiscard = receipt.status === 'draft' && mayHandleKind(receipt.kind, grants);
 
   return (
     <Page className={layout.detail}>
@@ -250,11 +243,11 @@ export default async function ReceiptPage({
           title={<span className={styles.long}>{receipt.number}</span>}
           status={<Badge tone={status.tone}>{status.text}</Badge>}
           actions={
-            can.confirm || can.reverse || canDiscard ? (
+            can.confirm || can.reverse || can.discard ? (
               <div className={styles.headActions}>
                 {can.confirm ? <ConfirmDialog {...common} idempotencyKey={randomUUID()} /> : null}
                 {can.reverse ? <ReverseDialog {...common} idempotencyKey={randomUUID()} /> : null}
-                {canDiscard ? (
+                {can.discard ? (
                   <DiscardReceiptDialog {...common} idempotencyKey={randomUUID()} />
                 ) : null}
               </div>
@@ -277,10 +270,17 @@ export default async function ReceiptPage({
           or partly received order takes receipts.
         </Alert>
       ) : null}
-      {receipt.status === 'draft' && !mayHandleKind(receipt.kind, grants) ? (
-        <Alert tone="info" role="status" title="Confirming goods is for the warehouse">
-          You can read this draft, but a colleague in the warehouse role has to confirm it.
-        </Alert>
+      {receipt.status === 'draft' && !can.discard ? (
+        receipt.kind === 'service' ? (
+          <Alert tone="info" role="status" title="Confirming a service is for whoever asked for it">
+            You can read this draft, but the person who raised the purchase request, or the
+            warehouse, has to confirm it.
+          </Alert>
+        ) : (
+          <Alert tone="info" role="status" title="Confirming goods is for the warehouse">
+            You can read this draft, but a colleague in the warehouse role has to confirm it.
+          </Alert>
+        )
       ) : null}
       {receipt.status === 'reversed' ? (
         <Alert tone="warning" role="status" title="This receipt was reversed">

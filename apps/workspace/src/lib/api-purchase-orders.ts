@@ -134,6 +134,8 @@ export const PoProgressSchema = z.object({
   number: Text,
   status: PoStatusSchema,
   lines: z.array(PoProgressLineSchema),
+  /** Which kinds of receipt the person may make on this order, from their live grants on it. */
+  can: z.object({ goods: z.boolean(), service: z.boolean() }).optional(),
 });
 export type PoProgress = z.infer<typeof PoProgressSchema>;
 
@@ -166,6 +168,11 @@ export const ReceiptSchema = z.object({
   version: z.number().int(),
   createdAt: Text,
   lines: z.array(ReceiptLineSchema),
+  /**
+   * What the person may do with this receipt, from their live grants on the order and its statuses. Sent by the list
+   * and detail reads; the write routes leave it out.
+   */
+  can: z.object({ confirm: z.boolean(), discard: z.boolean(), reverse: z.boolean() }).optional(),
 });
 export type Receipt = z.infer<typeof ReceiptSchema>;
 
