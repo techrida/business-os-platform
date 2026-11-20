@@ -30,7 +30,10 @@ function pushGuardEntry(): void {
  * links whose JSX you directly own, not sidebar/header links outside the form). This hook combines:
  * 1. `window` `beforeunload` for tab close, reload and external URL-bar navigation.
  * 2. Capture-phase `document` click interception on internal `<a href>` elements (runs before
- *    Next `<Link>`'s React handler) so in-app link clicks open a confirmation dialog first.
+ *    Next `<Link>`'s React handler) so in-app link clicks open a confirmation dialog first. Only the
+ *    default is prevented: the link's own onClick still runs (the bell marks its item read), and
+ *    `<Link>` skips a click whose default is prevented. A link whose onClick navigates by itself,
+ *    ignoring `defaultPrevented`, would bypass the guard; the app shell has none.
  * 3. A `popstate` guard backed by one tagged history sentinel (`__bosUnsavedGuard`), pushed once
  *    when `dirty` turns true and re-pushed if browser Back fires while dirty. Confirming Back steps
  *    past both the sentinel and the settings page (`history.go(-2)`). If the user saves or discards
@@ -80,9 +83,10 @@ export function useUnsavedChangesGuard(dirty: boolean): {
       if (url.pathname === window.location.pathname && url.search === window.location.search) {
         return;
       }
-      // Capture phase on document: runs before Next.js <Link>'s own click handler.
+      // Capture phase on document: runs before Next.js <Link>'s own click handler, which does not
+      // navigate a click whose default is already prevented. The click still reaches the link's
+      // own handlers, so the notifications bell marks the item read (U23-Q5) and menus close.
       event.preventDefault();
-      event.stopPropagation();
       setPendingLeave({ kind: 'href', href: `${url.pathname}${url.search}${url.hash}` });
     };
 
