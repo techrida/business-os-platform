@@ -1,5 +1,11 @@
+import { PDF_PREPARE_WITHIN_MS } from '@bos/contracts';
 import { describe, expect, it } from 'vitest';
 
+import {
+  ORPHAN_AFTER_MS as INVOICE_ORPHAN_AFTER_MS,
+  SWEEP_EVERY_MS,
+} from '../../invoices/render/invoice-render.sweeper';
+import { ORPHAN_AFTER_MS as PO_ORPHAN_AFTER_MS } from '../../procurement/orders/render/purchase-order-render.sweeper';
 import {
   MAX_RENDER_ATTEMPTS,
   nextRetryPauseMs,
@@ -29,5 +35,15 @@ describe('nextRetryPauseMs', () => {
     for (let n = 1; n < MAX_RENDER_ATTEMPTS; n += 1) total += nextRetryPauseMs(n) ?? 0;
     total += MAX_RENDER_ATTEMPTS * TICK_AND_DEADLINE_MS;
     expect(total).toBeLessThanOrEqual(RENDER_GIVE_UP_WITHIN_MS);
+  });
+
+  it('recovers an invoice or PO render that crashed midway within the bound the screens poll for', () => {
+    // The crashed first try, the orphan wait, the sweep that removes the orphan, and the try after it.
+    for (const orphanAfter of [INVOICE_ORPHAN_AFTER_MS, PO_ORPHAN_AFTER_MS]) {
+      const total = TICK_AND_DEADLINE_MS + orphanAfter + SWEEP_EVERY_MS + TICK_AND_DEADLINE_MS;
+      expect(total).toBeLessThanOrEqual(PDF_PREPARE_WITHIN_MS);
+      // Far above the create-to-receive gap (storing and hashing the bytes) it must not cut short.
+      expect(orphanAfter).toBeGreaterThanOrEqual(5 * 60_000);
+    }
   });
 });

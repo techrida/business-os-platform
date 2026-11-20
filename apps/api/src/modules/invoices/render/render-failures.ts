@@ -15,8 +15,8 @@ import {
   gt,
   isNotNull,
   isNull,
-  not,
   notExists,
+  notInArray,
   or,
   sql,
   type SQL,
@@ -167,9 +167,36 @@ export function renderHeldBack(
 }
 
 /**
- * Soft-removes document `documentId` of `o` when none of its uploads got bytes (all still awaiting_content): the try
- * that created it failed before storing them, and a live document would keep the owner out of the candidates. The same
- * soft remove as the sweepers' orphan cleanup; a document that got its bytes is left alone.
+ * Upload statuses that hold no bytes: still waiting for them, or refused by the type check (the file is deleted). A
+ * generated document whose uploads are all in one of these has no PDF and never will.
+ */
+export const UNFILLED_VERSION_STATUSES = ['awaiting_content', 'rejected'] as const;
+
+/**
+ * For a document query: an upload of document `documentId` holds bytes (it is past the type check). Its absence means
+ * the document is unfilled, and a live unfilled document would keep its owner out of the render candidates forever.
+ */
+export function filledVersion(
+  db: Db | DbTransaction,
+  tenantId: string | AnyPgColumn,
+  documentId: string | AnyPgColumn,
+) {
+  return db
+    .select({ one: sql`1` })
+    .from(documentVersions)
+    .where(
+      and(
+        eq(documentVersions.tenantId, tenantId),
+        eq(documentVersions.documentId, documentId),
+        notInArray(documentVersions.status, [...UNFILLED_VERSION_STATUSES]),
+      ),
+    );
+}
+
+/**
+ * Soft-removes document `documentId` of `o` when none of its uploads got bytes (awaiting_content, or rejected by the
+ * PDF type check): the try that created it failed before storing them, and a live document would keep the owner out of
+ * the candidates. The same soft remove as the sweepers' orphan cleanup; a document that got its bytes is left alone.
  */
 export async function discardUnfilledDocument(
   tx: DbTransaction,
@@ -177,16 +204,7 @@ export async function discardUnfilledDocument(
   documentId: string,
   now: Date,
 ): Promise<void> {
-  const filled = tx
-    .select({ one: sql`1` })
-    .from(documentVersions)
-    .where(
-      and(
-        eq(documentVersions.tenantId, o.tenantId),
-        eq(documentVersions.documentId, documentId),
-        not(eq(documentVersions.status, 'awaiting_content')),
-      ),
-    );
+  const filled = filledVersion(tx, o.tenantId, documentId);
   await tx
     .update(documents)
     .set({ removedAt: now, updatedAt: now })

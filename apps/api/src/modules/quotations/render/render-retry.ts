@@ -25,6 +25,16 @@ export const RETRY_PAUSE_MAX_MS = 30 * 60_000;
 export const RENDER_GIVE_UP_WITHIN_MS = PDF_PREPARE_WITHIN_MS;
 
 /**
+ * When the invoice and purchase-order sweepers treat a generated document that never got its bytes as left by a render
+ * that crashed midway, and soft-remove it so its owner is rendered again. While it is live the screens show "Preparing
+ * PDF", so a crash on the first try must be recovered within PDF_PREPARE_WITHIN_MS: first try, this wait, the sweep
+ * that removes it and the next try fit in it (render-retry.test.ts). It is far above the legitimate gap it must not
+ * cut short: the document is created after Chromium finished, so only storing and hashing the bytes are in between.
+ * 10 minutes, like a quotation's stale render claim. (Quotation documents do not block a render, so they keep an hour.)
+ */
+export const GENERATED_ORPHAN_AFTER_MS = 10 * 60_000;
+
+/**
  * The pause before the next try, after `failures` failed tries in a row (1 or more). Null once the tries are used up:
  * the render is given up.
  */
