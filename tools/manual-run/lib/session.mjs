@@ -26,14 +26,15 @@ export const LAST_TIMEOUT_KEY = 'lastTimeoutAt';
 /** How long after a timeout an adoption lookup waits, for a request sent at the deadline to land. */
 export const SETTLE_MS = 8000;
 
-/** The exact title(s) of a list's empty state as one anchored, literal pattern. */
-export const emptyStateText = (empty) =>
-  new RegExp(
-    `^(?:${[empty]
-      .flat()
-      .map((t) => t.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'))
-      .join('|')})$`,
-  );
+/**
+ * A list's empty state: its exact title, or any of several (app versions word it differently),
+ * each matched like `getByText(title, { exact: true })` and combined with `or`.
+ */
+export const emptyStateLocator = (page, empty) =>
+  [empty]
+    .flat()
+    .map((title) => page.getByText(title, { exact: true }))
+    .reduce((all, one) => all.or(one));
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
@@ -763,7 +764,6 @@ export class Session {
   async loadList(path, { heading, table, empty, attempts = 4 }) {
     // Every loadList is an adoption lookup (memo, lead, payments): let a late request land first.
     await this.settleAfterTimeout();
-    const emptyText = emptyStateText(empty);
     const failure = () =>
       this.page.getByRole('alert').filter({ hasText: /did not load|did not open/ });
     for (let i = 1; i <= attempts; i++) {
@@ -771,7 +771,7 @@ export class Session {
         p.getByRole('heading', { level: 1, name: heading, exact: true }),
       );
       const t = this.page.getByRole('table', { name: table, exact: true });
-      const e = this.page.getByText(emptyText);
+      const e = emptyStateLocator(this.page, empty);
       const wait = (loc, outcome) =>
         loc
           .first()

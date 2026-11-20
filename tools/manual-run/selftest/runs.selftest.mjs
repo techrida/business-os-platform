@@ -36,7 +36,7 @@ import {
   writeState,
 } from '../lib/store.mjs';
 import { uniqueValues } from '../lib/config.mjs';
-import { emptyStateText } from '../lib/session.mjs';
+import { emptyStateLocator } from '../lib/session.mjs';
 import { contactEmailFor, listIsComplete, paymentDecision } from '../workflows/sales.mjs';
 
 const WF = [
@@ -254,19 +254,46 @@ describe('a merged result is green only when every kept step is', () => {
     writeFileSync(kept, 'webm');
     const closer = { close: async () => {} };
     const result = { videos: [] };
+    // The main window's video is missing: the run fails.
+    await assert.rejects(
+      finishVideos(
+        cfg,
+        { videos: [] },
+        { ...closer, pages: () => [] },
+        { closedPages: [page(path.join(cfg.outDir, 'gone.webm'))] },
+        closer,
+        'start',
+      ),
+      /the video of the main window is missing/,
+    );
+    // A named window's video is missing: the run fails, after the main video is placed.
     await assert.rejects(
       finishVideos(
         cfg,
         result,
         { ...closer, pages: () => [] },
-        { closedPages: [page(kept), page(path.join(cfg.outDir, 'gone.webm'))] },
+        {
+          closedPages: [page(kept)],
+          extraContexts: [{ name: 'private', context: closer, pages: [page('/nope.webm')] }],
+        },
         closer,
         'start',
       ),
-      /the video of tab 2 is missing/,
+      /the video of the private window is missing/,
     );
-    // The main window's video was still placed, under the claimed name.
     assert.deepEqual(result.videos, [path.join(cfg.outDir, 'start.webm')]);
+    // An extra tab without a file (closed before its first frame) is only noted.
+    writeFileSync(kept, 'webm');
+    const tabs = { videos: [] };
+    await finishVideos(
+      cfg,
+      tabs,
+      { ...closer, pages: () => [] },
+      { closedPages: [page(kept), page('/nope.webm')] },
+      closer,
+      'start',
+    );
+    assert.deepEqual(tabs.videoNotes, ['no video file for tab 2']);
   });
 });
 
@@ -626,21 +653,40 @@ describe('payments are recorded at most once per run', () => {
   });
 
   test("the live app's empty search ('No matching payments.') counts as loaded and empty", () => {
-    const empty = emptyStateText([
+    // A page whose getByText finds the given titles exactly (as Playwright's exact match does).
+    const shown = new Set(['No matching payments.']);
+    const page = {
+      getByText: (title, opts) => ({
+        title,
+        exact: opts?.exact,
+        found: shown.has(title),
+        or(other) {
+          return {
+            ...this,
+            title: `${this.title} | ${other.title}`,
+            found: this.found || other.found,
+            or: this.or,
+          };
+        },
+      }),
+    };
+    const titles = [
       'No matching payments.',
       'No payments match these filters.',
       'No payments yet.',
-    ]);
-    for (const title of ['No matching payments.', 'No payments match these filters.'])
-      assert.ok(empty.test(title), title);
-    // Exact titles only: neither the hint nor the failure alert reads as an empty list.
-    for (const other of [
-      'Try another receipt number or customer name.',
-      'No matching payments. Show all payments',
-      'The payments did not load',
-      'No matching paymentsX',
-    ])
-      assert.ok(!empty.test(other), other);
+    ];
+    const loc = emptyStateLocator(page, titles);
+    assert.equal(loc.found, true, 'the live title is found');
+    assert.equal(loc.exact, true, 'every title is matched exactly');
+    assert.equal(loc.title, titles.join(' | '));
+    shown.clear();
+    shown.add('Try another receipt number or customer name.');
+    assert.equal(
+      emptyStateLocator(page, titles).found,
+      false,
+      'the hint alone is not the empty state',
+    );
+    assert.equal(emptyStateLocator(page, 'No leads match').title, 'No leads match');
     // Zero payments for this run's customer, then: a new payment may be recorded.
     assert.deepEqual(paymentDecision({ lookup: ok([]), ref, knownUrls: [] }), {
       action: 'record',
