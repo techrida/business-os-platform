@@ -18,6 +18,7 @@ allowBuilds:
   msgpackr-extract: false
   ssh2: false
   cpu-features: false
+  protobufjs: set this to true or false
 
 # The first install was not run when this file was written, so the full dependency graph was
 # not scanned for other install scripts. With false, an unlisted script is skipped and
