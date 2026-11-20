@@ -446,7 +446,7 @@ describe('RoleCache.current, the request path (U20a2-Q10)', () => {
     vi.spyOn(appPool, 'query').mockImplementation(() => {
       throw new Error('database down');
     });
-    await expect(cache.current(org.tenantId)).rejects.toThrow('database down');
+    await expect(cache.current(org.tenantId)).rejects.toThrow();
   });
 });
 

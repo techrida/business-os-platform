@@ -399,11 +399,9 @@ describe('effectiveScopeForUser and explainAreaAccess follow the run-time level 
       effectiveScopeForUser(member('manager', ['sales']), 'crm.lead.write', grantMap, off).scope,
     ).toBe('own');
 
-    // Finance starts leads for Sales: its manager sees the department's leads but edits none.
+    // Finance reads every lead (U20a2-Q4) and starts leads for Sales: its manager edits none.
     const financeManager = member('manager', ['finance']);
-    expect(effectiveScopeForUser(financeManager, 'crm.lead.read', grantMap, on).scope).toBe(
-      'department',
-    );
+    expect(effectiveScopeForUser(financeManager, 'crm.lead.read', grantMap, on).scope).toBe('all');
     expect(effectiveScopeForUser(financeManager, 'crm.lead.write', grantMap, on).scope).toBe('own');
 
     // Per role, then the widest: the Sales role carries the edit row for a Sales+Finance manager.
