@@ -230,7 +230,12 @@ export default async function InvoiceDetailPage({ params }: { params: Promise<{ 
             <>
               <InvoiceActions invoice={invoice} gates={gates} reloadHref={path} />
               {pdfNumber ? (
-                <InvoicePreview documentUrl={`${path}/document`} number={pdfNumber} />
+                <InvoicePreview
+                  documentUrl={`${path}/document`}
+                  number={pdfNumber}
+                  // The API's Retry needs invoice.issue on this invoice: the grant, and its scope reaching it.
+                  mayRetry={can('invoice.issue') && detail.can?.issue !== false}
+                />
               ) : null}
               {recordPayment ? <LinkButton href={recordPayment}>Record payment</LinkButton> : null}
             </>
