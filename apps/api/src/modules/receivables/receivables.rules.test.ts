@@ -149,6 +149,8 @@ describe('agingReport', () => {
             d91_plus: '49.50',
           },
           totalOpen: '300.00',
+          promiseMissed: false,
+          promiseMissedOn: null,
         },
         {
           customerId: a,
@@ -162,6 +164,8 @@ describe('agingReport', () => {
             d91_plus: '0.00',
           },
           totalOpen: '10.00',
+          promiseMissed: false,
+          promiseMissedOn: null,
         },
         {
           customerId: b,
@@ -175,6 +179,8 @@ describe('agingReport', () => {
             d91_plus: '0.00',
           },
           totalOpen: '100.00',
+          promiseMissed: false,
+          promiseMissedOn: null,
         },
       ],
       totals: [
