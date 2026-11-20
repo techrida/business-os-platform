@@ -1,7 +1,7 @@
 // Display helpers for Server Components that need @bos/locale or contract constants (kept out of
 // kernel-ui.ts so Client Components do not pull in decimal.js and the Nepali calendar).
 // Serves the NFR "amounts are exact and dates are Kathmandu time" for every kernel screen.
-import { DEFAULT_ROLE_PERMISSIONS, richTextToPlain } from '@bos/contracts';
+import { richTextToPlain } from '@bos/contracts';
 import {
   formatCustomerDate,
   formatKathmandu,
@@ -12,7 +12,6 @@ import {
 } from '@bos/locale';
 
 import { documentTypeLabel } from '@/app/(app)/inbox/inbox-params';
-import { isLiveGrants, type PermissionSource } from '@/components/p2/customers/permissions';
 
 import { humanizeKey } from './kernel-ui';
 
@@ -245,19 +244,4 @@ export function snapshotEntries(
       }
       return { key, label, value: JSON.stringify(raw, null, 2), block: true };
     });
-}
-
-/**
- * Whether the nav shows Admin: the person holds any `admin.*` permission. Pass the live grants
- * (`grantsFrom` over `getMeOrNull`) so a grant added or removed in Settings > Access shows at once.
- * Role keys still read the built-in defaults, which miss those edits. The admin pages and the API
- * still enforce every request.
- */
-export function canSeeAdmin(source: PermissionSource): boolean {
-  if (isLiveGrants(source)) return [...source.keys()].some((p) => p.startsWith('admin.'));
-  return source.some((role) => {
-    const grants = (DEFAULT_ROLE_PERMISSIONS as Record<string, object | undefined>)[role] as
-      Record<string, unknown> | undefined;
-    return grants !== undefined && Object.keys(grants).some((p) => p.startsWith('admin.'));
-  });
 }
