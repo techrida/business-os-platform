@@ -190,9 +190,13 @@ describe('billActions with the per-bill can flags', () => {
   });
 
   it('never lets a true flag stand in for a missing grant or a status that refuses', () => {
-    expect(billActions({ ...matching, can: OWN }, { enter: false })).toEqual(OTHERS);
+    expect(billActions({ ...matching, can: OWN }, { enter: false })).toEqual({
+      match: false,
+      submit: false,
+      void: false,
+    });
     expect(
       billActions({ status: 'paid', matchStatus: 'matched', purchaseOrderId: po, can: OWN }, enter),
-    ).toEqual(OTHERS);
+    ).toEqual({ match: false, submit: false, void: false });
   });
 });
