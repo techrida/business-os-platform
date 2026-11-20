@@ -8,6 +8,7 @@ const seen = vi.hoisted(() => ({
   avatarMounts: 0,
   uploads: [] as Array<Record<string, unknown>>,
   refresh: vi.fn(),
+  navGroups: [] as Array<{ label: string; items: Array<{ label: string }> }>,
 }));
 vi.mock('next/navigation', () => ({ useRouter: () => ({ refresh: seen.refresh }) }));
 vi.mock('@/components/ui/avatar', async () => {
@@ -30,7 +31,13 @@ vi.mock('@/components/ui/image-upload', () => ({
 }));
 // The navigation and shell controls have their own tests; here they only need to stay out of the way.
 vi.mock('./brand', () => ({ Brand: () => null }));
-vi.mock('./shell-nav', () => ({ ShellNav: () => null, ShellNavSearch: () => null }));
+vi.mock('./shell-nav', () => ({
+  ShellNav: ({ groups }: { groups: typeof seen.navGroups }) => {
+    seen.navGroups = groups;
+    return null;
+  },
+  ShellNavSearch: () => null,
+}));
 vi.mock('./shell-state', () => ({ CollapseToggle: () => null, DrawerCloseButton: () => null }));
 
 import { Sidebar } from './sidebar';
@@ -43,6 +50,7 @@ beforeEach(() => {
   seen.avatars = [];
   seen.uploads = [];
   seen.avatarMounts = 0;
+  seen.navGroups = [];
   seen.refresh.mockReset();
   Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true });
   vi.stubGlobal(
@@ -65,7 +73,7 @@ describe('Sidebar account', () => {
     mounted = await mountForm(
       <Sidebar
         user={{ name: 'Finance, Sales', detail: 'staff', id: USER_ID, imageDocumentId: PICTURE }}
-        roles={['finance']}
+        permissions={['invoice.read']}
       />,
     );
     expect(seen.avatars.at(-1)).toMatchObject({
@@ -81,7 +89,7 @@ describe('Sidebar account', () => {
     mounted = await mountForm(
       <Sidebar
         user={{ name: 'Finance', detail: 'staff', id: USER_ID, imageDocumentId: PICTURE }}
-        roles={['finance']}
+        permissions={['invoice.read']}
       />,
     );
     const trigger = mounted.container.querySelector('button[aria-label="Profile picture"]');
@@ -119,10 +127,29 @@ describe('Sidebar account', () => {
     mounted = await mountForm(
       <Sidebar
         user={{ name: 'Finance', detail: 'staff', imageDocumentId: PICTURE }}
-        roles={['finance']}
+        permissions={['invoice.read']}
       />,
     );
     expect(mounted.container.querySelector('button[aria-label="Profile picture"]')).toBeNull();
     expect(seen.avatars.at(-1)).toMatchObject({ name: 'Finance', imageDocumentId: PICTURE });
+  });
+});
+
+describe('Sidebar navigation', () => {
+  const navLabels = () => seen.navGroups.flatMap((group) => group.items.map((item) => item.label));
+  const user = { name: 'Sales', detail: 'staff' };
+
+  it('shows Settings to a non-Founder role granted a settings permission, and gated items it holds', async () => {
+    mounted = await mountForm(
+      <Sidebar user={user} permissions={['admin.users.read', 'invoice.read']} />,
+    );
+    expect(navLabels()).toEqual(expect.arrayContaining(['Settings', 'Invoices']));
+  });
+
+  it('hides Settings and the gated items without those grants', async () => {
+    mounted = await mountForm(<Sidebar user={user} permissions={['customer.read']} />);
+    expect(navLabels()).not.toContain('Settings');
+    expect(navLabels()).not.toContain('Invoices');
+    expect(navLabels()).toContain('Customers');
   });
 });

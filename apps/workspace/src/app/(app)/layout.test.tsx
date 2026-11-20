@@ -12,7 +12,11 @@ vi.mock('next/navigation', () => ({
   },
 }));
 vi.mock('@/components/web-vitals', () => ({ WebVitals: () => <i data-testid="web-vitals" /> }));
-type SidebarProps = { user: Record<string, unknown>; counts?: Record<string, number> };
+type SidebarProps = {
+  user: Record<string, unknown>;
+  permissions: readonly string[];
+  counts?: Record<string, number>;
+};
 const sidebarProps = vi.fn<(props: SidebarProps) => void>();
 vi.mock('@/components/shell/sidebar', () => ({
   Sidebar: (props: SidebarProps) => {
@@ -30,7 +34,12 @@ vi.mock('@/components/shell/shell-state', () => ({
 }));
 const getSession = vi.fn<() => Promise<Session | null>>();
 vi.mock('@/lib/session', () => ({ getSession: () => getSession() }));
-const getMe = vi.fn<() => Promise<{ avatarDocumentId?: string | null }>>();
+const getMe = vi.fn<
+  () => Promise<{
+    avatarDocumentId?: string | null;
+    permissions?: { permission: string; scope: string }[];
+  }>
+>();
 vi.mock('@/lib/api', () => ({ getMe: () => getMe() }));
 vi.mock('@/lib/display-settings', async () => {
   const { DEFAULT_NUMBER_SYSTEMS } = await import('@bos/locale');
@@ -97,9 +106,7 @@ describe('the account picture in the sidebar', () => {
   it('falls back to initials when /v1/me fails, and the shell still renders', async () => {
     getSession.mockResolvedValue(staff);
     getMe.mockRejectedValue(new Error('upstream down'));
-    const html = renderToStaticMarkup(
-      (await AppLayout({ children: <p>page</p> })) as ReactElement,
-    );
+    const html = renderToStaticMarkup((await AppLayout({ children: <p>page</p> })) as ReactElement);
     expect(html).toContain('<p>page</p>');
     expect(lastSidebarUser()).toMatchObject({ imageDocumentId: null });
   });
@@ -116,9 +123,7 @@ describe('approvals badge in the sidebar', () => {
     getSession.mockResolvedValue(staff);
     getInboxPage.mockResolvedValue({ items: [], total: 4 });
     renderToStaticMarkup((await AppLayout({ children: <p>page</p> })) as ReactElement);
-    expect(sidebarProps).toHaveBeenCalledWith(
-      expect.objectContaining({ counts: { '/inbox': 4 } }),
-    );
+    expect(sidebarProps).toHaveBeenCalledWith(expect.objectContaining({ counts: { '/inbox': 4 } }));
   });
 
   it('shows no badge, not a zero, when the read is refused', async () => {
@@ -126,5 +131,32 @@ describe('approvals badge in the sidebar', () => {
     getInboxPage.mockRejectedValue(new Error('403'));
     renderToStaticMarkup((await AppLayout({ children: <p>page</p> })) as ReactElement);
     expect(sidebarProps).toHaveBeenCalledWith(expect.objectContaining({ counts: {} }));
+  });
+});
+
+describe('navigation grants in the sidebar', () => {
+  const lastPermissions = () => sidebarProps.mock.calls.at(-1)?.[0].permissions;
+
+  it('are the live grants from /v1/me, including one Settings > Access added to the role', async () => {
+    getSession.mockResolvedValue(staff);
+    getMe.mockResolvedValue({
+      permissions: [
+        { permission: 'admin.users.read', scope: 'all' },
+        { permission: 'invoice.read', scope: 'own' },
+      ],
+    });
+    renderToStaticMarkup((await AppLayout({ children: <p>page</p> })) as ReactElement);
+    expect(lastPermissions()).toEqual(['admin.users.read', 'invoice.read']);
+    expect(getMe).toHaveBeenCalledTimes(1);
+  });
+
+  it('fall back to the role defaults when /v1/me fails', async () => {
+    const { DEFAULT_ROLE_PERMISSIONS } = await import('@bos/contracts');
+    getSession.mockResolvedValue(staff);
+    getMe.mockRejectedValue(new Error('upstream down'));
+    renderToStaticMarkup((await AppLayout({ children: <p>page</p> })) as ReactElement);
+    expect([...(lastPermissions() ?? [])].sort()).toEqual(
+      Object.keys(DEFAULT_ROLE_PERMISSIONS.finance).sort(),
+    );
   });
 });
