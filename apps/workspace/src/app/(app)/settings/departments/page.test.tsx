@@ -4,13 +4,23 @@ import { afterEach, expect, it, vi } from 'vitest';
 import DepartmentsPage from './page';
 
 vi.mock('server-only', () => ({}));
-vi.mock('../guard', () => ({
-  requireSection: () => Promise.resolve({ accessToken: 'test-token', roles: ['founder'] }),
+const viewer = vi.hoisted(() => ({
+  roles: ['founder'] as string[],
+  /** What `GET /v1/me` answers: the saved grants, or `'down'` when the call fails. */
+  live: ['admin.roles.write'] as string[] | 'down',
 }));
-const flags = vi.hoisted(() => ({ canWrite: true }));
-vi.mock('@/components/p2/customers/permissions', () => ({
-  permissionChecker: () => (permission: string) =>
-    permission === 'admin.roles.write' ? flags.canWrite : true,
+vi.mock('../guard', () => ({
+  requireSection: () => Promise.resolve({ accessToken: 'test-token', roles: viewer.roles }),
+}));
+// The real live-permissions helpers run; only the /v1/me call is answered here.
+vi.mock('@/lib/api', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@/lib/api')>()),
+  getMe: () =>
+    viewer.live === 'down'
+      ? Promise.reject(new Error('upstream down'))
+      : Promise.resolve({
+          permissions: viewer.live.map((permission) => ({ permission, scope: 'all' })),
+        }),
 }));
 vi.mock('./actions', () => ({
   createDepartmentAction: vi.fn(),
@@ -55,7 +65,8 @@ function stubApi(items: unknown[], unassigned = 0) {
 
 afterEach(() => {
   vi.restoreAllMocks();
-  flags.canWrite = true;
+  viewer.roles = ['founder'];
+  viewer.live = ['admin.roles.write'];
 });
 
 it("shows each department with the API's counts, the No department row and named actions", async () => {
@@ -81,7 +92,7 @@ it("shows each department with the API's counts, the No department row and named
 });
 
 it('hides New department and every row action when the viewer may only read', async () => {
-  flags.canWrite = false;
+  viewer.live = ['admin.users.read'];
   const { seen } = stubApi([sales], 7);
   const html = renderToStaticMarkup(await DepartmentsPage({ searchParams: Promise.resolve({}) }));
   expect(html).toContain('Sales');
@@ -108,4 +119,40 @@ it('offers New department in the empty state when there are no departments', asy
   expect(html).toContain('No departments yet.');
   expect(html).toContain('Add your first department, then add its people.');
   expect(html.match(/New department/g)).toHaveLength(1);
+});
+
+it('opens the actions to a role whose saved grants add admin.roles.write (defaults do not)', async () => {
+  viewer.roles = ['sales'];
+  viewer.live = ['admin.users.read', 'admin.roles.write'];
+  const { seen } = stubApi([sales], 7);
+  const html = renderToStaticMarkup(await DepartmentsPage({ searchParams: Promise.resolve({}) }));
+  expect(html).toContain('New department');
+  expect(html).toContain('aria-label="Rename Sales"');
+  expect(seen.some((url) => url.pathname === '/v1/admin/users')).toBe(true);
+});
+
+it('shuts the actions for a Founder once admin.roles.write is removed from the saved grants', async () => {
+  viewer.roles = ['founder'];
+  viewer.live = ['admin.users.read'];
+  const { seen } = stubApi([sales], 7);
+  const html = renderToStaticMarkup(await DepartmentsPage({ searchParams: Promise.resolve({}) }));
+  expect(html).toContain('Sales');
+  expect(html).not.toContain('New department');
+  expect(html).not.toContain('Rename Sales');
+  expect(seen.some((url) => url.pathname === '/v1/admin/users')).toBe(false);
+});
+
+it('falls back to the role defaults when the live grants cannot be read', async () => {
+  viewer.live = 'down';
+  stubApi([sales], 7);
+  const founder = renderToStaticMarkup(
+    await DepartmentsPage({ searchParams: Promise.resolve({}) }),
+  );
+  expect(founder).toContain('New department');
+  viewer.roles = ['sales'];
+  stubApi([sales], 7);
+  const salesHtml = renderToStaticMarkup(
+    await DepartmentsPage({ searchParams: Promise.resolve({}) }),
+  );
+  expect(salesHtml).not.toContain('New department');
 });
