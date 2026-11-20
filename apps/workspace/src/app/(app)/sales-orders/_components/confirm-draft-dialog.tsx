@@ -39,7 +39,9 @@ export function ConfirmDraftDialog({
     >
       {(state) => (
         <>
-          {state.creditHold ? <CreditHoldHelp hold={state.creditHold} /> : null}
+          {state.creditHold ? (
+            <CreditHoldHelp hold={state.creditHold} selectedVersionId={quotationVersionId} />
+          ) : null}
           <input type="hidden" name="quotationVersionId" value={quotationVersionId} />
         </>
       )}

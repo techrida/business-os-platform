@@ -211,6 +211,7 @@ describe('confirmOrderAction', () => {
         number: null,
         canOpen: false,
         canOverride: true,
+        quotationVersionId: IDS.version,
       });
       expect(mocks.getOpportunity).toHaveBeenCalledWith(expect.anything(), deal);
       expect(mocks.redirect).not.toHaveBeenCalled();
@@ -226,6 +227,7 @@ describe('confirmOrderAction', () => {
         number: 'DEAL-0042',
         canOpen: true,
         canOverride: false,
+        quotationVersionId: IDS.version,
       });
     });
 

@@ -21,18 +21,28 @@ const REASON_REQUIRED = 'Say why this deal may go ahead, up to 500 characters.';
 export function CreditOverrideDialog({
   opportunityId,
   number,
+  quotation,
   successMessage,
   onOverridden,
 }: {
   opportunityId: string;
   /** The deal's number, named in the dialog so the person knows which deal goes ahead; null when unknown. */
   number: string | null;
+  /**
+   * The quotation being confirmed, when the override is offered from a refused confirm: it names the deal
+   * for someone who cannot read the deal's number, and ties the override to the quotation in front of them.
+   */
+  quotation?: string | undefined;
   /** The toast after a save. Default: names the deal and says it can go to a sales order. */
   successMessage?: string | undefined;
   /** Called after the override is saved. */
   onOverridden?: (() => void) | undefined;
 }) {
   const deal = number ?? 'The opportunity';
+  const subject =
+    quotation === undefined
+      ? deal
+      : `The deal of quotation ${quotation}${number === null ? '' : ` (${number})`}`;
   const formId = useId();
   const [open, setOpenState] = useState(false);
   const [error, setError] = useState<string | undefined>();
@@ -97,7 +107,7 @@ export function CreditOverrideDialog({
       open={open}
       onOpenChange={setOpen}
       title="Override the credit hold?"
-      description={`${deal} can then be confirmed as a sales order although the customer is over its credit limit. The override stays on this deal.`}
+      description={`${subject} can then be confirmed as a sales order although the customer is over its credit limit. The override stays on this deal.`}
       locked={pending}
       closeOnOutsideClick={false}
       footer={
