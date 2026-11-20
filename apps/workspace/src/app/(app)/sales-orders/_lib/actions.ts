@@ -3,6 +3,7 @@
 import { revalidatePath } from 'next/cache';
 import { redirect } from 'next/navigation';
 
+import { getOpportunity } from '@/components/p2/crm/crm-api';
 import { keyOf } from '@/components/p2/crm/idempotency';
 import { apiDetailOf } from '@/lib/api-code';
 import {
@@ -14,6 +15,7 @@ import {
   markScheduleLineBillable,
 } from '@/lib/api-billing';
 import { requireStaffSession } from '@/lib/bff';
+import { getPermissionCheck } from '@/lib/live-permissions';
 import type { Session } from '@/lib/session';
 
 import { parseConfirm, parseDraft, parseMarkBillable, type FieldErrors } from './forms';
@@ -42,14 +44,33 @@ function invalid(key: string, errors: FieldErrors): ActionState {
 /** The words for a refusal, with the key the next try sends. */
 function failed(err: unknown, key: string): ActionState {
   const failure = describeBillingFailure(err);
-  // A credit hold names its deal (and nothing else), so the dialog can link to where it is overridden.
-  const held = failure.kind === 'credit_hold' ? apiDetailOf(err, 'opportunityId') : undefined;
   return {
     key: keyAfterFailure(err, key),
     error: failure.message,
     ...(failure.reload ? { reload: true } : {}),
-    ...(typeof held === 'string' && isGuid(held) ? { creditHoldOpportunityId: held } : {}),
   };
+}
+
+/**
+ * The deal a `credit_hold` refusal names (F1-Q20), with what the caller may do about it: open the
+ * deal (read as them; Finance often cannot, since it reads deals only at `own`) and override the
+ * hold (`credit.override`). The refusal carries the deal's id only, never amounts.
+ */
+async function creditHoldOf(
+  session: Session,
+  err: unknown,
+): Promise<ActionState['creditHold'] | undefined> {
+  if (describeBillingFailure(err).kind !== 'credit_hold') return undefined;
+  const id = apiDetailOf(err, 'opportunityId');
+  if (typeof id !== 'string' || !isGuid(id)) return undefined;
+  const [deal, canOverride] = await Promise.all([
+    getOpportunity(session, id).catch(() => null),
+    getPermissionCheck(session).then(
+      (can) => can('credit.override'),
+      () => false,
+    ),
+  ]);
+  return { opportunityId: id, number: deal?.number ?? null, canOpen: deal !== null, canOverride };
 }
 
 /**
@@ -107,7 +128,8 @@ export async function confirmOrderAction(_prev: ActionState, form: FormData): Pr
   try {
     orderId = (await confirmSalesOrder(session, parsed.body, key)).order.id;
   } catch (err) {
-    return failed(err, key);
+    const creditHold = await creditHoldOf(session, err);
+    return { ...failed(err, key), ...(creditHold ? { creditHold } : {}) };
   }
   revalidatePath('/sales-orders');
   // `redirect` throws, so it stays outside the try block.

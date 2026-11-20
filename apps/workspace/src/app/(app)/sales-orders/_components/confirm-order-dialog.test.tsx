@@ -6,8 +6,17 @@ import { click, mountForm } from '@/test/form-interactions';
 
 import type { ActionState } from '../_lib/state';
 
-const mocks = vi.hoisted(() => ({ confirmOrderAction: vi.fn() }));
+const mocks = vi.hoisted(() => ({
+  confirmOrderAction: vi.fn(),
+  overrideCreditHoldAction: vi.fn(),
+  success: vi.fn(),
+  error: vi.fn(),
+}));
 vi.mock('../_lib/actions', () => ({ confirmOrderAction: mocks.confirmOrderAction }));
+vi.mock('@/app/(app)/opportunities/actions', () => ({
+  overrideCreditHoldAction: mocks.overrideCreditHoldAction,
+}));
+vi.mock('@/components/ui/toast', () => ({ toast: { success: mocks.success, error: mocks.error } }));
 vi.mock('next/navigation', () => ({
   useRouter: () => ({ push: vi.fn(), replace: vi.fn(), refresh: vi.fn() }),
 }));
@@ -56,28 +65,81 @@ const dialogLinks = () =>
     a.getAttribute('href'),
   ]);
 
-it('links to the deal when the confirm is refused for a credit hold (F1-Q20)', async () => {
+const HELD = 'This customer is over its credit limit, so the sales order is on hold.';
+const OVERRIDE = 'Override credit hold';
+const buttonNamed = (label: string) =>
+  [...document.querySelectorAll('button')].find((b) => b.textContent === label) ?? null;
+const dialogs = () => [...document.querySelectorAll('[role="dialog"]')];
+
+it('lets a credit.override holder who cannot open the deal override it in place (F1-Q20)', async () => {
   const mounted = await confirmWith({
     key: KEY,
-    error: 'This customer is over its credit limit, so the sales order is on hold.',
-    creditHoldOpportunityId: DEAL,
+    error: HELD,
+    creditHold: { opportunityId: DEAL, number: null, canOpen: false, canOverride: true },
   });
-  expect(mocks.confirmOrderAction).toHaveBeenCalledOnce();
   expect(document.querySelector('[role="alert"]')?.textContent).toContain('over its credit limit');
-  expect(dialogLinks()).toContainEqual([
-    'Open the opportunity on credit hold',
-    `/opportunities/${DEAL}`,
-  ]);
+  // No link to a deal this person would get a 404 on.
+  expect(dialogLinks().map(([, href]) => href)).not.toContain(`/opportunities/${DEAL}`);
+
+  mocks.overrideCreditHoldAction.mockResolvedValue({ ok: true });
+  await click(buttonNamed(OVERRIDE));
+  expect(dialogs()).toHaveLength(2);
+  const override = dialogs().at(-1)!;
+  expect(override.textContent).toContain('The opportunity can then be confirmed');
+  const reason = override.querySelector('textarea')!;
+  Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value')!.set!.call(
+    reason,
+    'Cheque received today.',
+  );
+  await act(() => Promise.resolve(reason.dispatchEvent(new Event('input', { bubbles: true }))));
+  await click(
+    [...override.querySelectorAll('button')].find((b) => b.textContent === 'Override hold') ?? null,
+  );
+  for (let i = 0; i < 4; i += 1) await act(() => Promise.resolve());
+
+  expect(mocks.overrideCreditHoldAction).toHaveBeenCalledOnce();
+  const sent = mocks.overrideCreditHoldAction.mock.calls[0]?.[1] as FormData;
+  expect(sent.get('opportunityId')).toBe(DEAL);
+  expect(sent.get('reason')).toBe('Cheque received today.');
+  // Overriding is its own form: it never re-sends the confirm.
+  expect(mocks.confirmOrderAction).toHaveBeenCalledOnce();
+  expect(mocks.success).toHaveBeenCalledWith('Credit hold overridden. Confirm the order again.');
+  expect(document.querySelector('[role="dialog"] [role="status"]')?.textContent).toContain(
+    'Credit hold overridden',
+  );
+  expect(buttonNamed(OVERRIDE)).toBeNull();
   await mounted.unmount();
 });
 
-it('offers no deal link for any other refusal', async () => {
+it('links to the deal for someone who can open it, with no Override they do not hold', async () => {
+  const mounted = await confirmWith({
+    key: KEY,
+    error: HELD,
+    creditHold: { opportunityId: DEAL, number: 'DEAL-0042', canOpen: true, canOverride: false },
+  });
+  expect(dialogLinks()).toContainEqual(['Open DEAL-0042', `/opportunities/${DEAL}`]);
+  expect(buttonNamed(OVERRIDE)).toBeNull();
+  await mounted.unmount();
+});
+
+it('adds nothing for someone who can neither open nor override the deal', async () => {
+  const mounted = await confirmWith({
+    key: KEY,
+    error: HELD,
+    creditHold: { opportunityId: DEAL, number: null, canOpen: false, canOverride: false },
+  });
+  expect(document.querySelector('[role="alert"]')?.textContent).toContain('over its credit limit');
+  expect(dialogLinks().map(([, href]) => href)).not.toContain(`/opportunities/${DEAL}`);
+  expect(buttonNamed(OVERRIDE)).toBeNull();
+  await mounted.unmount();
+});
+
+it('offers no deal help for any other refusal', async () => {
   const mounted = await confirmWith({
     key: KEY,
     error: 'The evidence this step needs is missing.',
   });
-  expect(dialogLinks().map(([label]) => label)).not.toContain(
-    'Open the opportunity on credit hold',
-  );
+  expect(dialogLinks().map(([, href]) => href)).not.toContain(`/opportunities/${DEAL}`);
+  expect(buttonNamed(OVERRIDE)).toBeNull();
   await mounted.unmount();
 });
