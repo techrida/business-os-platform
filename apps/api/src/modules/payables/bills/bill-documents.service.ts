@@ -1,4 +1,6 @@
 // Staff invoice uploads use the bill-entry grant and the documents kernel's quarantine and scan pipeline.
+// Every call names `payables.bill.enter` as the upload's action (U20a2-Q3), so a bill enterer with `own` scope uploads
+// and replaces their own invoice files on any vendor, as they enter their own bills; `all` still reaches every file.
 import type { Readable } from 'node:stream';
 
 import { CreateDocumentBodySchema, type DocumentVersionDto } from '@bos/contracts';
@@ -20,6 +22,8 @@ import { DocumentsService } from '../../../platform/documents/documents.service'
 import { VendorBillsCaller } from './vendor-bills.caller';
 
 const OWNER_TYPE = 'vendor_bill_intake';
+/** The action every invoice upload belongs to: the one that enters the bill the file is for. */
+const UPLOAD = { action: 'payables.bill.enter' } as const;
 const Id = z.guid();
 const FileSchema = CreateDocumentBodySchema.pick({
   filename: true,
@@ -62,6 +66,7 @@ export function billDocumentOwnerPolicy(db: Db): DocumentOwnerPolicy {
   return {
     ownerType: OWNER_TYPE,
     uploadPermission: 'payables.bill.enter',
+    uploadActions: [UPLOAD.action],
     resource: async (scope, vendorId) => {
       const row = await load(scope, vendorId);
       if (row === undefined) return null;
@@ -100,7 +105,7 @@ export class BillDocumentsService {
     }
     const { vendorPartyId, ...file } = parsed.data;
     const created = await withTx(this.db, scope, actor, (tx) =>
-      this.documents.create(tx, { ownerType: OWNER_TYPE, ownerId: vendorPartyId, ...file }),
+      this.documents.create(tx, { ownerType: OWNER_TYPE, ownerId: vendorPartyId, ...file }, UPLOAD),
     );
     return {
       ...created,
@@ -152,6 +157,7 @@ export class BillDocumentsService {
     return this.documents.receiveContent(versionId, src, contentLength, {
       documentId,
       who: { scope, actor },
+      ...UPLOAD,
     });
   }
 
@@ -176,7 +182,7 @@ export class BillDocumentsService {
           ),
         );
       if (doc === undefined) throw notFound();
-      return this.documents.createVersion(tx, documentId, parsed.data);
+      return this.documents.createVersion(tx, documentId, parsed.data, UPLOAD);
     });
     return {
       ...created,
