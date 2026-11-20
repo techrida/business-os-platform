@@ -115,6 +115,34 @@ it('preselects nobody else when the signed-in user is not placed in the owner li
   }
 });
 
+// Finance, Accountant and PMO are not placed in the owner list: an empty owner goes to the default lead owner,
+// so the choice must not say "You". Only when who the caller is did not load does the API make it theirs.
+it('labels the empty owner Default owner for a caller who is not placed, and You when unknown', async () => {
+  /** What the owner select shows before anyone is chosen: the empty choice's label. */
+  const emptyOwner = async (callerUnplaced: boolean | undefined) => {
+    const mounted = await mountForm(
+      <LeadForm
+        action={vi.fn<FormAction>()}
+        sources={[{ label: 'Referral', value: 'referral' }]}
+        owners={OWNERS}
+        enabledCurrencies={ALL_CURRENCIES}
+        defaultOwnerId={undefined}
+        callerUnplaced={callerUnplaced}
+        idempotencyKey="44444444-4444-4444-8444-444444444444"
+      />,
+    );
+    try {
+      const field = mounted.container.querySelector('input[type="hidden"][name="ownerUserId"]');
+      expect(field?.getAttribute('value')).toBe('');
+      return field?.parentElement?.querySelector('button')?.textContent?.trim();
+    } finally {
+      await mounted.unmount();
+    }
+  };
+  expect(await emptyOwner(true)).toBe('Default owner');
+  expect(await emptyOwner(undefined)).toBe('You');
+});
+
 it('shows a single owner read-only and still posts it', async () => {
   const mounted = await mountLead([{ value: ME, label: 'Asha Gurung' }], ME);
   try {
