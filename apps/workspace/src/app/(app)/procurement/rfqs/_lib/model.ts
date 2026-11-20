@@ -17,7 +17,7 @@ export const RFQ_STATUS_LABEL: Record<RfqStatus, { tone: BadgeTone; text: string
 
 /** One line under the status on the detail page: what happens next, in plain words. */
 export const RFQ_STATUS_NOTE: Record<RfqStatus, string> = {
-  open: 'Invited vendors can send a quotation, and you can enter one for them. Recommend a quotation once enough are in.',
+  open: 'Invited vendors can send a quotation until the deadline, and you can enter one for them. Recommend a quotation once enough are in.',
   closed: 'No more quotations are taken. A quotation can still be recommended.',
   recommended:
     'A quotation was recommended. Submit it for the commitment approvals to move towards a purchase order.',
@@ -54,6 +54,27 @@ export function takesQuotations(status: RfqStatus): boolean {
   return status === 'open';
 }
 
+/**
+ * F1-Q47: the deadline has passed once `now` is strictly after it, the same instant rule the API
+ * applies to a quotation (one that arrives at the deadline itself is in time).
+ */
+export function deadlinePassed(deadline: string, now: Date): boolean {
+  return now.getTime() > new Date(deadline).getTime();
+}
+
+/** F1-Q47: a vendor upload sent after the deadline cannot become a quotation (the API answers 409). */
+export function arrivedLate(submittedAt: string, deadline: string): boolean {
+  return new Date(submittedAt).getTime() > new Date(deadline).getTime();
+}
+
+/**
+ * F1-Q47: Procurement extends the deadline of an open RFQ only (the API answers 409 otherwise),
+ * whether or not it has passed: an extension lets the invited vendors quote again.
+ */
+export function canExtendDeadline(status: RfqStatus, source: RfqGrantSource): boolean {
+  return status === 'open' && rfqGrants(source).sourcing;
+}
+
 export interface Convertibility {
   convertible: boolean;
   /** Short label for the scan column. */
@@ -63,8 +84,21 @@ export interface Convertibility {
   reason: string;
 }
 
-/** Only a file whose scan passed (`clean`) can be turned into a quotation. */
-export function submissionConvertibility(scanStatus: string | null): Convertibility {
+/** Shown for an upload that arrived after the quotation deadline (F1-Q47). */
+export const ARRIVED_LATE: Convertibility = {
+  convertible: false,
+  label: 'Arrived late',
+  tone: 'warning',
+  reason:
+    'It was sent after the quotation deadline, so it cannot be converted. Extend the deadline past the time it was sent to take it.',
+};
+
+/**
+ * Only a file whose scan passed (`clean`) can be turned into a quotation, and only one that arrived
+ * by the deadline (F1-Q47): a late upload is refused whatever its scan says.
+ */
+export function submissionConvertibility(scanStatus: string | null, late = false): Convertibility {
+  if (late) return ARRIVED_LATE;
   switch (scanStatus) {
     case 'clean':
       return { convertible: true, label: 'Scan passed', tone: 'success', reason: '' };
