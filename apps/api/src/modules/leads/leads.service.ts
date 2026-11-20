@@ -77,8 +77,8 @@ import {
   toLeadDto,
 } from './leads.types';
 import {
-  isStageManager,
   leadRef,
+  mayReopenLead,
   planLeadStageChange,
   type LeadStageCaller,
   type LeadStageRefusal,
@@ -385,11 +385,12 @@ export class LeadsService {
    */
   async changeStage(id: string, body: LeadStageChangeBody): Promise<LeadDto> {
     const { scope, actor, principal } = this.caller.current();
-    const by: LeadStageCaller = isStageManager(principal) ? 'manager' : 'user';
     return withTx(this.db, scope, actor, async (tx) => {
       const row = await this.lock(tx, scope, id);
       // Scope first (404), then state (409): someone who may not edit learns nothing about the stage.
       this.assertVisible('crm.lead.write', row);
+      // The reopen edge needs the live crm.lead.reopen grant on this lead's department as well as the level.
+      const by: LeadStageCaller = mayReopenLead(principal, row) ? 'manager' : 'user';
 
       // Lost carries an option of the tenant's list (D49), or a new one added in this same step. The planner still
       // sees a `reason`: the option's words, which the lead keeps as a snapshot beside the reference.
