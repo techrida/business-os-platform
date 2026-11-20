@@ -2024,3 +2024,96 @@ describe('quotation snapshot cost figures follow the viewer (D29)', () => {
     expect((await service.get(requestId)).snapshot).toEqual(snapshot);
   });
 });
+
+/**
+ * A Db that records every call made on it while a transaction it opened is still open. Such a call takes a second
+ * pooled connection while the transaction holds the first, so under load the pool can run dry and stall.
+ */
+function poolGuard(real: Db): { db: Db; touches: string[] } {
+  const touches: string[] = [];
+  let open = 0;
+  const where = () =>
+    (new Error().stack ?? '')
+      .split('\n')
+      .filter((line) => line.includes('/src/') && !line.includes('.test.'))
+      .slice(0, 2)
+      .map((line) => line.trim())
+      .join(' < ');
+  const db = new Proxy(real, {
+    get(target, prop) {
+      const value: unknown = Reflect.get(target, prop);
+      if (typeof value !== 'function') return value;
+      if (prop === 'transaction') {
+        return (fn: (tx: unknown) => Promise<unknown>, config?: unknown) =>
+          target.transaction(async (tx) => {
+            open += 1;
+            try {
+              return await fn(tx);
+            } finally {
+              open -= 1;
+            }
+          }, config as never);
+      }
+      return (...args: unknown[]) => {
+        if (open > 0) touches.push(`${String(prop)} at ${where()}`);
+        return (value as (...a: unknown[]) => unknown).apply(target, args);
+      };
+    },
+  });
+  return { db, touches };
+}
+
+describe('reads inside a submit or decision transaction', () => {
+  it('names the requester and the decider through the transaction, never a second pooled connection', async () => {
+    // Its own two-step workflow: earlier tests publish other versions of test_memo.
+    me = U.founder;
+    await admin.createWorkflow({
+      key: 'pool_memo',
+      name: 'Pool memo',
+      spec: {
+        documentType: 'pool_memo',
+        steps: [
+          { id: 'accountant', kind: 'role', role: 'accountant', reason: 'Accountant checks' },
+          { id: 'finance', kind: 'role', role: 'finance', reason: 'Finance approves' },
+        ],
+      },
+    });
+    await admin.publish('pool_memo', 1);
+    const guard = poolGuard(db);
+    const guarded = new ApprovalsService(guard.db, audit, notify, users, caller, clock);
+    guarded.registerSubject({
+      documentType: 'pool_memo',
+      onDecided,
+      link: (_tx, documentId) => `/memos/${documentId}`,
+    });
+    const { requestId } = await withTx(guard.db, scope, systemActor('test'), (tx) =>
+      guarded.submit(tx, {
+        documentType: 'pool_memo',
+        documentId: randomUUID(),
+        documentNumber: 'MEMO-2082/83-00001',
+        title: 'Office chairs',
+        snapshot: { title: 'Office chairs', amount: '50000.00', currency: 'NPR' },
+        facts: { amountNpr: '50000.00' },
+        requesterUserId: U.requester,
+        sodUserIds: [U.requester],
+      }),
+    );
+    me = U.acc;
+    await guarded.act(requestId, { action: 'approve', expectedVersion: 1 }, randomUUID());
+    me = U.fin;
+    const done = await guarded.act(
+      requestId,
+      { action: 'approve', expectedVersion: 2 },
+      randomUUID(),
+    );
+
+    expect(done.status).toBe('approved');
+    expect(guard.touches).toEqual([]);
+    // The names still arrive: the pending email names the requester, the decided email the decider.
+    const emails = notify.notifyUser.mock.calls.map(([, n]) => n.email);
+    const pending = emails.find((e) => e?.template === 'approval.pending');
+    const decided = emails.find((e) => e?.template === 'approval.decided');
+    expect(pending?.vars.requesterName).toBe('Sita Requester');
+    expect(decided?.vars.deciderName).toBe('Unnamed user');
+  });
+});
