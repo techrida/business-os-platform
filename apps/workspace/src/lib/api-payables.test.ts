@@ -277,7 +277,7 @@ describe('bill submissions', () => {
 });
 
 describe('the per-bill can flags', () => {
-  const can = { match: false, submit: true, void: false };
+  const can = { match: false, submit: true, void: false, discard: true, exception: false };
 
   it('keeps the can the API sends on a bill and on each list row', async () => {
     answer(reply({ ...bill, can }));

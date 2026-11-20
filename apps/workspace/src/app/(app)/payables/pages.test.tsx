@@ -809,6 +809,8 @@ describe('bill-entry withholding registry', () => {
 });
 
 describe('bill detail under the per-bill can flags', () => {
+  // The panel text also says 'Match again', so look for the trigger button.
+  const MATCH_BUTTON = /<button[^>]*>(<[^>]+>|\s)*Match again/;
   const open = () => html(BillPage({ params: Promise.resolve({ id: BILL }) }));
   const matching = { ...header, status: 'matching', matchStatus: 'matched', lines: [line] };
   const approved = { ...header, status: 'approved', matchStatus: 'matched', lines: [line] };
@@ -824,14 +826,14 @@ describe('bill detail under the per-bill can flags', () => {
     api.getBill.mockResolvedValue({ ...matching, can: OTHERS });
     const others = await open();
     expect(others).toContain('BILL-2083-0001');
-    expect(others).not.toContain('Match again');
+    expect(others).not.toMatch(MATCH_BUTTON);
     expect(others).not.toContain('Submit for approval');
     api.getBill.mockResolvedValue({ ...approved, can: OTHERS });
     expect(await open()).not.toContain('Void bill');
 
     api.getBill.mockResolvedValue({ ...matching, can: OWN });
     const own = await open();
-    expect(own).toContain('Match again');
+    expect(own).toMatch(MATCH_BUTTON);
     expect(own).toContain('Submit for approval');
     api.getBill.mockResolvedValue({ ...approved, can: OWN });
     expect(await open()).toContain('Void bill');
@@ -840,7 +842,7 @@ describe('bill detail under the per-bill can flags', () => {
   it('keeps offering the actions by grant and status when the bill comes without can', async () => {
     api.getBill.mockResolvedValue(matching);
     const out = await open();
-    expect(out).toContain('Match again');
+    expect(out).toMatch(MATCH_BUTTON);
     expect(out).toContain('Submit for approval');
     api.getBill.mockResolvedValue(approved);
     expect(await open()).toContain('Void bill');
