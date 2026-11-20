@@ -290,6 +290,23 @@ const acceptBody = (
   ...overrides,
 });
 
+/** A live, scanned-clean evidence document in the quotation's entity: acceptance now refuses an id that is not one. */
+const cleanDocument = (): Promise<string> =>
+  withTx(db, scopeA, systemActor('test'), async (tx) => {
+    const { rows } = await tx.execute(
+      sql`INSERT INTO app.documents (tenant_id, organization_id, owner_type, owner_id)
+          VALUES (${scopeA.tenantId}, ${scopeA.organizationId}, 'test_evidence', ${randomUUID()}) RETURNING id`,
+    );
+    const id = (rows[0] as { id: string }).id;
+    await tx.execute(
+      sql`INSERT INTO app.document_versions (tenant_id, organization_id, document_id, version, filename,
+            declared_mime, size_bytes, storage_key, status)
+          VALUES (${scopeA.tenantId}, ${scopeA.organizationId}, ${id}, 1, 'signed.pdf',
+                  'application/pdf', 1024, ${`${scopeA.tenantId}/${randomUUID()}`}, 'clean')`,
+    );
+    return id;
+  });
+
 const record = (q: QuotationDto, body: RecordOutcomeBody, key = `outcome-${randomUUID()}`) =>
   service.record(q.id, q.currentVersionId, body, key);
 
@@ -347,8 +364,8 @@ describe('RecordOutcomeService.record', () => {
   it('stores the evidence document ids on the acceptance row and returns them from the column', async () => {
     const q = await createQuotation();
     const expectedVersion = await advance(q, 'sent');
-    const docA = randomUUID();
-    const docB = randomUUID();
+    const docA = await cleanDocument();
+    const docB = await cleanDocument();
 
     const dto = await record(q, acceptBody(expectedVersion, { evidenceDocumentIds: [docA, docB] }));
 
@@ -405,7 +422,7 @@ describe('RecordOutcomeService.record', () => {
   it('stores the name the customer signed with and the ids when the core is called directly (the portal path)', async () => {
     const q = await createQuotation();
     await advance(q, 'sent');
-    const doc = randomUUID();
+    const doc = await cleanDocument();
 
     const dto = await withTx(db, scopeA, systemActor('test'), (tx) =>
       outcomes.accept(tx, {
@@ -453,7 +470,7 @@ describe('RecordOutcomeService.record', () => {
   it('keeps the acceptance append-only: the new columns cannot be rewritten afterwards', async () => {
     const q = await createQuotation();
     const expectedVersion = await advance(q, 'sent');
-    await record(q, acceptBody(expectedVersion, { evidenceDocumentIds: [randomUUID()] }));
+    await record(q, acceptBody(expectedVersion, { evidenceDocumentIds: [await cleanDocument()] }));
 
     await expect(
       withTx(db, scopeA, systemActor('test'), (tx) =>

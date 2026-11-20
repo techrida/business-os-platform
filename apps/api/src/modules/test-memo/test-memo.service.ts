@@ -506,7 +506,7 @@ export class TestMemoService implements OnModuleInit {
           ? 'department_head'
           : 'fallback';
     const planned = step?.eligibleUserIds ?? [];
-    const approvers = await this.approverIds(scope, planned);
+    const approvers = await this.approverIds(scope, planned, q);
     const eligibleUserIds = planned.filter((id) => approvers.has(id));
     const roleKey = step?.roleKey;
     const rule: MemoApproverRule = {
