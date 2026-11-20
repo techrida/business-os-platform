@@ -159,3 +159,69 @@ describe('settlementMayOwe', () => {
     expect(settlementMayOwe(['credited'])).toBe(false);
   });
 });
+
+describe('the per-invoice can flags', () => {
+  const CUSTOMER = '33333333-3333-4333-8333-333333333333';
+  const HREF = `/payments/new?customerId=${CUSTOMER}`;
+  // Finance holds every invoice permission at some scope; only the API's per-invoice answer tells another
+  // person's invoice from their own under an `own` grant.
+  const finance = permissionChecker(FINANCE);
+  const OTHERS = {
+    submit: false,
+    issue: false,
+    discard: false,
+    notes: false,
+    recordPayment: false,
+  };
+  const OWN = { submit: true, issue: true, discard: true, notes: true, recordPayment: true };
+  const draft = { kind: 'tax_invoice', status: 'draft' } as const;
+  const approved = { kind: 'tax_invoice', status: 'approved' } as const;
+  const issued = { kind: 'tax_invoice', status: 'issued', customerId: CUSTOMER } as const;
+
+  it("hides Submit, Issue, Discard, the notes and Record payment on another person's invoice", () => {
+    expect(invoiceGates({ ...draft, can: OTHERS }, finance)).toEqual(NONE);
+    expect(invoiceGates({ ...approved, can: OTHERS }, finance)).toEqual(NONE);
+    expect(invoiceGates({ ...issued, can: OTHERS }, finance)).toEqual(NONE);
+    expect(recordPaymentHref({ ...issued, can: OTHERS }, finance)).toBeNull();
+    expect(recordPaymentHref({ ...issued, can: OTHERS }, finance, 'unpaid')).toBeNull();
+  });
+
+  it("offers them on the person's own invoice as the status allows", () => {
+    expect(invoiceGates({ ...draft, can: OWN }, finance)).toEqual({
+      ...NONE,
+      submit: true,
+      discard: true,
+    });
+    expect(invoiceGates({ ...approved, can: OWN }, finance).issue).toBe(true);
+    expect(invoiceGates({ ...issued, can: OWN }, finance).notes).toBe(true);
+    expect(recordPaymentHref({ ...issued, can: OWN }, finance)).toBe(HREF);
+  });
+
+  it('decides each action by its own flag', () => {
+    expect(invoiceGates({ ...draft, can: { ...OWN, submit: false } }, finance)).toEqual({
+      ...NONE,
+      discard: true,
+    });
+    expect(invoiceGates({ ...issued, can: { ...OWN, notes: false } }, finance).notes).toBe(false);
+    expect(recordPaymentHref({ ...issued, can: { ...OWN, recordPayment: false } }, finance)).toBe(
+      null,
+    );
+    expect(recordPaymentHref({ ...issued, can: { ...OTHERS, recordPayment: true } }, finance)).toBe(
+      HREF,
+    );
+  });
+
+  it('keeps the grant-only behaviour when the response has no can', () => {
+    expect(invoiceGates(draft, finance)).toEqual({ ...NONE, submit: true, discard: true });
+    expect(invoiceGates({ ...approved, can: undefined }, finance).issue).toBe(true);
+    expect(recordPaymentHref(issued, finance)).toBe(HREF);
+  });
+
+  it('never lets a true flag stand in for a missing grant or a move the status refuses', () => {
+    expect(invoiceGates({ ...draft, can: OWN }, granted())).toEqual(NONE);
+    expect(invoiceGates({ kind: 'tax_invoice', status: 'discarded', can: OWN }, finance)).toEqual(
+      NONE,
+    );
+    expect(recordPaymentHref({ ...issued, can: OWN }, granted())).toBeNull();
+  });
+});

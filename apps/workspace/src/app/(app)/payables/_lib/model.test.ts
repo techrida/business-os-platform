@@ -133,3 +133,54 @@ describe('billActions', () => {
     ).toBe(false);
   });
 });
+
+describe('billActions with the per-bill can flags', () => {
+  // The person holds payables.bill.enter at some scope (an `own` grant counts for `enter`), so only the API's
+  // per-bill answer can tell another person's bill from their own.
+  const enter = { enter: true };
+  const po = 'po-1';
+  const matching = { status: 'matching', matchStatus: 'matched', purchaseOrderId: po } as const;
+  const approved = { status: 'approved', matchStatus: 'matched', purchaseOrderId: po } as const;
+  const OTHERS = { match: false, submit: false, void: false };
+  const OWN = { match: true, submit: true, void: true };
+
+  it("hides Match, Submit and Void on another person's bill under an own grant", () => {
+    expect(billActions({ ...matching, can: OTHERS }, enter)).toEqual({
+      match: false,
+      submit: false,
+      void: false,
+    });
+    expect(billActions({ ...approved, can: OTHERS }, enter).void).toBe(false);
+  });
+
+  it("offers them on the person's own bill as the status allows", () => {
+    expect(billActions({ ...matching, can: OWN }, enter)).toEqual({
+      match: true,
+      submit: true,
+      void: false,
+    });
+    expect(billActions({ ...approved, can: OWN }, enter).void).toBe(true);
+  });
+
+  it('decides each action by its own flag', () => {
+    expect(
+      billActions({ ...matching, can: { match: false, submit: true, void: true } }, enter),
+    ).toEqual({ match: false, submit: true, void: false });
+    expect(
+      billActions({ ...approved, can: { match: true, submit: true, void: false } }, enter).void,
+    ).toBe(false);
+  });
+
+  it('keeps the grant-only behaviour when the response has no can', () => {
+    expect(billActions(matching, enter)).toEqual({ match: true, submit: true, void: false });
+    expect(billActions({ ...matching, can: undefined }, enter).submit).toBe(true);
+    expect(billActions(approved, enter).void).toBe(true);
+  });
+
+  it('never lets a true flag stand in for a missing grant or a status that refuses', () => {
+    expect(billActions({ ...matching, can: OWN }, { enter: false })).toEqual(OTHERS);
+    expect(
+      billActions({ status: 'paid', matchStatus: 'matched', purchaseOrderId: po, can: OWN }, enter),
+    ).toEqual(OTHERS);
+  });
+});
