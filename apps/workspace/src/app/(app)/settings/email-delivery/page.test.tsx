@@ -1,4 +1,4 @@
-import type { ReactElement } from 'react';
+import type { ReactElement, ReactNode } from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
@@ -19,7 +19,18 @@ vi.mock('next/navigation', () => ({
 }));
 const revalidatePath = vi.hoisted(() => vi.fn());
 vi.mock('next/cache', () => ({ revalidatePath }));
-vi.mock('@/components/ui/toast', () => ({ toast: { success: vi.fn(), error: vi.fn() } }));
+const toast = vi.hoisted(() => ({ success: vi.fn(), error: vi.fn() }));
+vi.mock('@/components/ui/toast', () => ({ toast }));
+// The confirm dialog renders only its trigger here; a test calls the captured onConfirm as the confirm button would.
+const confirmDialog = vi.hoisted(() => ({
+  onConfirm: undefined as undefined | (() => unknown),
+}));
+vi.mock('@/components/ui/dialog', () => ({
+  ConfirmDialog: (props: { trigger: ReactNode; onConfirm: () => unknown }) => {
+    confirmDialog.onConfirm = props.onConfirm;
+    return props.trigger;
+  },
+}));
 const getSession = vi.fn<() => Promise<Session | null>>();
 vi.mock('@/lib/session', () => ({ getSession: () => getSession() }));
 const getMe =
@@ -33,6 +44,7 @@ vi.mock('@/lib/api-email-delivery', () => api);
 
 const { default: EmailDeliveryPage } = await import('./page');
 const { resendEmailAction } = await import('./actions');
+const { ResendButton } = await import('./resend-button');
 const { ApiError } = await import('@/lib/api');
 
 const ID = '3f2b8c1e-9d4a-4e6b-8a57-1c2d3e4f5a6b';
@@ -203,5 +215,37 @@ describe('resendEmailAction', () => {
     getMe.mockResolvedValue(grants('quotation.read'));
     await expect(resendEmailAction(ID)).rejects.toThrow(/REDIRECT:/);
     expect(api.resendEmail).not.toHaveBeenCalled();
+  });
+});
+
+describe('the Resend button', () => {
+  const confirm = () => {
+    renderToStaticMarkup(
+      <ResendButton id={ID} subject="MEMO-2082/83-00001" recipient="asha@example.test" />,
+    );
+    if (!confirmDialog.onConfirm) throw new Error('ResendButton rendered no ConfirmDialog');
+    return confirmDialog.onConfirm();
+  };
+
+  it('reports a resend that could not reach the server in a toast and keeps the dialog open', async () => {
+    getSession.mockRejectedValue(new TypeError('fetch failed'));
+
+    const result = await confirm();
+
+    expect(result).toBe(false);
+    expect(toast.error).toHaveBeenCalledWith('Could not resend the email', {
+      description: 'Check your connection and try again.',
+    });
+    expect(toast.success).not.toHaveBeenCalled();
+  });
+
+  it("closes on success and shows the action's message", async () => {
+    getMe.mockResolvedValue(grants('email_delivery.read', 'email_delivery.resend'));
+    api.resendEmail.mockResolvedValue({ outcome: 'queued' });
+
+    expect(await confirm()).not.toBe(false);
+    expect(toast.success).toHaveBeenCalledWith(
+      'The email is queued and will be sent again in a moment.',
+    );
   });
 });
