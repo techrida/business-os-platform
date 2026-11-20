@@ -550,7 +550,11 @@ describe('the tax invoice route by source (F1-Q30)', () => {
     // F1-Q30: the new route becomes the current version (what migration 0110 does for a seeded entity).
     as(U.admin, 'founder');
     await admin.addVersion('tax_invoice', TAX_INVOICE_WORKFLOW_SPEC);
-    await admin.publish('tax_invoice', 2);
+    await new ApprovalsAdminService(db, audit, asSecondPerson(caller), () => NOW).publish(
+      'tax_invoice',
+      2,
+      SKIP_LIVE_PUBLISHER_CHECK,
+    );
 
     // The open request still needs both steps: Finance alone cannot skip the Accountant.
     const early = await act(U.fin, 'finance', request.id, 'approve').catch((e: unknown) => e);
