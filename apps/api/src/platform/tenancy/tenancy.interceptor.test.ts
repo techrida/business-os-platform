@@ -158,7 +158,7 @@ let now = 1_000_000;
 let resolveCalls: number;
 let resolveArgs: { zitadelUserId: string; tenantId: string; idpOrgId: string }[];
 let status: Principal['status'];
-let grantRequests: { organizationId: string; roles: readonly RoleKey[]; level: AccessLevel }[];
+let grantRequests: { roles: readonly RoleKey[]; level: AccessLevel }[];
 /** The IdP org the token resolves to. */
 let tokenOrg: ResolvedIdpOrg;
 /** The user row the directory returns: its tenant, IdP org and memberships. */
@@ -166,18 +166,21 @@ let row: { tenantId: string; idpOrgId: string; memberships: EntityMembership[] }
 /** The role cache epoch; a test moves it to model `AuthzService.invalidate`. */
 let epoch = '0:0';
 
+/** How many times the interceptor asked the role cache for a tenant view (one per request). */
+let viewCalls = 0;
+
 const roleCache = {
-  epoch: () => Promise.resolve(epoch),
-  grantsFor: (
-    _t: string,
-    organizationId: string,
-    roles: readonly RoleKey[],
-    level: AccessLevel = 'staff',
-  ) => {
-    grantRequests.push({ organizationId, roles, level });
-    const merged = new Map<Permission, Scope>();
-    for (const role of roles) for (const [p, s] of TABLE[role] ?? []) merged.set(p, s);
-    return Promise.resolve(merged);
+  current: (_t: string) => {
+    viewCalls += 1;
+    return Promise.resolve({
+      epoch,
+      grantsFor: (roles: readonly RoleKey[], level: AccessLevel = 'staff') => {
+        grantRequests.push({ roles, level });
+        const merged = new Map<Permission, Scope>();
+        for (const role of roles) for (const [p, s] of TABLE[role] ?? []) merged.set(p, s);
+        return merged;
+      },
+    });
   },
 } as unknown as RoleCache;
 
@@ -293,6 +296,7 @@ describe('TenancyInterceptor', () => {
   beforeEach(() => {
     now = 1_000_000;
     epoch = '0:0';
+    viewCalls = 0;
     resolveCalls = 0;
     resolveArgs = [];
     status = 'active';
@@ -551,7 +555,7 @@ describe('TenancyInterceptor', () => {
       const { context, bound } = await run(interceptor, auth(finance), Routes, Routes.prototype.me);
       expect(context.organizationId).toBe(ENTITY_A);
       expect(bound.organizationId).toBe(ENTITY_A);
-      expect(grantRequests[0]?.organizationId).toBe(ENTITY_A);
+      expect(grantRequests).toHaveLength(1);
     });
 
     it('uses the only membership when none is marked default', async () => {
@@ -597,7 +601,7 @@ describe('TenancyInterceptor', () => {
         ENTITY_B,
       );
       expect(grantRequests).toEqual([
-        { organizationId: ENTITY_B, roles: ['sales'], level: 'manager' },
+        { roles: ['sales'], level: 'manager' },
       ]);
       expect(bound).toMatchObject({ departmentId: DEPT_B, level: 'manager' });
     });
@@ -607,7 +611,7 @@ describe('TenancyInterceptor', () => {
       row.memberships = [{ ...MEMBERSHIP_A, level: 'manager' }, MEMBERSHIP_B];
       const { bound } = await run(interceptor, auth(finance), Routes, Routes.prototype.me);
       expect(grantRequests).toEqual([
-        { organizationId: ENTITY_A, roles: ['finance'], level: 'staff' },
+        { roles: ['finance'], level: 'staff' },
       ]);
       expect(bound).toMatchObject({ departmentId: null, level: 'manager' });
     });
@@ -684,7 +688,7 @@ describe('TenancyInterceptor', () => {
       expect(bound.roles).toEqual(['sales']);
       expect(roles).toEqual(['sales']);
       expect(grantRequests).toEqual([
-        { organizationId: ENTITY_B, roles: ['sales'], level: 'staff' },
+        { roles: ['sales'], level: 'staff' },
       ]);
       // Narrowed away: finance's admin.users.read is not granted in entity B.
       const body = await denial(
@@ -767,7 +771,7 @@ describe('TenancyInterceptor', () => {
     });
   });
 
-  it('makes zero database or directory calls on a warm request (real IdpOrgResolver)', async () => {
+  it('makes no IdP org or directory call on a warm request, and asks the role cache once (real IdpOrgResolver)', async () => {
     let dbQueries = 0;
     const db = {
       select: () => ({
@@ -810,8 +814,10 @@ describe('TenancyInterceptor', () => {
     await run(warm, auth(financeAndSales), Routes, Routes.prototype.me);
     const coldQueries = dbQueries;
     const coldResolves = resolveCalls;
+    const coldViews = viewCalls;
     expect(coldQueries).toBe(2);
     expect(coldResolves).toBe(1);
+    expect(coldViews).toBe(1);
 
     now += 1_000;
     const { context } = await run(
@@ -824,6 +830,8 @@ describe('TenancyInterceptor', () => {
     expect(context.organizationId).toBe(ENTITY_B);
     expect(dbQueries - coldQueries).toBe(0);
     expect(resolveCalls - coldResolves).toBe(0);
+    // The role cache's one `authz_versions` read per request (U20a2-Q10) happens inside `current`.
+    expect(viewCalls - coldViews).toBe(1);
   });
 
   it('builds a principal from warm caches in under 1 ms', async () => {
