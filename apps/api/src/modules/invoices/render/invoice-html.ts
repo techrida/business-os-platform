@@ -20,11 +20,8 @@
 //   original did. The address and PAN/VAT number always come from the seller frozen at issue.
 import type { DocumentSellerContact } from '@bos/contracts';
 import {
-<<<<<<< HEAD
-  bsLongOfDay,
-=======
   amountInWords,
->>>>>>> origin/p4-main
+  bsLongOfDay,
   DEFAULT_CUSTOMER_DATE_FORMAT,
   DEFAULT_NUMBER_SYSTEMS,
   Dec,

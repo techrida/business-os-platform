@@ -297,14 +297,14 @@ describe('InvoiceView as the printed invoice', () => {
     expect(bare).not.toContain('signatory');
   });
 
-<<<<<<< HEAD
   it('writes the frozen issue date in the long BS form, never the compact one (U16-Q5)', () => {
     const html = renderToStaticMarkup(
       <InvoiceView view={sampleInvoice()} settlement={sampleSettlement()} />,
     );
     expect(html).toContain('22 Kartik 2083 BS');
     expect(html).not.toContain('2083-07-22');
-=======
+  });
+
   it('prints the contact the original PDF froze, not the profile as it is now', () => {
     const html = renderToStaticMarkup(
       <InvoiceView
@@ -333,7 +333,6 @@ describe('InvoiceView as the printed invoice', () => {
     );
     expect(none).not.toContain('Amanda Vance');
     expect(none).not.toContain('mailto:');
->>>>>>> origin/p4-main
   });
 
   it('gives the due date its Bikram Sambat date, and the Gregorian date alone out of range', () => {
