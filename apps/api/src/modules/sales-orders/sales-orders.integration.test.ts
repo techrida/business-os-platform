@@ -606,13 +606,13 @@ describe('SalesOrdersService.confirmFromQuotation', () => {
     expect(rows).toHaveLength(1);
   });
 
-  it('refuses an evidence file the scan found infected with 409 document_infected and makes no order (TR-Q12e)', async () => {
+  it('refuses an evidence file the scan found infected with 409 document_infected and leaves the order a draft (TR-Q12e)', async () => {
     const q = await acceptedQuotation();
     expect(await statusOf(confirm(q, [await infectedDocument()]))).toEqual({
       status: 409,
       code: 'document_infected',
     });
-    expect(await liveOrders(q.id)).toHaveLength(0);
+    expect(await orderStatuses(q.id)).toEqual(['draft']);
   });
 
   it('takes consecutive SO numbers for consecutive orders', async () => {
