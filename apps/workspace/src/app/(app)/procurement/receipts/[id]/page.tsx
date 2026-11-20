@@ -20,6 +20,7 @@ import {
 } from '@/lib/api-purchase-orders';
 import { requireStaffSession } from '@/lib/bff';
 import { when } from '@/lib/kernel-format';
+import { getPermissionCheck } from '@/lib/live-permissions';
 
 import layout from '../../procurement.module.css';
 import { isReceivable, PO_STATUS_LABEL, qtyText } from '../../orders/_lib/model';
@@ -158,7 +159,7 @@ export default async function ReceiptPage({
   const order = progress.status === 'fulfilled' ? progress.value : undefined;
   const others = siblings.status === 'fulfilled' ? siblings.value : [];
 
-  const grants = receiptGrants(session.roles);
+  const grants = receiptGrants(await getPermissionCheck(session));
   const can = receiptActions(receipt, grants, order?.status);
   const status = RECEIPT_STATUS_LABEL[receipt.status];
   const listHref = `/procurement/receipts?po=${encodeURIComponent(receipt.purchaseOrderId)}`;

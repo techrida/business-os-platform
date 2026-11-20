@@ -20,6 +20,7 @@ import { requireStaffSession } from '@/lib/bff';
 import { getNumberSystems } from '@/lib/display-settings';
 import { money, when } from '@/lib/kernel-format';
 import { humanizeKey } from '@/lib/kernel-ui';
+import { getPermissionCheck } from '@/lib/live-permissions';
 
 import { ApprovalTimeline } from '../../approval-timeline';
 import layout from '../../procurement.module.css';
@@ -134,7 +135,8 @@ export default async function RfqPage({
     );
   }
 
-  const grants = rfqGrants(session.roles);
+  const allowed = await getPermissionCheck(session);
+  const grants = rfqGrants(allowed);
   const open = takesQuotations(rfq.status);
   const [comparison, submissions, pr, approval] = await Promise.all([
     attempt(() => getComparison(session, id)),
@@ -160,7 +162,7 @@ export default async function RfqPage({
       recommendedQuotationId: rfq.recommendedQuotationId,
       prStatus: pr.value?.status ?? null,
     },
-    session.roles,
+    allowed,
   );
 
   const facts: Fact[] = [

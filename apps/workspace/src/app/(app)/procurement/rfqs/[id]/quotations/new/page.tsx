@@ -14,6 +14,7 @@ import { listTaxCodes } from '@/lib/api-tax-codes';
 import { requireStaffSession } from '@/lib/bff';
 import { loadEnabledCurrencies } from '@/lib/enabled-currencies.server';
 import { when } from '@/lib/kernel-format';
+import { getPermissionCheck } from '@/lib/live-permissions';
 
 import layout from '../../../../procurement.module.css';
 import { recordQuotationAction } from '../../../actions';
@@ -108,7 +109,7 @@ export default async function NewQuotationPage({
     </Page>
   );
 
-  if (!rfqGrants(session.roles).sourcing) {
+  if (!rfqGrants(await getPermissionCheck(session)).sourcing) {
     return blocked(
       'Your roles do not include sourcing',
       'Ask an administrator if you need to enter quotations.',

@@ -241,6 +241,8 @@ export default async function BillPage({
     reloadHref: here,
   };
   const inVariance = bill.status === 'variance' || bill.matchStatus === 'variance';
+  const canException =
+    grants.enter && bill.status === 'variance' && bill.matchStatus === 'variance';
 
   const facts: Fact[] = [
     {
@@ -325,10 +327,15 @@ export default async function BillPage({
             : 'A vendor invoice, matched before it goes for approval.'
         }
         actions={
-          can.match || can.submit || can.void || (bill.status === 'draft' && grants.enter) ? (
+          can.match ||
+          can.submit ||
+          can.void ||
+          canException ||
+          (bill.status === 'draft' && grants.enter) ? (
             <div className={styles.headActions}>
               {can.match ? <MatchDialog {...common} idempotencyKey={randomUUID()} /> : null}
               {can.submit ? <SubmitDialog {...common} idempotencyKey={randomUUID()} /> : null}
+              {canException ? <ExceptionDialog {...common} idempotencyKey={randomUUID()} /> : null}
               {can.void ? <VoidDialog {...common} idempotencyKey={randomUUID()} /> : null}
               {bill.status === 'draft' && grants.enter ? (
                 <DiscardBillDialog {...common} idempotencyKey={randomUUID()} />
@@ -369,14 +376,6 @@ export default async function BillPage({
               <FactList facts={totals} />
             </Panel>
             {approval !== null ? <ApprovalHistory approval={approval} /> : null}
-            {grants.enter && bill.status === 'variance' && bill.matchStatus === 'variance' ? (
-              <Panel
-                title="Match exception"
-                description="Finance can approve a reasoned exception to the match tolerance."
-              >
-                <ExceptionDialog {...common} idempotencyKey={randomUUID()} />
-              </Panel>
-            ) : null}
           </aside>
         </div>
         {/* The line tables run the full width: seven or eight columns do not fit beside the totals. */}

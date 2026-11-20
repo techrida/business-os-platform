@@ -12,6 +12,7 @@ import { listPurchaseRequests, type PurchaseRequestListItem } from '@/lib/api-pr
 import { requireStaffSession } from '@/lib/bff';
 import { getNumberSystems } from '@/lib/display-settings';
 import { money, when } from '@/lib/kernel-format';
+import { getPermissionCheck } from '@/lib/live-permissions';
 
 import layout from '../../procurement.module.css';
 import { createRfqAction } from '../actions';
@@ -39,7 +40,7 @@ export default async function NewRfqPage({
   const session = await requireStaffSession(here);
   const numberSystems = await getNumberSystems();
   const sp = await searchParams;
-  const allowed = rfqGrants(session.roles).sourcing;
+  const allowed = rfqGrants(await getPermissionCheck(session)).sourcing;
   const wanted = typeof sp.pr === 'string' && isGuid(sp.pr) ? sp.pr : '';
 
   const crumbs = (
