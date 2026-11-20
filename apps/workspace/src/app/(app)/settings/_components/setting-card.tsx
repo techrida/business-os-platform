@@ -10,7 +10,7 @@ import {
 import { useId, useRef, useState, type ReactNode } from 'react';
 
 import { Button } from '@/components/ui/button';
-import { Field, Input, Select } from '@/components/ui/field';
+import { Field, Input, Select, type FieldControlProps } from '@/components/ui/field';
 import { Icon } from '@/components/ui/icon';
 import { Panel } from '@/components/ui/panel';
 import type { SettingsSectionId } from '@/lib/settings-nav';
@@ -63,6 +63,22 @@ function ResetDefaultIcon() {
 }
 
 /**
+ * Moves focus to the first control of the setting `button` belongs to. Undo and Reset remove their own
+ * button once the value is back, so without this focus would fall to the page body (U23-Q5). The
+ * control stays mounted, so it is focused before React re-renders.
+ */
+function focusSettingControl(button: HTMLElement): void {
+  const item = button.closest('[data-setting]');
+  if (item === null) return;
+  const control = Array.from(
+    item.querySelectorAll<HTMLElement>(
+      'input:not([type="hidden"]):not([disabled]), select:not([disabled]), textarea:not([disabled]), button:not([disabled])',
+    ),
+  ).find((element) => element.closest('[data-field-actions]') === null);
+  control?.focus();
+}
+
+/**
  * Per-setting Undo (restores saved value, shown only when dirty) and Reset to default (stages the
  * built-in default in the form, shown only when current value differs from default).
  * Always rendered as siblings of `<label>`, never inside it, so inputs keep their exact name.
@@ -84,14 +100,17 @@ function FieldActions({
 }) {
   if (!dirty && atDefault) return null;
   return (
-    <span className={[styles.fieldActions, className].filter(Boolean).join(' ')}>
+    <span className={[styles.fieldActions, className].filter(Boolean).join(' ')} data-field-actions>
       {dirty ? (
         <button
           type="button"
           className={styles.iconButton}
           aria-label={`Undo change to ${spec.label}`}
           title="Undo change"
-          onClick={onUndo}
+          onClick={(event) => {
+            focusSettingControl(event.currentTarget);
+            onUndo();
+          }}
         >
           <Icon name="undo-2" size={16} />
         </button>
@@ -102,7 +121,10 @@ function FieldActions({
           className={styles.iconButton}
           aria-label={`Reset ${spec.label} to default`}
           title={`Back to default (${spec.defaultText})`}
-          onClick={onResetToDefault}
+          onClick={(event) => {
+            focusSettingControl(event.currentTarget);
+            onResetToDefault();
+          }}
         >
           <ResetDefaultIcon />
         </button>
@@ -165,6 +187,7 @@ function SettingCardPanel({
           return (
             <div
               key={spec.key}
+              data-setting={spec.key}
               className={[
                 isGroup ? styles.wide : styles.fieldItem,
                 !isGroup && actionCount > 0 ? styles.hasActions : undefined,
@@ -311,6 +334,38 @@ function Control({
   }
 }
 
+/**
+ * A group's error line. Always mounted, empty until there is an error, so screen readers are already
+ * watching the live region when the message arrives (a region inserted together with its text is
+ * often not announced). Empty, it takes no space (`.fieldError:empty`).
+ */
+function GroupError({ id, error }: { id: string; error: string | undefined }) {
+  return (
+    <p id={id} className={styles.fieldError} role="alert">
+      {error ?? ''}
+    </p>
+  );
+}
+
+/** The group's own ids for `aria-describedby`: its help line, and its error while there is one. */
+function groupDescribedBy(helpId: string | undefined, errorId: string, error: string | undefined) {
+  return [helpId, error ? errorId : undefined].filter(Boolean).join(' ') || undefined;
+}
+
+/** A control inside a group: invalid with the group, and described by the group's error line too. */
+function inGroup(
+  control: FieldControlProps,
+  errorId: string,
+  error: string | undefined,
+): FieldControlProps {
+  if (!error) return control;
+  return {
+    ...control,
+    'aria-invalid': true,
+    'aria-describedby': [control['aria-describedby'], errorId].filter(Boolean).join(' '),
+  };
+}
+
 function CurrenciesControl({
   spec,
   values,
@@ -326,6 +381,8 @@ function CurrenciesControl({
 }) {
   const id = useId();
   const labelId = `${id}-label`;
+  const helpId = `${id}-help`;
+  const errorId = `${id}-error`;
 
   const toggle = (currency: Currency, checked: boolean) => {
     const picked = new Set<Currency>(values);
@@ -339,6 +396,7 @@ function CurrenciesControl({
     <div
       role="group"
       aria-labelledby={labelId}
+      aria-describedby={groupDescribedBy(spec.help ? helpId : undefined, errorId, error)}
       className={styles.group}
       data-invalid={error ? 'true' : undefined}
     >
@@ -348,7 +406,11 @@ function CurrenciesControl({
         </p>
         {actions}
       </div>
-      {spec.help ? <p className={styles.help}>{spec.help}</p> : null}
+      {spec.help ? (
+        <p id={helpId} className={styles.help}>
+          {spec.help}
+        </p>
+      ) : null}
       <div className={styles.checkGrid}>
         {CURRENCIES.map((currency) =>
           currency === 'NPR' ? (
@@ -378,11 +440,7 @@ function CurrenciesControl({
           ),
         )}
       </div>
-      {error ? (
-        <p className={styles.fieldError} role="alert">
-          {error}
-        </p>
-      ) : null}
+      <GroupError id={errorId} error={error} />
     </div>
   );
 }
@@ -402,10 +460,13 @@ function SlaControl({
   actions?: ReactNode;
 }) {
   const labelId = useId();
+  const helpId = `${labelId}-help`;
+  const errorId = `${labelId}-error`;
   return (
     <div
       role="group"
       aria-labelledby={labelId}
+      aria-describedby={groupDescribedBy(spec.help ? helpId : undefined, errorId, error)}
       className={styles.group}
       data-invalid={error ? 'true' : undefined}
     >
@@ -415,7 +476,11 @@ function SlaControl({
         </p>
         {actions}
       </div>
-      {spec.help ? <p className={styles.help}>{spec.help}</p> : null}
+      {spec.help ? (
+        <p id={helpId} className={styles.help}>
+          {spec.help}
+        </p>
+      ) : null}
       <div className={styles.fields}>
         <Field label="Remind after (hours)">
           {(c) => (
@@ -427,7 +492,7 @@ function SlaControl({
               value={value.remindAfterHours}
               autoComplete="off"
               onChange={(e) => onChange({ ...value, remindAfterHours: e.currentTarget.value })}
-              {...c}
+              {...inGroup(c, errorId, error)}
             />
           )}
         </Field>
@@ -441,7 +506,7 @@ function SlaControl({
               value={value.escalateAfterHours}
               autoComplete="off"
               onChange={(e) => onChange({ ...value, escalateAfterHours: e.currentTarget.value })}
-              {...c}
+              {...inGroup(c, errorId, error)}
             />
           )}
         </Field>
@@ -453,7 +518,7 @@ function SlaControl({
               onChange={(e) =>
                 onChange({ ...value, escalateToRole: e.currentTarget.value as RoleKey })
               }
-              {...c}
+              {...inGroup(c, errorId, error)}
             >
               {ROLE_KEYS.map((r) => (
                 <option key={r} value={r}>
@@ -464,11 +529,7 @@ function SlaControl({
           )}
         </Field>
       </div>
-      {error ? (
-        <p className={styles.fieldError} role="alert">
-          {error}
-        </p>
-      ) : null}
+      <GroupError id={errorId} error={error} />
     </div>
   );
 }
@@ -488,6 +549,8 @@ function ScheduleControl({
   actions?: ReactNode;
 }) {
   const labelId = useId();
+  const helpId = `${labelId}-help`;
+  const errorId = `${labelId}-error`;
   const nextRowIdRef = useRef(rows.length);
   const [rowKeys, setRowKeys] = useState<string[]>(() => rows.map((_, i) => `row-${i}`));
 
@@ -521,6 +584,7 @@ function ScheduleControl({
     <div
       role="group"
       aria-labelledby={labelId}
+      aria-describedby={groupDescribedBy(spec.help ? helpId : undefined, errorId, error)}
       className={styles.group}
       data-invalid={error ? 'true' : undefined}
     >
@@ -530,7 +594,11 @@ function ScheduleControl({
         </p>
         {actions}
       </div>
-      {spec.help ? <p className={styles.help}>{spec.help}</p> : null}
+      {spec.help ? (
+        <p id={helpId} className={styles.help}>
+          {spec.help}
+        </p>
+      ) : null}
       <ul className={styles.scheduleRows}>
         {rows.map((row, index) => (
           <li key={rowKeys[index] ?? `row-idx-${index}`} className={styles.scheduleRow}>
@@ -542,7 +610,7 @@ function ScheduleControl({
                   autoComplete="off"
                   maxLength={100}
                   onChange={(e) => patch(index, { label: e.currentTarget.value })}
-                  {...c}
+                  {...inGroup(c, errorId, error)}
                 />
               )}
             </Field>
@@ -557,7 +625,7 @@ function ScheduleControl({
                   value={row.percent}
                   autoComplete="off"
                   onChange={(e) => patch(index, { percent: e.currentTarget.value })}
-                  {...c}
+                  {...inGroup(c, errorId, error)}
                 />
               )}
             </Field>
@@ -569,7 +637,7 @@ function ScheduleControl({
                   onChange={(e) =>
                     patch(index, { trigger: e.currentTarget.value as ScheduleTrigger })
                   }
-                  {...c}
+                  {...inGroup(c, errorId, error)}
                 >
                   {TRIGGER_OPTIONS.map((option) => (
                     <option key={option.value} value={option.value}>
@@ -603,11 +671,7 @@ function ScheduleControl({
               : ''}
         </p>
       </div>
-      {error ? (
-        <p className={styles.fieldError} role="alert">
-          {error}
-        </p>
-      ) : null}
+      <GroupError id={errorId} error={error} />
     </div>
   );
 }

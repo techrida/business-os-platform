@@ -1,4 +1,4 @@
-export function cookieName(kind: 'session' | 'login'): string {
+export function cookieName(kind: 'session' | 'login' | 'signed_out'): string {
   const namespace =
     process.env.NODE_ENV === 'development' ? process.env.BOS_DEV_COOKIE_NAMESPACE : undefined;
   if (namespace === undefined) return `__Host-bos_${kind}`;

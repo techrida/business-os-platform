@@ -124,7 +124,8 @@ function Section({
 }
 
 /**
- * Edits a workflow spec as a form (steps with a role, group, user or department head, plus amountNpr threshold rules)
+ * Edits a workflow spec as a form (steps with a role, group, user or department head, plus amountNpr threshold rules
+ * and the saved fact rules FactCondition describes)
  * or as raw JSON for anything the form cannot show. A spec the form cannot represent opens in JSON
  * mode, so nothing is dropped silently. The page decides what saving means: creating a workflow, or
  * adding the next draft version.
@@ -158,6 +159,8 @@ export function WorkflowEditor({
   const [form, setForm] = useState<SpecForm>(initial.form);
   const [json, setJson] = useState(initial.json);
   const [notes, setNotes] = useState<string[]>(initial.notes);
+  // Until a rule builder exists, raw JSON is offered only for a saved spec the form cannot show (Kuu, U23-Q4).
+  const jsonAvailable = initial.mode === 'json';
   const [key, setKey] = useState('');
   const [name, setName] = useState('');
   const [issues, setIssues] = useState<string[]>([]);
@@ -393,29 +396,31 @@ export function WorkflowEditor({
       {workflowKey ? <input type="hidden" name="key" value={workflowKey} /> : null}
       <input type="hidden" name="spec" value={built.ok ? JSON.stringify(built.spec) : ''} />
 
-      <div className={styles.toolbar}>
-        <span className={styles.toolbarLabel} id={viewLabelId}>
-          Editing as
-        </span>
-        <span role="group" aria-labelledby={viewLabelId} className={styles.toggle}>
-          <Button
-            size="small"
-            variant={view === 'form' ? 'secondary' : 'ghost'}
-            aria-pressed={view === 'form'}
-            onClick={() => (view === 'form' ? undefined : switchToForm())}
-          >
-            Form
-          </Button>
-          <Button
-            size="small"
-            variant={view === 'json' ? 'secondary' : 'ghost'}
-            aria-pressed={view === 'json'}
-            onClick={() => (view === 'json' ? undefined : switchToJson())}
-          >
-            JSON (advanced)
-          </Button>
-        </span>
-      </div>
+      {jsonAvailable ? (
+        <div className={styles.toolbar}>
+          <span className={styles.toolbarLabel} id={viewLabelId}>
+            Editing as
+          </span>
+          <span role="group" aria-labelledby={viewLabelId} className={styles.toggle}>
+            <Button
+              size="small"
+              variant={view === 'form' ? 'secondary' : 'ghost'}
+              aria-pressed={view === 'form'}
+              onClick={() => (view === 'form' ? undefined : switchToForm())}
+            >
+              Form
+            </Button>
+            <Button
+              size="small"
+              variant={view === 'json' ? 'secondary' : 'ghost'}
+              aria-pressed={view === 'json'}
+              onClick={() => (view === 'json' ? undefined : switchToJson())}
+            >
+              JSON (advanced)
+            </Button>
+          </span>
+        </div>
+      ) : null}
 
       {notes.length > 0 ? (
         <Alert
@@ -553,7 +558,11 @@ export function WorkflowEditor({
                 </fieldset>
               ))}
               {form.steps.length === 0 ? (
-                <p className={styles.empty}>No steps yet. Add the first approval step.</p>
+                <p className={styles.empty}>
+                  {form.rules.length > 0
+                    ? 'No fixed steps. Every step comes from the rules below.'
+                    : 'No steps yet. Add the first approval step.'}
+                </p>
               ) : null}
             </div>
             <div className={styles.addRow}>
@@ -566,14 +575,16 @@ export function WorkflowEditor({
           <Section
             number={3}
             label="The conditions"
-            title="Threshold rules"
-            hint="A rule adds one more step when the amount in NPR meets a condition. More complex conditions (several fields, lists) can be written in the JSON editor."
+            title="Rules"
+            hint={
+              jsonAvailable
+                ? 'A rule adds one more step when its condition is met. A new rule tests the amount in NPR. More complex conditions (several fields, lists) can be written in the JSON editor.'
+                : 'A rule adds one more step when its condition is met. A new rule tests the amount in NPR.'
+            }
           >
             <div className={styles.rows}>
               {form.rules.length === 0 ? (
-                <p className={styles.empty}>
-                  No threshold rules. Every request follows the steps above.
-                </p>
+                <p className={styles.empty}>No rules. Every request follows the steps above.</p>
               ) : null}
               {form.rules.map((rule, i) => (
                 <fieldset key={i} className={styles.row}>
@@ -591,39 +602,74 @@ export function WorkflowEditor({
                           />
                         )}
                       </Field>
-                      <Field label={`When ${THRESHOLD_FIELD}`}>
-                        {(control) => (
-                          <Select
-                            {...control}
-                            value={rule.op}
-                            onChange={(e) => updateRule(i, { op: e.target.value as ThresholdOp })}
-                          >
-                            {THRESHOLD_OPS.map((op) => (
-                              <option key={op} value={op}>
-                                {OP_LABEL[op]}
+                      {rule.fact?.field === 'fromSchedule' ? (
+                        <Field label="When the invoice">
+                          {(control) => (
+                            <Select
+                              {...control}
+                              value={String(rule.fact?.value === true)}
+                              onChange={(e) =>
+                                updateRule(i, {
+                                  fact: { field: 'fromSchedule', value: e.target.value === 'true' },
+                                })
+                              }
+                            >
+                              <option value="false">
+                                is not from an approved billing schedule
                               </option>
-                            ))}
-                          </Select>
-                        )}
-                      </Field>
-                      <Field
-                        label="Amount (NPR)"
-                        error={
-                          issues.length > 0 && !DecimalString.safeParse(rule.value.trim()).success
-                            ? WORKFLOW_AMOUNT_ERROR
-                            : undefined
-                        }
-                      >
-                        {(control) => (
-                          <Input
-                            {...control}
-                            value={rule.value}
-                            inputMode="decimal"
-                            autoComplete="off"
-                            onChange={(e) => updateRule(i, { value: e.target.value })}
-                          />
-                        )}
-                      </Field>
+                              <option value="true">is from an approved billing schedule</option>
+                            </Select>
+                          )}
+                        </Field>
+                      ) : rule.fact?.field === 'kind' ? (
+                        <Field
+                          label="When the document type is"
+                          hint="Matches every request of this type."
+                        >
+                          {(control) => (
+                            <Input {...control} value={String(rule.fact?.value ?? '')} readOnly />
+                          )}
+                        </Field>
+                      ) : (
+                        <>
+                          <Field label={`When ${THRESHOLD_FIELD}`}>
+                            {(control) => (
+                              <Select
+                                {...control}
+                                value={rule.op}
+                                onChange={(e) =>
+                                  updateRule(i, { op: e.target.value as ThresholdOp })
+                                }
+                              >
+                                {THRESHOLD_OPS.map((op) => (
+                                  <option key={op} value={op}>
+                                    {OP_LABEL[op]}
+                                  </option>
+                                ))}
+                              </Select>
+                            )}
+                          </Field>
+                          <Field
+                            label="Amount (NPR)"
+                            error={
+                              issues.length > 0 &&
+                              !DecimalString.safeParse(rule.value.trim()).success
+                                ? WORKFLOW_AMOUNT_ERROR
+                                : undefined
+                            }
+                          >
+                            {(control) => (
+                              <Input
+                                {...control}
+                                value={rule.value}
+                                inputMode="decimal"
+                                autoComplete="off"
+                                onChange={(e) => updateRule(i, { value: e.target.value })}
+                              />
+                            )}
+                          </Field>
+                        </>
+                      )}
                     </div>
                     <RuleStepGroup title="Then add this step">
                       {stepFields(rule.step, (n) => updateRuleStep(i, n))}

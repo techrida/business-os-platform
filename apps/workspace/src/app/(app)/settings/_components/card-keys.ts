@@ -8,7 +8,12 @@ export const CARD_KEYS = {
   currencies: ['currency.enabled', 'fx.max_rate_age_days'],
   tax: ['tax.vat_rate'],
   numbering: ['numbering.memo_prefix'],
-  sales: ['quotation.validity_days', 'sales.evidence_policy', 'sales.default_schedule'],
+  sales: [
+    'quotation.validity_days',
+    'sales.evidence_policy',
+    'sales.default_schedule',
+    'sales.delivery_hold.management_npr',
+  ],
   purchasing: [
     'procurement.min_quotes',
     'procurement.match.qty_pct',

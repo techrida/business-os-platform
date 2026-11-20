@@ -2,7 +2,11 @@
 // and their members, and delegations. Serves the NFR "approvals are auditable": a spec is edited only
 // as a draft, publishing freezes it (the DB trigger refuses later edits), and a new version affects
 // only requests submitted after it is published, because each request keeps its own version id.
-import { WorkflowWriteSpecSchema, type WorkflowSpec } from '@bos/contracts';
+import {
+  MEMO_APPROVER_DOCUMENT_TYPE,
+  WorkflowWriteSpecSchema,
+  type WorkflowSpec,
+} from '@bos/contracts';
 import {
   approvalGroupMembers,
   approvalGroups,
@@ -16,6 +20,7 @@ import {
 import {
   BadRequestException,
   ConflictException,
+  ForbiddenException,
   Inject,
   Injectable,
   NotFoundException,
@@ -24,7 +29,7 @@ import {
 import { and, asc, desc, eq, gt, inArray, isNull } from 'drizzle-orm';
 
 import { DB, type Db, type DbTransaction } from '../../platform/db/db.module';
-import { withTx, type TxScope } from '../../platform/db/tx';
+import { withTx, type Actor, type TxScope } from '../../platform/db/tx';
 import { SettingsService } from '../../platform/settings/settings.service';
 import { APPROVALS_CLOCK, ApprovalsAudit, ApprovalsCaller, type Clock } from './ports';
 import { activeEntityStaff, pgCode } from './requests.service';
@@ -35,7 +40,47 @@ export interface WorkflowVersionDto {
   status: 'draft' | 'published' | 'retired';
   spec: unknown;
   publishedAt: string | null;
+  /** Who saved this version; null for a version saved before the editor was recorded (0127). */
+  createdBy: string | null;
+  /**
+   * The editor's display name, so a Management member who cannot read the user directory still sees who saved a
+   * draft. 'Unnamed user' for a user without a display name (D54-2); null when the editor is unknown. List only.
+   */
+  createdByName?: string | null;
+  /** Who published it; null while it is a draft. */
+  publishedBy: string | null;
+  /** True when the caller saved it, so the caller cannot be the second person who publishes it (F1-Q11). */
+  savedByCaller: boolean;
 }
+
+/** Why a publish was refused to its caller (F1-Q11); recorded in the audit trail as well. */
+/**
+ * Re-checks, inside the publish transaction, that the person publishing may still publish. The route's guard reads
+ * the sign-in token, so someone demoted from Management would otherwise keep publishing until it expires. The HTTP
+ * route passes the live-grant check (access-revision lock, then the mirror's current roles); every caller must name
+ * one, so none skips it by accident.
+ */
+export type PublisherCheck = (tx: DbTransaction, scope: TxScope, actor: Actor) => Promise<void>;
+
+type PublishRefusal = 'own_draft' | 'editor_unknown';
+
+/** Thrown inside the publish transaction, so the refusal can be audited after that transaction rolls back. */
+class PublishRefused extends Error {
+  constructor(
+    readonly reason: PublishRefusal,
+    readonly versionId: string,
+    readonly createdBy: string | null,
+  ) {
+    super(reason);
+  }
+}
+
+const PUBLISH_REFUSAL_MESSAGE: Record<PublishRefusal, string> = {
+  own_draft:
+    'You saved this version, so another Management member must publish it. A workflow decides who approves money, so it needs a second person.',
+  editor_unknown:
+    'This draft was saved before the editor was recorded. Save it again as a new draft, then ask another Management member to publish it.',
+};
 export interface WorkflowDto {
   id: string;
   key: string;
@@ -78,11 +123,11 @@ export class ApprovalsAdminService {
 
   /** Runs `fn` in a transaction as the calling user, and turns constraint errors into 409. */
   private async write<T>(
-    fn: (tx: DbTransaction, scope: TxScope, userId: string) => Promise<T>,
+    fn: (tx: DbTransaction, scope: TxScope, userId: string, actor: Actor) => Promise<T>,
   ): Promise<T> {
     const { scope, actor, principal } = this.caller.current();
     try {
-      return await withTx(this.db, scope, actor, (tx) => fn(tx, scope, principal.userId));
+      return await withTx(this.db, scope, actor, (tx) => fn(tx, scope, principal.userId, actor));
     } catch (error) {
       const code = pgCode(error);
       if (code === '23505') throw new ConflictException('That key already exists');
@@ -126,7 +171,7 @@ export class ApprovalsAdminService {
   // ---- workflows -----------------------------------------------------------------------------------
 
   async listWorkflows(): Promise<WorkflowDto[]> {
-    const { scope } = this.caller.current();
+    const { scope, principal } = this.caller.current();
     const defs = await this.db
       .select()
       .from(workflowDefinitions)
@@ -148,13 +193,30 @@ export class ApprovalsAdminService {
         ),
       )
       .orderBy(asc(workflowVersions.version));
+    const editorIds = [
+      ...new Set(versions.flatMap((v) => (v.createdBy === null ? [] : [v.createdBy]))),
+    ];
+    const editors =
+      editorIds.length === 0
+        ? []
+        : await this.db
+            .select({ id: users.id, displayName: users.displayName })
+            .from(users)
+            .where(and(eq(users.tenantId, scope.tenantId), inArray(users.id, editorIds)));
+    const nameOf = (id: string | null): string | null => {
+      if (id === null) return null;
+      const editor = editors.find((u) => u.id === id);
+      return editor === undefined ? null : editor.displayName?.trim() || 'Unnamed user';
+    };
     return defs.map((d) => ({
       id: d.id,
       key: d.key,
       name: d.name,
       documentType: d.documentType,
       currentVersionId: d.currentVersionId,
-      versions: versions.filter((v) => v.definitionId === d.id).map(versionDto),
+      versions: versions
+        .filter((v) => v.definitionId === d.id)
+        .map((v) => ({ ...versionDto(v, principal.userId), createdByName: nameOf(v.createdBy) })),
     }));
   }
 
@@ -165,14 +227,21 @@ export class ApprovalsAdminService {
     spec: unknown;
   }): Promise<WorkflowVersionDto> {
     const spec = parseSpec(await this.withSlaDefaults(b.spec));
-    return this.write(async (tx, scope) => {
+    return this.write(async (tx, scope, userId) => {
       const [def] = await tx
         .insert(workflowDefinitions)
         .values({ ...scope, key: b.key, name: b.name, documentType: spec.documentType })
         .returning();
       const [v] = await tx
         .insert(workflowVersions)
-        .values({ ...scope, definitionId: def!.id, version: 1, status: 'draft', spec })
+        .values({
+          ...scope,
+          definitionId: def!.id,
+          version: 1,
+          status: 'draft',
+          spec,
+          createdBy: userId,
+        })
         .returning();
       await this.audit.record(tx, {
         action: 'approvals.workflow.create',
@@ -180,14 +249,14 @@ export class ApprovalsAdminService {
         entityId: def!.id,
         after: { key: b.key, documentType: spec.documentType },
       });
-      return versionDto(v!);
+      return versionDto(v!, userId);
     });
   }
 
   /** The next version number as a draft. Requests already submitted keep the version they had. */
   async addVersion(key: string, specInput: unknown): Promise<WorkflowVersionDto> {
     const spec = parseSpec(await this.withSlaDefaults(specInput));
-    return this.write(async (tx, scope) => {
+    return this.write(async (tx, scope, userId) => {
       const def = await this.definition(tx, scope, key);
       if (spec.documentType !== def.documentType) {
         throw new BadRequestException(`spec.documentType must stay "${def.documentType}"`);
@@ -206,6 +275,7 @@ export class ApprovalsAdminService {
           version: (last?.version ?? 0) + 1,
           status: 'draft',
           spec,
+          createdBy: userId,
         })
         .returning();
       await this.audit.record(tx, {
@@ -214,52 +284,86 @@ export class ApprovalsAdminService {
         entityId: v!.id,
         after: { key, version: v!.version },
       });
-      return versionDto(v!);
+      return versionDto(v!, userId);
     });
   }
 
-  /** Publishes a draft: it becomes the current version, and the previous published one is retired. */
-  async publish(key: string, version: number): Promise<WorkflowVersionDto> {
-    return this.write(async (tx, scope, userId) => {
-      const def = await this.definition(tx, scope, key);
-      const [v] = await tx
-        .select()
-        .from(workflowVersions)
-        .where(
-          and(eq(workflowVersions.definitionId, def.id), eq(workflowVersions.version, version)),
-        )
-        .for('update');
-      if (v === undefined)
-        throw new NotFoundException(`Workflow "${key}" has no version ${version}`);
-      if (v.status !== 'draft')
-        throw new ConflictException(`Version ${version} is already ${v.status}`);
-      const spec = parseSpec(v.spec);
-      await this.assertGroupsExist(tx, scope, spec);
-      const now = this.clock();
-      await tx
-        .update(workflowVersions)
-        .set({ status: 'retired' })
-        .where(
-          and(eq(workflowVersions.definitionId, def.id), eq(workflowVersions.status, 'published')),
-        );
-      const [published] = await tx
-        .update(workflowVersions)
-        .set({ status: 'published', publishedAt: now, publishedBy: userId })
-        .where(eq(workflowVersions.id, v.id))
-        .returning();
-      await tx
-        .update(workflowDefinitions)
-        .set({ currentVersionId: v.id })
-        .where(eq(workflowDefinitions.id, def.id));
-      await this.audit.record(tx, {
-        action: 'approvals.workflow.publish',
-        entityType: 'workflow_version',
-        entityId: v.id,
-        before: { currentVersionId: def.currentVersionId },
-        after: { key, version },
+  /**
+   * Publishes a draft: it becomes the current version, and the previous published one is retired. A second person
+   * publishes (F1-Q11, D7): the route needs approvals.definitions.publish (Management and the Founder by default),
+   * and whoever saved the draft is refused here, as is a draft whose editor was never recorded. A refusal is
+   * audited on its own transaction, because the publish transaction rolls back with it.
+   */
+  async publish(
+    key: string,
+    version: number,
+    assertPublisher: PublisherCheck,
+  ): Promise<WorkflowVersionDto> {
+    try {
+      return await this.write(async (tx, scope, userId, actor) => {
+        // First, before any row lock: the grant answer then holds for the rest of the transaction.
+        await assertPublisher(tx, scope, actor);
+        const def = await this.definition(tx, scope, key);
+        const [v] = await tx
+          .select()
+          .from(workflowVersions)
+          .where(
+            and(eq(workflowVersions.definitionId, def.id), eq(workflowVersions.version, version)),
+          )
+          .for('update');
+        if (v === undefined)
+          throw new NotFoundException(`Workflow "${key}" has no version ${version}`);
+        if (v.status !== 'draft')
+          throw new ConflictException(`Version ${version} is already ${v.status}`);
+        if (v.createdBy === null) throw new PublishRefused('editor_unknown', v.id, null);
+        if (v.createdBy === userId) throw new PublishRefused('own_draft', v.id, v.createdBy);
+        const spec = parseSpec(v.spec);
+        await this.assertGroupsExist(tx, scope, spec);
+        const now = this.clock();
+        await tx
+          .update(workflowVersions)
+          .set({ status: 'retired' })
+          .where(
+            and(
+              eq(workflowVersions.definitionId, def.id),
+              eq(workflowVersions.status, 'published'),
+            ),
+          );
+        const [published] = await tx
+          .update(workflowVersions)
+          .set({ status: 'published', publishedAt: now, publishedBy: userId })
+          .where(eq(workflowVersions.id, v.id))
+          .returning();
+        await tx
+          .update(workflowDefinitions)
+          .set({ currentVersionId: v.id })
+          .where(eq(workflowDefinitions.id, def.id));
+        await this.audit.record(tx, {
+          action: 'approvals.workflow.publish',
+          entityType: 'workflow_version',
+          entityId: v.id,
+          before: { currentVersionId: def.currentVersionId },
+          // The editor and the second person both stand in the trail (D7).
+          after: { key, version, editedBy: v.createdBy, publishedBy: userId },
+        });
+        return versionDto(published!, userId);
       });
-      return versionDto(published!);
-    });
+    } catch (error) {
+      if (!(error instanceof PublishRefused)) throw error;
+      await this.write(async (tx) => {
+        await this.audit.record(tx, {
+          action: 'approvals.workflow.publish_refused',
+          entityType: 'workflow_version',
+          entityId: error.versionId,
+          after: { key, version, reason: error.reason, editedBy: error.createdBy },
+        });
+      });
+      throw new ForbiddenException({
+        code: 'forbidden',
+        reason: 'separation_of_duties',
+        message: PUBLISH_REFUSAL_MESSAGE[error.reason],
+      });
+    }
   }
 
   private async definition(tx: DbTransaction, scope: TxScope, key: string) {
@@ -541,15 +645,35 @@ function parseSpec(input: unknown): WorkflowSpec {
       `Invalid workflow spec: ${parsed.error.issues.map((i) => `${i.path.join('.')}: ${i.message}`).join('; ')}`,
     );
   }
+  assertMemoApproverShape(parsed.data);
   return parsed.data;
 }
 
-function versionDto(v: typeof workflowVersions.$inferSelect): WorkflowVersionDto {
+/**
+ * The Memo approver workflow names the one person or role who signs "Approved by" (F1-Q9), so it has exactly one
+ * step and no rules; a spec that says more is refused rather than applied in part.
+ */
+function assertMemoApproverShape(spec: WorkflowSpec): void {
+  if (spec.documentType !== MEMO_APPROVER_DOCUMENT_TYPE) return;
+  if (spec.steps.length !== 1 || spec.rules.length !== 0) {
+    throw new BadRequestException(
+      'The memo approver workflow has exactly one step (who approves the memo) and no rules.',
+    );
+  }
+}
+
+function versionDto(
+  v: typeof workflowVersions.$inferSelect,
+  callerUserId: string,
+): WorkflowVersionDto {
   return {
     id: v.id,
     version: v.version,
     status: v.status,
     spec: v.spec,
     publishedAt: v.publishedAt?.toISOString() ?? null,
+    createdBy: v.createdBy,
+    publishedBy: v.publishedBy,
+    savedByCaller: v.createdBy !== null && v.createdBy === callerUserId,
   };
 }

@@ -1,7 +1,7 @@
 // Test doubles for k-users: an in-memory UsersStore with the same dedupe and upsert semantics as the
 // SQL, a fake ZITADEL, a fake queue and a db whose transaction just runs the callback.
 // Test-only: imported by *.test.ts files, never by runtime code.
-import type { RoleKey } from '@bos/contracts';
+import type { AccessLevel, RoleKey } from '@bos/contracts';
 
 import type { Db, DbTransaction } from '../db/db.module';
 import type { TxScope } from '../db/tx';
@@ -11,9 +11,12 @@ import {
   type ListedUser,
   type ListedUsers,
   type MembershipRow,
+  type PlacementDepartment,
   type Queryable,
+  type ExpiredLock,
   type UserFields,
   type UserRow,
+  type UserUpdate,
   UsersStore,
   type ZitadelEventKey,
 } from './users.store';
@@ -80,7 +83,7 @@ export class FakeUsersStore extends UsersStore {
   findByZitadelId(_q: Queryable, z: string) {
     return Promise.resolve(this.users.find((u) => u.zitadelUserId === z) ?? null);
   }
-  findById(_q: Queryable, s: TxScope, id: string) {
+  findById(_q: Queryable, s: TxScope, id: string, _lock?: boolean) {
     return Promise.resolve(
       this.users.find((u) => u.id === id && u.tenantId === s.tenantId) ?? null,
     );
@@ -93,10 +96,44 @@ export class FakeUsersStore extends UsersStore {
     this.users.push({ id, tenantId: s.tenantId, ...u });
     return Promise.resolve(id);
   }
-  updateUser(_tx: DbTransaction, id: string, u: Omit<UserFields, 'zitadelUserId' | 'idpOrgId'>) {
+  /** Every updateUser call, in order (the lock tests read what was written). */
+  updates: { id: string; update: UserUpdate }[] = [];
+  updateUser(_tx: DbTransaction, id: string, u: UserUpdate) {
+    this.updates.push({ id, update: u });
     const row = this.users.find((x) => x.id === id);
-    if (row) Object.assign(row, u);
+    if (row) {
+      const { lock, ...fields } = u;
+      Object.assign(row, fields);
+      // As the SQL store: a status other than inactive clears the lock; undefined keeps it.
+      const next = u.status === 'inactive' ? lock : null;
+      if (next === null) {
+        row.lockReason = null;
+        row.lockedUntil = null;
+      } else if (next) {
+        row.lockReason = next.reason;
+        row.lockedUntil = next.until?.toISOString() ?? null;
+      }
+    }
     return Promise.resolve();
+  }
+  postponeLock(_tx: DbTransaction, id: string, until: Date) {
+    const row = this.users.find((x) => x.id === id && x.lockReason === 'failed_sign_ins');
+    if (row) row.lockedUntil = until.toISOString();
+    return Promise.resolve();
+  }
+  expiredLocks(_q: Queryable, now: Date, limit: number): Promise<ExpiredLock[]> {
+    return Promise.resolve(
+      this.users
+        .filter(
+          (u) =>
+            u.lockReason === 'failed_sign_ins' &&
+            u.lockedUntil != null &&
+            Date.parse(u.lockedUntil) <= now.getTime(),
+        )
+        .sort((a, b) => Date.parse(a.lockedUntil ?? '') - Date.parse(b.lockedUntil ?? ''))
+        .slice(0, limit)
+        .map((u) => ({ id: u.id, tenantId: u.tenantId })),
+    );
   }
   notInactiveInIdpOrg(_q: Queryable, o: IdpOrgRow) {
     return Promise.resolve(
@@ -130,6 +167,27 @@ export class FakeUsersStore extends UsersStore {
       departmentId: null,
     });
     return Promise.resolve(true);
+  }
+  /** Departments by id, with the tenant they belong to. */
+  departments = new Map<string, PlacementDepartment & { tenantId: string }>();
+  departmentForPlacement(_q: Queryable, tenantId: string, departmentId: string) {
+    const found = this.departments.get(departmentId);
+    if (!found || found.tenantId !== tenantId) return Promise.resolve(null);
+    const { organizationId, name, status, headUserId } = found;
+    return Promise.resolve({ organizationId, name, status, headUserId });
+  }
+  placeMembership(
+    _tx: DbTransaction,
+    tenantId: string,
+    organizationId: string,
+    userId: string,
+    placement: { departmentId: string | null; level: AccessLevel },
+  ) {
+    const row = this.memberships.find(
+      (m) => m.tenantId === tenantId && m.organizationId === organizationId && m.userId === userId,
+    );
+    if (row) Object.assign(row, placement);
+    return Promise.resolve();
   }
   rolesOf(_q: Queryable, _tenantId: string, id: string) {
     return Promise.resolve([...(this.roles.get(id) ?? [])].sort());

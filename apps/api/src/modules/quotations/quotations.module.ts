@@ -38,6 +38,9 @@ import { QuotationOutcomeService } from './outcome/quotation-outcome.service';
 import { RecordOutcomeController } from './outcome/record-outcome.controller';
 import { RecordOutcomeService } from './outcome/record-outcome.service';
 import { drizzleHeadLoader, QuotationOwnerPolicy } from './quotation-owner.policy';
+import { MasterDataCaller } from './reference/master-data.caller';
+import { MasterDataController } from './reference/master-data.controller';
+import { MasterDataService } from './reference/master-data.service';
 import { ReferenceCaller } from './reference/reference.caller';
 import { ReferenceController } from './reference/reference.controller';
 import { ReferenceService } from './reference/reference.service';
@@ -57,6 +60,7 @@ import { QuotationSendService, QuotationSendStore } from './send/quotation-send.
   controllers: [
     DraftingController,
     ReferenceController,
+    MasterDataController,
     QuotationPreviewController,
     ReviseController,
     CancelController,
@@ -71,6 +75,8 @@ import { QuotationSendService, QuotationSendStore } from './send/quotation-send.
     DraftingCaller,
     ReferenceCaller,
     ReferenceService,
+    MasterDataCaller,
+    MasterDataService,
     QuotationPreviewService,
     QuotationPreviewCaller,
     ReviseService,

@@ -19,10 +19,11 @@ export const metadata: Metadata = { title: 'Sales · Business OS' };
 
 export default async function SalesSettingsPage() {
   const session = await requireSection('sales');
-  const [quotations, evidence, schedule] = await Promise.all([
+  const [quotations, evidence, schedule, deliveryHold] = await Promise.all([
     loadFields(session, ['quotation.validity_days']),
     loadFields(session, ['sales.evidence_policy']),
     loadFields(session, ['sales.default_schedule']),
+    loadFields(session, ['sales.delivery_hold.management_npr']),
   ]);
   const lostReasons = await section('view lost reasons', () => listLeadLostReasons(session));
   const cards = [
@@ -32,6 +33,11 @@ export default async function SalesSettingsPage() {
       title: 'Billing schedule',
       description: 'How an accepted quotation is billed when it has no schedule of its own.',
       result: schedule,
+    },
+    {
+      title: 'Delivery holds',
+      description: 'Who may release a delivery that is on hold.',
+      result: deliveryHold,
     },
   ];
 
@@ -54,7 +60,7 @@ export default async function SalesSettingsPage() {
       <BackToSettings />
       <PageHeader
         title="Sales"
-        description="Defaults for quotations and the deals they win, and the reasons a lead or opportunity can be lost. Every change is recorded in the audit trail."
+        description="Defaults for quotations and the deals they win, who releases a held delivery, and the reasons a lead or opportunity can be lost. Every change is recorded in the audit trail."
       />
       <div className={`${styles.column} ${styles.narrow}`}>
         {allFields.length > 0 ? (

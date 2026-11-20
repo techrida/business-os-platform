@@ -1,7 +1,12 @@
 // Request and response shapes that only the test memo routes use. The create body and MemoDto live in
 // @bos/contracts (memo.ts); the update body and the GET response are local because the e2e and k6 units are the
 // only other readers. Serves the NFR "inputs are validated at the edge".
-import { MemoBodyFieldsSchema, type DocumentVersionDto, type MemoDto } from '@bos/contracts';
+import {
+  MemoBodyFieldsSchema,
+  type DocumentVersionDto,
+  type MemoApproverRule,
+  type MemoDto,
+} from '@bos/contracts';
 import { z } from 'zod';
 
 /**
@@ -39,6 +44,8 @@ export type MemoDetailDto = MemoDto & {
   canUpdate: boolean;
   attachments: DocumentVersionDto[];
   approval: MemoApprovalSummary | null;
+  /** Who may approve this memo if it were submitted now (F1-Q9). Only for a template memo the caller may edit. */
+  approverRule?: MemoApproverRule;
 };
 
 /** POST /v1/test-memos/:id/submit */

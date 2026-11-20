@@ -210,6 +210,7 @@ export const ACCESS_AREA_CATALOGUE: readonly AccessAreaInfo[] = [
       'approvals.requests.reroute',
       'approvals.definitions.read',
       'approvals.definitions.write',
+      'approvals.definitions.publish',
       'approvals.groups.write',
       'approvals.delegations.write',
     ],
@@ -467,6 +468,7 @@ export const ACCESS_PERMISSION_GROUPS: readonly AccessPermissionGroup[] = [
       'approvals.requests.reroute',
       'approvals.definitions.read',
       'approvals.definitions.write',
+      'approvals.definitions.publish',
       'approvals.groups.write',
       'approvals.delegations.write',
     ],
@@ -519,6 +521,8 @@ export const ACCESS_PERMISSION_GROUPS: readonly AccessPermissionGroup[] = [
       'settings.finance.write',
       'settings.fx_rate.write',
       'audit.read',
+      'email_delivery.read',
+      'email_delivery.resend',
     ],
   },
   {
@@ -670,6 +674,14 @@ export const ACCESS_PERMISSION_CATALOGUE: readonly AccessPermissionInfo[] = [
     [],
     'Changes who must approve quotes, invoices, and payments.',
   ),
+  perm(
+    'approvals.definitions.publish',
+    'Publish approval workflows',
+    'onOff',
+    ON_OFF_STAFF,
+    [],
+    'Puts a saved workflow draft in use. Nobody can publish a draft they saved themselves.',
+  ),
   perm('approvals.groups.write', 'Manage approval groups', 'onOff', ON_OFF_STAFF, []),
   perm('approvals.delegations.write', 'Manage approval delegations', 'onOff', ON_OFF_STAFF, []),
   // Documents
@@ -794,6 +806,22 @@ export const ACCESS_PERMISSION_CATALOGUE: readonly AccessPermissionInfo[] = [
     [],
     'Views the full history of changes across the company.',
   ),
+  perm(
+    'email_delivery.read',
+    'See the email delivery log',
+    'onOff',
+    ON_OFF_STAFF,
+    [],
+    'Sees every email the company sent or failed to send, with its recipient and subject.',
+  ),
+  perm(
+    'email_delivery.resend',
+    'Resend failed emails',
+    'onOff',
+    ON_OFF_STAFF,
+    [],
+    'Sends a failed or bounced email again from the delivery log.',
+  ),
   // Portal access
   perm('portal.quotation.read', 'View company quotations in portal', 'portal', [], PORTAL_ONLY),
   perm('portal.quotation.respond', 'Respond to quotations in portal', 'portal', [], PORTAL_ONLY),
@@ -857,6 +885,8 @@ export const ADMIN_CONFIRM_PERMISSIONS: ReadonlySet<Permission> = new Set<Permis
   'settings.finance.write',
   'settings.fx_rate.write',
   'audit.read',
+  'email_delivery.read',
+  'email_delivery.resend',
 ]);
 
 /** Reach rank in strict order per Review R1 (`null < assigned < own < department < all`). */

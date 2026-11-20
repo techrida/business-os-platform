@@ -267,3 +267,103 @@ it('gives each row avatar its user id colour and picture, and a picture button n
     request.mockRestore();
   }
 });
+
+it('offers Lock, Deactivate, Unlock and Reactivate to a company-wide admin, never on their own row or an invite (F1-Q5, F1-Q4)', async () => {
+  const ME = '00000000-0000-4000-9000-0000000000a1';
+  const row = (
+    id: string,
+    displayName: string,
+    status: string,
+    lock: { lockReason: string; lockedUntil: string | null } | null = null,
+  ) => ({
+    id,
+    displayName,
+    email: `${displayName.toLowerCase()}@example.test`,
+    idpOrgId: IDP,
+    status,
+    ...(lock ?? {}),
+    roles: [],
+    department: null,
+    createdAt: '2026-11-19T00:00:00.000Z',
+    lastActiveAt: null,
+  });
+  const summary = (canChangeStatus: boolean) => ({
+    total: 4,
+    active: 2,
+    invited: 1,
+    deactivated: 1,
+    departments: [],
+    canSendPasswordReset: false,
+    canChangeStatus,
+  });
+  let canChange = true;
+  const request = vi.spyOn(globalThis, 'fetch').mockImplementation((input) => {
+    const url = new URL(input instanceof Request ? input.url : input);
+    if (url.pathname === '/v1/me') {
+      return Promise.resolve(
+        Response.json({
+          userId: '312345678901234567',
+          id: ME,
+          tenantId: '00000000-0000-4000-8000-0000000000f1',
+          organizationId: '00000000-0000-4000-8000-0000000000f2',
+          orgKind: 'staff',
+          partyId: null,
+          roles: ['founder'],
+          correlationId: 'corr-12345678',
+          permissions: [{ permission: 'admin.users.read', scope: 'all' }],
+        }),
+      );
+    }
+    return Promise.resolve(
+      Response.json(
+        url.pathname.endsWith('/summary')
+          ? summary(canChange)
+          : {
+              items: [
+                row(ME, 'Founder', 'active'),
+                row('00000000-0000-4000-9000-0000000000a2', 'Asha', 'active'),
+                row('00000000-0000-4000-9000-0000000000a3', 'Bikash', 'inactive'),
+                row('00000000-0000-4000-9000-0000000000a4', 'Chandra', 'invited'),
+                row('00000000-0000-4000-9000-0000000000a5', 'Dipesh', 'inactive', {
+                  lockReason: 'failed_sign_ins',
+                  lockedUntil: '2026-11-20T10:15:00.000Z',
+                }),
+                row('00000000-0000-4000-9000-0000000000a6', 'Esha', 'inactive', {
+                  lockReason: 'admin',
+                  lockedUntil: null,
+                }),
+              ],
+              nextPage: null,
+              nextAfter: null,
+            },
+      ),
+    );
+  });
+  try {
+    const html = renderToStaticMarkup(await UsersPage({ searchParams: Promise.resolve({}) }));
+    expect(html).toContain('aria-label="Deactivate Asha · asha@example.test"');
+    expect(html).toContain('aria-label="Lock Asha · asha@example.test"');
+    expect(html).toContain('aria-label="Reactivate Bikash · bikash@example.test"');
+    expect(html).not.toMatch(/(Lock|Unlock) Bikash/);
+    expect(html).not.toMatch(/(Deactivate|Lock) Founder/);
+    expect(html).not.toMatch(/(Deactivate|Reactivate|Lock|Unlock) Chandra/);
+    expect(html).toContain('>Deactivated<');
+    // A locked person is unlocked, never reactivated; a timed lock shows when it ends.
+    expect(html).toContain('aria-label="Unlock Dipesh · dipesh@example.test"');
+    expect(html).toContain('aria-label="Unlock Esha · esha@example.test"');
+    expect(html).not.toMatch(/(Reactivate|Lock) (Dipesh|Esha)/);
+    // A locked person can be deactivated (P2-2); a timed lock can be kept for good, an admin lock needs nothing more.
+    expect(html).toContain('aria-label="Deactivate Dipesh · dipesh@example.test"');
+    expect(html).toContain('aria-label="Deactivate Esha · esha@example.test"');
+    expect(html).toContain('aria-label="Keep locked Dipesh · dipesh@example.test"');
+    expect(html).not.toContain('Keep locked Esha');
+    expect(html.match(/>Locked</g)).toHaveLength(2);
+    expect(html).toContain('dateTime="2026-11-20T10:15:00.000Z"');
+
+    canChange = false;
+    const plain = renderToStaticMarkup(await UsersPage({ searchParams: Promise.resolve({}) }));
+    expect(plain).not.toMatch(/aria-label="(Deactivate|Reactivate|Lock|Keep locked|Unlock) /);
+  } finally {
+    request.mockRestore();
+  }
+});
