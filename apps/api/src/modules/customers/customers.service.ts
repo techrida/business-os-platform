@@ -50,7 +50,7 @@ import { updateVersioned, withIdempotency } from '../../platform/db/idempotency'
 import { withTx, type TxScope } from '../../platform/db/tx';
 import { searchPage } from '../../platform/list';
 import { NumberingService } from '../../platform/settings/numbering.service';
-import { personNames } from '../../platform/users/person-names';
+import { nameIn, personNameMap, personNames } from '../../platform/users/person-names';
 import { CustomersCaller } from './customers.caller';
 import { escapeLike, normalizeEmail, normalizeName, normalizePan } from './customers.normalize';
 import {
@@ -247,7 +247,17 @@ export class CustomersService {
         return count?.n ?? 0;
       },
     });
-    return { items: rows.map(toCustomerDto), total };
+    if (principal.orgKind !== 'staff') return { items: rows.map(toCustomerDto), total };
+    // U15a-Q3: the owner by name only (D46), read in the tenant, so the list needs no directory access.
+    const names = await personNameMap(
+      this.db,
+      scope.tenantId,
+      rows.map((r) => r.ownerUserId),
+    );
+    return {
+      items: rows.map((r) => ({ ...toCustomerDto(r), ownerName: nameIn(names, r.ownerUserId) })),
+      total,
+    };
   }
 
   /** The industries in use among the customers the caller may read, for the list's Industry filter. */

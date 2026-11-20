@@ -433,6 +433,28 @@ describe('create a customer and read it back', () => {
     expect((own.body as { total: number }).total).toBe(0);
   });
 
+  it('names the owner on each row of the list, and nothing more of them (U15a-Q3)', async () => {
+    const tag = randomUUID().slice(0, 6);
+    const mine = await createCustomer({ legalName: `Owner Name ${tag} Pvt Ltd` });
+    const unowned = await createCustomer({ legalName: `Owner Name ${tag} Unowned Pvt Ltd` });
+    await withTx(db, a, systemActor('test'), async (tx) => {
+      await tx.update(users).set({ displayName: 'Sita Sales' }).where(eq(users.id, a.userId));
+      await tx.update(customers).set({ ownerUserId: null }).where(eq(customers.id, unowned.id));
+    });
+    const res = await request(baseUrl)
+      .get('/v1/customers')
+      .query({ q: `Owner Name ${tag}` });
+    expect(res.status, JSON.stringify(res.body)).toBe(200);
+    const items = (res.body as { items: Record<string, unknown>[] }).items;
+    const byId = new Map(items.map((c) => [c.id, c]));
+    expect(byId.get(mine.id)).toMatchObject({ ownerUserId: a.userId, ownerName: 'Sita Sales' });
+    expect(byId.get(unowned.id)).toMatchObject({ ownerUserId: null, ownerName: null });
+    for (const item of items) {
+      expect(CustomerDtoSchema.parse(item)).toBeDefined();
+      expect(JSON.stringify(item)).not.toMatch(/@/);
+    }
+  });
+
   it('is a 400 without an Idempotency-Key and for a body that breaks the contract', async () => {
     const missing = await request(baseUrl).post('/v1/customers').send(customerBody());
     expect(missing.status).toBe(400);
