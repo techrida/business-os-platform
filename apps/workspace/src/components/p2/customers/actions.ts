@@ -106,8 +106,9 @@ export async function createCustomerAction(
     id = (await createCustomer(session, body, key)).id;
   } catch (err) {
     if (apiReasonOf(err) === 'duplicate_reason_required') {
-      // An organization of the same name exists: show what the search finds (it may be nothing the
-      // search can see) and ask for the reason. Nothing was created, so the next try is a new create.
+      // A possible duplicate exists (the same name, or the same PAN/VAT number without spaces and
+      // hyphens): show what the search finds (it may be nothing the search can see) and ask for the
+      // reason. Nothing was created, so the next try is a new create.
       return {
         key: randomUUID(),
         errors: {},

@@ -534,7 +534,52 @@ describe('"Create anyway" on a customer of the same name (F1-Q55)', () => {
     expect(await overrideEvents(second.id)).toEqual([
       {
         actor_id: a.userId,
-        meta: { reason: 'Separate branch billed on its own', matchedCustomerIds: [first.id] },
+        meta: {
+          reason: 'Separate branch billed on its own',
+          matchedCustomerIds: [first.id],
+          matches: [{ customerId: first.id, on: ['name'] }],
+        },
+      },
+    ]);
+  });
+
+  // The form flags the same PAN/VAT number after dropping spaces and hyphens (duplicate-check.ts); the server
+  // asks for the reason, and audits it, for exactly that match too.
+  it('needs a reason for the same PAN/VAT number written with hyphens, and audits which rule matched', async () => {
+    const tag = randomUUID().slice(0, 6);
+    const first = await createCustomer({
+      legalName: `Kailash ${tag} Pvt. Ltd.`,
+      panVatNo: '123456789',
+    });
+
+    const refused = await post(
+      customerBody({ legalName: `Different ${tag} Pvt. Ltd.`, panVatNo: '123-456-789' }),
+    );
+    expect(refused.status, JSON.stringify(refused.body)).toBe(400);
+    expect(errorOf(refused.body)).toMatchObject({
+      code: 'bad_request',
+      reason: 'duplicate_reason_required',
+    });
+    expect(errorOf(refused.body).message).toContain('PAN/VAT number');
+
+    const created = await post(
+      customerBody({
+        legalName: `Different ${tag} Pvt. Ltd.`,
+        panVatNo: '123-456-789',
+        duplicateOverrideReason: 'Sister company sharing the group PAN',
+      }),
+    );
+    expect(created.status, JSON.stringify(created.body)).toBe(201);
+    const second = CustomerDtoSchema.parse(created.body);
+    expect(second.panVatNo).toBe('123-456-789');
+    expect(await overrideEvents(second.id)).toEqual([
+      {
+        actor_id: a.userId,
+        meta: {
+          reason: 'Sister company sharing the group PAN',
+          matchedCustomerIds: [first.id],
+          matches: [{ customerId: first.id, on: ['pan_vat'] }],
+        },
       },
     ]);
   });

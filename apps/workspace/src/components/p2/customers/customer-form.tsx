@@ -115,7 +115,7 @@ export function CustomerForm({
     else formRef.current?.querySelector<HTMLElement>('[aria-invalid="true"]')?.focus();
   }, [state]);
 
-  // The API asked for a reason (a same-name organization it knows of): ask for it straight away.
+  // The API asked for a reason (a same-name or same-PAN organization it knows of): ask for it straight away.
   // Adjusted while rendering, once per answer, rather than in an effect.
   const [answered, setAnswered] = useState(state);
   if (answered !== state) {

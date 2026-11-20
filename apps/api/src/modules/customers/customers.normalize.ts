@@ -40,6 +40,16 @@ export function normalizePan(value: string): string {
   return value.trim().toUpperCase();
 }
 
+/**
+ * The PAN or VAT number as the duplicate check compares it: no spaces or hyphens, upper-case ("123-456-789" and
+ * "123456789" match). A copy of normalizePanVat in apps/workspace/src/components/p2/customers/duplicates.ts, so
+ * the server asks for a reason exactly where the form warns. Null when nothing is left.
+ */
+export function panMatchKey(value: string): string | null {
+  const cleaned = value.replace(/[\s-]+/g, '').toUpperCase();
+  return cleaned === '' ? null : cleaned;
+}
+
 /** The contact e-mail as stored: lower-case and trimmed (CHECK customer_contacts_email_norm_check). */
 export function normalizeEmail(value: string): string {
   return value.trim().toLowerCase();

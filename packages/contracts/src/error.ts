@@ -17,7 +17,8 @@ export const ERROR_REASONS = [
   'invalid_entity',
   'stale_memo',
   'deadline_in_past',
-  // F1-Q55 (400): a customer of the same name already exists and the create named no `duplicateOverrideReason`.
+  // F1-Q55 (400): a customer of the same name, or the same PAN/VAT number once spaces and hyphens are dropped,
+  // already exists and the create named no `duplicateOverrideReason`.
   'duplicate_reason_required',
 ] as const;
 export const ErrorReasonSchema = z.enum(ERROR_REASONS);
