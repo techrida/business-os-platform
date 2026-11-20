@@ -44,7 +44,7 @@ export interface RecordReach {
    * only permission `assigned` works on. Writes never get this reach (D55-3): they stay with the owner.
    */
   readPermission?: Permission;
-  /** Who entered the record (leads only, D50 `created`). */
+  /** Who entered the record (D50 `created`): a lead's creator, and an opportunity's lead creator (FX-Q1). */
   creator?: AnyPgColumn;
   /** The assignment rows naming this table's records in `subject`. */
   assignment?: { table: AssignmentTable; subject: AnyPgColumn };
@@ -198,6 +198,8 @@ defineRecordReach(opportunities, {
   owner: opportunities.ownerUserId,
   department: opportunities.departmentId,
   readPermission: 'crm.opportunity.read',
+  // FX-Q1 (migration 0101): whoever entered the lead keeps reading the opportunity it became.
+  creator: opportunities.leadCreatorUserId,
   assignment: { table: activities, subject: activities.opportunityId },
 });
 

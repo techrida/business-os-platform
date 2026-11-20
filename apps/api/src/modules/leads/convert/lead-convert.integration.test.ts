@@ -11,7 +11,7 @@ import { randomUUID } from 'node:crypto';
 import type { Server } from 'node:http';
 import type { AddressInfo } from 'node:net';
 
-import { ErrorBodySchema, LeadDtoSchema } from '@bos/contracts';
+import { ErrorBodySchema, LeadDtoSchema, OpportunityDtoSchema } from '@bos/contracts';
 import { activities, customerContacts, customers, leads, opportunities } from '@bos/db';
 import { type INestApplication } from '@nestjs/common';
 import { Test } from '@nestjs/testing';
@@ -28,6 +28,7 @@ import { systemActor, withTx } from '../../../platform/db/tx';
 import { NumberingService } from '../../../platform/settings/numbering.service';
 import { ErrorBodyFilter } from '../../../platform/tenancy/error-body.filter';
 import { CustomersService } from '../../customers/customers.service';
+import { OpportunitiesService } from '../../opportunities/opportunities.service';
 import { LeadsController } from '../leads.controller';
 import { LeadsService } from '../leads.service';
 import { LeadLostReasonsService } from '../lost-reasons.service';
@@ -42,6 +43,7 @@ vi.setConfig({ testTimeout: 60_000, hookTimeout: 180_000 });
 let h: Harness;
 let app: INestApplication;
 let baseUrl: string;
+let opportunitiesService: OpportunitiesService;
 
 beforeAll(async () => {
   h = await startHarness({ Pool, drizzle });
@@ -67,6 +69,13 @@ beforeAll(async () => {
     numbering,
     customersService,
     h.caller,
+  );
+  opportunitiesService = new OpportunitiesService(
+    h.db,
+    authz,
+    audit,
+    h.caller,
+    new LeadLostReasonsService(h.db, audit, h.caller),
   );
   const moduleRef = await Test.createTestingModule({
     controllers: [LeadsController, LeadConvertController],
@@ -526,5 +535,109 @@ describe('POST /v1/leads/:id/convert', () => {
     const denied = await convert(lead.id, createCustomerBody());
     expect(denied.status).toBe(403);
     expect(await leadRow(lead.id)).toMatchObject({ stage: 'qualified' });
+  });
+});
+
+describe('the lead creator on the opportunity (FX-Q1)', () => {
+  let salesStaff: string;
+  let finance: string;
+  let colleague: string;
+
+  beforeAll(async () => {
+    const salesDept = await h.department('Sales FX');
+    salesStaff = await h.member({ roles: ['sales'], departmentId: salesDept, displayName: 'Sam' });
+    colleague = await h.member({ roles: ['sales'], departmentId: salesDept, displayName: 'Cora' });
+    finance = await h.member({ roles: ['finance'], displayName: 'Fina Finance' });
+  });
+
+  it('records who entered the lead, so Finance opens the deal it became and may quote on it', async () => {
+    // Finance enters the lead for a Sales owner (D50) ...
+    await h.actAs(finance);
+    const created = await request(baseUrl).post('/v1/leads').send({
+      title: 'Finance referral',
+      source: 'referral',
+      companyName: 'Acme Pvt. Ltd.',
+      contactName: 'Sita Rai',
+      ownerUserId: salesStaff,
+    });
+    expect(created.status, JSON.stringify(created.body)).toBe(201);
+    const lead = LeadDtoSchema.parse(created.body);
+    // ... and the owner qualifies and converts it.
+    await h.actAs(salesStaff);
+    for (const [stage, expectedVersion] of [
+      ['contacted', 1],
+      ['qualified', 2],
+    ] as const) {
+      const moved = await request(baseUrl)
+        .patch(`/v1/leads/${lead.id}/stage`)
+        .send({ stage, expectedVersion });
+      expect(moved.status, JSON.stringify(moved.body)).toBe(200);
+    }
+    const res = await convert(lead.id, createCustomerBody());
+    expect(res.status, JSON.stringify(res.body)).toBe(201);
+    const { opportunityId } = res.body as { opportunityId: string };
+    expect(await opportunityRow(opportunityId)).toMatchObject({
+      ownerUserId: salesStaff,
+      leadCreatorUserId: finance,
+    });
+
+    // Finance holds crm.opportunity.read `own`: the creator reach now covers the deal, read only.
+    await h.actAs(finance);
+    const seen = OpportunityDtoSchema.parse(await opportunitiesService.get(opportunityId));
+    expect(seen).toMatchObject({
+      id: opportunityId,
+      ownerUserId: salesStaff,
+      canEdit: false,
+      canDraftQuotation: true,
+      allowedMoves: [],
+    });
+    const listed = await opportunitiesService.list({ limit: 50, offset: 0 });
+    expect(listed.items.map((o) => o.id)).toContain(opportunityId);
+    // Reading is not changing the deal (D55-3): Finance holds no opportunity write at all.
+    await expect(
+      opportunitiesService.changeStage(opportunityId, {
+        stage: 'requirement_received',
+        expectedVersion: 1,
+      }),
+    ).rejects.toMatchObject({ status: 403 });
+
+    // A colleague with only an assigned follow-up reads the deal but may not quote on it (FX-Q2).
+    await withTx(h.db, h.scopeA, systemActor('test'), (tx) =>
+      tx.insert(activities).values({
+        ...h.scopeA,
+        kind: 'call',
+        subject: 'Call the buyer',
+        opportunityId,
+        dueAt: new Date(Date.now() + 86_400_000),
+        assigneeUserId: colleague,
+        createdByUserId: salesStaff,
+      }),
+    );
+    await h.actAs(colleague);
+    expect(OpportunityDtoSchema.parse(await opportunitiesService.get(opportunityId))).toMatchObject(
+      {
+        canEdit: false,
+        canDraftQuotation: false,
+      },
+    );
+    // The owner may.
+    await h.actAs(salesStaff);
+    expect(OpportunityDtoSchema.parse(await opportunitiesService.get(opportunityId))).toMatchObject(
+      {
+        canEdit: true,
+        canDraftQuotation: true,
+      },
+    );
+  });
+
+  it('leaves the lead creator empty for a lead without a known creator', async () => {
+    const lead = await qualifiedLead();
+    await withTx(h.db, h.scopeA, systemActor('test'), (tx) =>
+      tx.update(leads).set({ createdByUserId: null }).where(eq(leads.id, lead.id)),
+    );
+    const res = await convert(lead.id, createCustomerBody());
+    expect(res.status, JSON.stringify(res.body)).toBe(201);
+    const { opportunityId } = res.body as { opportunityId: string };
+    expect(await opportunityRow(opportunityId)).toMatchObject({ leadCreatorUserId: null });
   });
 });

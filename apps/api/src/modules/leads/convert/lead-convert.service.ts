@@ -187,6 +187,8 @@ export class LeadConvertService {
         contactId,
         leadId: lead.id,
         ownerUserId: lead.ownerUserId,
+        // FX-Q1: whoever entered the lead keeps reading the deal it becomes and may draft its quotations.
+        leadCreatorUserId: lead.createdByUserId,
         stage: 'qualified',
         value: lead.expectedValue,
         currency: lead.currency,

@@ -47,6 +47,16 @@ function portalRows(p: Principal, table: ScopableTable, s: Scoped): SQL {
   return s.forCounterparty(table as unknown as AnyCounterpartyTable, counterparty.kind, p.partyId);
 }
 
+/**
+ * How far `scopeWhereFor` reaches. `assignees: false` leaves out the read reach a follow-up assignment gives
+ * (D55-5): an assigned follow-up lets its holder read and complete that work, never act on the record itself
+ * (FX-Q2: drafting a quotation on an opportunity). The record-check twin passes a ResourceRef without
+ * `assigneeUserIds`.
+ */
+export interface ScopeOptions {
+  assignees?: boolean;
+}
+
 /** The columns a scope compares, from record-reach.ts when the table is described there. */
 interface ScopeColumns {
   owner: AnyPgColumn | undefined;
@@ -71,13 +81,20 @@ function columnsOf(table: ScopableTable, action: Permission): ScopeColumns {
  * `p`'s own rows, the SQL of `isMine()` in can.ts: the owner column, plus on the table's read permission the
  * creator and the assignees. Undefined when the table has none of them, which matches no row.
  */
-function mineCondition(p: Principal, table: ScopableTable, c: ScopeColumns): SQL | undefined {
+function mineCondition(
+  p: Principal,
+  table: ScopableTable,
+  c: ScopeColumns,
+  options: ScopeOptions,
+): SQL | undefined {
   const parts: SQL[] = [];
   if (c.owner !== undefined) parts.push(eq(c.owner, p.userId));
   const reach = c.readReach;
   if (reach !== undefined) {
     if (reach.creator !== undefined) parts.push(eq(reach.creator, p.userId));
-    if (reach.assignment !== undefined) parts.push(assignedToSql(table, reach, p.userId));
+    if (reach.assignment !== undefined && options.assignees !== false) {
+      parts.push(assignedToSql(table, reach, p.userId));
+    }
   }
   if (parts.length === 0) return undefined;
   return parts.length === 1 ? parts[0] : or(...parts);
@@ -92,7 +109,12 @@ function mineCondition(p: Principal, table: ScopableTable, c: ScopeColumns): SQL
  * Separation of duties is not expressed here (it depends on who prepared each record, not on a
  * column), so an SoD action still needs `assert()` on the chosen record.
  */
-export function scopeWhereFor(p: Principal, table: ScopableTable, action: Permission): SQL {
+export function scopeWhereFor(
+  p: Principal,
+  table: ScopableTable,
+  action: Permission,
+  options: ScopeOptions = {},
+): SQL {
   if (p.status !== 'active') return NOTHING;
   const scope = p.grants.get(action);
   if (scope === undefined) return NOTHING;
@@ -103,17 +125,17 @@ export function scopeWhereFor(p: Principal, table: ScopableTable, action: Permis
     case 'assigned': {
       // Read only: on a write, or on a table no assignment hands over, `can()` refuses it too.
       const reach = c.readReach;
-      if (reach?.assignment === undefined) return NOTHING;
+      if (reach?.assignment === undefined || options.assignees === false) return NOTHING;
       return s.where(table, assignedToSql(table, reach, p.userId));
     }
     case 'own': {
-      const mine = mineCondition(p, table, c);
+      const mine = mineCondition(p, table, c, options);
       return mine === undefined ? NOTHING : s.where(table, mine);
     }
     case 'department': {
       // Cumulative: my own rows anywhere, and every row of my department. No department (mine or the
       // table's) leaves just the own rows; NULL = NULL would not match anyway, but be explicit.
-      const mine = mineCondition(p, table, c);
+      const mine = mineCondition(p, table, c, options);
       const parts: SQL[] = mine === undefined ? [] : [mine];
       if (p.departmentId !== null && c.department !== undefined) {
         parts.push(eq(c.department, p.departmentId));
