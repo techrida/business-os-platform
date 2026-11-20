@@ -3,17 +3,20 @@
 //   A file from before version 2 (one flat object) is kept as `legacy` and read for every workflow.
 // - results.json keeps every earlier result of a workflow under `history`, and video and screenshot
 //   names get a -2, -3 … suffix instead of replacing an existing file.
+import { randomUUID } from 'node:crypto';
 import {
   closeSync,
   copyFileSync,
   existsSync,
+  linkSync,
   openSync,
   readFileSync,
   renameSync,
   rmSync,
+  statSync,
   writeFileSync,
-  writeSync,
 } from 'node:fs';
+import { hostname } from 'node:os';
 import path from 'node:path';
 
 export function readJson(file, fallback) {
@@ -66,34 +69,135 @@ const alive = (pid) => {
   }
 };
 
-/**
- * One run per output folder at a time: `.lock` is created with O_EXCL and holds the owner's pid. A
- * lock whose process is gone is stale and is taken over (once). Returns a release function; throws
- * when another live process holds the folder.
- */
-export function acquireLock(dir) {
-  const file = path.join(dir, '.lock');
-  for (let attempt = 0; attempt < 2; attempt++) {
-    try {
-      const fd = openSync(file, 'wx');
-      writeSync(fd, JSON.stringify({ pid: process.pid, startedAt: new Date().toISOString() }));
-      closeSync(fd);
-      return () => {
-        if (readJson(file, {}).pid === process.pid) rmSync(file, { force: true });
-      };
-    } catch (error) {
-      if (error.code !== 'EEXIST') throw error;
-    }
-    const holder = readJson(file, null);
-    if (holder && Number.isInteger(holder.pid) && alive(holder.pid))
-      throw new Error(
-        `${dir} is in use by another manual-run (pid ${holder.pid}, since ${holder.startedAt}). ` +
-          'Wait for it to finish, or use another label.',
-      );
-    // Stale: its process is gone (or the file is unreadable). Remove it and try once more.
-    rmSync(file, { force: true });
+/** A lock file that is empty or unreadable this young may be mid-write by its owner: held. */
+export const LOCK_YOUNG_MS = 10_000;
+
+const readRaw = (file) => {
+  try {
+    return readFileSync(file, 'utf8');
+  } catch (error) {
+    if (error.code === 'ENOENT') return null;
+    return '';
   }
-  throw new Error(`Could not lock ${dir}: another run took it at the same moment.`);
+};
+
+const ageMs = (file) => {
+  try {
+    return Date.now() - statSync(file).mtimeMs;
+  } catch {
+    return 0;
+  }
+};
+
+/**
+ * Why the lock in `file` (its content `raw`) is still held, or null when it is stale.
+ * A lock without a hostname is from this tool before 20 Nov 2026 and counts as this machine's.
+ */
+function heldBy(file, raw, { breakLock }) {
+  let holder = null;
+  try {
+    holder = JSON.parse(raw);
+  } catch {
+    // empty or partly written
+  }
+  if (!holder || typeof holder !== 'object') {
+    return ageMs(file) < LOCK_YOUNG_MS ? 'a lock that is being written right now' : null;
+  }
+  const since = holder.startedAt ? `, since ${holder.startedAt}` : '';
+  if (holder.hostname && holder.hostname !== hostname()) {
+    if (breakLock) return null;
+    return (
+      `another machine (${holder.hostname}, pid ${holder.pid}${since}); its process cannot be ` +
+      'checked from here. Pass --break-lock only if that run is gone'
+    );
+  }
+  if (Number.isInteger(holder.pid) && alive(holder.pid))
+    return `another manual-run (pid ${holder.pid}${since})`;
+  return null;
+}
+
+/**
+ * One run per output folder at a time. The lock file `<dir>/<name>` is written completely under a
+ * temporary name and then hard-linked into place (`link` fails with EEXIST when it exists), so no
+ * other process ever sees a half-written lock of ours. It holds pid, hostname, start time and a
+ * unique token; release removes it only while it still carries that token.
+ *
+ * Held: a live pid on this machine, any lock from another hostname (unless `breakLock`), and an
+ * empty or unreadable lock younger than LOCK_YOUNG_MS. A stale lock is moved aside with an atomic
+ * rename to a unique name; only the process whose rename succeeded re-checks the moved content
+ * against what it judged stale, removes it and retries. If the content differs it moved a fresh
+ * lock: it links that back and reports the folder held. Returns a release function; throws when
+ * the lock is held.
+ */
+export function acquireLock(dir, { name = '.lock', breakLock = false } = {}) {
+  const file = path.join(dir, name);
+  const token = `${hostname()}:${process.pid}:${randomUUID()}`;
+  const content = JSON.stringify({
+    pid: process.pid,
+    hostname: hostname(),
+    startedAt: new Date().toISOString(),
+    token,
+  });
+  const tmp = `${file}.${process.pid}.${randomUUID()}.tmp`;
+  writeFileSync(tmp, content);
+  try {
+    for (let attempt = 0; attempt < 5; attempt++) {
+      try {
+        linkSync(tmp, file);
+        return () => {
+          if (readRaw(file) === content) rmSync(file, { force: true });
+        };
+      } catch (error) {
+        if (error.code !== 'EEXIST') throw error;
+      }
+      const raw = readRaw(file);
+      if (raw === null) continue; // released in the meantime
+      const why = heldBy(file, raw, { breakLock });
+      if (why)
+        throw new Error(`${dir} is in use by ${why}. Wait for it to finish, or use another label.`);
+      const aside = `${file}.stale.${process.pid}.${randomUUID()}`;
+      try {
+        renameSync(file, aside);
+      } catch (error) {
+        if (error.code === 'ENOENT') continue; // another process moved it first
+        throw error;
+      }
+      if (readRaw(aside) !== raw) {
+        // Between the read and the rename another process replaced the stale lock: put it back.
+        try {
+          linkSync(aside, file);
+        } catch {
+          // a third process linked its own lock meanwhile; see README (Known limits)
+        }
+        rmSync(aside, { force: true });
+        throw new Error(`${dir} is in use by another manual-run that took it at the same moment.`);
+      }
+      rmSync(aside, { force: true });
+    }
+  } finally {
+    rmSync(tmp, { force: true });
+  }
+  throw new Error(`Could not lock ${dir}: other runs kept taking it at the same moment.`);
+}
+
+/** Runs `fn` under the lock `<dir>/<name>`, waiting up to `waitMs` for another holder. */
+export async function withFileLock(dir, name, fn, { waitMs = 30_000 } = {}) {
+  const until = Date.now() + waitMs;
+  let release;
+  for (;;) {
+    try {
+      release = acquireLock(dir, { name });
+      break;
+    } catch (error) {
+      if (!/in use by|at the same moment/.test(error.message) || Date.now() > until) throw error;
+      await new Promise((r) => setTimeout(r, 100 + Math.random() * 200));
+    }
+  }
+  try {
+    return await fn();
+  } finally {
+    release();
+  }
 }
 
 /** The video name stem of one run: `sales`, `sales-from-sales-7`, `sales-only-sales-3_sales-4`. */

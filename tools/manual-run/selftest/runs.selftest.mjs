@@ -8,11 +8,14 @@ import {
   readFileSync,
   rmSync,
   statSync,
+  utimesSync,
   writeFileSync,
 } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { spawn } from 'node:child_process';
+import { hostname, tmpdir } from 'node:os';
 import path from 'node:path';
 import { after, describe, test } from 'node:test';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 
 import { planRuns } from '../lib/plan.mjs';
 import { clearSecrets, registerSecret } from '../lib/redact.mjs';
@@ -20,6 +23,7 @@ import { saveDriverError, saveResults } from '../lib/runner.mjs';
 import {
   acquireLock,
   claimPath,
+  LOCK_YOUNG_MS,
   hasEarlierRun,
   placeResult,
   readFolderMeta,
@@ -27,6 +31,7 @@ import {
   resetWorkflow,
   uniquePath,
   videoBase,
+  withFileLock,
   writeJson,
   writeState,
 } from '../lib/store.mjs';
@@ -39,6 +44,9 @@ const WF = [
   { name: 'procurement', stepIds: null },
 ];
 
+const here = path.dirname(fileURLToPath(import.meta.url));
+// Above Linux's largest pid (2^22), so never a live process.
+const DEAD_PID = 2 ** 22 + 12345;
 const tmp = mkdtempSync(path.join(tmpdir(), 'manual-run-selftest-'));
 after(() => rmSync(tmp, { recursive: true, force: true }));
 const freshDir = () => mkdtempSync(path.join(tmp, 'd-'));
@@ -194,11 +202,109 @@ describe('claimed names, temp files and the folder lock', () => {
     assert.throws(() => acquireLock(dir), /in use by another manual-run \(pid \d+/);
     release();
     assert.ok(!existsSync(path.join(dir, '.lock')));
-    // A lock left by a process that no longer exists.
-    writeFileSync(path.join(dir, '.lock'), JSON.stringify({ pid: 2 ** 22 + 12345 }));
+    // A lock left by a process that no longer exists (and one from before the hostname was kept).
+    writeFileSync(path.join(dir, '.lock'), JSON.stringify({ pid: DEAD_PID }));
     const again = acquireLock(dir);
-    assert.equal(JSON.parse(readFileSync(path.join(dir, '.lock'), 'utf8')).pid, process.pid);
+    const held = JSON.parse(readFileSync(path.join(dir, '.lock'), 'utf8'));
+    assert.equal(held.pid, process.pid);
+    assert.equal(held.hostname, hostname());
+    // Release removes the lock only while it still carries this run's token.
+    writeFileSync(path.join(dir, '.lock'), JSON.stringify({ ...held, token: 'someone else' }));
     again();
+    assert.ok(existsSync(path.join(dir, '.lock')));
+    assert.deepEqual(
+      readdirSync(dir).filter((f) => f !== '.lock'),
+      [],
+      'no temporary or stale files left',
+    );
+  });
+
+  test('an empty lock younger than 10 s is held; an old one is stale', () => {
+    const dir = freshDir();
+    const file = path.join(dir, '.lock');
+    writeFileSync(file, '');
+    assert.throws(() => acquireLock(dir), /being written right now/);
+    const old = new Date(Date.now() - LOCK_YOUNG_MS - 5000);
+    utimesSync(file, old, old);
+    acquireLock(dir)();
+  });
+
+  test('a lock from another machine is held unless --break-lock', () => {
+    const dir = freshDir();
+    const file = path.join(dir, '.lock');
+    writeFileSync(file, JSON.stringify({ pid: DEAD_PID, hostname: 'other-host', startedAt: 'x' }));
+    assert.throws(() => acquireLock(dir), /another machine \(other-host.*--break-lock/s);
+    const release = acquireLock(dir, { breakLock: true });
+    assert.equal(JSON.parse(readFileSync(file, 'utf8')).pid, process.pid);
+    release();
+  });
+
+  /** Starts `n` processes that all try to take the lock of `dir` at the same instant. */
+  const race = async (dir, n) => {
+    const script = path.join(tmp, 'lock-child.mjs');
+    writeFileSync(
+      script,
+      `import { acquireLock } from ${JSON.stringify(pathToFileURL(path.resolve(here, '../lib/store.mjs')).href)};
+const [dir, at] = process.argv.slice(2);
+while (Date.now() < Number(at)) {}
+try {
+  const release = acquireLock(dir);
+  console.log('ok');
+  setTimeout(release, 1500);
+} catch (e) {
+  console.log(/in use by|at the same moment/.test(e.message) ? 'held' : 'error ' + e.message);
+}
+`,
+    );
+    const at = Date.now() + 700;
+    const outs = await Promise.all(
+      Array.from(
+        { length: n },
+        () =>
+          new Promise((resolve, reject) => {
+            const child = spawn(process.execPath, [script, dir, String(at)]);
+            let out = '';
+            child.stdout.on('data', (d) => (out += d));
+            child.on('error', reject);
+            child.on('close', () => resolve(out.trim()));
+          }),
+      ),
+    );
+    return outs;
+  };
+
+  test('concurrent acquirers: exactly one wins, on a free folder and on a stale lock', async () => {
+    for (let round = 0; round < 3; round++) {
+      const dir = freshDir();
+      if (round > 0)
+        writeFileSync(
+          path.join(dir, '.lock'),
+          round === 1 ? JSON.stringify({ pid: DEAD_PID, hostname: hostname() }) : '',
+        );
+      if (round === 2) {
+        const old = new Date(Date.now() - LOCK_YOUNG_MS - 5000);
+        utimesSync(path.join(dir, '.lock'), old, old);
+      }
+      const outs = await race(dir, 6);
+      assert.equal(outs.filter((o) => o === 'ok').length, 1, `round ${round}: ${outs}`);
+      assert.equal(outs.filter((o) => o === 'held').length, 5, `round ${round}: ${outs}`);
+    }
+  });
+
+  test('the summary lock waits for its holder instead of failing', async () => {
+    const dir = freshDir();
+    const file = path.join(dir, 'summary.json');
+    writeJson(file, []);
+    await Promise.all(
+      Array.from({ length: 8 }, (_, i) =>
+        withFileLock(dir, '.summary.lock', async () => {
+          const prev = JSON.parse(readFileSync(file, 'utf8'));
+          await new Promise((r) => setTimeout(r, 5));
+          writeJson(file, [...prev, i]);
+        }),
+      ),
+    );
+    assert.equal(JSON.parse(readFileSync(file, 'utf8')).length, 8);
   });
 });
 

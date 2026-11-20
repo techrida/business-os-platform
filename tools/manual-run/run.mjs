@@ -23,6 +23,7 @@ import {
   readFolderMeta,
   readJson,
   resetWorkflow,
+  withFileLock,
   writeJson,
 } from './lib/store.mjs';
 
@@ -32,7 +33,7 @@ const args = parseArgs(process.argv.slice(2));
 if (args.help || !args.workflow) {
   console.log(
     'usage: node tools/manual-run/run.mjs --workflow start|sales|procurement|branches|all ' +
-      '--viewport 1440x900|820x1180|390x844|all --label scr1 [--from <step> | --only <step,step>] [--headed] [--no-captions]',
+      '--viewport 1440x900|820x1180|390x844|all --label scr1 [--from <step> | --only <step,step>] [--headed] [--no-captions] [--break-lock]',
   );
   process.exit(args.help ? 0 : 2);
 }
@@ -104,7 +105,7 @@ onCleanup(() => releases.forEach((release) => release()));
 for (const cfg of configs) {
   try {
     mkdirSync(cfg.outDir, { recursive: true });
-    releases.push(acquireLock(cfg.outDir));
+    releases.push(acquireLock(cfg.outDir, { breakLock: args['break-lock'] === true }));
   } catch (error) {
     usageError(error.message);
   }
@@ -221,13 +222,22 @@ for (const s of summary) {
     `| ${s.viewport} | ${s.name} | ${s.status} | ${(s.wallMs / 1000).toFixed(0)} | ${JSON.stringify(s.counts ?? {})} | ${s.videos.join('<br>')} |`,
   );
 }
-const prev = readJson(path.join(root, 'summary.json'), []);
-writeJson(path.join(root, 'summary.json'), [
-  ...prev,
-  { at: new Date().toISOString(), wallMs: Date.now() - t0, runs: summary },
-]);
 const text = redactText(lines.join('\n'));
-writeFileSync(path.join(root, 'summary.md'), text + '\n');
+// Runs of other viewports of this label may finish at the same moment: the label's summary is
+// read, extended and written under its own lock, so no run's entry is lost.
+try {
+  await withFileLock(root, '.summary.lock', () => {
+    const prev = readJson(path.join(root, 'summary.json'), []);
+    writeJson(path.join(root, 'summary.json'), [
+      ...prev,
+      { at: new Date().toISOString(), wallMs: Date.now() - t0, runs: summary },
+    ]);
+    writeFileSync(path.join(root, 'summary.md'), text + '\n');
+  });
+} catch (error) {
+  console.error(`manual-run: summary not saved: ${redactText(error.message)}`);
+  summary.push({ status: 'SUMMARY-NOT-SAVED' });
+}
 console.log(text);
 releases.forEach((release) => release());
 process.exit(
