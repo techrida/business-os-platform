@@ -400,6 +400,17 @@ async function doc(
   return documentId;
 }
 
+/** A further version of an invoice document, as a later replacement or a scan result would leave it. */
+async function addVersion(documentId: string, version: number, status: DocumentVersionStatus) {
+  await exec(
+    scopeA,
+    sql`INSERT INTO app.document_versions (tenant_id, organization_id, document_id, version, filename,
+          declared_mime, size_bytes, storage_key, status)
+        VALUES (${scopeA.tenantId}, ${scopeA.organizationId}, ${documentId}, ${version}, 'invoice.pdf',
+                'application/pdf', 1024, ${`${scopeA.tenantId}/${randomUUID()}`}, ${status})`,
+  );
+}
+
 async function billWithoutPo(documentId: string, vendorPartyId?: string) {
   return service.create(
     {
@@ -764,10 +775,11 @@ describe('invoice documents', () => {
         Readable.from(bytes),
         bytes.length,
       );
+      // Saved while the file is still being scanned (allowed), then the scan finds a virus.
+      const bill = await billWithoutPo(initial.documentId, vendorId);
       expect(await scanner.scanVersion({ ...scopeA, versionId: initial.versionId }, true)).toBe(
         'infected',
       );
-      const bill = await billWithoutPo(initial.documentId, vendorId);
       expect(codeOf(await httpErrorOf(service.submit(bill.id, randomUUID())))).toBe(
         'BILL_DOCUMENT_NOT_CLEAN',
       );
@@ -791,10 +803,92 @@ describe('invoice documents', () => {
       await rm(root, { recursive: true, force: true });
     }
   });
+  it('refuses to save a bill on an invoice the scan found infected (TR-Q12e), and saves it once replaced', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'bos-invoice-infected-'));
+    try {
+      const audit = new AuditService(db);
+      const storage = new DiskStorageAdapter(root);
+      const documentsService = new DocumentsService(
+        db,
+        storage,
+        new SignedLinks('bill-infected-test-signing-key-00000000', {
+          claim: () => Promise.resolve(true),
+        }),
+        { add: vi.fn().mockResolvedValue({}) } as unknown as Queue,
+        authz,
+        audit,
+      );
+      documentsService.registerOwner(billDocumentOwnerPolicy(db));
+      const uploads = new BillDocumentsService(db, caller, documentsService);
+      let verdict: 'infected' | 'clean' = 'infected';
+      const scanner = new ScanProcessor(
+        db,
+        storage,
+        {
+          scan: async (stream: Readable) => {
+            for await (const _chunk of stream) {
+              /* consume the file */
+            }
+            return { verdict, ms: 1 };
+          },
+          version: () => Promise.resolve('test scanner'),
+        } as unknown as ClamdClient,
+        audit,
+        notify,
+      );
+      const vendorId = await vendor();
+      const bytes = Buffer.from('%PDF-1.7\ninvoice\n');
+      const file = {
+        filename: 'eicar.pdf',
+        declaredMime: 'application/pdf',
+        sizeBytes: bytes.length,
+      };
+      const upload = await uploads.create({ ...file, vendorPartyId: vendorId });
+      await uploads.receive(
+        upload.documentId,
+        upload.versionId,
+        Readable.from(bytes),
+        bytes.length,
+      );
+      expect(await scanner.scanVersion({ ...scopeA, versionId: upload.versionId }, true)).toBe(
+        'infected',
+      );
+      const before = await read((tx) => tx.select({ id: vendorBills.id }).from(vendorBills));
+
+      const refused = await httpErrorOf(billWithoutPo(upload.documentId, vendorId));
+      expect(refused.getStatus()).toBe(409);
+      expect(codeOf(refused)).toBe('document_infected');
+      expect((refused.getResponse() as { message?: string }).message).toContain('eicar.pdf');
+      expect(await read((tx) => tx.select({ id: vendorBills.id }).from(vendorBills))).toHaveLength(
+        before.length,
+      );
+
+      // The way out: a replacement version. While it scans the bill can be saved (submit still needs clean).
+      const replacement = await uploads.createVersion(upload.documentId, {
+        ...file,
+        filename: 'invoice.pdf',
+      });
+      await uploads.receive(
+        replacement.documentId,
+        replacement.versionId,
+        Readable.from(bytes),
+        bytes.length,
+      );
+      verdict = 'clean';
+      const bill = await billWithoutPo(upload.documentId, vendorId);
+      expect(bill.status).toBe('draft');
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
   it.each<DocumentVersionStatus>(['awaiting_content', 'quarantined', 'infected', 'scan_failed'])(
     'refuses submit when the newest invoice version is %s even after an older clean version',
     async (status) => {
-      const bill = await billWithoutPo(await doc(['clean', status]));
+      // The bill is saved on the clean version; the newer one arrives (or scans infected) afterwards.
+      const documentId = await doc(['clean']);
+      const bill = await billWithoutPo(documentId);
+      await addVersion(documentId, 2, status);
       const refused = await httpErrorOf(service.submit(bill.id, randomUUID()));
       expect(refused.getStatus()).toBe(409);
       expect(codeOf(refused)).toBe('BILL_DOCUMENT_NOT_CLEAN');
