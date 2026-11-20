@@ -44,7 +44,9 @@ BEGIN
     FROM jsonb_to_recordset('[
       {"role": "finance", "permission": "settings.fx_rate.write", "scope": "all"},
       {"role": "finance", "permission": "settings.finance.write", "scope": "all"},
-      {"role": "accountant", "permission": "settings.finance.write", "scope": "all"}
+      {"role": "accountant", "permission": "settings.finance.write", "scope": "all"},
+      {"role": "founder", "permission": "settings.fx_rate.write", "scope": "all"},
+      {"role": "founder", "permission": "settings.finance.write", "scope": "all"}
     ]'::jsonb) AS finance_grant(role text, permission text, scope text)
     WHERE NOT EXISTS (
       SELECT 1

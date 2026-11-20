@@ -747,6 +747,8 @@ describe('0013 data move on a database that already has rows (K1-U1b)', () => {
       { role_key: 'finance', permission: 'settings.fx_rate.write', scope: 'all' },
       { role_key: 'founder', permission: 'crm.lead.reopen', scope: 'all' },
       { role_key: 'founder', permission: 'crm.opportunity.reopen', scope: 'all' },
+      { role_key: 'founder', permission: 'settings.finance.write', scope: 'all' },
+      { role_key: 'founder', permission: 'settings.fx_rate.write', scope: 'all' },
       { role_key: 'portal', permission: 'memo.read', scope: 'customer_org' },
     ]);
     const av = await pool.query('SELECT version FROM app.authz_versions WHERE tenant_id = $1', [
