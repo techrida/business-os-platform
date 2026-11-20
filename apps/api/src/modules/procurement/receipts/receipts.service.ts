@@ -49,7 +49,7 @@ import { withTx, type TxScope } from '../../../platform/db/tx';
 import { NumberingService } from '../../../platform/settings/numbering.service';
 import { ApprovalsService } from '../../approvals/requests.service';
 import { holdsPoRead, mayReadPo, mayReceiveKind } from '../orders/po-read-access';
-import { requestEmergencyReview } from './emergency-review';
+import { emergencyReviewDue, requestEmergencyReview } from './emergency-review';
 import {
   RECEIPT_AUDIT_ENTITY,
   RECEIPT_DERIVED_PO_STATUSES,
@@ -485,7 +485,7 @@ export class ReceiptsService {
       updatedAt: now,
     });
     const poStatus = await this.syncPoStatus(tx, scope, po, poLines, now);
-    if (poStatus === 'fully_received' && po.status !== 'fully_received' && this.approvals) {
+    if (emergencyReviewDue(po.status, poStatus) && this.approvals) {
       await requestEmergencyReview(
         tx,
         scope,

@@ -3,11 +3,13 @@
 // commitment route; once its order has received everything, Management reviews what was bought. The review is a
 // request on the existing approval engine: one Management step, the workflow's SLA reminds after 72 hours (the due
 // date) and escalates to the Founder after 7 days. Deciding it changes no record; it is audited.
-// - The review is asked for once per order, by the receipt confirmation that first brings the order to
-//   fully_received (a reversal and a second confirmation do not ask again).
-// - A confirmed receipt never fails because of the review: an entity with no published review workflow gets an
-//   audit row and a log line instead of a request (checked with a read before the submit, so nothing is aborted).
-import type { ApprovalContext } from '@bos/contracts';
+// - The review is asked for once per order, by whatever first brings the order to the end of its receiving
+//   (emergencyReviewDue): a receipt confirmation that makes it fully_received, a short-close, or an amendment
+//   (applied at once or after its approval) that leaves it fully_received. A reversal and a second confirmation do
+//   not ask again.
+// - The action never fails because of the review: an entity with no published review workflow gets an audit row and
+//   a log line instead of a request (checked with a read before the submit, so nothing is aborted).
+import type { ApprovalContext, PoStatus } from '@bos/contracts';
 import {
   approvalRequests,
   purchaseOrders,
@@ -53,16 +55,28 @@ export const EMERGENCY_REVIEW_WORKFLOW_SPEC: unknown = {
 
 const log = new Logger('EmergencyReview');
 
+/** The statuses an order ends its receiving in: everything was received, or the rest was short-closed. */
+const RECEIVING_ENDED: readonly PoStatus[] = ['fully_received', 'short_closed'];
+
 /**
- * Asks Management to review the emergency purchase behind `po`, inside the confirming transaction. Does nothing for
- * an order of an ordinary request, or when this order was already sent for review.
+ * Whether a move of the order from `from` to `to` should ask for the review: the order newly ends its receiving.
+ * An approved amendment moves from amendment_pending, so it always asks when it leaves the order fully_received;
+ * requestEmergencyReview's own check keeps that to one request per order.
+ */
+export const emergencyReviewDue = (from: PoStatus, to: PoStatus): boolean =>
+  RECEIVING_ENDED.includes(to) && !RECEIVING_ENDED.includes(from);
+
+/**
+ * Asks Management to review the emergency purchase behind `po`, inside the transaction of the action that ended its
+ * receiving. Does nothing for an order of an ordinary request, or when this order was already sent for review.
+ * `actorUserId` is who did that action (took the goods in, short-closed or amended the order); they do not review.
  */
 export async function requestEmergencyReview(
   tx: DbTransaction,
   scope: TxScope,
   deps: { approvals: ApprovalsService; audit: AuditService },
   po: { id: string; number: string; vendorId: string; purchaseRequestId: string },
-  receiverUserId: string,
+  actorUserId: string,
 ): Promise<'requested' | 'not_emergency' | 'already_requested' | 'not_configured'> {
   const [pr] = await tx
     .select({
@@ -134,9 +148,9 @@ export async function requestEmergencyReview(
     },
     facts: {},
     requesterUserId: pr.requesterUserId,
-    submittedByUserId: receiverUserId,
-    // Whoever asked for the purchase or took it in does not review it.
-    sodUserIds: [pr.requesterUserId, receiverUserId],
+    submittedByUserId: actorUserId,
+    // Whoever asked for the purchase, or took it in or closed it, does not review it.
+    sodUserIds: [pr.requesterUserId, actorUserId],
   });
   await deps.audit.record(tx, {
     action: 'procurement.emergency_review.requested',
