@@ -728,6 +728,8 @@ export class SalesOrdersService {
     await this.assertDocumentsUsable(tx, scope, namedIds);
     const acceptedIds = [...new Set(accepted)].filter((id) => !namedIds.includes(id));
     const live = await this.liveDocuments(tx, scope, acceptedIds);
+    // A file that passed the acceptance while still scanning may have been found infected since (TR-Q12e).
+    await assertNotInfected(tx, scope, [...live]);
     return [...namedIds, ...acceptedIds.filter((id) => live.has(id))];
   }
 
