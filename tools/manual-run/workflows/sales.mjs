@@ -822,6 +822,14 @@ export function workflow(cfg) {
             const row = s.page
               .getByRole('row')
               .filter({ has: s.page.getByRole('rowheader', { name: label, exact: true }) });
+            // Retry-safe: a row that already holds this run's file offers Change, not Upload.
+            if (
+              !(await visible(row.getByRole('button', { name: `Upload ${label}` }))) &&
+              (await visible(row.getByRole('button', { name: /^Change/ })))
+            ) {
+              s.checks.push(`note: ${label} was uploaded by an earlier attempt of this run`);
+              continue;
+            }
             await s.chooseFile(
               row.getByRole('button', { name: `Upload ${label}` }),
               demoFile(cfg, file),
