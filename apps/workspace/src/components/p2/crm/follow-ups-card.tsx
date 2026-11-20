@@ -35,6 +35,8 @@ export interface FollowUpsCardProps {
   schedule?: boolean | undefined;
   /** Whether the caller can complete, reschedule, cancel, or schedule follow-ups. Default: true. */
   canEdit?: boolean | undefined;
+  /** The caller's `app.users.id`: without write access they can still complete follow-ups assigned to them. */
+  currentUserId?: string | null | undefined;
   /** The time overdue is measured against. Default: now. */
   now?: Date | undefined;
   className?: string | undefined;
@@ -112,10 +114,13 @@ export function FollowUpActions({
   item,
   owners,
   className,
+  completeOnly = false,
 }: {
   item: ActivityDto;
   owners: readonly LeadOwnerOption[];
   className?: string | undefined;
+  /** Only Complete: an assignee with read access may finish their own follow-up but not move or cancel it. */
+  completeOnly?: boolean | undefined;
 }) {
   const [pending, startTransition] = useTransition();
 
@@ -142,40 +147,44 @@ export function FollowUpActions({
       >
         Complete
       </Button>
-      <RescheduleFollowUpDialog
-        item={item}
-        owners={owners}
-        trigger={
-          <Button
-            variant="secondary"
-            size="small"
-            className={styles.action}
-            disabled={pending}
-            aria-label={`Reschedule ${item.subject}`}
-          >
-            Reschedule
-          </Button>
-        }
-      />
-      <ConfirmDialog
-        trigger={
-          <Button
-            variant="ghost"
-            size="small"
-            className={styles.action}
-            disabled={pending}
-            aria-label={`Cancel ${item.subject}`}
-          >
-            Cancel
-          </Button>
-        }
-        title="Cancel this follow-up?"
-        description={`${item.subject} is removed from the plan. It does not appear in History.`}
-        confirmLabel="Cancel follow-up"
-        cancelLabel="Keep follow-up"
-        destructive
-        onConfirm={cancel}
-      />
+      {completeOnly ? null : (
+        <>
+          <RescheduleFollowUpDialog
+            item={item}
+            owners={owners}
+            trigger={
+              <Button
+                variant="secondary"
+                size="small"
+                className={styles.action}
+                disabled={pending}
+                aria-label={`Reschedule ${item.subject}`}
+              >
+                Reschedule
+              </Button>
+            }
+          />
+          <ConfirmDialog
+            trigger={
+              <Button
+                variant="ghost"
+                size="small"
+                className={styles.action}
+                disabled={pending}
+                aria-label={`Cancel ${item.subject}`}
+              >
+                Cancel
+              </Button>
+            }
+            title="Cancel this follow-up?"
+            description={`${item.subject} is removed from the plan. It does not appear in History.`}
+            confirmLabel="Cancel follow-up"
+            cancelLabel="Keep follow-up"
+            destructive
+            onConfirm={cancel}
+          />
+        </>
+      )}
     </div>
   );
 }
@@ -185,12 +194,15 @@ function FollowUpRow({
   owners,
   now,
   canEdit,
+  currentUserId,
 }: {
   item: ActivityDto;
   owners: readonly LeadOwnerOption[];
   now: Date;
   canEdit: boolean;
+  currentUserId: string | null | undefined;
 }) {
+  const ownFollowUp = currentUserId != null && item.assigneeUserId === currentUserId;
   const overdue = isOverdue(item, now);
   const assignee = assigneeName(item);
 
@@ -212,7 +224,11 @@ function FollowUpRow({
           </span>
         </p>
       </div>
-      {canEdit ? <FollowUpActions item={item} owners={owners} /> : null}
+      {canEdit ? (
+        <FollowUpActions item={item} owners={owners} />
+      ) : ownFollowUp ? (
+        <FollowUpActions item={item} owners={owners} completeOnly />
+      ) : null}
     </li>
   );
 }
@@ -229,6 +245,7 @@ export function FollowUpsCard({
   owners,
   schedule,
   canEdit = true,
+  currentUserId,
   now,
   className,
 }: FollowUpsCardProps) {
@@ -259,7 +276,14 @@ export function FollowUpsCard({
       ) : (
         <ol className={styles.list}>
           {planned.map((item) => (
-            <FollowUpRow key={item.id} item={item} owners={owners} now={at} canEdit={canEdit} />
+            <FollowUpRow
+              key={item.id}
+              item={item}
+              owners={owners}
+              now={at}
+              canEdit={canEdit}
+              currentUserId={currentUserId}
+            />
           ))}
         </ol>
       )}

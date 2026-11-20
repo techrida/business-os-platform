@@ -28,7 +28,7 @@ import { failureOf } from '@/lib/api-kernel';
 import { requireStaffSession } from '@/lib/bff';
 import { getNumberSystems } from '@/lib/display-settings';
 import { when } from '@/lib/kernel-format';
-import { getPermissionCheck } from '@/lib/live-permissions';
+import { getMeOrNull, getPermissionCheck } from '@/lib/live-permissions';
 
 import { logActivityAction } from '../../activities/actions';
 import { convertLeadAction, moveLeadStageAction } from '../actions';
@@ -217,6 +217,7 @@ export default async function LeadPage({ params }: { params: Promise<{ id: strin
   }
   const lead = leadResult.value;
   const canEdit = lead.canEdit ?? (await getPermissionCheck(session))('crm.lead.write');
+  const currentUserId = (await getMeOrNull(session.accessToken))?.id ?? null;
   const moves = resolvedMoves('lead', lead.stage, lead.allowedMoves ?? (canEdit ? undefined : []));
   const planned = plannedResult.status === 'fulfilled' ? plannedResult.value : null;
   const plannedProblem =
@@ -467,6 +468,7 @@ export default async function LeadPage({ params }: { params: Promise<{ id: strin
               owners={owners}
               schedule={canEdit}
               canEdit={canEdit}
+              currentUserId={currentUserId}
               now={now}
               className={styles.detailPanel}
             />
