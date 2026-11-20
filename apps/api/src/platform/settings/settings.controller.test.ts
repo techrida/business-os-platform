@@ -13,19 +13,27 @@ import {
   type Permission,
   type RoleKey,
   type Scope,
+  type SettingKey,
 } from '@bos/contracts';
-import { BadRequestException, ConflictException, NotFoundException } from '@nestjs/common';
+import {
+  BadRequestException,
+  ConflictException,
+  ForbiddenException,
+  NotFoundException,
+} from '@nestjs/common';
 import { Reflector } from '@nestjs/core';
+import { Test } from '@nestjs/testing';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { ZodType } from 'zod';
 
 import { can } from '../authz/can';
 import { ANY_AUTHENTICATED_KEY, CAN_KEY } from '../authz/decorators';
 import type { Principal } from '../authz/principal';
-import type { Db } from '../db/db.module';
-import type { MoneyService } from './money.service';
+import { findUnmarkedRoutes } from '../authz/route-policy.check';
+import { DB, type Db } from '../db/db.module';
+import { MoneyService } from './money.service';
 import { SettingsController } from './settings.controller';
-import { SETTING_DEFAULTS, type SettingsService } from './settings.service';
+import { SETTING_DEFAULTS, SettingsService } from './settings.service';
 
 const scope = { tenantId: 't-1', organizationId: 'o-1' };
 const actor = { kind: 'user' as const, id: 'u-1', correlationId: 'c-1' };
@@ -35,6 +43,30 @@ vi.mock('../db/tx', () => ({
   withTx: (_db: unknown, _scope: unknown, _actor: unknown, fn: (tx: unknown) => unknown) =>
     fn({ fake: 'tx' }),
 }));
+
+// The settings routes check the caller's grants in the handler (settings-access.ts), so principal() is the
+// caller under test. The Founder unless a test says otherwise.
+let currentPrincipal: Principal;
+vi.mock('../authz/principal', () => ({ principal: () => currentPrincipal }));
+
+/** A staff principal holding what `role` holds by default, plus `extra` grants. */
+function principalOf(role: RoleKey, extra: Partial<Record<Permission, Scope>> = {}): Principal {
+  return {
+    userId: 'a0000000-0000-4000-8000-000000000001',
+    zitadelUserId: 'sub-1',
+    tenantId: scope.tenantId,
+    organizationId: scope.organizationId,
+    orgKind: 'staff',
+    partyId: null,
+    idpOrgId: 'e0000000-0000-4000-8000-000000000001',
+    roles: [role],
+    departmentId: null,
+    status: 'active',
+    grants: new Map(
+      Object.entries({ ...DEFAULT_ROLE_PERMISSIONS[role], ...extra }) as [Permission, Scope][],
+    ),
+  };
+}
 
 const fakeSettings = {
   getCurrent: vi.fn(),
@@ -48,6 +80,7 @@ let controller: SettingsController;
 
 beforeEach(() => {
   vi.resetAllMocks();
+  currentPrincipal = principalOf('founder');
   controller = new SettingsController(
     {} as Db,
     fakeSettings as unknown as SettingsService,
@@ -247,25 +280,6 @@ describe('GET approval-sla-defaults (the default approval times for workflow edi
   const proto = SettingsController.prototype;
   const reflector = new Reflector();
 
-  /** A staff principal holding what `role` holds by default, plus `extra` grants. */
-  function principalOf(role: RoleKey, extra: Partial<Record<Permission, Scope>> = {}): Principal {
-    return {
-      userId: 'a0000000-0000-4000-8000-000000000001',
-      zitadelUserId: 'sub-1',
-      tenantId: scope.tenantId,
-      organizationId: scope.organizationId,
-      orgKind: 'staff',
-      partyId: null,
-      idpOrgId: 'e0000000-0000-4000-8000-000000000001',
-      roles: [role],
-      departmentId: null,
-      status: 'active',
-      grants: new Map(
-        Object.entries({ ...DEFAULT_ROLE_PERMISSIONS[role], ...extra }) as [Permission, Scope][],
-      ),
-    };
-  }
-
   /**
    * The tenancy interceptor's route decision, step for step: the real Reflector reads @Can from the
    * handler then the class, the real can() decides; @AnyAuthenticated needs an active user; an
@@ -299,15 +313,25 @@ describe('GET approval-sla-defaults (the default approval times for workflow edi
     expect(fakeSettings.getCurrent).toHaveBeenCalledWith(scope, 'approvals.sla_defaults');
   });
 
-  it('the same editor is still refused every other setting (403)', () => {
-    expect(status(proto.getSetting, editor)).toBe(403);
-    expect(status(proto.putSetting, editor)).toBe(403);
+  it('the same editor is still refused every other setting (403 from the handler, nothing read)', async () => {
+    currentPrincipal = editor;
+    await expect(controller.getSetting('approvals.sla_defaults')).rejects.toBeInstanceOf(
+      ForbiddenException,
+    );
+    await expect(
+      controller.putSetting('approvals.sla_defaults', { value: {} }),
+    ).rejects.toBeInstanceOf(ForbiddenException);
+    expect(fakeSettings.getCurrent).not.toHaveBeenCalled();
+    expect(fakeSettings.set).not.toHaveBeenCalled();
   });
 
-  it('a user who may neither edit workflows nor administer settings is refused both (403)', () => {
+  it('a user who may neither edit workflows nor administer settings is refused both (403)', async () => {
     const plain = principalOf('management');
     expect(status(proto.approvalSlaDefaults, plain)).toBe(403);
-    expect(status(proto.getSetting, plain)).toBe(403);
+    currentPrincipal = plain;
+    await expect(controller.getSetting('tax.vat_rate')).rejects.toBeInstanceOf(
+      ForbiddenException,
+    );
   });
 
   it('the Founder reads it too; a portal user does not', () => {
@@ -319,6 +343,177 @@ describe('GET approval-sla-defaults (the default approval times for workflow edi
         partyId: '20000000-0000-4000-8000-000000000001',
       }),
     ).toBe(403);
+  });
+});
+
+describe('who may read and change which setting (F1-Q48)', () => {
+  // The new grants are given explicitly so these tests decide the route rule, whatever the role defaults hold.
+  const finance = principalOf('finance', {
+    'settings.fx_rate.write': 'all',
+    'settings.finance.write': 'all',
+  });
+  const accountant = principalOf('accountant', { 'settings.finance.write': 'all' });
+  const sales = principalOf('sales');
+  const founder = principalOf('founder');
+  const callers = { finance, accountant, sales, founder } as const;
+  type Caller = keyof typeof callers;
+
+  /** 200 when the handler ran, 403 when it refused; any other error fails the test. */
+  async function outcome(run: () => Promise<unknown>): Promise<200 | 403> {
+    try {
+      await run();
+      return 200;
+    } catch (error) {
+      if (error instanceof ForbiddenException) return 403;
+      throw error;
+    }
+  }
+
+  beforeEach(() => {
+    fakeSettings.getCurrent.mockResolvedValue({ value: 'x', version: null });
+    fakeSettings.set.mockResolvedValue({ version: 1 });
+    fakeSettings.listNumberSeries.mockResolvedValue([]);
+    fakeMoney.listRates.mockResolvedValue([]);
+    fakeMoney.setRate.mockResolvedValue({ id: 'r-1' });
+  });
+
+  it('the grants are as described: neither Finance nor Accountant holds admin.settings.write', () => {
+    expect(finance.grants.has('admin.settings.write')).toBe(false);
+    expect(accountant.grants.has('admin.settings.write')).toBe(false);
+    expect(accountant.grants.has('settings.fx_rate.write')).toBe(false);
+    expect(sales.grants.has('settings.finance.write')).toBe(false);
+    expect(founder.grants.has('admin.settings.write')).toBe(true);
+  });
+
+  // [key, finance, accountant, sales, founder]
+  const keyTable: Array<[SettingKey, 200 | 403, 200 | 403, 200 | 403, 200 | 403]> = [
+    ['tax.vat_rate', 200, 200, 403, 200],
+    ['numbering.memo_prefix', 200, 200, 403, 200],
+    ['quotation.term_presets', 200, 200, 403, 200],
+    ['entity.address', 403, 403, 403, 200],
+    ['quotation.validity_days', 403, 403, 403, 200],
+    ['currency.enabled', 403, 403, 403, 200],
+    ['fx.max_rate_age_days', 403, 403, 403, 200],
+  ];
+
+  describe.each(keyTable)('%s', (key, ...expected) => {
+    const roles: Caller[] = ['finance', 'accountant', 'sales', 'founder'];
+    it.each(roles.map((role, i) => [role, expected[i]] as const))(
+      'PUT and GET settings/:key by %s answers %s',
+      async (role, want) => {
+        currentPrincipal = callers[role];
+        await expect(
+          outcome(() => controller.putSetting(key, { value: 'x', expectedVersion: null })),
+        ).resolves.toBe(want);
+        await expect(outcome(() => controller.getSetting(key))).resolves.toBe(want);
+        if (want === 403) {
+          expect(fakeSettings.set).not.toHaveBeenCalled();
+          expect(fakeSettings.getCurrent).not.toHaveBeenCalled();
+        } else {
+          expect(fakeSettings.set).toHaveBeenCalledWith({ fake: 'tx' }, key, 'x', {
+            expectedVersion: null,
+          });
+        }
+      },
+    );
+  });
+
+  it('an unknown key: 403 for a caller who may edit no setting, 404 for Accountant', async () => {
+    currentPrincipal = sales;
+    await expect(controller.getSetting('no.such_key')).rejects.toBeInstanceOf(ForbiddenException);
+    currentPrincipal = accountant;
+    await expect(controller.getSetting('no.such_key')).rejects.toBeInstanceOf(NotFoundException);
+  });
+
+  it('an inactive Finance user is refused a tax key (403)', async () => {
+    currentPrincipal = { ...finance, status: 'inactive' };
+    await expect(controller.putSetting('tax.vat_rate', { value: '13' })).rejects.toBeInstanceOf(
+      ForbiddenException,
+    );
+  });
+
+  it('a portal user holding settings.finance.write is refused (staff only)', async () => {
+    currentPrincipal = {
+      ...principalOf('customer_user', { 'settings.finance.write': 'all' }),
+      orgKind: 'customer',
+      partyId: '20000000-0000-4000-8000-000000000001',
+    };
+    await expect(controller.getSetting('tax.vat_rate')).rejects.toBeInstanceOf(
+      ForbiddenException,
+    );
+  });
+
+  it.each([
+    ['finance', 200],
+    ['accountant', 200],
+    ['sales', 403],
+    ['founder', 200],
+  ] as const)('GET number-series by %s answers %s', async (role, want) => {
+    currentPrincipal = callers[role];
+    await expect(outcome(() => controller.numberSeries())).resolves.toBe(want);
+  });
+
+  it('settings.fx_rate.write alone does not open number-series or tax keys', async () => {
+    currentPrincipal = principalOf('procurement', { 'settings.fx_rate.write': 'all' });
+    await expect(outcome(() => controller.numberSeries())).resolves.toBe(403);
+    await expect(outcome(() => controller.getSetting('tax.vat_rate'))).resolves.toBe(403);
+    await expect(outcome(() => controller.listFxRates({}))).resolves.toBe(200);
+  });
+
+  const rate = { currency: 'USD', rateNpr: '133.5', rateDate: '2025-07-17' };
+
+  it.each([
+    ['finance', 200],
+    ['accountant', 403],
+    ['sales', 403],
+    ['founder', 200],
+  ] as const)('GET and POST fx-rates by %s answers %s', async (role, want) => {
+    currentPrincipal = callers[role];
+    await expect(outcome(() => controller.listFxRates({}))).resolves.toBe(want);
+    await expect(outcome(() => controller.addFxRate(rate))).resolves.toBe(want);
+    if (want === 403) expect(fakeMoney.setRate).not.toHaveBeenCalled();
+  });
+
+  it('Finance records a rate through withTx (201 body is the new id)', async () => {
+    currentPrincipal = finance;
+    await expect(controller.addFxRate(rate)).resolves.toEqual({ id: 'r-1' });
+    expect(fakeMoney.setRate).toHaveBeenCalledWith(
+      { fake: 'tx' },
+      'USD',
+      '133.5',
+      '2025-07-17',
+      'manual',
+    );
+  });
+
+  it('an inactive Finance user is refused fx-rates (403)', async () => {
+    currentPrincipal = { ...finance, status: 'inactive' };
+    await expect(controller.addFxRate(rate)).rejects.toBeInstanceOf(ForbiddenException);
+    expect(fakeMoney.setRate).not.toHaveBeenCalled();
+  });
+
+  it('the any-of routes are @AnyAuthenticated (no single @Can), and every route is marked', async () => {
+    const proto = SettingsController.prototype;
+    for (const handler of [
+      proto.getSetting,
+      proto.putSetting,
+      proto.numberSeries,
+      proto.listFxRates,
+      proto.addFxRate,
+    ]) {
+      expect(Reflect.getMetadata(CAN_KEY, handler)).toBeUndefined();
+      expect(Reflect.getMetadata(ANY_AUTHENTICATED_KEY, handler)).toBe(true);
+    }
+    const moduleRef = await Test.createTestingModule({
+      controllers: [SettingsController],
+      providers: [
+        { provide: DB, useValue: {} },
+        { provide: SettingsService, useValue: {} },
+        { provide: MoneyService, useValue: {} },
+      ],
+    }).compile();
+    expect(findUnmarkedRoutes(moduleRef)).toEqual([]);
+    await moduleRef.close();
   });
 });
 

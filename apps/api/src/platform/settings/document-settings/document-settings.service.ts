@@ -38,15 +38,19 @@ import { AuthzService } from '../../authz/authz.service';
 import { principal } from '../../authz/principal';
 import { DB, type Db } from '../../db/db.module';
 import { requestTx, withTx, type TxScope } from '../../db/tx';
+import { FINANCE_SETTINGS_EDITORS } from '../settings-access';
 import { SettingsService } from '../settings.service';
 
 const TERM_PRESETS = 'quotation.term_presets';
 
-/** Any one of these lets a caller read the presets: the quotation form, or the admin who edits them. */
+/** Any one of these lets a caller read the presets: the quotation form, or anyone who edits them. */
 export const TERM_PRESET_READERS: readonly Permission[] = [
   'quotation.draft',
-  'admin.settings.write',
+  ...FINANCE_SETTINGS_EDITORS,
 ];
+
+/** Any one of these lets a caller add, change or remove a preset (F1-Q48: Finance, Accountant, the admin). */
+export const TERM_PRESET_WRITERS: readonly Permission[] = FINANCE_SETTINGS_EDITORS;
 
 const CreateBody = TermPresetSchema.omit({ id: true });
 const PatchBody = TermPresetSchema.pick({ name: true, body: true })
@@ -210,7 +214,8 @@ export class DocumentSettingsService {
   }
 
   async create(rawBody: unknown): Promise<TermPreset> {
-    this.authz.assert('admin.settings.write');
+    this.assertActiveStaff();
+    this.assertAnyOf(TERM_PRESET_WRITERS);
     const body = parse(CreateBody, rawBody, 'term preset');
     const created: TermPreset = { id: randomUUID(), ...body };
     await this.modify((list) => {
@@ -221,7 +226,8 @@ export class DocumentSettingsService {
   }
 
   async update(id: string, rawBody: unknown): Promise<TermPreset> {
-    this.authz.assert('admin.settings.write');
+    this.assertActiveStaff();
+    this.assertAnyOf(TERM_PRESET_WRITERS);
     const patch = parse(PatchBody, rawBody, 'term preset');
     let result: TermPreset | undefined;
     await this.modify((list) => {
@@ -242,7 +248,8 @@ export class DocumentSettingsService {
   }
 
   async remove(id: string): Promise<void> {
-    this.authz.assert('admin.settings.write');
+    this.assertActiveStaff();
+    this.assertAnyOf(TERM_PRESET_WRITERS);
     await this.modify((list) => {
       if (!list.some((p) => p.id === id)) throw this.notFound(id);
       return list.filter((p) => p.id !== id);
