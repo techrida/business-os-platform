@@ -17,7 +17,9 @@ import type {
   QuotationTaxSummaryRow,
   QuotationVersionRow,
 } from '../drafting/mapping';
+import { priceQuotation } from '../pricing/pricing';
 import type { PricedVersion } from '../pricing/pricing.types';
+import { planSchedule, ScheduleRuleError, scheduleTemplateOf } from '../../sales-orders/rules';
 import {
   buildApprovalSnapshot,
   contentSha256,
@@ -581,6 +583,93 @@ describe('QuotationSubmitService.submit', () => {
     });
     expect(store.load).not.toHaveBeenCalled();
     expect(approvals.preview).not.toHaveBeenCalled();
+  });
+});
+
+describe('QuotationSubmitService.submit: an instalment that is 0.00 only once converted to NPR (FR-4)', () => {
+  // INR 0.04 on the 1.6 peg is NPR 0.064, stored as NPR 0.06. In INR every quarter is 0.01; in NPR the first three
+  // quarters round half up to 0.02 each and leave 0.00 for the last, which the order's NPR split refuses.
+  const QUARTERS = [
+    { label: 'Advance', percent: '25' },
+    { label: 'Design', percent: '25' },
+    { label: 'Build', percent: '25' },
+    { label: 'Handover', percent: '25' },
+  ];
+  const EXEMPT_ROW = {
+    id: TAX_VAT,
+    code: 'EXEMPT',
+    name: 'Exempt',
+    kind: 'exempt' as const,
+    rateBp: 0,
+    creditable: true,
+    effectiveFrom: '2000-01-01',
+    effectiveTo: null,
+  };
+  const pricedInr = (): PricedVersion =>
+    priceQuotation(
+      {
+        currency: 'INR',
+        issueDate: '2026-11-09',
+        discount: null,
+        lines: [
+          {
+            lineNo: 1,
+            description: 'Token item',
+            uom: 'job',
+            quantity: '1',
+            unitPrice: '0.04',
+            taxCodeId: TAX_VAT,
+          },
+        ],
+      },
+      [EXEMPT_ROW],
+      { rate: '1.6', source: 'NRB peg', date: '2020-01-01' },
+    );
+
+  it('the real pricing and order split agree: INR quarters are positive, the NPR split has a 0.00 line', () => {
+    const priced = pricedInr();
+    expect(priced.columns).toMatchObject({ total: '0.04', amountNpr: '0.06' });
+    expect(() =>
+      planSchedule(
+        scheduleTemplateOf(QUARTERS, DEFAULT_SALES_SCHEDULE),
+        priced.columns.total,
+        priced.columns.amountNpr,
+      ),
+    ).toThrow(ScheduleRuleError);
+  });
+
+  it('refuses the submit with 422 PAYMENT_INSTALMENT_ZERO, naming the milestone, before any write', async () => {
+    const { service, pricing, store, approvals } = setup(
+      head({ currency: 'INR', paymentSchedule: QUARTERS }),
+    );
+    fakeUpdateVersioned(versionRow());
+    pricing.priceVersion.mockResolvedValue(pricedInr());
+
+    const error: unknown = await service.submit(QID, VID, BODY, 'key-1').catch((e: unknown) => e);
+
+    expect(error).toBeInstanceOf(UnprocessableEntityException);
+    expect((error as UnprocessableEntityException).getResponse()).toMatchObject({
+      code: 'PAYMENT_INSTALMENT_ZERO',
+      details: { label: 'Handover', total: '0.04', amountNpr: '0.06', converted: true },
+    });
+    expect(store.replacePriced).not.toHaveBeenCalled();
+    expect(approvals.preview).not.toHaveBeenCalled();
+  });
+
+  it('splits the company default schedule in NPR too when the quotation has none', () => {
+    const { columns } = pricedInr();
+    const fallback = QUARTERS.map((m) => ({ ...m, trigger: 'milestone' as const }));
+    let error: unknown;
+    try {
+      assertNoZeroInstalment(columns, 'INR', [], fallback);
+    } catch (e) {
+      error = e;
+    }
+    expect(error).toBeInstanceOf(UnprocessableEntityException);
+    expect((error as UnprocessableEntityException).getResponse()).toMatchObject({
+      code: 'PAYMENT_INSTALMENT_ZERO',
+      details: { label: 'Handover', converted: true },
+    });
   });
 });
 
