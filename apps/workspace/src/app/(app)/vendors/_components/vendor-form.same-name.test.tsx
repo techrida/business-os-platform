@@ -56,6 +56,10 @@ describe('vendor form, same-name warning (TR-Q12d)', () => {
       await submit(mounted.container);
       const text = mounted.container.textContent ?? '';
       expect(text).toContain('A vendor with this name already exists');
+      // Nothing was added, so the warning takes focus and is announced, wherever the button was pressed.
+      const warning = mounted.container.querySelector<HTMLElement>('[role="alert"]');
+      expect(warning?.textContent).toContain('A vendor with this name already exists');
+      expect(document.activeElement).toBe(warning);
       expect(text).toContain('HIMAL TRADERS PVT LTD (Blocked)');
       expect(text).toContain('Himal Traders (Approved)');
       const link = mounted.container.querySelector<HTMLAnchorElement>(
