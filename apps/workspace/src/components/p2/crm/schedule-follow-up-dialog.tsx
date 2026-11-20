@@ -109,7 +109,7 @@ export interface ScheduleFollowUpDialogProps {
   subjectId: string;
   /** The record's owner, the default assignee. */
   ownerUserId: string | null;
-  /** People the caller may assign to (`GET /v1/leads/owners`, or `/v1/opportunities/owners`). */
+  /** People the caller may assign to (`GET /v1/leads/owners`, or `/v1/opportunities/follow-up-assignees`). */
   owners: readonly LeadOwnerOption[];
   /** The opening control. Default: a secondary "Schedule follow-up" button. */
   trigger?: ReactNode;

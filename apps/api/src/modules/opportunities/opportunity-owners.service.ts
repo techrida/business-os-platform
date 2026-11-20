@@ -4,7 +4,7 @@
 // under the entity's stored rule for opportunities, so a salesperson finds a colleague before that colleague owns
 // a deal. A provider of its own because it needs the live role grants (RoleCache) that OpportunitiesService does
 // not use.
-import { type LeadOwnerOption } from '@bos/contracts';
+import { type LeadOwnerOption, type Permission } from '@bos/contracts';
 import { opportunities, scoped } from '@bos/db';
 import { Inject, Injectable } from '@nestjs/common';
 import { and, isNotNull } from 'drizzle-orm';
@@ -33,10 +33,23 @@ export class OpportunityOwnersService {
   /**
    * The people the caller may hand an opportunity to (F1-Q51, the owner select): exactly whom
    * `PATCH /v1/opportunities/:id/owner` accepts, so the select never offers a 400. The assignment rule's targets
-   * under the entity's stored rule for opportunities, among the active staff of the acting entity who can read
-   * opportunities. Names only, no address.
+   * under the entity's stored rule for opportunities, among the active staff of the acting entity who can read and
+   * write opportunities (the leads' owner rule: a read-only role never owns a deal). Names only, no address.
    */
-  async owners(): Promise<LeadOwnerOption[]> {
+  owners(): Promise<LeadOwnerOption[]> {
+    return this.parties('crm.opportunity.write');
+  }
+
+  /**
+   * The people the caller may assign a follow-up on an opportunity to: the same rule as the owner select, but a
+   * reader of opportunities is enough (the follow-up check, ActivitiesService.assertAssignee), so a read-only
+   * colleague such as Management can still be given a call to make. Names only, no address.
+   */
+  followUpAssignees(): Promise<LeadOwnerOption[]> {
+    return this.parties(undefined);
+  }
+
+  private parties(ownerWrite: Permission | undefined): Promise<LeadOwnerOption[]> {
     const { scope, actor, principal } = this.caller.current();
     return withTx(this.db, scope, actor, async (tx) => {
       const people = await assignableParties(tx, principal, scope, {
@@ -44,6 +57,7 @@ export class OpportunityOwnersService {
         context: 'reassign',
         rule: storedAssignmentRule(tx, scope, 'opportunities'),
         subjectRead: 'crm.opportunity.read',
+        ...(ownerWrite === undefined ? {} : { ownerWrite }),
       });
       return people
         .map((c) => ({

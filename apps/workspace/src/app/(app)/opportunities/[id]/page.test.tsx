@@ -16,6 +16,7 @@ const mocks = vi.hoisted(() => ({
   listActivities: vi.fn(),
   listLeadOwners: vi.fn(),
   listOpportunityOwners: vi.fn(),
+  listOpportunityFollowUpAssignees: vi.fn(),
   getCustomer: vi.fn(),
   listQuotations: vi.fn(),
   listOpportunityLostReasonChoices: vi.fn(),
@@ -45,6 +46,7 @@ vi.mock('@/components/p2/crm/crm-api', () => ({
   listActivities: mocks.listActivities,
   listLeadOwners: mocks.listLeadOwners,
   listOpportunityOwners: mocks.listOpportunityOwners,
+  listOpportunityFollowUpAssignees: mocks.listOpportunityFollowUpAssignees,
   getCreditHold: mocks.getCreditHold,
 }));
 vi.mock('@/components/p2/customers/api', () => ({ getCustomer: mocks.getCustomer }));
@@ -159,6 +161,7 @@ beforeEach(() => {
   mocks.listActivities.mockReset().mockResolvedValue([]);
   mocks.listLeadOwners.mockReset().mockResolvedValue([]);
   mocks.listOpportunityOwners.mockReset().mockResolvedValue([]);
+  mocks.listOpportunityFollowUpAssignees.mockReset().mockResolvedValue([]);
   mocks.getCustomer.mockReset().mockResolvedValue(null);
   mocks.listQuotations.mockReset().mockResolvedValue([]);
   mocks.listOpportunityLostReasonChoices.mockReset().mockResolvedValue([]);
@@ -342,6 +345,27 @@ describe('opportunity follow-ups (migrated open tasks on the deal)', () => {
     expect(html).toContain('Log activity');
   });
 
+  // F1-Q51: an owner must write deals, a follow-up's assignee need only read them, so the follow-ups
+  // take their own list and a read-only assignee keeps their place (and picture) there.
+  it('gives follow-ups their own assignee list, apart from the owner choices', async () => {
+    const SITA = '66666666-6666-4666-8666-666666666661';
+    const AVATAR = '88888888-8888-4888-8888-888888888888';
+    mocks.getOpportunity.mockResolvedValue(
+      opportunity('negotiation', { ownerUserId: SITA, ownerName: 'Sita Rai' }),
+    );
+    const sita = { userId: SITA, displayName: 'Sita Rai', email: '', avatarDocumentId: null };
+    mocks.listOpportunityOwners.mockResolvedValue([sita]);
+    mocks.listOpportunityFollowUpAssignees.mockResolvedValue([
+      sita,
+      { userId: ASSIGNEE, displayName: 'Mira Thapa', email: '', avatarDocumentId: AVATAR },
+    ]);
+    const doc = parse(await render());
+    expect(mocks.listOpportunityOwners).toHaveBeenCalledTimes(1);
+    expect(mocks.listOpportunityFollowUpAssignees).toHaveBeenCalledTimes(1);
+    const images = [...(section(doc, 'Planned')?.querySelectorAll('img') ?? [])];
+    expect(images.map((img) => img.getAttribute('src'))).toEqual([expect.stringContaining(AVATAR)]);
+  });
+
   it("shows a lead's follow-up carried at convert, and lets its assignee complete it without edit access", async () => {
     const carried = { ...planned, subject: 'Send the revised scope', assigneeUserId: ASSIGNEE };
     mocks.listActivities.mockImplementation((_s: unknown, opts: { status?: string }) =>
@@ -376,6 +400,7 @@ describe('opportunity follow-ups (migrated open tasks on the deal)', () => {
     );
     const html = await render();
     expect(mocks.listOpportunityOwners).not.toHaveBeenCalled();
+    expect(mocks.listOpportunityFollowUpAssignees).not.toHaveBeenCalled();
     expect(mocks.listLeadOwners).not.toHaveBeenCalled();
     expect(html).toContain('Chase the signed scope');
     expect(html).toContain('Mira Thapa');

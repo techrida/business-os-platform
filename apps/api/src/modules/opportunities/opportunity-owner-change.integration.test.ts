@@ -39,6 +39,8 @@ let salesStaff: string;
 let salesPeer: string;
 let salesManager: string;
 let elsewhere: string;
+let accountant: string;
+let management: string;
 let seq = 0;
 
 beforeAll(async () => {
@@ -64,6 +66,9 @@ beforeAll(async () => {
     departmentId: otherSalesDept,
     displayName: 'Nara North',
   });
+  // Readers of every deal who never write one (Accountant after 0123, Management by default).
+  accountant = await h.member({ roles: ['accountant'], displayName: 'Ana Accountant' });
+  management = await h.member({ roles: ['management'], displayName: 'Mo Management' });
   customerId = await h.seedCustomer(salesStaff);
 });
 
@@ -255,5 +260,27 @@ describe('PATCH /v1/opportunities/:id/owner (F1-Q51)', () => {
     expect(offered).not.toContain(salesManager);
     expect(offered).not.toContain(elsewhere);
     expect((await owners.owners()).every((o) => o.email === '')).toBe(true);
+  });
+
+  it('never makes a read-only role the owner, the leads rule (F1-Q51), but still lists them for follow-ups', async () => {
+    const id = await seedDeal(salesStaff);
+    const mine = await plan(id, salesStaff);
+    h.as('boss', 'founder');
+    for (const reader of [accountant, management]) {
+      expect(
+        await refusal(() => service.changeOwner(id, { ownerUserId: reader, expectedVersion: 1 })),
+      ).toBe('cannot_read_subject');
+    }
+    expect(await dealRow(id)).toMatchObject({ ownerUserId: salesStaff, version: 1 });
+    expect((await activityRow(mine.id)).assigneeUserId).toBe(salesStaff);
+    expect(await assignedNotices(id)).toEqual([]);
+
+    const offered = (await owners.owners()).map((o) => o.userId);
+    expect(offered).toContain(salesPeer);
+    expect(offered).not.toContain(accountant);
+    expect(offered).not.toContain(management);
+    // A follow-up on the deal only needs its read, so the assignee choices keep them.
+    const assignees = (await owners.followUpAssignees()).map((o) => o.userId);
+    expect(assignees).toEqual(expect.arrayContaining([salesPeer, accountant, management]));
   });
 });

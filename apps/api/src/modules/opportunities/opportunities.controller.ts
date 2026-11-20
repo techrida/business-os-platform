@@ -58,6 +58,17 @@ export class OpportunitiesController {
     return this.owners.owners();
   }
 
+  /**
+   * 200 with the LeadOwnerOption[] a follow-up on a deal may be assigned to: the owner select's rule, but reading
+   * opportunities is enough, as the follow-up's own check asks. Needs write, as scheduling one does. Declared
+   * before ':id'.
+   */
+  @Get('follow-up-assignees')
+  @Can('crm.opportunity.write')
+  followUpAssignees(): Promise<LeadOwnerOption[]> {
+    return this.owners.followUpAssignees();
+  }
+
   /** 200 with the OpportunityDto. 404 for a record of another entity or outside the caller's scope. */
   @Get(':id')
   @Can('crm.opportunity.read')

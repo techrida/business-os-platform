@@ -15,6 +15,7 @@ import {
   getCreditHold,
   getOpportunity,
   listActivities,
+  listOpportunityFollowUpAssignees,
   listOpportunityOwners,
 } from '@/components/p2/crm/crm-api';
 import { FollowUpList } from '@/components/p2/crm/follow-ups-card';
@@ -374,11 +375,16 @@ export default async function OpportunityPage({ params }: { params: Promise<{ id
       if (failureOf(err).status === 403) canMarkLost = false;
     }
   }
-  // The people an editor may hand the deal (F1-Q51) or its follow-ups to. Anyone else, or a failed
-  // list, sees the owner's name alone; a follow-up then goes to whoever schedules it.
+  // The people an editor may hand the deal to (F1-Q51), and the wider list its follow-ups may go to
+  // (a reader is enough for a follow-up, not for an owner). Anyone else, or a failed list, sees the
+  // owner's name alone; a follow-up then goes to whoever schedules it.
   let ownerChoices: LeadOwnerOption[] = [];
+  let assigneeChoices: LeadOwnerOption[] = [];
   if (canEdit) {
-    ownerChoices = await listOpportunityOwners(session).catch(() => []);
+    [ownerChoices, assigneeChoices] = await Promise.all([
+      listOpportunityOwners(session).catch(() => []),
+      listOpportunityFollowUpAssignees(session).catch(() => []),
+    ]);
   }
   const ownerFact =
     open && ownerChoices.length > 1 ? (
@@ -616,7 +622,7 @@ export default async function OpportunityPage({ params }: { params: Promise<{ id
         opportunityId={opp.id}
         canEdit={canEdit}
         ownerUserId={opp.ownerUserId}
-        owners={ownerChoices}
+        owners={assigneeChoices}
         planned={
           plannedProblem !== null ? (
             // An empty list would claim nothing is planned; say the list did not load instead.
@@ -631,7 +637,7 @@ export default async function OpportunityPage({ params }: { params: Promise<{ id
           ) : (
             <FollowUpList
               items={plannedResult.status === 'fulfilled' ? plannedResult.value : []}
-              owners={ownerChoices}
+              owners={assigneeChoices}
               canEdit={canEdit}
               currentUserId={currentUserId}
               now={now}

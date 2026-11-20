@@ -225,6 +225,15 @@ export function listOpportunityOwners(session: Session) {
 }
 
 /**
+ * The people a follow-up on a deal may be assigned to (`crm.opportunity.write`): the owner select's rule, but
+ * reading opportunities is enough, so a read-only colleague the owner list leaves out can still be given the work.
+ * Emails come back empty.
+ */
+export function listOpportunityFollowUpAssignees(session: Session) {
+  return call(session, '/v1/opportunities/follow-up-assignees', listOf(LeadOwnerOptionSchema));
+}
+
+/**
  * A deal's credit position (F1-Q20): limit, exposure and any override. Only for `credit.override`
  * holders; anyone else gets 403 and reads the booleans on the deal instead.
  */
