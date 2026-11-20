@@ -27,6 +27,7 @@ import { requireIdempotencyKey } from '../../customers/customers.types';
 import {
   ConvertSubmissionBodySchema,
   CreateRfqBodySchema,
+  ExtendRfqDeadlineBodySchema,
   RecordQuotationBodySchema,
   ScoreQuotationBodySchema,
 } from './sourcing.rules';
@@ -74,6 +75,25 @@ export class SourcingController {
     return this.sourcing.getRfq(id);
   }
 
+  /**
+   * 200. Moves an open RFQ's quotation deadline later (F1-Q47); body `{ deadline }` with its offset. 409 unless
+   * open; 400 `deadline_in_past` for a past instant, 400 for one not after the current deadline.
+   */
+  @Post(':id/deadline')
+  @HttpCode(200)
+  @Can('procurement.sourcing')
+  extendDeadline(
+    @Param('id', ParseUUIDPipe) id: string,
+    @Headers('idempotency-key') key: string | undefined,
+    @Body() body: unknown,
+  ): Promise<RfqDto> {
+    return this.sourcing.extendDeadline(
+      id,
+      parseOr400(ExtendRfqDeadlineBodySchema, body),
+      requireIdempotencyKey(key),
+    );
+  }
+
   /** The comparison: quotations cheapest first, with their scores. */
   @Get(':id/quotations')
   @Can('procurement.sourcing')
@@ -88,7 +108,10 @@ export class SourcingController {
     return this.sourcing.listSubmissions(id);
   }
 
-  /** 201. Records a quotation of an invited vendor; 409 when not invited, already quoted or the RFQ is not open. */
+  /**
+   * 201. Records a quotation of an invited vendor; 409 when not invited, already quoted, the RFQ is not open or its
+   * deadline has passed (`rfq_deadline_passed`).
+   */
   @Post(':id/quotations')
   @Can('procurement.sourcing')
   record(
