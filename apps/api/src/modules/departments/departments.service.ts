@@ -757,6 +757,21 @@ export class DepartmentsAdminService {
         });
       }
 
+      // Lock this department's membership rows before reading them. A concurrent member move or level change
+      // (an UPDATE, which takes the same row lock) either commits first and is re-checked here, or waits for this
+      // retire, so a member who just left is not moved again. Single-table lock: see no-locking-of.test.ts.
+      await tx
+        .select({ userId: userEntities.userId })
+        .from(userEntities)
+        .where(
+          and(
+            eq(userEntities.tenantId, scope.tenantId),
+            eq(userEntities.organizationId, scope.organizationId),
+            eq(userEntities.departmentId, dept.id),
+          ),
+        )
+        .for('update');
+
       // Invited members count too: on first login they would otherwise keep this department's reach.
       const members = await tx
         .select({
