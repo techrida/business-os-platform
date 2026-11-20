@@ -14,6 +14,7 @@ import {
   LeadOwnerOptionSchema,
   type RescheduleActivityBody,
   type UpdateLeadBody,
+  type OpportunityOwnerChangeBody,
   type OpportunityStage,
   type OpportunityStageChangeBody,
   OpportunityDtoSchema,
@@ -194,6 +195,31 @@ export function listOpportunities(
 
 export function getOpportunity(session: Session, id: string) {
   return call(session, `/v1/opportunities/${seg(id)}`, OpportunityDtoSchema);
+}
+
+/**
+ * Hand a deal to someone else (`PATCH /v1/opportunities/:id/owner`, F1-Q51). Answers the updated
+ * opportunity; the owner's open follow-ups on it move to the new owner in the same change.
+ */
+export function changeOpportunityOwner(
+  session: Session,
+  id: string,
+  body: OpportunityOwnerChangeBody,
+) {
+  return call(
+    session,
+    `/v1/opportunities/${seg(id)}/owner`,
+    OpportunityDtoSchema,
+    json('PATCH', body),
+  );
+}
+
+/**
+ * The people the caller may hand a deal to (`GET /v1/opportunities/owners`): exactly whom the
+ * owner PATCH accepts. Emails come back empty, so name people by `displayName`.
+ */
+export function listOpportunityOwners(session: Session) {
+  return call(session, '/v1/opportunities/owners', listOf(LeadOwnerOptionSchema));
 }
 
 /** The stage route answers the updated opportunity. */

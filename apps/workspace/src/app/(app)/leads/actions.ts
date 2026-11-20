@@ -12,7 +12,13 @@ import { requireStaffSession } from '@/lib/bff';
 import { currencyNotEnabledText } from '@/lib/kernel-ui';
 import type { Session } from '@/lib/session';
 
-import { echo, IDEMPOTENCY_KEY, runStageMove, UUID } from '@/components/p2/crm/action-helpers';
+import {
+  assignmentRefusalText,
+  echo,
+  IDEMPOTENCY_KEY,
+  runStageMove,
+  UUID,
+} from '@/components/p2/crm/action-helpers';
 import {
   cancelActivity,
   completeActivity,
@@ -283,6 +289,8 @@ export async function updateLeadOwnerAction(
   try {
     await updateLead(session, leadId, parsed.data);
   } catch (err) {
+    const refused = assignmentRefusalText(err);
+    if (refused) return { fieldErrors: { ownerUserId: refused } };
     const f = failureOf(err);
     return { error: f.message, reload: f.reload };
   }

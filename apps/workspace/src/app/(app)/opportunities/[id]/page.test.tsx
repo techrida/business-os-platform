@@ -15,6 +15,7 @@ const mocks = vi.hoisted(() => ({
   getOpportunity: vi.fn(),
   listActivities: vi.fn(),
   listLeadOwners: vi.fn(),
+  listOpportunityOwners: vi.fn(),
   getCustomer: vi.fn(),
   listQuotations: vi.fn(),
   listOpportunityLostReasonChoices: vi.fn(),
@@ -29,6 +30,7 @@ vi.mock('@/components/p2/crm/crm-api', () => ({
   getOpportunity: mocks.getOpportunity,
   listActivities: mocks.listActivities,
   listLeadOwners: mocks.listLeadOwners,
+  listOpportunityOwners: mocks.listOpportunityOwners,
 }));
 vi.mock('@/components/p2/customers/api', () => ({ getCustomer: mocks.getCustomer }));
 vi.mock('@/components/p2/quotations/api', () => ({ listQuotations: mocks.listQuotations }));
@@ -43,8 +45,15 @@ vi.mock('@/app/(app)/leads/actions', () => ({
   scheduleFollowUpAction: vi.fn(),
 }));
 vi.mock('../../activities/actions', () => ({ logActivityAction: vi.fn() }));
-vi.mock('../actions', () => ({ moveOpportunityStageAction: vi.fn() }));
-vi.mock('next/navigation', () => ({ notFound: vi.fn(), redirect: vi.fn() }));
+vi.mock('../actions', () => ({
+  moveOpportunityStageAction: vi.fn(),
+  updateOpportunityOwnerAction: vi.fn(),
+}));
+vi.mock('next/navigation', () => ({
+  notFound: vi.fn(),
+  redirect: vi.fn(),
+  useRouter: () => ({ push: vi.fn(), replace: vi.fn(), refresh: vi.fn() }),
+}));
 vi.mock('next/cache', () => ({ revalidatePath: vi.fn() }));
 
 const OPP = '11111111-1111-4111-8111-111111111111';
@@ -133,6 +142,7 @@ beforeEach(() => {
   mocks.getOpportunity.mockReset().mockResolvedValue(opportunity());
   mocks.listActivities.mockReset().mockResolvedValue([]);
   mocks.listLeadOwners.mockReset().mockResolvedValue([]);
+  mocks.listOpportunityOwners.mockReset().mockResolvedValue([]);
   mocks.getCustomer.mockReset().mockResolvedValue(null);
   mocks.listQuotations.mockReset().mockResolvedValue([]);
   mocks.listOpportunityLostReasonChoices.mockReset().mockResolvedValue([]);
@@ -582,5 +592,64 @@ describe('opportunity stage action buttons, timeline and read-only hygiene', () 
     const html = await render();
     expect(html).toContain('<strong>Budget freeze</strong>');
     expect(html).not.toContain('no longer offered');
+  });
+});
+
+describe("the deal's owner (F1-Q51)", () => {
+  const SITA = '66666666-6666-4666-8666-666666666661';
+  const RAM = '66666666-6666-4666-8666-666666666662';
+  /** `GET /v1/opportunities/owners` as the API sends it: emails always empty. */
+  const owners = [
+    { userId: SITA, displayName: 'Sita Rai', email: '' },
+    { userId: RAM, displayName: 'Ram Thapa', email: '' },
+  ];
+  const ownerFact = (doc: Document) =>
+    [...doc.querySelectorAll('dt')].find((dt) => dt.textContent === 'Owner')?.nextElementSibling;
+
+  it('names the owner and offers Change owner to an editor, saying follow-ups move', async () => {
+    mocks.getOpportunity.mockResolvedValue(
+      opportunity('negotiation', { ownerUserId: SITA, ownerName: 'Sita Rai' }),
+    );
+    mocks.listOpportunityOwners.mockResolvedValue(owners);
+    const fact = ownerFact(parse(await render()));
+    expect(fact?.textContent).toContain('Sita Rai');
+    expect(fact?.textContent).toContain('Change owner');
+    expect(fact?.querySelector('input[name="ownerUserId"]')?.getAttribute('value')).toBe(SITA);
+    expect(fact?.querySelector('input[name="opportunityId"]')?.getAttribute('value')).toBe(OPP);
+    expect(fact?.textContent).toContain('Open follow-ups move to the new owner.');
+  });
+
+  it('shows the name alone to someone who cannot edit, without asking for the owners list', async () => {
+    mocks.getOpportunity.mockResolvedValue(
+      opportunity('negotiation', {
+        ownerUserId: SITA,
+        ownerName: 'Sita Rai',
+        canEdit: false,
+        allowedMoves: [],
+      }),
+    );
+    const fact = ownerFact(parse(await render()));
+    expect(fact?.textContent).toContain('Sita Rai');
+    expect(fact?.textContent).not.toContain('Change owner');
+    expect(mocks.listOpportunityOwners).not.toHaveBeenCalled();
+  });
+
+  it('offers no hand-over on a won deal, and says No owner when there is none', async () => {
+    mocks.getOpportunity.mockResolvedValue(opportunity('won'));
+    mocks.listOpportunityOwners.mockResolvedValue(owners);
+    const fact = ownerFact(parse(await render()));
+    expect(fact?.textContent).toContain('No owner');
+    expect(fact?.textContent).not.toContain('Change owner');
+    expect(mocks.listOpportunityOwners).not.toHaveBeenCalled();
+  });
+
+  it('still renders the name when the owners list is refused', async () => {
+    mocks.getOpportunity.mockResolvedValue(
+      opportunity('qualified', { ownerUserId: SITA, ownerName: 'Sita Rai' }),
+    );
+    mocks.listOpportunityOwners.mockRejectedValue(new ApiError(403, 'forbidden'));
+    const fact = ownerFact(parse(await render()));
+    expect(fact?.textContent).toContain('Sita Rai');
+    expect(fact?.textContent).not.toContain('Change owner');
   });
 });

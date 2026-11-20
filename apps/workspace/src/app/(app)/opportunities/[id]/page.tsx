@@ -1,10 +1,16 @@
-import type { LeadLostReason, OpportunityDto, QuotationListItem } from '@bos/contracts';
+import type {
+  LeadLostReason,
+  LeadOwnerOption,
+  OpportunityDto,
+  QuotationListItem,
+} from '@bos/contracts';
 import type { Metadata } from 'next';
+import type { ReactNode } from 'react';
 import Link from 'next/link';
 import { notFound } from 'next/navigation';
 import type { NumberSystems } from '@bos/locale';
 
-import { getOpportunity, listActivities } from '@/components/p2/crm/crm-api';
+import { getOpportunity, listActivities, listOpportunityOwners } from '@/components/p2/crm/crm-api';
 import { FollowUpsCard } from '@/components/p2/crm/follow-ups-card';
 import { moneyOrNull } from '@/components/p2/crm/format';
 import { MarkLostDialog } from '@/components/p2/crm/mark-lost-dialog';
@@ -45,7 +51,9 @@ import { getCustomer } from '@/components/p2/customers/api';
 
 import { moveOpportunityStageAction } from '../actions';
 import { OpportunityActivities } from './activity-panel';
+import { OpportunityOwnerField } from './opportunity-owner-field';
 import styles from './detail.module.css';
+import { OwnerCell } from '../../leads/lead-cells';
 
 export const metadata: Metadata = { title: 'Opportunity · Business OS' };
 export const dynamic = 'force-dynamic';
@@ -203,9 +211,15 @@ function opportunityStageMessage(
   return 'Sending and accepting quotations update the stage automatically.';
 }
 
-function facts(o: OpportunityDto, customerName: string, numberSystems: NumberSystems): Fact[] {
+function facts(
+  o: OpportunityDto,
+  customerName: string,
+  numberSystems: NumberSystems,
+  owner: ReactNode,
+): Fact[] {
   const dash = <span className={styles.quiet}>Not set</span>;
   return [
+    { key: 'owner', label: 'Owner', value: owner },
     {
       key: 'value',
       label: 'Estimated value',
@@ -318,6 +332,24 @@ export default async function OpportunityPage({ params }: { params: Promise<{ id
       if (failureOf(err).status === 403) canMarkLost = false;
     }
   }
+  // F1-Q51: an editor may hand an open deal to someone the owner route lists. Anyone else, or a
+  // failed list, sees the owner's name alone (a 403 or an outage never blocks the page).
+  let ownerChoices: LeadOwnerOption[] = [];
+  if (canEdit && open) {
+    ownerChoices = await listOpportunityOwners(session).catch(() => []);
+  }
+  const ownerFact =
+    ownerChoices.length > 1 ? (
+      <OpportunityOwnerField
+        opportunityId={opp.id}
+        version={opp.version}
+        ownerUserId={opp.ownerUserId}
+        ownerName={opp.ownerName ?? null}
+        owners={ownerChoices}
+      />
+    ) : (
+      <OwnerCell name={opp.ownerName ?? null} seedId={opp.ownerUserId} />
+    );
   const reasonLabel = opp.lostReason?.label ?? opp.stageReason;
   // A list that did not load falls back to New:
   // the New page checks again before it shows the builder.
@@ -457,6 +489,7 @@ export default async function OpportunityPage({ params }: { params: Promise<{ id
             opp,
             customer ? `${customer.legalName} · ${customer.number}` : 'Customer name unavailable',
             numberSystems,
+            ownerFact,
           )}
           className={styles.facts ?? ''}
         />

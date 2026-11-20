@@ -1,9 +1,10 @@
 import 'server-only';
 
-import type { RecordKind } from '@bos/contracts';
+import { ASSIGNMENT_DENY_MESSAGES, type RecordKind } from '@bos/contracts';
 import { revalidatePath } from 'next/cache';
 
 import { ApiError } from '@/lib/api';
+import { apiDetailOf } from '@/lib/api-code';
 import { apiMessageOf, failureOf } from '@/lib/api-kernel';
 import { requireStaffSession } from '@/lib/bff';
 
@@ -14,6 +15,18 @@ import type { MoveState } from './types';
 
 export const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 export const IDEMPOTENCY_KEY = /^[A-Za-z0-9-]{8,64}$/;
+
+/**
+ * Why the assignment rule (D38/D50) refused a new owner, in product words, from the code the API
+ * sends as `details.assignmentReason`. Undefined for any other answer, or a code this build does
+ * not know, so the caller falls back to its generic wording.
+ */
+export function assignmentRefusalText(err: unknown): string | undefined {
+  const reason = apiDetailOf(err, 'assignmentReason');
+  if (typeof reason !== 'string' || !Object.hasOwn(ASSIGNMENT_DENY_MESSAGES, reason))
+    return undefined;
+  return `The new owner ${ASSIGNMENT_DENY_MESSAGES[reason as keyof typeof ASSIGNMENT_DENY_MESSAGES]}.`;
+}
 
 /** The API's 409 text when a new lost reason's words are already on the tenant's list. */
 const DUPLICATE_LOST_REASON = /already on the list of lost reasons/;
