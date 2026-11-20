@@ -240,6 +240,12 @@ export const ArAgingRowSchema = z.object({
   currency: CurrencySchema,
   buckets: AgingBucketsSchema,
   totalOpen: DecimalString,
+  /**
+   * F1-Q33: true when an invoice of this customer in this currency is still open and a promise to pay it was
+   * missed. `promiseMissedOn` is the latest promised day among those missed promises, null when there is none.
+   */
+  promiseMissed: z.boolean(),
+  promiseMissedOn: isoDate.nullable(),
 });
 export type ArAgingRow = z.infer<typeof ArAgingRowSchema>;
 
