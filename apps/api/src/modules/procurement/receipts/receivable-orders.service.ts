@@ -216,7 +216,10 @@ export class ReceivableOrdersService {
           ),
         )
         .where(
-          scoped(scope).where(purchaseOrders, inArray(purchaseOrders.status, [...RECEIVED_PO_STATUSES])),
+          scoped(scope).where(
+            purchaseOrders,
+            inArray(purchaseOrders.status, [...RECEIVED_PO_STATUSES]),
+          ),
         )
         .groupBy(
           purchaseOrders.id,

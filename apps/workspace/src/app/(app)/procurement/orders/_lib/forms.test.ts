@@ -64,7 +64,8 @@ describe('parseAmend', () => {
   it('refuses when nothing changed, before any API call', () => {
     const r = parseAmend(same, current, 30);
     expect(r.ok).toBe(false);
-    if (!r.ok) expect(r.errors['lines']).toMatch(/change a quantity, a price or the payment terms/i);
+    if (!r.ok)
+      expect(r.errors['lines']).toMatch(/change a quantity, a price or the payment terms/i);
   });
 
   it('sends a change of the payment terms alone, with no line (F1-Q40)', () => {

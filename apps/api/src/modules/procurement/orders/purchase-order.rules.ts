@@ -170,8 +170,7 @@ export interface AmendedLine {
 }
 
 export type AmendVerdict =
-  | { ok: true; lines: AmendedLine[]; changed: boolean }
-  | { ok: false; message: string };
+  { ok: true; lines: AmendedLine[]; changed: boolean } | { ok: false; message: string };
 
 /**
  * Applies the changes to the PO's current lines (a line not named keeps its quantity and price) and recomputes the

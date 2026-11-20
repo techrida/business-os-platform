@@ -364,7 +364,10 @@ describe('recently received orders (U18-Q3)', () => {
   });
 
   it('turns an open status or an extra field into a 502', async () => {
-    for (const bad of [{ ...done, status: 'issued' }, { ...done, openQuantity: '1.0000' }]) {
+    for (const bad of [
+      { ...done, status: 'issued' },
+      { ...done, openQuantity: '1.0000' },
+    ]) {
       answer(reply([bad]));
       await expect(listReceivedOrders(session)).rejects.toMatchObject({ status: 502 });
     }
