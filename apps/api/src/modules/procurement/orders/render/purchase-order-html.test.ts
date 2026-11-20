@@ -88,6 +88,14 @@ describe('renderPurchaseOrderHtml', () => {
     expect(html).toContain('PAN 600123456');
   });
 
+  it('prints the frozen BS issue date and the converted delivery date in the one long BS form', () => {
+    const html = renderPurchaseOrderHtml(sample());
+    expect(html).toContain('<span class="bs">(24 Kartik 2083 BS)</span>');
+    expect(html).not.toContain('2083-07-24');
+    // The delivery date has no frozen BS form, so it is converted (01 Dec 2026 is 15 Mangsir 2083).
+    expect(html).toContain('<span class="bs">(15 Mangsir 2083 BS)</span>');
+  });
+
   it('shows the payment and delivery terms when present', () => {
     const html = renderPurchaseOrderHtml(sample());
     expect(html).toContain('30 days');
