@@ -8,14 +8,14 @@ import { redirect } from 'next/navigation';
 import { kathmanduToday } from '@/components/p2/quotations/eligibility';
 import {
   parseCancel,
-  parseConfirmAcceptance,
+  parseConfirmEvidence,
   parseOutcome,
   parseRevise,
   parseSend,
   type FieldErrors,
   type Parsed,
 } from '@/components/p2/quotations/forms';
-import { lifecyclePaths } from '@/components/p2/quotations/lifecycle-contract';
+import { evidenceRefusal, lifecyclePaths } from '@/components/p2/quotations/lifecycle-contract';
 import { ApiError, apiFetch } from '@/lib/api';
 import { failureOf } from '@/lib/api-kernel';
 import { requireStaffSession } from '@/lib/bff';
@@ -75,6 +75,15 @@ async function post(session: Session, path: string, body: unknown, key: string):
   );
 }
 
+/** The API's error code, or '' when the body has none. */
+function codeOf(body: unknown): string {
+  if (typeof body !== 'object' || body === null) return '';
+  const error = (body as { error?: unknown }).error;
+  if (typeof error !== 'object' || error === null) return '';
+  const code = (error as { code?: unknown }).code;
+  return typeof code === 'string' ? code : '';
+}
+
 const BROKEN: Pick<ActionState, 'error' | 'reload'> = {
   error: 'This form is incomplete. Reload the page.',
   reload: true,
@@ -93,6 +102,8 @@ async function run<B>(
     ctx: { session: Session; quotationId: string; versionId: string; body: B },
     key: string,
   ) => Promise<void>,
+  /** This action's own words for a refusal, by status and code; undefined keeps the general words. */
+  words?: (status: number, code: string) => string | undefined,
 ): Promise<ActionState> {
   const quotationId = text(form, 'quotationId');
   const versionId = text(form, 'versionId');
@@ -114,6 +125,10 @@ async function run<B>(
     await send({ session, quotationId, versionId, body: parsed.body }, key);
   } catch (err) {
     const failure = failureOf(err);
+    const own = err instanceof ApiError ? words?.(err.status, codeOf(err.body)) : undefined;
+    if (own !== undefined) {
+      return { key: randomUUID(), error: own, ...(failure.status === 409 ? { reload: true } : {}) };
+    }
     return {
       // A 4xx is a final answer (this click is over), so the next try is a new decision. After a
       // timeout or 5xx the first call may have landed: send the same key so it cannot apply twice.
@@ -183,15 +198,20 @@ export async function cancelAction(prev: ActionState, form: FormData): Promise<A
 }
 
 /**
- * Confirm acceptance evidence (F1-Q28): a staff member records that the customer's evidence for an
- * accepted revision was checked. Path and body: `lifecycle-contract.ts`.
+ * Confirm acceptance evidence (F1-Q28): a staff member records which evidence for a portal acceptance
+ * they hold and checked. Path, body and refusals: `lifecycle-contract.ts`.
  */
-export async function confirmAcceptanceAction(
+export async function confirmEvidenceAction(
   prev: ActionState,
   form: FormData,
 ): Promise<ActionState> {
-  const state = await run(prev, form, parseConfirmAcceptance, (c, key) =>
-    post(c.session, lifecyclePaths.confirmAcceptance(c.quotationId, c.versionId), c.body, key),
+  const state = await run(
+    prev,
+    form,
+    parseConfirmEvidence,
+    (c, key) =>
+      post(c.session, lifecyclePaths.confirmEvidence(c.quotationId, c.versionId), c.body, key),
+    evidenceRefusal,
   );
   if (state.done === true) revalidatePath(`/quotations/${text(form, 'quotationId')}`);
   return state;

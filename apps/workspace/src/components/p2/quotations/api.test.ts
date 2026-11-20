@@ -259,26 +259,18 @@ describe('getQuotation', () => {
     fetchMock.mockResolvedValue(
       reply(200, {
         ...detail,
-        capabilities: { ...detail.capabilities, canCancel: false, canConfirmAcceptance: true },
+        capabilities: { ...detail.capabilities, canCancel: true },
       }),
     );
     const got = await getQuotation(session, ID_A);
     expect(fetchMock).toHaveBeenCalledTimes(1);
-    expect(got.lifecycle).toEqual({
-      canCancel: false,
-      canConfirmAcceptance: true,
-      confirmations: {},
-    });
+    expect(got.lifecycle).toEqual({ canCancel: true });
   });
 
   it('reads no lifecycle answers from a body that has none', async () => {
     fetchMock.mockResolvedValue(reply(200, detail));
     const got = await getQuotation(session, ID_A);
-    expect(got.lifecycle).toEqual({
-      canCancel: undefined,
-      canConfirmAcceptance: undefined,
-      confirmations: {},
-    });
+    expect(got.lifecycle).toEqual({ canCancel: undefined });
   });
 
   it('turns a detail without history into a 502', async () => {

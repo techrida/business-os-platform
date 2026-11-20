@@ -4,7 +4,7 @@ import { ApiError } from '@/lib/api';
 
 import {
   cancelAction,
-  confirmAcceptanceAction,
+  confirmEvidenceAction,
   outcomeAction,
   reviseAction,
   sendAction,
@@ -258,25 +258,61 @@ describe('cancelAction', () => {
   });
 });
 
-describe('confirmAcceptanceAction', () => {
-  it('posts the version row to the acceptance confirm endpoint of the version', async () => {
-    const state = await confirmAcceptanceAction(
-      prev,
-      form({ quotationId: Q, versionId: V, idempotencyKey: KEY, expectedVersion: '9' }),
-    );
+describe('confirmEvidenceAction (F1-Q28)', () => {
+  const confirm = (over: Record<string, string | string[]> = {}) =>
+    form({
+      quotationId: Q,
+      versionId: V,
+      idempotencyKey: KEY,
+      evidenceKinds: ['contract', 'purchase_order'],
+      ...over,
+    });
+
+  it('posts the ticked kinds with the page key to the evidence confirmation of the version', async () => {
+    const state = await confirmEvidenceAction(prev, confirm({ comment: '  PO 4471 on file  ' }));
     expect(state).toEqual({ key: KEY, done: true });
     const [, path, init] = mocks.apiFetch.mock.calls[0] as [unknown, string, RequestInit];
-    expect(path).toBe(`/v1/quotations/${Q}/versions/${V}/acceptance/confirm`);
-    expect(JSON.parse(init.body as string)).toEqual({ expectedVersion: 9 });
+    expect(path).toBe(`/v1/quotations/${Q}/versions/${V}/evidence-confirmation`);
+    expect((init.headers as Record<string, string>)['idempotency-key']).toBe(KEY);
+    expect(JSON.parse(init.body as string)).toEqual({
+      evidenceKinds: ['contract', 'purchase_order'],
+      comment: 'PO 4471 on file',
+    });
     expect(mocks.revalidatePath).toHaveBeenCalledWith(`/quotations/${Q}`);
   });
 
-  it('refuses a form that lost its version row, without calling the API', async () => {
-    const state = await confirmAcceptanceAction(
-      prev,
-      form({ quotationId: Q, versionId: V, idempotencyKey: KEY, expectedVersion: '' }),
-    );
+  it('sends no comment when the note is blank', async () => {
+    await confirmEvidenceAction(prev, confirm({ comment: '   ' }));
+    const [, , init] = mocks.apiFetch.mock.calls[0] as [unknown, string, RequestInit];
+    expect(JSON.parse(init.body as string)).toEqual({
+      evidenceKinds: ['contract', 'purchase_order'],
+    });
+  });
+
+  it('asks for the evidence before calling the API when nothing is ticked', async () => {
+    const state = await confirmEvidenceAction(prev, confirm({ evidenceKinds: [] }));
     expect(mocks.apiFetch).not.toHaveBeenCalled();
+    expect(state.errors?.evidence).toBe('Tick the evidence you checked.');
+  });
+
+  it("says plainly when the evidence does not meet the company's policy", async () => {
+    mocks.apiFetch.mockImplementation(() =>
+      answer(422, { error: { code: 'evidence_policy_unmet', message: 'needs both' } }),
+    );
+    const state = await confirmEvidenceAction(prev, confirm({ evidenceKinds: 'contract' }));
+    expect(state.error).toMatch(/does not meet your company's evidence policy/);
+    expect(state.error).not.toMatch(/did not respond/);
+    expect(state.done).toBeUndefined();
+  });
+
+  it('asks for a reload when someone else confirmed it first', async () => {
+    mocks.apiFetch.mockImplementation(() =>
+      answer(409, { error: { code: 'evidence_already_confirmed', message: 'done' } }),
+    );
+    const state = await confirmEvidenceAction(prev, confirm());
+    expect(state.error).toBe(
+      'Someone has already confirmed this evidence. Reload the page to see who.',
+    );
     expect(state.reload).toBe(true);
   });
 });

@@ -4,6 +4,9 @@
 // is valid, this file only words the refusal. Nothing invalid reaches the API.
 import {
   CancelQuotationBodySchema,
+  EVIDENCE_KINDS,
+  EvidenceKindSchema,
+  type EvidenceKind,
   RecordOutcomeBodySchema,
   ReviseQuotationBodySchema,
   SendQuotationBodySchema,
@@ -12,6 +15,7 @@ import {
   type ReviseQuotationBody,
   type SendQuotationBody,
 } from '@bos/contracts';
+import { z } from 'zod';
 
 export type FieldName =
   'recipient' | 'message' | 'outcome' | 'decidedOn' | 'evidence' | 'comment' | 'reason';
@@ -150,10 +154,35 @@ export function parseCancel(form: FormData): Parsed<CancelQuotationBody> {
   return { ok: false, errors };
 }
 
-/** The confirm-evidence form: only the version row the person looked at. */
-export function parseConfirmAcceptance(form: FormData): Parsed<{ expectedVersion: number }> {
-  const { expectedVersion } = version(form);
-  return Number.isInteger(expectedVersion) && expectedVersion >= 1
-    ? { ok: true, body: { expectedVersion } }
-    : { ok: false, errors: { form: BROKEN } };
+/** The body of the evidence confirmation (F1-Q28), as the API's `ConfirmEvidenceBody` asks for it. */
+export interface ConfirmEvidenceBody {
+  evidenceKinds: EvidenceKind[];
+  comment?: string;
+}
+
+const ConfirmEvidenceSchema = z.object({
+  evidenceKinds: z
+    .array(EvidenceKindSchema)
+    .min(1)
+    .max(EVIDENCE_KINDS.length)
+    .refine((list) => new Set(list).size === list.length),
+  comment: z.string().trim().min(1).max(2000).optional(),
+});
+
+/** The confirm-evidence form: the kinds of evidence the staff member holds, and an optional note. */
+export function parseConfirmEvidence(form: FormData): Parsed<ConfirmEvidenceBody> {
+  const parsed = ConfirmEvidenceSchema.safeParse({
+    evidenceKinds: form.getAll('evidenceKinds'),
+    ...optional(form, 'comment'),
+  });
+  if (parsed.success) {
+    const { evidenceKinds, comment } = parsed.data;
+    return {
+      ok: true,
+      body: comment === undefined ? { evidenceKinds } : { evidenceKinds, comment },
+    };
+  }
+  const errors = errorsOf(parsed.error.issues);
+  if (errors.evidence !== undefined) errors.evidence = 'Tick the evidence you checked.';
+  return { ok: false, errors };
 }

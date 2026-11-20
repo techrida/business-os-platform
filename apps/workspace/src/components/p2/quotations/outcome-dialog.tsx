@@ -33,7 +33,7 @@ export interface OutcomeDialogProps {
 type Outcome = '' | 'accepted' | 'rejected';
 
 /** A fieldset of native radios or checkboxes, with the hint and error lines Field gives a single control. */
-function Choices({
+export function Choices({
   legend,
   hint,
   error,

@@ -37,7 +37,7 @@ export interface DetailActionVisibility {
   versionId?: string;
 }
 
-const NO_LIFECYCLE: QuotationLifecycle = { confirmations: {} };
+const NO_LIFECYCLE: QuotationLifecycle = {};
 
 /** Whether `DetailActions` will render at least one button for this quotation and caller. */
 export function hasDetailActions({

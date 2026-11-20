@@ -1,24 +1,25 @@
-// The quotation lifecycle API this screen expects from the parallel API work (round 4): Cancel quotation,
-// staff confirmation of acceptance evidence, and the refusal of a schedule with a 0.00 instalment. Every
-// path, field name and error code the workspace assumes about that work lives in this one file, so the
-// wiring is adjusted here once the API lands. Pure (no server-only import): the page, the server actions
-// and the tests all read it.
+// The quotation lifecycle API this screen uses from the round 4 API work: Cancel quotation, the staff
+// confirmation of a portal acceptance's evidence, and the refusal of a schedule with a 0.00 instalment.
+// Every path, field name and error code the workspace relies on for them lives in this one file. Pure (no
+// server-only import): the page, the server actions and the tests all read it.
 //
-// Cancel and the zero-instalment refusal follow the API as built (round 4, unit A):
 // - Cancel is `POST /v1/quotations/:id/cancel` with an Idempotency-Key and `{ reason, expectedVersion }`,
 //   where `expectedVersion` is the current version row's `version`, the same guard Revise uses. Allowed
 //   on a Draft, Returned or Submitted version; cancelling a Submitted one also cancels its open approval
 //   request. The detail answer's optional `capabilities.canCancel` decides the button; absent means no.
 // - Submit refuses a schedule whose instalment would be 0.00 with 422 `PAYMENT_INSTALMENT_ZERO`,
 //   `details: { label, total }`.
-// Still assumed, until the acceptance work lands:
-// - The detail answer may carry `capabilities.canConfirmAcceptance`; when absent, the live
-//   `quotation.record_acceptance` grant stands in.
-// - An accepted version may carry `acceptanceConfirmation: { status: 'awaiting' | 'confirmed',
-//   confirmedAt, confirmedByUserId }`. Absent means the API has no confirmation step yet, and the screen
-//   shows nothing about it.
-// - Confirming is `POST /v1/quotations/:id/versions/:vid/acceptance/confirm` with `{ expectedVersion }`.
-import type { QuotationDetail, QuotationStatus } from '@bos/contracts';
+// - The evidence of an accepted version is `GET /v1/quotations/:id/versions/:vid/evidence`
+//   (`QuotationEvidenceDto`; 404 when there is no acceptance or it is out of scope). A portal acceptance
+//   is `pending` until a staff member confirms it with `POST .../evidence-confirmation`, an
+//   Idempotency-Key and `{ evidenceKinds, comment? }`; a staff-recorded acceptance is `confirmed` at once.
+//   The contract type lands with that API work, so the shape is read here with a lenient local schema.
+import {
+  EvidenceKindSchema,
+  type EvidenceKind,
+  type QuotationDetail,
+  type QuotationStatus,
+} from '@bos/contracts';
 import { z } from 'zod';
 
 const q = (id: string): string => `/v1/quotations/${encodeURIComponent(id)}`;
@@ -27,8 +28,10 @@ const v = (quotationId: string, versionId: string): string =>
 
 export const lifecyclePaths = {
   cancel: (quotationId: string): string => `${q(quotationId)}/cancel`,
-  confirmAcceptance: (quotationId: string, versionId: string): string =>
-    `${v(quotationId, versionId)}/acceptance/confirm`,
+  evidence: (quotationId: string, versionId: string): string =>
+    `${v(quotationId, versionId)}/evidence`,
+  confirmEvidence: (quotationId: string, versionId: string): string =>
+    `${v(quotationId, versionId)}/evidence-confirmation`,
 } as const;
 
 /** The statuses Cancel quotation is offered on: the `cancel` edges of the version state machine. */
@@ -55,64 +58,31 @@ export function isZeroInstalmentRefusal(code: string, message: string): boolean 
 export const ZERO_INSTALMENT_MESSAGE =
   'At least one payment milestone would come to 0.00 at this total. Remove that milestone or raise its share, then submit again. Nothing was submitted.';
 
-const AcceptanceConfirmationSchema = z.object({
-  status: z.enum(['awaiting', 'confirmed']),
-  confirmedAt: z.string().nullable().optional(),
-  confirmedByUserId: z.string().nullable().optional(),
-});
-export type AcceptanceConfirmation = z.infer<typeof AcceptanceConfirmationSchema>;
-
 /**
- * The fields of the detail answer that the contract does not describe yet. Lenient: each one is read
- * on its own, and anything malformed reads as absent, so the rest of the page is never affected.
+ * The field of the detail answer that the contract does not describe yet. Lenient: anything malformed
+ * reads as absent, so the rest of the page is never affected.
  */
 const ExtrasSchema = z.object({
   capabilities: z
-    .object({
-      canCancel: z.boolean().optional().catch(undefined),
-      canConfirmAcceptance: z.boolean().optional().catch(undefined),
-    })
-    .optional()
-    .catch(undefined),
-  versions: z
-    .array(
-      z.object({
-        id: z.string(),
-        acceptanceConfirmation: AcceptanceConfirmationSchema.nullable().optional().catch(undefined),
-      }),
-    )
+    .object({ canCancel: z.boolean().optional().catch(undefined) })
     .optional()
     .catch(undefined),
 });
 
 export interface QuotationLifecycle {
   canCancel?: boolean | undefined;
-  canConfirmAcceptance?: boolean | undefined;
-  /** By version id; only versions that carry the field. */
-  confirmations: Readonly<Record<string, AcceptanceConfirmation | null>>;
 }
 
 /** Reads the lifecycle fields from the raw detail body (the contract's parse drops them). */
 export function readLifecycle(body: unknown): QuotationLifecycle {
   const parsed = ExtrasSchema.safeParse(body);
-  if (!parsed.success) return { confirmations: {} };
-  const confirmations: Record<string, AcceptanceConfirmation | null> = {};
-  for (const version of parsed.data.versions ?? []) {
-    if (version.acceptanceConfirmation !== undefined) {
-      confirmations[version.id] = version.acceptanceConfirmation;
-    }
-  }
-  return {
-    canCancel: parsed.data.capabilities?.canCancel,
-    canConfirmAcceptance: parsed.data.capabilities?.canConfirmAcceptance,
-    confirmations,
-  };
+  return parsed.success ? { canCancel: parsed.data.capabilities?.canCancel } : {};
 }
 
 /** The detail answer with the lifecycle fields kept beside it. */
 export type QuotationDetailWithLifecycle = QuotationDetail & { lifecycle?: QuotationLifecycle };
 
-const NONE: QuotationLifecycle = { confirmations: {} };
+const NONE: QuotationLifecycle = {};
 
 export function lifecycleOf(detail: QuotationDetailWithLifecycle): QuotationLifecycle {
   return detail.lifecycle ?? NONE;
@@ -124,4 +94,57 @@ export function lifecycleOf(detail: QuotationDetailWithLifecycle): QuotationLife
  */
 export function mayCancel(status: QuotationStatus, lifecycle: QuotationLifecycle): boolean {
   return isCancellable(status) && lifecycle.canCancel === true;
+}
+
+// ---- Acceptance evidence (F1-Q28) ------------------------------------------------------------
+
+const kinds = z.array(z.unknown()).transform((list) =>
+  list.flatMap((k) => {
+    const kind = EvidenceKindSchema.safeParse(k);
+    return kind.success ? [kind.data] : [];
+  }),
+);
+
+/** The parts of `QuotationEvidenceDto` this screen shows. A kind it does not know is left out. */
+export const QuotationEvidenceSchema = z.object({
+  status: z.enum(['pending', 'confirmed']),
+  /** The company's evidence policy now: one kind, `both`, or `none`. */
+  policy: z.string(),
+  missing: kinds,
+  acceptance: z.object({
+    actorKind: z.string(),
+    acceptedByName: z.string().nullable().optional(),
+    evidenceKinds: kinds,
+  }),
+  confirmation: z
+    .object({
+      evidenceKinds: kinds,
+      comment: z.string().nullable().optional(),
+      confirmedBy: z.string(),
+      confirmedAt: z.string(),
+    })
+    .nullable(),
+  can: z.object({ confirm: z.boolean() }).catch({ confirm: false }),
+});
+export type QuotationEvidence = z.infer<typeof QuotationEvidenceSchema>;
+
+/** The kinds the company's evidence policy asks for: `both` is a contract and a purchase order. */
+export function policyKinds(policy: string): EvidenceKind[] {
+  if (policy === 'both') return ['contract', 'purchase_order'];
+  const kind = EvidenceKindSchema.safeParse(policy);
+  return kind.success ? [kind.data] : [];
+}
+
+/** Words for the evidence confirmation's refusals, or undefined to use the general ones. */
+export function evidenceRefusal(status: number, code: string): string | undefined {
+  if (status === 422 && code === 'evidence_policy_unmet') {
+    return "The evidence you ticked does not meet your company's evidence policy. Tick everything the policy asks for that you hold, then confirm again. Nothing was confirmed.";
+  }
+  if (status === 409 && code === 'evidence_already_confirmed') {
+    return 'Someone has already confirmed this evidence. Reload the page to see who.';
+  }
+  if (status === 409 && code === 'quotation_not_accepted') {
+    return 'This revision is no longer accepted, so there is no evidence to confirm. Reload the page.';
+  }
+  return undefined;
 }
