@@ -40,12 +40,12 @@ export class UsersService extends UserDirectory {
     return this.mirror.resolve(i);
   }
 
-  userIdsWithRole(scope: TxScope, role: RoleKey): Promise<string[]> {
-    return this.mirror.userIdsWithRole(scope, role);
+  userIdsWithRole(scope: TxScope, role: RoleKey, q?: Db | DbTransaction): Promise<string[]> {
+    return this.mirror.userIdsWithRole(scope, role, q);
   }
 
-  emailOf(userId: string): Promise<string | null> {
-    return this.mirror.emailOf(userId);
+  emailOf(userId: string, q?: Db | DbTransaction): Promise<string | null> {
+    return this.mirror.emailOf(userId, q);
   }
 
   syncUser(zitadelUserId: string): Promise<void> {

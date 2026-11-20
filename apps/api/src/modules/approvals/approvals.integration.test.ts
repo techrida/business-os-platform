@@ -34,6 +34,8 @@ import type { Db } from '../../platform/db/db.module';
 import { systemActor, withTx } from '../../platform/db/tx';
 import { buildLink, renderEmail } from '../../platform/notify/templates';
 import { SettingsService } from '../../platform/settings/settings.service';
+import { UserMirror } from '../../platform/users/user-mirror';
+import { UsersService } from '../../platform/users/users.service';
 import { SqlUsersStore } from '../../platform/users/users.store';
 import { ApprovalsAdminService } from './admin.service';
 import { canonicalSha256 } from '../../platform/hashing/canonical-json';
@@ -2115,5 +2117,63 @@ describe('reads inside a submit or decision transaction', () => {
     const decided = emails.find((e) => e?.template === 'approval.decided');
     expect(pending?.vars.requesterName).toBe('Sita Requester');
     expect(decided?.vars.deciderName).toBe('Unnamed user');
+  });
+
+  it('finds the role holders of each step through the transaction, never a second pooled connection', async () => {
+    me = U.founder;
+    await admin.createWorkflow({
+      key: 'pool_dir_memo',
+      name: 'Pool directory memo',
+      spec: {
+        documentType: 'pool_dir_memo',
+        steps: [
+          { id: 'accountant', kind: 'role', role: 'accountant', reason: 'Accountant checks' },
+          { id: 'finance', kind: 'role', role: 'finance', reason: 'Finance approves' },
+        ],
+      },
+    });
+    await admin.publish('pool_dir_memo', 1);
+    const guard = poolGuard(db);
+    // The real directory chain (UsersService -> UserMirror -> SqlUsersStore) over the watched handle, so a layer
+    // that drops the transaction shows up here. The ZITADEL client, queue and audit are never reached.
+    const guardStore = new SqlUsersStore(guard.db);
+    const directory = new UsersService(
+      new UserMirror(guard.db, guardStore, {} as never, {} as never),
+      guardStore,
+      {} as never,
+      guard.db,
+      {} as never,
+    );
+    const guarded = new ApprovalsService(guard.db, audit, notify, directory, caller, clock);
+    guarded.registerSubject({
+      documentType: 'pool_dir_memo',
+      onDecided,
+      link: (_tx, documentId) => `/memos/${documentId}`,
+    });
+    const { requestId, status } = await withTx(guard.db, scope, systemActor('test'), (tx) =>
+      guarded.submit(tx, {
+        documentType: 'pool_dir_memo',
+        documentId: randomUUID(),
+        documentNumber: 'MEMO-2082/83-00002',
+        title: 'Office chairs',
+        snapshot: { title: 'Office chairs', amount: '50000.00', currency: 'NPR' },
+        facts: { amountNpr: '50000.00' },
+        requesterUserId: U.requester,
+        sodUserIds: [U.requester],
+      }),
+    );
+    // Not blocked: the real store found an accountant for step 1 through the transaction.
+    expect(status).toBe('pending');
+    me = U.acc;
+    await guarded.act(requestId, { action: 'approve', expectedVersion: 1 }, randomUUID());
+    me = U.fin;
+    const done = await guarded.act(
+      requestId,
+      { action: 'approve', expectedVersion: 2 },
+      randomUUID(),
+    );
+
+    expect(done.status).toBe('approved');
+    expect(guard.touches).toEqual([]);
   });
 });
