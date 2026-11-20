@@ -746,9 +746,34 @@ describe("debit notes fall due on the customer's payment terms (TR-Q12c)", () =>
     });
   }
 
-  /** A debit note on a fresh issued invoice: drafted by U.fin, approved, issued by U.fin2. Returns its row. */
-  async function issuedDebitNote() {
-    const original = await issuedInvoice();
+  /** A manual tax invoice issued by U.fin with `dueDate`, so it has a credit period of its own. */
+  async function issuedInvoiceDue(dueDate: string): Promise<string> {
+    as(U.acc, 'accountant');
+    const id = (
+      await drafting.draftManual(
+        {
+          customerId: f.customerPartyId,
+          currency: 'NPR',
+          manualReason: 'Consulting on 30 days credit',
+          dueDate,
+          lines: [typedLine('Implementation', '1', '250.00', f.taxCodeVat13Id)],
+        },
+        key(),
+      )
+    ).invoice.id;
+    await withTx(db, scopeA, systemActor('note-fixture'), (tx) =>
+      tx.execute(
+        sql`UPDATE app.invoices SET status = 'approved', version = version + 1 WHERE id = ${id}`,
+      ),
+    );
+    as(U.fin, 'finance');
+    await issuing.issue(id, { expectedVersion: (await invoiceRow(id)).version }, key());
+    return id;
+  }
+
+  /** A debit note on `original` (a fresh issued invoice by default): drafted by U.fin, approved, issued by U.fin2. */
+  async function issuedDebitNote(original?: string) {
+    original ??= await issuedInvoice();
     as(U.fin, 'finance');
     const id = (await notes.draftDebitNote(debitBody(original), key())).invoice.id;
     expect((await invoiceRow(id)).dueDate).toBeNull();
@@ -784,7 +809,16 @@ describe("debit notes fall due on the customer's payment terms (TR-Q12c)", () =>
     expect(item.dueDate).toBe('2026-11-09');
   });
 
-  it('a customer with no account here keeps the old rule: due on the issue date for a manual original', async () => {
+  it('a customer with no term here gets the credit period of the original invoice (R2-022)', async () => {
+    await setCustomerTerm(null);
+    const original = await issuedInvoiceDue('2026-12-09');
+    expect((await invoiceRow(original)).dueDate).toBe('2026-12-09');
+    const { row, item } = await issuedDebitNote(original);
+    expect(row.dueDate).toBe('2026-12-09');
+    expect(item.dueDate).toBe('2026-12-09');
+  });
+
+  it('a customer with no term and an original due on receipt: the note is due on its issue date', async () => {
     await setCustomerTerm(null);
     const { row } = await issuedDebitNote();
     expect(row.dueDate).toBe('2026-11-09');
