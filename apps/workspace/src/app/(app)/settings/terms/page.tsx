@@ -5,7 +5,9 @@ import { ResetToDefaultButton } from '@/components/settings/reset-to-default';
 import { termSetsAreDefault } from '@/components/settings/term-presets/term-preset-model';
 import { TermPresetsManager } from '@/components/settings/term-presets/term-presets-manager';
 import { Page, PageHeader } from '@/components/ui/page';
+import { Panel } from '@/components/ui/panel';
 import { getSetting } from '@/lib/api-admin';
+import { listAdminPaymentTerms } from '@/lib/api-master-data';
 import { listTermPresets } from '@/lib/api-term-presets';
 
 import { BackToSettings } from '../_components/back-link';
@@ -14,6 +16,7 @@ import admin from '../admin.module.css';
 import { requireSection } from '../guard';
 import { section } from '../section';
 import { SectionError } from '../ui';
+import { PaymentTermsPanel } from './payment-terms-panel';
 
 export const metadata: Metadata = { title: 'Saved terms · Business OS' };
 
@@ -23,14 +26,17 @@ export default async function TermsSettingsPage() {
   const saved = await section('view term sets', () =>
     getSetting(session, 'quotation.term_presets'),
   );
-  const presets = await section('view term sets', () => listTermPresets(session));
+  const [presets, paymentTerms] = await Promise.all([
+    section('view term sets', () => listTermPresets(session)),
+    section('view payment terms', () => listAdminPaymentTerms(session)),
+  ]);
 
   return (
     <Page className={admin.page}>
       <BackToSettings />
       <PageHeader
         title="Saved terms"
-        description="Ready-made wording for quotation fields. Staff pick a term set to fill a field, then edit it freely. A quotation keeps its own text, so changing a set never changes a quotation already written."
+        description="Ready-made wording for quotation fields, and the payment terms documents use. Staff pick a term set to fill a field, then edit it freely. A quotation keeps its own text, so changing a set never changes a quotation already written."
         actions={
           presets.ok && saved.ok ? (
             <ResetToDefaultButton
@@ -55,6 +61,16 @@ export default async function TermsSettingsPage() {
         ) : (
           <SectionError message={presets.message} />
         )}
+        <Panel
+          title="Payment terms"
+          description="When an invoice or bill is due: the named terms documents and accounts can use."
+        >
+          {paymentTerms.ok ? (
+            <PaymentTermsPanel terms={paymentTerms.data} />
+          ) : (
+            <SectionError message={paymentTerms.message} />
+          )}
+        </Panel>
       </div>
     </Page>
   );

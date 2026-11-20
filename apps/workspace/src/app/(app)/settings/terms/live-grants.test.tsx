@@ -33,11 +33,19 @@ const api = vi.hoisted(() => ({
   deleteTermPreset: vi.fn(),
 }));
 vi.mock('@/lib/api-term-presets', () => api);
+const master = vi.hoisted(() => ({
+  listAdminPaymentTerms: vi.fn(),
+  createPaymentTerm: vi.fn(),
+  updatePaymentTerm: vi.fn(),
+}));
+vi.mock('@/lib/api-master-data', () => master);
 const admin = vi.hoisted(() => ({ getSetting: vi.fn(), putSetting: vi.fn() }));
 vi.mock('@/lib/api-admin', () => admin);
 
 const { default: TermsPage } = await import('./page');
 const { savePresetAction, removePresetAction } = await import('./actions');
+const { addPaymentTermAction, renamePaymentTermAction, setPaymentTermRetiredAction } =
+  await import('./payment-term-actions');
 
 const ID = '11111111-1111-4111-8111-111111111111';
 const preset: TermPreset = {
@@ -47,6 +55,14 @@ const preset: TermPreset = {
   body: '<p>We build it.</p>',
 };
 const add = { kind: 'scope', name: 'Standard build', body: 'We build it.' };
+const NET30 = {
+  id: '22222222-2222-4222-8222-222222222222',
+  code: 'NET30',
+  name: 'Net 30',
+  netDays: 30,
+  retired: false,
+  version: 2,
+};
 
 /** A staff session whose roles disagree with the live grants `/v1/me` reports for its token. */
 function persona(token: string, roles: string[], ...permissions: string[]): void {
@@ -63,6 +79,9 @@ function persona(token: string, roles: string[], ...permissions: string[]): void
 beforeEach(() => {
   vi.clearAllMocks();
   api.listTermPresets.mockResolvedValue([preset]);
+  master.listAdminPaymentTerms.mockResolvedValue([NET30]);
+  master.createPaymentTerm.mockResolvedValue(NET30);
+  master.updatePaymentTerm.mockResolvedValue(NET30);
   api.createTermPreset.mockResolvedValue(preset);
   api.deleteTermPreset.mockResolvedValue(undefined);
   admin.getSetting.mockResolvedValue({ key: 'quotation.term_presets', value: [], version: 3 });
@@ -96,5 +115,61 @@ describe('Saved terms by live grant', () => {
     persona('founder-emptied', ['founder']);
     await expect(savePresetAction(add)).rejects.toThrow('REDIRECT:/settings/denied');
     expect(api.createTermPreset).not.toHaveBeenCalled();
+  });
+});
+
+// F1-Q49: payment terms are edited on the same page, under the same grant.
+describe('Payment terms by live grant', () => {
+  it('shows the terms and their days to a finance-settings grant held by a Sales role', async () => {
+    persona('accountant-live', ['sales'], 'settings.finance.write');
+    const html = renderToStaticMarkup((await TermsPage()) as ReactElement);
+    expect(html).toContain('Net 30');
+    expect(html).toContain('Due in 30 days');
+    expect(html).toContain('Add payment term');
+  });
+
+  it('adds, renames and retires a term for that grant, never sending new days on an edit', async () => {
+    persona('accountant-live', ['sales'], 'settings.finance.write');
+    await expect(
+      addPaymentTermAction({ code: 'net45', name: 'Net 45', netDays: '45' }),
+    ).resolves.toMatchObject({ status: 'ok' });
+    expect(master.createPaymentTerm).toHaveBeenCalledWith(expect.anything(), {
+      code: 'NET45',
+      name: 'Net 45',
+      netDays: 45,
+    });
+    await expect(renamePaymentTermAction(NET30.id, 'Net 30 days', 2)).resolves.toMatchObject({
+      status: 'ok',
+    });
+    expect(master.updatePaymentTerm).toHaveBeenLastCalledWith(expect.anything(), NET30.id, {
+      name: 'Net 30 days',
+      expectedVersion: 2,
+    });
+    await expect(setPaymentTermRetiredAction(NET30.id, true, 3)).resolves.toMatchObject({
+      status: 'ok',
+    });
+    expect(master.updatePaymentTerm).toHaveBeenLastCalledWith(expect.anything(), NET30.id, {
+      retired: true,
+      expectedVersion: 3,
+    });
+  });
+
+  it('refuses days that are not a whole number from 0 to 365 without calling the API', async () => {
+    persona('accountant-live', ['sales'], 'settings.finance.write');
+    for (const netDays of ['', '400', '1.5', '-1']) {
+      const state = await addPaymentTermAction({ code: 'X', name: 'X', netDays });
+      expect(state.status, netDays).toBe('error');
+    }
+    expect(master.createPaymentTerm).not.toHaveBeenCalled();
+  });
+
+  it('refuses a Finance role whose live grants keep only rate entry, before any call', async () => {
+    persona('finance-rates', ['finance'], 'settings.fx_rate.write');
+    await expect(
+      addPaymentTermAction({ code: 'NET45', name: 'Net 45', netDays: '45' }),
+    ).rejects.toThrow('REDIRECT:/settings/currencies');
+    await expect(setPaymentTermRetiredAction(NET30.id, true, 2)).rejects.toThrow('REDIRECT:');
+    expect(master.createPaymentTerm).not.toHaveBeenCalled();
+    expect(master.updatePaymentTerm).not.toHaveBeenCalled();
   });
 });
