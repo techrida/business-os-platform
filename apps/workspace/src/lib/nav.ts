@@ -309,18 +309,6 @@ export function ownsPath(href: string, pathname: string): boolean {
   return href === '/' ? pathname === '/' : pathname === href || pathname.startsWith(`${href}/`);
 }
 
-/** Page title for a route: the label of the built item that owns the path, else the app name. */
-export function titleForPath(pathname: string): string {
-  let best: (NavItem & { href: string }) | undefined;
-  for (const group of NAV_GROUPS) {
-    for (const item of group.items) {
-      if (!isBuilt(item) || !ownsPath(item.href, pathname)) continue;
-      if (best === undefined || item.href.length > best.href.length) best = item;
-    }
-  }
-  return best?.label ?? APP_NAME;
-}
-
 /** Filter already-authorized, built navigation by group or destination name. */
 export function searchNavGroups(groups: readonly NavGroup[], query: string): readonly NavGroup[] {
   const term = query.trim().toLowerCase();

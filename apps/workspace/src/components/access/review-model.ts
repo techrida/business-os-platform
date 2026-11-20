@@ -26,11 +26,6 @@ export function impactSentence(bucket: AccessImpactBucket, direction: 'more' | '
   return `${who} will see ${direction}: ${names}${names.endsWith('.') ? '' : '.'}`;
 }
 
-/** The warnings that need their own tick box before saving. */
-export function confirmWarnings(warnings: readonly AccessWarning[]): AccessWarning[] {
-  return warnings.filter((warning) => warning.severity === 'confirm');
-}
-
 export function hasBlockedWarning(warnings: readonly AccessWarning[]): boolean {
   return warnings.some((warning) => warning.severity === 'blocked');
 }

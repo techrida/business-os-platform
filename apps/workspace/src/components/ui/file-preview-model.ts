@@ -39,14 +39,6 @@ export function isSameOriginUrl(url: string, origin: string): boolean {
   return (parsed.protocol === 'https:' || parsed.protocol === 'http:') && parsed.origin === origin;
 }
 
-/**
- * Hints for the browser's built-in PDF viewer: fit the whole page in the box, hide the thumbnail pane.
- * Chrome and Firefox honour them; a viewer that ignores them still shows the file.
- */
-export function pdfViewerUrl(url: string): string {
-  return url.includes('#') ? url : `${url}#view=Fit&navpanes=0`;
-}
-
 export type PreviewFetchOutcome =
   'ready' | 'preparing' | 'failed' | 'unavailable' | 'denied' | 'error';
 

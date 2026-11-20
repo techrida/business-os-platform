@@ -14,7 +14,6 @@ import {
   LeadOwnerOptionSchema,
   type RescheduleActivityBody,
   type UpdateLeadBody,
-  type OpportunityStage,
   type OpportunityStageChangeBody,
   OpportunityDtoSchema,
 } from '@bos/contracts';
@@ -38,7 +37,6 @@ const ConvertResultSchema = z.object({
   opportunityId: z.guid(),
   customerId: z.guid().optional(),
 });
-export type ConvertResult = z.infer<typeof ConvertResultSchema>;
 
 const seg = (id: string): string => encodeURIComponent(id);
 
@@ -93,13 +91,6 @@ function query(params: Record<string, string | number | readonly string[] | unde
 // ---------------------------------------------------------------------------------------------
 // Leads
 // ---------------------------------------------------------------------------------------------
-
-export function listLeads(
-  session: Session,
-  opts: { stage?: string; q?: string; limit?: number } = {},
-) {
-  return call(session, `/v1/leads${query(opts)}`, listOf(LeadDtoSchema));
-}
 
 export function getLead(session: Session, id: string) {
   return call(session, `/v1/leads/${seg(id)}`, LeadDtoSchema);
@@ -183,14 +174,6 @@ export function convertLead(
 // ---------------------------------------------------------------------------------------------
 // Opportunities
 // ---------------------------------------------------------------------------------------------
-
-/** An empty stage selection omits the filter. Each selected stage becomes a `stage` parameter. */
-export function listOpportunities(
-  session: Session,
-  opts: { stage?: string | readonly OpportunityStage[]; q?: string; limit?: number } = {},
-) {
-  return call(session, `/v1/opportunities${query(opts)}`, listOf(OpportunityDtoSchema));
-}
 
 export function getOpportunity(session: Session, id: string) {
   return call(session, `/v1/opportunities/${seg(id)}`, OpportunityDtoSchema);
