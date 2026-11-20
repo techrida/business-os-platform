@@ -31,6 +31,7 @@ import { and, asc, eq, isNull, or, type SQL } from 'drizzle-orm';
 import { AuditService } from '../../../platform/audit/audit.service';
 import { AuthzService } from '../../../platform/authz/authz.service';
 import { type Principal, type ResourceRef } from '../../../platform/authz/can';
+import { RoleCache } from '../../../platform/authz/role-cache';
 import { DB, type Db } from '../../../platform/db/db.module';
 import { updateVersioned, withIdempotency } from '../../../platform/db/idempotency';
 import { withTx, type DbTransaction, type TxScope } from '../../../platform/db/tx';
@@ -41,7 +42,9 @@ import {
   CustomersService,
   duplicatePan,
 } from '../../customers/customers.service';
+import { carryOpenFollowUps } from '../../activities/follow-ups';
 import { normalizeEmail, normalizeName, normalizePan } from '../../customers/customers.normalize';
+import { loadAssignmentParties, partyHolds } from '../lead-assignee';
 import { LeadsCaller } from '../leads.caller';
 import { type LeadRow } from '../leads.types';
 import { leadRef } from '../leads.service';
@@ -76,6 +79,7 @@ export class LeadConvertService {
     private readonly numbering: NumberingService,
     private readonly customersService: CustomersService,
     private readonly caller: LeadsCaller,
+    private readonly roleCache: RoleCache,
   ) {}
 
   async convert(
@@ -200,6 +204,24 @@ export class LeadConvertService {
       })
       .returning({ id: opportunities.id });
     const opportunityId = opportunity!.id;
+
+    // U16-Q6: the lead's open follow-ups go on with the deal, same assignee, due time and text, when the assignee
+    // can open deals at all (their live grants hold crm.opportunity.read at any scope; an assigned follow-up is
+    // then enough to reach this one).
+    await carryOpenFollowUps(tx, scope, this.audit, {
+      leadId: lead.id,
+      opportunityId,
+      canWorkOn: async (userIds) => {
+        const parties = await loadAssignmentParties(tx, scope, userIds);
+        const workers = new Set<string>();
+        for (const party of parties) {
+          if (await partyHolds(this.roleCache, scope, party, 'crm.opportunity.read')) {
+            workers.add(party.userId);
+          }
+        }
+        return workers;
+      },
+    });
 
     // 6. The lead, audit and activity.
     const updated = await updateVersioned(tx, leads, lead.id, body.expectedVersion, {

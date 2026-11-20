@@ -1,7 +1,7 @@
 // Moving the open follow-ups of a lead or opportunity with its owner (D45). One rule for both record kinds, so a
 // lead's owner change, an opportunity's owner change (F1-Q51) and any later caller move the same rows the same way.
 import { activities, scoped } from '@bos/db';
-import { and, eq, sql } from 'drizzle-orm';
+import { and, eq, inArray, sql } from 'drizzle-orm';
 
 import type { AuditService } from '../../platform/audit/audit.service';
 import type { DbTransaction, TxScope } from '../../platform/db/tx';
@@ -51,4 +51,59 @@ export async function moveOpenFollowUps(
     });
   }
   return moved.map((row) => row.id);
+}
+
+/**
+ * U16-Q6: a converting lead's open follow-ups carry to the opportunity it becomes, so the planned work is still
+ * there on the deal (D39: a follow-up is a planned activity). Same row, so the assignee, due time, kind, subject and
+ * text stay as they were; only its record changes from the lead to the opportunity (exactly one subject, so the
+ * lead id is cleared). Completed, cancelled and logged activities stay on the lead as its history, and so does a
+ * follow-up whose assignee `canWorkOn` says could not open the deal: carried, it would be stranded where its
+ * assignee may not complete it, while on the converted lead they still can. The version moves, so a form open on
+ * the lead's follow-up gets a 409. One audit row each. Returns the ids carried.
+ */
+export async function carryOpenFollowUps(
+  tx: DbTransaction,
+  scope: TxScope,
+  audit: AuditService,
+  change: {
+    leadId: string;
+    opportunityId: string;
+    canWorkOn: (assigneeUserIds: readonly string[]) => Promise<ReadonlySet<string>>;
+  },
+): Promise<string[]> {
+  const { leadId, opportunityId } = change;
+  const open = await tx
+    .select({ id: activities.id, assigneeUserId: activities.assigneeUserId })
+    .from(activities)
+    .where(scoped(scope).where(activities, and(eq(activities.leadId, leadId), isPlannedSql)));
+  const assignees = [
+    ...new Set(open.flatMap((row) => (row.assigneeUserId === null ? [] : [row.assigneeUserId]))),
+  ];
+  const workers = await change.canWorkOn(assignees);
+  const ids = open
+    .filter((row) => row.assigneeUserId === null || workers.has(row.assigneeUserId))
+    .map((row) => row.id);
+  if (ids.length === 0) return [];
+  const carried = await tx
+    .update(activities)
+    .set({
+      leadId: null,
+      opportunityId,
+      updatedAt: new Date(),
+      version: sql`${activities.version} + 1`,
+    })
+    .where(scoped(scope).where(activities, inArray(activities.id, ids)))
+    .returning({ id: activities.id });
+  for (const { id } of carried) {
+    await audit.record(tx, {
+      action: 'activity.carried_to_opportunity',
+      entityType: 'activities',
+      entityId: id,
+      before: { leadId },
+      after: { opportunityId },
+      meta: { reason: 'lead_converted' },
+    });
+  }
+  return carried.map((row) => row.id);
 }
