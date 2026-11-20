@@ -184,6 +184,20 @@ export const InvoiceDtoSchema = z
   });
 export type InvoiceDto = z.infer<typeof InvoiceDtoSchema>;
 
+/**
+ * The derived state of one invoice, from its allocations, credit notes and due date. These are values
+ * of a computed status, not stored columns. `settlementOf` in money-rules produces them.
+ */
+export const SETTLEMENT_STATUSES = [
+  'unpaid',
+  'partly_paid',
+  'paid',
+  'overdue',
+  'credited',
+] as const;
+export const SettlementStatusSchema = z.enum(SETTLEMENT_STATUSES);
+export type SettlementStatus = z.infer<typeof SettlementStatusSchema>;
+
 /** One row of `GET /v1/invoices`. */
 export const InvoiceListItemSchema = z.object({
   id: z.guid(),
@@ -196,6 +210,14 @@ export const InvoiceListItemSchema = z.object({
   total: DecimalString,
   issueDate: isoDate.nullable(),
   dueDate: isoDate.nullable(),
+  /**
+   * Paid, overdue and the rest, derived from the open item (never stored), for an issued tax invoice or debit
+   * note; null for anything without an open item (drafts, proformas, credit notes). Optional so an older API
+   * answer still parses.
+   */
+  settlement: SettlementStatusSchema.nullable().optional(),
+  /** What is still owed, in the invoice's currency; null exactly when `settlement` is. */
+  openAmount: DecimalString.nullable().optional(),
 });
 export type InvoiceListItem = z.infer<typeof InvoiceListItemSchema>;
 
