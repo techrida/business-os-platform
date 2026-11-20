@@ -2,14 +2,16 @@
 // Serves the NFR "authorization decisions use current data": the tenancy interceptor resolves every
 // caller through resolve() here. The logic lives in UserMirror (no authz imports, so the worker can
 // use it); this class adapts it to the port U1 injects, and repairs a half-finished invite.
-import type { AdminUsersQuery, RoleKey } from '@bos/contracts';
+import type { AccessLevel, AdminUsersQuery, RoleKey } from '@bos/contracts';
 import {
+  BadRequestException,
   ConflictException,
   Inject,
   Injectable,
   Logger,
   NotFoundException,
   ServiceUnavailableException,
+  UnprocessableEntityException,
 } from '@nestjs/common';
 
 import { UserDirectory } from '../authz/user-directory';
@@ -145,6 +147,58 @@ export class UsersService extends UserDirectory {
       if (!(error instanceof ConflictException)) throw error;
       return this.finishInvite(tx, b, error);
     }
+  }
+
+  /**
+   * F1-Q50: puts a just-invited person in a department at a level, on the membership the invite bootstrapped in the
+   * tenant's default entity. Runs in the invite's transaction, so a refusal here undoes the mirror rows (the ZITADEL
+   * user stays an open invite, which inviting again repairs). A head needs a department, and a department that
+   * already has a head keeps it: changing a head goes through Departments, which shows what the change does.
+   */
+  async placeInvitee(
+    tx: DbTransaction,
+    userId: string,
+    placement: { departmentId: string | null; level: AccessLevel },
+  ): Promise<void> {
+    if (placement.level === 'head' && placement.departmentId === null) {
+      throw new BadRequestException({
+        code: 'validation',
+        message: 'Choose a department for a department head.',
+        details: { departmentId: 'Choose a department for a department head.' },
+      });
+    }
+    const scope = await this.store.txScope(tx);
+    const entityId = await this.store.defaultEntityOf(scope.tenantId);
+    if (!entityId) throw new NotFoundException('Organization not found');
+    if (placement.departmentId !== null) {
+      const department = await this.store.departmentForPlacement(
+        tx,
+        scope.tenantId,
+        placement.departmentId,
+      );
+      if (!department || department.organizationId !== entityId) {
+        throw new UnprocessableEntityException({
+          code: 'unprocessable',
+          message: 'That department is not available for new people. Choose another one.',
+          details: { departmentId: 'Choose another department.' },
+        });
+      }
+      if (department.status !== 'active') {
+        throw new UnprocessableEntityException({
+          code: 'unprocessable',
+          message: `${department.name} is retired. Choose another department.`,
+          details: { departmentId: 'Choose another department.' },
+        });
+      }
+      if (placement.level === 'head' && department.headUserId !== null) {
+        throw new ConflictException({
+          code: 'department_has_head',
+          message: `${department.name} already has a head. Add this person at another level, then change the head in Departments.`,
+        });
+      }
+    }
+    await this.store.placeMembership(tx, scope.tenantId, entityId, userId, placement);
+    await this.store.bumpAuthzVersion(tx, scope);
   }
 
   setRoles(tx: DbTransaction, userId: string, roles: RoleKey[]): Promise<void> {

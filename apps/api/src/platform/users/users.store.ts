@@ -57,6 +57,14 @@ export interface MembershipRow {
   level?: AccessLevel;
 }
 
+/** The department an invite places a new person in (F1-Q50): where it lives, whether it is in use, and its head. */
+export interface PlacementDepartment {
+  organizationId: string;
+  name: string;
+  status: 'active' | 'retired';
+  headUserId: string | null;
+}
+
 /** One user who holds a role in one legal entity (see `effectiveRoleHolders`). */
 export interface EffectiveRoleHolder {
   organizationId: string;
@@ -126,6 +134,24 @@ export abstract class UsersStore {
     entityId: string,
     userId: string,
   ): Promise<boolean>;
+
+  /** A department of the tenant by id (any entity), or null. */
+  abstract departmentForPlacement(
+    q: Queryable,
+    tenantId: string,
+    departmentId: string,
+  ): Promise<PlacementDepartment | null>;
+  /**
+   * Sets the department and level of the user's membership in `organizationId`. The 0079 and 0086 triggers keep the
+   * department head and `department_since` in step; the audit trigger records the change under the tx's actor.
+   */
+  abstract placeMembership(
+    tx: DbTransaction,
+    tenantId: string,
+    organizationId: string,
+    userId: string,
+    placement: { departmentId: string | null; level: AccessLevel },
+  ): Promise<void>;
 
   abstract rolesOf(q: Queryable, tenantId: string, userId: string): Promise<RoleKey[]>;
   abstract replaceRoles(
@@ -342,6 +368,32 @@ export class SqlUsersStore extends UsersStore {
           RETURNING 1 AS one`,
     );
     return inserted.length > 0;
+  }
+
+  async departmentForPlacement(
+    q: Queryable,
+    tenantId: string,
+    departmentId: string,
+  ): Promise<PlacementDepartment | null> {
+    const [row] = await rows<PlacementDepartment & Record<string, unknown>>(
+      q,
+      sql`SELECT d.organization_id AS "organizationId", d.name, d.status, d.head_user_id AS "headUserId"
+          FROM app.departments d WHERE d.tenant_id = ${tenantId} AND d.id = ${departmentId}`,
+    );
+    return row ?? null;
+  }
+
+  async placeMembership(
+    tx: DbTransaction,
+    tenantId: string,
+    organizationId: string,
+    userId: string,
+    placement: { departmentId: string | null; level: AccessLevel },
+  ): Promise<void> {
+    await tx.execute(
+      sql`UPDATE app.user_entities SET department_id = ${placement.departmentId}, level = ${placement.level}
+          WHERE tenant_id = ${tenantId} AND organization_id = ${organizationId} AND user_id = ${userId}`,
+    );
   }
 
   async rolesOf(q: Queryable, tenantId: string, userId: string): Promise<RoleKey[]> {

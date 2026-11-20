@@ -72,3 +72,45 @@ it('sends the invitation and subsequent role edit through the authenticated admi
     },
   ]);
 });
+
+it('sends the chosen department and level with the invitation (F1-Q50)', async () => {
+  const departmentId = '00000000-0000-4000-8000-0000000005a1';
+  const fetch = vi
+    .spyOn(globalThis, 'fetch')
+    .mockResolvedValueOnce(
+      Response.json({ userId: '00000000-0000-4000-8000-000000000001' }, { status: 201 }),
+    );
+  const invite = new FormData();
+  invite.set('givenName', 'Asha');
+  invite.set('familyName', 'Lama');
+  invite.set('email', 'asha@example.test');
+  invite.set('departmentId', departmentId);
+  invite.set('level', 'manager');
+  expect((await inviteUserAction(IDLE, invite)).status).toBe('ok');
+  const init = fetch.mock.calls[0]?.[1];
+  expect(JSON.parse(typeof init?.body === 'string' ? init.body : 'null')).toEqual({
+    givenName: 'Asha',
+    familyName: 'Lama',
+    email: 'asha@example.test',
+    roles: [],
+    departmentId,
+    level: 'manager',
+  });
+});
+
+it('asks for a department before inviting a department head, keeping the chosen level', async () => {
+  const fetch = vi.spyOn(globalThis, 'fetch');
+  const invite = new FormData();
+  invite.set('givenName', 'Asha');
+  invite.set('familyName', 'Lama');
+  invite.set('email', 'asha@example.test');
+  invite.set('departmentId', '');
+  invite.set('level', 'head');
+  const result = await inviteUserAction(IDLE, invite);
+  expect(result.status).toBe('error');
+  expect(result.fieldErrors).toEqual({
+    departmentId: 'Choose a department for a department head.',
+  });
+  expect(result.fields).toMatchObject({ level: 'head', departmentId: '' });
+  expect(fetch).not.toHaveBeenCalled();
+});

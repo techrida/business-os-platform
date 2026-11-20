@@ -8,6 +8,7 @@ import 'server-only';
 // Nullable columns are declared nullable so responses from incomplete records still parse.
 
 import {
+  type AccessLevel,
   type AdminUsersQuery,
   AdminUsersPageSchema,
   AdminUsersSummarySchema,
@@ -227,7 +228,15 @@ export async function listApprovalPeople(
 
 export function inviteUser(
   session: Session,
-  b: { email: string; givenName: string; familyName: string; roles: RoleKey[] },
+  b: {
+    email: string;
+    givenName: string;
+    familyName: string;
+    roles: RoleKey[];
+    /** F1-Q50: optional placement; both are left out when the form did not ask. */
+    departmentId?: string;
+    level?: AccessLevel;
+  },
 ): Promise<{ userId: string }> {
   return requestParsed(
     session,

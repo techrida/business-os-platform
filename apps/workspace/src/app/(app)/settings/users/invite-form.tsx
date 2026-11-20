@@ -3,7 +3,7 @@
 import { useActionState } from 'react';
 
 import { Button, LinkButton } from '@/components/ui/button';
-import { Field, Input } from '@/components/ui/field';
+import { Field, Input, Select } from '@/components/ui/field';
 import { Icon } from '@/components/ui/icon';
 import { PageHeader } from '@/components/ui/page';
 import { Panel } from '@/components/ui/panel';
@@ -26,10 +26,21 @@ function SectionTitle({ step, children }: { step: string; children: string }) {
   );
 }
 
+const LEVELS = [
+  { value: 'staff', label: 'Staff' },
+  { value: 'manager', label: 'Manager' },
+  { value: 'head', label: 'Head of department' },
+] as const;
+
 // A Client Component for useActionState only: it shows the result without a page reload. The write
 // itself is the Server Action. The form wraps the page header so its Save button submits the form
 // and is disabled while the request runs.
-export function InviteForm() {
+// `departments` is null when the person may not place people (no `admin.roles.write`): the fields are left out.
+export function InviteForm({
+  departments = null,
+}: {
+  departments?: readonly { id: string; name: string }[] | null;
+}) {
   const [state, formAction, pending] = useActionState(inviteUserAction, IDLE);
   const fields = state.fields ?? {};
   // On success the form clears (React resets it); on an error `fields` puts the values back.
@@ -107,6 +118,37 @@ export function InviteForm() {
         title={<SectionTitle step="02 · Roles">Role & Access Configuration</SectionTitle>}
         description="Select the roles this person holds. You can change these later."
       >
+        {departments !== null && (
+          <div className={styles.fieldGrid}>
+            <Field
+              label="Department"
+              hint="Optional. Access to department records follows it."
+              error={state.fieldErrors?.departmentId}
+            >
+              {(control) => (
+                <Select
+                  name="departmentId"
+                  defaultValue={kept.departmentId ?? ''}
+                  options={[
+                    { value: '', label: 'No department' },
+                    ...departments.map((d) => ({ value: d.id, label: d.name })),
+                  ]}
+                  {...control}
+                />
+              )}
+            </Field>
+            <Field label="Level" hint="Optional. Staff unless you choose otherwise.">
+              {(control) => (
+                <Select
+                  name="level"
+                  defaultValue={kept.level || 'staff'}
+                  options={LEVELS}
+                  {...control}
+                />
+              )}
+            </Field>
+          </div>
+        )}
         <RoleCheckboxes
           idPrefix="invite-role"
           legend="Roles"
