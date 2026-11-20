@@ -50,6 +50,7 @@ import { UserMirror } from '../../platform/users/user-mirror';
 import type { UsersSyncData } from '../../platform/users/users.constants';
 import { SqlUsersStore } from '../../platform/users/users.store';
 import type { ZitadelAdminClient } from '../../platform/users/zitadel-admin.client';
+import { lockAccessRevision } from '../access-settings/access-revision';
 import { AccessRevisionTableStore } from './access-revision.port';
 import type { DepartmentsCaller } from './departments.caller';
 import { DepartmentsAdminController } from './departments.controller';
@@ -1006,5 +1007,53 @@ describe('Retire under concurrent access writes', () => {
       .filter((e) => e.action === 'department.member.removed')
       .map((e) => e.meta?.userId);
     expect(removed).toEqual([stayer]);
+  });
+
+  it('lets an access save and a retire on the same members both finish, without a deadlock', async () => {
+    const other = AdminDepartmentDetailSchema.parse(
+      (await request(baseUrl).post('/v1/admin/departments').send({ name: 'Order Landing' })).body,
+    );
+    const dept = AdminDepartmentDetailSchema.parse(
+      (await request(baseUrl).post('/v1/admin/departments').send({ name: 'Order Source' })).body,
+    );
+    const mover = await activeMember(dept.id, 'staff');
+    const stayer = await activeMember(dept.id, 'staff');
+
+    // The access save's order (AccessSettingsService.save): the access revision lock first, then the
+    // member rows. It holds the lock until the retire is waiting, then moves `mover`.
+    let release!: () => void;
+    let markLocked!: () => void;
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const locked = new Promise<void>((resolve) => {
+      markLocked = resolve;
+    });
+    const save = withTx(db, scope1A, systemActor('test-race'), async (tx) => {
+      await lockAccessRevision(tx, tenant1.tenantId);
+      markLocked();
+      await gate;
+      await tx.execute(
+        sql`UPDATE app.user_entities SET department_id = ${other.id}::uuid
+             WHERE tenant_id = ${tenant1.tenantId}::uuid AND organization_id = ${tenant1.organizationId}::uuid
+               AND user_id = ${mover}::uuid`,
+      );
+    });
+    await locked;
+
+    const retire = request(baseUrl)
+      .post(`/v1/admin/departments/${dept.id}/retire`)
+      .send({ expectedVersion: dept.version, moveMembersTo: null })
+      .then((res) => res);
+    await untilSomeoneWaitsForALock();
+    release();
+
+    // In the old order the retire held the member rows while waiting for the access lock, and one of
+    // the two was aborted as a deadlock.
+    await expect(save).resolves.toBeUndefined();
+    const retired = await retire;
+    expect(retired.status, JSON.stringify(retired.body)).toBe(200);
+    expect(await membershipOf(mover)).toEqual({ department_id: other.id, level: 'staff' });
+    expect(await membershipOf(stayer)).toEqual({ department_id: null, level: 'staff' });
   });
 });
