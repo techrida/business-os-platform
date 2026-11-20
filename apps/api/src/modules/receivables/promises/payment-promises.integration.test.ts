@@ -232,6 +232,33 @@ describe('a missed promise to pay (F1-Q33)', () => {
     );
   });
 
+  it('replays a committed promise retried after Kathmandu midnight instead of refusing its day', async () => {
+    const invoice = await issuedInvoice(h.scopeA, customer, '2000.00');
+    // 23:50 in Kathmandu on 2026-11-09: the promise is for that same day.
+    let now = new Date('2026-11-09T18:05:00Z');
+    const lateNight = new PaymentPromisesService(
+      h.db,
+      h.authz as unknown as AuthzService,
+      new AuditService(h.db),
+      () => now,
+    );
+    await h.actAs(accountant);
+    const { scope, actor } = h.caller.current();
+    const key = randomUUID();
+    const body = { promisedDate: '2026-11-09' };
+    const first = PaymentPromiseDtoSchema.parse(
+      await lateNight.record(scope, actor, invoice, body, key),
+    );
+
+    // The response was lost; the client retries with the same key at 00:10 the next day.
+    now = new Date('2026-11-09T18:25:00Z');
+    await expect(lateNight.record(scope, actor, invoice, body, key)).resolves.toEqual(first);
+    // A new key with that day is a new command, and the day is now in the past.
+    await expect(lateNight.record(scope, actor, invoice, body, randomUUID())).rejects.toBeInstanceOf(
+      BadRequestException,
+    );
+  });
+
   it('refuses an invoice of another legal entity as unknown', async () => {
     const other = await issuedInvoice(h.scopeB, customer, '1000.00');
     await h.actAs(accountant);
