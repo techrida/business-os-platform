@@ -8,6 +8,8 @@ import {
   CreateRfqBodySchema,
   ExtendRfqDeadlineBodySchema,
   PR_COMMITMENT_WORKFLOW_SPEC,
+  RFQ_DEADLINE_PASSED,
+  RFQ_DEADLINE_PASSED_MESSAGE,
   commitmentFactsOf,
   extendDeadlineVerdict,
   isLateQuotation,
@@ -216,5 +218,16 @@ describe('ExtendRfqDeadlineBodySchema', () => {
       ExtendRfqDeadlineBodySchema.safeParse({ deadline: '2026-11-25T10:00:00Z', status: 'open' })
         .success,
     ).toBe(false);
+  });
+});
+
+describe('the late-quotation refusal the clients recognise (F1-Q47)', () => {
+  // The workspace (rfqs/_lib/failure.ts) and the vendor portal (rfqs/[id]/quote/actions.ts) match this code and,
+  // while the error filter does not pass it, this exact sentence. Change all three copies together.
+  it('keeps its code and sentence word for word', () => {
+    expect(RFQ_DEADLINE_PASSED).toBe('rfq_deadline_passed');
+    expect(RFQ_DEADLINE_PASSED_MESSAGE).toBe(
+      'The quotation deadline of this RFQ has passed. Procurement can extend it to take more quotations.',
+    );
   });
 });
