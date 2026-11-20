@@ -12,7 +12,7 @@
 // Money is derived on read (plan A8): the open amount comes from open_item_balances and allocations, never from a
 // stored field. "Today" is the Kathmandu calendar day of the server clock (A10), as in ReceivablesService.
 import {
-  CompanyProfileSchema,
+  documentSellerContact,
   CustomerInvoiceViewSchema,
   PartySnapshotSchema,
   PortalInvoiceListItemSchema,
@@ -160,19 +160,12 @@ type TaxRow = typeof invoiceTaxSummary.$inferSelect;
 type SellerContact = NonNullable<CustomerInvoiceView['sellerContact']>;
 
 /**
- * The customer-safe part of the saved company profile (`entity.profile`): phones, email and the signatory. Named key
- * by key, so the logo, display name, website or a key added later never reach a customer. Null when the stored value
- * does not validate (a row edited by hand): the page then shows no contact block rather than failing.
+ * The customer-safe part of the saved company profile (`entity.profile`): phones, email and the signatory. The shared
+ * contracts mapper names them key by key (the PDF freezes the same four at print 1), and is null when the stored value
+ * does not validate: the page then shows no contact block rather than failing.
  */
 export function toSellerContact(rawProfile: unknown): SellerContact | null {
-  const profile = CompanyProfileSchema.safeParse(rawProfile);
-  if (!profile.success) return null;
-  return {
-    phones: [...profile.data.phones],
-    email: profile.data.email,
-    signatoryName: profile.data.signatoryName,
-    signatoryTitle: profile.data.signatoryTitle,
-  };
+  return documentSellerContact(rawProfile);
 }
 
 /** What the view adds beyond the invoice rows: the original print's format and the seller's contact. */

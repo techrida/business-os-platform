@@ -5,6 +5,7 @@ import {
   DEFAULT_DOCUMENT_STYLE,
   DocumentFormatSnapshotSchema,
   deriveBrandPalette,
+  documentSellerContact,
   DOCUMENT_LAYOUTS,
   DocumentStyleSnapshotSchema,
   EMPTY_COMPANY_PROFILE,
@@ -243,5 +244,53 @@ describe('DocumentFormatSnapshotSchema', () => {
     ['an oversize image', `data:image/png;base64,${'A'.repeat(720_000)}`],
   ])('refuses %s as the logo', (_name, logoDataUrl) => {
     expect(DocumentFormatSnapshotSchema.safeParse({ ...printed, logoDataUrl }).success).toBe(false);
+  });
+
+  it('keeps a frozen seller contact, an explicit null, or none on an older print', () => {
+    const contact = {
+      phones: ['+977 1 4000000'],
+      email: 'billing@example.com',
+      signatoryName: 'Sita Sharma',
+      signatoryTitle: 'Finance Manager',
+    };
+    expect(
+      DocumentFormatSnapshotSchema.parse({ ...printed, sellerContact: contact }).sellerContact,
+    ).toEqual(contact);
+    expect(
+      DocumentFormatSnapshotSchema.parse({ ...printed, sellerContact: null }).sellerContact,
+    ).toBeNull();
+    expect(DocumentFormatSnapshotSchema.parse(printed).sellerContact).toBeUndefined();
+    expect(
+      DocumentFormatSnapshotSchema.safeParse({
+        ...printed,
+        sellerContact: { ...contact, website: 'https://example.com' },
+      }).success,
+    ).toBe(false);
+  });
+});
+
+describe('documentSellerContact', () => {
+  it('names the four contact keys of a profile and nothing else', () => {
+    expect(
+      documentSellerContact({
+        ...EMPTY_COMPANY_PROFILE,
+        displayName: 'Acme',
+        website: 'https://acme.example',
+        phones: ['01-4000000', '9800000000'],
+        email: 'hello@acme.example',
+        signatoryName: 'Ram Thapa',
+        signatoryTitle: 'Director',
+      }),
+    ).toEqual({
+      phones: ['01-4000000', '9800000000'],
+      email: 'hello@acme.example',
+      signatoryName: 'Ram Thapa',
+      signatoryTitle: 'Director',
+    });
+  });
+
+  it('is null for a profile that does not validate', () => {
+    expect(documentSellerContact({ phones: 'not a list' })).toBeNull();
+    expect(documentSellerContact(undefined)).toBeNull();
   });
 });
