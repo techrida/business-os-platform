@@ -286,7 +286,7 @@ describe('lead detail page composition (U14 D39, D41, D48)', () => {
       'This lead is on hold. Use Resume in the header to move it back to New.',
     ],
     ['on_hold', [] as LeadDto['stage'][], [], 'This lead is on hold.'],
-    ['lost', [] as LeadDto['stage'][], [], 'Only a manager can reopen a lost lead.'],
+    ['lost', [] as LeadDto['stage'][], [], 'This lead is lost. Reopening needs reopen access.'],
     [
       'lost',
       ['contacted'] as LeadDto['stage'][],

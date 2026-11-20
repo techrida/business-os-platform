@@ -208,7 +208,7 @@ function leadStageMessage(
   if (stage === 'lost') {
     return canReopen
       ? 'This lead is lost. Use Reopen in the header to return it to Contacted.'
-      : 'Only a manager can reopen a lost lead.';
+      : 'This lead is lost. Reopening needs reopen access.';
   }
   return 'This lead is converted. Its stage is final.';
 }
