@@ -86,22 +86,52 @@ describe('customerCapabilities', () => {
 });
 
 describe('customerPortalAccess (F1-Q31: the account owner invites the first portal admin)', () => {
-  const access = (row: ReturnType<typeof customer>, p: Principal, hasUser: boolean) =>
-    customerPortalAccess(row, p, customerCapabilities(row, p), hasUser);
+  const access = (
+    row: ReturnType<typeof customer>,
+    p: Principal,
+    hasUser: boolean,
+    kyb: string | null = 'approved',
+  ) => customerPortalAccess(row, p, customerCapabilities(row, p), hasUser, kyb);
 
   it('offers the first invite to the account owner only', () => {
-    expect(access(customer(ME), as('sales'), false)).toEqual({ hasUser: false, canInvite: true });
+    expect(access(customer(ME), as('sales'), false)).toEqual({
+      hasUser: false,
+      canInvite: true,
+      blocked: null,
+    });
     // A founder holds customer.write on every customer, but is not this one's owner.
-    expect(access(customer(COLLEAGUE), as('founder'), false).canInvite).toBe(false);
-    expect(access(customer(null), as('founder'), false).canInvite).toBe(false);
+    expect(access(customer(COLLEAGUE), as('founder'), false)).toMatchObject({
+      canInvite: false,
+      blocked: 'owner_only',
+    });
+    expect(access(customer(null), as('founder'), false)).toMatchObject({
+      canInvite: false,
+      blocked: 'owner_missing',
+    });
   });
 
   it('offers later invites to anyone holding customer.write on the record', () => {
     expect(access(customer(COLLEAGUE), as('founder'), true)).toEqual({
       hasUser: true,
       canInvite: true,
+      blocked: null,
     });
-    expect(access(customer(COLLEAGUE), as('pmo'), true).canInvite).toBe(false);
+    // No customer.write: no invite, and no reason told.
+    expect(access(customer(COLLEAGUE), as('pmo'), true)).toEqual({
+      hasUser: true,
+      canInvite: false,
+      blocked: null,
+    });
+  });
+
+  it('offers no invite until the KYB case is approved, after the owner rule', () => {
+    for (const kyb of [null, 'draft', 'submitted', 'rejected']) {
+      expect(access(customer(ME), as('sales'), false, kyb)).toMatchObject({
+        canInvite: false,
+        blocked: 'kyb_not_verified',
+      });
+    }
+    expect(access(customer(COLLEAGUE), as('founder'), false, null).blocked).toBe('owner_only');
   });
 
   it('never offers an invite on a merged customer or to a portal caller', () => {

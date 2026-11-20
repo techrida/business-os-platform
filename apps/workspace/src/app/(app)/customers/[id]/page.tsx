@@ -1,6 +1,11 @@
 import { randomUUID } from 'node:crypto';
 
-import type { ContactDto, PartyAccountDto, VerificationCaseDto } from '@bos/contracts';
+import type {
+  ContactDto,
+  CustomerPortalAccess,
+  PartyAccountDto,
+  VerificationCaseDto,
+} from '@bos/contracts';
 import type { Metadata } from 'next';
 import Link from 'next/link';
 import { notFound } from 'next/navigation';
@@ -348,7 +353,7 @@ function PortalAccess({
   ownerLabel,
 }: {
   customerId: string;
-  access: { hasUser: boolean; canInvite: boolean };
+  access: CustomerPortalAccess;
   contacts: PromiseSettledResult<Listing<ContactDto>>;
   /** The account owner by name, or null when the customer has none. */
   ownerLabel: string | null;
@@ -361,13 +366,18 @@ function PortalAccess({
           hasEmail: c.email !== null && c.email !== '',
         }))
       : [];
-  const note = access.hasUser
-    ? 'This customer can sign in to the customer portal.'
-    : access.canInvite
-      ? 'No one from this customer can sign in to the portal yet. Invite one of its contacts as the portal admin.'
-      : ownerLabel !== null
-        ? `No one from this customer can sign in to the portal yet. The account owner, ${ownerLabel}, invites the first portal admin.`
-        : 'No one from this customer can sign in to the portal yet. Assign an account owner; the owner invites the first portal admin.';
+  const note =
+    access.blocked === 'kyb_not_verified'
+      ? "Portal access opens once this customer's KYB verification is approved."
+      : access.hasUser
+        ? 'This customer has portal access.'
+        : access.blocked === 'owner_only' && ownerLabel !== null
+          ? `No one from this customer has portal access yet. The account owner, ${ownerLabel}, invites the first portal admin.`
+          : access.blocked === 'owner_missing'
+            ? 'No one from this customer has portal access yet. It has no account owner, and the account owner invites the first portal admin.'
+            : access.canInvite
+              ? 'No one from this customer has portal access yet. Invite one of its contacts as the portal admin.'
+              : 'No one from this customer has portal access yet.';
   return (
     <Panel title="Portal access" as="aside">
       <div className={styles.cases}>

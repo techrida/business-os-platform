@@ -83,7 +83,10 @@ async function render(): Promise<string> {
   const html = renderToStaticMarkup(
     await CustomerPage({ params: Promise.resolve({ id: ID }), searchParams: Promise.resolve({}) }),
   );
-  return html.replace(/<[^>]*>/g, ' ').replace(/\s+/g, ' ');
+  return html
+    .replace(/<[^>]*>/g, ' ')
+    .replace(/&#x27;/g, "'")
+    .replace(/\s+/g, ' ');
 }
 
 beforeEach(() => {
@@ -123,7 +126,7 @@ describe('customer page portal access panel (F1-Q31)', () => {
   it("offers the account owner the first-admin invite with the customer's own contacts only", async () => {
     api.listContacts.mockResolvedValue(CONTACTS);
     api.getCustomerDetail.mockResolvedValue(
-      customer({ can: WRITE, portalAccess: { hasUser: false, canInvite: true } }),
+      customer({ can: WRITE, portalAccess: { hasUser: false, canInvite: true, blocked: null } }),
     );
     const text = await render();
     expect(text).toContain('Portal access');
@@ -135,7 +138,10 @@ describe('customer page portal access panel (F1-Q31)', () => {
   it('names the account owner to anyone else who may change the customer, with no invite', async () => {
     api.listContacts.mockResolvedValue(CONTACTS);
     api.getCustomerDetail.mockResolvedValue(
-      customer({ can: WRITE, portalAccess: { hasUser: false, canInvite: false } }),
+      customer({
+        can: WRITE,
+        portalAccess: { hasUser: false, canInvite: false, blocked: 'owner_only' },
+      }),
     );
     const text = await render();
     expect(text).toContain('The account owner, Sita Rai, invites the first portal admin.');
@@ -148,33 +154,51 @@ describe('customer page portal access panel (F1-Q31)', () => {
         ownerUserId: null,
         people: [],
         can: WRITE,
-        portalAccess: { hasUser: false, canInvite: false },
+        portalAccess: { hasUser: false, canInvite: false, blocked: 'owner_missing' },
       }),
     );
     const text = await render();
-    expect(text).toContain('Assign an account owner; the owner invites the first portal admin.');
+    expect(text).toContain(
+      'It has no account owner, and the account owner invites the first portal admin.',
+    );
+    expect(text).not.toContain('Invite portal admin');
+  });
+
+  it('says KYB comes first instead of offering an invite the API would refuse', async () => {
+    api.listContacts.mockResolvedValue(CONTACTS);
+    api.getCustomerDetail.mockResolvedValue(
+      customer({
+        can: WRITE,
+        portalAccess: { hasUser: false, canInvite: false, blocked: 'kyb_not_verified' },
+      }),
+    );
+    const text = await render();
+    expect(text).toContain(
+      "Portal access opens once this customer's KYB verification is approved.",
+    );
+    expect(text).not.toContain('Invite portal admin');
   });
 
   it('offers later invites once the portal has a user', async () => {
     api.listContacts.mockResolvedValue(CONTACTS);
     api.getCustomerDetail.mockResolvedValue(
-      customer({ can: WRITE, portalAccess: { hasUser: true, canInvite: true } }),
+      customer({ can: WRITE, portalAccess: { hasUser: true, canInvite: true, blocked: null } }),
     );
     const text = await render();
-    expect(text).toContain('This customer can sign in to the customer portal.');
+    expect(text).toContain('This customer has portal access.');
     expect(text).toContain('Invite portal user');
   });
 
   it('shows no panel to a reader who may not change the customer, or on a merged record', async () => {
     api.getCustomerDetail.mockResolvedValue(
-      customer({ portalAccess: { hasUser: false, canInvite: false } }),
+      customer({ portalAccess: { hasUser: false, canInvite: false, blocked: null } }),
     );
     expect(await render()).not.toContain('Portal access');
     api.getCustomerDetail.mockResolvedValue(
       customer({
         can: WRITE,
         mergedIntoId: '55555555-5555-4555-8555-555555555555',
-        portalAccess: { hasUser: true, canInvite: false },
+        portalAccess: { hasUser: true, canInvite: false, blocked: null },
       }),
     );
     expect(await render()).not.toContain('Portal access');

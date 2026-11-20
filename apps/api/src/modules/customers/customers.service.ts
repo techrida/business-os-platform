@@ -161,21 +161,23 @@ export function customerCapabilities(
 /**
  * The portal access block of the detail read (F1-Q31): may `p` invite a portal admin now? The same checks, in the
  * same order, as PortalAccessService.grant before it reads the contact: customer.write on the record (staff only),
- * not merged away, and the first-admin rule.
+ * not merged away, the first-admin rule, then an approved KYB case. `blocked` is told only to a caller who may change
+ * the customer, who would get the same answer from the grant route.
  */
 export function customerPortalAccess(
   row: Pick<CustomerRow, 'ownerUserId' | 'mergedIntoId'>,
   p: Principal,
   can: CustomerCan,
   hasPortalUser: boolean,
+  kybStatus: string | null,
 ): CustomerPortalAccess {
-  return {
-    hasUser: hasPortalUser,
-    canInvite:
-      can.write &&
-      row.mergedIntoId === null &&
-      firstAdminRule(row, p.userId, hasPortalUser) === 'ok',
-  };
+  if (!can.write || row.mergedIntoId !== null) {
+    return { hasUser: hasPortalUser, canInvite: false, blocked: null };
+  }
+  const rule = firstAdminRule(row, p.userId, hasPortalUser);
+  const blocked =
+    rule !== 'ok' ? rule : kybStatus === 'approved' ? null : ('kyb_not_verified' as const);
+  return { hasUser: hasPortalUser, canInvite: blocked === null, blocked };
 }
 
 /** The pg error behind `error`, which drizzle may wrap as `cause`. */
@@ -301,10 +303,10 @@ export class CustomersService {
     // no entities, so the field is left out (not an empty list, which would claim "no terms set").
     if (principal.orgKind !== 'staff') return dto;
     // The owner by name, read in the customer's tenant only, so the page needs no admin directory (403 for Sales).
-    const [accounts, people, hasCase, hasPortalUser] = await Promise.all([
+    const [accounts, people, caseStatus, hasPortalUser] = await Promise.all([
       this.accountsFor(scope.tenantId, principal.userId, id),
       personNames(this.db, row.tenantId, [row.ownerUserId]),
-      this.hasVerificationCase(scope.tenantId, id),
+      this.verificationStatus(scope.tenantId, id),
       customerHasPortalUser(this.db, row.tenantId, id),
     ]);
     const can = customerCapabilities(row, principal);
@@ -313,19 +315,23 @@ export class CustomersService {
       accounts,
       people,
       can,
-      verification: { exists: hasCase },
-      portalAccess: customerPortalAccess(row, principal, can, hasPortalUser),
+      verification: { exists: caseStatus !== null },
+      portalAccess: customerPortalAccess(row, principal, can, hasPortalUser, caseStatus),
     };
   }
 
-  /** Whether the customer has a verification case. Existence only; the case is read under verification.read. */
-  private async hasVerificationCase(tenantId: string, partyId: string): Promise<boolean> {
+  /**
+   * The status of the customer's verification case, or null when it has none. Only its existence reaches the page
+   * (`verification`), and whether it is approved only through `portalAccess.blocked`, for a caller who may change the
+   * customer; the case itself is read under verification.read.
+   */
+  private async verificationStatus(tenantId: string, partyId: string): Promise<string | null> {
     const [row] = await this.db
-      .select({ id: verificationCases.id })
+      .select({ status: verificationCases.status })
       .from(verificationCases)
       .where(and(eq(verificationCases.tenantId, tenantId), eq(verificationCases.partyId, partyId)))
       .limit(1);
-    return row !== undefined;
+    return row?.status ?? null;
   }
 
   // ------------------------------------------------------------------------------------------------- create

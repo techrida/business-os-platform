@@ -224,7 +224,7 @@ describe('invitePortalAdminAction (F1-Q31)', () => {
       'first_admin_owner_only',
       "Only this customer's account owner can invite its first portal admin.",
     ],
-    ['account_owner_missing', 'This customer has no account owner.'],
+    ['account_owner_missing', 'This customer has no account owner'],
     ['kyb_not_verified', 'Portal access needs an approved KYB verification.'],
   ])('words the %s refusal for a person', async (code, words) => {
     api.grantCustomerPortalAccess.mockRejectedValue(apiError(409, code));
