@@ -406,29 +406,52 @@ export function workflow(cfg) {
   };
 
   const recordPayment = async (s, ref) => {
-    await s.goto('/payments/new', (p) => h1(p, 'Record payment'));
-    await s.page.waitForLoadState('networkidle', { timeout: 15000 }).catch(() => {});
-    await s.choose('Customer', C);
-    // Round 3 preselects NPR; picking the selected option again left the list open over the form.
-    const currency = s.select('Currency');
-    if ((await currency.count()) && !/NPR/.test(await currency.first().innerText()))
-      await s.choose('Currency', 'NPR').catch(() => {});
-    await s.fill('Amount received', '67800.00');
-    await s.choose('Payment method', 'Bank transfer');
-    await s.fill('Bank reference', ref);
-    const tds = s.page.getByLabel('The customer withheld tax at source (TDS)');
-    if (await tds.count())
-      s.expect(!(await tds.first().isChecked()), 'Tax withheld / TDS is left unchecked');
-    await s.caption(
-      `${s.captionText.split(' — ')[0]} — add payment-proof.pdf and wait for the clean scan`,
-    );
-    await s.page.getByLabel('Add proof files').setInputFiles(demoFile(cfg, 'payment-proof.pdf'));
+    // next dev compiles the proof upload route on the first upload, and the rebuild reloads the
+    // form, emptying it (r3s2 sales-12). A plain GET compiles the route first (it answers 405).
+    const warm = await s.page
+      .evaluate(() => fetch('/payments/proofs', { credentials: 'include' }).then((r) => r.status))
+      .catch(() => 'failed');
+    s.checks.push(`compiled the proof upload route first (GET ${warm})`);
+    // Let the rebuild's reload of the current page pass before the form is opened.
+    await s.page.waitForTimeout(3000);
     const uploaded = s.page.getByRole('list', { name: 'Uploaded proof' });
-    await s.see(
-      uploaded.getByText('payment-proof.pdf'),
-      'payment-proof.pdf in Uploaded proof',
-      90000,
-    );
+    // Nothing is recorded before the Record payment click, so a form a reload emptied is filled
+    // once more (noted).
+    for (let attempt = 1; ; attempt++) {
+      await s.goto('/payments/new', (p) => h1(p, 'Record payment'));
+      await s.page.waitForLoadState('networkidle', { timeout: 15000 }).catch(() => {});
+      await s.choose('Customer', C);
+      // Round 3 preselects NPR; picking the selected option again left the list open over the form.
+      const currency = s.select('Currency');
+      if ((await currency.count()) && !/NPR/.test(await currency.first().innerText()))
+        await s.choose('Currency', 'NPR').catch(() => {});
+      await s.fill('Amount received', '67800.00');
+      await s.choose('Payment method', 'Bank transfer');
+      await s.fill('Bank reference', ref);
+      const tds = s.page.getByLabel('The customer withheld tax at source (TDS)');
+      if (await tds.count())
+        s.expect(!(await tds.first().isChecked()), 'Tax withheld / TDS is left unchecked');
+      await s.caption(
+        `${s.captionText.split(' — ')[0]} — add payment-proof.pdf and wait for the clean scan`,
+      );
+      await s.page.getByLabel('Add proof files').setInputFiles(demoFile(cfg, 'payment-proof.pdf'));
+      const shown = await uploaded
+        .getByText('payment-proof.pdf')
+        .first()
+        .waitFor({ state: 'visible', timeout: 90000 })
+        .then(() => true)
+        .catch(() => false);
+      const emptied =
+        (await s.page
+          .getByLabel('Bank reference', { exact: true })
+          .inputValue()
+          .catch(() => '')) !== ref;
+      if (shown && !emptied) break;
+      if (attempt === 2 || !emptied)
+        await s.see(uploaded.getByText('payment-proof.pdf'), 'payment-proof.pdf in Uploaded proof');
+      s.checks.push('note: the payment form was emptied by a page reload; filling it again');
+    }
+    s.checks.push('saw: payment-proof.pdf in Uploaded proof');
     await s.pause();
     const submit = s.button('Record payment');
     const notReady = s.page.getByText(/A proof file is not ready yet/);
