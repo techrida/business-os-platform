@@ -348,8 +348,9 @@ describe('DeliveryLogService.resend through the real drainer', () => {
     expect(await asFounder(home, () => service.resend(id))).toEqual({ outcome: 'queued' });
 
     // The webhook matches on the message id alone; the resent row no longer carries the old one.
-    expect(await new SqlBounceStore(db).markBounced({ messageId: 'old-message@test', kind: 'hard' }))
-      .toBe(0);
+    expect(
+      await new SqlBounceStore(db).markBounced({ messageId: 'old-message@test', kind: 'hard' }),
+    ).toBe(0);
     expect(await rowOf(id)).toMatchObject({ status: 'pending', lastError: null });
   });
 
