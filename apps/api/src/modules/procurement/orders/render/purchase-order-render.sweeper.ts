@@ -592,6 +592,8 @@ export function drizzlePurchaseOrderRenderStore(db: Db): RenderStore {
             eq(documents.organizationId, o.organizationId),
             eq(documents.id, o.documentId),
             isNull(documents.removedAt),
+            // Re-checked here: the bytes may have landed between the listing and this update.
+            notExists(filledVersion(tx, documents.tenantId, documents.id)),
           ),
         );
     },
