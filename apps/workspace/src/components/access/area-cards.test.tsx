@@ -246,8 +246,8 @@ it('keeps a value the server refused on its control, marked with the reason', as
   expect(card('Leads').textContent).not.toContain(reason);
 });
 
-/** Stages "Managers also see…" off on Leads, opens the review, then goes Back to the card. */
-async function reviewManagersThenBack(): Promise<string> {
+/** Stages "Managers also see…" off on Leads and opens the review (its dry run runs). */
+async function stageManagersAndReview(): Promise<string> {
   await render();
   await click(byLabel('Edit Leads'));
   const managers = 'Managers also see their whole department';
@@ -276,7 +276,7 @@ it('marks a value the dry run refuses with a field error, with no Try again', as
     message: reason,
     fieldErrors: { 'changes.0.area': reason },
   });
-  const managers = await reviewManagersThenBack();
+  const managers = await stageManagersAndReview();
   const dialog = document.querySelector('[role="dialog"]');
   expect(dialog?.textContent).toContain(reason);
   const labels = [...(dialog?.querySelectorAll('button') ?? [])].map((b) =>
@@ -308,7 +308,7 @@ it('marks a value the dry run blocks with a warning that names its change', asyn
       assignmentSummaries: {},
     },
   });
-  const managers = await reviewManagersThenBack();
+  const managers = await stageManagersAndReview();
   expect(dialogButton('Save changes').disabled).toBe(true);
   await click(dialogButton('Back'));
   await flush();
