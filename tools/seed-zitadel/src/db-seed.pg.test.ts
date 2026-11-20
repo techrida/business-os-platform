@@ -13,6 +13,8 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 
 import { createParty, createTenantWithEntity } from '../../../packages/db/src/testing/fixtures.js';
 import {
+  DEV_CUSTOMER_NAME_NORM,
+  DEV_CUSTOMER_PARTY_CODE,
   DEV_VENDOR_PARTY_CODE,
   type DevPersona,
   type SeedScope,
@@ -48,13 +50,18 @@ afterAll(async () => {
   await container?.stop();
 }, 60_000);
 
-/** A tenant with its TR-like entity, staff IdP org and the VEND-DEV party the tenancy step would create. */
+/** A tenant with its TR-like entity, staff IdP org and the VEND-DEV and CUST-DEV parties the tenancy step creates. */
 async function devTenant(): Promise<SeedScope & { idpOrgId: string }> {
   const tenant = await createTenantWithEntity(owner);
   await createParty(owner, {
     tenantId: tenant.tenantId,
     kind: 'vendor',
     code: DEV_VENDOR_PARTY_CODE,
+  });
+  await createParty(owner, {
+    tenantId: tenant.tenantId,
+    kind: 'customer',
+    code: DEV_CUSTOMER_PARTY_CODE,
   });
   return { ...tenant, correlationId: `pg-test-${randomUUID()}` };
 }
@@ -228,6 +235,57 @@ describe('dev people step on Postgres', () => {
         ['Marketing', 1],
         ['Operations', 1],
         ['Sales', 1],
+      ]);
+
+      // CUST-DEV customer, primary contact, and TR party account are seeded with the party's id and name.
+      const customers = await owner.query<{
+        id: string;
+        number: string;
+        legal_name: string;
+        name_norm: string;
+        relationship: string;
+        default_currency: string;
+        owner_zid: string | null;
+      }>(
+        `SELECT c.id, c.number, c.legal_name, c.name_norm, c.relationship, c.default_currency,
+                u.zitadel_user_id AS owner_zid
+         FROM app.customers c
+         LEFT JOIN app.users u ON u.id = c.owner_user_id
+         WHERE c.tenant_id = $1`,
+        [scope.tenantId],
+      );
+      expect(customers.rows).toHaveLength(1);
+      expect(customers.rows[0]).toMatchObject({
+        number: DEV_CUSTOMER_PARTY_CODE,
+        name_norm: DEV_CUSTOMER_NAME_NORM,
+        relationship: 'active',
+        default_currency: 'NPR',
+        owner_zid: zid('sales'),
+      });
+      const contacts = await owner.query<{
+        full_name: string;
+        email_norm: string | null;
+        is_primary: boolean;
+      }>(
+        `SELECT full_name, email_norm, is_primary FROM app.customer_contacts WHERE tenant_id = $1`,
+        [scope.tenantId],
+      );
+      expect(contacts.rows).toEqual([
+        { full_name: 'Dev Customer', email_norm: 'customer@dev.bos.test', is_primary: true },
+      ]);
+      const partyAccounts = await owner.query<{
+        party_id: string;
+        default_currency: string | null;
+        term_code: string | null;
+      }>(
+        `SELECT pa.party_id, pa.default_currency, pt.code AS term_code
+         FROM app.party_accounts pa
+         LEFT JOIN app.payment_terms pt ON pt.id = pa.payment_term_id
+         WHERE pa.tenant_id = $1 AND pa.organization_id = $2`,
+        [scope.tenantId, scope.organizationId],
+      );
+      expect(partyAccounts.rows).toEqual([
+        { party_id: customers.rows[0]?.id, default_currency: 'NPR', term_code: 'NET30' },
       ]);
 
       // A re-run changes 0 rows, and no trigger writes behind the counts either.
