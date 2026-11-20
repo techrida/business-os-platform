@@ -276,7 +276,9 @@ export function ApprovalPanel({
         <p className={styles.muted}>
           {state === 'needs_save'
             ? 'Save the draft to see who will approve it.'
-            : (message ?? 'Complete the lines to see who will approve.')}
+            : state === 'starting'
+              ? 'Who will approve it appears once the page has finished loading.'
+              : (message ?? 'Complete the lines to see who will approve.')}
         </p>
       )}
       {plan?.blocked ? (
