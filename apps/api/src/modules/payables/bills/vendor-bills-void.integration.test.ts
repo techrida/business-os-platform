@@ -52,6 +52,7 @@ import { systemActor, withTx, type TxScope } from '../../../platform/db/tx';
 import { NumberingService } from '../../../platform/settings/numbering.service';
 import { SettingsService } from '../../../platform/settings/settings.service';
 import { ApprovalsAdminService } from '../../approvals/admin.service';
+import { asSecondPerson } from '../../../../test/support/second-person';
 import { ApprovalsService } from '../../approvals/requests.service';
 import { LedgerService } from '../../ledger/ledger.service';
 import { PurchaseOrdersService } from '../../procurement/orders/purchase-orders.service';
@@ -226,12 +227,13 @@ beforeAll(async () => {
   const audit = new AuditService(db);
   as(U.founder, 'founder');
   const admin = new ApprovalsAdminService(db, audit, caller, () => now);
+  const adminPublisher = new ApprovalsAdminService(db, audit, asSecondPerson(caller), () => now);
   for (const [key, name, spec] of [
     [VENDOR_BILL_DOCUMENT_TYPE, 'Vendor bill', VENDOR_BILL_WORKFLOW_SPEC],
     [MATCH_EXCEPTION_DOCUMENT_TYPE, 'Match exception', MATCH_EXCEPTION_WORKFLOW_SPEC],
   ] as const) {
     await admin.createWorkflow({ key, name, spec });
-    await admin.publish(key, 1);
+    await adminPublisher.publish(key, 1);
   }
 
   approvals = new ApprovalsService(db, audit, notify, directory, caller, () => now);

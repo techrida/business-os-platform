@@ -154,6 +154,7 @@ export const SETTINGS_GROUPS: readonly SettingsGroup[] = [
         permission: [
           'approvals.definitions.read',
           'approvals.definitions.write',
+          'approvals.definitions.publish',
           'approvals.groups.write',
           'approvals.delegations.write',
         ],

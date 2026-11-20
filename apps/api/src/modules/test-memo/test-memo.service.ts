@@ -20,6 +20,9 @@
 import {
   DEFAULT_BRAND_COLOUR,
   LetterheadSchema,
+  MEMO_APPROVER_DEFAULT_SPEC,
+  MEMO_APPROVER_DOCUMENT_TYPE,
+  type MemoApproverRule,
   SETTINGS,
   type CreateMemoBody,
   type Letterhead,
@@ -35,6 +38,7 @@ import {
   type Money,
   type Permission,
   type RoutePlan,
+  WorkflowSpecSchema,
 } from '@bos/contracts';
 import {
   approvalRequests,
@@ -77,6 +81,7 @@ import {
   type SQL,
 } from 'drizzle-orm';
 
+import { roleLabel } from '../access-settings/access-catalogue';
 import { APPROVALS_CLOCK, type Clock } from '../approvals/ports';
 import { DocumentLogoResolverFactory } from '../images/document-logo.resolver';
 import { addressParts } from '../quotations/render/layouts/shared';
@@ -123,6 +128,8 @@ type Q = Db | DbTransaction;
  * MEMO-2082/83-00007), and numbers already issued keep the prefix they were stored with.
  */
 const MEMO_SERIES = 'MEMO';
+/** The Memo approver rule of an entity that has not published that workflow (F1-Q9). */
+const MEMO_APPROVER_BUILT_IN = WorkflowSpecSchema.parse(MEMO_APPROVER_DEFAULT_SPEC);
 
 /** The issued number with the series' stored prefix replaced by `prefix`: `MEMO-2082/83-00007` -> `NOTE-2082/83-00007`. */
 export function withMemoPrefix(number: string, fiscalYear: string, prefix: string): string {
@@ -220,6 +227,18 @@ export function explicitRouteOf(template: MemoTemplateSnapshot): ExplicitRouteSt
     })),
     { userId: template.approvedBy.userId, reason: 'Selected approver' },
   ];
+}
+
+/** Why submit refuses this "Approved by" (F1-Q9): the rule's own dead end, or who the workflow allows instead. */
+export function approverRefusal(rule: MemoApproverRule, approverName: string): string {
+  if (rule.blockReason !== undefined) return rule.blockReason;
+  const who =
+    rule.basis === 'department_head'
+      ? `the head of ${rule.departmentName ?? 'your department'}`
+      : rule.roleKey !== undefined
+        ? `someone in the ${roleLabel(rule.roleKey as RoleKey)} role`
+        : 'the person the Memo approver workflow names';
+  return `${approverName || 'This person'} cannot approve this memo. The Memo approver workflow asks for ${who}; choose them in Approved by.`;
 }
 
 export function toMemoDto(row: MemoRow): MemoDto {
@@ -423,8 +442,95 @@ export class TestMemoService implements OnModuleInit {
   /** The directory plus the live letterhead a draft shows (see buildMemoLetterhead, `live`: never fails on the logo). */
   async directory(): Promise<MemoDirectory> {
     const directory = await this.people();
-    const letterhead = await this.letterhead(this.caller.current().scope, 'live');
-    return letterhead === undefined ? directory : { ...directory, letterhead };
+    const { scope, principal } = this.caller.current();
+    const letterhead = await this.letterhead(scope, 'live');
+    // A new memo of the caller: they are its owner and its only editor so far.
+    const approverRule = await this.approverRule(this.db, scope, principal.userId, [
+      principal.userId,
+    ]);
+    return { ...directory, ...(letterhead === undefined ? {} : { letterhead }), approverRule };
+  }
+
+  /**
+   * Who may sign "Approved by" on a memo of `ownerUserId` (F1-Q9): the published Memo approver workflow planned for
+   * the owner's department in this entity (its head, else the workflow's fallback role), with the memo's own
+   * separation-of-duties list, then narrowed to people who hold a live approvals.requests.act (as the memo's own
+   * signer check is). Read with `q`, so submit reads it inside its transaction. An entity that has not published
+   * the workflow (one created before it was seeded) gets the rule it would start with: the head, else the Founder.
+   */
+  private async approverRule(
+    q: Q,
+    scope: TxScope,
+    ownerUserId: string,
+    sodUserIds: readonly string[],
+  ): Promise<MemoApproverRule> {
+    const [owner] = await q
+      .select({ departmentId: userEntities.departmentId, name: departments.name })
+      .from(userEntities)
+      .leftJoin(
+        departments,
+        and(
+          eq(departments.tenantId, userEntities.tenantId),
+          eq(departments.organizationId, userEntities.organizationId),
+          eq(departments.id, userEntities.departmentId),
+        ),
+      )
+      .where(scoped(scope).where(userEntities, eq(userEntities.userId, ownerUserId)));
+    const departmentId = owner?.departmentId ?? null;
+    const departmentName = departmentId === null ? null : (owner?.name ?? null);
+    const base = { departmentId, departmentName };
+    const planFor = (sod: readonly string[]) =>
+      this.approvals.planOf(
+        scope,
+        MEMO_APPROVER_DOCUMENT_TYPE,
+        { departmentId: departmentId ?? '' },
+        sod,
+        q,
+        MEMO_APPROVER_BUILT_IN,
+      );
+    let step = (await planFor(sodUserIds)).steps.at(-1);
+    // A head without approval rights (a seeded operations or sales head, say) counts as no head: the step falls back
+    // to its role, as it does for a head who wrote the memo, and the form says why.
+    let headCannotApprove = false;
+    if (step?.kind === 'department_head' && step.userId !== undefined) {
+      const head = step.userId;
+      if (!(await this.approverIds(scope, [head])).has(head)) {
+        headCannotApprove = true;
+        step = (await planFor([...sodUserIds, head])).steps.at(-1);
+      }
+    }
+    const basis: MemoApproverRule['basis'] =
+      step?.kind !== 'department_head'
+        ? 'workflow'
+        : step.userId !== undefined
+          ? 'department_head'
+          : 'fallback';
+    const planned = step?.eligibleUserIds ?? [];
+    const approvers = await this.approverIds(scope, planned);
+    const eligibleUserIds = planned.filter((id) => approvers.has(id));
+    const roleKey = step?.roleKey;
+    const rule: MemoApproverRule = {
+      ...base,
+      basis,
+      ...(roleKey === undefined ? {} : { roleKey, roleName: roleLabel(roleKey) }),
+      ...(headCannotApprove ? { headCannotApprove } : {}),
+      eligibleUserIds,
+      defaultUserId:
+        basis === 'department_head' && step?.userId !== undefined && approvers.has(step.userId)
+          ? step.userId
+          : eligibleUserIds.length === 1
+            ? eligibleUserIds[0]!
+            : null,
+    };
+    if (eligibleUserIds.length > 0) return rule;
+    const role = roleKey === undefined ? 'the workflow' : `the ${roleLabel(roleKey)} role`;
+    const noHead = headCannotApprove
+      ? `the head of ${departmentName ?? 'your department'} cannot decide approvals`
+      : `${departmentName ?? 'your department'} has no department head who can`;
+    return {
+      ...rule,
+      blockReason: `Nobody in ${role} can approve this memo${basis === 'fallback' ? `, and ${noHead}` : ''}. An administrator gives someone approval rights in Settings > Access, sets a department head in Settings > Departments or changes the Memo approver workflow in Settings > Workflows.`,
+    };
   }
 
   /**
@@ -679,12 +785,24 @@ export class TestMemoService implements OnModuleInit {
       MEMO_OWNER_TYPE,
       id,
     );
+    const canUpdate =
+      EDITABLE.includes(row.status) && can(principal, 'memo.update', memoRef(row)).allowed;
     return {
       ...toMemoDto(row),
-      canUpdate:
-        EDITABLE.includes(row.status) && can(principal, 'memo.update', memoRef(row)).allowed,
+      canUpdate,
       attachments,
       approval: await this.latestApproval(scope, id),
+      // Who may approve this memo if it were submitted now, with its own separation-of-duties list (F1-Q9).
+      ...(canUpdate && row.template
+        ? {
+            approverRule: await this.approverRule(
+              this.db,
+              scope,
+              row.ownerUserId,
+              this.sodUserIds(row, principal.userId, attachments),
+            ),
+          }
+        : {}),
     };
   }
 
@@ -929,6 +1047,11 @@ export class TestMemoService implements OnModuleInit {
             `${lacking.name} cannot decide approvals; choose someone with approval rights.`,
           );
         }
+        // "Approved by" must be someone the Memo approver workflow allows for this memo (F1-Q9).
+        const rule = await this.approverRule(tx, scope, row.ownerUserId, base.sodUserIds);
+        if (!rule.eligibleUserIds.includes(row.template.approvedBy.userId)) {
+          throw new ConflictException(approverRefusal(rule, row.template.approvedBy.name));
+        }
         // The letterhead as it stands now, frozen onto both the approval snapshot and the memo row, so what was
         // approved and what the memo prints agree, and a later logo or address change alters neither.
         const template = await this.frozenTemplate(scope, row.template);
@@ -1028,7 +1151,19 @@ export class TestMemoService implements OnModuleInit {
         sod,
         explicitRouteOf(row.template),
       );
-      return this.explainTemplatePlan(scope, row.template, plan);
+      const explained = await this.explainTemplatePlan(scope, row.template, plan);
+      const rule = await this.approverRule(this.db, scope, row.ownerUserId, sod);
+      if (rule.eligibleUserIds.includes(row.template.approvedBy.userId)) return explained;
+      // The approver is the last step: marked blocked with the same words submit would refuse with.
+      return {
+        steps: explained.steps.map((s, i, all) =>
+          i === all.length - 1 ? { ...s, blocked: true, eligibleUserIds: [] } : s,
+        ),
+        blocked: true,
+        blockReason: explained.blocked
+          ? (explained.blockReason ?? approverRefusal(rule, row.template.approvedBy.name))
+          : approverRefusal(rule, row.template.approvedBy.name),
+      };
     }
     return this.approvals.preview(scope, MEMO_OWNER_TYPE, { amountNpr: row.amountNpr }, sod);
   }

@@ -547,6 +547,13 @@
       "when": 1783000000125,
       "tag": "0125_user_locks",
       "breakpoints": true
+    },
+    {
+      "idx": 78,
+      "version": "7",
+      "when": 1783000000125,
+      "tag": "0127_workflow_publish",
+      "breakpoints": true
     }
   ]
 }

@@ -1,4 +1,4 @@
-import { WorkflowSpecSchema } from '@bos/contracts';
+import { MEMO_APPROVER_DEFAULT_SPEC, WorkflowSpecSchema } from '@bos/contracts';
 import { describe, expect, it } from 'vitest';
 
 import {
@@ -313,5 +313,12 @@ describe('describeStepTarget', () => {
     expect(describeStepTarget({ id: 'head', kind: 'department_head', reason: 'Review' })).toBe(
       'department head (falls back to operations_head)',
     );
+  });
+});
+
+describe('the seeded Memo approver workflow (F1-Q9)', () => {
+  it('opens in the form, so Settings > Workflows edits it without the JSON editor', () => {
+    const converted = specToForm(WorkflowSpecSchema.parse(MEMO_APPROVER_DEFAULT_SPEC));
+    expect(converted.ok).toBe(true);
   });
 });
