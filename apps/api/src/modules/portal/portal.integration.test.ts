@@ -585,7 +585,8 @@ describe('portal accept and reject on a real database', () => {
       settings.set(tx, 'sales.evidence_policy', 'both'),
     );
     const sent = await seedQuotation(w, w.entityA, w.partyP, 'sent');
-    const respond = respondFor(await portalCustomer(w));
+    const customer = await portalCustomer(w);
+    const respond = respondFor(customer);
 
     await expect(respond.accept(sent.versionId, `accept-${randomUUID()}`, SIGNED)).resolves.toEqual(
       { id: sent.versionId, status: 'accepted', decidedOn: '2026-11-10' },
@@ -602,6 +603,11 @@ describe('portal accept and reject on a real database', () => {
     expect(evidence?.acceptance).toMatchObject({
       actorKind: 'customer_user',
       acceptedByName: 'Ram Thapa',
+    });
+    // The same customer reloads the quotation and is told what happens next, not left at an error.
+    expect((await serviceFor(customer).get(sent.versionId)).afterAcceptance).toEqual({
+      status: 'pending',
+      needs: ['contract', 'purchase_order'],
     });
   });
 
