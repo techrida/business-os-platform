@@ -1,8 +1,12 @@
 import { describe, expect, it } from 'vitest';
 
 import {
+  DEADLINE_IN_PAST,
+  DEADLINE_NOT_LATER,
   deadlineToIso,
   emptyQuoteValues,
+  isoToKathmanduLocal,
+  parseExtensionValues,
   parseQuoteValues,
   parseRecommendValues,
   parseRfqValues,
@@ -342,5 +346,38 @@ describe('recommendation', () => {
       ]);
       expect(r.errors.fewerThanThreeReason).toMatch(/1000/);
     }
+  });
+});
+
+describe('the deadline extension (F1-Q47)', () => {
+  const now = new Date('2026-11-21T00:00:00Z');
+  const current = '2026-11-20T04:15:00.000Z';
+
+  it('shows an instant as Kathmandu datetime-local text', () => {
+    expect(isoToKathmanduLocal(current)).toBe('2026-11-20T10:00');
+    expect(isoToKathmanduLocal('2026-11-30T18:30:00.000Z')).toBe('2026-12-01T00:15');
+    expect(isoToKathmanduLocal('not a date')).toBe('');
+  });
+
+  it('sends a later Kathmandu deadline with its offset', () => {
+    expect(parseExtensionValues('2026-11-25T17:30', current, now)).toEqual({
+      ok: true,
+      data: { deadline: '2026-11-25T17:30:00+05:45' },
+    });
+  });
+
+  it('refuses a missing or unreal time, a past one and one not after the current deadline', () => {
+    expect(parseExtensionValues('', current, now)).toMatchObject({ ok: false });
+    expect(parseExtensionValues('2026-02-30T10:00', current, now)).toMatchObject({ ok: false });
+    expect(parseExtensionValues('2026-11-21T05:45', current, now)).toEqual({
+      ok: false,
+      errors: { deadline: DEADLINE_IN_PAST },
+    });
+    const future = '2026-12-10T04:15:00.000Z';
+    expect(parseExtensionValues('2026-12-10T10:00', future, now)).toEqual({
+      ok: false,
+      errors: { deadline: DEADLINE_NOT_LATER },
+    });
+    expect(parseExtensionValues('2026-12-10T10:01', future, now)).toMatchObject({ ok: true });
   });
 });
