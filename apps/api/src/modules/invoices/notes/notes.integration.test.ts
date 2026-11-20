@@ -67,6 +67,7 @@ const APP_PW = 'app-test-pw';
 const NOW = new Date('2026-11-09T06:00:00Z');
 
 // The seed's invoiceApprovalSpec (tools/seed-zitadel/src/db-seed.ts), one per approvable type; keep the two in step.
+// The seed's tax_invoice route now depends on the source (F1-Q30); these tests never submit a tax invoice.
 const approvalSpec = (documentType: string, what: string): unknown => ({
   documentType,
   steps: [
