@@ -183,11 +183,22 @@ export function workflow(cfg) {
     await s.click(row.first().getByRole('link').first(), 'the inbox row');
     await s.page.waitForURL(/\/inbox\/[0-9a-f-]{36}/);
     await s.pause();
-    await s.click(s.button('Approve'), 'Approve');
     const dialog = s.page.getByRole('dialog', { name: 'Approve request' });
-    await dialog.getByLabel('Comment (optional)', { exact: true }).fill(comment);
+    // Opening the dialog decides nothing, so a click lost to a dev-server rebuild reload (r3s1
+    // sales-11: no dialog, the page re-navigated) is repeated once.
+    for (let attempt = 1; ; attempt++) {
+      await s.click(s.button('Approve'), attempt === 1 ? 'Approve' : 'Approve again');
+      const open = await dialog
+        .waitFor({ state: 'visible', timeout: 20000 })
+        .then(() => true)
+        .catch(() => false);
+      if (open) break;
+      if (attempt === 2) throw new StepFailure('Approve did not open the Approve request dialog');
+      s.checks.push('note: the Approve request dialog did not open; clicking Approve again');
+    }
+    await s.fill(dialog.getByLabel('Comment (optional)', { exact: true }), comment);
     await s.pause(400);
-    await dialog.getByRole('button', { name: 'Approve', exact: true }).click();
+    await s.click(dialog.getByRole('button', { name: 'Approve', exact: true }), 'confirm Approve');
     await s.page.waitForURL(/\/inbox\?decided=approve/, { timeout: cfg.navTimeout });
     const who = await s.whoami();
     s.expect(
