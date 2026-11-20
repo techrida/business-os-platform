@@ -122,7 +122,8 @@ describe('portal bill invoice date default (TR-Q12a)', () => {
     form.set('claimedTotal', '1,000.00');
     expect(form.get('invoiceDate')).toBe('2026-11-20');
 
-    const key = String(form.get('idempotencyKey'));
+    const key = form.get('idempotencyKey');
+    if (typeof key !== 'string') throw new Error('the form has no idempotency key');
     expect(await redirectOf(submitBillAction({ key }, form))).toBe('/vendor/bills/new?sent=1');
     const sent = fetchMock.mock.calls
       .map((_, n) => callOf(fetchMock, n))
