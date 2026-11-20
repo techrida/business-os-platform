@@ -7,8 +7,7 @@
 //   pnpm --filter @bos/db exec vitest run src/finance-accountant-read-all-migration.test.ts
 //
 // The database is migrated with the real SQL up to the migration before 0123, seeded the way 0088 and the seed
-// left running tenants, then migrated with the real runner through 0123 only, so later migrations (0104's
-// credit.override rows, for one) do not shift what it checks. The contracts
+// left running tenants, then migrated with the real runner, which applies 0123 and anything later. The contracts
 // test compares the rows 0123 embeds with DEFAULT_ROLE_PERMISSIONS and DEFAULT_ROLE_PERMISSION_LEVELS.
 import { randomUUID } from 'node:crypto';
 import { copyFile, mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
@@ -46,7 +45,6 @@ let container: StartedPostgreSqlContainer;
 let admin: Pool;
 let owner: Pool;
 let beforeFolder: string;
-let throughFolder: string;
 let sql0123: string[];
 
 /** Seeded like 0088 left it, plus a Founder's opportunity read for Accountant and a Founder-made level row. */
@@ -279,21 +277,8 @@ beforeAll(async () => {
 
   tenantDefaults = await createTenantWithEntity(owner);
 
-  // The real runner now applies 0123, and nothing journalled after it.
-  throughFolder = await mkdtemp(join(tmpdir(), 'bos-through-0123-'));
-  await mkdir(join(throughFolder, 'meta'));
-  const through = journal.entries.slice(0, index + 1);
-  await writeFile(
-    join(throughFolder, 'meta/_journal.json'),
-    JSON.stringify({ ...journal, entries: through }),
-  );
-  for (const entry of through) {
-    await copyFile(
-      join(MIGRATIONS_FOLDER, `${entry.tag}.sql`),
-      join(throughFolder, `${entry.tag}.sql`),
-    );
-  }
-  await runMigrations(ownerUrl, throughFolder);
+  // The real runner now applies 0123 and everything after it.
+  await runMigrations(ownerUrl);
 }, 180_000);
 
 afterAll(async () => {
@@ -301,7 +286,6 @@ afterAll(async () => {
   await admin?.end();
   await container?.stop();
   if (beforeFolder) await rm(beforeFolder, { recursive: true, force: true });
-  if (throughFolder) await rm(throughFolder, { recursive: true, force: true });
 });
 
 describe('0123 Finance and Accountant base reads', () => {
@@ -333,7 +317,10 @@ describe('0123 Finance and Accountant base reads', () => {
       [`finance ${LEAD}`]: 'department true',
       [`finance ${OPP}`]: 'all false',
       [`accountant ${LEAD}`]: 'own false',
-      // 0127 and 0128 seed these rows to a tenant that stores grants.
+      // 0104, 0127 and 0128 seed these rows to a tenant that stores grants.
+      'finance credit.override': 'all true',
+      'founder credit.override': 'all true',
+      'management credit.override': 'all true',
       'founder approvals.definitions.publish': 'all true',
       'founder email_delivery.read': 'all true',
       'founder email_delivery.resend': 'all true',
@@ -392,11 +379,11 @@ describe('0123 level rows', () => {
 });
 
 describe('0123 tenants and versions', () => {
-  it('bumps the authz version once for each tenant whose rows changed, and only those (0127 and 0128 add two more bumps where they seed rows)', async () => {
-    expect(await authzVersion(tenantSeeded.tenantId)).toBe(6);
-    expect(await authzVersion(tenantMaterialized.tenantId)).toBe(4);
-    expect(await authzVersion(tenantFounder.tenantId)).toBe(4);
-    expect(await authzVersion(tenantOtherRoles.tenantId)).toBe(7);
+  it('bumps the authz version once for each tenant whose rows changed, and only those (0104, 0127 and 0128 add three more bumps where they seed rows)', async () => {
+    expect(await authzVersion(tenantSeeded.tenantId)).toBe(7);
+    expect(await authzVersion(tenantMaterialized.tenantId)).toBe(5);
+    expect(await authzVersion(tenantFounder.tenantId)).toBe(5);
+    expect(await authzVersion(tenantOtherRoles.tenantId)).toBe(8);
   });
 
   it('leaves a tenant with no role rows on the code defaults: no grant, no level row, no version', async () => {
