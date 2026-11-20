@@ -5,7 +5,7 @@ import { randomUUID } from 'node:crypto';
 import { VendorQuotationSubmissionBodySchema } from '@bos/contracts';
 import { redirect } from 'next/navigation';
 
-import { DEADLINE_PASSED_TEXT } from '@/components/vendor/rfq-list';
+import { DEADLINE_PASSED_TEXT } from '@/components/vendor/rfq-deadline';
 import { ApiError } from '@/lib/api';
 import { submitVendorQuotation } from '@/lib/api.vendor-writes';
 import { currencyNotEnabledText } from '@/lib/enabled-currencies';
