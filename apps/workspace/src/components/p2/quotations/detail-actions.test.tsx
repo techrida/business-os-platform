@@ -399,10 +399,9 @@ describe('Cancel quotation (F1-Q27: Cancel only)', () => {
         number="QT-2082-0042"
         current={current({ status, rejectionSource: status === 'rejected' ? 'customer' : null })}
         contacts={contacts}
-        capabilities={capabilities}
+        capabilities={{ ...capabilities, ...lifecycle }}
         reloadHref={`/quotations/${Q}`}
         today={TODAY}
-        lifecycle={{ ...lifecycle }}
       />,
     );
   }

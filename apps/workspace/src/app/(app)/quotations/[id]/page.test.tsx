@@ -1,6 +1,7 @@
 import {
   QuotationDetailSchema,
   type QuotationDetail,
+  type QuotationEvidenceDto,
   type QuotationVersionDto,
 } from '@bos/contracts';
 import type { ComponentProps, ReactNode } from 'react';
@@ -287,14 +288,18 @@ describe('quotation detail page', () => {
     expect(await render()).not.toContain('href="/sales-orders/');
   });
 
-  const pendingEvidence = {
-    status: 'pending' as const,
+  const pendingEvidence: QuotationEvidenceDto = {
+    quotationId: CUSTOMER,
+    versionId: V2,
+    status: 'pending',
     policy: 'both',
-    missing: ['purchase_order' as const],
+    missing: ['purchase_order'],
     acceptance: {
-      actorKind: 'portal_contact',
+      actorKind: 'customer_user',
+      decidedOn: '2026-11-20',
       acceptedByName: 'Jules',
-      evidenceKinds: ['contract' as const],
+      evidenceKinds: ['contract'],
+      evidenceDocumentIds: [],
     },
     confirmation: null,
     can: { confirm: true },
@@ -371,7 +376,10 @@ describe('quotation detail page', () => {
     const quote = detail();
     quote.quotation.status = 'submitted';
     quote.versions[1]!.status = 'submitted';
-    mocks.getQuotation.mockResolvedValue({ ...quote, lifecycle: { canCancel: true } });
+    mocks.getQuotation.mockResolvedValue({
+      ...quote,
+      capabilities: { ...quote.capabilities, canCancel: true },
+    });
     const html = await render();
     expect(html).toContain('>Cancel quotation</button>');
     expect(html).toContain('Cancelling ends this quotation and its approval request');

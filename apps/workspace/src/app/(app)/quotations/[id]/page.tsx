@@ -13,10 +13,6 @@ import styles from '@/components/p2/quotations/detail.module.css';
 import { DetailActions, hasDetailActions } from '@/components/p2/quotations/detail-actions';
 import { opportunityBlockers } from '@/components/p2/quotations/opportunity-gate';
 import { pdfLinkFor } from '@/components/p2/quotations/document-link';
-import {
-  lifecycleOf,
-  type QuotationDetailWithLifecycle,
-} from '@/components/p2/quotations/lifecycle-contract';
 import { PreparingRefresh } from '@/components/p2/quotations/preparing-refresh';
 import { QuotationStatusBadge } from '@/components/p2/quotations/status-badge';
 import { StatusHistory } from '@/components/p2/quotations/status-history';
@@ -169,7 +165,7 @@ export default async function QuotationDetailPage({
   const dateFormat = await getDateFormat();
   // Unit cost, cost total and margin (D29) arrive only when the viewer's live grants include
   // `quotation.cost.read`: the API leaves them out otherwise, and the components show what is present.
-  let detail: QuotationDetailWithLifecycle;
+  let detail: QuotationDetail;
   try {
     detail = await getQuotation(session, id);
   } catch (err) {
@@ -213,7 +209,6 @@ export default async function QuotationDetailPage({
   const maySend = detail.capabilities.canSend ?? allowed('quotation.send');
   const mayRecordOutcome =
     detail.capabilities.canRecordOutcome ?? allowed('quotation.record_acceptance');
-  const lifecycle = lifecycleOf(detail);
 
   // The revision on screen: the one `?rev=` names, else the current one. Actions and the client
   // decision always act on the current revision.
@@ -343,7 +338,6 @@ export default async function QuotationDetailPage({
             includeOutcome: true,
             maySend,
             mayRecordOutcome,
-            lifecycle,
             opportunity,
             versionId: current.id,
           }) ? (
@@ -357,7 +351,6 @@ export default async function QuotationDetailPage({
               includeOutcome={true}
               maySend={maySend}
               mayRecordOutcome={mayRecordOutcome}
-              lifecycle={lifecycle}
               opportunity={opportunity}
             />
           ) : null

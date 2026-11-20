@@ -2,7 +2,10 @@ import 'server-only';
 
 import {
   QUOTATION_STATUSES,
+  type QuotationDetail,
   QuotationDetailSchema,
+  type QuotationEvidenceDto,
+  QuotationEvidenceDtoSchema,
   type QuotationListItem,
   QuotationListItemSchema,
   type QuotationSummary,
@@ -13,13 +16,7 @@ import { z } from 'zod';
 import { ApiError, apiFetch } from '@/lib/api';
 import type { Session } from '@/lib/session';
 
-import {
-  lifecyclePaths,
-  QuotationEvidenceSchema,
-  readLifecycle,
-  type QuotationDetailWithLifecycle,
-  type QuotationEvidence,
-} from './lifecycle-contract';
+import { lifecyclePaths } from './lifecycle-contract';
 
 /**
  * Typed reads of the quotation endpoints, for the screens in this folder. Server-only: every call
@@ -42,7 +39,7 @@ async function read<T>(
   session: Session,
   path: string,
   schema: z.ZodType<T>,
-): Promise<{ data: T; res: Response; body: unknown }> {
+): Promise<{ data: T; res: Response }> {
   const res = await apiFetch(session, path, { method: 'GET' });
   const body = await readBody(res);
   const label = `GET ${path.split('?')[0] ?? path}`;
@@ -52,7 +49,7 @@ async function read<T>(
     // 502: the upstream answered, but not with the shape the contract promises.
     throw new ApiError(502, `${label} returned an invalid body`, parsed.error.issues);
   }
-  return { data: parsed.data, res, body };
+  return { data: parsed.data, res };
 }
 
 async function get<T>(session: Session, path: string, schema: z.ZodType<T>): Promise<T> {
@@ -184,33 +181,26 @@ export function getQuotationsSummary(
   );
 }
 
-/**
- * `GET /v1/quotations/:id`: the parent, every version, the status history and the contacts, plus the
- * lifecycle fields the contract does not describe yet (`lifecycle-contract.ts`), read from the same body.
- */
-export async function getQuotation(
-  session: Session,
-  id: string,
-): Promise<QuotationDetailWithLifecycle> {
-  const { data, body } = await read(session, `/v1/quotations/${seg(id)}`, QuotationDetailSchema);
-  return { ...data, lifecycle: readLifecycle(body) };
+/** `GET /v1/quotations/:id`: the parent, every version, the status history and the contacts. */
+export function getQuotation(session: Session, id: string): Promise<QuotationDetail> {
+  return get(session, `/v1/quotations/${seg(id)}`, QuotationDetailSchema);
 }
 
 /**
  * Where the evidence of an accepted version stands (F1-Q28), or null when the platform has none to show:
- * no acceptance, out of scope (404), or an API without the evidence step yet. Any other failure is null too,
+ * no acceptance, or out of scope (404). Any other failure (a body off the contract included) is null too,
  * so a failed read leaves out the evidence row instead of breaking the quotation page.
  */
 export async function getEvidence(
   session: Session,
   quotationId: string,
   versionId: string,
-): Promise<QuotationEvidence | null> {
+): Promise<QuotationEvidenceDto | null> {
   try {
     return await get(
       session,
       lifecyclePaths.evidence(quotationId, versionId),
-      QuotationEvidenceSchema,
+      QuotationEvidenceDtoSchema,
     );
   } catch {
     return null;

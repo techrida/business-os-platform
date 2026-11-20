@@ -190,7 +190,7 @@ describe('describeQuoteFailure: a 0.00 instalment (FR-4)', () => {
   });
 
   it('names the problem instead of "check the highlighted fields"', () => {
-    const f = describeQuoteFailure(refusal('PAYMENT_SCHEDULE_ZERO_INSTALMENT', ''), 'submit');
+    const f = describeQuoteFailure(refusal('PAYMENT_INSTALMENT_ZERO', ''), 'submit');
     expect(f.kind).toBe('invalid');
     expect(f.field).toBe('paymentSchedule');
     expect(f.message).toContain('would come to 0.00');
