@@ -628,11 +628,12 @@ describe('quotation approval: submit', () => {
     expect(d.schedule.map((m) => m.amount)).toEqual(['0.01', '0.00']);
     const error = await httpErrorOf(submit(d, d.rowVersion));
     expect(error.getStatus()).toBe(422);
-    expect(error.getResponse()).toMatchObject({
+    const body = error.getResponse() as { message: string };
+    expect(body).toMatchObject({
       code: 'PAYMENT_INSTALMENT_ZERO',
-      message: expect.stringContaining('"On delivery" would be NPR 0.00'),
       details: { label: 'On delivery', total: '0.01' },
     });
+    expect(body.message).toContain('"On delivery" would be NPR 0.00');
     expect(await versionRow(d.versionId)).toMatchObject({
       status: 'draft',
       approvalRequestId: null,
