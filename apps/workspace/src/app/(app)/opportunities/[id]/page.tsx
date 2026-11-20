@@ -34,7 +34,7 @@ import { listOpportunityLostReasonChoices } from '@/lib/api-lead-lost-reasons';
 import { requireStaffSession } from '@/lib/bff';
 import { getNumberSystems } from '@/lib/display-settings';
 import { money, when } from '@/lib/kernel-format';
-import { getPermissionCheck } from '@/lib/live-permissions';
+import { getMeOrNull, getPermissionCheck } from '@/lib/live-permissions';
 import { getCustomer } from '@/components/p2/customers/api';
 
 import { moveOpportunityStageAction } from '../actions';
@@ -293,7 +293,12 @@ export default async function OpportunityPage({ params }: { params: Promise<{ id
   }
   const opp = oppResult.value;
   const customer = await getCustomer(session, opp.customerId).catch(() => null);
-  const canEdit = opp.canEdit ?? (await getPermissionCheck(session))('crm.opportunity.write');
+  const can = await getPermissionCheck(session);
+  const canEdit = opp.canEdit ?? can('crm.opportunity.write');
+  // Quotations follow their own grant (the API asks for quotation.draft plus read of the opportunity),
+  // not write access to the opportunity.
+  const canDraft = can('quotation.draft');
+  const currentUserId = (await getMeOrNull(session.accessToken))?.id ?? null;
   const moves = resolvedMoves(
     'opportunity',
     opp.stage,
@@ -347,7 +352,7 @@ export default async function OpportunityPage({ params }: { params: Promise<{ id
           }
           actions={
             <>
-              {!canEdit ? (
+              {!canDraft ? (
                 <LinkButton href={quotesHref} variant="secondary">
                   View quotations
                 </LinkButton>
@@ -539,6 +544,7 @@ export default async function OpportunityPage({ params }: { params: Promise<{ id
           owners={owners}
           schedule={false}
           canEdit={canEdit}
+          currentUserId={currentUserId}
           now={now}
           className={styles.records}
         />
