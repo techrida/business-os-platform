@@ -150,3 +150,18 @@
 .drop input:disabled {
   cursor: not-allowed;
 }
+
+/* The confirm box under the reused bank reference warning. */
+.check {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 40px;
+  font-size: var(--font-size-body-small);
+  line-height: var(--line-height-body-small);
+}
+
+.check input {
+  width: 16px;
+  height: 16px;
+}

@@ -54,11 +54,14 @@ import { kybCaseOf, lockVendor, type VendorRow } from './vendors.queries';
 import {
   isoDay,
   kindCountryProblem,
+  kybReadyForReview,
   kindFromRow,
   kindToRow,
   lapsedTaxClearance,
   LIFECYCLE,
   lifecycleAllowed,
+  sameNameVendors,
+  submitKycMove,
   vendorPartyCode,
   type LifecycleCommand,
 } from './vendors.rules';
@@ -69,6 +72,9 @@ import {
   type UpdateVendorContactBody,
   type VendorContactDto,
   type VendorList,
+  type VendorNameMatches,
+  type VendorNameMatchesQuery,
+  type VendorReviewReadiness,
 } from './vendors.types';
 
 type ContactRow = typeof vendorContacts.$inferSelect;
@@ -81,6 +87,9 @@ export const VENDORS_CLOCK = Symbol('VENDORS_CLOCK');
 const PAN_INDEX = 'vendors_tenant_pan_unique';
 const PRIMARY_CONTACT_INDEX = 'vendor_contacts_tenant_vendor_primary_unique';
 const ACCOUNT_UNIQUE = 'vendor_accounts_tenant_org_vendor_unique';
+
+/** Most vendors one name-match answer lists: enough to recognise the record, small enough to read. */
+const NAME_MATCH_LIMIT = 20;
 
 const vendorNotFound = () =>
   new NotFoundException({ code: 'not_found', message: 'Vendor not found' });
@@ -218,6 +227,10 @@ const duplicatePan = (pan: string, existingId?: string) =>
     ...(existingId === undefined ? {} : { details: { vendorId: existingId } }),
   });
 
+/** A stale button is plain `conflict` (as a stale lead stage move); a status that takes no KYC move is a transition. */
+const submitKycRefusal = (kind: 'stale' | 'invalid', message: string) =>
+  new ConflictException({ code: kind === 'stale' ? 'conflict' : 'invalid_transition', message });
+
 const invalidTransition = (command: LifecycleCommand, from: VendorStatus) =>
   new ConflictException({
     code: 'invalid_transition',
@@ -288,6 +301,36 @@ export class VendorsService {
     return toVendorDto(row, principal, { approved, kycExpired });
   }
 
+  /**
+   * The vendors the caller may read whose legal name matches `legalName` (vendorNameKey), every status included:
+   * a blocked or archived namesake is the case the warning is for. A warning only (TR-Q12d): create never refuses.
+   * The key is worked out here, not in SQL (the table has no name key), over the tenant's id, name and status.
+   */
+  async nameMatches(query: VendorNameMatchesQuery): Promise<VendorNameMatches> {
+    const { scope, principal } = this.caller.current();
+    this.assertStaff(principal);
+    const rows = await this.db
+      .select({ id: vendors.id, legalName: vendors.legalName, status: vendors.status })
+      .from(vendors)
+      .where(this.visibleWhere(scope.tenantId, principal, 'vendor.read'))
+      .orderBy(asc(vendors.legalName), asc(vendors.id));
+    return { matches: sameNameVendors(query.legalName, rows).slice(0, NAME_MATCH_LIMIT) };
+  }
+
+  /**
+   * Whether the vendor's KYB case is submitted or approved: the same check `submitKyc` makes before pending_kyc ->
+   * under_review, so "Send for review" is drawn only when the API would take it. Needs `vendor.read` on the vendor.
+   */
+  async reviewReadiness(id: string): Promise<VendorReviewReadiness> {
+    const { scope, principal } = this.caller.current();
+    this.assertStaff(principal);
+    const row = await this.find(this.db, scope.tenantId, id);
+    if (row === undefined) throw vendorNotFound();
+    this.assertVisible('vendor.read', row, principal);
+    const kyb = await kybCaseOf(this.db, scope.tenantId, id);
+    return { kybSubmitted: kybReadyForReview(kyb?.status) };
+  }
+
   // ------------------------------------------------------------------------------------------------- create
 
   /**
@@ -348,6 +391,7 @@ export class VendorsService {
               createdAt: now,
               updatedAt: now,
             });
+            await this.recordSameName(tx, scope.tenantId, id, body.legalName);
             return { status: 201, response: toVendorDto(row!, principal) };
           } catch (error) {
             // Two creates with the same PAN can both pass the pre-check; the unique index decides.
@@ -433,46 +477,49 @@ export class VendorsService {
    * draft -> pending_kyc: opens the vendor's KYB case through VerificationService (so the registered vendor
    * adapter and `vendor.write` decide), then moves the vendor. pending_kyc -> under_review: only once that case is
    * submitted or approved (409 `kyb_not_submitted` otherwise). The case opens in its own transaction, before the
-   * vendor's: opening is idempotent, so a retry after a failed move is harmless.
+   * vendor's: opening is idempotent, so a retry after a failed move is harmless. `expectedStatus` (the status the
+   * caller's button was drawn for) is checked under the row lock: a different status is a 409, so a stale
+   * "Start KYB review" never runs "Send for review".
    */
-  async submitKyc(id: string, idempotencyKey: string): Promise<VendorDto> {
+  async submitKyc(
+    id: string,
+    idempotencyKey: string,
+    expectedStatus?: VendorStatus,
+  ): Promise<VendorDto> {
     const { scope, actor, principal } = this.caller.current();
     this.assertStaff(principal);
     const before = await this.find(this.db, scope.tenantId, id);
     if (before === undefined) throw vendorNotFound();
     this.assertVisible('vendor.write', before, principal);
-    if (before.status !== 'draft' && before.status !== 'pending_kyc') {
-      throw new ConflictException({
-        code: 'invalid_transition',
-        message: `A vendor in status ${before.status} cannot submit KYC`,
-      });
-    }
+    // Only the statuses that take no KYC move are refused before the case opens. The expected status is checked
+    // under the lock, inside withIdempotency, so a retry of a request that already moved the vendor still replays
+    // its first answer; opening the case for a stale button is harmless (it is idempotent).
+    const early = submitKycMove(before.status, undefined);
+    if (!early.ok) throw submitKycRefusal(early.kind, early.message);
     await this.verification.create({ partyId: id });
     const now = this.clock();
     return withTx(this.db, scope, actor, async (tx) => {
       const done = await withIdempotency(
         tx,
-        { command: 'vendor.submit_kyc', key: idempotencyKey, body: { id } },
+        {
+          command: 'vendor.submit_kyc',
+          key: idempotencyKey,
+          body: { id, expectedStatus: expectedStatus ?? null },
+        },
         async () => {
           const row = await lockVendor(tx, scope.tenantId, id);
           if (row === undefined) throw vendorNotFound();
-          let to: VendorStatus;
-          if (row.status === 'draft') {
-            to = 'pending_kyc';
-          } else if (row.status === 'pending_kyc') {
+          const move = submitKycMove(row.status, expectedStatus);
+          if (!move.ok) throw submitKycRefusal(move.kind, move.message);
+          const to: VendorStatus = move.to;
+          if (to === 'under_review') {
             const kyb = await kybCaseOf(tx, scope.tenantId, id);
-            if (kyb?.status !== 'submitted' && kyb?.status !== 'approved') {
+            if (!kybReadyForReview(kyb?.status)) {
               throw new ConflictException({
                 code: 'kyb_not_submitted',
                 message: 'The KYB case must be submitted before the vendor goes under review',
               });
             }
-            to = 'under_review';
-          } else {
-            throw new ConflictException({
-              code: 'invalid_transition',
-              message: `A vendor in status ${row.status} cannot submit KYC`,
-            });
           }
           const updated = await updateVersioned(tx, vendors, id, row.version, {
             status: to,
@@ -837,6 +884,33 @@ export class VendorsService {
       default:
         return none;
     }
+  }
+
+  /**
+   * TR-Q12d: a vendor added under a name another vendor of the tenant already has (vendorNameKey) is allowed, and
+   * the audit trail names the namesakes, so a review can find a duplicate made on purpose. Tenant-wide, whatever
+   * the caller may read; ids only.
+   */
+  private async recordSameName(
+    tx: DbTransaction,
+    tenantId: string,
+    id: string,
+    legalName: string,
+  ): Promise<void> {
+    const others = await tx
+      .select({ id: vendors.id, legalName: vendors.legalName })
+      .from(vendors)
+      .where(and(eq(vendors.tenantId, tenantId), ne(vendors.id, id)))
+      .orderBy(asc(vendors.id));
+    const same = sameNameVendors(legalName, others);
+    if (same.length === 0) return;
+    await this.audit.record(tx, {
+      action: 'vendor.created_with_same_name',
+      entityType: 'vendor',
+      entityId: id,
+      after: { legalName },
+      meta: { sameNameVendorIds: same.map((v) => v.id) },
+    });
   }
 
   /** Record-level authz that answers 404, not 403, for a record outside the caller's scope. */

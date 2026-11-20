@@ -37,7 +37,8 @@ export interface CurrentLine {
 
 /**
  * The amend body: only the lines whose quantity or price really changed, the terms only when they
- * changed, and a reason. Nothing changed is refused here, because the API refuses it too.
+ * changed, and a reason. A change of the payment terms alone is an amendment too (F1-Q40). Nothing
+ * changed is refused here, because the API refuses it too.
  */
 export function parseAmend(
   values: AmendValues,
@@ -91,9 +92,8 @@ export function parseAmend(
     }
   }
 
-  if (Object.keys(errors).length === 0 && lines.length === 0) {
-    errors['lines'] =
-      'Change at least one line. A change to the payment terms alone cannot be sent: it goes with a changed quantity or price.';
+  if (Object.keys(errors).length === 0 && lines.length === 0 && terms === undefined) {
+    errors['lines'] = 'Change a quantity, a price or the payment terms.';
   }
   if (Object.keys(errors).length > 0 || !reason.ok) return { ok: false, errors };
   return {

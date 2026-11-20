@@ -1,12 +1,15 @@
 // Table tests of the pure receipt rules (P4 unit P4r): what a draft may take in, the serial counts, the status a PO
 // derives from what was received, the reversal lines and the progress rows.
 // Run: pnpm --filter @bos/api exec vitest run src/modules/procurement/receipts/receipt.rules.test.ts
+import { PO_STATUSES } from '@bos/contracts';
 import { describe, expect, it } from 'vitest';
 
 import {
   CreateReceiptBodySchema,
   derivePoStatus,
   progressRowsOf,
+  receiptCan,
+  repeatedSerialAcrossLines,
   reversalLinesOf,
   serialViolation,
   validateDraftLines,
@@ -38,13 +41,16 @@ const line = (n: number, quantity: string, over: Record<string, unknown> = {}) =
 describe('CreateReceiptBodySchema', () => {
   const base = { purchaseOrderId: id(100), kind: 'goods', receivedAt: '2026-11-09' };
 
-  it('accepts a line with a null or missing over-receipt exception id', () => {
-    for (const exception of [null, undefined]) {
+  it('takes no over-receipt exception id at all (F1-Q39: amend the order first)', () => {
+    expect(CreateReceiptBodySchema.safeParse({ ...base, lines: [line(1, '3')] }).success).toBe(
+      true,
+    );
+    for (const exception of [null, id(9)]) {
       const parsed = CreateReceiptBodySchema.safeParse({
         ...base,
         lines: [line(1, '3', { overReceiptExceptionId: exception })],
       });
-      expect(parsed.success).toBe(true);
+      expect(parsed.success).toBe(false);
     }
   });
 
@@ -66,6 +72,45 @@ describe('CreateReceiptBodySchema', () => {
   });
 });
 
+describe('serials across the lines of one receipt (TR-Q12b)', () => {
+  const serial = (serialNo: string) => ({ serialNo });
+
+  it('refuses the same serial number on two lines of one receipt', () => {
+    const v = validateDraftLines(
+      'goods',
+      [
+        line(1, '2', { serials: [serial('SN-1'), serial('SN-2')] }),
+        line(2, '1', { serials: [serial('SN-2')] }),
+      ],
+      facts(poLine(1, { requiresSerials: true }), poLine(2, { requiresSerials: true })),
+      net(),
+    );
+    expect(v?.code).toBe('serial_duplicate');
+    expect(v?.message).toBe(
+      'Serial number SN-2 is on two lines of this receipt. Each item has its own serial number, so enter it once.',
+    );
+  });
+
+  it('passes different serial numbers on different lines', () => {
+    expect(
+      validateDraftLines(
+        'goods',
+        [line(1, '1', { serials: [serial('SN-1')] }), line(2, '1', { serials: [serial('SN-2')] })],
+        facts(poLine(1, { requiresSerials: true }), poLine(2, { requiresSerials: true })),
+        net(),
+      ),
+    ).toBeNull();
+  });
+
+  it('names the first repeated serial, and leaves a repeat within one line to the line rule', () => {
+    expect(repeatedSerialAcrossLines([{ serialNos: ['A', 'B'] }, { serialNos: ['C', 'A'] }])).toBe(
+      'A',
+    );
+    expect(repeatedSerialAcrossLines([{ serialNos: ['A', 'A'] }, { serialNos: ['B'] }])).toBeNull();
+    expect(repeatedSerialAcrossLines([])).toBeNull();
+  });
+});
+
 describe('validateDraftLines', () => {
   it('passes a quantity up to what is open', () => {
     expect(validateDraftLines('goods', [line(1, '5')], facts(poLine(1)), net())).toBeNull();
@@ -80,22 +125,19 @@ describe('validateDraftLines', () => {
     );
   });
 
+  it('tells the receiver to ask Procurement to amend the order first (F1-Q39)', () => {
+    const v = validateDraftLines('goods', [line(1, '6')], facts(poLine(1)), net());
+    expect(v?.message).toBe(
+      'Line 1 has only 5 still open on the purchase order. To receive more, ask Procurement to amend the purchase order first.',
+    );
+  });
+
   it('counts what other receipts, drafts included, already took, and the cancelled quantity', () => {
     const f = facts(poLine(1, { cancelledQuantity: '1.0000' }));
     expect(validateDraftLines('goods', [line(1, '1')], f, net({ [id(1)]: '3.0000' }))).toBeNull();
     expect(validateDraftLines('goods', [line(1, '3')], f, net({ [id(1)]: '2.0000' }))?.code).toBe(
       'over_receipt',
     );
-  });
-
-  it('refuses any exception id until an exceptions table exists', () => {
-    const v = validateDraftLines(
-      'goods',
-      [line(1, '6', { overReceiptExceptionId: id(9) })],
-      facts(poLine(1)),
-      net(),
-    );
-    expect(v?.code).toBe('over_receipt_exception_unknown');
   });
 
   it('refuses a line of another PO, a repeated line and a kind mismatch', () => {
@@ -219,5 +261,44 @@ describe('progressRowsOf', () => {
       billedQuantity: '0.0000',
     });
     expect(rows[1]).toMatchObject({ receivedQuantity: '0.0000', openQuantity: '1.0000' });
+  });
+});
+
+describe('receiptCan', () => {
+  const draft = { status: 'draft' as const, reversesReceiptId: null };
+  const confirmed = { status: 'confirmed' as const, reversesReceiptId: null };
+
+  it('offers nothing to a caller who may not receive this kind, whatever the statuses', () => {
+    for (const poStatus of PO_STATUSES) {
+      for (const r of [draft, confirmed]) {
+        expect(receiptCan(false, r, poStatus)).toEqual({
+          confirm: false,
+          discard: false,
+          reverse: false,
+        });
+      }
+    }
+  });
+
+  it('confirms a draft while the order takes receipts, discards any draft, reverses a confirmed original', () => {
+    expect(receiptCan(true, draft, 'issued')).toEqual({
+      confirm: true,
+      discard: true,
+      reverse: false,
+    });
+    expect(receiptCan(true, draft, 'amendment_pending')).toMatchObject({
+      confirm: false,
+      discard: true,
+    });
+    expect(receiptCan(true, confirmed, 'fully_received')).toEqual({
+      confirm: false,
+      discard: false,
+      reverse: true,
+    });
+    expect(receiptCan(true, confirmed, 'closed').reverse).toBe(false);
+    // A reversal is never reversed.
+    expect(receiptCan(true, { ...confirmed, reversesReceiptId: 'r-1' }, 'issued').reverse).toBe(
+      false,
+    );
   });
 });

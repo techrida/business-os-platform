@@ -1,10 +1,10 @@
-// Pure rules of purchase orders (P4 unit P3; AD4, AD7): the `po_amendment` workflow spec, the amendment facts, the
-// band comparison, amended line arithmetic, version totals and the short-close quantities. No I/O, so every rule is
-// cheap to table-test. Serves the NFRs "money moves only after the right people agree" (an amendment is re-approved
-// only when the band of its grand total incl. VAT in NPR is higher than the band already approved, AD7) and "amounts
-// are exact" (decimal.js, ROUND_HALF_UP, strings).
+// Pure rules of purchase orders (P4 unit P3; AD4; F1-Q40): the `po_amendment` workflow spec, the amendment facts,
+// when an amendment needs approval, amended line arithmetic, version totals and the short-close quantities. No I/O,
+// so every rule is cheap to table-test. Serves the NFRs "money moves only after the right people agree" (F1-Q40,
+// Kuu 2026-11-20, replacing AD7's band rule: an amendment is re-approved when the order's total rises or its payment
+// terms change; any other change is applied at once and audited) and "amounts are exact" (decimal.js,
+// ROUND_HALF_UP, strings).
 import {
-  PO_APPROVED_BANDS,
   PoStatusSchema,
   limitOffset,
   multi,
@@ -106,13 +106,33 @@ export interface AmendmentFacts extends Record<string, unknown> {
 }
 
 // ---------------------------------------------------------------------------------------------------------------
-// Bands and totals
+// When an amendment is approved first (F1-Q40)
 // ---------------------------------------------------------------------------------------------------------------
 
-/** AD7: true when `next` is a higher band than `approved` (base < management < founder). */
-export function bandRises(next: PoApprovedBand, approved: PoApprovedBand): boolean {
-  return PO_APPROVED_BANDS.indexOf(next) > PO_APPROVED_BANDS.indexOf(approved);
+/** Why an amendment goes to the approval route. */
+export type AmendmentApprovalReason = 'value_rises' | 'terms_change';
+
+/**
+ * F1-Q40 (Kuu, 2026-11-20): an amendment is approved first when the order's total incl. VAT rises above its current
+ * total, or its payment terms change. Any other change (a lower total, the same total) is applied at once and only
+ * audited. Both totals are in the order's currency at its own rate, so comparing them is comparing NPR values. The
+ * purchase order has no delivery terms of its own; a vendor change is not an amendment (no vendor field).
+ */
+export function amendmentApprovalReasons(i: {
+  currentTotal: string;
+  nextTotal: string;
+  currentTermsDays: number;
+  nextTermsDays: number;
+}): AmendmentApprovalReason[] {
+  const reasons: AmendmentApprovalReason[] = [];
+  if (new Decimal(i.nextTotal).greaterThan(i.currentTotal)) reasons.push('value_rises');
+  if (i.nextTermsDays !== i.currentTermsDays) reasons.push('terms_change');
+  return reasons;
 }
+
+// ---------------------------------------------------------------------------------------------------------------
+// Totals
+// ---------------------------------------------------------------------------------------------------------------
 
 const money = (d: Decimal) => d.toDecimalPlaces(2, Decimal.ROUND_HALF_UP).toFixed(2);
 
@@ -149,12 +169,14 @@ export interface AmendedLine {
   lineTotal: string;
 }
 
-export type AmendVerdict = { ok: true; lines: AmendedLine[] } | { ok: false; message: string };
+export type AmendVerdict =
+  { ok: true; lines: AmendedLine[]; changed: boolean } | { ok: false; message: string };
 
 /**
  * Applies the changes to the PO's current lines (a line not named keeps its quantity and price) and recomputes the
- * amounts at each line's tax rate. Refused: a line of another PO, a line named twice, a change that changes
- * nothing, and an ordered quantity below what is already received plus what is cancelled.
+ * amounts at each line's tax rate. `changed` says whether any quantity or price moved; the caller refuses an
+ * amendment that changes neither a line nor the terms. Refused: a line of another PO, a line named twice, and an
+ * ordered quantity below what is already received plus what is cancelled.
  */
 export function amendLines(
   current: readonly PoLineState[],
@@ -204,7 +226,7 @@ export function amendLines(
       ...amounts,
     });
   }
-  return changed ? { ok: true, lines } : { ok: false, message: 'The amendment changes no line' };
+  return { ok: true, lines, changed };
 }
 
 /** Short-close: each line's cancelled quantity becomes what is still open (ordered - received). */

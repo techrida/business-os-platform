@@ -5,6 +5,7 @@ import { randomUUID } from 'node:crypto';
 import { VendorQuotationSubmissionBodySchema } from '@bos/contracts';
 import { redirect } from 'next/navigation';
 
+import { DEADLINE_PASSED_TEXT } from '@/components/vendor/rfq-deadline';
 import { ApiError } from '@/lib/api';
 import { submitVendorQuotation } from '@/lib/api.vendor-writes';
 import { currencyNotEnabledText } from '@/lib/enabled-currencies';
@@ -34,6 +35,22 @@ export type QuoteField =
 export type QuoteFormState = FormState<QuoteField>;
 
 const LIST = '/vendor/rfqs';
+
+/**
+ * F1-Q47: the API's 409 for a quotation sent after the request's deadline, read by its code or,
+ * while the error filter does not pass that code yet, by its exact sentence (keep it equal to
+ * RFQ_DEADLINE_PASSED_MESSAGE in the API's sourcing.rules.ts). Any other 409 still means "in progress".
+ */
+const DEADLINE_PASSED_CODE = 'rfq_deadline_passed';
+const DEADLINE_PASSED_API_TEXT =
+  'The quotation deadline of this RFQ has passed. Procurement can extend it to take more quotations.';
+
+function isDeadlinePassed(err: unknown): boolean {
+  if (!(err instanceof ApiError) || err.status !== 409) return false;
+  const e = (err.body as { error?: { code?: unknown; message?: unknown } } | null | undefined)
+    ?.error;
+  return e?.code === DEADLINE_PASSED_CODE || e?.message === DEADLINE_PASSED_API_TEXT;
+}
 
 const FIELD_MESSAGE: Record<QuoteField, string> = {
   file: 'Add your quotation as a PDF or a picture.',
@@ -107,6 +124,13 @@ export async function submitQuoteAction(
         key: randomUUID(),
         error:
           'This request or your uploaded file is no longer available. Go back to your requests to check that it is still open.',
+      };
+    }
+    // The deadline passed while the form was open: a definite refusal, so the key rotates.
+    if (isDeadlinePassed(err)) {
+      return {
+        key: randomUUID(),
+        error: `The deadline for this request has passed. ${DEADLINE_PASSED_TEXT}`,
       };
     }
     // A 422 CURRENCY_NOT_ENABLED: the company switched the chosen currency off after the page loaded

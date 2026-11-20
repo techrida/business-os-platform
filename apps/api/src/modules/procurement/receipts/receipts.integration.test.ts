@@ -489,15 +489,14 @@ describe('over-receipt', () => {
     await createDraft(po, [{ poLineId: po.goods, quantity: '2' }]);
   });
 
-  it('refuses an over-receipt exception id while there is no exceptions table', async () => {
+  it('tells the receiver to ask Procurement to amend the order first (F1-Q39)', async () => {
     const po = await newPo();
-    const err = await httpErrorOf(
-      createDraft(po, [
-        { poLineId: po.goods, quantity: '6', overReceiptExceptionId: randomUUID() },
-      ]),
-    );
+    const err = await httpErrorOf(createDraft(po, [{ poLineId: po.goods, quantity: '6' }]));
     expect(err.getStatus()).toBe(422);
-    expect(codeOf(err)).toBe('over_receipt_exception_unknown');
+    expect(codeOf(err)).toBe('over_receipt');
+    expect((err.getResponse() as { message?: string }).message).toBe(
+      'Line 1 has only 5 still open on the purchase order. To receive more, ask Procurement to amend the purchase order first.',
+    );
   });
 
   it('lets exactly one of two parallel receivers of 3 against 5 through', async () => {
@@ -622,6 +621,40 @@ describe('who may receive', () => {
       expect(err.getStatus()).toBe(409);
       expect(codeOf(err)).toBe('invalid_transition');
     }
+  });
+
+  it('tells each caller which receipt actions it may take, and offers a read-only buyer none', async () => {
+    const po = await newPo();
+    as(U.warehouse, 'warehouse');
+    const goods = await createDraft(po, [{ poLineId: po.goods, quantity: '1' }]);
+    as(U.requester, 'operations_officer');
+    const svc = await createDraft(po, [{ poLineId: po.service, quantity: '1' }], 'service');
+    const none = { confirm: false, discard: false, reverse: false };
+    const draftActions = { confirm: true, discard: true, reverse: false };
+
+    as(U.warehouse, 'warehouse');
+    expect((await service.get(goods.id)).can).toEqual(draftActions);
+    expect((await service.get(svc.id)).can).toEqual(draftActions);
+    expect((await service.progress(po.id)).can).toEqual({ goods: true, service: true });
+
+    // Procurement reads every receipt but receives nothing: no Confirm or Discard, not even on a service.
+    as(U.procurement, 'procurement');
+    expect((await service.get(svc.id)).can).toEqual(none);
+    expect((await service.list(po.id)).map((r) => r.can)).toEqual([none, none]);
+    expect((await service.progress(po.id)).can).toEqual({ goods: false, service: false });
+
+    as(U.requester, 'operations_officer');
+    expect((await service.get(svc.id)).can).toEqual(draftActions);
+    expect((await service.get(goods.id)).can).toEqual(none);
+    expect((await service.progress(po.id)).can).toEqual({ goods: false, service: true });
+
+    as(U.warehouse, 'warehouse');
+    await confirm(goods.id);
+    expect((await service.get(goods.id)).can).toEqual({
+      confirm: false,
+      discard: false,
+      reverse: true,
+    });
   });
 
   it('refuses to confirm twice', async () => {

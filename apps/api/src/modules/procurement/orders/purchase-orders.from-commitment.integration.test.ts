@@ -203,7 +203,7 @@ beforeAll(async () => {
   await adminPublisher.publish(PR_COMMITMENT_DOCUMENT_TYPE, 1, SKIP_LIVE_PUBLISHER_CHECK);
 
   approvals = new ApprovalsService(db, audit, notify, directory, caller, () => now);
-  approvals.registerSubject(new PoAmendmentSubject(audit, () => now));
+  approvals.registerSubject(new PoAmendmentSubject(audit, approvals, () => now));
   service = new PurchaseOrdersService(db, approvals, audit, caller, () => now);
   const numbering = new NumberingService();
   approvals.registerSubject(new PrCommitmentSubject(numbering, () => now));

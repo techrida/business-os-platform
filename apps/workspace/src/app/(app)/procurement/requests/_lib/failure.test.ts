@@ -74,3 +74,31 @@ describe('prFailure', () => {
     expect(f.message).toContain('Unknown department');
   });
 });
+
+describe('a currency switched off (U16-Q14, D44)', () => {
+  it.each(['create', 'edit'] as const)(
+    'shows the agreed wording on %s, not the API sentence',
+    (op) => {
+      const f = prFailure(
+        apiError(422, 'CURRENCY_NOT_ENABLED', {
+          message: 'Currency USD is not enabled for this company',
+          details: { currency: 'USD' },
+        }),
+        op,
+      );
+      expect(f.message).toBe(
+        'USD is switched off for your company. Choose another currency, or ask an administrator to switch it on in Settings.',
+      );
+      expect(f.definite).toBe(true);
+      expect(f.reload).toBe(false);
+    },
+  );
+
+  it('reads the uncoded 422 the error filter sends today', () => {
+    const f = prFailure(
+      apiError(422, 'bad_request', { message: 'Currency USD is not enabled for this company' }),
+      'create',
+    );
+    expect(f.message).toContain('USD is switched off for your company.');
+  });
+});

@@ -93,8 +93,8 @@ export async function issueAction(prev: ActionState, form: FormData): Promise<Ac
 
 /**
  * Amend: quantities and prices per line, and optionally the payment terms. Only the changed lines
- * are sent. Whether it needs re-approval is the server's call (a higher approval band), so the
- * answer is worded from the `outcome` the API returns.
+ * are sent. Whether it needs re-approval is the server's call (a higher total or changed payment
+ * terms, F1-Q40), so the answer is worded from the `outcome` the API returns.
  */
 export async function amendAction(prev: ActionState, form: FormData): Promise<ActionState> {
   const r = await open(prev, form);
