@@ -689,7 +689,8 @@ export class Session {
     const t = (typeof trigger === 'string' ? this.select(trigger, { scope }) : trigger).first();
     await t.scrollIntoViewIfNeeded().catch(() => {});
     await this.hydrated(t);
-    await t.click();
+    // Held for 120 ms: a press that is released in the same tick does not open the react-aria select.
+    await t.click({ delay: 120 });
     const id = await t.getAttribute('aria-controls');
     const page = t.page();
     const list = id ? page.locator(`[id="${id}"]`) : page.getByRole('listbox');
@@ -700,7 +701,7 @@ export class Session {
           ? list.locator(`[role="option"][data-key="${option.key}"]`)
           : list.getByRole('option', { name: option, exact });
     await opt.first().waitFor({ state: 'visible', timeout: 20000 });
-    await opt.first().click();
+    await opt.first().click({ delay: 120 });
     await list
       .first()
       .waitFor({ state: 'hidden', timeout: 10000 })
@@ -725,7 +726,7 @@ export class Session {
       .getByRole('option')
       .filter({ has: page.getByText(new RegExp(`^${esc(name)}(?: \\(.+\\))?$`)) });
     await option.first().waitFor({ state: 'visible', timeout: 30000 });
-    await option.first().click();
+    await option.first().click({ delay: 120 });
   }
 
   /** A button that opens the native file chooser (headless-safe). */
