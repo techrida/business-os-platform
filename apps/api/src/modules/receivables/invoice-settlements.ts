@@ -10,6 +10,8 @@ import { and, eq, inArray, sql } from 'drizzle-orm';
 import type { DbTransaction } from '../../platform/db/db.module';
 import type { TxScope } from '../../platform/db/tx';
 
+/** Invoice ids bound per statement. */
+const ID_BATCH = 5000;
 const SETTLEMENT_KINDS: readonly InvoiceKind[] = ['tax_invoice', 'debit_note'];
 
 export interface InvoiceSettlementState {
@@ -49,32 +51,38 @@ export async function invoiceSettlements(
        AND a."organization_id" = ${openItemBalances.organizationId}
        AND a."debit_item_id" = ${openItemBalances.openItemId}
        AND c."source_type" = 'credit_note')`;
-  const rows = await tx
-    .select({
-      id: invoices.id,
-      issueDate: invoices.issueDate,
-      dueDate: invoices.dueDate,
-      total: openItemBalances.amount,
-      open: openItemBalances.openAmount,
-      credited,
-    })
-    .from(invoices)
-    .innerJoin(
-      openItemBalances,
-      and(
-        eq(openItemBalances.tenantId, invoices.tenantId),
-        eq(openItemBalances.organizationId, invoices.organizationId),
-        eq(openItemBalances.sourceId, invoices.id),
-        sql`${openItemBalances.sourceType} = ${invoices.kind}`,
-      ),
-    )
-    .where(
-      and(
-        eq(invoices.tenantId, scope.tenantId),
-        eq(invoices.organizationId, scope.organizationId),
-        inArray(invoices.id, ids),
-      ),
-    );
+  const readChunk = (chunk: string[]) =>
+    tx
+      .select({
+        id: invoices.id,
+        issueDate: invoices.issueDate,
+        dueDate: invoices.dueDate,
+        total: openItemBalances.amount,
+        open: openItemBalances.openAmount,
+        credited,
+      })
+      .from(invoices)
+      .innerJoin(
+        openItemBalances,
+        and(
+          eq(openItemBalances.tenantId, invoices.tenantId),
+          eq(openItemBalances.organizationId, invoices.organizationId),
+          eq(openItemBalances.sourceId, invoices.id),
+          sql`${openItemBalances.sourceType} = ${invoices.kind}`,
+        ),
+      )
+      .where(
+        and(
+          eq(invoices.tenantId, scope.tenantId),
+          eq(invoices.organizationId, scope.organizationId),
+          inArray(invoices.id, chunk),
+        ),
+      );
+  // An unpaginated list can hold more ids than one statement may bind (65,535 parameters), so read in batches.
+  const rows: Awaited<ReturnType<typeof readChunk>> = [];
+  for (let i = 0; i < ids.length; i += ID_BATCH) {
+    rows.push(...(await readChunk(ids.slice(i, i + ID_BATCH))));
+  }
   for (const r of rows) {
     const open = new Dec(r.open);
     states.set(r.id, {
