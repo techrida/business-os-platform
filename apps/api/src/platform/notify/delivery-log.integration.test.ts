@@ -186,10 +186,11 @@ async function deadLetterNotices(id: string): Promise<number> {
   return Number(rows[0]?.n);
 }
 
-async function makeOrg(code: string): Promise<Org> {
-  const tenant = await createTenantWithEntity(appPool, { code });
-  const { userId } = await createStaffUser(appPool, { ...tenant, roleKeys: ['founder'] });
-  directory.emails.set(userId, `founder-${code}@example.test`);
+/** A tenant and its Founder. The fake directory answers who holds `founder`, so no role row is needed. */
+async function makeOrg(label: string): Promise<Org> {
+  const tenant = await createTenantWithEntity(appPool);
+  const { userId } = await createStaffUser(appPool, { ...tenant });
+  directory.emails.set(userId, `founder-${label}@example.test`);
   return {
     scope: { tenantId: tenant.tenantId, organizationId: tenant.organizationId },
     idpOrgId: tenant.idpOrgId,
@@ -221,8 +222,8 @@ beforeAll(async () => {
   appPool = new Pool({ connectionString: urlFor('bos_app', APP_PW, 'bos'), max: 10 });
   db = drizzle({ client: appPool });
 
-  home = await makeOrg('HOME');
-  other = await makeOrg('OTHER');
+  home = await makeOrg('home');
+  other = await makeOrg('other');
 
   notify = new NotifyService(
     db,
