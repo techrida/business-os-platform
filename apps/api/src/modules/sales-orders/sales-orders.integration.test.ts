@@ -45,7 +45,7 @@ import { Pool } from 'pg';
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { AuditService } from '../../platform/audit/audit.service';
-import type { AuthzService } from '../../platform/authz/authz.service';
+import { scopeWhereFor, type AuthzService } from '../../platform/authz/authz.service';
 import { can } from '../../platform/authz/can';
 import type { Principal } from '../../platform/authz/principal';
 import { systemActor, withTx, type TxScope } from '../../platform/db/tx';
@@ -989,6 +989,27 @@ describe('saved reach on sales orders (U20a phase 2)', () => {
     current.grants = grantsOf('accountant');
     expect((await service.detail(neither.order.id)).order.id).toBe(neither.order.id);
     expect(ids((await service.list({})).rows)).toContain(neither.order.id);
+  });
+
+  it('the registry alone reaches an order through its quotation owner, so every scopeWhereFor agrees (U20a2-Q1)', async () => {
+    const otherOwner = await seedOtherStaffUser(db, f);
+    const mine = await acceptedQuotation();
+    const theirs = await acceptedQuotation();
+    current.userId = otherOwner;
+    const ofMyQuote = await confirm(mine);
+    const ofTheirQuote = await confirm(theirs);
+    current.userId = undefined;
+    await moveQuotation(theirs.id, otherOwner);
+
+    for (const reach of ['own', 'department'] as const) {
+      current.grants = new Map([...grantsOf('sales'), ['sales_order.read', reach]]);
+      const where = scopeWhereFor(principalNow(), salesOrders, 'sales_order.read');
+      const rows = await withTx(db, scopeA, userActor(), (tx) =>
+        tx.select({ id: salesOrders.id }).from(salesOrders).where(where),
+      );
+      expect(ids(rows), reach).toContain(ofMyQuote.order.id);
+      expect(ids(rows), reach).not.toContain(ofTheirQuote.order.id);
+    }
   });
 
   it('mark billable is a 404 outside the read and a 403 outside the mark-billable reach', async () => {
