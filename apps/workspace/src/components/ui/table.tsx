@@ -16,8 +16,8 @@ type Align = 'start' | 'end';
  *   can scroll it.
  * - `stickyFirstColumn` pins the first column while scrolling (the roles matrix needs it).
  * - Mark the trailing Status and Action cells `pinned` on `Th` and `Td` (Figma's pinned columns): they sit on a
- *   shaded band behind a divider and stay in view while the rest scrolls sideways, so the Action column is reachable
- *   on a phone. Pinned columns must be the last ones of the row; up to four are supported.
+ *   shaded band behind a divider and stay in view while the rest scrolls sideways (on a phone only the last one does),
+ *   so the Action column is always reachable. Pinned columns must be the last ones of the row; up to four are supported.
  * - Write the rows as `<thead><tr><Th>..</Th></tr></thead><tbody><tr><Td>..</Td></tr></tbody>`.
  */
 export function Table({
