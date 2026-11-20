@@ -640,6 +640,12 @@ describe("the invoice list carries each row's paid state (U15b-Q2)", () => {
         expect(filtered.sort()).toEqual(named.sort());
       }
     }
+    // The Total column summed over every match, per currency (U15b-Q4), and over a filter's matches only.
+    const list = invoiceList(w, NOW);
+    expect((await list.list()).totals).toEqual([{ currency: 'NPR', amount: '2800.00' }]);
+    expect((await list.list({ settlement: ['paid'] })).totals).toEqual([
+      { currency: 'NPR', amount: '500.00' },
+    ]);
     // The statement (as of NOW) agrees with the list.
     expect(await statementOf(w, partly)).toMatchObject({
       settlement: 'partly_paid',
