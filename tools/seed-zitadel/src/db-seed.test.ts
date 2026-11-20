@@ -1338,6 +1338,22 @@ describe('seedKernelRows: P3 invoice approval workflows and grants', () => {
     );
   });
 
+  it("matches migration 0110's old route to the one the seed published before F1-Q30", () => {
+    const migration = readFileSync(
+      fileURLToPath(
+        new URL('../../../packages/db/migrations/0110_tax_invoice_route.sql', import.meta.url),
+      ),
+      'utf8',
+    );
+    const literal = /v_old jsonb := '([^']+)'::jsonb;/.exec(migration)?.[1];
+    expect(literal).toBeDefined();
+    // The seed built every invoice route from one shape; the credit note still uses it.
+    const before = JSON.stringify(WorkflowSpecSchema.parse(CREDIT_NOTE_WORKFLOW_SPEC))
+      .replace('"credit_note"', '"tax_invoice"')
+      .replace('checks the credit note', 'checks the tax invoice');
+    expect(JSON.parse(literal ?? 'null')).toEqual(JSON.parse(before));
+  });
+
   it.each(P3_WORKFLOWS)(
     'seeds the %s workflow for the entity as published v1',
     async (documentType, name) => {
