@@ -751,6 +751,9 @@ describe("a lead's open follow-ups carry to the opportunity (U16-Q6)", () => {
     await h.actAs(peer);
     const theirs = (await activitiesService.list(planned)).items.find((a) => a.id === peers.id);
     expect(theirs).toBeDefined();
+    expect(
+      await activitiesService.complete(peers.id, { expectedVersion: theirs!.version }),
+    ).toMatchObject({ id: peers.id, planned: false, opportunityId });
   });
 
   it('leaves a follow-up on the lead when its assignee cannot open deals (Marketing)', async () => {
