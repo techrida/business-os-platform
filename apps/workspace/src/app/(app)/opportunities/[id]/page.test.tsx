@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import type { OpportunityDto, QuotationListItem } from '@bos/contracts';
+import { CreditHoldDtoSchema, type OpportunityDto, type QuotationListItem } from '@bos/contracts';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
@@ -724,15 +724,15 @@ describe('credit hold on the deal (F1-Q20)', () => {
   const held = () =>
     opportunity('won', { creditHold: { held: true, overridden: false }, number: 'DEAL-0042' });
   /** `GET /v1/opportunities/:id/credit-hold` as the API sends it. */
-  const position = {
+  const position = CreditHoldDtoSchema.parse({
     opportunityId: OPP,
     customerId: CUSTOMER,
-    currency: 'NPR' as const,
+    currency: 'NPR',
     creditLimit: '500000.00',
     exposure: '512345.50',
     held: true,
     override: null,
-  };
+  });
   const grants = (...held: string[]) =>
     mocks.getPermissionCheck.mockResolvedValue((p: string) => held.includes(p));
   const metadata = (doc: Document) => doc.querySelector('h1')?.parentElement?.parentElement;

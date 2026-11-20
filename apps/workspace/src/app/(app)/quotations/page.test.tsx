@@ -1,4 +1,9 @@
-import { avatarColour, imagePath, type QuotationListItem } from '@bos/contracts';
+import {
+  avatarColour,
+  imagePath,
+  OpportunityDtoSchema,
+  type QuotationListItem,
+} from '@bos/contracts';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
@@ -32,6 +37,32 @@ vi.mock('next/navigation', () => ({
 const CUSTOMER = '33333333-3333-4333-8333-333333333333';
 const OPP = '11111111-1111-4111-8111-111111111111';
 const Q1 = '55555555-5555-4555-8555-555555555551';
+
+/** A deal as `GET /v1/opportunities/:id` sends it, through the contract (optional fields omitted). */
+const dealDto = (over: Record<string, unknown> = {}) =>
+  OpportunityDtoSchema.parse({
+    id: OPP,
+    number: 'DEAL-0042',
+    name: 'Bridge works',
+    customerId: '33333333-3333-4333-8333-333333333333',
+    contactId: null,
+    leadId: null,
+    ownerUserId: null,
+    ownerName: null,
+    stage: 'negotiation',
+    stageReason: null,
+    lostReason: null,
+    stageNote: null,
+    value: null,
+    currency: 'NPR',
+    probability: null,
+    expectedClose: null,
+    wonQuotationVersionId: null,
+    version: 1,
+    createdAt: '2026-11-08T05:45:00.000Z',
+    updatedAt: '2026-11-08T05:45:00.000Z',
+    ...over,
+  });
 
 const item = {
   id: Q1,
@@ -79,9 +110,7 @@ const lastFilter = (): Record<string, unknown> | undefined =>
 beforeEach(() => {
   mocks.requireStaffSession.mockReset().mockResolvedValue({ accessToken: 'tok' });
   mocks.listQuotationsPage.mockReset().mockResolvedValue(page());
-  mocks.getOpportunity
-    .mockReset()
-    .mockResolvedValue({ id: OPP, stage: 'negotiation', canDraftQuotation: true });
+  mocks.getOpportunity.mockReset().mockResolvedValue(dealDto({ canDraftQuotation: true }));
   mocks.getQuotationsSummary.mockReset().mockResolvedValue(SUMMARY);
   mocks.listCustomers.mockReset().mockResolvedValue({
     items: [{ id: CUSTOMER, legalName: 'Himal Traders' }],
@@ -153,17 +182,13 @@ describe('quotations list', () => {
 
   it('offers New quotation for a deal only when the deal says the caller may quote on it (FX-Q2)', async () => {
     const newHref = `href="/quotations/new?opportunityId=${OPP}&amp;another=1"`;
-    mocks.getOpportunity.mockResolvedValue({
-      id: OPP,
-      stage: 'negotiation',
-      canDraftQuotation: false,
-    });
+    mocks.getOpportunity.mockResolvedValue(dealDto({ canDraftQuotation: false }));
     expect(await render({ opportunityId: OPP })).not.toContain(newHref);
 
-    mocks.getOpportunity.mockResolvedValue({ id: OPP, stage: 'negotiation' });
+    mocks.getOpportunity.mockResolvedValue(dealDto());
     expect(await render({ opportunityId: OPP })).not.toContain(newHref);
 
-    mocks.getOpportunity.mockResolvedValue({ id: OPP, stage: 'won', canDraftQuotation: true });
+    mocks.getOpportunity.mockResolvedValue(dealDto({ stage: 'won', canDraftQuotation: true }));
     expect(await render({ opportunityId: OPP })).not.toContain(newHref);
 
     mocks.getOpportunity.mockRejectedValue(new ApiError(404, 'missing'));
