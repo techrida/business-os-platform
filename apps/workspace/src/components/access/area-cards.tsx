@@ -65,7 +65,7 @@ interface ReviewTarget {
   target: AreaDraft;
 }
 
-/** Values the server refused on save, kept on the card's controls. */
+/** Values the server refused (in the review's dry run or on save), kept on the card's controls. */
 interface Refusal {
   key: AccessSettingAreaKey;
   target: AreaDraft;
@@ -265,7 +265,22 @@ export function AreaCards({
         title={`Review changes to ${reviewArea?.label ?? 'access'}`}
         changes={review?.changes ?? []}
         expectedRevision={catalogue.revision}
-        runPreview={(changes) => actions.preview({ changes })}
+        runPreview={async (changes) => {
+          const sent = review;
+          const result = await actions.preview({ changes });
+          // The dry run refuses what the save would refuse: a 422 with field errors, or a 200
+          // with blocked warnings that disable Save. Mark the controls either way, so Back shows
+          // them on the card. A failure that may pass on retry leaves the marks as they were.
+          if (sent && (result.ok || result.kind === 'refused')) {
+            const controls = result.ok
+              ? refusedControls(changes, undefined, result.preview.warnings)
+              : refusedControls(changes, result.fieldErrors, result.warnings);
+            setRefusal(
+              controls.length > 0 ? { key: sent.key, target: sent.target, controls } : null,
+            );
+          }
+          return result;
+        }}
         runSave={async ({ acknowledged, note }) => {
           const sent = review;
           const result = await actions.save({
