@@ -18,9 +18,9 @@ import { requireSection } from '../guard';
 
 // Server Actions for term sets (Settings > Saved terms). Resetting every set to the app defaults is
 // `resetSettingAction('terms', 'quotation.term_presets')` in ../_components/actions.ts: the same section
-// guard, and it writes exactly the default value. Each action is its own request, so the section permission is
-// re-checked here, apart from the page that rendered the list. The API still enforces
-// admin.settings.write on every write.
+// guard, and it writes exactly the default value. Each action is its own request, so the section permission (the
+// live grant settings.finance.write or admin.settings.write) is re-checked here, apart from the page that
+// rendered the list. The API still enforces every write.
 
 const PATH = '/settings/terms';
 
