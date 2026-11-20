@@ -13,8 +13,13 @@ const mocks = vi.hoisted(() => ({
   requireStaffSession: vi.fn(),
   listPaymentsPage: vi.fn(),
   getPaymentsSummary: vi.fn(),
+  getMe: vi.fn(),
 }));
 vi.mock('@/lib/bff', () => ({ requireStaffSession: mocks.requireStaffSession }));
+vi.mock('@/lib/api', async (original) => ({
+  ...(await original<typeof import('@/lib/api')>()),
+  getMe: mocks.getMe,
+}));
 vi.mock('@/lib/api-receivables', () => ({
   listPaymentsPage: mocks.listPaymentsPage,
   getPaymentsSummary: mocks.getPaymentsSummary,
@@ -25,6 +30,11 @@ vi.mock('next/navigation', () => ({
   usePathname: () => '/payments',
   useSearchParams: () => new URLSearchParams(),
 }));
+
+/** GET /v1/me with the live grants Settings > Access gives the caller's roles. */
+const liveGrants = (...permissions: string[]) => ({
+  permissions: permissions.map((permission) => ({ permission, scope: 'all' })),
+});
 
 const SUMMARY = {
   total: 9,
@@ -41,6 +51,8 @@ beforeEach(() => {
   mocks.requireStaffSession.mockResolvedValue({ accessToken: 't', roles: ['accountant'] });
   mocks.listPaymentsPage.mockResolvedValue(page([listItem()]));
   mocks.getPaymentsSummary.mockResolvedValue(SUMMARY);
+  // Without a live answer the gate falls back to the role defaults.
+  mocks.getMe.mockRejectedValue(new Error('GET /v1/me failed'));
 });
 
 describe('payments list', () => {
@@ -197,6 +209,15 @@ describe('payments list', () => {
       expect(html).not.toContain('/payments/new');
       expect(html).not.toContain('Record payment');
     }
+  });
+
+  it('shows the Record payment link by the live grants, not the role defaults', async () => {
+    mocks.requireStaffSession.mockResolvedValue({ accessToken: 't', roles: ['management'] });
+    mocks.getMe.mockResolvedValue(liveGrants('payment.read', 'payment.record'));
+    expect(await render()).toContain('href="/payments/new"');
+    mocks.requireStaffSession.mockResolvedValue({ accessToken: 't', roles: ['accountant'] });
+    mocks.getMe.mockResolvedValue(liveGrants('payment.read'));
+    expect(await render()).not.toContain('/payments/new');
   });
 
   it('has an empty state, and one that names the hiding filters with a way to clear them', async () => {

@@ -20,6 +20,7 @@ const mocks = vi.hoisted(() => ({
   listCustomers: vi.fn(),
   getCustomer: vi.fn(),
   apiFetch: vi.fn(),
+  getMe: vi.fn(),
 }));
 vi.mock('@/lib/bff', () => ({ requireStaffSession: mocks.requireStaffSession }));
 vi.mock('@/components/p2/customers/api', () => ({
@@ -30,9 +31,15 @@ vi.mock('@/components/p2/customers/api', () => ({
 vi.mock('@/lib/api', async (original) => ({
   ...(await original<typeof import('@/lib/api')>()),
   apiFetch: mocks.apiFetch,
+  getMe: mocks.getMe,
 }));
 // The form's action is a server action; the page test never submits it.
 vi.mock('./actions', () => ({ recordPaymentAction: vi.fn() }));
+
+/** GET /v1/me with the live grants Settings > Access gives the caller's roles. */
+const liveGrants = (...permissions: string[]) => ({
+  permissions: permissions.map((permission) => ({ permission, scope: 'all' })),
+});
 
 const OTHER_ID = '99999999-9999-4999-8999-999999999999';
 
@@ -82,6 +89,8 @@ beforeEach(() => {
   mocks.listCustomers.mockResolvedValue({ items: [customer()], total: 1 });
   mocks.getCustomer.mockRejectedValue(new ApiError(404, 'no'));
   enabledAre(['NPR', 'INR', 'USD']);
+  // Without a live answer the gate falls back to the role defaults.
+  mocks.getMe.mockRejectedValue(new Error('GET /v1/me failed'));
 });
 
 describe('record payment page', () => {
@@ -198,6 +207,15 @@ describe('record payment page', () => {
       expect(html).not.toContain('<form');
     }
     expect(mocks.listCustomers).not.toHaveBeenCalled();
+  });
+
+  it('shows the form to a role granted payment.record in Settings > Access, and not to one it was taken from', async () => {
+    mocks.requireStaffSession.mockResolvedValue({ accessToken: 't', roles: ['management'] });
+    mocks.getMe.mockResolvedValue(liveGrants('payment.read', 'payment.record'));
+    expect(await render()).toContain('<form');
+    mocks.requireStaffSession.mockResolvedValue({ accessToken: 't', roles: ['accountant'] });
+    mocks.getMe.mockResolvedValue(liveGrants('payment.read'));
+    expect(await render()).toContain('Your roles do not include recording payments');
   });
 
   it('keeps a very long customer name in the option text', async () => {

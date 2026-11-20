@@ -1,3 +1,4 @@
+import { DEFAULT_ROLE_PERMISSIONS } from '@bos/contracts';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { SESSION_UNAVAILABLE_MESSAGE, SessionUnavailableError } from '@/lib/session-unavailable';
@@ -23,6 +24,36 @@ const PATH = `/v1/payment-proofs/${DOC_ID}/versions/${VER_ID}/content`;
 const staff = { accessToken: 'tok', orgKind: 'staff', roles: ['accountant'] };
 
 const fetchMock = vi.fn<typeof fetch>();
+/**
+ * What GET /v1/me answers: a status, or the live grant list. `undefined` gives the caller's role defaults, which
+ * is what the API reports for a role nobody edited in Settings > Access.
+ */
+let meAnswer: number | string[] | undefined;
+const meBody = (roles: string[], permissions: string[]) => ({
+  userId: '312345678901234567',
+  tenantId: '00000000-0000-4000-8000-000000000001',
+  organizationId: '00000000-0000-4000-8000-000000000002',
+  orgKind: 'staff',
+  partyId: null,
+  roles,
+  correlationId: 'req-12345678',
+  permissions: permissions.map((permission) => ({ permission, scope: 'all' })),
+});
+const roleDefaults = (roles: string[]) =>
+  roles.flatMap((r) =>
+    Object.keys(DEFAULT_ROLE_PERMISSIONS[r as keyof typeof DEFAULT_ROLE_PERMISSIONS] ?? {}),
+  );
+/** Answers /v1/me from `meAnswer`; every other call goes to `fetchMock`, so its call list is the upload's alone. */
+const meCalls = vi.fn<(roles: string[]) => void>();
+function routedFetch(input: string | URL | Request, init?: RequestInit): Promise<Response> {
+  const url = new URL(input instanceof Request ? input.url : input);
+  if (url.pathname !== '/v1/me') return fetchMock(input, init);
+  const roles = currentRoles();
+  meCalls(roles);
+  if (typeof meAnswer === 'number') return Promise.resolve(json({}, meAnswer));
+  return Promise.resolve(json(meBody(roles, meAnswer ?? roleDefaults(roles))));
+}
+let currentRoles = () => staff.roles;
 const json = (body: unknown, status = 200) => new Response(JSON.stringify(body), { status });
 const started = () => json({ documentId: DOC_ID, versionId: VER_ID, uploadPath: PATH }, 201);
 const callOf = (n: number) => {
@@ -64,9 +95,12 @@ const messageOf = async (res: Response) =>
 
 beforeEach(() => {
   fetchMock.mockReset();
-  vi.stubGlobal('fetch', fetchMock);
+  meCalls.mockReset();
+  meAnswer = undefined;
+  vi.stubGlobal('fetch', routedFetch);
   getSession.mockReset();
   getSession.mockResolvedValue(staff);
+  currentRoles = () => staff.roles;
 });
 
 afterEach(() => {
@@ -117,12 +151,49 @@ describe('proof upload route', () => {
     getSession.mockResolvedValue(null);
     expect((await upload()).status).toBe(401);
     getSession.mockResolvedValue({ ...staff, roles: ['management'] });
+    currentRoles = () => ['management'];
     const denied = await upload();
     expect(denied.status).toBe(403);
     expect(await messageOf(denied)).toMatch(/do not include recording payments/);
     getSession.mockResolvedValue({ ...staff, orgKind: 'customer' });
     expect((await upload()).status).toBe(403);
     expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it('lets a role granted payment.record in Settings > Access upload, by the live grants', async () => {
+    getSession.mockResolvedValue({ ...staff, roles: ['management'] });
+    currentRoles = () => ['management'];
+    meAnswer = ['payment.read', 'payment.record'];
+    fetchMock
+      .mockResolvedValueOnce(started())
+      .mockResolvedValueOnce(new Response(null, { status: 200 }));
+    const res = await upload();
+    expect(res.status).toBe(200);
+    expect(meCalls).toHaveBeenCalledTimes(1);
+    expect(callOf(0).url.pathname).toBe('/v1/payment-proofs');
+  });
+
+  it('refuses a role whose payment.record was taken away, even though its defaults include it', async () => {
+    meAnswer = ['payment.read'];
+    const denied = await upload();
+    expect(denied.status).toBe(403);
+    expect(await messageOf(denied)).toMatch(/do not include recording payments/);
+    // An empty live list means the user may not act; it is not read as a failed lookup.
+    meAnswer = [];
+    expect((await upload()).status).toBe(403);
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it('falls back to the role defaults only when /v1/me fails', async () => {
+    meAnswer = 500;
+    fetchMock
+      .mockResolvedValueOnce(started())
+      .mockResolvedValueOnce(new Response(null, { status: 200 }));
+    expect((await upload()).status).toBe(200);
+    getSession.mockResolvedValue({ ...staff, roles: ['management'] });
+    currentRoles = () => ['management'];
+    expect((await upload()).status).toBe(403);
+    expect(fetchMock).toHaveBeenCalledTimes(2);
   });
 
   it('needs a real customer id, a PDF or picture, a size and a name before calling the API', async () => {
