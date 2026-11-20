@@ -4,7 +4,7 @@
 // after an upload or a removal. Without edit rights it is the picture and its preview only.
 import { useRouter } from 'next/navigation';
 
-import { ImageUpload } from '@/components/ui/image-upload';
+import { ImageUpload, type ImageUploadProps } from '@/components/ui/image-upload';
 
 export function CompanyLogoUpload({
   ownerType,
@@ -13,6 +13,7 @@ export function CompanyLogoUpload({
   logoDocumentId,
   label,
   readOnly,
+  size,
 }: {
   ownerType: 'customer_logo' | 'vendor_logo';
   companyId: string;
@@ -21,6 +22,8 @@ export function CompanyLogoUpload({
   /** "Customer logo" or "Vendor logo": the group name and the preview title. */
   label: string;
   readOnly: boolean;
+  /** The picture's size; the customer profile card shows it at `xlarge` (U12-Q4). Default `large`. */
+  size?: ImageUploadProps['size'];
 }) {
   const router = useRouter();
   return (
@@ -35,6 +38,7 @@ export function CompanyLogoUpload({
       label={label}
       onChange={() => router.refresh()}
       readOnly={readOnly}
+      size={size}
     />
   );
 }
