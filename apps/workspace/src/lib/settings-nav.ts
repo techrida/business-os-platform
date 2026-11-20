@@ -220,7 +220,8 @@ export const SETTINGS_GROUPS: readonly SettingsGroup[] = [
         label: 'Sales',
         href: '/settings/sales',
         icon: 'trending-up',
-        description: 'Quotation validity, evidence for won deals and the billing schedule.',
+        description:
+          'Quotation validity, evidence for won deals, the billing schedule and delivery holds.',
         permission: 'admin.settings.write',
         ready: true,
       },
