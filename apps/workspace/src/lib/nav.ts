@@ -1,7 +1,7 @@
 /**
  * The sidebar as data. Groups and items follow the Figma sidebar (node 727:10457) and the P1
- * screen map. Pure data with no React import, so unit tests and the header title lookup can use
- * it anywhere.
+ * screen map. Pure data with no React import, so unit tests and client components (the
+ * shell's navigation search and nav links) can use it anywhere.
  *
  * An item is "built" when it has an `href`: it renders as a link. Unbuilt items stay out of
  * navigation. `phase` and SHIPPED_PHASES are internal and never shown to users.
@@ -10,7 +10,8 @@
  *
  * Items with `audience: 'admin'` are shown only to people who can see the admin screens. The
  * server decides that (canSeeAdmin in kernel-format.ts) and passes the answer to the sidebar:
- * this file stays free of server code because the header title (a client component) imports it.
+ * this file stays free of server code because client components (shell-nav.tsx, nav-link.tsx)
+ * import it.
  *
  * "Estimates" is left out on purpose: decision D3 merged it into Quotations. "Approvals" and
  * "User" are not listed: they are Work > Inbox and Settings > Organisation. Organisation items
@@ -58,8 +59,9 @@ export interface NavItem {
   /**
    * The permission, or any one of a list, that lets a person see this item.
    * The server decides, as with `audience`, and passes the answer in as the predicate of
-   * `visibleGroups`: this file stays free of runtime contract imports because the header title (a
-   * client component) imports it. With no predicate, a gated item stays hidden (deny by default).
+   * `visibleGroups`: this file stays free of runtime contract imports because client components
+   * (shell-nav.tsx, nav-link.tsx) import it. With no predicate, a gated item stays hidden (deny by
+   * default).
    * The pages and the API still enforce the permission themselves.
    */
   permission?: string | readonly string[];
