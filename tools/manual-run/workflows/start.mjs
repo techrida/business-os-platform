@@ -519,19 +519,46 @@ export function workflow(cfg) {
             JSON.stringify(who),
           );
           await page.waitForTimeout(cfg.pace);
+          // Evidence for the outcome: the hops after Sign out, as host + path + status only (the
+          // callback's query carries a code, so no query is kept).
+          const hops = [];
+          const onResponse = (r) => {
+            const u = new URL(r.url());
+            if (/^\/(_next|telemetry|__nextjs)/.test(u.pathname)) return;
+            hops.push(`${r.request().method()} ${u.host}${u.pathname} ${r.status()}`);
+          };
+          page.on('response', onResponse);
           await page.getByRole('button', { name: 'Sign out', exact: true }).first().click();
-          await page.waitForURL(
-            (u) =>
-              !u.href.startsWith(`${cfg.appUrl}/`) ||
-              /\/auth\//.test(u.pathname) ||
-              /signed-?out/i.test(u.href),
-            {
-              timeout: cfg.navTimeout,
-            },
-          );
+          const leftApp = await page
+            .waitForURL(
+              (u) =>
+                !u.href.startsWith(`${cfg.appUrl}/`) ||
+                /\/auth\//.test(u.pathname) ||
+                /signed-?out/i.test(u.href),
+              { timeout: 45000 },
+            )
+            .then(() => true)
+            .catch(() => false);
+          page.off('response', onResponse);
           s.checks.push(
             `after Sign out: ${new URL(page.url()).host}${new URL(page.url()).pathname}`,
           );
+          if (!leftApp) {
+            // Still on the workspace: either a signed-out page there, or signed straight back in.
+            const again = await s.whoami(page);
+            s.checks.push(`hops after Sign out: ${hops.join(' → ') || '(none)'}`);
+            if (again?.roles?.length) {
+              s.finding(
+                'Sign out did not sign out: after a real password + one-time-code sign-in, Sign out ' +
+                  'returned to the workspace still signed in as Sales. Hops: ' +
+                  hops.join(' → '),
+                'high',
+              );
+              throw new StepFailure(
+                'Sign out left the private window signed in (see the finding and the hops)',
+              );
+            }
+          }
           // A dev-server restart can answer one hop with 5xx; retry the plain GET, never the sign-out.
           for (let i = 0; i < 4; i++) {
             const res = await page
