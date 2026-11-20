@@ -317,6 +317,7 @@ export default async function LeadsPage({ searchParams }: { searchParams: Promis
                             id={lead.id}
                             number={lead.number}
                             version={lead.version}
+                            variant="secondary"
                             size="small"
                           />
                         ) : (

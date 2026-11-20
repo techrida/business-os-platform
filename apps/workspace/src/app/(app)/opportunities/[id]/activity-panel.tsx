@@ -12,9 +12,11 @@ import styles from './detail.module.css';
 /** The opportunity's History with the shared Log activity form (type buttons, no follow-up). */
 export function OpportunityActivities({
   opportunityId,
+  canEdit = true,
   children,
 }: {
   opportunityId: string;
+  canEdit?: boolean;
   children: ReactNode;
 }) {
   const formId = useId();
@@ -25,24 +27,28 @@ export function OpportunityActivities({
       title="Activities"
       className={styles.records}
       actions={
-        <Button
-          variant="secondary"
-          size="small"
-          aria-controls={formId}
-          aria-expanded={expanded}
-          onClick={() => setExpanded(!expanded)}
-        >
-          {expanded ? 'Hide form' : 'Add activity'}
-        </Button>
+        canEdit ? (
+          <Button
+            variant="secondary"
+            size="small"
+            aria-controls={formId}
+            aria-expanded={expanded}
+            onClick={() => setExpanded(!expanded)}
+          >
+            {expanded ? 'Hide form' : 'Add activity'}
+          </Button>
+        ) : undefined
       }
     >
-      <div id={formId} className={styles.activityForm} hidden={!expanded}>
-        <ActivityForm
-          action={logActivityAction}
-          subjectKind="opportunityId"
-          subjectId={opportunityId}
-        />
-      </div>
+      {canEdit ? (
+        <div id={formId} className={styles.activityForm} hidden={!expanded}>
+          <ActivityForm
+            action={logActivityAction}
+            subjectKind="opportunityId"
+            subjectId={opportunityId}
+          />
+        </div>
+      ) : null}
       <div className={styles.activityList}>{children}</div>
     </Panel>
   );

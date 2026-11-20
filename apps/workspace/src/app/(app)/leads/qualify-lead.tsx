@@ -15,11 +15,13 @@ export function QualifyLead({
   id,
   number,
   version,
+  variant = 'primary',
   size,
 }: {
   id: string;
   number: string;
   version: number;
+  variant?: 'primary' | 'secondary' | undefined;
   size?: 'small';
 }) {
   async function qualify() {
@@ -45,7 +47,7 @@ export function QualifyLead({
   return (
     <ConfirmDialog
       trigger={
-        <Button variant="secondary" size={size}>
+        <Button variant={variant} size={size}>
           Qualify
         </Button>
       }
