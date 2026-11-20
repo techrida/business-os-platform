@@ -6,7 +6,7 @@
 // replace them, the widest scope wins, the version is read at most once per tenant every 5 s, and a
 // bump from another api instance is picked up once that window passes. And the level grants (D50,
 // D51): a level row only widens a base grant, the stored rows win once the tenant has any or Access
-// Settings marked them materialized, and an emptied policy stays empty. Role rows are tenant policy
+// Settings marked them materialized, and zero grant rows always mean the defaults. Role rows are tenant policy
 // (ADR 0027 §7), so every entity of a tenant shares one cache entry. Setup is the same as
 // settings/numbering.service.test.ts: roles and default privileges as in init-dbs.sh, migrate as
 // bos_owner, then work as bos_app.
@@ -374,21 +374,65 @@ describe('RoleCache.grantsFor', () => {
   });
 });
 
-describe('RoleCache: an emptied policy and rolesGranting', () => {
-  it('keeps a seeded tenant whose rows were all removed empty, instead of handing back the defaults', async () => {
+describe('RoleCache: a tenant without grant rows and rolesGranting', () => {
+  /** Every role at every level on a fresh, never-seeded tenant: the code defaults as the cache builds them. */
+  async function codeDefaults(
+    cache: RoleCache,
+  ): Promise<Record<string, Record<string, AccessScope>>> {
+    const fresh = await newOrg();
+    const want: Record<string, Record<string, AccessScope>> = {};
+    for (const role of ROLE_KEYS)
+      for (const level of ['staff', 'manager', 'head'] as const) {
+        const got = await cache.grantsFor(fresh.tenantId, fresh.organizationId, [role], level);
+        want[`${role} ${level}`] = grantsOf(got);
+      }
+    return want;
+  }
+
+  async function expectCodeDefaults(cache: RoleCache, org: TxScope): Promise<void> {
+    const want = await codeDefaults(cache);
+    for (const role of ROLE_KEYS)
+      for (const level of ['staff', 'manager', 'head'] as const) {
+        const got = await cache.grantsFor(org.tenantId, org.organizationId, [role], level);
+        expect(grantsOf(got), `${role} ${level}`).toEqual(want[`${role} ${level}`]);
+      }
+  }
+
+  it('keeps the code defaults for every role when a version row exists but no grant rows were ever written', async () => {
+    const org = await newOrg();
+    // A user or role write bumps the version without materialising any grants.
+    await otherInstance().invalidate(org.tenantId, org.organizationId);
+    const [versionRow] = (
+      await appPool.query<{ n: string }>(
+        'SELECT count(*)::text AS n FROM app.authz_versions WHERE tenant_id = $1',
+        [org.tenantId],
+      )
+    ).rows;
+    expect(versionRow?.n).toBe('1');
+
+    const cache = new RoleCache(db, clock);
+    const founder = await cache.grantsFor(org.tenantId, org.organizationId, ['founder']);
+    expect(grantsOf(founder)).toEqual(DEFAULT_ROLE_PERMISSIONS.founder);
+    expect(founder.get('admin.settings.write')).toBe('all');
+    await expectCodeDefaults(cache, org);
+  });
+
+  it('falls back to the code defaults when every grant row of a seeded tenant is gone, never an empty policy', async () => {
     const org = await newOrg();
     await setRows(org, [['founder', 'memo.read', 'all']]);
     await otherInstance().invalidate(org.tenantId, org.organizationId);
-    // The Founder removes every grant; the save bumps the version as every policy write does.
     await setRows(org, []);
     await otherInstance().invalidate(org.tenantId, org.organizationId);
 
     const cache = new RoleCache(db, clock);
-    expect((await cache.grantsFor(org.tenantId, org.organizationId, ['founder'])).size).toBe(0);
-    expect((await cache.grantsFor(org.tenantId, org.organizationId, ['sales'], 'head')).size).toBe(
-      0,
+    expect(grantsOf(await cache.grantsFor(org.tenantId, org.organizationId, ['founder']))).toEqual(
+      DEFAULT_ROLE_PERMISSIONS.founder,
     );
-    expect(await cache.rolesGranting(org.tenantId, 'memo.read')).toEqual([]);
+    await expectCodeDefaults(cache, org);
+    const defaultHolders = ROLE_KEYS.filter(
+      (role) => DEFAULT_ROLE_PERMISSIONS[role]['memo.read'] !== undefined,
+    ).sort();
+    expect(await cache.rolesGranting(org.tenantId, 'memo.read')).toEqual(defaultHolders);
   });
 
   it('gives a tenant that was never seeded (no rows, no version) both default tables', async () => {
