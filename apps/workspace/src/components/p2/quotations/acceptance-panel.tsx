@@ -1,8 +1,10 @@
 import { randomUUID } from 'node:crypto';
 
 import type { CustomerDateFormat } from '@bos/locale';
-import type { QuotationVersionDto } from '@bos/contracts';
+import type { QuotationVersionDto, SalesOrderListItem } from '@bos/contracts';
+import Link from 'next/link';
 
+import { salesOrderStatusMeta } from '@/app/(app)/sales-orders/_lib/status';
 import { Badge } from '@/components/ui/badge';
 import { Icon } from '@/components/ui/icon';
 import { FactList, Panel, type Fact } from '@/components/ui/panel';
@@ -14,8 +16,9 @@ import type { AcceptanceConfirmation } from './lifecycle-contract';
 
 /**
  * What follows a customer's acceptance, on the accepted revision: the staff check of the customer's
- * evidence (F1-Q28). Server Component. The row appears only when the platform sent a confirmation
- * state for this revision.
+ * evidence (F1-Q28) and the sales order drafted from it for Accounts to confirm (F1-Q25). Server
+ * Component. Each row appears only when there is something true to say: no confirmation row when
+ * the platform has no such step for this revision, no order row for a person who may not read orders.
  */
 export function AcceptancePanel({
   quotationId,
@@ -24,6 +27,8 @@ export function AcceptancePanel({
   confirmation,
   confirmedByName,
   mayConfirm,
+  order,
+  mayReadOrders,
   reloadHref,
   dateFormat,
 }: {
@@ -35,6 +40,9 @@ export function AcceptancePanel({
   confirmation: AcceptanceConfirmation | null | undefined;
   confirmedByName?: string | undefined;
   mayConfirm: boolean;
+  /** The revision's sales order that is not cancelled, if any. */
+  order: SalesOrderListItem | undefined;
+  mayReadOrders: boolean;
   reloadHref: string;
   dateFormat?: CustomerDateFormat | undefined;
 }) {
@@ -75,6 +83,29 @@ export function AcceptancePanel({
           ) : null}
         </span>
       ),
+      wide: true,
+    });
+  }
+
+  if (mayReadOrders) {
+    const meta = order ? salesOrderStatusMeta(order.status) : null;
+    facts.push({
+      key: 'order',
+      label: 'Sales order',
+      value:
+        order && meta ? (
+          <span className={styles.stateLine}>
+            <Link href={`/sales-orders/${encodeURIComponent(order.id)}`}>
+              {order.number ?? 'Draft sales order'}
+            </Link>
+            <Badge tone={meta.tone}>{meta.label}</Badge>
+            {order.status === 'draft' ? (
+              <span className={styles.recordNote}>Accounts confirms it before billing starts.</span>
+            ) : null}
+          </span>
+        ) : (
+          <span className={styles.quiet}>Not created yet</span>
+        ),
       wide: true,
     });
   }
