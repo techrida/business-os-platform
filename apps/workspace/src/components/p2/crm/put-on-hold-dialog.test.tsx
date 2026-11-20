@@ -94,6 +94,39 @@ describe('PutOnHoldDialog', () => {
     }
   });
 
+  it('moves focus to the first field in error on each refused submit, so the error is announced', async () => {
+    const mounted = await mountForm(
+      <PutOnHoldDialog
+        noun="lead"
+        action={moveLeadStageAction}
+        id={LEAD}
+        number="LD-2026-0019"
+        version={4}
+      />,
+    );
+    try {
+      await click(mounted.container.querySelector('button'));
+      await click(footerButton('Put on hold'));
+      await settle();
+      const reason = inDialog('input[name="reason"]');
+      expect(reason?.getAttribute('aria-invalid')).toBe('true');
+      expect(document.activeElement).toBe(reason);
+      // The focused field names its error through aria-describedby.
+      const described = reason?.getAttribute('aria-describedby') ?? '';
+      expect(document.getElementById(described)?.textContent).toBe(
+        'Give a reason, up to 200 characters.',
+      );
+
+      await fill(reason, 'Budget freeze');
+      await click(footerButton('Put on hold'));
+      await settle();
+      expect(document.activeElement).toBe(inDialog('textarea[name="note"]'));
+      expect(mocks.changeLeadStage).not.toHaveBeenCalled();
+    } finally {
+      await mounted.unmount();
+    }
+  });
+
   it('moves a lead to On Hold with trimmed reason and note and toasts success', async () => {
     mocks.changeLeadStage.mockResolvedValue({});
     const mounted = await mountForm(
