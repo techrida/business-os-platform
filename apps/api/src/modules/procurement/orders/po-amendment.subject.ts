@@ -7,7 +7,14 @@
 // - returned or rejected: the PO leaves amendment_pending unchanged (back to issued, or to the received status).
 // A PO that is not waiting for this decision is refused (409), never silently skipped.
 import type { ApprovalContext } from '@bos/contracts';
-import { documents, purchaseOrders, purchaseOrderVersions, scoped, vendors } from '@bos/db';
+import {
+  documents,
+  purchaseOrders,
+  purchaseOrderVersions,
+  purchaseRequests,
+  scoped,
+  vendors,
+} from '@bos/db';
 import { Logger } from '@nestjs/common';
 import { and, eq, sql } from 'drizzle-orm';
 
@@ -16,9 +23,10 @@ import type { Principal } from '../../../platform/authz/principal';
 import type { Db, DbTransaction } from '../../../platform/db/db.module';
 import type { TxScope } from '../../../platform/db/tx';
 import { actorUuid, readTxContext } from '../../../platform/documents/tx-context';
-import { fact, hrefFor, readableDocuments } from '../../approvals/context';
+import { fact, readableDocuments } from '../../approvals/context';
 import type { ApprovalSubject } from '../../approvals/requests.service';
 import { idAt, procurementReferenceNames } from '../reference-names';
+import { mayReadPo, requestFactsColumns, requestOf } from './po-read-access';
 import { PO_AMENDMENT_DOCUMENT_TYPE, PO_AUDIT_ENTITY } from './purchase-order.rules';
 import {
   drizzlePoVersionHeadLoader,
@@ -57,8 +65,9 @@ export class PoAmendmentSubject implements ApprovalSubject {
   }
 
   /**
-   * The order as it stands now, with the PDF of its current version. The order page is linked only for a holder of
-   * `procurement.po.issue`, which the order routes ask for.
+   * The order as it stands now, with the PDF of its current version. The order page is linked only for a viewer the
+   * order's detail route lets in (po-read-access.ts: procurement, and read-only the bill and receipt roles, F1-Q52);
+   * anyone else (management, by default) gets no link rather than a page that refuses them (TR-Q2).
    */
   async context(
     q: Db,
@@ -77,12 +86,14 @@ export class PoAmendmentSubject implements ApprovalSubject {
         approvedTotal: purchaseOrders.approvedTotal,
         currentVersion: purchaseOrders.currentVersion,
         vendorName: vendors.legalName,
+        request: requestFactsColumns,
       })
       .from(purchaseOrders)
       .leftJoin(
         vendors,
         and(eq(vendors.tenantId, purchaseOrders.tenantId), eq(vendors.id, purchaseOrders.vendorId)),
       )
+      .innerJoin(purchaseRequests, requestOf(purchaseOrders))
       .where(scoped(scope).where(purchaseOrders, eq(purchaseOrders.id, poId)));
     if (po === undefined) return null;
     const files = await q
@@ -121,7 +132,7 @@ export class PoAmendmentSubject implements ApprovalSubject {
         files.map((f) => f.id),
         [new PurchaseOrderVersionOwnerPolicy(drizzlePoVersionHeadLoader(q))],
       ),
-      href: hrefFor(viewer, `/procurement/orders/${po.id}`, 'procurement.po.issue'),
+      href: mayReadPo(viewer, po.request) ? `/procurement/orders/${po.id}` : null,
     };
   }
 

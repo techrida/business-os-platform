@@ -1,12 +1,15 @@
 // PurchaseOrdersService: list, detail and versions of purchase orders, and issue, amend, short-close and cancel
 // (P4 unit P3; AD4, AD7, done checks 2 and 15). Serves the NFRs:
 // - "only vetted vendors": issuing needs an `approved` vendor with an active account in the acting entity (409);
-// - "money moves only after the right people agree": an amendment whose grand total incl. VAT in NPR falls in a
-//   higher band than approved_band goes to the `po_amendment` route and is written only on approval (AD7);
+// - "money moves only after the right people agree": an amendment that raises the order's total or changes its
+//   payment terms goes to the `po_amendment` route and is written only on approval (F1-Q40, replacing AD7's band
+//   rule); any other amendment is written at once with an audit row;
 // - "history is never rewritten": every issued state is an immutable version row (trigger + revoked privileges);
 // - "no double effects" and "no lost updates": every write runs in withIdempotency and locks PO → lines FOR UPDATE,
 //   then a conditional UPDATE on the status it read;
-// - "one legal entity at a time": every read and write is scoped(); another entity's PO is a 404.
+// - "one legal entity at a time": every read and write is scoped(); another entity's PO is a 404;
+// - "deny by default": the reads are open to issuers and, read-only, to bill and receipt roles on the orders their
+//   grant reaches (F1-Q52, po-read-access.ts); the writes need procurement.po.issue at route level.
 // A change of vendor is not an amendment (the body has no vendor field): cancel and raise a new PO.
 import { WorkflowSpecSchema, canTransitionPo, type PoStatus } from '@bos/contracts';
 import {
@@ -36,12 +39,20 @@ import { ApprovalsNotify } from '../../approvals/ports';
 import { ApprovalsService } from '../../approvals/requests.service';
 import { BILLABLE_PO_STATUSES } from '../../payables/bills/vendor-bill.rules';
 import { purchaseRequestRef } from '../requests/purchase-requests.service';
+import {
+  assertHoldsPoRead,
+  mayReadPo,
+  mayReceivePo,
+  poReadWhere,
+  requestFactsColumns,
+  requestOf,
+} from './po-read-access';
 import { PurchaseOrdersCaller } from './purchase-orders.caller';
 import {
   PO_AMENDMENT_DOCUMENT_TYPE,
   PO_AUDIT_ENTITY,
   amendLines,
-  bandRises,
+  amendmentApprovalReasons,
   shortCloseCancelled,
   versionTotals,
   type AmendPurchaseOrderBody,
@@ -120,9 +131,11 @@ export interface PurchaseOrderDto {
   /**
    * What the caller may do from this order outside the PO routes, from the caller's live grants (detail only):
    * `enterBill` is payables.bill.enter on the order's purchase request (the check the order's progress read makes
-   * for the bill form) on an order a bill can be entered against (BILLABLE_PO_STATUSES).
+   * for the bill form) on an order a bill can be entered against (BILLABLE_PO_STATUSES); `receive` is the receipts
+   * unit's rule (mayReceivePo) on an order that still takes receipts. A read-only reader (F1-Q52) gets false for both
+   * unless their own grants allow it.
    */
-  can?: { enterBill: boolean };
+  can?: { enterBill: boolean; receive: boolean };
 }
 
 /** A row of the list: the detail without its lines, and always with the vendor's name. */
@@ -282,16 +295,22 @@ export class PurchaseOrdersService {
   async list(
     query: ListPurchaseOrdersQuery,
   ): Promise<{ rows: PurchaseOrderListItemDto[]; total: number }> {
-    const { scope, actor } = this.caller.current();
+    const { scope, actor, principal } = this.caller.current();
+    assertHoldsPoRead(principal);
+    // A read-only reader (F1-Q52) sees the orders their grant reaches through the purchase request.
+    const reach = poReadWhere(principal);
     return withTx(this.db, scope, actor, async (tx) => {
       const page = await searchPage(tx, {
         q: query.q,
         columns: [purchaseOrders.number, vendors.legalName],
         where: scoped(scope).where(
           purchaseOrders,
-          query.status === undefined || query.status.length === 0
-            ? undefined
-            : inArray(purchaseOrders.status, query.status),
+          and(
+            query.status === undefined || query.status.length === 0
+              ? undefined
+              : inArray(purchaseOrders.status, query.status),
+            reach,
+          ),
         ),
         orderBy: [
           desc(purchaseOrders.createdAt),
@@ -305,6 +324,7 @@ export class PurchaseOrdersService {
             .select({ po: purchaseOrders, vendorName: vendors.legalName })
             .from(purchaseOrders)
             .innerJoin(vendors, vendorOf(purchaseOrders))
+            .innerJoin(purchaseRequests, requestOf(purchaseOrders))
             .where(p.where)
             .orderBy(...p.orderBy)
             .limit(p.limit)
@@ -314,6 +334,7 @@ export class PurchaseOrdersService {
             .select({ n: sql<number>`count(*)::int` })
             .from(purchaseOrders)
             .innerJoin(vendors, vendorOf(purchaseOrders))
+            .innerJoin(purchaseRequests, requestOf(purchaseOrders))
             .where(where);
           return row?.n ?? 0;
         },
@@ -328,34 +349,23 @@ export class PurchaseOrdersService {
     });
   }
 
-  /** 404 outside the acting entity. */
+  /** 404 outside the acting entity, and for a read-only reader whose grant does not reach the order (F1-Q52). */
   async get(id: string): Promise<PurchaseOrderDto> {
     const { scope, actor, principal } = this.caller.current();
+    assertHoldsPoRead(principal);
     return withTx(this.db, scope, actor, async (tx) => {
-      // The request's owner and department decide can.enterBill only; neither is returned.
+      // The request's owner and department decide who reads the order and the `can` flags; neither is returned.
       const [row] = await tx
         .select({
           po: purchaseOrders,
           vendorName: vendors.legalName,
-          request: {
-            tenantId: purchaseRequests.tenantId,
-            organizationId: purchaseRequests.organizationId,
-            requesterUserId: purchaseRequests.requesterUserId,
-            departmentId: purchaseRequests.departmentId,
-          },
+          request: requestFactsColumns,
         })
         .from(purchaseOrders)
         .innerJoin(vendors, vendorOf(purchaseOrders))
-        .innerJoin(
-          purchaseRequests,
-          and(
-            eq(purchaseRequests.tenantId, purchaseOrders.tenantId),
-            eq(purchaseRequests.organizationId, purchaseOrders.organizationId),
-            eq(purchaseRequests.id, purchaseOrders.purchaseRequestId),
-          ),
-        )
+        .innerJoin(purchaseRequests, requestOf(purchaseOrders))
         .where(scoped(scope).where(purchaseOrders, eq(purchaseOrders.id, id)));
-      if (row === undefined) throw notFound();
+      if (row === undefined || !mayReadPo(principal, row.request)) throw notFound();
       const lines = await linesOf(tx, scope, id, false);
       // A draft from the commitment route has no lines until issue copies them from the approved quotation:
       // show those as the lines it will be issued with, from the same source issue() reads.
@@ -373,20 +383,30 @@ export class PurchaseOrdersService {
         ...toDto(row.po, lines),
         vendorName: row.vendorName,
         ...(proposed !== undefined ? { proposedLines: proposed } : {}),
-        can: { enterBill: mayEnterBill(principal, row.po.status, row.request) },
+        can: {
+          enterBill: mayEnterBill(principal, row.po.status, row.request),
+          receive: mayReceivePo(
+            principal,
+            row.po.status,
+            row.request,
+            lines.some((l) => l.kind === 'service'),
+          ),
+        },
       };
     });
   }
 
-  /** Every issued version, oldest first. 404 outside the acting entity. */
+  /** Every issued version, oldest first. 404 outside the acting entity, and where get() is a 404. */
   async versions(id: string): Promise<PurchaseOrderVersionDto[]> {
-    const { scope, actor } = this.caller.current();
+    const { scope, actor, principal } = this.caller.current();
+    assertHoldsPoRead(principal);
     return withTx(this.db, scope, actor, async (tx) => {
       const [po] = await tx
-        .select({ id: purchaseOrders.id })
+        .select({ id: purchaseOrders.id, request: requestFactsColumns })
         .from(purchaseOrders)
+        .innerJoin(purchaseRequests, requestOf(purchaseOrders))
         .where(scoped(scope).where(purchaseOrders, eq(purchaseOrders.id, id)));
-      if (po === undefined) throw notFound();
+      if (po === undefined || !mayReadPo(principal, po.request)) throw notFound();
       const rows = await tx
         .select()
         .from(purchaseOrderVersions)
@@ -524,11 +544,12 @@ export class PurchaseOrdersService {
   // ------------------------------------------------------------------------------------------------- amend
 
   /**
-   * Amends an issued or partially received PO (AD7). The amended grand total incl. VAT in NPR gives a band: not
-   * higher than approved_band → version N+1 now, with an audit row; higher → the `po_amendment` route (facts
-   * amountNpr, approvedBand, requesterIsFounder; the amender is excluded by SoD) and the PO waits in
-   * amendment_pending until the decision. 422 PO_AMENDMENT_INVALID for a line of another PO, a no-op or a quantity
-   * below received plus cancelled; 422 NO_ELIGIBLE_APPROVER (nothing written) when the route cannot be staffed.
+   * Amends an issued, partially or fully received PO (F1-Q39, F1-Q40). The amended grand total incl. VAT above the
+   * order's current total, or a change of payment terms, sends it to the `po_amendment` route (facts amountNpr,
+   * approvedBand, requesterIsFounder; the amender is excluded by SoD) and the PO waits in amendment_pending until
+   * the decision; any other change is version N+1 now, with an audit row. 422 PO_AMENDMENT_INVALID for a line of
+   * another PO, a change of nothing or a quantity below received plus cancelled; 422 NO_ELIGIBLE_APPROVER (nothing
+   * written) when the route cannot be staffed.
    */
   async amend(
     id: string,
@@ -572,6 +593,13 @@ export class PurchaseOrdersService {
                 message: verdict.message,
               });
             }
+            const paymentTermsDays = body.paymentTermsDays ?? po.paymentTermsDays;
+            if (!verdict.changed && paymentTermsDays === po.paymentTermsDays) {
+              throw new UnprocessableEntityException({
+                code: 'PO_AMENDMENT_INVALID',
+                message: 'The amendment changes no quantity, price or payment terms',
+              });
+            }
             const totals = versionTotals(
               verdict.lines.map((l) => l.lineTotal),
               po.fxRate,
@@ -581,13 +609,22 @@ export class PurchaseOrdersService {
               purchaseOrderNumber: po.number,
               fromVersion: po.currentVersion,
               reason: body.reason,
-              paymentTermsDays: body.paymentTermsDays ?? po.paymentTermsDays,
+              paymentTermsDays,
               currency: po.currency,
               lines: verdict.lines,
               ...totals,
             };
+            const approvalReasons = amendmentApprovalReasons({
+              currentTotal: versionTotals(
+                lines.map((l) => l.lineTotal),
+                po.fxRate,
+              ).total,
+              nextTotal: totals.total,
+              currentTermsDays: po.paymentTermsDays,
+              nextTermsDays: paymentTermsDays,
+            });
 
-            if (!bandRises(totals.band, po.approvedBand)) {
+            if (approvalReasons.length === 0) {
               const row = await applyAmendment(tx, scope, this.audit, po, proposal, {
                 approvalRequestId: null,
                 createdBy: principal.userId,
@@ -630,7 +667,9 @@ export class PurchaseOrdersService {
                   approvedTotal: po.approvedTotal,
                   approvedTotalNpr: po.approvedTotalNpr,
                   approvedBand: po.approvedBand,
+                  paymentTermsDays: po.paymentTermsDays,
                 },
+                approvalReasons,
               },
               facts,
               requesterUserId: principal.userId,
@@ -660,6 +699,8 @@ export class PurchaseOrdersService {
                 amendmentId,
                 totalNpr: totals.totalNpr,
                 band: totals.band,
+                paymentTermsDays,
+                approvalReasons,
               },
             });
             return {

@@ -180,7 +180,7 @@ export default async function PurchaseOrdersPage({
           }
         >
           {problem.status === 403
-            ? 'Purchase orders are for the procurement team. Ask an administrator if you need access. To receive goods, open the receipts screen.'
+            ? 'Purchase orders are for procurement, accounts, finance and the warehouse. Ask an administrator if you need access.'
             : problem.message}
         </Alert>
       ) : orders !== null && orders.length === 0 ? (

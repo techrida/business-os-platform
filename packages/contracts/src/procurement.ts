@@ -32,6 +32,8 @@ export const P4_DOCUMENT_TYPES = [
   'match_exception',
   'vendor_bill',
   'payment_request',
+  // F1-Q41: Management's review of an emergency purchase after it was received.
+  'emergency_review',
 ] as const;
 export const P4DocumentTypeSchema = z.enum(P4_DOCUMENT_TYPES);
 export type P4DocumentType = z.infer<typeof P4DocumentTypeSchema>;
@@ -138,7 +140,8 @@ export const PO_TRANSITIONS: Readonly<Record<PoStatus, readonly PoStatus[]>> = {
   issued: ['partially_received', 'fully_received', 'amendment_pending', 'cancelled'],
   // The two moves back are receipt reversals: the status follows the quantities received.
   partially_received: ['fully_received', 'issued', 'amendment_pending', 'short_closed'],
-  fully_received: ['partially_received', 'issued', 'closed'],
+  // F1-Q39: more arrived than was ordered, so the order is amended first (then it is partly received again).
+  fully_received: ['partially_received', 'issued', 'amendment_pending', 'closed'],
   amendment_pending: ['issued'],
   closed: [],
   short_closed: [],
@@ -146,7 +149,7 @@ export const PO_TRANSITIONS: Readonly<Record<PoStatus, readonly PoStatus[]>> = {
 };
 export const canTransitionPo = (from: PoStatus, to: PoStatus) => allowed(PO_TRANSITIONS, from, to);
 
-/** The approval band a PO was committed in (AD4). An amendment needs re-approval only if the band rises. */
+/** The approval band a PO was committed in (AD4). It picks the approvers; F1-Q40 decides when a re-approval runs. */
 export const PO_APPROVED_BANDS = ['base', 'management', 'founder'] as const;
 export const PoApprovedBandSchema = z.enum(PO_APPROVED_BANDS);
 export type PoApprovedBand = z.infer<typeof PoApprovedBandSchema>;
@@ -330,11 +333,8 @@ export const ReceiptLineBodySchema = z.strictObject({
   poLineId: z.guid(),
   /** Above zero. A return is a reversal of a confirmed receipt, not a negative line typed by hand. */
   quantity: QuantityString,
-  /**
-   * The approved over-receipt exception that allows this line to exceed what is open. There is no exceptions table
-   * yet, so the receipts service accepts only null or absent and answers 422 for an id.
-   */
-  overReceiptExceptionId: z.guid().nullable().optional(),
+  // F1-Q39 (Kuu, 2026-11-20): no line may take more than is still open. Receiving more needs a purchase order
+  // amendment first, so there is no over-receipt exception to name here.
   inspection: text(500).optional(),
   discrepancyNote: text(1000).optional(),
   serials: z
@@ -365,7 +365,10 @@ export type ReverseReceiptBody = z.infer<typeof ReverseReceiptBodySchema>;
 /** A purchase order advance percentage, including values saved before four-place precision. */
 export const PurchaseOrderAdvancePercentSchema = PercentFourDecimals;
 
-/** Amend an issued PO: a new version. Changing the vendor is a cancel and a new PO, so no vendor field here. */
+/**
+ * Amend an issued PO: a new version. Changing the vendor is a cancel and a new PO, so no vendor field here. The lines
+ * may be empty when only the payment terms change (F1-Q40); the server refuses an amendment that changes nothing.
+ */
 export const AmendPurchaseOrderBodySchema = z.strictObject({
   reason: text(1000),
   paymentTermsDays: z.number().int().min(0).max(365).optional(),
@@ -377,7 +380,6 @@ export const AmendPurchaseOrderBodySchema = z.strictObject({
         unitPrice: NonNegativeDecimalString.optional(),
       }),
     )
-    .min(1)
     .max(200),
 });
 export type AmendPurchaseOrderBody = z.infer<typeof AmendPurchaseOrderBodySchema>;

@@ -1,6 +1,7 @@
-// Unit tests of the thin HTTP layer of the purchase order PDF: the download route carries @Can('procurement.po.issue')
-// and is a GET of :id/versions/:version/document; the retry route (round 4, R4c2) carries the same permission (issuing
-// triggers the render) and is a POST of :id/versions/:version/document/retry answering 202. Both pass the ids to the
+// Unit tests of the thin HTTP layer of the purchase order PDF: the download route is a GET of
+// :id/versions/:version/document open like the other purchase order reads (@AnyAuthenticated; the service decides who
+// may read the order, F1-Q52); the retry route (round 4, R4c2) carries procurement.po.issue (issuing triggers the
+// render) and is a POST of :id/versions/:version/document/retry answering 202. Both pass the ids to the
 // service as given. The service is a fake; its rules are in the integration test.
 import 'reflect-metadata';
 
@@ -32,13 +33,13 @@ async function setup() {
 }
 
 describe('POST /v1/procurement/purchase-orders/:id/versions/:version/document/retry', () => {
-  it('needs procurement.po.issue like the download, is a POST answering 202 and passes the ids on', async () => {
+  it('needs procurement.po.issue (the download does not), is a POST answering 202 and passes the ids on', async () => {
     const { moduleRef, controller, service } = await setup();
     const handler = PurchaseOrderDocumentController.prototype.retry;
     expect(Reflect.getMetadata(CAN_KEY, handler)).toBe('procurement.po.issue');
-    expect(Reflect.getMetadata(CAN_KEY, PurchaseOrderDocumentController.prototype.link)).toBe(
-      'procurement.po.issue',
-    );
+    expect(
+      Reflect.getMetadata(CAN_KEY, PurchaseOrderDocumentController.prototype.link),
+    ).toBeUndefined();
     expect(Reflect.getMetadata('path', handler)).toBe(':id/versions/:version/document/retry');
     expect(Reflect.getMetadata('method', handler)).toBe(RequestMethod.POST);
     expect(Reflect.getMetadata('__httpCode__', handler)).toBe(202);

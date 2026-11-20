@@ -14,6 +14,8 @@
 // - "one legal entity at a time": a PO or receipt of another entity is a 404 on every route, never a 403.
 // The PO status is derived from the received quantities (issued, partially_received, fully_received); PO_TRANSITIONS
 // allows each of those moves, reversals included. Any other PO status is left alone and refuses receipts.
+// F1-Q41: the confirmation that first brings an emergency purchase's order to fully_received asks Management to
+// review it (emergency-review.ts), in the same transaction.
 import { type Permission, type PoStatus, type ReverseReceiptBody } from '@bos/contracts';
 import {
   purchaseOrderLines,
@@ -45,6 +47,9 @@ import { DB, type Db, type DbTransaction } from '../../../platform/db/db.module'
 import { updateVersioned, withIdempotency } from '../../../platform/db/idempotency';
 import { withTx, type TxScope } from '../../../platform/db/tx';
 import { NumberingService } from '../../../platform/settings/numbering.service';
+import { ApprovalsService } from '../../approvals/requests.service';
+import { holdsPoRead, mayReadPo, mayReceiveKind } from '../orders/po-read-access';
+import { requestEmergencyReview } from './emergency-review';
 import {
   RECEIPT_AUDIT_ENTITY,
   RECEIPT_DERIVED_PO_STATUSES,
@@ -52,8 +57,12 @@ import {
   RECEIVING_PO_STATUSES,
   derivePoStatus,
   openQuantity,
+  overReceiptMessage,
   progressRowsOf,
+  receiptCan,
+  repeatedSerialAcrossLines,
   reversalLinesOf,
+  serialOnTwoLines,
   serialViolation,
   toReceiptDto,
   validateDraftLines,
@@ -150,16 +159,19 @@ export class ReceiptsService {
     @Optional()
     @Inject(RECEIPTS_CLOCK)
     private readonly clock: () => Date = () => new Date(),
+    /** Asks for the review of an emergency purchase (F1-Q41); absent in tests that do not look. */
+    @Optional() private readonly approvals?: ApprovalsService,
   ) {}
 
   // ------------------------------------------------------------------------------------------------- reads
 
-  /** The receipts of one PO, newest first. 404 for another entity's PO. */
+  /** The receipts of one PO, newest first, each with what the caller may do with it. 404 for another entity's PO. */
   async list(purchaseOrderId: string): Promise<ReceiptDto[]> {
     this.assertStaffWithAccess();
-    const { scope } = this.caller.current();
+    const { scope, principal } = this.caller.current();
     const po = await this.readPo(this.db, scope, purchaseOrderId);
-    this.assertMayRead(await this.requestOf(this.db, scope, po));
+    const request = await this.requestOf(this.db, scope, po);
+    this.assertMayRead(request);
     const rows = await this.db
       .select()
       .from(receipts)
@@ -170,29 +182,38 @@ export class ReceiptsService {
       .from(receiptLines)
       .where(scoped(scope).where(receiptLines, eq(receiptLines.purchaseOrderId, po.id)));
     const serials = await this.serialsOf(this.db, scope, lines);
-    return rows.map((r) =>
-      toReceiptDto(
+    return rows.map((r) => ({
+      ...toReceiptDto(
         r,
         lines.filter((l) => l.receiptId === r.id),
         serials,
       ),
-    );
+      can: receiptCan(mayReceiveKind(principal, r.kind, request), r, po.status),
+    }));
   }
 
   /** One receipt with its lines and serials; 404 outside the caller's entity or reach. */
   async get(id: string): Promise<ReceiptDto> {
     this.assertStaffWithAccess();
-    const { scope } = this.caller.current();
+    const { scope, principal } = this.caller.current();
     const row = await this.readReceipt(this.db, scope, id);
     const po = await this.readPo(this.db, scope, row.purchaseOrderId);
-    this.assertMayRead(await this.requestOf(this.db, scope, po));
-    return this.dtoOf(this.db, scope, row);
+    const request = await this.requestOf(this.db, scope, po);
+    this.assertMayRead(request);
+    return {
+      ...(await this.dtoOf(this.db, scope, row)),
+      can: receiptCan(mayReceiveKind(principal, row.kind, request), row, po.status),
+    };
   }
 
-  /** Ordered, received (confirmed, net of reversals), still open and billed per PO line. */
+  /**
+   * Ordered, received (confirmed, net of reversals), still open and billed per PO line. Also open to whoever may read
+   * the order itself (F1-Q52: the read-only purchase order page shows it to finance, who reads bills).
+   */
   async progress(purchaseOrderId: string): Promise<PoProgress> {
-    this.assertStaffWithAccess(true);
-    const { scope } = this.caller.current();
+    const { scope, principal } = this.caller.current();
+    const readsOrders = holdsPoRead(principal);
+    if (!readsOrders) this.assertStaffWithAccess(true);
     const [row] = await this.db
       .select({ po: purchaseOrders, vendorName: vendors.legalName })
       .from(purchaseOrders)
@@ -204,7 +225,8 @@ export class ReceiptsService {
       .limit(1);
     if (row === undefined) throw notFound('Purchase order');
     const { po, vendorName } = row;
-    this.assertMayRead(await this.requestOf(this.db, scope, po), true);
+    const request = await this.requestOf(this.db, scope, po);
+    if (!readsOrders || !mayReadPo(principal, request)) this.assertMayRead(request, true);
     const lines = await this.db
       .select()
       .from(purchaseOrderLines)
@@ -218,6 +240,10 @@ export class ReceiptsService {
       number: po.number,
       status: po.status,
       lines: progressRowsOf(lines.map(poFacts), quantities),
+      can: {
+        goods: mayReceiveKind(principal, 'goods', request),
+        service: mayReceiveKind(principal, 'service', request),
+      },
     };
   }
 
@@ -254,6 +280,12 @@ export class ReceiptsService {
   ): Promise<ReceiptDto> {
     const po = await this.lockPo(tx, scope, body.purchaseOrderId);
     this.assertMayReceive(body.kind, await this.requestOf(tx, scope, po));
+    if (po.status === 'fully_received') {
+      // F1-Q39: more than was ordered needs an amendment first.
+      throw invalidTransition(
+        'Everything ordered on this purchase order has been received. To receive more, ask Procurement to amend the purchase order first.',
+      );
+    }
     if (!RECEIVING_PO_STATUSES.includes(po.status)) {
       throw invalidTransition(
         `A ${po.status} purchase order cannot take a receipt; it must be issued`,
@@ -421,13 +453,12 @@ export class ReceiptsService {
     const quantities = await this.quantitiesOf(tx, scope, po.id);
     for (const line of lines) {
       const poLine = poLines.find((p) => p.id === line.poLineId)!;
-      if (
-        line.overReceiptExceptionId === null &&
-        openQuantity(poFacts(poLine), quantities.get(poLine.id)?.net).isNegative()
-      ) {
+      const open = openQuantity(poFacts(poLine), quantities.get(poLine.id)?.net);
+      if (open.isNegative()) {
+        // `net` already counts this draft, so what it may take is what is open plus its own quantity.
         throw unprocessable({
           code: 'over_receipt',
-          message: `PO line ${poLine.lineNo}: this receipt takes more than the ${poLine.orderedQuantity} ordered less ${poLine.cancelledQuantity} cancelled`,
+          message: overReceiptMessage(poLine.lineNo, Decimal.max(open.plus(line.quantity), 0)),
         });
       }
       const mine = serials.filter((s) => s.receiptLineId === line.id);
@@ -440,6 +471,12 @@ export class ReceiptsService {
       if (bad !== null)
         throw unprocessable({ ...bad, message: `PO line ${poLine.lineNo}: ${bad.message}` });
     }
+    const repeated = repeatedSerialAcrossLines(
+      lines.map((l) => ({
+        serialNos: serials.filter((s) => s.receiptLineId === l.id).map((s) => s.serialNo),
+      })),
+    );
+    if (repeated !== null) throw unprocessable(serialOnTwoLines(repeated));
 
     const row = await updateVersioned(tx, receipts, id, receipt.version, {
       status: 'confirmed',
@@ -448,6 +485,15 @@ export class ReceiptsService {
       updatedAt: now,
     });
     const poStatus = await this.syncPoStatus(tx, scope, po, poLines, now);
+    if (poStatus === 'fully_received' && po.status !== 'fully_received' && this.approvals) {
+      await requestEmergencyReview(
+        tx,
+        scope,
+        { approvals: this.approvals, audit: this.audit },
+        po,
+        userId,
+      );
+    }
     await this.audit.record(tx, {
       action: 'procurement.receipt.confirmed',
       entityType: RECEIPT_AUDIT_ENTITY,
@@ -794,7 +840,8 @@ export class ReceiptsService {
     if (pg?.code === '23514' && pg.constraint === 'receipt_lines_over_receipt_check') {
       return unprocessable({
         code: 'over_receipt',
-        message: 'This receipt takes more than the quantity still open on a PO line',
+        message:
+          'This receipt takes more than is still open on a purchase order line. To receive more, ask Procurement to amend the purchase order first.',
       });
     }
     if (pg?.code === '23505' && pg.constraint === 'receipt_serials_tenant_line_serial_unique') {

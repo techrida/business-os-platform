@@ -7,6 +7,8 @@
 // A PO is receivable in the statuses ReceiptsService takes receipts in (RECEIVING_PO_STATUSES). Its open quantity is
 // ordered - cancelled - received over every line, where received counts confirmed and reversed receipts (a reversal
 // nets its original to zero) and never drafts: the same `confirmed` figure ReceiptsService.progress reports.
+// U18-Q3: the same grant also lists the orders the warehouse has finished with (fully received or closed), newest
+// receipt first, so it can look back at what it received; read-only, opened through the receipts page.
 import {
   purchaseOrderLines,
   purchaseOrders,
@@ -44,6 +46,27 @@ export interface ReceivableOrderDto {
   issuedAt?: string;
   /** Decimal string with four places: ordered - cancelled - received, over all lines. */
   openQuantity: string;
+}
+
+/** Query of `GET /v1/procurement/received-orders`: the orders received most recently first, at most `limit`. */
+export const ListReceivedOrdersQuerySchema = z.strictObject({
+  limit: z.coerce.number().int().min(1).max(100).default(20),
+});
+export type ListReceivedOrdersQuery = z.infer<typeof ListReceivedOrdersQuerySchema>;
+
+/** The statuses of an order the warehouse has finished with: everything arrived, or the order was closed. */
+export const RECEIVED_PO_STATUSES = ['fully_received', 'closed', 'short_closed'] as const;
+
+export interface ReceivedOrderDto {
+  id: string;
+  number: string;
+  vendorId: string;
+  /** `vendors.legalName`. */
+  vendorName: string;
+  kind: 'goods' | 'service' | 'mixed';
+  status: (typeof RECEIVED_PO_STATUSES)[number];
+  /** ISO timestamp of the latest confirmed receipt (or reversal); absent when nothing was ever confirmed. */
+  lastReceivedAt?: string;
 }
 
 const kindOf = (goodsLines: number, serviceLines: number): ReceivableOrderDto['kind'] =>
@@ -147,6 +170,77 @@ export class ReceivableOrdersService {
         status: o.status as ReceivableOrderDto['status'],
         ...(o.issuedAt === null ? {} : { issuedAt: o.issuedAt.toISOString() }),
         openQuantity: new Decimal(o.planned).minus(receivedBy.get(o.id) ?? 0).toFixed(4),
+      }));
+    });
+  }
+
+  /**
+   * The acting entity's fully received, closed and short-closed POs, the most recently received first (an order
+   * with no confirmed receipt last), with the vendor name and kind. One read.
+   */
+  async listReceived(query: ListReceivedOrdersQuery): Promise<ReceivedOrderDto[]> {
+    const { scope, actor } = this.caller.current();
+    const lastReceivedAt = sql<Date | string | null>`(
+      select max(${receipts.confirmedAt}) from ${receipts}
+      where ${receipts.tenantId} = ${purchaseOrders.tenantId}
+        and ${receipts.organizationId} = ${purchaseOrders.organizationId}
+        and ${receipts.purchaseOrderId} = ${purchaseOrders.id}
+        and ${receipts.status} in ('confirmed', 'reversed')
+    )`;
+    return withTx(this.db, scope, actor, async (tx) => {
+      const orders = await tx
+        .select({
+          id: purchaseOrders.id,
+          number: purchaseOrders.number,
+          vendorId: purchaseOrders.vendorId,
+          vendorName: vendors.legalName,
+          status: purchaseOrders.status,
+          lastReceivedAt,
+          goodsLines: sql<number>`count(*) filter (where ${purchaseOrderLines.kind} = 'goods')::int`,
+          serviceLines: sql<number>`count(*) filter (where ${purchaseOrderLines.kind} = 'service')::int`,
+        })
+        .from(purchaseOrders)
+        .innerJoin(
+          purchaseOrderLines,
+          and(
+            eq(purchaseOrderLines.tenantId, purchaseOrders.tenantId),
+            eq(purchaseOrderLines.organizationId, purchaseOrders.organizationId),
+            eq(purchaseOrderLines.purchaseOrderId, purchaseOrders.id),
+          ),
+        )
+        .innerJoin(
+          vendors,
+          and(
+            eq(vendors.tenantId, purchaseOrders.tenantId),
+            eq(vendors.id, purchaseOrders.vendorId),
+          ),
+        )
+        .where(
+          scoped(scope).where(
+            purchaseOrders,
+            inArray(purchaseOrders.status, [...RECEIVED_PO_STATUSES]),
+          ),
+        )
+        .groupBy(
+          purchaseOrders.id,
+          purchaseOrders.number,
+          purchaseOrders.vendorId,
+          vendors.legalName,
+          purchaseOrders.status,
+        )
+        .orderBy(sql`${lastReceivedAt} desc nulls last`, desc(purchaseOrders.id))
+        .limit(query.limit);
+      return orders.map((o) => ({
+        id: o.id,
+        number: o.number,
+        vendorId: o.vendorId,
+        vendorName: o.vendorName,
+        kind: kindOf(o.goodsLines, o.serviceLines),
+        // The where clause keeps only the finished statuses.
+        status: o.status as ReceivedOrderDto['status'],
+        ...(o.lastReceivedAt === null
+          ? {}
+          : { lastReceivedAt: new Date(o.lastReceivedAt).toISOString() }),
       }));
     });
   }
