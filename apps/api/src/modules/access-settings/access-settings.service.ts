@@ -60,6 +60,7 @@ import {
 } from './access-catalogue';
 import {
   type AccessSnapshot,
+  type EvaluationResult,
   type SimulatedState,
   type SnapshotDepartment,
   type SnapshotUser,
@@ -209,6 +210,29 @@ function buildGrantRows(
   return grants;
 }
 
+/**
+ * The 422 `save` throws for a batch the evaluator refuses (a field error or a blocked warning),
+ * with the same message and body, or null when the batch can be saved. The dry run uses it so it
+ * refuses what the save refuses.
+ */
+export function accessSaveRefusal(
+  evalResult: Pick<EvaluationResult, 'warnings' | 'fieldErrors'>,
+): UnprocessableEntityException | null {
+  const blockedWarnings = evalResult.warnings.filter((w) => w.severity === 'blocked');
+  const hasFieldErrors = Object.keys(evalResult.fieldErrors).length > 0;
+  if (!hasFieldErrors && blockedWarnings.length === 0) return null;
+  const firstMessage =
+    blockedWarnings[0]?.message ??
+    Object.values(evalResult.fieldErrors)[0] ??
+    'These access changes cannot be saved.';
+  return new UnprocessableEntityException({
+    code: 'unprocessable',
+    message: firstMessage,
+    ...(hasFieldErrors ? { fieldErrors: evalResult.fieldErrors } : {}),
+    ...(blockedWarnings.length > 0 ? { warnings: blockedWarnings } : {}),
+  });
+}
+
 @Injectable()
 export class AccessSettingsService {
   /**
@@ -245,6 +269,14 @@ export class AccessSettingsService {
   async preview(scope: TxScope, req: AccessPreviewRequest): Promise<AccessPreviewResponse> {
     const loaded = await this.loadSnapshot(this.db, scope, { includeOpenOwned: true });
     const evalResult = evaluateAccessChanges(loaded.snapshot, req.changes);
+
+    // A blocked warning already shows the refusal in the response. A change the save refuses with
+    // only a field error (say a head who is not in the department) would otherwise look ready to
+    // save, so refuse it here with the save's own 422.
+    const refusal = accessSaveRefusal(evalResult);
+    if (refusal !== null && !evalResult.warnings.some((w) => w.severity === 'blocked')) {
+      throw refusal;
+    }
 
     let report: CheckPersonReport | null | undefined;
     if (req.person !== undefined) {
@@ -1349,11 +1381,16 @@ export class AccessSettingsService {
       level: user.level,
     };
 
+    // A person with no membership in this entity cannot act in it, so the company-level roles give
+    // nothing here; the same holds for an inactive account.
+    const hasNoAccess = (u: SnapshotUser): boolean => u.status === 'inactive' || !u.inEntity;
+    const noAccess = hasNoAccess(user);
+
     const areaRows: CheckPersonAreaRow[] = await Promise.all(
       ACCESS_SETTING_AREA_KEYS.map(async (areaKey) => {
         const area = AREA_BY_KEY.get(areaKey)!;
         const effective = effectiveScopeForUser(user, area.seePermission, grantMap, levelMap);
-        const effScope = user.status === 'inactive' ? null : effective.scope;
+        const effScope = noAccess ? null : effective.scope;
         const scopeLabel = reachLabel(effScope, 'record');
 
         const { visibleCount, totalCount } = await this.countAreaRecords(
@@ -1366,7 +1403,7 @@ export class AccessSettingsService {
         );
 
         const actions: CheckPersonAction[] = [];
-        if (user.status !== 'inactive') {
+        if (!noAccess) {
           for (const actionPerm of area.actionPermissions) {
             const actionEff = effectiveScopeForUser(user, actionPerm, grantMap, levelMap);
             if (actionEff.scope !== null) {
@@ -1400,7 +1437,9 @@ export class AccessSettingsService {
           }
         }
 
-        const why = explainAreaAccess(user, areaKey, grantMap, levelMap);
+        const why = user.inEntity
+          ? explainAreaAccess(user, areaKey, grantMap, levelMap)
+          : ['No access in this entity.'];
         if (user.status === 'inactive') {
           why.unshift('This account is inactive.');
         }
@@ -1413,7 +1452,7 @@ export class AccessSettingsService {
             previous.grantMap,
             previous.levelMap,
           );
-          const prevScope = previous.user.status === 'inactive' ? null : prevEff.scope;
+          const prevScope = hasNoAccess(previous.user) ? null : prevEff.scope;
           const prevLabel = reachLabel(prevScope, 'record');
           if (prevLabel !== scopeLabel) {
             previousScopeLabel = prevLabel;
