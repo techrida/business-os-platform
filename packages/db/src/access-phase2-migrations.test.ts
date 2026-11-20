@@ -508,8 +508,10 @@ describe('0088 tenants and versions', () => {
   });
 
   it('bumps the authz version once for each tenant whose rows changed', async () => {
-    expect(await authzVersion(tenantA.tenantId)).toBe(4);
-    expect(await authzVersion(tenantB.tenantId)).toBe(2);
+    // One bump from 0088, and one more from the later 0104 (credit.override rows for Founder, Management and Finance
+    // in every tenant with rows), which the full folder also applies.
+    expect(await authzVersion(tenantA.tenantId)).toBe(5);
+    expect(await authzVersion(tenantB.tenantId)).toBe(3);
   });
 
   it('changes nothing and bumps nothing when its grant statements run again', async () => {
