@@ -10,6 +10,7 @@ import { PageHeader } from '@/components/ui/page';
 import { Panel } from '@/components/ui/panel';
 
 import type { VendorField, VendorValues } from '../_lib/forms';
+import { VENDOR_STATUS_LABEL } from '../_lib/model';
 import type { VendorFormState } from '../_lib/state';
 import styles from '../vendors.module.css';
 
@@ -203,6 +204,30 @@ export function VendorForm({
           actions={state.reload ? <a href={reloadHref}>Reload this vendor</a> : null}
         >
           {state.error}
+        </Alert>
+      ) : null}
+
+      {mode === 'create' && state.sameName !== undefined && state.sameName.length > 0 ? (
+        <Alert tone="warning" title="A vendor with this name already exists">
+          Check it is not the same vendor before you add another:
+          <ul>
+            {state.sameName.map((m) => (
+              <li key={m.id}>
+                <a href={`/vendors/${encodeURIComponent(m.id)}`} target="_blank" rel="noreferrer">
+                  {m.legalName}
+                </a>{' '}
+                ({VENDOR_STATUS_LABEL[m.status].text})
+              </li>
+            ))}
+          </ul>
+          <label className={styles.check}>
+            <input
+              type="checkbox"
+              name="sameNameConfirmed"
+              value={state.sameName.map((m) => m.id).join(',')}
+            />
+            This is a different vendor. Add it anyway.
+          </label>
         </Alert>
       ) : null}
 

@@ -16,8 +16,10 @@ import {
   lapsedTaxClearance,
   LIFECYCLE,
   lifecycleAllowed,
+  sameNameVendors,
   submitKycMove,
   vendorPartyCode,
+  vendorNameKey,
   type LifecycleCommand,
 } from './vendors.rules';
 
@@ -135,5 +137,25 @@ describe('kybReadyForReview (the gate of "Send for review")', () => {
     for (const s of [undefined, 'open', 'draft', 'rejected', 'changes_requested', '']) {
       expect(kybReadyForReview(s)).toBe(false);
     }
+  });
+});
+
+describe('vendor name key (TR-Q12d same-name warning)', () => {
+  it('ignores case, spaces, punctuation and company-form words', () => {
+    const key = vendorNameKey('Himal Hardware Traders Pvt. Ltd.');
+    expect(vendorNameKey('  himal   hardware-traders  PRIVATE LIMITED ')).toBe(key);
+    expect(vendorNameKey('HIMAL HARDWARE TRADERS (P) LTD')).toBe(key);
+    expect(vendorNameKey('Himal Hardware')).not.toBe(key);
+  });
+
+  it('finds the rows with the same key, and none for a name with no letters or digits', () => {
+    const rows = [
+      { id: 'a', legalName: 'Everest Supplies Pvt Ltd' },
+      { id: 'b', legalName: 'Everest Supplies & Co.' },
+      { id: 'c', legalName: 'Everest Supply' },
+      { id: 'd', legalName: '...' },
+    ];
+    expect(sameNameVendors('everest supplies', rows).map((r) => r.id)).toEqual(['a', 'b']);
+    expect(sameNameVendors(' -- ', rows)).toEqual([]);
   });
 });

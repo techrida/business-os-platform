@@ -10,6 +10,7 @@ import { isGuid } from '@/components/p2/customers/format';
 import {
   createVendor,
   createVendorContact,
+  findVendorNameMatches,
   getVendor,
   grantVendorPortalAccess,
   proposeBankAccount,
@@ -86,6 +87,14 @@ export async function createVendorAction(
   }
   const parsed = parseCreateVendor(vendorValues(form));
   if (!parsed.ok) return { key, errors: parsed.errors };
+
+  // TR-Q12d, warn but allow: a vendor whose name matches one already on file is added only after the
+  // person confirms it is a different one. Checked again on every submit, so a namesake the person has
+  // not seen (a changed name, or one added meanwhile) is shown before anything is created. The check is
+  // advice: if it cannot be read the vendor is still added, and the API's audit trail names any namesake.
+  const confirmed = new Set(text(form, 'sameNameConfirmed').split(',').filter(isGuid));
+  const sameName = await findVendorNameMatches(session, parsed.data.legalName).catch(() => []);
+  if (sameName.some((m) => !confirmed.has(m.id))) return { key, errors: {}, sameName };
 
   let id: string;
   try {

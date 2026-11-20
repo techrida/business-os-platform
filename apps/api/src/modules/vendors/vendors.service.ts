@@ -60,6 +60,7 @@ import {
   lapsedTaxClearance,
   LIFECYCLE,
   lifecycleAllowed,
+  sameNameVendors,
   submitKycMove,
   vendorPartyCode,
   type LifecycleCommand,
@@ -71,6 +72,8 @@ import {
   type UpdateVendorContactBody,
   type VendorContactDto,
   type VendorList,
+  type VendorNameMatches,
+  type VendorNameMatchesQuery,
   type VendorReviewReadiness,
 } from './vendors.types';
 
@@ -84,6 +87,9 @@ export const VENDORS_CLOCK = Symbol('VENDORS_CLOCK');
 const PAN_INDEX = 'vendors_tenant_pan_unique';
 const PRIMARY_CONTACT_INDEX = 'vendor_contacts_tenant_vendor_primary_unique';
 const ACCOUNT_UNIQUE = 'vendor_accounts_tenant_org_vendor_unique';
+
+/** Most vendors one name-match answer lists: enough to recognise the record, small enough to read. */
+const NAME_MATCH_LIMIT = 20;
 
 const vendorNotFound = () =>
   new NotFoundException({ code: 'not_found', message: 'Vendor not found' });
@@ -296,6 +302,22 @@ export class VendorsService {
   }
 
   /**
+   * The vendors the caller may read whose legal name matches `legalName` (vendorNameKey), every status included:
+   * a blocked or archived namesake is the case the warning is for. A warning only (TR-Q12d): create never refuses.
+   * The key is worked out here, not in SQL (the table has no name key), over the tenant's id, name and status.
+   */
+  async nameMatches(query: VendorNameMatchesQuery): Promise<VendorNameMatches> {
+    const { scope, principal } = this.caller.current();
+    this.assertStaff(principal);
+    const rows = await this.db
+      .select({ id: vendors.id, legalName: vendors.legalName, status: vendors.status })
+      .from(vendors)
+      .where(this.visibleWhere(scope.tenantId, principal, 'vendor.read'))
+      .orderBy(asc(vendors.legalName), asc(vendors.id));
+    return { matches: sameNameVendors(query.legalName, rows).slice(0, NAME_MATCH_LIMIT) };
+  }
+
+  /**
    * Whether the vendor's KYB case is submitted or approved: the same check `submitKyc` makes before pending_kyc ->
    * under_review, so "Send for review" is drawn only when the API would take it. Needs `vendor.read` on the vendor.
    */
@@ -369,6 +391,7 @@ export class VendorsService {
               createdAt: now,
               updatedAt: now,
             });
+            await this.recordSameName(tx, scope.tenantId, id, body.legalName);
             return { status: 201, response: toVendorDto(row!, principal) };
           } catch (error) {
             // Two creates with the same PAN can both pass the pre-check; the unique index decides.
@@ -861,6 +884,33 @@ export class VendorsService {
       default:
         return none;
     }
+  }
+
+  /**
+   * TR-Q12d: a vendor added under a name another vendor of the tenant already has (vendorNameKey) is allowed, and
+   * the audit trail names the namesakes, so a review can find a duplicate made on purpose. Tenant-wide, whatever
+   * the caller may read; ids only.
+   */
+  private async recordSameName(
+    tx: DbTransaction,
+    tenantId: string,
+    id: string,
+    legalName: string,
+  ): Promise<void> {
+    const others = await tx
+      .select({ id: vendors.id, legalName: vendors.legalName })
+      .from(vendors)
+      .where(and(eq(vendors.tenantId, tenantId), ne(vendors.id, id)))
+      .orderBy(asc(vendors.id));
+    const same = sameNameVendors(legalName, others);
+    if (same.length === 0) return;
+    await this.audit.record(tx, {
+      action: 'vendor.created_with_same_name',
+      entityType: 'vendor',
+      entityId: id,
+      after: { legalName },
+      meta: { sameNameVendorIds: same.map((v) => v.id) },
+    });
   }
 
   /** Record-level authz that answers 404, not 403, for a record outside the caller's scope. */

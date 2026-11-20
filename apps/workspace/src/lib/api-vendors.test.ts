@@ -7,6 +7,7 @@ import type { Session } from '@/lib/session';
 import {
   createBankEvidence,
   createVendor,
+  findVendorNameMatches,
   getVendorReviewReadiness,
   grantVendorPortalAccess,
   listBankAccounts,
@@ -212,6 +213,17 @@ describe('writes carry the Idempotency-Key', () => {
     expect(init.method).toBe('PATCH');
     expect(headers.get('idempotency-key')).toBeNull();
     expect(JSON.parse(init.body as string)).toEqual({ expectedVersion: 3, vatRegistered: false });
+  });
+
+  it('asks for vendors with the same name and returns the matches', async () => {
+    const match = { id: ID_A, legalName: 'Himal Traders', status: 'approved' };
+    answer(reply({ matches: [match] }));
+    expect(await findVendorNameMatches(session, 'Himal Traders & Co')).toEqual([match]);
+    expect(lastCall().url).toBe(
+      'http://api:3001/v1/vendors/name-matches?legalName=Himal+Traders+%26+Co',
+    );
+    answer(reply({ matches: [{ ...match, status: 'gone' }] }));
+    await expect(findVendorNameMatches(session, 'Himal')).rejects.toThrow();
   });
 
   it('reads the KYB review readiness and refuses a body that drifts from it', async () => {
