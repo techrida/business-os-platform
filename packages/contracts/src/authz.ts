@@ -58,6 +58,8 @@ export const PERMISSIONS = [
   'payment.verify',
   'payment.allocate',
   'ar.read',
+  // F1-Q20/F1-Q26: let a deal whose customer is over its credit limit become a sales order, with a reason.
+  'credit.override',
   // Customer portal: a customer user reads their own issued invoices and submits proof of payment.
   'portal.invoice.read',
   'portal.payment.submit',
@@ -198,6 +200,12 @@ const billingFinanceGrants: RoleGrants = {
 };
 
 /**
+ * F1-Q20/F1-Q26: Management and Finance override a deal's credit hold (with a reason, audited). On/off, so `all`.
+ * Migration 0104 writes the rows for tenants that already hold role_permissions rows.
+ */
+const creditOverrideGrants: RoleGrants = { 'credit.override': 'all' };
+
+/**
  * Every staff role sets its own profile picture (U12). Founder holds it at `all` through PERMISSIONS, and so may
  * set anyone's; no other default role holds `admin.users.invite`. Migration 0053 gives existing staff roles `own`,
  * and `all` to founder and to any role that holds `admin.users.invite`. Portal roles get none.
@@ -271,6 +279,7 @@ export const DEFAULT_ROLE_PERMISSIONS: Record<RoleKey, RoleGrants> = {
     ...salesRecordsReadAllGrants,
     ...salesCostReadGrants,
     ...billingReadAllGrants,
+    ...creditOverrideGrants,
   },
   finance: {
     ...ownProfileGrants,
@@ -283,6 +292,7 @@ export const DEFAULT_ROLE_PERMISSIONS: Record<RoleKey, RoleGrants> = {
     ...billingReadAllGrants,
     ...billingPreparerGrants,
     ...billingFinanceGrants,
+    ...creditOverrideGrants,
     ...p4FinanceGrants,
   },
   accountant: {
