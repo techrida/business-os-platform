@@ -4,7 +4,7 @@
 // Driven through the real form and a stubbed action, with matches in the route's own shape.
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { click, mountForm, submit } from '@/test/form-interactions';
+import { click, fill, mountForm, submit } from '@/test/form-interactions';
 
 import { CUSTOMER_ID } from '../_lib/fixtures';
 
@@ -106,6 +106,40 @@ describe('payment form, bank reference already recorded (TR-Q12d)', () => {
       const sent = mocks.action.mock.calls[1]?.[1];
       expect(sent?.get('referenceConfirmed')).toBe(`${EARLIER},${OLDER}`);
       expect(sent?.get('idempotencyKey')).toBe('aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa');
+    } finally {
+      await mounted.unmount();
+    }
+  });
+
+  it('keeps what was typed through the warning, and a new set of matches starts unticked', async () => {
+    const key = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa';
+    mocks.action
+      .mockResolvedValueOnce({ key, referenceMatches: [matches[0]!] })
+      .mockResolvedValueOnce({ key, referenceMatches: matches });
+    const mounted = await mount();
+    try {
+      const { container } = mounted;
+      await fill(container.querySelector('input[name="amount"]'), '250.50');
+      await fill(container.querySelector('input[name="bankReference"]'), 'NIC 77812');
+      await submit(container);
+      await click(container.querySelector('input[name="referenceConfirmed"]'));
+      // Someone recorded another payment with this reference in the meantime: the action warns again.
+      await submit(container);
+      const sent = mocks.action.mock.calls[1]?.[1];
+      expect(sent?.get('referenceConfirmed')).toBe(EARLIER);
+      expect(sent?.get('amount')).toBe('250.50');
+      expect(sent?.get('bankReference')).toBe('NIC 77812');
+      expect(sent?.get('customerId')).toBe(CUSTOMER_ID);
+
+      const confirm = container.querySelector<HTMLInputElement>('input[name="referenceConfirmed"]');
+      expect(confirm?.value).toBe(`${EARLIER},${OLDER}`);
+      expect(confirm?.checked).toBe(false);
+      expect(container.querySelector<HTMLInputElement>('input[name="amount"]')?.value).toBe(
+        '250.50',
+      );
+      expect(container.querySelector<HTMLInputElement>('input[name="bankReference"]')?.value).toBe(
+        'NIC 77812',
+      );
     } finally {
       await mounted.unmount();
     }

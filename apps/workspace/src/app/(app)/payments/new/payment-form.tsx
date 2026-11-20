@@ -282,7 +282,9 @@ export function PaymentForm({
               ))}
             </ul>
             <label className={styles.check}>
+              {/* Keyed by the list, so a new set of matches always starts unticked. */}
               <input
+                key={referenceMatches.map((m) => m.id).join(',')}
                 type="checkbox"
                 name="referenceConfirmed"
                 value={referenceMatches.map((m) => m.id).join(',')}
