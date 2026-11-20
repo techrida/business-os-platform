@@ -638,6 +638,20 @@ describe('scoring, recommending and committing on the detail', () => {
     );
   });
 
+  it('puts the commitment submit in the page header, not in a side panel', async () => {
+    rfqApi.getRfq.mockResolvedValue(rfq({ status: 'recommended', recommendedQuotationId: Q1 }));
+    const out = await detail();
+    const header = out.slice(0, out.indexOf('<section'));
+    expect(header).toContain('Submit for commitment approval');
+    expect(out.match(/Submit for commitment approval/g)).toHaveLength(1);
+    expect(out).not.toContain(
+      'Send the recommended quotation to be approved before a purchase order.',
+    );
+    // A recommended RFQ takes no quotation and no deadline extension.
+    expect(header).not.toContain('>Enter a quotation<');
+    expect(header).not.toContain('>Extend deadline<');
+  });
+
   it('shows no submit once the request waits on the approvers, and the approval panel appears', async () => {
     rfqApi.getRfq.mockResolvedValue(
       rfq({ status: 'recommended', recommendedQuotationId: Q1, commitmentApprovalRequestId: PR }),
