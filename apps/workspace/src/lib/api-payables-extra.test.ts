@@ -188,7 +188,8 @@ describe('staff invoice upload client', () => {
 
 describe('payment request pages', () => {
   it('repeats the status key, sends the search and offset, and reads the total from the header', async () => {
-    const { lines: _lines, ...row } = request;
+    const { lines: _lines, ...fields } = request;
+    const row = { ...fields, vendorName: 'Himal Supplies', can: { readVendor: true } };
     vi.mocked(apiFetch).mockImplementation(() =>
       Promise.resolve(
         new Response(JSON.stringify([row]), { status: 200, headers: { 'x-total-count': '61' } }),
