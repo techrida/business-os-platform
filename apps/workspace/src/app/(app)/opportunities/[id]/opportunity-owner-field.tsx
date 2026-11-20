@@ -20,7 +20,8 @@ export interface OpportunityOwnerFieldProps {
 
 /**
  * The opportunity page's "Owner" fact for people who may edit the deal (F1-Q51): the same control
- * as a lead's owner. Open follow-ups move to the new owner, so the hint and the toast say so. A
+ * as a lead's owner. The previous owner's open follow-ups move to the new owner (others' stay), so the
+ * hint and the toast say so. A
  * hand-over that takes the deal out of the caller's reach returns them to the list.
  */
 export function OpportunityOwnerField({ opportunityId, ...rest }: OpportunityOwnerFieldProps) {
@@ -31,10 +32,12 @@ export function OpportunityOwnerField({ opportunityId, ...rest }: OpportunityOwn
       recordId={opportunityId}
       idField="opportunityId"
       action={updateOpportunityOwnerAction}
-      hint="Open follow-ups move to the new owner."
-      savedMessage={(name) => `Owner changed to ${name}. Open follow-ups moved to them.`}
+      hint="The previous owner's open follow-ups move to the new owner."
+      savedMessage={(name) =>
+        `Owner changed to ${name}. The previous owner's open follow-ups moved to them.`
+      }
       onHandedAway={(name) => {
-        toast.success(`Handed to ${name}. Open follow-ups moved to them.`);
+        toast.success(`Handed to ${name}. The previous owner's open follow-ups moved to them.`);
         router.push('/opportunities');
       }}
     />
