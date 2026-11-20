@@ -14,7 +14,6 @@ import {
   invoiceGates,
   NOTE_CREATOR_CANNOT_ISSUE,
   recordPaymentHref,
-  settlementMayOwe,
 } from './gates';
 
 const ACCOUNTANT = ['accountant'];
@@ -161,16 +160,6 @@ describe('recordPaymentHref', () => {
     expect(href('tax_invoice', 'issued', ACCOUNTANT, 'paid')).toBeNull();
     expect(href('tax_invoice', 'issued', ACCOUNTANT, 'credited')).toBeNull();
     expect(href('tax_invoice', 'issued', ACCOUNTANT, null)).toBeNull();
-  });
-});
-
-describe('settlementMayOwe', () => {
-  it('offers Record payment on the list only when the filter selects owing states alone', () => {
-    expect(settlementMayOwe([])).toBe(false);
-    expect(settlementMayOwe(['unpaid', 'overdue'])).toBe(true);
-    expect(settlementMayOwe(['paid', 'overdue'])).toBe(false);
-    expect(settlementMayOwe(['paid'])).toBe(false);
-    expect(settlementMayOwe(['credited'])).toBe(false);
   });
 });
 

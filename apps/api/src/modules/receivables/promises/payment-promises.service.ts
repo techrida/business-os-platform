@@ -79,7 +79,7 @@ export class PaymentPromisesService {
   /**
    * Records the promise and returns it (201). 404 for an invoice outside the acting entity; 409 invoice_not_open for
    * a draft, a proforma, a credit note or a settled invoice; 409 promise_open when one is already open; 400 for a
-   * day before today (Kathmandu).
+   * day before today (Kathmandu). A retry with the same key replays the stored promise, even after midnight.
    */
   async record(
     scope: TxScope,
@@ -91,30 +91,39 @@ export class PaymentPromisesService {
     if (actor.kind !== 'user') {
       throw new ForbiddenException({ code: 'forbidden', reason: 'no_permission' });
     }
-    const today = kathmanduDay(this.clock());
-    if (body.promisedDate < today) {
-      throw new BadRequestException({
-        code: 'bad_request',
-        message: 'The promised date cannot be before today.',
-        details: { promisedDate: body.promisedDate, today },
-      });
-    }
     try {
       return await withTx(this.db, scope, actor, async (tx) => {
         const done = await withIdempotency(
           tx,
           // The id is part of the hashed body: one key cannot replay onto another invoice.
           { command: 'payment_promise.record', key: idempotencyKey, body: { invoiceId, ...body } },
-          async () => ({
-            status: 201,
-            response: await this.recordInTx(tx, scope, actor.id, invoiceId, body),
-          }),
+          // The day is checked here, inside the command, so a retry of a committed promise after Kathmandu midnight
+          // replays the stored answer instead of refusing a day that was valid when it was recorded.
+          async () => {
+            this.assertNotPast(body.promisedDate);
+            return {
+              status: 201,
+              response: await this.recordInTx(tx, scope, actor.id, invoiceId, body),
+            };
+          },
         );
         return done.response;
       });
     } catch (error) {
       if (isOneOpenViolation(error)) throw promiseOpen();
       throw error;
+    }
+  }
+
+  /** 400 for a promised day before today in Kathmandu. */
+  private assertNotPast(promisedDate: string): void {
+    const today = kathmanduDay(this.clock());
+    if (promisedDate < today) {
+      throw new BadRequestException({
+        code: 'bad_request',
+        message: 'The promised date cannot be before today.',
+        details: { promisedDate, today },
+      });
     }
   }
 
