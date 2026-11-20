@@ -18,6 +18,8 @@
 //   * candidates: issued tax invoices and proformas without a live document, never drafts or rendered ones;
 //   * two renders at once give one document and one print; Gotenberg 500 and a draft leave no document and no print;
 //   * an orphan generated document older than 1 h is soft-removed by a sweep, a younger one is kept;
+//   * a stored PDF is never removed when its print row fails: the write is retried once, and a second failure leaves
+//     the PDF live with no failure counted and no second original;
 //   * GET /v1/invoices/:id/document: a link for the clean PDF right after the render; 404 for a draft, for another entity
 //     and for a random id; 403 for a portal caller.
 //
@@ -85,6 +87,7 @@ import {
   InvoiceRenderSweeper,
   ORPHAN_AFTER_MS,
   type RenderCandidate,
+  type RenderStore,
 } from './invoice-render.sweeper';
 
 vi.setConfig({ testTimeout: 60_000, hookTimeout: 180_000 });
@@ -953,6 +956,45 @@ describe('a render that keeps failing (R4c2: TR-Q4, F1-Q13)', () => {
       'rejected',
       'clean',
     ]);
+  });
+
+  /** A worker over the real store whose print log write fails `failures` times, then goes to the real table. */
+  const flakyPrintLog = (failures: number) => {
+    let left = failures;
+    const recordPrint = vi.fn<RenderStore['recordPrint']>((...args) => {
+      if (left > 0) {
+        left -= 1;
+        return Promise.reject(new Error('print log down'));
+      }
+      return store.recordPrint(...args);
+    });
+    const worker = new InvoiceRenderSweeper(
+      { ...store, recordPrint },
+      runTx,
+      documents,
+      settings,
+      { htmlToPdf: vi.fn().mockResolvedValue(PDF) },
+      () => new Date(),
+      NO_LOGOS,
+      renderAudit,
+    );
+    return { worker, recordPrint };
+  };
+
+  it('keeps a stored PDF whose first print 1 write failed and records print 1 with its format on the retry', async () => {
+    const scope = await newScope();
+    const inv = await seedInvoice(scope);
+    const { worker, recordPrint } = flakyPrintLog(1);
+    expect(await worker.renderOne(inv)).toBe('rendered');
+    expect(recordPrint).toHaveBeenCalledTimes(2);
+    const docs = await documentRows(inv.invoiceId);
+    expect(docs).toHaveLength(1);
+    expect(docs[0]?.status).toBe('clean');
+    expect(docs[0]?.removed_at).toBeNull();
+    const prints = await printFormats(inv.invoiceId);
+    expect(prints.map((p) => p.print_no)).toEqual([1]);
+    expect(prints[0]?.render_format).not.toBeNull();
+    expect(await failureRow(inv.invoiceId)).toBeUndefined();
   });
 
 });
