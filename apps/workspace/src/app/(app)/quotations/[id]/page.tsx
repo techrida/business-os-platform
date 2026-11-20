@@ -447,6 +447,8 @@ export default async function QuotationDetailPage({
                 undefined
               }
               mayConfirm={lifecycle.canConfirmAcceptance ?? allowed('quotation.record_acceptance')}
+              order={order}
+              mayReadOrders={allowed('sales_order.read')}
               reloadHref={path}
               dateFormat={dateFormat}
             />
