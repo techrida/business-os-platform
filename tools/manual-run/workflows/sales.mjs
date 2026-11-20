@@ -955,6 +955,21 @@ export function workflow(cfg) {
             (await s.page.getByText('Virus free', { exact: true }).count()) >= DOCS.length,
             'all three files read Virus free',
           );
+          // A resumed row is skipped when it holds any file: before submitting, each row must hold
+          // this run's fixture (its Remove button names the file) and read Virus free.
+          for (const [label, file] of DOCS) {
+            const row = s.page
+              .getByRole('row')
+              .filter({ has: s.page.getByRole('rowheader', { name: label, exact: true }) });
+            if (!(await visible(row.getByRole('button', { name: `Remove ${file}`, exact: true }))))
+              throw new StepFailure(
+                `${label} does not hold ${file} (another file, or its name is not shown); not submitting`,
+              );
+            s.expect(
+              await visible(row.getByText('Virus free', { exact: true })),
+              `${label} holds ${file} and reads Virus free`,
+            );
+          }
           await s.click(s.button('Submit for review'), 'Submit for review');
           await s.page
             .getByRole('dialog')
