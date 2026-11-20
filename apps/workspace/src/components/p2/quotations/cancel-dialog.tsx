@@ -14,17 +14,20 @@ export interface CancelDialogProps {
   /** The `version` of the version row the person is looking at. */
   version: number;
   number: string;
+  /** The version is waiting for approval: cancelling it also ends that approval request. */
+  awaitingApproval?: boolean | undefined;
   /** A UUID the server generated for this render. */
   idempotencyKey: string;
   reloadHref: string;
 }
 
 /**
- * Cancel quotation (F1-Q27): ends a Draft or Returned quotation for good, with a mandatory reason that
+ * Cancel quotation (F1-Q27): ends a Draft, Returned or Submitted quotation for good, with a mandatory reason that
  * stays on the record. Named "Cancel quotation", never "Cancel", which every dialog uses to mean "close".
  */
 export function CancelDialog({
   number,
+  awaitingApproval = false,
   quotationId,
   versionId,
   version,
@@ -45,7 +48,11 @@ export function CancelDialog({
     <ActionDialog
       triggerLabel="Cancel quotation"
       title={`Cancel ${number}?`}
-      intro="Cancelling ends this quotation. It cannot be edited, submitted or sent afterwards, and it stays in the list as Cancelled."
+      intro={
+        awaitingApproval
+          ? 'Cancelling ends this quotation and its approval request: the approver no longer sees it. It cannot be edited, submitted or sent afterwards, and it stays in the list as Cancelled.'
+          : 'Cancelling ends this quotation. It cannot be edited, submitted or sent afterwards, and it stays in the list as Cancelled.'
+      }
       formId={formId}
       submitLabel="Cancel quotation"
       pending={pending}
