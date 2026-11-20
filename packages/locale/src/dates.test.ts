@@ -1,5 +1,14 @@
 import { describe, expect, it } from 'vitest';
-import { CUSTOMER_DATE_FORMATS, formatBs, formatCustomerDate, formatKathmandu } from './dates.js';
+import {
+  BS_MONTH_NAMES_EN,
+  bsLongOfDay,
+  CUSTOMER_DATE_FORMATS,
+  formatBs,
+  formatBsLong,
+  formatCustomerDate,
+  formatKathmandu,
+  toBs,
+} from './dates.js';
 
 describe('formatKathmandu', () => {
   it('shows date and time in UTC+05:45', () => {
@@ -27,6 +36,61 @@ describe('formatBs', () => {
 
   it('throws RangeError outside the supported range', () => {
     expect(() => formatBs(new Date('1900-01-01T00:00:00Z'), 'YYYY')).toThrow(RangeError);
+  });
+});
+
+describe('formatBsLong', () => {
+  it('writes the stored compact BS date as day, month name, year and BS', () => {
+    expect(formatBsLong('2083-09-04')).toBe('04 Poush 2083 BS');
+    expect(formatBsLong('2082-04-01')).toBe('01 Shrawan 2082 BS');
+  });
+
+  /** A Gregorian day inside each BS month of 2083, Baisakh first. */
+  const DAY_IN_MONTH = [
+    '2026-04-20',
+    '2026-05-20',
+    '2026-06-20',
+    '2026-07-25',
+    '2026-08-25',
+    '2026-09-25',
+    '2026-10-25',
+    '2026-11-25',
+    '2026-12-25',
+    '2027-01-25',
+    '2027-02-20',
+    '2027-03-25',
+  ];
+
+  it.each(BS_MONTH_NAMES_EN.map((name, i) => [i + 1, name] as const))(
+    'names BS month %i as the converter does (%s)',
+    (month, name) => {
+      expect(formatBsLong(`2083-${String(month).padStart(2, '0')}-15`)).toBe(`15 ${name} 2083 BS`);
+      // The converter's own name for a day in that month: the list and the library never drift apart.
+      const bs = toBs(new Date(`${DAY_IN_MONTH[month - 1]}T12:00:00+05:45`));
+      expect([bs.month, bs.monthNameEn]).toEqual([month, name]);
+    },
+  );
+
+  it('never throws: text that is not a compact BS date keeps its old form', () => {
+    expect(formatBsLong('2083-13-01')).toBe('2083-13-01 BS');
+    expect(formatBsLong('2083-00-01')).toBe('2083-00-01 BS');
+    expect(formatBsLong('soon')).toBe('soon BS');
+  });
+});
+
+describe('bsLongOfDay', () => {
+  it('converts a Gregorian day at noon in Kathmandu', () => {
+    expect(bsLongOfDay('2025-07-17')).toBe('01 Shrawan 2082 BS');
+  });
+
+  it('prints a converted day exactly as the frozen issue date prints', () => {
+    const instant = new Date('2026-12-20T03:00:00Z');
+    expect(bsLongOfDay('2026-12-20')).toBe(formatBsLong(formatBs(instant, 'YYYY-MM-DD')));
+  });
+
+  it('is null outside the converter range and for text that is not a date', () => {
+    expect(bsLongOfDay('1900-01-01')).toBeNull();
+    expect(bsLongOfDay('On receipt')).toBeNull();
   });
 });
 

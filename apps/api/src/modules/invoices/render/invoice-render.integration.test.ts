@@ -529,7 +529,8 @@ describe('invoice render', () => {
     expect(html).toContain('Tax Invoice');
     expect(html).toContain(inv.number ?? 'missing');
     expect(html).toContain(`PAN/VAT ${PAN}`);
-    expect(html).toContain('2083-07-24 BS');
+    expect(html).toContain('(24 Kartik 2083 BS)');
+    expect(html).not.toContain('2083-07-24');
     expect(html).not.toContain('Copy of original');
     expect(authz.assert).not.toHaveBeenCalled();
 
