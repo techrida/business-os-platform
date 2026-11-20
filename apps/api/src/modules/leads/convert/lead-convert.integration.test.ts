@@ -545,21 +545,30 @@ describe('POST /v1/leads/:id/convert', () => {
 
 describe('the lead creator on the opportunity (FX-Q1)', () => {
   let salesStaff: string;
-  let finance: string;
+  let pmo: string;
   let colleague: string;
 
   beforeAll(async () => {
     const salesDept = await h.department('Sales FX');
     salesStaff = await h.member({ roles: ['sales'], departmentId: salesDept, displayName: 'Sam' });
     colleague = await h.member({ roles: ['sales'], departmentId: salesDept, displayName: 'Cora' });
-    finance = await h.member({ roles: ['finance'], displayName: 'Fina Finance' });
+    // PMO reads opportunities at `own` only, with no department in common with Sales: the lead creator is the
+    // one way it reaches a deal. (Finance and Accountant read every deal since 0123, so they cannot show it.)
+    pmo = await h.member({ roles: ['pmo'], displayName: 'Pia PMO' });
   });
 
-  it('records who entered the lead, so Finance opens the deal it became and may quote on it', async () => {
-    // Finance enters the lead for a Sales owner (D50) ...
-    await h.actAs(finance);
+  it('records who entered the lead, so PMO opens the deal it became and may quote on it', async () => {
+    // A deal PMO had no part in, the control: Sales enters and converts the lead itself.
+    await h.actAs(salesStaff);
+    const other = await qualifiedLead();
+    const otherRes = await convert(other.id, createCustomerBody());
+    expect(otherRes.status, JSON.stringify(otherRes.body)).toBe(201);
+    const { opportunityId: controlId } = otherRes.body as { opportunityId: string };
+
+    // PMO enters the lead for a Sales owner (D50) ...
+    await h.actAs(pmo);
     const created = await request(baseUrl).post('/v1/leads').send({
-      title: 'Finance referral',
+      title: 'PMO referral',
       source: 'referral',
       companyName: 'Acme Pvt. Ltd.',
       contactName: 'Sita Rai',
@@ -567,7 +576,12 @@ describe('the lead creator on the opportunity (FX-Q1)', () => {
     });
     expect(created.status, JSON.stringify(created.body)).toBe(201);
     const lead = LeadDtoSchema.parse(created.body);
-    // ... and the owner qualifies and converts it.
+    // ... and reaches no deal it did not originate.
+    await expect(opportunitiesService.get(controlId)).rejects.toMatchObject({ status: 404 });
+    const before = await opportunitiesService.list({ limit: 50, offset: 0 });
+    expect(before.items.map((o) => o.id)).not.toContain(controlId);
+
+    // The owner qualifies and converts it.
     await h.actAs(salesStaff);
     for (const [stage, expectedVersion] of [
       ['contacted', 1],
@@ -581,13 +595,10 @@ describe('the lead creator on the opportunity (FX-Q1)', () => {
     const res = await convert(lead.id, createCustomerBody());
     expect(res.status, JSON.stringify(res.body)).toBe(201);
     const { opportunityId } = res.body as { opportunityId: string };
-    expect(await opportunityRow(opportunityId)).toMatchObject({
-      ownerUserId: salesStaff,
-      leadCreatorUserId: finance,
-    });
 
-    // Finance holds crm.opportunity.read `own`: the creator reach now covers the deal, read only.
-    await h.actAs(finance);
+    // PMO holds crm.opportunity.read `own`: the creator reach now covers this deal, read only, and still not the
+    // control.
+    await h.actAs(pmo);
     const seen = OpportunityDtoSchema.parse(await opportunitiesService.get(opportunityId));
     expect(seen).toMatchObject({
       id: opportunityId,
@@ -598,7 +609,13 @@ describe('the lead creator on the opportunity (FX-Q1)', () => {
     });
     const listed = await opportunitiesService.list({ limit: 50, offset: 0 });
     expect(listed.items.map((o) => o.id)).toContain(opportunityId);
-    // Reading is not changing the deal (D55-3): Finance holds no opportunity write at all.
+    expect(listed.items.map((o) => o.id)).not.toContain(controlId);
+    await expect(opportunitiesService.get(controlId)).rejects.toMatchObject({ status: 404 });
+    expect(await opportunityRow(opportunityId)).toMatchObject({
+      ownerUserId: salesStaff,
+      leadCreatorUserId: pmo,
+    });
+    // Reading is not changing the deal (D55-3): PMO holds no opportunity write at all.
     await expect(
       opportunitiesService.changeStage(opportunityId, {
         stage: 'requirement_received',
