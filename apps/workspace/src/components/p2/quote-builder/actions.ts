@@ -229,7 +229,13 @@ export async function submitQuoteAction(
     );
   } catch (err) {
     const f = describeQuoteFailure(err, 'submit');
-    return { ok: false, kind: f.kind, message: f.message, key: nextKey(err, key) };
+    return {
+      ok: false,
+      kind: f.kind,
+      message: f.message,
+      ...(f.field ? { fieldErrors: { [f.field]: f.message } } : {}),
+      key: nextKey(err, key),
+    };
   }
   revalidatePath(`/quotations/${input.quotationId}/edit`);
   return { ok: true };

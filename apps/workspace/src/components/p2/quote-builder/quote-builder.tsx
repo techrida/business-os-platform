@@ -796,6 +796,11 @@ export function QuoteBuilder({
           description="Choose a payment term, or split the payment into milestones that add up to 100%."
         >
           <div className={styles.sectionBody}>
+            {errors['paymentSchedule'] ? (
+              <Alert tone="error" role="alert">
+                {errors['paymentSchedule']}
+              </Alert>
+            ) : null}
             <div className={styles.grid2}>
               <Field
                 label="Payment term"
@@ -838,6 +843,7 @@ export function QuoteBuilder({
                   Object.fromEntries(
                     Object.entries(current).filter(
                       ([path]) =>
+                        path !== 'paymentSchedule' &&
                         !Object.keys(patch).some(
                           (field) => path === `paymentSchedule.${index}.${field}`,
                         ),
