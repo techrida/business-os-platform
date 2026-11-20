@@ -38,6 +38,11 @@ export const MeResponseSchema = z.object({
   /** The caller's picture (`app.users.avatar_document_id`); null or absent shows initials. */
   avatarDocumentId: z.guid().nullable().optional(),
   /**
+   * The caller's name as the identity service holds it (`app.users.display_name`), for the shell's user card and
+   * greeting; null when it is not known yet. Optional only so a client reading an older API keeps working.
+   */
+  displayName: z.string().nullable().optional(),
+  /**
    * The caller's effective grants, sorted by permission; empty when the user may not act (not active). The API
    * always sends it; it is optional only so a client reading an older API treats a missing list as no grants.
    */
