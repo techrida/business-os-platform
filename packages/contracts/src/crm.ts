@@ -741,6 +741,11 @@ export const OpportunityDtoSchema = z.object({
   heldFromStage: OpportunityStageSchema.nullable().optional(),
   allowedMoves: z.array(OpportunityStageSchema).optional(),
   canEdit: z.boolean().optional(),
+  /**
+   * The caller may create a quotation on this deal (FX-Q1, FX-Q2): `quotation.draft`, and opportunity read that
+   * reaches it as owner, department, lead creator or a broader scope. An assigned follow-up alone does not count.
+   */
+  canDraftQuotation: z.boolean().optional(),
   version: z.number().int().min(1),
   createdAt: isoDateTime,
   updatedAt: isoDateTime,

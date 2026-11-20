@@ -523,6 +523,8 @@ export const opportunities = appSchema.table(
     lostReasonId: uuid('lost_reason_id'),
     /** 0100 (F1-Q53): the stage an on_hold opportunity was held at; resuming returns there. NULL for older holds. */
     heldFromStage: text('held_from_stage', { enum: OPPORTUNITY_STAGES }),
+    /** 0101 (FX-Q1): who entered the lead this opportunity came from; creator reach covers the opportunity too. */
+    leadCreatorUserId: uuid('lead_creator_user_id'),
     /** The expected deal value. */
     value: numeric('value', { precision: 18, scale: 2 }),
     currency: char('currency', { length: 3 }).notNull().default('NPR'),
@@ -572,6 +574,16 @@ export const opportunities = appSchema.table(
       columns: [t.tenantId, t.lostReasonId],
       foreignColumns: [leadLostReasons.tenantId, leadLostReasons.id],
     }),
+    foreignKey({
+      name: 'opportunities_lead_creator_user_fk',
+      columns: [t.tenantId, t.leadCreatorUserId],
+      foreignColumns: [users.tenantId, users.id],
+    }),
+    index('opportunities_tenant_lead_creator_idx').on(
+      t.tenantId,
+      t.organizationId,
+      t.leadCreatorUserId,
+    ),
     index('opportunities_tenant_org_department_idx').on(
       t.tenantId,
       t.organizationId,

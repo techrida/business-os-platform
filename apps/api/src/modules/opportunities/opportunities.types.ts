@@ -12,7 +12,7 @@ import { type opportunities } from '@bos/db';
 import { z } from 'zod';
 
 import { can, type Principal } from '../../platform/authz/can';
-import { allowedOpportunityMoves, opportunityRef } from './opportunity-stage';
+import { allowedOpportunityMoves, mayDraftQuotationOn, opportunityRef } from './opportunity-stage';
 
 /**
  * `GET /v1/opportunities?q&stage&owner&limit&offset`. `stage` and `owner` may repeat (any of the selected values
@@ -62,6 +62,7 @@ export function toOpportunityDto(
       : {
           allowedMoves: allowedOpportunityMoves(principal, row),
           canEdit: can(principal, 'crm.opportunity.write', opportunityRef(row)).allowed,
+          canDraftQuotation: mayDraftQuotationOn(principal, row),
         }),
     version: row.version,
     createdAt: row.createdAt.toISOString(),

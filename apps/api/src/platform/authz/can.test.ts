@@ -441,11 +441,9 @@ describe('can(): read reach on CRM records', () => {
     },
   );
 
-  it('honours the creator only on leads, and the assignees on opportunities too', () => {
+  it('honours the lead creator and the assignees on opportunities too (FX-Q1)', () => {
     const p = principalWith({ [OPPORTUNITY_READ]: 'own' });
-    expect(can(p, OPPORTUNITY_READ, rec({ ...theirs, creatorUserId: ME }))).toEqual(
-      DENIED('out_of_scope'),
-    );
+    expect(can(p, OPPORTUNITY_READ, rec({ ...theirs, creatorUserId: ME }))).toEqual(ALLOWED('own'));
     expect(can(p, OPPORTUNITY_READ, rec({ ...theirs, assigneeUserIds: [ME] }))).toEqual(
       ALLOWED('own'),
     );

@@ -297,7 +297,7 @@ export class DraftingService {
 
   /**
    * A quotation on an opportunity of the acting entity, with revision 1 as a priced Draft. The customer is the
-   * opportunity's. 404 for an opportunity outside the acting entity or the caller's `crm.opportunity.read` reach;
+   * opportunity's. 404 for an opportunity outside the acting entity or the caller's draft reach (`findOpportunity`);
    * 400 for a contact of another customer, an unknown payment term or tax code, or a discount above the subtotal.
    */
   async create(body: CreateQuotationBody, idempotencyKey: string): Promise<QuotationDto> {
@@ -957,9 +957,11 @@ export class DraftingService {
   }
 
   /**
-   * The opportunity of the acting entity that the caller may read (`crm.opportunity.read` with its reach, as the
-   * opportunity list), locked so its stage cannot move under the create. Sending the quotation later moves this
-   * opportunity's stage, so one the caller cannot read is a 404 like a missing one.
+   * The opportunity of the acting entity the caller may draft on, locked so its stage cannot move under the
+   * create: `crm.opportunity.read` reaching it as owner, department, lead creator (FX-Q1) or a broader scope, but
+   * NOT through a follow-up assigned to the caller (FX-Q2): that lets them read and complete the follow-up, not
+   * start a quotation whose sending moves someone else's deal. The record-check twin is `mayDraftQuotationOn`
+   * (OpportunityDto.canDraftQuotation). An opportunity out of that reach is a 404 like a missing one.
    */
   private async findOpportunity(
     tx: DbTransaction,
@@ -975,7 +977,7 @@ export class DraftingService {
           opportunities,
           and(
             eq(opportunities.id, id),
-            scopeWhereFor(principal, opportunities, 'crm.opportunity.read'),
+            scopeWhereFor(principal, opportunities, 'crm.opportunity.read', { assignees: false }),
           ),
         ),
       )
