@@ -1332,11 +1332,16 @@ export class AccessSettingsService {
       level: user.level,
     };
 
+    // A person with no membership in this entity cannot act in it, so the company-level roles give
+    // nothing here; the same holds for an inactive account.
+    const hasNoAccess = (u: SnapshotUser): boolean => u.status === 'inactive' || !u.inEntity;
+    const noAccess = hasNoAccess(user);
+
     const areaRows: CheckPersonAreaRow[] = await Promise.all(
       ACCESS_SETTING_AREA_KEYS.map(async (areaKey) => {
         const area = AREA_BY_KEY.get(areaKey)!;
         const effective = effectiveScopeForUser(user, area.seePermission, grantMap, levelMap);
-        const effScope = user.status === 'inactive' ? null : effective.scope;
+        const effScope = noAccess ? null : effective.scope;
         const scopeLabel = reachLabel(effScope, 'record');
 
         const { visibleCount, totalCount } = await this.countAreaRecords(
@@ -1349,7 +1354,7 @@ export class AccessSettingsService {
         );
 
         const actions: CheckPersonAction[] = [];
-        if (user.status !== 'inactive') {
+        if (!noAccess) {
           for (const actionPerm of area.actionPermissions) {
             const actionEff = effectiveScopeForUser(user, actionPerm, grantMap, levelMap);
             if (actionEff.scope !== null) {
@@ -1383,7 +1388,9 @@ export class AccessSettingsService {
           }
         }
 
-        const why = explainAreaAccess(user, areaKey, grantMap, levelMap);
+        const why = user.inEntity
+          ? explainAreaAccess(user, areaKey, grantMap, levelMap)
+          : ['No access in this entity.'];
         if (user.status === 'inactive') {
           why.unshift('This account is inactive.');
         }
@@ -1396,7 +1403,7 @@ export class AccessSettingsService {
             previous.grantMap,
             previous.levelMap,
           );
-          const prevScope = previous.user.status === 'inactive' ? null : prevEff.scope;
+          const prevScope = hasNoAccess(previous.user) ? null : prevEff.scope;
           const prevLabel = reachLabel(prevScope, 'record');
           if (prevLabel !== scopeLabel) {
             previousScopeLabel = prevLabel;
