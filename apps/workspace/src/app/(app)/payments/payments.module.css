@@ -21,26 +21,6 @@
   color: var(--text-secondary);
 }
 
-/* The list's trailing Status and Action columns sit on a shaded band behind a divider, as on the
-   other lists (Figma's pinned columns). Declared on the table wrapper so it out-ranks the shared
-   cell background; a hovered row still highlights end to end. */
-.list th.statusColumn,
-.list td.statusColumn,
-.list th.actionColumn,
-.list td.actionColumn {
-  background: var(--surface-subtle);
-}
-
-.list th.statusColumn,
-.list td.statusColumn {
-  border-inline-start: var(--border-width-thin) solid var(--border-default);
-}
-
-.list tbody tr:hover > td,
-.list tbody tr:focus-within > td {
-  background: var(--table-row-hover-bg);
-}
-
 .rowAction {
   display: inline-grid;
   width: 40px;

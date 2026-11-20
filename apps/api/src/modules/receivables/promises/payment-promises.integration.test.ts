@@ -1,0 +1,242 @@
+// Integration test of promises to pay (F1-Q33) on a real Postgres (Testcontainers, needs Docker in WSL). Run with:
+//   pnpm --filter @bos/api exec vitest run src/modules/receivables/promises/payment-promises.integration.test.ts
+//
+// One chain, as the people involved: an Accountant records a promise through PaymentPromisesService; the hourly job
+// (the real drizzle store and withTx) runs after the promised day; Finance finds the collection call on the
+// Follow-ups list (ActivitiesService) and completes it, and sees the customer flagged on the receivables aging
+// (ReceivablesService); a second run plans nothing more. Real: migrations, every query as bos_app, the audit trail,
+// the RoleCache and the pure can() on the acting principal (../../leads/test/harness.ts). Seeded directly: the issued
+// invoice and its debit open item, written the way invoice issue writes them.
+import 'reflect-metadata';
+
+import { randomUUID } from 'node:crypto';
+
+import {
+  ActivityDtoSchema,
+  ArAgingReportSchema,
+  PaymentPromiseDtoSchema,
+  type RecordPaymentPromiseBody,
+} from '@bos/contracts';
+import { activities, paymentPromises } from '@bos/db';
+import {
+  BadRequestException,
+  ConflictException,
+  ForbiddenException,
+  NotFoundException,
+} from '@nestjs/common';
+import { and, eq, sql } from 'drizzle-orm';
+import { drizzle } from 'drizzle-orm/node-postgres';
+import { Pool } from 'pg';
+import { z } from 'zod';
+import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
+
+import { AuditService } from '../../../platform/audit/audit.service';
+import type { AuthzService } from '../../../platform/authz/authz.service';
+import { systemActor, withTx, type TxScope } from '../../../platform/db/tx';
+import { ActivitiesService } from '../../activities/activities.service';
+import { ListActivitiesQuerySchema } from '../../activities/activities.types';
+import { startHarness, type Harness } from '../../leads/test/harness';
+import { LedgerService } from '../../ledger/ledger.service';
+import { ReceivablesService } from '../receivables.service';
+import { drizzlePromiseStore, PaymentPromiseSweeper } from './payment-promise.sweeper';
+import { PaymentPromisesService } from './payment-promises.service';
+
+vi.setConfig({ testTimeout: 60_000, hookTimeout: 180_000 });
+
+/** 11:45 in Kathmandu on 2026-11-09, when the promise is recorded. */
+const RECORDED_AT = new Date('2026-11-09T06:00:00Z');
+/** 11:45 in Kathmandu on 2026-11-12, two days after the promised day. */
+const SWEPT_AT = new Date('2026-11-12T06:00:00Z');
+const PROMISED = '2026-11-10';
+
+let h: Harness;
+let promises: PaymentPromisesService;
+let sweeper: PaymentPromiseSweeper;
+let followUps: ActivitiesService;
+let receivables: ReceivablesService;
+let accountant: string;
+let finance: string;
+let customer: string;
+const ledger = new LedgerService();
+const system = systemActor('payment-promise-test');
+let nextSeq = 1;
+
+/** An issued NPR tax invoice of `total` for `customerId` in `scope`, with its debit open item (due 2026-12-01). */
+async function issuedInvoice(scope: TxScope, customerId: string, total: string): Promise<string> {
+  return withTx(h.db, scope, system, async (tx) => {
+    const inserted = await tx.execute<{ id: string }>(
+      sql`INSERT INTO app.invoices
+            (tenant_id, organization_id, kind, customer_party_id, manual_reason, currency, subtotal,
+             discount_amount, taxable_vat_amount, tax_amount, total)
+          VALUES (${scope.tenantId}, ${scope.organizationId}, 'tax_invoice', ${customerId}, 'One-off sale', 'NPR',
+                  ${total}, 0, ${total}, 0, ${total})
+          RETURNING id`,
+    );
+    const id = inserted.rows[0]?.id;
+    if (id === undefined) throw new Error('invoice insert returned no row');
+    const seq = nextSeq++;
+    await tx.execute(
+      sql`UPDATE app.invoices
+             SET status = 'issued', number = ${`INV-2083/84-${String(seq).padStart(5, '0')}`}, seq = ${seq},
+                 fiscal_year = '2083/84', issue_date = '2026-11-01', issue_date_bs = '2083-07-15',
+                 due_date = '2026-12-01', fx_rate = 1, amount_npr = total,
+                 seller_snapshot = '{"name": "Techrida Pvt. Ltd."}', buyer_snapshot = '{"name": "Acme"}',
+                 content_hash = decode(repeat('ab', 32), 'hex'), issued_at = now()
+           WHERE id = ${id}`,
+    );
+    await ledger.openItem(tx, scope, system, {
+      side: 'receivable',
+      direction: 'debit',
+      partyId: customerId,
+      sourceType: 'tax_invoice',
+      sourceId: id,
+      currency: 'NPR',
+      amount: total,
+      amountNpr: total,
+      fxRate: '1',
+      documentDate: '2026-11-01',
+      dueDate: '2026-12-01',
+    });
+    return id;
+  });
+}
+
+const record = (invoiceId: string, body: RecordPaymentPromiseBody, key = randomUUID()) => {
+  const { scope, actor } = h.caller.current();
+  return promises.record(scope, actor, invoiceId, body, key);
+};
+
+const callsOn = (customerId: string) =>
+  withTx(h.db, h.scopeA, system, (tx) =>
+    tx
+      .select()
+      .from(activities)
+      .where(and(eq(activities.tenantId, h.tenantId), eq(activities.customerId, customerId))),
+  );
+
+beforeAll(async () => {
+  h = await startHarness({ Pool, drizzle });
+  const authz = h.authz as unknown as AuthzService;
+  const audit = new AuditService(h.db);
+  promises = new PaymentPromisesService(h.db, authz, audit, () => RECORDED_AT);
+  sweeper = new PaymentPromiseSweeper(
+    drizzlePromiseStore(h.db),
+    (scope, actor, fn) => withTx(h.db, scope, actor, fn),
+    audit,
+    () => SWEPT_AT,
+  );
+  followUps = new ActivitiesService(h.db, authz, audit, h.caller, h.roleCache, h.notify);
+  receivables = new ReceivablesService(h.db, authz, () => SWEPT_AT);
+  accountant = await h.member({ roles: ['accountant'], displayName: 'Asha Accountant' });
+  finance = await h.member({ roles: ['finance'], displayName: 'Bina Finance' });
+  customer = await h.seedCustomer();
+});
+
+afterAll(async () => {
+  await h?.stop();
+});
+
+describe('a missed promise to pay (F1-Q33)', () => {
+  it('records, misses, plans one call for Finance, flags the aging, and plans nothing more on a second run', async () => {
+    const invoice = await issuedInvoice(h.scopeA, customer, '50000.00');
+
+    // The Accountant records the promise; the same key replays it, a second promise is refused.
+    await h.actAs(accountant);
+    const key = randomUUID();
+    const promise = PaymentPromiseDtoSchema.parse(
+      await record(invoice, { promisedDate: PROMISED, note: 'Pays after the board meets' }, key),
+    );
+    expect(promise).toMatchObject({
+      invoiceId: invoice,
+      promisedDate: PROMISED,
+      status: 'open',
+      recordedByUserId: accountant,
+      missedAt: null,
+      collectionActivityId: null,
+    });
+    await expect(
+      record(invoice, { promisedDate: PROMISED, note: 'Pays after the board meets' }, key),
+    ).resolves.toEqual(promise);
+    await expect(record(invoice, { promisedDate: '2026-11-20' })).rejects.toBeInstanceOf(
+      ConflictException,
+    );
+
+    // Before the day has passed the job leaves it alone.
+    const early = new PaymentPromiseSweeper(
+      drizzlePromiseStore(h.db),
+      (scope, actor, fn) => withTx(h.db, scope, actor, fn),
+      new AuditService(h.db),
+      () => new Date('2026-11-10T12:00:00Z'),
+    );
+    await expect(early.sweep()).resolves.toMatchObject({ missed: 0, kept: 0 });
+
+    // After it, the job marks the promise missed and plans the collection call for Finance.
+    await expect(sweeper.sweep()).resolves.toEqual({ missed: 1, kept: 0, skipped: 0, failed: 0 });
+    const [stored] = await withTx(h.db, h.scopeA, system, (tx) =>
+      tx.select().from(paymentPromises).where(eq(paymentPromises.id, promise.id)),
+    );
+    expect(stored).toMatchObject({ status: 'missed', missedAt: SWEPT_AT });
+    expect(stored?.collectionActivityId).toEqual(expect.any(String));
+
+    // Finance finds it on the Follow-ups list (planned, assigned to them) and completes it.
+    await h.actAs(finance);
+    const planned = z
+      .array(ActivityDtoSchema)
+      .parse((await followUps.list(ListActivitiesQuerySchema.parse({ status: 'planned' }))).items);
+    const call = planned.find((a) => a.id === stored?.collectionActivityId);
+    expect(call).toMatchObject({
+      kind: 'call',
+      subject: expect.stringMatching(/^Collect payment for INV-2083\/84-\d{5}$/) as string,
+      customerId: customer,
+      assigneeUserId: finance,
+    });
+    if (call === undefined) throw new Error('the collection call is not on the Follow-ups list');
+    expect(call.body).toContain(`by ${PROMISED}`);
+    expect(call.body).toContain('Pays after the board meets');
+    const done = ActivityDtoSchema.parse(
+      await followUps.complete(call.id, { expectedVersion: 1, note: 'Customer pays Friday' }),
+    );
+    expect(done.completedAt).not.toBeNull();
+
+    // The aging flags the customer in NPR with the promised day.
+    const aging = ArAgingReportSchema.parse(await receivables.aging(h.scopeA));
+    expect(aging.rows.find((r) => r.customerId === customer)).toMatchObject({
+      currency: 'NPR',
+      totalOpen: '50000.00',
+      promiseMissed: true,
+      promiseMissedOn: PROMISED,
+    });
+
+    // A second run plans nothing: still exactly one call on the customer.
+    await expect(sweeper.sweep()).resolves.toEqual({ missed: 0, kept: 0, skipped: 0, failed: 0 });
+    expect(await callsOn(customer)).toHaveLength(1);
+    // The promise is history now, so a new one may be recorded.
+    await h.actAs(accountant);
+    await expect(record(invoice, { promisedDate: '2026-11-20' })).resolves.toMatchObject({
+      status: 'open',
+    });
+  });
+
+  it('refuses a past day, an unknown invoice and a role without payment.record', async () => {
+    const invoice = await issuedInvoice(h.scopeA, customer, '1000.00');
+    await h.actAs(accountant);
+    await expect(record(invoice, { promisedDate: '2026-11-08' })).rejects.toBeInstanceOf(
+      BadRequestException,
+    );
+    await expect(record(randomUUID(), { promisedDate: PROMISED })).rejects.toBeInstanceOf(
+      NotFoundException,
+    );
+    h.as('salesA', 'sales');
+    await expect(record(invoice, { promisedDate: PROMISED })).rejects.toBeInstanceOf(
+      ForbiddenException,
+    );
+  });
+
+  it('refuses an invoice of another legal entity as unknown', async () => {
+    const other = await issuedInvoice(h.scopeB, customer, '1000.00');
+    await h.actAs(accountant);
+    await expect(record(other, { promisedDate: PROMISED })).rejects.toBeInstanceOf(
+      NotFoundException,
+    );
+  });
+});

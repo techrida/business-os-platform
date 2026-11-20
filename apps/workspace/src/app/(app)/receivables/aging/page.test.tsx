@@ -140,6 +140,22 @@ describe('receivables aging', () => {
     expect(html.match(/Zeta Traders/g)).toHaveLength(2);
   });
 
+  it('flags only the customer and currency with a missed promise to pay, with its date', async () => {
+    mocks.getAging.mockResolvedValue(
+      agingReport({
+        rows: [
+          agingRow({ promiseMissed: true, promiseMissedOn: '2026-11-18' }),
+          agingRow({ customerId: OTHER_CUSTOMER_ID, customerName: 'Alpha Traders' }),
+        ],
+        totals: [],
+      }),
+    );
+    const html = await render();
+    expect(html.match(/Missed promise to pay/g)).toHaveLength(1);
+    expect(html).toMatch(/Himalayan Traders Pvt\. Ltd\.[\s\S]*Missed promise to pay: 18 Nov 2026/);
+    expect(html.indexOf('Missed promise to pay')).toBeLessThan(html.indexOf('Alpha Traders'));
+  });
+
   it('shows the asOf date from the response and never today', async () => {
     vi.useFakeTimers();
     vi.setSystemTime(new Date('2031-03-03T06:00:00Z'));

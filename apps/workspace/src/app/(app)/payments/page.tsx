@@ -88,10 +88,10 @@ function PaymentRow({
       <Td nowrap>
         <time dateTime={item.receivedOn}>{when(item.receivedOn, 'date')}</time>
       </Td>
-      <Td nowrap className={styles.statusColumn}>
+      <Td nowrap pinned>
         <Badge tone={meta.tone}>{meta.label}</Badge>
       </Td>
-      <Td nowrap className={styles.actionColumn}>
+      <Td nowrap pinned>
         <Link href={href} className={styles.rowAction} aria-label={`View ${name}`}>
           <Icon name="chevron-right" size={20} />
         </Link>
@@ -236,7 +236,7 @@ export default async function PaymentsPage({
         )
       ) : items !== null ? (
         <div className={layout.results}>
-          <Table caption="Payments" minWidth={960} className={styles.list ?? ''}>
+          <Table caption="Payments" minWidth={960}>
             <thead>
               <tr>
                 <Th>Receipt</Th>
@@ -245,8 +245,8 @@ export default async function PaymentsPage({
                 <Th align="end">Amount received</Th>
                 <Th align="end">Not yet allocated</Th>
                 <Th>Received on</Th>
-                <Th className={styles.statusColumn}>Status</Th>
-                <Th className={styles.actionColumn}>Action</Th>
+                <Th pinned>Status</Th>
+                <Th pinned>Action</Th>
               </tr>
             </thead>
             <tbody>

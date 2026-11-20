@@ -1,6 +1,7 @@
 import type { ComponentPropsWithoutRef, ReactNode } from 'react';
 
 import styles from './table.module.css';
+import { PinnedColumnOffsets } from './table-pinned';
 
 type Align = 'start' | 'end';
 
@@ -14,6 +15,9 @@ type Align = 'start' | 'end';
  * - The wrapper scrolls sideways on narrow screens. It is a focusable region so a keyboard user
  *   can scroll it.
  * - `stickyFirstColumn` pins the first column while scrolling (the roles matrix needs it).
+ * - Mark the trailing Status and Action cells `pinned` on `Th` and `Td` (Figma's pinned columns): they sit on a
+ *   shaded band behind a divider and stay in view while the rest scrolls sideways (on a phone only the last one does),
+ *   so the Action column is always reachable. Pinned columns must be the last ones of the row; up to four are supported.
  * - Write the rows as `<thead><tr><Th>..</Th></tr></thead><tbody><tr><Td>..</Td></tr></tbody>`.
  */
 export function Table({
@@ -45,28 +49,45 @@ export function Table({
         <caption className="sr-only">{caption}</caption>
         {children}
       </table>
+      <PinnedColumnOffsets />
     </div>
   );
 }
 
-/** A column header. `align="end"` right-aligns a numeric column (and its cells). */
+/**
+ * A column header. `align="end"` right-aligns a numeric column (and its cells). `pinned` makes it one of the
+ * trailing pinned columns (see Table); mark the column's cells `pinned` too.
+ */
 export function Th({
   align = 'start',
   scope = 'col',
+  pinned = false,
   className,
   ...rest
-}: Omit<ComponentPropsWithoutRef<'th'>, 'align'> & { align?: Align }) {
+}: Omit<ComponentPropsWithoutRef<'th'>, 'align'> & { align?: Align; pinned?: boolean }) {
   const cls = [align === 'end' ? styles.end : undefined, className].filter(Boolean).join(' ');
-  return <th scope={scope} className={cls || undefined} {...rest} />;
+  return (
+    <th
+      scope={scope}
+      className={cls || undefined}
+      data-pinned={pinned ? '' : undefined}
+      {...rest}
+    />
+  );
 }
 
-/** A cell. Numbers use tabular figures so digits line up. */
+/** A cell. Numbers use tabular figures so digits line up. `pinned` puts it in a trailing pinned column (see Table). */
 export function Td({
   align = 'start',
   nowrap = false,
+  pinned = false,
   className,
   ...rest
-}: Omit<ComponentPropsWithoutRef<'td'>, 'align'> & { align?: Align; nowrap?: boolean }) {
+}: Omit<ComponentPropsWithoutRef<'td'>, 'align'> & {
+  align?: Align;
+  nowrap?: boolean;
+  pinned?: boolean;
+}) {
   const cls = [
     align === 'end' ? styles.end : undefined,
     nowrap ? styles.nowrap : undefined,
@@ -74,7 +95,7 @@ export function Td({
   ]
     .filter(Boolean)
     .join(' ');
-  return <td className={cls || undefined} {...rest} />;
+  return <td className={cls || undefined} data-pinned={pinned ? '' : undefined} {...rest} />;
 }
 
 /**
