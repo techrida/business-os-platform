@@ -148,8 +148,8 @@ const DEFAULT_LEVEL_ROWS: readonly LevelRow[] = Object.entries(
 /**
  * The fallback base table. The seed copies `DEFAULT_ROLE_PERMISSIONS` into `app.role_permissions` for every
  * tenant and bumps `authz_versions`, so in a seeded system the rows are the truth and this is only used for a
- * tenant that was never seeded (no rows and no version row). The seed must bump `authz_versions` when it inserts
- * the rows, or a cache that already loaded the defaults keeps them.
+ * tenant with no `role_permissions` rows. The seed must bump `authz_versions` when it inserts the rows, or a
+ * cache that already loaded the defaults keeps them.
  */
 const DEFAULT_BASE: ReadonlyMap<string, RoleGrants> = new Map(
   Object.entries(DEFAULT_ROLE_PERMISSIONS).map(([role, grants]) => [
@@ -158,7 +158,7 @@ const DEFAULT_BASE: ReadonlyMap<string, RoleGrants> = new Map(
   ]),
 );
 
-/** A tenant that was never seeded: both default tables, built once. */
+/** A tenant with no grant rows and no level rules of its own: both default tables, built once. */
 const DEFAULT_BY_ROLE: ReadonlyMap<string, LeveledGrants> = withLevels(
   DEFAULT_BASE,
   DEFAULT_LEVEL_ROWS,
@@ -218,7 +218,7 @@ export class RoleCache {
 
   /**
    * The roles whose live base grants in this tenant hold `permission` at any scope, sorted: who to notify or
-   * route to "everyone who may do X". The code defaults answer only for a tenant that was never seeded, like
+   * route to "everyone who may do X". The code defaults answer only for a tenant with no grant rows, like
    * `grantsFor`. Level rows are not consulted: a level only widens a grant the role already has.
    */
   async rolesGranting(tenantId: string, permission: Permission): Promise<RoleKey[]> {
@@ -292,7 +292,7 @@ export class RoleCache {
       return confirmed;
     }
 
-    const byRole = await this.readRows(tenantId, version !== null);
+    const byRole = await this.readRows(tenantId);
     const loaded: TenantEntry = { version, checkedAt, byRole };
     this.store(key, loaded, generation);
     return loaded;
@@ -316,18 +316,16 @@ export class RoleCache {
    * The tenant's base rows, level rows and level-rules flag, in one statement so a reload is still one round trip.
    *
    * Which tables count:
-   * - Base grants: the `role_permissions` rows. Only a tenant that was never seeded (no rows AND no
-   *   `authz_versions` row) gets `DEFAULT_ROLE_PERMISSIONS`. Every policy write bumps the version, so a Founder
-   *   who removed every grant keeps an empty policy instead of getting the defaults back.
+   * - Base grants: the `role_permissions` rows, or `DEFAULT_ROLE_PERMISSIONS` while the tenant has none. The
+   *   `authz_versions` row does not count: user and role writes create it without writing any grants, and an
+   *   empty policy cannot be saved on purpose (the Founder's grants are locked and every access save
+   *   materialises the defaults first), so zero rows always means "still on the defaults".
    * - Level grants: the `role_permission_levels` rows once the tenant has any, or once Access Settings marked the
    *   level rules materialized (`access_revisions.level_rules_materialized`), in which case zero rows means every
    *   level switch was turned off. Otherwise `DEFAULT_ROLE_PERMISSION_LEVELS`. The same rule as Access Settings'
    *   `deriveLevelRules`, so Check a person and the request agree.
    */
-  private async readRows(
-    tenantId: string,
-    hasVersionRow: boolean,
-  ): Promise<ReadonlyMap<string, LeveledGrants>> {
+  private async readRows(tenantId: string): Promise<ReadonlyMap<string, LeveledGrants>> {
     const result = await this.db.execute<LoadRow>(sql`
       SELECT 'base' AS "kind", role_key AS "roleKey", permission, NULL::text AS "minLevel", scope
         FROM app.role_permissions WHERE tenant_id = ${tenantId}
@@ -358,13 +356,13 @@ export class RoleCache {
       }
     }
 
-    // Never seeded and no level rows of its own: the prebuilt default tables.
-    if (baseRows.length === 0 && !hasVersionRow && !materialized && levelRows.length === 0) {
+    // No grant rows and no level rows of its own: the prebuilt default tables.
+    if (baseRows.length === 0 && !materialized && levelRows.length === 0) {
       return DEFAULT_BY_ROLE;
     }
 
     let base: ReadonlyMap<string, RoleGrants>;
-    if (baseRows.length === 0 && !hasVersionRow) {
+    if (baseRows.length === 0) {
       base = DEFAULT_BASE;
     } else {
       const byRole = new Map<string, Map<Permission, AccessScope>>();
