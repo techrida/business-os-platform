@@ -755,6 +755,32 @@ describe('a narrow grant (U20a phase 2)', () => {
     );
     expect((await service.get(theirs.id)).id).toBe(theirs.id);
   });
+
+  it("refuses to request or submit against a bill outside the caller's bill read, as a 404, and writes nothing", async () => {
+    const v = await vendor();
+    const bill = await approvedBill(v); // entered by U.acct
+    const drafted = await draft(v, [{ openItemId: bill.openItemId, amount: '100.00' }]);
+    const requestsOfFin2 = async () =>
+      (
+        await read((tx) =>
+          tx.select().from(paymentRequests).where(eq(paymentRequests.requestedBy, U.fin2)),
+        )
+      ).length;
+    const before = await requestsOfFin2();
+
+    as(U.fin2, 'finance');
+    const ownBills = grantsOf('finance');
+    ownBills.set('payables.bill.read', 'own');
+    current.grants = ownBills;
+    const refused = await httpErrorOf(
+      service.create(body(v, [{ openItemId: bill.openItemId, amount: '50.00' }]), randomUUID()),
+    );
+    expect(refused.getStatus()).toBe(404);
+    expect(await requestsOfFin2()).toBe(before);
+    // The draft made while the bill was readable cannot be submitted once it is not.
+    expect((await httpErrorOf(service.submit(drafted.id, randomUUID()))).getStatus()).toBe(404);
+    expect((await requestRow(drafted.id)).status).toBe('draft');
+  });
 });
 
 describe('list filters, search and paging', () => {
@@ -1061,5 +1087,38 @@ describe('available bill items', () => {
     );
     current.inB = true;
     expect(await service.listItems()).toEqual([]);
+  });
+
+  it('lists only the bills the caller may read: an `own` bill read reaches the bills they entered (U20a2-Q10)', async () => {
+    const v = await vendor();
+    const bill = await approvedBill(v); // entered by U.acct
+    const listedFor = async () =>
+      (await service.listItems()).some((item) => item.openItemId === bill.openItemId);
+
+    // Finance with its bill read narrowed to `own` entered no bill, so U.acct's item is not offered.
+    as(U.fin2, 'finance');
+    const ownBills = grantsOf('finance');
+    ownBills.set('payables.bill.read', 'own');
+    current.grants = ownBills;
+    expect(await listedFor()).toBe(false);
+
+    // No bill read at all: nothing, even with the request permission.
+    const noBills = grantsOf('finance');
+    noBills.delete('payables.bill.read');
+    current.grants = noBills;
+    expect(await service.listItems()).toEqual([]);
+
+    // The person who entered the bill reaches it on `own`.
+    as(U.acct, 'accountant');
+    const enterer = grantsOf('accountant');
+    enterer.set('payables.bill.read', 'own');
+    enterer.set('payables.payment.request', 'all');
+    current.grants = enterer;
+    expect(await listedFor()).toBe(true);
+
+    // Finance's default `all` still sees it.
+    as(U.fin2, 'finance');
+    current.grants = undefined;
+    expect(await listedFor()).toBe(true);
   });
 });
