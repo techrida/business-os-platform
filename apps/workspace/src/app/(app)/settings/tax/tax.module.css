@@ -1,0 +1,36 @@
+/* VAT codes table and its dialogs (Settings > Tax), on the shared tokens only. Phone: the hint and the Add button
+   stack, the table scrolls inside its own frame, and the row buttons keep a 44px target. */
+
+.manager {
+  display: grid;
+  gap: 16px;
+  min-width: 0;
+}
+
+.head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 8px 16px;
+}
+
+.hint {
+  flex: 1 1 260px;
+  max-width: 60ch;
+  margin: 0;
+  color: var(--text-secondary);
+  font-size: var(--font-size-body-small);
+  line-height: var(--line-height-body-small);
+}
+
+.rowActions {
+  display: inline-flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+
+.form {
+  display: grid;
+  gap: 16px;
+}

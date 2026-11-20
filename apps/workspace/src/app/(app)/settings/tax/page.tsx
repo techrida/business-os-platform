@@ -4,7 +4,7 @@ import { EmptyState } from '@/components/ui/empty-state';
 import { Page, PageHeader } from '@/components/ui/page';
 import { Panel } from '@/components/ui/panel';
 import { Table, Td, Th } from '@/components/ui/table';
-import { listTaxCodes } from '@/lib/api-tax-codes';
+import { listAdminTaxCodes } from '@/lib/api-master-data';
 import { listWithholdingCodes } from '@/lib/api-withholding-codes';
 
 import { BackToSettings } from '../_components/back-link';
@@ -13,9 +13,11 @@ import { SettingCard } from '../_components/setting-card';
 import { SettingsForm } from '../_components/settings-form';
 import styles from '../_components/settings.module.css';
 import admin from '../admin.module.css';
+import { todayInKathmandu } from '../format';
 import { requireSection } from '../guard';
 import { section } from '../section';
 import { SectionError } from '../ui';
+import { TaxCodesManager } from './tax-codes-manager';
 
 export const metadata: Metadata = { title: 'Tax · Business OS' };
 
@@ -25,14 +27,17 @@ export default async function TaxPage() {
   const session = await requireSection('tax');
   const [rate, vat, withholding] = await Promise.all([
     loadFields(session, ['tax.vat_rate']),
-    section('view VAT codes', () => listTaxCodes(session)),
+    section('view VAT codes', () => listAdminTaxCodes(session)),
     section('view withholding codes', () => listWithholdingCodes(session)),
   ]);
 
   return (
     <Page className={admin.page}>
       <BackToSettings />
-      <PageHeader title="Tax" description="VAT and withholding codes documents can use." />
+      <PageHeader
+        title="Tax"
+        description="The default VAT rate, and the VAT and withholding codes documents can use. Every change is recorded in the audit trail."
+      />
       <div className={styles.column}>
         {rate.ok ? (
           <div className={styles.narrow}>
@@ -44,40 +49,14 @@ export default async function TaxPage() {
           <SectionError message={rate.message} />
         )}
 
-        <Panel title="VAT codes" description="Read-only. Codes are set up with the system.">
+        <Panel
+          title="VAT codes"
+          description="The codes quotations, orders and bills can use, with the rate in force today."
+        >
           {!vat.ok ? (
             <SectionError message={vat.message} />
-          ) : vat.data.length === 0 ? (
-            <EmptyState title="No VAT codes yet" headingLevel={3}>
-              None have been set up.
-            </EmptyState>
           ) : (
-            <Table caption="VAT codes" className={admin.local ?? ''}>
-              <thead>
-                <tr>
-                  <Th>Name</Th>
-                  <Th>Code</Th>
-                  <Th align="end">Rate</Th>
-                </tr>
-              </thead>
-              <tbody>
-                {vat.data.map((code) => (
-                  <tr key={code.id}>
-                    <Th scope="row" className={admin.rowHead}>
-                      {code.label}
-                    </Th>
-                    <Td>{code.code ?? <span className={styles.muted}>None</span>}</Td>
-                    <Td align="end">
-                      {code.rateBp !== undefined
-                        ? percent(code.rateBp)
-                        : code.rate !== undefined
-                          ? `${code.rate}%`
-                          : '-'}
-                    </Td>
-                  </tr>
-                ))}
-              </tbody>
-            </Table>
+            <TaxCodesManager codes={vat.data} today={todayInKathmandu()} />
           )}
         </Panel>
 
