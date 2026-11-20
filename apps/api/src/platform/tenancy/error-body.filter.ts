@@ -319,8 +319,8 @@ const CONFLICT_CODES: readonly ErrorCode[] = [
   // U8 sales orders: only an accepted quotation confirms, only a confirmed order marks a line, only a planned
   // line becomes billable.
   'quotation_not_accepted',
-  // F1-Q20/F1-Q26: the customer owes more than its credit limit and the deal has no override (`details`: limit,
-  // exposure, opportunity).
+  // F1-Q20/F1-Q26: the customer owes more than its credit limit and the deal has no override (`details`: the
+  // opportunity id only; the limit and exposure are for credit.override holders).
   'credit_hold',
   'sales_order_not_open',
   'schedule_line_not_planned',

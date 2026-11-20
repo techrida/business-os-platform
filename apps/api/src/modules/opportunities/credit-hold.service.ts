@@ -1,7 +1,8 @@
 // The credit hold of a deal for the people who may lift it (F1-Q20, F1-Q26): its position in NPR and the override.
-// Route-level `credit.override` (Management and Finance by default, an on/off grant) is the whole check: Finance
-// reads opportunities only at `own`, so the deal is found in the acting entity by id, never through the caller's
-// opportunity scope, and only this narrow view of it is returned (no deal fields beyond the customer).
+// Route-level `credit.override` (Management and Finance by default, an on/off grant) is the whole check: a holder
+// need not read the deal (Settings may grant the override to a role whose opportunity read is narrower, or none),
+// so the deal is found in the acting entity by id, never through the caller's opportunity scope, and only this
+// narrow view of it is returned (no deal fields beyond the customer).
 import { type CreditHoldDto, type CreditOverrideBody } from '@bos/contracts';
 import { opportunities, scoped } from '@bos/db';
 import { ConflictException, Inject, Injectable, NotFoundException } from '@nestjs/common';
