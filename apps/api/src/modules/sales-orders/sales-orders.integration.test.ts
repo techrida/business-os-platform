@@ -56,6 +56,7 @@ import { CurrencyEnabledService } from '../../platform/settings/currency-enabled
 import type { MoneyService } from '../../platform/settings/money.service';
 import { NumberingService } from '../../platform/settings/numbering.service';
 import { SettingsService } from '../../platform/settings/settings.service';
+import { InvoiceDraftingService } from '../invoices/invoice-drafting.service';
 import { LedgerService } from '../ledger/ledger.service';
 import { LeadLostReasonsService } from '../leads/lost-reasons.service';
 import { OpportunitiesService } from '../opportunities/opportunities.service';
@@ -1366,5 +1367,90 @@ describe('saved reach on sales orders (U20a phase 2)', () => {
     current.grants = grantsOf('accountant');
     expect(await statusOf(markMilestone())).toEqual({ status: 422, code: 'evidence_required' });
     expect((await service.detail(theirs.order.id)).can!.markBillable).toBe(true);
+  });
+});
+
+// --------------------------------------------------------------------------------------- lock order
+
+describe('confirm and a draft of the advance line at once (lock order)', () => {
+  it('serialises on the sales order: the confirm commits, then the advance invoice is drafted', async () => {
+    const q = await acceptedQuotation();
+    const [order] = await liveOrders(q.id);
+    const [advance] = await db
+      .select()
+      .from(billingScheduleLines)
+      .where(eq(billingScheduleLines.salesOrderId, order!.id))
+      .orderBy(billingScheduleLines.seq);
+    expect(advance).toMatchObject({ trigger: 'advance', status: 'planned' });
+
+    current.grants = grantsOf('accountant');
+    current.userId = await seedOtherStaffUser(db, f);
+    const invoicing = new InvoiceDraftingService(
+      db,
+      authz as unknown as AuthzService,
+      new AuditService(db),
+      caller,
+      new LedgerService(),
+      new CurrencyEnabledService(settings),
+      () => NOW,
+    );
+
+    // The container's superuser holds the advance line, so the confirm stops at it; then a draft of that line starts.
+    // Order first (now), the draft waits behind the confirm. Line first (the old order), the confirm waits on the
+    // draft's order lock while the draft waits on the confirm's line lock: a deadlock, or a 409 for the draft.
+    const superPool = new Pool({ connectionString: urlFor('test', 'test', 'bos'), max: 2 });
+    const waiters = async (n: number, stop: () => boolean): Promise<boolean> => {
+      const deadline = Date.now() + 20_000;
+      for (;;) {
+        const { rows } = await superPool.query<{ n: number }>(
+          'SELECT count(DISTINCT pid)::int AS n FROM pg_locks WHERE NOT granted',
+        );
+        if ((rows[0]?.n ?? 0) >= n) return true;
+        if (stop() || Date.now() > deadline) return false;
+        await new Promise((resolve) => setTimeout(resolve, 50));
+      }
+    };
+    const blocker = await superPool.connect();
+    try {
+      await blocker.query('BEGIN');
+      await blocker.query(
+        'SELECT id FROM app.billing_schedule_lines WHERE id = $1 FOR NO KEY UPDATE',
+        [advance!.id],
+      );
+      let settled = 0;
+      const confirming = confirm(q).finally(() => (settled += 1));
+      confirming.catch(() => undefined);
+      expect(await waiters(1, () => settled > 0)).toBe(true);
+      const drafting = invoicing
+        .draftFromSchedule({ scheduleLineId: advance!.id }, `inv-${randomUUID()}`)
+        .finally(() => (settled += 1));
+      drafting.catch(() => undefined);
+      expect(await waiters(2, () => settled > 0)).toBe(true);
+      await blocker.query('COMMIT');
+
+      const [confirmed, drafted] = await Promise.allSettled([confirming, drafting]);
+      expect(confirmed.status).toBe('fulfilled');
+      expect(drafted.status).toBe('fulfilled');
+    } finally {
+      await blocker.query('ROLLBACK').catch(() => undefined);
+      blocker.release();
+      await superPool.end();
+    }
+
+    // No evidence row was filed: its foreign-key lock on the order would serialise the two on its own.
+    expect(
+      await db
+        .select()
+        .from(salesOrderEvidence)
+        .where(eq(salesOrderEvidence.salesOrderId, order!.id)),
+    ).toHaveLength(0);
+    const [after] = await liveOrders(q.id);
+    expect(after).toMatchObject({ id: order!.id, status: 'confirmed' });
+    const [line] = await db
+      .select()
+      .from(billingScheduleLines)
+      .where(eq(billingScheduleLines.id, advance!.id));
+    expect(line).toMatchObject({ status: 'drafted' });
+    expect(line!.invoiceId).not.toBeNull();
   });
 });
