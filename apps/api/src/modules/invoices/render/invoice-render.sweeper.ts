@@ -29,7 +29,9 @@
 // deletes the row). A success deletes the row. A rotating cursor keeps the oldest invoices from filling every batch; a
 // restart forgets only the cursor. A document created by a render that failed before its bytes were stored is removed
 // in the same failure path, so the next try is not blocked by it; one left by a crash between the two steps is
-// soft-removed after ORPHAN_AFTER_MS, which makes its invoice a candidate again.
+// soft-removed after ORPHAN_AFTER_MS, which makes its invoice a candidate again. A PDF whose bytes were stored is never
+// removed, even when its print row cannot be written (it may already have been downloaded): that write is tried twice
+// and then logged, with no failure counted (see recordPrintWithRetry).
 //
 // The tests drive the sweeper through a RenderStore fake; the drizzle store below is checked by the integration test.
 import { InjectQueue, Processor, WorkerHost } from '@nestjs/bullmq';
@@ -173,16 +175,6 @@ export interface RenderStore {
     documentId: string,
     now: Date,
   ): Promise<void>;
-  /**
-   * Soft-removes the invoice's document `documentId` although it got its bytes: its print could not be recorded, so it
-   * is not print 1 yet. Only the failure path of the try that created it calls this.
-   */
-  discardUnprinted(
-    tx: DbTransaction,
-    c: RenderCandidate,
-    documentId: string,
-    now: Date,
-  ): Promise<void>;
   /** Counts one failed try (render-failures.ts). */
   recordFailure(
     tx: DbTransaction,
@@ -281,14 +273,15 @@ export class InvoiceRenderSweeper {
     const actor = systemActor(INVOICE_RENDER_JOB_PREFIX);
     /** The document this try created, if it got that far: a failure after it must not leave it blocking the next. */
     let created: { documentId: string } | undefined;
-    /** Whether its bytes were stored: then only the print row is missing, and the document goes even with its bytes. */
-    let received = false;
+    /** The print the stored PDF is: its number and the format it printed with. */
+    let print: { printNo: number; format: DocumentFormatSnapshot };
     try {
       const source = await this.runTx(scope, actor, (tx) => this.store.load(tx, c));
       if (source === undefined) throw new RenderSourceMissingError();
       const { nextPrintNo, originalFormat, ...rows } = source;
       const view = toInvoiceRenderView({ ...rows, printNo: nextPrintNo });
       const format = await this.formatFor(scope, nextPrintNo, originalFormat);
+      print = { printNo: nextPrintNo, format };
       const bytes = await this.pdf.htmlToPdf(
         renderInvoiceHtml(view, {
           numberSystems: format.numberSystems,
@@ -317,51 +310,76 @@ export class InvoiceRenderSweeper {
       created = generated;
       // After the commit above: the content step opens its own transactions and the scan worker reads the row.
       await this.documents.receiveGenerated(generated, file, { scope, actor });
-      received = true;
-
-      // The bytes are in and queued for the scan: now the print is real, and earlier failures are forgotten. If this
-      // fails, the document is removed with the failure: a PDF without its print row would keep print 1's format
-      // unsaved for good (its invoice is never a candidate again), so the next try renders print 1 again.
-      await this.runTx(scope, actor, async (tx) => {
-        await this.store.recordPrint(
-          tx,
-          c,
-          nextPrintNo,
-          this.clock(),
-          nextPrintNo === 1 ? format : null,
-        );
-        await this.store.clearFailure(tx, c);
-      });
-      return { outcome: 'rendered' };
     } catch (error) {
       const kind = failureKind(error);
       this.logger.warn(`invoice render failed: invoice=${c.invoiceId} kind=${kind}`);
-      await this.noteFailure(c, scope, kind, created, received);
+      await this.noteFailure(c, scope, kind, created);
       return { outcome: 'failed', kind };
+    }
+
+    // The bytes are in and queued for the scan, and the PDF can be downloaded from now on: it IS this print, so it is
+    // never removed and never rendered again (a second original could differ in format). What is left is its print
+    // row, which also forgets earlier failures. A failed write is tried once more with the same print number and
+    // format; recordPrint ignores a print number already logged, so a first write that did commit is not doubled.
+    await this.recordPrintWithRetry(c, scope, print.printNo, print.format);
+    return { outcome: 'rendered' };
+  }
+
+  /**
+   * Writes the print row of a stored PDF, trying twice. When both tries fail, it logs and gives up without counting a
+   * render failure: the PDF stays live, so the invoice is no longer a candidate and is never rendered again.
+   *
+   * Known limitation: the invoice then has a downloadable PDF but no print row, so print 1's format is not stored; a
+   * later reprint (after the document is removed) would number itself print 1 and use the settings in force then.
+   * The log line below is what tells an operator to add the row by hand.
+   */
+  private async recordPrintWithRetry(
+    c: RenderCandidate,
+    scope: TxScope,
+    printNo: number,
+    format: DocumentFormatSnapshot,
+  ): Promise<void> {
+    const actor = systemActor(INVOICE_RENDER_JOB_PREFIX);
+    const write = () =>
+      this.runTx(scope, actor, async (tx) => {
+        await this.store.recordPrint(tx, c, printNo, this.clock(), printNo === 1 ? format : null);
+        await this.store.clearFailure(tx, c);
+      });
+    try {
+      await write();
+      return;
+    } catch (error) {
+      this.logger.warn(
+        `invoice render: could not record the print, trying again: invoice=${c.invoiceId} print=${printNo} kind=${failureKind(error)}`,
+      );
+    }
+    try {
+      await write();
+    } catch (error) {
+      this.logger.error(
+        `invoice render: stored PDF has no print row: invoice=${c.invoiceId} print=${printNo} kind=${failureKind(error)}`,
+      );
     }
   }
 
   /**
-   * Records a failed try. First, in its own transaction, removes the document this try created: if it never got its
-   * bytes, or if it got them but its print was not recorded (`received`). Then, in another, counts the failure and,
-   * when that used up the last try, writes the admin entry. Apart, so that one failing does not undo the other: a
-   * document left live would keep the invoice out of the candidates until the orphan cleanup. A failure of either is
-   * logged and left to the next sweep (an unfilled document left behind is removed as an orphan).
+   * Records a failed try (one that never stored its bytes). First, in its own transaction, removes the document this
+   * try created if it never got its bytes. Then, in another, counts the failure and, when that used up the last try,
+   * writes the admin entry. Apart, so that one failing does not undo the other: a document left live would keep the
+   * invoice out of the candidates until the orphan cleanup. A failure of either is logged and left to the next sweep
+   * (an unfilled document left behind is removed as an orphan).
    */
   private async noteFailure(
     c: RenderCandidate,
     scope: TxScope,
     kind: string,
     created: { documentId: string } | undefined,
-    received: boolean,
   ): Promise<void> {
     const actor = systemActor(INVOICE_RENDER_JOB_PREFIX);
     if (created !== undefined) {
       try {
         await this.runTx(scope, actor, (tx) =>
-          received
-            ? this.store.discardUnprinted(tx, c, created.documentId, this.clock())
-            : this.store.discardUnfilled(tx, c, created.documentId, this.clock()),
+          this.store.discardUnfilled(tx, c, created.documentId, this.clock()),
         );
       } catch (error) {
         this.logger.error(
@@ -648,22 +666,6 @@ export function drizzleInvoiceRenderStore(db: Db): RenderStore {
 
     discardUnfilled(tx, c, documentId, now) {
       return discardUnfilledDocument(tx, ownerOf(c), documentId, now);
-    },
-
-    async discardUnprinted(tx, c, documentId, now) {
-      await tx
-        .update(documents)
-        .set({ removedAt: now, updatedAt: now })
-        .where(
-          and(
-            eq(documents.tenantId, c.tenantId),
-            eq(documents.organizationId, c.organizationId),
-            eq(documents.ownerType, INVOICE_OWNER_TYPE),
-            eq(documents.ownerId, c.invoiceId),
-            eq(documents.id, documentId),
-            isNull(documents.removedAt),
-          ),
-        );
     },
 
     recordFailure(tx, c, kind, now) {
