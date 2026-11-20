@@ -505,6 +505,13 @@
       "when": 1783000000120,
       "tag": "0120_finance_settings_permissions",
       "breakpoints": true
+    },
+    {
+      "idx": 73,
+      "version": "7",
+      "when": 1783000000121,
+      "tag": "0121_crm_reopen_permissions",
+      "breakpoints": true
     }
   ]
 }
