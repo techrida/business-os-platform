@@ -367,6 +367,9 @@ export class UserMirror {
             displayName: user.displayName,
             status,
           });
+          // A status change (disabled, re-enabled) reaches every request at once: the per-request user cache
+          // is keyed on the authz version, so without a bump a disabled user stays active for up to 60 s.
+          if (existing.status !== status) await this.store.bumpAuthzVersion(tx, scope);
           changed = true;
         }
       }
@@ -447,13 +450,16 @@ export class UserMirror {
   }
 
   private async deactivate(user: UserRow): Promise<void> {
-    await withTx(this.db, await this.entityScope(user.tenantId), zitadelActor(), (tx) =>
-      this.store.updateUser(tx, user.id, {
+    const scope = await this.entityScope(user.tenantId);
+    await withTx(this.db, scope, zitadelActor(), async (tx) => {
+      await this.store.updateUser(tx, user.id, {
         email: user.email,
         displayName: user.displayName,
         status: 'inactive',
-      }),
-    );
+      });
+      // Bump the authz version so the per-request user cache drops the user at once (see apply).
+      await this.store.bumpAuthzVersion(tx, scope);
+    });
   }
 
   /** The tenant's staff IdP org: invites are created and grants are set there. */
