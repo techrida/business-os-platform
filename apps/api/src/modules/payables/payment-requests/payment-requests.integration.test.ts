@@ -773,6 +773,17 @@ describe('list filters, search and paging', () => {
 
     const byVendor = await service.list({ ...PAGE, q: name });
     expect(ids(byVendor)).toEqual(expect.arrayContaining([first.id, second.id]));
+    // Each row names its vendor, and the matches' amounts are summed per currency (U15b-Q4): over the
+    // whole match set, close (fuzzy) vendor-name matches included, as the rows are.
+    const named = byVendor.rows.filter((r) => r.id === first.id || r.id === second.id);
+    expect(named.map((r) => [r.vendorName, r.can.readVendor])).toEqual([
+      [name, true],
+      [name, true],
+    ]);
+    expect(byVendor.total).toBe(byVendor.rows.length);
+    const sum = byVendor.rows.reduce((acc, r) => acc + Math.round(Number(r.totalAmount) * 100), 0);
+    expect(byVendor.totals).toEqual([{ currency: 'NPR', amount: (sum / 100).toFixed(2) }]);
+    expect((await service.list({ ...PAGE, status: ['rejected'], q: name })).totals).toEqual([]);
 
     const all = await service.list(PAGE);
     const next = await service.list({ limit: 1, offset: 1 });
