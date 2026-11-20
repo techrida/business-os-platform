@@ -79,6 +79,7 @@ import { freezeEntityLogo } from './frozen-logo';
 import { renderInvoiceHtml } from './invoice-html';
 import {
   clearRenderFailure,
+  discardUnfilledDocument,
   recordRenderFailure,
   renderHeldBack,
   type RecordedFailure,
@@ -623,32 +624,8 @@ export function drizzleInvoiceRenderStore(db: Db): RenderStore {
         .limit(limit);
     },
 
-    async discardUnfilled(tx, c, documentId, now) {
-      // The same soft remove as removeOrphan, only while no version of the document got its bytes.
-      const filled = db
-        .select({ one: sql`1` })
-        .from(documentVersions)
-        .where(
-          and(
-            eq(documentVersions.tenantId, c.tenantId),
-            eq(documentVersions.documentId, documentId),
-            not(eq(documentVersions.status, 'awaiting_content')),
-          ),
-        );
-      await tx
-        .update(documents)
-        .set({ removedAt: now, updatedAt: now })
-        .where(
-          and(
-            eq(documents.tenantId, c.tenantId),
-            eq(documents.organizationId, c.organizationId),
-            eq(documents.ownerType, INVOICE_OWNER_TYPE),
-            eq(documents.ownerId, c.invoiceId),
-            eq(documents.id, documentId),
-            isNull(documents.removedAt),
-            notExists(filled),
-          ),
-        );
+    discardUnfilled(tx, c, documentId, now) {
+      return discardUnfilledDocument(tx, ownerOf(c), documentId, now);
     },
 
     recordFailure(tx, c, kind, now) {
