@@ -239,7 +239,7 @@ export async function addContactAction(
 const PORTAL_REFUSAL: Record<string, string> = {
   first_admin_owner_only: "Only this customer's account owner can invite its first portal admin.",
   account_owner_missing:
-    'This customer has no account owner. Assign one first; the owner invites the first portal admin.',
+    'This customer has no account owner, and only the account owner can invite its first portal admin.',
   kyb_not_verified:
     "Portal access needs an approved KYB verification. Finish this customer's verification first.",
   customer_merged:

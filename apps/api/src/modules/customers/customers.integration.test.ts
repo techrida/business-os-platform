@@ -998,8 +998,37 @@ describe('detail can and verification presence (audit #6)', () => {
     const body = await detail(mine.id);
     expect(body.can).toEqual({ write: true, readVerification: true, openVerification: true });
     expect(body.verification).toEqual({ exists: false });
-    // F1-Q31: the owner may invite the first portal admin.
-    expect(body.portalAccess).toEqual({ hasUser: false, canInvite: true });
+    // F1-Q31: the owner may invite the first portal admin once the customer's KYB case is approved.
+    expect(body.portalAccess).toEqual({
+      hasUser: false,
+      canInvite: false,
+      blocked: 'kyb_not_verified',
+    });
+  });
+
+  it('offers the owner the first portal admin invite once the KYB case is approved (F1-Q31)', async () => {
+    const { userId: reviewer } = await createStaffUser(appPool, { ...a, roleKeys: ['finance'] });
+    asStaff(a);
+    const mine = await createCustomer({ ownerUserId: a.userId });
+    const now = new Date();
+    await withTx(db, a, systemActor('test'), (tx) =>
+      tx.insert(verificationCases).values({
+        tenantId: a.tenantId,
+        partyId: mine.id,
+        partyKind: 'customer',
+        status: 'approved',
+        reviewPolicy: 'document_review_v1',
+        checklist: [],
+        submittedByUserId: a.userId,
+        submittedAt: now,
+        reviewerUserId: reviewer,
+        decidedAt: now,
+        createdAt: now,
+        updatedAt: now,
+      }),
+    );
+    const body = await detail(mine.id);
+    expect(body.portalAccess).toEqual({ hasUser: false, canInvite: true, blocked: null });
   });
 
   it("tells Sales a colleague's customer has a case, without offering to start one or leaking the case", async () => {
@@ -1011,7 +1040,7 @@ describe('detail can and verification presence (audit #6)', () => {
     const body = await detail(theirs.id);
     expect(body.can).toEqual({ write: true, readVerification: false, openVerification: false });
     // F1-Q31: only the account owner invites the first portal admin.
-    expect(body.portalAccess).toEqual({ hasUser: false, canInvite: false });
+    expect(body.portalAccess).toEqual({ hasUser: false, canInvite: false, blocked: 'owner_only' });
     expect(body.verification).toEqual({ exists: true });
     // Existence only: nothing of the case itself (id, status, reviewer note) comes with the customer.
     const text = JSON.stringify(body);
