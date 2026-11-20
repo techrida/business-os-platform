@@ -330,15 +330,43 @@ export function workflow(cfg) {
               'route is Dev Accountant then Dev Finance',
               routeText.slice(0, 200),
             );
-            const submit = s.button('Submit for approval');
-            await s.see(submit, 'Submit for approval');
-            const confirm = s.page
-              .getByRole('dialog', { name: 'Submit for approval?' })
+            // The opener and the confirm are both named "Submit for approval": the opener is looked
+            // up in <main> (the dialog is portalled outside it) so it can never match the confirm.
+            const submit = s.page
+              .getByRole('main')
               .getByRole('button', { name: 'Submit for approval', exact: true });
+            await s.see(submit, 'Submit for approval');
+            const submitDialog = s.page.getByRole('dialog', { name: 'Submit for approval?' });
+            const confirm = submitDialog.getByRole('button', {
+              name: 'Submit for approval',
+              exact: true,
+            });
             // A dev-server reload can close the confirm dialog before its button is clicked (r3f,
             // 20 Nov 2026). Nothing is sent until the confirm, so the dialog is opened again, at
             // most three times, each noted; the confirm itself is clicked once.
             for (let attempt = 1; ; attempt++) {
+              // A dialog still open at a retry is cancelled first, so the retry cannot submit.
+              if (
+                attempt > 1 &&
+                (await submitDialog
+                  .first()
+                  .isVisible()
+                  .catch(() => false))
+              ) {
+                await submitDialog
+                  .getByRole('button', { name: 'Cancel', exact: true })
+                  .click({ timeout: 5000 })
+                  .catch(() => s.page.keyboard.press('Escape'));
+                const closed = await submitDialog
+                  .waitFor({ state: 'hidden', timeout: 10000 })
+                  .then(() => true)
+                  .catch(() => false);
+                if (!closed)
+                  throw new StepFailure(
+                    'The Submit for approval? dialog stayed open after Cancel; not retrying, so ' +
+                      'the confirm is not clicked by mistake',
+                  );
+              }
               await s.click(
                 submit,
                 attempt === 1 ? 'Submit for approval' : 'Submit for approval again',

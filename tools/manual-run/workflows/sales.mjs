@@ -188,8 +188,27 @@ export function workflow(cfg) {
     // Nothing is decided before the confirm click, so a dialog lost to a dev-server rebuild
     // reload (r3s1 sales-11: it never opened; r3s2 sales-7: it closed before the confirm) is
     // opened and filled again, at most three times, each noted. The confirm is clicked once.
+    // The opener and the confirm are both named "Approve": the opener is looked up in <main> (the
+    // dialog is portalled outside it), and a still-open dialog is cancelled before a retry, so a
+    // retry click can never land on the confirm and approve without the comment.
+    const opener = s.page.getByRole('main').getByRole('button', { name: 'Approve', exact: true });
     for (let attempt = 1; ; attempt++) {
-      await s.click(s.button('Approve'), attempt === 1 ? 'Approve' : 'Approve again');
+      if (attempt > 1 && (await visible(dialog))) {
+        await dialog
+          .getByRole('button', { name: 'Cancel', exact: true })
+          .click({ timeout: 5000 })
+          .catch(() => s.page.keyboard.press('Escape'));
+        const closed = await dialog
+          .waitFor({ state: 'hidden', timeout: 10000 })
+          .then(() => true)
+          .catch(() => false);
+        if (!closed)
+          throw new StepFailure(
+            'The Approve request dialog stayed open after Cancel; not retrying, so the confirm ' +
+              'is not clicked by mistake',
+          );
+      }
+      await s.click(opener, attempt === 1 ? 'Approve' : 'Approve again');
       const ready = await dialog
         .waitFor({ state: 'visible', timeout: 20000 })
         .then(() => dialog.getByLabel('Comment (optional)', { exact: true }).fill(comment))
