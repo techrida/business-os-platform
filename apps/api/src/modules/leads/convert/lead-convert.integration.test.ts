@@ -27,6 +27,8 @@ import type { AuthzService } from '../../../platform/authz/authz.service';
 import { systemActor, withTx } from '../../../platform/db/tx';
 import { NumberingService } from '../../../platform/settings/numbering.service';
 import { ErrorBodyFilter } from '../../../platform/tenancy/error-body.filter';
+import { ActivitiesService } from '../../activities/activities.service';
+import { ListActivitiesQuerySchema } from '../../activities/activities.types';
 import { CustomersService } from '../../customers/customers.service';
 import { OpportunitiesService } from '../../opportunities/opportunities.service';
 import { LeadsController } from '../leads.controller';
@@ -44,6 +46,7 @@ let h: Harness;
 let app: INestApplication;
 let baseUrl: string;
 let opportunitiesService: OpportunitiesService;
+let activitiesService: ActivitiesService;
 
 beforeAll(async () => {
   h = await startHarness({ Pool, drizzle });
@@ -69,6 +72,7 @@ beforeAll(async () => {
     numbering,
     customersService,
     h.caller,
+    h.roleCache,
   );
   opportunitiesService = new OpportunitiesService(
     h.db,
@@ -77,6 +81,7 @@ beforeAll(async () => {
     h.caller,
     new LeadLostReasonsService(h.db, audit, h.caller),
   );
+  activitiesService = new ActivitiesService(h.db, authz, audit, h.caller, h.roleCache, h.notify);
   const moduleRef = await Test.createTestingModule({
     controllers: [LeadsController, LeadConvertController],
     providers: [
@@ -639,5 +644,138 @@ describe('the lead creator on the opportunity (FX-Q1)', () => {
     expect(res.status, JSON.stringify(res.body)).toBe(201);
     const { opportunityId } = res.body as { opportunityId: string };
     expect(await opportunityRow(opportunityId)).toMatchObject({ leadCreatorUserId: null });
+  });
+});
+
+describe("a lead's open follow-ups carry to the opportunity (U16-Q6)", () => {
+  let salesStaff: string;
+  let peer: string;
+  let marketing: string;
+
+  beforeAll(async () => {
+    const salesDept = await h.department('Sales Carry');
+    salesStaff = await h.member({ roles: ['sales'], departmentId: salesDept, displayName: 'Sam' });
+    peer = await h.member({ roles: ['sales'], departmentId: salesDept, displayName: 'Pia' });
+    marketing = await h.member({ roles: ['marketing'], displayName: 'Maya Marketing' });
+  });
+
+  const activityRow = async (id: string) =>
+    (await h.db.select().from(activities).where(eq(activities.id, id)))[0]!;
+
+  async function onLead(
+    leadId: string,
+    assigneeUserId: string | null,
+    extra: { subject: string; body?: string; due?: boolean; completed?: boolean },
+  ) {
+    const [row] = await withTx(h.db, h.scopeA, systemActor('test'), (tx) =>
+      tx
+        .insert(activities)
+        .values({
+          ...h.scopeA,
+          kind: 'call',
+          subject: extra.subject,
+          body: extra.body ?? null,
+          leadId,
+          dueAt: extra.due === false ? null : new Date('2026-12-01T09:30:00Z'),
+          assigneeUserId,
+          createdByUserId: salesStaff,
+          completedAt: extra.completed === true ? new Date() : null,
+        })
+        .returning(),
+    );
+    return row!;
+  }
+
+  it('moves the planned follow-ups, with assignee, due time and text, and keeps the history on the lead', async () => {
+    await h.actAs(salesStaff);
+    const lead = await qualifiedLead();
+    const mine = await onLead(lead.id, salesStaff, {
+      subject: 'Send proposal',
+      body: 'Bring pricing',
+    });
+    const peers = await onLead(lead.id, peer, { subject: 'Site visit' });
+    const done = await onLead(lead.id, salesStaff, { subject: 'First call', completed: true });
+    const logged = await onLead(lead.id, salesStaff, { subject: 'Logged call', due: false });
+
+    const res = await convert(lead.id, createCustomerBody());
+    expect(res.status, JSON.stringify(res.body)).toBe(201);
+    const { opportunityId } = res.body as { opportunityId: string };
+
+    for (const before of [mine, peers]) {
+      const after = await activityRow(before.id);
+      expect(after).toMatchObject({
+        leadId: null,
+        opportunityId,
+        assigneeUserId: before.assigneeUserId,
+        dueAt: before.dueAt,
+        subject: before.subject,
+        body: before.body,
+        kind: before.kind,
+        completedAt: null,
+        cancelledAt: null,
+        version: before.version + 1,
+      });
+    }
+    for (const kept of [done, logged]) {
+      expect(await activityRow(kept.id)).toMatchObject({ leadId: lead.id, opportunityId: null });
+    }
+    const { rows } = await h.ownerPool.query(
+      `SELECT entity_id, before, after FROM audit.audit_events
+        WHERE tenant_id = $1 AND action = 'activity.carried_to_opportunity' ORDER BY entity_id`,
+      [h.tenantId],
+    );
+    const carried = (rows as { entity_id: string; before: unknown; after: unknown }[]).filter(
+      (r) => r.entity_id === mine.id || r.entity_id === peers.id,
+    );
+    expect(carried).toHaveLength(2);
+    for (const r of carried) {
+      expect(r.before).toEqual({ leadId: lead.id });
+      expect(r.after).toEqual({ opportunityId });
+    }
+
+    // The owner lists them as the deal's planned activities, and plans a new one through the same API.
+    const planned = ListActivitiesQuerySchema.parse({ opportunityId, status: 'planned' });
+    expect((await activitiesService.list(planned)).items.map((a) => a.id).sort()).toEqual(
+      [mine.id, peers.id].sort(),
+    );
+    const added = await activitiesService.create({
+      kind: 'meeting',
+      subject: 'Negotiation meeting',
+      dueAt: '2026-12-05T10:00:00.000Z',
+      opportunityId,
+    });
+    expect(added).toMatchObject({ opportunityId, planned: true, assigneeUserId: salesStaff });
+    expect((await activitiesService.list(planned)).items.map((a) => a.id)).toContain(added.id);
+
+    // The peer still holds their follow-up on the deal and completes it there (D55-5).
+    await h.actAs(peer);
+    const theirs = (await activitiesService.list(planned)).items.find((a) => a.id === peers.id);
+    expect(theirs).toBeDefined();
+  });
+
+  it('leaves a follow-up on the lead when its assignee cannot open deals (Marketing)', async () => {
+    await h.actAs(salesStaff);
+    const lead = await qualifiedLead();
+    const theirs = await onLead(lead.id, marketing, { subject: 'Send the brochure' });
+    const mine = await onLead(lead.id, salesStaff, { subject: 'Book the demo' });
+    const res = await convert(lead.id, createCustomerBody());
+    expect(res.status, JSON.stringify(res.body)).toBe(201);
+    const { opportunityId } = res.body as { opportunityId: string };
+    expect(await activityRow(mine.id)).toMatchObject({ leadId: null, opportunityId });
+    expect(await activityRow(theirs.id)).toMatchObject({
+      leadId: lead.id,
+      opportunityId: null,
+      assigneeUserId: marketing,
+      version: theirs.version,
+    });
+    // Still theirs to finish, on the converted lead they can open.
+    await h.actAs(marketing);
+    const listed = await activitiesService.list(
+      ListActivitiesQuerySchema.parse({ status: 'planned' }),
+    );
+    expect(listed.items.map((a) => a.id)).toContain(theirs.id);
+    expect(
+      await activitiesService.complete(theirs.id, { expectedVersion: theirs.version }),
+    ).toMatchObject({ id: theirs.id, planned: false });
   });
 });
