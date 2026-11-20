@@ -1,8 +1,8 @@
 import type { ReactElement } from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { RFQ_ID, sampleRfq } from '@/components/vendor/rfq-fixtures';
+import { BEFORE_DEADLINE, RFQ_ID, sampleRfq } from '@/components/vendor/rfq-fixtures';
 import { sampleOnboarding } from '@/components/vendor/vendor-fixtures';
 import { ApiError } from '@/lib/api';
 
@@ -36,12 +36,19 @@ const render = async (id: string = RFQ_ID) =>
   renderToStaticMarkup((await RfqPage({ params: Promise.resolve({ id }) })) as ReactElement);
 
 beforeEach(() => {
+  // The page compares the sample deadline with now (F1-Q47): pin now before it.
+  vi.useFakeTimers({ toFake: ['Date'] });
+  vi.setSystemTime(BEFORE_DEADLINE);
   for (const f of Object.values(m)) f.mockReset();
   m.getSession.mockResolvedValue(vendorSession());
   m.getVendorOnboarding.mockResolvedValue(
     sampleOnboarding({ status: 'approved', capability: 'full' }),
   );
   m.getVendorRfq.mockResolvedValue(sampleRfq());
+});
+
+afterEach(() => {
+  vi.useRealTimers();
 });
 
 describe('vendor RFQ detail page', () => {
@@ -54,11 +61,12 @@ describe('vendor RFQ detail page', () => {
     expect(m.getVendorRfq).toHaveBeenCalledWith(expect.anything(), RFQ_ID);
   });
 
-  it('warns about a past deadline and still shows the link', async () => {
+  it('after the deadline says it passed and drops the quotation link (F1-Q47)', async () => {
     m.getVendorRfq.mockResolvedValue(sampleRfq({ deadline: '2020-01-01T00:00:00.000Z' }));
     const html = await render();
     expect(text(html)).toContain('The deadline for this request has passed');
-    expect(html).toContain(`href="/vendor/rfqs/${RFQ_ID}/quote"`);
+    expect(text(html)).toContain('If we extend the deadline, the new date will show here.');
+    expect(html).not.toContain(`href="/vendor/rfqs/${RFQ_ID}/quote"`);
   });
 
   it.each(['not-a-uuid', '../bills', '123'])(
