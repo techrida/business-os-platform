@@ -9,11 +9,13 @@ import { Field, Input, Select } from '@/components/ui/field';
 import { DatePicker } from '@/components/ui/date-picker';
 import { Icon } from '@/components/ui/icon';
 import { PageHeader } from '@/components/ui/page';
+import { useNumberSystems } from '@/components/ui/number-system-context';
 import { toast } from '@/components/ui/toast';
 import { Panel } from '@/components/ui/panel';
 import { CURRENCY_NAME, normalizeEnabled } from '@/lib/enabled-currencies';
+import { money, when } from '@/lib/kernel-format';
 
-import { methodLabel } from '../_lib/status';
+import { methodLabel, paymentStatusMeta } from '../_lib/status';
 
 import { recordPaymentAction } from './actions';
 import type { RecordPaymentState } from './form-state';
@@ -134,10 +136,16 @@ export function PaymentForm({
   const uploadBusy = useRef(false);
   const formRef = useRef<HTMLFormElement>(null);
   const errorRef = useRef<HTMLDivElement>(null);
+  const referenceRef = useRef<HTMLDivElement>(null);
+  const numberSystems = useNumberSystems();
+  const referenceMatches = state.referenceMatches ?? [];
 
-  // Send focus to what needs attention: the summary, else the first field that is wrong.
+  // Send focus to what needs attention: the summary, the reused bank reference warning (nothing was
+  // recorded, and the person pressed the button at the bottom), else the first field that is wrong.
   useEffect(() => {
     if (state.error) errorRef.current?.focus();
+    else if (state.referenceMatches !== undefined && state.referenceMatches.length > 0)
+      referenceRef.current?.focus();
     else formRef.current?.querySelector<HTMLElement>('[aria-invalid="true"]')?.focus();
   }, [state]);
 
@@ -244,6 +252,43 @@ export function PaymentForm({
             actions={state.reload ? <a href={reloadHref}>Reload the form</a> : null}
           >
             {state.error}
+          </Alert>
+        ) : null}
+
+        {referenceMatches.length > 0 ? (
+          <Alert
+            ref={referenceRef}
+            tabIndex={-1}
+            tone="warning"
+            role="alert"
+            title="A payment with this bank reference is already recorded"
+          >
+            Check this is not the same payment before you record it again:
+            <ul>
+              {referenceMatches.map((m) => (
+                <li key={m.id}>
+                  <a
+                    href={`/payments/${encodeURIComponent(m.id)}`}
+                    target="_blank"
+                    rel="noreferrer"
+                  >
+                    {m.number ?? 'Not yet numbered'}
+                  </a>
+                  : {money(m.amount, m.currency, numberSystems)} from{' '}
+                  {m.customerName ?? 'a customer you cannot see'}, received{' '}
+                  <time dateTime={m.receivedOn}>{when(m.receivedOn, 'date')}</time> (
+                  {paymentStatusMeta(m.status).label})
+                </li>
+              ))}
+            </ul>
+            <label className={styles.check}>
+              <input
+                type="checkbox"
+                name="referenceConfirmed"
+                value={referenceMatches.map((m) => m.id).join(',')}
+              />
+              This is a different payment. Record it anyway.
+            </label>
           </Alert>
         ) : null}
 
