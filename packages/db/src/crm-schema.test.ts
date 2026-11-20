@@ -221,6 +221,14 @@ describe('0015_crm and src/schema/crm.ts', () => {
       'utf8',
     ),
   );
+  // 0103 adds the credit override columns of opportunities (with their FK to users and their check).
+  applyAlters(
+    parsed,
+    readFileSync(
+      new URL('../migrations/0103_opportunity_credit_override.sql', import.meta.url),
+      'utf8',
+    ),
+  );
 
   it('create the same nine tables', () => {
     expect([...parsed.keys()].sort()).toEqual(Object.keys(DRIZZLE).sort());

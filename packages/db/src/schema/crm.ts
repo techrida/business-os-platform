@@ -525,6 +525,13 @@ export const opportunities = appSchema.table(
     heldFromStage: text('held_from_stage', { enum: OPPORTUNITY_STAGES }),
     /** 0101 (FX-Q1): who entered the lead this opportunity came from; creator reach covers the opportunity too. */
     leadCreatorUserId: uuid('lead_creator_user_id'),
+    /**
+     * 0103 (F1-Q20/F1-Q26): the override of the deal's credit hold, set together (opportunities_credit_override_check).
+     * The hold itself is derived from the ledger, never stored.
+     */
+    creditOverrideReason: text('credit_override_reason'),
+    creditOverrideByUserId: uuid('credit_override_by_user_id'),
+    creditOverrideAt: timestamp('credit_override_at', { withTimezone: true }),
     /** The expected deal value. */
     value: numeric('value', { precision: 18, scale: 2 }),
     currency: char('currency', { length: 3 }).notNull().default('NPR'),
@@ -579,6 +586,15 @@ export const opportunities = appSchema.table(
       columns: [t.tenantId, t.leadCreatorUserId],
       foreignColumns: [users.tenantId, users.id],
     }),
+    foreignKey({
+      name: 'opportunities_credit_override_by_user_fk',
+      columns: [t.tenantId, t.creditOverrideByUserId],
+      foreignColumns: [users.tenantId, users.id],
+    }),
+    check(
+      'opportunities_credit_override_check',
+      sql`(${t.creditOverrideReason} IS NULL AND ${t.creditOverrideByUserId} IS NULL AND ${t.creditOverrideAt} IS NULL) OR (${t.creditOverrideReason} IS NOT NULL AND length(btrim(${t.creditOverrideReason})) > 0 AND ${t.creditOverrideByUserId} IS NOT NULL AND ${t.creditOverrideAt} IS NOT NULL)`,
+    ),
     index('opportunities_tenant_lead_creator_idx').on(
       t.tenantId,
       t.organizationId,
