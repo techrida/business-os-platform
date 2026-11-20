@@ -716,7 +716,7 @@ describe('invoice render', () => {
     ).rejects.toBeInstanceOf(ForbiddenException);
   });
 
-  it('removes an orphan older than an hour and keeps a younger one', async () => {
+  it('removes an orphan older than ORPHAN_AFTER_MS and keeps a younger one', async () => {
     const scope = await newScope();
     const old = await seedInvoice(scope);
     const young = await seedInvoice(scope);
@@ -923,5 +923,68 @@ describe('a render that keeps failing (R4c2: TR-Q4, F1-Q13)', () => {
       'awaiting_content',
       'clean',
     ]);
+  });
+
+  it('removes the document whose bytes failed the PDF type check, so the render is tried again', async () => {
+    const scope = await newScope();
+    const inv = await seedInvoice(scope);
+    let clock = new Date();
+    // The renderer answered, but not with a PDF: the real receive rejects the bytes with a 415.
+    const notAPdf = new InvoiceRenderSweeper(
+      store,
+      runTx,
+      documents,
+      settings,
+      { htmlToPdf: vi.fn().mockResolvedValue(Buffer.from('<html>gateway error</html>')) },
+      () => clock,
+      NO_LOGOS,
+      renderAudit,
+    );
+    expect(await notAPdf.renderOne(inv)).toBe('failed');
+    const [doc] = await documentRows(inv.invoiceId);
+    expect(doc?.status).toBe('rejected');
+    expect(doc?.removed_at).not.toBeNull();
+    const row = await failureRow(inv.invoiceId);
+    expect(row).toMatchObject({ attempts: 1, last_failure_kind: 'http_415' });
+    clock = new Date((row?.next_attempt_at ?? new Date()).getTime() + 1);
+    expect(ids(await store.candidates(clock, 1_000))).toContain(inv.invoiceId);
+    expect(await sweeper.renderOne(inv)).toBe('rendered');
+    expect((await documentRows(inv.invoiceId)).map((d) => d.status)).toEqual([
+      'rejected',
+      'clean',
+    ]);
+  });
+
+  it('removes a stored PDF whose print 1 could not be recorded, so the next try prints and freezes print 1', async () => {
+    const scope = await newScope();
+    const inv = await seedInvoice(scope);
+    let clock = new Date();
+    const noPrintLog = {
+      ...store,
+      recordPrint: vi.fn().mockRejectedValue(new Error('print log down')),
+    };
+    const worker = new InvoiceRenderSweeper(
+      noPrintLog,
+      runTx,
+      documents,
+      settings,
+      { htmlToPdf: vi.fn().mockResolvedValue(PDF) },
+      () => clock,
+      NO_LOGOS,
+      renderAudit,
+    );
+    expect(await worker.renderOne(inv)).toBe('failed');
+    const [doc] = await documentRows(inv.invoiceId);
+    expect(doc?.status).toBe('clean');
+    expect(doc?.removed_at).not.toBeNull();
+    expect(await printFormats(inv.invoiceId)).toEqual([]);
+    const row = await failureRow(inv.invoiceId);
+    expect(row).toMatchObject({ attempts: 1 });
+    clock = new Date((row?.next_attempt_at ?? new Date()).getTime() + 1);
+    expect(ids(await store.candidates(clock, 1_000))).toContain(inv.invoiceId);
+    expect(await sweeper.renderOne(inv)).toBe('rendered');
+    const prints = await printFormats(inv.invoiceId);
+    expect(prints.map((p) => p.print_no)).toEqual([1]);
+    expect(prints[0]?.render_format).not.toBeNull();
   });
 });

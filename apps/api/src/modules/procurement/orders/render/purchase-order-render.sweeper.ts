@@ -37,7 +37,6 @@ import {
 } from '@bos/contracts';
 import {
   documents,
-  documentVersions,
   organizations,
   purchaseOrderVersions,
   purchaseOrders,
@@ -62,6 +61,7 @@ import { freezeEntityLogo } from '../../../invoices/render/frozen-logo';
 import {
   clearRenderFailure,
   discardUnfilledDocument,
+  filledVersion,
   recordRenderFailure,
   renderHeldBack,
   type RecordedFailure,
@@ -78,7 +78,10 @@ import type {
   RenderSettings,
   RunInTx,
 } from '../../../quotations/render/quotation-render.sweeper';
-import { RENDER_GIVEN_UP_ACTION } from '../../../quotations/render/render-retry';
+import {
+  GENERATED_ORPHAN_AFTER_MS,
+  RENDER_GIVEN_UP_ACTION,
+} from '../../../quotations/render/render-retry';
 import { PO_AUDIT_ENTITY } from '../purchase-order.rules';
 import { renderPurchaseOrderHtml } from './purchase-order-html';
 import { PO_RENDER_JOB_PREFIX, PO_VERSION_OWNER_TYPE } from './purchase-order-version-owner.policy';
@@ -93,8 +96,8 @@ import {
 export const PO_RENDER_QUEUE = 'purchase-order.render';
 export const PO_RENDER_SWEEP_JOB = 'purchase-order.render.sweep';
 export const SWEEP_EVERY_MS = 60_000;
-/** A generated document still awaiting its bytes after this long was left by a render that crashed midway. */
-export const ORPHAN_AFTER_MS = 60 * 60_000;
+/** A generated document still without its bytes after this long was left by a render that crashed midway. */
+export const ORPHAN_AFTER_MS = GENERATED_ORPHAN_AFTER_MS;
 /** Versions handled per tick; the rest wait a minute. Keeps one tick bounded (each render has its own deadline). */
 const BATCH = 10;
 const ORPHAN_BATCH = 50;
@@ -302,7 +305,15 @@ export class PurchaseOrderRenderSweeper {
       created = generated;
       // After the commit above: the content step opens its own transactions and the scan worker reads the row.
       await this.documents.receiveGenerated(generated, file, { scope, actor });
-      await this.runTx(scope, actor, (tx) => this.store.clearFailure(tx, c));
+      // The PDF is stored: the render succeeded even if its earlier failures cannot be forgotten now. Counting that as
+      // a failed try could give up a render whose PDF exists; a leftover row is harmless behind a live document.
+      try {
+        await this.runTx(scope, actor, (tx) => this.store.clearFailure(tx, c));
+      } catch (error) {
+        this.logger.error(
+          `purchase order render: could not forget earlier failures: version=${c.versionId} kind=${failureKind(error)}`,
+        );
+      }
       return { outcome: 'rendered' };
     } catch (error) {
       const kind = failureKind(error);
@@ -313,9 +324,10 @@ export class PurchaseOrderRenderSweeper {
   }
 
   /**
-   * Records a failed try, in one transaction: removes the document this try created if it never got its bytes, counts
-   * the failure, and, when that used up the last try, writes the admin entry on the purchase order. A failure here is
-   * logged and left to the next sweep.
+   * Records a failed try. First, in its own transaction, removes the document this try created if it never got its
+   * bytes. Then, in another, counts the failure and, when that used up the last try, writes the admin entry on the
+   * purchase order. Apart, so that one failing does not undo the other: a document left live would keep the version
+   * out of the candidates until the orphan cleanup. A failure of either is logged and left to the next sweep.
    */
   private async noteFailure(
     c: RenderCandidate,
@@ -323,10 +335,21 @@ export class PurchaseOrderRenderSweeper {
     kind: string,
     created: { documentId: string } | undefined,
   ): Promise<void> {
+    const actor = systemActor(PO_RENDER_JOB_PREFIX);
+    if (created !== undefined) {
+      try {
+        await this.runTx(scope, actor, (tx) =>
+          this.store.discardUnfilled(tx, c, created.documentId, this.clock()),
+        );
+      } catch (error) {
+        this.logger.error(
+          `purchase order render: could not remove the failed try's document: version=${c.versionId} kind=${failureKind(error)}`,
+        );
+      }
+    }
     try {
-      await this.runTx(scope, systemActor(PO_RENDER_JOB_PREFIX), async (tx) => {
+      await this.runTx(scope, actor, async (tx) => {
         const now = this.clock();
-        if (created !== undefined) await this.store.discardUnfilled(tx, c, created.documentId, now);
         const recorded = await this.store.recordFailure(tx, c, kind, now);
         if (!recorded.givenUp) return;
         await this.audit.record(tx, {
@@ -545,19 +568,12 @@ export function drizzlePurchaseOrderRenderStore(db: Db): RenderStore {
           documentId: documents.id,
         })
         .from(documents)
-        .innerJoin(
-          documentVersions,
-          and(
-            eq(documentVersions.tenantId, documents.tenantId),
-            eq(documentVersions.documentId, documents.id),
-          ),
-        )
         .where(
           and(
             eq(documents.ownerType, PO_VERSION_OWNER_TYPE),
             isNull(documents.removedAt),
             lt(documents.createdAt, cutoff),
-            eq(documentVersions.status, 'awaiting_content'),
+            notExists(filledVersion(db, documents.tenantId, documents.id)),
           ),
         )
         .orderBy(asc(documents.createdAt))
@@ -566,7 +582,7 @@ export function drizzlePurchaseOrderRenderStore(db: Db): RenderStore {
 
     async removeOrphan(tx, o, now) {
       // Soft remove, like DocumentsService.remove (which refuses here: nobody removes a PO file by hand). Rows are
-      // kept for the audit trail, and there are no bytes to delete: the version never left awaiting_content.
+      // kept for the audit trail, and there are no bytes to delete: the version is awaiting_content or rejected.
       await tx
         .update(documents)
         .set({ removedAt: now, updatedAt: now })
