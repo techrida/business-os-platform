@@ -9,6 +9,7 @@ import {
   checkOrigin,
   legacyRunKeyFor,
   loadConfig,
+  navLayout,
   normaliseLabel,
   parseViewport,
   runKeyFor,
@@ -217,5 +218,17 @@ describe('loadConfig', () => {
     assert.throws(() => loadConfig({ label: 'x' }), /CA file .* not found/);
     process.env.CA_FILE = path.join(dir, 'caddy-root.crt');
     assert.equal(loadConfig({ label: 'x' }).caFile, process.env.CA_FILE);
+  });
+});
+
+describe('navLayout', () => {
+  test('follows the shell breakpoints (1024 and 768 px)', () => {
+    assert.equal(navLayout(1440), 'sidebar');
+    assert.equal(navLayout(1024), 'sidebar');
+    assert.equal(navLayout(1023), 'rail');
+    assert.equal(navLayout(820), 'rail');
+    assert.equal(navLayout(768), 'rail');
+    assert.equal(navLayout(767), 'drawer');
+    assert.equal(navLayout(390), 'drawer');
   });
 });

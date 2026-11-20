@@ -19,6 +19,18 @@ export function parseViewport(text) {
   return { width, height, text: `${width}x${height}` };
 }
 
+/**
+ * The workspace navigation a viewport width gets, from the shell's media queries
+ * (apps/workspace/src/components/shell/shell.module.css): 1024 px and wider has the Collapse sidebar
+ * toggle, 768–1023 px a fixed icon rail with no toggle, narrower an Open menu drawer.
+ * @returns {'sidebar' | 'rail' | 'drawer'}
+ */
+export function navLayout(width) {
+  if (width >= 1024) return 'sidebar';
+  if (width >= 768) return 'rail';
+  return 'drawer';
+}
+
 /** `--name value` and `--name=value`; bare `--flag` becomes true. */
 export function parseArgs(argv) {
   const out = {};

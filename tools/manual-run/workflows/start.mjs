@@ -2,7 +2,7 @@
 // Exact values come from docs/testrun-2026-11-19/steps/start-*.md and the "Update 19 Nov" boxes:
 // the new-memo button is Next (autosave), draft buttons are "Download preview as PDF" / "Print preview".
 /* global window, document, MutationObserver -- referenced inside page.evaluate callbacks, which run in the browser */
-import { runMatch } from '../lib/config.mjs';
+import { navLayout, runMatch } from '../lib/config.mjs';
 import { realLogin, StepFailure } from '../lib/session.mjs';
 import { isPdf, pdfText, findMail } from '../lib/support.mjs';
 
@@ -98,20 +98,20 @@ export function workflow(cfg) {
           );
 
           await s.caption('start-1 — collapse and reopen the navigation, then Tab + Enter');
-          const collapse = s.button('Collapse sidebar');
-          if (await collapse.isVisible().catch(() => false)) {
+          // The layout follows the viewport width. A visibility probe on a page that is still
+          // settling (dev-server restart) once took the icon-rail branch at 1440.
+          const layout = navLayout(cfg.viewport.width);
+          if (layout === 'sidebar') {
+            const collapse = s.button('Collapse sidebar');
+            await s.see(collapse, 'the Collapse sidebar toggle');
             await s.click(collapse, 'Collapse sidebar');
             await s.see(s.button('Expand sidebar'), 'sidebar collapsed (Expand sidebar)');
             await s.pause(500);
             await s.click(s.button('Expand sidebar'), 'Expand sidebar');
             await s.see(s.button('Collapse sidebar'), 'sidebar open again');
             await s.button('Collapse sidebar').focus();
-          } else if (
-            await s
-              .button('Open menu')
-              .isVisible()
-              .catch(() => false)
-          ) {
+          } else if (layout === 'drawer') {
+            await s.see(s.button('Open menu'), 'the Open menu button');
             await s.click(s.button('Open menu'), 'Open menu (narrow screen)');
             await s.see(s.button('Close menu'), 'navigation drawer open');
             await s.pause(500);
