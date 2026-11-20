@@ -78,7 +78,10 @@ import type {
   RenderSettings,
   RunInTx,
 } from '../../../quotations/render/quotation-render.sweeper';
-import { RENDER_GIVEN_UP_ACTION } from '../../../quotations/render/render-retry';
+import {
+  GENERATED_ORPHAN_AFTER_MS,
+  RENDER_GIVEN_UP_ACTION,
+} from '../../../quotations/render/render-retry';
 import { PO_AUDIT_ENTITY } from '../purchase-order.rules';
 import { renderPurchaseOrderHtml } from './purchase-order-html';
 import { PO_RENDER_JOB_PREFIX, PO_VERSION_OWNER_TYPE } from './purchase-order-version-owner.policy';
@@ -93,8 +96,8 @@ import {
 export const PO_RENDER_QUEUE = 'purchase-order.render';
 export const PO_RENDER_SWEEP_JOB = 'purchase-order.render.sweep';
 export const SWEEP_EVERY_MS = 60_000;
-/** A generated document still awaiting its bytes after this long was left by a render that crashed midway. */
-export const ORPHAN_AFTER_MS = 60 * 60_000;
+/** A generated document still without its bytes after this long was left by a render that crashed midway. */
+export const ORPHAN_AFTER_MS = GENERATED_ORPHAN_AFTER_MS;
 /** Versions handled per tick; the rest wait a minute. Keeps one tick bounded (each render has its own deadline). */
 const BATCH = 10;
 const ORPHAN_BATCH = 50;

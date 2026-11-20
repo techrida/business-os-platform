@@ -727,7 +727,7 @@ describe('purchase order render', () => {
     expect(gotenberg.requests).toHaveLength(0);
   });
 
-  it('removes an orphan older than an hour and keeps a younger one', async () => {
+  it('removes an orphan older than ORPHAN_AFTER_MS and keeps a younger one', async () => {
     const old = await candidateOf(await issuedPo(), 1);
     const young = await candidateOf(await issuedPo(), 1);
     const oldDoc = await createOrphan(old, ORPHAN_AFTER_MS + 60_000);
