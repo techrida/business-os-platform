@@ -38,13 +38,16 @@ const line = (n: number, quantity: string, over: Record<string, unknown> = {}) =
 describe('CreateReceiptBodySchema', () => {
   const base = { purchaseOrderId: id(100), kind: 'goods', receivedAt: '2026-11-09' };
 
-  it('accepts a line with a null or missing over-receipt exception id', () => {
-    for (const exception of [null, undefined]) {
+  it('takes no over-receipt exception id at all (F1-Q39: amend the order first)', () => {
+    expect(CreateReceiptBodySchema.safeParse({ ...base, lines: [line(1, '3')] }).success).toBe(
+      true,
+    );
+    for (const exception of [null, id(9)]) {
       const parsed = CreateReceiptBodySchema.safeParse({
         ...base,
         lines: [line(1, '3', { overReceiptExceptionId: exception })],
       });
-      expect(parsed.success).toBe(true);
+      expect(parsed.success).toBe(false);
     }
   });
 
@@ -80,22 +83,19 @@ describe('validateDraftLines', () => {
     );
   });
 
+  it('tells the receiver to ask Procurement to amend the order first (F1-Q39)', () => {
+    const v = validateDraftLines('goods', [line(1, '6')], facts(poLine(1)), net());
+    expect(v?.message).toBe(
+      'Line 1 has only 5 still open on the purchase order. To receive more, ask Procurement to amend the purchase order first.',
+    );
+  });
+
   it('counts what other receipts, drafts included, already took, and the cancelled quantity', () => {
     const f = facts(poLine(1, { cancelledQuantity: '1.0000' }));
     expect(validateDraftLines('goods', [line(1, '1')], f, net({ [id(1)]: '3.0000' }))).toBeNull();
     expect(validateDraftLines('goods', [line(1, '3')], f, net({ [id(1)]: '2.0000' }))?.code).toBe(
       'over_receipt',
     );
-  });
-
-  it('refuses any exception id until an exceptions table exists', () => {
-    const v = validateDraftLines(
-      'goods',
-      [line(1, '6', { overReceiptExceptionId: id(9) })],
-      facts(poLine(1)),
-      net(),
-    );
-    expect(v?.code).toBe('over_receipt_exception_unknown');
   });
 
   it('refuses a line of another PO, a repeated line and a kind mismatch', () => {

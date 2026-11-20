@@ -101,7 +101,6 @@ const receipt = (over: Record<string, unknown> = {}) => ({
       reversesReceiptLineId: null,
       inspection: 'Boxes sealed',
       discrepancyNote: null,
-      overReceiptExceptionId: null,
       serials: [
         { serialNo: 'SN-0001', batchNo: null, warrantyUntil: null },
         { serialNo: 'SN-0002', batchNo: null, warrantyUntil: null },

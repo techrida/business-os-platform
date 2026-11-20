@@ -14,11 +14,6 @@ const apiError = (status: number, code: string, extra: Record<string, unknown> =
 describe('422 refusals', () => {
   it.each([
     ['over_receipt', /more was entered than is still open/i, true],
-    [
-      'over_receipt_exception_unknown',
-      /over-receipt exception reference was not recognised/i,
-      false,
-    ],
     ['po_line_unknown', /no longer on the purchase order/i, true],
     ['duplicate_po_line', /appears twice/i, false],
     ['receipt_kind_mismatch', /goods receipt takes only goods/i, false],
@@ -31,6 +26,15 @@ describe('422 refusals', () => {
     expect(f.message).not.toMatch(/internal wording/);
     expect(f.reload).toBe(reload);
     expect(f.definite).toBe(true);
+  });
+
+  it('tells the receiver to ask Procurement to amend the order to receive more (F1-Q39)', () => {
+    expect(receiptFailure(apiError(422, 'over_receipt'), 'create', 'goods').message).toMatch(
+      /ask Procurement to amend the purchase order first/,
+    );
+    expect(receiptFailure(apiError(409, 'invalid_transition'), 'create', 'goods').message).toMatch(
+      /ask Procurement to amend the purchase order first/,
+    );
   });
 
   it('falls back to a plain sentence for a 422 nobody named', () => {

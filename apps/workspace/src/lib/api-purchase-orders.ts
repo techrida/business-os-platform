@@ -141,7 +141,6 @@ export const ReceiptLineSchema = z.object({
   reversesReceiptLineId: z.guid().nullable(),
   inspection: Text.nullable(),
   discrepancyNote: Text.nullable(),
-  overReceiptExceptionId: z.guid().nullable(),
   serials: z.array(
     z.object({ serialNo: Text, batchNo: Text.nullable(), warrantyUntil: Text.nullable() }),
   ),

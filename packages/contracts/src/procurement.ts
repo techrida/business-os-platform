@@ -138,7 +138,8 @@ export const PO_TRANSITIONS: Readonly<Record<PoStatus, readonly PoStatus[]>> = {
   issued: ['partially_received', 'fully_received', 'amendment_pending', 'cancelled'],
   // The two moves back are receipt reversals: the status follows the quantities received.
   partially_received: ['fully_received', 'issued', 'amendment_pending', 'short_closed'],
-  fully_received: ['partially_received', 'issued', 'closed'],
+  // F1-Q39: more arrived than was ordered, so the order is amended first (then it is partly received again).
+  fully_received: ['partially_received', 'issued', 'amendment_pending', 'closed'],
   amendment_pending: ['issued'],
   closed: [],
   short_closed: [],
@@ -330,11 +331,8 @@ export const ReceiptLineBodySchema = z.strictObject({
   poLineId: z.guid(),
   /** Above zero. A return is a reversal of a confirmed receipt, not a negative line typed by hand. */
   quantity: QuantityString,
-  /**
-   * The approved over-receipt exception that allows this line to exceed what is open. There is no exceptions table
-   * yet, so the receipts service accepts only null or absent and answers 422 for an id.
-   */
-  overReceiptExceptionId: z.guid().nullable().optional(),
+  // F1-Q39 (Kuu, 2026-11-20): no line may take more than is still open. Receiving more needs a purchase order
+  // amendment first, so there is no over-receipt exception to name here.
   inspection: text(500).optional(),
   discrepancyNote: text(1000).optional(),
   serials: z

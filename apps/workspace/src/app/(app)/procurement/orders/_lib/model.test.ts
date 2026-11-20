@@ -70,10 +70,17 @@ describe('orderActions', () => {
       cancel: false,
     });
   });
+  it('offers only amend on a fully received order, so more can be received (F1-Q39)', () => {
+    expect(orderActions('fully_received', can)).toEqual({
+      issue: false,
+      amend: true,
+      shortClose: false,
+      cancel: false,
+    });
+  });
   it('offers nothing while an amendment waits, or once the order is over', () => {
     for (const s of [
       'amendment_pending',
-      'fully_received',
       'closed',
       'short_closed',
       'cancelled',

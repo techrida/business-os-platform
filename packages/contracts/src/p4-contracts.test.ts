@@ -248,6 +248,8 @@ describe('P4 state machines', () => {
     expect(canTransitionPo('partially_received', 'issued')).toBe(true);
     expect(canTransitionPo('fully_received', 'closed')).toBe(true);
     expect(canTransitionPo('fully_received', 'cancelled')).toBe(false);
+    // F1-Q39: an order that has everything can still be amended up, so more can be received.
+    expect(canTransitionPo('fully_received', 'amendment_pending')).toBe(true);
     expect(canTransitionPo('closed', 'fully_received')).toBe(false);
     expect(canTransitionPo('short_closed', 'partially_received')).toBe(false);
   });
@@ -535,7 +537,7 @@ describe('procurement DTOs', () => {
     ).toBe(false);
   });
 
-  it('parses a receipt line with a null, absent or well-formed over-receipt exception id only', () => {
+  it('parses a receipt line with no over-receipt exception id at all (F1-Q39: amend the order first)', () => {
     const body = {
       purchaseOrderId: id(6),
       kind: 'goods',
@@ -547,15 +549,11 @@ describe('procurement DTOs', () => {
       lines: [{ ...body.lines[0], ...extra }],
     });
     expect(ConfirmReceiptBodySchema.safeParse(body).success).toBe(true);
-    expect(
-      ConfirmReceiptBodySchema.safeParse(withLine({ overReceiptExceptionId: null })).success,
-    ).toBe(true);
-    expect(
-      ConfirmReceiptBodySchema.safeParse(withLine({ overReceiptExceptionId: id(8) })).success,
-    ).toBe(true);
-    expect(
-      ConfirmReceiptBodySchema.safeParse(withLine({ overReceiptExceptionId: 'x' })).success,
-    ).toBe(false);
+    for (const exception of [null, id(8), 'x']) {
+      expect(
+        ConfirmReceiptBodySchema.safeParse(withLine({ overReceiptExceptionId: exception })).success,
+      ).toBe(false);
+    }
     expect(ConfirmReceiptBodySchema.safeParse(withLine({ status: 'confirmed' })).success).toBe(
       false,
     );

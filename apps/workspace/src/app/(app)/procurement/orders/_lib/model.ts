@@ -49,15 +49,18 @@ export interface OrderActions {
 }
 
 /**
- * The buttons for this status: issue a draft; amend while issued or partly received; short-close
- * once part has arrived; cancel only before anything arrived. An order waiting for an amendment
- * approval, and one that is over, take no action.
+ * The buttons for this status: issue a draft; amend while issued, partly or fully received (F1-Q39:
+ * receiving more than was ordered needs an amendment first); short-close once part has arrived;
+ * cancel only before anything arrived. An order waiting for an amendment approval, and one that is
+ * over, take no action.
  */
 export function orderActions(status: PoStatus, can: { issue: boolean }): OrderActions {
   const on = can.issue;
   return {
     issue: on && status === 'draft',
-    amend: on && (status === 'issued' || status === 'partially_received'),
+    amend:
+      on &&
+      (status === 'issued' || status === 'partially_received' || status === 'fully_received'),
     shortClose: on && status === 'partially_received',
     cancel: on && status === 'issued',
   };

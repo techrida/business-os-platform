@@ -52,6 +52,7 @@ import {
   RECEIVING_PO_STATUSES,
   derivePoStatus,
   openQuantity,
+  overReceiptMessage,
   progressRowsOf,
   reversalLinesOf,
   serialViolation,
@@ -254,6 +255,12 @@ export class ReceiptsService {
   ): Promise<ReceiptDto> {
     const po = await this.lockPo(tx, scope, body.purchaseOrderId);
     this.assertMayReceive(body.kind, await this.requestOf(tx, scope, po));
+    if (po.status === 'fully_received') {
+      // F1-Q39: more than was ordered needs an amendment first.
+      throw invalidTransition(
+        'Everything ordered on this purchase order has been received. To receive more, ask Procurement to amend the purchase order first.',
+      );
+    }
     if (!RECEIVING_PO_STATUSES.includes(po.status)) {
       throw invalidTransition(
         `A ${po.status} purchase order cannot take a receipt; it must be issued`,
@@ -421,13 +428,12 @@ export class ReceiptsService {
     const quantities = await this.quantitiesOf(tx, scope, po.id);
     for (const line of lines) {
       const poLine = poLines.find((p) => p.id === line.poLineId)!;
-      if (
-        line.overReceiptExceptionId === null &&
-        openQuantity(poFacts(poLine), quantities.get(poLine.id)?.net).isNegative()
-      ) {
+      const open = openQuantity(poFacts(poLine), quantities.get(poLine.id)?.net);
+      if (open.isNegative()) {
+        // `net` already counts this draft, so what it may take is what is open plus its own quantity.
         throw unprocessable({
           code: 'over_receipt',
-          message: `PO line ${poLine.lineNo}: this receipt takes more than the ${poLine.orderedQuantity} ordered less ${poLine.cancelledQuantity} cancelled`,
+          message: overReceiptMessage(poLine.lineNo, Decimal.max(open.plus(line.quantity), 0)),
         });
       }
       const mine = serials.filter((s) => s.receiptLineId === line.id);
@@ -794,7 +800,8 @@ export class ReceiptsService {
     if (pg?.code === '23514' && pg.constraint === 'receipt_lines_over_receipt_check') {
       return unprocessable({
         code: 'over_receipt',
-        message: 'This receipt takes more than the quantity still open on a PO line',
+        message:
+          'This receipt takes more than is still open on a purchase order line. To receive more, ask Procurement to amend the purchase order first.',
       });
     }
     if (pg?.code === '23505' && pg.constraint === 'receipt_serials_tenant_line_serial_unique') {
