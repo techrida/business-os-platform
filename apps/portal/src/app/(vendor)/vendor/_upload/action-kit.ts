@@ -61,7 +61,7 @@ export function codeOf(err: unknown): string {
 
 export const NOT_A_VENDOR = 'Sign in with your vendor account to do this.';
 
-/** The API's words for a `document_infected` refusal (they name the file), or a fixed sentence without them. */
+/** The API's words for a `document_infected` refusal, or a fixed sentence without them. */
 function infectedMessage(err: unknown): string {
   const e = (err instanceof ApiError ? err.body : undefined) as
     { error?: { message?: unknown } } | null | undefined;

@@ -39,10 +39,12 @@ const v = (version: number, status: string, filename = `v${version}.pdf`): Row =
 });
 
 describe('assertNotInfected', () => {
-  it('refuses a document whose newest version is infected, naming that file', async () => {
-    expect(await verdict([v(1, 'infected', 'eicar.pdf')], [d])).toBe(
-      'document_infected: A virus was found in “eicar.pdf”. Remove it or upload a clean copy, then try again.',
+  it('refuses a document whose newest version is infected, without naming the file', async () => {
+    const out = await verdict([v(1, 'infected', 'eicar-payroll.pdf')], [d]);
+    expect(out).toBe(
+      'document_infected: A virus was found in this file. Remove it or upload a clean copy, then try again.',
     );
+    expect(out).not.toContain('eicar-payroll');
   });
 
   it('a rejected newer upload does not hide an infected one', async () => {
