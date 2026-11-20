@@ -19,7 +19,15 @@ import {
   registerTotpSecret,
 } from '../lib/redact.mjs';
 import { withTimeout } from '../lib/runner.mjs';
-import { readPersona, realLogin, Session, StepFailure, totp } from '../lib/session.mjs';
+import {
+  LAST_TIMEOUT_KEY,
+  readPersona,
+  realLogin,
+  Session,
+  SETTLE_MS,
+  StepFailure,
+  totp,
+} from '../lib/session.mjs';
 import { findMail } from '../lib/support.mjs';
 
 const CFG = {
@@ -437,6 +445,43 @@ describe('step time limit', () => {
     assert.equal(persisted, 1);
     // Mailpit polling stops at once with the step's signal; no request is made.
     await assert.rejects(findMail(CFG, 'subject:x', 60_000, { signal: s.signal }), StepFailure);
+  });
+
+  test('at the deadline every window closes at once and its pages are kept for the videos', async () => {
+    const closed = [];
+    const ctx = (name, pages) => ({
+      pages: () => pages,
+      route: async () => {},
+      close: async () => closed.push(name),
+    });
+    const s = new Session({
+      context: ctx('main', ['p1', 'p2']),
+      page: null,
+      cfg: CFG,
+      state: {},
+      log: () => {},
+    });
+    s.windows = [ctx('private', ['w1'])];
+    await s.abort('sales-12 did not finish within 1 s');
+    await s.closeWindows();
+    assert.deepEqual(closed.sort(), ['main', 'private']);
+    assert.deepEqual(s.closedPages, ['p1', 'p2']);
+  });
+
+  test('an adoption lookup waits until 8 s after the last time-out, and not otherwise', async () => {
+    const s = (state) => new Session({ context: null, page: null, cfg: CFG, state, log: () => {} });
+    const timed = async (session, ms) => {
+      const t = Date.now();
+      await session.settleAfterTimeout(ms);
+      return Date.now() - t;
+    };
+    assert.ok((await timed(s({}), 300)) < 50, 'no time-out: no wait');
+    const recent = s({ [LAST_TIMEOUT_KEY]: new Date(Date.now() - 100).toISOString() });
+    assert.ok((await timed(recent, 300)) >= 150, 'waits out the rest of the settle period');
+    assert.match(recent.checks[0], /waited \d+ s after an earlier time-out/);
+    const old = s({ [LAST_TIMEOUT_KEY]: new Date(Date.now() - 10_000).toISOString() });
+    assert.ok((await timed(old, 300)) < 50, 'long past: no wait');
+    assert.equal(SETTLE_MS, 8000);
   });
 
   test('a step that finishes in time is not cancelled', async () => {

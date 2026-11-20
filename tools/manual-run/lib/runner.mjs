@@ -7,7 +7,7 @@ import { launch, newRecordedContext } from './browser.mjs';
 import { isStopping, onCleanup } from './cleanup.mjs';
 import { configuredOrigins } from './origins.mjs';
 import { redactDeep, redactText, redactUrl } from './redact.mjs';
-import { Session, StepFailure } from './session.mjs';
+import { LAST_TIMEOUT_KEY, Session, StepFailure } from './session.mjs';
 import {
   claimPath,
   placeResult,
@@ -172,8 +172,18 @@ export async function runWorkflow(cfg, workflow, opts = {}) {
         const message = `${step.id} did not finish within ${limit / 1000} s`;
         const body = Promise.resolve().then(() => step.run(session));
         await withTimeout(body, limit, message, async () => {
-          // Cancel the step, then give its current action a moment to fail before the screenshot.
-          await session.abort(message);
+          // Cancel the step and close its windows at once: pending waits end and sockets close. A
+          // request already sent can still commit on the server; the time is kept so the next
+          // invocation's adoption lookups wait for it (Session.settleAfterTimeout).
+          const aborting = session.abort(message);
+          await session.closeWindows();
+          await aborting.catch(() => {});
+          state[LAST_TIMEOUT_KEY] = now();
+          try {
+            persist();
+          } catch {
+            // the results still record the time-out
+          }
           await Promise.race([body.catch(() => {}), sleep(10000)]);
         });
         await session.pause();
@@ -187,8 +197,13 @@ export async function runWorkflow(cfg, workflow, opts = {}) {
         );
         entry.url = redactUrl(session.page.url());
         const shot = claimPath(shotsDir, `${step.id}-FAIL`, '.png');
-        await session.page.screenshot({ path: shot, fullPage: true }).catch(() => {});
-        entry.screenshot = shot;
+        // After a time-out the windows are closed and there is nothing to capture.
+        const shotTaken = await session.page
+          .screenshot({ path: shot, fullPage: true })
+          .then(() => true)
+          .catch(() => false);
+        if (shotTaken) entry.screenshot = shot;
+        else rmSync(shot, { force: true });
         log(`FAIL ${step.id}: ${entry.error}`);
         await session.caption(`${step.id} FAILED — ${entry.error.slice(0, 160)}`);
         await sleep(2500); // not session.pause: it refuses to wait once the step is cancelled
@@ -202,7 +217,7 @@ export async function runWorkflow(cfg, workflow, opts = {}) {
       if (session.consoleErrors.length)
         entry.consoleErrors = session.consoleErrors.slice(0, 12).map(redactText);
       for (const [k, v] of Object.entries(state))
-        if (JSON.stringify(before[k]) !== JSON.stringify(v))
+        if (k !== LAST_TIMEOUT_KEY && JSON.stringify(before[k]) !== JSON.stringify(v))
           entry.records[k] = typeof v === 'string' ? redactText(v) : v;
       inFlight = null;
       persist();

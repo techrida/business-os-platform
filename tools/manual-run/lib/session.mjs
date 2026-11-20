@@ -21,6 +21,11 @@ const BROKEN_PAGE = /\bdid not open\b|Application error|Internal Server Error/;
 
 export class StepFailure extends Error {}
 
+/** state.json key: when a step last ran out of time (ISO). Not a record of the app. */
+export const LAST_TIMEOUT_KEY = 'lastTimeoutAt';
+/** How long after a timeout an adoption lookup waits, for a request sent at the deadline to land. */
+export const SETTLE_MS = 8000;
+
 /** The exact title(s) of a list's empty state as one anchored, literal pattern. */
 export const emptyStateText = (empty) =>
   new RegExp(
@@ -118,6 +123,32 @@ export class Session {
 
   guard() {
     if (this.abortReason) throw new StepFailure(`Stopped: ${this.abortReason}`);
+  }
+
+  /**
+   * Closes every window of the session at once (the step ran out of time): pending Playwright
+   * waits end and the browser's sockets close. Their pages are kept in `closedPages`, so their
+   * videos are still named afterwards.
+   */
+  async closeWindows() {
+    const contexts = [this.context, ...(this.windows ?? [])].filter(Boolean);
+    this.closedPages ??= this.context ? [...this.context.pages()] : [];
+    await Promise.all(contexts.map((c) => c.close().catch(() => {})));
+  }
+
+  /**
+   * A step that timed out may have sent a request just before its windows closed, and the server
+   * can still commit it. Before a lookup that decides whether to adopt or create a record, wait
+   * until `ms` after the last timeout recorded in state.json.
+   */
+  async settleAfterTimeout(ms = SETTLE_MS) {
+    const at = Date.parse(this.state?.[LAST_TIMEOUT_KEY] ?? '');
+    const left = Number.isNaN(at) ? 0 : at + ms - Date.now();
+    if (left <= 0) return;
+    this.checks.push(
+      `note: waited ${Math.ceil(left / 1000)} s after an earlier time-out before the lookup`,
+    );
+    await abortableSleep(left, this.signal);
   }
 
   /**
@@ -730,6 +761,8 @@ export class Session {
    * e.g. "No matching payments." and "No payments match these filters.").
    */
   async loadList(path, { heading, table, empty, attempts = 4 }) {
+    // Every loadList is an adoption lookup (memo, lead, payments): let a late request land first.
+    await this.settleAfterTimeout();
     const emptyText = emptyStateText(empty);
     const failure = () =>
       this.page.getByRole('alert').filter({ hasText: /did not load|did not open/ });
