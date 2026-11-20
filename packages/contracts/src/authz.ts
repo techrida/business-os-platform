@@ -8,6 +8,10 @@ export const PERMISSIONS = [
   'admin.roles.read',
   'admin.roles.write',
   'admin.settings.write',
+  // Narrow company-settings writes split out of admin.settings.write (which stays Founder-only): exchange rates,
+  // and the finance settings (tax and numbering keys, number series, the Terms page).
+  'settings.fx_rate.write',
+  'settings.finance.write',
   'approvals.definitions.read',
   'approvals.definitions.write',
   'approvals.groups.write',
@@ -28,6 +32,10 @@ export const PERMISSIONS = [
   'crm.lead.write',
   'crm.opportunity.read',
   'crm.opportunity.write',
+  // Reopen a lost lead or opportunity. The grant alone is not enough: the code also requires the Founder or a
+  // member at level manager or head, so a staff-level holder cannot reopen.
+  'crm.lead.reopen',
+  'crm.opportunity.reopen',
   'customer.read',
   'customer.write',
   'customer.merge',
@@ -159,6 +167,22 @@ const salesCreatorGrants: RoleGrants = {
 };
 
 /**
+ * Reopen a lost record (K2): every role that writes leads or opportunities holds the matching reopen at the
+ * department, so a manager or head reopens the department's lost records. The code also requires level manager or
+ * head (or the Founder), so staff in these roles still cannot reopen. Founder gets both through PERMISSIONS.
+ */
+const leadReopenGrants: RoleGrants = { 'crm.lead.reopen': 'department' };
+const opportunityReopenGrants: RoleGrants = { 'crm.opportunity.reopen': 'department' };
+
+/**
+ * Company settings slices (K3). Finance changes exchange rates and the finance settings (tax and numbering keys,
+ * number series, the Terms page); the Accountant changes the finance settings only. Everything else in company
+ * settings stays on admin.settings.write, which only the Founder holds.
+ */
+const settingsFinanceGrants: RoleGrants = { 'settings.finance.write': 'all' };
+const settingsFxRateGrants: RoleGrants = { 'settings.fx_rate.write': 'all' };
+
+/**
  * See the internal unit cost, cost total and margin on a quotation (D29a). The roles that draft or approve
  * quotations hold it; operations_head, procurement, warehouse and the portal roles do not. Founder gets it
  * through PERMISSIONS. Migration 0055 gives it to existing roles that hold `quotation.draft` or
@@ -284,6 +308,9 @@ export const DEFAULT_ROLE_PERMISSIONS: Record<RoleKey, RoleGrants> = {
     ...billingPreparerGrants,
     ...billingFinanceGrants,
     ...p4FinanceGrants,
+    ...leadReopenGrants,
+    ...settingsFinanceGrants,
+    ...settingsFxRateGrants,
   },
   accountant: {
     ...ownProfileGrants,
@@ -295,6 +322,8 @@ export const DEFAULT_ROLE_PERMISSIONS: Record<RoleKey, RoleGrants> = {
     ...billingReadAllGrants,
     ...billingPreparerGrants,
     ...p4AccountantGrants,
+    ...leadReopenGrants,
+    ...settingsFinanceGrants,
   },
   sales: {
     ...staffBaseGrants,
@@ -302,6 +331,8 @@ export const DEFAULT_ROLE_PERMISSIONS: Record<RoleKey, RoleGrants> = {
     'crm.lead.write': 'own',
     'crm.opportunity.read': 'own',
     'crm.opportunity.write': 'own',
+    ...leadReopenGrants,
+    ...opportunityReopenGrants,
     // Customers are shared master data, so a salesperson must see all of them to avoid creating a duplicate.
     'customer.read': 'all',
     'customer.write': 'all',
@@ -322,6 +353,7 @@ export const DEFAULT_ROLE_PERMISSIONS: Record<RoleKey, RoleGrants> = {
     ...staffBaseGrants,
     'crm.lead.read': 'own',
     'crm.lead.write': 'own',
+    ...leadReopenGrants,
     'customer.read': 'own',
   },
   // Portal users see and answer only quotations naming their own party (`customer_org`). Staff roles
@@ -339,6 +371,7 @@ export const DEFAULT_ROLE_PERMISSIONS: Record<RoleKey, RoleGrants> = {
     ...salesRecordsReadAllGrants,
     ...salesCreatorGrants,
     ...salesCostReadGrants,
+    ...leadReopenGrants,
     'verification.review': 'all',
   },
   // D50: Operations does not work leads, so no lead or opportunity read.
