@@ -7,7 +7,8 @@
 //   button needs a version the state machine can cancel (`canCancelQuotation`: Draft, Returned, Submitted)
 //   and `capabilities.canCancel` from the detail answer; an answer without it offers nothing.
 // - Submit refuses a schedule whose instalment would be 0.00 with 422 `PAYMENT_INSTALMENT_ZERO`,
-//   `details: { label, total }`.
+//   `details: { label, total }`; when only the NPR split of a foreign total has the 0.00 line, also
+//   `amountNpr` and `converted: true`.
 // - The evidence of an accepted version is `GET .../versions/:vid/evidence` (`QuotationEvidenceDto`; 404
 //   when there is no acceptance or it is out of scope). A portal acceptance is `pending` until a staff member
 //   confirms it with `POST .../evidence-confirmation` (`ConfirmEvidenceBody`, Idempotency-Key).
@@ -44,6 +45,13 @@ export function isZeroInstalmentRefusal(code: string, message: string): boolean 
 
 export const ZERO_INSTALMENT_MESSAGE =
   'At least one payment milestone would come to 0.00 at this total. Remove that milestone or raise its share, then submit again. Nothing was submitted.';
+
+/**
+ * The same refusal when only the NPR conversion of the total gives the 0.00 line (`details.converted`): the
+ * builder shows every milestone above 0.00 in the quotation's currency, so the copy names the conversion.
+ */
+export const ZERO_INSTALMENT_NPR_MESSAGE =
+  'At least one payment milestone would come to NPR 0.00 once this total is converted to NPR. Remove that milestone or raise the total, then submit again. Nothing was submitted.';
 
 /**
  * Cancel quotation is offered on a Draft, Returned or Submitted version only when the API says this caller

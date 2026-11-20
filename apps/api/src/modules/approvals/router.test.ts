@@ -687,15 +687,29 @@ describe('route: reasons fill {fact} placeholders from the request facts', () =>
     );
   });
 
-  it('renders a number and a decimal beyond float precision without exponent or rounding', () => {
+  it('renders a number and a long decimal without exponent', () => {
     expect(reasonOf({ effectiveDiscountPct: 12.0001 })).toBe(
       'Discount 12.0001% exceeds permitted 12%',
     );
-    expect(reasonOf({ effectiveDiscountPct: '12.000000000000000000001' })).toBe(
-      'Discount 12.000000000000000000001% exceeds permitted 12%',
-    );
     expect(reasonOf({ effectiveDiscountPct: 1e21 })).toBe(
       'Discount 1000000000000000000000% exceeds permitted 12%',
+    );
+  });
+
+  it('rounds a percentage placeholder ("{fact}%") half up to four decimals (D22)', () => {
+    // The pricing fact is unrounded (discount x 100 / subtotal), e.g. 100/7 % of a subtotal.
+    expect(reasonOf({ effectiveDiscountPct: '14.285714285714285714' })).toBe(
+      'Discount 14.2857% exceeds permitted 12%',
+    );
+    expect(reasonOf({ effectiveDiscountPct: '12.33335' })).toBe(
+      'Discount 12.3334% exceeds permitted 12%',
+    );
+    expect(reasonOf({ effectiveDiscountPct: 12.33335 })).toBe(
+      'Discount 12.3334% exceeds permitted 12%',
+    );
+    // Accepted: a share just above the limit keeps its four zeros rather than reading "12%".
+    expect(reasonOf({ effectiveDiscountPct: '12.000000000000000000001' })).toBe(
+      'Discount 12.0000% exceeds permitted 12%',
     );
   });
 
@@ -710,6 +724,12 @@ describe('route: reasons fill {fact} placeholders from the request facts', () =>
       [],
     ).steps[1]?.reason;
   const over = { effectiveDiscountPct: '13' };
+
+  it('leaves a value that is not followed by % at its written scale', () => {
+    expect(
+      loose('Discount of {effectiveDiscountPct} percent', { effectiveDiscountPct: '12.33335' }),
+    ).toBe('Discount of 12.33335 percent');
+  });
 
   it('leaves an unknown placeholder literal', () => {
     expect(loose('Because {nope} and {effectiveDiscountPct}', over)).toBe('Because {nope} and 13');

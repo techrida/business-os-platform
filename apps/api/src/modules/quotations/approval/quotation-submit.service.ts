@@ -150,25 +150,38 @@ export function storedPricingInput(
  * a sales order refuses a zero billing line, so a quotation that would hit that dead end is not submitted. A tiny
  * total (a few paisa) split over several milestones, or a 0% milestone, does it. D22 rounding is unchanged: the
  * split is the one every screen shows (paymentScheduleAmounts).
+ *
+ * The order splits its NPR total on its own as well (sales-orders rules.ts planSchedule), so a foreign quotation is
+ * also checked on `amountNpr`: INR 0.04 in four quarters is 0.01 each, but its NPR 0.06 splits 0.02/0.02/0.02/0.00.
+ * `details.converted` is true when only the NPR split has the 0.00 line.
  */
 export function assertNoZeroInstalment(
-  total: string,
+  totals: { total: string; amountNpr: string },
   currency: string,
   paymentSchedule: unknown,
   /** The company's default schedule (`sales.default_schedule`): what an order bills on when the quotation has none. */
   fallbackSchedule: readonly { label: string; percent: string }[] = [],
 ): void {
   const own = PaymentMilestoneSchema.array().parse(paymentSchedule);
-  const instalments = paymentScheduleAmounts(
-    total,
-    own.length > 0 ? own : fallbackSchedule.map((l) => ({ label: l.label, percent: l.percent })),
-  );
-  const zero = instalments.find((m) => /^0\.00$/.test(m.amount));
-  if (zero === undefined) return;
+  const milestones =
+    own.length > 0 ? own : fallbackSchedule.map((l) => ({ label: l.label, percent: l.percent }));
+  const zeroIn = (total: string) =>
+    paymentScheduleAmounts(total, milestones).find((m) => /^0\.00$/.test(m.amount));
+  const { total, amountNpr } = totals;
+  const zero = zeroIn(total);
+  if (zero !== undefined) {
+    throw new UnprocessableEntityException({
+      code: 'PAYMENT_INSTALMENT_ZERO',
+      message: `The payment milestone "${zero.label}" would be ${currency} 0.00 at this total, and an order cannot bill nothing. Raise the total, or remove or merge that milestone, then submit again.`,
+      details: { label: zero.label, total },
+    });
+  }
+  const zeroNpr = currency === 'NPR' ? undefined : zeroIn(amountNpr);
+  if (zeroNpr === undefined) return;
   throw new UnprocessableEntityException({
     code: 'PAYMENT_INSTALMENT_ZERO',
-    message: `The payment milestone "${zero.label}" would be ${currency} 0.00 at this total, and an order cannot bill nothing. Raise the total, or remove or merge that milestone, then submit again.`,
-    details: { label: zero.label, total },
+    message: `The payment milestone "${zeroNpr.label}" would be NPR 0.00 once this total is converted to NPR, and an order cannot bill nothing. Raise the total, or remove or merge that milestone, then submit again.`,
+    details: { label: zeroNpr.label, total, amountNpr, converted: true },
   });
 }
 
@@ -402,7 +415,7 @@ export class QuotationSubmitService {
     // FR-4: refused before any write, like a blocked route.
     // A quotation without its own schedule bills on the company default, so that is split too.
     assertNoZeroInstalment(
-      priced.columns.total,
+      priced.columns,
       version.currency,
       version.paymentSchedule,
       await this.settings.get(scope, 'sales.default_schedule'),
