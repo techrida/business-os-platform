@@ -13,6 +13,9 @@ const mocks = vi.hoisted(() => ({
   submitQuoteAction: vi.fn(),
   error: vi.fn(),
   success: vi.fn(),
+  push: vi.fn(),
+  replace: vi.fn(),
+  refresh: vi.fn(),
 }));
 
 vi.mock('./actions', () => ({
@@ -21,7 +24,7 @@ vi.mock('./actions', () => ({
   submitQuoteAction: mocks.submitQuoteAction,
 }));
 vi.mock('next/navigation', () => ({
-  useRouter: () => ({ push: vi.fn(), refresh: vi.fn() }),
+  useRouter: () => ({ push: mocks.push, replace: mocks.replace, refresh: mocks.refresh }),
   unstable_rethrow: vi.fn(),
 }));
 vi.mock('@/components/ui/toast', () => ({
@@ -51,6 +54,9 @@ beforeEach(() => {
   mocks.submitQuoteAction.mockReset();
   mocks.error.mockReset();
   mocks.success.mockReset();
+  mocks.push.mockReset();
+  mocks.replace.mockReset();
+  mocks.refresh.mockReset();
 });
 afterEach(async () => {
   await mounted?.unmount();
@@ -180,5 +186,28 @@ describe('quote builder currency picker (D44: only enabled currencies)', () => {
       'USD is not enabled for your company. Choose another currency, or ask an administrator to switch it on in Settings. Nothing was saved.',
       { id: 'quotation-action-error' },
     );
+  });
+});
+
+describe('saving a new quotation moves to its editor once (TR-Q8)', () => {
+  const Q = '66666666-6666-4666-8666-666666666666';
+
+  it('replaces the address with the new draft editor a single time, with no redirect thrown', async () => {
+    mocks.saveDraftAction.mockResolvedValue({ ok: true, version: 1, createdId: Q });
+    const container = await mountBuilder({ currency: 'NPR', enabled: ['NPR'] });
+    await click(saveButton(container));
+    expect(mocks.saveDraftAction).toHaveBeenCalledTimes(1);
+    expect(mocks.replace).toHaveBeenCalledTimes(1);
+    expect(mocks.replace).toHaveBeenCalledWith(`/quotations/${Q}/edit?saved=1`);
+    expect(mocks.push).not.toHaveBeenCalled();
+    expect(mocks.error).not.toHaveBeenCalled();
+  });
+
+  it('stays on the page after saving an existing draft', async () => {
+    mocks.saveDraftAction.mockResolvedValue({ ok: true, version: 5 });
+    const container = await mountBuilder({ target: EDIT, currency: 'NPR', enabled: ['NPR'] });
+    await click(saveButton(container));
+    expect(mocks.replace).not.toHaveBeenCalled();
+    expect(mocks.push).not.toHaveBeenCalled();
   });
 });
