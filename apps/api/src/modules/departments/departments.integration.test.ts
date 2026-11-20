@@ -30,6 +30,7 @@ import { ForbiddenException, type INestApplication } from '@nestjs/common';
 import { Reflector } from '@nestjs/core';
 import { Test } from '@nestjs/testing';
 import { PostgreSqlContainer, type StartedPostgreSqlContainer } from '@testcontainers/postgresql';
+import type { Queue } from 'bullmq';
 import { eq, sql } from 'drizzle-orm';
 import { drizzle } from 'drizzle-orm/node-postgres';
 import { Pool } from 'pg';
@@ -45,6 +46,10 @@ import type { Principal, ResourceRef } from '../../platform/authz/principal';
 import type { Db } from '../../platform/db/db.module';
 import { type Actor, systemActor, type TxScope, withTx } from '../../platform/db/tx';
 import { ErrorBodyFilter } from '../../platform/tenancy/error-body.filter';
+import { UserMirror } from '../../platform/users/user-mirror';
+import type { UsersSyncData } from '../../platform/users/users.constants';
+import { SqlUsersStore } from '../../platform/users/users.store';
+import type { ZitadelAdminClient } from '../../platform/users/zitadel-admin.client';
 import { AccessRevisionTableStore } from './access-revision.port';
 import type { DepartmentsCaller } from './departments.caller';
 import { DepartmentsAdminController } from './departments.controller';
@@ -650,6 +655,167 @@ describe('Department lifecycle: create, duplicate name, list, search, rename, re
     expect(unassignedNow.items.map((u) => u.userId)).toEqual(
       expect.arrayContaining([nishaId, bikashId]),
     );
+  });
+});
+
+describe('Retiring a department with invited members', () => {
+  async function seedMember(
+    departmentId: string,
+    level: 'staff' | 'manager',
+    status: 'invited' | 'inactive',
+  ): Promise<{ userId: string; zitadelUserId: string }> {
+    const { userId } = await createStaffUser(appPool, { ...tenant1, roleKeys: ['sales'] });
+    await withTx(db, scope1A, systemActor('test-seed'), async (tx) => {
+      await tx.execute(
+        sql`UPDATE app.users SET status = ${status}
+             WHERE tenant_id = ${tenant1.tenantId}::uuid AND id = ${userId}::uuid`,
+      );
+      await tx.execute(
+        sql`UPDATE app.user_entities SET department_id = ${departmentId}::uuid, level = ${level}
+             WHERE tenant_id = ${tenant1.tenantId}::uuid AND organization_id = ${tenant1.organizationId}::uuid
+               AND user_id = ${userId}::uuid`,
+      );
+    });
+    const res = await ownerPool.query<{ zitadel_user_id: string }>(
+      'SELECT zitadel_user_id FROM app.users WHERE id = $1',
+      [userId],
+    );
+    return { userId, zitadelUserId: res.rows[0]!.zitadel_user_id };
+  }
+
+  async function membershipRow(
+    userId: string,
+  ): Promise<{ department_id: string | null; level: string }> {
+    const res = await ownerPool.query<{ department_id: string | null; level: string }>(
+      `SELECT department_id, level FROM app.user_entities
+        WHERE tenant_id = $1 AND organization_id = $2 AND user_id = $3`,
+      [tenant1.tenantId, tenant1.organizationId, userId],
+    );
+    return res.rows[0]!;
+  }
+
+  // The first-login path: the tenancy interceptor resolves the user (an invited row turns active) and
+  // takes the department and level of the acting membership as the principal's reach.
+  function mirror(): UserMirror {
+    return new UserMirror(
+      db,
+      new SqlUsersStore(db),
+      {} as unknown as ZitadelAdminClient,
+      { add: () => Promise.resolve() } as unknown as Queue<UsersSyncData>,
+    );
+  }
+
+  async function principalAtLogin(zitadelUserId: string): Promise<Principal> {
+    const resolved = await mirror().resolve({
+      zitadelUserId,
+      tenantId: tenant1.tenantId,
+      idpOrgId: tenant1.idpOrgId,
+    });
+    const membership = resolved.memberships.find(
+      (m) => m.organizationId === tenant1.organizationId,
+    );
+    return {
+      userId: resolved.userId,
+      zitadelUserId,
+      tenantId: tenant1.tenantId,
+      organizationId: tenant1.organizationId,
+      idpOrgId: tenant1.idpOrgId,
+      orgKind: 'staff',
+      partyId: null,
+      status: resolved.status,
+      roles: ['sales'],
+      departmentId: membership?.departmentId ?? null,
+      level: membership?.level ?? 'staff',
+      grants: new Map<Permission, Scope>([['crm.lead.read', 'department']]),
+    };
+  }
+
+  const leadIn = (departmentId: string): ResourceRef => ({
+    tenantId: tenant1.tenantId,
+    organizationId: tenant1.organizationId,
+    ownerUserId: ashaId,
+    departmentId,
+  });
+
+  it('unassigns invited members on retire without a destination, so their first login has no reach over the retired department', async () => {
+    const dept = AdminDepartmentDetailSchema.parse(
+      (await request(baseUrl).post('/v1/admin/departments').send({ name: 'Invite Desk' })).body,
+    );
+    const invited = await seedMember(dept.id, 'manager', 'invited');
+
+    // Before the retire the membership reaches the department's leads.
+    const before = await new SqlUsersStore(db).membershipsOf(db, tenant1.tenantId, invited.userId);
+    expect(before[0]).toMatchObject({ departmentId: dept.id, level: 'manager' });
+
+    // Only invited people: no destination is required, they are unassigned.
+    const retired = await request(baseUrl)
+      .post(`/v1/admin/departments/${dept.id}/retire`)
+      .send({ expectedVersion: dept.version });
+    expect(retired.status, JSON.stringify(retired.body)).toBe(200);
+    expect(await membershipRow(invited.userId)).toEqual({ department_id: null, level: 'staff' });
+    const events = await auditEventsOf(scope1A, dept.id);
+    expect(
+      events.some(
+        (e) => e.action === 'department.member.removed' && e.meta?.userId === invited.userId,
+      ),
+    ).toBe(true);
+
+    const principal = await principalAtLogin(invited.zitadelUserId);
+    expect(principal.status).toBe('active');
+    expect(principal.departmentId).toBeNull();
+    expect(principal.level).toBe('staff');
+    expect(can(principal, 'crm.lead.read', leadIn(dept.id)).allowed).toBe(false);
+  });
+
+  it('moves invited members to the destination department on retire', async () => {
+    const dest = AdminDepartmentDetailSchema.parse(
+      (await request(baseUrl).post('/v1/admin/departments').send({ name: 'Invite Landing' })).body,
+    );
+    const dept = AdminDepartmentDetailSchema.parse(
+      (await request(baseUrl).post('/v1/admin/departments').send({ name: 'Invite Source' })).body,
+    );
+    const invited = await seedMember(dept.id, 'manager', 'invited');
+
+    const retired = await request(baseUrl)
+      .post(`/v1/admin/departments/${dept.id}/retire`)
+      .send({ expectedVersion: dept.version, moveMembersTo: dest.id });
+    expect(retired.status, JSON.stringify(retired.body)).toBe(200);
+    expect(await membershipRow(invited.userId)).toEqual({
+      department_id: dest.id,
+      level: 'manager',
+    });
+
+    const principal = await principalAtLogin(invited.zitadelUserId);
+    expect(principal.departmentId).toBe(dest.id);
+    expect(can(principal, 'crm.lead.read', leadIn(dept.id)).allowed).toBe(false);
+    expect(can(principal, 'crm.lead.read', leadIn(dest.id)).allowed).toBe(true);
+  });
+
+  it('gives no department reach from a membership still pointing at a retired department', async () => {
+    const dept = AdminDepartmentDetailSchema.parse(
+      (await request(baseUrl).post('/v1/admin/departments').send({ name: 'Dormant Desk' })).body,
+    );
+    // Inactive members are left in place by the retire; one coming back must not regain the reach.
+    const dormant = await seedMember(dept.id, 'manager', 'inactive');
+    const retired = await request(baseUrl)
+      .post(`/v1/admin/departments/${dept.id}/retire`)
+      .send({ expectedVersion: dept.version });
+    expect(retired.status, JSON.stringify(retired.body)).toBe(200);
+    expect(await membershipRow(dormant.userId)).toEqual({
+      department_id: dept.id,
+      level: 'manager',
+    });
+
+    await withTx(db, scope1A, systemActor('test-seed'), (tx) =>
+      tx.execute(
+        sql`UPDATE app.users SET status = 'invited'
+             WHERE tenant_id = ${tenant1.tenantId}::uuid AND id = ${dormant.userId}::uuid`,
+      ),
+    );
+    const principal = await principalAtLogin(dormant.zitadelUserId);
+    expect(principal.departmentId).toBeNull();
+    expect(principal.level).toBe('staff');
+    expect(can(principal, 'crm.lead.read', leadIn(dept.id)).allowed).toBe(false);
   });
 });
 
