@@ -27,8 +27,13 @@ const mocks = vi.hoisted(() => ({
   getDocument: vi.fn(),
   getCustomerStatement: vi.fn(),
   getCustomerAdvance: vi.fn(),
+  getMe: vi.fn(),
 }));
 vi.mock('@/lib/bff', () => ({ requireStaffSession: mocks.requireStaffSession }));
+vi.mock('@/lib/api', async (original) => ({
+  ...(await original<typeof import('@/lib/api')>()),
+  getMe: mocks.getMe,
+}));
 vi.mock('@/lib/api-receivables', () => ({
   getPayment: mocks.getPayment,
   listPaymentAllocations: mocks.listPaymentAllocations,
@@ -38,6 +43,11 @@ vi.mock('@/lib/api-receivables', () => ({
 vi.mock('@/components/p2/customers/api', () => ({ getCustomer: mocks.getCustomer }));
 vi.mock('@/components/p2/crm/verification-api', () => ({ getDocument: mocks.getDocument }));
 vi.mock('next/cache', () => ({ revalidatePath: vi.fn() }));
+
+/** GET /v1/me with the live grants Settings > Access gives the caller's roles. */
+const liveGrants = (...permissions: string[]) => ({
+  permissions: permissions.map((permission) => ({ permission, scope: 'all' })),
+});
 
 const VERSION = '88888888-8888-4888-8888-888888888888';
 
@@ -81,6 +91,8 @@ beforeEach(() => {
     legalName: 'Himalayan Traders Pvt. Ltd.',
   });
   mocks.getDocument.mockResolvedValue(proofDoc('clean'));
+  // Without a live answer the gate falls back to the role defaults.
+  mocks.getMe.mockRejectedValue(new Error('GET /v1/me failed'));
 });
 
 describe('payment detail', () => {
@@ -197,6 +209,16 @@ describe('allocate panel on the detail page', () => {
       CUSTOMER_ID,
       { openOnly: true, currency: 'NPR' },
     );
+  });
+
+  it('follows the live grants: shown to a role granted payment.allocate, hidden from one it was taken from', async () => {
+    mocks.getPayment.mockResolvedValue(verifiedPayment());
+    mocks.requireStaffSession.mockResolvedValue({ accessToken: 't', roles: ['management'] });
+    mocks.getMe.mockResolvedValue(liveGrants('payment.read', 'payment.allocate'));
+    expect(await render()).toContain('Allocate this payment');
+    asAccountant();
+    mocks.getMe.mockResolvedValue(liveGrants('payment.read'));
+    expect(await render()).not.toContain('Allocate this payment');
   });
 
   it('is hidden without payment.allocate, and the API is not asked for the statement', async () => {

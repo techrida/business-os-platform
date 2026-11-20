@@ -19,6 +19,7 @@ vi.mock('server-only', () => ({}));
 const mocks = vi.hoisted(() => ({
   requireStaffSession: vi.fn(),
   apiFetch: vi.fn(),
+  getMe: vi.fn(),
   revalidatePath: vi.fn(),
   redirect: vi.fn((url: string) => {
     throw new Error(`REDIRECT:${url}`);
@@ -29,9 +30,15 @@ vi.mock('@/lib/bff', () => ({ requireStaffSession: mocks.requireStaffSession }))
 vi.mock('@/lib/api', async (importOriginal) => ({
   ...(await importOriginal<typeof import('@/lib/api')>()),
   apiFetch: mocks.apiFetch,
+  getMe: mocks.getMe,
 }));
 vi.mock('next/cache', () => ({ revalidatePath: mocks.revalidatePath }));
 vi.mock('next/navigation', () => ({ redirect: mocks.redirect }));
+
+/** GET /v1/me with the live grants Settings > Access gives the caller's roles. */
+const liveGrants = (...permissions: string[]) => ({
+  permissions: permissions.map((permission) => ({ permission, scope: 'all' })),
+});
 
 const KEY = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa';
 const PROOF_2 = '99999999-9999-4999-8999-999999999999';
@@ -81,6 +88,8 @@ async function run(f: FormData, state: RecordPaymentState = prev) {
 beforeEach(() => {
   vi.clearAllMocks();
   mocks.requireStaffSession.mockResolvedValue({ accessToken: 't', roles: ['accountant'] });
+  // Without a live answer the gate falls back to the role defaults.
+  mocks.getMe.mockRejectedValue(new Error('GET /v1/me failed'));
 });
 
 describe('recordPaymentAction', () => {
@@ -183,6 +192,23 @@ describe('recordPaymentAction', () => {
       const out = await run(form());
       expect(out.state?.error).toBe(NO_RECORD_WORDS);
     }
+    expect(mocks.apiFetch).not.toHaveBeenCalled();
+  });
+
+  it('records for a role granted payment.record in Settings > Access, by the live grants', async () => {
+    mocks.requireStaffSession.mockResolvedValue({ accessToken: 't', roles: ['management'] });
+    mocks.getMe.mockResolvedValue(liveGrants('payment.read', 'payment.record'));
+    mocks.apiFetch.mockImplementation(() => answer(201, payment()));
+    const out = await run(form());
+    expect(out.to).toBe(`/payments/${PAYMENT_ID}`);
+    expect(mocks.apiFetch).toHaveBeenCalledTimes(1);
+  });
+
+  it('refuses a role whose payment.record was taken away, and an empty live list, before calling the API', async () => {
+    mocks.getMe.mockResolvedValue(liveGrants('payment.read'));
+    expect((await run(form())).state?.error).toBe(NO_RECORD_WORDS);
+    mocks.getMe.mockResolvedValue(liveGrants());
+    expect((await run(form())).state?.error).toBe(NO_RECORD_WORDS);
     expect(mocks.apiFetch).not.toHaveBeenCalled();
   });
 
