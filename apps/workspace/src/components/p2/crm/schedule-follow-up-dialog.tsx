@@ -142,10 +142,16 @@ export function ScheduleFollowUpDialog({
 
   const ownerListed = has(owners, ownerUserId);
   const defaultAssignee = ownerListed ? (ownerUserId ?? '') : '';
-  // Left empty, the API picks: the lead's owner on a lead, the person scheduling on a deal.
+  // Left empty, the API picks the record's owner, or the person scheduling when it has none.
   const options = assigneeOptions(
     owners,
-    ownerListed ? undefined : subjectKind === 'leadId' ? 'Lead owner' : 'Me',
+    ownerListed
+      ? undefined
+      : ownerUserId === null
+        ? 'Me'
+        : subjectKind === 'leadId'
+          ? 'Lead owner'
+          : 'Opportunity owner',
   );
   const shown = dialog.outcome.fieldErrors ?? {};
 
