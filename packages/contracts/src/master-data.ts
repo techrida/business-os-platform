@@ -148,3 +148,5 @@ export const UpdatePaymentTermBodySchema = z
   })
   .refine((b) => b.name !== undefined || b.retired !== undefined, 'nothing to change');
 export type UpdatePaymentTermBody = z.infer<typeof UpdatePaymentTermBodySchema>;
+
+export type TaxCodeKind = z.infer<typeof TaxCodeKindSchema>;

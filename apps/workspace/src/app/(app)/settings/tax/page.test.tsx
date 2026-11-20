@@ -24,8 +24,14 @@ vi.mock('@/lib/api', async (importOriginal) => ({
   ...(await importOriginal<typeof import('@/lib/api')>()),
   getMe: (session: { accessToken: string }) => getMe(session.accessToken),
 }));
-const listTaxCodes = vi.fn<() => unknown>();
-vi.mock('@/lib/api-tax-codes', () => ({ listTaxCodes: () => listTaxCodes() }));
+const master = vi.hoisted(() => ({
+  listAdminTaxCodes: vi.fn(),
+  createTaxCode: vi.fn(),
+  changeTaxCode: vi.fn(),
+  retireTaxCode: vi.fn(),
+}));
+vi.mock('@/lib/api-master-data', () => master);
+const listTaxCodes = master.listAdminTaxCodes;
 const listWithholdingCodes = vi.fn<() => unknown>();
 vi.mock('@/lib/api-withholding-codes', () => ({
   listWithholdingCodes: () => listWithholdingCodes(),
@@ -48,11 +54,31 @@ function persona(token: string, roles: string[], ...permissions: string[]): void
   getSession.mockResolvedValue({ accessToken: token, orgKind: 'staff', roles } as Session);
 }
 
+const PERIOD = {
+  id: '11111111-1111-4111-8111-111111111111',
+  name: 'VAT 13%',
+  rate: '13',
+  rateBp: 1300,
+  creditable: true,
+  effectiveFrom: '2025-07-17',
+  effectiveTo: null,
+  version: 3,
+};
+const VAT13 = {
+  code: 'VAT13',
+  kind: 'vat',
+  periods: [PERIOD],
+  current: PERIOD,
+  next: null,
+  endsOn: null,
+  latest: PERIOD,
+};
+
 const render = async () => renderToStaticMarkup((await TaxPage()) as ReactElement);
 
 beforeEach(() => {
   vi.clearAllMocks();
-  listTaxCodes.mockResolvedValue([{ id: 'v13', label: 'VAT 13%', code: 'VAT13', rateBp: 1300 }]);
+  listTaxCodes.mockResolvedValue([VAT13]);
   listWithholdingCodes.mockResolvedValue([]);
   admin.getSetting.mockResolvedValue({ key: 'tax.vat_rate', value: '13', version: 2 });
 });
@@ -62,7 +88,8 @@ describe('the Tax page by live grant', () => {
     persona('finance-live', ['sales'], 'settings.finance.write');
     const html = await render();
     expect(html).toContain('VAT 13%');
-    expect(html).toContain('13.00%');
+    expect(html).toContain('13%');
+    expect(html).toContain('Add tax code');
   });
 
   it('opens for admin.settings.write', async () => {
