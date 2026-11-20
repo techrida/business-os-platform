@@ -38,7 +38,6 @@ import {
   invoices,
   openItems,
   paymentTerms,
-  quotationAcceptances,
   quotationLines,
   quotations,
   quotationTaxSummary,
@@ -73,6 +72,7 @@ import { NumberingService } from '../../platform/settings/numbering.service';
 import { SettingsService } from '../../platform/settings/settings.service';
 import { LedgerService } from '../ledger/ledger.service';
 import { evidenceSatisfies, missingEvidence } from '../quotations/outcome/evidence-policy';
+import { readEvidenceState } from '../quotations/outcome/evidence-state';
 import { planSchedule, ScheduleRuleError, scheduleTemplateOf } from './rules';
 import { SalesOrdersCaller } from './sales-orders.caller';
 
@@ -318,8 +318,8 @@ export class SalesOrdersService {
 
   /**
    * `POST /v1/sales-orders`: confirms the accepted quotation version as a sales order. 404 for a version outside
-   * the entity; 409 `quotation_not_accepted`; 422 `evidence_policy_unmet` when the accepted evidence does not meet
-   * the entity's policy now, `invalid_evidence_document` for a document of another entity or one removed, and
+   * the entity; 409 `quotation_not_accepted`; 422 `evidence_not_confirmed` while a portal acceptance's evidence
+   * waits for staff, `evidence_policy_unmet` when the accepted evidence does not meet the entity's policy now, `invalid_evidence_document` for a document of another entity or one removed, and
    * `invalid_payment_schedule` for a schedule that cannot be split. A second confirm of the same quotation
    * returns the existing order.
    */
@@ -389,19 +389,15 @@ export class SalesOrdersService {
     const customerPartyId = quotation.customerPartyId;
     if (customerPartyId === null) throw new Error(`quotation ${quotation.number} has no customer`);
 
-    const [acceptance] = await tx
-      .select()
-      .from(quotationAcceptances)
-      .where(
-        scoped(scope).where(
-          quotationAcceptances,
-          and(
-            eq(quotationAcceptances.versionId, version.id),
-            eq(quotationAcceptances.outcome, 'accepted'),
-          ),
-        ),
+    // F1-Q28: a portal acceptance waits for staff to confirm its evidence before an order can be confirmed.
+    const evidence = await readEvidenceState(tx, scope, version.id);
+    if (evidence?.status === 'pending') {
+      throw unprocessable(
+        'evidence_not_confirmed',
+        'The customer accepted in the portal; confirm the evidence on the quotation first',
       );
-    const acceptedKinds: EvidenceKind[] = acceptance?.evidenceKinds ?? [];
+    }
+    const acceptedKinds: EvidenceKind[] = evidence?.kinds ?? [];
     const policy = await this.settings.get(scope, 'sales.evidence_policy');
     if (!evidenceSatisfies(policy, acceptedKinds)) {
       const missing = missingEvidence(policy, acceptedKinds);
@@ -415,7 +411,7 @@ export class SalesOrdersService {
       tx,
       scope,
       body.evidenceDocumentIds,
-      acceptance?.evidenceDocumentIds ?? [],
+      evidence?.documentIds ?? [],
     );
 
     // Totals, lines and tax are the accepted version's, copied as they are.
