@@ -2,7 +2,14 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { ApiError } from '@/lib/api';
 
-import { cancelAction, outcomeAction, reviseAction, sendAction, type ActionState } from './actions';
+import {
+  cancelAction,
+  confirmAcceptanceAction,
+  outcomeAction,
+  reviseAction,
+  sendAction,
+  type ActionState,
+} from './actions';
 
 // `server-only` throws outside the react-server condition, which Vitest does not use.
 vi.mock('server-only', () => ({}));
@@ -248,5 +255,28 @@ describe('cancelAction', () => {
     expect(state.done).toBeUndefined();
     expect(state.error).toBeTruthy();
     expect(mocks.revalidatePath).not.toHaveBeenCalled();
+  });
+});
+
+describe('confirmAcceptanceAction', () => {
+  it('posts the version row to the acceptance confirm endpoint of the version', async () => {
+    const state = await confirmAcceptanceAction(
+      prev,
+      form({ quotationId: Q, versionId: V, idempotencyKey: KEY, expectedVersion: '9' }),
+    );
+    expect(state).toEqual({ key: KEY, done: true });
+    const [, path, init] = mocks.apiFetch.mock.calls[0] as [unknown, string, RequestInit];
+    expect(path).toBe(`/v1/quotations/${Q}/versions/${V}/acceptance/confirm`);
+    expect(JSON.parse(init.body as string)).toEqual({ expectedVersion: 9 });
+    expect(mocks.revalidatePath).toHaveBeenCalledWith(`/quotations/${Q}`);
+  });
+
+  it('refuses a form that lost its version row, without calling the API', async () => {
+    const state = await confirmAcceptanceAction(
+      prev,
+      form({ quotationId: Q, versionId: V, idempotencyKey: KEY, expectedVersion: '' }),
+    );
+    expect(mocks.apiFetch).not.toHaveBeenCalled();
+    expect(state.reload).toBe(true);
   });
 });
