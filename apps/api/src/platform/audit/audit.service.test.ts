@@ -197,6 +197,55 @@ describe('AuditService.list', () => {
   });
 });
 
+describe('AuditService.list order=desc', () => {
+  /** Appends `count` events of `entityType`, numbered from `start`, in one transaction. */
+  async function append(at: TxScope, entityType: string, start: number, count: number) {
+    await withTx(db, at, systemActor('test'), async (tx) => {
+      for (let n = start; n < start + count; n += 1) {
+        await service.record(tx, { action: 'order.step', entityType, entityId: `step-${n}` });
+      }
+    });
+  }
+
+  it('returns the newest events of a type, newest first, and keeps the default order oldest first', async () => {
+    const other = await seedTenant();
+    // 60 events of one type, then later ones of the same type in another tenant and of another type here.
+    await append(scope, 'order_desc_60', 1, 60);
+    await append(other, 'order_desc_60', 61, 5);
+    await append(scope, 'order_desc_other', 1, 3);
+
+    const newest = await service.list(scope, {
+      entityType: 'order_desc_60',
+      limit: 50,
+      order: 'desc',
+    });
+    expect(newest.map((e) => e.entityId)).toEqual(
+      Array.from({ length: 50 }, (_, i) => `step-${60 - i}`),
+    );
+    expect(newest.every((e) => e.tenantId === scope.tenantId)).toBe(true);
+
+    // Left out, the order is unchanged: the oldest 50, oldest first.
+    const oldest = await service.list(scope, { entityType: 'order_desc_60', limit: 50 });
+    expect(oldest.map((e) => e.entityId)).toEqual(
+      Array.from({ length: 50 }, (_, i) => `step-${i + 1}`),
+    );
+  });
+
+  it('finds the newest events past more than one 500-row page', async () => {
+    await append(scope, 'order_desc_many', 1, 300);
+    await append(scope, 'order_desc_many', 301, 300);
+
+    const newest = await service.list(scope, {
+      entityType: 'order_desc_many',
+      limit: 50,
+      order: 'desc',
+    });
+    expect(newest.map((e) => e.entityId)).toEqual(
+      Array.from({ length: 50 }, (_, i) => `step-${600 - i}`),
+    );
+  }, 60_000);
+});
+
 describe('AuditService.list canonical text', () => {
   it("returns the jsonb columns exactly as Postgres's ::text prints them", async () => {
     // Written as raw jsonb text so the number keeps its trailing zero; JSON.stringify would drop it.

@@ -27,7 +27,8 @@ export const HISTORY_LIMIT = 50;
 const AuditListSchema = z.object({ items: z.array(AuditEventDtoSchema) });
 
 async function listByType(session: Session, entityType: string): Promise<AuditEventDto[]> {
-  const query = new URLSearchParams({ entityType, limit: String(HISTORY_LIMIT) });
+  // Newest first: the API's default order is oldest first, which would hide recent changes.
+  const query = new URLSearchParams({ entityType, order: 'desc', limit: String(HISTORY_LIMIT) });
   const res = await apiFetch(session, `/v1/audit?${query.toString()}`, { method: 'GET' });
   const text = await res.text();
   let body: unknown;
@@ -42,7 +43,7 @@ async function listByType(session: Session, entityType: string): Promise<AuditEv
   return parsed.data.items;
 }
 
-/** The API's own order: newest chain month first, then newest sequence number. */
+/** Merges the per-type lists: newest chain month first, then newest sequence number. */
 function newestFirst(a: AuditEventDto, b: AuditEventDto): number {
   if (a.chainMonth !== b.chainMonth) return a.chainMonth < b.chainMonth ? 1 : -1;
   return b.seq - a.seq;
