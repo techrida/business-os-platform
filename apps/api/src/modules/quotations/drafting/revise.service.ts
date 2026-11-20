@@ -13,6 +13,10 @@
 // version's superseded_by = new, (5) quotations.current_version_id = new, (6) history and audit.
 // Only Approved and Sent become Superseded (QUOTATION_REVISION_RULES.supersededOnRevise); a Rejected or Expired
 // version keeps its status, and only its superseded_by link is set.
+//
+// Lock order: the quotation row, then the current version's approval request, then the version. CancelService and
+// ApprovalsService.act take the request before the version too, so an approver deciding while the owner revises
+// waits instead of deadlocking.
 import {
   canReviseQuotation,
   QUOTATION_REVISION_RULES,
@@ -186,9 +190,10 @@ export class ReviseService {
   ): Promise<QuotationVersionDto> {
     const quotation = await this.lockQuotation(tx, scope, quotationId);
     this.assertMayRevise(quotation);
+    const requestId = await this.lockApprovalRequest(tx, scope, quotation);
     const old = await this.lockCurrentVersion(tx, scope, quotation);
     // Checked under the lock and before any write, so a stale caller changes nothing.
-    if (old.version !== body.expectedVersion) {
+    if (old.version !== body.expectedVersion || old.approvalRequestId !== requestId) {
       throw conflict('This quotation was changed by someone else; reload it and try again');
     }
     if (!canReviseQuotation(old.status)) {
@@ -355,6 +360,33 @@ export class ReviseService {
       .for('update');
     if (row === undefined) throw notFound();
     return row;
+  }
+
+  /**
+   * The approval request of the current version, locked before the version (NO KEY UPDATE, as ApprovalsService takes
+   * it); null when the version has none. The version is read without a lock here: the caller locks it next and
+   * checks that it still points at this request.
+   */
+  private async lockApprovalRequest(
+    tx: DbTransaction,
+    scope: TxScope,
+    quotation: typeof quotations.$inferSelect,
+  ): Promise<string | null> {
+    if (quotation.currentVersionId === null) return null;
+    const [peek] = await tx
+      .select({ approvalRequestId: quotationVersions.approvalRequestId })
+      .from(quotationVersions)
+      .where(
+        scoped(scope).where(quotationVersions, eq(quotationVersions.id, quotation.currentVersionId)),
+      );
+    const requestId = peek?.approvalRequestId ?? null;
+    if (requestId === null) return null;
+    await tx
+      .select({ id: approvalRequests.id })
+      .from(approvalRequests)
+      .where(and(eq(approvalRequests.tenantId, scope.tenantId), eq(approvalRequests.id, requestId)))
+      .for('no key update');
+    return requestId;
   }
 
   /** The current version, locked. A quotation always has one once created. */
