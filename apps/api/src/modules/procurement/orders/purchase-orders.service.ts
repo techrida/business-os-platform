@@ -1,8 +1,9 @@
 // PurchaseOrdersService: list, detail and versions of purchase orders, and issue, amend, short-close and cancel
 // (P4 unit P3; AD4, AD7, done checks 2 and 15). Serves the NFRs:
 // - "only vetted vendors": issuing needs an `approved` vendor with an active account in the acting entity (409);
-// - "money moves only after the right people agree": an amendment whose grand total incl. VAT in NPR falls in a
-//   higher band than approved_band goes to the `po_amendment` route and is written only on approval (AD7);
+// - "money moves only after the right people agree": an amendment that raises the order's total or changes its
+//   payment terms goes to the `po_amendment` route and is written only on approval (F1-Q40, replacing AD7's band
+//   rule); any other amendment is written at once with an audit row;
 // - "history is never rewritten": every issued state is an immutable version row (trigger + revoked privileges);
 // - "no double effects" and "no lost updates": every write runs in withIdempotency and locks PO → lines FOR UPDATE,
 //   then a conditional UPDATE on the status it read;
@@ -41,7 +42,7 @@ import {
   PO_AMENDMENT_DOCUMENT_TYPE,
   PO_AUDIT_ENTITY,
   amendLines,
-  bandRises,
+  amendmentApprovalReasons,
   shortCloseCancelled,
   versionTotals,
   type AmendPurchaseOrderBody,
@@ -524,11 +525,12 @@ export class PurchaseOrdersService {
   // ------------------------------------------------------------------------------------------------- amend
 
   /**
-   * Amends an issued or partially received PO (AD7). The amended grand total incl. VAT in NPR gives a band: not
-   * higher than approved_band → version N+1 now, with an audit row; higher → the `po_amendment` route (facts
-   * amountNpr, approvedBand, requesterIsFounder; the amender is excluded by SoD) and the PO waits in
-   * amendment_pending until the decision. 422 PO_AMENDMENT_INVALID for a line of another PO, a no-op or a quantity
-   * below received plus cancelled; 422 NO_ELIGIBLE_APPROVER (nothing written) when the route cannot be staffed.
+   * Amends an issued, partially or fully received PO (F1-Q39, F1-Q40). The amended grand total incl. VAT above the
+   * order's current total, or a change of payment terms, sends it to the `po_amendment` route (facts amountNpr,
+   * approvedBand, requesterIsFounder; the amender is excluded by SoD) and the PO waits in amendment_pending until
+   * the decision; any other change is version N+1 now, with an audit row. 422 PO_AMENDMENT_INVALID for a line of
+   * another PO, a change of nothing or a quantity below received plus cancelled; 422 NO_ELIGIBLE_APPROVER (nothing
+   * written) when the route cannot be staffed.
    */
   async amend(
     id: string,
@@ -572,6 +574,13 @@ export class PurchaseOrdersService {
                 message: verdict.message,
               });
             }
+            const paymentTermsDays = body.paymentTermsDays ?? po.paymentTermsDays;
+            if (!verdict.changed && paymentTermsDays === po.paymentTermsDays) {
+              throw new UnprocessableEntityException({
+                code: 'PO_AMENDMENT_INVALID',
+                message: 'The amendment changes no quantity, price or payment terms',
+              });
+            }
             const totals = versionTotals(
               verdict.lines.map((l) => l.lineTotal),
               po.fxRate,
@@ -581,13 +590,22 @@ export class PurchaseOrdersService {
               purchaseOrderNumber: po.number,
               fromVersion: po.currentVersion,
               reason: body.reason,
-              paymentTermsDays: body.paymentTermsDays ?? po.paymentTermsDays,
+              paymentTermsDays,
               currency: po.currency,
               lines: verdict.lines,
               ...totals,
             };
+            const approvalReasons = amendmentApprovalReasons({
+              currentTotal: versionTotals(
+                lines.map((l) => l.lineTotal),
+                po.fxRate,
+              ).total,
+              nextTotal: totals.total,
+              currentTermsDays: po.paymentTermsDays,
+              nextTermsDays: paymentTermsDays,
+            });
 
-            if (!bandRises(totals.band, po.approvedBand)) {
+            if (approvalReasons.length === 0) {
               const row = await applyAmendment(tx, scope, this.audit, po, proposal, {
                 approvalRequestId: null,
                 createdBy: principal.userId,
@@ -630,7 +648,9 @@ export class PurchaseOrdersService {
                   approvedTotal: po.approvedTotal,
                   approvedTotalNpr: po.approvedTotalNpr,
                   approvedBand: po.approvedBand,
+                  paymentTermsDays: po.paymentTermsDays,
                 },
+                approvalReasons,
               },
               facts,
               requesterUserId: principal.userId,
@@ -660,6 +680,8 @@ export class PurchaseOrdersService {
                 amendmentId,
                 totalNpr: totals.totalNpr,
                 band: totals.band,
+                paymentTermsDays,
+                approvalReasons,
               },
             });
             return {

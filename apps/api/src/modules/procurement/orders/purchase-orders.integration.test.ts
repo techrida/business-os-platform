@@ -468,12 +468,12 @@ describe('issue', () => {
 
 // ---------------------------------------------------------------------------------------- amend (AD7)
 
-describe('amend (done check 2)', () => {
-  it('90,000 -> 99,000 issues v2 at once, with no approval and an audit row', async () => {
+describe('amend (done check 2, F1-Q40)', () => {
+  it('90,000 -> 81,000 issues v2 at once, with no approval and an audit row', async () => {
     const po = await issued();
     const r = await service.amend(
       po.id,
-      { reason, lines: [{ poLineId: po.lineId, unitPrice: '87610.62' }] },
+      { reason, lines: [{ poLineId: po.lineId, unitPrice: '71681.42' }] },
       randomUUID(),
     );
     expect(r.outcome).toBe('applied');
@@ -483,11 +483,11 @@ describe('amend (done check 2)', () => {
       currentVersion: 2,
       approvedBand: 'base',
     });
-    expect(r.purchaseOrder.lines[0]).toMatchObject({ id: po.lineId, lineTotal: '99000.00' });
+    expect(r.purchaseOrder.lines[0]).toMatchObject({ id: po.lineId, lineTotal: '81000.00' });
     const versions = await service.versions(po.id);
     expect(versions.map((v) => [v.version, v.total, v.band, v.approvalRequestId])).toEqual([
       [1, '90000.00', 'base', null],
-      [2, '99000.00', 'base', null],
+      [2, '81000.00', 'base', null],
     ]);
     const requests = await read((tx) =>
       tx
@@ -508,6 +508,52 @@ describe('amend (done check 2)', () => {
       limit: 100,
     });
     expect(events.map((e) => e.action)).toContain('procurement.po.amended');
+  });
+
+  it('90,000 -> 99,000 rises inside the base band and waits for Accountant and Finance (F1-Q40)', async () => {
+    const po = await issued();
+    const r = await service.amend(
+      po.id,
+      { reason, lines: [{ poLineId: po.lineId, unitPrice: '87610.62' }] },
+      randomUUID(),
+    );
+    expect(r.outcome).toBe('pending_approval');
+    expect(r.purchaseOrder).toMatchObject({ status: 'amendment_pending', currentVersion: 1 });
+    expect(await stepRoles(r.approvalRequestId!)).toEqual(['accountant', 'finance']);
+    const request = await approvals.get(r.approvalRequestId!);
+    expect(request.snapshot).toMatchObject({ approvalReasons: ['value_rises'] });
+
+    await decide(U.acct, 'accountant', r.approvalRequestId!);
+    await decide(U.fin, 'finance', r.approvalRequestId!);
+    expect(await service.get(po.id)).toMatchObject({
+      status: 'issued',
+      currentVersion: 2,
+      approvedTotal: '99000.00',
+      approvedBand: 'base',
+    });
+  });
+
+  it('sends a change of payment terms alone for approval, and refuses an amendment of nothing (F1-Q40)', async () => {
+    const po = await issued();
+    const nothing = await httpErrorOf(
+      service.amend(po.id, { reason, paymentTermsDays: 30, lines: [] }, randomUUID()),
+    );
+    expect(nothing.getStatus()).toBe(422);
+    expect(codeOf(nothing)).toBe('PO_AMENDMENT_INVALID');
+
+    const r = await service.amend(po.id, { reason, paymentTermsDays: 45, lines: [] }, randomUUID());
+    expect(r.outcome).toBe('pending_approval');
+    expect((await approvals.get(r.approvalRequestId!)).snapshot).toMatchObject({
+      approvalReasons: ['terms_change'],
+    });
+    await decide(U.acct, 'accountant', r.approvalRequestId!);
+    await decide(U.fin, 'finance', r.approvalRequestId!);
+    expect(await service.get(po.id)).toMatchObject({
+      status: 'issued',
+      currentVersion: 2,
+      paymentTermsDays: 45,
+      approvedTotal: '90000.00',
+    });
   });
 
   it('90,000 -> 1,50,000 routes to Management and writes v2 only on approval', async () => {
@@ -626,10 +672,10 @@ describe('receiving more than ordered (F1-Q39)', () => {
       { reason: 'One more arrived', lines: [{ poLineId: po.lineId, quantity: '6' }] },
       randomUUID(),
     );
-    if (amended.outcome === 'pending_approval') {
-      await decide(U.acct, 'accountant', amended.approvalRequestId!);
-      await decide(U.fin, 'finance', amended.approvalRequestId!);
-    }
+    // The total rises, so the amendment is approved first (F1-Q40).
+    expect(amended.outcome).toBe('pending_approval');
+    await decide(U.acct, 'accountant', amended.approvalRequestId!);
+    await decide(U.fin, 'finance', amended.approvalRequestId!);
     const after = await service.get(po.id);
     expect(after).toMatchObject({ status: 'partially_received', currentVersion: 2 });
     expect(after.lines[0]).toMatchObject({ orderedQuantity: '6.0000' });

@@ -211,7 +211,7 @@ export function AmendDialog({
       size="large"
       triggerLabel="Amend order"
       title={`Amend ${common.number}`}
-      intro="Change a quantity or price. If the new total falls in a higher approval band, the order waits for approval and keeps its current version until then. Otherwise the change becomes the next version straight away."
+      intro="Change a quantity, a price or the payment terms. If the total goes up or the payment terms change, the order waits for approval and keeps its current version until then. Any other change becomes the next version straight away."
       action={amendAction}
       idempotencyKey={common.idempotencyKey}
       recordField="purchaseOrderId"
