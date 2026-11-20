@@ -68,6 +68,11 @@ export function addDays(isoDate: string, days: number): string {
   return d.toISOString().slice(0, 10);
 }
 
+/** Whole calendar days from one `YYYY-MM-DD` to a later one (UTC arithmetic, so no zone shift). */
+function daysBetween(from: string, to: string): number {
+  return Math.round((Date.parse(`${to}T00:00:00Z`) - Date.parse(`${from}T00:00:00Z`)) / 86_400_000);
+}
+
 type InvoiceRow = typeof invoices.$inferSelect;
 
 /** What every kind freezes at issue: the NPR value and the seller and buyer snapshots. */
@@ -351,10 +356,10 @@ export class InvoiceIssueService {
 
   /**
    * The due date at issue. A debit note is a further charge, so it follows the customer's payment terms with this entity
-   * (TR-Q12c): issue date + the term's net days. A debit note whose customer has no account or no term here, and every
-   * other kind, falls through to the rule below.
+   * (TR-Q12c): issue date + the term's net days. A customer with no term here gets the credit period of the original
+   * invoice (its due date less its issue date), and an original due on receipt makes the note due on issue.
    *
-   * Issue date + the order's credit days when the invoice has a sales order; otherwise the
+   * Any other kind: issue date + the order's credit days when the invoice has a sales order; otherwise the
    * drafted due date (422 DUE_DATE_BEFORE_ISSUE when it is already past), or the issue date when none was drafted (due
    * on receipt).
    */
@@ -380,6 +385,18 @@ export class InvoiceIssueService {
         )
         .limit(1);
       if (term !== undefined) return addDays(issueDate, term.netDays);
+      // No term with this entity: the credit period the customer was given on the invoice this note adds to.
+      if (invoice.originalInvoiceId !== null) {
+        const [original] = await tx
+          .select({ issueDate: invoices.issueDate, dueDate: invoices.dueDate })
+          .from(invoices)
+          .where(scoped(scope).where(invoices, eq(invoices.id, invoice.originalInvoiceId)))
+          .limit(1);
+        if (original?.issueDate && original.dueDate) {
+          return addDays(issueDate, daysBetween(original.issueDate, original.dueDate));
+        }
+      }
+      return issueDate;
     }
     if (invoice.salesOrderId !== null) {
       const [order] = await tx
