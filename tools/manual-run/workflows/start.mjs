@@ -588,17 +588,33 @@ export function workflow(cfg) {
             hops.push(`${r.request().method()} ${u.host}${u.pathname} ${r.status()}`);
           };
           page.on('response', onResponse);
-          await page.getByRole('button', { name: 'Sign out', exact: true }).first().click();
-          const leftApp = await page
-            .waitForURL(
-              (u) =>
-                !u.href.startsWith(`${cfg.appUrl}/`) ||
-                /\/auth\//.test(u.pathname) ||
-                /signed-?out/i.test(u.href),
-              { timeout: 45000 },
-            )
-            .then(() => true)
-            .catch(() => false);
+          const signOut = page.getByRole('button', { name: 'Sign out', exact: true });
+          const waitLeftApp = () =>
+            page
+              .waitForURL(
+                (u) =>
+                  !u.href.startsWith(`${cfg.appUrl}/`) ||
+                  /\/auth\//.test(u.pathname) ||
+                  /signed-?out/i.test(u.href),
+                { timeout: 45000 },
+              )
+              .then(() => true)
+              .catch(() => false);
+          // A logout hop proves the click reached the app; without one a dev-server reload may have
+          // swallowed the click, which is a driver retry, not a product finding.
+          const sawLogout = () => hops.some((h) => /logout|end_session/i.test(h));
+          await s.hydrated(signOut);
+          await signOut.first().click();
+          let leftApp = await waitLeftApp();
+          if (!leftApp && !sawLogout()) {
+            s.checks.push(
+              'note: Sign out sent no logout request (page reloaded?); clicking it again',
+            );
+            await page.waitForLoadState('load').catch(() => {});
+            await s.hydrated(signOut);
+            await signOut.first().click();
+            leftApp = await waitLeftApp();
+          }
           page.off('response', onResponse);
           s.checks.push(
             `after Sign out: ${new URL(page.url()).host}${new URL(page.url()).pathname}`,
@@ -607,6 +623,10 @@ export function workflow(cfg) {
             // Still on the workspace: either a signed-out page there, or signed straight back in.
             const again = await s.whoami(page);
             s.checks.push(`hops after Sign out: ${hops.join(' → ') || '(none)'}`);
+            if (again?.roles?.length && !sawLogout())
+              throw new StepFailure(
+                'The Sign out click had no effect, twice (page reloaded?); no logout request was sent',
+              );
             if (again?.roles?.length) {
               s.finding(
                 'Sign out did not sign out: after a real password + one-time-code sign-in, Sign out ' +
