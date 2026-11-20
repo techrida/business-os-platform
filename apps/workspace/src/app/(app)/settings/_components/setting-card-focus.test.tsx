@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { click, fill, mountForm, submit } from '@/test/form-interactions';
+import { click, fill, mountForm } from '@/test/form-interactions';
 
 import type { FieldSpec } from './setting-fields';
 
@@ -53,29 +53,6 @@ const sla: FieldSpec = {
   },
   version: 1,
   defaultText: 'remind after 24 h, escalate after 72 h to founder',
-  isDefault: true,
-};
-
-const schedule: FieldSpec = {
-  key: 'sales.default_schedule',
-  label: 'Default billing schedule',
-  kind: 'schedule',
-  current: {
-    kind: 'schedule',
-    rows: [
-      { label: 'Advance', percent: '60', trigger: 'advance' },
-      { label: 'Final', percent: '40', trigger: 'uat' },
-    ],
-  },
-  defaultValue: {
-    kind: 'schedule',
-    rows: [
-      { label: 'Advance', percent: '60', trigger: 'advance' },
-      { label: 'Final', percent: '40', trigger: 'uat' },
-    ],
-  },
-  version: 1,
-  defaultText: 'Advance 60%, Final 40%',
   isDefault: true,
 };
 

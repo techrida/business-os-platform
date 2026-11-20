@@ -16,7 +16,11 @@ vi.mock('./actions', () => ({
   resetSettingAction: vi.fn(),
 }));
 vi.mock('@/components/ui/toast', () => ({ toast: { success: vi.fn(), error: vi.fn() } }));
-const router = vi.hoisted(() => ({ push: vi.fn(), replace: vi.fn(), refresh: vi.fn() }));
+const router = vi.hoisted(() => ({
+  push: vi.fn<(href: string) => void>(),
+  replace: vi.fn<(href: string) => void>(),
+  refresh: vi.fn<() => void>(),
+}));
 vi.mock('next/navigation', () => ({ useRouter: () => router }));
 vi.mock('@/components/ui/bell-ring', () => ({
   BELL_AFTER_DOT_MS: 0,

@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { click, fill, mountForm, submit } from '@/test/form-interactions';
+import { fill, mountForm, submit } from '@/test/form-interactions';
 
 import type { FieldSpec } from './setting-fields';
 
@@ -26,18 +26,6 @@ vi.stubGlobal('ResizeObserver', NoopResizeObserver);
 
 const { SettingsForm } = await import('./settings-form');
 const { SettingCard } = await import('./setting-card');
-
-const validity = (value: string): FieldSpec => ({
-  key: 'quotation.validity_days',
-  label: 'Quotation validity (days)',
-  kind: 'integer',
-  current: { kind: 'text', value },
-  defaultValue: { kind: 'text', value: '15' },
-  version: 2,
-  defaultText: '15',
-  isDefault: value === '15',
-  numberBounds: { min: 1, max: 365, step: '1' },
-});
 
 const sla: FieldSpec = {
   key: 'approvals.sla_defaults',
@@ -85,9 +73,6 @@ const mount = (fields: FieldSpec[], section: 'sales' | 'workflows' = 'sales') =>
       <SettingCard title="Settings" fields={fields} />
     </SettingsForm>,
   );
-
-const byLabel = (root: ParentNode, label: string): HTMLButtonElement | null =>
-  root.querySelector<HTMLButtonElement>(`button[aria-label="${label}"]`);
 
 beforeEach(() => {
   vi.stubGlobal('IS_REACT_ACT_ENVIRONMENT', true);
