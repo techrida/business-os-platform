@@ -274,15 +274,26 @@ export async function lifecycleAction(prev: PanelState, form: FormData): Promise
 
   // The status the KYB button was drawn for: the API refuses (409) once the vendor has moved on, so a stale
   // "Start KYB review" in a second tab never sends the vendor for review.
-  const expectedStatus = text(form, 'expectedStatus');
-  if (command === 'submit_kyc' && !isKycStatus(expectedStatus)) {
-    return { savedCount: prev.savedCount, key: o.key, errors: {}, error: INCOMPLETE, reload: true };
+  let kycFrom: keyof typeof KYC_DONE | undefined;
+  if (command === 'submit_kyc') {
+    const expectedStatus = text(form, 'expectedStatus');
+    if (!isKycStatus(expectedStatus)) {
+      return {
+        savedCount: prev.savedCount,
+        key: o.key,
+        errors: {},
+        error: INCOMPLETE,
+        reload: true,
+      };
+    }
+    kycFrom = expectedStatus;
   }
 
   try {
-    if (command === 'submit_kyc' && isKycStatus(expectedStatus)) {
-      await submitVendorKyc(o.session, o.vendorId, o.key, expectedStatus);
-    } else await vendorLifecycle(o.session, o.vendorId, command, o.key, reason);
+    if (kycFrom !== undefined) await submitVendorKyc(o.session, o.vendorId, o.key, kycFrom);
+    else if (command !== 'submit_kyc') {
+      await vendorLifecycle(o.session, o.vendorId, command, o.key, reason);
+    }
   } catch (err) {
     const f = vendorFailure(err, COMMAND_OP[command]);
     if (!f.reload) return refused(prev, o.key, f);
@@ -293,12 +304,7 @@ export async function lifecycleAction(prev: PanelState, form: FormData): Promise
   }
   revalidatePath('/vendors');
   revalidatePath(`/vendors/${o.vendorId}`);
-  return done(
-    prev,
-    command === 'submit_kyc' && isKycStatus(expectedStatus)
-      ? KYC_DONE[expectedStatus]
-      : COMMAND_DONE[command],
-  );
+  return done(prev, kycFrom !== undefined ? KYC_DONE[kycFrom] : COMMAND_DONE[command]);
 }
 
 export async function proposeBankAction(
