@@ -53,7 +53,6 @@ import { AuditService } from '../../../platform/audit/audit.service';
 import { scopeWhereFor } from '../../../platform/authz/authz.service';
 import { can } from '../../../platform/authz/can';
 import type { Principal } from '../../../platform/authz/principal';
-import { defineRecordReach } from '../../../platform/authz/record-reach';
 import { DB, type Db, type DbTransaction } from '../../../platform/db/db.module';
 import { withIdempotency } from '../../../platform/db/idempotency';
 import { withTx, type TxScope } from '../../../platform/db/tx';
@@ -85,10 +84,6 @@ import { PaymentRequestsCaller } from './payment-requests.caller';
 
 /** Injection token for a test clock; production falls back to the system time. */
 export const PAYMENT_REQUESTS_CLOCK = Symbol('PAYMENT_REQUESTS_CLOCK');
-
-// The requester owns the request; there is no department column, so `department` reaches what `own` does (spec
-// review R2, as for invoices and bills). Described here because this service is the only reader of the table.
-defineRecordReach(paymentRequests, { id: paymentRequests.id, owner: paymentRequests.requestedBy });
 
 /**
  * The requests `p` may see and act on: every request of the acting entity on an `all` grant, only their own on an
