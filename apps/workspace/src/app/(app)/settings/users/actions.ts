@@ -1,6 +1,6 @@
 'use server';
 
-import { RoleKeySchema, type RoleKey } from '@bos/contracts';
+import { AccessLevelSchema, RoleKeySchema, type RoleKey } from '@bos/contracts';
 import { revalidatePath } from 'next/cache';
 import { z } from 'zod';
 
@@ -16,11 +16,19 @@ import { requireSection } from '../guard';
 
 const PATH = '/settings/users';
 
-const InviteSchema = z.object({
-  email: z.email('Enter a valid email address.').max(320),
-  givenName: z.string().trim().min(1, 'Enter a given name.').max(200),
-  familyName: z.string().trim().min(1, 'Enter a family name.').max(200),
-});
+const InviteSchema = z
+  .object({
+    email: z.email('Enter a valid email address.').max(320),
+    givenName: z.string().trim().min(1, 'Enter a given name.').max(200),
+    familyName: z.string().trim().min(1, 'Enter a family name.').max(200),
+    // F1-Q50: both optional. An empty department is "no department"; an empty level is staff.
+    departmentId: z.union([z.literal(''), z.guid('Choose a department from the list.')]),
+    level: z.union([z.literal(''), AccessLevelSchema]),
+  })
+  .refine((v) => v.level !== 'head' || v.departmentId !== '', {
+    path: ['departmentId'],
+    message: 'Choose a department for a department head.',
+  });
 
 function rolesFrom(formData: FormData): RoleKey[] {
   const roles: RoleKey[] = [];
@@ -46,6 +54,8 @@ export async function inviteUserAction(
     email: text(formData, 'email').trim(),
     givenName: text(formData, 'givenName'),
     familyName: text(formData, 'familyName'),
+    departmentId: text(formData, 'departmentId'),
+    level: text(formData, 'level'),
     roles: roles.join(','),
   };
 
@@ -59,8 +69,14 @@ export async function inviteUserAction(
     };
   }
 
+  const { departmentId, level, ...person } = parsed.data;
   try {
-    await inviteUser(session, { ...parsed.data, roles });
+    await inviteUser(session, {
+      ...person,
+      roles,
+      ...(departmentId !== '' ? { departmentId } : {}),
+      ...(level !== '' ? { level } : {}),
+    });
   } catch (error) {
     return fail(describeError(error, 'invite users'), fields);
   }

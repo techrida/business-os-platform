@@ -429,6 +429,116 @@ describe('POST /v1/admin/users/invite permissions', () => {
   });
 });
 
+describe('POST /v1/admin/users/invite with a department and level (F1-Q50)', () => {
+  const SALES = '00000000-0000-4000-8000-0000000005a1';
+  const OTHER_ENTITY = '00000000-0000-4000-8000-0000000000bb';
+  const BOTH: Permission[] = ['admin.users.invite', 'admin.roles.write'];
+
+  const department = (
+    over: Partial<{
+      organizationId: string;
+      status: 'active' | 'retired';
+      headUserId: string | null;
+    }> = {},
+  ) =>
+    store.departments.set(SALES, {
+      tenantId: TENANT,
+      organizationId: STAFF_ORG,
+      name: 'Sales',
+      status: 'active',
+      headUserId: null,
+      ...over,
+    });
+
+  const membershipOf = (userId: string) => store.memberships.find((m) => m.userId === userId);
+
+  it('places the new person in the department at the chosen level on their default-entity membership', async () => {
+    department();
+    const { userId } = await asAdmin(BOTH, () =>
+      controller.invite({ ...NEW_USER, roles: [], departmentId: SALES, level: 'manager' }),
+    );
+
+    expect(membershipOf(userId)).toMatchObject({
+      organizationId: STAFF_ORG,
+      departmentId: SALES,
+      level: 'manager',
+    });
+    expect(authz.invalidations).toBe(1);
+  });
+
+  it('accepts a department alone, at level staff', async () => {
+    department();
+    const { userId } = await asAdmin(BOTH, () =>
+      controller.invite({ ...NEW_USER, roles: [], departmentId: SALES }),
+    );
+    expect(membershipOf(userId)).toMatchObject({ departmentId: SALES, level: 'staff' });
+  });
+
+  it('refuses 403 a department without admin.roles.write, before ZITADEL or the mirror', async () => {
+    department();
+    const error = await asAdmin(['admin.users.invite'], () =>
+      controller.invite({ ...NEW_USER, roles: [], departmentId: SALES }),
+    ).catch((e: unknown) => e);
+
+    expect(error).toBeInstanceOf(ForbiddenException);
+    expect(zitadel.createCalls).toBe(0);
+    expect(store.users).toHaveLength(0);
+  });
+
+  it('needs no extra grant for level staff without a department, and places nobody', async () => {
+    const { userId } = await asAdmin(['admin.users.invite'], () =>
+      controller.invite({ ...NEW_USER, roles: [], level: 'staff' }),
+    );
+    expect(membershipOf(userId)).toMatchObject({ departmentId: null });
+    expect(membershipOf(userId)).not.toHaveProperty('level');
+  });
+
+  it('refuses a head without a department', async () => {
+    const error = await asAdmin(BOTH, () =>
+      controller.invite({ ...NEW_USER, roles: [], level: 'head' }),
+    ).catch((e: unknown) => e);
+    expect(error).toBeInstanceOf(BadRequestException);
+  });
+
+  it.each([
+    ['in another legal entity', { organizationId: OTHER_ENTITY }],
+    ['retired', { status: 'retired' as const }],
+  ])('refuses a department %s', async (_label, over) => {
+    department(over);
+    const error = await asAdmin(BOTH, () =>
+      controller.invite({ ...NEW_USER, roles: [], departmentId: SALES }),
+    ).catch((e: unknown) => e);
+    expect((error as { getStatus?: () => number }).getStatus?.()).toBe(422);
+  });
+
+  it('refuses an unknown department, and a malformed one with 400', async () => {
+    const unknown = await asAdmin(BOTH, () =>
+      controller.invite({
+        ...NEW_USER,
+        roles: [],
+        departmentId: '00000000-0000-4000-8000-0000000005ff',
+      }),
+    ).catch((e: unknown) => e);
+    expect((unknown as { getStatus?: () => number }).getStatus?.()).toBe(422);
+
+    const malformed = await asAdmin(BOTH, () =>
+      controller.invite({ ...NEW_USER, roles: [], departmentId: 'sales' }),
+    ).catch((e: unknown) => e);
+    expect(malformed).toBeInstanceOf(BadRequestException);
+  });
+
+  it('keeps an existing head: a second head is refused with 409', async () => {
+    department({ headUserId: ADMIN });
+    const error = await asAdmin(BOTH, () =>
+      controller.invite({ ...NEW_USER, roles: [], departmentId: SALES, level: 'head' }),
+    ).catch((e: unknown) => e);
+    expect(error).toBeInstanceOf(ConflictException);
+    expect((error as ConflictException).getResponse()).toMatchObject({
+      code: 'department_has_head',
+    });
+  });
+});
+
 describe('inviting again after a half-finished invite', () => {
   const both: Permission[] = ['admin.users.invite', 'admin.roles.write'];
 

@@ -1,7 +1,12 @@
 // Admin routes for users: list, invite, set roles.
 // Serves the NFR "role assignment has one source of truth": every change goes to ZITADEL first, then
 // the mirror, then the authz cache is invalidated, so the token, the mirror and the cache agree.
-import { ADMIN_USERS_MAX_PAGE, AdminUsersQuerySchema, RoleKeySchema } from '@bos/contracts';
+import {
+  ADMIN_USERS_MAX_PAGE,
+  AccessLevelSchema,
+  AdminUsersQuerySchema,
+  RoleKeySchema,
+} from '@bos/contracts';
 import {
   BadRequestException,
   Body,
@@ -48,6 +53,9 @@ const InviteBody = z.object({
   givenName: z.string().trim().min(1).max(200),
   familyName: z.string().trim().min(1).max(200),
   roles: Roles,
+  /** F1-Q50: optional, both. Without them the person lands in no department at level staff, as before. */
+  departmentId: z.guid().optional(),
+  level: AccessLevelSchema.optional(),
 });
 const RolesBody = z.object({ roles: Roles });
 
@@ -133,23 +141,31 @@ export class AdminUsersController {
   @Post('invite')
   @Can('admin.users.invite')
   async invite(@Body() body: unknown): Promise<{ userId: string }> {
-    const b = parse(InviteBody, body, 'invite');
+    const { departmentId, level, ...invite } = parse(InviteBody, body, 'invite');
+    const placement =
+      departmentId !== undefined || (level !== undefined && level !== 'staff')
+        ? { departmentId: departmentId ?? null, level: level ?? 'staff' }
+        : null;
     // An invite grants roles, so it is a role assignment too: `admin.users.invite` alone must not be
     // a way to hand out `founder`. There is no default low role in the invite flow, so any role needs it.
-    if (b.roles.length > 0) this.authz.assert('admin.roles.write');
+    // A department or level shapes access the same way (D50), so it needs the same grant as a Departments save.
+    const assignsAccess = invite.roles.length > 0 || placement !== null;
+    if (assignsAccess) this.authz.assert('admin.roles.write');
     const { scope, actor } = requestTx();
     const result = await zitadelCall(() =>
       withTx(this.db, scope, actor, async (tx) => {
-        if (b.roles.length > 0) {
+        if (assignsAccess) {
           // The access-revision lock first, as an access save takes it: a Founder removed by a concurrent
           // write cannot finish this one on a check made before it.
           await lockAccessRevision(tx, scope.tenantId);
           await assertLiveGrant(tx, this.liveGrants, scope, actor, 'admin.roles.write');
         }
-        return this.users.invite(tx, b);
+        const invited = await this.users.invite(tx, invite);
+        if (placement !== null) await this.users.placeInvitee(tx, invited.userId, placement);
+        return invited;
       }),
     );
-    if (b.roles.length > 0) await this.authz.invalidate(scope.tenantId, scope.organizationId);
+    if (assignsAccess) await this.authz.invalidate(scope.tenantId, scope.organizationId);
     return result;
   }
 

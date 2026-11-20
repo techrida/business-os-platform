@@ -1,7 +1,7 @@
 // Test doubles for k-users: an in-memory UsersStore with the same dedupe and upsert semantics as the
 // SQL, a fake ZITADEL, a fake queue and a db whose transaction just runs the callback.
 // Test-only: imported by *.test.ts files, never by runtime code.
-import type { RoleKey } from '@bos/contracts';
+import type { AccessLevel, RoleKey } from '@bos/contracts';
 
 import type { Db, DbTransaction } from '../db/db.module';
 import type { TxScope } from '../db/tx';
@@ -11,6 +11,7 @@ import {
   type ListedUser,
   type ListedUsers,
   type MembershipRow,
+  type PlacementDepartment,
   type Queryable,
   type UserFields,
   type UserRow,
@@ -130,6 +131,27 @@ export class FakeUsersStore extends UsersStore {
       departmentId: null,
     });
     return Promise.resolve(true);
+  }
+  /** Departments by id, with the tenant they belong to. */
+  departments = new Map<string, PlacementDepartment & { tenantId: string }>();
+  departmentForPlacement(_q: Queryable, tenantId: string, departmentId: string) {
+    const found = this.departments.get(departmentId);
+    if (!found || found.tenantId !== tenantId) return Promise.resolve(null);
+    const { organizationId, name, status, headUserId } = found;
+    return Promise.resolve({ organizationId, name, status, headUserId });
+  }
+  placeMembership(
+    _tx: DbTransaction,
+    tenantId: string,
+    organizationId: string,
+    userId: string,
+    placement: { departmentId: string | null; level: AccessLevel },
+  ) {
+    const row = this.memberships.find(
+      (m) => m.tenantId === tenantId && m.organizationId === organizationId && m.userId === userId,
+    );
+    if (row) Object.assign(row, placement);
+    return Promise.resolve();
   }
   rolesOf(_q: Queryable, _tenantId: string, id: string) {
     return Promise.resolve([...(this.roles.get(id) ?? [])].sort());
