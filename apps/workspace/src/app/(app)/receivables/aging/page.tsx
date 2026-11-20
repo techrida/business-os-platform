@@ -3,7 +3,6 @@ import type { Metadata } from 'next';
 import Link from 'next/link';
 import type { NumberSystems } from '@bos/locale';
 
-import { hasPermission } from '@/components/p2/customers/permissions';
 import { Alert } from '@/components/ui/alert';
 import { StatCard } from '@/components/ui/stat-card';
 import { EmptyState } from '@/components/ui/empty-state';
@@ -14,6 +13,7 @@ import { getAging } from '@/lib/api-receivables';
 import { requireStaffSession } from '@/lib/bff';
 import { getNumberSystems } from '@/lib/display-settings';
 import { money, when } from '@/lib/kernel-format';
+import { getPermissionCheck } from '@/lib/live-permissions';
 
 import { BUCKET_CARD, BUCKET_LABEL, isZeroAmount } from '../_lib/aging';
 import styles from '../receivables.module.css';
@@ -213,7 +213,8 @@ export default async function ReceivablesAgingPage() {
   const numberSystems = await getNumberSystems();
 
   // A person without ar.read is told so without the page fetching anything for them.
-  if (!hasPermission(session.roles, 'ar.read')) {
+  // The live grants decide (Settings > Access), not the role defaults.
+  if (!(await getPermissionCheck(session))('ar.read')) {
     return (
       <Notice tone="info" title="Your roles do not include receivables">
         Receivables are for the accounts and finance team. Ask an administrator if you need access.
