@@ -130,6 +130,29 @@ describe('submitQuoteAction', () => {
     expect(res.ok ? '' : res.key).not.toBe(KEY);
   });
 
+  it('words a refusal for a 0.00 instalment plainly and puts it on the payment schedule (FR-4)', async () => {
+    const v = values();
+    v.schedule = [m('99.99'), m('0.01')];
+    api.submitVersion.mockRejectedValueOnce(
+      new ApiError(422, 'x', {
+        error: {
+          code: 'PAYMENT_INSTALMENT_ZERO',
+          message: 'Milestone 2 would be an instalment of 0.00',
+          correlationId: 'c',
+        },
+      }),
+    );
+    const res = await submitQuoteAction({ ...submit, values: v });
+    const words =
+      'At least one payment milestone would come to 0.00 at this total. Remove that milestone or raise its share, then submit again. Nothing was submitted.';
+    expect(res).toMatchObject({
+      ok: false,
+      kind: 'invalid',
+      message: words,
+      fieldErrors: { paymentSchedule: words },
+    });
+  });
+
   it('asks for a reload on a stale row version (409)', async () => {
     api.submitVersion.mockRejectedValue(apiError(409, 'VERSION_CONFLICT'));
     const res = await submitQuoteAction({ ...submit, values: values() });
@@ -184,11 +207,13 @@ describe('saveDraftAction', () => {
     expect(api.createQuotation).not.toHaveBeenCalled();
   });
 
-  it('creates the draft with the page key and goes to its edit page', async () => {
-    api.createQuotation.mockResolvedValue({ id: QID });
-    await expect(saveDraftAction({ ...create, values: values() })).rejects.toThrow(
-      `NEXT_REDIRECT /quotations/${QID}/edit?saved=1`,
-    );
+  it('creates the draft with the page key and returns its id, without redirecting itself (TR-Q8)', async () => {
+    api.createQuotation.mockResolvedValue({ id: QID, version: 1 });
+    await expect(saveDraftAction({ ...create, values: values() })).resolves.toEqual({
+      ok: true,
+      version: 1,
+      createdId: QID,
+    });
     expect(api.createQuotation).toHaveBeenCalledWith(expect.anything(), expect.anything(), KEY);
   });
 

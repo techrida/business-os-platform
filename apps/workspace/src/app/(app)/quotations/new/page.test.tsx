@@ -139,11 +139,11 @@ describe('new quotation currencies (D44: only what the company switched on)', ()
     expect(builder().initial.currency).toBe('USD');
   });
 
-  it("starts in NPR when the customer's currency has been switched off", async () => {
+  it("keeps the customer's currency even when it has been switched off, never silently NPR (U16-Q7)", async () => {
     mocks.call.mockResolvedValue({ enabledCurrencies: ['NPR', 'USD'] });
     mocks.getCustomer.mockResolvedValue({ id: CUSTOMER, defaultCurrency: 'INR' });
     await render();
     expect(builder().enabledCurrencies).toEqual(['NPR', 'USD']);
-    expect(builder().initial.currency).toBe('NPR');
+    expect(builder().initial.currency).toBe('INR');
   });
 });

@@ -4,6 +4,8 @@ import {
   QUOTATION_STATUSES,
   type QuotationDetail,
   QuotationDetailSchema,
+  type QuotationEvidenceDto,
+  QuotationEvidenceDtoSchema,
   type QuotationListItem,
   QuotationListItemSchema,
   type QuotationSummary,
@@ -13,6 +15,8 @@ import { z } from 'zod';
 
 import { ApiError, apiFetch } from '@/lib/api';
 import type { Session } from '@/lib/session';
+
+import { lifecyclePaths } from './lifecycle-contract';
 
 /**
  * Typed reads of the quotation endpoints, for the screens in this folder. Server-only: every call
@@ -180,4 +184,25 @@ export function getQuotationsSummary(
 /** `GET /v1/quotations/:id`: the parent, every version, the status history and the contacts. */
 export function getQuotation(session: Session, id: string): Promise<QuotationDetail> {
   return get(session, `/v1/quotations/${seg(id)}`, QuotationDetailSchema);
+}
+
+/**
+ * Where the evidence of an accepted version stands (F1-Q28), or null when the platform has none to show:
+ * no acceptance, or out of scope (404). Any other failure (a body off the contract included) is null too,
+ * so a failed read leaves out the evidence row instead of breaking the quotation page.
+ */
+export async function getEvidence(
+  session: Session,
+  quotationId: string,
+  versionId: string,
+): Promise<QuotationEvidenceDto | null> {
+  try {
+    return await get(
+      session,
+      lifecyclePaths.evidence(quotationId, versionId),
+      QuotationEvidenceDtoSchema,
+    );
+  } catch {
+    return null;
+  }
 }
