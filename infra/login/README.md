@@ -14,6 +14,6 @@ For production, set `ZITADEL_SMTP_HOST` (host and port) and `ZITADEL_SMTP_FROM` 
 
 ## Footer and theme
 
-Set `LOGIN_HELP_URL` and `LOGIN_PRIVACY_URL` as absolute HTTP(S) URLs in the Login V2 container environment. Each item is hidden when its setting is empty or invalid. The server reads them when rendering the layout, so the same image can run in different deployments. The workspace has no Help menu or product footer on main.
+Set `LOGIN_HELP_URL` and `LOGIN_PRIVACY_URL` as absolute HTTP(S) URLs in the Login V2 container environment. Each item is hidden when its setting is empty or invalid. The server reads them when rendering the layout, so the same image can run in different deployments. Compose passes both from the deployment environment and leaves them empty by default. The workspace's notice pages (sign-in error, no access, staff only) show the same footer links from their own settings, `BOS_HELP_URL` and `BOS_PRIVACY_URL`; set them alongside the Login V2 pair to keep the links consistent. The signed-in workspace has no Help menu or product footer.
 
 Business OS renders light even when the device prefers dark. The shared `BOS_LIGHT_ONLY` constant in `packages/locale/src/theme-mode.ts` controls the workspace, portal, and Login V2. Keep any theme controls in downstream layouts behind this lock.
