@@ -20,7 +20,12 @@ import { sql } from 'drizzle-orm';
 import type { EntityMembership, ResolvedUser } from '../authz/user-directory';
 import { DB, type Db, type DbTransaction } from '../db/db.module';
 import { type TxScope, systemActor, withTx } from '../db/tx';
-import { USERS_QUEUE, USERS_SYNC_JOB, type UsersSyncData } from './users.constants';
+import {
+  lockoutPinnedCursor,
+  USERS_QUEUE,
+  USERS_SYNC_JOB,
+  type UsersSyncData,
+} from './users.constants';
 import {
   type IdpOrgRow,
   type ListedUsers,
@@ -386,7 +391,7 @@ export class UserMirror {
           }
         }
       }
-      const lock = lockConfirmed ? this.lockChange(existing, user) : undefined;
+      const lock = lockConfirmed ? await this.lockChange(org, existing, user) : undefined;
       let userId: string;
       if (!existing) {
         userId = await this.store.insertUser(tx, scope, {
@@ -437,25 +442,43 @@ export class UserMirror {
   }
 
   /**
-   * The lock to write for what ZITADEL says (F1-Q4), or undefined to keep the stored one. A lock the app did not
-   * write itself is ZITADEL's lockout policy at work (too many wrong passwords or codes), so it becomes a
-   * `failed_sign_ins` lock that the lock-expiry job ends ACCOUNT_LOCKOUT.lockMinutes after ZITADEL locked the user
-   * (`details.changeDate`; the time it was seen when ZITADEL sent none). A user ZITADEL no longer holds locked has
-   * the stored lock cleared. An admin lock is written by UserStatusService, so it is already stored here.
+   * The lock to write for what ZITADEL says (F1-Q4), or undefined to keep the stored one. A user ZITADEL no longer
+   * holds locked has the stored lock cleared.
+   *
+   * A lock the app did not write is an `admin` lock, which never ends by itself: someone locked the person in the
+   * ZITADEL console (every lock from before the lockout policy existed is one of those), or an app lock whose
+   * database write was lost. Only a lock that can be the lockout policy at work becomes a `failed_sign_ins` lock that
+   * the lock-expiry job ends: ZITADEL changed the user (`details.changeDate`) after the policy was pinned on the
+   * org (UserLocks.ensureLockoutPolicies stores when) and within one lock window of now. That lock ends one window
+   * after the change date. Wrongly calling a console lock timed would let the person back in, so every doubt
+   * (no change date, no pin, an old change) keeps the person locked.
    */
-  private lockChange(existing: UserRow | null, read: ZitadelUser): UserLock | null | undefined {
+  private async lockChange(
+    org: IdpOrgRow,
+    existing: UserRow | null,
+    read: ZitadelUser,
+  ): Promise<UserLock | null | undefined> {
     const stored = existing?.lockReason ?? null;
-    if (read.locked && stored === null) {
-      const now = new Date();
-      const lockedAt = read.changedAt && read.changedAt <= now ? read.changedAt : now;
+    if (!read.locked) return stored !== null ? null : undefined;
+    if (stored !== null) return undefined;
+    const now = new Date();
+    const changedAt = read.changedAt && read.changedAt <= now ? read.changedAt : null;
+    const pinned = await this.store.getCursor(lockoutPinnedCursor(org.zitadelOrgId));
+    const pinnedAt = pinned ? Date.parse(pinned) : Number.NaN;
+    const window = ACCOUNT_LOCKOUT.lockMinutes * 60_000;
+    if (
+      changedAt !== null &&
+      !Number.isNaN(pinnedAt) &&
+      changedAt.getTime() >= pinnedAt &&
+      now.getTime() - changedAt.getTime() < window
+    ) {
       return {
         reason: 'failed_sign_ins',
-        lockedAt,
-        until: new Date(lockedAt.getTime() + ACCOUNT_LOCKOUT.lockMinutes * 60_000),
+        lockedAt: changedAt,
+        until: new Date(changedAt.getTime() + window),
       };
     }
-    if (!read.locked && stored !== null) return null;
-    return undefined;
+    return { reason: 'admin', lockedAt: changedAt ?? now, until: null };
   }
 
   /**

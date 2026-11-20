@@ -4,8 +4,10 @@ import type { Queue } from 'bullmq';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import type { DbTransaction } from '../db/db.module';
+import type { AuditService } from '../audit/audit.service';
+import { UserLocks } from './user-locks';
 import { UserMirror } from './user-mirror';
-import type { UsersSyncData } from './users.constants';
+import { lockoutPinnedCursor, type UsersSyncData } from './users.constants';
 import {
   CUST_IDP,
   CUST_ZORG,
@@ -522,10 +524,20 @@ describe('UserMirror status changes are re-read behind the row lock (F1-Q5)', ()
 });
 
 describe('UserMirror mirrors ZITADEL locks as a timed lock (F1-Q4)', () => {
+  // A lock ZITADEL set a minute ago, after the lockout policy was pinned an hour ago: a failed-sign-in lock.
   const locked = (over: Partial<ReturnType<typeof zUser>> = {}) =>
-    zUser('z1', { status: 'inactive', locked: true, ...over });
+    zUser('z1', {
+      status: 'inactive',
+      locked: true,
+      changedAt: new Date(Date.now() - 60_000),
+      ...over,
+    });
 
   beforeEach(async () => {
+    store.cursors.set(
+      lockoutPinnedCursor(STAFF_ZORG),
+      new Date(Date.now() - 3_600_000).toISOString(),
+    );
     zitadel.users.set('z1', zUser('z1'));
     await mirror.syncUser('z1');
   });
@@ -545,15 +557,60 @@ describe('UserMirror mirrors ZITADEL locks as a timed lock (F1-Q4)', () => {
     });
   });
 
-  it('counts the window from when the lock was seen when ZITADEL sends no change date', async () => {
+  it('treats a lock without a change date as an admin lock, which never ends by itself (P2-1)', async () => {
     zitadel.users.set('z1', locked({ changedAt: null }));
-    const before = Date.now();
 
     await mirror.syncUser('z1');
 
-    const until = Date.parse(store.users[0]?.lockedUntil ?? '');
-    expect(until).toBeGreaterThanOrEqual(before + ACCOUNT_LOCKOUT.lockMinutes * 60_000);
-    expect(until).toBeLessThanOrEqual(Date.now() + ACCOUNT_LOCKOUT.lockMinutes * 60_000);
+    expect(store.users[0]).toMatchObject({ lockReason: 'admin', lockedUntil: null });
+  });
+
+  it('treats a lock from before the lockout policy was pinned as an admin lock (console lock, P2-1)', async () => {
+    zitadel.users.set('z1', locked({ changedAt: new Date(Date.now() - 2 * 3_600_000) }));
+
+    await mirror.syncUser('z1');
+
+    expect(store.users[0]).toMatchObject({ lockReason: 'admin', lockedUntil: null });
+  });
+
+  it('treats a lock older than one window as an admin lock even after the pin (P2-1)', async () => {
+    zitadel.users.set(
+      'z1',
+      locked({ changedAt: new Date(Date.now() - (ACCOUNT_LOCKOUT.lockMinutes + 1) * 60_000) }),
+    );
+
+    await mirror.syncUser('z1');
+
+    expect(store.users[0]).toMatchObject({ lockReason: 'admin', lockedUntil: null });
+  });
+
+  it('treats every lock as an admin lock while the lockout policy was never pinned (P2-1)', async () => {
+    store.cursors.delete(lockoutPinnedCursor(STAFF_ZORG));
+    zitadel.users.set('z1', locked());
+
+    await mirror.syncUser('z1');
+
+    expect(store.users[0]).toMatchObject({ lockReason: 'admin', lockedUntil: null });
+  });
+
+  it('keeps a console-locked user locked through reconcile and the lock-expiry job (P2-1)', async () => {
+    // Locked in the console two hours ago, before this deployment pinned the policy.
+    zitadel.users.set('z1', locked({ changedAt: new Date(Date.now() - 2 * 3_600_000) }));
+    const unlockUser = vi.fn(() => Promise.resolve());
+    const client = Object.assign(zitadel, { unlockUser }).asClient();
+    const audit = { record: vi.fn(() => Promise.resolve()) } as unknown as AuditService;
+    const expiry = new UserLocks(db, store, client, audit);
+
+    await mirror.reconcile();
+    const result = await expiry.expire(new Date(Date.now() + 2 * 3_600_000));
+
+    expect(result).toEqual({ unlocked: 0, cleared: 0, postponed: 0 });
+    expect(unlockUser).not.toHaveBeenCalled();
+    expect(store.users[0]).toMatchObject({
+      status: 'inactive',
+      lockReason: 'admin',
+      lockedUntil: null,
+    });
   });
 
   it('keeps an admin lock as it is while ZITADEL still holds the user locked', async () => {

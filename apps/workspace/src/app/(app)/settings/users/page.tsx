@@ -39,7 +39,7 @@ import { PageSize } from './page-size';
 import { PictureEditor } from './picture-editor';
 import { roleLabel } from './role-checkboxes';
 import { RolesEditor } from './roles-editor';
-import { StatusAction } from './status-actions';
+import { StatusAction, type StatusActionKind } from './status-actions';
 import styles from './users.module.css';
 
 export const metadata: Metadata = { title: 'Users · Business OS' };
@@ -64,12 +64,13 @@ const STATUS_LABELS: Record<AdminUser['status'], string> = {
 };
 
 /**
- * The account actions a row offers (F1-Q5, F1-Q4): an active person can be locked or deactivated, a locked person
- * unlocked (ZITADEL holds them LOCKED, so reactivate would not fit), a deactivated person reactivated, an open invite
- * nothing.
+ * The account actions a row offers (F1-Q5, F1-Q4): an active person can be locked or deactivated; a locked person
+ * unlocked (ZITADEL holds them LOCKED, so reactivate would not fit) or deactivated, and one locked after failed
+ * sign-ins also kept locked for good; a deactivated person reactivated; an open invite nothing.
  */
-function statusActions(user: AdminUser): ('lock' | 'deactivate' | 'unlock' | 'reactivate')[] {
-  if (user.lockReason) return ['unlock'];
+function statusActions(user: AdminUser): StatusActionKind[] {
+  if (user.lockReason === 'failed_sign_ins') return ['unlock', 'keepLocked', 'deactivate'];
+  if (user.lockReason) return ['unlock', 'deactivate'];
   if (user.status === 'active') return ['lock', 'deactivate'];
   if (user.status === 'inactive') return ['reactivate'];
   return [];
