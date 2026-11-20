@@ -500,6 +500,13 @@
       "breakpoints": true
     },
     {
+      "idx": 71,
+      "version": "7",
+      "when": 1783000000093,
+      "tag": "0093_retired_department_members_repair",
+      "breakpoints": true
+    },
+    {
       "idx": 72,
       "version": "7",
       "when": 1783000000120,
@@ -511,13 +518,6 @@
       "version": "7",
       "when": 1783000000121,
       "tag": "0121_crm_reopen_permissions",
-      "breakpoints": true
-    },
-    {
-      "idx": 71,
-      "version": "7",
-      "when": 1783000000093,
-      "tag": "0093_retired_department_members_repair",
       "breakpoints": true
     },
     {
