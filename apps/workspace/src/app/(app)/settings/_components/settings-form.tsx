@@ -258,9 +258,10 @@ export function SettingsForm({
     (key: SettingKey, next: SettingFieldValue) => {
       setDrafts((prev) => ({ ...prev, [key]: next }));
       clearErrorsForKey(key);
-      setBanner(null);
+      // The banner holds the only Reload control: keep it while a version conflict is unresolved.
+      if (staleKeys.length === 0) setBanner(null);
     },
-    [clearErrorsForKey],
+    [clearErrorsForKey, staleKeys],
   );
 
   const undoField = useCallback(
