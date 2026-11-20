@@ -155,7 +155,10 @@ export function assertNoZeroInstalment(
   currency: string,
   paymentSchedule: unknown,
 ): void {
-  const instalments = paymentScheduleAmounts(total, PaymentMilestoneSchema.array().parse(paymentSchedule));
+  const instalments = paymentScheduleAmounts(
+    total,
+    PaymentMilestoneSchema.array().parse(paymentSchedule),
+  );
   const zero = instalments.find((m) => /^0\.00$/.test(m.amount));
   if (zero === undefined) return;
   throw new UnprocessableEntityException({
