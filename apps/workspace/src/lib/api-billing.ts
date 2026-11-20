@@ -475,6 +475,7 @@ export type BillingFailureKind =
   | 'period_mismatch' // PERIOD_FY_MISMATCH
   | 'stale_fx' // fx_rate_stale
   | 'evidence' // evidence_policy_unmet
+  | 'credit_hold' // credit_hold: the customer is over its credit limit (F1-Q20/F1-Q26)
   | 'in_progress' // the first request with this key has not settled
   | 'stale' // the row version moved: reload
   | 'forbidden'
@@ -569,6 +570,11 @@ export function describeBillingFailure(err: unknown): BillingFailure {
         );
       case 'fx_rate_stale':
         return final('stale_fx', staleFxMessage(details));
+      case 'credit_hold':
+        return final(
+          'credit_hold',
+          'This customer is over its credit limit, so the sales order is on hold. Ask Management or Finance to override the credit hold on the opportunity, then confirm again.',
+        );
       default:
         return { ...base, kind: 'stale', definite: true };
     }

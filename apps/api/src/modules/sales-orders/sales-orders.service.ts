@@ -414,7 +414,8 @@ export class SalesOrdersService {
     if (customerPartyId === null) throw new Error(`quotation ${quotation.number} has no customer`);
 
     // F1-Q20/F1-Q26: a customer over its credit limit with this entity holds the deal here, the hand-over to a
-    // sales order, until Management or Finance overrides the hold on the deal with a reason.
+    // sales order, until Management or Finance overrides the hold on the deal with a reason. The refusal names the
+    // deal only: the limit and the balance are for holders of credit.override (GET /v1/opportunities/:id/credit-hold).
     const credit = await creditPosition(tx, scope, customerPartyId);
     if (credit.held) {
       const [deal] = await tx
@@ -424,13 +425,9 @@ export class SalesOrdersService {
       if (deal?.creditOverrideAt == null) {
         throw new ConflictException({
           code: 'credit_hold',
-          message: `The customer owes NPR ${credit.exposure}, over its credit limit of NPR ${credit.creditLimit}; the deal needs a credit override first`,
-          details: {
-            opportunityId: quotation.opportunityId,
-            creditLimit: credit.creditLimit ?? '',
-            exposure: credit.exposure,
-            currency: 'NPR',
-          },
+          message:
+            'The customer is over its credit limit; Management or Finance must override the credit hold on the deal first',
+          details: { opportunityId: quotation.opportunityId },
         });
       }
     }
