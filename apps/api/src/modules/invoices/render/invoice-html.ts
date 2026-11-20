@@ -10,12 +10,13 @@
 // The one image allowed is the company logo frozen at print 1 (U12), and only as a data URL that passes the logo schema
 // here; the CSP then allows `img-src data:` and nothing more. With no logo the page is exactly as before.
 import {
+  bsLongOfDay,
   DEFAULT_CUSTOMER_DATE_FORMAT,
   DEFAULT_NUMBER_SYSTEMS,
   Dec,
+  formatBsLong,
   formatCustomerDate,
   formatMoney,
-  toBs,
   type CustomerDateFormat,
   type NumberSystems,
 } from '@bos/locale';
@@ -31,28 +32,19 @@ const escapeHtml = (text: string): string =>
     .replace(/"/g, '&quot;')
     .replace(/'/g, '&#39;');
 
-/** Noon in Kathmandu (UTC+05:45) on the calendar day, so no timezone shifts the day. */
-const kathmanduNoon = (isoDate: string): Date => new Date(`${isoDate}T12:00:00+05:45`);
-
-/** The Gregorian date with the Bikram Sambat date beside it. The issue date's BS form is the one frozen at issue. */
+/**
+ * The Gregorian date with the Bikram Sambat date beside it, in the one long BS form (`04 Poush 2083 BS`, U16-Q5). The
+ * issue date's BS form is the one frozen at issue; any other date is converted. Outside the converter's range (BS 2000
+ * to 2090) the Gregorian date shows alone.
+ */
 function dateCell(
   isoDate: string,
   bsFrozen: string | null,
   dateFormat: CustomerDateFormat,
 ): string {
   const gregorian = escapeHtml(formatCustomerDate(isoDate, dateFormat));
-  if (bsFrozen !== null) {
-    return `${gregorian} <span class="bs">(${escapeHtml(bsFrozen)} BS)</span>`;
-  }
-  try {
-    const bs = toBs(kathmanduNoon(isoDate));
-    const text = `${String(bs.day).padStart(2, '0')} ${bs.monthNameEn} ${bs.year} BS`;
-    return `${gregorian} <span class="bs">(${escapeHtml(text)})</span>`;
-  } catch (error) {
-    // Outside the converter's range (BS 2000 to 2090): show the Gregorian date alone.
-    if (error instanceof RangeError) return gregorian;
-    throw error;
-  }
+  const bs = bsFrozen !== null ? formatBsLong(bsFrozen) : bsLongOfDay(isoDate);
+  return bs === null ? gregorian : `${gregorian} <span class="bs">(${escapeHtml(bs)})</span>`;
 }
 
 const TITLES: Record<InvoiceRenderView['kind'], string> = {
