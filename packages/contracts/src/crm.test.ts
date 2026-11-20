@@ -333,6 +333,64 @@ describe('stage change bodies', () => {
       }).success,
     ).toBe(false);
   });
+
+  it('accepts contactActivity only on contacted and only for call or email', () => {
+    expect(
+      LeadStageChangeBodySchema.safeParse({
+        stage: 'contacted',
+        expectedVersion: 1,
+        contactActivity: { kind: 'call', body: 'Spoke with buyer' },
+      }).success,
+    ).toBe(true);
+    expect(
+      LeadStageChangeBodySchema.safeParse({
+        stage: 'contacted',
+        expectedVersion: 1,
+        contactActivity: { kind: 'email', subject: 'Intro', body: 'Sent brochure' },
+      }).success,
+    ).toBe(true);
+
+    for (const stage of ['qualified', 'on_hold', 'lost'] as const) {
+      const base =
+        stage === 'lost'
+          ? leadLost
+          : stage === 'on_hold'
+            ? { ...lost, stage: 'on_hold' as const }
+            : { stage, expectedVersion: 1 };
+      const parsed = LeadStageChangeBodySchema.safeParse({
+        ...base,
+        contactActivity: { kind: 'call', body: 'Should fail' },
+      });
+      expect(parsed.success, stage).toBe(false);
+      if (!parsed.success) {
+        expect(parsed.error.issues).toContainEqual(
+          expect.objectContaining({
+            path: ['contactActivity'],
+            message: 'only for a move to contacted',
+          }),
+        );
+      }
+    }
+
+    for (const badKind of ['note', 'meeting'] as const) {
+      expect(
+        LeadStageChangeBodySchema.safeParse({
+          stage: 'contacted',
+          expectedVersion: 1,
+          contactActivity: { kind: badKind, body: 'Wrong kind' },
+        }).success,
+        badKind,
+      ).toBe(false);
+    }
+
+    expect(
+      LeadStageChangeBodySchema.safeParse({
+        stage: 'contacted',
+        expectedVersion: 1,
+        contactActivity: { kind: 'call', body: '   ' },
+      }).success,
+    ).toBe(false);
+  });
 });
 
 describe('lostReasonsToken and stale-view schemas (D54-4)', () => {
