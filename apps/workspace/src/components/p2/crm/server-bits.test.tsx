@@ -12,7 +12,6 @@ import {
 } from './server-bits';
 
 const ASHA = '11111111-1111-4111-8111-111111111111';
-const GONE = '99999999-9999-4999-8999-999999999999';
 const NOW = new Date('2026-11-19T06:00:00.000Z');
 
 function activity(over: Partial<ActivityDto> = {}): ActivityDto {
