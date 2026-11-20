@@ -276,6 +276,7 @@ describe('confirmEvidenceAction (F1-Q28)', () => {
     expect((init.headers as Record<string, string>)['idempotency-key']).toBe(KEY);
     expect(JSON.parse(init.body as string)).toEqual({
       evidenceKinds: ['contract', 'purchase_order'],
+      evidenceDocumentIds: [],
       comment: 'PO 4471 on file',
     });
     expect(mocks.revalidatePath).toHaveBeenCalledWith(`/quotations/${Q}`);
@@ -286,6 +287,7 @@ describe('confirmEvidenceAction (F1-Q28)', () => {
     const [, , init] = mocks.apiFetch.mock.calls[0] as [unknown, string, RequestInit];
     expect(JSON.parse(init.body as string)).toEqual({
       evidenceKinds: ['contract', 'purchase_order'],
+      evidenceDocumentIds: [],
     });
   });
 

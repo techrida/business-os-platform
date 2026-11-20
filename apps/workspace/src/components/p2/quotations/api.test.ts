@@ -261,22 +261,13 @@ describe('getQuotation', () => {
     expect(got.contacts[0]?.email).toBeNull();
   });
 
-  it('keeps the lifecycle fields the contract does not describe yet, from the same body', async () => {
+  it('keeps capabilities.canCancel from the contract, and leaves it out when the API does', async () => {
     fetchMock.mockResolvedValue(
-      reply(200, {
-        ...detail,
-        capabilities: { ...detail.capabilities, canCancel: true },
-      }),
+      reply(200, { ...detail, capabilities: { ...detail.capabilities, canCancel: true } }),
     );
-    const got = await getQuotation(session, ID_A);
-    expect(fetchMock).toHaveBeenCalledTimes(1);
-    expect(got.lifecycle).toEqual({ canCancel: true });
-  });
-
-  it('reads no lifecycle answers from a body that has none', async () => {
+    expect((await getQuotation(session, ID_A)).capabilities.canCancel).toBe(true);
     fetchMock.mockResolvedValue(reply(200, detail));
-    const got = await getQuotation(session, ID_A);
-    expect(got.lifecycle).toEqual({ canCancel: undefined });
+    expect((await getQuotation(session, ID_A)).capabilities.canCancel).toBeUndefined();
   });
 
   it('turns a detail without history into a 502', async () => {
@@ -294,7 +285,7 @@ describe('getEvidence (F1-Q28)', () => {
     policy: 'both',
     missing: ['purchase_order'],
     acceptance: {
-      actorKind: 'portal_contact',
+      actorKind: 'customer_user',
       decidedOn: '2026-11-20',
       acceptedByName: 'Jules',
       evidenceKinds: ['contract'],
@@ -316,19 +307,17 @@ describe('getEvidence (F1-Q28)', () => {
     });
   });
 
-  it('leaves out a kind of evidence it does not know, instead of failing the page', async () => {
+  it('is null for an answer off the contract, so the page leaves the row out instead of failing', async () => {
     fetchMock.mockResolvedValue(
       reply(200, {
         ...evidence,
         acceptance: { ...evidence.acceptance, evidenceKinds: ['contract', 'fax'] },
       }),
     );
-    expect((await getEvidence(session, ID_A, ID_B))?.acceptance.evidenceKinds).toEqual([
-      'contract',
-    ]);
+    expect(await getEvidence(session, ID_A, ID_B)).toBeNull();
   });
 
-  it('is null when there is no acceptance to show (404) or the API has no evidence step', async () => {
+  it('is null when there is no acceptance to show (404) or the body is not evidence', async () => {
     fetchMock.mockResolvedValue(reply(404, { error: { code: 'not_found' } }));
     expect(await getEvidence(session, ID_A, ID_B)).toBeNull();
     fetchMock.mockResolvedValue(reply(200, { unexpected: true }));

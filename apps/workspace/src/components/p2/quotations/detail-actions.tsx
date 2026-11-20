@@ -14,7 +14,7 @@ import { LinkButton } from '@/components/ui/button';
 
 import { CancelDialog } from './cancel-dialog';
 import { canRecordOutcome, kathmanduToday, preselectedContactId, sendGate } from './eligibility';
-import { mayCancel, type QuotationLifecycle } from './lifecycle-contract';
+import { mayCancel } from './lifecycle-contract';
 import { opportunityBlockers, type OpportunityFacts } from './opportunity-gate';
 import { OutcomeDialog } from './outcome-dialog';
 import { ReviseForm } from './revise-form';
@@ -26,8 +26,6 @@ export interface DetailActionVisibility {
   includeOutcome?: boolean;
   maySend?: boolean;
   mayRecordOutcome?: boolean;
-  /** The lifecycle answers the contract does not carry yet (Cancel quotation). */
-  lifecycle?: QuotationLifecycle;
   /**
    * The quotation's opportunity, for the stage rules Send and Accepted depend on. Null when it could
    * not be read: then nothing is held back here and the API decides.
@@ -37,8 +35,6 @@ export interface DetailActionVisibility {
   versionId?: string;
 }
 
-const NO_LIFECYCLE: QuotationLifecycle = {};
-
 /** Whether `DetailActions` will render at least one button for this quotation and caller. */
 export function hasDetailActions({
   status,
@@ -46,7 +42,6 @@ export function hasDetailActions({
   includeOutcome = true,
   maySend,
   mayRecordOutcome,
-  lifecycle = NO_LIFECYCLE,
   opportunity,
   versionId = '',
 }: DetailActionVisibility): boolean {
@@ -61,7 +56,7 @@ export function hasDetailActions({
     (capabilities.canRecordOutcome ?? mayRecordOutcome ?? false);
   const showEdit = capabilities.canEdit && isQuotationEditable(status);
   const showRevise = capabilities.canRevise && canReviseQuotation(status);
-  const showCancel = mayCancel(status, lifecycle);
+  const showCancel = mayCancel(status, capabilities);
   return showEdit || showSend || showOutcome || showRevise || showCancel;
 }
 
@@ -85,7 +80,6 @@ export function DetailActions({
   includeOutcome = true,
   maySend,
   mayRecordOutcome,
-  lifecycle = NO_LIFECYCLE,
   opportunity,
 }: {
   quotationId: string;
@@ -103,8 +97,6 @@ export function DetailActions({
   maySend?: boolean;
   /** Live permission fallback when `capabilities.canRecordOutcome` is omitted. */
   mayRecordOutcome?: boolean;
-  /** The lifecycle answers the contract does not carry yet (Cancel quotation). */
-  lifecycle?: QuotationLifecycle;
   /** The quotation's opportunity; null when it could not be read (then the API decides). */
   opportunity?: OpportunityFacts | null;
 }) {
@@ -127,7 +119,7 @@ export function DetailActions({
   // Draft and Returned are changed in place in the quote builder; every later change is a revision.
   const showEdit = capabilities.canEdit && isQuotationEditable(status);
   const showRevise = capabilities.canRevise && canReviseQuotation(status);
-  const showCancel = mayCancel(status, lifecycle);
+  const showCancel = mayCancel(status, capabilities);
 
   return (
     <>

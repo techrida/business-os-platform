@@ -136,7 +136,7 @@ describe('submitQuoteAction', () => {
     api.submitVersion.mockRejectedValueOnce(
       new ApiError(422, 'x', {
         error: {
-          code: 'PAYMENT_SCHEDULE_ZERO_INSTALMENT',
+          code: 'PAYMENT_INSTALMENT_ZERO',
           message: 'Milestone 2 would be an instalment of 0.00',
           correlationId: 'c',
         },
