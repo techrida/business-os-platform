@@ -573,7 +573,7 @@ export function describeBillingFailure(err: unknown): BillingFailure {
       case 'credit_hold':
         return final(
           'credit_hold',
-          'This customer is over its credit limit, so the sales order is on hold. Ask Management or Finance to override the credit hold on the opportunity, then confirm again.',
+          'This customer is over its credit limit, so the sales order is on hold. Ask someone with credit override access to override the credit hold on the opportunity, then confirm again.',
         );
       default:
         return { ...base, kind: 'stale', definite: true };
