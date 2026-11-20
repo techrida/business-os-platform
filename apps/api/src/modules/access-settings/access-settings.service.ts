@@ -35,8 +35,11 @@ import { sql } from 'drizzle-orm';
 
 import { AuditService } from '../../platform/audit/audit.service';
 import { AuthzService } from '../../platform/authz/authz.service';
+import { type LiveGrantDeps, assertLiveGrant } from '../../platform/authz/live-grants';
+import { RoleCache } from '../../platform/authz/role-cache';
 import { DB, type Db, type DbTransaction } from '../../platform/db/db.module';
 import { type Actor, type TxScope, withTx } from '../../platform/db/tx';
+import { SqlUsersStore } from '../../platform/users/users.store';
 import { assignableTargets } from '../leads/lead-assignment-rule';
 import {
   ACCESS_AREA_CATALOGUE,
@@ -208,11 +211,22 @@ function buildGrantRows(
 
 @Injectable()
 export class AccessSettingsService {
+  /**
+   * Save re-checks the caller against the database, not the token (U20b-Q3). The mirror reads run
+   * on the save's transaction; the grant table is read fresh per save, so no cached rows apply.
+   */
+  private readonly liveGrants: LiveGrantDeps;
+
   constructor(
     @Inject(DB) private readonly db: Db,
     private readonly authz: AuthzService,
     private readonly audit: AuditService,
-  ) {}
+  ) {
+    this.liveGrants = {
+      users: new SqlUsersStore(db),
+      grants: { grantsFor: (...args) => new RoleCache(db).grantsFor(...args) },
+    };
+  }
 
   /**
    * `GET /v1/admin/access`: full catalogue, live rules, defaults, active people counts, and
@@ -305,6 +319,9 @@ export class AccessSettingsService {
   ): Promise<AccessCatalogueResponse> {
     await withTx(this.db, scope, actor, async (tx) => {
       await lockAccessRevision(tx, scope.tenantId);
+      // The route's @Can used the token's roles; a Founder whose role was removed since sign-in
+      // still passes it, so check the roles the mirror holds now (403 unless admin.roles.write).
+      await assertLiveGrant(tx, this.liveGrants, scope, actor, 'admin.roles.write');
 
       const loaded = await this.loadSnapshot(tx, scope, { includeOpenOwned: true });
       if (loaded.revisionRow.revision !== req.expectedRevision) {
