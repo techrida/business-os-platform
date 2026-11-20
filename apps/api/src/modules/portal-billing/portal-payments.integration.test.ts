@@ -341,15 +341,7 @@ beforeAll(async () => {
   const numbering = new NumberingService();
   const ledger = new LedgerService();
   // The real decision for the portal path; the staff service only seeds rows.
-  const realPayments = new PaymentsService(
-    db,
-    authz,
-    money,
-    numbering,
-    audit,
-    ledger,
-    () => NOW,
-  );
+  const realPayments = new PaymentsService(db, authz, money, numbering, audit, ledger, () => NOW);
   staffPayments = new PaymentsService(
     db,
     { assert: () => undefined } as unknown as AuthzService,
