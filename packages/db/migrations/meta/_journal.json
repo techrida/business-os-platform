@@ -526,6 +526,13 @@
       "when": 1783000000103,
       "tag": "0103_opportunity_credit_override",
       "breakpoints": true
+    },
+    {
+      "idx": 75,
+      "version": "7",
+      "when": 1783000000104,
+      "tag": "0104_credit_override_permission",
+      "breakpoints": true
     }
   ]
 }
