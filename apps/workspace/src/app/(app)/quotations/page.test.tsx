@@ -14,6 +14,7 @@ const mocks = vi.hoisted(() => ({
   listQuotationsPage: vi.fn(),
   getQuotationsSummary: vi.fn(),
   listCustomers: vi.fn(),
+  getOpportunity: vi.fn(),
 }));
 vi.mock('@/lib/bff', () => ({ requireStaffSession: mocks.requireStaffSession }));
 vi.mock('@/components/p2/quotations/api', () => ({
@@ -21,6 +22,7 @@ vi.mock('@/components/p2/quotations/api', () => ({
   getQuotationsSummary: mocks.getQuotationsSummary,
 }));
 vi.mock('@/components/p2/customers/api', () => ({ listCustomers: mocks.listCustomers }));
+vi.mock('@/components/p2/crm/crm-api', () => ({ getOpportunity: mocks.getOpportunity }));
 vi.mock('next/navigation', () => ({
   useRouter: () => ({ push: vi.fn(), replace: vi.fn() }),
   usePathname: () => '/quotations',
@@ -77,6 +79,9 @@ const lastFilter = (): Record<string, unknown> | undefined =>
 beforeEach(() => {
   mocks.requireStaffSession.mockReset().mockResolvedValue({ accessToken: 'tok' });
   mocks.listQuotationsPage.mockReset().mockResolvedValue(page());
+  mocks.getOpportunity
+    .mockReset()
+    .mockResolvedValue({ id: OPP, stage: 'negotiation', canDraftQuotation: true });
   mocks.getQuotationsSummary.mockReset().mockResolvedValue(SUMMARY);
   mocks.listCustomers.mockReset().mockResolvedValue({
     items: [{ id: CUSTOMER, legalName: 'Himal Traders' }],
@@ -144,6 +149,28 @@ describe('quotations list', () => {
     // Starting another quotation from here is deliberate, so the New page does not resume a draft.
     expect(html).toContain(`href="/quotations/new?opportunityId=${OPP}&amp;another=1"`);
     expect(html).toContain(`href="/opportunities/${OPP}"`);
+  });
+
+  it('offers New quotation for a deal only when the deal says the caller may quote on it (FX-Q2)', async () => {
+    const newHref = `href="/quotations/new?opportunityId=${OPP}&amp;another=1"`;
+    mocks.getOpportunity.mockResolvedValue({
+      id: OPP,
+      stage: 'negotiation',
+      canDraftQuotation: false,
+    });
+    expect(await render({ opportunityId: OPP })).not.toContain(newHref);
+
+    mocks.getOpportunity.mockResolvedValue({ id: OPP, stage: 'negotiation' });
+    expect(await render({ opportunityId: OPP })).not.toContain(newHref);
+
+    mocks.getOpportunity.mockResolvedValue({ id: OPP, stage: 'won', canDraftQuotation: true });
+    expect(await render({ opportunityId: OPP })).not.toContain(newHref);
+
+    mocks.getOpportunity.mockRejectedValue(new ApiError(404, 'missing'));
+    const html = await render({ opportunityId: OPP });
+    expect(html).not.toContain(newHref);
+    expect(html).toContain('Quotations for this opportunity');
+    expect(mocks.getOpportunity).toHaveBeenCalledWith(expect.anything(), OPP);
   });
 
   it('ignores an opportunityId that is not a UUID', async () => {
