@@ -59,11 +59,13 @@ it('reads the directory for a role whose saved grants add admin.users.read, thou
     items: [{ id: 'a', displayName: 'Mina', email: null }],
     nextAfter: null,
   } as never);
-  expect(await userNames({ ...session, roles: ['sales'] })).toEqual(new Map([['a', 'Mina']]));
+  expect(await userNames({ ...session, accessToken: 'live-1', roles: ['sales'] })).toEqual(
+    new Map([['a', 'Mina']]),
+  );
 });
 
 it('skips the directory when the saved grants removed admin.users.read, though the defaults hold it', async () => {
   vi.mocked(getMe).mockResolvedValue(liveGrants('customer.read'));
-  expect(await userNames(session)).toEqual(new Map());
+  expect(await userNames({ ...session, accessToken: 'live-2' })).toEqual(new Map());
   expect(listUsers).not.toHaveBeenCalled();
 });
