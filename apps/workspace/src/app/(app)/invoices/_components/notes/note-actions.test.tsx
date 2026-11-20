@@ -2,6 +2,8 @@ import type { ReactNode } from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { describe, expect, it, vi } from 'vitest';
 
+import { permissionChecker } from '@/components/p2/customers/permissions';
+
 import { invoiceGates } from '../../_lib/gates';
 import { ID, TAX, invoiceDetail } from '../../_lib/test-fixtures';
 
@@ -47,7 +49,7 @@ function render(
       invoice={{ ...invoice, currency: 'NPR' }}
       lines={lines}
       taxCodes={over.taxCodes === undefined ? taxCodes : over.taxCodes}
-      gates={invoiceGates(invoice, roles)}
+      gates={invoiceGates(invoice, permissionChecker(roles))}
     />,
   );
 }

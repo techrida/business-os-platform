@@ -11,6 +11,7 @@ vi.mock('server-only', () => ({}));
 const mocks = vi.hoisted(() => ({
   requireStaffSession: vi.fn(),
   apiFetch: vi.fn(),
+  getMe: vi.fn(),
   redirect: vi.fn(),
   revalidatePath: vi.fn(),
   loadEnabledCurrencies: vi.fn(),
@@ -22,6 +23,7 @@ vi.mock('@/lib/enabled-currencies.server', () => ({
 vi.mock('@/lib/api', async (importOriginal) => ({
   ...(await importOriginal<typeof import('@/lib/api')>()),
   apiFetch: mocks.apiFetch,
+  getMe: mocks.getMe,
 }));
 vi.mock('next/navigation', () => ({ redirect: mocks.redirect }));
 vi.mock('next/cache', () => ({ revalidatePath: mocks.revalidatePath }));
@@ -74,6 +76,8 @@ const call = () => mocks.apiFetch.mock.calls[0] as [unknown, string, RequestInit
 
 beforeEach(async () => {
   vi.clearAllMocks();
+  // Until a test sets live grants, GET /v1/me fails and the role defaults decide.
+  mocks.getMe.mockRejectedValue(new Error('upstream down'));
   mocks.requireStaffSession.mockResolvedValue({ accessToken: 't', roles: ['accountant'] });
   mocks.loadEnabledCurrencies.mockResolvedValue(['NPR', 'INR', 'USD']);
   const body = await detailBody();
@@ -242,6 +246,27 @@ describe('createManualInvoiceAction', () => {
 
   it('refuses a person without invoice.draft before anything else', async () => {
     mocks.requireStaffSession.mockResolvedValue({ accessToken: 't', roles: ['management'] });
+    const state = await createManualInvoiceAction(prev, form());
+    expect(mocks.apiFetch).not.toHaveBeenCalled();
+    expect(state.error).toMatch(/do not include/i);
+  });
+
+  it('lets a role granted invoice.draft in Settings > Access draft, whatever its defaults', async () => {
+    mocks.requireStaffSession.mockResolvedValue({ accessToken: 't', roles: ['sales'] });
+    mocks.getMe.mockResolvedValue({ permissions: [{ permission: 'invoice.draft', scope: 'all' }] });
+    await expect(createManualInvoiceAction(prev, form())).rejects.toThrow('REDIRECT');
+    expect(mocks.getMe).toHaveBeenCalledWith({ accessToken: 't' });
+    expect(call()[1]).toBe('/v1/invoices');
+  });
+
+  it('falls back to the role defaults only when /v1/me fails', async () => {
+    await expect(createManualInvoiceAction(prev, form())).rejects.toThrow('REDIRECT');
+    expect(mocks.getMe).toHaveBeenCalled();
+    expect(call()[1]).toBe('/v1/invoices');
+  });
+
+  it('refuses a role whose invoice.draft was revoked, though its defaults hold it', async () => {
+    mocks.getMe.mockResolvedValue({ permissions: [{ permission: 'invoice.read', scope: 'all' }] });
     const state = await createManualInvoiceAction(prev, form());
     expect(mocks.apiFetch).not.toHaveBeenCalled();
     expect(state.error).toMatch(/do not include/i);

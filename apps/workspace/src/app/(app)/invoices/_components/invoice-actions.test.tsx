@@ -3,6 +3,8 @@ import type { InvoiceKind, InvoiceStatus } from '@bos/contracts';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { describe, expect, it, vi } from 'vitest';
 
+import { permissionChecker } from '@/components/p2/customers/permissions';
+
 import { invoiceGates } from '../_lib/gates';
 import { ID } from '../_lib/test-fixtures';
 
@@ -44,7 +46,7 @@ function render(
   return renderToStaticMarkup(
     <InvoiceActions
       invoice={invoice}
-      gates={invoiceGates(invoice, roles)}
+      gates={invoiceGates(invoice, permissionChecker(roles))}
       reloadHref={`/invoices/${ID}`}
     />,
   );

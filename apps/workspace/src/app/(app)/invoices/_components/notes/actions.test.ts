@@ -11,6 +11,7 @@ vi.mock('server-only', () => ({}));
 const mocks = vi.hoisted(() => ({
   requireStaffSession: vi.fn(),
   apiFetch: vi.fn(),
+  getMe: vi.fn(),
   redirect: vi.fn(),
   revalidatePath: vi.fn(),
 }));
@@ -18,6 +19,7 @@ vi.mock('@/lib/bff', () => ({ requireStaffSession: mocks.requireStaffSession }))
 vi.mock('@/lib/api', async (importOriginal) => ({
   ...(await importOriginal<typeof import('@/lib/api')>()),
   apiFetch: mocks.apiFetch,
+  getMe: mocks.getMe,
 }));
 vi.mock('next/navigation', () => ({ redirect: mocks.redirect }));
 vi.mock('next/cache', () => ({ revalidatePath: mocks.revalidatePath }));
@@ -75,6 +77,8 @@ const call = () => mocks.apiFetch.mock.calls[0] as [unknown, string, RequestInit
 
 beforeEach(() => {
   vi.clearAllMocks();
+  // Until a test sets live grants, GET /v1/me fails and the role defaults decide.
+  mocks.getMe.mockRejectedValue(new Error('upstream down'));
   mocks.requireStaffSession.mockResolvedValue({ accessToken: 't', roles: ['finance'] });
   mocks.apiFetch.mockImplementation(() =>
     answer(
@@ -144,6 +148,22 @@ describe('createCreditNoteAction', () => {
 
   it('refuses a person without invoice.credit_note', async () => {
     mocks.requireStaffSession.mockResolvedValue({ accessToken: 't', roles: ['accountant'] });
+    const state = await createCreditNoteAction(prev, credit());
+    expect(mocks.apiFetch).not.toHaveBeenCalled();
+    expect(state.error).toMatch(/do not include/i);
+  });
+
+  it('follows the live invoice.credit_note grant, not the role defaults', async () => {
+    mocks.requireStaffSession.mockResolvedValue({ accessToken: 't', roles: ['accountant'] });
+    mocks.getMe.mockResolvedValue({
+      permissions: [{ permission: 'invoice.credit_note', scope: 'all' }],
+    });
+    await expect(createCreditNoteAction(prev, credit())).rejects.toThrow('REDIRECT');
+    expect(call()[1]).toBe('/v1/credit-notes');
+
+    vi.clearAllMocks();
+    mocks.requireStaffSession.mockResolvedValue({ accessToken: 't', roles: ['finance'] });
+    mocks.getMe.mockResolvedValue({ permissions: [] });
     const state = await createCreditNoteAction(prev, credit());
     expect(mocks.apiFetch).not.toHaveBeenCalled();
     expect(state.error).toMatch(/do not include/i);
