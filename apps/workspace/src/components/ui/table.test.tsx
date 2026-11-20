@@ -95,11 +95,14 @@ it('leaves a table without pinned columns alone', async () => {
   await view.unmount();
 });
 
-it('makes pinned cells sticky in the shared table styles, not only shaded', () => {
+it('makes pinned cells sticky in the shared table styles, only the last one on a phone', () => {
   const css = readFileSync(join(process.cwd(), 'src/components/ui/table.module.css'), 'utf8');
   const sticky =
     /\.table \[data-pinned\]:last-child,\s*\.wrap\[data-pinned-ready\] \.table \[data-pinned\] \{[^}]*position: sticky;/;
   expect(css).toMatch(sticky);
+  expect(css).toMatch(
+    /@media \(max-width: 767\.98px\) \{\s*\.wrap\[data-pinned-ready\] \.table \[data-pinned\]:not\(:last-child\) \{\s*position: static;/,
+  );
   for (const n of [2, 3, 4]) {
     expect(css).toContain(
       `.wrap[data-pinned-ready] .table [data-pinned]:nth-last-child(${n}) {\n  inset-inline-end: var(--table-pin-end-${n}, 0);`,
