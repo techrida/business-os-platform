@@ -421,11 +421,19 @@ export class LeadsService {
       });
       if (!plan.ok) throw refusalToException(plan.kind, plan.message);
 
-      if (body.contactActivity !== undefined && row.stage !== 'new') {
-        throw new BadRequestException({
-          code: 'bad_request',
-          message: 'A contact activity can only be logged when moving a new lead to contacted',
-        });
+      if (body.contactActivity !== undefined) {
+        if (body.stage !== 'contacted') {
+          throw new BadRequestException({
+            code: 'bad_request',
+            message: 'A contact activity can only be logged when moving a lead to contacted',
+          });
+        }
+        if (row.stage !== 'new') {
+          throw new ConflictException({
+            code: 'conflict',
+            message: 'A contact activity can only be logged when moving a new lead to contacted',
+          });
+        }
       }
 
       const now = new Date();
