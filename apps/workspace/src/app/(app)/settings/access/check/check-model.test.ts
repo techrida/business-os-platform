@@ -7,6 +7,7 @@ import {
   changeHref,
   checkHref,
   headerLine,
+  PICK_PROMPT,
   personNotice,
   personParam,
   visibleText,
@@ -75,11 +76,31 @@ describe('personNotice', () => {
   it('says when the person is disabled or has no roles, and nothing otherwise', () => {
     expect(personNotice(person())).toBeNull();
     expect(personNotice(person({ status: 'inactive' }))).toBe(
-      'Asha K. is disabled and cannot sign in. This shows what their roles would allow.',
+      "Asha K. is disabled and cannot sign in. This shows what Asha K.'s roles would allow.",
     );
     expect(personNotice(person({ roles: [] }))).toBe(
-      'Asha K. has no roles, so they cannot open anything.',
+      'Asha K. has no roles, so Asha K. cannot open anything.',
     );
+  });
+
+  it('says "this person" when the name is blank', () => {
+    expect(personNotice(person({ name: '  ', roles: [] }))).toBe(
+      'This person has no roles, so this person cannot open anything.',
+    );
+    expect(personNotice(person({ name: '', status: 'inactive' }))).toBe(
+      "This person is disabled and cannot sign in. This shows what this person's roles would allow.",
+    );
+  });
+
+  it('never calls a named person "they" or "their"', () => {
+    const lines = [
+      PICK_PROMPT,
+      personNotice(person({ roles: [] })),
+      personNotice(person({ status: 'inactive' })),
+      personNotice(person({ name: '', roles: [] })),
+      personNotice(person({ name: '', status: 'inactive' })),
+    ];
+    for (const line of lines) expect(line).not.toMatch(/\bthey\b|\btheir\b/i);
   });
 });
 
