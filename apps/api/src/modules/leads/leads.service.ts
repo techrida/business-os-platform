@@ -31,16 +31,7 @@ import {
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
-import {
-  and,
-  count,
-  desc,
-  eq,
-  getTableColumns,
-  inArray,
-  isNotNull,
-  type SQL,
-} from 'drizzle-orm';
+import { and, count, desc, eq, getTableColumns, inArray, isNotNull, type SQL } from 'drizzle-orm';
 
 import { AuditService } from '../../platform/audit/audit.service';
 import { AuthzService, scopeWhereFor } from '../../platform/authz/authz.service';
@@ -56,7 +47,7 @@ import { searchPage } from '../../platform/list';
 import { NumberingService } from '../../platform/settings/numbering.service';
 import { nameIn, personNameMap, personNames } from '../../platform/users/person-names';
 import { nextFollowUpSql } from '../activities/activities.types';
-import { moveOpenFollowUps } from '../activities/follow-ups';
+import { moveOpenFollowUps, notifyFollowUpAssigned } from '../activities/follow-ups';
 import {
   actorParty,
   type AssignmentCheck,
@@ -352,13 +343,19 @@ export class LeadsService {
             assigneeUserId,
             createdByUserId: principal.userId,
           })
-          .returning({ id: activities.id });
+          .returning();
         await this.audit.record(tx, {
           action: 'activity.scheduled',
           entityType: 'activities',
           entityId: planned!.id,
           after: { kind: followUp.kind, leadId: row!.id, dueAt: followUp.dueAt, assigneeUserId },
         });
+        // U20a2-Q8: a first follow-up handed to someone else tells them (#22), unless they are the owner, whom the
+        // lead's own notice above already told.
+        if (assigneeUserId !== principal.userId && assigneeUserId !== ownerUserId) {
+          await notifyFollowUpAssigned(tx, this.notify, planned!, `/leads/${row!.id}`, principal);
+          sent.notice = true;
+        }
         // The only planned activity of a new lead, so it is the next follow-up.
         return toLeadDto(row!, dueAt, ownerName, null, principal);
       };

@@ -51,7 +51,6 @@ import { updateVersioned, withIdempotency } from '../../platform/db/idempotency'
 import { withTx, type DbTransaction, type TxScope } from '../../platform/db/tx';
 import { searchPage } from '../../platform/list';
 import { NotifyService } from '../../platform/notify/notify.service';
-import { nameIn, personNameMap } from '../../platform/users/person-names';
 import { customerRef } from '../customers/customers.service';
 import {
   assertAssignable,
@@ -73,6 +72,7 @@ import {
   type ListActivitiesQuery,
   type SubjectKey,
 } from './activities.types';
+import { notifyFollowUpAssigned } from './follow-ups';
 
 type Q = Db | DbTransaction;
 
@@ -632,20 +632,6 @@ export class ActivitiesService {
     row: ActivityRow,
     by: Principal,
   ): Promise<void> {
-    const assigneeUserId = row.assigneeUserId;
-    if (assigneeUserId === null) return;
-    const assignerName = nameIn(await personNameMap(tx, row.tenantId, [by.userId]), by.userId)!;
-    const link = assignedLink(key, row[key]!);
-    await this.notify.notifyUser(tx, {
-      userId: assigneeUserId,
-      title: `Follow-up assigned to you: ${row.subject}`,
-      body: `${assignerName} assigned you the follow-up "${row.subject}".`,
-      link,
-      email: {
-        template: 'crm.assigned',
-        vars: { entityType: 'follow-up', entityName: row.subject, assignerName, linkPath: link },
-      },
-      dedupeKey: `crm.assigned:activity:${row.id}:${row.version}`,
-    });
+    await notifyFollowUpAssigned(tx, this.notify, row, assignedLink(key, row[key]!), by);
   }
 }
