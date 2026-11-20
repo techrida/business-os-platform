@@ -162,6 +162,23 @@ export function branchesPaymentDecision({ recordedUrl, lookup, ref, knownUrls = 
  * Distinct `/procurement/requests/<uuid>` paths from a loaded PR list whose row text contains one
  * of `texts` (this run's exact justifications; the row shows the justification in full).
  */
+/**
+ * Whether a purchase-request search page holds every request of this run. The search lists exact
+ * hits first and, when there are fewer than five, adds close matches (other labels' suffixes)
+ * after them. A page that does not show the whole result therefore still holds all of this run's
+ * requests when its last row is not one of them.
+ * @returns {{ ok: true, note?: string } | { ok: false, reason: string }}
+ */
+export function prPageCoversRun({ complete, lastRowText = '', marker }) {
+  if (complete.ok) return { ok: true };
+  if (!runMatch(marker).test(String(lastRowText)))
+    return {
+      ok: true,
+      note: `the search is not one page (${complete.reason}), but its last row is another run's close match`,
+    };
+  return { ok: false, reason: complete.reason };
+}
+
 export function extractPrUrls(rows, texts, baseUrl = 'https://app.localhost') {
   const res = [texts].flat().map(runMatch);
   return [
@@ -784,7 +801,7 @@ export function workflow(cfg) {
   /**
    * Loads the Purchase requests list searched for this run's suffix. The search covers the number
    * and the justification only (not the budget code), and every justification this workflow writes
-   * ends with the suffix. Fails the step when the list does not fit on one page.
+   * ends with the suffix. Fails the step when this run's requests may go on past the page.
    */
   const runPrList = async (s) => {
     const q = encodeURIComponent(u.suffix.trim());
@@ -798,10 +815,14 @@ export function workflow(cfg) {
         summary: await s.text(),
         hasNext: (await s.page.getByRole('link', { name: 'Next', exact: true }).count()) > 0,
       });
-      if (!complete.ok)
+      const lastRowText = await s.text(table.locator('tbody tr').last());
+      const covers = prPageCoversRun({ complete, lastRowText, marker: u.suffix.trim() });
+      if (!covers.ok)
         throw new StepFailure(
-          `The purchase requests search for "${u.suffix.trim()}" is not one page (${complete.reason}); use a new label.`,
+          `The purchase requests search for "${u.suffix.trim()}" is not one page (${covers.reason}), ` +
+            "and this run's requests may go on past it; check them by hand or use a new label.",
         );
+      if (covers.note) s.checks.push(`note: ${covers.note}`);
     }
     return table;
   };

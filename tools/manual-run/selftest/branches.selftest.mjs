@@ -16,6 +16,7 @@ import {
   hasAmount,
   parseNprAmount,
   pickCustomerOption,
+  prPageCoversRun,
   workflow as branchesWorkflow,
 } from '../workflows/branches.mjs';
 
@@ -309,6 +310,23 @@ describe('branches pure helpers', () => {
         knownUrls: ['/payments/rej'],
       }).reason,
       /may be incomplete/,
+    );
+  });
+
+  test('prPageCoversRun accepts a cut-off page only when its last row is another run', () => {
+    const marker = 'SCR-r4-1440x0900';
+    assert.deepEqual(prPageCoversRun({ complete: { ok: true }, lastRowText: marker, marker }), {
+      ok: true,
+    });
+    const cut = { ok: false, reason: 'the list has a next page' };
+    // Close matches from other labels come after the exact hits: a last row of another run is fine.
+    assert.equal(
+      prPageCoversRun({ complete: cut, lastRowText: 'Demo cable. SCR-r4-0390x0844', marker }).ok,
+      true,
+    );
+    assert.deepEqual(
+      prPageCoversRun({ complete: cut, lastRowText: `Demo cable. ${marker} Draft`, marker }),
+      { ok: false, reason: 'the list has a next page' },
     );
   });
 
