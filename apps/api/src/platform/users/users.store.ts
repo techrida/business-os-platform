@@ -137,8 +137,11 @@ export abstract class UsersStore {
   /** Bumps the tenant's authz_version so every process drops its cached principals and grants. */
   abstract bumpAuthzVersion(tx: DbTransaction, scope: TxScope): Promise<void>;
 
-  /** Active holders of `role` with a membership in the entity whose role_keys is NULL or has the role. */
-  abstract userIdsWithRole(scope: TxScope, role: RoleKey): Promise<string[]>;
+  /**
+   * Active holders of `role` with a membership in the entity whose role_keys is NULL or has the role. Read on `q`
+   * (the caller's transaction, when there is one), or on the pool.
+   */
+  abstract userIdsWithRole(scope: TxScope, role: RoleKey, q?: Queryable): Promise<string[]>;
   /**
    * Effective holders of `role` per legal entity, used by the last-Founder guard: an active user with the
    * role and a membership in the entity whose role_keys is NULL or has the role. One row per (entity, user).
@@ -148,8 +151,11 @@ export abstract class UsersStore {
     tenantId: string,
     role: RoleKey,
   ): Promise<EffectiveRoleHolder[]>;
-  /** The address of an `active` user only: notifications must not mail a deactivated or invited person. */
-  abstract emailOf(userId: string): Promise<string | null>;
+  /**
+   * The address of an `active` user only: notifications must not mail a deactivated or invited person. Read on `q`
+   * (the caller's transaction, when there is one), or on the pool.
+   */
+  abstract emailOf(userId: string, q?: Queryable): Promise<string | null>;
   /**
    * The tenant's staff users (the staff IdP org's), with their mirrored roles. `total` counts every match of
    * the same scope, filters and search, ignoring the id cursor and the page.
@@ -389,9 +395,9 @@ export class SqlUsersStore extends UsersStore {
     );
   }
 
-  async userIdsWithRole(scope: TxScope, role: RoleKey): Promise<string[]> {
+  async userIdsWithRole(scope: TxScope, role: RoleKey, q: Queryable = this.db): Promise<string[]> {
     const found = await rows<{ id: string }>(
-      this.db,
+      q,
       sql`SELECT u.id FROM app.user_roles ur
           JOIN app.users u ON u.tenant_id = ur.tenant_id AND u.id = ur.user_id
           JOIN app.user_entities ue ON ue.tenant_id = ur.tenant_id AND ue.user_id = ur.user_id
@@ -421,9 +427,9 @@ export class SqlUsersStore extends UsersStore {
     );
   }
 
-  async emailOf(userId: string): Promise<string | null> {
+  async emailOf(userId: string, q: Queryable = this.db): Promise<string | null> {
     const [row] = await rows<{ email: string | null }>(
-      this.db,
+      q,
       sql`SELECT email FROM app.users WHERE id = ${userId} AND status = 'active'`,
     );
     return row?.email ?? null;

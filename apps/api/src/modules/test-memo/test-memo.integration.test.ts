@@ -1348,6 +1348,29 @@ describe('a template memo routes through exactly the people the author named', (
     },
   );
 
+  it('checks the named signers through the submit transaction, never a second pooled connection', async () => {
+    const { id } = await createTemplateMemo([ops.a], ops.b);
+    const guard = poolGuard(db);
+    // The same collaborators as `service`; only the memo service's own handle is watched.
+    const guarded = new TestMemoService(
+      guard.db,
+      new NumberingService(),
+      new MoneyService(db, settingsService),
+      documents,
+      approvals,
+      authz as unknown as AuthzService,
+      roleCache,
+      caller,
+      () => now,
+      settingsService,
+      notify as never,
+    );
+
+    expect(await guarded.submit(id, 1)).toMatchObject({ status: 'pending' });
+    expect(guard.touches).toEqual([]);
+    expect(await statusOf(id)).toMatchObject({ status: 'submitted', version: 2 });
+  });
+
   it('keeps the compatibility value when the memo is submitted without money', async () => {
     const { id } = await createTemplateMemo([], ops.a);
     await submitMemo(id);
@@ -2223,3 +2246,41 @@ describe('POST /v1/test-memos/:id/discard (Delete draft)', () => {
     ).rejects.toMatchObject({ code: '23514', constraint: 'test_memos_discarded_by_owner_check' });
   });
 });
+
+/**
+ * A Db that records every call made on it while a transaction it opened is still open. Such a call takes a second
+ * pooled connection while the transaction holds the first, so under load the pool can run dry and stall.
+ */
+function poolGuard(real: Db): { db: Db; touches: string[] } {
+  const touches: string[] = [];
+  let open = 0;
+  const where = () =>
+    (new Error().stack ?? '')
+      .split('\n')
+      .filter((line) => line.includes('/src/') && !line.includes('.test.'))
+      .slice(0, 2)
+      .map((line) => line.trim())
+      .join(' < ');
+  const db = new Proxy(real, {
+    get(target, prop) {
+      const value: unknown = Reflect.get(target, prop);
+      if (typeof value !== 'function') return value;
+      if (prop === 'transaction') {
+        return (fn: (tx: unknown) => Promise<unknown>, config?: unknown) =>
+          target.transaction(async (tx) => {
+            open += 1;
+            try {
+              return await fn(tx);
+            } finally {
+              open -= 1;
+            }
+          }, config as never);
+      }
+      return (...args: unknown[]) => {
+        if (open > 0) touches.push(`${String(prop)} at ${where()}`);
+        return (value as (...a: unknown[]) => unknown).apply(target, args);
+      };
+    },
+  });
+  return { db, touches };
+}

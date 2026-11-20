@@ -23,6 +23,9 @@ import type { CoreConfig } from '../config/config';
 import { type Db } from '../db/db.module';
 import { type TxScope, systemActor, withTx } from '../db/tx';
 import { bindIdentity, bindPrincipal, runWithRequestStore } from '../tenancy/request-context';
+import { UserMirror } from '../users/user-mirror';
+import { UsersService } from '../users/users.service';
+import { SqlUsersStore } from '../users/users.store';
 import { NotifyService } from './notify.service';
 
 const OWNER_PW = 'owner-test-pw';
@@ -281,6 +284,89 @@ describe('NotifyService.notifyRole', () => {
     );
   });
 });
+
+describe('NotifyService reads the directory through the caller transaction', () => {
+  it('finds role holders and their addresses on the transaction, never a second pooled connection', async () => {
+    const { userId: holder } = await createStaffUser(appPool, {
+      ...scope,
+      idpOrgId,
+      roleKeys: ['accountant'],
+    });
+    const guard = poolGuard(db);
+    // The real directory chain (UsersService -> UserMirror -> SqlUsersStore) over the watched handle, so a layer
+    // that drops the transaction shows up here. The ZITADEL client, queue and audit are never reached.
+    const store = new SqlUsersStore(guard.db);
+    const users = new UsersService(
+      new UserMirror(guard.db, store, {} as never, {} as never),
+      store,
+      {} as never,
+      guard.db,
+      {} as never,
+    );
+    const guarded = new NotifyService(
+      guard.db,
+      { WORKSPACE_PUBLIC_URL: 'https://app.example.com' } as CoreConfig,
+      users,
+      {} as Queue,
+    );
+    const { userId: _ignored, ...rest } = input(ids.a, 'txread:role');
+
+    await withTx(guard.db, scope, systemActor('test'), async (tx) => {
+      await guarded.notifyUser(tx, input(ids.a, 'txread:user'));
+      await guarded.notifyRole(tx, 'accountant', rest);
+    });
+
+    expect(guard.touches).toEqual([]);
+    // The reads on the transaction still see the users: each outbox row carries the mirrored address.
+    const { rows } = await appPool.query<{ dedupe_key: string; to_email: string | null }>(
+      `SELECT o.dedupe_key, o.to_email FROM app.outbox o
+         JOIN app.users u ON u.id = o.to_user_id AND u.email = o.to_email
+        WHERE o.dedupe_key LIKE 'txread:%' ORDER BY o.dedupe_key`,
+    );
+    expect(rows.map((r) => r.dedupe_key)).toEqual([
+      `txread:role:${holder}`,
+      `txread:user:${ids.a}`,
+    ]);
+  });
+});
+
+/**
+ * A Db that records every call made on it while a transaction it opened is still open. Such a call takes a second
+ * pooled connection while the transaction holds the first, so under load the pool can run dry and stall.
+ */
+function poolGuard(real: Db): { db: Db; touches: string[] } {
+  const touches: string[] = [];
+  let open = 0;
+  const where = () =>
+    (new Error().stack ?? '')
+      .split('\n')
+      .filter((line) => line.includes('/src/') && !line.includes('.test.'))
+      .slice(0, 2)
+      .map((line) => line.trim())
+      .join(' < ');
+  const db = new Proxy(real, {
+    get(target, prop) {
+      const value: unknown = Reflect.get(target, prop);
+      if (typeof value !== 'function') return value;
+      if (prop === 'transaction') {
+        return (fn: (tx: unknown) => Promise<unknown>, config?: unknown) =>
+          target.transaction(async (tx) => {
+            open += 1;
+            try {
+              return await fn(tx);
+            } finally {
+              open -= 1;
+            }
+          }, config as never);
+      }
+      return (...args: unknown[]) => {
+        if (open > 0) touches.push(`${String(prop)} at ${where()}`);
+        return (value as (...a: unknown[]) => unknown).apply(target, args);
+      };
+    },
+  });
+  return { db, touches };
+}
 
 describe('NotifyService reads and markRead', () => {
   async function seed(userId: string, title: string, createdAt: Date): Promise<string> {
