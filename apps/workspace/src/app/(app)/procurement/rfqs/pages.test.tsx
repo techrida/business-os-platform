@@ -1,5 +1,5 @@
 import { renderToStaticMarkup } from 'react-dom/server';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { ApiError } from '@/lib/api';
 
@@ -35,6 +35,7 @@ vi.mock('./actions', () => ({
   scoreQuotationAction: vi.fn(),
   recommendQuotationAction: vi.fn(),
   commitRfqAction: vi.fn(),
+  extendDeadlineAction: vi.fn(),
 }));
 const rfqApi = vi.hoisted(() => ({
   listRfqsPage: vi.fn(),
@@ -186,8 +187,18 @@ const quotePage = async (sp: Record<string, string> = {}) =>
     await QuotePage({ params: Promise.resolve({ id: RFQ }), searchParams: Promise.resolve(sp) }),
   );
 
+// The pages compare the RFQ deadline (1 Dec 2026 in the fixtures) with now (F1-Q47): pin now before it.
+const BEFORE_DEADLINE = new Date('2026-11-15T00:00:00Z');
+const AFTER_DEADLINE = new Date('2026-12-02T00:00:00Z');
+
+afterEach(() => {
+  vi.useRealTimers();
+});
+
 beforeEach(() => {
   vi.clearAllMocks();
+  vi.useFakeTimers({ toFake: ['Date'] });
+  vi.setSystemTime(BEFORE_DEADLINE);
   session.roles = ['procurement'];
   me.getMe.mockReset().mockRejectedValue(new Error('offline'));
   currencies.loadEnabledCurrencies.mockResolvedValue(['NPR', 'INR', 'USD']);
@@ -360,6 +371,41 @@ describe('the detail', () => {
     const out = await detail();
     expect(out).toContain('An Accountant checks the quotation');
     expect(out).toContain('Recommended');
+  });
+
+  it('an open RFQ before its deadline offers entry and the extension in the header (F1-Q47)', async () => {
+    const out = await detail();
+    const header = out.slice(0, out.indexOf('<section'));
+    expect(header).toContain('>Enter a quotation<');
+    expect(header).toMatch(/<button[^>]*aria-haspopup="dialog"[^>]*>Extend deadline<\/button>/);
+    expect(out).not.toContain('The quotation deadline has passed');
+  });
+
+  it('after the deadline: no entry, a notice, the extension, and late uploads cannot be converted (F1-Q47)', async () => {
+    vi.setSystemTime(AFTER_DEADLINE);
+    rfqApi.listSubmissions.mockResolvedValue([
+      submission({ submittedAt: '2026-11-30T05:45:00.000Z' }),
+      submission({ id: Q1, vendorName: 'Late Sender', submittedAt: '2026-12-01T10:00:01.000Z' }),
+    ]);
+    const out = await detail();
+    const header = out.slice(0, out.indexOf('<section'));
+    expect(header).not.toContain('>Enter a quotation<');
+    expect(header).toContain('>Extend deadline<');
+    expect(out).toContain('The quotation deadline has passed');
+    expect(out).toContain('(passed)');
+    // Sent before the deadline: still convertible after it.
+    expect(out).toContain('Convert the submission from Himal Traders');
+    expect(out).not.toContain('Convert the submission from Late Sender');
+    expect(out).toContain('Arrived late');
+  });
+
+  it('a viewer after the deadline sees the notice without the extension', async () => {
+    vi.setSystemTime(AFTER_DEADLINE);
+    session.roles = ['viewer'];
+    const out = await detail();
+    expect(out).toContain('The quotation deadline has passed');
+    expect(out).not.toContain('>Extend deadline<');
+    expect(out).toContain('A quotation already received can still be recommended.');
   });
 
   it('a missing RFQ is a 404 and a failed load is an alert', async () => {
@@ -682,5 +728,28 @@ describe('the quotation entry currency picker (D44)', () => {
     const out = await quotePage();
     expect(currencies.loadEnabledCurrencies).toHaveBeenCalledOnce();
     expect(currencyOptions(out)).toEqual(['NPR=NPR', 'USD=USD']);
+  });
+});
+
+describe('the quotation entry page after the deadline (F1-Q47)', () => {
+  it('blocks typing a quotation in and points to the extension', async () => {
+    vi.setSystemTime(AFTER_DEADLINE);
+    const out = await quotePage();
+    expect(out).toContain('The quotation deadline has passed');
+    expect(out).toContain('Extend the deadline on the RFQ to enter more.');
+    expect(out).not.toContain('name="vendorId"');
+  });
+
+  it('still converts an upload sent before the deadline, and refuses a late one', async () => {
+    vi.setSystemTime(AFTER_DEADLINE);
+    rfqApi.listSubmissions.mockResolvedValue([submission()]);
+    const inTime = await quotePage({ submission: SUB });
+    expect(inTime).not.toContain('The quotation deadline has passed');
+    expect(inTime).not.toContain('cannot be converted');
+    rfqApi.listSubmissions.mockResolvedValue([
+      submission({ submittedAt: '2026-12-01T10:00:01.000Z' }),
+    ]);
+    const late = await quotePage({ submission: SUB });
+    expect(late).toContain('sent after the quotation deadline');
   });
 });

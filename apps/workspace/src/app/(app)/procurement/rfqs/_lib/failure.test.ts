@@ -4,7 +4,7 @@ import { ApiError } from '@/lib/api';
 
 vi.mock('server-only', () => ({}));
 
-import { rfqFailure } from './failure';
+import { isRfqDeadlinePassed, rfqFailure } from './failure';
 
 const err = (status: number, code = 'x', message = 'The API wording.', reason?: string) =>
   new ApiError(status, 'x', {
@@ -95,6 +95,33 @@ describe('rfqFailure', () => {
   it('words 403 reasons', () => {
     expect(rfqFailure(err(403, 'forbidden', 'x', 'mfa_required'), 'create').message).toMatch(/MFA/);
     expect(rfqFailure(err(403), 'create').message).toMatch(/roles do not allow/);
+  });
+});
+
+/** The API's sentence for a late quotation: RFQ_DEADLINE_PASSED_MESSAGE in sourcing.rules.ts. */
+const LATE_TEXT =
+  'The quotation deadline of this RFQ has passed. Procurement can extend it to take more quotations.';
+
+describe('a quotation after the RFQ deadline (F1-Q47)', () => {
+  it('reads the 409 by its code, and by its sentence while the filter says conflict', () => {
+    expect(isRfqDeadlinePassed(err(409, 'rfq_deadline_passed', LATE_TEXT))).toBe(true);
+    expect(isRfqDeadlinePassed(err(409, 'conflict', LATE_TEXT))).toBe(true);
+    expect(isRfqDeadlinePassed(err(409, 'conflict', 'A closed RFQ takes no quotation'))).toBe(
+      false,
+    );
+    expect(isRfqDeadlinePassed(err(400, 'rfq_deadline_passed', LATE_TEXT))).toBe(false);
+  });
+
+  it('says plainly what to do, offers no reload and rotates the key', () => {
+    const record = rfqFailure(err(409, 'conflict', LATE_TEXT), 'record');
+    expect(record.message).toBe(
+      'The quotation deadline has passed, so this quotation was not recorded. Extend the deadline on the RFQ first if you still want to take it.',
+    );
+    expect(record.reload).toBe(false);
+    expect(record.definite).toBe(true);
+    const convert = rfqFailure(err(409, 'rfq_deadline_passed', LATE_TEXT), 'convert');
+    expect(convert.message).toContain('sent after the quotation deadline');
+    expect(convert.reload).toBe(false);
   });
 });
 
