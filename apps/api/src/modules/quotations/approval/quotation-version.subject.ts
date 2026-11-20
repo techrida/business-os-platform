@@ -195,7 +195,7 @@ export class QuotationVersionSubject implements ApprovalSubject {
     });
   }
 
-  /** A cancel is the quotation module's own act (revise or withdraw), which sets the version's status itself. */
+  /** A cancel is the quotation module's own act (revise or cancel), which sets the version's status itself. */
   onCancelled(_tx: DbTransaction, _versionId: string, _reason: string): Promise<void> {
     return Promise.resolve();
   }
