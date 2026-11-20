@@ -443,13 +443,42 @@ export function workflow(cfg) {
           await s.caption('start-5 — notification bell: opening the panel must not mark all read');
           const bell = s.page.getByRole('button', { name: /^Notifications/ });
           const before = await bell.first().getAttribute('aria-label');
-          await s.click(bell, 'the notification bell');
           const panel = s.page.getByRole('region', { name: 'Notifications panel' });
-          await s.see(panel, 'the notifications panel');
           const item = panel
             .getByRole('listitem')
             .filter({ hasText: runMatch(s.state.memoNumber ?? subject) });
-          await s.see(item, 'a notification for this memo', 60000);
+          const link = item.first().getByRole('link').first();
+          // A dev-server rebuild can reload the page under the open panel (r2d before the click,
+          // r3c before the item showed), which closes it. The panel is reopened, at most three
+          // openings in all, each noted; a panel that stays open without the item still fails.
+          let openings = 0;
+          const openPanel = async () => {
+            for (;;) {
+              openings++;
+              await s.click(bell, openings === 1 ? 'the notification bell' : 'the bell again');
+              await s.see(panel, 'the notifications panel');
+              const found = await Promise.race([
+                link
+                  .waitFor({ state: 'visible', timeout: 60000 })
+                  .then(() => 'item')
+                  .catch(() => 'none'),
+                panel
+                  .waitFor({ state: 'hidden', timeout: 60000 })
+                  .then(() => 'closed')
+                  .catch(() => 'none'),
+              ]);
+              if (found === 'item') return;
+              if (found !== 'closed' || openings >= 3)
+                throw new StepFailure(
+                  found === 'closed'
+                    ? 'The notifications panel closed itself three times'
+                    : `Expected to see: a notification for ${s.state.memoNumber ?? subject} in the open panel`,
+                );
+              s.checks.push('note: the notifications panel closed (page reloaded); reopening it');
+            }
+          };
+          await openPanel();
+          s.checks.push('saw: a notification for this memo');
           await s.page.waitForTimeout(1500);
           const after = await bell.first().getAttribute('aria-label');
           const unread = (t) => Number(/(\d+) unread/.exec(t ?? '')?.[1] ?? 0);
@@ -459,31 +488,11 @@ export function workflow(cfg) {
             `${before} → ${after}`,
           );
           await s.pause(400);
-          // A dev-server recompile can reload the page under the open panel (r2d: the memo page
-          // reloaded and the panel was gone before the click). Reopen it, at most twice; the
-          // "not marked read" check above stays tied to the first opening.
-          const link = item.first().getByRole('link').first();
-          for (let attempt = 0; ; attempt++) {
-            const shown = await link
-              .waitFor({ state: 'visible', timeout: 5000 })
-              .then(() => true)
-              .catch(() => false);
-            if (shown) {
-              const clicked = await s
-                .click(link, 'the matching notification')
-                .then(() => true)
-                .catch((e) => {
-                  if (attempt >= 2) throw e;
-                  return false;
-                });
-              if (clicked) break;
-            }
-            if (attempt >= 2)
-              throw new StepFailure('The notifications panel closed itself three times');
-            s.checks.push('note: the notifications panel closed (page reloaded); reopening it');
-            await s.click(bell, 'the notification bell again');
-            await s.see(item, 'a notification for this memo', 60000);
+          if (!(await link.isVisible().catch(() => false))) {
+            s.checks.push('note: the notifications panel closed before the click; reopening it');
+            await openPanel();
           }
+          await s.click(link, 'the matching notification');
           await s.page.waitForURL((u) => u.pathname !== '/', { timeout: cfg.navTimeout });
           s.checks.push(`notification opened ${s.page.url()}`);
 
