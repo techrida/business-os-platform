@@ -293,6 +293,17 @@ describe('ErrorBodyFilter', () => {
     ).toBe('bad_request');
   });
 
+  it('keeps document_infected and its message naming the file on a 409 (TR-Q12e)', () => {
+    const message =
+      'A virus was found in “eicar.pdf”. Remove it or upload a clean copy, then try again.';
+    const out = filter(new ConflictException({ code: 'document_infected', message }));
+    expect(out.status).toBe(409);
+    expect(ErrorBodySchema.parse(out.body).error).toMatchObject({
+      code: 'document_infected',
+      message,
+    });
+  });
+
   it.each([
     'invalid_transition',
     'kyb_not_submitted',
