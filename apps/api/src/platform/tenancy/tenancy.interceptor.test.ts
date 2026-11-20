@@ -6,7 +6,7 @@
 import 'reflect-metadata';
 
 import type { AccessLevel, Permission, RoleKey, Scope } from '@bos/contracts';
-import { idpOrgs, organizations } from '@bos/db';
+import { authzVersions, idpOrgs, organizations } from '@bos/db';
 import {
   BadRequestException,
   type CallHandler,
@@ -21,7 +21,7 @@ import type { AuthIdentity } from '../auth/claims';
 import { CustomersController } from '../../modules/customers/customers.controller';
 import { AnyAuthenticated, Can } from '../authz/decorators';
 import { type Principal, principal } from '../authz/principal';
-import type { RoleCache } from '../authz/role-cache';
+import { RoleCache } from '../authz/role-cache';
 import type { EntityMembership, ResolvedUser, UserDirectory } from '../authz/user-directory';
 import type { Db } from '../db/db.module';
 import { IdpOrgResolver, type ResolvedIdpOrg } from './idp-org-resolver';
@@ -832,6 +832,101 @@ describe('TenancyInterceptor', () => {
     expect(resolveCalls - coldResolves).toBe(0);
     // The role cache's one `authz_versions` read per request (U20a2-Q10) happens inside `current`.
     expect(viewCalls - coldViews).toBe(1);
+  });
+
+  describe('a removed grant with the real RoleCache (U20a2-Q10)', () => {
+    /** The tenant's `authz_versions` row and `role_permissions` rows, as another api instance leaves them. */
+    let version: number;
+    let rows: { roleKey: RoleKey; permission: string; scope: string }[];
+    let versionReads: number;
+    let rowLoads: number;
+    /** The version read fails, as when the database is unreachable. */
+    let versionDown: boolean;
+
+    /** A RoleCache over a fake database; the cache's own version check and merge run. */
+    function realCache(): RoleCache {
+      const db = {
+        select: () => ({
+          from: (table: unknown) => ({
+            where: () => {
+              if (table !== authzVersions) throw new Error('unexpected table');
+              versionReads += 1;
+              const result = versionDown
+                ? Promise.reject(new Error('database down'))
+                : Promise.resolve([{ version }]);
+              return Object.assign(result, { limit: () => result });
+            },
+          }),
+        }),
+        execute: () => {
+          rowLoads += 1;
+          return Promise.resolve({
+            rows: rows.map((r) => ({ kind: 'base', minLevel: null, ...r })),
+          });
+        },
+      } as unknown as Db;
+      // The cache's clock never moves: nothing here may wait for the 5 s window.
+      return new RoleCache(db, () => now);
+    }
+
+    function withCache(cache: RoleCache): TenancyInterceptor {
+      const orgs = { resolve: () => Promise.resolve(tokenOrg) } as unknown as IdpOrgResolver;
+      return new TenancyInterceptor(orgs, new Reflector(), fakeDirectory(), cache, () => now);
+    }
+
+    beforeEach(() => {
+      version = 1;
+      rows = [{ roleKey: 'finance', permission: 'admin.users.read', scope: 'all' }];
+      versionReads = 0;
+      rowLoads = 0;
+      versionDown = false;
+    });
+
+    it('refuses the next request once an access save on another instance removed the grant', async () => {
+      const live = withCache(realCache());
+      const allowed = await run(live, auth(finance), Routes, Routes.prototype.readUsers);
+      expect(allowed.result).toBe('handled');
+
+      // Another instance saves access: the grant is gone and the version row bumped. No time passes.
+      rows = [{ roleKey: 'finance', permission: 'audit.read', scope: 'all' }];
+      version = 2;
+
+      const body = await denial(run(live, auth(finance), Routes, Routes.prototype.readUsers));
+      expect(body).toMatchObject({ reason: 'no_permission' });
+    });
+
+    it('asks the directory again at once when the version moved, so a removed role or level shows', async () => {
+      const live = withCache(realCache());
+      await run(live, auth(finance), Routes, Routes.prototype.me);
+      version = 2;
+      await run(live, auth(finance), Routes, Routes.prototype.me);
+      expect(resolveCalls).toBe(2);
+    });
+
+    it('serves an unchanged version from memory: one version read per request, no row reload', async () => {
+      const live = withCache(realCache());
+      await run(live, auth(finance), Routes, Routes.prototype.readUsers);
+      expect(versionReads).toBe(1);
+      expect(rowLoads).toBe(1);
+
+      for (let i = 0; i < 5; i += 1) {
+        await run(live, auth(finance), Routes, Routes.prototype.readUsers);
+      }
+      expect(versionReads).toBe(6);
+      expect(rowLoads).toBe(1);
+      expect(resolveCalls).toBe(1);
+    });
+
+    it('fails the request, never serving the cached grants, when the version cannot be read', async () => {
+      const live = withCache(realCache());
+      const allowed = await run(live, auth(finance), Routes, Routes.prototype.readUsers);
+      expect(allowed.result).toBe('handled');
+
+      versionDown = true;
+      await expect(run(live, auth(finance), Routes, Routes.prototype.readUsers)).rejects.toThrow(
+        'database down',
+      );
+    });
   });
 
   it('builds a principal from warm caches in under 1 ms', async () => {
