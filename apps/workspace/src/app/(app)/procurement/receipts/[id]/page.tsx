@@ -163,7 +163,7 @@ export default async function ReceiptPage({
   const can = receiptActions(receipt, grants, order?.status);
   const status = RECEIPT_STATUS_LABEL[receipt.status];
   const listHref = `/procurement/receipts?po=${encodeURIComponent(receipt.purchaseOrderId)}`;
-  const orderHref = grants.issue
+  const orderHref = grants.openOrder
     ? `/procurement/orders/${encodeURIComponent(receipt.purchaseOrderId)}`
     : listHref;
   const reversal =

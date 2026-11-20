@@ -34,15 +34,30 @@ describe('bandText', () => {
 describe('poGrants', () => {
   it('reads the live grants at any scope, and denies by default', () => {
     expect(poGrants(new Map([['procurement.po.issue', 'all']]))).toEqual({
+      read: true,
       issue: true,
       confirm: false,
+      vendorRead: false,
     });
     expect(poGrants(new Map([['procurement.receipt.confirm', 'own']]))).toEqual({
+      read: true,
       issue: false,
       confirm: true,
+      vendorRead: false,
     });
-    expect(poGrants(new Map([['crm.lead.read', 'all']]))).toEqual({ issue: false, confirm: false });
-    expect(poGrants(new Map())).toEqual({ issue: false, confirm: false });
+    expect(poGrants(new Map([['vendor.read', 'all']]))).toEqual({
+      read: false,
+      issue: false,
+      confirm: false,
+      vendorRead: true,
+    });
+    const none = { read: false, issue: false, confirm: false, vendorRead: false };
+    // F1-Q52: the bill grants open purchase orders read-only.
+    for (const g of ['payables.bill.enter', 'payables.bill.read'] as const) {
+      expect(poGrants(new Map([[g, 'all']]))).toEqual({ ...none, read: true });
+    }
+    expect(poGrants(new Map([['crm.lead.read', 'all']]))).toEqual(none);
+    expect(poGrants(new Map())).toEqual(none);
   });
 });
 
@@ -79,12 +94,7 @@ describe('orderActions', () => {
     });
   });
   it('offers nothing while an amendment waits, or once the order is over', () => {
-    for (const s of [
-      'amendment_pending',
-      'closed',
-      'short_closed',
-      'cancelled',
-    ] as const) {
+    for (const s of ['amendment_pending', 'closed', 'short_closed', 'cancelled'] as const) {
       expect(Object.values(orderActions(s, can)).some(Boolean)).toBe(false);
     }
   });
