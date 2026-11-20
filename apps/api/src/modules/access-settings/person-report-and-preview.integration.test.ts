@@ -5,7 +5,9 @@
 //   pnpm --filter @bos/api exec vitest run src/modules/access-settings/person-report-and-preview.integration.test.ts
 import { randomUUID } from 'node:crypto';
 
+import type { AccessChange } from '@bos/contracts';
 import { createDepartment, createStaffUser, createTenantWithEntity, runMigrations } from '@bos/db';
+import { UnprocessableEntityException } from '@nestjs/common';
 import { PostgreSqlContainer, type StartedPostgreSqlContainer } from '@testcontainers/postgresql';
 import { sql } from 'drizzle-orm';
 import { drizzle } from 'drizzle-orm/node-postgres';
@@ -16,7 +18,7 @@ import { AuditService } from '../../platform/audit/audit.service';
 import { AuthzService } from '../../platform/authz/authz.service';
 import { RoleCache } from '../../platform/authz/role-cache';
 import type { Db } from '../../platform/db/db.module';
-import { type TxScope, systemActor, withTx } from '../../platform/db/tx';
+import { type Actor, type TxScope, systemActor, withTx } from '../../platform/db/tx';
 import { AccessSettingsService } from './access-settings.service';
 
 const OWNER_PW = 'owner-test-pw';
@@ -104,6 +106,22 @@ async function createEnv(): Promise<Env> {
   };
 }
 
+function founderActor(env: Env): Actor {
+  return { kind: 'user', id: env.founderId, correlationId: `test-${randomUUID()}` };
+}
+
+/** The 422 body `fn` throws; fails the test when it resolves or throws anything else. */
+async function refusalOf(fn: () => Promise<unknown>): Promise<Record<string, unknown>> {
+  let caught: unknown;
+  try {
+    await fn();
+  } catch (err) {
+    caught = err;
+  }
+  expect(caught).toBeInstanceOf(UnprocessableEntityException);
+  return (caught as UnprocessableEntityException).getResponse() as Record<string, unknown>;
+}
+
 beforeAll(async () => {
   container = await new PostgreSqlContainer('postgres:16-alpine').start();
 
@@ -173,5 +191,68 @@ describe('Check a person for someone who cannot enter the entity (real Postgres)
     expect(leads?.why).toEqual(['No access in this entity.']);
     // Nothing before and Nothing after: no "was" label for this person.
     expect(leads?.previousScopeLabel).toBeUndefined();
+  });
+});
+
+describe('Access dry run refuses what the save refuses (real Postgres)', () => {
+  it('refuses a head who is not in the department, with the save body', async () => {
+    const env = await createEnv();
+    const { revision } = await env.service.getCatalogue(env.scope);
+    const changes: AccessChange[] = [
+      { kind: 'head', departmentId: env.marketingDeptId, userId: env.salesStaffId },
+    ];
+
+    const previewBody = await refusalOf(() => env.service.preview(env.scope, { changes }));
+    const saveBody = await refusalOf(() =>
+      env.service.save(env.scope, founderActor(env), {
+        expectedRevision: revision,
+        changes,
+        acknowledged: [],
+      }),
+    );
+
+    expect(previewBody).toEqual(saveBody);
+    expect(previewBody.code).toBe('unprocessable');
+    expect(previewBody.message).toMatch(/is not a member of Marketing\.$/);
+    expect(previewBody.fieldErrors).toEqual({ 'changes.0.userId': previewBody.message });
+  });
+
+  it('refuses a head with no membership in the entity, and a batch that hides it among valid changes', async () => {
+    const env = await createEnv();
+    const outsider = await refusalOf(() =>
+      env.service.preview(env.scope, {
+        changes: [{ kind: 'head', departmentId: env.salesDeptId, userId: env.outsiderId }],
+      }),
+    );
+    expect(outsider.message).toBe('Person does not belong to this company.');
+
+    const mixed = await refusalOf(() =>
+      env.service.preview(env.scope, {
+        changes: [
+          { kind: 'head', departmentId: env.salesDeptId, userId: env.salesStaffId },
+          { kind: 'head', departmentId: env.marketingDeptId, userId: env.salesStaffId },
+        ],
+      }),
+    );
+    expect(Object.keys(mixed.fieldErrors as Record<string, string>)).toEqual([
+      'changes.1.userId',
+    ]);
+  });
+
+  it('still previews a valid head change and still returns blocked warnings in the response', async () => {
+    const env = await createEnv();
+    const valid = await env.service.preview(env.scope, {
+      changes: [{ kind: 'head', departmentId: env.salesDeptId, userId: env.salesStaffId }],
+    });
+    expect(valid.applied.some((a) => a.to === 'Head' || a.label.includes('becomes head'))).toBe(
+      true,
+    );
+    expect(valid.warnings.some((w) => w.severity === 'blocked')).toBe(false);
+
+    // W1 (editing the Founder role) keeps its blocked warning in the dry run response.
+    const blocked = await env.service.preview(env.scope, {
+      changes: [{ kind: 'grant', role: 'founder', permission: 'crm.lead.read', scope: 'own' }],
+    });
+    expect(blocked.warnings.some((w) => w.code === 'W1' && w.severity === 'blocked')).toBe(true);
   });
 });
