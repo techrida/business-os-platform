@@ -22,6 +22,7 @@ import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import { AuditService } from '../../platform/audit/audit.service';
 import type { AuthzService } from '../../platform/authz/authz.service';
 import { systemActor, withTx } from '../../platform/db/tx';
+import { ActivitiesService } from '../activities/activities.service';
 import { startHarness, type Harness } from '../leads/test/harness';
 import type { OpportunitiesCaller } from './opportunities.caller';
 import { OpportunityOwnerChangeService } from './opportunity-owner-change.service';
@@ -31,6 +32,7 @@ vi.setConfig({ testTimeout: 60_000, hookTimeout: 180_000 });
 
 let h: Harness;
 let service: OpportunityOwnerChangeService;
+let activitiesService: ActivitiesService;
 let owners: OpportunityOwnersService;
 let customerId: string;
 let salesDept: string;
@@ -55,6 +57,14 @@ beforeAll(async () => {
     h.roleCache,
   );
   owners = new OpportunityOwnersService(h.db, caller, h.roleCache);
+  activitiesService = new ActivitiesService(
+    h.db,
+    h.authz as unknown as AuthzService,
+    new AuditService(h.db),
+    h.caller,
+    h.roleCache,
+    h.notify,
+  );
   salesDept = await h.department('Sales OC');
   otherSalesDept = await h.department('Sales OC North');
   const sales = { roles: ['sales'] as const, departmentId: salesDept };
@@ -282,5 +292,84 @@ describe('PATCH /v1/opportunities/:id/owner (F1-Q51)', () => {
     // A follow-up on the deal only needs its read, so the assignee choices keep them.
     const assignees = (await owners.followUpAssignees()).map((o) => o.userId);
     expect(assignees).toEqual(expect.arrayContaining([salesPeer, accountant, management]));
+  });
+});
+
+describe('D45: a follow-up planned on a deal while it changes owner', () => {
+  const followUp = (opportunityId: string) => ({
+    kind: 'call' as const,
+    subject: 'Call back',
+    opportunityId,
+    dueAt: '2030-01-01T09:00:00.000Z',
+  });
+
+  it('goes to the new owner when planned after the hand-over', async () => {
+    const id = await seedDeal(salesStaff);
+    h.as('boss', 'founder');
+    await service.changeOwner(id, { ownerUserId: salesPeer, expectedVersion: 1 });
+    expect((await activitiesService.create(followUp(id))).assigneeUserId).toBe(salesPeer);
+  });
+
+  it('waits for the hand-over in flight and goes to the new owner, never to the old one unmoved', async () => {
+    const id = await seedDeal(salesStaff);
+    // One acting user for both calls: the harness caller is process-wide.
+    h.as('boss', 'founder');
+
+    // The hand-over stops inside its transaction, after it locked the deal, changed the owner and moved the old
+    // owner's follow-ups: its notice to the new owner is the last thing before the commit.
+    let markHeld!: () => void;
+    const held = new Promise<void>((resolve) => {
+      markHeld = resolve;
+    });
+    let release!: () => void;
+    const released = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const notifyUser = h.notify.notifyUser.bind(h.notify);
+    const spy = vi.spyOn(h.notify, 'notifyUser').mockImplementationOnce(async (...args) => {
+      markHeld();
+      await released;
+      return notifyUser(...args);
+    });
+    // Settled before the test ends even when an assertion fails, so nothing runs on after the pool closes.
+    const pending: Promise<unknown>[] = [];
+    try {
+      const transfer = service.changeOwner(id, { ownerUserId: salesPeer, expectedVersion: 1 });
+      pending.push(transfer);
+      await Promise.race([
+        held,
+        transfer.then(() => {
+          throw new Error('the hand-over committed without telling the new owner');
+        }),
+      ]);
+      let settled = false;
+      const creating = activitiesService.create(followUp(id)).finally(() => {
+        settled = true;
+      });
+      pending.push(creating);
+      try {
+        // Wait for a signal, not a clock: either the follow-up's statement is blocked on a lock, or it finished.
+        let blocked: string | undefined;
+        while (blocked === undefined && !settled) {
+          const { rows } = await h.appPool.query(
+            `SELECT query FROM pg_stat_activity
+              WHERE datname = current_database() AND wait_event_type = 'Lock'`,
+          );
+          blocked = (rows as { query: string }[])[0]?.query;
+          if (blocked === undefined) await new Promise((resolve) => setImmediate(resolve));
+        }
+        expect(settled, 'the follow-up did not wait for the hand-over').toBe(false);
+        // It waits at the deal it reads, before choosing the assignee, not later at the insert.
+        expect(blocked).toMatch(/for share/i);
+      } finally {
+        release();
+      }
+      expect((await transfer).ownerUserId).toBe(salesPeer);
+      expect((await creating).assigneeUserId).toBe(salesPeer);
+    } finally {
+      release();
+      await Promise.allSettled(pending);
+      spy.mockRestore();
+    }
   });
 });
