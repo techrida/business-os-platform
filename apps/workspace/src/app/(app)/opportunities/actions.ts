@@ -1,6 +1,6 @@
 'use server';
 
-import { OpportunityOwnerChangeBodySchema } from '@bos/contracts';
+import { CreditOverrideBodySchema, OpportunityOwnerChangeBodySchema } from '@bos/contracts';
 import { revalidatePath } from 'next/cache';
 
 import { ApiError } from '@/lib/api';
@@ -8,7 +8,11 @@ import { failureOf } from '@/lib/api-kernel';
 import { requireStaffSession } from '@/lib/bff';
 
 import { assignmentRefusalText, runStageMove, UUID } from '@/components/p2/crm/action-helpers';
-import { changeOpportunityOwner, getOpportunity } from '@/components/p2/crm/crm-api';
+import {
+  changeOpportunityOwner,
+  getOpportunity,
+  overrideCreditHold,
+} from '@/components/p2/crm/crm-api';
 import type { OwnerChangeState } from '@/components/p2/crm/owner-field';
 import type { MoveState } from '@/components/p2/crm/types';
 
@@ -65,5 +69,53 @@ export async function updateOpportunityOwnerAction(
     if (err instanceof ApiError && err.status === 404) return { ok: true, handedAway: true };
   }
   revalidatePath(`/opportunities/${id}`);
+  return { ok: true };
+}
+
+/** What the Override credit hold dialog gets back. */
+export interface CreditOverrideState {
+  ok?: boolean;
+  error?: string;
+  fieldErrors?: Partial<Record<'reason', string>>;
+  reload?: boolean;
+}
+
+const OVERRIDE_REASON = 'Say why this deal may go ahead, up to 500 characters.';
+
+/**
+ * Override a deal's credit hold (F1-Q20, `POST /v1/opportunities/:id/credit-override`) with a
+ * required reason. The override is permanent for the deal, so its sales order can then be
+ * confirmed. A deal no longer on hold (409) asks for a reload; a 403 says the permission is missing.
+ */
+export async function overrideCreditHoldAction(
+  _prev: CreditOverrideState,
+  form: FormData,
+): Promise<CreditOverrideState> {
+  const idValue = form.get('opportunityId');
+  const id = typeof idValue === 'string' ? idValue : '';
+  if (!UUID.test(id)) return { error: INCOMPLETE, reload: true };
+  const session = await requireStaffSession(`/opportunities/${id}`);
+
+  const reasonValue = form.get('reason');
+  const parsed = CreditOverrideBodySchema.safeParse({
+    reason: typeof reasonValue === 'string' ? reasonValue.trim() : '',
+  });
+  if (!parsed.success) return { fieldErrors: { reason: OVERRIDE_REASON } };
+
+  try {
+    await overrideCreditHold(session, id, parsed.data);
+  } catch (err) {
+    const f = failureOf(err);
+    if (f.status === 400) return { fieldErrors: { reason: OVERRIDE_REASON } };
+    if (f.status === 409) {
+      return {
+        error: 'This opportunity is no longer on credit hold. Reload to see it.',
+        reload: true,
+      };
+    }
+    return { error: f.message, reload: f.reload };
+  }
+  revalidatePath(`/opportunities/${id}`);
+  revalidatePath('/sales-orders');
   return { ok: true };
 }

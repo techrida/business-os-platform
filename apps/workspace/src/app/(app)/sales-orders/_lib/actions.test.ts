@@ -148,6 +148,42 @@ describe('confirmOrderAction', () => {
     expect(mocks.apiFetch.mock.calls.map((c) => keyOf(c as Call))).toEqual([KEY, KEY, KEY]);
   });
 
+  it('names the deal on credit hold (409 credit_hold), says who can override, and does not reload (F1-Q20)', async () => {
+    const deal = '11111111-1111-4111-8111-111111111111';
+    mocks.apiFetch.mockImplementation(() =>
+      answer(409, {
+        error: {
+          code: 'credit_hold',
+          message: 'm',
+          correlationId: 'c',
+          details: { opportunityId: deal },
+        },
+      }),
+    );
+    const state = await confirmOrderAction(prev, confirmForm());
+    expect(state.error).toMatch(/over its credit limit/);
+    expect(state.error).toMatch(/Management or Finance/);
+    expect(state.reload).toBeUndefined();
+    expect(state.creditHoldOpportunityId).toBe(deal);
+    expect(mocks.redirect).not.toHaveBeenCalled();
+  });
+
+  it('links no deal when a credit_hold refusal carries no usable id', async () => {
+    mocks.apiFetch.mockImplementation(() =>
+      answer(409, {
+        error: {
+          code: 'credit_hold',
+          message: 'm',
+          correlationId: 'c',
+          details: { opportunityId: '../x' },
+        },
+      }),
+    );
+    const state = await confirmOrderAction(prev, confirmForm());
+    expect(state.error).toMatch(/over its credit limit/);
+    expect(state).not.toHaveProperty('creditHoldOpportunityId');
+  });
+
   it('words a 403 and does not reload', async () => {
     mocks.apiFetch.mockImplementation(() => refusal(403, 'forbidden'));
     const state = await confirmOrderAction(prev, confirmForm());

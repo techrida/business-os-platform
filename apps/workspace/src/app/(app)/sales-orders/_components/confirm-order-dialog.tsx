@@ -1,5 +1,6 @@
 'use client';
 
+import Link from 'next/link';
 import { useState } from 'react';
 
 import { Alert } from '@/components/ui/alert';
@@ -78,6 +79,13 @@ export function ConfirmOrderDialog({
     >
       {(state) => (
         <>
+          {state.creditHoldOpportunityId ? (
+            <p>
+              <Link href={`/opportunities/${state.creditHoldOpportunityId}`}>
+                Open the opportunity on credit hold
+              </Link>
+            </p>
+          ) : null}
           <Field label="Accepted quotation" error={state.errors?.quotation}>
             {(control) => (
               <Select

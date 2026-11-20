@@ -10,6 +10,17 @@
   gap: 4px 8px;
 }
 
+.holdBadge {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.overrideForm {
+  display: grid;
+  gap: 16px;
+}
+
 .stageCard,
 .summary,
 .records {

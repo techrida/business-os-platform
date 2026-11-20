@@ -1,4 +1,5 @@
 import type {
+  CreditHoldDto,
   LeadLostReason,
   LeadOwnerOption,
   OpportunityDto,
@@ -10,7 +11,12 @@ import Link from 'next/link';
 import { notFound } from 'next/navigation';
 import type { NumberSystems } from '@bos/locale';
 
-import { getOpportunity, listActivities, listOpportunityOwners } from '@/components/p2/crm/crm-api';
+import {
+  getCreditHold,
+  getOpportunity,
+  listActivities,
+  listOpportunityOwners,
+} from '@/components/p2/crm/crm-api';
 import { FollowUpList } from '@/components/p2/crm/follow-ups-card';
 import { moneyOrNull } from '@/components/p2/crm/format';
 import { MarkLostDialog } from '@/components/p2/crm/mark-lost-dialog';
@@ -34,8 +40,10 @@ import {
 } from '@/components/p2/quotations/resume';
 import { QuotationStatusBadge } from '@/components/p2/quotations/status-badge';
 import { Alert } from '@/components/ui/alert';
+import { Badge } from '@/components/ui/badge';
 import { LinkButton } from '@/components/ui/button';
 import { Card } from '@/components/ui/card';
+import { Icon } from '@/components/ui/icon';
 import { Breadcrumb, Page, PageHeader } from '@/components/ui/page';
 import { FactList, Panel, type Fact } from '@/components/ui/panel';
 import { StatusTimeline, type TimelineStep } from '@/components/ui/status-timeline';
@@ -50,6 +58,7 @@ import { getCustomer } from '@/components/p2/customers/api';
 
 import { moveOpportunityStageAction } from '../actions';
 import { OpportunityActivities } from './activity-panel';
+import { CreditOverrideDialog } from './credit-override-dialog';
 import { OpportunityOwnerField } from './opportunity-owner-field';
 import styles from './detail.module.css';
 import { OwnerCell } from '../../leads/lead-cells';
@@ -210,6 +219,45 @@ function opportunityStageMessage(
   return 'Sending and accepting quotations update the stage automatically.';
 }
 
+/**
+ * Why a deal is on credit hold (F1-Q20), for everyone who can read it. Holders of `credit.override`
+ * also get the amounts (when they load) and the Override action; anyone else is told who can
+ * override, with no button that would only be refused.
+ */
+function CreditHoldBanner({
+  opp,
+  canOverride,
+  hold,
+  numberSystems,
+}: {
+  opp: OpportunityDto;
+  canOverride: boolean;
+  hold: CreditHoldDto | null;
+  numberSystems: NumberSystems;
+}) {
+  const amounts =
+    hold && hold.creditLimit !== null
+      ? ` It owes ${money(hold.exposure, hold.currency, numberSystems)} against a limit of ${money(hold.creditLimit, hold.currency, numberSystems)}.`
+      : '';
+  return (
+    <Alert
+      tone="warning"
+      role="status"
+      title="Credit hold"
+      actions={
+        canOverride ? (
+          <CreditOverrideDialog opportunityId={opp.id} number={opp.number} />
+        ) : undefined
+      }
+    >
+      {`This customer is over its credit limit, so the accepted quotation cannot become a sales order yet.${amounts} `}
+      {canOverride
+        ? 'Override the hold to let it go ahead, or wait for a payment to bring the customer under the limit.'
+        : 'Management or Finance can override the hold. A payment that brings the customer under the limit also lifts it.'}
+    </Alert>
+  );
+}
+
 function facts(
   o: OpportunityDto,
   customerName: string,
@@ -344,6 +392,10 @@ export default async function OpportunityPage({ params }: { params: Promise<{ id
     ) : (
       <OwnerCell name={opp.ownerName ?? null} seedId={opp.ownerUserId} />
     );
+  // F1-Q20: the deal's flag is booleans only; the amounts are for credit.override holders.
+  const creditHeld = opp.creditHold?.held === true && opp.creditHold.overridden !== true;
+  const canOverride = creditHeld && can('credit.override');
+  const creditHold = canOverride ? await getCreditHold(session, opp.id).catch(() => null) : null;
   const reasonLabel = opp.lostReason?.label ?? opp.stageReason;
   // A list that did not load falls back to New:
   // the New page checks again before it shows the builder.
@@ -361,6 +413,16 @@ export default async function OpportunityPage({ params }: { params: Promise<{ id
           description={
             <span className={styles.metadata}>
               <StageBadge kind="opportunity" stage={opp.stage} />
+              {creditHeld ? (
+                <Badge
+                  tone="warning"
+                  className={styles.holdBadge}
+                  title="The customer is over its credit limit: no sales order until the hold is overridden or lifted."
+                >
+                  <Icon name="credit-card" size={12} />
+                  Credit hold
+                </Badge>
+              ) : null}
               <span>{opp.number}</span>
             </span>
           }
@@ -446,6 +508,14 @@ export default async function OpportunityPage({ params }: { params: Promise<{ id
             </>
           }
         />
+        {creditHeld ? (
+          <CreditHoldBanner
+            opp={opp}
+            canOverride={canOverride}
+            hold={creditHold}
+            numberSystems={numberSystems}
+          />
+        ) : null}
       </div>
 
       <Card as="aside" aria-label="Stage" className={styles.stageCard}>

@@ -4,6 +4,7 @@ import { revalidatePath } from 'next/cache';
 import { redirect } from 'next/navigation';
 
 import { keyOf } from '@/components/p2/crm/idempotency';
+import { apiDetailOf } from '@/lib/api-code';
 import {
   confirmSalesOrder,
   describeBillingFailure,
@@ -41,10 +42,13 @@ function invalid(key: string, errors: FieldErrors): ActionState {
 /** The words for a refusal, with the key the next try sends. */
 function failed(err: unknown, key: string): ActionState {
   const failure = describeBillingFailure(err);
+  // A credit hold names its deal (and nothing else), so the dialog can link to where it is overridden.
+  const held = failure.kind === 'credit_hold' ? apiDetailOf(err, 'opportunityId') : undefined;
   return {
     key: keyAfterFailure(err, key),
     error: failure.message,
     ...(failure.reload ? { reload: true } : {}),
+    ...(typeof held === 'string' && isGuid(held) ? { creditHoldOpportunityId: held } : {}),
   };
 }
 
