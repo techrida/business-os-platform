@@ -101,7 +101,7 @@ describe('the founder', () => {
     ]) {
       expect(html).toContain(`href="${href}"`);
     }
-    expect(html).toContain('People and access');
+    expect(html).toContain('Organisation');
     expect(html).not.toMatch(/version \d|\bfx\.max_rate/);
   });
 });
@@ -112,12 +112,16 @@ describe('the settings layout', () => {
     return renderToStaticMarkup((await SettingsLayout({ children: <p>page</p> })) as ReactElement);
   };
 
-  it('renders a labelled sub-sidebar with the active section marked, for the founder', async () => {
+  it('renders the section sidebar and active sub-tab strip for the founder', async () => {
     const html = await nav(['founder']);
     expect(html).toContain('<nav aria-label="Settings"');
-    expect(html.match(/aria-current="page"/g)).toHaveLength(1);
-    expect(html).toMatch(/aria-current="page" href="\/settings\/tax"/);
-    expect(html).toContain('href="/settings/access"');
+    expect(html).toContain('aria-label="Finance views"');
+    expect(html.match(/aria-current="page"/g)).toHaveLength(2);
+    expect(html).toMatch(/aria-current="page" href="\/settings\/currencies"/);
+    expect(html).toMatch(
+      /aria-current="page"[^>]*href="\/settings\/tax"|href="\/settings\/tax"[^>]*aria-current="page"/,
+    );
+    expect(html).toContain('href="/settings/users"');
     expect(html).not.toContain('Roles and permissions');
   });
 

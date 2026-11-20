@@ -58,11 +58,79 @@ const nextConfig: NextConfig = {
   // `notFound()` guard in the dev page (wall 2) and the post-build checker (wall 3).
   pageExtensions: isDev ? ['dev.tsx', 'dev.ts', 'tsx', 'ts'] : ['tsx', 'ts'],
 
-  // Roles and permissions became Settings > Access (By role tab). Temporary (307), so browsers do
-  // not cache it for good.
+  // Roles and permissions became Settings > Access (By role tab), and Organisation/Department
+  // routes moved under Settings. Temporary (307), so browsers do not cache them for good.
   redirects() {
     return Promise.resolve([
       { source: '/settings/roles', destination: '/settings/access/roles', permanent: false },
+      { source: '/settings/organization', destination: '/settings/organisation', permanent: false },
+      { source: '/organisation', destination: '/settings/organisation', permanent: false },
+      { source: '/organization', destination: '/settings/organisation', permanent: false },
+      {
+        source: '/organisation/departments',
+        destination: '/settings/departments',
+        permanent: false,
+      },
+      {
+        source: '/organisation/departments/:path*',
+        destination: '/settings/departments/:path*',
+        permanent: false,
+      },
+      {
+        source: '/organization/departments',
+        destination: '/settings/departments',
+        permanent: false,
+      },
+      {
+        source: '/organization/departments/:path*',
+        destination: '/settings/departments/:path*',
+        permanent: false,
+      },
+      {
+        source: '/organisation/department',
+        destination: '/settings/departments',
+        permanent: false,
+      },
+      {
+        source: '/organization/department',
+        destination: '/settings/departments',
+        permanent: false,
+      },
+      { source: '/organisation/users', destination: '/settings/users', permanent: false },
+      {
+        source: '/organisation/users/:path*',
+        destination: '/settings/users/:path*',
+        permanent: false,
+      },
+      { source: '/organization/users', destination: '/settings/users', permanent: false },
+      {
+        source: '/organization/users/:path*',
+        destination: '/settings/users/:path*',
+        permanent: false,
+      },
+      { source: '/organisation/access', destination: '/settings/access', permanent: false },
+      {
+        source: '/organisation/access/:path*',
+        destination: '/settings/access/:path*',
+        permanent: false,
+      },
+      { source: '/organization/access', destination: '/settings/access', permanent: false },
+      {
+        source: '/organization/access/:path*',
+        destination: '/settings/access/:path*',
+        permanent: false,
+      },
+      { source: '/organisation/roles', destination: '/settings/access/roles', permanent: false },
+      { source: '/organization/roles', destination: '/settings/access/roles', permanent: false },
+      { source: '/organisation/workflows', destination: '/settings/workflows', permanent: false },
+      { source: '/organization/workflows', destination: '/settings/workflows', permanent: false },
+      { source: '/department', destination: '/settings/departments', permanent: false },
+      { source: '/departments', destination: '/settings/departments', permanent: false },
+      {
+        source: '/departments/:path*',
+        destination: '/settings/departments/:path*',
+        permanent: false,
+      },
     ]);
   },
 

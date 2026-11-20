@@ -9,8 +9,11 @@ import {
   SETTINGS_GROUPS,
   SETTINGS_SECTIONS,
   canOpenSection,
+  firstAllowedInGroup,
   firstAllowedSection,
+  groupForPath,
   sectionForPath,
+  settingsGroup,
   settingsSection,
   visibleSettingsGroups,
 } from './settings-nav';
@@ -21,12 +24,12 @@ const labels = (can: ((p: string) => boolean) | undefined) =>
   visibleSettingsGroups(can).flatMap((g) => g.sections.map((s) => s.label));
 
 describe('SETTINGS_GROUPS', () => {
-  it('lists the thirteen sections of the plan in four groups, in order', () => {
-    expect(SETTINGS_GROUPS.map((g) => g.label)).toEqual([
-      'Company',
-      'People and access',
-      'Finance',
-      'Sales and purchasing',
+  it('lists the thirteen sub-tabs across four left-hand sections in order', () => {
+    expect(SETTINGS_GROUPS.map((g) => [g.id, g.label, g.href])).toEqual([
+      ['company-setup', 'Company', '/settings/company-setup'],
+      ['organisation', 'Organisation', '/settings/organisation'],
+      ['finance', 'Finance', '/settings/finance'],
+      ['sales-and-purchasing', 'Sales and purchasing', '/settings/sales-and-purchasing'],
     ]);
     expect(SETTINGS_SECTIONS.map((s) => s.href)).toEqual([
       '/settings/company',
@@ -45,23 +48,46 @@ describe('SETTINGS_GROUPS', () => {
     ]);
   });
 
-  it('has unique ids, hrefs and labels, and a description for every section', () => {
+  it('places every ready leaf in exactly one section with unique ids, labels and non-colliding hrefs', () => {
+    const groupIds = SETTINGS_GROUPS.map((g) => g.id);
+    const groupHrefs = SETTINGS_GROUPS.map((g) => g.href);
+    const groupLabels = SETTINGS_GROUPS.map((g) => g.label);
+    expect(new Set(groupIds).size).toBe(groupIds.length);
+    expect(new Set(groupHrefs).size).toBe(groupHrefs.length);
+    expect(new Set(groupLabels).size).toBe(groupLabels.length);
+
     for (const key of ['id', 'href', 'label'] as const) {
       const values = SETTINGS_SECTIONS.map((s) => s[key]);
       expect(new Set(values).size).toBe(values.length);
     }
+
+    const leafHrefs = new Set(SETTINGS_SECTIONS.map((s) => s.href));
+    for (const group of SETTINGS_GROUPS) {
+      expect(leafHrefs.has(group.href), group.href).toBe(false);
+      expect(group.description.length, group.id).toBeGreaterThan(10);
+    }
+
+    for (const section of SETTINGS_SECTIONS.filter((s) => s.ready)) {
+      const owners = SETTINGS_GROUPS.filter((g) => g.sections.some((s) => s.id === section.id));
+      expect(owners, section.id).toHaveLength(1);
+    }
+
     for (const s of SETTINGS_SECTIONS) expect(s.description.length, s.id).toBeGreaterThan(10);
   });
 
-  it('never links to a page that does not exist: every ready section has its page.tsx', () => {
+  it('never links to a page that does not exist: every section index and ready sub-tab has its page.tsx', () => {
     const root = join(process.cwd(), 'src', 'app', '(app)');
+    for (const group of SETTINGS_GROUPS) {
+      const indexPage = join(root, group.href, 'page.tsx');
+      expect(existsSync(indexPage), group.href).toBe(true);
+    }
     for (const section of SETTINGS_SECTIONS) {
       const page = join(root, section.href, 'page.tsx');
       if (section.ready) expect(existsSync(page), section.href).toBe(true);
     }
   });
 
-  it('keeps the four new Company sections out of the menu until they are ready', () => {
+  it('keeps the four Company sub-tabs gated on admin.settings.write', () => {
     const company = SETTINGS_SECTIONS.filter((s) =>
       ['company', 'documents', 'formats', 'terms'].includes(s.id),
     );
@@ -84,13 +110,13 @@ describe('visibleSettingsGroups', () => {
     expect(visibleSettingsGroups(() => false)).toEqual([]);
   });
 
-  it('shows a section for any one of its permissions and omits groups left empty', () => {
+  it('shows a section for any one of its permissions and omits sections left empty', () => {
     const groups = visibleSettingsGroups((p) => p === 'approvals.groups.write');
-    expect(groups.map((g) => g.label)).toEqual(['People and access']);
+    expect(groups.map((g) => g.label)).toEqual(['Organisation']);
     expect(groups[0]?.sections.map((s) => s.label)).toEqual(['Approval workflows']);
   });
 
-  it('hides a ready section that is switched back to not ready', () => {
+  it('hides a ready section that has no matching permission', () => {
     const section = settingsSection('tax');
     expect(canOpenSection(section, founder)).toBe(true);
     expect(canOpenSection({ ...section, permission: [] }, founder)).toBe(false);
@@ -98,19 +124,43 @@ describe('visibleSettingsGroups', () => {
 });
 
 describe('sections and paths', () => {
-  it('finds the first allowed section, or none', () => {
+  it('finds the first allowed sub-tab overall and within each section, or none', () => {
     expect(firstAllowedSection(founder)?.href).toBe('/settings/company');
     expect(firstAllowedSection(sales)).toBeUndefined();
     expect(firstAllowedSection((p) => p === 'admin.settings.write')?.href).toBe(
       '/settings/company',
     );
+    expect(firstAllowedInGroup('organisation', founder)?.href).toBe('/settings/users');
+    expect(firstAllowedInGroup('organisation', (p) => p === 'admin.roles.read')?.href).toBe(
+      '/settings/departments',
+    );
+    expect(firstAllowedInGroup('organisation', (p) => p === 'approvals.groups.write')?.href).toBe(
+      '/settings/workflows',
+    );
+    expect(
+      firstAllowedInGroup('organisation', (p) => p === 'admin.settings.write'),
+    ).toBeUndefined();
+    expect(firstAllowedInGroup('organisation', undefined)).toBeUndefined();
+    expect(settingsGroup('organisation').href).toBe('/settings/organisation');
   });
 
-  it('names the Access section and its By role and Check a person pages as one section', () => {
+  it('names the Access section and its By role and Check a person pages as one sub-tab', () => {
     expect(settingsSection('roles')).toMatchObject({ label: 'Access', href: '/settings/access' });
     expect(sectionForPath('/settings/access/roles/sales')?.id).toBe('roles');
     expect(sectionForPath('/settings/access/check')?.id).toBe('roles');
     expect(sectionForPath('/settings/departments/abc')?.id).toBe('departments');
+  });
+
+  it('maps section index paths and nested sub-tab paths to their owning section', () => {
+    expect(groupForPath('/settings/organisation')?.id).toBe('organisation');
+    expect(groupForPath('/settings/departments/abc')?.id).toBe('organisation');
+    expect(groupForPath('/settings/access/roles')?.id).toBe('organisation');
+    expect(groupForPath('/settings/tax')?.id).toBe('finance');
+    expect(groupForPath('/settings/company')?.id).toBe('company-setup');
+    expect(groupForPath('/settings/sales')?.id).toBe('sales-and-purchasing');
+    expect(groupForPath('/settings/usersx')).toBeUndefined();
+    expect(groupForPath('/settings')).toBeUndefined();
+    expect(groupForPath('/settings/denied')).toBeUndefined();
   });
 
   it('opens Departments with either users or roles read access', () => {
