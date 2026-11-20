@@ -84,6 +84,72 @@
   background: var(--table-row-hover-bg);
 }
 
+/* ---- Pinned columns (Figma's pinned columns, U15b-Q1) ----
+   Cells marked `pinned` (data-pinned) are the row's trailing Status and Action columns. They sit on a shaded band
+   behind a divider and stay in view while the rest of the row scrolls sideways, so the Action column is always
+   reachable on a phone. A hovered row still highlights end to end: the hover rule above out-ranks this one.
+   Collapsed table borders do not travel with a sticky cell, so the divider and the row hairlines of pinned cells are
+   inset shadows, and their own borders are made transparent. Every background here is opaque, so the scrolled
+   cells never show through. */
+.table [data-pinned] {
+  background: var(--surface-subtle);
+}
+
+.table thead [data-pinned] {
+  border-bottom-color: transparent;
+  box-shadow: inset 0 calc(-1 * var(--border-width-thin)) 0 var(--border-default);
+}
+
+.table thead :not([data-pinned]) + [data-pinned] {
+  box-shadow:
+    inset var(--border-width-thin) 0 0 var(--border-default),
+    inset 0 calc(-1 * var(--border-width-thin)) 0 var(--border-default);
+}
+
+.table tbody :not([data-pinned]) + [data-pinned] {
+  box-shadow: inset var(--border-width-thin) 0 0 var(--border-default);
+}
+
+.table tbody tr + tr > [data-pinned] {
+  border-top-color: transparent;
+  box-shadow: inset 0 var(--border-width-thin) 0 var(--border-default);
+}
+
+.table tbody tr + tr > :not([data-pinned]) + [data-pinned] {
+  box-shadow:
+    inset var(--border-width-thin) 0 0 var(--border-default),
+    inset 0 var(--border-width-thin) 0 var(--border-default);
+}
+
+/* The last column sticks from the first paint. The ones before it wait for PinnedColumnOffsets to measure the
+   columns after them (data-pinned-ready); until then they scroll, so no two pinned cells overlap. */
+.table [data-pinned]:last-child,
+.wrap[data-pinned-ready] .table [data-pinned] {
+  position: sticky;
+  z-index: 1;
+  inset-inline-end: 0;
+}
+
+.wrap[data-pinned-ready] .table [data-pinned]:nth-last-child(2) {
+  inset-inline-end: var(--table-pin-end-2, 0);
+}
+
+.wrap[data-pinned-ready] .table [data-pinned]:nth-last-child(3) {
+  inset-inline-end: var(--table-pin-end-3, 0);
+}
+
+.wrap[data-pinned-ready] .table [data-pinned]:nth-last-child(4) {
+  inset-inline-end: var(--table-pin-end-4, 0);
+}
+
+/* On a phone, two or three sticky columns would cover most of the screen, so only the last one (Action) stays put;
+   the others keep their band and scroll with the row. */
+@media (max-width: 767.98px) {
+  .wrap[data-pinned-ready] .table [data-pinned]:not(:last-child) {
+    position: static;
+  }
+}
+
 .cellTitle {
   display: grid;
   gap: 2px;

@@ -153,6 +153,13 @@ function AgingTable({
                     </Link>
                   }
                   meta={row.currency}
+                  note={
+                    row.promiseMissed && row.promiseMissedOn !== null ? (
+                      <span className={styles.promiseMissed}>
+                        Missed promise to pay: {when(row.promiseMissedOn, 'date')}
+                      </span>
+                    ) : undefined
+                  }
                 />
               </div>
             </Td>

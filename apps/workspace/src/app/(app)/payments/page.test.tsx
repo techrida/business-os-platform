@@ -106,10 +106,8 @@ describe('payments list', () => {
       'Status',
       'Action',
     ]);
-    // The status badge sits after the date, in the shaded trailing band.
-    expect(html).toMatch(
-      /<\/time><\/td><td class="[^"]*statusColumn[^"]*">.*?Awaiting verification/,
-    );
+    // The status badge sits after the date, in the pinned trailing band.
+    expect(html).toMatch(/<\/time><\/td><td [^>]*data-pinned=""[^>]*>.*?Awaiting verification/);
     const links = html.match(/<a [^>]*>/g) ?? [];
     const numbered = links.find((a) => a.includes('aria-label="View RCPT-2083/84-00001"'));
     expect(numbered).toContain('href="/payments/22222222-2222-4222-8222-222222222222"');
