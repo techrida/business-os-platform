@@ -13,4 +13,6 @@ export interface ActionState {
   done?: boolean;
   /** Draft invoice answered SCHEDULE_LINE_TAKEN: the invoice already drafted for the line. */
   takenInvoiceId?: string;
+  /** Confirm answered `credit_hold` (F1-Q20): the deal whose credit hold stops the order. */
+  creditHoldOpportunityId?: string;
 }

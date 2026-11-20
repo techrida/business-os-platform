@@ -21,12 +21,15 @@ const mocks = vi.hoisted(() => ({
   listOpportunityLostReasonChoices: vi.fn(),
   userNames: vi.fn(),
   getMeOrNull: vi.fn(),
+  getPermissionCheck: vi.fn(),
+  getCreditHold: vi.fn(),
 }));
 
 vi.mock('@/lib/bff', () => ({ requireStaffSession: mocks.requireStaffSession }));
 vi.mock('@/lib/live-permissions', async (importOriginal) => ({
   ...(await importOriginal<object>()),
   getMeOrNull: mocks.getMeOrNull,
+  getPermissionCheck: mocks.getPermissionCheck,
 }));
 vi.mock('@/lib/api-lead-lost-reasons', () => ({
   listOpportunityLostReasonChoices: mocks.listOpportunityLostReasonChoices,
@@ -36,6 +39,7 @@ vi.mock('@/components/p2/crm/crm-api', () => ({
   listActivities: mocks.listActivities,
   listLeadOwners: mocks.listLeadOwners,
   listOpportunityOwners: mocks.listOpportunityOwners,
+  getCreditHold: mocks.getCreditHold,
 }));
 vi.mock('@/components/p2/customers/api', () => ({ getCustomer: mocks.getCustomer }));
 vi.mock('@/components/p2/quotations/api', () => ({ listQuotations: mocks.listQuotations }));
@@ -53,6 +57,7 @@ vi.mock('../../activities/actions', () => ({ logActivityAction: vi.fn() }));
 vi.mock('../actions', () => ({
   moveOpportunityStageAction: vi.fn(),
   updateOpportunityOwnerAction: vi.fn(),
+  overrideCreditHoldAction: vi.fn(),
 }));
 vi.mock('next/navigation', () => ({
   notFound: vi.fn(),
@@ -153,6 +158,15 @@ beforeEach(() => {
   mocks.listOpportunityLostReasonChoices.mockReset().mockResolvedValue([]);
   mocks.userNames.mockReset().mockResolvedValue(new Map());
   mocks.getMeOrNull.mockReset().mockResolvedValue(null);
+  mocks.getPermissionCheck
+    .mockReset()
+    .mockImplementation(
+      async (...args: Parameters<typeof import('@/lib/live-permissions').getPermissionCheck>) =>
+        (
+          await vi.importActual<typeof import('@/lib/live-permissions')>('@/lib/live-permissions')
+        ).getPermissionCheck(...args),
+    );
+  mocks.getCreditHold.mockReset();
 });
 
 describe('opportunity quotation actions (demo feedback: New quotation made four quotations)', () => {
@@ -703,5 +717,77 @@ describe("the deal's owner (F1-Q51)", () => {
     const fact = ownerFact(parse(await render()));
     expect(fact?.textContent).toContain('Sita Rai');
     expect(fact?.textContent).not.toContain('Change owner');
+  });
+});
+
+describe('credit hold on the deal (F1-Q20)', () => {
+  const held = () =>
+    opportunity('won', { creditHold: { held: true, overridden: false }, number: 'DEAL-0042' });
+  /** `GET /v1/opportunities/:id/credit-hold` as the API sends it. */
+  const position = {
+    opportunityId: OPP,
+    customerId: CUSTOMER,
+    currency: 'NPR' as const,
+    creditLimit: '500000.00',
+    exposure: '512345.50',
+    held: true,
+    override: null,
+  };
+  const grants = (...held: string[]) =>
+    mocks.getPermissionCheck.mockResolvedValue((p: string) => held.includes(p));
+  const metadata = (doc: Document) => doc.querySelector('h1')?.parentElement?.parentElement;
+  const banner = (doc: Document) =>
+    [...doc.querySelectorAll('[role="status"]')].find((el) =>
+      el.textContent?.startsWith('Credit hold'),
+    ) ?? null;
+
+  it('marks the header and says who can override, with no Override button, to someone without credit.override', async () => {
+    mocks.getOpportunity.mockResolvedValue(held());
+    grants('crm.opportunity.read');
+    const doc = parse(await render());
+    expect(metadata(doc)?.textContent).toContain('Credit hold');
+    expect(banner(doc)?.textContent).toContain('over its credit limit');
+    expect(banner(doc)?.textContent).toContain('Management or Finance can override the hold.');
+    expect(doc.body.textContent).not.toContain('Override credit hold');
+    expect(banner(doc)?.textContent).not.toMatch(/500,000|5,00,000/);
+    expect(mocks.getCreditHold).not.toHaveBeenCalled();
+  });
+
+  it('shows the amounts and the Override action to a credit.override holder', async () => {
+    mocks.getOpportunity.mockResolvedValue(held());
+    mocks.getCreditHold.mockResolvedValue(position);
+    grants('crm.opportunity.read', 'credit.override');
+    const doc = parse(await render());
+    expect(mocks.getCreditHold).toHaveBeenCalledWith(expect.anything(), OPP);
+    const text = banner(doc)?.textContent ?? '';
+    expect(text).toMatch(/owes .*5,12,345\.50.* against a limit of .*5,00,000\.00/);
+    expect(
+      [...(banner(doc)?.querySelectorAll('button') ?? [])].map((b) => b.textContent),
+    ).toContain('Override credit hold');
+  });
+
+  it('keeps the Override action when the amounts do not load', async () => {
+    mocks.getOpportunity.mockResolvedValue(held());
+    mocks.getCreditHold.mockRejectedValue(new ApiError(503, 'down'));
+    grants('credit.override');
+    const doc = parse(await render());
+    expect(banner(doc)?.textContent).toContain('over its credit limit');
+    expect(banner(doc)?.textContent).not.toContain('owes');
+    expect(doc.body.textContent).toContain('Override credit hold');
+  });
+
+  it('shows nothing once the hold is overridden, or when the flag is absent', async () => {
+    grants('credit.override');
+    mocks.getOpportunity.mockResolvedValue(
+      opportunity('won', { creditHold: { held: true, overridden: true } }),
+    );
+    let doc = parse(await render());
+    expect(metadata(doc)?.textContent).not.toContain('Credit hold');
+    expect(banner(doc)).toBeNull();
+
+    mocks.getOpportunity.mockResolvedValue(opportunity('won'));
+    doc = parse(await render());
+    expect(banner(doc)).toBeNull();
+    expect(mocks.getCreditHold).not.toHaveBeenCalled();
   });
 });
