@@ -193,6 +193,32 @@ export function IssueDialog({
   );
 }
 
+/**
+ * Issue, shown but off: the person created this credit or debit note, and its issuer must be someone else (TR-Q12f).
+ * The button stays in the tab order with `aria-disabled` (a natively disabled button cannot be focused, so its reason
+ * would never be read out); the reason sits under it, linked with `aria-describedby`, and is its tooltip. A click does
+ * nothing.
+ */
+export function IssueBlocked({ kindLabel, reason }: { kindLabel: string; reason: string }) {
+  const reasonId = useId();
+  return (
+    <div className={styles.blocked}>
+      <Button
+        variant="primary"
+        aria-disabled="true"
+        aria-describedby={reasonId}
+        title={reason}
+        onClick={(e) => e.preventDefault()}
+      >
+        {`Issue ${kindLabel.toLowerCase()}`}
+      </Button>
+      <p id={reasonId} className={styles.blockedReason}>
+        {reason}
+      </p>
+    </div>
+  );
+}
+
 /** Discard: final, and it needs a reason for the history. */
 export function DiscardDialog({ name, ...rest }: InvoiceActionProps) {
   // Controlled: React 19 resets uncontrolled fields after every action, which would wipe what the

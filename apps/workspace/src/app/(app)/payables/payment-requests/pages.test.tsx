@@ -80,7 +80,7 @@ beforeEach(() => {
   session.roles = ['finance'];
   grants.live = undefined;
   currencies.loadEnabledCurrencies.mockResolvedValue(['NPR', 'INR', 'USD']);
-  api.listPaymentRequestsPage.mockResolvedValue({ items: [record], total: 1 });
+  api.listPaymentRequestsPage.mockResolvedValue({ items: [record], total: 1, totals: null });
   reads.getVendor.mockResolvedValue({ legalName: 'Himal Supplies' });
   reads.getApprovalRequest.mockRejectedValue(new Error('forbidden'));
   api.getPaymentRequest.mockResolvedValue(record);
@@ -277,7 +277,7 @@ it('sends repeated statuses, the search and the page window, and ignores a junk 
 });
 
 it('shows the server total and range, with no Show button', async () => {
-  api.listPaymentRequestsPage.mockResolvedValue({ items: [record], total: 61 });
+  api.listPaymentRequestsPage.mockResolvedValue({ items: [record], total: 61, totals: null });
   const html = await listOf();
   expect(html).toContain('Showing 1 of 61 payment requests');
   expect(html).toContain('Showing 1–25 of 61');
@@ -286,7 +286,7 @@ it('shows the server total and range, with no Show button', async () => {
 });
 
 it('says so when there are none, and names the filters that match none', async () => {
-  api.listPaymentRequestsPage.mockResolvedValue({ items: [], total: 0 });
+  api.listPaymentRequestsPage.mockResolvedValue({ items: [], total: 0, totals: null });
   expect(await listOf()).toContain('No payment requests yet.');
   const html = await listOf({ status: 'rejected', q: 'zzz' });
   expect(html).toContain('No payment requests match.');
@@ -340,6 +340,7 @@ it('counts each card with one limit-1 read, after the permission check', async (
       Promise.resolve({
         items: [record],
         total: q.limit === 1 ? (q.status.length === 0 ? 12 : 3) : 1,
+        totals: null,
       }),
   );
   const html = await listOf({ q: 'Himal' });
@@ -357,34 +358,50 @@ it('counts each card with one limit-1 read, after the permission check', async (
   expect(html).toMatch(/Rejected<\/dt><dd[^>]*>3</);
 });
 
-it('names each vendor once from its own read, and shows plain text when the vendor cannot be read', async () => {
+it('names each vendor from the row, links it only when the vendor page would open, and reads no vendor', async () => {
   const other = '22222222-2222-4222-8222-222222222222';
   api.listPaymentRequestsPage.mockResolvedValue({
     items: [
       record,
-      { ...record, id: other, number: null },
       {
         ...record,
         id: id.replace('1', '3'),
         vendorPartyId: other,
         number: null,
         bankLast4: '9999',
+        vendorName: 'Kathmandu Traders',
+        can: { readVendor: false },
       },
     ],
-    total: 3,
+    total: 2,
+    totals: null,
   });
-  reads.getVendor.mockImplementation((_s: unknown, vendorId: string) =>
-    vendorId === id
-      ? Promise.resolve({ legalName: 'Himal Supplies' })
-      : Promise.reject(new Error('403')),
-  );
   const html = await listOf();
-  expect(reads.getVendor).toHaveBeenCalledTimes(2);
+  // Old code read every vendor again and showed "Vendor name unavailable" when that read was refused.
+  expect(reads.getVendor).not.toHaveBeenCalled();
   expect(html).toContain(`href="/vendors/${id}"`);
   expect(html).toContain('>Himal Supplies</a>');
-  expect(html).toContain('Vendor name unavailable');
+  expect(html).toContain('Kathmandu Traders');
   expect(html).not.toContain(`/vendors/${other}`);
-  expect(html).not.toContain('View vendor');
+  expect(html).not.toContain('Vendor name unavailable');
+});
+
+it('ends the table with the amounts of every match, one row per currency', async () => {
+  api.listPaymentRequestsPage.mockResolvedValue({
+    items: [record],
+    total: 61,
+    totals: [
+      { currency: 'NPR', amount: '2018180.00' },
+      { currency: 'USD', amount: '1500.00' },
+    ],
+  });
+  const html = await listOf();
+  const foot = /<tfoot>.*<\/tfoot>/s.exec(html)?.[0] ?? '';
+  // Old code showed no total at all.
+  expect(foot).toContain('Total, all pages · NPR');
+  expect(foot).toContain('20,18,180.00');
+  expect(foot).toContain('Total, all pages · USD');
+  expect(foot).toContain('1,500.00');
 });
 
 it('pins Status and a View action to each row, named per row, with rows per page', async () => {
@@ -394,6 +411,7 @@ it('pins Status and a View action to each row, named per row, with rows per page
       { ...record, id: '33333333-3333-4333-8333-333333333333', number: null, bankLast4: '5678' },
     ],
     total: 2,
+    totals: null,
   });
   const html = await listOf();
   const heads = [...html.matchAll(/<th[^>]*>([^<]*)<\/th>/g)].map((m) => m[1]);
@@ -458,7 +476,7 @@ it('starts from the bill a "Request payment" link names, and ignores a bill it c
 });
 
 it('reads the rows-per-page choice from the URL into the page window', async () => {
-  api.listPaymentRequestsPage.mockResolvedValue({ items: [record], total: 61 });
+  api.listPaymentRequestsPage.mockResolvedValue({ items: [record], total: 61, totals: null });
   const html = await listOf({ rows: '100' });
   expect(api.listPaymentRequestsPage).toHaveBeenCalledWith(expect.anything(), {
     status: [],

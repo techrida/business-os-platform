@@ -1,6 +1,7 @@
 import 'server-only';
 
 import {
+  type MoneyTotals,
   BillKindSchema,
   BillStatusSchema,
   CurrencySchema,
@@ -22,6 +23,7 @@ import { z } from 'zod';
 
 import { ApiError, apiFetch } from './api';
 import { callList, listQuery } from './api-procurement';
+import { readMoneyTotals } from './money-totals';
 import type { Session } from './session';
 
 /**
@@ -419,7 +421,12 @@ const paymentFields = {
   cancelReason: Text.nullable(),
   version: z.number().int(),
 };
-export const PaymentRequestListSchema = z.object(paymentFields);
+/** A list row: the request, its vendor named under the request's own read, and whether the caller may open it. */
+export const PaymentRequestListSchema = z.object({
+  ...paymentFields,
+  vendorName: Text,
+  can: z.object({ readVendor: z.boolean() }),
+});
 export const PaymentRequestSchema = z.object({
   ...paymentFields,
   lines: z.array(
@@ -474,20 +481,28 @@ export function listPaymentRequestItemsWithoutBankAccount(
  * One page of `GET .../payment-requests` with several statuses, a search over number and vendor name, and
  * `offset`, plus the total of all matches from `X-Total-Count`.
  */
-export function listPaymentRequestsPage(
+export async function listPaymentRequestsPage(
   session: Session,
   query: { status?: readonly PaymentRequestStatus[]; q?: string; limit: number; offset: number },
-): Promise<{ items: PaymentRequestListItem[]; total: number }> {
-  return callList(
-    session,
-    listQuery(REQUESTS, {
-      status: query.status?.map((s) => PaymentRequestStatusSchema.parse(s)),
-      q: query.q,
-      limit: query.limit,
-      offset: query.offset,
-    }),
-    PaymentRequestListSchema,
-  );
+): Promise<{ items: PaymentRequestListItem[]; total: number; totals: MoneyTotals | null }> {
+  const path = listQuery(REQUESTS, {
+    status: query.status?.map((s) => PaymentRequestStatusSchema.parse(s)),
+    q: query.q,
+    limit: query.limit,
+    offset: query.offset,
+  });
+  const res = await apiFetch(session, path);
+  const body = await readBody(res);
+  if (!res.ok) throw new ApiError(res.status, `GET ${REQUESTS} failed with ${res.status}`, body);
+  const parsed = z.array(PaymentRequestListSchema).safeParse(body);
+  if (!parsed.success) {
+    throw new ApiError(502, `GET ${REQUESTS} returned an invalid body`, parsed.error.issues);
+  }
+  // A missing or unreadable count falls back to the row count, as callList does.
+  const header = Number(res.headers.get('x-total-count'));
+  const total =
+    Number.isInteger(header) && header >= parsed.data.length ? header : parsed.data.length;
+  return { items: parsed.data, total, totals: readMoneyTotals(res) };
 }
 
 export function getPaymentRequest(session: Session, id: string): Promise<PaymentRequestDetail> {

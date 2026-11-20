@@ -11,14 +11,14 @@ import {
   type CustomerAdvance,
   type InvoiceSettlement,
 } from '@bos/contracts';
-import { invoices, openItemBalances, parties, payments } from '@bos/db';
+import { invoices, openItemBalances, parties, paymentPromises, payments } from '@bos/db';
 import { Inject, Injectable, NotFoundException, Optional } from '@nestjs/common';
 import { and, asc, eq, gt, inArray, sql } from 'drizzle-orm';
 
 import { AuthzService } from '../../platform/authz/authz.service';
 import { DB, type Db, type DbTransaction } from '../../platform/db/db.module';
 import { withTx, type Actor, type TxScope } from '../../platform/db/tx';
-import { agingReport, kathmanduDay, settlementRow } from './receivables.rules';
+import { agingReport, agingRowKey, kathmanduDay, settlementRow } from './receivables.rules';
 
 /** Injection token for a test clock; production falls back to the system time. */
 export const RECEIVABLES_CLOCK = Symbol('RECEIVABLES_CLOCK');
@@ -155,6 +155,7 @@ export class ReceivablesService {
           dueDate: r.dueDate ?? r.documentDate ?? this.today(),
         })),
         this.today(),
+        await this.missedPromises(tx, scope),
       );
     });
   }
@@ -201,6 +202,56 @@ export class ReceivablesService {
   }
 
   // -------------------------------------------------------------------------------------- internals
+
+  /**
+   * F1-Q33: per customer and currency, the latest promised day of a missed promise to pay whose invoice still has an
+   * open amount. Paying the invoice (or crediting it to zero) clears the flag on the next read: nothing is stored.
+   */
+  private async missedPromises(tx: DbTransaction, scope: TxScope): Promise<Map<string, string>> {
+    const latest = sql<string>`max(${paymentPromises.promisedDate})::text`;
+    const rows = await tx
+      .select({
+        customerId: invoices.customerPartyId,
+        currency: invoices.currency,
+        promisedDate: latest,
+      })
+      .from(paymentPromises)
+      .innerJoin(
+        invoices,
+        and(
+          eq(invoices.tenantId, paymentPromises.tenantId),
+          eq(invoices.organizationId, paymentPromises.organizationId),
+          eq(invoices.id, paymentPromises.invoiceId),
+        ),
+      )
+      .innerJoin(
+        openItemBalances,
+        and(
+          eq(openItemBalances.tenantId, invoices.tenantId),
+          eq(openItemBalances.organizationId, invoices.organizationId),
+          eq(openItemBalances.sourceId, invoices.id),
+          sql`${openItemBalances.sourceType} = ${invoices.kind}`,
+          eq(openItemBalances.side, 'receivable'),
+          eq(openItemBalances.direction, 'debit'),
+        ),
+      )
+      .where(
+        and(
+          eq(paymentPromises.tenantId, scope.tenantId),
+          eq(paymentPromises.organizationId, scope.organizationId),
+          eq(paymentPromises.status, 'missed'),
+          gt(openItemBalances.openAmount, '0'),
+        ),
+      )
+      .groupBy(invoices.customerPartyId, invoices.currency);
+    return new Map(
+      rows.flatMap((r) =>
+        r.customerId === null
+          ? []
+          : [[agingRowKey(r.customerId, r.currency), r.promisedDate] as const],
+      ),
+    );
+  }
 
   private today(): string {
     return kathmanduDay(this.clock());

@@ -40,7 +40,14 @@ import { updateVersioned } from '../../../platform/db/idempotency';
 import type { Actor, TxScope } from '../../../platform/db/tx';
 import { NumberingService } from '../../../platform/settings/numbering.service';
 import { LedgerService } from '../../ledger/ledger.service';
-import { conflict, invoiceNotFound, kathmanduDay, notApproved } from '../invoice-support';
+import {
+  conflict,
+  createdThisNote,
+  invoiceNotFound,
+  kathmanduDay,
+  notApproved,
+  noteIssuerIsCreator,
+} from '../invoice-support';
 import {
   creditCapExcess,
   creditExceedsInvoice,
@@ -138,6 +145,7 @@ export class CreditNoteIssueService {
       return { kind: 'already_issued', invoiceId: note.id, number: note.number };
     }
     if (note.status !== 'approved') throw notApproved();
+    if (createdThisNote(note, actor.kind === 'user' ? actor.id : null)) throw noteIssuerIsCreator();
     if (note.version !== body.expectedVersion) {
       throw conflict('This invoice was changed by someone else; reload it and try again');
     }

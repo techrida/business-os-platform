@@ -192,7 +192,11 @@ export default async function InvoiceDetailPage({ params }: { params: Promise<{ 
   const { numberSystems } = format;
   // Issued: the buyer as frozen at issue. A draft has no snapshot yet, so the API sends the customer's current name.
   const customerName = invoice.buyer?.legalName ?? detail.customerName;
-  const gates = invoiceGates({ ...invoice, can: detail.can }, can);
+  const gates = invoiceGates(
+    { ...invoice, can: detail.can },
+    can,
+    detail.issueBlockedBySod === true,
+  );
   const pdfNumber =
     invoice.kind !== 'proforma' && invoice.status === 'issued' ? invoice.number : null;
   const kind = kindMeta(invoice.kind).label;

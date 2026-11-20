@@ -146,9 +146,8 @@ export const QUOTATION_VERSION_WORKFLOW_SPEC: unknown = {
 };
 
 /**
- * The P3 invoice approval route (plan A5), the same for all three document types: Accountant checks,
- * then Finance approves. Per entity, like every workflow (ADR 0027). There are no amount rules: the
- * route is fixed. An entity whose route is empty refuses submit, so nothing is auto-issued.
+ * The P3 invoice approval route (plan A5) for corrections: Accountant checks, then Finance approves. Per entity, like
+ * every workflow (ADR 0027). An entity whose route is empty refuses submit, so nothing is auto-issued.
  */
 const invoiceApprovalSpec = (documentType: string, what: string): unknown => ({
   documentType,
@@ -166,7 +165,46 @@ const invoiceApprovalSpec = (documentType: string, what: string): unknown => ({
   sla: { remindAfterHours: 24, escalateAfterHours: 72, escalateTo: { role: 'founder' } },
 });
 
-export const TAX_INVOICE_WORKFLOW_SPEC: unknown = invoiceApprovalSpec('tax_invoice', 'tax invoice');
+/**
+ * The tax invoice route (F1-Q30, decision D56): an invoice drafted from an approved billing schedule line needs Finance
+ * only, because the schedule was approved with its order; a manual invoice keeps Accountant then Finance. The engine
+ * only adds steps, so both are rules on an empty base: the Accountant step fires on `fromSchedule` false (the submit
+ * fact `invoice.scheduleLineId !== null`), and the Finance step fires on every tax invoice (`kind` is always
+ * `tax_invoice` here) and lands after it. Migration 0110 publishes the same spec as the next version for entities still
+ * on the original route; keep the two word for word.
+ */
+export const TAX_INVOICE_WORKFLOW_SPEC: unknown = {
+  documentType: 'tax_invoice',
+  steps: [],
+  rules: [
+    {
+      id: 'manual-invoice',
+      when: { field: 'fromSchedule', op: 'eq', value: false },
+      add: {
+        id: 'accountant',
+        kind: 'role',
+        role: 'accountant',
+        reason: 'Accountant checks a manual tax invoice',
+      },
+      position: 'end',
+      reason: 'Accountant check: a manual invoice, not from an approved billing schedule',
+    },
+    {
+      id: 'finance-approves',
+      when: { field: 'kind', op: 'eq', value: 'tax_invoice' },
+      add: {
+        id: 'finance',
+        kind: 'role',
+        role: 'finance',
+        reason: 'Finance approves every tax invoice',
+      },
+      position: 'end',
+      reason: 'Finance approves every tax invoice',
+    },
+  ],
+  distinctApprovers: true,
+  sla: { remindAfterHours: 24, escalateAfterHours: 72, escalateTo: { role: 'founder' } },
+};
 export const CREDIT_NOTE_WORKFLOW_SPEC: unknown = invoiceApprovalSpec('credit_note', 'credit note');
 export const DEBIT_NOTE_WORKFLOW_SPEC: unknown = invoiceApprovalSpec('debit_note', 'debit note');
 
@@ -774,7 +812,8 @@ export async function seedKernelRows(
     changed += await seedTaxCodes(client, scope);
     changed += await seedPaymentTerms(client, scope);
     changed += await seedWithholdingCodes(client, scope);
-    // P3 sales and invoicing: one Accountant to Finance route per money document (plan A5).
+    // P3 sales and invoicing: an Accountant to Finance route per money document (plan A5); a tax invoice from an
+    // approved billing schedule goes to Finance only (F1-Q30).
     changed += await seedWorkflow(client, scope, {
       key: 'tax_invoice',
       name: 'Tax invoice approval',

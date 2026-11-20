@@ -588,7 +588,8 @@ export function workflow(cfg) {
 
     await approveOnce(s, progressKey, secondApprover, { requestId }, comments[1], pastApproval);
 
-    await as(s, 'Dev Finance');
+    // TR-Q12f: the creator (Dev Finance) may not issue their own note, so Dev Finance Two issues it.
+    await as(s, 'Dev Finance Two');
     await openUrl(s, urlKey, (p) =>
       p.getByRole('button', { name: issueButton, exact: true }).or(h1(p, numberRe)),
     );
