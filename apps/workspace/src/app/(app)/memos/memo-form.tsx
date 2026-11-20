@@ -37,7 +37,7 @@ import {
 } from './memo-form-model';
 import type { PdfSource } from './memo-pdf-client';
 import { MemoPreview } from './memo-preview';
-import { useMemoReviewGate } from './memo-review-gate';
+import { useMemoReviewGate, useMemoSaveReporter } from './memo-review-gate';
 import templateStyles from './memo-template.module.css';
 import { SignerSection } from './signer-section';
 import { useMemoDraftSync } from './use-memo-draft-sync';
@@ -73,12 +73,17 @@ export function MemoForm(props: MemoFormProps) {
   const [epoch, setEpoch] = useState(0);
   const [navigating, startNavigation] = useTransition();
   const wasNavigating = useRef(false);
+  const reportSave = useMemoSaveReporter();
   // After Done the page shows the saved memo in the same route. The form is rebuilt once that page has arrived (new
-  // baseline, autosave running again, header Submit released), whatever the saved text turned out to be.
+  // baseline, autosave running again, header Submit released), whatever the saved text turned out to be. Only then
+  // is the save reported as done: a Submit pressed meanwhile must send the saved memo's new version (R2-019).
   useEffect(() => {
-    if (wasNavigating.current && !navigating) setEpoch((n) => n + 1);
+    if (wasNavigating.current && !navigating) {
+      setEpoch((n) => n + 1);
+      reportSave?.('saved');
+    }
     wasNavigating.current = navigating;
-  }, [navigating]);
+  }, [navigating, reportSave]);
   const onSaved = useCallback((to: string) => startNavigation(() => router.push(to)), [router]);
   // A server re-render with different saved content (a change made elsewhere) also starts a fresh form. Typing in
   // progress is written out by the old form as it unmounts.
@@ -190,10 +195,14 @@ function MemoFormInner({
   // deleted it) and resumes only if the server refused. On success the server action redirects.
   const inFlight = useRef(false);
   const [saved, setSaved] = useState(false);
+  const reportSave = useMemoSaveReporter();
   const [state, formAction, pending] = useActionState<MemoFormState, FormData>(
     async (prev, form) => {
       if (inFlight.current) return prev;
       inFlight.current = true;
+      // 'saving' was reported by onSubmit (an update made inside this action would only show once it ends). A save
+      // stays 'saving' until the outer form has the saved page; any other ending is a failed save.
+      let outcome: 'saving' | 'failed' = 'failed';
       try {
         await syncRef.current.settle();
         syncRef.current.freeze();
@@ -201,6 +210,7 @@ function MemoFormInner({
         const next = (await action(prev, form)) ?? prev;
         if (next.savedTo) {
           // Saved: autosave stays stopped (the server deleted the working copy) until the form is rebuilt.
+          outcome = 'saving';
           setSaved(true);
           onSaved(next.savedTo);
           return next;
@@ -209,6 +219,7 @@ function MemoFormInner({
         return next;
       } finally {
         inFlight.current = false;
+        if (outcome === 'failed') reportSave?.('failed');
       }
     },
     initialState,
@@ -267,6 +278,7 @@ function MemoFormInner({
         noValidate
         className={templateStyles.controls}
         onBlur={() => sync.flush()}
+        onSubmit={() => reportSave?.('saving')}
       >
         {directory ? (
           <input type="hidden" name="template" value={JSON.stringify(templateInput)} />
