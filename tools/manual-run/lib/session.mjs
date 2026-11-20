@@ -118,6 +118,20 @@ export class Session {
    */
   async guardContext(context) {
     const allowed = configuredOrigins(this.cfg);
+    // The route handler sees only the first request of a redirect chain: Chromium follows a 3xx to
+    // another origin without asking it again. Those hops are detected below (a redirected request,
+    // a page that landed elsewhere) and stop the step; only network isolation prevents them.
+    context.on('page', (page) => this.guardPage(page));
+    context.on('request', (request) => {
+      if (!request.redirectedFrom() || originAllowed(request.url(), allowed)) return;
+      let page = null;
+      try {
+        page = request.frame().page();
+      } catch {
+        // a request without a frame (none expected with service workers blocked)
+      }
+      this.leftOrigins(request.url(), page, 'followed a redirect');
+    });
     await context.route('**/*', (route) => {
       const url = route.request().url();
       if (originAllowed(url, allowed)) return route.continue();
@@ -131,6 +145,51 @@ export class Session {
         ws.close().catch(() => {});
       }
     });
+  }
+
+  /** Every main-frame navigation of `page` (main window, private window, popups) is checked. */
+  guardPage(page) {
+    if (this.guardedPages?.has(page)) return;
+    (this.guardedPages ??= new WeakSet()).add(page);
+    page.on('framenavigated', (frame) => {
+      if (frame === page.mainFrame()) this.checkPageOrigin(page);
+    });
+    this.checkPageOrigin(page);
+  }
+
+  /**
+   * False (and the step is stopped) when `page` is no longer on a configured origin. Chrome's own
+   * error page (a 502 from the dev server) and browser-local pages are not a different site.
+   */
+  checkPageOrigin(page) {
+    const url = page.url();
+    if (/^chrome-error:/.test(url) || originAllowed(url, configuredOrigins(this.cfg))) return true;
+    this.leftOrigins(url, page, 'navigated');
+    return false;
+  }
+
+  /** checkPageOrigin for a step: fails it at once when the page left the configured origins. */
+  assertPageOrigin(page = this.page) {
+    if (!this.checkPageOrigin(page)) throw new StepFailure(this.abortReason);
+  }
+
+  /**
+   * The browser reached an origin outside the configured ones (a redirect the route guard cannot
+   * see). From this moment nothing is typed or clicked: the step is aborted, the page is sent to
+   * about:blank and a high finding is recorded.
+   */
+  leftOrigins(url, page, how) {
+    const clean = redactUrl(url);
+    if (!this.leftOriginsAt) {
+      this.leftOriginsAt = clean;
+      this.findings.push({
+        severity: 'high',
+        text: `The browser ${how} outside the configured origins: ${clean}`,
+      });
+      this.log(`  ! the browser ${how} outside the configured origins: ${clean}`);
+    }
+    void this.abort(`The browser ${how} outside the configured origins (${clean}); stopped`);
+    if (page && !page.isClosed?.()) void page.goto('about:blank').catch(() => {});
   }
 
   blocked(url) {
@@ -192,6 +251,7 @@ export class Session {
       viewport: this.cfg.viewport,
       recordVideo: { dir: this.dirs.video, size: this.cfg.viewport },
       ignoreHTTPSErrors: false,
+      serviceWorkers: 'block',
     });
     context.setDefaultTimeout(this.cfg.actionTimeout);
     context.setDefaultNavigationTimeout(this.cfg.navTimeout);
@@ -336,9 +396,12 @@ export class Session {
         if (i === 1 || page.url() !== full)
           await page.goto(full, { waitUntil: 'domcontentloaded' });
         else await page.reload({ waitUntil: 'domcontentloaded' });
+        this.assertPageOrigin(page);
         await this.waitReady(ready, page);
+        this.assertPageOrigin(page);
         return;
       } catch (error) {
+        if (this.abortReason) throw new StepFailure(this.abortReason);
         lastError = error.message.split('\n')[0];
         this.log(`    (load ${i}/${attempts} of ${full} not ready: ${lastError.slice(0, 140)})`);
         if (i < attempts) await sleep(i === 1 ? 5000 : 15000);

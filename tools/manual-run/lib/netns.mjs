@@ -39,24 +39,40 @@ const loopback = (host) =>
   host === 'localhost' || host.endsWith('.localhost') || host === '127.0.0.1';
 
 /**
+ * Network isolation is what keeps the browser off every other host: inside the namespace only the
+ * forwarded loopback ports exist, so a redirect to an unconfigured origin cannot connect. Without
+ * it the run-time origin checks can only detect such a redirect after Chromium followed it.
+ *
  * Only for stacks whose every origin is on this machine's loopback (e.g. *.testrun.localhost).
  * A non-loopback origin (a *.bos.test host, or a target allowed by ALLOW_NON_LOCAL_TARGET) is an
- * error unless NETNS=0 says to run without isolation: isolation is never turned off silently.
+ * error unless NETNS=0 says to run without isolation, and running without isolation (NETNS=0, or
+ * NETNS=auto without unshare, socat or ip) needs ALLOW_NO_NETNS=1 (or ALLOW_NON_LOCAL_TARGET=1):
+ * isolation is never turned off silently.
  */
-export function netnsWanted(origins, value = process.env.NETNS ?? 'auto') {
-  if (/^(0|false|no|off)$/i.test(value)) return false;
+export function netnsWanted(origins, value = process.env.NETNS ?? 'auto', env = process.env) {
+  const accepted = env.ALLOW_NO_NETNS === '1' || env.ALLOW_NON_LOCAL_TARGET === '1';
+  const without = (why) => {
+    if (!accepted)
+      throw new Error(
+        `${why}, so the browser would run without network isolation: a redirect to another ` +
+          'host could then only be detected, not prevented. Set ALLOW_NO_NETNS=1 to accept that.',
+      );
+    console.warn(
+      `\n!!! manual-run: ${why}; the browser runs WITHOUT network isolation. A redirect to an ` +
+        'unconfigured origin can only be detected (the step stops), not prevented. !!!\n',
+    );
+    return false;
+  };
+  if (/^(0|false|no|off)$/i.test(value)) return without(`NETNS=${value}`);
   const remote = origins.map((o) => new URL(o).hostname).filter((h) => !loopback(h));
   if (remote.length)
     throw new Error(
       `Network isolation (NETNS=${value}) needs every origin on loopback; ${remote.join(', ')} ` +
-        'is not. Set NETNS=0 to run that stack without isolation.',
+        'is not. Set NETNS=0 and ALLOW_NO_NETNS=1 to run that stack without isolation.',
     );
   const ok = process.platform === 'linux' && has('unshare') && has('socat') && has('ip');
   if (!ok && value !== 'auto') throw new Error('NETNS=1 needs Linux with unshare, socat and ip');
-  if (!ok)
-    console.warn(
-      'note: unshare, socat or ip is missing, so the browser runs without network isolation (NETNS=auto).',
-    );
+  if (!ok) return without('unshare, socat or ip is missing (NETNS=auto)');
   return ok;
 }
 

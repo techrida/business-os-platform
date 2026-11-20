@@ -20,7 +20,11 @@ const print = (line) => console.log(redactText(line));
 const args = parseArgs(process.argv.slice(2));
 const cfg = loadConfig({ label: 'probe', ...args, captions: 'false' });
 const browser = await launch(cfg, [cfg.appUrl], origins(cfg));
-const context = await browser.newContext({ viewport: cfg.viewport, ignoreHTTPSErrors: false });
+const context = await browser.newContext({
+  viewport: cfg.viewport,
+  ignoreHTTPSErrors: false,
+  serviceWorkers: 'block',
+});
 context.setDefaultTimeout(cfg.actionTimeout);
 const session = await Session.open({
   context,

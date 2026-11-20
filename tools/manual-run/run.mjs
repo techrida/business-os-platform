@@ -12,6 +12,8 @@ import path from 'node:path';
 
 import { onCleanup } from './lib/cleanup.mjs';
 import { WORKFLOWS, legacyRunKeyFor, loadConfig, parseArgs, parseViewport } from './lib/config.mjs';
+import { netnsWanted } from './lib/netns.mjs';
+import { configuredOrigins as origins } from './lib/origins.mjs';
 import { planRuns } from './lib/plan.mjs';
 import { redactText } from './lib/redact.mjs';
 import { runWorkflow, saveDriverError, saveResults } from './lib/runner.mjs';
@@ -87,6 +89,13 @@ try {
 
 if (args.fresh && (args.from !== undefined || args.only !== undefined))
   usageError('--fresh starts a workflow over; it cannot be combined with --from or --only.');
+
+// Network isolation (or the explicit opt-out ALLOW_NO_NETNS=1) is settled before anything starts.
+try {
+  netnsWanted(origins(configs[0]));
+} catch (error) {
+  usageError(error.message);
+}
 
 // One run per output folder: the lock is held until this process exits, and it is taken before
 // any check of the folder's earlier runs, so two invocations can never both pass those checks.

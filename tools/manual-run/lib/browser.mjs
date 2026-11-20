@@ -118,6 +118,8 @@ export async function newRecordedContext(browser, cfg, videoDir) {
     viewport: cfg.viewport,
     recordVideo: { dir: videoDir, size: cfg.viewport },
     ignoreHTTPSErrors: false,
+    // A service worker's fetches bypass context.route; the app does not need one for the run.
+    serviceWorkers: 'block',
     acceptDownloads: true,
     locale: 'en-GB',
     timezoneId: process.env.BROWSER_TZ || undefined,

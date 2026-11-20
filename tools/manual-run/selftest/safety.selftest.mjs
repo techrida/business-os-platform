@@ -152,6 +152,70 @@ describe('run-time origin checks', () => {
     assert.equal(s.findings.length, 1);
     assert.match(s.findings[0].text, /https:\/\/cdn\.example\/a\.js$/);
   });
+
+  /** A page and context with just the events and calls the origin watcher uses. */
+  const fakeBrowser = (startUrl) => {
+    const handlers = {};
+    const page = {
+      _url: startUrl,
+      gone: [],
+      url: () => page._url,
+      isClosed: () => false,
+      mainFrame: () => 'main',
+      on: (event, fn) => ((handlers[`page:${event}`] ??= []).push(fn), page),
+      goto: async (url) => page.gone.push(url),
+      navigate(url, frame = 'main') {
+        page._url = frame === 'main' ? url : page._url;
+        for (const fn of handlers['page:framenavigated'] ?? []) fn(frame);
+      },
+    };
+    const context = {
+      routes: 0,
+      on: (event, fn) => (handlers[`context:${event}`] ??= []).push(fn),
+      route: async () => context.routes++,
+      routeWebSocket: async () => {},
+      pages: () => [page],
+      emit: (event, arg) => (handlers[`context:${event}`] ?? []).forEach((fn) => fn(arg)),
+    };
+    return { page, context };
+  };
+
+  test('a page that lands on another origin stops the step and goes to about:blank', async () => {
+    const { page, context } = fakeBrowser(`${CFG.appUrl}/leads`);
+    const s = new Session({ context, page, cfg: CFG, state: {}, log: () => {} });
+    await s.guardContext(context);
+    context.emit('page', page);
+    page.navigate(`${CFG.authUrl}/ui/login`); // a configured origin: fine
+    page.navigate('chrome-error://chromewebdata/'); // the dev server's 502: fine
+    page.navigate('https://evil.example/frame', 'child'); // a child frame is not the page
+    assert.equal(s.abortReason, undefined);
+    page.navigate('https://evil.example/phish?code=1');
+    assert.match(s.abortReason, /navigated outside the configured origins/);
+    assert.ok(!/code=1/.test(s.abortReason));
+    assert.deepEqual(page.gone, ['about:blank']);
+    assert.equal(s.findings.filter((f) => f.severity === 'high').length, 1);
+    // Nothing more is typed or clicked: every helper refuses from now on.
+    assert.throws(() => s.guard(), StepFailure);
+    await assert.rejects(s.fill(s.page, 'x'), StepFailure);
+    assert.throws(() => s.assertPageOrigin(page), StepFailure);
+  });
+
+  test('a redirect followed to another origin is detected through the redirected request', async () => {
+    const { page, context } = fakeBrowser(`${CFG.appUrl}/`);
+    const s = new Session({ context, page, cfg: CFG, state: {}, log: () => {} });
+    await s.guardContext(context);
+    const request = (url, from) => ({
+      url: () => url,
+      redirectedFrom: () => from,
+      frame: () => ({ page: () => page }),
+    });
+    context.emit('request', request('https://cdn.example/x.js', null)); // the route guard's job
+    context.emit('request', request(`${CFG.appUrl}/b`, {})); // a redirect on the app: fine
+    assert.equal(s.abortReason, undefined);
+    context.emit('request', request('https://evil.example/r', {}));
+    assert.match(s.abortReason, /followed a redirect outside the configured origins/);
+    assert.deepEqual(page.gone, ['about:blank']);
+  });
 });
 
 describe('the real sign-in', () => {
@@ -264,19 +328,24 @@ describe('shell-safe paths', () => {
 
 describe('network isolation choice', () => {
   const local = ['https://app.testrun.localhost:58343', 'https://127.0.0.1:1'];
-  test('NETNS=0 turns it off for any origin', () => {
-    assert.equal(netnsWanted(['https://app.p1.bos.test'], '0'), false);
+  test('NETNS=0 is refused unless ALLOW_NO_NETNS=1 (or ALLOW_NON_LOCAL_TARGET=1) accepts it', () => {
+    assert.throws(
+      () => netnsWanted(['https://app.p1.bos.test'], '0', {}),
+      /without network isolation.*ALLOW_NO_NETNS=1/s,
+    );
+    for (const env of [{ ALLOW_NO_NETNS: '1' }, { ALLOW_NON_LOCAL_TARGET: '1' }])
+      assert.equal(netnsWanted(['https://app.p1.bos.test'], '0', env), false);
   });
   test('never turns itself off silently for a non-loopback origin', () => {
     for (const mode of ['auto', '1'])
       assert.throws(
-        () => netnsWanted([...local, 'https://app.p1.bos.test'], mode),
-        /NETNS=0/,
+        () => netnsWanted([...local, 'https://app.p1.bos.test'], mode, { ALLOW_NO_NETNS: '1' }),
+        /NETNS=0 and ALLOW_NO_NETNS=1/,
         mode,
       );
   });
   test('loopback origins are allowed in auto mode', () => {
-    assert.equal(typeof netnsWanted(local, 'auto'), 'boolean');
+    assert.equal(typeof netnsWanted(local, 'auto', { ALLOW_NO_NETNS: '1' }), 'boolean');
   });
 });
 
