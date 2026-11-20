@@ -184,19 +184,15 @@ export default async function PaymentRequestsPage({
         <>
           <ResultCount shown={rows.length} total={total} noun="payment request" />
           <div className={layout.results}>
-            <Table
-              caption="Payment requests, newest first"
-              minWidth={860}
-              className={styles.list ?? ''}
-            >
+            <Table caption="Payment requests, newest first" minWidth={860}>
               <thead>
                 <tr>
                   <Th>Request</Th>
                   <Th>Vendor</Th>
                   <Th>Vendor bank account</Th>
                   <Th align="end">Amount</Th>
-                  <Th className={styles.statusColumn}>Status</Th>
-                  <Th className={styles.actionColumn}>Action</Th>
+                  <Th pinned>Status</Th>
+                  <Th pinned>Action</Th>
                 </tr>
               </thead>
               <tbody>
@@ -230,10 +226,10 @@ export default async function PaymentRequestsPage({
                       <Td align="end" nowrap>
                         <span className={styles.numeric}>{amount}</span>
                       </Td>
-                      <Td nowrap className={styles.statusColumn}>
+                      <Td nowrap pinned>
                         <Badge tone={st.tone}>{st.text}</Badge>
                       </Td>
-                      <Td nowrap className={styles.actionColumn}>
+                      <Td nowrap pinned>
                         <Link href={href} className={styles.rowAction} aria-label={`View ${name}`}>
                           <Icon name="chevron-right" size={20} />
                         </Link>

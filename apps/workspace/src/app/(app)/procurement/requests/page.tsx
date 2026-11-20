@@ -104,13 +104,13 @@ function Row({ pr, numberSystems }: { pr: PurchaseRequestListItem; numberSystems
           {money(pr.estimatedTotal, pr.currency, numberSystems)}
         </span>
       </Td>
-      <Td nowrap className={styles.statusColumn}>
+      <Td nowrap pinned>
         <span className={styles.badges}>
           <Badge tone={status.tone}>{status.text}</Badge>
           {pr.isEmergency ? <Badge tone="error">Emergency</Badge> : null}
         </span>
       </Td>
-      <Td nowrap className={styles.actionColumn}>
+      <Td nowrap pinned>
         <Link href={href} className={styles.rowAction} aria-label={`View ${name}`}>
           <Icon name="chevron-right" size={20} />
         </Link>
@@ -260,19 +260,15 @@ export default async function PurchaseRequestsPage({
       ) : requests !== null ? (
         <div className={layout.results}>
           <ResultCount shown={requests.length} total={total} noun="request" />
-          <Table
-            className={`${layout.resultsTable ?? ''} ${styles.list ?? ''}`}
-            caption="Purchase requests"
-            minWidth={860}
-          >
+          <Table className={layout.resultsTable ?? ''} caption="Purchase requests" minWidth={860}>
             <thead>
               <tr>
                 <Th>Request</Th>
                 <Th>Department</Th>
                 <Th>Needed by</Th>
                 <Th align="end">Estimated total</Th>
-                <Th className={styles.statusColumn}>Status</Th>
-                <Th className={styles.actionColumn}>Action</Th>
+                <Th pinned>Status</Th>
+                <Th pinned>Action</Th>
               </tr>
             </thead>
             <tbody>
