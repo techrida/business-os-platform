@@ -100,8 +100,24 @@ const json = (status: number, body: unknown) =>
 
 // The API's own answers: the memo for anyone who may read it, the audit list only with `audit.read`.
 let auditAllowed = false;
+// The live grants `GET /v1/me` reports; null answers 403 there, so the page falls back to the role defaults.
+let liveGrants: string[] | null = null;
 const fetchMock = vi.fn<typeof fetch>((input) => {
   const path = new URL(input as URL | string).pathname;
+  if (path === '/v1/me' && liveGrants !== null) {
+    return Promise.resolve(
+      json(200, {
+        userId: OWNER,
+        tenantId: '00000000-0000-4000-8000-000000000001',
+        organizationId: '00000000-0000-4000-8000-000000000002',
+        orgKind: 'staff',
+        partyId: null,
+        roles: [],
+        correlationId: 'req-12345678',
+        permissions: liveGrants.map((permission) => ({ permission, scope: 'all' })),
+      }),
+    );
+  }
   if (path === `/v1/test-memos/${MEMO}`) return Promise.resolve(json(200, memo));
   if (path === '/v1/audit' && auditAllowed) return Promise.resolve(json(200, { items: [event] }));
   return Promise.resolve(
@@ -124,6 +140,7 @@ async function render(roles: string[]): Promise<string> {
 
 beforeEach(() => {
   mocks.requireStaffSession.mockReset();
+  liveGrants = null;
   fetchMock.mockClear();
   stubApiEnv();
   vi.stubGlobal('fetch', fetchMock);
@@ -152,5 +169,21 @@ describe('memo detail page audit timeline', () => {
     expect(entityIds.sort()).toEqual([MEMO, REQUEST].sort());
     expect(html).not.toContain('only open to roles with audit access');
     expect(html).toContain('Ram Thapa');
+  });
+
+  it('loads the audit trail for a role whose saved grants add audit.read, though its defaults lack it', async () => {
+    auditAllowed = true;
+    liveGrants = ['audit.read'];
+    const html = await render(['sales']);
+    expect(auditCalls()).toHaveLength(2);
+    expect(html).not.toContain('only open to roles with audit access');
+  });
+
+  it('asks nothing of the audit trail when the saved grants removed audit.read, though the defaults hold it', async () => {
+    auditAllowed = true;
+    liveGrants = ['memo.read'];
+    const html = await render(['finance']);
+    expect(auditCalls()).toHaveLength(0);
+    expect(html).toContain('only open to roles with audit access');
   });
 });
