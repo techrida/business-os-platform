@@ -18,6 +18,8 @@ import { and, asc, eq, ne, sql } from 'drizzle-orm';
 import type { AuditService } from '../../../platform/audit/audit.service';
 import type { DbTransaction } from '../../../platform/db/db.module';
 import type { TxScope } from '../../../platform/db/tx';
+import type { ApprovalsService } from '../../approvals/requests.service';
+import { emergencyReviewDue, requestEmergencyReview } from '../receipts/emergency-review';
 import { derivePoStatus } from '../receipts/receipt.rules';
 import {
   PO_AMENDMENT_DOCUMENT_TYPE,
@@ -205,15 +207,17 @@ export async function insertVersion(
 /**
  * Applies an amendment to a PO locked by the caller: the lines take the new quantities and prices, version N+1 is
  * written with its totals and band, and the status follows what has been received. A re-approved amendment
- * (approvalRequestId set) also moves approved_total, approved_total_npr and approved_band (AD7).
+ * (approvalRequestId set) also moves approved_total, approved_total_npr and approved_band (AD7). An amendment that
+ * leaves an emergency order fully received (its quantity lowered to what arrived) asks for its review (F1-Q41).
+ * `amendedBy` is who proposed the amendment; `createdBy` writes the version (the approver, once approved).
  */
 export async function applyAmendment(
   tx: DbTransaction,
   scope: TxScope,
-  audit: AuditService,
+  deps: { audit: AuditService; approvals: ApprovalsService },
   po: PoRow,
   p: AmendmentProposal,
-  by: { approvalRequestId: string | null; createdBy: string; now: Date },
+  by: { approvalRequestId: string | null; createdBy: string; amendedBy: string; now: Date },
 ): Promise<PoRow> {
   if (po.currentVersion !== p.fromVersion) {
     throw conflict(`The purchase order is at version ${po.currentVersion}, not ${p.fromVersion}`);
@@ -272,7 +276,7 @@ export async function applyAmendment(
     approvalRequestId: by.approvalRequestId,
     createdBy: by.createdBy,
   });
-  await audit.record(tx, {
+  await deps.audit.record(tx, {
     action: 'procurement.po.amended',
     entityType: PO_AUDIT_ENTITY,
     entityId: po.id,
@@ -292,6 +296,9 @@ export async function applyAmendment(
       reason: p.reason,
     },
   });
+  if (emergencyReviewDue(po.status, status)) {
+    await requestEmergencyReview(tx, scope, deps, row, by.amendedBy);
+  }
   return row;
 }
 

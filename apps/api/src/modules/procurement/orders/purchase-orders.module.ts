@@ -27,6 +27,6 @@ export class PurchaseOrdersModule implements OnModuleInit {
 
   /** The registry throws on a duplicate, so this runs once, when the module starts. */
   onModuleInit(): void {
-    this.approvals.registerSubject(new PoAmendmentSubject(this.audit));
+    this.approvals.registerSubject(new PoAmendmentSubject(this.audit, this.approvals));
   }
 }

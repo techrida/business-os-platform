@@ -223,7 +223,7 @@ beforeAll(async () => {
   await admin.publish(EMERGENCY_REVIEW_DOCUMENT_TYPE, 1);
 
   approvals = new ApprovalsService(db, audit, notify, directory, caller, () => now);
-  approvals.registerSubject(new PoAmendmentSubject(audit, () => now));
+  approvals.registerSubject(new PoAmendmentSubject(audit, approvals, () => now));
   approvals.registerSubject(new EmergencyReviewSubject(audit));
   service = new PurchaseOrdersService(db, approvals, audit, caller, () => now);
   receiptsService = new ReceiptsService(

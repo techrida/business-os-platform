@@ -626,11 +626,19 @@ export class PurchaseOrdersService {
             });
 
             if (approvalReasons.length === 0) {
-              const row = await applyAmendment(tx, scope, this.audit, po, proposal, {
-                approvalRequestId: null,
-                createdBy: principal.userId,
-                now,
-              });
+              const row = await applyAmendment(
+                tx,
+                scope,
+                { audit: this.audit, approvals: this.approvals },
+                po,
+                proposal,
+                {
+                  approvalRequestId: null,
+                  createdBy: principal.userId,
+                  amendedBy: principal.userId,
+                  now,
+                },
+              );
               return {
                 status: 200,
                 response: {

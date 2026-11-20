@@ -201,7 +201,7 @@ beforeAll(async () => {
   await admin.publish(PR_COMMITMENT_DOCUMENT_TYPE, 1);
 
   approvals = new ApprovalsService(db, audit, notify, directory, caller, () => now);
-  approvals.registerSubject(new PoAmendmentSubject(audit, () => now));
+  approvals.registerSubject(new PoAmendmentSubject(audit, approvals, () => now));
   service = new PurchaseOrdersService(db, approvals, audit, caller, () => now);
   const numbering = new NumberingService();
   approvals.registerSubject(new PrCommitmentSubject(numbering, () => now));
