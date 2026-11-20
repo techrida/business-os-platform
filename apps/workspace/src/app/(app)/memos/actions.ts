@@ -138,7 +138,8 @@ export async function submitMemoAction(_prev: SubmitState, form: FormData): Prom
   // real outage has already stopped the session check, and "unknown" must not be read as "no changes".
   try {
     const draft = await readDraft({ orgId: session.orgId, sub: session.sub }, memoId.toLowerCase());
-    if (draft.values !== null) return { error: 'Review your changes before submitting.' };
+    if (draft.values !== null)
+      return { error: 'Your edits are not saved yet. Press Done, then submit.' };
   } catch {
     return { error: 'Your changes could not be checked right now. Try again in a moment.' };
   }

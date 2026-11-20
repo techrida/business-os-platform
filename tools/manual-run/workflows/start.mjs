@@ -6,7 +6,7 @@ import { navLayout, runMatch } from '../lib/config.mjs';
 import { realLogin, StepFailure } from '../lib/session.mjs';
 import { isPdf, pdfText, findMail } from '../lib/support.mjs';
 
-const ROLE = { 'Dev Sales': 'sales', 'Dev Accountant': 'accountant', 'Dev Finance': 'finance' };
+const ROLE = { 'Dev Sales': 'sales', 'Dev Accountant': 'accountant', 'Dev Founder': 'founder' };
 
 export function workflow(cfg) {
   const subject = `BOS Demo — service delivery approval SCR-${cfg.runKey}`;
@@ -208,7 +208,9 @@ export function workflow(cfg) {
               'the subject kept its value',
             );
             await s.typeahead('Recommended by 1', 'Dev Accountant');
-            await s.typeahead('Approved by', 'Dev Finance');
+            // "Approved by" lists only the people the Memo approver rule allows. The Sales department head cannot
+            // decide approvals, so the rule falls back to the Founder role: Dev Founder is the only choice.
+            await s.typeahead('Approved by', 'Dev Founder');
             await s.pause();
             await s.click(s.button('Next'), 'Next (saves the memo)');
             await s.page.waitForURL(/\/memos\/[0-9a-f-]{36}(\?.*)?$/, { timeout: cfg.navTimeout });
@@ -235,7 +237,7 @@ export function workflow(cfg) {
             ['department Operations', 'Operations'],
             ['author Dev Sales', 'Dev Sales'],
             ['recommender Dev Accountant', 'Dev Accountant'],
-            ['approver Dev Finance', 'Dev Finance'],
+            ['approver Dev Founder', 'Dev Founder'],
           ]) {
             s.expect(main.includes(needle), `memo shows the ${what}`);
           }
@@ -324,10 +326,10 @@ export function workflow(cfg) {
             await s.see(route, 'the approval route panel');
             const routeText = await s.text(route);
             const ia = routeText.indexOf('Dev Accountant');
-            const ifn = routeText.indexOf('Dev Finance');
+            const ifo = routeText.indexOf('Dev Founder');
             s.expect(
-              ia >= 0 && ifn > ia,
-              'route is Dev Accountant then Dev Finance',
+              ia >= 0 && ifo > ia,
+              'route is Dev Accountant then Dev Founder',
               routeText.slice(0, 200),
             );
             // The opener and the confirm are both named "Submit for approval": the opener is looked
@@ -435,13 +437,13 @@ export function workflow(cfg) {
             'step 1 Dev Accountant is Approved',
             steps[0],
           );
-          // A re-run after start-5 finds Finance's approval too: that is a later step's effect.
-          if (/Dev Finance/.test(steps[1] ?? '') && /Approved/i.test(steps[1]))
-            s.checks.push('note: Finance already approved (start-5 ran in an earlier attempt)');
+          // A re-run after start-5 finds the Founder's approval too: that is a later step's effect.
+          if (/Dev Founder/.test(steps[1] ?? '') && /Approved/i.test(steps[1]))
+            s.checks.push('note: Founder already approved (start-5 ran in an earlier attempt)');
           else
             s.expect(
-              /Dev Finance/.test(steps[1] ?? '') && !/Approved/i.test(steps[1]),
-              'step 2 waits for Dev Finance',
+              /Dev Founder/.test(steps[1] ?? '') && !/Approved/i.test(steps[1]),
+              'step 2 waits for Dev Founder',
               steps[1],
             );
         },
@@ -450,18 +452,18 @@ export function workflow(cfg) {
         id: 'start-5',
         title: 'Final approval and notification',
         async run(s) {
-          await asPersona(s, 'Dev Finance');
+          await asPersona(s, 'Dev Founder');
           // Retry-safe: an earlier attempt may already have given the final approval.
           await s.goto(`/inbox/${s.need('memoRequestId')}`, (p) =>
             p.getByRole('list', { name: 'Approval route steps' }),
           );
           const done = await routeSteps(s);
           if (done.length >= 2 && /Approved/i.test(done[1]))
-            s.checks.push('note: Finance approved in an earlier attempt of this run');
-          else await approveFromInbox(s, 'Demo memo approved by Finance.');
+            s.checks.push('note: Founder approved in an earlier attempt of this run');
+          else await approveFromInbox(s, 'Demo memo approved by Founder.');
 
           await s.caption(
-            'start-5 — Finance opens the approved memo: audit timeline and decisions',
+            'start-5 — Founder opens the approved memo: audit timeline and decisions',
           );
           await openMemo(s);
           await s.see(s.page.getByText('Approved', { exact: true }), 'memo status Approved');
@@ -479,8 +481,8 @@ export function workflow(cfg) {
             "the Accountant's decision comment",
           );
           await s.see(
-            s.page.getByText('Demo memo approved by Finance.'),
-            "Finance's decision comment",
+            s.page.getByText('Demo memo approved by Founder.'),
+            "the Founder's decision comment",
           );
           await s.pause();
 

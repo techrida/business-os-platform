@@ -86,6 +86,7 @@ type ClaimedRow = {
   body_text: string;
   body_html: string | null;
   attempts: number;
+  resend_count: number;
 };
 
 type ReclaimedRow = {
@@ -94,6 +95,7 @@ type ReclaimedRow = {
   organization_id: string;
   template: string;
   attempts: number;
+  resend_count: number;
   status: string;
 };
 
@@ -103,6 +105,8 @@ type DeadRef = {
   organizationId: string;
   template: string;
   attempts: number;
+  /** How many times the row was resent from the delivery log: each resend cycle gets its own notice. */
+  resendCount: number;
   /** The claim time this worker wrote in step 2. Absent for a reclaimed row, which is not ours to update. */
   claimedAt?: Date;
 };
@@ -154,7 +158,7 @@ export class OutboxDrainer {
               THEN 'drainer stopped while sending, no attempts left' ELSE last_error END
         WHERE status = 'sending'
           AND claimed_at < ${now.toISOString()}::timestamptz - (${STALE_CLAIM_MIN}::int * interval '1 minute')
-        RETURNING id, tenant_id, organization_id, template, attempts, status`);
+        RETURNING id, tenant_id, organization_id, template, attempts, resend_count, status`);
 
       // Step 2, claim. SKIP LOCKED makes a second drainer pass over rows the first one has locked, so each
       // due row is handed to exactly one of them.
@@ -167,7 +171,8 @@ export class OutboxDrainer {
           ORDER BY next_attempt_at
           LIMIT ${CLAIM_BATCH}
           FOR UPDATE SKIP LOCKED)
-        RETURNING id, tenant_id, organization_id, template, to_email, subject, body_text, body_html, attempts`);
+        RETURNING id, tenant_id, organization_id, template, to_email, subject, body_text, body_html, attempts,
+                  resend_count`);
 
       return {
         claimed: claimedRows.rows,
@@ -185,6 +190,7 @@ export class OutboxDrainer {
         organizationId: r.organization_id,
         template: r.template,
         attempts: r.attempts,
+        resendCount: r.resend_count,
       };
       if (await this.settle(ref, () => this.announceDead(ref, undefined))) result.dead += 1;
     }
@@ -198,6 +204,7 @@ export class OutboxDrainer {
         organizationId: row.organization_id,
         template: row.template,
         attempts: row.attempts,
+        resendCount: row.resend_count,
         claimedAt: now,
       };
       let outcome: { providerMessageId: string } | { error: string };
@@ -310,13 +317,18 @@ export class OutboxDrainer {
         await this.notify?.notifyRole(sp, 'founder', {
           title: 'Email could not be delivered',
           body: `An "${ref.template}" email failed ${ref.attempts} times and was dropped.`,
-          link: '/inbox/',
+          // The delivery log, where the Founder can resend it.
+          link: '/settings/email-delivery',
           // No last_error here: an email is read outside our control, and errors can quote hosts.
           email: {
             template: DEAD_LETTER_TEMPLATE,
             vars: { failedTemplate: ref.template, attempts: String(ref.attempts) },
           },
-          dedupeKey: `dead-letter:${ref.id}`,
+          // A resent email that dies again needs a new notice: the first one's key is already used.
+          dedupeKey:
+            ref.resendCount === 0
+              ? `dead-letter:${ref.id}`
+              : `dead-letter:${ref.id}:resend-${ref.resendCount}`,
         });
       });
     } catch (err) {

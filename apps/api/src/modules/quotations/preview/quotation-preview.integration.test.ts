@@ -52,6 +52,7 @@ import { MoneyService } from '../../../platform/settings/money.service';
 import { SettingsService } from '../../../platform/settings/settings.service';
 import { ErrorBodyFilter } from '../../../platform/tenancy/error-body.filter';
 import { ApprovalsAdminService } from '../../approvals/admin.service';
+import { asSecondPerson, SKIP_LIVE_PUBLISHER_CHECK } from '../../../../test/support/second-person';
 import { ApprovalsService } from '../../approvals/requests.service';
 import { PricingService } from '../pricing/pricing.service';
 import { QuotationPreviewController } from './quotation-preview.controller';
@@ -249,12 +250,13 @@ beforeAll(async () => {
   resetRoles();
   as(U.boss, 'founder');
   const adminSvc = new ApprovalsAdminService(db, audit, caller, () => now);
+  const adminSvcPublisher = new ApprovalsAdminService(db, audit, asSecondPerson(caller), () => now);
   await adminSvc.createWorkflow({
     key: 'quotation_version',
     name: 'Quotation',
     spec: seedSpec,
   });
-  await adminSvc.publish('quotation_version', 1);
+  await adminSvcPublisher.publish('quotation_version', 1, SKIP_LIVE_PUBLISHER_CHECK);
 
   const approvals = new ApprovalsService(db, audit, notify, directory, caller, () => now);
   const pricing = new PricingService(new MoneyService(db, new SettingsService(db)));

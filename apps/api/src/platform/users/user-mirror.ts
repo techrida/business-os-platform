@@ -11,7 +11,7 @@
 // legal entities listed in app.user_entities, and a new staff user gets one membership in the
 // tenant's default entity (the bootstrap rule). Writes run with the default entity as the withTx
 // scope, because the audit fallback for tenant-scoped rows reads bos.organization_id.
-import type { AdminUsersQuery, RoleKey } from '@bos/contracts';
+import { ACCOUNT_LOCKOUT, type AdminUsersQuery, type RoleKey } from '@bos/contracts';
 import { InjectQueue } from '@nestjs/bullmq';
 import { ConflictException, Inject, Injectable, Logger, NotFoundException } from '@nestjs/common';
 import { Queue } from 'bullmq';
@@ -20,11 +20,23 @@ import { sql } from 'drizzle-orm';
 import type { EntityMembership, ResolvedUser } from '../authz/user-directory';
 import { DB, type Db, type DbTransaction } from '../db/db.module';
 import { type TxScope, systemActor, withTx } from '../db/tx';
-import { USERS_QUEUE, USERS_SYNC_JOB, type UsersSyncData } from './users.constants';
-import { type IdpOrgRow, type ListedUsers, type UserRow, UsersStore } from './users.store';
+import {
+  lockoutPinnedCursor,
+  USERS_QUEUE,
+  USERS_SYNC_JOB,
+  type UsersSyncData,
+} from './users.constants';
+import {
+  type IdpOrgRow,
+  type ListedUsers,
+  type UserLock,
+  type UserRow,
+  UsersStore,
+} from './users.store';
 import {
   ZitadelAdminClient,
   ZitadelHttpError,
+  type MirroredStatus,
   ZitadelNotConfiguredError,
   type ZitadelUser,
 } from './zitadel-admin.client';
@@ -55,6 +67,34 @@ function sameRoles(a: readonly string[], b: readonly string[]): boolean {
 }
 
 export type { EntityMembership, ResolvedUser };
+
+/** A person an invite reached: the app row, their ZITADEL identity, and whether this invite created it. */
+export interface InvitedUser {
+  userId: string;
+  zitadelUserId: string;
+  /** False when the invite finished an earlier open invite (the identity existed before this request). */
+  created: boolean;
+}
+
+/**
+ * The legal entities whose only effective Founder is `userId`, joined for a message, or null when there is none.
+ * Per entity, not company-wide: an entity whose only Founder this is would be left with none, even when other entities
+ * still have Founders. The caller holds the access-revision lock, so two removals cannot both see the other Founder.
+ */
+export async function soleFounderEntities(
+  q: DbTransaction,
+  store: UsersStore,
+  tenantId: string,
+  userId: string,
+): Promise<string | null> {
+  const founders = await store.effectiveRoleHolders(q, tenantId, 'founder');
+  const orphaned = founders.filter(
+    (f) =>
+      f.userId === userId &&
+      !founders.some((o) => o.organizationId === f.organizationId && o.userId !== userId),
+  );
+  return orphaned.length > 0 ? orphaned.map((f) => f.entityName).join(', ') : null;
+}
 
 @Injectable()
 export class UserMirror {
@@ -253,7 +293,7 @@ export class UserMirror {
   async invite(
     tx: DbTransaction,
     b: { email: string; givenName: string; familyName: string; roles: RoleKey[] },
-  ): Promise<{ userId: string }> {
+  ): Promise<InvitedUser> {
     const scope = await this.store.txScope(tx);
     const org = await this.staffOrgOf(scope);
     let zitadelUserId: string;
@@ -280,7 +320,7 @@ export class UserMirror {
       await this.store.replaceRoles(tx, scope, userId, b.roles);
       await this.store.bumpAuthzVersion(tx, scope);
     }
-    return { userId };
+    return { userId, zitadelUserId, created: true };
   }
 
   /** ZITADEL first (it is the truth), then the mirror. The caller invalidates authz after commit. */
@@ -301,18 +341,10 @@ export class UserMirror {
       await tx.execute(
         sql`SELECT pg_advisory_xact_lock(hashtext('access_revisions:' || ${scope.tenantId}))`,
       );
-      // Per legal entity, not company-wide: an entity whose only effective Founder is this user would
-      // be left with none, even when other entities still have Founders.
-      const founders = await this.store.effectiveRoleHolders(tx, scope.tenantId, 'founder');
-      const orphaned = founders.filter(
-        (f) =>
-          f.userId === userId &&
-          !founders.some((o) => o.organizationId === f.organizationId && o.userId !== userId),
-      );
-      if (orphaned.length > 0) {
+      const entities = await soleFounderEntities(tx, this.store, scope.tenantId, userId);
+      if (entities !== null) {
         // Never the email: the address is not a name (U20a2-Q10).
         const name = user.displayName?.trim() || 'This person';
-        const entities = orphaned.map((f) => f.entityName).join(', ');
         throw new ConflictException({
           code: 'last_founder',
           message: `${name} is the only Founder of ${entities}. Make someone else a Founder there first.`,
@@ -329,21 +361,45 @@ export class UserMirror {
   /** The one write path for ZITADEL data: upsert the user, mirror the roles, bump authz on change. */
   private async apply(
     org: IdpOrgRow,
-    user: ZitadelUser,
+    read: ZitadelUser,
     roles: readonly RoleKey[],
   ): Promise<boolean> {
-    const status = user.status;
-    if (status === null) {
+    if (read.status === null) {
       // A state we cannot read must never lock anyone out or let anyone in: write nothing at all.
       this.logger.warn(
-        `users.apply skipped ${user.id}: unknown state from ZITADEL; left unchanged`,
+        `users.apply skipped ${read.id}: unknown state from ZITADEL; left unchanged`,
       );
       return false;
     }
+    let user = read;
+    let status: MirroredStatus = read.status;
     const scope = await this.entityScope(org.tenantId);
     return withTx(this.db, scope, zitadelActor(), async (tx) => {
       let changed = false;
+      let lockConfirmed = true;
       const existing = await this.store.findByZitadelId(tx, user.id, true);
+      if (
+        existing &&
+        (existing.status !== status || Boolean(existing.lockReason) !== Boolean(user.locked))
+      ) {
+        // `user` was read before this row lock. An admin status action (which holds the same lock while it changes
+        // ZITADEL) may have finished in between, and writing the older state back would undo it: a deactivated
+        // leaver active again until the next pass. So a status or lock change is re-read now, behind that lock.
+        const fresh = await this.zitadel.getUser(user.id).catch(() => null);
+        if (fresh?.status) {
+          user = fresh;
+          status = fresh.status;
+        } else {
+          // Unconfirmed: the stored lock stays as it is.
+          lockConfirmed = false;
+          if (status === 'active' || status === 'invited') {
+            // Unconfirmed, and it would let someone in: leave the row for the next pass.
+            this.logger.warn(`users.apply: could not confirm ${user.id}; status left unchanged`);
+            status = existing.status;
+          }
+        }
+      }
+      const lock = lockConfirmed ? await this.lockChange(org, existing, user) : undefined;
       let userId: string;
       if (!existing) {
         userId = await this.store.insertUser(tx, scope, {
@@ -353,6 +409,14 @@ export class UserMirror {
           displayName: user.displayName,
           status,
         });
+        if (lock) {
+          await this.store.updateUser(tx, userId, {
+            email: user.email,
+            displayName: user.displayName,
+            status,
+            lock,
+          });
+        }
         await this.bootstrap(tx, org, scope, userId);
         changed = true;
       } else {
@@ -361,12 +425,14 @@ export class UserMirror {
         if (
           existing.email !== user.email ||
           existing.displayName !== user.displayName ||
-          existing.status !== status
+          existing.status !== status ||
+          lock !== undefined
         ) {
           await this.store.updateUser(tx, userId, {
             email: user.email,
             displayName: user.displayName,
             status,
+            ...(lock === undefined ? {} : { lock }),
           });
           // A status change (disabled, re-enabled) reaches every request at once: the per-request user cache
           // is keyed on the authz version, so without a bump a disabled user stays active for up to 60 s.
@@ -381,6 +447,46 @@ export class UserMirror {
       }
       return changed;
     });
+  }
+
+  /**
+   * The lock to write for what ZITADEL says (F1-Q4), or undefined to keep the stored one. A user ZITADEL no longer
+   * holds locked has the stored lock cleared.
+   *
+   * A lock the app did not write is an `admin` lock, which never ends by itself: someone locked the person in the
+   * ZITADEL console (every lock from before the lockout policy existed is one of those), or an app lock whose
+   * database write was lost. Only a lock that can be the lockout policy at work becomes a `failed_sign_ins` lock that
+   * the lock-expiry job ends: ZITADEL changed the user (`details.changeDate`) after the policy was pinned on the
+   * org (UserLocks.ensureLockoutPolicies stores when) and within one lock window of now. That lock ends one window
+   * after the change date. Wrongly calling a console lock timed would let the person back in, so every doubt
+   * (no change date, no pin, an old change) keeps the person locked.
+   */
+  private async lockChange(
+    org: IdpOrgRow,
+    existing: UserRow | null,
+    read: ZitadelUser,
+  ): Promise<UserLock | null | undefined> {
+    const stored = existing?.lockReason ?? null;
+    if (!read.locked) return stored !== null ? null : undefined;
+    if (stored !== null) return undefined;
+    const now = new Date();
+    const changedAt = read.changedAt && read.changedAt <= now ? read.changedAt : null;
+    const pinned = await this.store.getCursor(lockoutPinnedCursor(org.zitadelOrgId));
+    const pinnedAt = pinned ? Date.parse(pinned) : Number.NaN;
+    const window = ACCOUNT_LOCKOUT.lockMinutes * 60_000;
+    if (
+      changedAt !== null &&
+      !Number.isNaN(pinnedAt) &&
+      changedAt.getTime() >= pinnedAt &&
+      now.getTime() - changedAt.getTime() < window
+    ) {
+      return {
+        reason: 'failed_sign_ins',
+        lockedAt: changedAt,
+        until: new Date(changedAt.getTime() + window),
+      };
+    }
+    return { reason: 'admin', lockedAt: changedAt ?? now, until: null };
   }
 
   /**

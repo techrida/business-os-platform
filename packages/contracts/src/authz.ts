@@ -14,6 +14,9 @@ export const PERMISSIONS = [
   'settings.finance.write',
   'approvals.definitions.read',
   'approvals.definitions.write',
+  // Publish a saved workflow draft (F1-Q11, D7): the second person after the editor. Held by Management (and the
+  // Founder); the API refuses it to whoever saved that draft.
+  'approvals.definitions.publish',
   'approvals.groups.write',
   'approvals.delegations.write',
   'approvals.requests.read',
@@ -24,6 +27,10 @@ export const PERMISSIONS = [
   // Set a user's profile picture (U12): scope `own` is "my own picture", scope `all` is "anyone's in the tenant".
   'profile.avatar.write',
   'audit.read',
+  // The email delivery log (Settings > Email delivery): see sent and failed emails, and resend a failed one.
+  // Founder only by default; migration 0128 adds the Founder rows in tenants that hold role rows.
+  'email_delivery.read',
+  'email_delivery.resend',
   'memo.create',
   'memo.read',
   'memo.update',
@@ -291,6 +298,9 @@ export const DEFAULT_ROLE_PERMISSIONS: Record<RoleKey, RoleGrants> = {
   management: {
     ...ownProfileGrants,
     ...approverGrants,
+    // Management seconds workflow changes (F1-Q11): it sees the drafts and publishes one another person saved.
+    'approvals.definitions.read': 'all',
+    'approvals.definitions.publish': 'all',
     ...crmReadAllGrants,
     ...salesRecordsReadAllGrants,
     ...salesCostReadGrants,

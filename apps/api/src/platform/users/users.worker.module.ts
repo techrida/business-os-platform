@@ -1,4 +1,4 @@
-// Users worker module (U6a): the users.sync and users.reconcile processor plus the reconcile schedule.
+// Users worker module (U6a): the users.sync, users.reconcile and users.lock-expiry processor plus their schedules.
 // Imported only by WorkerModule. It takes UsersCoreModule, not UsersModule, because UsersModule has
 // controllers and needs AppConfig and AuthzService, which the worker does not provide.
 //
@@ -9,6 +9,7 @@ import { Global, Module } from '@nestjs/common';
 
 import { AuditModule } from '../audit/audit.module';
 import { UserDirectory } from '../authz/user-directory';
+import { UserLocks } from './user-locks';
 import { UsersCoreModule } from './users.core.module';
 import { UsersProcessor, UsersReconcileScheduler } from './users.processor';
 import { UsersService } from './users.service';
@@ -19,6 +20,7 @@ import { UsersService } from './users.service';
   providers: [
     UsersProcessor,
     UsersReconcileScheduler,
+    UserLocks,
     UsersService,
     { provide: UserDirectory, useExisting: UsersService },
   ],

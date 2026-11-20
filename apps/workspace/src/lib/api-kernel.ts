@@ -15,6 +15,7 @@ import {
   InboxItemDtoSchema,
   type MemoList,
   MemoListSchema,
+  MemoApproverRuleSchema,
   MemoDtoSchema,
   MemoDirectorySchema,
   type NotificationDto,
@@ -49,6 +50,8 @@ export const MemoDetailSchema = MemoDtoSchema.extend({
   canUpdate: z.boolean().default(false),
   attachments: z.array(DocumentVersionDtoSchema),
   approval: z.object({ requestId: z.string(), status: ApprovalRequestStatusSchema }).nullable(),
+  /** Who may sign "Approved by" on this memo (F1-Q9); sent to whoever may edit a template memo. */
+  approverRule: MemoApproverRuleSchema.optional(),
 });
 export type MemoDetail = z.infer<typeof MemoDetailSchema>;
 export type Memo = z.infer<typeof MemoDtoSchema>;

@@ -2,7 +2,7 @@ import { cookies } from 'next/headers';
 
 import { ApiError, getMe } from '@/lib/api';
 import { getEnv } from '@/lib/env';
-import { completeLogin, LOGIN_COOKIE, LoginStateExpiredError } from '@/lib/oidc';
+import { completeLogin, LOGIN_COOKIE, LoginStateExpiredError, SIGNED_OUT_COOKIE } from '@/lib/oidc';
 import { createSession, setSessionCookie } from '@/lib/session';
 
 export const runtime = 'nodejs';
@@ -71,6 +71,10 @@ export async function GET(req: Request): Promise<Response> {
     });
     await setSessionCookie(id);
     jar.set(RECOVERY_COOKIE, '', { ...RECOVERY_COOKIE_OPTIONS, maxAge: 0 });
+    // Signed in again: the next login may reuse the ZITADEL session as usual.
+    if (jar.get(SIGNED_OUT_COOKIE)?.value) {
+      jar.set(SIGNED_OUT_COOKIE, '', { ...RECOVERY_COOKIE_OPTIONS, maxAge: 0 });
+    }
     // returnTo went through safeReturnTo in /auth/login and was stored server-side with the state.
     return redirectTo(returnTo);
   } catch (err) {
