@@ -4,7 +4,10 @@ import { activities, scoped } from '@bos/db';
 import { and, eq, inArray, sql } from 'drizzle-orm';
 
 import type { AuditService } from '../../platform/audit/audit.service';
+import type { Principal } from '../../platform/authz/can';
 import type { DbTransaction, TxScope } from '../../platform/db/tx';
+import type { NotifyService } from '../../platform/notify/notify.service';
+import { nameIn, personNameMap } from '../../platform/users/person-names';
 import { isPlannedSql } from './activities.types';
 
 /** The record whose follow-ups move, and why (the audit meta names it). */
@@ -106,4 +109,38 @@ export async function carryOpenFollowUps(
     });
   }
   return carried.map((row) => row.id);
+}
+
+/**
+ * `crm.assigned` (#22) to a follow-up's assignee: the bell row and the email, inside the caller's transaction (the
+ * caller nudges the queue after the commit). `link` is the page of the record it is about. One dedupe key per
+ * version, so a later hand-over notifies again.
+ */
+export async function notifyFollowUpAssigned(
+  tx: DbTransaction,
+  notify: NotifyService,
+  followUp: {
+    id: string;
+    tenantId: string;
+    subject: string;
+    version: number;
+    assigneeUserId: string | null;
+  },
+  link: string,
+  by: Principal,
+): Promise<void> {
+  const assigneeUserId = followUp.assigneeUserId;
+  if (assigneeUserId === null) return;
+  const assignerName = nameIn(await personNameMap(tx, followUp.tenantId, [by.userId]), by.userId)!;
+  await notify.notifyUser(tx, {
+    userId: assigneeUserId,
+    title: `Follow-up assigned to you: ${followUp.subject}`,
+    body: `${assignerName} assigned you the follow-up "${followUp.subject}".`,
+    link,
+    email: {
+      template: 'crm.assigned',
+      vars: { entityType: 'follow-up', entityName: followUp.subject, assignerName, linkPath: link },
+    },
+    dedupeKey: `crm.assigned:activity:${followUp.id}:${followUp.version}`,
+  });
 }
