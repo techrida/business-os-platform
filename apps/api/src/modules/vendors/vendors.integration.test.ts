@@ -395,6 +395,56 @@ describe('create', () => {
   });
 });
 
+describe('same-name warning (TR-Q12d)', () => {
+  const add = async (legalName: string) => {
+    const res = await createVendor({ legalName });
+    expect(res.status, JSON.stringify(res.body)).toBe(201);
+    return VendorDtoSchema.parse(res.body);
+  };
+  const matchesFor = async (legalName: string) => {
+    const res = await api().get('/v1/vendors/name-matches').query({ legalName });
+    expect(res.status, JSON.stringify(res.body)).toBe(200);
+    return (res.body as { matches: { id: string; legalName: string; status: string }[] }).matches;
+  };
+
+  it('lists vendors whose name matches once case, spaces, punctuation and company words are ignored', async () => {
+    as('procurement', 'procurement');
+    const tag = `Dup${randomUUID().slice(0, 6)}`;
+    const first = await add(`${tag} Hardware Traders Pvt. Ltd.`);
+    await add(`${tag} Other Supplies`);
+    const found = await matchesFor(`  ${tag.toLowerCase()}   hardware-traders private limited `);
+    expect(found).toEqual([
+      { id: first.id, legalName: `${tag} Hardware Traders Pvt. Ltd.`, status: 'draft' },
+    ]);
+    expect(await matchesFor(`${tag} Hardware`)).toEqual([]);
+    // A name with nothing to match on matches nothing; an empty name is a 400.
+    expect(await matchesFor('...')).toEqual([]);
+    expect((await api().get('/v1/vendors/name-matches').query({ legalName: ' ' })).status).toBe(
+      400,
+    );
+  });
+
+  it('still creates the namesake, and the audit trail names the vendors it shares its name with', async () => {
+    as('procurement', 'procurement');
+    const tag = `Aud${randomUUID().slice(0, 6)}`;
+    const first = await add(`${tag} Traders`);
+    const firstAudit = await rowOf<{ meta: unknown }>(
+      `SELECT meta FROM audit.audit_events WHERE tenant_id = $1 AND entity_id = $2 AND action = 'vendor.created_with_same_name'`,
+      [tenantId, first.id],
+    );
+    expect(firstAudit).toEqual([]);
+
+    const second = await add(`${tag.toUpperCase()} TRADERS PVT LTD`);
+    expect(second.status).toBe('draft');
+    const rows = await rowOf<{ meta: { sameNameVendorIds: string[] } }>(
+      `SELECT meta FROM audit.audit_events WHERE tenant_id = $1 AND entity_id = $2 AND action = 'vendor.created_with_same_name'`,
+      [tenantId, second.id],
+    );
+    expect(rows).toHaveLength(1);
+    expect(rows[0]?.meta.sameNameVendorIds).toEqual([first.id]);
+  });
+});
+
 describe('list', () => {
   const mint = async (legalName: string, overrides: Record<string, unknown> = {}) => {
     const res = await createVendor({ legalName, ...overrides });

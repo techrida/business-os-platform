@@ -1,3 +1,5 @@
+import type { VendorStatus } from '@bos/contracts';
+
 import type { FieldErrors, VendorField } from './forms';
 
 /** What the vendor create and edit actions hand back to their form. */
@@ -9,6 +11,11 @@ export interface VendorFormState {
   error?: string;
   /** The page is out of date: offer a reload instead of a retry. */
   reload?: boolean;
+  /**
+   * TR-Q12d: vendors whose legal name matches the one being added. Nothing was created; the form
+   * shows them and asks the person to confirm it is a different vendor before adding it.
+   */
+  sameName?: { id: string; legalName: string; status: VendorStatus }[];
 }
 
 /**

@@ -3,6 +3,7 @@
 // so each rule has a unit test that needs no Postgres.
 import { canTransitionVendor, type VendorKind, type VendorStatus } from '@bos/contracts';
 
+import { normalizeName } from '../customers/customers.normalize';
 import { kathmanduDay } from '../quotations/reference/reference.types';
 
 /** The table's `kind` values (0032 CHECK). They differ from the API's only for the sole proprietor. */
@@ -93,4 +94,23 @@ export function submitKycMove(
   if (current === 'draft') return { ok: true, to: 'pending_kyc' };
   if (current === 'pending_kyc') return { ok: true, to: 'under_review' };
   return { ok: false, kind: 'invalid', message: `A vendor in status ${current} cannot submit KYC` };
+}
+
+/**
+ * What two vendor names are compared on for the duplicate warning (TR-Q12d): the customers' name key (case, spaces,
+ * punctuation and company-form words such as "Pvt. Ltd." do not count), so both directories match names alike.
+ * Empty for a name with no letters or digits, which matches nothing.
+ */
+export function vendorNameKey(name: string): string {
+  return normalizeName(name);
+}
+
+/** The rows whose legal name has the same key as `name`, in their order; none when `name` has no key. */
+export function sameNameVendors<T extends { legalName: string }>(
+  name: string,
+  rows: readonly T[],
+): T[] {
+  const key = vendorNameKey(name);
+  if (key === '') return [];
+  return rows.filter((r) => vendorNameKey(r.legalName) === key);
 }

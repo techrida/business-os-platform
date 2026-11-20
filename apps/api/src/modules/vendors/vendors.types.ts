@@ -58,6 +58,22 @@ export const SubmitKycBodySchema = z.strictObject({
 export type SubmitKycBody = z.infer<typeof SubmitKycBodySchema>;
 
 /**
+ * GET /v1/vendors/name-matches?legalName=: the vendors whose legal name matches the one being added once case,
+ * spaces, punctuation and company-form words are ignored (TR-Q12d). A warning only: creating is never refused.
+ */
+export const VendorNameMatchesQuerySchema = z.strictObject({ legalName: text(200) });
+export type VendorNameMatchesQuery = z.infer<typeof VendorNameMatchesQuerySchema>;
+
+export const VendorNameMatchSchema = z.strictObject({
+  id: z.guid(),
+  legalName: z.string(),
+  status: VendorStatusSchema,
+});
+export interface VendorNameMatches {
+  matches: z.infer<typeof VendorNameMatchSchema>[];
+}
+
+/**
  * GET /v1/vendors/:id/review-readiness: whether the vendor's KYB case is submitted (or approved), the state
  * `submit-kyc` checks before pending_kyc -> under_review. The screens draw "Send for review" only when it is true.
  */

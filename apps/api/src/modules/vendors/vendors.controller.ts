@@ -32,9 +32,11 @@ import {
   SubmitKycBodySchema,
   UpdateVendorBodySchema,
   UpdateVendorContactBodySchema,
+  VendorNameMatchesQuerySchema,
   VendorReasonBodySchema,
   type VendorContactDto,
   type VendorList,
+  type VendorNameMatches,
   type VendorReviewReadiness,
 } from './vendors.types';
 
@@ -47,6 +49,17 @@ export class VendorsController {
   @Can('vendor.read')
   list(@Query() query: Record<string, unknown>): Promise<VendorList> {
     return this.vendors.list(parseOr400(ListVendorsQuerySchema, query));
+  }
+
+  /**
+   * 200 `{ matches }`: the vendors whose legal name matches `?legalName=` once case, spaces, punctuation and
+   * company-form words are ignored. For the add form's warning (TR-Q12d); a create is never refused for a name.
+   * Declared before `:id` so the static path is not read as an id.
+   */
+  @Get('name-matches')
+  @Can('vendor.read')
+  nameMatches(@Query() query: Record<string, unknown>): Promise<VendorNameMatches> {
+    return this.vendors.nameMatches(parseOr400(VendorNameMatchesQuerySchema, query));
   }
 
   /** 201 with the new VendorDto (status draft). 409 `duplicate_pan` for a PAN the tenant already holds. */

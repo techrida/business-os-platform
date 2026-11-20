@@ -177,6 +177,29 @@ export function getVendor(session: Session, id: string): Promise<VendorDto> {
   return call(session, `/v1/vendors/${seg(id)}`, VendorDtoSchema);
 }
 
+const VendorNameMatchesSchema = z.strictObject({
+  matches: z.array(
+    z.strictObject({ id: z.guid(), legalName: z.string(), status: VendorStatusSchema }),
+  ),
+});
+export type VendorNameMatch = z.infer<typeof VendorNameMatchesSchema>['matches'][number];
+
+/**
+ * `GET /v1/vendors/name-matches?legalName=`: the vendors whose legal name matches once case, spaces,
+ * punctuation and company-form words are ignored. A warning for the add form; the API never refuses
+ * a create for a name.
+ */
+export function findVendorNameMatches(
+  session: Session,
+  legalName: string,
+): Promise<VendorNameMatch[]> {
+  return call(
+    session,
+    withQuery('/v1/vendors/name-matches', { legalName }),
+    VendorNameMatchesSchema,
+  ).then((r) => r.matches);
+}
+
 const VendorReviewReadinessSchema = z.strictObject({ kybSubmitted: z.boolean() });
 
 /**

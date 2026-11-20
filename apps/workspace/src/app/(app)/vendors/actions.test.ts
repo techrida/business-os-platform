@@ -18,6 +18,7 @@ vi.mock('next/navigation', () => ({
 const api = vi.hoisted(() => ({
   createVendor: vi.fn(),
   createVendorContact: vi.fn(),
+  findVendorNameMatches: vi.fn(),
   getVendor: vi.fn(),
   grantVendorPortalAccess: vi.fn(),
   proposeBankAccount: vi.fn(),
@@ -69,6 +70,7 @@ const start = { key: KEY, errors: {} };
 beforeEach(() => {
   vi.clearAllMocks();
   session.roles = ['procurement'];
+  api.findVendorNameMatches.mockResolvedValue([]);
 });
 
 describe('createVendorAction', () => {
@@ -87,6 +89,48 @@ describe('createVendorAction', () => {
         country: 'NP',
       },
       KEY,
+    );
+  });
+
+  // TR-Q12d: warn but allow.
+  const namesake = { id: ACCOUNT, legalName: 'HIMAL TRADERS PVT LTD', status: 'blocked' as const };
+
+  it('shows the vendors with the same name and creates nothing until the person confirms', async () => {
+    api.findVendorNameMatches.mockResolvedValue([namesake]);
+    const r = await createVendorAction(start, form(vendorForm));
+    expect(api.findVendorNameMatches).toHaveBeenCalledWith(
+      expect.anything(),
+      'Himal Traders Pvt. Ltd.',
+    );
+    expect(r.sameName).toEqual([namesake]);
+    expect(r.error).toBeUndefined();
+    // Nothing was sent, so the same key goes with the confirmed submit.
+    expect(r.key).toBe(KEY);
+    expect(api.createVendor).not.toHaveBeenCalled();
+  });
+
+  it('adds the vendor once the person confirms the namesakes they were shown', async () => {
+    api.findVendorNameMatches.mockResolvedValue([namesake]);
+    api.createVendor.mockResolvedValue({ id: ID });
+    await expect(
+      createVendorAction(start, form({ ...vendorForm, sameNameConfirmed: ACCOUNT })),
+    ).rejects.toThrow(`redirect /vendors/${ID}?created=1`);
+    expect(api.createVendor).toHaveBeenCalledOnce();
+  });
+
+  it('warns again about a namesake the person has not seen, even after confirming another', async () => {
+    const another = { id: DOC, legalName: 'Himal Traders', status: 'draft' as const };
+    api.findVendorNameMatches.mockResolvedValue([namesake, another]);
+    const r = await createVendorAction(start, form({ ...vendorForm, sameNameConfirmed: ACCOUNT }));
+    expect(r.sameName).toEqual([namesake, another]);
+    expect(api.createVendor).not.toHaveBeenCalled();
+  });
+
+  it('still adds the vendor when the name check cannot be read (it is a warning, not a gate)', async () => {
+    api.findVendorNameMatches.mockRejectedValue(apiError(503, 'unavailable'));
+    api.createVendor.mockResolvedValue({ id: ID });
+    await expect(createVendorAction(start, form(vendorForm))).rejects.toThrow(
+      `redirect /vendors/${ID}?created=1`,
     );
   });
 
