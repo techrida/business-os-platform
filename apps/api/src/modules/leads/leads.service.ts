@@ -592,8 +592,8 @@ export class LeadsService {
    * The people the caller may hand a lead to (the owner select, and the follow-up assignee select): exactly whom
    * create and PATCH accept, so the select never offers a 400. That is the assignment rule's targets under the
    * entity's stored rule (`assignableTargets`), among the active staff of the acting entity, kept only when their
-   * live grants read leads. `create` lists whom a new lead may be started for: for Finance, Accountant and PMO the
-   * Sales users, not themselves.
+   * live grants read and write leads (Management reads every lead and owns none). `create` lists whom a new lead
+   * may be started for: for Finance, Accountant and PMO the Sales users, not themselves.
    */
   async owners(context: AssignmentContext = 'reassign'): Promise<LeadOwnerOption[]> {
     const { scope, actor, principal } = this.caller.current();
@@ -676,7 +676,10 @@ export class LeadsService {
     return and(...filters);
   }
 
-  /** How a lead's owner is checked in this transaction: the leads area's stored rule, and lead read for the target. */
+  /**
+   * How a lead's owner is checked in this transaction: the leads area's stored rule, lead read for the target, and
+   * lead write for an owner (a role that never edits leads never owns one).
+   */
   private assignmentCheck(
     tx: DbTransaction,
     scope: TxScope,
@@ -687,6 +690,7 @@ export class LeadsService {
       context,
       rule: storedAssignmentRule(tx, scope, 'leads'),
       subjectRead: 'crm.lead.read',
+      ownerWrite: 'crm.lead.write',
     };
   }
 
