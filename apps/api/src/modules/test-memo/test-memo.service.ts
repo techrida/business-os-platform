@@ -429,23 +429,24 @@ export class TestMemoService implements OnModuleInit {
 
   /**
    * The company, its departments and its people, without the letterhead: what a save and a submit check signers
-   * against, so neither reads the logo for nothing.
+   * against, so neither reads the logo for nothing. Inside a transaction pass it as `q`: a read on the pool there
+   * takes a second connection while the transaction holds the first, which can stall the pool under load.
    */
-  private async people(): Promise<MemoDirectory> {
+  private async people(q: Q = this.db): Promise<MemoDirectory> {
     const { scope, principal } = this.caller.current();
     this.authz.assert('memo.create');
     if (principal.orgKind !== 'staff' || principal.status !== 'active')
       throw new ForbiddenException();
-    const [entity] = await this.db
+    const [entity] = await q
       .select()
       .from(organizations)
       .where(scoped(scope).where(organizations));
     if (!entity) throw new ForbiddenException();
-    const depts = await this.db
+    const depts = await q
       .select({ id: departments.id, name: departments.name })
       .from(departments)
       .where(scoped(scope).where(departments));
-    const people = await this.db
+    const people = await q
       .select({
         userId: users.id,
         displayName: users.displayName,
@@ -477,6 +478,7 @@ export class TestMemoService implements OnModuleInit {
     const approvers = await this.approverIds(
       scope,
       named.map((p) => p.userId),
+      q,
     );
     return {
       organizationId: entity.id,
@@ -501,9 +503,13 @@ export class TestMemoService implements OnModuleInit {
    * `approvals.requests.act` grant in the live role_permissions rows (RoleCache). That is the check the decide
    * route's @Can runs, so a person named here can actually reach the decision.
    */
-  private async approverIds(scope: TxScope, ids: readonly string[]): Promise<Set<string>> {
+  private async approverIds(
+    scope: TxScope,
+    ids: readonly string[],
+    q: Q = this.db,
+  ): Promise<Set<string>> {
     if (ids.length === 0) return new Set();
-    const rows = await this.db
+    const rows = await q
       .select({
         userId: userRoles.userId,
         roleKey: userRoles.roleKey,
@@ -914,8 +920,8 @@ export class TestMemoService implements OnModuleInit {
 
       if (row.template) {
         // Internal correspondence: no money, no thresholds. The route is the people the author named.
-        const directory = await this.people();
-        const selected = [...row.template.recommenders, row.template.approvedBy];
+        const directory = await this.people(tx);
+        const selected =[...row.template.recommenders, row.template.approvedBy];
         if (selected.some((p) => !directory.people.some((active) => active.userId === p.userId))) {
           throw new ConflictException('A selected approver is no longer active in this company');
         }
