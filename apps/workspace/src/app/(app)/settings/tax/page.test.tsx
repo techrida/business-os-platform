@@ -15,6 +15,7 @@ vi.mock('next/navigation', () => ({
   },
   usePathname: () => '/settings/tax',
 }));
+vi.mock('next/cache', () => ({ revalidatePath: vi.fn() }));
 const getSession = vi.fn<() => Promise<Session | null>>();
 vi.mock('@/lib/session', () => ({ getSession: () => getSession() }));
 const getMe =
@@ -29,8 +30,11 @@ const listWithholdingCodes = vi.fn<() => unknown>();
 vi.mock('@/lib/api-withholding-codes', () => ({
   listWithholdingCodes: () => listWithholdingCodes(),
 }));
+const admin = vi.hoisted(() => ({ getSetting: vi.fn(), putSetting: vi.fn() }));
+vi.mock('@/lib/api-admin', () => admin);
 
 const { default: TaxPage } = await import('./page');
+const { saveSettingsPageAction } = await import('../_components/actions');
 
 /** A staff session whose roles disagree with the live grants `/v1/me` reports for its token. */
 function persona(token: string, roles: string[], ...permissions: string[]): void {
@@ -50,6 +54,7 @@ beforeEach(() => {
   vi.clearAllMocks();
   listTaxCodes.mockResolvedValue([{ id: 'v13', label: 'VAT 13%', code: 'VAT13', rateBp: 1300 }]);
   listWithholdingCodes.mockResolvedValue([]);
+  admin.getSetting.mockResolvedValue({ key: 'tax.vat_rate', value: '13', version: 2 });
 });
 
 describe('the Tax page by live grant', () => {
@@ -76,5 +81,52 @@ describe('the Tax page by live grant', () => {
     await expect(render()).rejects.toThrow('REDIRECT:/settings/currencies');
     persona('rates-only-finance', ['finance'], 'settings.fx_rate.write');
     await expect(render()).rejects.toThrow('REDIRECT:/settings/currencies');
+  });
+});
+
+// F1-Q48: CARD_KEYS.tax names tax.vat_rate, but the page never rendered it, so nobody could change it.
+describe('the default VAT rate card', () => {
+  it('shows the saved rate as a typed percent field to a finance-settings grant', async () => {
+    persona('accountant-live', ['sales'], 'settings.finance.write');
+    admin.getSetting.mockResolvedValue({ key: 'tax.vat_rate', value: '12.5', version: 4 });
+    const html = await render();
+    expect(admin.getSetting).toHaveBeenCalledWith(expect.anything(), 'tax.vat_rate');
+    expect(html).toContain('Default VAT rate (%)');
+    const input = html.match(/<input[^>]*name="v:tax\.vat_rate"[^>]*>/)?.[0] ?? '';
+    expect(input).toContain('type="number"');
+    expect(input).toContain('value="12.5"');
+  });
+
+  it('keeps the codes when the rate cannot be read', async () => {
+    persona('accountant-live', ['sales'], 'settings.finance.write');
+    admin.getSetting.mockRejectedValue(new Error('down'));
+    const html = await render();
+    expect(html).not.toContain('Default VAT rate (%)');
+    expect(html).toContain('VAT 13%');
+  });
+});
+
+describe('saving the default VAT rate by live grant', () => {
+  const change = {
+    key: 'tax.vat_rate' as const,
+    value: { kind: 'text' as const, value: '12.5' },
+    expectedVersion: 2,
+  };
+
+  it('writes it for a finance-settings grant held by a role without it by default', async () => {
+    persona('accountant-live', ['sales'], 'settings.finance.write');
+    admin.putSetting.mockResolvedValue({ version: 3 });
+    await expect(saveSettingsPageAction('tax', [change])).resolves.toMatchObject({
+      status: 'ok',
+    });
+    expect(admin.putSetting).toHaveBeenCalledWith(expect.anything(), 'tax.vat_rate', '12.5', 2);
+  });
+
+  it('refuses a Finance role whose live grants hold only exchange rates, before any write', async () => {
+    persona('rates-only-finance', ['finance'], 'settings.fx_rate.write');
+    await expect(saveSettingsPageAction('tax', [change])).rejects.toThrow(
+      'REDIRECT:/settings/currencies',
+    );
+    expect(admin.putSetting).not.toHaveBeenCalled();
   });
 });
