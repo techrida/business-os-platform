@@ -51,6 +51,8 @@ export type ErrorCode =
   | 'account_exists'
   | 'no_verified_bank_account'
   | 'callback_evidence_not_clean'
+  // TR-Q12e: a record refuses a file the virus scan found infected (any attach point, one code).
+  | 'document_infected'
   | 'NO_ELIGIBLE_APPROVER'
   | 'APPROVER_NOT_ELIGIBLE'
   | 'evidence_policy_unmet'
@@ -178,6 +180,7 @@ const GENERIC_MESSAGE: Record<ErrorCode, string> = {
   account_exists: 'This vendor already has this bank account',
   no_verified_bank_account: 'The vendor has no verified bank account',
   callback_evidence_not_clean: 'The call-back evidence has not passed the virus scan',
+  document_infected: 'A virus was found in this file. Remove it or upload a clean copy.',
   NO_ELIGIBLE_APPROVER: 'No one is eligible to approve this; an administrator has been told',
   APPROVER_NOT_ELIGIBLE: 'The chosen approver cannot approve this',
   evidence_policy_unmet: 'The evidence given does not meet the policy',
@@ -339,6 +342,8 @@ const CONFLICT_CODES: readonly ErrorCode[] = [
   'account_exists',
   'no_verified_bank_account',
   'callback_evidence_not_clean',
+  // TR-Q12e: a bill, evidence, quotation, KYC or portal submission names a file the scan found infected.
+  'document_infected',
   // P4 sourcing: an invited vendor is not approved or has no account in the entity, or a recommendation is
   // short of the minimum number of quotations without a reason (AD13).
   'VENDOR_NOT_APPROVED',
