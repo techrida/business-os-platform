@@ -498,6 +498,13 @@
       "when": 1783000000092,
       "tag": "0092_lead_creator_backfill",
       "breakpoints": true
+    },
+    {
+      "idx": 75,
+      "version": "7",
+      "when": 1783000000123,
+      "tag": "0123_finance_accountant_read_all_crm",
+      "breakpoints": true
     }
   ]
 }
