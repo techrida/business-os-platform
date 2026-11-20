@@ -4,7 +4,13 @@ import { ApiError } from '@/lib/api';
 import { __resetEnvForTests } from '@/lib/env';
 import type { Session } from '@/lib/session';
 
-import { getQuotation, getQuotationsSummary, listQuotations, listQuotationsPage } from './api';
+import {
+  getEvidence,
+  getQuotation,
+  getQuotationsSummary,
+  listQuotations,
+  listQuotationsPage,
+} from './api';
 
 // `server-only` throws outside the react-server condition, which Vitest does not use.
 vi.mock('server-only', () => ({}));
@@ -277,5 +283,55 @@ describe('getQuotation', () => {
     const { statusHistory: _omitted, ...broken } = detail;
     fetchMock.mockResolvedValue(reply(200, broken));
     await expect(getQuotation(session, ID_A)).rejects.toMatchObject({ status: 502 });
+  });
+});
+
+describe('getEvidence (F1-Q28)', () => {
+  const evidence = {
+    quotationId: ID_A,
+    versionId: ID_B,
+    status: 'pending',
+    policy: 'both',
+    missing: ['purchase_order'],
+    acceptance: {
+      actorKind: 'portal_contact',
+      decidedOn: '2026-11-20',
+      acceptedByName: 'Jules',
+      evidenceKinds: ['contract'],
+      evidenceDocumentIds: [],
+    },
+    confirmation: null,
+    can: { confirm: true },
+  };
+
+  it('reads the evidence of the version from its own endpoint', async () => {
+    fetchMock.mockResolvedValue(reply(200, evidence));
+    const got = await getEvidence(session, ID_A, ID_B);
+    expect(calledUrl().pathname).toBe(`/v1/quotations/${ID_A}/versions/${ID_B}/evidence`);
+    expect(got).toMatchObject({
+      status: 'pending',
+      missing: ['purchase_order'],
+      acceptance: { evidenceKinds: ['contract'] },
+      can: { confirm: true },
+    });
+  });
+
+  it('leaves out a kind of evidence it does not know, instead of failing the page', async () => {
+    fetchMock.mockResolvedValue(
+      reply(200, {
+        ...evidence,
+        acceptance: { ...evidence.acceptance, evidenceKinds: ['contract', 'fax'] },
+      }),
+    );
+    expect((await getEvidence(session, ID_A, ID_B))?.acceptance.evidenceKinds).toEqual([
+      'contract',
+    ]);
+  });
+
+  it('is null when there is no acceptance to show (404) or the API has no evidence step', async () => {
+    fetchMock.mockResolvedValue(reply(404, { error: { code: 'not_found' } }));
+    expect(await getEvidence(session, ID_A, ID_B)).toBeNull();
+    fetchMock.mockResolvedValue(reply(200, { unexpected: true }));
+    expect(await getEvidence(session, ID_A, ID_B)).toBeNull();
   });
 });
