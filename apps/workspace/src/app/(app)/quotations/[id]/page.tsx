@@ -480,14 +480,6 @@ export default async function QuotationDetailPage({
                   </span>
                 </li>
               ) : null}
-              {order ? (
-                <li>
-                  <Icon name="briefcase" size={18} />
-                  <Link href={`/sales-orders/${encodeURIComponent(order.id)}`}>
-                    {order.number === null ? 'Sales order' : `Sales order ${order.number}`}
-                  </Link>
-                </li>
-              ) : null}
             </ul>
           </Panel>
         </div>
