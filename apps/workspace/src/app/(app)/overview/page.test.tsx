@@ -202,6 +202,7 @@ describe('overview page', () => {
   });
 
   it('words an activity as who did what, and names no one it cannot resolve', async () => {
+    mocks.granted = new Set(['crm.lead.read']);
     let html = await render();
     expect(html).toContain('Mina Rai logged a call');
     expect(html).toContain('href="/leads/22222222-2222-4222-8222-222222222222"');
@@ -213,6 +214,23 @@ describe('overview page', () => {
 
     mocks.listActivitiesPage.mockRejectedValue(new Error('403'));
     expect(await render()).not.toContain('Recent activities');
+  });
+
+  it('leaves out Recent activities for staff who may read no activity subject', async () => {
+    // The API answers an empty page, not 403, to a caller without any CRM, customer or quotation read.
+    mocks.listActivitiesPage.mockResolvedValue({ items: [], total: 0 });
+    let html = await render();
+    expect(html).not.toContain('Recent activities');
+    expect(html).not.toContain('No activity yet');
+
+    // Live grants win: one subject read brings the panel (and its honest empty state) back.
+    mocks.getMe.mockResolvedValue({
+      userId: ME,
+      permissions: [{ permission: 'customer.read' }],
+    });
+    html = await render();
+    expect(html).toContain('Recent activities');
+    expect(html).toContain('No activity yet');
   });
 
   it('shows notification titles in words, without the raw type or id fragment', async () => {
