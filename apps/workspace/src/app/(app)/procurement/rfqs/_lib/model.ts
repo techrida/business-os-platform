@@ -1,11 +1,9 @@
 import type { PrStatus, RfqStatus } from '@bos/contracts';
 
-import { hasPermission } from '@/components/p2/customers/permissions';
-
 import type { BadgeTone } from '../../requests/_lib/model';
 
 /**
- * What the RFQ screens show and offer, decided from the RFQ's status and the person's roles. Pure.
+ * What the RFQ screens show and offer, decided from the RFQ's status and the person's live grants. Pure.
  * The API still decides every call (deny by default); this only keeps buttons away from people and
  * statuses that would be refused.
  */
@@ -31,15 +29,15 @@ export interface RfqGrants {
   sourcing: boolean;
 }
 
-export type RfqGrantSource = readonly string[] | ((permission: string) => boolean);
+/**
+ * The live-grant predicate from `getPermissionCheck`. Role keys are not accepted: a grant changed in
+ * Settings > Access must show here the way the API enforces it.
+ */
+export type RfqGrantSource = (permission: string) => boolean;
 
-function allows(source: RfqGrantSource, permission: string): boolean {
-  return typeof source === 'function' ? source(permission) : hasPermission(source, permission);
-}
-
-/** The sourcing permission from live grants (`getPermissionCheck`) or role defaults. Server-side only. */
+/** The sourcing permission from live grants. Server-side only. */
 export function rfqGrants(source: RfqGrantSource): RfqGrants {
-  return { sourcing: allows(source, 'procurement.sourcing') };
+  return { sourcing: source('procurement.sourcing') };
 }
 
 /** "Start RFQ" on a purchase request: department-approved, no RFQ yet, and the person may source. */
