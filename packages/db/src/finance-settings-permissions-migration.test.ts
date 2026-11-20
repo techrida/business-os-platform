@@ -195,6 +195,8 @@ beforeAll(async () => {
       ['finance', 'settings.fx_rate.write', 'all', true],
       ['finance', 'settings.finance.write', 'all', true],
       ['accountant', 'settings.finance.write', 'all', true],
+      ['founder', 'settings.fx_rate.write', 'all', true],
+      ['founder', 'settings.finance.write', 'all', true],
     ],
     5,
   );
@@ -213,11 +215,13 @@ afterAll(async () => {
 });
 
 describe('0120 finance settings permissions', () => {
-  it('gives Finance exchange rates and finance settings, and Accountant finance settings, at scope all, seeded', async () => {
+  it('gives Finance exchange rates and finance settings, Accountant finance settings, and the Founder both, at scope all, seeded', async () => {
     expect(await settingsGrantsOf(tenantA.tenantId)).toEqual([
       'accountant settings.finance.write all true',
       'finance settings.finance.write all true',
       'finance settings.fx_rate.write all true',
+      'founder settings.finance.write all true',
+      'founder settings.fx_rate.write all true',
     ]);
   });
 
@@ -226,6 +230,8 @@ describe('0120 finance settings permissions', () => {
       'accountant settings.finance.write own false',
       'finance settings.finance.write all true',
       'finance settings.fx_rate.write department false',
+      'founder settings.finance.write all true',
+      'founder settings.fx_rate.write all true',
     ]);
   });
 
@@ -267,7 +273,7 @@ describe('0120 finance settings permissions', () => {
         WHERE tenant_id = $1 AND entity_type = 'role_permissions' AND actor_id = 'system:migration-0120'`,
       [tenantA.tenantId],
     );
-    expect(Number(rows[0]!.n)).toBe(3);
+    expect(Number(rows[0]!.n)).toBe(5);
   });
 
   it('changes nothing and bumps nothing when it runs again', async () => {
