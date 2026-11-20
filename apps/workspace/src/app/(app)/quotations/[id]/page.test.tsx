@@ -331,6 +331,25 @@ describe('quotation detail page', () => {
     expect(await render()).not.toContain('Awaiting confirmation');
   });
 
+  it('shows the draft sales order created from the accepted revision, waiting for Accounts (F1-Q25)', async () => {
+    const quote = detail();
+    quote.quotation.status = 'accepted';
+    quote.versions[1]!.status = 'accepted';
+    mocks.getQuotation.mockResolvedValue(quote);
+    mocks.listSalesOrders.mockResolvedValue([
+      { id: CUSTOMER, number: 'SO-2082-0007', status: 'draft' },
+    ]);
+    const html = await render();
+    const panel = html.slice(html.indexOf('After acceptance'));
+    expect(panel).toContain(`href="/sales-orders/${CUSTOMER}"`);
+    expect(panel).toContain('SO-2082-0007');
+    expect(panel).toContain('Draft');
+    expect(panel).toContain('Accounts confirms it before billing starts.');
+
+    mocks.listSalesOrders.mockResolvedValue([]);
+    expect(await render()).toContain('Not created yet');
+  });
+
   it('lists the superseded revision in the dialog, with its own total', async () => {
     const html = await render();
     expect(html).toContain('Superseded');
