@@ -91,7 +91,6 @@ export const QUOTATION_ACTIONS = [
   'submit',
   'resubmit',
   'return',
-  'withdraw',
   'reject',
   'approve',
   'send',
@@ -133,7 +132,6 @@ export const QUOTATION_TRANSITIONS: readonly QuotationTransition[] = [
   edge('submit', 'draft', 'submitted'),
   edge('resubmit', 'returned', 'submitted'),
   edge('return', 'submitted', 'returned', true),
-  edge('withdraw', 'submitted', 'returned'),
   edge('reject', 'submitted', 'rejected', true),
   edge('approve', 'submitted', 'approved'),
   edge('send', 'approved', 'sent'),
@@ -350,13 +348,6 @@ export const SubmitQuotationBodySchema = z.strictObject({
   approverUserId: z.guid().optional(),
 });
 export type SubmitQuotationBody = z.infer<typeof SubmitQuotationBodySchema>;
-
-/** The creator pulls a Submitted version back to Returned to improve it. */
-export const WithdrawQuotationBodySchema = z.strictObject({
-  reason: text(1000).optional(),
-  expectedVersion,
-});
-export type WithdrawQuotationBody = z.infer<typeof WithdrawQuotationBodySchema>;
 
 export const ReviseQuotationBodySchema = z.strictObject({
   reason: text(1000),
