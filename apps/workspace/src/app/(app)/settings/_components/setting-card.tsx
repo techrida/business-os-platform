@@ -63,6 +63,22 @@ function ResetDefaultIcon() {
 }
 
 /**
+ * Moves focus to the first control of the setting `button` belongs to. Undo and Reset remove their own
+ * button once the value is back, so without this focus would fall to the page body (U23-Q5). The
+ * control stays mounted, so it is focused before React re-renders.
+ */
+function focusSettingControl(button: HTMLElement): void {
+  const item = button.closest('[data-setting]');
+  if (item === null) return;
+  const control = Array.from(
+    item.querySelectorAll<HTMLElement>(
+      'input:not([type="hidden"]):not([disabled]), select:not([disabled]), textarea:not([disabled]), button:not([disabled])',
+    ),
+  ).find((element) => element.closest('[data-field-actions]') === null);
+  control?.focus();
+}
+
+/**
  * Per-setting Undo (restores saved value, shown only when dirty) and Reset to default (stages the
  * built-in default in the form, shown only when current value differs from default).
  * Always rendered as siblings of `<label>`, never inside it, so inputs keep their exact name.
@@ -84,14 +100,17 @@ function FieldActions({
 }) {
   if (!dirty && atDefault) return null;
   return (
-    <span className={[styles.fieldActions, className].filter(Boolean).join(' ')}>
+    <span className={[styles.fieldActions, className].filter(Boolean).join(' ')} data-field-actions>
       {dirty ? (
         <button
           type="button"
           className={styles.iconButton}
           aria-label={`Undo change to ${spec.label}`}
           title="Undo change"
-          onClick={onUndo}
+          onClick={(event) => {
+            focusSettingControl(event.currentTarget);
+            onUndo();
+          }}
         >
           <Icon name="undo-2" size={16} />
         </button>
@@ -102,7 +121,10 @@ function FieldActions({
           className={styles.iconButton}
           aria-label={`Reset ${spec.label} to default`}
           title={`Back to default (${spec.defaultText})`}
-          onClick={onResetToDefault}
+          onClick={(event) => {
+            focusSettingControl(event.currentTarget);
+            onResetToDefault();
+          }}
         >
           <ResetDefaultIcon />
         </button>
@@ -165,6 +187,7 @@ function SettingCardPanel({
           return (
             <div
               key={spec.key}
+              data-setting={spec.key}
               className={[
                 isGroup ? styles.wide : styles.fieldItem,
                 !isGroup && actionCount > 0 ? styles.hasActions : undefined,
