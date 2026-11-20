@@ -453,3 +453,69 @@ describe('UserMirror.resolve on an accepted invite', () => {
     expect(queue.added).toEqual([{ name: 'users.sync', data: { zitadelUserId: 'z-new' } }]);
   });
 });
+
+describe('UserMirror status changes are re-read behind the row lock (F1-Q5)', () => {
+  /** getUser answers `stale` once (the read before the row lock), then whatever ZITADEL now holds. */
+  const staleOnce = (stale: ReturnType<typeof zUser>) => {
+    const real = zitadel.getUser.bind(zitadel);
+    let served = false;
+    vi.spyOn(zitadel, 'getUser').mockImplementation((id: string) => {
+      if (served) return real(id);
+      served = true;
+      return Promise.resolve(stale);
+    });
+  };
+
+  beforeEach(async () => {
+    zitadel.users.set('z1', zUser('z1'));
+    await mirror.syncUser('z1');
+  });
+
+  it('does not write back an active state read before an admin deactivated the user (old code: active again)', async () => {
+    // The admin's action: ZITADEL and the mirror both say inactive now.
+    zitadel.users.set('z1', zUser('z1', { status: 'inactive' }));
+    store.users[0]!.status = 'inactive';
+    staleOnce(zUser('z1'));
+
+    await mirror.syncUser('z1');
+
+    expect(store.users[0]?.status).toBe('inactive');
+  });
+
+  it('does not write back an inactive state read before an admin reactivated the user', async () => {
+    store.users[0]!.status = 'active';
+    staleOnce(zUser('z1', { status: 'inactive' }));
+
+    await mirror.syncUser('z1');
+
+    expect(store.users[0]?.status).toBe('active');
+  });
+
+  it('leaves a change that would let someone in for the next pass when the re-read fails', async () => {
+    store.users[0]!.status = 'inactive';
+    let calls = 0;
+    vi.spyOn(zitadel, 'getUser').mockImplementation(() => {
+      calls += 1;
+      return calls === 1 ? Promise.resolve(zUser('z1')) : Promise.reject(new Error('ZITADEL 503'));
+    });
+    vi.spyOn(Logger.prototype, 'warn').mockImplementation(() => undefined);
+
+    await mirror.syncUser('z1');
+
+    expect(store.users[0]?.status).toBe('inactive');
+  });
+
+  it('still applies a change that takes access away when the re-read fails', async () => {
+    let calls = 0;
+    vi.spyOn(zitadel, 'getUser').mockImplementation(() => {
+      calls += 1;
+      return calls === 1
+        ? Promise.resolve(zUser('z1', { status: 'inactive' }))
+        : Promise.reject(new Error('ZITADEL 503'));
+    });
+
+    await mirror.syncUser('z1');
+
+    expect(store.users[0]?.status).toBe('inactive');
+  });
+});

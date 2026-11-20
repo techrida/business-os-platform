@@ -81,7 +81,7 @@ export class FakeUsersStore extends UsersStore {
   findByZitadelId(_q: Queryable, z: string) {
     return Promise.resolve(this.users.find((u) => u.zitadelUserId === z) ?? null);
   }
-  findById(_q: Queryable, s: TxScope, id: string) {
+  findById(_q: Queryable, s: TxScope, id: string, _lock?: boolean) {
     return Promise.resolve(
       this.users.find((u) => u.id === id && u.tenantId === s.tenantId) ?? null,
     );
