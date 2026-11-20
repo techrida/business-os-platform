@@ -201,15 +201,36 @@ describe('P1 kernel settings', () => {
     expect(list).toEqual(['PORTAL_PUBLIC_URL: must be an http(s) URL']);
   });
 
-  it('keeps POSTAL_WEBHOOK_SECRET optional in production, and refuses a short one without echoing it', () => {
+  it('keeps POSTAL_WEBHOOK_SECRET optional in production, treats blank as unset, and refuses a short one without echoing it', () => {
     expect(loadAppConfig(prod).POSTAL_WEBHOOK_SECRET).toBeUndefined();
+    for (const blank of ['', '   ', ' '.repeat(40)]) {
+      expect(loadAppConfig({ ...base, POSTAL_WEBHOOK_SECRET: blank }).POSTAL_WEBHOOK_SECRET).toBeUndefined();
+      expect(loadAppConfig({ ...prod, POSTAL_WEBHOOK_SECRET: blank }).POSTAL_WEBHOOK_SECRET).toBeUndefined();
+    }
     const secret = 'p'.repeat(32);
     expect(loadAppConfig({ ...prod, POSTAL_WEBHOOK_SECRET: secret }).POSTAL_WEBHOOK_SECRET).toBe(
       secret,
     );
-    const list = problems(() => loadAppConfig({ ...base, POSTAL_WEBHOOK_SECRET: 'short-postal' }));
-    expect(list.map((p) => p.split(':')[0])).toEqual(['POSTAL_WEBHOOK_SECRET']);
-    expect(list.join('\n')).not.toContain('short-postal');
+    for (const env of [base, prod]) {
+      const list = problems(() => loadAppConfig({ ...env, POSTAL_WEBHOOK_SECRET: 'short-postal' }));
+      expect(list.map((p) => p.split(':')[0])).toEqual(['POSTAL_WEBHOOK_SECRET']);
+      expect(list.join('\n')).not.toContain('short-postal');
+    }
+  });
+
+  it('treats blank DOCS_LINK_SECRET and ZITADEL_ACTIONS_SIGNING_KEY as unset, and still requires DOCS_LINK_SECRET in production', () => {
+    for (const blank of ['', '   ']) {
+      expect(loadAppConfig({ ...base, DOCS_LINK_SECRET: blank }).DOCS_LINK_SECRET).toBeUndefined();
+      expect(
+        loadAppConfig({ ...base, ZITADEL_ACTIONS_SIGNING_KEY: blank }).ZITADEL_ACTIONS_SIGNING_KEY,
+      ).toBeUndefined();
+      expect(
+        loadAppConfig({ ...prod, ZITADEL_ACTIONS_SIGNING_KEY: blank }).ZITADEL_ACTIONS_SIGNING_KEY,
+      ).toBeUndefined();
+      expect(problems(() => loadAppConfig({ ...prod, DOCS_LINK_SECRET: blank }))).toEqual([
+        'DOCS_LINK_SECRET: is required in production',
+      ]);
+    }
   });
 
   it('reads explicit values and coerces CLAMD_PORT', () => {
