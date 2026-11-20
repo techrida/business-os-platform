@@ -116,6 +116,11 @@ export class FakeUsersStore extends UsersStore {
     }
     return Promise.resolve();
   }
+  postponeLock(_tx: DbTransaction, id: string, until: Date) {
+    const row = this.users.find((x) => x.id === id && x.lockReason === 'failed_sign_ins');
+    if (row) row.lockedUntil = until.toISOString();
+    return Promise.resolve();
+  }
   expiredLocks(_q: Queryable, now: Date, limit: number): Promise<ExpiredLock[]> {
     return Promise.resolve(
       this.users

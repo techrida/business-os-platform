@@ -154,6 +154,8 @@ export abstract class UsersStore {
   abstract notInactiveInIdpOrg(q: Queryable, org: IdpOrgRow): Promise<UserRow[]>;
   /** Up to `limit` `failed_sign_ins` locks that ended by `now`, across tenants, oldest first (the lock-expiry job). */
   abstract expiredLocks(q: Queryable, now: Date, limit: number): Promise<ExpiredLock[]>;
+  /** Moves a `failed_sign_ins` lock's end to `until` (the lock-expiry job's retry after a failed unlock). */
+  abstract postponeLock(tx: DbTransaction, userId: string, until: Date): Promise<void>;
 
   abstract membershipsOf(q: Queryable, tenantId: string, userId: string): Promise<MembershipRow[]>;
   /**
@@ -365,6 +367,13 @@ export class SqlUsersStore extends UsersStore {
       sql`UPDATE app.users SET email = ${u.email}, display_name = ${u.displayName},
             status = ${u.status}, last_synced_at = now(), updated_at = now() ${lockSet}
           WHERE id = ${userId}`,
+    );
+  }
+
+  async postponeLock(tx: DbTransaction, userId: string, until: Date): Promise<void> {
+    await tx.execute(
+      sql`UPDATE app.users SET locked_until = ${until.toISOString()}::timestamptz, updated_at = now()
+          WHERE id = ${userId} AND lock_reason = 'failed_sign_ins'`,
     );
   }
 
