@@ -813,3 +813,72 @@ describe("D46: an activity carries its assignee's and author's display names and
     expect(dto(logged.body)).toMatchObject({ assigneeUserId: null, assigneeName: null });
   });
 });
+
+describe('D45: a follow-up planned while its lead changes owner', () => {
+  it('waits for the owner change in flight and goes to the new owner, never to the old one unmoved', async () => {
+    h.as('boss', 'founder');
+    const lead = await seedLead();
+    expect(lead.ownerUserId).toBe(h.users.boss);
+
+    // The owner change stops inside its transaction, after it locked the lead, changed the owner and moved the old
+    // owner's follow-ups: its notice to the new owner is the last thing before the commit.
+    let markHeld!: () => void;
+    const held = new Promise<void>((resolve) => {
+      markHeld = resolve;
+    });
+    let release!: () => void;
+    const released = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const notifyUser = h.notify.notifyUser.bind(h.notify);
+    const spy = vi.spyOn(h.notify, 'notifyUser').mockImplementationOnce(async (...args) => {
+      markHeld();
+      await released;
+      return notifyUser(...args);
+    });
+    try {
+      const transfer = leadsService.update(lead.id, {
+        ownerUserId: h.users.salesA,
+        expectedVersion: 1,
+      });
+      await Promise.race([
+        held,
+        transfer.then(() => {
+          throw new Error('the owner change committed without telling the new owner');
+        }),
+      ]);
+      let settled = false;
+      const creating = post({
+        kind: 'call',
+        subject: 'Call back',
+        leadId: lead.id,
+        dueAt: DUE_1,
+      }).then((res) => {
+        settled = true;
+        return res;
+      });
+      try {
+        // Wait for a signal, not a clock: either the follow-up's statement is blocked on a lock, or it finished.
+        let blocked: string | undefined;
+        while (blocked === undefined && !settled) {
+          const { rows } = await h.appPool.query(
+            `SELECT query FROM pg_stat_activity
+              WHERE datname = current_database() AND wait_event_type = 'Lock'`,
+          );
+          blocked = (rows as { query: string }[])[0]?.query;
+          if (blocked === undefined) await new Promise((resolve) => setImmediate(resolve));
+        }
+        expect(settled, 'the follow-up did not wait for the owner change').toBe(false);
+        expect(blocked).toMatch(/for share/i);
+      } finally {
+        release();
+      }
+      expect((await transfer).ownerUserId).toBe(h.users.salesA);
+      const res = await creating;
+      expect(res.status, JSON.stringify(res.body)).toBe(201);
+      expect(dto(res.body).assigneeUserId).toBe(h.users.salesA);
+    } finally {
+      spy.mockRestore();
+    }
+  });
+});
