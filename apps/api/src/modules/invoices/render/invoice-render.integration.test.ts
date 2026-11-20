@@ -18,6 +18,8 @@
 //   * candidates: issued tax invoices and proformas without a live document, never drafts or rendered ones;
 //   * two renders at once give one document and one print; Gotenberg 500 and a draft leave no document and no print;
 //   * an orphan generated document older than 1 h is soft-removed by a sweep, a younger one is kept;
+//   * a stored PDF is never removed when its print row fails: the write is retried once, and a second failure leaves
+//     the PDF live with no failure counted and no second original;
 //   * GET /v1/invoices/:id/document: a link for the clean PDF right after the render; 404 for a draft, for another entity
 //     and for a random id; 403 for a portal caller.
 //
@@ -85,6 +87,7 @@ import {
   InvoiceRenderSweeper,
   ORPHAN_AFTER_MS,
   type RenderCandidate,
+  type RenderStore,
 } from './invoice-render.sweeper';
 
 vi.setConfig({ testTimeout: 60_000, hookTimeout: 180_000 });
@@ -955,36 +958,62 @@ describe('a render that keeps failing (R4c2: TR-Q4, F1-Q13)', () => {
     ]);
   });
 
-  it('removes a stored PDF whose print 1 could not be recorded, so the next try prints and freezes print 1', async () => {
-    const scope = await newScope();
-    const inv = await seedInvoice(scope);
-    let clock = new Date();
-    const noPrintLog = {
-      ...store,
-      recordPrint: vi.fn().mockRejectedValue(new Error('print log down')),
-    };
+  /** A worker over the real store whose print log write fails `failures` times, then goes to the real table. */
+  const flakyPrintLog = (failures: number) => {
+    let left = failures;
+    const recordPrint = vi.fn<RenderStore['recordPrint']>((...args) => {
+      if (left > 0) {
+        left -= 1;
+        return Promise.reject(new Error('print log down'));
+      }
+      return store.recordPrint(...args);
+    });
     const worker = new InvoiceRenderSweeper(
-      noPrintLog,
+      { ...store, recordPrint },
       runTx,
       documents,
       settings,
       { htmlToPdf: vi.fn().mockResolvedValue(PDF) },
-      () => clock,
+      () => new Date(),
       NO_LOGOS,
       renderAudit,
     );
-    expect(await worker.renderOne(inv)).toBe('failed');
-    const [doc] = await documentRows(inv.invoiceId);
-    expect(doc?.status).toBe('clean');
-    expect(doc?.removed_at).not.toBeNull();
-    expect(await printFormats(inv.invoiceId)).toEqual([]);
-    const row = await failureRow(inv.invoiceId);
-    expect(row).toMatchObject({ attempts: 1 });
-    clock = new Date((row?.next_attempt_at ?? new Date()).getTime() + 1);
-    expect(ids(await store.candidates(clock, 1_000))).toContain(inv.invoiceId);
-    expect(await sweeper.renderOne(inv)).toBe('rendered');
+    return { worker, recordPrint };
+  };
+
+  it('keeps a stored PDF whose first print 1 write failed and records print 1 with its format on the retry', async () => {
+    const scope = await newScope();
+    const inv = await seedInvoice(scope);
+    const { worker, recordPrint } = flakyPrintLog(1);
+    expect(await worker.renderOne(inv)).toBe('rendered');
+    expect(recordPrint).toHaveBeenCalledTimes(2);
+    const docs = await documentRows(inv.invoiceId);
+    expect(docs).toHaveLength(1);
+    expect(docs[0]?.status).toBe('clean');
+    expect(docs[0]?.removed_at).toBeNull();
     const prints = await printFormats(inv.invoiceId);
     expect(prints.map((p) => p.print_no)).toEqual([1]);
     expect(prints[0]?.render_format).not.toBeNull();
+    expect(await failureRow(inv.invoiceId)).toBeUndefined();
+  });
+
+  it('keeps a stored PDF live when print 1 cannot be recorded twice, and never renders a second original', async () => {
+    const scope = await newScope();
+    const inv = await seedInvoice(scope);
+    const { worker, recordPrint } = flakyPrintLog(2);
+    expect(await worker.renderOne(inv)).toBe('rendered');
+    expect(recordPrint).toHaveBeenCalledTimes(2);
+    const [doc] = await documentRows(inv.invoiceId);
+    expect(doc?.status).toBe('clean');
+    expect(doc?.removed_at).toBeNull();
+    // Known limitation: no print row, and no failure counted either.
+    expect(await printFormats(inv.invoiceId)).toEqual([]);
+    expect(await failureRow(inv.invoiceId)).toBeUndefined();
+    // The live PDF keeps the invoice out of the candidates, so no later sweep prints another original.
+    const farFuture = new Date(Date.now() + 365 * 24 * 60 * 60_000);
+    expect(ids(await store.candidates(farFuture, 1_000))).not.toContain(inv.invoiceId);
+    expect(await sweeper.renderOne(inv)).toBe('skipped');
+    expect(await documentRows(inv.invoiceId)).toHaveLength(1);
+    expect(await printFormats(inv.invoiceId)).toEqual([]);
   });
 });
