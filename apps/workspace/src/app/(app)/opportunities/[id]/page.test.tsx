@@ -460,7 +460,12 @@ describe('opportunity stage action buttons, timeline and read-only hygiene', () 
       ['Resume'],
       'This opportunity is on hold. Use Resume in the header to return it to Negotiation.',
     ],
-    ['lost', [] as OpportunityDto['stage'][], [], 'This opportunity is lost. Reopening needs reopen access.'],
+    [
+      'lost',
+      [] as OpportunityDto['stage'][],
+      [],
+      'This opportunity is lost. Reopening needs reopen access.',
+    ],
     [
       'lost',
       ['qualified'] as OpportunityDto['stage'][],
