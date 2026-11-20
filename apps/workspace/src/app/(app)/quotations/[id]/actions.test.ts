@@ -232,6 +232,7 @@ describe('cancelAction', () => {
     expect(JSON.parse(init.body as string)).toEqual({
       reason: 'Customer chose another vendor',
       expectedVersion: 4,
+      versionId: V,
     });
     expect(mocks.revalidatePath).toHaveBeenCalledWith(`/quotations/${Q}`);
   });
