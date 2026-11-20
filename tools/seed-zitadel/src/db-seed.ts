@@ -609,13 +609,7 @@ async function seedDevPeopleAndVendor(
      FROM app.payment_terms pt
      WHERE pt.tenant_id = $1::uuid AND pt.code = $5
      ON CONFLICT (tenant_id, organization_id, party_id) DO NOTHING`,
-    [
-      scope.tenantId,
-      scope.organizationId,
-      customerPartyId,
-      customerOwnerId,
-      DEV_CUSTOMER_TERM,
-    ],
+    [scope.tenantId, scope.organizationId, customerPartyId, customerOwnerId, DEV_CUSTOMER_TERM],
   );
   changed += customerAccount.rowCount ?? 0;
   return changed;

@@ -204,8 +204,12 @@ describe('P1 kernel settings', () => {
   it('keeps POSTAL_WEBHOOK_SECRET optional in production, treats blank as unset, and refuses a short one without echoing it', () => {
     expect(loadAppConfig(prod).POSTAL_WEBHOOK_SECRET).toBeUndefined();
     for (const blank of ['', '   ', ' '.repeat(40)]) {
-      expect(loadAppConfig({ ...base, POSTAL_WEBHOOK_SECRET: blank }).POSTAL_WEBHOOK_SECRET).toBeUndefined();
-      expect(loadAppConfig({ ...prod, POSTAL_WEBHOOK_SECRET: blank }).POSTAL_WEBHOOK_SECRET).toBeUndefined();
+      expect(
+        loadAppConfig({ ...base, POSTAL_WEBHOOK_SECRET: blank }).POSTAL_WEBHOOK_SECRET,
+      ).toBeUndefined();
+      expect(
+        loadAppConfig({ ...prod, POSTAL_WEBHOOK_SECRET: blank }).POSTAL_WEBHOOK_SECRET,
+      ).toBeUndefined();
     }
     const secret = 'p'.repeat(32);
     expect(loadAppConfig({ ...prod, POSTAL_WEBHOOK_SECRET: secret }).POSTAL_WEBHOOK_SECRET).toBe(
