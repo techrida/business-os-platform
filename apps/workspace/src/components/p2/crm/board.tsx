@@ -58,7 +58,9 @@ export function Board({
     setOpenId(dragged.id);
     setAnnounce(`Choose Move to put ${dragged.title} in ${column.label}. On Hold needs a reason.`);
     const el = refs.current.get(dragged.id);
-    requestAnimationFrame(() => el?.querySelector('select')?.focus());
+    requestAnimationFrame(() =>
+      el?.querySelector<HTMLElement>('button[aria-haspopup="listbox"]')?.focus(),
+    );
   }
 
   return (

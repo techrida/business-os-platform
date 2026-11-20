@@ -110,13 +110,15 @@ export function addOptionFor(
 export const selectableIds = (flat: readonly ComboboxOption[]): string[] =>
   flat.filter((o) => o.disabled !== true).map((o) => o.id);
 
-/** ArrowDown / ArrowUp over the selectable ids, wrapping at both ends. From no active option, Down goes first and Up goes last. */
+/** ArrowDown / ArrowUp / Home / End over the selectable ids. Arrows wrap at both ends; from no active option, Down/Home goes first and Up/End goes last. */
 export function moveActive(
   ids: readonly string[],
   activeId: string | null,
-  key: 'ArrowDown' | 'ArrowUp',
+  key: 'ArrowDown' | 'ArrowUp' | 'Home' | 'End',
 ): string | null {
   if (ids.length === 0) return null;
+  if (key === 'Home') return ids[0]!;
+  if (key === 'End') return ids[ids.length - 1]!;
   const index = activeId === null ? -1 : ids.indexOf(activeId);
   if (index === -1) return key === 'ArrowDown' ? ids[0]! : ids[ids.length - 1]!;
   const step = key === 'ArrowDown' ? 1 : -1;

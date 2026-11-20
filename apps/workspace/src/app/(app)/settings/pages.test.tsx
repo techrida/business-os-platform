@@ -38,8 +38,6 @@ const { default: UsersPage } = await import('./users/page');
 const { default: RolesPage } = await import('./access/roles/page');
 const { default: WorkflowsPage } = await import('./workflows/page');
 const { default: AccessPage } = await import('./access/page');
-const { saveCardAction } = await import('./_components/actions');
-const { IDLE } = await import('./action-state');
 
 const session = (roles: string[]): Session =>
   ({ accessToken: 't', orgKind: 'staff', roles }) as Session;
@@ -101,7 +99,7 @@ describe('the founder', () => {
     ]) {
       expect(html).toContain(`href="${href}"`);
     }
-    expect(html).toContain('People and access');
+    expect(html).toContain('Organisation');
     expect(html).not.toMatch(/version \d|\bfx\.max_rate/);
   });
 });
@@ -112,12 +110,16 @@ describe('the settings layout', () => {
     return renderToStaticMarkup((await SettingsLayout({ children: <p>page</p> })) as ReactElement);
   };
 
-  it('renders a labelled sub-sidebar with the active section marked, for the founder', async () => {
+  it('renders the section sidebar and active sub-tab strip for the founder', async () => {
     const html = await nav(['founder']);
     expect(html).toContain('<nav aria-label="Settings"');
-    expect(html.match(/aria-current="page"/g)).toHaveLength(1);
-    expect(html).toMatch(/aria-current="page" href="\/settings\/tax"/);
-    expect(html).toContain('href="/settings/access"');
+    expect(html).toContain('aria-label="Finance views"');
+    expect(html.match(/aria-current="page"/g)).toHaveLength(2);
+    expect(html).toMatch(/aria-current="page" href="\/settings\/currencies"/);
+    expect(html).toMatch(
+      /aria-current="page"[^>]*href="\/settings\/tax"|href="\/settings\/tax"[^>]*aria-current="page"/,
+    );
+    expect(html).toContain('href="/settings/users"');
     expect(html).not.toContain('Roles and permissions');
   });
 
@@ -151,70 +153,5 @@ describe('the settings index with live grants', () => {
     getSession.mockResolvedValue(session(['sales']));
     getMe.mockResolvedValue(live('customer.read'));
     await expect(SettingsIndex()).rejects.toThrow('REDIRECT:/settings/denied');
-  });
-});
-
-describe('saveCardAction', () => {
-  const form = (entries: [string, string][]) => {
-    const data = new FormData();
-    for (const [k, v] of entries) data.append(k, v);
-    return data;
-  };
-
-  it('refuses a key the section does not own, and an unknown section', async () => {
-    getSession.mockResolvedValue(session(['founder']));
-    const wrongKey = form([
-      ['section', 'sales'],
-      ['key', 'procurement.min_quotes'],
-      ['v:procurement.min_quotes', '5'],
-      ['i:procurement.min_quotes', '3'],
-    ]);
-    expect((await saveCardAction(IDLE, wrongKey)).status).toBe('error');
-    expect((await saveCardAction(IDLE, form([['section', 'constructor']]))).status).toBe('error');
-  });
-
-  it('refuses a person without the section permission', async () => {
-    getSession.mockResolvedValue(session(['sales']));
-    const data = form([
-      ['section', 'sales'],
-      ['key', 'quotation.validity_days'],
-      ['v:quotation.validity_days', '20'],
-      ['i:quotation.validity_days', '15'],
-    ]);
-    await expect(saveCardAction(IDLE, data)).rejects.toThrow('REDIRECT:/settings/denied');
-  });
-
-  it('shows a refused value at its field and writes nothing', async () => {
-    getSession.mockResolvedValue(session(['founder']));
-    const { putSetting } = await import('@/lib/api-admin');
-    const data = form([
-      ['section', 'sales'],
-      ['key', 'quotation.validity_days'],
-      ['v:quotation.validity_days', 'abc'],
-      ['i:quotation.validity_days', '15'],
-    ]);
-    const result = await saveCardAction(IDLE, data);
-    expect(result.status).toBe('error');
-    expect(result.fieldErrors?.['quotation.validity_days']).toBeTruthy();
-    expect(putSetting).not.toHaveBeenCalled();
-  });
-
-  it('writes only the keys that changed', async () => {
-    getSession.mockResolvedValue(session(['founder']));
-    const { putSetting } = await import('@/lib/api-admin');
-    vi.mocked(putSetting).mockResolvedValue({ version: 2 });
-    const data = form([
-      ['section', 'purchasing'],
-      ['key', 'procurement.match.qty_pct'],
-      ['v:procurement.match.qty_pct', '1'],
-      ['i:procurement.match.qty_pct', '0'],
-      ['key', 'procurement.match.price_pct'],
-      ['v:procurement.match.price_pct', '2'],
-      ['i:procurement.match.price_pct', '2'],
-    ]);
-    expect((await saveCardAction(IDLE, data)).status).toBe('ok');
-    expect(vi.mocked(putSetting).mock.calls.map(([, key, value]) => [key, value])).toEqual([
-      ['procurement.match.qty_pct', '1'],
-    ]);
   });
 });

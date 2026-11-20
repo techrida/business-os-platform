@@ -1,5 +1,5 @@
-/* Settings cards on the shared tokens only. One card is one decision with one Save. Forms stay at
-   760px; tables use the full width. Phone: fields stack, Save is full width. */
+/* Settings cards on the shared tokens only. Forms stay at 760px; tables use the full width.
+   One sticky page-level action bar saves or discards all changed settings on the page. */
 
 .column {
   display: grid;
@@ -9,6 +9,63 @@
 
 .narrow {
   max-width: 760px;
+}
+
+/* ---- page form and sticky action bar ----------------------------------------------------------- */
+
+.pageForm {
+  display: grid;
+  gap: var(--spacing-section);
+  min-width: 0;
+}
+
+.actionBar {
+  position: sticky;
+  inset-block-end: 0;
+  z-index: 10;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 12px 16px;
+  border: var(--border-width-thin) solid var(--border-default);
+  border-radius: var(--radius-xl);
+  background: var(--surface-elevated);
+  box-shadow: var(--shadow-section);
+}
+
+.actionMeta {
+  margin: 0;
+  color: var(--text-secondary);
+  font-size: var(--font-size-body-small);
+  line-height: var(--line-height-body-small);
+}
+
+.actionButtons {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+@media (max-width: 639.98px) {
+  .actionBar {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr);
+    gap: 10px;
+  }
+
+  .actionButtons {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  /* Primary Save sits first when stacked on narrow screens. */
+  .actionButtons > :last-child {
+    order: -1;
+  }
 }
 
 /* ---- card body --------------------------------------------------------------------------------- */
@@ -27,10 +84,92 @@
 
 .wide {
   grid-column: 1 / -1;
+  min-width: 0;
 }
 
-/* The undo icon (D32) sits at the end of the label line, level with the label text. The label keeps
-   room for it so a long label wraps before it instead of running underneath. */
+/* Per-setting Undo and Reset-to-default icon buttons sit beside the label line as siblings, never
+   inside `<label>`. Labels reserve right padding based on how many buttons are visible. */
+.fieldItem {
+  position: relative;
+  min-width: 0;
+}
+
+.fieldItem[data-actions='1'] > div > label {
+  padding-inline-end: 36px;
+  overflow-wrap: anywhere;
+}
+
+.fieldItem[data-actions='2'] > div > label {
+  padding-inline-end: 72px;
+  overflow-wrap: anywhere;
+}
+
+.fieldActions {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  flex: none;
+}
+
+.fieldActionsOverlay {
+  position: absolute;
+  top: -6px;
+  right: 0;
+}
+
+.iconButton {
+  display: inline-grid;
+  place-items: center;
+  flex: none;
+  width: 32px;
+  height: 32px;
+  padding: 0;
+  border: 0;
+  border-radius: var(--radius-lg);
+  background: transparent;
+  color: var(--text-secondary);
+  cursor: pointer;
+  transition:
+    background-color 120ms ease,
+    color 120ms ease;
+}
+
+.iconButton:hover {
+  background: var(--interactive-hover);
+  color: var(--text-primary);
+}
+
+.iconButton:focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: 2px;
+}
+
+@media (pointer: coarse) {
+  .fieldItem[data-actions='1'] > div > label {
+    padding-inline-end: 48px;
+  }
+
+  .fieldItem[data-actions='2'] > div > label {
+    padding-inline-end: 96px;
+  }
+
+  .fieldActionsOverlay {
+    top: -18px;
+  }
+
+  .iconButton {
+    width: 44px;
+    height: 44px;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .iconButton {
+    transition: none;
+  }
+}
+
+/* Kept for sibling settings screens (company-editor, format cards, fx-form) that import this sheet. */
 .resettable {
   position: relative;
 }
@@ -65,7 +204,7 @@
   align-items: end; /* the rate field has a hint line above its control; keep the controls level */
 }
 
-/* Save sits at the end of the card. Under 640px it takes the full width. */
+/* Save sits at the end of standalone cards (company, formats, fx). Under 640px it takes full width. */
 .foot {
   display: flex;
   flex-wrap: wrap;
@@ -118,24 +257,31 @@
 
 /* ---- typed controls ---------------------------------------------------------------------------- */
 
-.fieldset {
+.group {
   display: grid;
   gap: 8px;
   min-width: 0;
-  margin: 0;
-  padding: 0;
-  border: 0;
 }
 
-.legend {
-  padding: 0;
+.groupHeader {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  min-height: 24px;
+}
+
+.groupLabel {
+  margin: 0;
   color: var(--text-primary);
   font-size: var(--font-size-body-small);
   font-weight: var(--font-weight-medium);
   line-height: var(--line-height-body-small);
+  overflow-wrap: anywhere;
 }
 
 .help {
+  margin: 0;
   color: var(--text-secondary);
   font-size: var(--font-size-caption);
   line-height: var(--line-height-caption);
@@ -165,8 +311,11 @@
 }
 
 .fieldError {
-  color: var(--error-700);
+  margin: 0;
+  color: var(--status-error);
   font-size: var(--font-size-caption);
+  font-weight: var(--font-weight-medium);
+  line-height: var(--line-height-caption);
 }
 
 /* ---- billing schedule rows --------------------------------------------------------------------- */
@@ -187,13 +336,15 @@
 }
 
 .scheduleTotal {
+  margin: 0;
   color: var(--text-secondary);
   font-size: var(--font-size-body-small);
   font-variant-numeric: tabular-nums;
 }
 
 .scheduleTotal[data-off='true'] {
-  color: var(--error-700);
+  color: var(--status-error);
+  font-weight: var(--font-weight-medium);
 }
 
 @media (max-width: 639.98px) {

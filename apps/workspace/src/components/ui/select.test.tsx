@@ -5,6 +5,11 @@ import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import { choose, mountForm, submit } from '@/test/form-interactions';
 import { Dialog } from './dialog';
 import { Field, Select } from './field';
+import {
+  DROPDOWN_CONTAINER_PADDING,
+  DROPDOWN_POPOVER_OFFSET,
+  dropdownPopoverProps,
+} from './popover-container';
 import type { SelectChangeEvent, SelectHandle } from './select';
 
 let mounted: Awaited<ReturnType<typeof mountForm>>;
@@ -389,4 +394,152 @@ it('marks the trigger invalid for assistive technology', async () => {
     </form>,
   );
   expect(mounted.container.querySelector('button')!.getAttribute('aria-invalid')).toBe('true');
+});
+
+it('exports the shared placement contract (bottom start, 8px offset, flip, 8px padding)', () => {
+  expect(DROPDOWN_POPOVER_OFFSET).toBe(8);
+  expect(DROPDOWN_CONTAINER_PADDING).toBe(8);
+  expect(dropdownPopoverProps(undefined)).toEqual({
+    placement: 'bottom start',
+    offset: 8,
+    shouldFlip: true,
+    containerPadding: 8,
+  });
+  const host = document.createElement('div');
+  expect(dropdownPopoverProps(host)).toEqual({
+    placement: 'bottom start',
+    offset: 8,
+    shouldFlip: true,
+    containerPadding: 8,
+    UNSTABLE_portalContainer: host,
+    style: { position: 'absolute' },
+  });
+});
+
+it('places the panel below the trigger when room exists and flips above near the viewport bottom', async () => {
+  const origViewport = window.visualViewport;
+  const origClientHeight = Object.getOwnPropertyDescriptor(
+    document.documentElement,
+    'clientHeight',
+  );
+  const origClientWidth = Object.getOwnPropertyDescriptor(document.documentElement, 'clientWidth');
+  const origOffsetHeight = Object.getOwnPropertyDescriptor(HTMLElement.prototype, 'offsetHeight');
+  const origOffsetWidth = Object.getOwnPropertyDescriptor(HTMLElement.prototype, 'offsetWidth');
+
+  Object.defineProperty(window, 'visualViewport', {
+    configurable: true,
+    value: {
+      width: 1440,
+      height: 900,
+      offsetTop: 0,
+      offsetLeft: 0,
+      pageTop: 0,
+      pageLeft: 0,
+      scale: 1,
+      addEventListener() {},
+      removeEventListener() {},
+    },
+  });
+  Object.defineProperty(document.documentElement, 'clientHeight', {
+    configurable: true,
+    value: 900,
+  });
+  Object.defineProperty(document.documentElement, 'clientWidth', {
+    configurable: true,
+    value: 1440,
+  });
+  Object.defineProperty(HTMLElement.prototype, 'offsetHeight', {
+    configurable: true,
+    get(this: HTMLElement) {
+      return this.getAttribute('data-trigger') === 'Select' ? 160 : 42;
+    },
+  });
+  Object.defineProperty(HTMLElement.prototype, 'offsetWidth', {
+    configurable: true,
+    get() {
+      return 240;
+    },
+  });
+
+  try {
+    // Case 1: room below trigger -> opens below with 8px offset and 8px viewport padding.
+    mounted = await mountForm(
+      <form>
+        <Select name="stage" aria-label="Stage" defaultValue="req">
+          <option value="req">Requirement Received</option>
+          <option value="prop">Proposal Sent</option>
+          <option value="hold">On Hold (needs a reason)</option>
+        </Select>
+      </form>,
+    );
+    const triggerBelow = mounted.container.querySelector('button')!;
+    triggerBelow.getBoundingClientRect = () => new DOMRect(100, 200, 240, 42);
+    await act(() => Promise.resolve(triggerBelow.click()));
+    const popoverBelow = document.querySelector<HTMLElement>('[data-trigger="Select"]')!;
+    expect(popoverBelow.getAttribute('data-placement')).toBe('bottom');
+    expect(popoverBelow.style.top).toBe('250px');
+    expect(popoverBelow.style.maxHeight).toBe('642px');
+
+    // Case 2: near bottom of viewport -> flips above the trigger with 8px offset and 8px padding.
+    await mounted.unmount();
+    mounted = await mountForm(
+      <form>
+        <Select name="stage" aria-label="Stage" defaultValue="req">
+          <option value="req">Requirement Received</option>
+          <option value="prop">Proposal Sent</option>
+          <option value="hold">On Hold (needs a reason)</option>
+        </Select>
+      </form>,
+    );
+    const triggerBottom = mounted.container.querySelector('button')!;
+    triggerBottom.getBoundingClientRect = () => new DOMRect(100, 800, 240, 42);
+    await act(() => Promise.resolve(triggerBottom.click()));
+    const popoverAbove = document.querySelector<HTMLElement>('[data-trigger="Select"]')!;
+    expect(popoverAbove.getAttribute('data-placement')).toBe('top');
+    expect(popoverAbove.style.bottom).toBe('108px');
+    expect(popoverAbove.style.maxHeight).toBe('784px');
+  } finally {
+    Object.defineProperty(window, 'visualViewport', { configurable: true, value: origViewport });
+    if (origClientHeight) {
+      Object.defineProperty(document.documentElement, 'clientHeight', origClientHeight);
+    }
+    if (origClientWidth) {
+      Object.defineProperty(document.documentElement, 'clientWidth', origClientWidth);
+    }
+    if (origOffsetHeight) {
+      Object.defineProperty(HTMLElement.prototype, 'offsetHeight', origOffsetHeight);
+    }
+    if (origOffsetWidth) {
+      Object.defineProperty(HTMLElement.prototype, 'offsetWidth', origOffsetWidth);
+    }
+  }
+});
+
+it('supports Home, End and typeahead keyboard navigation', async () => {
+  mounted = await mountForm(
+    <form>
+      <Select name="kind" aria-label="Kind" defaultValue="a">
+        <option value="a">Alpha</option>
+        <option value="b">Beta</option>
+        <option value="c">Gamma</option>
+      </Select>
+    </form>,
+  );
+  const trigger = mounted.container.querySelector('button')!;
+  trigger.focus();
+  const press = (target: Element, key: string) =>
+    act(() => {
+      target.dispatchEvent(new KeyboardEvent('keydown', { key, bubbles: true, cancelable: true }));
+      target.dispatchEvent(new KeyboardEvent('keyup', { key, bubbles: true, cancelable: true }));
+      return Promise.resolve();
+    });
+  await press(trigger, 'ArrowDown');
+  await press(document.activeElement!, 'End');
+  expect(document.activeElement?.textContent?.trim()).toBe('Gamma');
+  await press(document.activeElement!, 'Home');
+  expect(document.activeElement?.textContent?.trim()).toBe('Alpha');
+  await press(document.activeElement!, 'b');
+  expect(document.activeElement?.textContent?.trim()).toBe('Beta');
+  await press(document.activeElement!, 'Enter');
+  expect(submitted(mounted.container)).toEqual({ kind: 'b' });
 });

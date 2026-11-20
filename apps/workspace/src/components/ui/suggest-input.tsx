@@ -12,7 +12,7 @@ import {
 
 import { Icon } from './icon';
 import fieldStyles from './field.module.css';
-import { usePopoverContainer } from './popover-container';
+import { dropdownPopoverProps, usePopoverContainer } from './popover-container';
 import styles from './select.module.css';
 import { useFormReset } from './use-form-reset';
 
@@ -127,12 +127,7 @@ export function SuggestInput({
         {...(ariaInvalid === true || ariaInvalid === 'true' ? { 'aria-invalid': true } : {})}
         {...(autoComplete ? { autoComplete } : {})}
       />
-      <Popover
-        className={styles.popover ?? ''}
-        offset={8}
-        placement="bottom start"
-        {...(container ? { UNSTABLE_portalContainer: container, boundaryElement: container } : {})}
-      >
+      <Popover className={styles.popover ?? ''} {...dropdownPopoverProps(container)}>
         <ListBox className={styles.list ?? ''}>
           {(item: { id: string }) => (
             <ListBoxItem id={item.id} textValue={item.id} className={styles.item ?? ''}>

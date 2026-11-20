@@ -18,6 +18,7 @@ import {
   Popover,
 } from 'react-aria-components';
 
+import { dropdownPopoverProps, usePopoverContainer } from './popover-container';
 import styles from './date-picker.module.css';
 
 /** `YYYY-MM-DD` to a calendar date, or null for an empty or malformed value. */
@@ -97,6 +98,8 @@ export function DatePicker({
   popoverContainer,
   ...aria
 }: DatePickerProps) {
+  const contextContainer = usePopoverContainer();
+  const container = popoverContainer ?? contextContainer;
   const isInvalid = invalid === true || ariaInvalid === true || ariaInvalid === 'true';
   const minValue = toCalendarDate(min);
   const maxValue = toCalendarDate(max);
@@ -148,17 +151,7 @@ export function DatePicker({
           </svg>
         </Button>
       </Group>
-      <Popover
-        placement="bottom start"
-        offset={8}
-        className={styles.popover ?? ''}
-        {...(popoverContainer
-          ? {
-              UNSTABLE_portalContainer: popoverContainer,
-              boundaryElement: popoverContainer,
-            }
-          : {})}
-      >
+      <Popover className={styles.popover ?? ''} {...dropdownPopoverProps(container)}>
         <Dialog className={styles.dialog ?? ''}>
           <Calendar className={styles.calendar ?? ''}>
             <header className={styles.calendarHeader ?? ''}>

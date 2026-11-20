@@ -13,8 +13,9 @@ import { requireSession } from './guard';
 
 export const metadata: Metadata = { title: 'Settings · Business OS' };
 
-// The index of every section the person may open. On a phone it is the menu (56px rows with a
-// chevron); from 768px it is a grid of cards beside the sub-sidebar.
+// The Settings landing page: lists the sections the person may open (with links to each permitted
+// sub-tab). On a phone (390px) it is the section menu/list; from 768px it is a grid of section
+// cards beside the left-hand section sidebar. Keeps one H1 ("Settings").
 export default async function SettingsIndexPage() {
   const session = await requireSession('/settings');
   const groups = visibleSettingsGroups(await getPermissionCheck(session));
@@ -27,35 +28,40 @@ export default async function SettingsIndexPage() {
         title="Settings"
         description="Setup that changes how the whole organisation works. Each change is recorded in the audit trail with your name."
       />
-      <div className={styles.groups}>
-        {groups.map((group, index) => (
-          <section key={group.label} aria-labelledby={`settings-index-${index}`}>
-            <h2 id={`settings-index-${index}`} className={styles.groupHead}>
-              {group.label}
-            </h2>
-            <ul className={styles.rows}>
-              {group.sections.map((section) => (
-                <li key={section.href} className={styles.row}>
-                  <Icon name={section.icon} size={20} className={styles.icon} />
-                  <div className={styles.rowText}>
-                    <Link
-                      href={section.href}
-                      className={styles.rowLink}
-                      aria-describedby={`settings-index-${section.id}`}
-                    >
+      <ul className={styles.sectionGrid} aria-label="Settings sections">
+        {groups.map((group) => {
+          const entryHref = group.sections[0]?.href ?? group.href;
+          return (
+            <li key={group.id} className={styles.sectionCard}>
+              <div className={styles.sectionCardTop}>
+                <Icon name={group.icon} size={20} className={styles.icon} />
+                <div className={styles.rowText}>
+                  <Link
+                    href={entryHref}
+                    className={styles.sectionCardLink}
+                    aria-describedby={`settings-section-desc-${group.id}`}
+                  >
+                    {group.label}
+                  </Link>
+                  <span id={`settings-section-desc-${group.id}`} className={styles.rowDescription}>
+                    {group.description}
+                  </span>
+                </div>
+                <Icon name="chevron-right" size={18} className={styles.chevron} />
+              </div>
+              <ul className={styles.subtabLinks} aria-label={`${group.label} views`}>
+                {group.sections.map((section) => (
+                  <li key={section.href}>
+                    <Link href={section.href} className={styles.subtabLink}>
                       {section.label}
                     </Link>
-                    <span id={`settings-index-${section.id}`} className={styles.rowDescription}>
-                      {section.description}
-                    </span>
-                  </div>
-                  <Icon name="chevron-right" size={18} className={styles.chevron} />
-                </li>
-              ))}
-            </ul>
-          </section>
-        ))}
-      </div>
+                  </li>
+                ))}
+              </ul>
+            </li>
+          );
+        })}
+      </ul>
     </Page>
   );
 }
