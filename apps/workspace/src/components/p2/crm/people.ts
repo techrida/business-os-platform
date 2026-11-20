@@ -2,7 +2,7 @@ import 'server-only';
 
 import type { LeadOwnerOption } from '@bos/contracts';
 
-import { hasPermission } from '@/components/p2/customers/permissions';
+import { getPermissions } from '@/lib/live-permissions';
 import type { Session } from '@/lib/session';
 
 import { listLeadOwners } from './crm-api';
@@ -13,11 +13,14 @@ export interface People {
 }
 
 /**
- * Whether the owners list is worth asking for. It needs `crm.lead.write`; without it the API
- * answers 403, so pages outside Leads skip the call rather than fail it.
+ * Whether the owners list is worth asking for. It needs `crm.lead.write` in the caller's live grants (the rows
+ * Settings > Access edits, not the role defaults); without it the API answers 403, so pages outside Leads skip
+ * the call rather than fail it.
  */
-export function canAssignFollowUps(session: Session): boolean {
-  return hasPermission(session.roles, 'crm.lead.write');
+export async function canAssignFollowUps(
+  session: Pick<Session, 'accessToken' | 'roles'>,
+): Promise<boolean> {
+  return (await getPermissions(session)).includes('crm.lead.write');
 }
 
 /**
