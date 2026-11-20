@@ -383,6 +383,25 @@ describe('RecordOutcomeService.record', () => {
     expect(await acceptanceRows(q.currentVersionId)).toEqual([]);
   });
 
+  it('refuses a removed evidence file with 422 invalid_evidence_document, as evidence confirmation does', async () => {
+    const q = await createQuotation();
+    const expectedVersion = await advance(q, 'sent');
+    const documentId = await withTx(db, scopeA, systemActor('test'), async (tx) => {
+      const { rows } = await tx.execute(
+        sql`INSERT INTO app.documents (tenant_id, organization_id, owner_type, owner_id, removed_at)
+            VALUES (${scopeA.tenantId}, ${scopeA.organizationId}, 'test_evidence', ${randomUUID()}, now())
+            RETURNING id`,
+      );
+      return (rows[0] as { id: string }).id;
+    });
+
+    await expect(
+      record(q, acceptBody(expectedVersion, { evidenceDocumentIds: [documentId] })),
+    ).rejects.toMatchObject({ status: 422, response: { code: 'invalid_evidence_document' } });
+    expect((await versionRow(q.currentVersionId)).status).toBe('sent');
+    expect(await acceptanceRows(q.currentVersionId)).toEqual([]);
+  });
+
   it('stores the name the customer signed with and the ids when the core is called directly (the portal path)', async () => {
     const q = await createQuotation();
     await advance(q, 'sent');
