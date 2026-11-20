@@ -2238,7 +2238,7 @@ describe('reads inside a submit or decision transaction', () => {
         ],
       },
     });
-    await admin.publish('pool_memo', 1, SKIP_LIVE_PUBLISHER_CHECK);
+    await publishSeconded('pool_memo', 1);
     const guard = poolGuard(db);
     const guarded = new ApprovalsService(guard.db, audit, notify, users, caller, clock);
     guarded.registerSubject({
@@ -2290,7 +2290,7 @@ describe('reads inside a submit or decision transaction', () => {
         ],
       },
     });
-    await admin.publish('pool_dir_memo', 1, SKIP_LIVE_PUBLISHER_CHECK);
+    await publishSeconded('pool_dir_memo', 1);
     const guard = poolGuard(db);
     // The real directory chain (UsersService -> UserMirror -> SqlUsersStore) over the watched handle, so a layer
     // that drops the transaction shows up here. The ZITADEL client, queue and audit are never reached.

@@ -49,7 +49,7 @@ import {
   createTenantWithEntity,
   runMigrations,
 } from '@bos/db';
-import { formatBs } from '@bos/locale';
+import { formatBs, formatBsLong } from '@bos/locale';
 import {
   ConflictException,
   ForbiddenException,
@@ -623,7 +623,7 @@ describe('purchase order render', () => {
     expect(html).toContain('45 days');
     expect(html).toContain('25%');
     expect(html).toContain('Teku warehouse');
-    expect(html).toContain(`${formatBs(before.created_at, 'YYYY-MM-DD')} BS`);
+    expect(html).toContain(formatBsLong(formatBs(before.created_at, 'YYYY-MM-DD')));
     expect(authz.assert).not.toHaveBeenCalled();
 
     // One generated document, owned by the version, with no user behind it, named for the number and version.

@@ -734,7 +734,7 @@ describe('POST /v1/verification-cases/:id/decision', () => {
     const res = await putDocument(draft.id, 'address_proof', infected.documentId, draft.version);
     expect(res.status).toBe(409);
     expect(ErrorBodySchema.parse(res.body).error.code).toBe('document_infected');
-    expect(ErrorBodySchema.parse(res.body).error.message).toContain('certificate.pdf');
+    expect(ErrorBodySchema.parse(res.body).error.message).not.toContain('certificate.pdf');
     expect((await rawCase(draft.id)).version).toBe(draft.version);
   });
 
