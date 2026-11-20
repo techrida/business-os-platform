@@ -439,3 +439,12 @@ describe('Cancel quotation (F1-Q27: Cancel only)', () => {
     expect(cancelTriggers(renderWith('draft', { ...ALLOWED, canEdit: false }))).toBe(0);
   });
 });
+
+describe('Record outcome names the revision', () => {
+  it('titles the dialog with the current revision it records on', () => {
+    const html = render({ status: 'sent', revisionNo: 2 });
+    expect(html).toContain('Record outcome for revision 2');
+    expect(html).toContain('QT-2082-0042, revision 2');
+    expect(html).not.toContain('Record the outcome of');
+  });
+});
