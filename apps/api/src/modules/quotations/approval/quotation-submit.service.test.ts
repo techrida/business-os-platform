@@ -17,7 +17,9 @@ import type {
   QuotationTaxSummaryRow,
   QuotationVersionRow,
 } from '../drafting/mapping';
+import { priceQuotation } from '../pricing/pricing';
 import type { PricedVersion } from '../pricing/pricing.types';
+import { planSchedule, ScheduleRuleError, scheduleTemplateOf } from '../../sales-orders/rules';
 import {
   buildApprovalSnapshot,
   contentSha256,
@@ -584,7 +586,96 @@ describe('QuotationSubmitService.submit', () => {
   });
 });
 
+describe('QuotationSubmitService.submit: an instalment that is 0.00 only once converted to NPR (FR-4)', () => {
+  // INR 0.04 on the 1.6 peg is NPR 0.064, stored as NPR 0.06. In INR every quarter is 0.01; in NPR the first three
+  // quarters round half up to 0.02 each and leave 0.00 for the last, which the order's NPR split refuses.
+  const QUARTERS = [
+    { label: 'Advance', percent: '25' },
+    { label: 'Design', percent: '25' },
+    { label: 'Build', percent: '25' },
+    { label: 'Handover', percent: '25' },
+  ];
+  const EXEMPT_ROW = {
+    id: TAX_VAT,
+    code: 'EXEMPT',
+    name: 'Exempt',
+    kind: 'exempt' as const,
+    rateBp: 0,
+    creditable: true,
+    effectiveFrom: '2000-01-01',
+    effectiveTo: null,
+  };
+  const pricedInr = (): PricedVersion =>
+    priceQuotation(
+      {
+        currency: 'INR',
+        issueDate: '2026-11-09',
+        discount: null,
+        lines: [
+          {
+            lineNo: 1,
+            description: 'Token item',
+            uom: 'job',
+            quantity: '1',
+            unitPrice: '0.04',
+            taxCodeId: TAX_VAT,
+          },
+        ],
+      },
+      [EXEMPT_ROW],
+      { rate: '1.6', source: 'NRB peg', date: '2020-01-01' },
+    );
+
+  it('the real pricing and order split agree: INR quarters are positive, the NPR split has a 0.00 line', () => {
+    const priced = pricedInr();
+    expect(priced.columns).toMatchObject({ total: '0.04', amountNpr: '0.06' });
+    expect(() =>
+      planSchedule(
+        scheduleTemplateOf(QUARTERS, DEFAULT_SALES_SCHEDULE),
+        priced.columns.total,
+        priced.columns.amountNpr,
+      ),
+    ).toThrow(ScheduleRuleError);
+  });
+
+  it('refuses the submit with 422 PAYMENT_INSTALMENT_ZERO, naming the milestone, before any write', async () => {
+    const { service, pricing, store, approvals } = setup(
+      head({ currency: 'INR', paymentSchedule: QUARTERS }),
+    );
+    fakeUpdateVersioned(versionRow());
+    pricing.priceVersion.mockResolvedValue(pricedInr());
+
+    const error: unknown = await service.submit(QID, VID, BODY, 'key-1').catch((e: unknown) => e);
+
+    expect(error).toBeInstanceOf(UnprocessableEntityException);
+    expect((error as UnprocessableEntityException).getResponse()).toMatchObject({
+      code: 'PAYMENT_INSTALMENT_ZERO',
+      details: { label: 'Handover', total: '0.04', amountNpr: '0.06', converted: true },
+    });
+    expect(store.replacePriced).not.toHaveBeenCalled();
+    expect(approvals.preview).not.toHaveBeenCalled();
+  });
+
+  it('splits the company default schedule in NPR too when the quotation has none', () => {
+    const { columns } = pricedInr();
+    const fallback = QUARTERS.map((m) => ({ ...m, trigger: 'milestone' as const }));
+    let error: unknown;
+    try {
+      assertNoZeroInstalment(columns, 'INR', [], fallback);
+    } catch (e) {
+      error = e;
+    }
+    expect(error).toBeInstanceOf(UnprocessableEntityException);
+    expect((error as UnprocessableEntityException).getResponse()).toMatchObject({
+      code: 'PAYMENT_INSTALMENT_ZERO',
+      details: { label: 'Handover', converted: true },
+    });
+  });
+});
+
 describe('assertNoZeroInstalment (FR-4)', () => {
+  /** An NPR quotation: its NPR total is its total. */
+  const npr = (total: string) => ({ total, amountNpr: total });
   const schedule = [
     { label: 'Advance', percent: '50' },
     { label: 'On delivery', percent: '50' },
@@ -593,7 +684,7 @@ describe('assertNoZeroInstalment (FR-4)', () => {
   it('refuses a total whose split leaves a 0.00 instalment, naming the milestone', () => {
     let error: unknown;
     try {
-      assertNoZeroInstalment('0.01', 'NPR', schedule);
+      assertNoZeroInstalment(npr('0.01'), 'NPR', schedule);
     } catch (e) {
       error = e;
     }
@@ -606,20 +697,20 @@ describe('assertNoZeroInstalment (FR-4)', () => {
 
   it('refuses a 0% milestone, and passes every instalment above 0.00 or no schedule at all', () => {
     expect(() =>
-      assertNoZeroInstalment('1000.00', 'USD', [
+      assertNoZeroInstalment({ total: '1000.00', amountNpr: '133000.00' }, 'USD', [
         { label: 'Deposit', percent: '0' },
         { label: 'Balance', percent: '100' },
       ]),
     ).toThrow(UnprocessableEntityException);
-    expect(() => assertNoZeroInstalment('0.02', 'NPR', schedule)).not.toThrow();
-    expect(() => assertNoZeroInstalment('0.00', 'NPR', [])).not.toThrow();
+    expect(() => assertNoZeroInstalment(npr('0.02'), 'NPR', schedule)).not.toThrow();
+    expect(() => assertNoZeroInstalment(npr('0.00'), 'NPR', [])).not.toThrow();
   });
 
   it('splits the company default schedule when the quotation has none (the order bills on it)', () => {
     // 20% of 0.02 is 0.004, so the default Final 20% line would be 0.00 on the order.
     let error: unknown;
     try {
-      assertNoZeroInstalment('0.02', 'NPR', [], DEFAULT_SALES_SCHEDULE);
+      assertNoZeroInstalment(npr('0.02'), 'NPR', [], DEFAULT_SALES_SCHEDULE);
     } catch (e) {
       error = e;
     }
@@ -627,7 +718,9 @@ describe('assertNoZeroInstalment (FR-4)', () => {
     expect((error as UnprocessableEntityException).getResponse()).toMatchObject({
       code: 'PAYMENT_INSTALMENT_ZERO',
     });
-    expect(() => assertNoZeroInstalment('100.00', 'NPR', [], DEFAULT_SALES_SCHEDULE)).not.toThrow();
+    expect(() =>
+      assertNoZeroInstalment(npr('100.00'), 'NPR', [], DEFAULT_SALES_SCHEDULE),
+    ).not.toThrow();
   });
 });
 

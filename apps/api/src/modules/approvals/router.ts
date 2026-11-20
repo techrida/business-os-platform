@@ -169,9 +169,14 @@ function firstUnassignable<S extends { eligibleUserIds: readonly string[] }>(
   return steps.find((_, i) => !assign(i, new Set()));
 }
 
-/** A placeholder, with the currency code written just before it when there is one ("NPR {amountNpr}"). */
-const PLACEHOLDER = /(?:\b(NPR|INR|USD) )?\{([A-Za-z_]\w*(?:\.\w+)*)\}/g;
+/**
+ * A placeholder, with the currency code written just before it when there is one ("NPR {amountNpr}") and the
+ * percent sign written just after it when there is one ("{effectiveDiscountPct}%").
+ */
+const PLACEHOLDER = /(?:\b(NPR|INR|USD) )?\{([A-Za-z_]\w*(?:\.\w+)*)\}(%)?/g;
 const DECIMAL_TEXT = /^-?\d+(\.\d+)?$/;
+/** D22: a percentage is shown with at most four decimals. */
+const PERCENT_SCALE = 4;
 
 /**
  * How an amount in a reason groups its digits (U15b-Q7). Western grouping for every currency, so a filled
@@ -194,6 +199,9 @@ const REASON_NUMBER_SYSTEMS: NumberSystems = {
  * - A placeholder written right after a currency code ("NPR {amountNpr}") is an amount of money (U15b-Q7,
  *   D22): it is shown grouped, rounded half up to two decimals ("NPR 139,506,172.14"). Only the text is
  *   rounded; the facts the conditions compare stay exact.
+ * - A placeholder written right before a percent sign ("{effectiveDiscountPct}%") is a percentage (D22): a
+ *   value with more than four decimals is rounded half up to four ("14.285714..." reads "14.2857"); a shorter
+ *   one keeps its written scale. Only the text is rounded, as for money.
  * - Other decimal facts are formatted with decimal.js, never through a float: a decimal string keeps its
  *   written scale ("12.50" stays "12.50") and a number never turns into an exponent ("1e21").
  * - One pass over the template, so a fact value containing `{other}` is not expanded again. The text
@@ -202,8 +210,14 @@ const REASON_NUMBER_SYSTEMS: NumberSystems = {
 function fillReason(template: string, facts: Record<string, unknown>): string {
   return template.replace(
     PLACEHOLDER,
-    (literal, currency: 'NPR' | 'INR' | 'USD' | undefined, path: string) => {
+    (
+      literal,
+      currency: 'NPR' | 'INR' | 'USD' | undefined,
+      path: string,
+      percentSign: '%' | undefined,
+    ) => {
       const prefix = currency === undefined ? '' : `${currency} `;
+      const suffix = percentSign ?? '';
       let current: unknown = facts;
       for (const part of path.split('.')) {
         if (current === null || typeof current !== 'object') return literal;
@@ -219,11 +233,17 @@ function fillReason(template: string, facts: Record<string, unknown>): string {
         decimal = new Decimal(current).toFixed(scale);
       }
       if (decimal !== undefined && currency !== undefined) {
-        return formatMoney(decimal, currency, { numberSystems: REASON_NUMBER_SYSTEMS });
+        return `${formatMoney(decimal, currency, { numberSystems: REASON_NUMBER_SYSTEMS })}${suffix}`;
       }
-      if (decimal !== undefined) return `${prefix}${decimal}`;
-      if (typeof current === 'string') return `${prefix}${current}`;
-      return typeof current === 'boolean' ? `${prefix}${String(current)}` : literal;
+      if (decimal !== undefined && percentSign !== undefined) {
+        const exact = new Decimal(decimal);
+        if (exact.decimalPlaces() > PERCENT_SCALE) {
+          decimal = exact.toFixed(PERCENT_SCALE, Decimal.ROUND_HALF_UP);
+        }
+      }
+      if (decimal !== undefined) return `${prefix}${decimal}${suffix}`;
+      if (typeof current === 'string') return `${prefix}${current}${suffix}`;
+      return typeof current === 'boolean' ? `${prefix}${String(current)}${suffix}` : literal;
     },
   );
 }
