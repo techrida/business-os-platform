@@ -13,8 +13,10 @@ import {
   type MembershipRow,
   type PlacementDepartment,
   type Queryable,
+  type ExpiredLock,
   type UserFields,
   type UserRow,
+  type UserUpdate,
   UsersStore,
   type ZitadelEventKey,
 } from './users.store';
@@ -94,10 +96,39 @@ export class FakeUsersStore extends UsersStore {
     this.users.push({ id, tenantId: s.tenantId, ...u });
     return Promise.resolve(id);
   }
-  updateUser(_tx: DbTransaction, id: string, u: Omit<UserFields, 'zitadelUserId' | 'idpOrgId'>) {
+  /** Every updateUser call, in order (the lock tests read what was written). */
+  updates: { id: string; update: UserUpdate }[] = [];
+  updateUser(_tx: DbTransaction, id: string, u: UserUpdate) {
+    this.updates.push({ id, update: u });
     const row = this.users.find((x) => x.id === id);
-    if (row) Object.assign(row, u);
+    if (row) {
+      const { lock, ...fields } = u;
+      Object.assign(row, fields);
+      // As the SQL store: a status other than inactive clears the lock; undefined keeps it.
+      const next = u.status === 'inactive' ? lock : null;
+      if (next === null) {
+        row.lockReason = null;
+        row.lockedUntil = null;
+      } else if (next) {
+        row.lockReason = next.reason;
+        row.lockedUntil = next.until?.toISOString() ?? null;
+      }
+    }
     return Promise.resolve();
+  }
+  expiredLocks(_q: Queryable, now: Date, limit: number): Promise<ExpiredLock[]> {
+    return Promise.resolve(
+      this.users
+        .filter(
+          (u) =>
+            u.lockReason === 'failed_sign_ins' &&
+            u.lockedUntil != null &&
+            Date.parse(u.lockedUntil) <= now.getTime(),
+        )
+        .sort((a, b) => Date.parse(a.lockedUntil ?? '') - Date.parse(b.lockedUntil ?? ''))
+        .slice(0, limit)
+        .map((u) => ({ id: u.id, tenantId: u.tenantId })),
+    );
   }
   notInactiveInIdpOrg(_q: Queryable, o: IdpOrgRow) {
     return Promise.resolve(

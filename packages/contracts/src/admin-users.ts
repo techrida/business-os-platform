@@ -4,6 +4,23 @@ import { RoleKeySchema } from './authz.js';
 import { multi, searchParam } from './list-query.js';
 
 export const UserStatusSchema = z.enum(['invited', 'active', 'inactive']);
+/**
+ * Why a person is locked (F1-Q4, F1-Q5). `failed_sign_ins`: too many wrong passwords or codes; the lock ends by itself
+ * after ACCOUNT_LOCKOUT.lockMinutes, or earlier when an admin unlocks. `admin`: an admin locked them; only an admin
+ * unlocks. A locked person's status is `inactive`.
+ */
+export const UserLockReasonSchema = z.enum(['failed_sign_ins', 'admin']);
+export type UserLockReason = z.infer<typeof UserLockReasonSchema>;
+
+/**
+ * The sign-in lockout (F1-Q4), the same for every deployment: after this many wrong passwords or one-time codes in a
+ * row the identity service locks the person, and the app unlocks them `lockMinutes` after it saw the lock.
+ */
+export const ACCOUNT_LOCKOUT = {
+  maxPasswordAttempts: 5,
+  maxOtpAttempts: 5,
+  lockMinutes: 15,
+} as const;
 export const AdminUserSortSchema = z.enum(['name', 'lastActive', 'createdAt']);
 export const AdminUserSearchSchema = z.string().trim().max(200);
 
@@ -44,6 +61,10 @@ export const AdminUserSchema = z.object({
   /** The user's picture (`app.users.avatar_document_id`); null or absent shows initials. */
   avatarDocumentId: z.guid().nullable().optional(),
   status: UserStatusSchema,
+  /** Why the person is locked; null or absent = not locked (F1-Q4). */
+  lockReason: UserLockReasonSchema.nullable().optional(),
+  /** When a `failed_sign_ins` lock ends by itself; null for an admin lock or no lock. */
+  lockedUntil: z.iso.datetime().nullable().optional(),
   roles: z.array(RoleKeySchema),
   department: DepartmentSchema.nullable(),
   createdAt: z.iso.datetime(),

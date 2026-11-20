@@ -11,7 +11,7 @@
 // legal entities listed in app.user_entities, and a new staff user gets one membership in the
 // tenant's default entity (the bootstrap rule). Writes run with the default entity as the withTx
 // scope, because the audit fallback for tenant-scoped rows reads bos.organization_id.
-import type { AdminUsersQuery, RoleKey } from '@bos/contracts';
+import { ACCOUNT_LOCKOUT, type AdminUsersQuery, type RoleKey } from '@bos/contracts';
 import { InjectQueue } from '@nestjs/bullmq';
 import { ConflictException, Inject, Injectable, Logger, NotFoundException } from '@nestjs/common';
 import { Queue } from 'bullmq';
@@ -21,7 +21,13 @@ import type { EntityMembership, ResolvedUser } from '../authz/user-directory';
 import { DB, type Db, type DbTransaction } from '../db/db.module';
 import { type TxScope, systemActor, withTx } from '../db/tx';
 import { USERS_QUEUE, USERS_SYNC_JOB, type UsersSyncData } from './users.constants';
-import { type IdpOrgRow, type ListedUsers, type UserRow, UsersStore } from './users.store';
+import {
+  type IdpOrgRow,
+  type ListedUsers,
+  type UserLock,
+  type UserRow,
+  UsersStore,
+} from './users.store';
 import {
   ZitadelAdminClient,
   ZitadelHttpError,
@@ -357,21 +363,30 @@ export class UserMirror {
     const scope = await this.entityScope(org.tenantId);
     return withTx(this.db, scope, zitadelActor(), async (tx) => {
       let changed = false;
+      let lockConfirmed = true;
       const existing = await this.store.findByZitadelId(tx, user.id, true);
-      if (existing && existing.status !== status) {
+      if (
+        existing &&
+        (existing.status !== status || Boolean(existing.lockReason) !== Boolean(user.locked))
+      ) {
         // `user` was read before this row lock. An admin status action (which holds the same lock while it changes
         // ZITADEL) may have finished in between, and writing the older state back would undo it: a deactivated
-        // leaver active again until the next pass. So a status change is re-read now, behind that lock.
+        // leaver active again until the next pass. So a status or lock change is re-read now, behind that lock.
         const fresh = await this.zitadel.getUser(user.id).catch(() => null);
         if (fresh?.status) {
           user = fresh;
           status = fresh.status;
-        } else if (status === 'active' || status === 'invited') {
-          // Unconfirmed, and it would let someone in: leave the row for the next pass.
-          this.logger.warn(`users.apply: could not confirm ${user.id}; status left unchanged`);
-          status = existing.status;
+        } else {
+          // Unconfirmed: the stored lock stays as it is.
+          lockConfirmed = false;
+          if (status === 'active' || status === 'invited') {
+            // Unconfirmed, and it would let someone in: leave the row for the next pass.
+            this.logger.warn(`users.apply: could not confirm ${user.id}; status left unchanged`);
+            status = existing.status;
+          }
         }
       }
+      const lock = lockConfirmed ? this.lockChange(existing, user) : undefined;
       let userId: string;
       if (!existing) {
         userId = await this.store.insertUser(tx, scope, {
@@ -381,6 +396,14 @@ export class UserMirror {
           displayName: user.displayName,
           status,
         });
+        if (lock) {
+          await this.store.updateUser(tx, userId, {
+            email: user.email,
+            displayName: user.displayName,
+            status,
+            lock,
+          });
+        }
         await this.bootstrap(tx, org, scope, userId);
         changed = true;
       } else {
@@ -389,12 +412,14 @@ export class UserMirror {
         if (
           existing.email !== user.email ||
           existing.displayName !== user.displayName ||
-          existing.status !== status
+          existing.status !== status ||
+          lock !== undefined
         ) {
           await this.store.updateUser(tx, userId, {
             email: user.email,
             displayName: user.displayName,
             status,
+            ...(lock === undefined ? {} : { lock }),
           });
           // A status change (disabled, re-enabled) reaches every request at once: the per-request user cache
           // is keyed on the authz version, so without a bump a disabled user stays active for up to 60 s.
@@ -409,6 +434,28 @@ export class UserMirror {
       }
       return changed;
     });
+  }
+
+  /**
+   * The lock to write for what ZITADEL says (F1-Q4), or undefined to keep the stored one. A lock the app did not
+   * write itself is ZITADEL's lockout policy at work (too many wrong passwords or codes), so it becomes a
+   * `failed_sign_ins` lock that the lock-expiry job ends ACCOUNT_LOCKOUT.lockMinutes after ZITADEL locked the user
+   * (`details.changeDate`; the time it was seen when ZITADEL sent none). A user ZITADEL no longer holds locked has
+   * the stored lock cleared. An admin lock is written by UserStatusService, so it is already stored here.
+   */
+  private lockChange(existing: UserRow | null, read: ZitadelUser): UserLock | null | undefined {
+    const stored = existing?.lockReason ?? null;
+    if (read.locked && stored === null) {
+      const now = new Date();
+      const lockedAt = read.changedAt && read.changedAt <= now ? read.changedAt : now;
+      return {
+        reason: 'failed_sign_ins',
+        lockedAt,
+        until: new Date(lockedAt.getTime() + ACCOUNT_LOCKOUT.lockMinutes * 60_000),
+      };
+    }
+    if (!read.locked && stored !== null) return null;
+    return undefined;
   }
 
   /**

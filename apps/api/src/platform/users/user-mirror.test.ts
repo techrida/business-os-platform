@@ -1,3 +1,4 @@
+import { ACCOUNT_LOCKOUT } from '@bos/contracts';
 import { Logger, NotFoundException } from '@nestjs/common';
 import type { Queue } from 'bullmq';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
@@ -517,5 +518,107 @@ describe('UserMirror status changes are re-read behind the row lock (F1-Q5)', ()
     await mirror.syncUser('z1');
 
     expect(store.users[0]?.status).toBe('inactive');
+  });
+});
+
+describe('UserMirror mirrors ZITADEL locks as a timed lock (F1-Q4)', () => {
+  const locked = (over: Partial<ReturnType<typeof zUser>> = {}) =>
+    zUser('z1', { status: 'inactive', locked: true, ...over });
+
+  beforeEach(async () => {
+    zitadel.users.set('z1', zUser('z1'));
+    await mirror.syncUser('z1');
+  });
+
+  it('turns a lock ZITADEL set after failed sign-ins into a lock that ends 15 minutes after ZITADEL locked them', async () => {
+    const lockedAt = new Date(Date.now() - 4 * 60_000);
+    zitadel.users.set('z1', locked({ changedAt: lockedAt }));
+
+    expect(await mirror.syncUser('z1')).toBe(true);
+
+    expect(store.users[0]).toMatchObject({
+      status: 'inactive',
+      lockReason: 'failed_sign_ins',
+      lockedUntil: new Date(
+        lockedAt.getTime() + ACCOUNT_LOCKOUT.lockMinutes * 60_000,
+      ).toISOString(),
+    });
+  });
+
+  it('counts the window from when the lock was seen when ZITADEL sends no change date', async () => {
+    zitadel.users.set('z1', locked({ changedAt: null }));
+    const before = Date.now();
+
+    await mirror.syncUser('z1');
+
+    const until = Date.parse(store.users[0]?.lockedUntil ?? '');
+    expect(until).toBeGreaterThanOrEqual(before + ACCOUNT_LOCKOUT.lockMinutes * 60_000);
+    expect(until).toBeLessThanOrEqual(Date.now() + ACCOUNT_LOCKOUT.lockMinutes * 60_000);
+  });
+
+  it('keeps an admin lock as it is while ZITADEL still holds the user locked', async () => {
+    zitadel.users.set('z1', locked());
+    Object.assign(store.users[0]!, { status: 'inactive', lockReason: 'admin', lockedUntil: null });
+    const writes = store.updates.length;
+
+    expect(await mirror.syncUser('z1')).toBe(false);
+
+    expect(store.updates.length).toBe(writes);
+    expect(store.users[0]).toMatchObject({ lockReason: 'admin', lockedUntil: null });
+  });
+
+  it('clears the lock when ZITADEL lets the user in again (unlocked in the console)', async () => {
+    zitadel.users.set('z1', locked());
+    await mirror.syncUser('z1');
+    zitadel.users.set('z1', zUser('z1'));
+
+    await mirror.syncUser('z1');
+
+    expect(store.users[0]).toMatchObject({ status: 'active', lockReason: null, lockedUntil: null });
+  });
+
+  it('clears the lock but keeps the person out when ZITADEL deactivates a locked user', async () => {
+    zitadel.users.set('z1', locked());
+    await mirror.syncUser('z1');
+    zitadel.users.set('z1', zUser('z1', { status: 'inactive' }));
+
+    expect(await mirror.syncUser('z1')).toBe(true);
+
+    expect(store.users[0]).toMatchObject({ status: 'inactive', lockReason: null });
+  });
+
+  it('does not write a lock read before an admin unlocked the user', async () => {
+    // The admin's unlock: ZITADEL and the mirror both say active now; the sync read the user while still locked.
+    let calls = 0;
+    vi.spyOn(zitadel, 'getUser').mockImplementation(() => {
+      calls += 1;
+      return Promise.resolve(calls === 1 ? locked() : zUser('z1'));
+    });
+
+    await mirror.syncUser('z1');
+
+    expect(store.users[0]?.status).toBe('active');
+    expect(store.users[0]?.lockReason ?? null).toBeNull();
+  });
+
+  it('keeps the stored lock when the re-read of a lock-only change fails', async () => {
+    zitadel.users.set('z1', locked());
+    await mirror.syncUser('z1');
+    const until = store.users[0]?.lockedUntil;
+    let calls = 0;
+    vi.spyOn(zitadel, 'getUser').mockImplementation(() => {
+      calls += 1;
+      return calls === 1
+        ? Promise.resolve(zUser('z1', { status: 'inactive' }))
+        : Promise.reject(new Error('ZITADEL 503'));
+    });
+
+    await mirror.syncUser('z1');
+
+    expect(store.users[0]).toMatchObject({
+      status: 'inactive',
+      lockReason: 'failed_sign_ins',
+      lockedUntil: until,
+    });
   });
 });

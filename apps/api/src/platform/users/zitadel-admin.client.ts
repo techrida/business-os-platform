@@ -21,8 +21,10 @@ export const ZITADEL_ENDPOINTS = {
   // UNVERIFIED: user v2 GetUserByID; body { userId }, response { user }.
   getUser: '/zitadel.user.v2.UserService/GetUserByID',
   passwordReset: '/zitadel.user.v2.UserService/PasswordReset',
-  // UNVERIFIED (F1-Q5, from the user v2 docs; no live call yet): body { userId }. ZITADEL refuses a state change
-  // that does not fit (deactivating an invited user, reactivating an active one) with a precondition error.
+  // F1-Q5. VERIFIED at v4.20.1 (2026-11-20): each path exists and takes body { userId } (an unknown id answers
+  // 404 "User could not be found", an unknown method answers "404 page not found"). UNVERIFIED: a real state change
+  // with this client's PAT. ZITADEL refuses a change that does not fit (deactivating an invited user, reactivating
+  // an active one) with a precondition error.
   deactivateUser: '/zitadel.user.v2.UserService/DeactivateUser',
   reactivateUser: '/zitadel.user.v2.UserService/ReactivateUser',
   // VERIFIED path and organizationIdQuery (seed findUser). UNVERIFIED: the `query` paging object, the
@@ -87,6 +89,13 @@ export interface ZitadelUser {
   displayName: string;
   /** Null when ZITADEL sent a state we do not recognise: callers leave the mirrored user unchanged. */
   status: MirroredStatus | null;
+  /**
+   * ZITADEL holds the user LOCKED (status 'inactive'): its lockout policy saw too many wrong passwords or codes, or
+   * an admin locked them. Absent means false.
+   */
+  locked?: boolean;
+  /** When ZITADEL last changed the user (`details.changeDate`), or null when it did not say. */
+  changedAt?: Date | null;
   /** When ZITADEL created the user (`details.creationDate`), or null when it did not say. */
   createdAt: Date | null;
 }
@@ -135,7 +144,11 @@ const UserShape = z.object({
   username: Str.default(''),
   preferredLoginName: Str.default(''),
   details: z
-    .object({ resourceOwner: Str.default(''), creationDate: Str.optional() })
+    .object({
+      resourceOwner: Str.default(''),
+      creationDate: Str.optional(),
+      changeDate: Str.optional(),
+    })
     .default({ resourceOwner: '' }),
   human: z
     .object({
@@ -273,7 +286,9 @@ function toUser(u: UserShape): ZitadelUser {
     email: email.length > 0 ? email : null,
     displayName,
     status: statusFromState(u.state),
+    locked: u.state === 'USER_STATE_LOCKED',
     createdAt: dateOrNull(u.details.creationDate),
+    changedAt: dateOrNull(u.details.changeDate),
   };
 }
 
