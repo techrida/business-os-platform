@@ -184,21 +184,26 @@ export function workflow(cfg) {
     await s.page.waitForURL(/\/inbox\/[0-9a-f-]{36}/);
     await s.pause();
     const dialog = s.page.getByRole('dialog', { name: 'Approve request' });
-    // Opening the dialog decides nothing, so a click lost to a dev-server rebuild reload (r3s1
-    // sales-11: no dialog, the page re-navigated) is repeated once.
+    const confirmApprove = dialog.getByRole('button', { name: 'Approve', exact: true });
+    // Nothing is decided before the confirm click, so a dialog lost to a dev-server rebuild
+    // reload (r3s1 sales-11: it never opened; r3s2 sales-7: it closed before the confirm) is
+    // opened and filled again, at most three times, each noted. The confirm is clicked once.
     for (let attempt = 1; ; attempt++) {
       await s.click(s.button('Approve'), attempt === 1 ? 'Approve' : 'Approve again');
-      const open = await dialog
+      const ready = await dialog
         .waitFor({ state: 'visible', timeout: 20000 })
+        .then(() => dialog.getByLabel('Comment (optional)', { exact: true }).fill(comment))
+        .then(() => s.pause(400))
+        .then(() => confirmApprove.waitFor({ state: 'visible', timeout: 5000 }))
         .then(() => true)
         .catch(() => false);
-      if (open) break;
-      if (attempt === 2) throw new StepFailure('Approve did not open the Approve request dialog');
-      s.checks.push('note: the Approve request dialog did not open; clicking Approve again');
+      if (ready) break;
+      if (attempt === 3)
+        throw new StepFailure('The Approve request dialog closed or never opened, three times');
+      s.checks.push('note: the Approve request dialog was lost (page reloaded); opening it again');
+      await s.page.waitForLoadState('load').catch(() => {});
     }
-    await s.fill(dialog.getByLabel('Comment (optional)', { exact: true }), comment);
-    await s.pause(400);
-    await s.click(dialog.getByRole('button', { name: 'Approve', exact: true }), 'confirm Approve');
+    await s.click(confirmApprove, 'confirm Approve');
     await s.page.waitForURL(/\/inbox\?decided=approve/, { timeout: cfg.navTimeout });
     const who = await s.whoami();
     s.expect(
