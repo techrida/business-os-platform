@@ -437,10 +437,7 @@ export class TestMemoService implements OnModuleInit {
     this.authz.assert('memo.create');
     if (principal.orgKind !== 'staff' || principal.status !== 'active')
       throw new ForbiddenException();
-    const [entity] = await q
-      .select()
-      .from(organizations)
-      .where(scoped(scope).where(organizations));
+    const [entity] = await q.select().from(organizations).where(scoped(scope).where(organizations));
     if (!entity) throw new ForbiddenException();
     const depts = await q
       .select({ id: departments.id, name: departments.name })
@@ -921,7 +918,7 @@ export class TestMemoService implements OnModuleInit {
       if (row.template) {
         // Internal correspondence: no money, no thresholds. The route is the people the author named.
         const directory = await this.people(tx);
-        const selected =[...row.template.recommenders, row.template.approvedBy];
+        const selected = [...row.template.recommenders, row.template.approvedBy];
         if (selected.some((p) => !directory.people.some((active) => active.userId === p.userId))) {
           throw new ConflictException('A selected approver is no longer active in this company');
         }
