@@ -5,14 +5,19 @@ import {
   DocumentFormatSnapshotSchema,
   PartySnapshotSchema,
   type DocumentFormatSnapshot,
+  type InvoiceCan,
   type InvoiceDetail,
   type InvoiceDto,
   type InvoiceLineDto,
   type InvoiceListItem,
   type InvoiceTaxSummaryItem,
+  type Permission,
 } from '@bos/contracts';
 import type { invoiceLines, invoicePrintLog, invoices, invoiceTaxSummary } from '@bos/db';
 import { Dec, allocateLargestRemainder } from '@bos/money-rules';
+
+import { can, type Principal } from '../../platform/authz/can';
+import type { TxScope } from '../../platform/db/tx';
 
 export type InvoiceRow = typeof invoices.$inferSelect;
 export type InvoiceLineRow = typeof invoiceLines.$inferSelect;
@@ -151,6 +156,33 @@ export function firstPrintFormat(
   if (original === undefined || original.renderFormat === null) return null;
   const parsed = DocumentFormatSnapshotSchema.safeParse(original.renderFormat);
   return parsed.success ? parsed.data : null;
+}
+
+/**
+ * What `principal` may do on one invoice: the record checks the commands make, so a grant narrowed to `own` offers an
+ * action only on the invoices the caller drafted. Submit, issue, discard and notes judge the drafter (`createdBy`);
+ * a payment is recorded against the customer, as the payment command checks it.
+ */
+export function invoiceCan(
+  principal: Principal,
+  scope: TxScope,
+  row: Pick<InvoiceRow, 'createdBy' | 'customerPartyId'>,
+): InvoiceCan {
+  const drafted = { ...scope, ownerUserId: row.createdBy };
+  const on = (permission: Permission) => can(principal, permission, drafted).allowed;
+  return {
+    submit: on('invoice.submit'),
+    issue: on('invoice.issue'),
+    discard: on('invoice.draft'),
+    notes: on('invoice.credit_note'),
+    recordPayment:
+      row.customerPartyId !== null &&
+      can(principal, 'payment.record', {
+        ...scope,
+        customerPartyId: row.customerPartyId,
+        sodUserIds: [],
+      }).allowed,
+  };
 }
 
 export function toInvoiceListItem(row: InvoiceRow, customerName: string): InvoiceListItem {
