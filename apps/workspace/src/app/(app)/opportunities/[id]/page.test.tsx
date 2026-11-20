@@ -839,6 +839,35 @@ describe('credit hold on the deal (F1-Q20)', () => {
     expect(doc.body.textContent).toContain('Override credit hold');
   });
 
+  it('flags an open deal before any quotation is accepted, in words true for it', async () => {
+    mocks.getOpportunity.mockResolvedValue(
+      opportunity('negotiation', { creditHold: { held: true, overridden: false, ordered: false } }),
+    );
+    grants('crm.opportunity.read', 'credit.override');
+    mocks.getCreditHold.mockResolvedValue(position);
+    const doc = parse(await render());
+    expect(metadata(doc)?.textContent).toContain('Credit hold');
+    const text = banner(doc)?.textContent ?? '';
+    expect(text).toContain('an accepted quotation on this deal cannot become a sales order');
+    expect(text).not.toContain('the accepted quotation');
+    expect(doc.body.textContent).toContain('Override credit hold');
+  });
+
+  it('shows no hold and no override on a lost deal, or a won one whose sales order went ahead', async () => {
+    grants('crm.opportunity.read', 'credit.override');
+    for (const deal of [
+      opportunity('lost', { creditHold: { held: true, overridden: false, ordered: false } }),
+      opportunity('won', { creditHold: { held: true, overridden: false, ordered: true } }),
+    ]) {
+      mocks.getOpportunity.mockResolvedValue(deal);
+      const doc = parse(await render());
+      expect(metadata(doc)?.textContent).not.toContain('Credit hold');
+      expect(banner(doc)).toBeNull();
+      expect(doc.body.textContent).not.toContain('Override credit hold');
+    }
+    expect(mocks.getCreditHold).not.toHaveBeenCalled();
+  });
+
   it('shows nothing once the hold is overridden, or when the flag is absent', async () => {
     grants('credit.override');
     mocks.getOpportunity.mockResolvedValue(

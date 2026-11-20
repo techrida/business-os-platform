@@ -13,7 +13,7 @@ import {
   type OpportunityStageChangeBody,
   type Permission,
 } from '@bos/contracts';
-import { customers, opportunities, scoped } from '@bos/db';
+import { customers, opportunities, quotations, salesOrders, scoped } from '@bos/db';
 import {
   BadRequestException,
   ConflictException,
@@ -173,11 +173,13 @@ export class OpportunitiesService {
       row,
       await loadRecordReaders(this.db, scope, opportunities, id),
     );
-    // F1-Q20/F1-Q26: the flag only (the amounts are for credit.override holders). In a transaction, so the ledger
-    // is read under the entity's row security rather than seen as empty.
-    const credit = await withTx(this.db, scope, actor, (tx) =>
-      creditPosition(tx, scope, row.customerId),
-    );
+    // F1-Q20/F1-Q26: the flag only (the amounts are for credit.override holders), and whether a sales order already
+    // went ahead (a draft one is what the hold keeps waiting). In a transaction, so the ledger and the orders are
+    // read under the entity's row security rather than seen as empty.
+    const { credit, ordered } = await withTx(this.db, scope, actor, async (tx) => ({
+      credit: await creditPosition(tx, scope, row.customerId),
+      ordered: await this.hasSalesOrder(tx, scope, row.id),
+    }));
     return {
       ...toOpportunityDto(
         row,
@@ -185,8 +187,33 @@ export class OpportunitiesService {
         await this.lostReasonOf(this.db, row),
         principal,
       ),
-      creditHold: { held: credit.held, overridden: row.creditOverrideAt !== null },
+      creditHold: { held: credit.held, overridden: row.creditOverrideAt !== null, ordered },
     };
+  }
+
+  /** Whether one of the deal's quotations became a confirmed or completed sales order (not a draft, not cancelled). */
+  private async hasSalesOrder(tx: DbTransaction, scope: TxScope, id: string): Promise<boolean> {
+    const [order] = await tx
+      .select({ id: salesOrders.id })
+      .from(salesOrders)
+      .innerJoin(
+        quotations,
+        and(
+          eq(quotations.tenantId, salesOrders.tenantId),
+          eq(quotations.id, salesOrders.quotationId),
+        ),
+      )
+      .where(
+        scoped(scope).where(
+          salesOrders,
+          and(
+            eq(quotations.opportunityId, id),
+            inArray(salesOrders.status, ['confirmed', 'completed']),
+          ),
+        ),
+      )
+      .limit(1);
+    return order !== undefined;
   }
 
   // ------------------------------------------------------------------------------------------ stage change
