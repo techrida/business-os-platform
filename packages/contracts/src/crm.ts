@@ -800,10 +800,14 @@ export const OpportunityDtoSchema = z.object({
   canDraftQuotation: z.boolean().optional(),
   /**
    * F1-Q20/F1-Q26, on the detail (`GET /v1/opportunities/:id`) only: whether the customer owes the acting entity more
-   * than its credit limit, so the accepted quotation cannot become a sales order (409 `credit_hold`), and whether
-   * Management or Finance overrode that. Amounts are on `GET /v1/opportunities/:id/credit-hold` (credit.override).
+   * than its credit limit, so an accepted quotation cannot become a sales order (409 `credit_hold`), whether someone
+   * with `credit.override` overrode that, and whether the deal already has a confirmed or completed sales order
+   * (`ordered`; then the hold no longer stands in its way). Amounts are on `GET /v1/opportunities/:id/credit-hold`
+   * (credit.override).
    */
-  creditHold: z.object({ held: z.boolean(), overridden: z.boolean() }).optional(),
+  creditHold: z
+    .object({ held: z.boolean(), overridden: z.boolean(), ordered: z.boolean().optional() })
+    .optional(),
   version: z.number().int().min(1),
   createdAt: isoDateTime,
   updatedAt: isoDateTime,

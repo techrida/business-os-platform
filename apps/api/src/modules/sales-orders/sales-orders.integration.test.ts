@@ -1409,7 +1409,8 @@ describe('credit hold at the hand-over to a sales order (F1-Q20, F1-Q26)', () =>
 
       // The deal's own page carries the flag for whoever reads the deal, amounts only through credit.override.
       const deal = OpportunityDtoSchema.parse(await opportunitiesService.get(q.opportunityId));
-      expect(deal.creditHold).toEqual({ held: true, overridden: false });
+      // The draft order the acceptance made is not a sales order yet: the hold still stands in its way.
+      expect(deal.creditHold).toEqual({ held: true, overridden: false, ordered: false });
       expect((await statusOf(credit.get(q.opportunityId))).status).toBe(403);
       expect(
         (await statusOf(credit.override(q.opportunityId, { reason: 'Sales says fine' }))).status,
@@ -1456,7 +1457,7 @@ describe('credit hold at the hand-over to a sales order (F1-Q20, F1-Q26)', () =>
       expect(released.id).toBe(heldDraft?.id);
       expect(
         OpportunityDtoSchema.parse(await opportunitiesService.get(q.opportunityId)).creditHold,
-      ).toEqual({ held: true, overridden: true });
+      ).toEqual({ held: true, overridden: true, ordered: true });
     } finally {
       await setLimit(null);
     }

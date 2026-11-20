@@ -251,7 +251,7 @@ function CreditHoldBanner({
         ) : undefined
       }
     >
-      {`This customer is over its credit limit, so the accepted quotation cannot become a sales order yet.${amounts} `}
+      {`This customer is over its credit limit, so an accepted quotation on this deal cannot become a sales order until the hold is overridden or lifted.${amounts} `}
       {canOverride
         ? 'Override the hold to let it go ahead, or wait for a payment to bring the customer under the limit.'
         : 'Management or Finance can override the hold. A payment that brings the customer under the limit also lifts it.'}
@@ -398,8 +398,13 @@ export default async function OpportunityPage({ params }: { params: Promise<{ id
     ) : (
       <OwnerCell name={opp.ownerName ?? null} seedId={opp.ownerUserId} />
     );
-  // F1-Q20: the deal's flag is booleans only; the amounts are for credit.override holders.
-  const creditHeld = opp.creditHold?.held === true && opp.creditHold.overridden !== true;
+  // F1-Q20: the deal's flag is booleans only; the amounts are for credit.override holders. The hold
+  // matters only while a sales order can still come: on an open deal, or a won one whose order has not
+  // gone ahead. A lost deal, or a won one with its order, shows no hold and offers no override.
+  const creditHeld =
+    opp.creditHold?.held === true &&
+    opp.creditHold.overridden !== true &&
+    (open || (opp.stage === 'won' && opp.creditHold.ordered !== true));
   const canOverride = creditHeld && can('credit.override');
   const creditHold = canOverride ? await getCreditHold(session, opp.id).catch(() => null) : null;
   const reasonLabel = opp.lostReason?.label ?? opp.stageReason;
