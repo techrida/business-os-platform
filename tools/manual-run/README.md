@@ -4,12 +4,12 @@ This driver performs the Business OS manual test guide through the real UI and r
 per workflow per viewport. It is development and test tooling only. It is listed in `.dockerignore`
 and lives outside `apps/*`, so no production image or route manifest includes it.
 
-| Workflow      | Guide steps                                                                       | Status                                |
-| ------------- | --------------------------------------------------------------------------------- | ------------------------------------- |
-| `start`       | start-1 … start-6 (memo, approvals, notification, mail, private window)           | implemented                           |
-| `sales`       | sales-1 … sales-15 (lead → verification → quotation → order → invoice → payments) | implemented                           |
-| `procurement` | procurement-1 … 15 (PR → RFQ → vendor quote → PO → receipt → bill → payment req.) | implemented (not yet run end to end)  |
-| `branches`    | branches-1 … 12                                                                   | Phase B (reported as NOT-IMPLEMENTED) |
+| Workflow      | Guide steps                                                                       | Status                               |
+| ------------- | --------------------------------------------------------------------------------- | ------------------------------------ |
+| `start`       | start-1 … start-6 (memo, approvals, notification, mail, private window)           | implemented                          |
+| `sales`       | sales-1 … sales-15 (lead → verification → quotation → order → invoice → payments) | implemented                          |
+| `procurement` | procurement-1 … 15 (PR → RFQ → vendor quote → PO → receipt → bill → payment req.) | implemented (not yet run end to end) |
+| `branches`    | branches-4, 5, 6, 7, 11, 12 (1–3 and 8–10 are exploratory)                        | partial (other steps SKIPPED)        |
 
 ## Setup
 
@@ -128,7 +128,7 @@ The request guard sees only the first request of a redirect chain: Chromium foll
 
 ## Adding steps or a workflow (Phase B)
 
-A workflow module exports `workflow(cfg)`, which returns `{ name, title, origins?, steps: [{ id, title, timeoutMs?, run(s) }] }`. `origins` lists the origins whose certificates are checked before launch (`app`, `portal`, `mail`, `auth`; all four when omitted), so a stack whose portal is down can still run a staff-only workflow. See `workflows/start.mjs`.
+A workflow module exports `workflow(cfg)`, which returns `{ name, title, origins?, steps: [{ id, title, timeoutMs?, run(s) }] }`. A step written as `{ id, title, exploratory: true, note }` has no `run`: it is reported SKIPPED with its note, and `--from`/`--only` refuse it (see the branches workflow). `origins` lists the origins whose certificates are checked before launch (`app`, `portal`, `mail`, `auth`; all four when omitted), so a stack whose portal is down can still run a staff-only workflow. See `workflows/start.mjs`.
 
 Inside `run(s)`, use the `Session` API from `lib/session.mjs`. Never call `page.click` directly:
 
@@ -182,6 +182,23 @@ Assert on something the action changes. For example, count the rows that carry a
 - **procurement-13 changes a shared seed record.** Verifying this run's account retires the account an earlier run verified on Dev Vendor Co (one active account per vendor). Nothing else of the seed vendor is changed.
 - **procurement-14 (TR-Q1):** the guide expects a "no eligible approver" refusal; the seed has Dev Finance Two, so the request goes to Awaiting approval. The step checks that Dev Finance (the requester) sees "This request is waiting for a different approver." without Approve, and that Dev Finance Two is offered Approve; it never clicks it (procurement-15 is the VAT register, and no money moves). The refusal for a requester who is the only Finance person is left to the API unit tests. `Paying entity bank account ID` is the seed placeholder GUID (ISSUES I-40).
 - **Re-running a step:** procurement-1 reuses its recorded request and submits only a Draft; 2, 7 and 12 approve once per approver (as in sales); 3 adopts the RFQ the request links; 4 and 10 skip a quotation or bill the staff side already lists by this run's reference; 5, 6, 8, 9 and 14 skip a conversion, score, recommendation, commitment, issue, receipt confirmation or submit already done (9 adopts the one receipt listed for the order and fails on two); 11 fails closed when the submission no longer offers Create bill and no bill was recorded; 13 follows `bankAccountPlan`. **Gaps:** a stop between Save draft and its record leaves a second draft request on a re-run of procurement-1; a stop between Create draft request and its record (procurement-14) leaves a draft whose amount blocks the next create.
+
+### Branches workflow (Phase B)
+
+`workflows/branches.mjs` scripts the predictable steps branches-4, 5, 6, 7, 11 and 12. The exploratory steps (branches-1, 2, 3, 8, 9 and 10) are listed with `exploratory: true` and no script: one exploratory agent pass per release covers them. The driver reports them as SKIPPED with a note, so they do not stop a PASS or exit code 0. `--from` or `--only` with an exploratory step stops before launch (exit code 2) and lists the runnable steps.
+
+- **Not run against a stack yet.** The steps were written from the current `apps/workspace` source (labels, routes, messages) and checked with the no-browser self-tests only.
+- **Customer.** branches-4, 5 and 6 use this run's `BOS Demo Himalayan Labs SCR-<run key>` (made by sales-2 under the same label) and fall back to the seeded `Dev Customer Co` when it is missing. The first pick is recorded, so later steps use the same customer.
+- **Dev Finance Two (TR-Q1).** Dev Finance creates the credit and debit notes and may not decide them. branches-5 checks that Dev Finance sees "This request is waiting for a different approver." and no Approve button, then approves as Dev Accountant and Dev Finance Two, and issues as Dev Finance.
+- **Purchase requests are found by justification.** The list search covers the number and the justification, not the budget code. Every justification the workflow writes ends with this run's suffix, branches-11's two tab texts included (the guide's text plus the suffix). The lookup searches for the suffix (`?q=SCR-<run key>&rows=100`). With fewer than five exact hits the search adds close matches from other labels after them, so a page that does not show the whole result is accepted only when its last row is another run's; otherwise the step fails.
+- **What each step asserts, and what it does not prove:**
+  - branches-4: the empty save shows the six named field errors; Add items adds line 2 and Remove line 2 takes it away; the draft shows NPR 1,000.00, VAT 130.00 and 1,130.00, "Not numbered yet", no invoice number and no Open amount; Discard (with the guide's reason) leads to Discarded, "A discarded invoice has no PDF." and no Submit or Discard button. A discard reason missing from the page is a finding (R2-025). It does not check the main issued invoice from sales-11.
+  - branches-5: the manual NPR 1,130 invoice is issued after Accountant and Finance approve, has no Void action and starts at Open amount NPR 1,130.00; the credit note (quantity 0.1) totals NPR 113.00 and links to the original; the original's Open amount drops to NPR 1,017.00; the debit note (1 lot at 100.00, VAT13) totals NPR 113.00, links to the original and is open at NPR 113.00; the customer statement lists both open items. It does not open the notes' PDFs or try a credit above the cap.
+  - branches-6: the NPR 10.00 payment with reference `BOS-DEMO-REJECT-<run key>` is Rejected, shows the reason, has no receipt number, no Allocate panel and no allocation; the payment `BOS-DEMO-ADVANCE-<run key>` gets a receipt number, stays Verified with NPR 10.00 left and no allocation; the statement shows a Customer advance (exactly NPR 10.00 for this run's customer, at least NPR 10.00 for `Dev Customer Co`) and branches-5's invoice still open at NPR 1,017.00. It does not try the recorder verifying their own payment (R2-052).
+  - branches-7: a draft request (NPR 100.00, no serial numbers, not an emergency) is cancelled through "Cancel this draft?"; reopened from the Purchase requests list, it reads Cancelled with the cancelled note and offers no Edit request, Submit for approval, Cancel request, Start RFQ or Open RFQ. It does not prove that no RFQ or PO exists anywhere, only that the request offers none.
+  - branches-11: two tabs open the edit page at the same version; tab 1's save lands; tab 2's save stays on the edit page with "This page is out of date", the stale-edit message and "Reload this request"; the request keeps tab 1's text. Then 999999.00 allocated from the advance to branches-5's invoice is refused with the over-allocation message, and after a reload the advance still has NPR 10.00 left and the invoice NPR 1,017.00 open. It does not read server logs (R2-056). A dev-server reload of tab 2 before its save fails the step, with a message to re-run it.
+  - branches-12: "This is an emergency purchase" with an empty reason is refused with the required-reason message; with the reason, the request saves, shows the Emergency badge and the two-approver note, and gets a PR number on submit; Dev Department Head and then Dev Management approve from the inbox; the request reads Department approved, every approval step reads Approved, Start RFQ is offered (not clicked) and no RFQ is open. It does not exercise the later sourcing or commitment route.
+- **Re-runs.** Each step adopts what an earlier attempt left: the recorded URLs and approvals, the payments by exact bank reference (as in sales-12), the purchase requests by exact justification (two matches fail the step), and the status on the page (Discarded, Issued, Rejected, Verified, Cancelled, submitted). A stop between "Create credit note" or "Create debit note" and the record right after it is not covered: a re-run creates a second note. Check the original invoice's notes before resuming such a run, or use a new label.
 
 ## Known limits
 
