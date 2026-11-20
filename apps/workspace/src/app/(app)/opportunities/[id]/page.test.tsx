@@ -19,9 +19,15 @@ const mocks = vi.hoisted(() => ({
   listQuotations: vi.fn(),
   listOpportunityLostReasonChoices: vi.fn(),
   userNames: vi.fn(),
+  getMe: vi.fn(),
 }));
 
 vi.mock('@/lib/bff', () => ({ requireStaffSession: mocks.requireStaffSession }));
+// The live grants come from GET /v1/me; when it fails the page falls back to the role defaults.
+vi.mock('@/lib/api', async (importOriginal) => ({
+  ...(await importOriginal<object>()),
+  getMe: mocks.getMe,
+}));
 vi.mock('@/lib/api-lead-lost-reasons', () => ({
   listOpportunityLostReasonChoices: mocks.listOpportunityLostReasonChoices,
 }));
@@ -136,6 +142,12 @@ beforeEach(() => {
   mocks.listQuotations.mockReset().mockResolvedValue([]);
   mocks.listOpportunityLostReasonChoices.mockReset().mockResolvedValue([]);
   mocks.userNames.mockReset().mockResolvedValue(new Map());
+  mocks.getMe.mockReset().mockRejectedValue(new Error('down'));
+});
+
+/** The live grants `/v1/me` reports, each at `all`. */
+const liveGrants = (...permissions: string[]) => ({
+  permissions: permissions.map((permission) => ({ permission, scope: 'all' })),
 });
 
 describe('opportunity quotation actions (demo feedback: New quotation made four quotations)', () => {
@@ -265,6 +277,20 @@ describe('opportunity follow-ups (migrated open tasks on the deal)', () => {
     expect(html).toContain('Chase the signed scope');
     expect(html).toContain('Mira Thapa');
     expect(html).not.toContain('Another teammate');
+  });
+
+  it('asks for lead owners when the saved grants add crm.lead.write to a role without it', async () => {
+    mocks.requireStaffSession.mockResolvedValue({ accessToken: 'tok', roles: ['management'] });
+    mocks.getMe.mockResolvedValue(liveGrants('crm.opportunity.read', 'crm.lead.write'));
+    await render();
+    expect(mocks.listLeadOwners).toHaveBeenCalledTimes(1);
+  });
+
+  it('skips lead owners when the saved grants removed crm.lead.write from sales', async () => {
+    mocks.getMe.mockResolvedValue(liveGrants('crm.opportunity.read', 'crm.opportunity.write'));
+    const html = await render();
+    expect(mocks.listLeadOwners).not.toHaveBeenCalled();
+    expect(html).toContain('Chase the signed scope');
   });
 
   it('says the follow-ups did not load instead of showing an empty card', async () => {
