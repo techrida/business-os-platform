@@ -962,6 +962,19 @@ export class VendorBillsService {
               );
             }
             if (body.evidenceDocumentId !== undefined) {
+              // A foreign id would otherwise be a composite-FK 500, and a removed file evidence nobody can open.
+              const [doc] = await tx
+                .select({ id: documents.id })
+                .from(documents)
+                .where(
+                  scoped(scope).where(
+                    documents,
+                    and(eq(documents.id, body.evidenceDocumentId), isNull(documents.removedAt)),
+                  ),
+                );
+              if (doc === undefined) {
+                throw unprocessable('DOCUMENT_NOT_FOUND', 'The evidence file was not found');
+              }
               await assertNotInfected(tx, scope, [body.evidenceDocumentId]);
             }
             const exceptionId = randomUUID();

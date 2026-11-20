@@ -881,7 +881,7 @@ describe('invoice documents', () => {
       const refused = await httpErrorOf(billWithoutPo(upload.documentId, vendorId));
       expect(refused.getStatus()).toBe(409);
       expect(codeOf(refused)).toBe('document_infected');
-      expect((refused.getResponse() as { message?: string }).message).toContain('eicar.pdf');
+      expect((refused.getResponse() as { message?: string }).message).not.toContain('eicar.pdf');
       expect(await read((tx) => tx.select({ id: vendorBills.id }).from(vendorBills))).toHaveLength(
         before.length,
       );

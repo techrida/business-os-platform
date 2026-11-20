@@ -448,8 +448,10 @@ export class QuotationOutcomeService {
       acceptedByName?: string;
     },
   ): Promise<AcceptanceDto> {
-    // TR-Q12e: an evidence file the scan found infected is not recorded with the decision.
-    await assertNotInfected(tx, scope, input.evidenceDocumentIds ?? []);
+    // The same checks as at evidence confirmation: a live document of this entity, then not infected (TR-Q12e).
+    const evidenceIds = [...new Set(input.evidenceDocumentIds ?? [])];
+    await this.assertDocumentsLive(tx, scope, evidenceIds);
+    await assertNotInfected(tx, scope, evidenceIds);
     const [row] = await tx
       .insert(quotationAcceptances)
       .values({
