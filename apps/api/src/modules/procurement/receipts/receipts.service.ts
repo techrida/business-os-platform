@@ -14,6 +14,8 @@
 // - "one legal entity at a time": a PO or receipt of another entity is a 404 on every route, never a 403.
 // The PO status is derived from the received quantities (issued, partially_received, fully_received); PO_TRANSITIONS
 // allows each of those moves, reversals included. Any other PO status is left alone and refuses receipts.
+// F1-Q41: the confirmation that first brings an emergency purchase's order to fully_received asks Management to
+// review it (emergency-review.ts), in the same transaction.
 import { type Permission, type PoStatus, type ReverseReceiptBody } from '@bos/contracts';
 import {
   purchaseOrderLines,
@@ -45,6 +47,8 @@ import { DB, type Db, type DbTransaction } from '../../../platform/db/db.module'
 import { updateVersioned, withIdempotency } from '../../../platform/db/idempotency';
 import { withTx, type TxScope } from '../../../platform/db/tx';
 import { NumberingService } from '../../../platform/settings/numbering.service';
+import { ApprovalsService } from '../../approvals/requests.service';
+import { requestEmergencyReview } from './emergency-review';
 import {
   RECEIPT_AUDIT_ENTITY,
   RECEIPT_DERIVED_PO_STATUSES,
@@ -151,6 +155,8 @@ export class ReceiptsService {
     @Optional()
     @Inject(RECEIPTS_CLOCK)
     private readonly clock: () => Date = () => new Date(),
+    /** Asks for the review of an emergency purchase (F1-Q41); absent in tests that do not look. */
+    @Optional() private readonly approvals?: ApprovalsService,
   ) {}
 
   // ------------------------------------------------------------------------------------------------- reads
@@ -454,6 +460,15 @@ export class ReceiptsService {
       updatedAt: now,
     });
     const poStatus = await this.syncPoStatus(tx, scope, po, poLines, now);
+    if (poStatus === 'fully_received' && po.status !== 'fully_received' && this.approvals) {
+      await requestEmergencyReview(
+        tx,
+        scope,
+        { approvals: this.approvals, audit: this.audit },
+        po,
+        userId,
+      );
+    }
     await this.audit.record(tx, {
       action: 'procurement.receipt.confirmed',
       entityType: RECEIPT_AUDIT_ENTITY,

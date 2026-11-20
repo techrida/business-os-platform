@@ -43,6 +43,11 @@ import { systemActor, withTx, type TxScope } from '../../../platform/db/tx';
 import { NumberingService } from '../../../platform/settings/numbering.service';
 import { ApprovalsAdminService } from '../../approvals/admin.service';
 import { ApprovalsService } from '../../approvals/requests.service';
+import {
+  EMERGENCY_REVIEW_DOCUMENT_TYPE,
+  EMERGENCY_REVIEW_WORKFLOW_SPEC,
+  EmergencyReviewSubject,
+} from '../receipts/emergency-review';
 import { ReceiptsService } from '../receipts/receipts.service';
 import { quotationLineAmounts } from '../sourcing/sourcing.rules';
 import { PoAmendmentSubject } from './po-amendment.subject';
@@ -203,8 +208,16 @@ beforeAll(async () => {
   });
   await admin.publish(PO_AMENDMENT_DOCUMENT_TYPE, 1);
 
+  await admin.createWorkflow({
+    key: EMERGENCY_REVIEW_DOCUMENT_TYPE,
+    name: 'Emergency purchase review',
+    spec: EMERGENCY_REVIEW_WORKFLOW_SPEC,
+  });
+  await admin.publish(EMERGENCY_REVIEW_DOCUMENT_TYPE, 1);
+
   approvals = new ApprovalsService(db, audit, notify, directory, caller, () => now);
   approvals.registerSubject(new PoAmendmentSubject(audit, () => now));
+  approvals.registerSubject(new EmergencyReviewSubject(audit));
   service = new PurchaseOrdersService(db, approvals, audit, caller, () => now);
   receiptsService = new ReceiptsService(
     db,
@@ -213,6 +226,7 @@ beforeAll(async () => {
     new NumberingService(),
     caller,
     () => now,
+    approvals,
   );
 });
 
@@ -277,7 +291,13 @@ let poSeq = 0;
  * `quantity` x `unitPrice` + 13% VAT. Default 1 x 79,646.02 = 90,000.00 incl. VAT, band base.
  */
 async function draftPo(
-  opts: { vendorId?: string; scope?: TxScope; quantity?: string; unitPrice?: string } = {},
+  opts: {
+    vendorId?: string;
+    scope?: TxScope;
+    quantity?: string;
+    unitPrice?: string;
+    emergency?: boolean;
+  } = {},
 ): Promise<{ id: string; prId: string; lineId: string }> {
   const scope = opts.scope ?? scopeA;
   const vendorId = opts.vendorId ?? (await vendor('approved', { accountIn: [scopeA, scopeB] }));
@@ -298,6 +318,13 @@ async function draftPo(
     sql`UPDATE app.purchase_requests SET status = 'approved', fx_rate = 1, estimated_total = ${a.lineTotal},
           estimated_total_npr = ${a.lineTotal}, number = ${`PR-T-${prId.slice(0, 8)}`} WHERE id = ${prId}`,
   );
+  if (opts.emergency === true) {
+    await exec(
+      scope,
+      sql`UPDATE app.purchase_requests SET is_emergency = true, emergency_reason = 'The server room is flooding'
+          WHERE id = ${prId}`,
+    );
+  }
   const id = randomUUID();
   poSeq += 1;
   await exec(
@@ -696,6 +723,63 @@ describe('receiving more than ordered (F1-Q39)', () => {
     expect((e.getResponse() as { message?: string }).message).toBe(
       'Line 1 has only 2 still open on the purchase order. To receive more, ask Procurement to amend the purchase order first.',
     );
+  });
+});
+
+describe('review of an emergency purchase after receipt (F1-Q41)', () => {
+  const reviewsOf = (poId: string) =>
+    read((tx) =>
+      tx
+        .select()
+        .from(approvalRequests)
+        .where(
+          sql`${approvalRequests.documentType} = ${EMERGENCY_REVIEW_DOCUMENT_TYPE}
+              AND ${approvalRequests.documentId} = ${poId}`,
+        ),
+    );
+
+  it('asks Management once, when the order first has everything, and audits the decision', async () => {
+    const po = await issued({ quantity: '5', unitPrice: '100.00', emergency: true });
+    await receive(po, '3');
+    expect(await reviewsOf(po.id)).toEqual([]);
+    await receive(po, '2');
+
+    const [review] = await reviewsOf(po.id);
+    expect(review).toMatchObject({ status: 'pending', requesterUserId: U.req });
+    expect(review!.sodUserIds).toEqual(expect.arrayContaining([U.req, U.wh]));
+    expect(await stepRoles(review!.id)).toEqual(['management']);
+    expect(review!.snapshot).toMatchObject({
+      purchaseOrderId: po.id,
+      emergencyReason: 'The server room is flooding',
+    });
+
+    // A reversal and a second full receipt do not ask again.
+    as(U.wh, 'warehouse');
+    const [last] = await receiptsService.list(po.id);
+    await receiptsService.reverse(last!.id, { reason: 'Wrong box' }, randomUUID());
+    as(U.proc, 'procurement');
+    await receive(po, '2');
+    expect(await reviewsOf(po.id)).toHaveLength(1);
+
+    await decide(U.mgmt, 'management', review!.id);
+    const events = await audit.list(scopeA, {
+      entityType: 'purchase_orders',
+      entityId: po.id,
+      limit: 100,
+    });
+    expect(events.map((e) => e.action)).toEqual(
+      expect.arrayContaining([
+        'procurement.emergency_review.requested',
+        'procurement.emergency_review.approved',
+      ]),
+    );
+  });
+
+  it('asks nothing for an ordinary purchase', async () => {
+    const po = await issued({ quantity: '2', unitPrice: '100.00' });
+    await receive(po, '2');
+    expect((await service.get(po.id)).status).toBe('fully_received');
+    expect(await reviewsOf(po.id)).toEqual([]);
   });
 });
 
