@@ -38,6 +38,7 @@ import { searchPage } from '../../../platform/list';
 import { ApprovalsNotify } from '../../approvals/ports';
 import { ApprovalsService } from '../../approvals/requests.service';
 import { BILLABLE_PO_STATUSES } from '../../payables/bills/vendor-bill.rules';
+import { emergencyReviewDue, requestEmergencyReview } from '../receipts/emergency-review';
 import { purchaseRequestRef } from '../requests/purchase-requests.service';
 import {
   assertHoldsPoRead,
@@ -756,7 +757,7 @@ export class PurchaseOrdersService {
     idempotencyKey: string,
     to: 'short_closed' | 'cancelled',
   ): Promise<PurchaseOrderDto> {
-    const { scope, actor } = this.caller.current();
+    const { scope, actor, principal } = this.caller.current();
     const now = this.clock();
     const command = to === 'cancelled' ? 'procurement.po.cancel' : 'procurement.po.short_close';
     return withTx(this.db, scope, actor, async (tx) => {
@@ -817,6 +818,16 @@ export class PurchaseOrdersService {
             before: { status: po.status },
             after: { status: to, reason, cancelled },
           });
+          // A short-close ends the receiving of the order: an emergency purchase is now reviewed (F1-Q41).
+          if (emergencyReviewDue(po.status, to)) {
+            await requestEmergencyReview(
+              tx,
+              scope,
+              { approvals: this.approvals, audit: this.audit },
+              row,
+              principal.userId,
+            );
+          }
           return { status: 200, response: toDto(row, await linesOf(tx, scope, id, false)) };
         },
       );
