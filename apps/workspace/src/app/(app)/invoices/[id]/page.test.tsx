@@ -97,10 +97,35 @@ const withFormat = (detail: InvoiceDetail, format: unknown): InvoiceDetail =>
 const textOf = (html: string) => html.replace(/<[^>]*>/g, ' ').replace(/\s+/g, ' ');
 
 describe('invoice detail page', () => {
+  it("shows a note's creator Issue off with the reason, from the API's issueBlockedBySod (TR-Q12f)", async () => {
+    const note = (blocked: boolean) =>
+      InvoiceDetailSchema.parse({
+        ...invoiceDetail({
+          kind: 'debit_note',
+          status: 'approved',
+          salesOrderId: null,
+          originalInvoiceId: APPROVAL,
+          noteReason: 'Extra support day',
+        }),
+        ...(blocked ? { issueBlockedBySod: true } : {}),
+      });
+    mocks.getInvoice.mockResolvedValue(note(true));
+    const blocked = await render();
+    expect(blocked).toMatch(/<button[^>]*aria-disabled="true"[^>]*>Issue debit note<\/button>/);
+    expect(blocked).toContain(
+      'You created this note, so someone else with issue access must issue it.',
+    );
+
+    mocks.getInvoice.mockResolvedValue(note(false));
+    const open = await render();
+    expect(open).not.toContain('aria-disabled="true"');
+    expect(open).not.toContain('You created this note');
+  });
+
   it('shows number, issue date (AD and BS) and the buyer, all as read-only text', async () => {
     const html = await render();
     expect(html).toContain('INV-2083/84-00001');
-    expect(html).toContain('2083-07-23');
+    expect(html).toContain('23 Kartik 2083 BS');
     expect(html).toContain('Himalayan Agro Foods');
     expect(html).not.toMatch(/<input[^>]*(number|issueDate)/i);
   });
@@ -488,7 +513,9 @@ describe('invoice detail page: the document', () => {
 
   it('prints the issue date with its frozen BS form and the due date with its converted BS form', async () => {
     const text = textOf(await render());
-    expect(text).toContain('(2083-07-23 BS)');
+    // One long BS form on the document (U16-Q5); the compact form stays out.
+    expect(text).toContain('(23 Kartik 2083 BS)');
+    expect(text).not.toContain('2083-07-23');
     expect(text).toMatch(/\(\d{2} [A-Za-z]+ 2083 BS\)/);
     expect(text).toMatch(/Due 08 Dec 2026 · 30 days/);
   });

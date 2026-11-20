@@ -59,6 +59,8 @@ export const BILLING_ERROR_CODES = {
   already_issued: 200,
   fx_rate_stale: 409,
   evidence_policy_unmet: 422,
+  /** Issue refused: the drafted due date is before today, the issue date. `details` names both when known. */
+  DUE_DATE_BEFORE_ISSUE: 422,
 } as const;
 export type BillingErrorCode = keyof typeof BILLING_ERROR_CODES;
 export const BillingErrorCodeSchema = z.enum(

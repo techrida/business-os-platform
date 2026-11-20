@@ -91,7 +91,8 @@ describe('renderInvoiceHtml', () => {
     expect(html).toContain('PAN/VAT 301234567');
     expect(html).toContain('PAN/VAT ABC-12345');
     expect(html).toContain('Himal Traders Pvt. Ltd.');
-    expect(html).toContain('2083-07-24 BS');
+    expect(html).toContain('(24 Kartik 2083 BS)');
+    expect(html).not.toContain('2083-07-24');
     expect(html).toContain('Due date');
     expect(html).toContain('VAT 13% (13%) on NPR 17,86,000.00');
     expect(html).not.toContain('Proforma');

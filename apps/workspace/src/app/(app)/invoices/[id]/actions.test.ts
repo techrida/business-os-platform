@@ -146,6 +146,57 @@ describe('issueInvoiceAction', () => {
     expect(state.reload).toBe(true);
   });
 
+  it('says the due date has passed (422 DUE_DATE_BEFORE_ISSUE), never that the invoice changed', async () => {
+    mocks.apiFetch.mockImplementation(() =>
+      answer(422, {
+        error: {
+          code: 'DUE_DATE_BEFORE_ISSUE',
+          message: 'The due date is before the issue date',
+          correlationId: 'c',
+          details: { dueDate: '2026-11-09', issueDate: '2026-11-12' },
+        },
+      }),
+    );
+    const state = await issueInvoiceAction(prev, form(base()));
+    expect(state.error).toBe(
+      'The due date (09 Nov 2026) is before today, so this invoice cannot be issued. An invoice is issued with a due date of today or later.',
+    );
+    expect(state.error).not.toMatch(/changed|reload/i);
+    expect(state.reload).toBeUndefined();
+  });
+
+  it('tells the creator of a note that someone else must issue it (403 separation_of_duties)', async () => {
+    mocks.apiFetch.mockImplementation(() =>
+      answer(403, {
+        error: {
+          code: 'forbidden',
+          message: 'The creator of a credit or debit note cannot issue it',
+          correlationId: 'c',
+          reason: 'separation_of_duties',
+        },
+      }),
+    );
+    const state = await issueInvoiceAction(prev, form(base()));
+    expect(state.error).toBe(
+      'You created this note, so someone else with issue access must issue it.',
+    );
+  });
+
+  it('leaves out a due date that is not a plain date', async () => {
+    mocks.apiFetch.mockImplementation(() =>
+      answer(422, {
+        error: {
+          code: 'DUE_DATE_BEFORE_ISSUE',
+          message: 'm',
+          correlationId: 'c',
+          details: { dueDate: '<b>soon</b>' },
+        },
+      }),
+    );
+    const state = await issueInvoiceAction(prev, form(base()));
+    expect(state.error).toMatch(/^The due date is before today/);
+  });
+
   it('explains a fiscal year mismatch (409 PERIOD_FY_MISMATCH)', async () => {
     mocks.apiFetch.mockImplementation(() => answer(409, { error: { code: 'PERIOD_FY_MISMATCH' } }));
     const state = await issueInvoiceAction(prev, form(base()));

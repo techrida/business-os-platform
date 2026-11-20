@@ -18,6 +18,8 @@ import {
   invoices,
   invoiceTaxSummary,
   organizations,
+  partyAccounts,
+  paymentTerms,
   salesOrders,
   scoped,
 } from '@bos/db';
@@ -41,12 +43,15 @@ import { creditExceedsInvoice } from './notes/note-drafting.service';
 import {
   assertStaff,
   conflict,
+  createdThisNote,
+  dueDateBeforeIssue,
   formatAddress,
   INVOICE_CLOCK,
   InvoiceCaller,
   invoiceNotFound,
   kathmanduDay,
   notApproved,
+  noteIssuerIsCreator,
   pgError,
 } from './invoice-support';
 
@@ -61,6 +66,11 @@ export function addDays(isoDate: string, days: number): string {
   const d = new Date(`${isoDate}T00:00:00Z`);
   d.setUTCDate(d.getUTCDate() + days);
   return d.toISOString().slice(0, 10);
+}
+
+/** Whole calendar days from one `YYYY-MM-DD` to a later one (UTC arithmetic, so no zone shift). */
+function daysBetween(from: string, to: string): number {
+  return Math.round((Date.parse(`${to}T00:00:00Z`) - Date.parse(`${from}T00:00:00Z`)) / 86_400_000);
 }
 
 type InvoiceRow = typeof invoices.$inferSelect;
@@ -97,8 +107,8 @@ export class InvoiceIssueService {
 
   /**
    * `issued` the first time, `already_issued` (with the same number) for a replay or a second click. 404 outside the
-   * entity, 403 without `invoice.issue`, 409 for a stale `expectedVersion`, a status that is not draft, a due date
-   * before today, or a kind that needs approval first (NOT_APPROVED).
+   * entity, 403 without `invoice.issue`, 409 for a stale `expectedVersion`, a status that is not draft or a kind that
+   * needs approval first (NOT_APPROVED), 422 DUE_DATE_BEFORE_ISSUE for a due date before today.
    */
   async issue(
     id: string,
@@ -138,9 +148,7 @@ export class InvoiceIssueService {
         throw creditExceedsInvoice();
       }
       if (pg?.code === '23514' && pg.constraint === 'invoices_due_date_check') {
-        throw conflict(
-          'The due date is before the issue date; correct the due date and issue again',
-        );
+        throw dueDateBeforeIssue();
       }
       throw error;
     }
@@ -244,6 +252,9 @@ export class InvoiceIssueService {
       return { kind: 'already_issued', invoiceId: invoice.id, number: invoice.number };
     }
     if (invoice.status !== 'approved') throw notApproved();
+    if (createdThisNote(invoice, actor.kind === 'user' ? actor.id : null)) {
+      throw noteIssuerIsCreator();
+    }
     if (invoice.version !== body.expectedVersion) {
       throw conflict('This invoice was changed by someone else; reload it and try again');
     }
@@ -344,8 +355,13 @@ export class InvoiceIssueService {
   }
 
   /**
-   * The due date at issue: issue date + the order's credit days when the invoice has a sales order; otherwise the
-   * drafted due date (409 when it is already past), or the issue date when none was drafted (due on receipt).
+   * The due date at issue. A debit note is a further charge, so it follows the customer's payment terms with this entity
+   * (TR-Q12c): issue date + the term's net days. A customer with no term here gets the credit period of the original
+   * invoice (its due date less its issue date), and an original due on receipt makes the note due on issue.
+   *
+   * Any other kind: issue date + the order's credit days when the invoice has a sales order; otherwise the
+   * drafted due date (422 DUE_DATE_BEFORE_ISSUE when it is already past), or the issue date when none was drafted (due
+   * on receipt).
    */
   private async dueDateOf(
     tx: DbTransaction,
@@ -353,6 +369,35 @@ export class InvoiceIssueService {
     invoice: InvoiceRow,
     issueDate: string,
   ): Promise<string> {
+    if (invoice.kind === 'debit_note' && invoice.customerPartyId !== null) {
+      const [term] = await tx
+        .select({ netDays: paymentTerms.netDays })
+        .from(partyAccounts)
+        .innerJoin(
+          paymentTerms,
+          and(
+            eq(paymentTerms.tenantId, partyAccounts.tenantId),
+            eq(paymentTerms.id, partyAccounts.paymentTermId),
+          ),
+        )
+        .where(
+          scoped(scope).where(partyAccounts, eq(partyAccounts.partyId, invoice.customerPartyId)),
+        )
+        .limit(1);
+      if (term !== undefined) return addDays(issueDate, term.netDays);
+      // No term with this entity: the credit period the customer was given on the invoice this note adds to.
+      if (invoice.originalInvoiceId !== null) {
+        const [original] = await tx
+          .select({ issueDate: invoices.issueDate, dueDate: invoices.dueDate })
+          .from(invoices)
+          .where(scoped(scope).where(invoices, eq(invoices.id, invoice.originalInvoiceId)))
+          .limit(1);
+        if (original?.issueDate && original.dueDate) {
+          return addDays(issueDate, daysBetween(original.issueDate, original.dueDate));
+        }
+      }
+      return issueDate;
+    }
     if (invoice.salesOrderId !== null) {
       const [order] = await tx
         .select({ creditDays: salesOrders.creditDays })
@@ -363,9 +408,8 @@ export class InvoiceIssueService {
       return addDays(issueDate, order.creditDays);
     }
     if (invoice.dueDate === null) return issueDate;
-    if (invoice.dueDate < issueDate) {
-      throw conflict('The due date is before the issue date; correct the due date and issue again');
-    }
+    if (invoice.dueDate < issueDate)
+      throw dueDateBeforeIssue({ dueDate: invoice.dueDate, issueDate });
     return invoice.dueDate;
   }
 

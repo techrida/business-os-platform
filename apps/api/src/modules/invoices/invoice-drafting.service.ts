@@ -56,6 +56,7 @@ import {
   assertStaff,
   badRequest,
   conflict,
+  createdThisNote,
   INVOICE_CLOCK,
   InvoiceCaller,
   invoiceNotFound,
@@ -266,19 +267,26 @@ export class InvoiceDraftingService {
     );
   }
 
-  /** 200 with the detail; 404 for an invoice of another entity or outside the caller's read scope. */
+  /**
+   * 200 with the detail; 404 for an invoice of another entity or outside the caller's read scope. A note the caller
+   * created carries `issueBlockedBySod`.
+   */
   async detail(id: string): Promise<InvoiceDetail> {
     const { scope, actor, principal } = this.caller.current();
     assertStaff(principal);
     const visible = scopeWhereFor(principal, invoices, 'invoice.read');
     return withTx(this.db, scope, actor, async (tx) => {
       const [row] = await tx
-        .select({ id: invoices.id })
+        .select({ id: invoices.id, kind: invoices.kind, createdBy: invoices.createdBy })
         .from(invoices)
         .where(and(visible, eq(invoices.id, id)))
         .limit(1);
       if (row === undefined) throw invoiceNotFound();
-      return this.loadDetail(tx, scope, id);
+      const detail = await this.loadDetail(tx, scope, id);
+      // The issue route refuses the note's creator (TR-Q12f); the page says so before the click.
+      return createdThisNote(row, principal.userId)
+        ? { ...detail, issueBlockedBySod: true }
+        : detail;
     });
   }
 
