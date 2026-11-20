@@ -169,10 +169,28 @@ it('says the vendor has no verified bank account, not that balances were claimed
   const text = plain(html);
   expect(text).toContain('Approved bills from Everest Traders cannot be requested yet');
   expect(text).toContain('this vendor has none');
-  expect(text).toContain('Propose a bank account on the vendor’s page');
+  // Default Finance verifies bank accounts but does not propose them, so it is told who does.
+  expect(text).toContain('Procurement proposes an account on the vendor’s page');
+  expect(text).not.toContain('Propose a bank account');
   expect(html).toContain(`href="/vendors/${otherVendor}"`);
   expect(text).not.toContain('claimed the remaining balances');
   expect(html).not.toContain('Create draft request');
+});
+
+it('words the fix for a reader who may propose a bank account, and links vendors only for vendor readers', async () => {
+  api.listPaymentRequestItems.mockResolvedValue([]);
+  api.listPaymentRequestItemsWithoutBankAccount.mockResolvedValue([
+    heldItem(otherVendor, 'Everest Traders', otherBill),
+  ]);
+  grants.live = new Map([
+    ['payables.payment.request', 'all'],
+    ['vendor.bank.propose', 'all'],
+  ]);
+  const html = renderToStaticMarkup(await NewPage());
+  expect(plain(html)).toContain('Propose a bank account on the vendor’s page');
+  // No vendor.read: the name is shown, not linked to a page that would refuse them.
+  expect(plain(html)).toContain('Everest Traders');
+  expect(html).not.toContain(`href="/vendors/${otherVendor}"`);
 });
 
 it('keeps the claimed-balances message when no vendor is missing a bank account, or that read fails', async () => {

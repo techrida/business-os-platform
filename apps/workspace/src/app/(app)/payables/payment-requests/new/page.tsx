@@ -21,7 +21,7 @@ import { PO_STATUS_LABEL } from '../../../procurement/orders/_lib/model';
 import { PaymentRequestEntry } from '../forms';
 import { paymentRequestFailure } from '../failure';
 import {
-  ADD_BANK_ACCOUNT,
+  addBankAccountText,
   NEW_REQUEST_HEADING,
   requestableItem,
   vendorsWithoutBankAccount,
@@ -42,7 +42,11 @@ export default async function NewPaymentRequestPage({
     `/payables/payment-requests/new${billId !== undefined ? `?bill=${billId}` : ''}`,
   );
   // Live grants (GET /v1/me), not the role defaults: an admin may grant payment requests to any role, at any scope.
-  const allowed = hasGrant(await getGrants(session), 'payables.payment.request');
+  const grants = await getGrants(session);
+  const allowed = hasGrant(grants, 'payables.payment.request');
+  // For a vendor without a verified bank account: what this reader can do about it, and whether its page opens.
+  const addBank = addBankAccountText(hasGrant(grants, 'vendor.bank.propose'));
+  const linkVendors = hasGrant(grants, 'vendor.read');
   let items: PaymentRequestItem[] = [];
   // Balances held back only because the vendor has no verified bank account: named so the person knows what to fix.
   // Optional: if it does not load, the page says what it said before.
@@ -100,12 +104,12 @@ export default async function NewPaymentRequestPage({
         ) : items.length === 0 ? (
           held.length > 0 ? (
             <Alert tone="info" role="status" title="A vendor has no verified bank account">
-              Approved bills from <VendorNames held={held} /> cannot be requested yet: a payment
-              goes only to a verified bank account, and{' '}
+              Approved bills from <VendorNames held={held} link={linkVendors} /> cannot be requested
+              yet: a payment goes only to a verified bank account, and{' '}
               {vendorsWithoutBankAccount(held).length === 1
                 ? 'this vendor has'
                 : 'these vendors have'}{' '}
-              none. {ADD_BANK_ACCOUNT}
+              none. {addBank}
             </Alert>
           ) : (
             <Alert tone="info" role="status">
@@ -118,8 +122,8 @@ export default async function NewPaymentRequestPage({
             {heldBill !== undefined ? (
               <Alert tone="warning" role="status" title="This bill cannot be requested yet">
                 {heldBill.billNumber ?? heldBill.vendorInvoiceNo} from{' '}
-                <VendorNames held={[heldBill]} /> cannot be requested yet: a payment goes only to a
-                verified bank account, and this vendor has none. {ADD_BANK_ACCOUNT}
+                <VendorNames held={[heldBill]} link={linkVendors} /> cannot be requested yet: a
+                payment goes only to a verified bank account, and this vendor has none. {addBank}
               </Alert>
             ) : null}
             <PaymentRequestEntry
@@ -142,15 +146,15 @@ export default async function NewPaymentRequestPage({
   );
 }
 
-/** The vendors of `held`, each linked to its page, where a bank account is proposed. */
-function VendorNames({ held }: { held: readonly PaymentRequestItem[] }) {
+/** The vendors of `held`, each linked to its page (where a bank account is proposed) when the reader may open it. */
+function VendorNames({ held, link }: { held: readonly PaymentRequestItem[]; link: boolean }) {
   const vendors = vendorsWithoutBankAccount(held);
   return (
     <>
       {vendors.map((v, n) => (
         <span key={v.id}>
           {n > 0 ? (n === vendors.length - 1 ? ' and ' : ', ') : null}
-          <Link href={`/vendors/${encodeURIComponent(v.id)}`}>{v.name}</Link>
+          {link ? <Link href={`/vendors/${encodeURIComponent(v.id)}`}>{v.name}</Link> : v.name}
         </span>
       ))}
     </>
