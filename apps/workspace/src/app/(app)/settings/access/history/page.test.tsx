@@ -201,6 +201,37 @@ describe('Access history', () => {
     );
   });
 
+  it('shows the newest changes when one type has more than the limit', async () => {
+    // 60 departments added, oldest first, the way the API stores them.
+    const many = Array.from({ length: 60 }, (_, i) =>
+      event({
+        seq: 101 + i,
+        action: 'department.created',
+        entityType: 'departments',
+        entityId: FIELD_OPS,
+        after: { name: `Team ${i + 1}`, headUserId: null, status: 'active', version: 1 },
+      }),
+    );
+    // Like GET /v1/audit: the oldest `limit` rows unless the read asks for order=desc.
+    kernel.apiFetch.mockImplementation((_session, path) => {
+      const params = new URL(path, 'http://api.test').searchParams;
+      const rows = params.get('entityType') === 'departments' ? many : [];
+      const limit = Number(params.get('limit') ?? '50');
+      const items =
+        params.get('order') === 'desc' ? rows.slice(-limit).reverse() : rows.slice(0, limit);
+      return Promise.resolve(Response.json({ items }));
+    });
+
+    const page = await render();
+
+    expect(page).toContain('Department Team 60 added.');
+    expect(page).toContain('Department Team 11 added.');
+    expect(page).not.toContain('Department Team 10 added.');
+    expect(page.indexOf('Department Team 60 added.')).toBeLessThan(
+      page.indexOf('Department Team 59 added.'),
+    );
+  });
+
   it('shows the no-access state and reads nothing without audit.read', async () => {
     kernel.getMe.mockResolvedValue(grants('admin.roles.read'));
 
