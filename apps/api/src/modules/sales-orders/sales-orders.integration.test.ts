@@ -299,6 +299,7 @@ async function seedDocument(scope: TxScope = scopeA): Promise<string> {
 
 async function draftQuotation(
   paymentSchedule?: { label: string; percent: string }[],
+  unitPrice = '4465000.00',
 ): Promise<QuotationDto> {
   const opportunityId = await seedOpportunity();
   return drafting.create(
@@ -312,7 +313,7 @@ async function draftQuotation(
           description: 'Platform build',
           uom: 'lot',
           quantity: '1',
-          unitPrice: '4465000.00',
+          unitPrice,
           taxCodeId: f.taxCodeVat13Id,
         },
       ],
@@ -595,6 +596,146 @@ describe('SalesOrdersService.confirmFromQuotation', () => {
 });
 
 // ------------------------------------------------------------------------------------ list and detail
+
+describe('draft sales order on acceptance (F1-Q25)', () => {
+  const auditActions = async (entityId: string) =>
+    (
+      await ownerPool.query<{ action: string; after: Record<string, unknown> }>(
+        'SELECT action, after FROM audit.audit_events WHERE entity_id = $1 ORDER BY occurred_at, id',
+        [entityId],
+      )
+    ).rows;
+
+  it('drafts the order when the quotation is accepted, and the Accountant confirms that same order', async () => {
+    const q = await acceptedQuotation();
+    const [draftRow] = await liveOrders(q.id);
+    expect(draftRow).toMatchObject({
+      status: 'draft',
+      number: null,
+      quotationVersionId: q.currentVersionId,
+      total: GOLDEN_TOTAL,
+      createdBy: null,
+    });
+    const draftLines = await db
+      .select()
+      .from(billingScheduleLines)
+      .where(eq(billingScheduleLines.salesOrderId, draftRow!.id));
+    // Nothing is billable before the Accountant confirms, not even the advance.
+    expect(draftLines.map((l) => l.status)).toEqual(['planned', 'planned', 'planned']);
+    expect((await auditActions(draftRow!.id)).map((a) => a.action)).toContain(
+      'sales_order.drafted',
+    );
+
+    // The quotation's owner (Sales, own) reads the draft; nothing blocks it, but Sales cannot confirm.
+    const asOwner = parsed(await service.detail(draftRow!.id));
+    expect(asOwner.order).toMatchObject({ status: 'draft', number: null, confirmedAt: null });
+    expect(asOwner.draft).toMatchObject({
+      evidenceStatus: 'confirmed',
+      policy: 'signed_quote',
+      missing: [],
+      blocker: null,
+    });
+    expect(asOwner.can?.confirm).toBe(false);
+    const listed = (await service.list({ status: ['draft'] })).rows.map((r) =>
+      SalesOrderListItemSchema.parse(r),
+    );
+    expect(listed.map((r) => r.id)).toContain(draftRow!.id);
+
+    current.grants = grantsOf('accountant');
+    current.userId = await seedOtherStaffUser(db, f);
+    expect(parsed(await service.detail(draftRow!.id)).can?.confirm).toBe(true);
+    const confirmed = parsed(await confirm(q));
+    expect(confirmed.order).toMatchObject({ id: draftRow!.id, status: 'confirmed', version: 1 });
+    expect(confirmed.order.number).toMatch(/^SO-\d{4}\/\d{2}-\d{5}$/);
+    expect(confirmed.draft).toBeNull();
+    expect(confirmed.schedule.map((l) => l.status)).toEqual(['billable', 'planned', 'planned']);
+    const [after] = await liveOrders(q.id);
+    // Whoever confirms a drafted order becomes its creator, as when the order was made at confirm.
+    expect(after).toMatchObject({ createdBy: current.userId, confirmedBy: current.userId });
+    expect(await liveOrders(q.id)).toHaveLength(1);
+  });
+
+  it('makes one draft when two people record the acceptance at once, and none again on a replay', async () => {
+    const q = await draftQuotation();
+    const expectedVersion = await sendQuotation(q);
+    const record = (key: string) =>
+      recorder.record(
+        q.id,
+        q.currentVersionId,
+        {
+          outcome: 'accepted',
+          decidedOn: DECIDED_ON,
+          evidenceKinds: ['signed_quote'],
+          expectedVersion,
+        },
+        key,
+      );
+    const results = await Promise.allSettled([record('race-a'), record('race-b')]);
+    expect(results.filter((r) => r.status === 'fulfilled')).toHaveLength(1);
+    await record(results[0].status === 'fulfilled' ? 'race-a' : 'race-b');
+    expect(await orderStatuses(q.id)).toEqual(['draft']);
+  });
+
+  it('keeps the acceptance when the order cannot be drafted, audits why and tells the owner', async () => {
+    notify.notifyUser.mockClear();
+    // 0.01 + 13% VAT is 0.01: the 60/20/20 default schedule would bill 0.00 twice.
+    const q = await draftQuotation(undefined, '0.01');
+    const expectedVersion = await sendQuotation(q);
+    await recorder.record(
+      q.id,
+      q.currentVersionId,
+      {
+        outcome: 'accepted',
+        decidedOn: DECIDED_ON,
+        evidenceKinds: ['signed_quote'],
+        expectedVersion,
+      },
+      `accept-${randomUUID()}`,
+    );
+    expect((await versionRow(q.currentVersionId)).status).toBe('accepted');
+    expect(await liveOrders(q.id)).toHaveLength(0);
+    const refused = (await auditActions(q.id)).find(
+      (a) => a.action === 'sales_order.draft_refused',
+    );
+    expect(refused?.after).toMatchObject({
+      versionId: q.currentVersionId,
+      code: 'invalid_payment_schedule',
+    });
+    expect(notify.notifyUser).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({
+        userId: f.ownerUserId,
+        dedupeKey: `sales_order.draft_refused:${q.currentVersionId}`,
+      }),
+    );
+    // The manual route answers the same refusal until the schedule is fixed.
+    current.grants = grantsOf('accountant');
+    expect(await statusOf(confirm(q))).toEqual({ status: 422, code: 'invalid_payment_schedule' });
+  });
+
+  it('drafts a portal acceptance its quotation owner can read, blocked until staff confirm the evidence', async () => {
+    const q = await portalAcceptedQuotation();
+    const [draftRow] = await liveOrders(q.id);
+    expect(draftRow).toMatchObject({ status: 'draft', createdBy: null });
+
+    // Sales reads at `own`: the order reaches its quotation's owner (U20a2-Q1), list and detail alike.
+    expect((await service.list({})).rows.map((r) => r.id)).toContain(draftRow!.id);
+    expect(parsed(await service.detail(draftRow!.id)).draft).toMatchObject({
+      evidenceStatus: 'pending',
+      blocker: 'evidence_not_confirmed',
+    });
+
+    current.grants = grantsOf('accountant');
+    expect(parsed(await service.detail(draftRow!.id)).can?.confirm).toBe(false);
+    current.grants = grantsOf('sales');
+    await confirmEvidence(q, { evidenceKinds: ['signed_quote'] });
+    current.grants = grantsOf('accountant');
+    const ready = parsed(await service.detail(draftRow!.id));
+    expect(ready.draft?.blocker).toBeNull();
+    expect(ready.can?.confirm).toBe(true);
+    expect((await confirm(q)).order.id).toBe(draftRow!.id);
+  });
+});
 
 describe('evidence confirmation before the order (F1-Q28)', () => {
   it('holds a portal acceptance until staff confirm evidence that meets the policy, then confirms the order on it', async () => {
