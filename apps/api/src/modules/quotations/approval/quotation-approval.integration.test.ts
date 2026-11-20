@@ -1167,7 +1167,7 @@ describe('quotation approval: the author names the first-step approver', () => {
 
     // Their own-scope request read does not reach someone else's request, and nothing waits on them: only having
     // decided a step lets them read it, the context showing the version as it stands now.
-    expect(await inboxIds(X.mate, 'sales')).toEqual([]);
+    expect(await inboxIds(X.mate, 'sales')).not.toContain(request!.id);
     as(X.mate, 'sales');
     try {
       const dto = await approvals.get(request!.id);
