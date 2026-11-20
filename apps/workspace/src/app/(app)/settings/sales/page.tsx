@@ -6,8 +6,9 @@ import { Panel } from '@/components/ui/panel';
 import { listLeadLostReasons } from '@/lib/api-lead-lost-reasons';
 
 import { BackToSettings } from '../_components/back-link';
-import { cardKey, loadFields } from '../_components/load-fields';
+import { loadFields } from '../_components/load-fields';
 import { SettingCard } from '../_components/setting-card';
+import { SettingsForm } from '../_components/settings-form';
 import styles from '../_components/settings.module.css';
 import admin from '../admin.module.css';
 import { requireSection } from '../guard';
@@ -34,6 +35,20 @@ export default async function SalesSettingsPage() {
     },
   ];
 
+  const allFields = cards.flatMap((c) => (c.result.ok ? c.result.data : []));
+  const cardNodes = cards.map(({ title, description, result }) =>
+    result.ok ? (
+      <SettingCard
+        key={title}
+        title={title}
+        {...(description ? { description } : {})}
+        fields={result.data}
+      />
+    ) : (
+      <SectionError key={title} message={result.message} />
+    ),
+  );
+
   return (
     <Page className={admin.page}>
       <BackToSettings />
@@ -42,18 +57,12 @@ export default async function SalesSettingsPage() {
         description="Defaults for quotations and the deals they win, and the reasons a lead or opportunity can be lost. Every change is recorded in the audit trail."
       />
       <div className={`${styles.column} ${styles.narrow}`}>
-        {cards.map(({ title, description, result }) =>
-          result.ok ? (
-            <SettingCard
-              key={`${title}:${cardKey(result.data)}`}
-              section="sales"
-              title={title}
-              {...(description ? { description } : {})}
-              fields={result.data}
-            />
-          ) : (
-            <SectionError key={title} message={result.message} />
-          ),
+        {allFields.length > 0 ? (
+          <SettingsForm section="sales" fields={allFields}>
+            {cardNodes}
+          </SettingsForm>
+        ) : (
+          cardNodes
         )}
         {lostReasons.ok ? (
           <Panel

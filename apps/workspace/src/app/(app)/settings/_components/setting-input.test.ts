@@ -1,8 +1,9 @@
 import { describe, expect, it } from 'vitest';
 
-import { parseSettingInput, settingValueText } from './setting-input';
+import { scheduleSummary } from './setting-fields';
+import { isFieldAtDefault, parseSettingInput, settingValueText } from './setting-input';
 
-describe('parseSettingInput', () => {
+describe('parseSettingInput (legacy raw string arrays)', () => {
   it('trims a VAT rate and rejects one out of range', () => {
     expect(parseSettingInput('tax.vat_rate', [' 13 '])).toEqual({ ok: true, value: '13' });
     expect(parseSettingInput('tax.vat_rate', ['101']).ok).toBe(false);
@@ -41,6 +42,133 @@ describe('parseSettingInput', () => {
       parseSettingInput('approvals.sla_defaults', [
         '{"remindAfterHours":50,"escalateAfterHours":10}',
       ]).ok,
+    ).toBe(false);
+  });
+});
+
+describe('parseSettingInput (typed SettingFieldValue)', () => {
+  it('serialises typed SLA defaults and rejects escalate <= remind or non-integers', () => {
+    expect(
+      parseSettingInput('approvals.sla_defaults', {
+        kind: 'sla',
+        value: { remindAfterHours: '12', escalateAfterHours: '48', escalateToRole: 'management' },
+      }),
+    ).toEqual({
+      ok: true,
+      value: { remindAfterHours: 12, escalateAfterHours: 48, escalateTo: { role: 'management' } },
+    });
+
+    const badOrder = parseSettingInput('approvals.sla_defaults', {
+      kind: 'sla',
+      value: { remindAfterHours: '72', escalateAfterHours: '24', escalateToRole: 'founder' },
+    });
+    expect(badOrder.ok).toBe(false);
+    expect(badOrder.ok === false && badOrder.message).toContain('later than remind after');
+
+    expect(
+      parseSettingInput('approvals.sla_defaults', {
+        kind: 'sla',
+        value: { remindAfterHours: '2.5', escalateAfterHours: '24', escalateToRole: 'founder' },
+      }).ok,
+    ).toBe(false);
+  });
+
+  it('serialises typed billing schedule rows and reports exact shortfall or excess', () => {
+    expect(
+      parseSettingInput('sales.default_schedule', {
+        kind: 'schedule',
+        rows: [
+          { label: '  Advance  ', percent: '33.33', trigger: 'advance' },
+          { label: 'Milestone', percent: '33.33', trigger: 'milestone' },
+          { label: 'Final', percent: '33.34', trigger: 'uat' },
+        ],
+      }),
+    ).toEqual({
+      ok: true,
+      value: [
+        { label: 'Advance', percent: '33.33', trigger: 'advance' },
+        { label: 'Milestone', percent: '33.33', trigger: 'milestone' },
+        { label: 'Final', percent: '33.34', trigger: 'uat' },
+      ],
+    });
+
+    const short = parseSettingInput('sales.default_schedule', {
+      kind: 'schedule',
+      rows: [
+        { label: 'Advance', percent: '60', trigger: 'advance' },
+        { label: 'Final', percent: '20', trigger: 'uat' },
+      ],
+    });
+    expect(short.ok).toBe(false);
+    expect(short.ok === false && short.message).toContain('Add 20% more');
+
+    const over = parseSettingInput('sales.default_schedule', {
+      kind: 'schedule',
+      rows: [
+        { label: 'Advance', percent: '60', trigger: 'advance' },
+        { label: 'Final', percent: '45', trigger: 'uat' },
+      ],
+    });
+    expect(over.ok).toBe(false);
+    expect(over.ok === false && over.message).toContain('Remove 5%');
+
+    const emptyLabel = parseSettingInput('sales.default_schedule', {
+      kind: 'schedule',
+      rows: [{ label: '   ', percent: '100', trigger: 'advance' }],
+    });
+    expect(emptyLabel.ok).toBe(false);
+  });
+
+  it('rejects VAT with > 2 decimals and checks numeric ranges on typed inputs', () => {
+    expect(parseSettingInput('tax.vat_rate', { kind: 'text', value: '13.25' })).toEqual({
+      ok: true,
+      value: '13.25',
+    });
+    expect(parseSettingInput('tax.vat_rate', { kind: 'text', value: '100.123' }).ok).toBe(false);
+    expect(parseSettingInput('tax.vat_rate', { kind: 'text', value: '101' }).ok).toBe(false);
+    expect(parseSettingInput('fx.max_rate_age_days', { kind: 'text', value: '366' }).ok).toBe(
+      false,
+    );
+    expect(parseSettingInput('quotation.validity_days', { kind: 'text', value: '0' }).ok).toBe(
+      false,
+    );
+    expect(parseSettingInput('procurement.min_quotes', { kind: 'text', value: '11' }).ok).toBe(
+      false,
+    );
+    expect(parseSettingInput('currency.enabled', { kind: 'currencies', values: ['USD'] }).ok).toBe(
+      false,
+    );
+  });
+
+  it('computes exact schedule totals without floating-point drift', () => {
+    expect(
+      scheduleSummary([
+        { label: 'A', percent: '33.33', trigger: 'advance' },
+        { label: 'B', percent: '33.33', trigger: 'milestone' },
+        { label: 'C', percent: '33.34', trigger: 'uat' },
+      ]),
+    ).toEqual({ status: 'ok', totalText: '100' });
+
+    expect(scheduleSummary([{ label: 'A', percent: '80', trigger: 'advance' }])).toEqual({
+      status: 'short',
+      totalText: '80',
+      diffText: '20',
+      actionText: 'Add 20% more',
+    });
+
+    expect(scheduleSummary([{ label: 'A', percent: '105', trigger: 'advance' }])).toMatchObject({
+      status: 'invalid',
+    });
+  });
+
+  it('treats equivalent decimals and reordered currency sets as matching default', () => {
+    expect(isFieldAtDefault('tax.vat_rate', { kind: 'text', value: '13.00' })).toBe(true);
+    expect(isFieldAtDefault('tax.vat_rate', { kind: 'text', value: '14' })).toBe(false);
+    expect(
+      isFieldAtDefault('currency.enabled', { kind: 'currencies', values: ['USD', 'NPR', 'INR'] }),
+    ).toBe(true);
+    expect(
+      isFieldAtDefault('currency.enabled', { kind: 'currencies', values: ['NPR', 'USD'] }),
     ).toBe(false);
   });
 });
