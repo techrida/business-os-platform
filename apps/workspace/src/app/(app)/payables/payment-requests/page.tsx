@@ -31,7 +31,7 @@ import { poMoney } from '../../procurement/orders/_lib/model';
 import { PAYMENT_REQUEST_COUNT_CARDS, countCards } from '../_lib/summary';
 import styles from '../payables.module.css';
 import { paymentRequestFailure } from './failure';
-import { PAYMENT_STATUS } from './model';
+import { PAYMENT_STATUS, requestTitle } from './model';
 import { PaymentRequestsFilters } from './payment-requests-filters';
 
 export const metadata: Metadata = { title: 'Payment requests · Business OS' };
@@ -198,13 +198,14 @@ export default async function PaymentRequestsPage({
                   const href = `/payables/payment-requests/${encodeURIComponent(row.id)}`;
                   const amount = poMoney(row.totalAmount, row.currency, numberSystems);
                   // Drafts share a name, so the action is named by the amount and the account too.
-                  const name = `${row.number ?? 'draft request'} for ${amount} to the account ending ${row.bankLast4}`;
+                  const title = requestTitle(row);
+                  const name = `${title} for ${amount} to the account ending ${row.bankLast4}`;
                   const st = PAYMENT_STATUS[row.status];
                   return (
                     <tr key={row.id}>
                       <Td>
                         <Link href={href} className={styles.name}>
-                          {row.number ?? 'Draft request'}
+                          {title}
                         </Link>
                       </Td>
                       <Td>
