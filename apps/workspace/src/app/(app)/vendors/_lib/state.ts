@@ -22,6 +22,11 @@ export interface PanelState<K extends string = string> {
   reload?: boolean;
   /** A short confirmation, such as "Sita Sharma was added." */
   saved?: string;
+  /**
+   * The vendor had moved on since the page was drawn (a stale button), and the action has refreshed the page.
+   * The form that sent it may be gone from the new page, so the refusal is raised as a toast.
+   */
+  refreshed?: boolean;
   savedCount: number;
 }
 

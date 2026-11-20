@@ -519,6 +519,33 @@ describe('lifecycle and activation', () => {
     expect(second.body.status).toBe('under_review');
   });
 
+  it('refuses a stale "Start KYB review" with a plain 409 instead of sending the vendor for review', async () => {
+    const v = await newVendor();
+    as('procurement', 'procurement');
+    // Tab 1 starts the review; tab 2 still shows "Start KYB review", drawn for draft.
+    const first = await post(`/v1/vendors/${v.id}/submit-kyc`, { expectedStatus: 'draft' });
+    expect(first.status, JSON.stringify(first.body)).toBe(200);
+    expect(first.body.status).toBe('pending_kyc');
+    await setCase(v.id, 'submitted');
+
+    const stale = await post(`/v1/vendors/${v.id}/submit-kyc`, { expectedStatus: 'draft' });
+    expect(stale.status, JSON.stringify(stale.body)).toBe(409);
+    expect(stale.body.error.code).toBe('conflict');
+    expect(stale.body.error.message).toMatch(/changed by someone else/);
+    const [row] = await rowOf<{ status: string }>('SELECT status FROM app.vendors WHERE id = $1', [
+      v.id,
+    ]);
+    expect(row?.status).toBe('pending_kyc');
+
+    // The button drawn for pending_kyc still works, and an unknown status is a 400.
+    expect((await post(`/v1/vendors/${v.id}/submit-kyc`, { expectedStatus: 'nope' })).status).toBe(
+      400,
+    );
+    const send = await post(`/v1/vendors/${v.id}/submit-kyc`, { expectedStatus: 'pending_kyc' });
+    expect(send.status, JSON.stringify(send.body)).toBe(200);
+    expect(send.body.status).toBe('under_review');
+  });
+
   it('answers 409 to an activation without an approved KYB case', async () => {
     const v = await newVendor();
     const draft = await post(`/v1/vendors/${v.id}/activate`);

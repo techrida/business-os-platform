@@ -195,16 +195,23 @@ export function updateVendor(
   return call(session, `/v1/vendors/${seg(id)}`, VendorDtoSchema, jsonInit('PATCH', body));
 }
 
-/** `POST /v1/vendors/:id/submit-kyc`: draft to pending_kyc (opens the KYB case), then to under_review. */
+/**
+ * `POST /v1/vendors/:id/submit-kyc`: draft to pending_kyc (opens the KYB case), then to under_review.
+ * `expectedStatus` is the status the button was drawn for: the API answers 409 when the vendor has
+ * moved on since, so a stale "Start KYB review" never sends the vendor for review.
+ */
 export function submitVendorKyc(
   session: Session,
   id: string,
   idempotencyKey: string,
+  expectedStatus: VendorStatus,
 ): Promise<VendorDto> {
-  return call(session, `/v1/vendors/${seg(id)}/submit-kyc`, VendorDtoSchema, {
-    method: 'POST',
-    headers: { 'idempotency-key': idempotencyKey },
-  });
+  return call(
+    session,
+    `/v1/vendors/${seg(id)}/submit-kyc`,
+    VendorDtoSchema,
+    jsonInit('POST', { expectedStatus }, idempotencyKey),
+  );
 }
 
 /**

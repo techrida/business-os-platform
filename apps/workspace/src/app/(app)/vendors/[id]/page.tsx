@@ -499,6 +499,7 @@ export default async function VendorPage({
                 <LifecycleForm
                   key={o.command}
                   vendorId={vendor.id}
+                  status={vendor.status}
                   option={o}
                   idempotencyKey={randomUUID()}
                 />

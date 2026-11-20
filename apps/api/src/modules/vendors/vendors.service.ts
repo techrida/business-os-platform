@@ -59,6 +59,7 @@ import {
   lapsedTaxClearance,
   LIFECYCLE,
   lifecycleAllowed,
+  submitKycMove,
   vendorPartyCode,
   type LifecycleCommand,
 } from './vendors.rules';
@@ -217,6 +218,10 @@ const duplicatePan = (pan: string, existingId?: string) =>
     message: `A vendor with PAN ${pan} already exists`,
     ...(existingId === undefined ? {} : { details: { vendorId: existingId } }),
   });
+
+/** A stale button is plain `conflict` (as a stale lead stage move); a status that takes no KYC move is a transition. */
+const submitKycRefusal = (kind: 'stale' | 'invalid', message: string) =>
+  new ConflictException({ code: kind === 'stale' ? 'conflict' : 'invalid_transition', message });
 
 const invalidTransition = (command: LifecycleCommand, from: VendorStatus) =>
   new ConflictException({
@@ -433,33 +438,42 @@ export class VendorsService {
    * draft -> pending_kyc: opens the vendor's KYB case through VerificationService (so the registered vendor
    * adapter and `vendor.write` decide), then moves the vendor. pending_kyc -> under_review: only once that case is
    * submitted or approved (409 `kyb_not_submitted` otherwise). The case opens in its own transaction, before the
-   * vendor's: opening is idempotent, so a retry after a failed move is harmless.
+   * vendor's: opening is idempotent, so a retry after a failed move is harmless. `expectedStatus` (the status the
+   * caller's button was drawn for) is checked under the row lock: a different status is a 409, so a stale
+   * "Start KYB review" never runs "Send for review".
    */
-  async submitKyc(id: string, idempotencyKey: string): Promise<VendorDto> {
+  async submitKyc(
+    id: string,
+    idempotencyKey: string,
+    expectedStatus?: VendorStatus,
+  ): Promise<VendorDto> {
     const { scope, actor, principal } = this.caller.current();
     this.assertStaff(principal);
     const before = await this.find(this.db, scope.tenantId, id);
     if (before === undefined) throw vendorNotFound();
     this.assertVisible('vendor.write', before, principal);
-    if (before.status !== 'draft' && before.status !== 'pending_kyc') {
-      throw new ConflictException({
-        code: 'invalid_transition',
-        message: `A vendor in status ${before.status} cannot submit KYC`,
-      });
-    }
+    // Only the statuses that take no KYC move are refused before the case opens. The expected status is checked
+    // under the lock, inside withIdempotency, so a retry of a request that already moved the vendor still replays
+    // its first answer; opening the case for a stale button is harmless (it is idempotent).
+    const early = submitKycMove(before.status, undefined);
+    if (!early.ok) throw submitKycRefusal(early.kind, early.message);
     await this.verification.create({ partyId: id });
     const now = this.clock();
     return withTx(this.db, scope, actor, async (tx) => {
       const done = await withIdempotency(
         tx,
-        { command: 'vendor.submit_kyc', key: idempotencyKey, body: { id } },
+        {
+          command: 'vendor.submit_kyc',
+          key: idempotencyKey,
+          body: { id, expectedStatus: expectedStatus ?? null },
+        },
         async () => {
           const row = await lockVendor(tx, scope.tenantId, id);
           if (row === undefined) throw vendorNotFound();
-          let to: VendorStatus;
-          if (row.status === 'draft') {
-            to = 'pending_kyc';
-          } else if (row.status === 'pending_kyc') {
+          const move = submitKycMove(row.status, expectedStatus);
+          if (!move.ok) throw submitKycRefusal(move.kind, move.message);
+          const to: VendorStatus = move.to;
+          if (to === 'under_review') {
             const kyb = await kybCaseOf(tx, scope.tenantId, id);
             if (kyb?.status !== 'submitted' && kyb?.status !== 'approved') {
               throw new ConflictException({
@@ -467,12 +481,6 @@ export class VendorsService {
                 message: 'The KYB case must be submitted before the vendor goes under review',
               });
             }
-            to = 'under_review';
-          } else {
-            throw new ConflictException({
-              code: 'invalid_transition',
-              message: `A vendor in status ${row.status} cannot submit KYC`,
-            });
           }
           const updated = await updateVersioned(tx, vendors, id, row.version, {
             status: to,

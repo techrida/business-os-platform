@@ -29,6 +29,7 @@ import { VendorsService } from './vendors.service';
 import {
   CreateVendorAccountBodySchema,
   ListVendorsQuerySchema,
+  SubmitKycBodySchema,
   UpdateVendorBodySchema,
   UpdateVendorContactBodySchema,
   VendorReasonBodySchema,
@@ -75,15 +76,20 @@ export class VendorsController {
 
   // ------------------------------------------------------------------------------------------ lifecycle
 
-  /** draft -> pending_kyc (opens the KYB case); pending_kyc -> under_review once the case is submitted. */
+  /**
+   * draft -> pending_kyc (opens the KYB case); pending_kyc -> under_review once the case is submitted. Body
+   * `{ expectedStatus? }`: 409 when the vendor is no longer in that status (a stale button in another tab).
+   */
   @Post(':id/submit-kyc')
   @HttpCode(200)
   @Can('vendor.write')
   submitKyc(
     @Param('id', ParseUUIDPipe) id: string,
     @Headers('idempotency-key') idempotencyKey: string | undefined,
+    @Body() body: unknown,
   ): Promise<VendorDto> {
-    return this.vendors.submitKyc(id, requireIdempotencyKey(idempotencyKey));
+    const { expectedStatus } = parseOr400(SubmitKycBodySchema, body ?? {});
+    return this.vendors.submitKyc(id, requireIdempotencyKey(idempotencyKey), expectedStatus);
   }
 
   /** 200 approved. 409 without an approved KYB case; 403 for the vendor's creator. */

@@ -222,8 +222,15 @@ const COMMAND_OP: Record<LifecycleCommand, VendorOp> = {
   block: 'lifecycle',
   archive: 'lifecycle',
 };
+/** The statuses a KYB button is drawn for, and what it did there. */
+const KYC_DONE = {
+  draft: 'KYB review started.',
+  pending_kyc: 'The vendor was sent for review.',
+} as const;
+const isKycStatus = (v: string): v is keyof typeof KYC_DONE => Object.hasOwn(KYC_DONE, v);
+
 const COMMAND_DONE: Record<LifecycleCommand, string> = {
-  submit_kyc: 'KYB review started.',
+  submit_kyc: KYC_DONE.draft,
   activate: 'The vendor is approved.',
   suspend: 'The vendor is suspended.',
   block: 'The vendor is blocked.',
@@ -256,15 +263,33 @@ export async function lifecycleAction(prev: PanelState, form: FormData): Promise
     reason = r.data;
   }
 
+  // The status the KYB button was drawn for: the API refuses (409) once the vendor has moved on, so a stale
+  // "Start KYB review" in a second tab never sends the vendor for review.
+  const expectedStatus = text(form, 'expectedStatus');
+  if (command === 'submit_kyc' && !isKycStatus(expectedStatus)) {
+    return { savedCount: prev.savedCount, key: o.key, errors: {}, error: INCOMPLETE, reload: true };
+  }
+
   try {
-    if (command === 'submit_kyc') await submitVendorKyc(o.session, o.vendorId, o.key);
-    else await vendorLifecycle(o.session, o.vendorId, command, o.key, reason);
+    if (command === 'submit_kyc' && isKycStatus(expectedStatus)) {
+      await submitVendorKyc(o.session, o.vendorId, o.key, expectedStatus);
+    } else await vendorLifecycle(o.session, o.vendorId, command, o.key, reason);
   } catch (err) {
-    return refused(prev, o.key, vendorFailure(err, COMMAND_OP[command]));
+    const f = vendorFailure(err, COMMAND_OP[command]);
+    if (!f.reload) return refused(prev, o.key, f);
+    // The page is out of date: redraw it with the vendor's current status and buttons.
+    revalidatePath('/vendors');
+    revalidatePath(`/vendors/${o.vendorId}`);
+    return { ...refused(prev, o.key, f), refreshed: true };
   }
   revalidatePath('/vendors');
   revalidatePath(`/vendors/${o.vendorId}`);
-  return done(prev, COMMAND_DONE[command]);
+  return done(
+    prev,
+    command === 'submit_kyc' && isKycStatus(expectedStatus)
+      ? KYC_DONE[expectedStatus]
+      : COMMAND_DONE[command],
+  );
 }
 
 export async function proposeBankAction(

@@ -47,6 +47,16 @@ export const UpdateVendorBodySchema = z.strictObject({
 });
 export type UpdateVendorBody = z.infer<typeof UpdateVendorBodySchema>;
 
+/**
+ * POST /v1/vendors/:id/submit-kyc. `expectedStatus` is the status the caller's button was drawn for; a different
+ * current status is a 409, so a stale button never runs the other move of this endpoint. Optional for callers that
+ * send no body.
+ */
+export const SubmitKycBodySchema = z.strictObject({
+  expectedStatus: VendorStatusSchema.optional(),
+});
+export type SubmitKycBody = z.infer<typeof SubmitKycBodySchema>;
+
 /** Body of suspend, block and archive: why, for the audit trail (the table has no reason column). */
 export const VendorReasonBodySchema = z.strictObject({ reason: text(500) });
 export type VendorReasonBody = z.infer<typeof VendorReasonBodySchema>;

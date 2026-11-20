@@ -186,11 +186,12 @@ describe('writes carry the Idempotency-Key', () => {
     expect(JSON.parse(init.body as string)).toMatchObject({ kind: 'company', country: 'NP' });
   });
 
-  it('submit-kyc and activate send the key and no body', async () => {
+  it('submit-kyc sends the key and the status its button saw; activate sends no body', async () => {
     answer(reply(vendor));
-    await submitVendorKyc(session, ID_A, 'key-kyc-1234');
+    await submitVendorKyc(session, ID_A, 'key-kyc-1234', 'draft');
     expect(lastCall().url).toBe(`http://api:3001/v1/vendors/${ID_A}/submit-kyc`);
     expect(lastCall().headers.get('idempotency-key')).toBe('key-kyc-1234');
+    expect(JSON.parse(lastCall().init.body as string)).toEqual({ expectedStatus: 'draft' });
     await vendorLifecycle(session, ID_A, 'activate', 'key-act-1234');
     expect(lastCall().url).toBe(`http://api:3001/v1/vendors/${ID_A}/activate`);
     expect(lastCall().init.body).toBeUndefined();
@@ -214,7 +215,7 @@ describe('writes carry the Idempotency-Key', () => {
 
   it('encodes an id so it cannot climb out of the route', async () => {
     answer(reply(vendor));
-    await submitVendorKyc(session, '../x', 'key-123456');
+    await submitVendorKyc(session, '../x', 'key-123456', 'draft');
     expect(lastCall().url).toBe('http://api:3001/v1/vendors/..%2Fx/submit-kyc');
   });
 });
