@@ -292,8 +292,8 @@ export class DraftingService {
 
   /**
    * A quotation on an opportunity of the acting entity, with revision 1 as a priced Draft. The customer is the
-   * opportunity's. 404 for an opportunity outside the acting entity; 400 for a contact of another customer, an
-   * unknown payment term or tax code, or a discount above the subtotal.
+   * opportunity's. 404 for an opportunity outside the acting entity or the caller's `crm.opportunity.read` reach;
+   * 400 for a contact of another customer, an unknown payment term or tax code, or a discount above the subtotal.
    */
   async create(body: CreateQuotationBody, idempotencyKey: string): Promise<QuotationDto> {
     const { scope, actor, principal } = this.caller.current();
@@ -307,7 +307,7 @@ export class DraftingService {
         { command: 'quotation.create', key: idempotencyKey, body },
         async () => ({
           status: 201,
-          response: await this.createInTx(tx, scope, actor, principal.userId, body, now, mayCost),
+          response: await this.createInTx(tx, scope, actor, principal, body, now, mayCost),
         }),
       );
       return done.response;
@@ -318,13 +318,14 @@ export class DraftingService {
     tx: DbTransaction,
     scope: TxScope,
     actor: Actor,
-    /** The owner: the user the quotation.draft check above approved as owner. */
-    ownerUserId: string,
+    /** The caller, who becomes the owner: the user the quotation.draft check above approved as owner. */
+    principal: Principal,
     body: CreateQuotationBody,
     now: Date,
     mayCost: boolean,
   ): Promise<QuotationDto> {
-    const opportunity = await this.findOpportunity(tx, scope, body.opportunityId);
+    const ownerUserId = principal.userId;
+    const opportunity = await this.findOpportunity(tx, scope, principal, body.opportunityId);
     const customerPartyId = opportunity.customerId;
     await this.assertCustomer(tx, scope.tenantId, customerPartyId);
     if (body.contactId !== undefined) {
@@ -950,12 +951,29 @@ export class DraftingService {
     });
   }
 
-  /** The opportunity of the acting entity, locked so its stage cannot move under the create. */
-  private async findOpportunity(tx: DbTransaction, scope: TxScope, id: string) {
+  /**
+   * The opportunity of the acting entity that the caller may read (`crm.opportunity.read` with its reach, as the
+   * opportunity list), locked so its stage cannot move under the create. Sending the quotation later moves this
+   * opportunity's stage, so one the caller cannot read is a 404 like a missing one.
+   */
+  private async findOpportunity(
+    tx: DbTransaction,
+    scope: TxScope,
+    principal: Principal,
+    id: string,
+  ) {
     const [row] = await tx
       .select({ id: opportunities.id, customerId: opportunities.customerId })
       .from(opportunities)
-      .where(scoped(scope).where(opportunities, eq(opportunities.id, id)))
+      .where(
+        scoped(scope).where(
+          opportunities,
+          and(
+            eq(opportunities.id, id),
+            scopeWhereFor(principal, opportunities, 'crm.opportunity.read'),
+          ),
+        ),
+      )
       .for('update');
     if (row === undefined) throw opportunityNotFound();
     return row;
