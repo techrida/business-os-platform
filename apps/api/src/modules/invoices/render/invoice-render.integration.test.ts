@@ -997,4 +997,23 @@ describe('a render that keeps failing (R4c2: TR-Q4, F1-Q13)', () => {
     expect(await failureRow(inv.invoiceId)).toBeUndefined();
   });
 
+  it('keeps a stored PDF live when print 1 cannot be recorded twice, and never renders a second original', async () => {
+    const scope = await newScope();
+    const inv = await seedInvoice(scope);
+    const { worker, recordPrint } = flakyPrintLog(2);
+    expect(await worker.renderOne(inv)).toBe('rendered');
+    expect(recordPrint).toHaveBeenCalledTimes(2);
+    const [doc] = await documentRows(inv.invoiceId);
+    expect(doc?.status).toBe('clean');
+    expect(doc?.removed_at).toBeNull();
+    // Known limitation: no print row, and no failure counted either.
+    expect(await printFormats(inv.invoiceId)).toEqual([]);
+    expect(await failureRow(inv.invoiceId)).toBeUndefined();
+    // The live PDF keeps the invoice out of the candidates, so no later sweep prints another original.
+    const farFuture = new Date(Date.now() + 365 * 24 * 60 * 60_000);
+    expect(ids(await store.candidates(farFuture, 1_000))).not.toContain(inv.invoiceId);
+    expect(await sweeper.renderOne(inv)).toBe('skipped');
+    expect(await documentRows(inv.invoiceId)).toHaveLength(1);
+    expect(await printFormats(inv.invoiceId)).toEqual([]);
+  });
 });
