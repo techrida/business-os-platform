@@ -282,9 +282,9 @@ export default async function OpportunityPage({ params }: { params: Promise<{ id
   const customer = await getCustomer(session, opp.customerId).catch(() => null);
   const can = await getPermissionCheck(session);
   const canEdit = opp.canEdit ?? can('crm.opportunity.write');
-  // Quotations follow their own grant (the API asks for quotation.draft plus read of the opportunity),
-  // not write access to the opportunity.
-  const canDraft = can('quotation.draft');
+  // Quotations follow the server's own answer for this deal (FX-Q1, FX-Q2): quotation.draft plus reach
+  // as owner, department or lead creator. An assigned follow-up alone does not count; omitted means no.
+  const canDraft = opp.canDraftQuotation === true;
   const currentUserId = (await getMeOrNull(session.accessToken))?.id ?? null;
   const moves = resolvedMoves(
     'opportunity',
