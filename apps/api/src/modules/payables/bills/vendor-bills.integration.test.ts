@@ -31,6 +31,7 @@ import {
   createParty,
   createStaffUser,
   createTenantWithEntity,
+  matchExceptions,
   matchResults,
   runMigrations,
   vendorBills,
@@ -676,6 +677,28 @@ describe('match (check 6, AD6 defaults from settings)', () => {
       receivedQuantity: '3.0000',
       quantityVariance: '1.0000',
     });
+  });
+
+  it('refuses a match exception whose evidence file the scan found infected (TR-Q12e)', async () => {
+    const po = await receivedPo('1', '10000.00', '1');
+    const bill = await billFor(po, '1', '11000.00');
+    expect(bill.status).toBe('variance');
+    const evidence = await doc(['infected']);
+    const refused = await httpErrorOf(
+      service.requestException(
+        bill.id,
+        { reason: 'Vendor raised the price', evidenceDocumentId: evidence },
+        randomUUID(),
+      ),
+    );
+    expect(refused.getStatus()).toBe(409);
+    expect(codeOf(refused)).toBe('document_infected');
+    expect((await service.get(bill.id)).status).toBe('variance');
+    expect(
+      await read((tx) =>
+        tx.select().from(matchExceptions).where(eq(matchExceptions.vendorBillId, bill.id)),
+      ),
+    ).toHaveLength(0);
   });
 
   it('a bill 10% over price shows variance, submit is 409, an approved exception unblocks it', async () => {
