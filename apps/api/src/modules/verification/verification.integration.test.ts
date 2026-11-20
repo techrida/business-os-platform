@@ -387,6 +387,7 @@ describe('POST /v1/verification-cases', () => {
       new NumberingService(),
       authz as unknown as AuthzService,
       caller,
+      new AuditService(db),
     );
     const customer = await customers.create(
       {

@@ -64,7 +64,7 @@ beforeAll(async () => {
     h.roleCache,
     h.notify,
   );
-  const customersService = new CustomersService(h.db, numbering, authz, h.caller);
+  const customersService = new CustomersService(h.db, numbering, authz, h.caller, audit);
   const convertService = new LeadConvertService(
     h.db,
     authz,
