@@ -337,8 +337,13 @@ export function workflow(cfg) {
               .getByRole('dialog', { name: 'Submit for approval?' })
               .getByRole('button', { name: 'Submit for approval', exact: true })
               .click();
-            await s.page.waitForURL(/[?&]submitted=pending\b/, { timeout: cfg.navTimeout });
-            await s.seeText('Submitted for approval.', 'the submitted confirmation');
+            // Round 3: the page no longer carries `?submitted=pending` or the 'Submitted for approval.'
+            // text; the status badge reads Submitted and the route is shown.
+            await s.see(
+              s.page.getByRole('link', { name: 'View the approval route and history' }),
+              'the approval route link',
+            );
+            await s.see(s.page.getByText('Submitted', { exact: true }).first(), 'status Submitted');
             const href = await s.page
               .getByRole('link', { name: 'View the approval route and history' })
               .getAttribute('href');
