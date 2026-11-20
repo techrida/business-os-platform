@@ -37,7 +37,7 @@ import type { Response } from 'express';
 import { z } from 'zod';
 
 import { Can } from '../../platform/authz/decorators';
-import { setTotalCount } from '../../platform/list';
+import { setMoneyTotals, setTotalCount } from '../../platform/list';
 import { parseOr400 } from '../approvals/approvals.controller';
 import { requireIdempotencyKey } from '../customers/customers.types';
 import { InvoiceApprovalService } from './invoice-approval.service';
@@ -86,15 +86,21 @@ export class InvoicesController {
     private readonly approval: InvoiceApprovalService,
   ) {}
 
-  /** 200 with a bare array of InvoiceListItem, newest first; X-Total-Count is all matches, not this page. */
+  /**
+   * 200 with a bare array of InvoiceListItem, newest first; X-Total-Count is all matches, not this page, and
+   * X-Money-Totals their totals summed per currency.
+   */
   @Get()
   @Can('invoice.read')
   async list(
     @Query() query: unknown,
     @Res({ passthrough: true }) res: Response,
   ): Promise<InvoiceListItem[]> {
-    const { rows, total } = await this.drafting.list(parseOr400(ListInvoicesQuerySchema, query));
+    const { rows, total, totals } = await this.drafting.list(
+      parseOr400(ListInvoicesQuerySchema, query),
+    );
     setTotalCount(res, total);
+    setMoneyTotals(res, totals);
     return rows;
   }
 

@@ -16,6 +16,7 @@ import { createHash } from 'node:crypto';
 
 import {
   type AllocationDto,
+  type MoneyTotals,
   type PaymentCapabilities,
   type PaymentChannel,
   type PaymentDto,
@@ -51,7 +52,7 @@ import {
   UnprocessableEntityException,
 } from '@nestjs/common';
 import Decimal from 'decimal.js';
-import { and, asc, count, desc, eq, inArray, isNull, lte, or, type SQL } from 'drizzle-orm';
+import { and, asc, count, desc, eq, inArray, isNull, lte, or, sql, type SQL } from 'drizzle-orm';
 
 import { AuditService } from '../../platform/audit/audit.service';
 import { AuthzService } from '../../platform/authz/authz.service';
@@ -60,7 +61,7 @@ import { DB, type Db, type DbTransaction } from '../../platform/db/db.module';
 import { updateVersioned, withIdempotency } from '../../platform/db/idempotency';
 import { withTx, type Actor, type TxScope } from '../../platform/db/tx';
 import { currentPrincipal } from '../../platform/tenancy/request-context';
-import { NO_LIMIT, searchPage } from '../../platform/list';
+import { NO_LIMIT, searchPage, sumByCurrency } from '../../platform/list';
 import { MoneyService } from '../../platform/settings/money.service';
 import { NumberingService } from '../../platform/settings/numbering.service';
 import { LedgerService } from '../ledger/ledger.service';
@@ -166,17 +167,18 @@ export class PaymentsService {
   // ------------------------------------------------------------------------------------------ reads
 
   /**
-   * One page of the acting entity's payments, newest first (id breaks ties), and the number of all matches.
-   * The entity is part of every query, so a filter can only narrow it.
+   * One page of the acting entity's payments, newest first (id breaks ties), the number of all matches and the
+   * sum of their amounts per currency (U15b-Q4). The entity is part of every query, so a filter can only narrow it.
    */
   async list(
     scope: TxScope,
     filter: PaymentListFilter = {},
-  ): Promise<{ rows: PaymentListItem[]; total: number }> {
+  ): Promise<{ rows: PaymentListItem[]; total: number; totals: MoneyTotals }> {
     this.authz.assert('payment.read', {
       tenantId: scope.tenantId,
       organizationId: scope.organizationId,
     });
+    let totals: MoneyTotals = [];
     const { rows, total } = await searchPage(this.db, {
       q: filter.q,
       columns: SEARCH_COLUMNS,
@@ -206,17 +208,26 @@ export class PaymentsService {
           .orderBy(...p.orderBy)
           .limit(p.limit)
           .offset(p.offset),
+      // searchPage may count twice (exact, then close matches); the last call is the set the rows come from.
       count: async (r, where) => {
-        const [row] = await r
-          .select({ n: count() })
+        const groups = await r
+          .select({
+            currency: payments.currency,
+            n: count(),
+            amount: sql<string>`sum(${payments.amount})::text`,
+          })
           .from(payments)
           .innerJoin(parties, customerJoin())
-          .where(where);
-        return row?.n ?? 0;
+          .where(where)
+          .groupBy(payments.currency);
+        const summed = sumByCurrency(groups);
+        totals = summed.totals;
+        return summed.total;
       },
     });
     return {
       total,
+      totals,
       rows: rows.map(({ p, customerName, openAmount }) => ({
         id: p.id,
         customerId: p.customerPartyId ?? '',
