@@ -8,6 +8,8 @@ import { Module } from '@nestjs/common';
 import { AuditModule } from '../../platform/audit/audit.module';
 import { NotifyModule } from '../../platform/notify/notify.module';
 import { LeadsModule } from '../leads/leads.module';
+import { CreditHoldController } from './credit-hold.controller';
+import { CreditHoldService } from './credit-hold.service';
 import { OpportunitiesCaller } from './opportunities.caller';
 import { OpportunitiesController } from './opportunities.controller';
 import { OpportunitiesService } from './opportunities.service';
@@ -17,12 +19,13 @@ import { OpportunityOwnersService } from './opportunity-owners.service';
 
 @Module({
   imports: [AuditModule, LeadsModule, NotifyModule],
-  controllers: [OpportunitiesController, OpportunityOwnerChangeController],
+  controllers: [OpportunitiesController, OpportunityOwnerChangeController, CreditHoldController],
   providers: [
     OpportunitiesService,
     OpportunitiesCaller,
     OpportunityOwnersService,
     OpportunityOwnerChangeService,
+    CreditHoldService,
   ],
   exports: [OpportunitiesService],
 })

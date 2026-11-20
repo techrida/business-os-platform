@@ -36,6 +36,7 @@ import {
   documents,
   invoices,
   openItems,
+  opportunities,
   paymentTerms,
   quotationAcceptances,
   quotationLines,
@@ -71,6 +72,7 @@ import { searchPage, type SearchColumn } from '../../platform/list';
 import { NumberingService } from '../../platform/settings/numbering.service';
 import { SettingsService } from '../../platform/settings/settings.service';
 import { LedgerService } from '../ledger/ledger.service';
+import { creditPosition } from '../opportunities/credit-hold';
 import { evidenceSatisfies, missingEvidence } from '../quotations/outcome/evidence-policy';
 import { planSchedule, ScheduleRuleError, scheduleTemplateOf } from './rules';
 import { SalesOrdersCaller } from './sales-orders.caller';
@@ -410,6 +412,28 @@ export class SalesOrdersService {
     }
     const customerPartyId = quotation.customerPartyId;
     if (customerPartyId === null) throw new Error(`quotation ${quotation.number} has no customer`);
+
+    // F1-Q20/F1-Q26: a customer over its credit limit with this entity holds the deal here, the hand-over to a
+    // sales order, until Management or Finance overrides the hold on the deal with a reason.
+    const credit = await creditPosition(tx, scope, customerPartyId);
+    if (credit.held) {
+      const [deal] = await tx
+        .select({ creditOverrideAt: opportunities.creditOverrideAt })
+        .from(opportunities)
+        .where(scoped(scope).where(opportunities, eq(opportunities.id, quotation.opportunityId)));
+      if (deal?.creditOverrideAt == null) {
+        throw new ConflictException({
+          code: 'credit_hold',
+          message: `The customer owes NPR ${credit.exposure}, over its credit limit of NPR ${credit.creditLimit}; the deal needs a credit override first`,
+          details: {
+            opportunityId: quotation.opportunityId,
+            creditLimit: credit.creditLimit ?? '',
+            exposure: credit.exposure,
+            currency: 'NPR',
+          },
+        });
+      }
+    }
 
     const [acceptance] = await tx
       .select()

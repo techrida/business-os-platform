@@ -556,6 +556,34 @@ export const OpportunityStageChangeBodySchema = z
   });
 export type OpportunityStageChangeBody = z.infer<typeof OpportunityStageChangeBodySchema>;
 
+/** `POST /v1/opportunities/:id/credit-override` (F1-Q20/F1-Q26): why the deal may go ahead over the limit. */
+export const CreditOverrideBodySchema = z.strictObject({ reason: text(500) });
+export type CreditOverrideBody = z.infer<typeof CreditOverrideBodySchema>;
+
+/**
+ * A deal's credit position (F1-Q20/F1-Q26), for holders of `credit.override`. Amounts are NPR with two decimals
+ * (D22). `exposure` is what the customer owes the acting entity now: its open receivable debits less its open
+ * credits (unapplied payments, credit notes), each at its own NPR rate. `held` is `exposure > creditLimit`; never
+ * held without a limit. The override, once given, lets the deal's accepted quotation become a sales order.
+ */
+export const CreditHoldDtoSchema = z.object({
+  opportunityId: z.guid(),
+  customerId: z.guid(),
+  currency: z.literal('NPR'),
+  creditLimit: DecimalString.nullable(),
+  exposure: z.string().regex(/^-?\d+\.\d{2}$/),
+  held: z.boolean(),
+  override: z
+    .object({
+      reason: z.string(),
+      byUserId: z.guid(),
+      byName: z.string(),
+      at: isoDateTime,
+    })
+    .nullable(),
+});
+export type CreditHoldDto = z.infer<typeof CreditHoldDtoSchema>;
+
 /**
  * `PATCH /v1/opportunities/:id/owner` (F1-Q51): hand the deal to another person. The same assignment rule as a
  * lead's owner (D38/D50, the entity's stored rule for opportunities); the old owner's open follow-ups on the deal
@@ -769,6 +797,12 @@ export const OpportunityDtoSchema = z.object({
    * reaches it as owner, department, lead creator or a broader scope. An assigned follow-up alone does not count.
    */
   canDraftQuotation: z.boolean().optional(),
+  /**
+   * F1-Q20/F1-Q26, on the detail (`GET /v1/opportunities/:id`) only: whether the customer owes the acting entity more
+   * than its credit limit, so the accepted quotation cannot become a sales order (409 `credit_hold`), and whether
+   * Management or Finance overrode that. Amounts are on `GET /v1/opportunities/:id/credit-hold` (credit.override).
+   */
+  creditHold: z.object({ held: z.boolean(), overridden: z.boolean() }).optional(),
   version: z.number().int().min(1),
   createdAt: isoDateTime,
   updatedAt: isoDateTime,

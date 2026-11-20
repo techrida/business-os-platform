@@ -14,7 +14,9 @@ import 'reflect-metadata';
 import { randomUUID } from 'node:crypto';
 
 import {
+  CreditHoldDtoSchema,
   DEFAULT_ROLE_PERMISSIONS,
+  OpportunityDtoSchema,
   SalesOrderDetailSchema,
   SalesOrderListItemSchema,
   type EvidencePolicy,
@@ -29,6 +31,7 @@ import {
   documents,
   invoices,
   opportunities,
+  partyAccounts,
   quotationVersions,
   quotations,
   runMigrations,
@@ -56,6 +59,7 @@ import { NumberingService } from '../../platform/settings/numbering.service';
 import { SettingsService } from '../../platform/settings/settings.service';
 import { LedgerService } from '../ledger/ledger.service';
 import { LeadLostReasonsService } from '../leads/lost-reasons.service';
+import { CreditHoldService } from '../opportunities/credit-hold.service';
 import { OpportunitiesService } from '../opportunities/opportunities.service';
 import { DraftingService } from '../quotations/drafting/drafting.service';
 import {
@@ -1017,5 +1021,174 @@ describe('saved reach on sales orders (U20a phase 2)', () => {
     current.grants = grantsOf('accountant');
     expect(await statusOf(markMilestone())).toEqual({ status: 422, code: 'evidence_required' });
     expect((await service.detail(theirs.order.id)).can!.markBillable).toBe(true);
+  });
+});
+
+// ------------------------------------------------------------------------------------ credit hold
+
+describe('credit hold at the hand-over to a sales order (F1-Q20, F1-Q26)', () => {
+  let credit: CreditHoldService;
+  let ledger: LedgerService;
+  let financeUser: string;
+
+  beforeAll(async () => {
+    credit = new CreditHoldService(
+      db,
+      caller,
+      authz as unknown as AuthzService,
+      new AuditService(db),
+    );
+    ledger = new LedgerService();
+    financeUser = await seedOtherStaffUser(db, f);
+  });
+
+  async function setLimit(creditLimit: string | null): Promise<void> {
+    await withTx(db, scopeA, systemActor('test'), (tx) =>
+      tx
+        .insert(partyAccounts)
+        .values({ ...scopeA, partyId: f.customerPartyId, creditLimit })
+        .onConflictDoUpdate({
+          target: [partyAccounts.tenantId, partyAccounts.organizationId, partyAccounts.partyId],
+          set: { creditLimit },
+        }),
+    );
+  }
+
+  /** An open receivable item of the fixture's customer, as an issued invoice or a received payment leaves it. */
+  async function openItem(
+    direction: 'debit' | 'credit',
+    currency: 'NPR' | 'USD',
+    amount: string,
+    fxRate = '1',
+  ): Promise<void> {
+    const amountNpr = (Number(amount) * Number(fxRate)).toFixed(2);
+    await withTx(db, scopeA, systemActor('test'), (tx) =>
+      ledger.openItem(tx, scopeA, systemActor('test'), {
+        side: 'receivable',
+        direction,
+        partyId: f.customerPartyId,
+        sourceType: direction === 'debit' ? 'tax_invoice' : 'payment',
+        sourceId: randomUUID(),
+        currency,
+        amount,
+        amountNpr,
+        fxRate,
+        ...(currency === 'NPR' ? {} : { fxSource: 'nrb', fxDate: DECIDED_ON }),
+        documentDate: DECIDED_ON,
+      }),
+    );
+  }
+
+  async function holdOf(promise: Promise<unknown>) {
+    try {
+      await promise;
+    } catch (error) {
+      if (error instanceof HttpException) {
+        return { status: error.getStatus(), body: error.getResponse() as Record<string, unknown> };
+      }
+      throw error;
+    }
+    throw new Error('expected the call to fail');
+  }
+
+  const asFinance = () => {
+    current.grants = grantsOf('finance');
+    current.userId = financeUser;
+  };
+
+  it('holds over the limit only, lets Finance override with a reason, then confirms with the same key', async () => {
+    // NPR 80,000.00 invoiced + USD 200.00 at 133.50 (26,700.00) less a NPR 6,700.00 payment = exactly the limit.
+    await setLimit('100000.00');
+    try {
+      await openItem('debit', 'NPR', '80000.00');
+      await openItem('debit', 'USD', '200.00', '133.50');
+      await openItem('credit', 'NPR', '6700.00');
+
+      const atLimit = await acceptedQuotation();
+      expect(parsed(await confirm(atLimit)).order.status).toBe('confirmed');
+
+      await openItem('debit', 'NPR', '0.01');
+      const q = await acceptedQuotation();
+      const key = `so-${randomUUID()}`;
+      const refused = await holdOf(confirm(q, [], key));
+      expect(refused.status).toBe(409);
+      expect(refused.body).toMatchObject({
+        code: 'credit_hold',
+        details: {
+          opportunityId: q.opportunityId,
+          creditLimit: '100000.00',
+          exposure: '100000.01',
+          currency: 'NPR',
+        },
+      });
+      expect(await liveOrders(q.id)).toEqual([]);
+
+      // The deal's own page carries the flag for whoever reads the deal, amounts only through credit.override.
+      const deal = OpportunityDtoSchema.parse(await opportunitiesService.get(q.opportunityId));
+      expect(deal.creditHold).toEqual({ held: true, overridden: false });
+      expect((await statusOf(credit.get(q.opportunityId))).status).toBe(403);
+      expect(
+        (await statusOf(credit.override(q.opportunityId, { reason: 'Sales says fine' }))).status,
+      ).toBe(403);
+
+      asFinance();
+      const before = CreditHoldDtoSchema.parse(await credit.get(q.opportunityId));
+      expect(before).toMatchObject({
+        creditLimit: '100000.00',
+        exposure: '100000.01',
+        held: true,
+        override: null,
+      });
+      const overridden = CreditHoldDtoSchema.parse(
+        await credit.override(q.opportunityId, { reason: 'Advance cheque received' }),
+      );
+      expect(overridden.override).toMatchObject({
+        reason: 'Advance cheque received',
+        byUserId: financeUser,
+      });
+      // A second override keeps the first one.
+      const again = await credit.override(q.opportunityId, { reason: 'Another reason' });
+      expect(again.override).toEqual(overridden.override);
+      const { rows } = await ownerPool.query(
+        `SELECT meta FROM audit.audit_events
+          WHERE tenant_id = $1 AND action = 'opportunity.credit_overridden' AND entity_id = $2`,
+        [f.tenantId, q.opportunityId],
+      );
+      expect(rows).toEqual([
+        {
+          meta: {
+            reason: 'Advance cheque received',
+            creditLimit: '100000.00',
+            exposure: '100000.01',
+            currency: 'NPR',
+          },
+        },
+      ]);
+
+      current.grants = grantsOf('sales');
+      current.userId = undefined;
+      expect(parsed(await confirm(q, [], key)).order.status).toBe('confirmed');
+      expect(
+        OpportunityDtoSchema.parse(await opportunitiesService.get(q.opportunityId)).creditHold,
+      ).toEqual({ held: true, overridden: true });
+    } finally {
+      await setLimit(null);
+    }
+  });
+
+  it('refuses to override a deal that is not on hold, and answers 404 for a deal of another entity', async () => {
+    const q = await acceptedQuotation();
+    asFinance();
+    expect(CreditHoldDtoSchema.parse(await credit.get(q.opportunityId))).toMatchObject({
+      creditLimit: null,
+      held: false,
+      override: null,
+    });
+    expect(await statusOf(credit.override(q.opportunityId, { reason: 'Just in case' }))).toEqual({
+      status: 409,
+      code: 'conflict',
+    });
+    current.scope = scopeB;
+    expect((await statusOf(credit.get(q.opportunityId))).status).toBe(404);
   });
 });

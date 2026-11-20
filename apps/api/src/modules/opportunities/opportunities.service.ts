@@ -34,6 +34,7 @@ import { readTxContext } from '../../platform/documents/tx-context';
 import { nameIn, personNameMap } from '../../platform/users/person-names';
 import { searchPage } from '../../platform/list';
 import { LeadLostReasonsService, lostReasonRefs } from '../leads/lost-reasons.service';
+import { creditPosition } from './credit-hold';
 import { OpportunitiesCaller } from './opportunities.caller';
 import type { OpportunityLostHandler } from './opportunities.ports';
 import {
@@ -160,7 +161,7 @@ export class OpportunitiesService {
   }
 
   async get(id: string): Promise<OpportunityDto> {
-    const { scope, principal } = this.caller.current();
+    const { scope, actor, principal } = this.caller.current();
     const [row] = await this.db
       .select()
       .from(opportunities)
@@ -172,12 +173,20 @@ export class OpportunitiesService {
       row,
       await loadRecordReaders(this.db, scope, opportunities, id),
     );
-    return toOpportunityDto(
-      row,
-      await this.ownerNameOf(this.db, row),
-      await this.lostReasonOf(this.db, row),
-      principal,
+    // F1-Q20/F1-Q26: the flag only (the amounts are for credit.override holders). In a transaction, so the ledger
+    // is read under the entity's row security rather than seen as empty.
+    const credit = await withTx(this.db, scope, actor, (tx) =>
+      creditPosition(tx, scope, row.customerId),
     );
+    return {
+      ...toOpportunityDto(
+        row,
+        await this.ownerNameOf(this.db, row),
+        await this.lostReasonOf(this.db, row),
+        principal,
+      ),
+      creditHold: { held: credit.held, overridden: row.creditOverrideAt !== null },
+    };
   }
 
   // ------------------------------------------------------------------------------------------ stage change
