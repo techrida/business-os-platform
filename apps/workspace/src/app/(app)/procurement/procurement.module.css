@@ -2,23 +2,6 @@
   row-gap: var(--spacing-content-gap);
 }
 
-.filters,
-.filterActions {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: flex-end;
-  gap: 8px 12px;
-}
-
-.filters {
-  margin-top: 8px;
-}
-
-.filters > :first-child {
-  flex: 0 1 15rem;
-  min-width: 0;
-}
-
 .results {
   min-width: 0;
   border: var(--border-width-thin) solid var(--card-border);
@@ -39,14 +22,6 @@
 
 .results > :not(.resultsTable) {
   border-top: var(--border-width-thin) solid var(--border-default);
-}
-
-.resultsNote {
-  margin: 0;
-  padding: 16px 20px;
-  color: var(--pagination-text);
-  font-size: var(--font-size-caption);
-  line-height: var(--line-height-caption);
 }
 
 .formPage,
@@ -95,10 +70,6 @@
 }
 
 @media (min-width: 1200px) {
-  .filters {
-    justify-content: flex-end;
-  }
-
   .detailColumns {
     grid-template-columns: minmax(0, 3fr) minmax(0, 2fr);
   }
