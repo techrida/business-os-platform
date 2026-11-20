@@ -14,7 +14,6 @@ import type { Metadata } from 'next';
 import Link from 'next/link';
 import type { NumberSystems } from '@bos/locale';
 
-import { hasPermission } from '@/components/p2/customers/permissions';
 import { Alert } from '@/components/ui/alert';
 import { Badge } from '@/components/ui/badge';
 import { LinkButton } from '@/components/ui/button';
@@ -35,6 +34,7 @@ import { getAging } from '@/lib/api-receivables';
 import { requireStaffSession } from '@/lib/bff';
 import { getNumberSystems } from '@/lib/display-settings';
 import { money, when } from '@/lib/kernel-format';
+import { getPermissionCheck } from '@/lib/live-permissions';
 import {
   activeFilterLabels,
   clearFiltersHref,
@@ -47,7 +47,7 @@ import { InvoiceFilters } from './_components/invoice-filters';
 import { InvoiceStatusBadge } from './_components/badges';
 import styles from './_components/invoice.module.css';
 import { ListPager } from './_components/list-pager';
-import { recordPaymentHref, settlementMayOwe } from './_lib/gates';
+import { type Can, recordPaymentHref, settlementMayOwe } from './_lib/gates';
 import { kindMeta, settlementLabel, statusMeta } from './_lib/meta';
 
 export const metadata: Metadata = { title: 'Invoices · Business OS' };
@@ -56,18 +56,18 @@ export const dynamic = 'force-dynamic';
 function InvoiceRow({
   item,
   numberSystems,
-  roles,
+  can,
   mayOwe,
 }: {
   item: InvoiceListItem;
   numberSystems: NumberSystems;
-  roles: readonly string[];
+  can: Can;
   mayOwe: boolean;
 }) {
   const kind = kindMeta(item.kind).label;
   const name = item.number ?? `${kind} (${statusMeta(item.status).label.toLowerCase()})`;
   const href = `/invoices/${encodeURIComponent(item.id)}`;
-  const pay = mayOwe ? recordPaymentHref(item, roles) : null;
+  const pay = mayOwe ? recordPaymentHref(item, can) : null;
   return (
     <tr>
       <Th scope="row">
@@ -206,7 +206,7 @@ export default async function InvoicesPage({ searchParams }: { searchParams: Pro
   };
   const here = hrefWith('/invoices', raw, { page: state.page > 1 ? state.page : undefined });
   const session = await requireStaffSession(here);
-  const numberSystems = await getNumberSystems();
+  const [numberSystems, can] = await Promise.all([getNumberSystems(), getPermissionCheck(session)]);
 
   let items: InvoiceListItem[] | null = null;
   let total = 0;
@@ -215,7 +215,7 @@ export default async function InvoicesPage({ searchParams }: { searchParams: Pro
   let problem: { message: string; status: number } | null = null;
   // The open balances behind the Outstanding cards, for the people who may read receivables. Started with the list so
   // it costs no extra wait; a failure (or no ar.read) only leaves the cards out.
-  const aging: Promise<ArAgingReport | null> = hasPermission(session.roles, 'ar.read')
+  const aging: Promise<ArAgingReport | null> = can('ar.read')
     ? getAging(session).catch((): null => null)
     : Promise.resolve(null);
   try {
@@ -263,7 +263,7 @@ export default async function InvoicesPage({ searchParams }: { searchParams: Pro
         title="Invoices"
         description="Bill customers against sales orders or directly, then track payments."
         actions={
-          hasPermission(session.roles, 'invoice.draft') ? (
+          can('invoice.draft') ? (
             <LinkButton href="/invoices/new" size="large">
               <span aria-hidden="true" className={styles.addIcon}>
                 +
@@ -336,7 +336,7 @@ export default async function InvoicesPage({ searchParams }: { searchParams: Pro
                   numberSystems={numberSystems}
                   key={item.id}
                   item={item}
-                  roles={session.roles}
+                  can={can}
                   mayOwe={settlementMayOwe(multi.settlement)}
                 />
               ))}

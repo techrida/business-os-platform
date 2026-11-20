@@ -3,10 +3,10 @@
 import { revalidatePath } from 'next/cache';
 import { redirect } from 'next/navigation';
 
-import { hasPermission } from '@/components/p2/customers/permissions';
 import { createManualInvoice } from '@/lib/api-billing';
 import { requireStaffSession } from '@/lib/bff';
 import { loadEnabledCurrencies } from '@/lib/enabled-currencies.server';
+import { getPermissionCheck } from '@/lib/live-permissions';
 
 import { failureState, INCOMPLETE, keyOf, refusal, textOf } from './action-helpers';
 import type { InvoiceFormState } from './form-state';
@@ -30,7 +30,7 @@ export async function createManualInvoiceAction(
 ): Promise<InvoiceFormState> {
   const session = await requireStaffSession('/invoices/new');
   const key = keyOf(form);
-  if (!hasPermission(session.roles, 'invoice.draft')) {
+  if (!(await getPermissionCheck(session))('invoice.draft')) {
     return refusal(
       key,
       'Your roles do not include drafting invoices. Ask an administrator if you need to.',
