@@ -8,7 +8,6 @@ import {
 } from '@bos/contracts';
 import type { Metadata } from 'next';
 
-import { permissionChecker } from '@/components/p2/customers/permissions';
 import { Avatar } from '@/components/ui/avatar';
 import { Badge } from '@/components/ui/badge';
 import { LinkButton } from '@/components/ui/button';
@@ -25,6 +24,7 @@ import {
   readList,
   type RawParams,
 } from '@/lib/list-params';
+import { getPermissionCheck } from '@/lib/live-permissions';
 
 import admin from '../admin.module.css';
 import { BackToSettings } from '../_components/back-link';
@@ -86,7 +86,7 @@ export default async function UsersPage({ searchParams }: { searchParams: Promis
 
   const session = await requireSection('users', href(page));
   // "Check access" opens Settings > Access, which needs the access read permission.
-  const canCheckAccess = permissionChecker(session.roles)('admin.roles.read');
+  const canCheckAccess = (await getPermissionCheck(session))('admin.roles.read');
   const [users, summary] = await Promise.all([
     section('view users', () => listUsers(session, query)),
     section('view user totals', () => summarizeUsers(session)),

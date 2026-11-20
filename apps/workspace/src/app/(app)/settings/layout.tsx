@@ -1,6 +1,6 @@
 import type { ReactNode } from 'react';
 
-import { permissionChecker } from '@/components/p2/customers/permissions';
+import { getPermissionCheck } from '@/lib/live-permissions';
 import { getSession } from '@/lib/session';
 import { visibleSettingsGroups } from '@/lib/settings-nav';
 
@@ -13,7 +13,7 @@ import { SettingsSidebar } from './_components/settings-sidebar';
 // session it shows no menu and lets the page send the visitor to sign in.
 export default async function SettingsLayout({ children }: { children: ReactNode }) {
   const session = await getSession();
-  const groups = session ? visibleSettingsGroups(permissionChecker(session.roles)) : [];
+  const groups = session ? visibleSettingsGroups(await getPermissionCheck(session)) : [];
   if (session && groups.length === 0) return <div className={styles.content}>{children}</div>;
   return (
     <div className={styles.frame}>

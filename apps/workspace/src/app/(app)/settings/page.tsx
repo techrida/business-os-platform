@@ -2,9 +2,9 @@ import type { Metadata } from 'next';
 import Link from 'next/link';
 import { redirect } from 'next/navigation';
 
-import { permissionChecker } from '@/components/p2/customers/permissions';
 import { Icon } from '@/components/ui/icon';
 import { Page, PageHeader } from '@/components/ui/page';
+import { getPermissionCheck } from '@/lib/live-permissions';
 import { visibleSettingsGroups } from '@/lib/settings-nav';
 
 import admin from './admin.module.css';
@@ -17,7 +17,7 @@ export const metadata: Metadata = { title: 'Settings · Business OS' };
 // chevron); from 768px it is a grid of cards beside the sub-sidebar.
 export default async function SettingsIndexPage() {
   const session = await requireSession('/settings');
-  const groups = visibleSettingsGroups(permissionChecker(session.roles));
+  const groups = visibleSettingsGroups(await getPermissionCheck(session));
   // Deny by default: nothing to open here means nothing to see.
   if (groups.length === 0) redirect('/settings/denied');
 

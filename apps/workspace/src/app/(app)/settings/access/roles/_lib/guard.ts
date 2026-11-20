@@ -3,6 +3,7 @@ import 'server-only';
 import { redirect } from 'next/navigation';
 
 import { permissionChecker } from '@/components/p2/customers/permissions';
+import { getPermissionCheck } from '@/lib/live-permissions';
 import type { Session } from '@/lib/session';
 import { firstAllowedSection } from '@/lib/settings-nav';
 
@@ -26,9 +27,10 @@ export interface AccessViewer {
  */
 export async function requireAccess(returnTo: string): Promise<AccessViewer> {
   const session = await requireSession(returnTo);
-  const can = permissionChecker(session.roles);
+  const can = await getPermissionCheck(session);
   if (!READ_ACCESS.some((permission) => can(permission))) {
     redirect(firstAllowedSection(can)?.href ?? '/settings/denied');
   }
-  return { session, canWrite: can(WRITE_ACCESS) };
+  // Changing access stays Founder-only, so the write flag keeps reading the role defaults.
+  return { session, canWrite: permissionChecker(session.roles)(WRITE_ACCESS) };
 }
