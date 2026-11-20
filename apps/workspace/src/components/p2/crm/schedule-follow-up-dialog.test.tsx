@@ -129,7 +129,7 @@ it('leaves the assignee to the API when the owner is not someone the caller can 
   await mounted.unmount();
 });
 
-it('plans a follow-up on an opportunity, and offers "Me" when the deal owner is not a choice (U16-Q6)', async () => {
+it('plans a follow-up on an opportunity, leaving it to the deal owner when they are not a choice (U16-Q6)', async () => {
   const DEAL = '66666666-6666-4666-8666-666666666666';
   mocks.createActivity.mockResolvedValue({ id: ACTIVITY });
   const mounted = await mountForm(
@@ -141,7 +141,7 @@ it('plans a follow-up on an opportunity, and offers "Me" when the deal owner is 
     />,
   );
   await click(mounted.container.querySelector('button'));
-  expect(dialog()?.textContent).toContain('Me');
+  expect(dialog()?.textContent).toContain('Opportunity owner');
   expect(dialog()?.textContent).not.toContain('Lead owner');
   await fill(inDialog('input[name="dueAt"]'), '2026-11-22T09:00');
   await click(footerButton('Schedule'));
@@ -152,6 +152,21 @@ it('plans a follow-up on an opportunity, and offers "Me" when the deal owner is 
     expect.stringMatching(UUID_SHAPE),
   );
   expect(mocks.success).toHaveBeenCalledWith('Follow-up scheduled.');
+  await mounted.unmount();
+});
+
+it('says the follow-up goes to the person scheduling it when the record has no owner', async () => {
+  const mounted = await mountForm(
+    <ScheduleFollowUpDialog
+      subjectKind="opportunityId"
+      subjectId={LEAD}
+      ownerUserId={null}
+      owners={owners}
+    />,
+  );
+  await click(mounted.container.querySelector('button'));
+  expect(dialog()?.textContent).toContain('Me');
+  expect(dialog()?.textContent).not.toContain('Opportunity owner');
   await mounted.unmount();
 });
 
