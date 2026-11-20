@@ -545,7 +545,7 @@
       "idx": 77,
       "version": "7",
       "when": 1783000000123,
-      "tag": "0127_workflow_publish_and_memo_approver",
+      "tag": "0127_workflow_publish",
       "breakpoints": true
     }
   ]

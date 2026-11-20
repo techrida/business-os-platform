@@ -1,4 +1,4 @@
--- 0127_workflow_publish_and_memo_approver: publishing a workflow needs a second person (F1-Q11, D7).
+-- 0127_workflow_publish: publishing a workflow needs a second person (F1-Q11, D7).
 --
 -- * app.workflow_versions.created_by: who saved the version. Every save inserts a new version (no draft is edited in
 --   place), so the creator is the version's editor, and the API refuses that person's publish. Rows saved before this
