@@ -206,9 +206,9 @@ describe('payment request pages', () => {
       session,
       '/v1/payables/payment-requests?status=draft&status=approved&q=Himal&limit=25&offset=25',
     );
-    expect(() =>
+    await expect(
       listPaymentRequestsPage(session, { status: ['other' as never], limit: 25, offset: 0 }),
-    ).toThrow();
+    ).rejects.toThrow();
   });
 });
 
