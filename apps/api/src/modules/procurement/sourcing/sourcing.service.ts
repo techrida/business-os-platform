@@ -44,6 +44,7 @@ import { AuditService } from '../../../platform/audit/audit.service';
 import { DB, type Db, type DbTransaction } from '../../../platform/db/db.module';
 import { withIdempotency } from '../../../platform/db/idempotency';
 import { withTx, type TxScope } from '../../../platform/db/tx';
+import { assertNotInfected } from '../../../platform/documents/documents.service';
 import { CurrencyEnabledService } from '../../../platform/settings/currency-enabled';
 import { searchPage } from '../../../platform/list';
 import { MoneyService } from '../../../platform/settings/money.service';
@@ -814,6 +815,7 @@ export class SourcingService {
       .from(documents)
       .where(scoped(scope).where(documents, eq(documents.id, documentId)));
     if (doc === undefined) throw badRequest('Unknown document');
+    await assertNotInfected(tx, scope, [documentId]);
 
     const prLines = await tx
       .select({ id: purchaseRequestLines.id })
