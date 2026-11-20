@@ -31,6 +31,13 @@ vi.mock('@/lib/api-billing', async (importOriginal) => ({
 }));
 vi.mock('@/lib/api-tax-codes', () => ({ listTaxCodes: mocks.listTaxCodes }));
 vi.mock('@/lib/api-receivables', () => ({ getCustomerStatement: mocks.getCustomerStatement }));
+// GET /v1/me for an unedited role answers the role's default grants.
+vi.mock('@/lib/live-permissions', async () => {
+  const { permissionChecker } = await import('@/components/p2/customers/permissions');
+  return {
+    getPermissionCheck: (s: { roles: string[] }) => Promise.resolve(permissionChecker(s.roles)),
+  };
+});
 vi.mock('next/navigation', () => ({ notFound: mocks.notFound, redirect: vi.fn() }));
 vi.mock('next/cache', () => ({ revalidatePath: vi.fn() }));
 // The tenant's display settings come through the real `getDisplaySettings` read; only the session and the HTTP call

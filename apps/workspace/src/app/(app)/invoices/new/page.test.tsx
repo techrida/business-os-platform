@@ -16,6 +16,13 @@ vi.mock('@/lib/api-tax-codes', () => ({ listTaxCodes: () => Promise.resolve([]) 
 // The real `loadEnabledCurrencies` reads `GET /v1/settings/display` through this client.
 vi.mock('@/lib/api-procurement', () => ({ call: mocks.call }));
 vi.mock('./actions', () => ({ createManualInvoiceAction: vi.fn() }));
+// GET /v1/me for an unedited role answers the role's default grants.
+vi.mock('@/lib/live-permissions', async () => {
+  const { permissionChecker } = await import('@/components/p2/customers/permissions');
+  return {
+    getPermissionCheck: (s: { roles: string[] }) => Promise.resolve(permissionChecker(s.roles)),
+  };
+});
 
 const customerPage = {
   items: [

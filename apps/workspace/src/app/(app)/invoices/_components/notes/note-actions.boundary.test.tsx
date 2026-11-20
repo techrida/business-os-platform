@@ -1,6 +1,8 @@
 import { renderToStaticMarkup } from 'react-dom/server';
 import { expect, it, vi } from 'vitest';
 
+import { permissionChecker } from '@/components/p2/customers/permissions';
+
 import { invoiceGates } from '../../_lib/gates';
 import { invoiceDetail } from '../../_lib/test-fixtures';
 
@@ -26,7 +28,10 @@ it('passes plain credit-line data across the server/client boundary without call
       invoice={detail.invoice}
       lines={detail.lines}
       taxCodes={[]}
-      gates={invoiceGates({ kind: 'tax_invoice', status: 'issued' }, ['finance'])}
+      gates={invoiceGates(
+        { kind: 'tax_invoice', status: 'issued' },
+        permissionChecker(['finance']),
+      )}
     />,
   );
   expect(clients.CreditNoteDialog.mock.calls[0]?.[0].lines).toEqual(

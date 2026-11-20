@@ -7,7 +7,9 @@ import {
 } from '@bos/contracts';
 import { describe, expect, it } from 'vitest';
 
-import { invoiceGates, recordPaymentHref, settlementMayOwe } from './gates';
+import { permissionChecker } from '@/components/p2/customers/permissions';
+
+import { type Can, invoiceGates, recordPaymentHref, settlementMayOwe } from './gates';
 
 const ACCOUNTANT = ['accountant'];
 const FINANCE = ['finance'];
@@ -15,7 +17,13 @@ const NOBODY = ['sales'];
 const NONE = { submit: false, issue: false, discard: false, notes: false };
 
 const gates = (kind: InvoiceKind, status: InvoiceStatus, roles: string[]) =>
-  invoiceGates({ kind, status }, roles);
+  invoiceGates({ kind, status }, permissionChecker(roles));
+
+/** A person's live grants as Settings > Access left them, whatever their roles' defaults say. */
+const granted =
+  (...permissions: string[]): Can =>
+  (p) =>
+    permissions.includes(p);
 
 describe('invoiceGates follow canTransitionInvoice and the role', () => {
   it.each(INVOICE_KINDS.flatMap((k) => INVOICE_STATUSES.map((s) => [k, s] as const)))(
@@ -77,6 +85,21 @@ describe('invoiceGates follow canTransitionInvoice and the role', () => {
     expect(gates('proforma', 'issued', FINANCE).notes).toBe(false);
   });
 
+  it('follows the live grants, not the role defaults', () => {
+    // A Sales user granted invoice.draft and invoice.submit in Settings > Access.
+    expect(
+      invoiceGates(
+        { kind: 'tax_invoice', status: 'draft' },
+        granted('invoice.draft', 'invoice.submit'),
+      ),
+    ).toEqual({ submit: true, issue: false, discard: true, notes: false });
+    // A Finance user whose invoice.issue and invoice.credit_note were revoked.
+    expect(
+      invoiceGates({ kind: 'tax_invoice', status: 'approved' }, granted('invoice.draft')).issue,
+    ).toBe(false);
+    expect(invoiceGates({ kind: 'tax_invoice', status: 'issued' }, granted()).notes).toBe(false);
+  });
+
   it('offers nothing to a role with no invoice grants, or to nobody', () => {
     for (const status of INVOICE_STATUSES) {
       expect(gates('tax_invoice', status, NOBODY)).toEqual(NONE);
@@ -93,7 +116,8 @@ describe('recordPaymentHref', () => {
     status: InvoiceStatus,
     roles: string[],
     settlement?: Parameters<typeof recordPaymentHref>[2],
-  ) => recordPaymentHref({ kind, status, customerId: CUSTOMER }, roles, settlement);
+  ) =>
+    recordPaymentHref({ kind, status, customerId: CUSTOMER }, permissionChecker(roles), settlement);
 
   it.each(INVOICE_KINDS.flatMap((k) => INVOICE_STATUSES.map((s) => [k, s] as const)))(
     'offers it on %s %s only when it opens a receivable',
@@ -108,6 +132,12 @@ describe('recordPaymentHref', () => {
     expect(href('tax_invoice', 'issued', ['founder'])).toBe(HREF);
     expect(href('tax_invoice', 'issued', ['management'])).toBeNull();
     expect(href('tax_invoice', 'issued', NOBODY)).toBeNull();
+  });
+
+  it('follows a live payment.record grant, not the role defaults', () => {
+    const invoice = { kind: 'tax_invoice', status: 'issued', customerId: CUSTOMER } as const;
+    expect(recordPaymentHref(invoice, granted('payment.record'))).toBe(HREF);
+    expect(recordPaymentHref(invoice, granted('invoice.draft'))).toBeNull();
   });
 
   it('follows a settlement the caller read: open ones yes, settled or unknown no', () => {

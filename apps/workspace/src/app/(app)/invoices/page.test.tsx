@@ -21,6 +21,13 @@ vi.mock('@/lib/api-billing', () => ({
   getInvoicesSummary: mocks.getInvoicesSummary,
 }));
 vi.mock('@/lib/api-receivables', () => ({ getAging: mocks.getAging }));
+// GET /v1/me for an unedited role answers the role's default grants.
+vi.mock('@/lib/live-permissions', async () => {
+  const { permissionChecker } = await import('@/components/p2/customers/permissions');
+  return {
+    getPermissionCheck: (s: { roles: string[] }) => Promise.resolve(permissionChecker(s.roles)),
+  };
+});
 // The filter toolbar is a client component that reads the router.
 vi.mock('next/navigation', () => ({
   useRouter: () => ({ push: vi.fn(), replace: vi.fn() }),
