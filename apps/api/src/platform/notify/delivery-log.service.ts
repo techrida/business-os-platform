@@ -28,20 +28,22 @@ import { NotifyService } from './notify.service';
 /** What the bounce webhook writes into last_error on the row that bounced (bounce.store.ts). */
 const BOUNCED_PREFIX = 'bounced (';
 /** What the bounce webhook writes on rows it stopped because their recipient hard-bounced. */
+/** A soft bounce is not resendable: the mail server may still deliver it, and a resend would send a second copy. */
+const HARD_BOUNCE = 'bounced (hard)';
 const RECIPIENT_BOUNCED = 'recipient bounced';
 
 type OutboxStatus = (typeof outbox.$inferSelect)['status'];
 
-/** A row an admin may resend: out of retries, or sent and then bounced. */
+/** A row an admin may resend: out of retries, or sent and then hard-bounced. */
 function resendable(status: OutboxStatus, lastError: string | null): boolean {
   if (status === 'dead') return true;
-  return status === 'sent' && lastError !== null && lastError.startsWith(BOUNCED_PREFIX);
+  return status === 'sent' && lastError === HARD_BOUNCE;
 }
 
 /** The same rule as `resendable`, as SQL for the list filter. */
 const RESENDABLE_SQL: SQL = or(
   eq(outbox.status, 'dead'),
-  and(eq(outbox.status, 'sent'), sql`${outbox.lastError} LIKE ${`${BOUNCED_PREFIX}%`}`),
+  and(eq(outbox.status, 'sent'), eq(outbox.lastError, HARD_BOUNCE)),
 ) as SQL;
 
 function stateOf(status: OutboxStatus, lastError: string | null): EmailDeliveryState {
