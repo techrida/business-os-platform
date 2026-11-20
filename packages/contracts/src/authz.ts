@@ -24,6 +24,10 @@ export const PERMISSIONS = [
   // Set a user's profile picture (U12): scope `own` is "my own picture", scope `all` is "anyone's in the tenant".
   'profile.avatar.write',
   'audit.read',
+  // The email delivery log (Settings > Email delivery): see sent and failed emails, and resend a failed one.
+  // Founder only by default; migration 0128 adds the Founder rows in tenants that hold role rows.
+  'email_delivery.read',
+  'email_delivery.resend',
   'memo.create',
   'memo.read',
   'memo.update',
