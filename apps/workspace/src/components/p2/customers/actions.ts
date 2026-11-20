@@ -5,7 +5,7 @@ import { randomUUID } from 'node:crypto';
 import { revalidatePath } from 'next/cache';
 import { redirect } from 'next/navigation';
 
-import { apiCodeOf } from '@/lib/api-code';
+import { apiCodeOf, apiReasonOf } from '@/lib/api-code';
 import { failureOf } from '@/lib/api-kernel';
 import { requireStaffSession } from '@/lib/bff';
 import { getGrants, hasGrant } from '@/lib/grants';
@@ -97,10 +97,25 @@ export async function createCustomerAction(
     }
   }
 
+  // "Create anyway" carries the person's reason (F1-Q55); the API audits it with the matches.
+  const reason = text(form, 'duplicateOverrideReason').trim();
+  const body = reason !== '' ? { ...parsed.data, duplicateOverrideReason: reason } : parsed.data;
+
   let id: string;
   try {
-    id = (await createCustomer(session, parsed.data, key)).id;
+    id = (await createCustomer(session, body, key)).id;
   } catch (err) {
+    if (apiReasonOf(err) === 'duplicate_reason_required') {
+      // An organization of the same name exists: show what the search finds (it may be nothing the
+      // search can see) and ask for the reason. Nothing was created, so the next try is a new create.
+      return {
+        key: randomUUID(),
+        errors: {},
+        duplicates: await findDuplicates(session, parsed.data),
+        checked: { legalName: parsed.data.legalName, panVatNo: parsed.data.panVatNo ?? '' },
+        needsReason: true,
+      };
+    }
     const failure = failureOf(err);
     return {
       // A 4xx is a final answer, so the next try is a new create. After a timeout or 5xx the first

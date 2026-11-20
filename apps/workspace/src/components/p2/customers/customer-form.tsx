@@ -5,7 +5,8 @@ import { useActionState, useEffect, useRef, useState, type ReactNode } from 'rea
 
 import { Alert } from '@/components/ui/alert';
 import { Button, LinkButton } from '@/components/ui/button';
-import { Field, Input, Select } from '@/components/ui/field';
+import { Dialog, DialogClose } from '@/components/ui/dialog';
+import { Field, Input, Select, Textarea } from '@/components/ui/field';
 import { PageHeader } from '@/components/ui/page';
 import { Panel } from '@/components/ui/panel';
 import { currencyChoices } from '@/lib/enabled-currencies';
@@ -39,6 +40,9 @@ function SectionTitle({
     </>
   );
 }
+
+const REASON_MAX = 500;
+const REASON_REQUIRED = `Say why this is a different organization, up to ${REASON_MAX} characters.`;
 
 /** CSS modules type every class as possibly missing; `Field` wants a string. */
 const WIDE = styles.wide ?? '';
@@ -99,11 +103,28 @@ export function CustomerForm({
     (e: { target: { value: string } }): void =>
       setValues((v) => ({ ...v, [field]: e.target.value }));
 
+  // "Create anyway" asks why first (F1-Q55): the reason is audited with the organizations it matched.
+  const reasonFieldRef = useRef<HTMLTextAreaElement>(null);
+  const [reasonOpen, setReasonOpen] = useState(false);
+  const [reason, setReason] = useState('');
+  const [reasonError, setReasonError] = useState<string | undefined>();
+
   // Send focus to what needs attention: the summary, else the first field that is wrong.
   useEffect(() => {
     if (state.error || state.duplicates) summaryRef.current?.focus();
     else formRef.current?.querySelector<HTMLElement>('[aria-invalid="true"]')?.focus();
   }, [state]);
+
+  // The API asked for a reason (a same-name organization it knows of): ask for it straight away.
+  // Adjusted while rendering, once per answer, rather than in an effect.
+  const [answered, setAnswered] = useState(state);
+  if (answered !== state) {
+    setAnswered(state);
+    if (state.needsReason) {
+      setReasonError(undefined);
+      setReasonOpen(true);
+    }
+  }
 
   const err = state.errors;
   const currencies = currencyChoices(enabledCurrencies, initial.defaultCurrency);
@@ -121,14 +142,37 @@ export function CustomerForm({
         ? 'Create anyway'
         : 'Create Organization';
 
+  function confirmCreateAnyway() {
+    const why = reason.trim();
+    if (why === '' || why.length > REASON_MAX) {
+      setReasonError(REASON_REQUIRED);
+      reasonFieldRef.current?.focus();
+      return;
+    }
+    setReasonOpen(false);
+    formRef.current?.requestSubmit();
+  }
+
   const actions = (
     <div className={styles.actions}>
       <LinkButton href={cancelHref} variant="secondary">
         Cancel
       </LinkButton>
-      <Button type="submit" disabled={pending}>
-        {submitLabel}
-      </Button>
+      {acknowledged && !pending ? (
+        <Button
+          type="button"
+          onClick={() => {
+            setReasonError(undefined);
+            setReasonOpen(true);
+          }}
+        >
+          Create anyway
+        </Button>
+      ) : (
+        <Button type="submit" disabled={pending}>
+          {submitLabel}
+        </Button>
+      )}
     </div>
   );
 
@@ -145,7 +189,12 @@ export function CustomerForm({
       {mode === 'create' ? (
         <>
           <input type="hidden" name="idempotencyKey" value={state.key} />
-          {acknowledged ? <input type="hidden" name="ackDuplicates" value="yes" /> : null}
+          {acknowledged ? (
+            <>
+              <input type="hidden" name="ackDuplicates" value="yes" />
+              <input type="hidden" name="duplicateOverrideReason" value={reason.trim()} />
+            </>
+          ) : null}
         </>
       ) : (
         <>
@@ -174,25 +223,36 @@ export function CustomerForm({
           tone="warning"
           role="alert"
           title={
-            state.duplicates.length === 1
-              ? 'This may be an organization you already have'
-              : 'These may be organizations you already have'
+            state.duplicates.length === 0
+              ? 'An organization with this name already exists'
+              : state.duplicates.length === 1
+                ? 'This may be an organization you already have'
+                : 'These may be organizations you already have'
           }
         >
-          <ul className={styles.matches}>
-            {state.duplicates.map((d) => (
-              <li key={d.id} className={styles.match}>
-                <a href={`/customers/${encodeURIComponent(d.id)}`} target="_blank" rel="noreferrer">
-                  {d.legalName}
-                  <span className="sr-only"> (opens in a new tab)</span>
-                </a>{' '}
-                <span className={styles.matchMeta}>
-                  {d.number}, {d.reasons.map((r) => REASON_TEXT[r]).join(' and ')}
-                </span>
-              </li>
-            ))}
-          </ul>
-          <p>If this is a different company, choose Create anyway. Nothing has been saved yet.</p>
+          {state.duplicates.length > 0 ? (
+            <ul className={styles.matches}>
+              {state.duplicates.map((d) => (
+                <li key={d.id} className={styles.match}>
+                  <a
+                    href={`/customers/${encodeURIComponent(d.id)}`}
+                    target="_blank"
+                    rel="noreferrer"
+                  >
+                    {d.legalName}
+                    <span className="sr-only"> (opens in a new tab)</span>
+                  </a>{' '}
+                  <span className={styles.matchMeta}>
+                    {d.number}, {d.reasons.map((r) => REASON_TEXT[r]).join(' and ')}
+                  </span>
+                </li>
+              ))}
+            </ul>
+          ) : null}
+          <p>
+            If this is a different company, choose Create anyway and say why. Nothing has been saved
+            yet.
+          </p>
         </Alert>
       ) : null}
 
@@ -481,6 +541,43 @@ export function CustomerForm({
         </div>
       </Panel>
       <div className={styles.bottomActions}>{actions}</div>
+
+      {mode === 'create' ? (
+        <Dialog
+          open={reasonOpen}
+          onOpenChange={setReasonOpen}
+          title="Create anyway?"
+          description={`Say why ${values.legalName.trim() || 'this'} is a different organization from the possible duplicates. The reason is kept in the audit log.`}
+          size="small"
+          closeOnOutsideClick={false}
+          initialFocusRef={reasonFieldRef}
+          footer={
+            <>
+              <DialogClose asChild>
+                <Button variant="secondary">Cancel</Button>
+              </DialogClose>
+              <Button onClick={confirmCreateAnyway}>Create anyway</Button>
+            </>
+          }
+        >
+          <Field label="Reason" error={reasonError}>
+            {(control) => (
+              <Textarea
+                ref={reasonFieldRef}
+                rows={3}
+                maxLength={REASON_MAX}
+                required
+                value={reason}
+                onChange={(e) => {
+                  setReason(e.target.value);
+                  setReasonError(undefined);
+                }}
+                {...control}
+              />
+            )}
+          </Field>
+        </Dialog>
+      ) : null}
     </form>
   );
 }
