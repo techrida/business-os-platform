@@ -13,10 +13,6 @@ import styles from './vendor.module.css';
 export const isPastDeadline = (deadline: string, now: Date): boolean =>
   new Date(deadline).getTime() < now.getTime();
 
-/** What a vendor is told once a request's deadline has passed (F1-Q47). */
-export const DEADLINE_PASSED_TEXT =
-  'We can no longer take a quotation for this request. If we extend the deadline, the new date will show here.';
-
 /** The deadline in Kathmandu time, e.g. `20 Nov 2026, 14:00`. */
 export const formatDeadline = (deadline: string): string =>
   formatKathmandu(new Date(deadline), 'datetime');

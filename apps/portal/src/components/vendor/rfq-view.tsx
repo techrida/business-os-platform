@@ -3,7 +3,8 @@ import type { VendorPortalRfqView } from '@bos/contracts';
 import { Alert } from '@/components/portal/alert';
 import { LinkButton } from '@/components/ui/button';
 
-import { DEADLINE_PASSED_TEXT, formatDeadline, isPastDeadline } from './rfq-list';
+import { DEADLINE_PASSED_TEXT } from './rfq-deadline';
+import { formatDeadline, isPastDeadline } from './rfq-list';
 import styles from './vendor.module.css';
 import { trimQuantity } from './vendor-status';
 
