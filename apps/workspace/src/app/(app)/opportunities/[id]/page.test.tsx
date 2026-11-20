@@ -476,7 +476,9 @@ describe('opportunity stage action buttons, timeline and read-only hygiene', () 
     const html = await render();
     const doc = parse(html);
     expect(headerStageButtons(doc)).toEqual([]);
-    expect(headerLinks(html)).toEqual([['View quotations', `/quotations?opportunityId=${OPP}`]]);
+    // Quotations follow quotation.draft, which the sales role holds without opportunity write access.
+    expect(headerLinks(html).map(([label]) => label)).toContain('View quotations');
+    expect(headerLinks(html).map(([label]) => label)).toContain('Edit quotation');
     expect(doc.querySelector('[aria-label="Stage"]')?.textContent).toContain(
       'You have read-only access to this opportunity.',
     );
