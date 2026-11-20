@@ -781,7 +781,7 @@ export class ApprovalsService {
               // The template reads `decision`; a key it does not list is ignored, so "outcome" made every
               // subject say "updated".
               decision: outcome,
-              deciderName: await this.displayName(scope.tenantId, userId),
+              deciderName: await this.displayName(tx, scope.tenantId, userId),
               linkPath: requesterLink,
             }),
           },
@@ -1801,18 +1801,28 @@ export class ApprovalsService {
     return {
       documentType: row?.documentType,
       requesterName:
-        row === undefined ? undefined : await this.displayName(row.tenantId, row.requesterUserId),
+        row === undefined
+          ? undefined
+          : await this.displayName(tx, row.tenantId, row.requesterUserId),
     };
   }
 
   /**
    * A person's name for an email: their display name, or "Unnamed user" (D54-2), never a piece of their address.
-   * Read on its own connection and never throws: a failed statement inside the decision's transaction would abort
-   * it, and a lookup problem must not roll back a decision. The template has a neutral default for a missing name.
+   * Read through the caller's transaction, not a second pooled connection (which can stall the pool under load),
+   * and never throws: the read runs in a savepoint, so a failed lookup rolls back only the savepoint and the decision
+   * goes on. The catch sits outside the savepoint on purpose: caught inside it, the failed statement would still
+   * abort the whole transaction. The template has a neutral default for a missing name.
    */
-  private async displayName(tenantId: string, userId: string): Promise<string | undefined> {
+  private async displayName(
+    tx: DbTransaction,
+    tenantId: string,
+    userId: string,
+  ): Promise<string | undefined> {
     try {
-      return nameIn(await personNameMap(this.db, tenantId, [userId]), userId) ?? undefined;
+      return await tx.transaction(
+        async (sp) => nameIn(await personNameMap(sp, tenantId, [userId]), userId) ?? undefined,
+      );
     } catch {
       return undefined;
     }
