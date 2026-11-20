@@ -267,13 +267,11 @@ describe('Retire checks the members the dialog showed', () => {
     expect(new Set(dialog.memberIds)).toEqual(new Set([stays, leaves]));
     await placeIn(leaves, null);
 
-    const left = await request(baseUrl)
-      .post(`/v1/admin/departments/${dept.id}/retire`)
-      .send({
-        expectedVersion: dialog.version,
-        moveMembersTo: null,
-        expectedMemberIds: dialog.memberIds,
-      });
+    const left = await request(baseUrl).post(`/v1/admin/departments/${dept.id}/retire`).send({
+      expectedVersion: dialog.version,
+      moveMembersTo: null,
+      expectedMemberIds: dialog.memberIds,
+    });
     expect(left.status, JSON.stringify(left.body)).toBe(409);
     expect(errorOf(left.body).code).toBe('members_changed');
 
