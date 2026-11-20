@@ -406,9 +406,10 @@ const scopeOf = (p: Principal): TxScope => ({
 
 /**
  * The portal read filter: the caller's party in the acting entity (forCounterparty, ADR 0027 §5), only when that entity
- * is the tenant's default, and only issued documents of a portal kind. `extra` narrows further.
+ * is the tenant's default, and only issued documents of a portal kind. `extra` narrows further. Also used by the
+ * milestones read, so a schedule line names only an invoice this module would show.
  */
-function visibleTo(p: Principal, extra?: SQL): SQL {
+export function visibleTo(p: Principal, extra?: SQL): SQL {
   // assertCustomerCaller ran first, so partyId is a non-empty string here.
   const partyId = p.partyId ?? '';
   const defaultEntity = sql`EXISTS (SELECT 1 FROM ${organizations}

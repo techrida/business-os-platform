@@ -204,6 +204,8 @@ async function newCustomer(
   kyb: 'approved' | 'submitted' | null,
   s = scope,
   email: string | null = `ana-${randomUUID().slice(0, 8)}@acme.test`,
+  // F1-Q31: the account owner invites the first portal admin. The caller (founder) owns it unless a test says not.
+  owner: string | null = s === scope ? founder : null,
 ): Promise<{ customerId: string; contactId: string }> {
   const partyId = randomUUID();
   const contactId = randomUUID();
@@ -213,9 +215,9 @@ async function newCustomer(
           VALUES (${partyId}, ${s.tenantId}, 'customer', ${`P-${partyId.slice(0, 8)}`}, 'Acme Pvt. Ltd.')`,
     );
     await tx.execute(
-      sql`INSERT INTO app.customers (id, tenant_id, number, legal_name, name_norm, address)
+      sql`INSERT INTO app.customers (id, tenant_id, number, legal_name, name_norm, address, owner_user_id)
           VALUES (${partyId}, ${s.tenantId}, ${`CUS-${partyId.slice(0, 8)}`}, 'Acme Pvt. Ltd.', 'acme',
-                  ${ADDRESS}::jsonb)`,
+                  ${ADDRESS}::jsonb, ${owner})`,
     );
     await tx.execute(
       sql`INSERT INTO app.customer_contacts (id, tenant_id, customer_id, full_name, email_norm)
@@ -360,6 +362,51 @@ describe('POST /v1/customers/:id/portal-access', () => {
     const res = await grant(customerId, contactId);
     // The error filter turns any 400 into code bad_request (contact_email_missing is not a known reason).
     expect(res.status).toBe(400);
+  });
+
+  describe('first portal admin (F1-Q31)', () => {
+    const codeOf = (res: request.Response) => (res.body as { error: { code: string } }).error.code;
+
+    it('refuses 409 first_admin_owner_only when the caller is not the account owner, writing nothing', async () => {
+      const { customerId, contactId } = await newCustomer('approved', scope, undefined, sales);
+      const before = zitadel.calls.length;
+      const res = await grant(customerId, contactId);
+      expect(res.status).toBe(409);
+      expect(codeOf(res)).toBe('first_admin_owner_only');
+      expect(zitadel.calls.length).toBe(before);
+      expect(
+        await rows('SELECT 1 FROM app.idp_orgs WHERE party_id = $1', [customerId]),
+      ).toHaveLength(0);
+    });
+
+    it('refuses 409 account_owner_missing when the customer has no account owner', async () => {
+      const { customerId, contactId } = await newCustomer('approved', scope, undefined, null);
+      const res = await grant(customerId, contactId);
+      expect(res.status).toBe(409);
+      expect(codeOf(res)).toBe('account_owner_missing');
+    });
+
+    it('answers 404 for a contact of another customer in the same tenant, before ZITADEL', async () => {
+      const { customerId } = await newCustomer('approved');
+      const other = await newCustomer('approved');
+      const before = zitadel.calls.length;
+      const res = await grant(customerId, other.contactId);
+      expect(res.status).toBe(404);
+      expect((res.body as { error: { message: string } }).error.message).toContain(
+        'existing contacts',
+      );
+      expect(zitadel.calls.length).toBe(before);
+    });
+
+    it('lets a non-owner holding customer.write grant again once the first admin exists', async () => {
+      const { customerId, contactId } = await newCustomer('approved');
+      expect((await grant(customerId, contactId)).status).toBe(201);
+      await withTx(db, scope, systemActor('test'), (tx) =>
+        tx.execute(sql`UPDATE app.customers SET owner_user_id = ${sales} WHERE id = ${customerId}`),
+      );
+      const again = await grant(customerId, contactId);
+      expect(again.status).toBe(201);
+    });
   });
 
   it('answers 404 for a customer of another tenant', async () => {

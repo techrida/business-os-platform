@@ -21,6 +21,7 @@ import { DB, type Db, type DbTransaction } from '../../platform/db/db.module';
 import { withIdempotency } from '../../platform/db/idempotency';
 import { withTx, type Actor, type TxScope } from '../../platform/db/tx';
 import { UsersStore } from '../../platform/users/users.store';
+import { customerHasPortalUser } from './first-admin';
 import { PORTAL_ROLES, VENDOR_PORTAL_ROLES } from './portal-access.service';
 import {
   PortalAccessStore,
@@ -93,6 +94,7 @@ export class SqlPortalAccessStore extends PortalAccessStore implements VendorPor
       contact: contact ?? null,
       kybStatus: kyb?.status ?? null,
       idpOrg: await this.portalOrgOf(tenantId, customerId, 'customer'),
+      hasPortalUser: await customerHasPortalUser(this.db, tenantId, customerId),
     };
   }
 
