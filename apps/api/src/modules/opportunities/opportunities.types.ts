@@ -11,6 +11,9 @@ import {
 import { type opportunities } from '@bos/db';
 import { z } from 'zod';
 
+import { can, type Principal } from '../../platform/authz/can';
+import { allowedOpportunityMoves, opportunityRef } from './opportunity-stage';
+
 /**
  * `GET /v1/opportunities?q&stage&owner&limit&offset`. `stage` and `owner` may repeat (any of the selected values
  * matches). The board view asks for up to 200 rows at once, so the cap stays at 200 and the default at 50.
@@ -33,6 +36,7 @@ export function toOpportunityDto(
   row: OpportunityRow,
   ownerName: string | null,
   lostReason: LeadLostReasonRef | null,
+  principal?: Principal,
 ): OpportunityDto {
   return {
     id: row.id,
@@ -52,6 +56,12 @@ export function toOpportunityDto(
     probability: row.probability,
     expectedClose: row.expectedClose,
     wonQuotationVersionId: row.wonQuotationVersionId,
+    ...(principal === undefined
+      ? {}
+      : {
+          allowedMoves: allowedOpportunityMoves(principal, row),
+          canEdit: can(principal, 'crm.opportunity.write', opportunityRef(row)).allowed,
+        }),
     version: row.version,
     createdAt: row.createdAt.toISOString(),
     updatedAt: row.updatedAt.toISOString(),

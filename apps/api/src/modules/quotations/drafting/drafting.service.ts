@@ -260,18 +260,23 @@ export function draftRefOf(q: {
 
 /**
  * What `p` may do with a quotation whose current version has `status`, by the same rules the commands
- * enforce: updateDraft() (Draft or Returned, `quotation.draft` on the record) and ReviseService.revise()
- * (a revisable status, `quotation.revise` on quotationRef()). Pure, so a screen can trust it and a test
- * can check it without a database.
+ * enforce: updateDraft() (Draft or Returned, `quotation.draft` on the record), ReviseService.revise()
+ * (a revisable status, `quotation.revise` on quotationRef()), QuotationSendService (`quotation.send` on
+ * approved/expired) and RecordOutcomeService (`quotation.record_acceptance` on sent). Pure, so a screen
+ * can trust it and a test can check it without a database.
  */
 export function capabilitiesOf(
   p: Principal,
   q: Parameters<typeof draftRefOf>[0],
   status: QuotationStatus,
 ): QuotationCapabilities {
+  const ref = quotationRef(q);
   return {
     canEdit: isQuotationEditable(status) && can(p, 'quotation.draft', draftRefOf(q)).allowed,
-    canRevise: canReviseQuotation(status) && can(p, 'quotation.revise', quotationRef(q)).allowed,
+    canRevise: canReviseQuotation(status) && can(p, 'quotation.revise', ref).allowed,
+    canSend:
+      (status === 'approved' || status === 'expired') && can(p, 'quotation.send', ref).allowed,
+    canRecordOutcome: status === 'sent' && can(p, 'quotation.record_acceptance', ref).allowed,
   };
 }
 
@@ -637,7 +642,7 @@ export class DraftingService {
         // No current version: toQuotationDetail refuses the answer anyway, so nothing is offered.
         capabilities:
           current === undefined
-            ? { canEdit: false, canRevise: false }
+            ? { canEdit: false, canRevise: false, canSend: false, canRecordOutcome: false }
             : capabilitiesOf(principal, quotation, current.status),
         people,
         ...(lead === undefined ? {} : { lead }),

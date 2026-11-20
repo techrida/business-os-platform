@@ -2,10 +2,69 @@
 // LEAD_TRANSITIONS is unit-testable without a database. Serves the NFR "the pipeline is auditable": a stage
 // moves only along the table, Converted is reached by the convert action alone, and a move to Lost or On Hold
 // always carries its reason and note.
-import { findTransition, type LeadStage } from '@bos/contracts';
+import { findTransition, LEAD_TRANSITIONS, type LeadStage } from '@bos/contracts';
+
+import { can, type Principal, type ResourceRef } from '../../platform/authz/can';
+import type { RecordReaders } from '../../platform/authz/record-reach';
 
 /** Who is asking: a user, or a manager (who may also reopen a lost lead). */
 export type LeadStageCaller = 'user' | 'manager';
+
+/** Whether the caller may take manager-only stage edges (reopening a lost lead or opportunity). */
+export function isStageManager(principal: Principal): boolean {
+  return (
+    principal.roles.includes('founder') ||
+    principal.level === 'manager' ||
+    principal.level === 'head'
+  );
+}
+
+/**
+ * What authz decides on for one lead. No party column: a portal grant reaches no lead. The department (stamped by
+ * the database from the owner, D55-4) lets a department grant reach the lead. `readers` (record-reach.ts
+ * `loadRecordReaders`) add the creator and the follow-up assignees, which only a read permission honours: pass them
+ * on a read so the record check agrees with the list query, and leave them out of a write.
+ */
+export function leadRef(
+  row: {
+    tenantId: string;
+    organizationId: string;
+    ownerUserId: string | null;
+    departmentId?: string | null;
+  },
+  readers?: RecordReaders,
+): ResourceRef {
+  return {
+    tenantId: row.tenantId,
+    organizationId: row.organizationId,
+    ownerUserId: row.ownerUserId,
+    departmentId: row.departmentId ?? null,
+    ...(readers === undefined
+      ? {}
+      : { creatorUserId: readers.creatorUserId, assigneeUserIds: readers.assigneeUserIds }),
+  };
+}
+
+/** The stage targets `principal` may move `row` to over HTTP. Pure, using live `crm.lead.write`. */
+export function allowedLeadMoves(
+  principal: Principal,
+  row: {
+    tenantId: string;
+    organizationId: string;
+    ownerUserId: string | null;
+    departmentId?: string | null;
+    stage: LeadStage;
+  },
+): LeadStage[] {
+  if (!can(principal, 'crm.lead.write', leadRef(row)).allowed) return [];
+  const manager = isStageManager(principal);
+  return LEAD_TRANSITIONS.filter(
+    (t) =>
+      t.from === row.stage &&
+      t.to !== 'converted' &&
+      (t.by === 'user' || (t.by === 'manager' && manager)),
+  ).map((t) => t.to);
+}
 
 export interface LeadStageInput {
   current: LeadStage;
