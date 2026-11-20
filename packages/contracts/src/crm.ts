@@ -108,6 +108,11 @@ export const CustomerDtoSchema = z.object({
   industry: z.string().nullable(),
   relationship: CustomerRelationshipSchema,
   ownerUserId: z.guid().nullable(),
+  /**
+   * U15a-Q3: the owner's display name (D46: a name only, "Unnamed user" without one, null without an owner). Sent
+   * on the staff list (`GET /v1/customers`); absent elsewhere and for portal callers.
+   */
+  ownerName: z.string().nullable().optional(),
   defaultCurrency: CurrencySchema.nullable(),
   address: AddressSchema,
   /** The customer's logo (`app.customers.logo_document_id`); null or absent shows initials. */
