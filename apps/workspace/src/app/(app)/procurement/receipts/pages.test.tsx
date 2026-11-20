@@ -31,6 +31,7 @@ vi.mock('./actions', () => ({
 }));
 const api = vi.hoisted(() => ({
   listReceivableOrders: vi.fn(),
+  listReceivedOrders: vi.fn(),
   listRequestedOrders: vi.fn(),
   listReceipts: vi.fn(),
   getReceipt: vi.fn(),
@@ -135,6 +136,7 @@ beforeEach(() => {
   me.getMe.mockReset().mockRejectedValue(new Error('offline'));
   for (const fn of Object.values(api)) fn.mockReset();
   api.listReceivableOrders.mockResolvedValue([waiting()]);
+  api.listReceivedOrders.mockResolvedValue([]);
   api.listRequestedOrders.mockResolvedValue([]);
   api.getPoProgress.mockResolvedValue(progress());
   api.listReceipts.mockResolvedValue([receipt()]);
@@ -230,6 +232,57 @@ describe('the receipts of one purchase order', () => {
     expect(out).not.toContain('Purchase order ID');
   });
 
+  it('lists the orders the warehouse has finished with, read-only, each opening its receipts (U18-Q3)', async () => {
+    api.listReceivedOrders.mockResolvedValue([
+      {
+        id: SERVICE,
+        number: 'PO-2082-0003',
+        vendorId: USER,
+        vendorName: 'Everest Cleaners',
+        kind: 'goods',
+        status: 'fully_received',
+        lastReceivedAt: '2026-11-08T20:30:00.000Z',
+      },
+      {
+        id: REVERSAL,
+        number: 'PO-2082-0004',
+        vendorId: USER,
+        vendorName: 'Himal Traders Pvt. Ltd.',
+        kind: 'service',
+        status: 'closed',
+      },
+    ]);
+    const out = await list({});
+    expect(api.listReceivedOrders).toHaveBeenCalledTimes(1);
+    expect(out).toContain('Recently received');
+    expect(out).toContain('PO-2082-0003');
+    expect(out).toContain('Fully received');
+    expect(out).toContain('9 Nov 2026');
+    expect(out).toContain('Closed');
+    expect(out).toContain('Nothing received');
+    expect(out).toContain(`href="/procurement/receipts?po=${SERVICE}"`);
+    expect(out).toContain(`href="/procurement/receipts?po=${REVERSAL}"`);
+    expect(out).not.toContain(`href="/procurement/receipts/new?po=${SERVICE}"`);
+    expect(out).not.toContain(`href="/procurement/receipts/new?po=${REVERSAL}"`);
+  });
+
+  it('says nothing was fully received yet, and offers the list to the warehouse only', async () => {
+    let out = await list({});
+    expect(out).toContain('Nothing has been fully received yet');
+    session.roles = ['operations_officer'];
+    out = await list({});
+    expect(out).not.toContain('Recently received');
+    expect(api.listReceivedOrders).toHaveBeenCalledTimes(1);
+  });
+
+  it('words a failed recently received list', async () => {
+    api.listReceivedOrders.mockRejectedValue(apiError(500));
+    const out = await list({});
+    expect(out).toContain('The recently received orders did not load');
+    expect(out).toContain('Waiting to be received');
+    expect(out).not.toContain('internal wording');
+  });
+
   it('says no purchase order is waiting', async () => {
     api.listReceivableOrders.mockResolvedValue([]);
     const out = await list({});
@@ -239,8 +292,10 @@ describe('the receipts of one purchase order', () => {
 
   it('leaves the waiting list out when it is forbidden', async () => {
     api.listReceivableOrders.mockRejectedValue(apiError(403, 'forbidden'));
+    api.listReceivedOrders.mockRejectedValue(apiError(403, 'forbidden'));
     const out = await list({});
     expect(out).not.toContain('Waiting to be received');
+    expect(out).not.toContain('Recently received');
     expect(out).not.toContain('role="alert"');
     expect(out).toContain('No purchase orders to open');
   });
