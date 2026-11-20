@@ -36,7 +36,6 @@ import { type Db } from '../../platform/db/db.module';
 import { type Actor, type TxScope, systemActor, withTx } from '../../platform/db/tx';
 import { MoneyService } from '../../platform/settings/money.service';
 import { NumberingService } from '../../platform/settings/numbering.service';
-import type { CurrencyEnabledService } from '../../platform/settings/currency-enabled';
 import type { SettingsService } from '../../platform/settings/settings.service';
 import { LedgerService } from '../ledger/ledger.service';
 import { PAYMENT_INTAKE_OWNER_TYPE } from '../payments/payment-owner.policy';
@@ -272,10 +271,6 @@ beforeAll(async () => {
   const settings = { get: () => Promise.resolve(7) } as unknown as SettingsService;
   const authz = { assert: () => undefined } as unknown as AuthzService;
   const audit = new AuditService(db);
-  // Every currency passes here; the refusal of a disabled one is unit-tested in payments.currency.test.ts.
-  const currencies = {
-    assertEnabled: () => Promise.resolve(),
-  } as unknown as CurrencyEnabledService;
   payments = new PaymentsService(
     db,
     authz,
@@ -283,7 +278,6 @@ beforeAll(async () => {
     new NumberingService(),
     audit,
     ledger,
-    currencies,
     () => NOW,
   );
   allocations = new AllocationsService(db, authz, audit, ledger);
