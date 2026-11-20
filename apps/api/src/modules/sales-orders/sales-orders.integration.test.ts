@@ -15,6 +15,7 @@ import { randomUUID } from 'node:crypto';
 
 import {
   DEFAULT_ROLE_PERMISSIONS,
+  QuotationEvidenceDtoSchema,
   SalesOrderDetailSchema,
   SalesOrderListItemSchema,
   type EvidencePolicy,
@@ -91,6 +92,7 @@ let scopeA: TxScope;
 let scopeB: TxScope;
 let drafting: DraftingService;
 let recorder: RecordOutcomeService;
+let outcomes: QuotationOutcomeService;
 let settings: SettingsService;
 let opportunitiesService: OpportunitiesService;
 let service: SalesOrdersService;
@@ -196,7 +198,7 @@ beforeAll(async () => {
     caller,
     new LeadLostReasonsService(db, audit, caller),
   );
-  const outcomes = new QuotationOutcomeService(
+  outcomes = new QuotationOutcomeService(
     settings,
     opportunitiesService,
     notify as unknown as NotifyService,
@@ -374,6 +376,34 @@ async function acceptedQuotation(
   current.grants = held;
   return q;
 }
+
+/** A sent quotation accepted the way the portal accepts it: as the customer, with the typed name as a signed quote. */
+async function portalAcceptedQuotation(): Promise<QuotationDto> {
+  const held = current.grants;
+  current.grants = grantsOf('sales');
+  const q = await draftQuotation();
+  await sendQuotation(q);
+  const customerUser = await seedOtherStaffUser(db, f);
+  await withTx(db, scopeA, { kind: 'user', id: customerUser, correlationId: 'portal' }, (tx) =>
+    outcomes.accept(tx, {
+      versionId: q.currentVersionId,
+      quotationId: q.id,
+      actorKind: 'customer_user',
+      actorUserId: customerUser,
+      decidedOn: DECIDED_ON,
+      acceptedByName: 'Ram Thapa',
+      evidenceKinds: ['signed_quote'],
+    }),
+  );
+  current.grants = held;
+  return q;
+}
+
+const confirmEvidence = (
+  q: QuotationDto,
+  body: { evidenceKinds: EvidenceKindName[]; evidenceDocumentIds?: string[]; comment?: string },
+  key = `evidence-${randomUUID()}`,
+) => recorder.confirmEvidence(q.id, q.currentVersionId, { evidenceDocumentIds: [], ...body }, key);
 
 const confirm = (q: QuotationDto, evidenceDocumentIds: string[] = [], key = `so-${randomUUID()}`) =>
   service.confirmFromQuotation(
@@ -561,6 +591,90 @@ describe('SalesOrdersService.confirmFromQuotation', () => {
 });
 
 // ------------------------------------------------------------------------------------ list and detail
+
+describe('evidence confirmation before the order (F1-Q28)', () => {
+  it('holds a portal acceptance until staff confirm evidence that meets the policy, then confirms the order on it', async () => {
+    await setPolicy('contract');
+    const q = await portalAcceptedQuotation();
+
+    expect(await statusOf(confirm(q))).toEqual({ status: 422, code: 'evidence_not_confirmed' });
+    const pending = QuotationEvidenceDtoSchema.parse(
+      await recorder.evidence(q.id, q.currentVersionId),
+    );
+    expect(pending).toMatchObject({
+      status: 'pending',
+      policy: 'contract',
+      missing: ['contract'],
+      acceptance: { actorKind: 'customer_user', acceptedByName: 'Ram Thapa' },
+      confirmation: null,
+      can: { confirm: true },
+    });
+
+    expect(await statusOf(confirmEvidence(q, { evidenceKinds: ['signed_quote'] }))).toEqual({
+      status: 422,
+      code: 'evidence_policy_unmet',
+    });
+    const foreign = await seedDocument(scopeB);
+    expect(
+      await statusOf(
+        confirmEvidence(q, { evidenceKinds: ['contract'], evidenceDocumentIds: [foreign] }),
+      ),
+    ).toEqual({ status: 422, code: 'invalid_evidence_document' });
+
+    const contract = await seedDocument();
+    const key = `evidence-${randomUUID()}`;
+    const body = {
+      evidenceKinds: ['contract'] as EvidenceKindName[],
+      evidenceDocumentIds: [contract],
+    };
+    const confirmed = QuotationEvidenceDtoSchema.parse(await confirmEvidence(q, body, key));
+    expect(confirmed).toMatchObject({
+      status: 'confirmed',
+      missing: [],
+      confirmation: { evidenceKinds: ['contract'], evidenceDocumentIds: [contract] },
+      can: { confirm: false },
+    });
+    expect(confirmed.confirmation?.confirmedBy).toBe(f.ownerUserId);
+    // A retry replays; a second confirmation is refused.
+    expect(await confirmEvidence(q, body, key)).toEqual(confirmed);
+    expect(await statusOf(confirmEvidence(q, body))).toEqual({
+      status: 409,
+      code: 'evidence_already_confirmed',
+    });
+    // The same reader sees what they confirmed.
+    expect((await recorder.evidence(q.id, q.currentVersionId)).status).toBe('confirmed');
+
+    current.grants = grantsOf('accountant');
+    const order = parsed(await confirm(q));
+    expect(order.order.status).toBe('confirmed');
+    expect(order.evidence).toEqual([{ documentId: contract, kind: 'contract' }]);
+  });
+
+  it('counts a staff entry as confirmed, and hides the evidence from a caller who cannot read the quotation', async () => {
+    const q = await acceptedQuotation();
+    const evidence = await recorder.evidence(q.id, q.currentVersionId);
+    expect(evidence).toMatchObject({
+      status: 'confirmed',
+      confirmation: null,
+      acceptance: { actorKind: 'staff' },
+      can: { confirm: false },
+    });
+    expect(await statusOf(confirmEvidence(q, { evidenceKinds: ['signed_quote'] }))).toEqual({
+      status: 409,
+      code: 'evidence_already_confirmed',
+    });
+
+    current.userId = await seedOtherStaffUser(db, f);
+    expect(await statusOf(recorder.evidence(q.id, q.currentVersionId))).toEqual({
+      status: 404,
+      code: 'not_found',
+    });
+    expect(await statusOf(confirmEvidence(q, { evidenceKinds: ['signed_quote'] }))).toEqual({
+      status: 404,
+      code: 'not_found',
+    });
+  });
+});
 
 describe('SalesOrdersService.list and detail', () => {
   it('lists the order with its customer name, filters by status and customer, and parses as the UI does', async () => {
