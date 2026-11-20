@@ -10,8 +10,9 @@
 // - "a saved reach is the reach enforced" (U20a phase 2): an order is the caller's own when they confirmed it
 //   (`created_by`, the column record-reach.ts registers) or own the quotation it was confirmed from, so a
 //   salesperson keeps seeing the orders of their deals (ACCESS-SETTINGS-UX-SPEC 3.2: "Records they created or
-//   own"). Orders carry no department, so `department` reaches what `own` does. The list, the summary, the detail
-//   and mark billable read the same rule (`readWhere` in SQL, `canOnOrder` on a row), so they always agree.
+//   own"). record-reach.ts registers both (`owner` and `ownerVia`, U20a2-Q1), so every `scopeWhereFor` on orders
+//   reads the rule. Orders carry no department, so `department` reaches what `own` does. The list, the summary,
+//   the detail and mark billable read the same rule (`readWhere` in SQL, `canOnOrder` on a row).
 //
 // Confirm, in one transaction (plan section 2, money command shape): withTx -> withIdempotency -> lock the
 // quotation, then its version (the order QuotationOutcomeService.lockSent uses) -> checks -> insert the order as a
@@ -58,7 +59,7 @@ import {
   Optional,
   UnprocessableEntityException,
 } from '@nestjs/common';
-import { and, asc, count, desc, eq, exists, inArray, isNull, ne, or, type SQL } from 'drizzle-orm';
+import { and, asc, count, desc, eq, inArray, isNull, ne, type SQL } from 'drizzle-orm';
 
 import { AuditService } from '../../platform/audit/audit.service';
 import { scopeWhereFor } from '../../platform/authz/authz.service';
@@ -269,7 +270,7 @@ export class SalesOrdersService {
     principal: Principal,
     filter: SalesOrderListFilter,
   ): SQL {
-    const conditions = [this.readWhere(tx, scope, principal)];
+    const conditions = [this.readWhere(principal)];
     if (filter.status !== undefined && filter.status.length > 0) {
       conditions.push(inArray(salesOrders.status, filter.status));
     }
@@ -287,39 +288,16 @@ export class SalesOrdersService {
     const { scope, actor, principal } = this.caller.current();
     this.assertStaff(principal);
     return withTx(this.db, scope, actor, (tx) =>
-      this.loadDetail(tx, scope, id, this.readWhere(tx, scope, principal)),
+      this.loadDetail(tx, scope, id, this.readWhere(principal)),
     );
   }
 
   /**
-   * The orders the caller may read. `scopeWhereFor` gives the registered reach (the entity for `all`, the orders
-   * the caller confirmed for `own` and `department`); `own` and `department` also reach the orders of the
-   * quotations the caller owns now, resolved inside the same tenant and entity.
+   * The orders the caller may read: the registered reach (record-reach.ts), which for `own` and `department` is
+   * the orders the caller confirmed or whose quotation they own now, and the entity for `all`.
    */
-  private readWhere(tx: DbTransaction, scope: TxScope, principal: Principal): SQL {
-    const registered = scopeWhereFor(principal, salesOrders, 'sales_order.read');
-    const decision = can(principal, 'sales_order.read');
-    if (!decision.allowed || (decision.scope !== 'own' && decision.scope !== 'department')) {
-      return registered;
-    }
-    const ofMyQuotation = scoped(scope).where(
-      salesOrders,
-      exists(
-        tx
-          .select({ id: quotations.id })
-          .from(quotations)
-          .where(
-            scoped(scope).where(
-              quotations,
-              and(
-                eq(quotations.id, salesOrders.quotationId),
-                eq(quotations.ownerUserId, principal.userId),
-              ),
-            ),
-          ),
-      ),
-    );
-    return or(registered, ofMyQuotation) ?? registered;
+  private readWhere(principal: Principal): SQL {
+    return scopeWhereFor(principal, salesOrders, 'sales_order.read');
   }
 
   /** The current owner of the order's quotation, in the acting entity; null when it has none. */
