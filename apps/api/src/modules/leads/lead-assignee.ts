@@ -26,7 +26,7 @@ import { idpOrgs, userEntities, userRoles, users } from '@bos/db';
 import { BadRequestException } from '@nestjs/common';
 import { and, eq, inArray, type SQL } from 'drizzle-orm';
 
-import { can, type Principal } from '../../platform/authz/can';
+import type { Principal } from '../../platform/authz/can';
 import type { RoleCache } from '../../platform/authz/role-cache';
 import type { DbTransaction } from '../../platform/db/tx';
 import { loadAssignmentConfig, toAssignmentRuleConfig } from '../access-settings/assignment-config';
@@ -268,49 +268,4 @@ export async function assignableParties(
     }
   }
   return out;
-}
-
-/** The caller's crm.lead.write grant reaches a lead of this entity owned by `userId`. */
-export function mayAssignLead(principal: Principal, scope: EntityScope, userId: string): boolean {
-  return can(principal, 'crm.lead.write', {
-    tenantId: scope.tenantId,
-    organizationId: scope.organizationId,
-    ownerUserId: userId,
-  }).allowed;
-}
-
-/** `userId` must be an active staff member of the acting entity; otherwise a 400 naming `field`. */
-export async function assertActiveStaff(
-  tx: DbTransaction,
-  scope: EntityScope,
-  userId: string,
-  field: string,
-): Promise<void> {
-  const [found] = await activeStaffOfEntity(tx, scope, userId).limit(1);
-  if (found === undefined) {
-    throw new BadRequestException({
-      code: 'bad_request',
-      message: `${field} is not an active staff member of this entity`,
-    });
-  }
-}
-
-/**
- * `userId` may own a lead, or be given its follow-up, by this caller: an active staff member of the acting entity
- * whom the caller's grant reaches. Otherwise a 400 naming `field`.
- */
-export async function assertLeadAssignee(
-  tx: DbTransaction,
-  principal: Principal,
-  scope: EntityScope,
-  userId: string,
-  field: string,
-): Promise<void> {
-  await assertActiveStaff(tx, scope, userId, field);
-  if (!mayAssignLead(principal, scope, userId)) {
-    throw new BadRequestException({
-      code: 'bad_request',
-      message: `${field} cannot be someone else: your access covers only your own leads`,
-    });
-  }
 }
