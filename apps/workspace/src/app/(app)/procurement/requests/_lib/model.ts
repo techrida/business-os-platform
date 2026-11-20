@@ -5,7 +5,11 @@ import {
   type PrStatus,
 } from '@bos/contracts';
 
-import { hasPermission } from '@/components/p2/customers/permissions';
+import {
+  hasPermission,
+  isLiveGrants,
+  type PermissionSource,
+} from '@/components/p2/customers/permissions';
 
 /**
  * What the purchase request screens show and offer, decided from the request's status and the
@@ -57,15 +61,23 @@ export interface PrGrants {
   create: boolean;
 }
 
-/** The purchase request permissions the session's roles hold by default. Server-side only. */
-export function prGrants(roles: readonly string[]): PrGrants {
-  const grants: Record<string, Record<string, unknown> | undefined> = DEFAULT_ROLE_PERMISSIONS;
+/**
+ * The purchase request permissions the person holds. Pass the live grants (`getGrants(session)`), the saved
+ * role rows the API enforces; role keys still read the built-in defaults for callers not yet moved.
+ * Server-side only.
+ */
+export function prGrants(source: PermissionSource): PrGrants {
+  const readAll = isLiveGrants(source)
+    ? source.get('procurement.pr.read') === 'all'
+    : source.some((role) => {
+        const defaults: Record<string, Record<string, unknown> | undefined> =
+          DEFAULT_ROLE_PERMISSIONS;
+        return Object.hasOwn(defaults, role) && defaults[role]?.['procurement.pr.read'] === 'all';
+      });
   return {
-    read: hasPermission(roles, 'procurement.pr.read'),
-    readAll: roles.some(
-      (role) => Object.hasOwn(grants, role) && grants[role]?.['procurement.pr.read'] === 'all',
-    ),
-    create: hasPermission(roles, 'procurement.pr.create'),
+    read: hasPermission(source, 'procurement.pr.read'),
+    readAll,
+    create: hasPermission(source, 'procurement.pr.create'),
   };
 }
 
