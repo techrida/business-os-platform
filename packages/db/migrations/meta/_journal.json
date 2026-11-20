@@ -465,7 +465,7 @@
       "breakpoints": true
     },
     {
-     "idx": 65,
+      "idx": 65,
       "version": "7",
       "when": 1783000000088,
       "tag": "0088_access_phase2_grants",
@@ -497,6 +497,13 @@
       "version": "7",
       "when": 1783000000092,
       "tag": "0092_lead_creator_backfill",
+      "breakpoints": true
+    },
+    {
+      "idx": 107,
+      "version": "7",
+      "when": 1783000000107,
+      "tag": "0107_quotation_evidence_confirmations",
       "breakpoints": true
     }
   ]
