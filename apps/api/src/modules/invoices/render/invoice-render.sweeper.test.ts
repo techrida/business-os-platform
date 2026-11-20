@@ -93,7 +93,6 @@ function fixture(
     orphans: vi.fn().mockResolvedValue([]),
     removeOrphan: vi.fn().mockResolvedValue(undefined),
     discardUnfilled: vi.fn().mockResolvedValue(undefined),
-    discardUnprinted: vi.fn().mockResolvedValue(undefined),
     recordFailure: vi.fn().mockResolvedValue({ attempts: 1, givenUp: false }),
     clearFailure: vi.fn().mockResolvedValue(undefined),
   } satisfies RenderStore;
@@ -366,13 +365,43 @@ describe('InvoiceRenderSweeper.sweep', () => {
     expect(f.store.recordPrint).not.toHaveBeenCalled();
   });
 
-  it('removes the stored PDF when its print 1 cannot be recorded, so the next try prints and freezes print 1', async () => {
+  it('records print 1 on a second try, with the same format, when the first print write fails after the PDF was stored', async () => {
     const f = fixture();
-    f.store.recordPrint.mockRejectedValue(new Error('db hiccup'));
-    await expect(f.sweeper.renderOne(candidate(1))).resolves.toBe('failed');
-    expect(f.store.discardUnprinted).toHaveBeenCalledWith(TX, candidate(1), 'doc-1', NOW);
+    const c = candidate(1);
+    const format = {
+      numberSystems: SOUTH_ASIAN,
+      dateFormat: 'dd MMM yyyy',
+      logoDataUrl: null,
+      sellerContact: null,
+      capturedAt: NOW.toISOString(),
+    };
+    // The settings change while the first write fails: the retry must still store what the stored PDF printed with.
+    f.store.recordPrint.mockImplementationOnce(() => {
+      f.live['format.number_systems'] = INTERNATIONAL;
+      return Promise.reject(new Error('db hiccup'));
+    });
+    await expect(f.sweeper.renderOne(c)).resolves.toBe('rendered');
+    expect(f.store.recordPrint).toHaveBeenCalledTimes(2);
+    expect(f.store.recordPrint).toHaveBeenNthCalledWith(1, TX, c, 1, NOW, format);
+    expect(f.store.recordPrint).toHaveBeenNthCalledWith(2, TX, c, 1, NOW, format);
+    expect(f.store.clearFailure).toHaveBeenCalledWith(TX, c);
+    // One render, one document: the stored PDF is the original, never removed or rendered again.
+    expect(f.pdf.htmlToPdf).toHaveBeenCalledOnce();
+    expect(f.documents.createGenerated).toHaveBeenCalledOnce();
     expect(f.store.discardUnfilled).not.toHaveBeenCalled();
-    expect(f.store.recordFailure).toHaveBeenCalledWith(TX, candidate(1), 'error', NOW);
+    expect(f.store.recordFailure).not.toHaveBeenCalled();
+  });
+
+  it('keeps the stored PDF and counts no failure when print 1 cannot be recorded on the retry either', async () => {
+    const f = fixture({ candidates: [candidate(1)] });
+    f.store.recordPrint.mockRejectedValue(new Error('print log down'));
+    const result = await f.sweeper.sweep();
+    expect(result).toMatchObject({ rendered: 1, failed: 0, failures: [] });
+    expect(f.store.recordPrint).toHaveBeenCalledTimes(2);
+    expect(f.store.discardUnfilled).not.toHaveBeenCalled();
+    expect(f.store.recordFailure).not.toHaveBeenCalled();
+    expect(f.audit.record).not.toHaveBeenCalled();
+    expect(Object.keys(f.store)).not.toContain('discardUnprinted');
   });
 
   it('counts the failure even when the document of the failed try cannot be removed', async () => {
