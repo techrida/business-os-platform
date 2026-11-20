@@ -8,7 +8,7 @@ import { BadRequestException } from '@nestjs/common';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { AuditController } from './audit.controller';
-import type { AuditService } from './audit.service';
+import { AuditNewestFirstTooLargeError, type AuditService } from './audit.service';
 
 const caller = { tenantId: 't-caller', organizationId: 'o-caller' };
 
@@ -71,7 +71,27 @@ describe('GET /v1/audit', () => {
     });
   });
 
+  it('passes order=desc through, and leaves order out when it is not given', async () => {
+    fakeAudit.list.mockResolvedValue([]);
+    await controller.list({ entityType: 'memo', order: 'desc', limit: '50' });
+    expect(fakeAudit.list).toHaveBeenCalledWith(caller, {
+      entityType: 'memo',
+      order: 'desc',
+      limit: 50,
+    });
+    await controller.list({ order: '' });
+    expect(fakeAudit.list).toHaveBeenLastCalledWith(caller, { limit: 50 });
+  });
+
+  it('answers 400 when a newest-first read matches too many events', async () => {
+    fakeAudit.list.mockRejectedValue(new AuditNewestFirstTooLargeError());
+    await expect(controller.list({ order: 'desc' })).rejects.toBeInstanceOf(BadRequestException);
+  });
+
   it.each([
+    { order: 'newest' },
+    { order: 'DESC' },
+    { order: 'desc', afterId: '120' },
     { limit: '0' },
     { limit: '501' },
     { limit: 'many' },
