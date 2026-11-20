@@ -53,6 +53,8 @@ import { can } from '../../platform/authz/can';
 import { DB, type Db, type DbTransaction } from '../../platform/db/db.module';
 import { type TxScope, withTx } from '../../platform/db/tx';
 import { searchPage } from '../../platform/list';
+import { personLabel, UNNAMED_USER } from '../../platform/users/person-names';
+import { lockAccessRevision } from '../access-settings/access-revision';
 import { ACCESS_REVISION_PORT, type AccessRevisionPort } from './access-revision.port';
 import { DepartmentsCaller } from './departments.caller';
 
@@ -60,14 +62,6 @@ type Queryable = Db | DbTransaction;
 
 const ACTIVE_NAME_INDEX = 'departments_tenant_org_active_name_unique';
 const MAX_LIST_ROWS = 500;
-
-function displayNameOf(displayName: string | null, email: string | null, userId: string): string {
-  const name = displayName?.trim();
-  if (name) return name;
-  const mail = email?.trim();
-  if (mail) return mail;
-  return userId;
-}
 
 function effectiveRoles(
   tenantRoles: readonly string[],
@@ -163,6 +157,16 @@ export class DepartmentsAdminService {
     );
   }
 
+  /**
+   * Every department write takes the tenant's access revision lock first, then this entity's
+   * department lock. The access save also takes the access revision lock first, so a department
+   * write and an access save never wait on each other in a cycle.
+   */
+  private async lockForDepartmentWrite(tx: DbTransaction, scope: TxScope): Promise<void> {
+    await lockAccessRevision(tx, scope.tenantId);
+    await this.lockEntityDepartments(tx, scope);
+  }
+
   private async assertUniqueActiveName(
     tx: DbTransaction,
     scope: TxScope,
@@ -215,11 +219,11 @@ export class DepartmentsAdminService {
     const map = new Map<string, string>();
     if (headIds.length === 0) return map;
     const rows = await q
-      .select({ id: users.id, displayName: users.displayName, email: users.email })
+      .select({ id: users.id, displayName: users.displayName })
       .from(users)
       .where(and(eq(users.tenantId, tenantId), inArray(users.id, [...headIds])));
     for (const row of rows) {
-      map.set(row.id, displayNameOf(row.displayName, row.email, row.id));
+      map.set(row.id, personLabel(row.displayName));
     }
     return map;
   }
@@ -281,7 +285,7 @@ export class DepartmentsAdminService {
     const members: DepartmentMember[] = memberRows
       .map((row) => ({
         userId: row.userId,
-        name: displayNameOf(row.displayName, row.email, row.userId),
+        name: personLabel(row.displayName),
         email: row.email,
         jobTitle: row.jobTitle,
         level: row.level,
@@ -305,7 +309,7 @@ export class DepartmentsAdminService {
         const headNames = await this.loadHeadNames(q, scope.tenantId, [dept.headUserId]);
         head = {
           id: dept.headUserId,
-          name: headNames.get(dept.headUserId) ?? dept.headUserId,
+          name: headNames.get(dept.headUserId) ?? UNNAMED_USER,
         };
       }
     }
@@ -407,7 +411,7 @@ export class DepartmentsAdminService {
       head:
         dept.headUserId === null
           ? null
-          : { id: dept.headUserId, name: headNames.get(dept.headUserId) ?? dept.headUserId },
+          : { id: dept.headUserId, name: headNames.get(dept.headUserId) ?? UNNAMED_USER },
       managers: managerCounts.get(dept.id) ?? 0,
       members: memberCounts.get(dept.id) ?? 0,
       version: dept.version,
@@ -486,7 +490,7 @@ export class DepartmentsAdminService {
 
     const items: UnassignedPerson[] = rows.map((row) => ({
       userId: row.userId,
-      name: displayNameOf(row.displayName, row.email, row.userId),
+      name: personLabel(row.displayName),
       email: row.email,
       jobTitle: row.jobTitle,
       roles: effectiveRoles(roleMap.get(row.userId) ?? [], row.roleKeys),
@@ -511,7 +515,7 @@ export class DepartmentsAdminService {
     let detail: AdminDepartmentDetail;
     try {
       detail = await withTx(this.db, scope, actor, async (tx) => {
-        await this.lockEntityDepartments(tx, scope);
+        await this.lockForDepartmentWrite(tx, scope);
         await this.assertUniqueActiveName(tx, scope, body.name);
 
         let headBefore: {
@@ -663,7 +667,7 @@ export class DepartmentsAdminService {
 
     try {
       return await withTx(this.db, scope, actor, async (tx) => {
-        await this.lockEntityDepartments(tx, scope);
+        await this.lockForDepartmentWrite(tx, scope);
 
         const [dept] = await tx
           .select({
@@ -730,7 +734,7 @@ export class DepartmentsAdminService {
     const { scope, actor } = this.caller.tx();
 
     const { detail, shouldInvalidate } = await withTx(this.db, scope, actor, async (tx) => {
-      await this.lockEntityDepartments(tx, scope);
+      await this.lockForDepartmentWrite(tx, scope);
 
       const [dept] = await tx
         .select({
@@ -757,7 +761,23 @@ export class DepartmentsAdminService {
         });
       }
 
-      // Invited members count too: on first login they would otherwise keep this department's reach.
+      // Lock this department's membership rows before reading them. A concurrent member move or level change
+      // (an UPDATE, which takes the same row lock) either commits first and is re-checked here, or waits for this
+      // retire, so a member who just left is not moved again. Single-table lock: see no-locking-of.test.ts.
+      await tx
+        .select({ userId: userEntities.userId })
+        .from(userEntities)
+        .where(
+          and(
+            eq(userEntities.tenantId, scope.tenantId),
+            eq(userEntities.organizationId, scope.organizationId),
+            eq(userEntities.departmentId, dept.id),
+          ),
+        )
+        .for('update');
+
+      // Invited and inactive members count too: on first login or reactivation they would otherwise keep this
+      // department's reach.
       const members = await tx
         .select({
           userId: userEntities.userId,
@@ -779,7 +799,6 @@ export class DepartmentsAdminService {
             eq(userEntities.organizationId, scope.organizationId),
             eq(userEntities.departmentId, dept.id),
             eq(idpOrgs.kind, 'staff'),
-            ne(users.status, 'inactive'),
           ),
         );
 
@@ -803,6 +822,10 @@ export class DepartmentsAdminService {
         const destinationId = body.moveMembersTo ?? null;
 
         const memberIds = members.map((m) => m.userId);
+        // Inactive members are unassigned whatever the destination, so reactivating one later grants no
+        // department reach that nobody chose.
+        const inactiveMembers = members.filter((m) => m.status === 'inactive');
+        const movingMembers = members.filter((m) => m.status !== 'inactive');
         if (destinationId !== null) {
           if (destinationId === dept.id) {
             const message =
@@ -830,8 +853,10 @@ export class DepartmentsAdminService {
 
           // Demote any moved head to manager so migration 0079's trigger does not replace the
           // destination department's head.
-          const movedHeadIds = members.filter((m) => m.level === 'head').map((m) => m.userId);
-          const movedOtherIds = members.filter((m) => m.level !== 'head').map((m) => m.userId);
+          const movedHeadIds = movingMembers.filter((m) => m.level === 'head').map((m) => m.userId);
+          const movedOtherIds = movingMembers
+            .filter((m) => m.level !== 'head')
+            .map((m) => m.userId);
           if (movedHeadIds.length > 0) {
             await tx
               .update(userEntities)
@@ -857,7 +882,7 @@ export class DepartmentsAdminService {
               );
           }
 
-          for (const member of members) {
+          for (const member of movingMembers) {
             const nextLevel: AccessLevel = member.level === 'head' ? 'manager' : member.level;
             await this.audit.record(tx, {
               action: 'department.member.moved',
@@ -868,8 +893,34 @@ export class DepartmentsAdminService {
               meta: { userId: member.userId, reason: 'department_retired' },
             });
           }
+
+          if (inactiveMembers.length > 0) {
+            await tx
+              .update(userEntities)
+              .set({ departmentId: null, level: 'staff' })
+              .where(
+                and(
+                  eq(userEntities.tenantId, scope.tenantId),
+                  eq(userEntities.organizationId, scope.organizationId),
+                  inArray(
+                    userEntities.userId,
+                    inactiveMembers.map((m) => m.userId),
+                  ),
+                ),
+              );
+            for (const member of inactiveMembers) {
+              await this.audit.record(tx, {
+                action: 'department.member.removed',
+                entityType: 'departments',
+                entityId: dept.id,
+                before: { departmentId: dept.id, level: member.level },
+                after: { departmentId: null, level: 'staff' },
+                meta: { userId: member.userId, reason: 'department_retired' },
+              });
+            }
+          }
         } else {
-          // Explicit null: unassign all active and invited members and reset level to staff (0079 check).
+          // Explicit null: unassign all active, invited and inactive members and reset level to staff (0079 check).
           await tx
             .update(userEntities)
             .set({ departmentId: null, level: 'staff' })
@@ -967,7 +1018,7 @@ export class DepartmentsAdminService {
 
     try {
       return await withTx(this.db, scope, actor, async (tx) => {
-        await this.lockEntityDepartments(tx, scope);
+        await this.lockForDepartmentWrite(tx, scope);
 
         const [dept] = await tx
           .select({
