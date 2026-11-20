@@ -5,13 +5,13 @@ import type { Metadata } from 'next';
 import Link from 'next/link';
 
 import { listCustomers } from '@/components/p2/customers/api';
-import { hasPermission } from '@/components/p2/customers/permissions';
 import { Alert } from '@/components/ui/alert';
 import { Breadcrumb, Page, PageHeader } from '@/components/ui/page';
 import { failureOf } from '@/lib/api-kernel';
 import { listTaxCodes } from '@/lib/api-tax-codes';
 import { requireStaffSession } from '@/lib/bff';
 import { loadEnabledCurrencies } from '@/lib/enabled-currencies.server';
+import { getPermissionCheck } from '@/lib/live-permissions';
 
 import { createManualInvoiceAction } from './actions';
 import { ManualInvoiceForm, type CustomerOption } from './manual-invoice-form';
@@ -26,7 +26,7 @@ export default async function NewInvoicePage() {
   const session = await requireStaffSession('/invoices/new');
   const crumbs = [{ label: 'Invoices', href: '/invoices' }, { label: 'Create Invoice' }];
 
-  if (!hasPermission(session.roles, 'invoice.draft')) {
+  if (!(await getPermissionCheck(session))('invoice.draft')) {
     return (
       <Page width="narrow">
         <Breadcrumb items={crumbs} />

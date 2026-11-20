@@ -2,10 +2,12 @@ import {
   canTransitionInvoice,
   type InvoiceKind,
   type InvoiceStatus,
+  type Permission,
   type SettlementStatus,
 } from '@bos/contracts';
 
-import { hasPermission } from '@/components/p2/customers/permissions';
+/** Whether the person holds a permission: their live grants on the pages, a plain predicate in tests. */
+export type Can = (permission: Permission) => boolean;
 
 export interface InvoiceGates {
   /** Send for approval (also resubmits a returned invoice). Never for a proforma. */
@@ -19,7 +21,7 @@ export interface InvoiceGates {
 
 /**
  * Which actions one invoice offers to one person: the contract's transition table decides whether the
- * move exists, the person's role decides whether they may make it. Both must say yes. This only
+ * move exists, the person's grants decide whether they may make it. Both must say yes. This only
  * decides what to show; the API enforces the same rules again on every call.
  *
  * Permissions (the brief names the first, second and fourth; discard and proforma issue are choices):
@@ -31,17 +33,14 @@ export interface InvoiceGates {
  */
 export function invoiceGates(
   invoice: { kind: InvoiceKind; status: InvoiceStatus },
-  roles: readonly string[],
+  can: Can,
 ): InvoiceGates {
   const { kind, status } = invoice;
   return {
-    submit:
-      canTransitionInvoice(kind, status, 'submitted') && hasPermission(roles, 'invoice.submit'),
-    issue: canTransitionInvoice(kind, status, 'issued') && hasPermission(roles, 'invoice.issue'),
-    discard:
-      canTransitionInvoice(kind, status, 'discarded') && hasPermission(roles, 'invoice.draft'),
-    notes:
-      kind === 'tax_invoice' && status === 'issued' && hasPermission(roles, 'invoice.credit_note'),
+    submit: canTransitionInvoice(kind, status, 'submitted') && can('invoice.submit'),
+    issue: canTransitionInvoice(kind, status, 'issued') && can('invoice.issue'),
+    discard: canTransitionInvoice(kind, status, 'discarded') && can('invoice.draft'),
+    notes: kind === 'tax_invoice' && status === 'issued' && can('invoice.credit_note'),
   };
 }
 
@@ -68,12 +67,12 @@ export function settlementMayOwe(selected: readonly string[]): boolean {
  */
 export function recordPaymentHref(
   invoice: { kind: InvoiceKind; status: InvoiceStatus; customerId: string },
-  roles: readonly string[],
+  can: Can,
   settlement?: SettlementStatus | null,
 ): string | null {
   const { kind, status, customerId } = invoice;
   if (status !== 'issued' || (kind !== 'tax_invoice' && kind !== 'debit_note')) return null;
-  if (!hasPermission(roles, 'payment.record')) return null;
+  if (!can('payment.record')) return null;
   if (settlement !== undefined && (settlement === null || !PAYABLE.has(settlement))) return null;
   return `/payments/new?customerId=${encodeURIComponent(customerId)}`;
 }

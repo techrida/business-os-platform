@@ -3,9 +3,9 @@
 import { revalidatePath } from 'next/cache';
 import { redirect } from 'next/navigation';
 
-import { hasPermission } from '@/components/p2/customers/permissions';
 import { createCreditNote, createDebitNote } from '@/lib/api-billing';
 import { requireStaffSession } from '@/lib/bff';
+import { getPermissionCheck } from '@/lib/live-permissions';
 
 import { failureState, INCOMPLETE, keyOf, refusal, textOf } from '../../new/action-helpers';
 import type { InvoiceFormState } from '../../new/form-state';
@@ -52,7 +52,8 @@ export async function createCreditNoteAction(
   form: FormData,
 ): Promise<InvoiceFormState> {
   const { session, key, original } = await open(form);
-  if (!hasPermission(session.roles, 'invoice.credit_note')) return refusal(key, NO_PERMISSION);
+  if (!(await getPermissionCheck(session))('invoice.credit_note'))
+    return refusal(key, NO_PERMISSION);
 
   const lines = parseCreditLinesJson(textOf(form, 'lines'));
   if (!isGuid(original) || lines === null) return { key, errors: { form: INCOMPLETE } };
@@ -78,7 +79,8 @@ export async function createDebitNoteAction(
   form: FormData,
 ): Promise<InvoiceFormState> {
   const { session, key, original } = await open(form);
-  if (!hasPermission(session.roles, 'invoice.credit_note')) return refusal(key, NO_PERMISSION);
+  if (!(await getPermissionCheck(session))('invoice.credit_note'))
+    return refusal(key, NO_PERMISSION);
 
   const lines = parseLinesJson(textOf(form, 'lines'));
   if (!isGuid(original) || lines === null) return { key, errors: { form: INCOMPLETE } };

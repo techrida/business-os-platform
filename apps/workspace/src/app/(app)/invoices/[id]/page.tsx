@@ -4,7 +4,6 @@ import type { Metadata } from 'next';
 import Link from 'next/link';
 import { notFound } from 'next/navigation';
 
-import { hasPermission } from '@/components/p2/customers/permissions';
 import { Alert } from '@/components/ui/alert';
 import { Badge } from '@/components/ui/badge';
 import { LinkButton } from '@/components/ui/button';
@@ -17,6 +16,7 @@ import { listTaxCodes } from '@/lib/api-tax-codes';
 import { requireStaffSession } from '@/lib/bff';
 import { getDisplaySettings } from '@/lib/display-settings';
 import { money, when } from '@/lib/kernel-format';
+import { getPermissionCheck } from '@/lib/live-permissions';
 import type { Session } from '@/lib/session';
 
 import { InvoiceKindBadge, InvoiceStatusBadge } from '../_components/badges';
@@ -28,7 +28,7 @@ import { InvoicePreview } from '../_components/invoice-preview';
 import { InvoiceProgress } from '../_components/invoice-progress';
 import styles from '../_components/invoice.module.css';
 import { InvoiceNoteActions } from '../_components/notes/note-actions';
-import { invoiceGates, recordPaymentHref } from '../_lib/gates';
+import { type Can, invoiceGates, recordPaymentHref } from '../_lib/gates';
 import { approvalWords, kindMeta } from '../_lib/meta';
 import { settlementMeta } from '../../receivables/_lib/settlement';
 
@@ -51,10 +51,11 @@ function pdfAvailability(invoice: InvoiceDetail['invoice']) {
 async function settlementOf(
   session: Session,
   invoice: InvoiceDetail['invoice'],
+  can: Can,
 ): Promise<InvoiceSettlement | null> {
   if (invoice.status !== 'issued') return null;
   if (invoice.kind !== 'tax_invoice' && invoice.kind !== 'debit_note') return null;
-  if (!hasPermission(session.roles, 'ar.read')) return null;
+  if (!can('ar.read')) return null;
   const rows = await getCustomerStatement(session, invoice.customerId, {
     currency: invoice.currency,
   }).catch((): null => null);
@@ -157,7 +158,7 @@ export default async function InvoiceDetailPage({ params }: { params: Promise<{ 
   if (!UUID.test(id)) notFound();
   const path = `/invoices/${encodeURIComponent(id)}`;
   const session = await requireStaffSession(path);
-  const display = await getDisplaySettings();
+  const [display, can] = await Promise.all([getDisplaySettings(), getPermissionCheck(session)]);
 
   let detail: InvoiceDetail;
   try {
@@ -191,7 +192,7 @@ export default async function InvoiceDetailPage({ params }: { params: Promise<{ 
   const { numberSystems } = format;
   // Issued: the buyer as frozen at issue. A draft has no snapshot yet, so the API sends the customer's current name.
   const customerName = invoice.buyer?.legalName ?? detail.customerName;
-  const gates = invoiceGates(invoice, session.roles);
+  const gates = invoiceGates(invoice, can);
   const pdfNumber =
     invoice.kind !== 'proforma' && invoice.status === 'issued' ? invoice.number : null;
   const kind = kindMeta(invoice.kind).label;
@@ -199,13 +200,13 @@ export default async function InvoiceDetailPage({ params }: { params: Promise<{ 
   // A list that fails to load degrades the dialog (it says so); it never fails the page.
   const [taxCodes, settlement] = await Promise.all([
     gates.notes ? listTaxCodes(session).catch((): null => null) : Promise.resolve(null),
-    settlementOf(session, invoice),
+    settlementOf(session, invoice, can),
   ]);
   const payment = settlement === null ? null : settlementMeta(settlement.settlement);
   // Only while something is still owed, as the server's settlement says; unknown settlement offers nothing.
   const recordPayment = recordPaymentHref(
     invoice,
-    session.roles,
+    can,
     settlement === null ? null : settlement.settlement,
   );
 
