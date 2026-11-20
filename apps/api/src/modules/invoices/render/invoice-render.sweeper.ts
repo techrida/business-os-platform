@@ -15,7 +15,8 @@
 //   the settings in force when the copy is printed.
 //   Print 1 also freezes the company logo's bytes into that format (U12, see frozen-logo.ts), so a copy printed after
 //   the logo changed or was removed still shows the original's logo. A copy of a print made before logos were frozen
-//   prints without one, and a copy never resolves the logo.
+//   prints without one, and a copy never resolves the logo. The seller's phones, email and signatory are frozen the
+//   same way (U16-Q4, see invoice-html.ts).
 //
 // Claiming: the slow part (Chromium) runs with no transaction and no lock. The write is then serialised per invoice by
 // a transaction advisory lock and a re-check for a live document, so two workers that raced both render but only one
@@ -31,6 +32,7 @@ import {
   DEFAULT_DATE_FORMAT,
   DEFAULT_NUMBER_SYSTEMS,
   DocumentFormatSnapshotSchema,
+  documentSellerContact,
   SETTINGS,
   type DocumentFormatSnapshot,
 } from '@bos/contracts';
@@ -246,6 +248,7 @@ export class InvoiceRenderSweeper {
           numberSystems: format.numberSystems,
           dateFormat: format.dateFormat,
           logoDataUrl: format.logoDataUrl ?? null,
+          sellerContact: format.sellerContact ?? null,
         }),
       );
       const file = {
@@ -285,8 +288,8 @@ export class InvoiceRenderSweeper {
   /**
    * The grouping, date pattern and logo this print uses. A copy reuses what print 1 stored; print 1, or a copy of a
    * print made before 0051 (or one whose stored value no longer parses), reads the settings in force now. An invalid
-   * setting (a hand-edited row) prints the default; it never fails the render. Only print 1 resolves the logo: a copy
-   * without a usable stored format prints none, as its original did.
+   * setting (a hand-edited row) prints the default; it never fails the render. Only print 1 resolves the logo and the
+   * seller contact: a copy without a usable stored format prints neither, as its original did.
    */
   private async formatFor(
     scope: TxScope,
@@ -307,6 +310,11 @@ export class InvoiceRenderSweeper {
       numberSystems: numberSystems.success ? numberSystems.data : DEFAULT_NUMBER_SYSTEMS,
       dateFormat: dateFormat.success ? dateFormat.data : DEFAULT_DATE_FORMAT,
       logoDataUrl: printNo === 1 ? await freezeEntityLogo(this.settings, this.logos, scope) : null,
+      // The phones, email and signatory, frozen like the logo: only print 1 reads the profile (U16-Q4).
+      sellerContact:
+        printNo === 1
+          ? documentSellerContact(await this.settings.get(scope, 'entity.profile'))
+          : null,
       capturedAt: this.clock().toISOString(),
     };
   }
