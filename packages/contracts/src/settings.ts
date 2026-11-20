@@ -62,6 +62,23 @@ export const P4_SETTING_DEFAULTS = {
   'procurement.band.founder_npr': '1000000',
 } as const satisfies { [K in keyof typeof P4_SETTINGS]: z.infer<(typeof P4_SETTINGS)[K]> };
 
+/**
+ * Sales delivery-hold settings (F1-Q32), a block of their own so parallel edits merge cleanly. A hardware delivery
+ * on hold is released by Finance; above this NPR amount only Management may release it (see `deliveryHoldReleaser`
+ * in @bos/money-rules). The amount is a string like the other NPR settings, so decimal.js reads it exactly.
+ */
+export const DELIVERY_HOLD_SETTINGS = {
+  /** Above this NPR amount a delivery-hold release needs Management instead of Finance. 0 or more, 2 decimals. */
+  'sales.delivery_hold.management_npr': NonNegativeDecimalString,
+} as const;
+
+/** Defaults of the delivery-hold keys (D32: every setting has a default). */
+export const DELIVERY_HOLD_SETTING_DEFAULTS = {
+  'sales.delivery_hold.management_npr': '100000',
+} as const satisfies {
+  [K in keyof typeof DELIVERY_HOLD_SETTINGS]: z.infer<(typeof DELIVERY_HOLD_SETTINGS)[K]>;
+};
+
 export const SETTINGS = {
   /** Used when a workflow spec leaves its `sla` out. */
   'approvals.sla_defaults': SlaSpecSchema,
@@ -104,6 +121,7 @@ export const SETTINGS = {
   /** Saved wording the quotation form offers for payment terms, scope and the like. */
   'quotation.term_presets': TermPresetListSchema,
   ...P4_SETTINGS,
+  ...DELIVERY_HOLD_SETTINGS,
 } as const;
 
 /** Defaults of the document and format keys. The API's SETTING_DEFAULTS spreads these in. */
@@ -164,6 +182,7 @@ export const SETTING_DEFAULTS: { readonly [K in SettingKey]: SettingValue<K> } =
   ...P2_SETTING_DEFAULTS,
   ...P3_SETTING_DEFAULTS,
   ...P4_SETTING_DEFAULTS,
+  ...DELIVERY_HOLD_SETTING_DEFAULTS,
   ...DOCUMENT_SETTING_DEFAULTS,
 };
 export const SETTING_KEYS = Object.keys(SETTINGS) as SettingKey[];

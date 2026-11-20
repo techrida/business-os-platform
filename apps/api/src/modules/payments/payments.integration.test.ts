@@ -38,7 +38,6 @@ import { type Db } from '../../platform/db/db.module';
 import { type Actor, type TxScope, systemActor, withTx } from '../../platform/db/tx';
 import { MoneyService } from '../../platform/settings/money.service';
 import { NumberingService } from '../../platform/settings/numbering.service';
-import type { CurrencyEnabledService } from '../../platform/settings/currency-enabled';
 import type { SettingsService } from '../../platform/settings/settings.service';
 import { LedgerService } from '../ledger/ledger.service';
 import { PAYMENT_INTAKE_OWNER_TYPE } from './payment-owner.policy';
@@ -213,10 +212,6 @@ beforeAll(async () => {
   db = drizzle({ client: appPool });
   const settings = { get: () => Promise.resolve(7) } as unknown as SettingsService;
   const authz = { assert: () => undefined } as unknown as AuthzService;
-  // Every currency passes here; the refusal of a disabled one is unit-tested in payments.currency.test.ts.
-  const currencies = {
-    assertEnabled: () => Promise.resolve(),
-  } as unknown as CurrencyEnabledService;
   service = new PaymentsService(
     db,
     authz,
@@ -224,7 +219,6 @@ beforeAll(async () => {
     new NumberingService(),
     new AuditService(db),
     ledger,
-    currencies,
     () => NOW,
   );
 }, 180_000);
@@ -498,6 +492,20 @@ describe('reverseVerified', () => {
   });
 });
 
+describe('list totals', () => {
+  it('count a payment as money received only once it is verified', async () => {
+    const w = await newWorld();
+    const p = await submit(w);
+    expect((await service.list(w.scope)).totals).toEqual([
+      { currency: p.currency, amount: '0.00' },
+    ]);
+    await service.verify(w.scope, w.verifier, p.id, { expectedVersion: 1 }, randomUUID());
+    expect((await service.list(w.scope)).totals).toEqual([
+      { currency: p.currency, amount: p.amount },
+    ]);
+  });
+});
+
 describe('one legal entity at a time', () => {
   it('answers 404 for a payment of another entity of the same tenant', async () => {
     const w = await newWorld();
@@ -515,16 +523,20 @@ describe('one legal entity at a time', () => {
     await expect(
       service.verify(other, w.verifier, p.id, { expectedVersion: 1 }, randomUUID()),
     ).rejects.toMatchObject({ status: 404 });
-    expect(await service.list(other)).toEqual({ rows: [], total: 0 });
+    expect(await service.list(other)).toEqual({ rows: [], total: 0, totals: [] });
     // Filters and a search narrow the entity; they never reach another entity's payment.
     expect(
       (await service.list(other, { status: ['submitted'], q: p.number ?? 'RCPT' })).total,
     ).toBe(0);
     expect((await service.summary(other)).total).toBe(0);
-    const { rows, total } = await service.list(w.scope);
+    const { rows, total, totals } = await service.list(w.scope);
     const listed = z.array(PaymentListItemSchema).parse(rows);
     expect(listed.map((r) => r.id)).toEqual([p.id]);
     expect(total).toBe(1);
+    // The money received per currency (U15b-Q4): a submitted payment is a row but not yet money, so it adds
+    // nothing; a filter that matches nothing totals nothing.
+    expect(totals).toEqual([{ currency: p.currency, amount: '0.00' }]);
+    expect((await service.list(w.scope, { status: ['verified'] })).totals).toEqual([]);
     expect((await service.list(w.scope, { status: ['verified'] })).total).toBe(0);
     expect((await service.list(w.scope, { method: [p.method], status: ['submitted'] })).total).toBe(
       1,

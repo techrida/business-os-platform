@@ -90,3 +90,21 @@ it('refuses a Management approver without that grant, before reading the request
   expect(text).not.toContain('Himal Supplies');
   expect(getPaymentRequest).not.toHaveBeenCalled();
 });
+
+it('heads an unnumbered request by its status: a submitted one is no longer a draft (U15b-Q5)', async () => {
+  const base = await getPaymentRequest({} as never, '11111111-1111-4111-8111-111111111111');
+  grants.live = new Map([['payables.payment.request', 'all']]);
+  // The API does not number requests yet, so a submitted one arrives with number null.
+  vi.mocked(getPaymentRequest).mockResolvedValueOnce({
+    ...base,
+    number: null,
+    status: 'pending_approval',
+  });
+  const submitted = (await render()).replace(/<[^>]*>/g, ' ');
+  // Old code headed it "Draft payment request".
+  expect(submitted).not.toMatch(/draft/i);
+  expect(submitted).toContain('Payment request');
+
+  vi.mocked(getPaymentRequest).mockResolvedValueOnce({ ...base, number: null, status: 'draft' });
+  expect((await render()).replace(/<[^>]*>/g, ' ')).toContain('Draft payment request');
+});

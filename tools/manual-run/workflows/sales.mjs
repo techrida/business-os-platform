@@ -1473,14 +1473,7 @@ export function workflow(cfg) {
             // Each approver once; an approval an earlier attempt gave is not given again.
             const k = 'invoiceApprovals';
             const done = invoicePastApproval;
-            await approveOnce(
-              s,
-              k,
-              'Dev Accountant',
-              v.company,
-              'Demo invoice lines and tax checked.',
-              done,
-            );
+            // F1-Q30: an invoice from an approved billing schedule needs Finance only.
             await approveOnce(s, k, 'Dev Finance', v.company, 'Demo invoice ready to issue.', done);
 
             await s.caption('sales-11 — Finance issues the tax invoice');

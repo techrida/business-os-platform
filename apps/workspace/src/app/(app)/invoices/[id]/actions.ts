@@ -2,6 +2,8 @@
 
 import { randomUUID } from 'node:crypto';
 
+import { formatCustomerDate } from '@bos/locale';
+
 import { NO_APPROVER_MESSAGE } from '@/components/p2/quote-builder/failure';
 import { ApiError } from '@/lib/api';
 import {
@@ -14,6 +16,8 @@ import {
 } from '@/lib/api-billing';
 import { requireStaffSession } from '@/lib/bff';
 import type { Session } from '@/lib/session';
+
+import { NOTE_CREATOR_CANNOT_ISSUE } from '../_lib/gates';
 
 /**
  * Submit, issue and discard one invoice. Serves the NFR "no double issue, no double decision": each
@@ -114,15 +118,40 @@ export async function submitInvoiceAction(
   );
 }
 
+const ISO_DAY = /^\d{4}-\d{2}-\d{2}$/;
+
+/** The issue refusals the billing client would word generically, in the invoice's own terms. */
+function issueRefusal(err: unknown): string | undefined {
+  if (!(err instanceof ApiError)) return undefined;
+  const error = (
+    err.body as {
+      error?: { code?: unknown; reason?: unknown; details?: Record<string, unknown> };
+    }
+  )?.error;
+  // TR-Q12f: the creator of a credit or debit note may not issue it.
+  if (err.status === 403 && error?.reason === 'separation_of_duties') {
+    return NOTE_CREATOR_CANNOT_ISSUE;
+  }
+  if (err.status !== 422 || error?.code !== 'DUE_DATE_BEFORE_ISSUE') return undefined;
+  // Only a plain date is echoed from `details`.
+  const due = error.details?.['dueDate'];
+  const when = typeof due === 'string' && ISO_DAY.test(due) ? ` (${formatCustomerDate(due)})` : '';
+  return `The due date${when} is before today, so this invoice cannot be issued. An invoice is issued with a due date of today or later.`;
+}
+
 /** `POST /v1/invoices/:id/issue`: both `issued` and `already_issued` are a success. */
 export async function issueInvoiceAction(
   prev: InvoiceActionState,
   form: FormData,
 ): Promise<InvoiceActionState> {
-  return run(prev, form, async (c, key) =>
-    issueOutcomeMessage(
-      await issueInvoice(c.session, c.id, { expectedVersion: c.expectedVersion }, key),
-    ),
+  return run(
+    prev,
+    form,
+    async (c, key) =>
+      issueOutcomeMessage(
+        await issueInvoice(c.session, c.id, { expectedVersion: c.expectedVersion }, key),
+      ),
+    issueRefusal,
   );
 }
 

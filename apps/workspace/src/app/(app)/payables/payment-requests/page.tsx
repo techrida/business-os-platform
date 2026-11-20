@@ -1,5 +1,6 @@
 import {
   DEFAULT_ROWS,
+  type MoneyTotals,
   PAYMENT_REQUEST_STATUSES,
   PaymentRequestStatusSchema,
   ROWS_OPTIONS,
@@ -18,8 +19,8 @@ import { Page, PageHeader } from '@/components/ui/page';
 import { StatCard } from '@/components/ui/stat-card';
 import { Table, Td, Th } from '@/components/ui/table';
 import layout from '@/components/p3/list.module.css';
+import { MoneyTotalRows } from '@/components/p3/money-total-rows';
 import { listPaymentRequestsPage, type PaymentRequestListItem } from '@/lib/api-payables';
-import { getVendor } from '@/lib/api-vendors';
 import { requireStaffSession } from '@/lib/bff';
 import { getNumberSystems } from '@/lib/display-settings';
 import { getGrants, hasGrant } from '@/lib/grants';
@@ -30,7 +31,7 @@ import { poMoney } from '../../procurement/orders/_lib/model';
 import { PAYMENT_REQUEST_COUNT_CARDS, countCards } from '../_lib/summary';
 import styles from '../payables.module.css';
 import { paymentRequestFailure } from './failure';
-import { PAYMENT_STATUS } from './model';
+import { PAYMENT_STATUS, requestTitle } from './model';
 import { PaymentRequestsFilters } from './payment-requests-filters';
 
 export const metadata: Metadata = { title: 'Payment requests · Business OS' };
@@ -83,6 +84,7 @@ export default async function PaymentRequestsPage({
   );
   let rows: PaymentRequestListItem[];
   let total = 0;
+  let totals: MoneyTotals | null = null;
   let window = pageWindow(list.page, list.rows);
   try {
     const fetchPage = () =>
@@ -103,6 +105,7 @@ export default async function PaymentRequestsPage({
     }
     rows = result.items;
     total = result.total;
+    totals = result.totals;
   } catch (err) {
     const f = paymentRequestFailure(err);
     return (
@@ -127,15 +130,6 @@ export default async function PaymentRequestsPage({
       },
     },
   );
-  // The list row carries the vendor's id only: each vendor on the page is read once, under the person's own
-  // vendor read. A vendor that does not load (no vendor read, or an error) shows as plain text, never a dead link.
-  const vendorIds = [...new Set(rows.map((row) => row.vendorPartyId))];
-  const vendorReads = await Promise.allSettled(vendorIds.map((id) => getVendor(session, id)));
-  const vendorNames = new Map<string, string>();
-  vendorReads.forEach((read, i) => {
-    const id = vendorIds[i];
-    if (read.status === 'fulfilled' && id !== undefined) vendorNames.set(id, read.value.legalName);
-  });
   const cards = await counts;
   return (
     <Page>
@@ -184,56 +178,53 @@ export default async function PaymentRequestsPage({
         <>
           <ResultCount shown={rows.length} total={total} noun="payment request" />
           <div className={layout.results}>
-            <Table
-              caption="Payment requests, newest first"
-              minWidth={860}
-              className={styles.list ?? ''}
-            >
+            <Table caption="Payment requests, newest first" minWidth={860}>
               <thead>
                 <tr>
                   <Th>Request</Th>
                   <Th>Vendor</Th>
                   <Th>Vendor bank account</Th>
                   <Th align="end">Amount</Th>
-                  <Th className={styles.statusColumn}>Status</Th>
-                  <Th className={styles.actionColumn}>Action</Th>
+                  <Th pinned>Status</Th>
+                  <Th pinned>Action</Th>
                 </tr>
               </thead>
               <tbody>
                 {rows.map((row) => {
                   const href = `/payables/payment-requests/${encodeURIComponent(row.id)}`;
-                  const vendorName = vendorNames.get(row.vendorPartyId);
                   const amount = poMoney(row.totalAmount, row.currency, numberSystems);
                   // Drafts share a name, so the action is named by the amount and the account too.
-                  const name = `${row.number ?? 'draft request'} for ${amount} to the account ending ${row.bankLast4}`;
+                  const title = requestTitle(row);
+                  const name = `${title} for ${amount} to the account ending ${row.bankLast4}`;
                   const st = PAYMENT_STATUS[row.status];
                   return (
                     <tr key={row.id}>
                       <Td>
                         <Link href={href} className={styles.name}>
-                          {row.number ?? 'Draft request'}
+                          {title}
                         </Link>
                       </Td>
                       <Td>
-                        {vendorName !== undefined ? (
+                        {/* The row names its vendor; the link shows only when the vendor page would open. */}
+                        {row.can.readVendor ? (
                           <Link
                             href={`/vendors/${encodeURIComponent(row.vendorPartyId)}`}
                             className={styles.long}
                           >
-                            {vendorName}
+                            {row.vendorName}
                           </Link>
                         ) : (
-                          <span className={styles.quiet}>Vendor name unavailable</span>
+                          <span className={styles.long}>{row.vendorName}</span>
                         )}
                       </Td>
                       <Td nowrap>Ending {row.bankLast4}</Td>
                       <Td align="end" nowrap>
                         <span className={styles.numeric}>{amount}</span>
                       </Td>
-                      <Td nowrap className={styles.statusColumn}>
+                      <Td nowrap pinned>
                         <Badge tone={st.tone}>{st.text}</Badge>
                       </Td>
-                      <Td nowrap className={styles.actionColumn}>
+                      <Td nowrap pinned>
                         <Link href={href} className={styles.rowAction} aria-label={`View ${name}`}>
                           <Icon name="chevron-right" size={20} />
                         </Link>
@@ -242,6 +233,13 @@ export default async function PaymentRequestsPage({
                   );
                 })}
               </tbody>
+              <MoneyTotalRows
+                totals={totals}
+                column={3}
+                columns={6}
+                allPages={total > rows.length}
+                format={(amount, currency) => poMoney(amount, currency, numberSystems)}
+              />
             </Table>
             <ListPager
               pathname={PATH}

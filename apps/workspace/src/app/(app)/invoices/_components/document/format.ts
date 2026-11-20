@@ -4,8 +4,9 @@
 import type { DocumentSellerContact, InvoiceDetail } from '@bos/contracts';
 import {
   amountInWords,
+  bsLongOfDay,
+  formatBsLong,
   formatCustomerDate,
-  toBs,
   type CustomerDateFormat,
   type NumberSystems,
 } from '@bos/locale';
@@ -37,12 +38,10 @@ export function documentContact(
   return frozen.sellerContact;
 }
 
-/** Noon in Kathmandu (UTC+05:45) on the calendar day, so no timezone shifts the day. Same as the PDF. */
-const kathmanduNoon = (isoDate: string): Date => new Date(`${isoDate}T12:00:00+05:45`);
-
 /**
- * A calendar date in the document's pattern, with its Bikram Sambat form as the PDF prints it: the issue date's BS
- * form is the one frozen at issue; any other date is converted. Outside the converter's range, no BS form.
+ * A calendar date in the document's pattern, with its Bikram Sambat form as the PDF prints it (`04 Poush 2083 BS`): the
+ * issue date's BS form is the one frozen at issue; any other date is converted. Outside the converter's range, no BS
+ * form.
  */
 export function documentDate(
   isoDate: string,
@@ -50,14 +49,7 @@ export function documentDate(
   pattern: CustomerDateFormat,
 ): { ad: string; bs: string | null } {
   const ad = formatCustomerDate(isoDate, pattern);
-  if (bsFrozen !== null) return { ad, bs: `${bsFrozen} BS` };
-  try {
-    const bs = toBs(kathmanduNoon(isoDate));
-    return { ad, bs: `${String(bs.day).padStart(2, '0')} ${bs.monthNameEn} ${bs.year} BS` };
-  } catch (error) {
-    if (error instanceof RangeError) return { ad, bs: null };
-    throw error;
-  }
+  return { ad, bs: bsFrozen !== null ? formatBsLong(bsFrozen) : bsLongOfDay(isoDate) };
 }
 
 /** Whole days from the issue date to the due date, or null when either is missing or the due date comes first. */

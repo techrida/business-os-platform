@@ -341,8 +341,9 @@ describe('ErrorBodyFilter', () => {
     'serials_not_allowed',
     'serial_duplicate',
     'PO_AMENDMENT_INVALID',
+    'DUE_DATE_BEFORE_ISSUE',
   ])(
-    'keeps %s on a 422 (quotation outcome Q3b/PA-3, goods receipts P4), and only on a 422',
+    'keeps %s on a 422 (quotation outcome Q3b/PA-3, goods receipts P4, invoice issue), and only on a 422',
     (code) => {
       const out = filter(new UnprocessableEntityException({ code, message: 'Not accepted' }));
 
@@ -632,6 +633,20 @@ describe('ErrorBodyFilter', () => {
       'internal',
       'internal',
     ]);
+  });
+
+  it('passes the dates of a refused invoice issue through as details (DUE_DATE_BEFORE_ISSUE)', () => {
+    const out = filter(
+      new UnprocessableEntityException({
+        code: 'DUE_DATE_BEFORE_ISSUE',
+        message: 'The due date is before the issue date',
+        details: { dueDate: '2026-11-09', issueDate: '2026-11-12' },
+      }),
+    );
+    expect(ErrorBodySchema.parse(out.body).error.details).toEqual({
+      dueDate: '2026-11-09',
+      issueDate: '2026-11-12',
+    });
   });
 
   it.each([
