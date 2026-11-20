@@ -48,6 +48,14 @@
   font-size: var(--font-size-body);
 }
 
+/* The picture at the head of a record's profile card (Figma customer detail: 76px). */
+.xlarge {
+  --avatar-size: 76px;
+
+  font-size: var(--font-size-h2);
+  line-height: var(--line-height-h2);
+}
+
 .square {
   border-radius: var(--radius-lg);
 }

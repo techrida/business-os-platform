@@ -19,7 +19,7 @@ import type { Queue } from 'bullmq';
 import { sql } from 'drizzle-orm';
 import { drizzle } from 'drizzle-orm/node-postgres';
 import { Pool } from 'pg';
-import { afterAll, beforeAll, beforeEach, expect, it, vi } from 'vitest';
+import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { AuditService } from '../../../platform/audit/audit.service';
 import { CAN_KEY } from '../../../platform/authz/decorators';
@@ -42,6 +42,7 @@ let root = '';
 let scopeA: TxScope;
 let scopeB: TxScope;
 let userId = '';
+let otherUserId = '';
 let vendorId = '';
 let service: BillDocumentsService;
 let documentsService: DocumentsService;
@@ -50,10 +51,14 @@ const current = {
   role: 'accountant' as RoleKey,
   scope: null as TxScope | null,
   kind: 'staff' as Principal['orgKind'],
+  /** Replaces the role's grants when set (an own-scope bill enterer, a user with no grant). */
+  grants: null as [Permission, Scope][] | null,
+  /** Another staff user acting, when set. */
+  userId: null as string | null,
 };
 const principal = (): Principal => ({
   ...current.scope!,
-  userId,
+  userId: current.userId ?? userId,
   zitadelUserId: 'test-user',
   idpOrgId: randomUUID(),
   orgKind: current.kind,
@@ -61,12 +66,19 @@ const principal = (): Principal => ({
   roles: [current.role],
   departmentId: null,
   status: 'active',
-  grants: new Map(Object.entries(DEFAULT_ROLE_PERMISSIONS[current.role])) as Map<Permission, Scope>,
+  grants:
+    current.grants === null
+      ? (new Map(Object.entries(DEFAULT_ROLE_PERMISSIONS[current.role])) as Map<Permission, Scope>)
+      : new Map(current.grants),
 });
 const caller = {
   current: () => ({
     scope: current.scope!,
-    actor: { kind: 'user' as const, id: userId, correlationId: 'bill-documents-test' },
+    actor: {
+      kind: 'user' as const,
+      id: current.userId ?? userId,
+      correlationId: 'bill-documents-test',
+    },
     principal: principal(),
   }),
 };
@@ -103,6 +115,7 @@ beforeAll(async () => {
   scopeA = { tenantId: tenant.tenantId, organizationId: tenant.organizationId };
   scopeB = { tenantId: tenant.tenantId, organizationId: randomUUID() };
   userId = (await createStaffUser(appPool, { ...scopeA, idpOrgId: tenant.idpOrgId })).userId;
+  otherUserId = (await createStaffUser(appPool, { ...scopeA, idpOrgId: tenant.idpOrgId })).userId;
   vendorId = (await createParty(appPool, { tenantId: tenant.tenantId, kind: 'vendor' })).partyId;
   await withTx(db, scopeA, systemActor('test'), async (tx) => {
     await tx.execute(
@@ -149,6 +162,8 @@ beforeEach(() => {
   current.role = 'accountant';
   current.kind = 'staff';
   current.scope = scopeA;
+  current.grants = null;
+  current.userId = null;
   scan.add.mockClear();
 });
 
@@ -385,4 +400,85 @@ it('freezes a converted portal submission even while its bill is draft', async (
   await expect(
     documentsService.remove(created.documentId, { who: caller.current() }),
   ).rejects.toMatchObject({ status: 409 });
+});
+
+describe('an own-scope bill enterer (U20a2-Q3: the upload is authorised against payables.bill.enter)', () => {
+  const own: [Permission, Scope][] = [['payables.bill.enter', 'own']];
+  const bytes = Buffer.from('%PDF-1.7\nown invoice\n');
+
+  it('uploads, streams and replaces their own invoice on a vendor someone else owns', async () => {
+    const owner = await appPool.query<{ owner_user_id: string | null }>(
+      'SELECT owner_user_id FROM app.vendors WHERE id = $1',
+      [vendorId],
+    );
+    expect(owner.rows[0]?.owner_user_id ?? null).not.toBe(userId);
+    current.grants = own;
+    const created = await service.create({
+      ...file,
+      vendorPartyId: vendorId,
+      sizeBytes: bytes.length,
+    });
+    expect(
+      (
+        await service.receive(
+          created.documentId,
+          created.versionId,
+          Readable.from(bytes),
+          bytes.length,
+        )
+      ).status,
+    ).toBe('quarantined');
+    await referenceBill(created.documentId);
+    const replacement = await service.createVersion(created.documentId, {
+      ...file,
+      sizeBytes: bytes.length,
+    });
+    expect(
+      (
+        await service.receive(
+          created.documentId,
+          replacement.versionId,
+          Readable.from(bytes),
+          bytes.length,
+        )
+      ).status,
+    ).toBe('quarantined');
+  });
+
+  it("is refused another user's invoice file: no new version, no bytes", async () => {
+    current.userId = otherUserId;
+    current.grants = own;
+    const theirs = await service.create({
+      ...file,
+      vendorPartyId: vendorId,
+      sizeBytes: bytes.length,
+    });
+    current.userId = null;
+    await expect(
+      service.receive(theirs.documentId, theirs.versionId, Readable.from(bytes), bytes.length),
+    ).rejects.toMatchObject({ status: 403 });
+    await expect(service.createVersion(theirs.documentId, file)).rejects.toMatchObject({
+      status: 403,
+    });
+    expect(scan.add).not.toHaveBeenCalled();
+  });
+
+  it('a user with no bill-entry grant is refused, even holding documents.upload', async () => {
+    current.grants = [['documents.upload', 'all']];
+    await expect(service.create({ ...file, vendorPartyId: vendorId })).rejects.toMatchObject({
+      status: 403,
+    });
+    current.grants = [];
+    await expect(service.create({ ...file, vendorPartyId: vendorId })).rejects.toMatchObject({
+      status: 403,
+    });
+  });
+
+  it('another tenant or entity finds no vendor account: 404, nothing written', async () => {
+    current.grants = own;
+    current.scope = { tenantId: randomUUID(), organizationId: randomUUID() };
+    await expect(service.create({ ...file, vendorPartyId: vendorId })).rejects.toMatchObject({
+      status: 404,
+    });
+  });
 });

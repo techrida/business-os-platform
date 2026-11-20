@@ -77,6 +77,7 @@ export function version(over: Record<string, unknown> = {}): QuotationVersionDto
     renderedDocumentId: null,
     renderedSha256: null,
     renderedScanStatus: null,
+    renderFailed: false,
     supersedesVersionId: null,
     supersededByVersionId: null,
     revisionReason: null,
