@@ -1,5 +1,5 @@
 // The default access model (D50, D51) as data: the target table, the default base and level grants that must
-// reproduce it, the copy of the level grants migration 0088 embeds, and the assignment rule's vocabulary.
+// reproduce it, the copies of the grants migrations 0088 and 0123 embed, and the assignment rule's vocabulary.
 // What stays a todo here: each cell checked against the real API as a seeded user, which needs the real
 // interceptor, role cache and live rows (the API e2e matrix).
 import { readFileSync } from 'node:fs';
@@ -172,18 +172,30 @@ describe('target lead access (D50)', () => {
     }
   });
 
-  it('lets Finance, Accountant and PMO start leads and read, not edit, what they started; their managers and heads see the department', () => {
-    for (const role of LEAD_INTAKE_ROLE_KEYS) {
-      expect(TARGET_LEAD_ACCESS[role].staff).toMatchObject({
+  it('lets PMO start leads and read, not edit, what it started; its managers and heads see the department (D51)', () => {
+    expect(TARGET_LEAD_ACCESS.pmo.staff).toMatchObject({
+      create: true,
+      read: 'created',
+      write: 'none',
+    });
+    for (const level of ['manager', 'head'] as const) {
+      expect(TARGET_LEAD_ACCESS.pmo[level]).toMatchObject({
         create: true,
-        read: 'created',
+        read: 'department',
         write: 'none',
       });
-      for (const level of ['manager', 'head'] as const) {
-        expect(TARGET_LEAD_ACCESS[role][level]).toMatchObject({
+    }
+  });
+
+  it('lets Finance and Accountant start leads and read every lead at every level, editing none (U20a2-Q4)', () => {
+    for (const role of ['finance', 'accountant'] as const) {
+      expect(LEAD_INTAKE_ROLE_KEYS as readonly RoleKey[], role).toContain(role);
+      for (const level of ACCESS_LEVELS) {
+        expect(TARGET_LEAD_ACCESS[role][level], `${role} ${level}`).toEqual({
           create: true,
-          read: 'department',
+          read: 'all',
           write: 'none',
+          assigned: false,
         });
       }
     }
@@ -247,11 +259,12 @@ describe('the default grants reproduce the target table', () => {
     }
   });
 
-  it('moves Finance, Accountant and PMO from every lead to what they started and keeps their other reads (K2)', () => {
+  it('moves PMO from every lead to what it started, gives Finance and Accountant every lead, and keeps their other reads (K2, U20a2-Q4)', () => {
     for (const role of LEAD_INTAKE_ROLE_KEYS) {
       const grants = DEFAULT_ROLE_PERMISSIONS[role];
-      expect(grants['crm.lead.read'], role).toBe('own');
-      expect(grants['crm.opportunity.read'], role).toBe('own');
+      const read = role === 'pmo' ? 'own' : 'all';
+      expect(grants['crm.lead.read'], role).toBe(read);
+      expect(grants['crm.opportunity.read'], role).toBe(read);
       expect(grants['crm.lead.write'], role).toBe('own');
       expect(grants['quotation.read'], role).toBe('all');
       expect(grants['customer.read'], role).toBe('all');
@@ -335,14 +348,6 @@ describe('default level grants (U20b materialisation)', () => {
   it('is exactly the rows Settings > Access materialises from the default switches', () => {
     expect(allRows.map(rowKey).sort()).toEqual(
       [
-        'finance crm.lead.read manager department',
-        'finance crm.lead.read head department',
-        'finance crm.opportunity.read manager department',
-        'finance crm.opportunity.read head department',
-        'accountant crm.lead.read manager department',
-        'accountant crm.lead.read head department',
-        'accountant crm.opportunity.read manager department',
-        'accountant crm.opportunity.read head department',
         'sales crm.lead.read manager department',
         'sales crm.lead.read head department',
         'sales crm.opportunity.read manager department',
@@ -364,6 +369,24 @@ describe('default level grants (U20b materialisation)', () => {
         'operations_officer procurement.pr.read head department',
       ].sort(),
     );
+  });
+
+  it('gives Finance and Accountant no level row (they read every lead), and PMO managers and heads the department (D51)', () => {
+    for (const role of ['finance', 'accountant'] as const) {
+      expect(DEFAULT_ROLE_PERMISSION_LEVELS[role], role).toEqual([]);
+      for (const level of ACCESS_LEVELS) {
+        for (const permission of ['crm.lead.read', 'crm.opportunity.read'] as const) {
+          expect(effectiveScope(role, permission, level), `${role} ${permission} ${level}`).toBe(
+            'all',
+          );
+        }
+      }
+    }
+    for (const permission of ['crm.lead.read', 'crm.opportunity.read'] as const) {
+      expect(effectiveScope('pmo', permission, 'staff'), permission).toBe('own');
+      expect(effectiveScope('pmo', permission, 'manager'), permission).toBe('department');
+      expect(effectiveScope('pmo', permission, 'head'), permission).toBe('department');
+    }
   });
 
   it('has an entry for every role, none for the Founder or the portal roles', () => {
@@ -487,42 +510,75 @@ describe('default level grants (U20b materialisation)', () => {
   });
 });
 
-describe('migration 0088 level grants', () => {
-  // A migration cannot import code, so 0088 embeds the default level rows as a frozen copy. If the defaults change,
-  // a new migration is needed for the existing tenants; this test makes the drift visible instead of silent.
-  const sql = readFileSync(
-    join(
-      fileURLToPath(new URL('.', import.meta.url)),
-      '../../db/migrations/0088_access_phase2_grants.sql',
-    ),
-    'utf8',
-  );
+describe('migrations 0088 and 0123 level grants', () => {
+  // A migration cannot import code, so 0088 embeds the default level rows as a frozen copy and 0123 the rows it
+  // removes and the reads it widens. If the defaults change, a new migration is needed for the existing tenants;
+  // these tests make the drift visible instead of silent.
+  const migration = (file: string): string =>
+    readFileSync(
+      join(fileURLToPath(new URL('.', import.meta.url)), `../../db/migrations/${file}`),
+      'utf8',
+    );
+  const sql = migration('0088_access_phase2_grants.sql');
+  const sql0123 = migration('0123_finance_accountant_read_all_crm.sql');
 
   // The JSON holds no single quote, so `[^']*` stays inside one SQL string literal.
-  const recordset = (alias: string): unknown => {
+  const recordset = (alias: string, text = sql): unknown => {
     const match = new RegExp(`jsonb_to_recordset\\('(\\[[^']*\\])'::jsonb\\) AS ${alias}\\(`).exec(
-      sql,
+      text,
     );
     expect(match, alias).not.toBeNull();
     return JSON.parse(match![1]!);
   };
 
-  it('embeds exactly DEFAULT_ROLE_PERMISSION_LEVELS', () => {
-    const rows = recordset('level_grant') as {
-      role: string;
-      permission: string;
-      min_level: string;
+  interface EmbeddedLevelRow {
+    role: RoleKey;
+    permission: Permission;
+    min_level: string;
+    scope: string;
+  }
+  const levelKey = (row: EmbeddedLevelRow): string =>
+    `${row.role} ${row.permission} ${row.min_level} ${row.scope}`;
+  const seeded0088 = (recordset('level_grant') as EmbeddedLevelRow[]).map(levelKey);
+  const removed0123 = (recordset('removed_level', sql0123) as EmbeddedLevelRow[]).map(levelKey);
+  const defaults = ROLE_KEYS.flatMap((role) =>
+    DEFAULT_ROLE_PERMISSION_LEVELS[role].map(
+      (row) => `${role} ${row.permission} ${row.minLevel} ${row.scope}`,
+    ),
+  );
+
+  it('0088 less the rows 0123 removes is exactly DEFAULT_ROLE_PERMISSION_LEVELS', () => {
+    expect(seeded0088.filter((key) => !removed0123.includes(key)).sort()).toEqual(
+      [...defaults].sort(),
+    );
+  });
+
+  it('0123 removes only rows 0088 seeded, and only for roles whose default now reads every record', () => {
+    for (const row of recordset('removed_level', sql0123) as EmbeddedLevelRow[]) {
+      const label = levelKey(row);
+      expect(seeded0088, label).toContain(label);
+      expect(DEFAULT_ROLE_PERMISSIONS[row.role][row.permission], label).toBe('all');
+    }
+    expect(removed0123.filter((key) => key.startsWith('pmo '))).toEqual([]);
+  });
+
+  it('0123 widens exactly the Finance and Accountant reads the defaults hold at `all`', () => {
+    const rows = recordset('read_all_grant', sql0123) as {
+      role: RoleKey;
+      permission: Permission;
       scope: string;
     }[];
-    const embedded = rows.map(
-      (row) => `${row.role} ${row.permission} ${row.min_level} ${row.scope}`,
+    expect(rows.map((row) => `${row.role} ${row.permission} ${row.scope}`).sort()).toEqual(
+      [
+        'finance crm.lead.read all',
+        'finance crm.opportunity.read all',
+        'accountant crm.lead.read all',
+        'accountant crm.opportunity.read all',
+      ].sort(),
     );
-    const expected = ROLE_KEYS.flatMap((role) =>
-      DEFAULT_ROLE_PERMISSION_LEVELS[role].map(
-        (row) => `${role} ${row.permission} ${row.minLevel} ${row.scope}`,
-      ),
-    );
-    expect([...embedded].sort()).toEqual([...expected].sort());
+    for (const row of rows) {
+      expect(DEFAULT_ROLE_PERMISSIONS[row.role][row.permission], row.role).toBe(row.scope);
+    }
   });
 
   it('adds Marketing only rows its defaults hold', () => {
