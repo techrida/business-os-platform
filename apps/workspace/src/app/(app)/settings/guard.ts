@@ -2,7 +2,7 @@ import 'server-only';
 
 import { redirect } from 'next/navigation';
 
-import { permissionChecker } from '@/components/p2/customers/permissions';
+import { getPermissionCheck } from '@/lib/live-permissions';
 import { getSession, type Session } from '@/lib/session';
 import {
   canOpenSection,
@@ -28,12 +28,12 @@ export async function requireSession(returnTo: string): Promise<Session> {
  * `requireSession`, then the section's own permission (deny by default). A person without it is
  * sent to the first section they may open, or to the Settings denied page when there is none. The API
  * still enforces every call; this keeps the page, and the actions behind it, shut to people
- * whose role does not open the section. Call it outside any try block.
+ * whose live grants (Settings > Access) do not open the section. Call it outside any try block.
  */
 export async function requireSection(id: SettingsSectionId, returnTo?: string): Promise<Session> {
   const section = settingsSection(id);
   const session = await requireSession(returnTo ?? section.href);
-  const can = permissionChecker(session.roles);
+  const can = await getPermissionCheck(session);
   if (!canOpenSection(section, can)) {
     redirect(firstAllowedSection(can)?.href ?? '/settings/denied');
   }

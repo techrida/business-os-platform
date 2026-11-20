@@ -1,7 +1,6 @@
-import { permissionChecker } from '@/components/p2/customers/permissions';
 import { Avatar } from '@/components/ui/avatar';
-import { canSeeAdmin } from '@/lib/kernel-format';
 import { visibleGroups } from '@/lib/nav';
+import { visibleSettingsGroups } from '@/lib/settings-nav';
 
 import { Brand } from './brand';
 import { ProfilePictureDialog } from './profile-picture-dialog';
@@ -22,18 +21,21 @@ export interface SidebarUser {
 }
 
 /**
- * Expanded navigation on desktop, a rail on tablet and a drawer on mobile. Admin screens show
- * only for people who can see admin; permission-gated CRM items only for roles that grant them.
+ * Expanded navigation on desktop, a rail on tablet and a drawer on mobile. `permissions` are the person's
+ * effective grants (`getPermissions`): a gated item shows only when they hold its permission, and Settings
+ * only when at least one settings section opens for them.
  */
 export function Sidebar({
   user,
-  roles,
+  permissions,
   counts = {},
 }: {
   user: SidebarUser;
-  roles: readonly string[];
+  permissions: readonly string[];
   counts?: Readonly<Record<string, number>>;
 }) {
+  const held = new Set(permissions);
+  const can = (permission: string) => held.has(permission);
   const avatarName = user.name.split(',')[0] ?? user.name;
   const imageDocumentId = user.imageDocumentId ?? null;
   return (
@@ -44,7 +46,10 @@ export function Sidebar({
         <DrawerCloseButton />
       </div>
       <ShellNavSearch className={styles.drawerSearch} />
-      <ShellNav groups={visibleGroups(canSeeAdmin(roles), permissionChecker(roles))} counts={counts} />
+      <ShellNav
+        groups={visibleGroups(visibleSettingsGroups(can).length > 0, can)}
+        counts={counts}
+      />
       <div className={styles.footer}>
         <div className={styles.userCard}>
           {user.id ? (
