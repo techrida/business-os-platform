@@ -13,6 +13,7 @@ import {
   isInvoiceEditable,
   type ApprovalContext,
   type InvoiceDetail,
+  type ReopenInvoiceBody,
   type SubmitInvoiceBody,
 } from '@bos/contracts';
 import { customers, invoiceLines, invoices, invoiceTaxSummary, scoped } from '@bos/db';
@@ -310,6 +311,55 @@ export class InvoiceApprovalService {
         message: `This invoice cannot be submitted: ${error.notice.reason}. An administrator has been told.`,
       });
     }
+  }
+
+  /**
+   * Takes an approved invoice back to draft (its due date passed before issue, say: issue answers 422
+   * DUE_DATE_BEFORE_ISSUE and nothing else moves it). Returns the InvoiceDetail (status draft). 404 outside the entity,
+   * 403 without `invoice.issue` on the drafter (the people who issue it are the ones it is stuck for), 409 for any
+   * other status or a stale `expectedVersion`. The approval no longer counts: it must be submitted and approved again.
+   */
+  async reopen(
+    id: string,
+    body: ReopenInvoiceBody,
+    idempotencyKey: string,
+  ): Promise<InvoiceDetail> {
+    const { scope, actor, principal } = this.caller.current();
+    assertStaff(principal);
+    this.authz.assert('invoice.issue', scope);
+    return withTx(this.db, scope, actor, async (tx) => {
+      const [owned] = await tx
+        .select({ createdBy: invoices.createdBy })
+        .from(invoices)
+        .where(and(scopeWhereFor(principal, invoices, 'invoice.read'), eq(invoices.id, id)))
+        .limit(1);
+      if (owned === undefined) throw invoiceNotFound();
+      this.authz.assert('invoice.issue', { ...scope, ownerUserId: owned.createdBy });
+      const done = await withIdempotency(
+        tx,
+        { command: 'invoice.reopen', key: idempotencyKey, body: { id, ...body } },
+        async () => {
+          const [invoice] = await tx
+            .select()
+            .from(invoices)
+            .where(scoped(scope).where(invoices, eq(invoices.id, id)))
+            .for('update');
+          if (invoice === undefined) throw invoiceNotFound();
+          // reopenForEdit also returns a submitted invoice and leaves a draft as it is; this route moves approved only.
+          if (invoice.status !== 'approved') {
+            throw conflict(
+              `A ${invoice.status} invoice cannot be taken back to draft; only an approved one`,
+            );
+          }
+          if (invoice.version !== body.expectedVersion) {
+            throw conflict('This invoice was changed by someone else; reload it and try again');
+          }
+          await this.reopenForEdit(tx, scope, actor, id, body.reason);
+          return { status: 200, response: await this.drafting.loadDetail(tx, scope, id) };
+        },
+      );
+      return done.response;
+    });
   }
 
   /**

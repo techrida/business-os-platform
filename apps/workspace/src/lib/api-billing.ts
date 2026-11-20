@@ -21,6 +21,7 @@ import {
   type IssueInvoiceResult,
   IssueInvoiceResultSchema,
   type MarkBillableBody,
+  type ReopenInvoiceBody,
   SALES_ORDER_STATUSES,
   type SalesOrderDetail,
   SalesOrderDetailSchema,
@@ -433,6 +434,16 @@ export function discardInvoice(
   key: string,
 ): Promise<unknown> {
   return command(session, `/v1/invoices/${seg(id)}/discard`, body, key, anyBody);
+}
+
+/** An approved invoice back to draft; it needs a new approval before issue. */
+export function reopenInvoice(
+  session: Session,
+  id: string,
+  body: ReopenInvoiceBody,
+  key: string,
+): Promise<unknown> {
+  return command(session, `/v1/invoices/${seg(id)}/reopen`, body, key, anyBody);
 }
 
 /** `issued` and `already_issued` are both results, never errors (a replay or a double click). */

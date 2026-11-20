@@ -331,6 +331,13 @@ export type SubmitInvoiceBody = z.infer<typeof SubmitInvoiceBodySchema>;
 export const DiscardInvoiceBodySchema = z.strictObject({ expectedVersion, reason: text(1000) });
 export type DiscardInvoiceBody = z.infer<typeof DiscardInvoiceBodySchema>;
 
+/**
+ * `POST /v1/invoices/:id/reopen`: an approved invoice back to draft (its due date passed before issue, say). The
+ * approval no longer counts, so it must be submitted and approved again; the reason stays in its history.
+ */
+export const ReopenInvoiceBodySchema = z.strictObject({ expectedVersion, reason: text(1000) });
+export type ReopenInvoiceBody = z.infer<typeof ReopenInvoiceBodySchema>;
+
 export const IssueInvoiceBodySchema = z.strictObject({ expectedVersion });
 export type IssueInvoiceBody = z.infer<typeof IssueInvoiceBodySchema>;
 

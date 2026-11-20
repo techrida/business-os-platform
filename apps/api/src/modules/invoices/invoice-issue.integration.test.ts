@@ -706,6 +706,107 @@ describe('issue guards', () => {
     expect(responseOf(stale)).toMatchObject({ code: 'conflict' });
   });
 
+  it('an approved invoice whose due date passed goes back to draft by reopen, then can be resubmitted or discarded', async () => {
+    as(U.acc, 'accountant');
+    const id = (await drafting.draftManual({ ...manualBody(), dueDate: '2026-11-09' }, key()))
+      .invoice.id;
+    await approveFully(id);
+    const approved = await invoiceRow(id);
+    expect(approved.status).toBe('approved');
+    const decided = approved.approvalRequestId;
+    const later = new InvoiceIssueService(
+      db,
+      authz,
+      audit,
+      caller,
+      new LedgerService(),
+      new NumberingService(),
+      money,
+      settings,
+      () => new Date('2026-11-12T06:00:00Z'),
+    );
+    as(U.fin, 'finance');
+    const stuck = await later
+      .issue(id, { expectedVersion: approved.version }, key())
+      .catch((e: unknown) => e);
+    expect(responseOf(stuck)).toMatchObject({ code: 'DUE_DATE_BEFORE_ISSUE' });
+
+    // A stale version is refused and changes nothing.
+    const stale = await submitting
+      .reopen(id, { expectedVersion: approved.version - 1, reason: 'Due date passed' }, key())
+      .catch((e: unknown) => e);
+    expect(statusOf(stale)).toBe(409);
+    expect((await invoiceRow(id)).status).toBe('approved');
+
+    const k = key();
+    const body = { expectedVersion: approved.version, reason: 'Due date passed' };
+    const detail = await submitting.reopen(id, body, k);
+    expect(detail.invoice.status).toBe('draft');
+    // A replay answers the same draft and does not move it again.
+    expect((await submitting.reopen(id, body, k)).invoice.version).toBe(detail.invoice.version);
+    const draft = await invoiceRow(id);
+    expect(draft.status).toBe('draft');
+    expect(draft.contentHash).toBeNull();
+    // Issue now needs a new approval.
+    const notApproved = await issueAs(id, draft.version).catch((e: unknown) => e);
+    expect(responseOf(notApproved)).toMatchObject({ code: 'NOT_APPROVED' });
+
+    // Resubmitting opens a fresh request; the decided one stays decided.
+    await submit(id);
+    const resubmitted = await invoiceRow(id);
+    expect(resubmitted.status).toBe('submitted');
+    expect(resubmitted.approvalRequestId).not.toBeNull();
+    expect(resubmitted.approvalRequestId).not.toBe(decided);
+  });
+
+  it('a reopened invoice can be discarded, freeing the way to a new draft', async () => {
+    const id = await draftManual();
+    await approveFully(id);
+    as(U.fin, 'finance');
+    const reopened = await submitting.reopen(
+      id,
+      { expectedVersion: (await invoiceRow(id)).version, reason: 'Due date passed' },
+      key(),
+    );
+    as(U.acc, 'accountant');
+    const discarded = await drafting.discard(
+      id,
+      { expectedVersion: reopened.invoice.version, reason: 'Redrafting with a new due date' },
+      key(),
+    );
+    expect(discarded.invoice.status).toBe('discarded');
+  });
+
+  it('reopen refuses a draft or submitted invoice (409) and leaves it, and a caller without invoice.issue (403)', async () => {
+    const id = await draftManual();
+    as(U.fin, 'finance');
+    const onDraft = await submitting
+      .reopen(id, { expectedVersion: (await invoiceRow(id)).version, reason: 'x' }, key())
+      .catch((e: unknown) => e);
+    expect(statusOf(onDraft)).toBe(409);
+    expect((await invoiceRow(id)).status).toBe('draft');
+
+    await submit(id);
+    const open = (await invoiceRow(id)).approvalRequestId;
+    as(U.fin, 'finance');
+    const onSubmitted = await submitting
+      .reopen(id, { expectedVersion: (await invoiceRow(id)).version, reason: 'x' }, key())
+      .catch((e: unknown) => e);
+    expect(statusOf(onSubmitted)).toBe(409);
+    expect((await invoiceRow(id)).status).toBe('submitted');
+    expect((await requestOf(id))!.id).toBe(open);
+    expect((await requestOf(id))!.status).not.toBe('cancelled');
+
+    const other = await draftManual();
+    const version = await forceApproved(other);
+    as(U.acc, 'accountant');
+    const denied = await submitting
+      .reopen(other, { expectedVersion: version, reason: 'x' }, key())
+      .catch((e: unknown) => e);
+    expect(statusOf(denied)).toBe(403);
+    expect((await invoiceRow(other)).status).toBe('approved');
+  });
+
   it('a stale FX rate answers 409 fx_rate_stale and consumes no number', async () => {
     const id = await draftManual('USD');
     const version = await forceApproved(id);

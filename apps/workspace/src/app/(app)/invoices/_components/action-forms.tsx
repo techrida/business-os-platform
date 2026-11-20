@@ -13,6 +13,7 @@ import {
 import {
   discardInvoiceAction,
   issueInvoiceAction,
+  reopenInvoiceAction,
   submitInvoiceAction,
   type InvoiceActionState,
 } from '@/app/(app)/invoices/[id]/actions';
@@ -216,6 +217,36 @@ export function IssueBlocked({ kindLabel, reason }: { kindLabel: string; reason:
         {reason}
       </p>
     </div>
+  );
+}
+
+/** Back to draft: the approval no longer counts, and it needs a reason for the history. */
+export function ReopenDialog({ name, ...rest }: InvoiceActionProps) {
+  const [reason, setReason] = useState('');
+  return (
+    <InvoiceActionDialog
+      {...rest}
+      action={reopenInvoiceAction}
+      triggerLabel="Back to draft"
+      confirmLabel="Move to draft"
+      title={`Move ${name} back to draft`}
+      description="Its approval no longer counts: it must be submitted and approved again before it is issued. The reason stays in its history."
+      pendingWords="Moving"
+      fields={(state) => (
+        <Field label="Reason" error={state.errors?.reason}>
+          {(control) => (
+            <Textarea
+              name="reason"
+              value={reason}
+              onChange={(e) => setReason(e.target.value)}
+              rows={4}
+              maxLength={1000}
+              {...control}
+            />
+          )}
+        </Field>
+      )}
+    />
   );
 }
 
