@@ -182,3 +182,26 @@ describe('describeQuoteFailure: hidden cost figures', () => {
     expect(f.message).not.toBe(STALE_VERSION_MESSAGE);
   });
 });
+
+describe('describeQuoteFailure: a 0.00 instalment (FR-4)', () => {
+  const refusal = (code: string, message: string) => ({
+    status: 422,
+    body: { error: { code, message } },
+  });
+
+  it('names the problem instead of "check the highlighted fields"', () => {
+    const f = describeQuoteFailure(refusal('PAYMENT_SCHEDULE_ZERO_INSTALMENT', ''), 'submit');
+    expect(f.kind).toBe('invalid');
+    expect(f.field).toBe('paymentSchedule');
+    expect(f.message).toContain('would come to 0.00');
+    expect(f.message).not.toContain('highlighted fields');
+  });
+
+  it('recognises the refusal by its words when the code differs', () => {
+    const f = describeQuoteFailure(
+      refusal('bad_request', 'An installment of 0.00 is not allowed'),
+      'submit',
+    );
+    expect(f.field).toBe('paymentSchedule');
+  });
+});
