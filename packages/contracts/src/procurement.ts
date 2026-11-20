@@ -32,6 +32,8 @@ export const P4_DOCUMENT_TYPES = [
   'match_exception',
   'vendor_bill',
   'payment_request',
+  // F1-Q41: Management's review of an emergency purchase after it was received.
+  'emergency_review',
 ] as const;
 export const P4DocumentTypeSchema = z.enum(P4_DOCUMENT_TYPES);
 export type P4DocumentType = z.infer<typeof P4DocumentTypeSchema>;
