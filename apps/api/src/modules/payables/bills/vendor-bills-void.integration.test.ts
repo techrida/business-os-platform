@@ -52,7 +52,7 @@ import { systemActor, withTx, type TxScope } from '../../../platform/db/tx';
 import { NumberingService } from '../../../platform/settings/numbering.service';
 import { SettingsService } from '../../../platform/settings/settings.service';
 import { ApprovalsAdminService } from '../../approvals/admin.service';
-import { asSecondPerson } from '../../../../test/support/second-person';
+import { asSecondPerson, SKIP_LIVE_PUBLISHER_CHECK } from '../../../../test/support/second-person';
 import { ApprovalsService } from '../../approvals/requests.service';
 import { LedgerService } from '../../ledger/ledger.service';
 import { PurchaseOrdersService } from '../../procurement/orders/purchase-orders.service';
@@ -233,7 +233,7 @@ beforeAll(async () => {
     [MATCH_EXCEPTION_DOCUMENT_TYPE, 'Match exception', MATCH_EXCEPTION_WORKFLOW_SPEC],
   ] as const) {
     await admin.createWorkflow({ key, name, spec });
-    await adminPublisher.publish(key, 1);
+    await adminPublisher.publish(key, 1, SKIP_LIVE_PUBLISHER_CHECK);
   }
 
   approvals = new ApprovalsService(db, audit, notify, directory, caller, () => now);

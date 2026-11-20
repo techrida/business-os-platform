@@ -40,7 +40,7 @@ import { systemActor, withTx, type TxScope } from '../../../platform/db/tx';
 import { MoneyService } from '../../../platform/settings/money.service';
 import { NumberingService } from '../../../platform/settings/numbering.service';
 import { ApprovalsAdminService } from '../../approvals/admin.service';
-import { asSecondPerson } from '../../../../test/support/second-person';
+import { asSecondPerson, SKIP_LIVE_PUBLISHER_CHECK } from '../../../../test/support/second-person';
 import { ApprovalsService } from '../../approvals/requests.service';
 import { PrCommitmentSubject } from './pr-commitment.subject';
 import { PR_COMMITMENT_DOCUMENT_TYPE, PR_COMMITMENT_WORKFLOW_SPEC } from './sourcing.rules';
@@ -190,7 +190,7 @@ beforeAll(async () => {
     name: 'Purchase commitment',
     spec: PR_COMMITMENT_WORKFLOW_SPEC,
   });
-  await adminPublisher.publish(PR_COMMITMENT_DOCUMENT_TYPE, 1);
+  await adminPublisher.publish(PR_COMMITMENT_DOCUMENT_TYPE, 1, SKIP_LIVE_PUBLISHER_CHECK);
 
   const numbering = new NumberingService();
   approvals = new ApprovalsService(db, audit, notify, directory, caller, () => now);

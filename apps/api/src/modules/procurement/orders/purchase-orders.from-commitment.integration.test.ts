@@ -41,7 +41,7 @@ import { systemActor, withTx, type TxScope } from '../../../platform/db/tx';
 import { MoneyService } from '../../../platform/settings/money.service';
 import { NumberingService } from '../../../platform/settings/numbering.service';
 import { ApprovalsAdminService } from '../../approvals/admin.service';
-import { asSecondPerson } from '../../../../test/support/second-person';
+import { asSecondPerson, SKIP_LIVE_PUBLISHER_CHECK } from '../../../../test/support/second-person';
 import { ApprovalsService } from '../../approvals/requests.service';
 import { PrCommitmentSubject } from '../sourcing/pr-commitment.subject';
 import {
@@ -194,13 +194,13 @@ beforeAll(async () => {
     name: 'Purchase order amendment',
     spec: PO_AMENDMENT_WORKFLOW_SPEC,
   });
-  await adminPublisher.publish(PO_AMENDMENT_DOCUMENT_TYPE, 1);
+  await adminPublisher.publish(PO_AMENDMENT_DOCUMENT_TYPE, 1, SKIP_LIVE_PUBLISHER_CHECK);
   await admin.createWorkflow({
     key: PR_COMMITMENT_DOCUMENT_TYPE,
     name: 'Purchase commitment',
     spec: PR_COMMITMENT_WORKFLOW_SPEC,
   });
-  await adminPublisher.publish(PR_COMMITMENT_DOCUMENT_TYPE, 1);
+  await adminPublisher.publish(PR_COMMITMENT_DOCUMENT_TYPE, 1, SKIP_LIVE_PUBLISHER_CHECK);
 
   approvals = new ApprovalsService(db, audit, notify, directory, caller, () => now);
   approvals.registerSubject(new PoAmendmentSubject(audit, () => now));
