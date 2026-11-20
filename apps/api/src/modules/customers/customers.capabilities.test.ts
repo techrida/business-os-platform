@@ -10,7 +10,7 @@ import {
 import { describe, expect, it } from 'vitest';
 
 import { type Principal } from '../../platform/authz/principal';
-import { customerCapabilities } from './customers.service';
+import { customerCapabilities, customerPortalAccess } from './customers.service';
 
 const TENANT = '11111111-1111-4111-8111-111111111111';
 const ENTITY = '22222222-2222-4222-8222-222222222222';
@@ -82,5 +82,33 @@ describe('customerCapabilities', () => {
       readVerification: false,
       openVerification: false,
     });
+  });
+});
+
+describe('customerPortalAccess (F1-Q31: the account owner invites the first portal admin)', () => {
+  const access = (row: ReturnType<typeof customer>, p: Principal, hasUser: boolean) =>
+    customerPortalAccess(row, p, customerCapabilities(row, p), hasUser);
+
+  it('offers the first invite to the account owner only', () => {
+    expect(access(customer(ME), as('sales'), false)).toEqual({ hasUser: false, canInvite: true });
+    // A founder holds customer.write on every customer, but is not this one's owner.
+    expect(access(customer(COLLEAGUE), as('founder'), false).canInvite).toBe(false);
+    expect(access(customer(null), as('founder'), false).canInvite).toBe(false);
+  });
+
+  it('offers later invites to anyone holding customer.write on the record', () => {
+    expect(access(customer(COLLEAGUE), as('founder'), true)).toEqual({
+      hasUser: true,
+      canInvite: true,
+    });
+    expect(access(customer(COLLEAGUE), as('pmo'), true).canInvite).toBe(false);
+  });
+
+  it('never offers an invite on a merged customer or to a portal caller', () => {
+    expect(access(customer(ME, CUSTOMER), as('sales'), true).canInvite).toBe(false);
+    expect(
+      access(customer(ME), as('founder', { orgKind: 'customer', partyId: CUSTOMER }), true)
+        .canInvite,
+    ).toBe(false);
   });
 });
