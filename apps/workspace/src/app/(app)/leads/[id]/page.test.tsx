@@ -270,6 +270,20 @@ describe('lead detail page composition (U14 D39, D41, D48)', () => {
       ['Resume'],
       'This lead is on hold. Use Resume in the header to move it back to Contacted.',
     ],
+    // F1-Q53: a lead held at Qualified resumes to Qualified, the one move the server sends.
+    [
+      'on_hold',
+      ['qualified'] as LeadDto['stage'][],
+      ['Resume'],
+      'This lead is on hold. Use Resume in the header to move it back to Qualified.',
+    ],
+    [
+      'on_hold',
+      ['new'] as LeadDto['stage'][],
+      ['Resume'],
+      'This lead is on hold. Use Resume in the header to move it back to New.',
+    ],
+    ['on_hold', [] as LeadDto['stage'][], [], 'This lead is on hold.'],
     ['lost', [] as LeadDto['stage'][], [], 'Only a manager can reopen a lost lead.'],
     [
       'lost',
@@ -296,6 +310,7 @@ describe('lead detail page composition (U14 D39, D41, D48)', () => {
             ? {
                 stageReason: 'Waiting on Q2 budget',
                 stageNote: 'Check back in April.',
+                heldFromStage: allowedMoves[0] ?? null,
               }
             : {}),
           ...(stage === 'converted'

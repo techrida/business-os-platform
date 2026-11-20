@@ -15,7 +15,7 @@ import { loadPeople } from '@/components/p2/crm/people';
 import { PutOnHoldDialog } from '@/components/p2/crm/put-on-hold-dialog';
 import { ActivityList, LoadProblem, StageBadge } from '@/components/p2/crm/server-bits';
 import { StageConfirmDialog } from '@/components/p2/crm/stage-confirm-dialog';
-import { resolvedMoves, stageLabel } from '@/components/p2/crm/stages';
+import { resolvedMoves, resumeMove, stageLabel } from '@/components/p2/crm/stages';
 import { Alert } from '@/components/ui/alert';
 import { Button, LinkButton } from '@/components/ui/button';
 import { Card } from '@/components/ui/card';
@@ -165,7 +165,12 @@ function leadTimeline(lead: LeadDto, activity: readonly ActivityDto[]): Timeline
   return steps;
 }
 
-function leadStageMessage(stage: LeadDto['stage'], canEdit: boolean, canReopen: boolean): string {
+function leadStageMessage(
+  stage: LeadDto['stage'],
+  canEdit: boolean,
+  canReopen: boolean,
+  resumeLabel: string | null,
+): string {
   if (!canEdit) return 'You have read-only access to this lead.';
   if (stage === 'new') {
     return 'Log a call or email with Mark contacted to move this lead to Contacted.';
@@ -177,7 +182,9 @@ function leadStageMessage(stage: LeadDto['stage'], canEdit: boolean, canReopen: 
     return 'Qualifying is complete. Convert this lead to an opportunity, put it on hold, or mark it lost.';
   }
   if (stage === 'on_hold') {
-    return 'This lead is on hold. Use Resume in the header to move it back to Contacted.';
+    return resumeLabel
+      ? `This lead is on hold. Use Resume in the header to move it back to ${resumeLabel}.`
+      : 'This lead is on hold.';
   }
   if (stage === 'lost') {
     return canReopen
@@ -218,7 +225,12 @@ export default async function LeadPage({ params }: { params: Promise<{ id: strin
   const lead = leadResult.value;
   const canEdit = lead.canEdit ?? (await getPermissionCheck(session))('crm.lead.write');
   const currentUserId = (await getMeOrNull(session.accessToken))?.id ?? null;
-  const moves = resolvedMoves('lead', lead.stage, lead.allowedMoves ?? (canEdit ? undefined : []));
+  const moves = resolvedMoves(
+    'lead',
+    lead.stage,
+    lead.allowedMoves ?? (canEdit ? undefined : []),
+    lead.heldFromStage,
+  );
   const planned = plannedResult.status === 'fulfilled' ? plannedResult.value : null;
   const plannedProblem =
     plannedResult.status === 'rejected' ? failureOf(plannedResult.reason).message : null;
@@ -234,7 +246,9 @@ export default async function LeadPage({ params }: { params: Promise<{ id: strin
   const hasMove = (stage: string) => moves.some((move) => move.stage === stage);
   const canMarkContacted = lead.stage === 'new' && hasMove('contacted');
   const canQualify = lead.stage === 'contacted' && hasMove('qualified');
-  const canResume = lead.stage === 'on_hold' && hasMove('contacted');
+  // A held lead resumes only to the stage it was held at (F1-Q53): the server sends that one move.
+  const resume = resumeMove(lead.stage, moves);
+  const canResume = resume !== null;
   const canReopen = lead.stage === 'lost' && hasMove('contacted');
   const canPutOnHold = hasMove('on_hold');
   const canMarkLost = hasMove('lost');
@@ -277,18 +291,18 @@ export default async function LeadPage({ params }: { params: Promise<{ id: strin
                   variant="primary"
                 />
               ) : null}
-              {canResume ? (
+              {resume ? (
                 <StageConfirmDialog
                   action={moveLeadStageAction}
                   id={lead.id}
                   version={lead.version}
-                  stage="contacted"
+                  stage={resume.stage}
                   triggerLabel="Resume"
                   triggerVariant="primary"
                   title="Resume this lead?"
-                  description={`${lead.number} will move from On Hold back to Contacted.`}
+                  description={`${lead.number} will move from On Hold back to ${resume.label}.`}
                   confirmLabel="Resume lead"
-                  successMessage="Moved to Contacted."
+                  successMessage={`Moved to ${resume.label}.`}
                   errorMessage="The lead could not be resumed."
                 />
               ) : null}
@@ -478,7 +492,9 @@ export default async function LeadPage({ params }: { params: Promise<{ id: strin
             <div>
               <StageBadge kind="lead" stage={lead.stage} />
             </div>
-            <p className={styles.quiet}>{leadStageMessage(lead.stage, canEdit, canReopen)}</p>
+            <p className={styles.quiet}>
+              {leadStageMessage(lead.stage, canEdit, canReopen, resume?.label ?? null)}
+            </p>
           </Panel>
         </div>
       </div>
