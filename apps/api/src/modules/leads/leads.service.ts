@@ -45,6 +45,7 @@ import { NotifyService } from '../../platform/notify/notify.service';
 import { CurrencyEnabledService } from '../../platform/settings/currency-enabled';
 import { searchPage } from '../../platform/list';
 import { NumberingService } from '../../platform/settings/numbering.service';
+import { readSetting } from '../../platform/settings/settings.service';
 import { nameIn, personNameMap, personNames } from '../../platform/users/person-names';
 import { nextFollowUpSql } from '../activities/activities.types';
 import { moveOpenFollowUps, notifyFollowUpAssigned } from '../activities/follow-ups';
@@ -726,7 +727,12 @@ export class LeadsService {
       return principal.userId;
     }
     if (decision.reason === 'sales_owner_required') {
-      const owner = defaultSalesOwner(await assignableParties(tx, principal, scope, check));
+      const parties = await assignableParties(tx, principal, scope, check);
+      // F1-Q21: the entity's default lead owner when set and still someone this lead may be handed to; else the
+      // Sales head as before.
+      const configured = (await readSetting(tx, scope, 'crm.default_lead_owner')).value;
+      if (configured !== null && parties.some((p) => p.userId === configured)) return configured;
+      const owner = defaultSalesOwner(parties);
       if (owner !== null) return owner;
     }
     throw assignmentRefused('ownerUserId', decision.reason);
