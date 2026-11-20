@@ -207,6 +207,45 @@ it('sends nothing that writes until Save changes in the review dialog', async ()
   expect(router.refresh).toHaveBeenCalled();
 });
 
+it('keeps a value the server refused on its control, marked with the reason', async () => {
+  // The save's 422 names the refused change by index, as the access evaluator does.
+  const reason = 'Leads does not use department rules.';
+  actions.save.mockResolvedValueOnce({
+    ok: false,
+    kind: 'invalid',
+    message: reason,
+    fieldErrors: { 'changes.0.area': reason },
+  });
+  await render();
+  await click(byLabel('Edit Leads'));
+  const managers = 'Managers also see their whole department';
+  await click(checkbox(card('Leads'), managers));
+  await click(textButton('Review changes'));
+  await flush();
+  await click(textButton('Save changes'));
+  await flush();
+  expect(document.querySelector('[role="dialog"]')?.textContent).toContain(reason);
+  await click(dialogButton('Back'));
+  await flush();
+
+  const refused = checkbox(card('Leads'), managers);
+  expect(refused.checked).toBe(false);
+  expect(refused.getAttribute('aria-invalid')).toBe('true');
+  const describedBy = refused.getAttribute('aria-describedby') ?? '';
+  expect(describedBy).not.toBe('');
+  expect(document.getElementById(describedBy)?.textContent).toBe(reason);
+  // The other level line was not refused.
+  const heads = checkbox(card('Leads'), 'Department heads also see their whole department');
+  expect(heads.getAttribute('aria-invalid')).toBeNull();
+
+  // Changing the control away from the refused value clears the mark.
+  await click(refused);
+  const cleared = checkbox(card('Leads'), managers);
+  expect(cleared.checked).toBe(true);
+  expect(cleared.getAttribute('aria-invalid')).toBeNull();
+  expect(card('Leads').textContent).not.toContain(reason);
+});
+
 it('names each undo icon, shows none at the default and reviews its one change', async () => {
   await render();
   await click(byLabel('Edit Leads'));
