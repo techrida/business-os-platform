@@ -24,6 +24,7 @@ export * from './procurement.js';
 export * from './quotations.js';
 export * from './quotation-evidence.js';
 export * from './receivables.js';
+export * from './payment-promises.js';
 export * from './sales.js';
 export * from './settings.js';
 export * from './vendors.js';

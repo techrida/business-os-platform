@@ -60,7 +60,7 @@ describe('InvoiceView', () => {
       'Tax invoice',
       'Unpaid',
       '8 Dec 2026',
-      '2083-07-22 BS',
+      '22 Kartik 2083 BS',
       'Techrida Pvt. Ltd.',
       'Big Kahuna Burger Ltd.',
       'PAN/VAT 609876543',
@@ -297,6 +297,14 @@ describe('InvoiceView as the printed invoice', () => {
     expect(bare).not.toContain('signatory');
   });
 
+  it('writes the frozen issue date in the long BS form, never the compact one (U16-Q5)', () => {
+    const html = renderToStaticMarkup(
+      <InvoiceView view={sampleInvoice()} settlement={sampleSettlement()} />,
+    );
+    expect(html).toContain('22 Kartik 2083 BS');
+    expect(html).not.toContain('2083-07-22');
+  });
+
   it('prints the contact the original PDF froze, not the profile as it is now', () => {
     const html = renderToStaticMarkup(
       <InvoiceView
@@ -338,8 +346,7 @@ describe('InvoiceView as the printed invoice', () => {
         settlement={sampleSettlement({ dueDate: '2040-01-01' })}
       />,
     );
-    expect(far).toContain('1 Jan 2040');
-    expect(far).not.toMatch(/[A-Za-z]+ \d{4} BS/);
+    expect(far).toContain('<dt>Due date</dt><dd>01 Jan 2040</dd>');
   });
 
   it('titles the document by its kind and names the balance to match', () => {

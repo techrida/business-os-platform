@@ -46,7 +46,8 @@ export function PaymentRequestEntry({
   orders?: readonly { id: string; vendorId: string; label: string }[];
   /**
    * The currencies the company has switched on (`currency.enabled`, D44), read once on the server. The
-   * platform refuses a request in any other currency, so bills in a switched-off one are not offered.
+   * platform refuses a request in any other currency, so bills in a switched-off one cannot be chosen; the
+   * Currency field still names that currency (U16-Q9) instead of leaving it out silently.
    */
   enabledCurrencies: readonly Currency[];
 }) {
@@ -83,6 +84,14 @@ export function PaymentRequestEntry({
       .map((item) => item.currency),
   );
   const currencies = [...vendorCurrencies].filter((currency) => enabled.has(currency));
+  const switchedOff = [...vendorCurrencies].filter((currency) => !enabled.has(currency)).sort();
+  const offList = switchedOff.join(' and ');
+  const currencyHint =
+    switchedOff.length === 0
+      ? undefined
+      : currencies.length === 0
+        ? `This vendor's approved bills are only in ${offList}, switched off in Settings.`
+        : `This vendor also has approved bills in ${offList}, switched off in Settings.`;
   const eligible = items.filter(
     (item) => item.vendorPartyId === header.vendorPartyId && item.currency === header.currency,
   );
@@ -198,15 +207,7 @@ export function PaymentRequestEntry({
                   </Select>
                 )}
               </Field>
-              <Field
-                label="Currency"
-                hint={
-                  vendorCurrencies.size > 0 && currencies.length === 0
-                    ? "This vendor's approved bills are only in currencies switched off in Settings."
-                    : undefined
-                }
-                error={errors['currency']}
-              >
+              <Field label="Currency" hint={currencyHint} error={errors['currency']}>
                 {(control) => (
                   <Select
                     name="currency"
@@ -221,6 +222,11 @@ export function PaymentRequestEntry({
                     {currencies.map((currency) => (
                       <option key={currency} value={currency}>
                         {currency}
+                      </option>
+                    ))}
+                    {switchedOff.map((currency) => (
+                      <option key={currency} value={currency} disabled>
+                        {`${currency}, switched off`}
                       </option>
                     ))}
                   </Select>

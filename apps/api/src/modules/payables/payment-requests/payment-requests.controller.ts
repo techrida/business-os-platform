@@ -18,7 +18,7 @@ import {
 import type { Response } from 'express';
 
 import { Can } from '../../../platform/authz/decorators';
-import { setTotalCount } from '../../../platform/list';
+import { setMoneyTotals, setTotalCount } from '../../../platform/list';
 import { parseOr400 } from '../../approvals/approvals.controller';
 import { requireIdempotencyKey } from '../../customers/customers.types';
 import {
@@ -29,6 +29,7 @@ import {
   PaymentRequestsService,
   type PaymentRequestDetailDto,
   type PaymentRequestDto,
+  type PaymentRequestListRowDto,
   type PaymentRequestItemDto,
 } from './payment-requests.service';
 
@@ -38,18 +39,20 @@ export class PaymentRequestsController {
 
   /**
    * The entity's payment requests, newest first. Query: `status` (repeatable), `q`, `limit` (default 25, at most
-   * 100), `offset`; X-Total-Count is the number of all matches.
+   * 100), `offset`; X-Total-Count is the number of all matches and X-Money-Totals their amounts per currency.
+   * Each row names its vendor and says whether the caller may open the vendor's page.
    */
   @Get()
   @Can('payables.payment.request')
   list(
     @Query() query: unknown,
     @Res({ passthrough: true }) res: Response,
-  ): Promise<Omit<PaymentRequestDto, 'lines'>[]> {
+  ): Promise<PaymentRequestListRowDto[]> {
     return this.requests
       .list(parseOr400(ListPaymentRequestsQuerySchema, query))
-      .then(({ rows, total }) => {
+      .then(({ rows, total, totals }) => {
         setTotalCount(res, total);
+        setMoneyTotals(res, totals);
         return rows;
       });
   }

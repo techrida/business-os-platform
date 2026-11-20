@@ -199,7 +199,8 @@ describe('staff invoice upload client', () => {
 
 describe('payment request pages', () => {
   it('repeats the status key, sends the search and offset, and reads the total from the header', async () => {
-    const { lines: _lines, ...row } = request;
+    const { lines: _lines, ...fields } = request;
+    const row = { ...fields, vendorName: 'Himal Supplies', can: { readVendor: true } };
     vi.mocked(apiFetch).mockImplementation(() =>
       Promise.resolve(
         new Response(JSON.stringify([row]), { status: 200, headers: { 'x-total-count': '61' } }),
@@ -216,9 +217,9 @@ describe('payment request pages', () => {
       session,
       '/v1/payables/payment-requests?status=draft&status=approved&q=Himal&limit=25&offset=25',
     );
-    expect(() =>
+    await expect(
       listPaymentRequestsPage(session, { status: ['other' as never], limit: 25, offset: 0 }),
-    ).toThrow();
+    ).rejects.toThrow();
   });
 });
 

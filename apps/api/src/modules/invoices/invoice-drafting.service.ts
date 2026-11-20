@@ -21,6 +21,7 @@ import {
   type InvoiceDetail,
   type InvoiceKind,
   type InvoiceListItem,
+  type MoneyTotals,
   type InvoiceStatus,
   INVOICE_STATUSES,
   type SettlementStatus,
@@ -45,10 +46,11 @@ import { AuthzService, scopeWhereFor } from '../../platform/authz/authz.service'
 import type { Principal } from '../../platform/authz/principal';
 import { DB, type Db, type DbTransaction } from '../../platform/db/db.module';
 import { updateVersioned, withIdempotency } from '../../platform/db/idempotency';
-import { NO_LIMIT, searchPage } from '../../platform/list';
+import { NO_LIMIT, searchPage, sumByCurrency } from '../../platform/list';
 import { withTx, type Actor, type TxScope } from '../../platform/db/tx';
 import { CurrencyEnabledService } from '../../platform/settings/currency-enabled';
 import { LedgerService } from '../ledger/ledger.service';
+import { invoiceSettlements } from '../receivables/invoice-settlements';
 import { loadTaxCodePeriods } from '../quotations/pricing/tax-codes.resolver';
 import { invoiceCan, toInvoiceDetail, toInvoiceListItem } from './invoice-mapping';
 import { priceInvoice, priceSlice, type PricedInvoice } from './invoice-pricing';
@@ -56,6 +58,7 @@ import {
   assertStaff,
   badRequest,
   conflict,
+  createdThisNote,
   INVOICE_CLOCK,
   InvoiceCaller,
   invoiceNotFound,
@@ -161,12 +164,15 @@ export class InvoiceDraftingService {
    * One page of the invoices of the acting entity the caller may read, newest first (id breaks ties), and the
    * number of all matches. Filters only narrow `visible`, the entity and permission scope.
    */
-  async list(filter: InvoiceListFilter = {}): Promise<{ rows: InvoiceListItem[]; total: number }> {
+  async list(
+    filter: InvoiceListFilter = {},
+  ): Promise<{ rows: InvoiceListItem[]; total: number; totals: MoneyTotals }> {
     const { scope, actor, principal } = this.caller.current();
     assertStaff(principal);
     const visible = scopeWhereFor(principal, invoices, 'invoice.read');
     const today = kathmanduDay(this.clock());
     return withTx(this.db, scope, actor, async (tx) => {
+      let totals: MoneyTotals = [];
       const { rows, total } = await searchPage(tx, {
         q: filter.q,
         columns: SEARCH_COLUMNS,
@@ -183,21 +189,48 @@ export class InvoiceDraftingService {
             .orderBy(...p.orderBy)
             .limit(p.limit)
             .offset(p.offset),
+        // The Total column summed per currency over all matches (U15b-Q4). searchPage may count twice (exact,
+        // then close matches); the last call is the set the rows come from.
         count: async (r, where) => {
-          const [row] = await r
-            .select({ n: count() })
+          const groups = await r
+            .select({
+              currency: invoices.currency,
+              n: count(),
+              // Live money only: issued tax invoices and debit notes, less issued credit notes. Drafts, proformas and
+              // discarded rows are in the row count but add nothing.
+              amount: sql<string>`sum(CASE
+                WHEN ${invoices.status} = 'issued' AND ${invoices.kind} IN ('tax_invoice', 'debit_note') THEN ${invoices.total}
+                WHEN ${invoices.status} = 'issued' AND ${invoices.kind} = 'credit_note' THEN -${invoices.total}
+                ELSE 0 END)::text`,
+            })
             .from(invoices)
             .innerJoin(customers, customerJoin())
-            .where(where);
-          return row?.n ?? 0;
+            .where(where)
+            .groupBy(invoices.currency);
+          const summed = sumByCurrency(groups);
+          totals = summed.totals;
+          return summed.total;
         },
       });
+      // Paid / overdue and the open amount of this page's issued tax invoices and debit notes (U15b-Q2).
+      const states = await invoiceSettlements(
+        tx,
+        scope,
+        rows.map((r) => r.invoice),
+        today,
+      );
       return {
-        rows: rows.map((r) => ({
-          ...toInvoiceListItem(r.invoice, r.customerName),
-          can: invoiceCan(principal, scope, r.invoice),
-        })),
+        rows: rows.map((r) => {
+          const state = states.get(r.invoice.id);
+          return {
+            ...toInvoiceListItem(r.invoice, r.customerName),
+            settlement: state?.settlement ?? null,
+            openAmount: state?.openAmount ?? null,
+            can: invoiceCan(principal, scope, r.invoice),
+          };
+        }),
         total,
+        totals,
       };
     });
   }
@@ -272,19 +305,33 @@ export class InvoiceDraftingService {
     );
   }
 
-  /** 200 with the detail; 404 for an invoice of another entity or outside the caller's read scope. */
+  /**
+   * 200 with the detail; 404 for an invoice of another entity or outside the caller's read scope. A note the caller
+   * created carries `issueBlockedBySod`.
+   */
   async detail(id: string): Promise<InvoiceDetail> {
     const { scope, actor, principal } = this.caller.current();
     assertStaff(principal);
     const visible = scopeWhereFor(principal, invoices, 'invoice.read');
     return withTx(this.db, scope, actor, async (tx) => {
       const [row] = await tx
-        .select({ createdBy: invoices.createdBy, customerPartyId: invoices.customerPartyId })
+        .select({
+          id: invoices.id,
+          kind: invoices.kind,
+          createdBy: invoices.createdBy,
+          customerPartyId: invoices.customerPartyId,
+        })
         .from(invoices)
         .where(and(visible, eq(invoices.id, id)))
         .limit(1);
       if (row === undefined) throw invoiceNotFound();
-      return { ...(await this.loadDetail(tx, scope, id)), can: invoiceCan(principal, scope, row) };
+      const detail = await this.loadDetail(tx, scope, id);
+      // The issue route refuses the note's creator (TR-Q12f); the page says so before the click.
+      return {
+        ...detail,
+        can: invoiceCan(principal, scope, row),
+        ...(createdThisNote(row, principal.userId) ? { issueBlockedBySod: true } : {}),
+      };
     });
   }
 

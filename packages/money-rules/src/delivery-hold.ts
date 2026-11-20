@@ -1,0 +1,44 @@
+// Who may release a hardware delivery hold (F1-Q32, decision D56). Pure: no I/O. The NPR threshold is the
+// `sales.delivery_hold.management_npr` setting (default 100,000.00); `fx.ts` owns the strict ">" so a threshold
+// edge is not above itself, as for the approval bands.
+import { exceedsApprovalThresholdNpr } from './fx.js';
+import { type Dec, parseDecimal } from './money.js';
+
+/** A role that may release a delivery hold. The strings match the platform's role keys. */
+export type DeliveryHoldReleaserRole = 'finance' | 'management';
+
+/**
+ * The roles that may release a hold on a delivery worth `amountNpr` (NPR, the order amount the hold guards).
+ * Up to and including `thresholdNpr` it is Finance; above it, Management. 100,000.00 is Finance and
+ * 100,000.01 is Management with the default threshold.
+ */
+export function deliveryHoldReleaser(
+  amountNpr: Dec,
+  thresholdNpr: string,
+): readonly DeliveryHoldReleaserRole[] {
+  if (parseDecimal(thresholdNpr).isNegative()) {
+    throw new RangeError('The delivery-hold threshold cannot be negative.');
+  }
+  return exceedsApprovalThresholdNpr(amountNpr, thresholdNpr) ? ['management'] : ['finance'];
+}
+
+export interface DeliveryHoldRelease {
+  amountNpr: Dec;
+  /** `sales.delivery_hold.management_npr`, as settings text. */
+  thresholdNpr: string;
+  /**
+   * The user who asked for the delivery. They may never release its hold, whatever roles they hold (separation of
+   * duties: the requester is not the releaser). Null when the request has no known requester.
+   */
+  requestedByUserId: string | null;
+  /** The user trying to release the hold, with the role keys they hold. */
+  releaser: { userId: string; roles: readonly string[] };
+}
+
+/** True when `releaser` holds a role `deliveryHoldReleaser` allows and is not the person who requested the delivery. */
+export function mayReleaseDeliveryHold(input: DeliveryHoldRelease): boolean {
+  if (input.requestedByUserId !== null && input.releaser.userId === input.requestedByUserId)
+    return false;
+  const allowed = deliveryHoldReleaser(input.amountNpr, input.thresholdNpr);
+  return allowed.some((role) => input.releaser.roles.includes(role));
+}

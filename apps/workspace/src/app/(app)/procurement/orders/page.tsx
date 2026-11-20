@@ -71,10 +71,10 @@ function Row({ po, numberSystems }: { po: PoListItem; numberSystems: NumberSyste
           <span className={styles.quiet}>Not issued</span>
         )}
       </Td>
-      <Td nowrap className={styles.statusColumn}>
+      <Td nowrap pinned>
         <Badge tone={status.tone}>{status.text}</Badge>
       </Td>
-      <Td nowrap className={styles.actionColumn}>
+      <Td nowrap pinned>
         <Link href={href} className={styles.rowAction} aria-label={`View ${po.number}`}>
           <Icon name="chevron-right" size={20} />
         </Link>
@@ -205,11 +205,7 @@ export default async function PurchaseOrdersPage({
       ) : orders !== null ? (
         <div className={layout.results}>
           <ResultCount shown={orders.length} total={total} noun="purchase order" />
-          <Table
-            className={`${layout.resultsTable ?? ''} ${styles.list ?? ''}`}
-            caption="Purchase orders"
-            minWidth={860}
-          >
+          <Table className={layout.resultsTable ?? ''} caption="Purchase orders" minWidth={860}>
             <thead>
               <tr>
                 <Th>Number</Th>
@@ -217,8 +213,8 @@ export default async function PurchaseOrdersPage({
                 <Th align="end">Approved total</Th>
                 <Th align="end">Version</Th>
                 <Th>Issued</Th>
-                <Th className={styles.statusColumn}>Status</Th>
-                <Th className={styles.actionColumn}>Action</Th>
+                <Th pinned>Status</Th>
+                <Th pinned>Action</Th>
               </tr>
             </thead>
             <tbody>

@@ -129,18 +129,34 @@ function sumOf(buckets: Record<AgingBucket, InstanceType<typeof Dec>>): string {
     .toFixed(2);
 }
 
+/** The key of an aging row: one customer in one currency. */
+export function agingRowKey(customerId: string, currency: Currency): string {
+  return `${customerId}|${currency}`;
+}
+
 /**
  * The aging report as of `today`: one row per customer and currency (sorted by customer name, then id, then
  * currency) and one total per currency. Currencies are never added together.
+ *
+ * `missedPromises` (F1-Q33) maps an aging row key to the latest promised day of a missed promise to pay on an invoice
+ * of that customer and currency that is still open. A row in it is flagged `promiseMissed`; a key without an open
+ * item makes no row of its own.
  */
-export function agingReport(items: readonly AgingItem[], today: string): ArAgingReport {
+export function agingReport(
+  items: readonly AgingItem[],
+  today: string,
+  missedPromises: ReadonlyMap<string, string> = new Map(),
+): ArAgingReport {
   const rows = new Map<
     string,
-    { head: Omit<ArAgingRow, 'buckets' | 'totalOpen'>; b: ReturnType<typeof emptyBuckets> }
+    {
+      head: Omit<ArAgingRow, 'buckets' | 'totalOpen' | 'promiseMissed' | 'promiseMissedOn'>;
+      b: ReturnType<typeof emptyBuckets>;
+    }
   >();
   const totals = new Map<Currency, ReturnType<typeof emptyBuckets>>();
   for (const item of items) {
-    const key = `${item.customerId}|${item.currency}`;
+    const key = agingRowKey(item.customerId, item.currency);
     let row = rows.get(key);
     if (row === undefined) {
       row = {
@@ -172,7 +188,16 @@ export function agingReport(items: readonly AgingItem[], today: string): ArAging
           cmp(x.head.customerId, y.head.customerId) ||
           cmp(x.head.currency, y.head.currency),
       )
-      .map(({ head, b }) => ({ ...head, buckets: fixed(b), totalOpen: sumOf(b) })),
+      .map(({ head, b }) => {
+        const missedOn = missedPromises.get(agingRowKey(head.customerId, head.currency)) ?? null;
+        return {
+          ...head,
+          buckets: fixed(b),
+          totalOpen: sumOf(b),
+          promiseMissed: missedOn !== null,
+          promiseMissedOn: missedOn,
+        };
+      }),
     totals: [...totals.entries()]
       .sort(([x], [y]) => cmp(x, y))
       .map(([currency, b]) => ({ currency, buckets: fixed(b), totalOpen: sumOf(b) })),

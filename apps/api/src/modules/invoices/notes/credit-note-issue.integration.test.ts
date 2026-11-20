@@ -470,7 +470,6 @@ beforeAll(async () => {
     new NumberingService(),
     audit,
     ledger,
-    currencies,
     () => NOW,
   );
   allocations = new AllocationsService(db, passAuthz, audit, ledger);
