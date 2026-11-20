@@ -23,7 +23,9 @@ export function isOverLimit(creditLimit: string | null, exposure: string): boole
 /**
  * The customer's credit position with the acting entity: its open receivable debits (invoices, debit notes) less
  * its open receivable credits (unapplied payments, credit notes), each converted at its own NPR rate
- * (`open_items.fx_rate`), summed and then rounded half-up to two decimals (D22). Must run in a withTx transaction:
+ * (`open_items.fx_rate`) and rounded half-up to two decimals on its own (D22; Postgres `round` takes a half away
+ * from zero, so a credit rounds like a debit), then summed: the exposure is the sum of the NPR amounts a statement
+ * shows, never a sum of unrounded fractions. Must run in a withTx transaction:
  * the ledger rows are read under the entity's row security, and a read outside one would see nothing, which would
  * read as "owes nothing" and never hold a deal.
  */
@@ -33,9 +35,9 @@ export async function creditPosition(
   customerPartyId: string,
 ): Promise<CreditPosition> {
   const exposureRows = await tx.execute<{ exposure: string }>(sql`
-    SELECT round(coalesce(sum(
+    SELECT coalesce(sum(round(
              CASE WHEN b.direction = 'debit' THEN b.open_amount ELSE -b.open_amount END * oi.fx_rate
-           ), 0), 2)::text AS exposure
+           , 2)), 0)::numeric(18, 2)::text AS exposure
       FROM app.open_item_balances b
       JOIN app.open_items oi
         ON oi.tenant_id = b.tenant_id AND oi.organization_id = b.organization_id AND oi.id = b.open_item_id
