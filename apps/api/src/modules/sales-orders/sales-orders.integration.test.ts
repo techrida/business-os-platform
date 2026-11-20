@@ -417,6 +417,10 @@ const parsed = (detail: SalesOrderDetail) => SalesOrderDetailSchema.parse(detail
 const liveOrders = (quotationId: string) =>
   db.select().from(salesOrders).where(eq(salesOrders.quotationId, quotationId));
 
+/** The order statuses of a quotation: an accepted one has its draft (F1-Q25) until it is confirmed. */
+const orderStatuses = async (quotationId: string) =>
+  (await liveOrders(quotationId)).map((o) => o.status);
+
 // ------------------------------------------------------------------------------------------ confirm
 
 describe('SalesOrdersService.confirmFromQuotation', () => {
@@ -543,7 +547,7 @@ describe('SalesOrdersService.confirmFromQuotation', () => {
 
     const failure = await statusOf(confirm(q));
     expect(failure).toEqual({ status: 422, code: 'evidence_policy_unmet' });
-    expect(await liveOrders(q.id)).toHaveLength(0);
+    expect(await orderStatuses(q.id)).toEqual(['draft']);
 
     // The same quotation confirms once the policy is one its evidence meets.
     await setPolicy('signed_quote');
@@ -570,7 +574,7 @@ describe('SalesOrdersService.confirmFromQuotation', () => {
       status: 422,
       code: 'invalid_evidence_document',
     });
-    expect(await liveOrders(q.id)).toHaveLength(0);
+    expect(await orderStatuses(q.id)).toEqual(['draft']);
 
     const doc = await seedDocument();
     const detail = parsed(await confirm(q, [doc]));
@@ -900,7 +904,7 @@ describe('SalesOrdersService.list and detail', () => {
     current.scope = scopeB;
     expect(await statusOf(confirm(q))).toEqual({ status: 404, code: 'not_found' });
     current.scope = scopeA;
-    expect(await liveOrders(q.id)).toHaveLength(0);
+    expect(await orderStatuses(q.id)).toEqual(['draft']);
   });
 });
 
@@ -1040,7 +1044,7 @@ describe('SalesOrdersService.detail held invoices (audit #7)', () => {
     expect(held.can).toEqual({ openInvoice: false });
     expect(asSales.schedule[1]!.invoice).toBeNull();
     expect(asSales.schedule[1]!.can).toEqual({ openInvoice: false });
-    expect(asSales.can).toEqual({ markBillable: false, draftInvoice: false });
+    expect(asSales.can).toEqual({ markBillable: false, draftInvoice: false, confirm: false });
   });
 
   it('lets a role that reads invoices open it, and follows a live grant given to Sales', async () => {
@@ -1050,12 +1054,16 @@ describe('SalesOrdersService.detail held invoices (audit #7)', () => {
     current.grants = grantsOf('accountant');
     const asAccountant = parsed(await service.detail(detail.order.id));
     expect(asAccountant.schedule[0]!.can).toEqual({ openInvoice: true });
-    expect(asAccountant.can).toEqual({ markBillable: true, draftInvoice: true });
+    expect(asAccountant.can).toEqual({ markBillable: true, draftInvoice: true, confirm: false });
 
     current.grants = new Map([...grantsOf('sales'), ['invoice.read', 'all']]);
     const asEditedSales = parsed(await service.detail(detail.order.id));
     expect(asEditedSales.schedule[0]!.can).toEqual({ openInvoice: true });
-    expect(asEditedSales.can).toEqual({ markBillable: false, draftInvoice: false });
+    expect(asEditedSales.can).toEqual({
+      markBillable: false,
+      draftInvoice: false,
+      confirm: false,
+    });
   });
 });
 
