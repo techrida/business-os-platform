@@ -36,7 +36,7 @@ import {
   runMigrations,
   vendorBills,
 } from '@bos/db';
-import { ForbiddenException, HttpException, NotFoundException } from '@nestjs/common';
+import { ForbiddenException, HttpException } from '@nestjs/common';
 import { PostgreSqlContainer, type StartedPostgreSqlContainer } from '@testcontainers/postgresql';
 import { asc, eq, sql } from 'drizzle-orm';
 import { drizzle } from 'drizzle-orm/node-postgres';
