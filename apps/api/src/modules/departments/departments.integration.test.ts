@@ -1057,3 +1057,45 @@ describe('Retire under concurrent access writes', () => {
     expect(await membershipOf(stayer)).toEqual({ department_id: null, level: 'staff' });
   });
 });
+
+describe('People without a display name', () => {
+  async function namelessUser(displayName: string | null, email: string): Promise<string> {
+    const { userId } = await createStaffUser(appPool, { ...tenant1, roleKeys: ['sales'] });
+    await withTx(db, scope1A, systemActor('test-seed'), (tx) =>
+      tx.execute(
+        sql`UPDATE app.users SET display_name = ${displayName}, email = ${email}
+             WHERE tenant_id = ${tenant1.tenantId}::uuid AND id = ${userId}::uuid`,
+      ),
+    );
+    return userId;
+  }
+
+  it('labels them Unnamed user as member, head and unassigned person, never by their email', async () => {
+    const headId = await namelessUser(null, 'nameless.head@acme.test');
+    const blankId = await namelessUser('   ', 'blank.name@acme.test');
+
+    const unassigned = UnassignedPeopleResponseSchema.parse(
+      (await request(baseUrl).get('/v1/admin/departments/unassigned')).body,
+    );
+    const blank = unassigned.items.find((p) => p.userId === blankId);
+    expect(blank?.name).toBe('Unnamed user');
+    expect(blank?.email).toBe('blank.name@acme.test');
+    expect(unassigned.items.find((p) => p.userId === headId)?.name).toBe('Unnamed user');
+
+    const created = await request(baseUrl)
+      .post('/v1/admin/departments')
+      .send({ name: 'Nameless Desk', headUserId: headId });
+    expect(created.status, JSON.stringify(created.body)).toBe(201);
+    const dept = AdminDepartmentDetailSchema.parse(created.body);
+    expect(dept.head).toEqual({ id: headId, name: 'Unnamed user' });
+    expect(dept.members.find((m) => m.userId === headId)?.name).toBe('Unnamed user');
+
+    const list = AdminDepartmentListSchema.parse(
+      (await request(baseUrl).get('/v1/admin/departments')).body,
+    );
+    expect(list.items.find((d) => d.id === dept.id)?.head).toEqual({
+      id: headId,
+      name: 'Unnamed user',
+    });
+  });
+});
