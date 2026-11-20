@@ -90,21 +90,7 @@ export async function runWorkflow(cfg, workflow, opts = {}) {
   let unregister = () => {};
   const checkpoint = () => {
     if (finalSaved) return;
-    try {
-      persist();
-    } catch {
-      // the results below still record what ran
-    }
-    const steps = result.steps.map((st) =>
-      st === inFlight
-        ? { ...st, status: 'INTERRUPTED', error: 'The run was stopped while this step ran' }
-        : st,
-    );
-    saveResults(
-      cfg,
-      { ...result, steps, status: 'RUNNING', interrupted: true, wallMs: Date.now() - t0 },
-      earlier,
-    );
+    saveCheckpoint(cfg, { result, earlier, state, persist, inFlight, wallMs: Date.now() - t0 });
   };
   // After the checkpoint, the step that was cut off must not overwrite it with a FAIL.
   const save = (r) => (isStopping() ? null : saveResults(cfg, r, earlier));
@@ -249,6 +235,31 @@ export async function runWorkflow(cfg, workflow, opts = {}) {
     log(result.videoError);
   }
   return save(result) ?? result;
+}
+
+/**
+ * The save of a run stopped by a signal (or an exit). The step in flight becomes INTERRUPTED. A
+ * request it sent may still commit after the stop (a payment form sends a fresh idempotency key
+ * per render), so the stop counts as a time-out: its time is recorded before the records are
+ * written, and the next invocation's adoption lookups wait for it (Session.settleAfterTimeout).
+ */
+export function saveCheckpoint(cfg, { result, earlier, state, persist, inFlight, wallMs }) {
+  state[LAST_TIMEOUT_KEY] = now();
+  try {
+    persist();
+  } catch {
+    // the results below still record what ran
+  }
+  const steps = result.steps.map((st) =>
+    st === inFlight
+      ? { ...st, status: 'INTERRUPTED', error: 'The run was stopped while this step ran' }
+      : st,
+  );
+  return saveResults(
+    cfg,
+    { ...result, steps, status: 'RUNNING', interrupted: true, wallMs },
+    earlier,
+  );
 }
 
 /**

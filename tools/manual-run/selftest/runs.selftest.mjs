@@ -19,7 +19,7 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 
 import { planRuns } from '../lib/plan.mjs';
 import { clearSecrets, registerSecret } from '../lib/redact.mjs';
-import { finishVideos, saveDriverError, saveResults } from '../lib/runner.mjs';
+import { finishVideos, saveCheckpoint, saveDriverError, saveResults } from '../lib/runner.mjs';
 import {
   acquireLock,
   claimPath,
@@ -36,7 +36,7 @@ import {
   writeState,
 } from '../lib/store.mjs';
 import { uniqueValues } from '../lib/config.mjs';
-import { emptyStateLocator } from '../lib/session.mjs';
+import { emptyStateLocator, LAST_TIMEOUT_KEY, Session } from '../lib/session.mjs';
 import { contactEmailFor, listIsComplete, paymentDecision } from '../workflows/sales.mjs';
 
 const WF = [
@@ -678,6 +678,61 @@ describe('per-workflow state', () => {
       wallMs: 0,
     });
     assert.equal(hasEarlierRun(dir, 'sales'), true);
+  });
+});
+
+describe('a run stopped by a signal is treated like a time-out', () => {
+  test('the checkpoint records the stop time before the records, and the next lookup waits', async () => {
+    const outDir = freshDir();
+    const cfg = { outDir, label: 'sig', viewportText: '1440x900', appUrl: 'https://a.localhost' };
+    const file = path.join(outDir, 'state.json');
+    // sales-12 was recording a payment (its request sent, not yet committed) when SIGINT came.
+    const state = { customerUrl: '/customers/1' };
+    const inFlight = {
+      id: 'sales-12',
+      title: 'pay',
+      status: 'PASS',
+      durationMs: 0,
+      checks: [],
+      findings: [],
+      records: {},
+    };
+    const result = {
+      name: 'sales',
+      title: 't',
+      runId: 'r1',
+      status: 'PASS',
+      startedAt: '',
+      steps: [inFlight],
+      videos: [],
+    };
+    let seen = null;
+    const persist = () => {
+      seen = { ...state };
+      writeState(file, 'sales', state);
+    };
+    const saved = saveCheckpoint(cfg, {
+      result,
+      earlier: null,
+      state,
+      persist,
+      inFlight,
+      wallMs: 5,
+    });
+    assert.equal(saved.steps[0].status, 'INTERRUPTED');
+    assert.ok(seen[LAST_TIMEOUT_KEY], 'the stop time is in the state that was written');
+    // The resumed invocation reads state.json and its adoption lookup waits out the settle period.
+    const resumed = new Session({
+      context: null,
+      page: null,
+      cfg,
+      state: readState(file, 'sales'),
+      log: () => {},
+    });
+    const t = Date.now();
+    await resumed.settleAfterTimeout(400);
+    assert.ok(Date.now() - t >= 300, 'the lookup waited after the stop');
+    assert.match(resumed.checks[0], /waited \d+ s after an earlier time-out/);
   });
 });
 
