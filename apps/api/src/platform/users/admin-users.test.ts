@@ -549,6 +549,27 @@ describe('PUT /v1/admin/users/:id/roles last-Founder guard', () => {
     expect(authz.invalidations).toBe(1);
   });
 
+  it.each([null, '   '])(
+    'names a Founder without a display name (%j) "This person", never the email',
+    async (displayName) => {
+      store.users[0]!.displayName = displayName;
+      let caught: unknown;
+      try {
+        await asAdmin(['admin.roles.write'], () =>
+          controller.setRoles(FOUNDER_ONE, { roles: ['management'] }),
+        );
+      } catch (error) {
+        caught = error;
+      }
+      expect(caught).toBeInstanceOf(ConflictException);
+      const body = (caught as ConflictException).getResponse() as { message: string };
+      expect(body.message).toBe(
+        'This person is the only Founder of Techrida Nepal. Make someone else a Founder there first.',
+      );
+      expect(body.message).not.toContain('kiran@techrida.test');
+    },
+  );
+
   describe('per legal entity', () => {
     const ENTITY_B = '00000000-0000-4000-8000-0000000000bb';
 
