@@ -585,6 +585,8 @@ describe('QuotationSubmitService.submit', () => {
 });
 
 describe('assertNoZeroInstalment (FR-4)', () => {
+  /** An NPR quotation: its NPR total is its total. */
+  const npr = (total: string) => ({ total, amountNpr: total });
   const schedule = [
     { label: 'Advance', percent: '50' },
     { label: 'On delivery', percent: '50' },
@@ -593,7 +595,7 @@ describe('assertNoZeroInstalment (FR-4)', () => {
   it('refuses a total whose split leaves a 0.00 instalment, naming the milestone', () => {
     let error: unknown;
     try {
-      assertNoZeroInstalment('0.01', 'NPR', schedule);
+      assertNoZeroInstalment(npr('0.01'), 'NPR', schedule);
     } catch (e) {
       error = e;
     }
@@ -606,20 +608,20 @@ describe('assertNoZeroInstalment (FR-4)', () => {
 
   it('refuses a 0% milestone, and passes every instalment above 0.00 or no schedule at all', () => {
     expect(() =>
-      assertNoZeroInstalment('1000.00', 'USD', [
+      assertNoZeroInstalment({ total: '1000.00', amountNpr: '133000.00' }, 'USD', [
         { label: 'Deposit', percent: '0' },
         { label: 'Balance', percent: '100' },
       ]),
     ).toThrow(UnprocessableEntityException);
-    expect(() => assertNoZeroInstalment('0.02', 'NPR', schedule)).not.toThrow();
-    expect(() => assertNoZeroInstalment('0.00', 'NPR', [])).not.toThrow();
+    expect(() => assertNoZeroInstalment(npr('0.02'), 'NPR', schedule)).not.toThrow();
+    expect(() => assertNoZeroInstalment(npr('0.00'), 'NPR', [])).not.toThrow();
   });
 
   it('splits the company default schedule when the quotation has none (the order bills on it)', () => {
     // 20% of 0.02 is 0.004, so the default Final 20% line would be 0.00 on the order.
     let error: unknown;
     try {
-      assertNoZeroInstalment('0.02', 'NPR', [], DEFAULT_SALES_SCHEDULE);
+      assertNoZeroInstalment(npr('0.02'), 'NPR', [], DEFAULT_SALES_SCHEDULE);
     } catch (e) {
       error = e;
     }
@@ -627,7 +629,7 @@ describe('assertNoZeroInstalment (FR-4)', () => {
     expect((error as UnprocessableEntityException).getResponse()).toMatchObject({
       code: 'PAYMENT_INSTALMENT_ZERO',
     });
-    expect(() => assertNoZeroInstalment('100.00', 'NPR', [], DEFAULT_SALES_SCHEDULE)).not.toThrow();
+    expect(() => assertNoZeroInstalment(npr('100.00'), 'NPR', [], DEFAULT_SALES_SCHEDULE)).not.toThrow();
   });
 });
 
