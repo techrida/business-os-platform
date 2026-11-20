@@ -1,5 +1,5 @@
 import type { CustomerInvoiceView, PortalDisplay } from '@bos/contracts';
-import { amountInWords, toBs } from '@bos/locale';
+import { amountInWords, bsLongOfDay, formatBsLong } from '@bos/locale';
 
 import { Alert } from '@/components/portal/alert';
 import { Badge } from '@/components/ui/badge';
@@ -22,20 +22,6 @@ const WORDING: Record<View['kind'], { number: string; balance: string; to: strin
 
 const isZero = (amount: string | undefined): boolean =>
   amount === undefined || /^-?0*(\.0*)?$/.test(amount);
-
-/**
- * The Bikram Sambat date of a calendar day, read at noon in Kathmandu (UTC+05:45) so no timezone
- * moves the day, written as the printed invoice writes it. Null outside the converter's range.
- */
-function bsDate(isoDate: string): string | null {
-  try {
-    const bs = toBs(new Date(`${isoDate}T12:00:00+05:45`));
-    return `${String(bs.day).padStart(2, '0')} ${bs.monthNameEn} ${bs.year} BS`;
-  } catch (error) {
-    if (error instanceof RangeError) return null;
-    throw error;
-  }
-}
 
 /**
  * One issued invoice as the customer sees it, laid out like its printed copy. It reads only
@@ -62,7 +48,8 @@ export function InvoiceView({
   const money = (amount: string) => formatAmount(amount, view.currency);
   const look = settlement ? SETTLEMENT_LOOK[settlement.settlement] : null;
   const wording = WORDING[view.kind];
-  const dueBs = view.dueDate ? bsDate(view.dueDate) : null;
+  // One BS form everywhere (U16-Q5): `04 Poush 2083 BS`, the issue date's as frozen at issue.
+  const dueBs = view.dueDate ? bsLongOfDay(view.dueDate) : null;
   const words = amountInWords(
     view.totals.total,
     view.currency,
@@ -164,7 +151,7 @@ export function InvoiceView({
                 <dt>Issue date</dt>
                 <dd>
                   {formatDay(view.issueDate)}
-                  <span className={styles.bs}>{view.issueDateBs} BS</span>
+                  <span className={styles.bs}>{formatBsLong(view.issueDateBs)}</span>
                 </dd>
               </div>
               <div>

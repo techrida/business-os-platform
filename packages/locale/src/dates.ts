@@ -67,6 +67,54 @@ export function formatBs(instant: Date, fmt: string, lang: 'en' | 'np' = 'en'): 
   return toNepaliDate(instant).format(fmt, lang);
 }
 
+/** BS month names as the converter spells them in English, Baisakh (month 1) first. */
+export const BS_MONTH_NAMES_EN = [
+  'Baisakh',
+  'Jestha',
+  'Asar',
+  'Shrawan',
+  'Bhadra',
+  'Aswin',
+  'Kartik',
+  'Mangsir',
+  'Poush',
+  'Magh',
+  'Falgun',
+  'Chaitra',
+] as const;
+
+const BS_COMPACT = /^(\d{4})-(\d{2})-(\d{2})$/;
+
+/**
+ * The one BS date form for documents and pages (U16-Q5): `04 Poush 2083 BS`. Takes a stored compact BS date
+ * (`2083-09-04`, as `issue_date_bs` keeps it). Never throws: text that is not a compact BS date comes back with
+ * ` BS` after it, so a render always has something to show. The compact form is for table cells only.
+ */
+export function formatBsLong(compactBs: string): string {
+  const match = BS_COMPACT.exec(compactBs);
+  const month = match ? BS_MONTH_NAMES_EN[Number(match[2]) - 1] : undefined;
+  if (!match || month === undefined || Number(match[3]) < 1 || Number(match[3]) > 32) {
+    return `${compactBs} BS`;
+  }
+  return `${match[3]} ${month} ${match[1]} BS`;
+}
+
+/**
+ * The long BS form (`04 Poush 2083 BS`) of a Gregorian calendar day `YYYY-MM-DD`, read at noon in Kathmandu so no
+ * timezone moves the day. Null when the text is not a date or the day is outside the converter's range.
+ */
+export function bsLongOfDay(isoDate: string): string | null {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(isoDate)) return null;
+  const instant = new Date(`${isoDate}T12:00:00+05:45`);
+  if (Number.isNaN(instant.getTime())) return null;
+  try {
+    return formatBsLong(formatBs(instant, 'YYYY-MM-DD'));
+  } catch (error) {
+    if (error instanceof RangeError) return null;
+    throw error;
+  }
+}
+
 /**
  * Nepali fiscal year, e.g. `2082/83`. It runs from Shrawan 1 (BS month 4) to the end of Asar (month 3 of the next BS year).
  */
