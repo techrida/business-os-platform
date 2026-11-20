@@ -9,6 +9,7 @@ import {
 import type { Metadata } from 'next';
 import Link from 'next/link';
 
+import { grantsFrom } from '@/components/p2/customers/permissions';
 import { Alert } from '@/components/ui/alert';
 import { Avatar } from '@/components/ui/avatar';
 import { Badge } from '@/components/ui/badge';
@@ -28,6 +29,7 @@ import {
   readList,
   type RawParams,
 } from '@/lib/list-params';
+import { getMeOrNull } from '@/lib/live-permissions';
 import { companyLogo } from '../customers/_lib/company-logo';
 import { ListPager } from '../invoices/_components/list-pager';
 
@@ -135,7 +137,8 @@ export default async function VendorsPage({ searchParams }: { searchParams: Prom
     problem = { message: f.message, status: f.status };
   }
 
-  const addButton = vendorGrants(session.roles).write ? (
+  const live = grantsFrom(await getMeOrNull(session.accessToken), session.roles);
+  const addButton = vendorGrants(live).write ? (
     <LinkButton href="/vendors/new" size="large">
       <span aria-hidden="true" className={styles.plus}>
         +
