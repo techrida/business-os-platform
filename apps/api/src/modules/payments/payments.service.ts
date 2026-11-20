@@ -16,6 +16,7 @@ import { createHash } from 'node:crypto';
 
 import {
   type AllocationDto,
+  type MoneyTotals,
   type PaymentCapabilities,
   type PaymentChannel,
   type PaymentDto,
@@ -51,7 +52,7 @@ import {
   UnprocessableEntityException,
 } from '@nestjs/common';
 import Decimal from 'decimal.js';
-import { and, asc, count, desc, eq, inArray, isNull, lte, or, type SQL } from 'drizzle-orm';
+import { and, asc, count, desc, eq, inArray, isNull, lte, or, sql, type SQL } from 'drizzle-orm';
 
 import { AuditService } from '../../platform/audit/audit.service';
 import { AuthzService } from '../../platform/authz/authz.service';
@@ -60,8 +61,7 @@ import { DB, type Db, type DbTransaction } from '../../platform/db/db.module';
 import { updateVersioned, withIdempotency } from '../../platform/db/idempotency';
 import { withTx, type Actor, type TxScope } from '../../platform/db/tx';
 import { currentPrincipal } from '../../platform/tenancy/request-context';
-import { CurrencyEnabledService } from '../../platform/settings/currency-enabled';
-import { NO_LIMIT, searchPage } from '../../platform/list';
+import { NO_LIMIT, searchPage, sumByCurrency } from '../../platform/list';
 import { MoneyService } from '../../platform/settings/money.service';
 import { NumberingService } from '../../platform/settings/numbering.service';
 import { LedgerService } from '../ledger/ledger.service';
@@ -159,7 +159,6 @@ export class PaymentsService {
     private readonly numbering: NumberingService,
     private readonly audit: AuditService,
     private readonly ledger: LedgerService,
-    private readonly currencies: CurrencyEnabledService,
     @Optional()
     @Inject(PAYMENTS_CLOCK)
     private readonly clock: () => Date = () => new Date(),
@@ -168,17 +167,18 @@ export class PaymentsService {
   // ------------------------------------------------------------------------------------------ reads
 
   /**
-   * One page of the acting entity's payments, newest first (id breaks ties), and the number of all matches.
-   * The entity is part of every query, so a filter can only narrow it.
+   * One page of the acting entity's payments, newest first (id breaks ties), the number of all matches and the
+   * sum of their amounts per currency (U15b-Q4). The entity is part of every query, so a filter can only narrow it.
    */
   async list(
     scope: TxScope,
     filter: PaymentListFilter = {},
-  ): Promise<{ rows: PaymentListItem[]; total: number }> {
+  ): Promise<{ rows: PaymentListItem[]; total: number; totals: MoneyTotals }> {
     this.authz.assert('payment.read', {
       tenantId: scope.tenantId,
       organizationId: scope.organizationId,
     });
+    let totals: MoneyTotals = [];
     const { rows, total } = await searchPage(this.db, {
       q: filter.q,
       columns: SEARCH_COLUMNS,
@@ -208,17 +208,26 @@ export class PaymentsService {
           .orderBy(...p.orderBy)
           .limit(p.limit)
           .offset(p.offset),
+      // searchPage may count twice (exact, then close matches); the last call is the set the rows come from.
       count: async (r, where) => {
-        const [row] = await r
-          .select({ n: count() })
+        const groups = await r
+          .select({
+            currency: payments.currency,
+            n: count(),
+            amount: sql<string>`sum(${payments.amount})::text`,
+          })
           .from(payments)
           .innerJoin(parties, customerJoin())
-          .where(where);
-        return row?.n ?? 0;
+          .where(where)
+          .groupBy(payments.currency);
+        const summed = sumByCurrency(groups);
+        totals = summed.totals;
+        return summed.total;
       },
     });
     return {
       total,
+      totals,
       rows: rows.map(({ p, customerName, openAmount }) => ({
         id: p.id,
         customerId: p.customerPartyId ?? '',
@@ -352,7 +361,8 @@ export class PaymentsService {
    * Records a payment the customer says it sent (status submitted). Staff call it with `channel: 'staff'` and need
    * `payment.record`; the portal (U13) calls it with `channel: 'portal'` and `body.customerId` set to the
    * principal's party, and needs `portal.payment.submit` on that customer. 422 for an unknown customer, withholding
-   * code or proof document, and 422 CURRENCY_NOT_ENABLED for a currency the company switched off (D44).
+   * code or proof document. A currency the company switched off is still accepted (D56 U16-Q1): money that has
+   * arrived must always be recordable, so payments are exempt from the D44 rule that new documents follow.
    */
   async submit(
     scope: TxScope,
@@ -362,37 +372,20 @@ export class PaymentsService {
     idempotencyKey: string,
   ): Promise<PaymentDto> {
     this.assertMaySubmit(scope, body, channel);
-    // 422 CURRENCY_NOT_ENABLED for a currency the company switched off (D44). The check is a pool read, so it runs
-    // before the transaction opens, but the refusal is thrown inside the idempotency callback: a retry of a submit
-    // that already went through replays the stored payment even after the currency was switched off. Staff and
-    // portal submits both come through here.
-    let refusal: unknown;
-    try {
-      await this.currencies.assertEnabled(scope, body.currency);
-    } catch (error) {
-      refusal = error;
-    }
     return withTx(this.db, scope, actor, async (tx) => {
       const done = await withIdempotency(
         tx,
         { command: `payment.submit.${channel}`, key: idempotencyKey, body },
-        async () => {
-          if (refusal instanceof Error) throw refusal;
-          return {
-            status: 201,
-            response: await this.submitInTx(tx, scope, actor, body, channel),
-          };
-        },
+        async () => ({
+          status: 201,
+          response: await this.submitInTx(tx, scope, actor, body, channel),
+        }),
       );
       return done.response;
     });
   }
 
-  /**
-   * `submit` inside a caller's transaction (opened with withTx), for a caller with its own idempotency. It does not
-   * check that the currency is enabled (a pool read does not belong inside the transaction): a caller must call
-   * CurrencyEnabledService.assertEnabled first, as `submit` does.
-   */
+  /** `submit` inside a caller's transaction (opened with withTx), for a caller with its own idempotency. */
   async submitInTx(
     tx: DbTransaction,
     scope: TxScope,

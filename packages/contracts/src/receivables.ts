@@ -4,7 +4,7 @@
 // (`SETTLEMENT_STATUSES`) and the open amount is computed from allocations on every read.
 import { z } from 'zod';
 
-import { InvoiceKindSchema } from './invoicing.js';
+import { InvoiceKindSchema, SettlementStatusSchema } from './invoicing.js';
 import { CurrencySchema, DecimalString, NprSnapshotSchema } from './money.js';
 import { NonNegativeDecimalString } from './quotations.js';
 
@@ -51,19 +51,8 @@ export const PAYMENT_CHANNELS = ['portal', 'staff'] as const;
 export const PaymentChannelSchema = z.enum(PAYMENT_CHANNELS);
 export type PaymentChannel = z.infer<typeof PaymentChannelSchema>;
 
-/**
- * The derived state of one invoice, from its allocations, credit notes and due date. These are values
- * of a computed status, not stored columns. `settlementOf` in money-rules produces them.
- */
-export const SETTLEMENT_STATUSES = [
-  'unpaid',
-  'partly_paid',
-  'paid',
-  'overdue',
-  'credited',
-] as const;
-export const SettlementStatusSchema = z.enum(SETTLEMENT_STATUSES);
-export type SettlementStatus = z.infer<typeof SettlementStatusSchema>;
+// The settlement states live in invoicing.ts (an invoice list row carries one); re-exported here, where they began.
+export { SETTLEMENT_STATUSES, SettlementStatusSchema, type SettlementStatus } from './invoicing.js';
 
 /** Aging buckets by days past due, counted from Kathmandu "today". `current` is not yet due. */
 export const AGING_BUCKETS = ['current', 'd1_30', 'd31_60', 'd61_90', 'd91_plus'] as const;
