@@ -110,6 +110,9 @@ const AUDIT_ENTITY = 'activities';
 
 const subjectNotFound = () =>
   new NotFoundException({ code: 'not_found', message: 'Subject not found' });
+/** The subjects without assigned reach: customers are tenant master data, read `all` or `own` (D55-6). */
+const CUSTOMER_KEYS: ReadonlySet<SubjectKey> = new Set<SubjectKey>(['customerId', 'contactId']);
+
 const activityNotFound = () =>
   new NotFoundException({ code: 'not_found', message: 'Activity not found' });
 
@@ -367,7 +370,8 @@ export class ActivitiesService {
    *
    * The assignee is the exception (K5): their follow-up is theirs to do, so they may complete it on a subject they
    * can only read (assigned reach). Rescheduling or calling it off still needs the subject's write permission, and
-   * they get a 403 for it rather than a 404: the follow-up is on their own list, so it is no secret.
+   * they get a 403 for it rather than a 404: the follow-up is on their own list, so it is no secret. On a customer or
+   * contact, which has no assigned reach, the assignee completes it without reaching the customer (U20a2-Q7).
    */
   private async changePlanned(
     id: string,
@@ -391,7 +395,16 @@ export class ActivitiesService {
       const key = ACTIVITY_SUBJECT_KEYS.find((k) => row[k] !== null);
       if (key === undefined) throw activityNotFound();
       // Out of scope answers exactly like an unknown id, so a guessed activity id learns nothing.
-      if (row.assigneeUserId === principal.userId) {
+      if (
+        row.assigneeUserId === principal.userId &&
+        what === 'complete' &&
+        CUSTOMER_KEYS.has(key)
+      ) {
+        // U20a2-Q7: customers have no assigned reach, so an `own` reader who is handed a follow-up on someone
+        // else's customer could list it (readableSubjects) but never finish it. Completing their own follow-up
+        // needs only the customer read grant at some scope; the customer record itself stays out of reach.
+        this.authz.assert(SUBJECT_PERMISSION[key].read);
+      } else if (row.assigneeUserId === principal.userId) {
         const ref = await this.assertSubject(tx, key, row[key]!, 'read', activityNotFound);
         if (what !== 'complete') this.authz.assert(SUBJECT_PERMISSION[key].write, ref);
       } else {
