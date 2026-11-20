@@ -1,4 +1,4 @@
-import type { InvoiceListItem } from '@bos/contracts';
+import type { InvoiceListItem, MoneyTotals } from '@bos/contracts';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
@@ -77,7 +77,11 @@ const SUMMARY = {
     { id: OTHER, name: 'Everest Traders' },
   ],
 };
-const page = (items: InvoiceListItem[], total = items.length) => ({ items, total });
+const page = (
+  items: InvoiceListItem[],
+  total = items.length,
+  totals: MoneyTotals | null = null,
+) => ({ items, total, totals });
 const BUCKETS = {
   current: '0.00',
   d1_30: '0.00',
@@ -384,6 +388,32 @@ describe('record payment row action', () => {
       ]),
     );
     expect(await render({ settlement: ['unpaid'] })).not.toContain('Record payment');
+  });
+});
+
+describe('total row', () => {
+  it('ends the table with the totals of every match, one row per currency, under the Total column', async () => {
+    mocks.listInvoicesPage.mockResolvedValue(
+      page([item()], 41, [
+        { currency: 'NPR', amount: '2018180.00' },
+        { currency: 'USD', amount: '25.00' },
+      ]),
+    );
+    const foot = /<tfoot>.*<\/tfoot>/s.exec(await render())?.[0] ?? '';
+    // Old code showed no total at all.
+    expect(foot).toContain('Total, all pages · NPR');
+    expect(foot).toContain('20,18,180.00');
+    expect(foot).toContain('Total, all pages · USD');
+    expect(foot).toContain('colSpan="5"');
+  });
+
+  it('says plain Total when every match is on the page, and shows none without totals', async () => {
+    mocks.listInvoicesPage.mockResolvedValue(
+      page([item()], 1, [{ currency: 'NPR', amount: '2018180.00' }]),
+    );
+    expect(await render()).toMatch(/<tfoot>.*>Total<.*<\/tfoot>/s);
+    mocks.listInvoicesPage.mockResolvedValue(page([item()]));
+    expect(await render()).not.toContain('<tfoot>');
   });
 });
 
