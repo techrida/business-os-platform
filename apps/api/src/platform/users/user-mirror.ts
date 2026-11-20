@@ -310,7 +310,8 @@ export class UserMirror {
           !founders.some((o) => o.organizationId === f.organizationId && o.userId !== userId),
       );
       if (orphaned.length > 0) {
-        const name = user.displayName?.trim() || user.email || 'This user';
+        // Never the email: the address is not a name (U20a2-Q10).
+        const name = user.displayName?.trim() || 'This person';
         const entities = orphaned.map((f) => f.entityName).join(', ');
         throw new ConflictException({
           code: 'last_founder',
