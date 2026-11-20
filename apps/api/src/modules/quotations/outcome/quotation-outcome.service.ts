@@ -12,17 +12,25 @@
 //   through, so this check is the only one that refuses it;
 // - the decided day is not after today in Kathmandu (422 `decided_on_in_future`), and not after the version's
 //   valid_until (409 `quotation_expired`);
-// - accepting needs the evidence `sales.evidence_policy` asks for (422 `evidence_policy_unmet`, see
-//   evidence-policy.ts); rejecting needs a comment (the table's CHECK refuses a rejection without one).
+// - a staff entry of an acceptance needs the evidence `sales.evidence_policy` asks for (422 `evidence_policy_unmet`,
+//   see evidence-policy.ts), so it is confirmed as it is recorded. A portal acceptance is recorded whatever the
+//   policy (F1-Q28, F1 bug 32: the portal no longer dead-ends) and waits for staff to confirm the evidence
+//   (`confirmEvidence`, evidence-state.ts); rejecting needs a comment (the table's CHECK refuses one without).
+// An acceptance also drafts the sales order for the Accountant to confirm (F1-Q25, sales-orders/draft-order.ts), in
+// the same transaction. When the version cannot become an order (a schedule that cannot be split), the acceptance
+// still stands: the refusal is audited and the quotation's owner is told, and the manual confirm stays available.
 import {
   type AcceptanceDto,
   type ActorKindSchema,
   type EvidenceKind,
+  type QuotationEvidenceDto,
   type QuotationStatus,
 } from '@bos/contracts';
 import {
   customers,
+  documents,
   quotationAcceptances,
+  quotationEvidenceConfirmations,
   quotations,
   quotationStatusHistory,
   quotationVersions,
@@ -36,7 +44,7 @@ import {
   Optional,
   UnprocessableEntityException,
 } from '@nestjs/common';
-import { and, eq, sql } from 'drizzle-orm';
+import { and, eq, inArray, isNull, sql } from 'drizzle-orm';
 import type { z } from 'zod';
 
 import { AuditService } from '../../../platform/audit/audit.service';
@@ -47,8 +55,10 @@ import { readTxContext } from '../../../platform/documents/tx-context';
 import { NotifyService } from '../../../platform/notify/notify.service';
 import { SettingsService } from '../../../platform/settings/settings.service';
 import { OpportunitiesService } from '../../opportunities/opportunities.service';
+import { draftOrderOnAcceptance } from '../../sales-orders/draft-order';
 import { kathmanduDay } from '../reference/reference.types';
 import { missingEvidence } from './evidence-policy';
+import { type EvidenceState, evidenceStateOf, readEvidenceState } from './evidence-state';
 
 /** Injection token for a test clock; production falls back to the system time. */
 export const QUOTATION_OUTCOME_CLOCK = Symbol('QUOTATION_OUTCOME_CLOCK');
@@ -80,6 +90,17 @@ export interface AcceptQuotationInput extends OutcomeInputBase {
   comment?: string | null;
 }
 
+/** Staff confirm the evidence behind a portal acceptance (F1-Q28). */
+export interface ConfirmEvidenceInput {
+  quotationId: string;
+  versionId: string;
+  /** The staff user (an app.users id of the tenant). */
+  actorUserId: string;
+  evidenceKinds: readonly EvidenceKind[];
+  evidenceDocumentIds: readonly string[];
+  comment?: string | undefined;
+}
+
 export interface RejectQuotationInput extends OutcomeInputBase {
   comment: string;
   /** Always the customer here; an internal rejection is the approval engine's. */
@@ -105,22 +126,15 @@ export class QuotationOutcomeService {
 
   /**
    * Accepts a Sent version inside the caller's `tx`: the acceptance row, the version to Accepted, history, audit,
-   * the opportunity to Won (with this version) and a notice to the quotation's owner. The caller must call
-   * `NotifyService.nudge()` after its transaction commits.
+   * the opportunity to Won (with this version), the draft sales order (F1-Q25) and a notice to the quotation's
+   * owner. The caller must call `NotifyService.nudge()` after its transaction commits.
    */
   async accept(tx: DbTransaction, input: AcceptQuotationInput): Promise<AcceptanceDto> {
     const { scope } = await readTxContext(tx);
     const { quotation, version } = await this.lockSent(tx, scope, input);
     const policy = await this.settings.get(scope, 'sales.evidence_policy');
-    const missing = missingEvidence(policy, input.evidenceKinds);
-    if (missing.length > 0) {
-      throw new UnprocessableEntityException({
-        code: 'evidence_policy_unmet',
-        message: `This entity's evidence policy (${policy}) also needs: ${missing.join(', ')}`,
-        policy,
-        missing,
-      });
-    }
+    // Staff confirm what they record; a customer's acceptance stands and its evidence waits for staff (F1-Q28).
+    if (input.actorKind === 'staff') this.assertPolicyMet(policy, input.evidenceKinds);
     const now = this.clock();
     const acceptance = await this.insertAcceptance(tx, scope, version.id, 'accepted', input);
     await this.moveVersion(tx, scope, version.id, {
@@ -143,9 +157,28 @@ export class QuotationOutcomeService {
         evidenceDocumentIds: [...(input.evidenceDocumentIds ?? [])],
         acceptedByName: input.acceptedByName ?? null,
         evidencePolicy: policy,
+        evidenceStatus: input.actorKind === 'staff' ? 'confirmed' : 'pending',
       },
     });
     await this.opportunities.markWon(tx, quotation.opportunityId, version.id);
+    // Nobody is the draft's creator: the Accountant who confirms it becomes one. Its quotation's owner reaches it.
+    const draft = await draftOrderOnAcceptance(
+      tx,
+      scope,
+      { settings: this.settings, audit: this.audit },
+      quotation,
+      version,
+      null,
+    );
+    if (!draft.drafted && draft.reason === 'refused' && quotation.ownerUserId !== null) {
+      await this.notify.notifyUser(tx, {
+        userId: quotation.ownerUserId,
+        title: `No draft sales order for ${quotation.number}`,
+        body: `${quotation.number} was accepted, but its sales order could not be drafted: ${draft.refusal.message}`,
+        link: `/quotations/${quotation.id}`,
+        dedupeKey: `sales_order.draft_refused:${version.id}`,
+      });
+    }
     if (quotation.ownerUserId !== null) {
       const customerName = await this.customerName(tx, scope, quotation.customerPartyId);
       const linkPath = `/quotations/${quotation.id}`;
@@ -203,31 +236,149 @@ export class QuotationOutcomeService {
     return acceptance;
   }
 
+  /**
+   * Staff confirm the evidence of a portal acceptance inside the caller's `tx` (F1-Q28): the kinds they hold must
+   * meet the policy in force now and the files must be live documents of the entity. One confirmation per version:
+   * a second one, or one for a staff entry (confirmed as it was recorded), is a 409 `evidence_already_confirmed`;
+   * a version that is not Accepted is a 409 `quotation_not_accepted`. Who may confirm is the caller's check.
+   */
+  async confirmEvidence(tx: DbTransaction, input: ConfirmEvidenceInput): Promise<EvidenceState> {
+    const { scope } = await readTxContext(tx);
+    const { quotation, version } = await this.lockVersion(tx, scope, input);
+    const state =
+      version.status === 'accepted' ? await readEvidenceState(tx, scope, version.id) : undefined;
+    if (state === undefined) {
+      throw conflict(
+        'quotation_not_accepted',
+        `A ${version.status} quotation has no acceptance to confirm`,
+      );
+    }
+    if (state.status === 'confirmed') {
+      throw conflict(
+        'evidence_already_confirmed',
+        'The evidence of this acceptance is already confirmed',
+      );
+    }
+    const policy = await this.settings.get(scope, 'sales.evidence_policy');
+    this.assertPolicyMet(policy, input.evidenceKinds);
+    const documentIds = [...new Set(input.evidenceDocumentIds)];
+    await this.assertDocumentsLive(tx, scope, documentIds);
+    const [row] = await tx
+      .insert(quotationEvidenceConfirmations)
+      .values({
+        tenantId: scope.tenantId,
+        organizationId: scope.organizationId,
+        versionId: version.id,
+        evidenceKinds: [...input.evidenceKinds],
+        evidenceDocumentIds: documentIds,
+        comment: input.comment ?? null,
+        confirmedBy: input.actorUserId,
+      })
+      .returning();
+    await this.audit.record(tx, {
+      action: 'quotation.evidence_confirmed',
+      entityType: AUDIT_ENTITY,
+      entityId: quotation.id,
+      before: { versionId: version.id, evidenceStatus: 'pending' },
+      after: {
+        versionId: version.id,
+        evidenceStatus: 'confirmed',
+        evidenceKinds: [...input.evidenceKinds],
+        evidenceDocumentIds: documentIds,
+        comment: input.comment ?? null,
+        evidencePolicy: policy,
+      },
+    });
+    return evidenceStateOf(state.acceptance, row!);
+  }
+
+  /** The evidence DTO of `state` under the entity's policy now; `canConfirm` is the caller's record check. */
+  async evidenceView(
+    tx: DbTransaction,
+    quotationId: string,
+    state: EvidenceState,
+    canConfirm: boolean,
+  ): Promise<QuotationEvidenceDto> {
+    const { scope } = await readTxContext(tx);
+    const policy = await this.settings.get(scope, 'sales.evidence_policy');
+    const { acceptance, confirmation } = state;
+    return {
+      quotationId,
+      versionId: acceptance.versionId,
+      status: state.status,
+      policy,
+      missing: missingEvidence(policy, state.kinds),
+      acceptance: {
+        actorKind: acceptance.actorKind,
+        decidedOn: acceptance.decidedOn,
+        acceptedByName: acceptance.acceptedByName,
+        evidenceKinds: acceptance.evidenceKinds,
+        evidenceDocumentIds: acceptance.evidenceDocumentIds,
+      },
+      confirmation:
+        confirmation === null
+          ? null
+          : {
+              evidenceKinds: confirmation.evidenceKinds,
+              evidenceDocumentIds: confirmation.evidenceDocumentIds,
+              comment: confirmation.comment,
+              confirmedBy: confirmation.confirmedBy,
+              confirmedAt: confirmation.createdAt.toISOString(),
+            },
+      can: { confirm: canConfirm && state.status === 'pending' },
+    };
+  }
+
   // ----------------------------------------------------------------------------------------------- helpers
+
+  private assertPolicyMet(
+    policy: Parameters<typeof missingEvidence>[0],
+    kinds: readonly EvidenceKind[],
+  ): void {
+    const missing = missingEvidence(policy, kinds);
+    if (missing.length > 0) {
+      throw new UnprocessableEntityException({
+        code: 'evidence_policy_unmet',
+        message: `This entity's evidence policy (${policy}) also needs: ${missing.join(', ')}`,
+        policy,
+        missing,
+      });
+    }
+  }
+
+  /** A foreign or removed document would otherwise be filed as evidence nobody can open. */
+  private async assertDocumentsLive(
+    tx: DbTransaction,
+    scope: TxScope,
+    ids: readonly string[],
+  ): Promise<void> {
+    if (ids.length === 0) return;
+    const rows = await tx
+      .select({ id: documents.id })
+      .from(documents)
+      .where(
+        scoped(scope).where(
+          documents,
+          and(inArray(documents.id, [...ids]), isNull(documents.removedAt)),
+        ),
+      );
+    const live = new Set(rows.map((r) => r.id));
+    const bad = ids.filter((id) => !live.has(id));
+    if (bad.length > 0) {
+      throw new UnprocessableEntityException({
+        code: 'invalid_evidence_document',
+        message: 'An evidence document does not exist in this entity or was removed',
+        documentIds: bad,
+      });
+    }
+  }
 
   /**
    * Locks the quotation, then the version (the order ReviseService uses, so the two never deadlock), and checks
    * every rule that needs no setting: same quotation, expected row version, Sent, decided day, validity.
    */
   private async lockSent(tx: DbTransaction, scope: TxScope, input: OutcomeInputBase) {
-    const [peek] = await tx
-      .select({ quotationId: quotationVersions.quotationId })
-      .from(quotationVersions)
-      .where(scoped(scope).where(quotationVersions, eq(quotationVersions.id, input.versionId)));
-    if (peek === undefined) throw notFound();
-    if (input.quotationId !== undefined && peek.quotationId !== input.quotationId) throw notFound();
-    const [quotation] = await tx
-      .select()
-      .from(quotations)
-      .where(scoped(scope).where(quotations, eq(quotations.id, peek.quotationId)))
-      .for('update');
-    if (quotation === undefined) throw notFound();
-    const [version] = await tx
-      .select()
-      .from(quotationVersions)
-      .where(scoped(scope).where(quotationVersions, eq(quotationVersions.id, input.versionId)))
-      .for('update');
-    if (version === undefined) throw notFound();
+    const { quotation, version } = await this.lockVersion(tx, scope, input);
 
     if (input.expectedVersion !== undefined && version.version !== input.expectedVersion) {
       throw conflict(
@@ -254,6 +405,33 @@ export class QuotationOutcomeService {
         `This quotation was valid until ${version.validUntil}; revise it to answer again`,
       );
     }
+    return { quotation, version };
+  }
+
+  /** Locks the quotation, then the version; a version of another quotation (when one is named) is a 404. */
+  private async lockVersion(
+    tx: DbTransaction,
+    scope: TxScope,
+    input: { versionId: string; quotationId?: string | undefined },
+  ) {
+    const [peek] = await tx
+      .select({ quotationId: quotationVersions.quotationId })
+      .from(quotationVersions)
+      .where(scoped(scope).where(quotationVersions, eq(quotationVersions.id, input.versionId)));
+    if (peek === undefined) throw notFound();
+    if (input.quotationId !== undefined && peek.quotationId !== input.quotationId) throw notFound();
+    const [quotation] = await tx
+      .select()
+      .from(quotations)
+      .where(scoped(scope).where(quotations, eq(quotations.id, peek.quotationId)))
+      .for('update');
+    if (quotation === undefined) throw notFound();
+    const [version] = await tx
+      .select()
+      .from(quotationVersions)
+      .where(scoped(scope).where(quotationVersions, eq(quotationVersions.id, input.versionId)))
+      .for('update');
+    if (version === undefined) throw notFound();
     return { quotation, version };
   }
 

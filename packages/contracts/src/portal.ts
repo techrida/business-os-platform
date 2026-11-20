@@ -12,6 +12,7 @@ import {
 } from './document-style.js';
 import { CurrencySchema, DecimalString, type Currency } from './money.js';
 import {
+  EvidenceKindSchema,
   PaymentMilestoneDtoSchema,
   PercentFourDecimals,
   QuantityString,
@@ -146,6 +147,16 @@ export const CustomerQuotationViewSchema = z.strictObject({
   file: z
     .strictObject({ documentId: z.guid(), filename: z.string(), sha256: sha256Hex })
     .nullable(),
+  /**
+   * What happens after the customer accepted (F1-Q28), on a portal read of an accepted version only (never in the
+   * PDF): `pending` until staff confirm the acceptance, and the documents they still need from the customer.
+   */
+  afterAcceptance: z
+    .strictObject({
+      status: z.enum(['pending', 'confirmed']),
+      needs: z.array(EvidenceKindSchema),
+    })
+    .optional(),
 });
 export type CustomerQuotationView = z.infer<typeof CustomerQuotationViewSchema>;
 

@@ -1,6 +1,7 @@
 import { formatMoney, type NumberSystems } from '@bos/locale';
 
 import { Alert } from '@/components/ui/alert';
+import { Button } from '@/components/ui/button';
 import { useNumberSystems } from '@/components/ui/number-system-context';
 import { Panel } from '@/components/ui/panel';
 
@@ -10,9 +11,10 @@ import styles from './quote-builder.module.css';
 
 /**
  * What the totals area is doing. `ready` and `loading` carry a server result; the others carry
- * only a message, so no amount can be shown that the server did not return.
+ * only a message, so no amount can be shown that the server did not return. `starting` is the page
+ * as the server sent it, before its script runs: nothing has been asked yet.
  */
-export type PreviewState = 'needs_save' | 'incomplete' | 'loading' | 'ready' | 'error';
+export type PreviewState = 'starting' | 'needs_save' | 'incomplete' | 'loading' | 'ready' | 'error';
 
 export interface TotalsPanelProps {
   currency: Currency;
@@ -20,6 +22,10 @@ export interface TotalsPanelProps {
   preview?: PreviewResult | null | undefined;
   /** Explains `needs_save`, `incomplete` and `error`. */
   message?: string | undefined;
+  /** This page's address: a plain link to load it again, which works even if its script did not. */
+  reloadHref?: string | undefined;
+  /** Asks for the totals again after an error. */
+  onRetry?: (() => void) | undefined;
 }
 
 const money =
@@ -33,7 +39,14 @@ const money =
  * (the NFR "amounts are exact" lives on the server). While a new preview is on the way the last
  * server figures stay visible, marked as updating, so the panel does not flash empty on each key.
  */
-export function TotalsPanel({ currency, state, preview, message }: TotalsPanelProps) {
+export function TotalsPanel({
+  currency,
+  state,
+  preview,
+  message,
+  reloadHref,
+  onRetry,
+}: TotalsPanelProps) {
   const fmt = money(useNumberSystems());
   const shown = (state === 'ready' || state === 'loading') && preview ? preview : null;
   const t = shown?.totals;
@@ -99,9 +112,29 @@ export function TotalsPanel({ currency, state, preview, message }: TotalsPanelPr
           ) : null}
         </div>
       ) : state === 'error' ? (
-        <Alert tone="error" role="alert">
+        <Alert
+          tone="error"
+          role="alert"
+          actions={
+            onRetry ? (
+              <Button size="small" variant="secondary" onClick={onRetry}>
+                Try again
+              </Button>
+            ) : null
+          }
+        >
           {message ?? 'The totals could not be worked out. Try again in a moment.'}
         </Alert>
+      ) : state === 'starting' ? (
+        <p className={styles.muted}>
+          The totals appear once the page has finished loading.
+          {reloadHref ? (
+            <>
+              {' '}
+              If they do not, <a href={reloadHref}>reload the page</a>.
+            </>
+          ) : null}
+        </p>
       ) : state === 'loading' ? (
         <div className={styles.skeletons} aria-hidden="true">
           <span className={styles.skeleton} />

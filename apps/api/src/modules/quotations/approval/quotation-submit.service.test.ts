@@ -1,8 +1,13 @@
 // Unit tests of QuotationSubmitService with the database, pricing and approvals faked: the order of operations and
 // what reaches the approvals engine. The SQL (scoped reads, the S2 freeze and snapshot checks, the 404 for another
 // entity) runs on Postgres in the integration test.
-import type { RoutePlan } from '@bos/contracts';
-import { ConflictException, ForbiddenException, NotFoundException } from '@nestjs/common';
+import { DEFAULT_SALES_SCHEDULE, type RoutePlan } from '@bos/contracts';
+import {
+  ConflictException,
+  ForbiddenException,
+  NotFoundException,
+  UnprocessableEntityException,
+} from '@nestjs/common';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import type { DbTransaction } from '../../../platform/db/db.module';
@@ -20,6 +25,7 @@ import {
   snapshotSha256,
 } from './quotation-approval-snapshot';
 import {
+  assertNoZeroInstalment,
   QuotationSubmitService,
   storedPricingInput,
   type SubmitHead,
@@ -271,6 +277,7 @@ function setup(h: SubmitHead = head(), mayReadCost = true) {
     audit as never,
     store,
     caller as never,
+    { get: vi.fn().mockResolvedValue(DEFAULT_SALES_SCHEDULE) } as never,
     () => NOW,
   );
   return { service, store, authz, pricing, approvals, notify, audit };
@@ -574,6 +581,53 @@ describe('QuotationSubmitService.submit', () => {
     });
     expect(store.load).not.toHaveBeenCalled();
     expect(approvals.preview).not.toHaveBeenCalled();
+  });
+});
+
+describe('assertNoZeroInstalment (FR-4)', () => {
+  const schedule = [
+    { label: 'Advance', percent: '50' },
+    { label: 'On delivery', percent: '50' },
+  ];
+
+  it('refuses a total whose split leaves a 0.00 instalment, naming the milestone', () => {
+    let error: unknown;
+    try {
+      assertNoZeroInstalment('0.01', 'NPR', schedule);
+    } catch (e) {
+      error = e;
+    }
+    expect(error).toBeInstanceOf(UnprocessableEntityException);
+    expect((error as UnprocessableEntityException).getResponse()).toMatchObject({
+      code: 'PAYMENT_INSTALMENT_ZERO',
+      details: { label: 'On delivery', total: '0.01' },
+    });
+  });
+
+  it('refuses a 0% milestone, and passes every instalment above 0.00 or no schedule at all', () => {
+    expect(() =>
+      assertNoZeroInstalment('1000.00', 'USD', [
+        { label: 'Deposit', percent: '0' },
+        { label: 'Balance', percent: '100' },
+      ]),
+    ).toThrow(UnprocessableEntityException);
+    expect(() => assertNoZeroInstalment('0.02', 'NPR', schedule)).not.toThrow();
+    expect(() => assertNoZeroInstalment('0.00', 'NPR', [])).not.toThrow();
+  });
+
+  it('splits the company default schedule when the quotation has none (the order bills on it)', () => {
+    // 20% of 0.02 is 0.004, so the default Final 20% line would be 0.00 on the order.
+    let error: unknown;
+    try {
+      assertNoZeroInstalment('0.02', 'NPR', [], DEFAULT_SALES_SCHEDULE);
+    } catch (e) {
+      error = e;
+    }
+    expect(error).toBeInstanceOf(UnprocessableEntityException);
+    expect((error as UnprocessableEntityException).getResponse()).toMatchObject({
+      code: 'PAYMENT_INSTALMENT_ZERO',
+    });
+    expect(() => assertNoZeroInstalment('100.00', 'NPR', [], DEFAULT_SALES_SCHEDULE)).not.toThrow();
   });
 });
 

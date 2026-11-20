@@ -6,10 +6,12 @@ import { notFound } from 'next/navigation';
 
 import { stageLabel } from '@/components/p2/crm/stages';
 import { getOpportunity, listPaymentTerms } from '@/components/p2/quote-builder/api';
-import { getQuotation } from '@/components/p2/quotations/api';
+import { getEvidence, getQuotation } from '@/components/p2/quotations/api';
+import { AcceptancePanel } from '@/components/p2/quotations/acceptance-panel';
 import { QuotationContents } from '@/components/p2/quotations/contents';
 import styles from '@/components/p2/quotations/detail.module.css';
 import { DetailActions, hasDetailActions } from '@/components/p2/quotations/detail-actions';
+import { opportunityBlockers } from '@/components/p2/quotations/opportunity-gate';
 import { pdfLinkFor } from '@/components/p2/quotations/document-link';
 import { PdfFailed } from '@/components/p2/quotations/pdf-failed';
 import { PreparingRefresh } from '@/components/p2/quotations/preparing-refresh';
@@ -204,10 +206,13 @@ export default async function QuotationDetailPage({
   const { quotation, versions, customerName, contacts } = detail;
   const current = versions.find((v) => v.id === quotation.currentVersionId) ?? null;
   const allowed = await getPermissionCheck(session);
-  const orders =
-    current?.status === 'accepted' && allowed('sales_order.read')
-      ? await listSalesOrders(session, { quotationVersionId: current.id }).catch(() => [])
-      : [];
+  const accepted = current?.status === 'accepted' ? current : null;
+  const [orders, evidence] = await Promise.all([
+    accepted && allowed('sales_order.read')
+      ? listSalesOrders(session, { quotationVersionId: accepted.id }).catch(() => [])
+      : [],
+    accepted ? getEvidence(session, quotation.id, accepted.id) : null,
+  ]);
   const order = orders.find((item) => item.status !== 'cancelled');
   const mayRetryPdf = allowed('quotation.send');
   const maySend = detail.capabilities.canSend ?? allowed('quotation.send');
@@ -234,6 +239,20 @@ export default async function QuotationDetailPage({
           .then(() => listPaymentTerms(session))
           .then((terms) => terms.find((t) => t.id === paymentTermId)?.label)
           .catch(() => undefined);
+
+  // Send and Accepted are hidden while the opportunity's stage would make the API refuse them; the
+  // reason is said here once, to whoever would otherwise have had the button.
+  const blockers = current === null ? null : opportunityBlockers(opportunity, current.id);
+  const heldBack =
+    current === null || blockers === null
+      ? null
+      : (current.status === 'approved' || current.status === 'expired') &&
+          blockers.send !== null &&
+          maySend
+        ? blockers.send
+        : current.status === 'sent' && blockers.accept !== null && mayRecordOutcome
+          ? blockers.accept
+          : null;
 
   // The quotation returns the names of the people it names (owner, history actors): no admin directory.
   const people = new Map((detail.people ?? []).map((p) => [p.userId, p.name]));
@@ -328,6 +347,8 @@ export default async function QuotationDetailPage({
             includeOutcome: true,
             maySend,
             mayRecordOutcome,
+            opportunity,
+            versionId: current.id,
           }) ? (
             <DetailActions
               quotationId={quotation.id}
@@ -339,6 +360,7 @@ export default async function QuotationDetailPage({
               includeOutcome={true}
               maySend={maySend}
               mayRecordOutcome={mayRecordOutcome}
+              opportunity={opportunity}
             />
           ) : null
         }
@@ -352,6 +374,12 @@ export default async function QuotationDetailPage({
         >
           The current revision could not be loaded. Reload to try again. Earlier revisions remain
           available below.
+        </Alert>
+      ) : null}
+
+      {heldBack !== null ? (
+        <Alert tone="info" role="status">
+          {heldBack}
         </Alert>
       ) : null}
 
@@ -413,6 +441,20 @@ export default async function QuotationDetailPage({
         </div>
 
         <div className={`${styles.stack} ${styles.historyStack}`}>
+          {current?.status === 'accepted' ? (
+            <AcceptancePanel
+              quotationId={quotation.id}
+              number={quotation.number}
+              version={current}
+              evidence={evidence}
+              confirmedByName={people.get(evidence?.confirmation?.confirmedBy ?? '') ?? undefined}
+              order={order}
+              mayReadOrders={allowed('sales_order.read')}
+              reloadHref={path}
+              dateFormat={dateFormat}
+            />
+          ) : null}
+
           <StatusHistory
             history={detail.statusHistory}
             versions={versions}
@@ -445,14 +487,6 @@ export default async function QuotationDetailPage({
                   <span className={styles.recordNote}>
                     {stageLabel('opportunity', opportunity.stage)}
                   </span>
-                </li>
-              ) : null}
-              {order ? (
-                <li>
-                  <Icon name="briefcase" size={18} />
-                  <Link href={`/sales-orders/${encodeURIComponent(order.id)}`}>
-                    {order.number === null ? 'Sales order' : `Sales order ${order.number}`}
-                  </Link>
                 </li>
               ) : null}
             </ul>

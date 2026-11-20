@@ -384,3 +384,70 @@ describe('Revise', () => {
     expect(out).toContain('The current one stays in the revision list as a record.');
   });
 });
+
+describe('Cancel quotation (F1-Q27: Cancel only)', () => {
+  const cancelTriggers = (html: string): number =>
+    [...html.matchAll(/<button[^>]*>Cancel quotation<\/button>/g)].length;
+
+  function renderWith(
+    status: QuotationStatus,
+    capabilities: QuotationCapabilities,
+    lifecycle?: { canCancel?: boolean },
+  ): string {
+    return renderToStaticMarkup(
+      <DetailActions
+        quotationId={Q}
+        number="QT-2082-0042"
+        current={current({ status, rejectionSource: status === 'rejected' ? 'customer' : null })}
+        contacts={contacts}
+        capabilities={{ ...capabilities, ...lifecycle }}
+        reloadHref={`/quotations/${Q}`}
+        today={TODAY}
+      />,
+    );
+  }
+
+  it.each(['draft', 'returned', 'submitted'] as const)(
+    'is offered on a %s quotation the API says the caller may cancel',
+    (s) => {
+      const html = renderWith(s, ALLOWED, { canCancel: true });
+      expect(cancelTriggers(html)).toBeGreaterThan(0);
+      expect(html).toContain('Why are you cancelling it?');
+    },
+  );
+
+  it('says a Submitted quotation leaves the approver too', () => {
+    expect(renderWith('submitted', ALLOWED, { canCancel: true })).toContain(
+      'Cancelling ends this quotation and its approval request',
+    );
+    expect(renderWith('draft', ALLOWED, { canCancel: true })).not.toContain('approval request');
+  });
+
+  it.each(['approved', 'sent', 'accepted', 'rejected', 'expired', 'cancelled'] as const)(
+    'is not offered on a %s quotation, which the API cannot cancel',
+    (s) => {
+      expect(cancelTriggers(renderWith(s, ALLOWED, { canCancel: true }))).toBe(0);
+    },
+  );
+
+  it('follows the API answer, not the edit right', () => {
+    expect(cancelTriggers(renderWith('draft', ALLOWED, { canCancel: false }))).toBe(0);
+    expect(
+      cancelTriggers(renderWith('draft', { ...ALLOWED, canEdit: false }, { canCancel: true })),
+    ).toBeGreaterThan(0);
+  });
+
+  it('is not offered when the API answer has no canCancel at all', () => {
+    expect(cancelTriggers(renderWith('draft', ALLOWED))).toBe(0);
+    expect(cancelTriggers(renderWith('submitted', ALLOWED))).toBe(0);
+  });
+});
+
+describe('Record outcome names the revision', () => {
+  it('titles the dialog with the current revision it records on', () => {
+    const html = render({ status: 'sent', revisionNo: 2 });
+    expect(html).toContain('Record outcome for revision 2');
+    expect(html).toContain('QT-2082-0042, revision 2');
+    expect(html).not.toContain('Record the outcome of');
+  });
+});

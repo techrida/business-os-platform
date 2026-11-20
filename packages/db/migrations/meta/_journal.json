@@ -538,6 +538,13 @@
       "idx": 76,
       "version": "7",
       "when": 1783000000123,
+      "tag": "0107_quotation_evidence_confirmations",
+      "breakpoints": true
+    },
+    {
+      "idx": 77,
+      "version": "7",
+      "when": 1783000000124,
       "tag": "0115_document_render_failures",
       "breakpoints": true
     }
