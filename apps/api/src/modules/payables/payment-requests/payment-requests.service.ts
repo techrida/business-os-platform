@@ -353,7 +353,8 @@ export class PaymentRequestsService {
             .select({
               currency: paymentRequests.currency,
               n: sql<number>`count(*)::int`,
-              amount: sql<string>`sum(${paymentRequests.totalAmount})::text`,
+              // Money still asked for: rejected and cancelled requests add nothing.
+              amount: sql<string>`sum(CASE WHEN ${paymentRequests.status} IN ('rejected', 'cancelled') THEN 0 ELSE ${paymentRequests.totalAmount} END)::text`,
             })
             .from(paymentRequests)
             .innerJoin(vendors, vendorJoin)

@@ -519,8 +519,9 @@ describe('one legal entity at a time', () => {
     const listed = z.array(PaymentListItemSchema).parse(rows);
     expect(listed.map((r) => r.id)).toEqual([p.id]);
     expect(total).toBe(1);
-    // The amounts of every match, per currency (U15b-Q4); a filter that matches nothing totals nothing.
-    expect(totals).toEqual([{ currency: p.currency, amount: p.amount }]);
+    // The money received per currency (U15b-Q4): a submitted payment is a row but not yet money, so it adds
+    // nothing; a filter that matches nothing totals nothing.
+    expect(totals).toEqual([{ currency: p.currency, amount: '0.00' }]);
     expect((await service.list(w.scope, { status: ['verified'] })).totals).toEqual([]);
     expect((await service.list(w.scope, { status: ['verified'] })).total).toBe(0);
     expect((await service.list(w.scope, { method: [p.method], status: ['submitted'] })).total).toBe(

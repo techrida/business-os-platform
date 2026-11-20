@@ -196,7 +196,12 @@ export class InvoiceDraftingService {
             .select({
               currency: invoices.currency,
               n: count(),
-              amount: sql<string>`sum(${invoices.total})::text`,
+              // Live money only: issued tax invoices and debit notes, less issued credit notes. Drafts, proformas and
+              // discarded rows are in the row count but add nothing.
+              amount: sql<string>`sum(CASE
+                WHEN ${invoices.status} = 'issued' AND ${invoices.kind} IN ('tax_invoice', 'debit_note') THEN ${invoices.total}
+                WHEN ${invoices.status} = 'issued' AND ${invoices.kind} = 'credit_note' THEN -${invoices.total}
+                ELSE 0 END)::text`,
             })
             .from(invoices)
             .innerJoin(customers, customerJoin())
