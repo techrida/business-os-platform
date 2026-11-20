@@ -48,7 +48,7 @@ import { updateVersioned, withIdempotency } from '../../../platform/db/idempoten
 import { withTx, type TxScope } from '../../../platform/db/tx';
 import { NumberingService } from '../../../platform/settings/numbering.service';
 import { ApprovalsService } from '../../approvals/requests.service';
-import { holdsPoRead, mayReadPo } from '../orders/po-read-access';
+import { holdsPoRead, mayReadPo, mayReceiveKind } from '../orders/po-read-access';
 import { requestEmergencyReview } from './emergency-review';
 import {
   RECEIPT_AUDIT_ENTITY,
@@ -59,6 +59,7 @@ import {
   openQuantity,
   overReceiptMessage,
   progressRowsOf,
+  receiptCan,
   repeatedSerialAcrossLines,
   reversalLinesOf,
   serialOnTwoLines,
@@ -164,12 +165,13 @@ export class ReceiptsService {
 
   // ------------------------------------------------------------------------------------------------- reads
 
-  /** The receipts of one PO, newest first. 404 for another entity's PO. */
+  /** The receipts of one PO, newest first, each with what the caller may do with it. 404 for another entity's PO. */
   async list(purchaseOrderId: string): Promise<ReceiptDto[]> {
     this.assertStaffWithAccess();
-    const { scope } = this.caller.current();
+    const { scope, principal } = this.caller.current();
     const po = await this.readPo(this.db, scope, purchaseOrderId);
-    this.assertMayRead(await this.requestOf(this.db, scope, po));
+    const request = await this.requestOf(this.db, scope, po);
+    this.assertMayRead(request);
     const rows = await this.db
       .select()
       .from(receipts)
@@ -180,23 +182,28 @@ export class ReceiptsService {
       .from(receiptLines)
       .where(scoped(scope).where(receiptLines, eq(receiptLines.purchaseOrderId, po.id)));
     const serials = await this.serialsOf(this.db, scope, lines);
-    return rows.map((r) =>
-      toReceiptDto(
+    return rows.map((r) => ({
+      ...toReceiptDto(
         r,
         lines.filter((l) => l.receiptId === r.id),
         serials,
       ),
-    );
+      can: receiptCan(mayReceiveKind(principal, r.kind, request), r, po.status),
+    }));
   }
 
   /** One receipt with its lines and serials; 404 outside the caller's entity or reach. */
   async get(id: string): Promise<ReceiptDto> {
     this.assertStaffWithAccess();
-    const { scope } = this.caller.current();
+    const { scope, principal } = this.caller.current();
     const row = await this.readReceipt(this.db, scope, id);
     const po = await this.readPo(this.db, scope, row.purchaseOrderId);
-    this.assertMayRead(await this.requestOf(this.db, scope, po));
-    return this.dtoOf(this.db, scope, row);
+    const request = await this.requestOf(this.db, scope, po);
+    this.assertMayRead(request);
+    return {
+      ...(await this.dtoOf(this.db, scope, row)),
+      can: receiptCan(mayReceiveKind(principal, row.kind, request), row, po.status),
+    };
   }
 
   /**
@@ -233,6 +240,10 @@ export class ReceiptsService {
       number: po.number,
       status: po.status,
       lines: progressRowsOf(lines.map(poFacts), quantities),
+      can: {
+        goods: mayReceiveKind(principal, 'goods', request),
+        service: mayReceiveKind(principal, 'service', request),
+      },
     };
   }
 

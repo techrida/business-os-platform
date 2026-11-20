@@ -85,21 +85,34 @@ export function poReadWhere(p: Principal): SQL | undefined {
 }
 
 /**
- * May `p` take in what arrives on this order? The rule the receipts unit applies (assertMayReceive): goods need
- * procurement.receipt.confirm on the order's request; a service may also be confirmed by the request's requester.
- * Only on an order that still takes receipts.
+ * May `p` receive, confirm, discard or reverse a receipt of `kind` on the order raised from `request`? The rule the
+ * receipts unit enforces (assertMayReceive): goods need procurement.receipt.confirm on the order's request; a service
+ * may also be handled by the request's requester. Anyone else only reads.
  */
+export function mayReceiveKind(
+  p: Principal,
+  kind: 'goods' | 'service',
+  request: PoRequestFacts,
+): boolean {
+  if (!activeStaff(p)) return false;
+  if (can(p, 'procurement.receipt.confirm', purchaseRequestRef(request)).allowed) return true;
+  return (
+    kind === 'service' &&
+    p.organizationId === request.organizationId &&
+    p.userId === request.requesterUserId
+  );
+}
+
+/** mayReceiveKind for some line of the order, on an order that still takes receipts: Receive goods on the order. */
 export function mayReceivePo(
   p: Principal,
   status: PoStatus,
   request: PoRequestFacts,
   hasServiceLines: boolean,
 ): boolean {
-  if (!activeStaff(p) || !RECEIVABLE.includes(status)) return false;
-  if (can(p, 'procurement.receipt.confirm', purchaseRequestRef(request)).allowed) return true;
+  if (!RECEIVABLE.includes(status)) return false;
   return (
-    hasServiceLines &&
-    p.organizationId === request.organizationId &&
-    p.userId === request.requesterUserId
+    mayReceiveKind(p, 'goods', request) ||
+    (hasServiceLines && mayReceiveKind(p, 'service', request))
   );
 }

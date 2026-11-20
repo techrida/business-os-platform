@@ -623,6 +623,40 @@ describe('who may receive', () => {
     }
   });
 
+  it('tells each caller which receipt actions it may take, and offers a read-only buyer none', async () => {
+    const po = await newPo();
+    as(U.warehouse, 'warehouse');
+    const goods = await createDraft(po, [{ poLineId: po.goods, quantity: '1' }]);
+    as(U.requester, 'operations_officer');
+    const svc = await createDraft(po, [{ poLineId: po.service, quantity: '1' }], 'service');
+    const none = { confirm: false, discard: false, reverse: false };
+    const draftActions = { confirm: true, discard: true, reverse: false };
+
+    as(U.warehouse, 'warehouse');
+    expect((await service.get(goods.id)).can).toEqual(draftActions);
+    expect((await service.get(svc.id)).can).toEqual(draftActions);
+    expect((await service.progress(po.id)).can).toEqual({ goods: true, service: true });
+
+    // Procurement reads every receipt but receives nothing: no Confirm or Discard, not even on a service.
+    as(U.procurement, 'procurement');
+    expect((await service.get(svc.id)).can).toEqual(none);
+    expect((await service.list(po.id)).map((r) => r.can)).toEqual([none, none]);
+    expect((await service.progress(po.id)).can).toEqual({ goods: false, service: false });
+
+    as(U.requester, 'operations_officer');
+    expect((await service.get(svc.id)).can).toEqual(draftActions);
+    expect((await service.get(goods.id)).can).toEqual(none);
+    expect((await service.progress(po.id)).can).toEqual({ goods: false, service: true });
+
+    as(U.warehouse, 'warehouse');
+    await confirm(goods.id);
+    expect((await service.get(goods.id)).can).toEqual({
+      confirm: false,
+      discard: false,
+      reverse: true,
+    });
+  });
+
   it('refuses to confirm twice', async () => {
     const po = await newPo();
     const done = await receiveGoods(po, [{ poLineId: po.goods, quantity: '1' }]);
