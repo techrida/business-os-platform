@@ -697,14 +697,31 @@ export function workflow(cfg) {
             throw new StepFailure(
               'Could not load /inbox after Sign out (four tries); signed-out state not proven',
             );
-          const signInVisible = await page
-            .locator('input[name=loginName]')
-            .waitFor({ state: 'visible', timeout: cfg.navTimeout })
-            .then(() => true)
-            .catch(() => false);
+          // After sign-out the identity provider shows either its login form or its account chooser
+          // (it waits for a pick; nothing signs in by itself). Both leave the app signed out, but the
+          // page must stay on the sign-in origin and never return to the app on its own.
+          const authOrigin = new URL(cfg.authUrl).origin;
+          const loginForm = page.locator('input[name=loginName]');
+          const chooser = page.getByRole('heading', { name: /accounts?/i });
+          const signInState = await Promise.race([
+            loginForm
+              .waitFor({ state: 'visible', timeout: cfg.navTimeout })
+              .then(() => 'the login form')
+              .catch(() => null),
+            chooser
+              .first()
+              .waitFor({ state: 'visible', timeout: cfg.navTimeout })
+              .then(() => 'the account chooser')
+              .catch(() => null),
+          ]);
+          await page.waitForTimeout(3000);
+          const stayed = new URL(page.url()).origin === authOrigin;
+          s.checks.push(
+            `saw: after Sign out the sign-in page shows ${signInState ?? 'neither form nor chooser'}`,
+          );
           s.expect(
-            new URL(page.url()).origin === new URL(cfg.authUrl).origin && signInVisible,
-            'signed out: /inbox sends you to the sign-in page with its login form',
+            Boolean(signInState) && stayed,
+            'signed out: /inbox sends you to the sign-in page (login form or account chooser) and stays there',
             page.url(),
           );
           await page.waitForTimeout(cfg.pace);
