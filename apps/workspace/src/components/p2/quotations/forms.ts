@@ -149,3 +149,11 @@ export function parseCancel(form: FormData): Parsed<CancelQuotationBody> {
   }
   return { ok: false, errors };
 }
+
+/** The confirm-evidence form: only the version row the person looked at. */
+export function parseConfirmAcceptance(form: FormData): Parsed<{ expectedVersion: number }> {
+  const { expectedVersion } = version(form);
+  return Number.isInteger(expectedVersion) && expectedVersion >= 1
+    ? { ok: true, body: { expectedVersion } }
+    : { ok: false, errors: { form: BROKEN } };
+}
