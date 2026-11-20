@@ -7,6 +7,7 @@ const api = vi.hoisted(() => ({
   listPaymentRequestsPage: vi.fn(),
   getPaymentRequest: vi.fn(),
   listPaymentRequestItems: vi.fn(),
+  listPaymentRequestItemsWithoutBankAccount: vi.fn(),
 }));
 vi.mock('@/lib/bff', () => ({ requireStaffSession: () => Promise.resolve(session) }));
 // GET /v1/me for an unedited role answers the role's default grants; a test sets `live` for an edited one.
@@ -83,6 +84,7 @@ beforeEach(() => {
   reads.getVendor.mockResolvedValue({ legalName: 'Himal Supplies' });
   reads.getApprovalRequest.mockRejectedValue(new Error('forbidden'));
   api.getPaymentRequest.mockResolvedValue(record);
+  api.listPaymentRequestItemsWithoutBankAccount.mockResolvedValue([]);
   api.listPaymentRequestItems.mockResolvedValue([
     {
       openItemId: id,
@@ -139,6 +141,83 @@ it('shows an empty state when all approved bill balances are claimed', async () 
   const html = renderToStaticMarkup(await NewPage());
   expect(html).toContain('No approved bill balances');
   expect(html).not.toContain('Create draft request');
+});
+
+// U15b-Q6: a balance held back because the vendor has no verified bank account is named, with what to do.
+const heldItem = (vendorPartyId: string, vendorName: string, vendorBillId: string) => ({
+  openItemId: vendorBillId,
+  vendorPartyId,
+  vendorName,
+  vendorBillId,
+  billNumber: 'BILL-9',
+  vendorInvoiceNo: 'INV-9',
+  currency: 'NPR',
+  openAmount: '500.00',
+  claimedAmount: '0.00',
+  availableAmount: '500.00',
+});
+const plain = (html: string) => html.replace(/<[^>]+>/g, '').replace(/\s+/g, ' ');
+const otherVendor = '33333333-3333-4333-8333-333333333333';
+const otherBill = '44444444-4444-4444-8444-444444444444';
+
+it('says the vendor has no verified bank account, not that balances were claimed (U15b-Q6)', async () => {
+  api.listPaymentRequestItems.mockResolvedValue([]);
+  api.listPaymentRequestItemsWithoutBankAccount.mockResolvedValue([
+    heldItem(otherVendor, 'Everest Traders', otherBill),
+  ]);
+  const html = renderToStaticMarkup(await NewPage());
+  const text = plain(html);
+  expect(text).toContain('Approved bills from Everest Traders cannot be requested yet');
+  expect(text).toContain('this vendor has none');
+  // Default Finance verifies bank accounts but does not propose them, so it is told who does.
+  expect(text).toContain('Procurement proposes an account on the vendor’s page');
+  expect(text).not.toContain('Propose a bank account');
+  expect(html).toContain(`href="/vendors/${otherVendor}"`);
+  expect(text).not.toContain('claimed the remaining balances');
+  expect(html).not.toContain('Create draft request');
+});
+
+it('words the fix for a reader who may propose a bank account, and links vendors only for vendor readers', async () => {
+  api.listPaymentRequestItems.mockResolvedValue([]);
+  api.listPaymentRequestItemsWithoutBankAccount.mockResolvedValue([
+    heldItem(otherVendor, 'Everest Traders', otherBill),
+  ]);
+  grants.live = new Map([
+    ['payables.payment.request', 'all'],
+    ['vendor.bank.propose', 'all'],
+  ]);
+  const html = renderToStaticMarkup(await NewPage());
+  expect(plain(html)).toContain('Propose a bank account on the vendor’s page');
+  // No vendor.read: the name is shown, not linked to a page that would refuse them.
+  expect(plain(html)).toContain('Everest Traders');
+  expect(html).not.toContain(`href="/vendors/${otherVendor}"`);
+});
+
+it('keeps the claimed-balances message when no vendor is missing a bank account, or that read fails', async () => {
+  api.listPaymentRequestItems.mockResolvedValue([]);
+  api.listPaymentRequestItemsWithoutBankAccount.mockRejectedValue(new Error('offline'));
+  expect(plain(renderToStaticMarkup(await NewPage()))).toContain(
+    'Existing requests may have claimed the remaining balances',
+  );
+});
+
+it('explains a ?bill= of a vendor without a bank account while other bills stay requestable', async () => {
+  api.listPaymentRequestItemsWithoutBankAccount.mockResolvedValue([
+    heldItem(otherVendor, 'Everest Traders', otherBill),
+  ]);
+  const html = renderToStaticMarkup(
+    await NewPage({ searchParams: Promise.resolve({ bill: otherBill }) }),
+  );
+  const text = plain(html);
+  expect(text).toContain('This bill cannot be requested yet');
+  expect(text).toContain('BILL-9 from Everest Traders cannot be requested yet');
+  // The other vendor's balance is still offered.
+  expect(html).toContain('Create draft request');
+  // No note for a bill that can be requested.
+  const ok = plain(
+    renderToStaticMarkup(await NewPage({ searchParams: Promise.resolve({ bill: id }) })),
+  );
+  expect(ok).not.toContain('This bill cannot be requested yet');
 });
 
 it('denies entry before loading eligible items and handles lookup failure', async () => {

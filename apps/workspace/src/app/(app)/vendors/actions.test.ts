@@ -18,6 +18,7 @@ vi.mock('next/navigation', () => ({
 const api = vi.hoisted(() => ({
   createVendor: vi.fn(),
   createVendorContact: vi.fn(),
+  findVendorNameMatches: vi.fn(),
   getVendor: vi.fn(),
   grantVendorPortalAccess: vi.fn(),
   proposeBankAccount: vi.fn(),
@@ -69,6 +70,7 @@ const start = { key: KEY, errors: {} };
 beforeEach(() => {
   vi.clearAllMocks();
   session.roles = ['procurement'];
+  api.findVendorNameMatches.mockResolvedValue([]);
 });
 
 describe('createVendorAction', () => {
@@ -87,6 +89,48 @@ describe('createVendorAction', () => {
         country: 'NP',
       },
       KEY,
+    );
+  });
+
+  // TR-Q12d: warn but allow.
+  const namesake = { id: ACCOUNT, legalName: 'HIMAL TRADERS PVT LTD', status: 'blocked' as const };
+
+  it('shows the vendors with the same name and creates nothing until the person confirms', async () => {
+    api.findVendorNameMatches.mockResolvedValue([namesake]);
+    const r = await createVendorAction(start, form(vendorForm));
+    expect(api.findVendorNameMatches).toHaveBeenCalledWith(
+      expect.anything(),
+      'Himal Traders Pvt. Ltd.',
+    );
+    expect(r.sameName).toEqual([namesake]);
+    expect(r.error).toBeUndefined();
+    // Nothing was sent, so the same key goes with the confirmed submit.
+    expect(r.key).toBe(KEY);
+    expect(api.createVendor).not.toHaveBeenCalled();
+  });
+
+  it('adds the vendor once the person confirms the namesakes they were shown', async () => {
+    api.findVendorNameMatches.mockResolvedValue([namesake]);
+    api.createVendor.mockResolvedValue({ id: ID });
+    await expect(
+      createVendorAction(start, form({ ...vendorForm, sameNameConfirmed: ACCOUNT })),
+    ).rejects.toThrow(`redirect /vendors/${ID}?created=1`);
+    expect(api.createVendor).toHaveBeenCalledOnce();
+  });
+
+  it('warns again about a namesake the person has not seen, even after confirming another', async () => {
+    const another = { id: DOC, legalName: 'Himal Traders', status: 'draft' as const };
+    api.findVendorNameMatches.mockResolvedValue([namesake, another]);
+    const r = await createVendorAction(start, form({ ...vendorForm, sameNameConfirmed: ACCOUNT }));
+    expect(r.sameName).toEqual([namesake, another]);
+    expect(api.createVendor).not.toHaveBeenCalled();
+  });
+
+  it('still adds the vendor when the name check cannot be read (it is a warning, not a gate)', async () => {
+    api.findVendorNameMatches.mockRejectedValue(apiError(503, 'unavailable'));
+    api.createVendor.mockResolvedValue({ id: ID });
+    await expect(createVendorAction(start, form(vendorForm))).rejects.toThrow(
+      `redirect /vendors/${ID}?created=1`,
     );
   });
 
@@ -264,14 +308,79 @@ describe('lifecycleAction', () => {
     expect(r.savedCount).toBe(1);
   });
 
-  it('start KYB review is open to vendor.write and sends the key', async () => {
+  it('start KYB review is open to vendor.write and sends the key and the status its button saw', async () => {
     api.submitVendorKyc.mockResolvedValue({});
     const r = await lifecycleAction(
       panel,
-      form({ vendorId: ID, command: 'submit_kyc', idempotencyKey: KEY }),
+      form({ vendorId: ID, command: 'submit_kyc', expectedStatus: 'draft', idempotencyKey: KEY }),
     );
-    expect(api.submitVendorKyc).toHaveBeenCalledWith(expect.anything(), ID, KEY);
+    expect(api.submitVendorKyc).toHaveBeenCalledWith(expect.anything(), ID, KEY, 'draft');
     expect(r.saved).toBe('KYB review started.');
+  });
+
+  it('send for review says so', async () => {
+    api.submitVendorKyc.mockResolvedValue({});
+    const r = await lifecycleAction(
+      panel,
+      form({
+        vendorId: ID,
+        command: 'submit_kyc',
+        expectedStatus: 'pending_kyc',
+        idempotencyKey: KEY,
+      }),
+    );
+    expect(api.submitVendorKyc).toHaveBeenCalledWith(expect.anything(), ID, KEY, 'pending_kyc');
+    expect(r.saved).toBe('The vendor was sent for review.');
+  });
+
+  it('a KYB move without the status its button saw is an incomplete form, never sent', async () => {
+    for (const expectedStatus of [undefined, 'approved', 'nope']) {
+      const r = await lifecycleAction(
+        panel,
+        form({
+          vendorId: ID,
+          command: 'submit_kyc',
+          idempotencyKey: KEY,
+          ...(expectedStatus === undefined ? {} : { expectedStatus }),
+        }),
+      );
+      expect(r.error).toMatch(/incomplete/);
+    }
+    expect(api.submitVendorKyc).not.toHaveBeenCalled();
+  });
+
+  it('a stale KYB button (409) is worded plainly and redraws the vendor page', async () => {
+    const { revalidatePath } = await import('next/cache');
+    api.submitVendorKyc.mockRejectedValue(apiError(409, 'conflict'));
+    const r = await lifecycleAction(
+      panel,
+      form({ vendorId: ID, command: 'submit_kyc', expectedStatus: 'draft', idempotencyKey: KEY }),
+    );
+    expect(r.error).toBe('This vendor changed since you opened it. Reload and try again.');
+    expect(r.error).not.toMatch(/internal wording/);
+    expect(r.reload).toBe(true);
+    expect(r.refreshed).toBe(true);
+    expect(r.saved).toBeUndefined();
+    expect(revalidatePath).toHaveBeenCalledWith(`/vendors/${ID}`);
+    // A definite answer: the next try is a new decision with a new key.
+    expect(r.key).not.toBe(KEY);
+  });
+
+  it('a refusal that does not mean the page is stale leaves the page as it is', async () => {
+    const { revalidatePath } = await import('next/cache');
+    api.submitVendorKyc.mockRejectedValue(apiError(409, 'kyb_not_submitted'));
+    const r = await lifecycleAction(
+      panel,
+      form({
+        vendorId: ID,
+        command: 'submit_kyc',
+        expectedStatus: 'pending_kyc',
+        idempotencyKey: KEY,
+      }),
+    );
+    expect(r.error).toMatch(/KYB case has not been submitted/);
+    expect(r.refreshed).toBeUndefined();
+    expect(revalidatePath).not.toHaveBeenCalled();
   });
 
   it('an unknown command is refused as an incomplete form', async () => {

@@ -9,6 +9,7 @@ import {
   isEditable,
   lifecycleOptions,
   mayGrantPortal,
+  sendForReviewHint,
   VENDOR_KIND_LABEL,
   VENDOR_STATUS_LABEL,
   vendorGrants,
@@ -46,8 +47,23 @@ describe('lifecycle options', () => {
     expect(names('draft', true, false)).toEqual(['submit_kyc']);
     expect(names('draft', false, true)).toEqual([]);
   });
-  it('pending_kyc can be sent for review', () => {
-    expect(names('pending_kyc', true, true)).toEqual(['submit_kyc']);
+  it('pending_kyc can be sent for review only once the KYB case is submitted', () => {
+    const pending = (kybSubmitted: boolean | undefined, write = true) =>
+      lifecycleOptions('pending_kyc', { write, activate: true }, kybSubmitted).map((o) => o.label);
+    expect(pending(true)).toEqual(['Send for review']);
+    expect(pending(false)).toEqual([]);
+    // Unknown fails closed: the button would be refused by the API.
+    expect(pending(undefined)).toEqual([]);
+    expect(pending(true, false)).toEqual([]);
+  });
+  it('explains a missing "Send for review" to a writer, and only then', () => {
+    expect(sendForReviewHint('pending_kyc', true, false)).toMatch(/once its KYB case is submitted/);
+    expect(sendForReviewHint('pending_kyc', true, undefined)).toMatch(
+      /could not check the KYB case/,
+    );
+    expect(sendForReviewHint('pending_kyc', true, true)).toBeNull();
+    expect(sendForReviewHint('pending_kyc', false, false)).toBeNull();
+    expect(sendForReviewHint('draft', true, false)).toBeNull();
   });
   it('under review can be activated only with vendor.activate', () => {
     expect(names('under_review', true, true)).toEqual(['activate']);
@@ -72,7 +88,7 @@ describe('lifecycle options', () => {
       archive: 'archived',
     } as const;
     for (const s of VENDOR_STATUSES) {
-      for (const o of lifecycleOptions(s, { write: true, activate: true })) {
+      for (const o of lifecycleOptions(s, { write: true, activate: true }, true)) {
         if (o.command === 'submit_kyc') continue;
         expect(canTransitionVendor(s, to[o.command])).toBe(true);
       }
