@@ -392,6 +392,18 @@ describe('InvoiceRenderSweeper.sweep', () => {
     expect(f.store.recordFailure).not.toHaveBeenCalled();
   });
 
+  it('keeps the stored PDF and counts no failure when print 1 cannot be recorded on the retry either', async () => {
+    const f = fixture({ candidates: [candidate(1)] });
+    f.store.recordPrint.mockRejectedValue(new Error('print log down'));
+    const result = await f.sweeper.sweep();
+    expect(result).toMatchObject({ rendered: 1, failed: 0, failures: [] });
+    expect(f.store.recordPrint).toHaveBeenCalledTimes(2);
+    expect(f.store.discardUnfilled).not.toHaveBeenCalled();
+    expect(f.store.recordFailure).not.toHaveBeenCalled();
+    expect(f.audit.record).not.toHaveBeenCalled();
+    expect(Object.keys(f.store)).not.toContain('discardUnprinted');
+  });
+
   it('counts the failure even when the document of the failed try cannot be removed', async () => {
     const f = fixture();
     f.documents.receiveGenerated.mockRejectedValue(new Error('disk full'));
