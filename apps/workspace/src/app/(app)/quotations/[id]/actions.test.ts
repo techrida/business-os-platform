@@ -2,7 +2,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { ApiError } from '@/lib/api';
 
-import { outcomeAction, reviseAction, sendAction, type ActionState } from './actions';
+import { cancelAction, outcomeAction, reviseAction, sendAction, type ActionState } from './actions';
 
 // `server-only` throws outside the react-server condition, which Vitest does not use.
 vi.mock('server-only', () => ({}));
@@ -201,5 +201,52 @@ describe('reviseAction', () => {
     const state = await reviseAction(prev, revise());
     expect(state.reload).toBe(true);
     expect(mocks.redirect).not.toHaveBeenCalled();
+  });
+});
+
+describe('cancelAction', () => {
+  const cancel = (over: Record<string, string> = {}) =>
+    form({
+      quotationId: Q,
+      versionId: V,
+      idempotencyKey: KEY,
+      expectedVersion: '4',
+      reason: 'Customer chose another vendor',
+      ...over,
+    });
+
+  it('posts the reason and the version row to the quotation cancel endpoint, then refreshes', async () => {
+    const state = await cancelAction(prev, cancel());
+    expect(state).toEqual({ key: KEY, done: true });
+    const [, path, init] = mocks.apiFetch.mock.calls[0] as [unknown, string, RequestInit];
+    expect(path).toBe(`/v1/quotations/${Q}/cancel`);
+    expect(init.method).toBe('POST');
+    expect((init.headers as Record<string, string>)['idempotency-key']).toBe(KEY);
+    expect(JSON.parse(init.body as string)).toEqual({
+      reason: 'Customer chose another vendor',
+      expectedVersion: 4,
+    });
+    expect(mocks.revalidatePath).toHaveBeenCalledWith(`/quotations/${Q}`);
+  });
+
+  it('asks why before calling the API, in words about cancelling', async () => {
+    const state = await cancelAction(prev, cancel({ reason: '  ' }));
+    expect(mocks.apiFetch).not.toHaveBeenCalled();
+    expect(state.errors?.reason).toBe(
+      'Say why you are cancelling it. The reason is kept with the quotation.',
+    );
+    expect(state.key).toBe(KEY);
+  });
+
+  it("shows the API's refusal and does not refresh", async () => {
+    mocks.apiFetch.mockImplementation(() =>
+      answer(409, {
+        error: { code: 'invalid_transition', message: 'Only a draft can be cancelled' },
+      }),
+    );
+    const state = await cancelAction(prev, cancel());
+    expect(state.done).toBeUndefined();
+    expect(state.error).toBeTruthy();
+    expect(mocks.revalidatePath).not.toHaveBeenCalled();
   });
 });
