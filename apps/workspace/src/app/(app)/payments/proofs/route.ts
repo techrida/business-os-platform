@@ -1,6 +1,6 @@
-import { hasPermission } from '@/components/p2/customers/permissions';
 import { ApiError } from '@/lib/api';
 import { forbiddenOrigin, isSameOrigin, jsonResponse, routeSession } from '@/lib/bff';
+import { getPermissionCheck } from '@/lib/live-permissions';
 
 import { proofProblem } from '../new/proof-rules';
 
@@ -28,7 +28,7 @@ export async function POST(req: Request): Promise<Response> {
   if (!isSameOrigin(req)) return forbiddenOrigin();
   const session = await routeSession();
   if (session instanceof Response) return session;
-  if (!hasPermission(session.roles, 'payment.record')) {
+  if (!(await getPermissionCheck(session))('payment.record')) {
     return reply('Your roles do not include recording payments.', 403);
   }
 

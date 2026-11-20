@@ -7,10 +7,10 @@ import { revalidatePath } from 'next/cache';
 import { redirect } from 'next/navigation';
 
 import { todayInKathmandu } from '@/app/(app)/settings/format';
-import { hasPermission } from '@/components/p2/customers/permissions';
 import { submitPayment } from '@/lib/api-receivables';
 import { requireStaffSession } from '@/lib/bff';
 import { currencyNotEnabledText } from '@/lib/kernel-ui';
+import { getPermissionCheck } from '@/lib/live-permissions';
 
 import { describePaymentFailure } from '../_lib/failure';
 
@@ -101,7 +101,7 @@ export async function recordPaymentAction(
   const submitted = text(form, 'idempotencyKey');
   const key = KEY.test(submitted) ? submitted : prev.key;
   if (!KEY.test(key)) return { key: randomUUID(), error: BROKEN, reload: true };
-  if (!hasPermission(session.roles, 'payment.record')) {
+  if (!(await getPermissionCheck(session))('payment.record')) {
     return { key, error: NO_RECORD_WORDS };
   }
 
