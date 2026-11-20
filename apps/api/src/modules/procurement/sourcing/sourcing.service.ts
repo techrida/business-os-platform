@@ -38,7 +38,7 @@ import {
   Optional,
   UnprocessableEntityException,
 } from '@nestjs/common';
-import { and, asc, desc, eq, inArray, sql } from 'drizzle-orm';
+import { and, asc, desc, eq, inArray, isNull, sql } from 'drizzle-orm';
 
 import { AuditService } from '../../../platform/audit/audit.service';
 import { DB, type Db, type DbTransaction } from '../../../platform/db/db.module';
@@ -813,7 +813,12 @@ export class SourcingService {
     const [doc] = await tx
       .select({ id: documents.id })
       .from(documents)
-      .where(scoped(scope).where(documents, eq(documents.id, documentId)));
+      .where(
+        scoped(scope).where(
+          documents,
+          and(eq(documents.id, documentId), isNull(documents.removedAt)),
+        ),
+      );
     if (doc === undefined) throw badRequest('Unknown document');
     await assertNotInfected(tx, scope, [documentId]);
 
