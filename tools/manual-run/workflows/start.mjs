@@ -332,11 +332,34 @@ export function workflow(cfg) {
             );
             const submit = s.button('Submit for approval');
             await s.see(submit, 'Submit for approval');
-            await s.click(submit, 'Submit for approval');
-            await s.page
+            const confirm = s.page
               .getByRole('dialog', { name: 'Submit for approval?' })
-              .getByRole('button', { name: 'Submit for approval', exact: true })
-              .click();
+              .getByRole('button', { name: 'Submit for approval', exact: true });
+            // A dev-server reload can close the confirm dialog before its button is clicked (r3f,
+            // 20 Nov 2026). Nothing is sent until the confirm, so the dialog is opened again, at
+            // most three times, each noted; the confirm itself is clicked once.
+            for (let attempt = 1; ; attempt++) {
+              await s.click(
+                submit,
+                attempt === 1 ? 'Submit for approval' : 'Submit for approval again',
+              );
+              const ready = await confirm
+                .waitFor({ state: 'visible', timeout: 20000 })
+                .then(() => s.pause(400))
+                .then(() => confirm.waitFor({ state: 'visible', timeout: 5000 }))
+                .then(() => true)
+                .catch(() => false);
+              if (ready) break;
+              if (attempt === 3)
+                throw new StepFailure(
+                  'The Submit for approval? dialog closed or never opened, three times',
+                );
+              s.checks.push(
+                'note: the Submit for approval? dialog was lost (page reloaded); opening it again',
+              );
+              await s.page.waitForLoadState('load').catch(() => {});
+            }
+            await s.click(confirm, 'confirm Submit for approval');
             // Round 3: the page no longer carries `?submitted=pending` or the 'Submitted for approval.'
             // text; the status badge reads Submitted and the route is shown.
             await s.see(
