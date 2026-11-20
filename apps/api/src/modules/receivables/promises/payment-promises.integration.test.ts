@@ -192,7 +192,7 @@ describe('a missed promise to pay (F1-Q33)', () => {
     });
     if (call === undefined) throw new Error('the collection call is not on the Follow-ups list');
     expect(call.body).toContain(`by ${PROMISED}`);
-    expect(call.body).toContain('Pays after the board meets');
+    expect(call.body).not.toContain('Pays after the board meets');
     const done = ActivityDtoSchema.parse(
       await followUps.complete(call.id, { expectedVersion: 1, note: 'Customer pays Friday' }),
     );

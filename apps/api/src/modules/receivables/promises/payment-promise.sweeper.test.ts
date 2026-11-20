@@ -110,12 +110,12 @@ describe('collectionAssignee', () => {
 });
 
 describe('collectionCallText', () => {
-  it('names the invoice and the promised day, and carries the note', () => {
+  it('names the invoice and the promised day, and leaves the recorder note on the promise', () => {
     expect(collectionCallText(due())).toEqual({
       subject: 'Collect payment for INV-2083/84-00007',
-      body: 'The customer promised to pay INV-2083/84-00007 by 2026-11-18, and it is still open.\n\nNote: Will pay after the board meets',
+      body: 'The customer promised to pay INV-2083/84-00007 by 2026-11-18, and it is still open.',
     });
-    expect(collectionCallText(due({ note: null })).body).not.toContain('Note:');
+    expect(collectionCallText(due({ note: null })).body).toBe(collectionCallText(due()).body);
   });
 });
 

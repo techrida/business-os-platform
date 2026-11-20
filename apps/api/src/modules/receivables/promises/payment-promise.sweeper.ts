@@ -131,7 +131,9 @@ export function collectionCallText(
 } {
   const subject = `Collect payment for ${p.invoiceNumber}`;
   const promised = `The customer promised to pay ${p.invoiceNumber} by ${p.promisedDate}, and it is still open.`;
-  return { subject, body: p.note === null ? promised : `${promised}\n\nNote: ${p.note}` };
+  // The recorder's free-text note stays on the promise: the call is readable by anyone who may read the customer's
+  // activities, which is wider than who may read receivables.
+  return { subject, body: promised };
 }
 
 @Injectable()
