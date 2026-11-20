@@ -25,8 +25,6 @@ export function documentFormat(
   return { numberSystems: frozen.numberSystems, dateFormat: frozen.dateFormat };
 }
 
-<<<<<<< HEAD
-=======
 /**
  * The seller's phones, email and signatory as the original PDF printed them (frozen at print 1, U16-Q4), so a profile
  * edit never makes the screen disagree with the PDF. Without a frozen one (never printed, or printed before contacts
@@ -40,10 +38,6 @@ export function documentContact(
   return frozen.sellerContact;
 }
 
-/** Noon in Kathmandu (UTC+05:45) on the calendar day, so no timezone shifts the day. Same as the PDF. */
-const kathmanduNoon = (isoDate: string): Date => new Date(`${isoDate}T12:00:00+05:45`);
-
->>>>>>> origin/p4-main
 /**
  * A calendar date in the document's pattern, with its Bikram Sambat form as the PDF prints it (`04 Poush 2083 BS`): the
  * issue date's BS form is the one frozen at issue; any other date is converted. Outside the converter's range, no BS
