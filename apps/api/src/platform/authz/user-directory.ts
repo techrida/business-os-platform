@@ -3,6 +3,7 @@
 // An abstract class, not an interface, so Nest can use it as the injection token.
 import type { AccessLevel, RoleKey } from '@bos/contracts';
 
+import type { Db, DbTransaction } from '../db/db.module';
 import type { Actor, TxScope } from '../db/tx';
 
 /**
@@ -51,9 +52,17 @@ export abstract class UserDirectory {
   /** Best-effort staff activity tracking after route authorization. */
   recordActivity?(scope: TxScope, actor: Actor): void;
 
-  /** Active users holding `role` in this scope: the approver lookup for routing and notifications. */
-  abstract userIdsWithRole(scope: TxScope, role: RoleKey): Promise<string[]>;
+  /**
+   * Active users holding `role` in this scope: the approver lookup for routing and notifications. A caller inside a
+   * transaction passes it as `q`, so the read does not take a second pooled connection while the transaction holds
+   * one (that can stall the pool under load). Without `q` the read uses the pool.
+   */
+  abstract userIdsWithRole(
+    scope: TxScope,
+    role: RoleKey,
+    q?: Db | DbTransaction,
+  ): Promise<string[]>;
 
-  /** The address to email, or null when the user has none or is unknown. */
-  abstract emailOf(userId: string): Promise<string | null>;
+  /** The address to email, or null when the user has none or is unknown. `q` as for userIdsWithRole. */
+  abstract emailOf(userId: string, q?: Db | DbTransaction): Promise<string | null>;
 }

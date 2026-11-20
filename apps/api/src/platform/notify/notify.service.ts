@@ -92,7 +92,8 @@ export class NotifyService {
 
     if (n.email === undefined) return;
 
-    const to = await this.users.emailOf(n.userId);
+    // On `tx`, not the pool: a second pooled connection while the transaction holds one can stall the pool.
+    const to = await this.users.emailOf(n.userId, tx);
     if (!to?.trim()) {
       this.log.warn({
         event: 'notify.email_skipped',
@@ -161,7 +162,7 @@ export class NotifyService {
     n: Omit<NotifyInput, 'userId'>,
   ): Promise<void> {
     const scope = await scopeOf(tx);
-    const userIds = await this.users.userIdsWithRole(scope, role);
+    const userIds = await this.users.userIdsWithRole(scope, role, tx);
     // One after another: a drizzle transaction is a single connection, so there is nothing to gain from Promise.all.
     for (const userId of userIds) {
       await this.notifyUser(tx, { ...n, userId });
