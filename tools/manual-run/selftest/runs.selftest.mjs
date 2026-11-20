@@ -377,9 +377,9 @@ try {
         const old = new Date(Date.now() - LOCK_YOUNG_MS - 5000);
         utimesSync(path.join(dir, '.lock'), old, old);
       }
-      const outs = await race(dir, 6);
+      const outs = await race(dir, 8);
       assert.equal(outs.filter((o) => o === 'ok').length, 1, `round ${round}: ${outs}`);
-      assert.equal(outs.filter((o) => o === 'held').length, 5, `round ${round}: ${outs}`);
+      assert.equal(outs.filter((o) => o === 'held').length, 7, `round ${round}: ${outs}`);
     }
   });
 

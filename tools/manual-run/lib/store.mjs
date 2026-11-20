@@ -116,6 +116,36 @@ function heldBy(file, raw, { breakLock }) {
   return null;
 }
 
+const pauseSync = (ms) => Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
+
+/**
+ * Removes the lock `file` only if it still holds `raw` (judged stale), under a short reclaim mutex
+ * (`<file>.reclaim`, linked into place like the lock). Every removal of another process's lock goes
+ * through this mutex and re-reads the lock inside it, so a lock that was replaced in the meantime is
+ * never removed, and a live lock is never moved. A mutex older than LOCK_YOUNG_MS was left by a
+ * process that died while holding it, and is removed.
+ */
+function reclaimStale(file, raw) {
+  const mutex = `${file}.reclaim`;
+  const tmp = `${mutex}.${process.pid}.${randomUUID()}.tmp`;
+  writeFileSync(tmp, String(process.pid));
+  try {
+    linkSync(tmp, mutex);
+  } catch (error) {
+    if (error.code !== 'EEXIST') throw error;
+    if (ageMs(mutex) > LOCK_YOUNG_MS) rmSync(mutex, { force: true });
+    else pauseSync(5); // another process is reclaiming; look again
+    return;
+  } finally {
+    rmSync(tmp, { force: true });
+  }
+  try {
+    if (readRaw(file) === raw) rmSync(file, { force: true });
+  } finally {
+    rmSync(mutex, { force: true });
+  }
+}
+
 /**
  * One run per output folder at a time. The lock file `<dir>/<name>` is written completely under a
  * temporary name and then hard-linked into place (`link` fails with EEXIST when it exists), so no
@@ -123,11 +153,9 @@ function heldBy(file, raw, { breakLock }) {
  * unique token; release removes it only while it still carries that token.
  *
  * Held: a live pid on this machine, any lock from another hostname (unless `breakLock`), and an
- * empty or unreadable lock younger than LOCK_YOUNG_MS. A stale lock is moved aside with an atomic
- * rename to a unique name; only the process whose rename succeeded re-checks the moved content
- * against what it judged stale, removes it and retries. If the content differs it moved a fresh
- * lock: it links that back and reports the folder held. Returns a release function; throws when
- * the lock is held.
+ * empty or unreadable lock younger than LOCK_YOUNG_MS. A stale lock is removed by reclaimStale
+ * (only while it still holds the content judged stale) and the link is tried again. Returns a
+ * release function; throws when the lock is held.
  */
 export function acquireLock(dir, { name = '.lock', breakLock = false } = {}) {
   const file = path.join(dir, name);
@@ -141,7 +169,7 @@ export function acquireLock(dir, { name = '.lock', breakLock = false } = {}) {
   const tmp = `${file}.${process.pid}.${randomUUID()}.tmp`;
   writeFileSync(tmp, content);
   try {
-    for (let attempt = 0; attempt < 5; attempt++) {
+    for (let attempt = 0; attempt < 20; attempt++) {
       try {
         linkSync(tmp, file);
         return () => {
@@ -155,24 +183,7 @@ export function acquireLock(dir, { name = '.lock', breakLock = false } = {}) {
       const why = heldBy(file, raw, { breakLock });
       if (why)
         throw new Error(`${dir} is in use by ${why}. Wait for it to finish, or use another label.`);
-      const aside = `${file}.stale.${process.pid}.${randomUUID()}`;
-      try {
-        renameSync(file, aside);
-      } catch (error) {
-        if (error.code === 'ENOENT') continue; // another process moved it first
-        throw error;
-      }
-      if (readRaw(aside) !== raw) {
-        // Between the read and the rename another process replaced the stale lock: put it back.
-        try {
-          linkSync(aside, file);
-        } catch {
-          // a third process linked its own lock meanwhile; see README (Known limits)
-        }
-        rmSync(aside, { force: true });
-        throw new Error(`${dir} is in use by another manual-run that took it at the same moment.`);
-      }
-      rmSync(aside, { force: true });
+      reclaimStale(file, raw);
     }
   } finally {
     rmSync(tmp, { force: true });
