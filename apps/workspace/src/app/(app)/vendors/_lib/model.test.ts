@@ -1,6 +1,9 @@
 import { VENDOR_STATUSES, canTransitionVendor, type VendorStatus } from '@bos/contracts';
 import { describe, expect, it } from 'vitest';
 
+import { grantsFrom } from '@/components/p2/customers/permissions';
+import type { Grants } from '@/lib/grants';
+
 import {
   identityLocked,
   isEditable,
@@ -97,5 +100,32 @@ describe('vendorGrants', () => {
     expect(g.verify).toBe(false);
     const none = vendorGrants(['no_such_role']);
     expect(Object.values(none).every((v) => v === false)).toBe(true);
+  });
+
+  // The live saved grants decide, not the role defaults: an admin edits them in Settings > Access.
+  it('follows a grant an admin added that no default carries (procurement defaults lack activate)', () => {
+    const live: Grants = new Map([
+      ['vendor.read', 'all'],
+      ['vendor.activate', 'all'],
+      ['vendor.bank.verify', 'all'],
+    ]);
+    expect(vendorGrants(live)).toEqual({
+      read: true,
+      write: false,
+      activate: true,
+      propose: false,
+      verify: true,
+    });
+  });
+
+  it('drops a grant an admin removed though the defaults still carry it', () => {
+    const live = grantsFrom({ permissions: [{ permission: 'vendor.read', scope: 'all' }] }, [
+      'procurement',
+    ]);
+    const g = vendorGrants(live);
+    expect(g.read).toBe(true);
+    expect(g.write).toBe(false);
+    expect(g.propose).toBe(false);
+    expect(Object.values(vendorGrants(new Map())).every((v) => v === false)).toBe(true);
   });
 });

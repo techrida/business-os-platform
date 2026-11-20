@@ -12,6 +12,7 @@ import {
 } from '@bos/locale';
 
 import { documentTypeLabel } from '@/app/(app)/inbox/inbox-params';
+import { isLiveGrants, type PermissionSource } from '@/components/p2/customers/permissions';
 
 import { humanizeKey } from './kernel-ui';
 
@@ -247,12 +248,14 @@ export function snapshotEntries(
 }
 
 /**
- * Whether the nav shows Admin. `session.roles` holds role keys, not permissions, so this reads the
- * default grants: any role whose defaults include an `admin.*` permission. A custom grant added
- * later in the admin screens does not show here; the admin pages and the API still enforce it.
+ * Whether the nav shows Admin: the person holds any `admin.*` permission. Pass the live grants
+ * (`grantsFrom` over `getMeOrNull`) so a grant added or removed in Settings > Access shows at once.
+ * Role keys still read the built-in defaults, which miss those edits. The admin pages and the API
+ * still enforce every request.
  */
-export function canSeeAdmin(roles: readonly string[]): boolean {
-  return roles.some((role) => {
+export function canSeeAdmin(source: PermissionSource): boolean {
+  if (isLiveGrants(source)) return [...source.keys()].some((p) => p.startsWith('admin.'));
+  return source.some((role) => {
     const grants = (DEFAULT_ROLE_PERMISSIONS as Record<string, object | undefined>)[role] as
       Record<string, unknown> | undefined;
     return grants !== undefined && Object.keys(grants).some((p) => p.startsWith('admin.'));

@@ -1,6 +1,9 @@
 import { PR_STATUSES } from '@bos/contracts';
 import { describe, expect, it } from 'vitest';
 
+import { grantsFrom } from '@/components/p2/customers/permissions';
+import type { Grants } from '@/lib/grants';
+
 import {
   approvalSummary,
   canCancelPr,
@@ -22,6 +25,36 @@ describe('prGrants', () => {
     expect(prGrants(['finance'])).toEqual({ read: false, readAll: false, create: false });
     expect(prGrants([])).toEqual({ read: false, readAll: false, create: false });
     expect(prGrants(['not-a-role'])).toEqual({ read: false, readAll: false, create: false });
+  });
+});
+
+// The live saved grants decide, not the role defaults: an admin can widen or narrow them in Settings > Access.
+describe('prGrants with live grants', () => {
+  it('reads every request when the saved grant is widened to all (operations officer defaults to own)', () => {
+    const live: Grants = new Map([
+      ['procurement.pr.read', 'all'],
+      ['procurement.pr.create', 'own'],
+    ]);
+    expect(prGrants(live)).toEqual({ read: true, readAll: true, create: true });
+  });
+
+  it('reads only their own when the saved grant is narrowed (procurement defaults to all)', () => {
+    const live: Grants = new Map([['procurement.pr.read', 'own']]);
+    expect(prGrants(live)).toEqual({ read: true, readAll: false, create: false });
+    const department: Grants = new Map([['procurement.pr.read', 'department']]);
+    expect(prGrants(department).readAll).toBe(false);
+  });
+
+  it('grants nothing once the grants are removed, whatever the role defaults say', () => {
+    expect(prGrants(new Map())).toEqual({ read: false, readAll: false, create: false });
+  });
+
+  it('finance gains the list when an admin grants it, though no default carries it', () => {
+    const live = grantsFrom(
+      { permissions: [{ permission: 'procurement.pr.read', scope: 'all' }] },
+      ['finance'],
+    );
+    expect(prGrants(live)).toEqual({ read: true, readAll: true, create: false });
   });
 });
 
