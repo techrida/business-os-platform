@@ -236,6 +236,27 @@ describe('reads', () => {
     expect(url.searchParams.get('offset')).toBe('50');
   });
 
+  it('passes on the money totals of every match from X-Money-Totals, or null without them', async () => {
+    mocks.apiFetch.mockImplementation(() =>
+      Promise.resolve(
+        new Response('[]', {
+          status: 200,
+          headers: {
+            'X-Total-Count': '0',
+            'X-Money-Totals': '[{"currency":"NPR","amount":"150.00"}]',
+          },
+        }),
+      ),
+    );
+    expect((await listInvoicesPage(session)).totals).toEqual([
+      { currency: 'NPR', amount: '150.00' },
+    ]);
+    mocks.apiFetch.mockImplementation(() =>
+      Promise.resolve(new Response('[]', { status: 200, headers: { 'X-Total-Count': '0' } })),
+    );
+    expect((await listInvoicesPage(session)).totals).toBeNull();
+  });
+
   it('fails like a contract drift when the total header is missing or malformed', async () => {
     for (const headers of [{}, { 'X-Total-Count': 'many' }]) {
       mocks.apiFetch.mockImplementation(() =>
