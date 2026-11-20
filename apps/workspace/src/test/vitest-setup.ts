@@ -15,14 +15,14 @@ function emptyRect(): DOMRect {
     toJSON() {
       return this;
     },
-  } as DOMRect;
+  };
 }
 
 function emptyRectList(): DOMRectList {
   const list = Object.assign([] as DOMRect[], {
     item: () => null,
   });
-  return list as unknown as DOMRectList;
+  return list;
 }
 
 if (typeof Range !== 'undefined') {
