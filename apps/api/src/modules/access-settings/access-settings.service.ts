@@ -345,8 +345,8 @@ export class AccessSettingsService {
       const hasGrantOrReset = req.changes.some((c) => c.kind === 'grant' || c.kind === 'resetRole');
       const hasLevelRuleChange = req.changes.some((c) => c.kind === 'levelRule');
 
-      // Any save invalidates the role cache, which writes the version row, and a version row with no grant rows reads
-      // as a deliberately empty policy: so a tenant still on the code defaults is materialised on every save.
+      // A tenant still on the code defaults has no grant rows; the first save writes them out, so the edit applies to
+      // the policy the tenant has been running on rather than to an empty table.
       if (!loaded.hasPersistedGrants) {
         await this.materializeDefaultGrants(tx, scope.tenantId);
       }
