@@ -1,5 +1,6 @@
-// Invoice approval (P3 unit U6, plan A5): a draft or returned tax invoice, credit note or debit note goes to the
-// Accountant -> Finance route, and the decision moves it to approved or returned. Serves the NFRs:
+// Invoice approval (P3 unit U6, plan A5): a draft or returned tax invoice, credit note or debit note goes to its
+// document type's route (Accountant -> Finance; a tax invoice from an approved billing schedule, Finance only: F1-Q30),
+// and the decision moves it to approved or returned. Serves the NFRs:
 // - "nothing is auto-issued": a route with no eligible approver refuses the submit (422 NO_ELIGIBLE_APPROVER; nothing
 //   is written but the admins' notice), and an empty route counts as blocked (router.ts refuses zero steps);
 // - "separation of duties": the drafter and the submitter are SoD users, so neither can approve their own invoice;
@@ -386,7 +387,14 @@ export class InvoiceApprovalService {
       { amount: invoice.total, currency: invoice.currency },
       now,
     );
-    const facts = { amountNpr: fx.amountNpr, currency: invoice.currency, kind };
+    // `fromSchedule` (F1-Q30): the tax_invoice route asks for an Accountant only when the invoice is not drafted from
+    // an approved billing schedule line. The line is part of the content hash, so it cannot change after submit.
+    const facts = {
+      amountNpr: fx.amountNpr,
+      currency: invoice.currency,
+      kind,
+      fromSchedule: invoice.scheduleLineId !== null,
+    };
     const requesterUserId = invoice.createdBy ?? callerUserId;
     const sodUserIds = [...new Set([requesterUserId, callerUserId])];
 
