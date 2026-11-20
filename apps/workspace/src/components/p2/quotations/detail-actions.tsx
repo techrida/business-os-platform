@@ -6,17 +6,43 @@ import {
   QUOTATION_REVISION_RULES,
   type QuotationCapabilities,
   type QuotationContact,
+  type QuotationStatus,
   type QuotationVersionDto,
 } from '@bos/contracts';
 
 import { LinkButton } from '@/components/ui/button';
-import { Panel } from '@/components/ui/panel';
 
 import { canRecordOutcome, kathmanduToday, preselectedContactId, sendGate } from './eligibility';
-import { OutcomeDialog, type OutcomeDialogProps } from './outcome-dialog';
-import styles from './detail.module.css';
+import { OutcomeDialog } from './outcome-dialog';
 import { ReviseForm } from './revise-form';
 import { SendDialog } from './send-dialog';
+
+export interface DetailActionVisibility {
+  status: QuotationStatus;
+  capabilities: QuotationCapabilities;
+  includeOutcome?: boolean;
+  maySend?: boolean;
+  mayRecordOutcome?: boolean;
+}
+
+/** Whether `DetailActions` will render at least one button for this quotation and caller. */
+export function hasDetailActions({
+  status,
+  capabilities,
+  includeOutcome = true,
+  maySend,
+  mayRecordOutcome,
+}: DetailActionVisibility): boolean {
+  const showSend =
+    (status === 'approved' || status === 'expired') && (capabilities.canSend ?? maySend ?? false);
+  const showOutcome =
+    includeOutcome &&
+    canRecordOutcome(status) &&
+    (capabilities.canRecordOutcome ?? mayRecordOutcome ?? false);
+  const showEdit = capabilities.canEdit && isQuotationEditable(status);
+  const showRevise = capabilities.canRevise && canReviseQuotation(status);
+  return showEdit || showSend || showOutcome || showRevise;
+}
 
 /**
  * The actions on one quotation, for the detail page's action slot: Edit, Send to customer, Record
@@ -36,6 +62,8 @@ export function DetailActions({
   reloadHref,
   today = kathmanduToday(),
   includeOutcome = true,
+  maySend,
+  mayRecordOutcome,
 }: {
   quotationId: string;
   number: string;
@@ -48,12 +76,21 @@ export function DetailActions({
   /** `YYYY-MM-DD` in Kathmandu. A prop so a test can pin the clock. */
   today?: string;
   includeOutcome?: boolean;
+  /** Live permission fallback when `capabilities.canSend` is omitted. */
+  maySend?: boolean;
+  /** Live permission fallback when `capabilities.canRecordOutcome` is omitted. */
+  mayRecordOutcome?: boolean;
 }) {
   const { status } = current;
   const ids = { quotationId, versionId: current.id, version: current.version, number, reloadHref };
 
   // Send is offered for an approved quotation, and for an expired one so the reason is on screen.
-  const showSend = status === 'approved' || status === 'expired';
+  const showSend =
+    (status === 'approved' || status === 'expired') && (capabilities.canSend ?? maySend ?? false);
+  const showOutcome =
+    includeOutcome &&
+    canRecordOutcome(status) &&
+    (capabilities.canRecordOutcome ?? mayRecordOutcome ?? false);
   const gate = sendGate(current, contacts, today);
 
   // Draft and Returned are changed in place in the quote builder; every later change is a revision.
@@ -79,9 +116,7 @@ export function DetailActions({
           blocker={gate.ok ? null : gate.reason}
         />
       ) : null}
-      {includeOutcome && canRecordOutcome(status) ? (
-        <OutcomeDialog {...ids} today={today} idempotencyKey={randomUUID()} />
-      ) : null}
+      {showOutcome ? <OutcomeDialog {...ids} today={today} idempotencyKey={randomUUID()} /> : null}
       {showRevise ? (
         <ReviseForm
           {...ids}
@@ -92,31 +127,5 @@ export function DetailActions({
         />
       ) : null}
     </>
-  );
-}
-
-export function ClientDecision({
-  current,
-  ...quotation
-}: Pick<OutcomeDialogProps, 'quotationId' | 'number' | 'reloadHref'> & {
-  current: QuotationVersionDto;
-}) {
-  if (!canRecordOutcome(current.status)) return null;
-  return (
-    <Panel
-      title="Record client decision"
-      className={styles.detailPanel}
-      description="Record whether the customer accepted or declined this quotation."
-    >
-      <div className={styles.actions}>
-        <OutcomeDialog
-          {...quotation}
-          versionId={current.id}
-          version={current.version}
-          today={kathmanduToday()}
-          idempotencyKey={randomUUID()}
-        />
-      </div>
-    </Panel>
   );
 }

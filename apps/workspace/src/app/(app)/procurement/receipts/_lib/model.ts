@@ -38,11 +38,17 @@ export interface ReceiptGrants {
   issue: boolean;
 }
 
-/** The permissions the session's roles hold by default. Server-side only. */
-export function receiptGrants(roles: readonly string[]): ReceiptGrants {
+export type ReceiptGrantSource = readonly string[] | ((permission: string) => boolean);
+
+function allows(source: ReceiptGrantSource, permission: string): boolean {
+  return typeof source === 'function' ? source(permission) : hasPermission(source, permission);
+}
+
+/** The permissions from live grants (`getPermissionCheck`) or role defaults. Server-side only. */
+export function receiptGrants(source: ReceiptGrantSource): ReceiptGrants {
   return {
-    confirm: hasPermission(roles, 'procurement.receipt.confirm'),
-    issue: hasPermission(roles, 'procurement.po.issue'),
+    confirm: allows(source, 'procurement.receipt.confirm'),
+    issue: allows(source, 'procurement.po.issue'),
   };
 }
 

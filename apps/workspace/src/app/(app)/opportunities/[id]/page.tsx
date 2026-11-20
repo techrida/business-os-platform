@@ -1,4 +1,4 @@
-import { type LeadLostReason, OPPORTUNITY_STAGES, type OpportunityDto } from '@bos/contracts';
+import type { LeadLostReason, OpportunityDto } from '@bos/contracts';
 import type { Metadata } from 'next';
 import Link from 'next/link';
 import { notFound } from 'next/navigation';
@@ -8,10 +8,11 @@ import { getOpportunity, listActivities } from '@/components/p2/crm/crm-api';
 import { FollowUpsCard } from '@/components/p2/crm/follow-ups-card';
 import { moneyOrNull } from '@/components/p2/crm/format';
 import { MarkLostDialog } from '@/components/p2/crm/mark-lost-dialog';
-import { MoveForm } from '@/components/p2/crm/move-form';
 import { canAssignFollowUps, loadPeople } from '@/components/p2/crm/people';
+import { PutOnHoldDialog } from '@/components/p2/crm/put-on-hold-dialog';
 import { ActivityList, LoadProblem, StageBadge } from '@/components/p2/crm/server-bits';
-import { stageLabel, userMoves } from '@/components/p2/crm/stages';
+import { StageConfirmDialog } from '@/components/p2/crm/stage-confirm-dialog';
+import { resolvedMoves, stageLabel, type Move } from '@/components/p2/crm/stages';
 import { listQuotations } from '@/components/p2/quotations/api';
 import {
   editQuotationHref,
@@ -26,13 +27,14 @@ import { LinkButton } from '@/components/ui/button';
 import { Card } from '@/components/ui/card';
 import { Breadcrumb, Page, PageHeader } from '@/components/ui/page';
 import { FactList, Panel, type Fact } from '@/components/ui/panel';
-import { StatusTimeline } from '@/components/ui/status-timeline';
+import { StatusTimeline, type TimelineStep } from '@/components/ui/status-timeline';
 import { Table, Td, Th } from '@/components/ui/table';
 import { failureOf } from '@/lib/api-kernel';
 import { listOpportunityLostReasonChoices } from '@/lib/api-lead-lost-reasons';
 import { requireStaffSession } from '@/lib/bff';
 import { getNumberSystems } from '@/lib/display-settings';
 import { money, when } from '@/lib/kernel-format';
+import { getMeOrNull, getPermissionCheck } from '@/lib/live-permissions';
 import { getCustomer } from '@/components/p2/customers/api';
 
 import { moveOpportunityStageAction } from '../actions';
@@ -43,6 +45,176 @@ export const metadata: Metadata = { title: 'Opportunity · Business OS' };
 export const dynamic = 'force-dynamic';
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+const LINEAR_STAGES = [
+  'qualified',
+  'requirement_received',
+  'proposal_sent',
+  'quotation_sent',
+  'negotiation',
+  'won',
+] as const;
+
+interface PrimaryStageAction {
+  stage: string;
+  triggerLabel: string;
+  title: string;
+  description: string;
+  confirmLabel: string;
+  successMessage: string;
+  errorMessage: string;
+}
+
+function primaryOpportunityMove(
+  opp: Pick<OpportunityDto, 'stage' | 'number'>,
+  moves: readonly Move[],
+): PrimaryStageAction | null {
+  const has = (stage: string) => moves.some((m) => m.stage === stage);
+  if (has('requirement_received')) {
+    return {
+      stage: 'requirement_received',
+      triggerLabel: 'Requirement received',
+      title: 'Mark requirement received?',
+      description: `${opp.number} will move from Qualified to Requirement Received.`,
+      confirmLabel: 'Move to Requirement Received',
+      successMessage: 'Moved to Requirement Received.',
+      errorMessage: 'The opportunity stage could not be updated.',
+    };
+  }
+  if (has('proposal_sent')) {
+    return {
+      stage: 'proposal_sent',
+      triggerLabel: 'Proposal sent',
+      title: 'Mark proposal sent?',
+      description: `${opp.number} will move from Requirement Received to Proposal Sent.`,
+      confirmLabel: 'Move to Proposal Sent',
+      successMessage: 'Moved to Proposal Sent.',
+      errorMessage: 'The opportunity stage could not be updated.',
+    };
+  }
+  if (opp.stage === 'quotation_sent' && has('negotiation')) {
+    return {
+      stage: 'negotiation',
+      triggerLabel: 'Move to negotiation',
+      title: 'Move this opportunity to negotiation?',
+      description: `${opp.number} will move from Quotation Sent to Negotiation.`,
+      confirmLabel: 'Move to Negotiation',
+      successMessage: 'Moved to Negotiation.',
+      errorMessage: 'The opportunity stage could not be updated.',
+    };
+  }
+  if (opp.stage === 'on_hold' && has('negotiation')) {
+    return {
+      stage: 'negotiation',
+      triggerLabel: 'Resume',
+      title: 'Resume this opportunity?',
+      description: `${opp.number} will move from On Hold back to Negotiation.`,
+      confirmLabel: 'Resume opportunity',
+      successMessage: 'Moved to Negotiation.',
+      errorMessage: 'The opportunity could not be resumed.',
+    };
+  }
+  if (opp.stage === 'lost' && has('qualified')) {
+    return {
+      stage: 'qualified',
+      triggerLabel: 'Reopen',
+      title: 'Reopen this opportunity?',
+      description: `${opp.number} will move from Lost back to Qualified.`,
+      confirmLabel: 'Reopen opportunity',
+      successMessage: 'Moved to Qualified.',
+      errorMessage: 'The opportunity could not be reopened.',
+    };
+  }
+  return null;
+}
+
+function opportunityTimeline(
+  opp: Pick<OpportunityDto, 'stage'>,
+  hasQuotations: boolean,
+): TimelineStep[] {
+  const currentIndex = LINEAR_STAGES.findIndex((stage) => stage === opp.stage);
+  if (currentIndex !== -1) {
+    return LINEAR_STAGES.map((stage, index): TimelineStep => {
+      if (index < currentIndex) {
+        return {
+          key: stage,
+          title: <span>{stageLabel('opportunity', stage)}</span>,
+          status: 'Reached',
+          tone: 'done',
+        };
+      }
+      if (index === currentIndex) {
+        const won = stage === 'won';
+        return {
+          key: stage,
+          title: <span>{stageLabel('opportunity', stage)}</span>,
+          status: won ? 'Won' : 'Current',
+          tone: won ? 'done' : 'current',
+        };
+      }
+      return {
+        key: stage,
+        title: <span>{stageLabel('opportunity', stage)}</span>,
+        status: 'Not yet',
+        tone: 'upcoming',
+      };
+    });
+  }
+
+  if (opp.stage === 'on_hold') {
+    const steps: TimelineStep[] = LINEAR_STAGES.map((stage): TimelineStep => {
+      const reached = stage !== 'won';
+      return {
+        key: stage,
+        title: <span>{stageLabel('opportunity', stage)}</span>,
+        status: reached ? 'Reached' : 'Not yet',
+        tone: reached ? 'done' : 'upcoming',
+      };
+    });
+    steps.push({
+      key: 'on_hold',
+      title: <span>On Hold</span>,
+      status: 'Current',
+      tone: 'warning',
+    });
+    return steps;
+  }
+
+  const steps: TimelineStep[] = LINEAR_STAGES.map((stage): TimelineStep => {
+    const reached = stage === 'qualified' || (stage === 'quotation_sent' && hasQuotations);
+    return {
+      key: stage,
+      title: <span>{stageLabel('opportunity', stage)}</span>,
+      status: reached ? 'Reached' : 'Not yet',
+      tone: reached ? 'done' : 'upcoming',
+    };
+  });
+  steps.push({
+    key: 'lost',
+    title: <span>Lost</span>,
+    status: 'Current',
+    tone: 'error',
+  });
+  return steps;
+}
+
+function opportunityStageMessage(
+  stage: OpportunityDto['stage'],
+  canEdit: boolean,
+  canReopen: boolean,
+): string {
+  if (!canEdit) return 'You have read-only access to this opportunity.';
+  if (stage === 'won') return 'This opportunity is won. Its stage is final.';
+  if (stage === 'lost') {
+    return canReopen
+      ? 'This opportunity is lost. Use Reopen in the header to return it to Qualified.'
+      : 'Only a manager can reopen a lost opportunity.';
+  }
+  if (stage === 'on_hold') {
+    return 'This opportunity is on hold. Use Resume in the header to return it to Negotiation.';
+  }
+  return 'Sending and accepting quotations update the stage automatically.';
+}
 
 function facts(o: OpportunityDto, customerName: string, numberSystems: NumberSystems): Fact[] {
   const dash = <span className={styles.quiet}>Not set</span>;
@@ -121,7 +293,17 @@ export default async function OpportunityPage({ params }: { params: Promise<{ id
   }
   const opp = oppResult.value;
   const customer = await getCustomer(session, opp.customerId).catch(() => null);
-  const moves = userMoves('opportunity', opp.stage);
+  const can = await getPermissionCheck(session);
+  const canEdit = opp.canEdit ?? can('crm.opportunity.write');
+  // Quotations follow their own grant (the API asks for quotation.draft plus read of the opportunity),
+  // not write access to the opportunity.
+  const canDraft = can('quotation.draft');
+  const currentUserId = (await getMeOrNull(session.accessToken))?.id ?? null;
+  const moves = resolvedMoves(
+    'opportunity',
+    opp.stage,
+    opp.allowedMoves ?? (canEdit ? undefined : []),
+  );
   const activityProblem =
     activityResult.status === 'rejected' ? failureOf(activityResult.reason) : null;
   const { owners } = peopleResult.status === 'fulfilled' ? peopleResult.value : { owners: [] };
@@ -134,6 +316,8 @@ export default async function OpportunityPage({ params }: { params: Promise<{ id
   const quotations = quotationsResult.status === 'fulfilled' ? quotationsResult.value : [];
   const quotesHref = opportunityQuotationsHref(opp.id);
   const open = opp.stage !== 'lost' && opp.stage !== 'won';
+  const primaryMove = primaryOpportunityMove(opp, moves);
+  const canPutOnHold = moves.some((move) => move.stage === 'on_hold');
   // The options Mark lost offers (D54-3). Only asked for when the stage allows it. A 403 means this
   // person may read the opportunity but not change it, so the action is left out rather than shown and refused;
   // any other failure leaves the dialog able to add a reason.
@@ -150,9 +334,7 @@ export default async function OpportunityPage({ params }: { params: Promise<{ id
   // A list that did not load falls back to New:
   // the New page checks again before it shows the builder.
   const entry: QuotationEntry = quotationEntryFor(quotations);
-  const stages = OPPORTUNITY_STAGES.filter(
-    (stage) => (stage !== 'lost' && stage !== 'on_hold') || stage === opp.stage,
-  );
+  const quoteCtaVariant = primaryMove ? 'secondary' : 'primary';
 
   return (
     <Page>
@@ -170,13 +352,18 @@ export default async function OpportunityPage({ params }: { params: Promise<{ id
           }
           actions={
             <>
-              {entry.kind === 'resume' ? (
+              {!canDraft ? (
+                <LinkButton href={quotesHref} variant="secondary">
+                  View quotations
+                </LinkButton>
+              ) : entry.kind === 'resume' ? (
                 <>
                   <LinkButton href={quotesHref} variant="secondary">
                     View quotations
                   </LinkButton>
                   <LinkButton
                     href={editQuotationHref(entry.quotationId)}
+                    variant={quoteCtaVariant}
                     aria-label={`Edit quotation ${entry.number}`}
                   >
                     Edit quotation
@@ -192,7 +379,9 @@ export default async function OpportunityPage({ params }: { params: Promise<{ id
                       New quotation
                     </LinkButton>
                   ) : null}
-                  <LinkButton href={quotesHref}>Choose a draft ({entry.count})</LinkButton>
+                  <LinkButton href={quotesHref} variant={quoteCtaVariant}>
+                    Choose a draft ({entry.count})
+                  </LinkButton>
                 </>
               ) : (
                 <>
@@ -200,10 +389,36 @@ export default async function OpportunityPage({ params }: { params: Promise<{ id
                     View quotations
                   </LinkButton>
                   {open ? (
-                    <LinkButton href={newQuotationHref(opp.id)}>New quotation</LinkButton>
+                    <LinkButton href={newQuotationHref(opp.id)} variant={quoteCtaVariant}>
+                      New quotation
+                    </LinkButton>
                   ) : null}
                 </>
               )}
+              {primaryMove ? (
+                <StageConfirmDialog
+                  action={moveOpportunityStageAction}
+                  id={opp.id}
+                  version={opp.version}
+                  stage={primaryMove.stage}
+                  triggerLabel={primaryMove.triggerLabel}
+                  triggerVariant="primary"
+                  title={primaryMove.title}
+                  description={primaryMove.description}
+                  confirmLabel={primaryMove.confirmLabel}
+                  successMessage={primaryMove.successMessage}
+                  errorMessage={primaryMove.errorMessage}
+                />
+              ) : null}
+              {canPutOnHold ? (
+                <PutOnHoldDialog
+                  noun="opportunity"
+                  action={moveOpportunityStageAction}
+                  id={opp.id}
+                  number={opp.number}
+                  version={opp.version}
+                />
+              ) : null}
               {canMarkLost ? (
                 <MarkLostDialog
                   noun="opportunity"
@@ -222,44 +437,29 @@ export default async function OpportunityPage({ params }: { params: Promise<{ id
       <Card as="aside" aria-label="Stage" className={styles.stageCard}>
         <StatusTimeline
           label="Opportunity stages"
-          steps={stages.map((stage) => ({
-            key: stage,
-            title: <span>{stageLabel('opportunity', stage)}</span>,
-            status: stage === opp.stage ? 'Current' : '',
-            tone: stage === opp.stage ? 'current' : 'upcoming',
-          }))}
+          steps={opportunityTimeline(opp, quotations.length > 0)}
           className={styles.pipeline ?? ''}
         />
-        {opp.stage !== 'won' ? (
-          <div className={styles.stageControls}>
-            {reasonLabel ? (
-              <div className={styles.reasonBox}>
-                <strong>{reasonLabel}</strong>
-                {opp.lostReason?.retired ? (
-                  <span className={styles.quiet}>
-                    This reason is no longer offered for new opportunities.
-                  </span>
-                ) : null}
-                {opp.stageNote ? <span>{opp.stageNote}</span> : null}
-              </div>
-            ) : null}
-            {moves.length > 0 ? (
-              <p className={styles.quiet}>Sending and accepting quotations update the stage.</p>
-            ) : null}
-            <MoveForm
-              action={moveOpportunityStageAction}
-              recordId={opp.id}
-              version={opp.version}
-              moves={moves}
-              exclude={['lost']}
-              emptyText={
-                opp.stage === 'lost'
-                  ? 'No further moves from here.'
-                  : 'No further manual moves from here.'
-              }
-            />
-          </div>
-        ) : null}
+        <div className={styles.stageControls}>
+          {reasonLabel || opp.stageNote ? (
+            <div className={styles.reasonBox}>
+              {reasonLabel ? <strong>{reasonLabel}</strong> : null}
+              {opp.lostReason?.retired ? (
+                <span className={styles.quiet}>
+                  This reason is no longer offered for new opportunities.
+                </span>
+              ) : null}
+              {opp.stageNote ? <span>{opp.stageNote}</span> : null}
+            </div>
+          ) : null}
+          <p className={styles.quiet}>
+            {opportunityStageMessage(
+              opp.stage,
+              canEdit,
+              moves.some((move) => move.stage === 'qualified'),
+            )}
+          </p>
+        </div>
       </Card>
 
       <Panel title="Deal summary" className={styles.summary}>
@@ -343,12 +543,14 @@ export default async function OpportunityPage({ params }: { params: Promise<{ id
           items={plannedResult.status === 'fulfilled' ? plannedResult.value : []}
           owners={owners}
           schedule={false}
+          canEdit={canEdit}
+          currentUserId={currentUserId}
           now={now}
           className={styles.records}
         />
       )}
 
-      <OpportunityActivities opportunityId={opp.id}>
+      <OpportunityActivities opportunityId={opp.id} canEdit={canEdit}>
         {activityProblem ? (
           <LoadProblem
             status={activityProblem.status}

@@ -84,7 +84,7 @@ async function open(
   form: FormData,
   field: 'billId' | 'submissionId',
   back: (id: string) => string,
-  live = false,
+  live = true,
 ): Promise<{ ok: true; o: Opened } | { ok: false; state: ActionState }> {
   const id = text(form, field);
   const key = keyOf(form);

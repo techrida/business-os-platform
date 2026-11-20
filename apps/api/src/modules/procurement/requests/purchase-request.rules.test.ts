@@ -1,10 +1,20 @@
 // Unit tests of the purchase request rules (P4 unit P1): line arithmetic, the approval facts, the body envelope, and
 // above all the `purchase_request` route, planned by the real router from the real spec (AD10, AD11, AD12).
 // Run: pnpm --filter @bos/api exec vitest run src/modules/procurement/requests/purchase-request.rules.test.ts
-import { PurchaseRequestLineBodySchema, WorkflowSpecSchema, type RoutePlan } from '@bos/contracts';
+import {
+  DEFAULT_ROLE_PERMISSIONS,
+  PurchaseRequestLineBodySchema,
+  WorkflowSpecSchema,
+  type Permission,
+  type PrStatus,
+  type RoleKey,
+  type RoutePlan,
+  type Scope,
+} from '@bos/contracts';
 import { UnprocessableEntityException } from '@nestjs/common';
 import { describe, expect, it } from 'vitest';
 
+import type { Principal } from '../../../platform/authz/principal';
 import { buildDirectory, route, type DirectoryData } from '../../approvals/router';
 import {
   ExpectedVersionEnvelopeSchema,
@@ -16,6 +26,7 @@ import {
   isPrEditable,
   lineAmount,
   lineRowsOf,
+  purchaseRequestCapabilities,
   sumAmounts,
 } from './purchase-request.rules';
 
@@ -242,5 +253,130 @@ describe('the list query', () => {
     );
     expect(ListPurchaseRequestsQuerySchema.safeParse({ limit: '201' }).success).toBe(false);
     expect(ListPurchaseRequestsQuerySchema.safeParse({ organizationId: 'x' }).success).toBe(false);
+  });
+});
+
+describe('purchaseRequestCapabilities', () => {
+  const TENANT = '00000000-0000-4000-8000-000000000001';
+  const ENTITY = '00000000-0000-4000-8000-000000000002';
+  const ME = '00000000-0000-4000-8000-000000000003';
+  const OTHER = '00000000-0000-4000-8000-000000000004';
+  const RFQ = '00000000-0000-4000-8000-000000000099';
+
+  function principalOf(role: RoleKey, over: Partial<Principal> = {}): Principal {
+    return {
+      userId: ME,
+      zitadelUserId: 'z-me',
+      tenantId: TENANT,
+      organizationId: ENTITY,
+      orgKind: 'staff',
+      partyId: null,
+      idpOrgId: '00000000-0000-4000-8000-000000000009',
+      roles: [role],
+      departmentId: DEPT,
+      status: 'active',
+      grants: new Map(Object.entries(DEFAULT_ROLE_PERMISSIONS[role])) as Map<Permission, Scope>,
+      ...over,
+    };
+  }
+
+  const pr = (status: PrStatus, requesterUserId = ME) => ({
+    tenantId: TENANT,
+    organizationId: ENTITY,
+    requesterUserId,
+    departmentId: DEPT,
+    status,
+  });
+
+  it('grants edit/submit/cancel on own draft and denies on another requester under own scope', () => {
+    const officer = principalOf('operations_officer');
+    expect(purchaseRequestCapabilities(officer, pr('draft', ME), null)).toEqual({
+      edit: true,
+      submit: true,
+      cancel: true,
+      startRfq: false,
+      openRfq: false,
+    });
+    expect(purchaseRequestCapabilities(officer, pr('returned', ME), null)).toEqual({
+      edit: true,
+      submit: true,
+      cancel: false,
+      startRfq: false,
+      openRfq: false,
+    });
+    expect(purchaseRequestCapabilities(officer, pr('draft', OTHER), null)).toEqual({
+      edit: false,
+      submit: false,
+      cancel: false,
+      startRfq: false,
+      openRfq: false,
+    });
+  });
+
+  it('grants startRfq and openRfq only to holders of procurement.sourcing', () => {
+    const procurement = principalOf('procurement');
+    expect(purchaseRequestCapabilities(procurement, pr('dept_approved', OTHER), null)).toEqual({
+      edit: false,
+      submit: false,
+      cancel: false,
+      startRfq: true,
+      openRfq: false,
+    });
+    expect(purchaseRequestCapabilities(procurement, pr('sourcing', OTHER), RFQ)).toEqual({
+      edit: false,
+      submit: false,
+      cancel: false,
+      startRfq: false,
+      openRfq: true,
+    });
+    // A regular requester cannot start or open an RFQ even on their own approved request.
+    const officer = principalOf('operations_officer');
+    expect(purchaseRequestCapabilities(officer, pr('dept_approved', ME), null)).toEqual({
+      edit: false,
+      submit: false,
+      cancel: false,
+      startRfq: false,
+      openRfq: false,
+    });
+    expect(purchaseRequestCapabilities(officer, pr('sourcing', ME), RFQ).openRfq).toBe(false);
+
+    // A buyer with department-scoped sourcing still matches SourcingController's route-level check.
+    const deptBuyer = principalOf('procurement', {
+      departmentId: '00000000-0000-4000-8000-000000000099',
+      grants: new Map([['procurement.sourcing', 'department']]),
+    });
+    expect(purchaseRequestCapabilities(deptBuyer, pr('dept_approved', OTHER), null).startRfq).toBe(
+      true,
+    );
+    expect(purchaseRequestCapabilities(deptBuyer, pr('sourcing', OTHER), RFQ).openRfq).toBe(true);
+  });
+
+  it('denies everything for an inactive or non-staff principal', () => {
+    expect(
+      purchaseRequestCapabilities(
+        principalOf('founder', { status: 'inactive' }),
+        pr('draft', ME),
+        null,
+      ),
+    ).toEqual({
+      edit: false,
+      submit: false,
+      cancel: false,
+      startRfq: false,
+      openRfq: false,
+    });
+    expect(
+      purchaseRequestCapabilities(
+        principalOf('founder', { orgKind: 'vendor' }),
+        pr('dept_approved', ME),
+        null,
+      ),
+    ).toEqual({
+      edit: false,
+      submit: false,
+      cancel: false,
+      startRfq: false,
+      openRfq: false,
+    });
   });
 });

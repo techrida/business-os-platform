@@ -22,11 +22,11 @@ import { getApprovalRequest } from '@/lib/api-kernel';
 import { requireStaffSession } from '@/lib/bff';
 import { getNumberSystems } from '@/lib/display-settings';
 import { money, when } from '@/lib/kernel-format';
+import { getPermissionCheck } from '@/lib/live-permissions';
 
 import { ApprovalTimeline } from '../../approval-timeline';
 import { PO_STATUS_LABEL, qtyText } from '../../orders/_lib/model';
 import layout from '../../procurement.module.css';
-import { canStartRfq, rfqGrants } from '../../rfqs/_lib/model';
 import { CancelForm, SubmitForm } from '../_components/command-forms';
 import { prFailure } from '../_lib/failure';
 import {
@@ -35,7 +35,6 @@ import {
   isPrEditable,
   PR_STATUS_LABEL,
   PR_STATUS_NOTE,
-  prGrants,
   REQUEST_TYPE_LABEL,
 } from '../_lib/model';
 import styles from '../requests.module.css';
@@ -270,11 +269,24 @@ export default async function PurchaseRequestPage({
     );
   }
 
-  const approvalLoad =
-    pr.approvalRequestId !== null ? await loadApproval(session, pr.approvalRequestId) : null;
-  const grants = prGrants(session.roles);
+  const [approvalLoad, allowed] = await Promise.all([
+    pr.approvalRequestId !== null
+      ? loadApproval(session, pr.approvalRequestId)
+      : Promise.resolve(null),
+    getPermissionCheck(session),
+  ]);
+  const canCreate = allowed('procurement.pr.create');
+  const canSourcing = allowed('procurement.sourcing');
   const status = PR_STATUS_LABEL[pr.status];
-  const editable = isPrEditable(pr.status) && grants.create;
+  const canEdit = pr.can?.edit ?? (isPrEditable(pr.status) && canCreate);
+  const canSubmit = pr.can?.submit ?? (isPrEditable(pr.status) && canCreate);
+  const canCancel = pr.can?.cancel ?? (canCancelPr(pr.status) && canCreate);
+  const rfqId = pr.rfqId ?? null;
+  const canOpenRfq = rfqId !== null && (pr.can?.openRfq ?? canSourcing);
+  const canStart =
+    !canOpenRfq &&
+    (pr.can?.startRfq ?? (pr.status === 'dept_approved' && rfqId === null && canSourcing));
+  const hasActions = canSubmit || canEdit || canCancel || canOpenRfq || canStart;
   const showFx = pr.currency !== 'NPR' && pr.estimatedTotalNpr !== null;
   const label = pr.number ?? 'Draft purchase request';
 
@@ -294,22 +306,42 @@ export default async function PurchaseRequestPage({
           }
           description={PR_STATUS_NOTE[pr.status]}
           actions={
-            <>
-              {editable ? (
-                <LinkButton href={`${self}/edit`} variant="secondary">
-                  Edit request
-                </LinkButton>
-              ) : null}
-              {pr.rfqId && rfqGrants(session.roles).sourcing ? (
-                <LinkButton href={`/procurement/rfqs/${encodeURIComponent(pr.rfqId)}`}>
-                  Open RFQ
-                </LinkButton>
-              ) : canStartRfq(pr.status, pr.rfqId, session.roles) ? (
-                <LinkButton href={`/procurement/rfqs/new?pr=${encodeURIComponent(pr.id)}`}>
-                  Start RFQ
-                </LinkButton>
-              ) : null}
-            </>
+            hasActions ? (
+              <>
+                {canSubmit ? (
+                  <SubmitForm
+                    prId={pr.id}
+                    version={pr.version}
+                    idempotencyKey={randomUUID()}
+                    emergency={pr.isEmergency}
+                    resubmit={pr.status === 'returned'}
+                    reloadHref={self}
+                  />
+                ) : null}
+                {canEdit ? (
+                  <LinkButton href={`${self}/edit`} variant="secondary">
+                    Edit request
+                  </LinkButton>
+                ) : null}
+                {canCancel ? (
+                  <CancelForm
+                    prId={pr.id}
+                    version={pr.version}
+                    idempotencyKey={randomUUID()}
+                    reloadHref={self}
+                  />
+                ) : null}
+                {canOpenRfq && rfqId !== null ? (
+                  <LinkButton href={`/procurement/rfqs/${encodeURIComponent(rfqId)}`}>
+                    Open RFQ
+                  </LinkButton>
+                ) : canStart ? (
+                  <LinkButton href={`/procurement/rfqs/new?pr=${encodeURIComponent(pr.id)}`}>
+                    Start RFQ
+                  </LinkButton>
+                ) : null}
+              </>
+            ) : null
           }
         />
       </div>
@@ -320,39 +352,13 @@ export default async function PurchaseRequestPage({
         <SuccessNotice message="Your changes were saved." />
       ) : null}
 
-      <div className={editable || approvalLoad !== null ? layout.detailColumns : layout.stack}>
+      <div className={approvalLoad !== null ? layout.detailColumns : layout.stack}>
         <Panel title="Request details">
           <FactList facts={factsOf(pr)} />
         </Panel>
-        {editable || approvalLoad !== null ? (
+        {approvalLoad !== null ? (
           <div className={layout.stack}>
-            {editable ? (
-              <Panel
-                as="aside"
-                title={pr.status === 'returned' ? 'Resubmit' : 'Submit for approval'}
-              >
-                <SubmitForm
-                  prId={pr.id}
-                  version={pr.version}
-                  idempotencyKey={randomUUID()}
-                  emergency={pr.isEmergency}
-                  reloadHref={self}
-                />
-              </Panel>
-            ) : null}
-
-            {approvalLoad !== null ? <ApprovalPanel load={approvalLoad} retry={self} /> : null}
-
-            {canCancelPr(pr.status) && grants.create ? (
-              <Panel as="aside" title="Cancel">
-                <CancelForm
-                  prId={pr.id}
-                  version={pr.version}
-                  idempotencyKey={randomUUID()}
-                  reloadHref={self}
-                />
-              </Panel>
-            ) : null}
+            <ApprovalPanel load={approvalLoad} retry={self} />
           </div>
         ) : null}
       </div>

@@ -20,7 +20,10 @@ vi.mock('../actions', () => actions);
 vi.mock('@/components/ui/toast', () => ({ toast }));
 vi.mock('next/navigation', () => ({ useRouter: () => ({ refresh: vi.fn() }) }));
 
-const optionFor = (status: 'approved' | 'blocked', command: 'block' | 'archive') => {
+const optionFor = (
+  status: 'draft' | 'under_review' | 'approved' | 'blocked',
+  command: 'submit_kyc' | 'activate' | 'suspend' | 'block' | 'archive',
+) => {
   const option = lifecycleOptions(status, { write: true, activate: true }).find(
     (candidate) => candidate.command === command,
   );
@@ -52,6 +55,7 @@ afterEach(() => {
 
 describe('vendor lifecycle confirmation', () => {
   it.each([
+    ['approved', 'suspend', 'Suspend vendor'],
     ['approved', 'block', 'Block vendor'],
     ['blocked', 'archive', 'Archive vendor'],
   ] as const)(
@@ -88,6 +92,41 @@ describe('vendor lifecycle confirmation', () => {
         expect(submit?.textContent).toBe(label);
         expect(submit?.form).toBe(form);
         expect(footer?.textContent).toContain('Cancel');
+      } finally {
+        await mounted.unmount();
+      }
+    },
+  );
+
+  it.each([
+    ['draft', 'submit_kyc', 'Start KYB review'],
+    ['under_review', 'activate', 'Approve vendor'],
+  ] as const)(
+    'confirms %s to %s in a fixed-footer dialog without a reason field',
+    async (status, command, label) => {
+      const mounted = await mountForm(
+        <LifecycleForm
+          vendorId="vendor-id"
+          option={optionFor(status, command)}
+          idempotencyKey="request-key"
+        />,
+      );
+      try {
+        const trigger = mounted.container.querySelector('button');
+        expect(trigger?.textContent).toBe(label);
+        expect(mounted.container.querySelector('[type="submit"]')).toBeNull();
+
+        await click(trigger);
+        const dialog = document.querySelector<HTMLElement>('[role="dialog"]');
+        expect(dialog).not.toBeNull();
+        expect(dialog?.querySelector('textarea[name="reason"]')).toBeNull();
+        const form = dialog?.querySelector('form');
+        expect(form?.querySelector<HTMLInputElement>('[name="command"]')?.value).toBe(command);
+
+        const footer = dialog?.querySelector('footer');
+        const submit = footer?.querySelector<HTMLButtonElement>('button[type="submit"]');
+        expect(submit?.textContent).toBe(label);
+        expect(submit?.form).toBe(form);
       } finally {
         await mounted.unmount();
       }

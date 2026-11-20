@@ -93,6 +93,15 @@ export const PurchaseRequestDtoSchema = PurchaseRequestListItemSchema.extend({
   lines: z.array(PurchaseRequestLineSchema),
   /** Sent by the detail read only; the writes answer without it. */
   purchaseOrders: z.array(LinkedPurchaseOrderSchema).optional(),
+  can: z
+    .object({
+      edit: z.boolean(),
+      submit: z.boolean(),
+      cancel: z.boolean(),
+      startRfq: z.boolean(),
+      openRfq: z.boolean(),
+    })
+    .optional(),
 });
 export type PurchaseRequestDto = z.infer<typeof PurchaseRequestDtoSchema>;
 
