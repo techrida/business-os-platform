@@ -95,6 +95,8 @@ describe('MarkContactedDialog', () => {
         'Add a note about the call or email, up to 10,000 characters.',
       );
       expect(inDialog('textarea[name="contactBody"]')?.getAttribute('aria-invalid')).toBe('true');
+      // The refusal is announced: focus lands on the field in error, which names its error.
+      expect(document.activeElement).toBe(inDialog('textarea[name="contactBody"]'));
     } finally {
       await mounted.unmount();
     }
