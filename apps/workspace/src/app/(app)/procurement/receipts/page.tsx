@@ -65,10 +65,7 @@ async function loadWaiting(session: Session, mayReceive: boolean): Promise<Waiti
 type Received =
   { state: 'list'; orders: readonly ReceivedOrder[] } | { state: 'failed'; message: string };
 
-async function loadReceived(
-  session: Session,
-  mayReceive: boolean,
-): Promise<Received | undefined> {
+async function loadReceived(session: Session, mayReceive: boolean): Promise<Received | undefined> {
   if (!mayReceive) return undefined;
   try {
     return { state: 'list', orders: await listReceivedOrders(session) };
@@ -500,7 +497,7 @@ export default async function ReceiptsPage({
     return (
       <Picker
         invalid={po !== ''}
-        canOpenOrders={grants.issue}
+        canOpenOrders={grants.openOrder}
         waiting={waiting}
         received={received}
         mine={mine}
@@ -548,7 +545,7 @@ export default async function ReceiptsPage({
       <div className={layout.detailHeader}>
         <Breadcrumb
           items={
-            grants.issue
+            grants.openOrder
               ? [
                   { label: 'Purchase orders', href: '/procurement/orders' },
                   {

@@ -68,15 +68,16 @@ describe('scaled quantities', () => {
 
 describe('who may handle what', () => {
   it('maps live grants to the screen grants', () => {
+    // F1-Q52: the warehouse opens the purchase order read-only through its receipt grant.
     expect(receiptGrants(live(['warehouse'], ['procurement.receipt.confirm']))).toEqual({
       confirm: true,
-      issue: false,
+      openOrder: true,
     });
     expect(receiptGrants(live(['procurement'], ['procurement.po.issue']))).toEqual({
       confirm: false,
-      issue: true,
+      openOrder: true,
     });
-    expect(receiptGrants(live(['sales'], []))).toEqual({ confirm: false, issue: false });
+    expect(receiptGrants(live(['sales'], []))).toEqual({ confirm: false, openOrder: false });
   });
 
   it('follows saved grants, not role defaults', () => {
@@ -88,8 +89,8 @@ describe('who may handle what', () => {
   });
 
   it('falls back to role defaults only when /v1/me fails', () => {
-    expect(receiptGrants(live(['warehouse'], null))).toEqual({ confirm: true, issue: false });
-    expect(receiptGrants(live(['sales'], null))).toEqual({ confirm: false, issue: false });
+    expect(receiptGrants(live(['warehouse'], null))).toEqual({ confirm: true, openOrder: true });
+    expect(receiptGrants(live(['sales'], null))).toEqual({ confirm: false, openOrder: false });
   });
 
   it('offers a service to everyone and goods to the warehouse', () => {

@@ -297,7 +297,9 @@ describe('the receipts of one purchase order', () => {
     expect(out).not.toContain('Waiting to be received');
     expect(out).not.toContain('Recently received');
     expect(out).not.toContain('role="alert"');
-    expect(out).toContain('No purchase orders to open');
+    // The warehouse still opens purchase orders read-only (F1-Q52), so it is pointed at the order list.
+    expect(out).toContain('href="/procurement/orders"');
+    expect(out).not.toContain('No purchase orders to open');
   });
 
   it('shows an error alert on a failed list', async () => {
@@ -568,8 +570,12 @@ describe('one receipt', () => {
     expect(out).toContain('Purchase order line');
     expect(out).toContain('The order&#x27;s details did not load');
     expect(out).toContain(`href="/procurement/receipts?po=${PO}"`);
+    // F1-Q52: the warehouse opens the order read-only; a requester still cannot.
+    expect(out).toContain(`href="/procurement/orders/${PO}"`);
     session.roles = ['procurement'];
     expect(await detail()).toContain(`href="/procurement/orders/${PO}"`);
+    session.roles = ['operations_officer'];
+    expect(await detail()).not.toContain(`href="/procurement/orders/${PO}"`);
   });
 
   it('shows not-found for a bad id or another entity, and words a 403 and a 500', async () => {

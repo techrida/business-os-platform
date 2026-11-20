@@ -81,8 +81,12 @@ export const PurchaseOrderSchema = z.object({
   lines: z.array(PoLineSchema),
   /** A draft with no lines yet: the approved quotation's lines that issue will copy in. Read-only. */
   proposedLines: z.array(PoLineSchema).optional(),
-  /** What the caller may do from this order, from their live grants. Sent by the detail read only. */
-  can: z.object({ enterBill: z.boolean() }).optional(),
+  /**
+   * What the caller may do from this order, from their live grants. Sent by the detail read only: `enterBill` on an
+   * order a bill can be entered against, `receive` on one that still takes receipts (the warehouse, or the requester
+   * of a service). A read-only reader gets false for both.
+   */
+  can: z.object({ enterBill: z.boolean(), receive: z.boolean() }).optional(),
 });
 export type PurchaseOrder = z.infer<typeof PurchaseOrderSchema>;
 

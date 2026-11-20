@@ -1,7 +1,7 @@
 import type { PoStatus, ReceiptKind, ReceiptStatus } from '@bos/contracts';
 
 import { toScaled } from '../../orders/_lib/forms';
-import { isReceivable, qtyText, type BadgeTone } from '../../orders/_lib/model';
+import { isReceivable, PO_READ_GRANTS, qtyText, type BadgeTone } from '../../orders/_lib/model';
 
 /**
  * What the receipt screens show and offer. Pure. The API still decides every call (deny by
@@ -32,8 +32,11 @@ export const WAITING_KIND_LABEL: Record<'goods' | 'service' | 'mixed', string> =
 export interface ReceiptGrants {
   /** `procurement.receipt.confirm`: the warehouse, who receives goods. */
   confirm: boolean;
-  /** `procurement.po.issue`: procurement, who may open the purchase order itself. */
-  issue: boolean;
+  /**
+   * May open the purchase order itself: procurement, and read-only the warehouse and the bill roles (F1-Q52,
+   * PO_READ_GRANTS).
+   */
+  openOrder: boolean;
 }
 
 /**
@@ -46,7 +49,7 @@ export type ReceiptGrantSource = (permission: string) => boolean;
 export function receiptGrants(source: ReceiptGrantSource): ReceiptGrants {
   return {
     confirm: source('procurement.receipt.confirm'),
-    issue: source('procurement.po.issue'),
+    openOrder: PO_READ_GRANTS.some((g) => source(g)),
   };
 }
 

@@ -23,21 +23,41 @@ export const PO_STATUS_LABEL: Record<PoStatus, { tone: BadgeTone; text: string }
   cancelled: { tone: 'error', text: 'Cancelled' },
 };
 
+/**
+ * The grants that open purchase orders (F1-Q52): procurement.po.issue, and read-only the bill and receipt grants of
+ * the accountant, finance and the warehouse. The API decides each order on the grant's scope; any scope counts here.
+ */
+export const PO_READ_GRANTS = [
+  'procurement.po.issue',
+  'payables.bill.enter',
+  'payables.bill.read',
+  'procurement.receipt.confirm',
+] as const;
+
 export interface PoGrants {
-  /** `procurement.po.issue`: every purchase order route needs it. */
+  /** Holds one of PO_READ_GRANTS: may open purchase orders, so links to them are offered. */
+  read: boolean;
+  /**
+   * `procurement.po.issue`: issue, amend, short-close and cancel. Without it the order is read-only: the accountant,
+   * finance and the warehouse open it through their bill and receipt grants (F1-Q52).
+   */
   issue: boolean;
   /** `procurement.receipt.confirm`: the warehouse, who receives goods. */
   confirm: boolean;
+  /** `vendor.read`: the vendor's name links to the vendor page only for someone who may open it. */
+  vendorRead: boolean;
 }
 
 /**
- * The two flags from the person's live grants (`getGrants`, GET /v1/me), not the role defaults, so a grant an admin
+ * The flags from the person's live grants (`getGrants`, GET /v1/me), not the role defaults, so a grant an admin
  * added or removed shows at once. Any scope counts: the API checks the order itself.
  */
 export function poGrants(grants: Grants): PoGrants {
   return {
+    read: PO_READ_GRANTS.some((g) => grants.has(g)),
     issue: grants.has('procurement.po.issue'),
     confirm: grants.has('procurement.receipt.confirm'),
+    vendorRead: grants.has('vendor.read'),
   };
 }
 
@@ -59,8 +79,7 @@ export function orderActions(status: PoStatus, can: { issue: boolean }): OrderAc
   return {
     issue: on && status === 'draft',
     amend:
-      on &&
-      (status === 'issued' || status === 'partially_received' || status === 'fully_received'),
+      on && (status === 'issued' || status === 'partially_received' || status === 'fully_received'),
     shortClose: on && status === 'partially_received',
     cancel: on && status === 'issued',
   };
