@@ -78,6 +78,7 @@ describe('planTaxCodeChange', () => {
   it('closes the last period on the change day and leaves its rate alone', () => {
     const plan = planTaxCodeChange(rows, {
       effectiveFrom: '2026-12-01',
+      expectedPeriodId: ID(1),
       expectedVersion: 1,
       today: TODAY,
     });
@@ -90,6 +91,7 @@ describe('planTaxCodeChange', () => {
   it('prices a document issued before the change day at the old rate and one on or after it at the new', () => {
     const plan = planTaxCodeChange(rows, {
       effectiveFrom: '2026-12-01',
+      expectedPeriodId: ID(1),
       expectedVersion: 1,
       today: TODAY,
     });
@@ -106,10 +108,20 @@ describe('planTaxCodeChange', () => {
 
   it('allows a change from today, never from an earlier day', () => {
     expect(
-      planTaxCodeChange(rows, { effectiveFrom: TODAY, expectedVersion: 1, today: TODAY }).ok,
+      planTaxCodeChange(rows, {
+        effectiveFrom: TODAY,
+        expectedPeriodId: ID(1),
+        expectedVersion: 1,
+        today: TODAY,
+      }).ok,
     ).toBe(true);
     expectRefusal(
-      planTaxCodeChange(rows, { effectiveFrom: '2026-11-19', expectedVersion: 1, today: TODAY }),
+      planTaxCodeChange(rows, {
+        effectiveFrom: '2026-11-19',
+        expectedPeriodId: ID(1),
+        expectedVersion: 1,
+        today: TODAY,
+      }),
       400,
       'before today',
     );
@@ -123,6 +135,7 @@ describe('planTaxCodeChange', () => {
     expectRefusal(
       planTaxCodeChange(scheduled, {
         effectiveFrom: '2026-12-01',
+        expectedPeriodId: ID(2),
         expectedVersion: 1,
         today: TODAY,
       }),
@@ -132,6 +145,7 @@ describe('planTaxCodeChange', () => {
     expect(
       planTaxCodeChange(scheduled, {
         effectiveFrom: '2027-04-01',
+        expectedPeriodId: ID(2),
         expectedVersion: 1,
         today: TODAY,
       }),
@@ -140,14 +154,25 @@ describe('planTaxCodeChange', () => {
 
   it('refuses a stale version, an unknown code and a retired code', () => {
     expect(
-      planTaxCodeChange(rows, { effectiveFrom: '2026-12-01', expectedVersion: 7, today: TODAY }),
+      planTaxCodeChange(rows, {
+        effectiveFrom: '2026-12-01',
+        expectedPeriodId: ID(1),
+        expectedVersion: 7,
+        today: TODAY,
+      }),
     ).toEqual({ ok: false, status: 409, message: STALE_TAX_CODE_MESSAGE });
     expect(
-      planTaxCodeChange([], { effectiveFrom: '2026-12-01', expectedVersion: 1, today: TODAY }),
+      planTaxCodeChange([], {
+        effectiveFrom: '2026-12-01',
+        expectedPeriodId: ID(1),
+        expectedVersion: 1,
+        today: TODAY,
+      }),
     ).toMatchObject({ ok: false, status: 404 });
     expectRefusal(
       planTaxCodeChange([row({ id: ID(1), effectiveTo: '2026-12-31' })], {
         effectiveFrom: '2027-01-05',
+        expectedPeriodId: ID(1),
         expectedVersion: 1,
         today: TODAY,
       }),
@@ -157,12 +182,53 @@ describe('planTaxCodeChange', () => {
   });
 });
 
+describe('a dialog opened on an earlier period', () => {
+  // Final review P2: every new period starts at version 1, so the version alone cannot tell the period a dialog was
+  // opened on from the one scheduled after it. Finance schedules 15% from December (a new v1 period); a dialog opened
+  // earlier on the 13% period (also v1) must not then add a January change carrying 13%, nor retire the code.
+  const scheduled = [
+    row({ id: ID(1), effectiveTo: '2026-12-01', version: 2 }),
+    row({ id: ID(2), rateBp: 1500, effectiveFrom: '2026-12-01' }),
+  ];
+
+  it('refuses a change or a retirement that names a period other than the latest, at the same version', () => {
+    expect(
+      planTaxCodeChange(scheduled, {
+        effectiveFrom: '2027-01-01',
+        expectedPeriodId: ID(1),
+        expectedVersion: 1,
+        today: TODAY,
+      }),
+    ).toEqual({ ok: false, status: 409, message: STALE_TAX_CODE_MESSAGE });
+    expect(
+      planTaxCodeRetire(scheduled, {
+        effectiveTo: '2027-01-01',
+        expectedPeriodId: ID(1),
+        expectedVersion: 1,
+        today: TODAY,
+      }),
+    ).toEqual({ ok: false, status: 409, message: STALE_TAX_CODE_MESSAGE });
+  });
+
+  it('accepts the same change from a dialog opened on the latest period', () => {
+    expect(
+      planTaxCodeChange(scheduled, {
+        effectiveFrom: '2027-01-01',
+        expectedPeriodId: ID(2),
+        expectedVersion: 1,
+        today: TODAY,
+      }),
+    ).toMatchObject({ ok: true, close: { id: ID(2), version: 1, effectiveTo: '2027-01-01' } });
+  });
+});
+
 describe('planTaxCodeRetire', () => {
   const rows = [row({ id: ID(1) })];
 
   it('closes the last period: documents issued before keep the code, none are priced with it after', () => {
     const plan = planTaxCodeRetire(rows, {
       effectiveTo: '2026-12-01',
+      expectedPeriodId: ID(1),
       expectedVersion: 1,
       today: TODAY,
     });
@@ -174,11 +240,17 @@ describe('planTaxCodeRetire', () => {
 
   it('refuses a day before today, a day not after the current start, and a second retirement', () => {
     expect(
-      planTaxCodeRetire(rows, { effectiveTo: '2026-11-01', expectedVersion: 1, today: TODAY }),
+      planTaxCodeRetire(rows, {
+        effectiveTo: '2026-11-01',
+        expectedPeriodId: ID(1),
+        expectedVersion: 1,
+        today: TODAY,
+      }),
     ).toMatchObject({ ok: false, status: 400 });
     expect(
       planTaxCodeRetire([row({ id: ID(1), effectiveFrom: TODAY })], {
         effectiveTo: TODAY,
+        expectedPeriodId: ID(1),
         expectedVersion: 1,
         today: TODAY,
       }),
@@ -186,6 +258,7 @@ describe('planTaxCodeRetire', () => {
     expect(
       planTaxCodeRetire([row({ id: ID(1), effectiveTo: '2026-12-01' })], {
         effectiveTo: '2026-12-05',
+        expectedPeriodId: ID(1),
         expectedVersion: 1,
         today: TODAY,
       }),

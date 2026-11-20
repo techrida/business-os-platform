@@ -311,6 +311,7 @@ function ChangeTaxCodeDialog({
         rate: zero ? '0' : rate,
         creditable,
         effectiveFrom,
+        expectedPeriodId: code.latest.id,
         expectedVersion: code.latest.version,
       }),
     );
@@ -422,7 +423,10 @@ function RetireTaxCodeDialog({
       confirmLabel="Retire tax code"
       destructive
       onConfirm={async () => {
-        const state = await retireTaxCodeAction(code.code, effectiveTo, code.latest.version);
+        const state = await retireTaxCodeAction(code.code, effectiveTo, {
+          expectedPeriodId: code.latest.id,
+          expectedVersion: code.latest.version,
+        });
         if (state.status === 'error') {
           setError(state.message);
           return false;

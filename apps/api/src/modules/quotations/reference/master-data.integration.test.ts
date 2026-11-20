@@ -144,6 +144,7 @@ describe('tax codes', () => {
       rate: '15',
       creditable: true,
       effectiveFrom: from,
+      expectedPeriodId: before.latest.id,
       expectedVersion: 99,
     });
     expect(stale.status).toBe(409);
@@ -153,10 +154,39 @@ describe('tax codes', () => {
       rate: '15',
       creditable: true,
       effectiveFrom: from,
+      expectedPeriodId: before.latest.id,
       expectedVersion: before.latest.version,
     });
     expect(res.status, JSON.stringify(res.body)).toBe(201);
     const after = code(res.body);
+
+    // A dialog opened before that change still shows the old period at version 1, the version the new period starts
+    // at. Its change (back to 13%) or retirement names the old period, so both are refused and nothing is written.
+    expect(after.latest.version).toBe(before.latest.version);
+    const fromOldDialog = await request(baseUrl)
+      .post('/v1/admin/tax-codes/WP4VAT/changes')
+      .send({
+        name: 'VAT 13%',
+        rate: '13',
+        creditable: true,
+        effectiveFrom: shift(from, 5),
+        expectedPeriodId: before.latest.id,
+        expectedVersion: before.latest.version,
+      });
+    expect(fromOldDialog.status, JSON.stringify(fromOldDialog.body)).toBe(409);
+    const retireFromOldDialog = await request(baseUrl)
+      .post('/v1/admin/tax-codes/WP4VAT/retire')
+      .send({
+        effectiveTo: shift(from, 5),
+        expectedPeriodId: before.latest.id,
+        expectedVersion: before.latest.version,
+      });
+    expect(retireFromOldDialog.status, JSON.stringify(retireFromOldDialog.body)).toBe(409);
+    const unchanged = z
+      .array(AdminTaxCodeSchema)
+      .parse((await request(baseUrl).get('/v1/admin/tax-codes')).body)
+      .find((c) => c.code === 'WP4VAT')!;
+    expect(unchanged.periods).toEqual(after.periods);
     expect(after.periods.map((p) => [p.rate, p.effectiveFrom, p.effectiveTo])).toEqual([
       ['13', today, from],
       ['15', from, null],
@@ -191,9 +221,11 @@ describe('tax codes', () => {
       .parse((await request(baseUrl).get('/v1/admin/tax-codes')).body);
     const current = list.find((c) => c.code === 'WP4VAT')!;
     const retireOn = shift(today, 20);
-    const res = await request(baseUrl)
-      .post('/v1/admin/tax-codes/WP4VAT/retire')
-      .send({ effectiveTo: retireOn, expectedVersion: current.latest.version });
+    const res = await request(baseUrl).post('/v1/admin/tax-codes/WP4VAT/retire').send({
+      effectiveTo: retireOn,
+      expectedPeriodId: current.latest.id,
+      expectedVersion: current.latest.version,
+    });
     expect(res.status, JSON.stringify(res.body)).toBe(200);
     expect(code(res.body).endsOn).toBe(retireOn);
 
@@ -204,6 +236,7 @@ describe('tax codes', () => {
         rate: '16',
         creditable: true,
         effectiveFrom: shift(today, 30),
+        expectedPeriodId: code(res.body).latest.id,
         expectedVersion: code(res.body).latest.version,
       });
     expect(change.status).toBe(409);
@@ -212,7 +245,11 @@ describe('tax codes', () => {
   it('answers 404 for a code the tenant does not have', async () => {
     const res = await request(baseUrl)
       .post('/v1/admin/tax-codes/NOPE/retire')
-      .send({ effectiveTo: shift(today, 5), expectedVersion: 1 });
+      .send({
+        effectiveTo: shift(today, 5),
+        expectedPeriodId: '00000000-0000-4000-8000-000000000001',
+        expectedVersion: 1,
+      });
     expect(res.status).toBe(404);
   });
 });

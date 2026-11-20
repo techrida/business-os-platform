@@ -55,8 +55,10 @@ const change = {
   rate: '15',
   creditable: true,
   effectiveFrom: '2099-01-01',
+  expectedPeriodId: '00000000-0000-4000-8000-000000000003',
   expectedVersion: 3,
 };
+const shown = { expectedPeriodId: '00000000-0000-4000-8000-000000000003', expectedVersion: 4 };
 
 beforeEach(() => {
   vi.clearAllMocks();
@@ -75,12 +77,12 @@ describe('tax code actions by live grant', () => {
     });
     await expect(changeTaxCodeAction('VAT13', change)).resolves.toMatchObject({ status: 'ok' });
     expect(master.changeTaxCode).toHaveBeenCalledWith(expect.anything(), 'VAT13', change);
-    await expect(retireTaxCodeAction('VAT13', '2099-02-01', 4)).resolves.toMatchObject({
+    await expect(retireTaxCodeAction('VAT13', '2099-02-01', shown)).resolves.toMatchObject({
       status: 'ok',
     });
     expect(master.retireTaxCode).toHaveBeenCalledWith(expect.anything(), 'VAT13', {
       effectiveTo: '2099-02-01',
-      expectedVersion: 4,
+      ...shown,
     });
   });
 
@@ -88,7 +90,7 @@ describe('tax code actions by live grant', () => {
     persona('rates-only', ['finance'], 'settings.fx_rate.write');
     await expect(addTaxCodeAction(add)).rejects.toThrow('REDIRECT:/settings/currencies');
     await expect(changeTaxCodeAction('VAT13', change)).rejects.toThrow('REDIRECT:');
-    await expect(retireTaxCodeAction('VAT13', '2099-02-01', 4)).rejects.toThrow('REDIRECT:');
+    await expect(retireTaxCodeAction('VAT13', '2099-02-01', shown)).rejects.toThrow('REDIRECT:');
     expect(master.createTaxCode).not.toHaveBeenCalled();
     expect(master.changeTaxCode).not.toHaveBeenCalled();
     expect(master.retireTaxCode).not.toHaveBeenCalled();
@@ -103,6 +105,13 @@ describe('tax code action checks', () => {
     expect(state).toMatchObject({ status: 'error' });
     expect(state.message).toContain('0%');
     expect(master.createTaxCode).not.toHaveBeenCalled();
+  });
+
+  it('asks for a reload, without calling the API, when the screen sent no period id', async () => {
+    const state = await changeTaxCodeAction('VAT13', { ...change, expectedPeriodId: '' });
+    expect(state.status).toBe('error');
+    expect(state.message).toContain('Reload the page');
+    expect(master.changeTaxCode).not.toHaveBeenCalled();
   });
 
   it("shows the API's words for a refused change and refreshes the table", async () => {
