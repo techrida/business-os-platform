@@ -43,6 +43,7 @@ import { creditExceedsInvoice } from './notes/note-drafting.service';
 import {
   assertStaff,
   conflict,
+  createdThisNote,
   dueDateBeforeIssue,
   formatAddress,
   INVOICE_CLOCK,
@@ -50,6 +51,7 @@ import {
   invoiceNotFound,
   kathmanduDay,
   notApproved,
+  noteIssuerIsCreator,
   pgError,
 } from './invoice-support';
 
@@ -245,6 +247,9 @@ export class InvoiceIssueService {
       return { kind: 'already_issued', invoiceId: invoice.id, number: invoice.number };
     }
     if (invoice.status !== 'approved') throw notApproved();
+    if (createdThisNote(invoice, actor.kind === 'user' ? actor.id : null)) {
+      throw noteIssuerIsCreator();
+    }
     if (invoice.version !== body.expectedVersion) {
       throw conflict('This invoice was changed by someone else; reload it and try again');
     }

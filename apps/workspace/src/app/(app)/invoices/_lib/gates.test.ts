@@ -9,12 +9,18 @@ import { describe, expect, it } from 'vitest';
 
 import { permissionChecker } from '@/components/p2/customers/permissions';
 
-import { type Can, invoiceGates, recordPaymentHref, settlementMayOwe } from './gates';
+import {
+  type Can,
+  invoiceGates,
+  NOTE_CREATOR_CANNOT_ISSUE,
+  recordPaymentHref,
+  settlementMayOwe,
+} from './gates';
 
 const ACCOUNTANT = ['accountant'];
 const FINANCE = ['finance'];
 const NOBODY = ['sales'];
-const NONE = { submit: false, issue: false, discard: false, notes: false };
+const NONE = { submit: false, issue: false, discard: false, notes: false, issueBlocker: null };
 
 const gates = (kind: InvoiceKind, status: InvoiceStatus, roles: string[]) =>
   invoiceGates({ kind, status }, permissionChecker(roles));
@@ -45,6 +51,7 @@ describe('invoiceGates follow canTransitionInvoice and the role', () => {
       issue: false,
       discard: true,
       notes: false,
+      issueBlocker: null,
     });
   });
 
@@ -56,6 +63,7 @@ describe('invoiceGates follow canTransitionInvoice and the role', () => {
         issue: false,
         discard: true,
         notes: false,
+        issueBlocker: null,
       });
     },
   );
@@ -92,7 +100,13 @@ describe('invoiceGates follow canTransitionInvoice and the role', () => {
         { kind: 'tax_invoice', status: 'draft' },
         granted('invoice.draft', 'invoice.submit'),
       ),
-    ).toEqual({ submit: true, issue: false, discard: true, notes: false });
+    ).toEqual({
+      submit: true,
+      issue: false,
+      discard: true,
+      notes: false,
+      issueBlocker: null,
+    });
     // A Finance user whose invoice.issue and invoice.credit_note were revoked.
     expect(
       invoiceGates({ kind: 'tax_invoice', status: 'approved' }, granted('invoice.draft')).issue,
@@ -157,5 +171,31 @@ describe('settlementMayOwe', () => {
     expect(settlementMayOwe(['paid', 'overdue'])).toBe(false);
     expect(settlementMayOwe(['paid'])).toBe(false);
     expect(settlementMayOwe(['credited'])).toBe(false);
+  });
+});
+
+describe('a note its viewer created (TR-Q12f)', () => {
+  it.each(['credit_note', 'debit_note'] as const)(
+    'keeps Issue on an approved %s but says why it is off',
+    (kind) => {
+      const g = invoiceGates({ kind, status: 'approved' }, permissionChecker(FINANCE), true);
+      expect(g.issue).toBe(true);
+      expect(g.issueBlocker).toBe(NOTE_CREATOR_CANNOT_ISSUE);
+    },
+  );
+
+  it('blocks nothing for another viewer, a tax invoice, or a note not yet approved', () => {
+    expect(
+      invoiceGates({ kind: 'debit_note', status: 'approved' }, permissionChecker(FINANCE), false)
+        .issueBlocker,
+    ).toBeNull();
+    expect(
+      invoiceGates({ kind: 'tax_invoice', status: 'approved' }, permissionChecker(FINANCE), true)
+        .issueBlocker,
+    ).toBeNull();
+    expect(
+      invoiceGates({ kind: 'credit_note', status: 'draft' }, permissionChecker(FINANCE), true)
+        .issueBlocker,
+    ).toBeNull();
   });
 });

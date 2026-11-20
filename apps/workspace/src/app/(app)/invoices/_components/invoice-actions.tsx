@@ -5,7 +5,7 @@ import type { InvoiceDto } from '@bos/contracts';
 import { kindMeta } from '../_lib/meta';
 import type { InvoiceGates } from '../_lib/gates';
 
-import { DiscardDialog, IssueDialog, SubmitDialog } from './action-forms';
+import { DiscardDialog, IssueBlocked, IssueDialog, SubmitDialog } from './action-forms';
 
 /**
  * The actions on one invoice, for the detail page's action slot: Submit for approval, Issue and
@@ -34,7 +34,9 @@ export function InvoiceActions({
   return (
     <>
       {gates.submit ? <SubmitDialog {...ids} idempotencyKey={randomUUID()} /> : null}
-      {gates.issue ? (
+      {gates.issue && gates.issueBlocker !== null ? (
+        <IssueBlocked kindLabel={kindLabel} reason={gates.issueBlocker} />
+      ) : gates.issue ? (
         <IssueDialog {...ids} kindLabel={kindLabel} idempotencyKey={randomUUID()} />
       ) : null}
       {gates.discard ? <DiscardDialog {...ids} idempotencyKey={randomUUID()} /> : null}
