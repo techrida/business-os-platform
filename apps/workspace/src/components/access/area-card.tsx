@@ -38,12 +38,14 @@ import {
   reachChoices,
   reachHint,
   reachLabel,
+  sameControl,
   scopeFromValue,
   splitByAccess,
   staffRoles,
   undoName,
   type AreaControl,
   type AreaDraft,
+  type RefusedControl,
 } from './by-area-model';
 import { HandOversEditor, type DepartmentOption } from './hand-overs-editor';
 import { LockIcon } from './lock-icon';
@@ -59,6 +61,8 @@ export interface AreaCardProps {
   /** The staged values while open; the saved values otherwise. */
   draft: AreaDraft;
   dirty: boolean;
+  /** Staged values the server refused on save, with its reason; shown on their controls. */
+  refused?: readonly RefusedControl[] | undefined;
   edited: boolean;
   canEdit: boolean;
   stale: boolean;
@@ -177,6 +181,24 @@ function undoFor(props: AreaCardProps, control: AreaControl, subject: string, te
   );
 }
 
+/** The server's reason when it refused the value this control holds. */
+function refusalOf(props: AreaCardProps, control: AreaControl): string | undefined {
+  return props.refused?.find((r) => sameControl(r.control, control))?.message;
+}
+
+/** `aria-describedby` for a control: its hint, plus the refusal when there is one. */
+const describedBy = (ids: readonly (string | false | undefined)[]) =>
+  ids.filter(Boolean).join(' ') || undefined;
+
+function Refusal({ id, message }: { id: string; message: string | undefined }) {
+  if (!message) return null;
+  return (
+    <span id={id} className={styles.error}>
+      {message}
+    </span>
+  );
+}
+
 function FounderRow({ role, area }: { role: AccessRoleInfo; area: AccessAreaInfo }) {
   const hintId = useId();
   return (
@@ -205,6 +227,8 @@ function FounderRow({ role, area }: { role: AccessRoleInfo; area: AccessAreaInfo
 function RoleRow(props: AreaCardProps & { role: AccessRoleInfo }) {
   const { catalogue, area, role, draft, canEdit, onDraft, defaults } = props;
   const hintId = useId();
+  const errorId = useId();
+  const refusal = refusalOf(props, { type: 'reach', role: role.key });
   const value = draft.reach[role.key] ?? null;
   const fallback = defaults.reach[role.key] ?? null;
   const actions = actionLabels(catalogue, area, role.key);
@@ -226,7 +250,8 @@ function RoleRow(props: AreaCardProps & { role: AccessRoleInfo }) {
         value={value ?? ''}
         disabled={!canEdit}
         aria-label={`${role.label} can see ${lower(area.label)}`}
-        aria-describedby={hintId}
+        aria-describedby={describedBy([hintId, refusal && errorId])}
+        aria-invalid={refusal ? true : undefined}
         onChange={(event) =>
           onDraft({
             ...draft,
@@ -237,6 +262,7 @@ function RoleRow(props: AreaCardProps & { role: AccessRoleInfo }) {
       <span id={hintId} className={styles.hint}>
         {reachHint(value)}
       </span>
+      <Refusal id={errorId} message={refusal} />
       {actions.length > 0 ? (
         <p className={styles.alsoLine}>
           Can also: {actions.join(', ')}.{' '}
@@ -260,18 +286,25 @@ function LevelLine(
 ) {
   const { control, text, checked, onCheck, disabled, defaults } = props;
   const fallback = control.type === 'managers' ? defaults.managers : defaults.heads;
+  const errorId = useId();
+  const refusal = refusalOf(props, control);
   return (
-    <div className={styles.levelRow}>
-      <label className={styles.check}>
-        <input
-          type="checkbox"
-          checked={checked}
-          disabled={disabled}
-          onChange={(event) => onCheck(event.currentTarget.checked)}
-        />
-        <span>{text}</span>
-      </label>
-      {undoFor(props, control, `“${text}”`, onOff(fallback))}
+    <div className={styles.levelLine}>
+      <div className={styles.levelRow}>
+        <label className={styles.check}>
+          <input
+            type="checkbox"
+            checked={checked}
+            disabled={disabled}
+            aria-invalid={refusal ? true : undefined}
+            aria-describedby={describedBy([refusal && errorId])}
+            onChange={(event) => onCheck(event.currentTarget.checked)}
+          />
+          <span>{text}</span>
+        </label>
+        {undoFor(props, control, `“${text}”`, onOff(fallback))}
+      </div>
+      <Refusal id={errorId} message={refusal} />
     </div>
   );
 }
@@ -281,6 +314,9 @@ function AssignBlock(props: AreaCardProps) {
   const headingId = useId();
   const staffId = useId();
   const managersId = useId();
+  const staffErrorId = useId();
+  const managersErrorId = useId();
+  const handOversErrorId = useId();
   const rule = assignmentRuleFor(catalogue, area);
   const fixed = catalogue.assignmentSummaries[area.key];
 
@@ -298,6 +334,9 @@ function AssignBlock(props: AreaCardProps) {
   }
 
   const assignment = draft.assignment;
+  const staffRefusal = refusalOf(props, { type: 'staffRule' });
+  const managersRefusal = refusalOf(props, { type: 'managerRule' });
+  const handOversRefusal = refusalOf(props, { type: 'handOvers' });
   const known: AssignmentHandOver[] = [...rule.handOvers, ...rule.defaults.handOvers];
   const setAssignment = (patch: Partial<typeof assignment>) =>
     onDraft({ ...draft, assignment: { ...assignment, ...patch } });
@@ -322,8 +361,11 @@ function AssignBlock(props: AreaCardProps) {
           options={STAFF_RULE_OPTIONS}
           value={assignment.staff}
           disabled={!canEdit}
+          aria-describedby={describedBy([staffRefusal && staffErrorId])}
+          aria-invalid={staffRefusal ? true : undefined}
           onChange={(event) => setAssignment({ staff: event.target.value as StaffAssignmentRule })}
         />
+        <Refusal id={staffErrorId} message={staffRefusal} />
       </RuleLine>
       <RuleLine
         id={managersId}
@@ -340,10 +382,13 @@ function AssignBlock(props: AreaCardProps) {
           options={MANAGER_RULE_OPTIONS}
           value={assignment.managers}
           disabled={!canEdit}
+          aria-describedby={describedBy([managersRefusal && managersErrorId])}
+          aria-invalid={managersRefusal ? true : undefined}
           onChange={(event) =>
             setAssignment({ managers: event.target.value as ManagerAssignmentRule })
           }
         />
+        <Refusal id={managersErrorId} message={managersRefusal} />
       </RuleLine>
       <HandOversEditor
         value={assignment.handOvers}
@@ -353,6 +398,7 @@ function AssignBlock(props: AreaCardProps) {
         onChange={(handOvers) => setAssignment({ handOvers })}
         undo={undoFor(props, { type: 'handOvers' }, 'hand-overs', 'the default hand-overs')}
       />
+      <Refusal id={handOversErrorId} message={handOversRefusal} />
       <p className={styles.fixedLine}>
         <LockIcon className={styles.lock ?? ''} />
         Founders can assign to anyone. Nobody can assign to someone above their own level.
