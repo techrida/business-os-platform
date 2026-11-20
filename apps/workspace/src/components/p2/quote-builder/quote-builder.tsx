@@ -2,7 +2,15 @@
 
 import type { TermPreset } from '@bos/contracts';
 import { unstable_rethrow, useRouter } from 'next/navigation';
-import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  useSyncExternalStore,
+  type ReactNode,
+} from 'react';
 
 import { Alert } from '@/components/ui/alert';
 import { Button, LinkButton } from '@/components/ui/button';
@@ -87,6 +95,13 @@ function friendlyErrors(
   return out;
 }
 
+const noSubscription = () => () => {};
+const onClient = () => true;
+const onServer = () => false;
+
+/** How long the totals wait for the platform before saying they did not load (TR-Q8). */
+export const PREVIEW_TIMEOUT_MS = 20_000;
+
 const DISCOUNT_LABEL: Record<DiscountMode, string> = {
   none: 'No discount',
   pct: 'Percentage',
@@ -161,6 +176,13 @@ export function QuoteBuilder({
   const [scheduleAttempted, setScheduleAttempted] = useState(false);
   const [errors, setErrors] = useState<Record<string, string>>({});
   const [lastView, setLastView] = useState<PreviewView>({ state: 'loading', preview: null });
+  // False on the server and until this page's script has run. Until then no totals request can have
+  // been made, so the panel must not claim one is on its way (TR-Q8: a page whose script failed to
+  // load kept saying "Updating totals" for ever).
+  const hydrated = useSyncExternalStore(noSubscription, onClient, onServer);
+  // Bumped by Try again: the same inputs are priced once more.
+  const [attempt, setAttempt] = useState(0);
+  const retryNow = useRef(false);
 
   // A saved quotation keeps its own currency even after it is switched off; the API accepts it unchanged.
   const keptCurrency = useMemo(
@@ -209,6 +231,7 @@ export function QuoteBuilder({
   // ---- Totals and approval route: ask the platform, show what it says ----------------------
 
   const previewKey = JSON.stringify([
+    attempt,
     pricedIssueDate,
     values.issueDate,
     values.currency,
@@ -225,6 +248,13 @@ export function QuoteBuilder({
     ]),
   ]);
   const firstPreview = useRef(true);
+  // The pricing inputs on screen now. A reply is shown whenever it answers them, even if the request
+  // that asked was cleaned up meanwhile (TR-Q8: a dropped reply left the totals updating until the next
+  // keystroke). A reply for inputs that have since changed is ignored.
+  const currentPreviewKey = useRef(previewKey);
+  useEffect(() => {
+    currentPreviewKey.current = previewKey;
+  });
 
   useEffect(() => {
     const snapshot = latest.current;
@@ -235,14 +265,22 @@ export function QuoteBuilder({
     )
       return;
 
-    let cancelled = false;
-    const delay = firstPreview.current ? 0 : 600;
+    const delay = firstPreview.current || retryNow.current ? 0 : 600;
     firstPreview.current = false;
+    retryNow.current = false;
 
     async function run(quotationId: string, versionId: string) {
       let next: PreviewView;
       try {
-        const res = await previewQuoteAction({ quotationId, versionId, values: snapshot });
+        // A reply that never comes must not leave the panel waiting for ever: after the limit it says
+        // so and offers Try again.
+        const res = await Promise.race([
+          previewQuoteAction({ quotationId, versionId, values: snapshot }),
+          new Promise<'timeout'>((resolve) => {
+            watchdog = setTimeout(() => resolve('timeout'), PREVIEW_TIMEOUT_MS);
+          }),
+        ]);
+        if (res === 'timeout') throw new Error('timeout');
         next = res.ok
           ? { state: 'ready', preview: res.preview }
           : {
@@ -254,16 +292,22 @@ export function QuoteBuilder({
         next = {
           state: 'error',
           preview: null,
-          message: 'The totals could not load.',
+          message: 'The totals did not load. Try again.',
         };
+      } finally {
+        clearTimeout(watchdog);
       }
-      if (!cancelled) setLastView({ ...next, key: previewKey, currency: snapshot.currency });
+      if (currentPreviewKey.current === previewKey) {
+        setLastView({ ...next, key: previewKey, currency: snapshot.currency });
+      }
     }
 
+    let watchdog: ReturnType<typeof setTimeout> | undefined;
     const timer = setTimeout(() => void run(target.quotationId, target.versionId), delay);
     return () => {
-      cancelled = true;
       clearTimeout(timer);
+      // Inputs that change again bring their own limit; a reply to these still lands if it comes.
+      clearTimeout(watchdog);
     };
     // The key captures the pricing inputs, including the issue date saved on the server.
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -282,6 +326,7 @@ export function QuoteBuilder({
       };
     }
     if (lastView.key === previewKey) return lastView;
+    if (!hydrated) return { state: 'starting', preview: null };
     return {
       state: 'loading',
       preview: lastView.currency === values.currency ? lastView.preview : null,
@@ -294,6 +339,7 @@ export function QuoteBuilder({
     pricedIssueDate,
     lastView,
     previewKey,
+    hydrated,
   ]);
   const readyPreview = view.state === 'ready' ? view.preview : null;
   // The first-step approver the author chose ('' = anyone eligible). A fresh route that no longer offers
@@ -396,6 +442,13 @@ export function QuoteBuilder({
               values,
             },
       );
+      if (res.ok && res.createdId !== undefined) {
+        // A new draft: move to its editor once. Nothing else is set, so this page does not re-render
+        // into a half-saved state on the way out.
+        leaving.current = true;
+        router.replace(`/quotations/${encodeURIComponent(res.createdId)}/edit?saved=1`);
+        return;
+      }
       if (res.ok) {
         setRowVersion(res.version);
         setSaved(JSON.stringify(values));
@@ -407,7 +460,6 @@ export function QuoteBuilder({
         fail(res.kind, res.message, res.fieldErrors);
       }
     } catch (error) {
-      // A successful create redirects through Next's server action transport.
       unstable_rethrow(error);
       fail('error', 'The save could not be confirmed. Try again.');
     } finally {
@@ -509,7 +561,7 @@ export function QuoteBuilder({
                   open={confirming}
                   onOpenChange={openConfirmation}
                   title="Submit this quotation for approval?"
-                  description="Editing is locked while approval is pending. Recall the quotation if it needs changes."
+                  description="Editing is locked while approval is pending. If the approver returns it, you can change it and submit again."
                   confirmLabel="Submit quotation"
                   cancelLabel="Keep editing"
                   onConfirm={submit}
@@ -661,6 +713,15 @@ export function QuoteBuilder({
                 state={view.state}
                 preview={view.preview}
                 message={view.message}
+                reloadHref={
+                  target.mode === 'edit'
+                    ? `/quotations/${encodeURIComponent(target.quotationId)}/edit`
+                    : undefined
+                }
+                onRetry={() => {
+                  retryNow.current = true;
+                  setAttempt((n) => n + 1);
+                }}
               />
             }
             errors={errors}
@@ -749,6 +810,11 @@ export function QuoteBuilder({
           description="Choose a payment term, or split the payment into milestones that add up to 100%."
         >
           <div className={styles.sectionBody}>
+            {errors['paymentSchedule'] ? (
+              <Alert tone="error" role="alert">
+                {errors['paymentSchedule']}
+              </Alert>
+            ) : null}
             <div className={styles.grid2}>
               <Field
                 label="Payment term"
@@ -791,6 +857,7 @@ export function QuoteBuilder({
                   Object.fromEntries(
                     Object.entries(current).filter(
                       ([path]) =>
+                        path !== 'paymentSchedule' &&
                         !Object.keys(patch).some(
                           (field) => path === `paymentSchedule.${index}.${field}`,
                         ),
