@@ -23,12 +23,14 @@ const api = vi.hoisted(() => ({
   scoreQuotation: vi.fn(),
   recommendQuotation: vi.fn(),
   commitRfq: vi.fn(),
+  extendRfqDeadline: vi.fn(),
 }));
 vi.mock('@/lib/api-rfqs', () => api);
 
 const {
   commitRfqAction,
   createRfqAction,
+  extendDeadlineAction,
   recommendQuotationAction,
   recordQuotationAction,
   scoreQuotationAction,
@@ -455,5 +457,96 @@ describe('commitRfqAction', () => {
       api.commitRfq.mockRejectedValue(err);
       expect((await commitRfqAction(commitStart, form(entries))).key).toBe(KEY);
     }
+  });
+});
+
+describe('extendDeadlineAction (F1-Q47)', () => {
+  const editStart = { key: KEY, errors: {}, count: 0 };
+  const entries = (deadline: string): [string, string][] => [
+    ['idempotencyKey', KEY],
+    ['rfqId', RFQ],
+    ['currentDeadline', '2026-11-20T04:15:00.000Z'],
+    ['deadline', deadline],
+  ];
+
+  it('sends the new Kathmandu deadline with the form key, refreshes the RFQ and says until when', async () => {
+    api.extendRfqDeadline.mockResolvedValue({ deadline: '2030-12-01T11:45:00.000Z' });
+    const next = await extendDeadlineAction(editStart, form(entries('2030-12-01T17:30')));
+    expect(api.extendRfqDeadline).toHaveBeenCalledWith(
+      expect.anything(),
+      RFQ,
+      { deadline: '2030-12-01T17:30:00+05:45' },
+      KEY,
+    );
+    expect(next.count).toBe(1);
+    expect(next.key).not.toBe(KEY);
+    expect(next.saved).toContain('Deadline extended to');
+    expect(next.saved).toContain('Invited vendors can send quotations until then.');
+    expect(cache.revalidatePath.mock.calls.map((c) => String(c[0]))).toContain(
+      `/procurement/rfqs/${RFQ}`,
+    );
+  });
+
+  it('refuses a past deadline next to the field without calling the API', async () => {
+    const next = await extendDeadlineAction(editStart, form(entries('2020-01-01T10:00')));
+    expect(next.errors.deadline).toMatch(/has passed/);
+    expect(next.key).toBe(KEY);
+    expect(api.extendRfqDeadline).not.toHaveBeenCalled();
+  });
+
+  it("puts the API's 400 refusals next to the field and rotates the key", async () => {
+    api.extendRfqDeadline.mockRejectedValueOnce(
+      new ApiError(400, 'x', {
+        error: {
+          code: 'bad_request',
+          message: 'The new deadline must be later than the current one.',
+          correlationId: 'corr-12345678',
+        },
+      }),
+    );
+    const next = await extendDeadlineAction(editStart, form(entries('2030-12-01T17:30')));
+    expect(next.errors.deadline).toBe('Choose a deadline later than the current one.');
+    expect(next.error).toBeUndefined();
+    expect(next.key).not.toBe(KEY);
+  });
+
+  it('a closed RFQ (409) asks for a reload; a 5xx keeps the key', async () => {
+    api.extendRfqDeadline.mockRejectedValueOnce(
+      apiError(409, 'conflict', "Only an open RFQ's deadline can be extended; this one is closed"),
+    );
+    const closed = await extendDeadlineAction(editStart, form(entries('2030-12-01T17:30')));
+    expect(closed.reload).toBe(true);
+    expect(closed.error).not.toBeUndefined();
+    api.extendRfqDeadline.mockRejectedValueOnce(new ApiError(503, 'x'));
+    const down = await extendDeadlineAction(editStart, form(entries('2030-12-01T17:30')));
+    expect(down.key).toBe(KEY);
+  });
+
+  it('refuses a form without a real RFQ id and a person without the grant, before any call', async () => {
+    const bad = await extendDeadlineAction(
+      editStart,
+      form([...entries('2030-12-01T17:30').filter(([k]) => k !== 'rfqId'), ['rfqId', 'x']]),
+    );
+    expect(bad.reload).toBe(true);
+    session.roles = ['viewer'];
+    const denied = await extendDeadlineAction(editStart, form(entries('2030-12-01T17:30')));
+    expect(denied.error).toMatch(/sourcing/);
+    expect(api.extendRfqDeadline).not.toHaveBeenCalled();
+  });
+});
+
+describe('a quotation after the deadline (F1-Q47)', () => {
+  it('says the deadline passed instead of asking for a reload, and rotates the key', async () => {
+    api.recordQuotation.mockRejectedValueOnce(
+      apiError(
+        409,
+        'rfq_deadline_passed',
+        'The quotation deadline of this RFQ has passed. Procurement can extend it to take more quotations.',
+      ),
+    );
+    const next = await recordQuotationAction(start, form(quoteEntries));
+    expect(next.error).toMatch(/deadline has passed/);
+    expect(next.reload).toBeUndefined();
+    expect(next.key).not.toBe(KEY);
   });
 });

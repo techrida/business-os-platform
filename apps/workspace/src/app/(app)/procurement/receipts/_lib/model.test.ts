@@ -68,15 +68,16 @@ describe('scaled quantities', () => {
 
 describe('who may handle what', () => {
   it('maps live grants to the screen grants', () => {
+    // F1-Q52: the warehouse opens the purchase order read-only through its receipt grant.
     expect(receiptGrants(live(['warehouse'], ['procurement.receipt.confirm']))).toEqual({
       confirm: true,
-      issue: false,
+      openOrder: true,
     });
     expect(receiptGrants(live(['procurement'], ['procurement.po.issue']))).toEqual({
       confirm: false,
-      issue: true,
+      openOrder: true,
     });
-    expect(receiptGrants(live(['sales'], []))).toEqual({ confirm: false, issue: false });
+    expect(receiptGrants(live(['sales'], []))).toEqual({ confirm: false, openOrder: false });
   });
 
   it('follows saved grants, not role defaults', () => {
@@ -88,8 +89,8 @@ describe('who may handle what', () => {
   });
 
   it('falls back to role defaults only when /v1/me fails', () => {
-    expect(receiptGrants(live(['warehouse'], null))).toEqual({ confirm: true, issue: false });
-    expect(receiptGrants(live(['sales'], null))).toEqual({ confirm: false, issue: false });
+    expect(receiptGrants(live(['warehouse'], null))).toEqual({ confirm: true, openOrder: true });
+    expect(receiptGrants(live(['sales'], null))).toEqual({ confirm: false, openOrder: false });
   });
 
   it('offers a service to everyone and goods to the warehouse', () => {
@@ -112,6 +113,31 @@ describe('who may handle what', () => {
   });
 });
 
+describe("the receipt's own can flags", () => {
+  const draft = { status: 'draft' as const, kind: 'service' as const, reversesReceiptId: null };
+  const none = { confirm: false, discard: false, reverse: false };
+
+  it('win over the grant guess: a read-only buyer gets no Confirm or Discard, even on a service', () => {
+    // The old guess offered a service draft to anyone; the API's answer for procurement is none.
+    expect(receiptActions({ ...draft, can: none }, { confirm: false })).toEqual(none);
+    expect(receiptActions({ ...draft, can: none }, { confirm: true }, 'issued')).toEqual(none);
+    const mine = { confirm: true, discard: true, reverse: false };
+    expect(receiptActions({ ...draft, can: mine }, { confirm: false })).toEqual(mine);
+  });
+
+  it('decide which kinds a person can start a receipt for', () => {
+    const lines = [
+      { kind: 'goods' as const, ...L('2.0000', '0.0000') },
+      { kind: 'service' as const, ...L('2.0000', '0.0000') },
+    ];
+    expect(kindsOffered(lines, { confirm: false }, { goods: false, service: false })).toEqual([]);
+    expect(kindsOffered(lines, { confirm: false }, { goods: false, service: true })).toEqual([
+      'service',
+    ]);
+    expect(kindsOffered(lines, { confirm: false })).toEqual(['service']);
+  });
+});
+
 describe('receiptActions gating', () => {
   const draft = { status: 'draft' as const, kind: 'goods' as const, reversesReceiptId: null };
   const confirmed = { ...draft, status: 'confirmed' as const };
@@ -119,8 +145,16 @@ describe('receiptActions gating', () => {
   const nobody = { confirm: false };
 
   it('shows Confirm on a draft to the warehouse, and on a service draft to anyone', () => {
-    expect(receiptActions(draft, warehouse)).toEqual({ confirm: true, reverse: false });
-    expect(receiptActions(draft, nobody)).toEqual({ confirm: false, reverse: false });
+    expect(receiptActions(draft, warehouse)).toEqual({
+      confirm: true,
+      discard: true,
+      reverse: false,
+    });
+    expect(receiptActions(draft, nobody)).toEqual({
+      confirm: false,
+      discard: false,
+      reverse: false,
+    });
     expect(receiptActions({ ...draft, kind: 'service' }, nobody).confirm).toBe(true);
   });
 

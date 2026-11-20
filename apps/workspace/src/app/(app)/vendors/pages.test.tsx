@@ -40,6 +40,7 @@ const api = vi.hoisted(() => ({
   listVendorContacts: vi.fn(),
   listVendorAccounts: vi.fn(),
   listBankAccounts: vi.fn(),
+  getVendorReviewReadiness: vi.fn(),
 }));
 vi.mock('@/lib/api-vendors', () => api);
 const kyb = vi.hoisted(() => ({ listVerificationCases: vi.fn() }));
@@ -104,6 +105,7 @@ beforeEach(() => {
   api.listVendorContacts.mockResolvedValue([]);
   api.listVendorAccounts.mockResolvedValue([]);
   api.listBankAccounts.mockResolvedValue([]);
+  api.getVendorReviewReadiness.mockResolvedValue({ kybSubmitted: false });
   kyb.listVerificationCases.mockResolvedValue({ items: [], total: null });
 });
 
@@ -333,6 +335,42 @@ describe('vendor detail', () => {
     expect(checker).toContain('Verify account');
     expect(checker).toContain('Call-back evidence');
     expect(checker).not.toContain('Propose a bank account');
+  });
+
+  it('shows "Send for review" only once the KYB case is submitted, the state the API checks', async () => {
+    api.getVendor.mockResolvedValue(vendor({ status: 'pending_kyc' }));
+    session.roles = ['procurement'];
+    // The case is open, not submitted: no button, and the status panel says why.
+    const open = await detail();
+    expect(api.getVendorReviewReadiness).toHaveBeenCalledWith(expect.anything(), ID);
+    expect(open).not.toContain('Send for review');
+    expect(open).toContain('once its KYB case is submitted');
+    expect(open).not.toContain('No status action is open');
+
+    api.getVendorReviewReadiness.mockResolvedValue({ kybSubmitted: true });
+    const ready = await detail();
+    expect(ready.slice(0, ready.indexOf('<section'))).toContain('Send for review');
+    expect(ready).not.toContain('once its KYB case is submitted');
+
+    // The readiness read fails: the button stays hidden (fail closed) and the panel says so.
+    api.getVendorReviewReadiness.mockRejectedValue(apiError(500, 'internal'));
+    const failed = await detail();
+    expect(failed).not.toContain('Send for review');
+    expect(failed).toContain('could not check the KYB case');
+  });
+
+  it('does not ask for KYB readiness when "Send for review" could not show', async () => {
+    api.getVendor.mockResolvedValue(vendor({ status: 'draft' }));
+    await detail();
+    session.roles = ['finance'];
+    api.getVendor.mockResolvedValue(
+      vendor({
+        status: 'pending_kyc',
+        can: { write: false, activate: true, suspend: false, block: false, archive: false },
+      }),
+    );
+    await detail();
+    expect(api.getVendorReviewReadiness).not.toHaveBeenCalled();
   });
 
   it('gates the lifecycle buttons by status and permission in the page header', async () => {

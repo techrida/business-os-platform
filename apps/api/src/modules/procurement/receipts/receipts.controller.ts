@@ -1,5 +1,5 @@
 // HTTP routes of goods and service receipts (P4 unit P4r). Thin on purpose: parsing here (the bodies are the
-// contracts of procurement.ts, plus the exception id of receipt.rules.ts), every rule in ReceiptsService. Every
+// contracts of procurement.ts), every rule in ReceiptsService. Every
 // write needs an Idempotency-Key, so a double click or a retry cannot open two receipts or reverse one twice.
 //
 // Route-level grant: @AnyAuthenticated on every route, because no single permission fits the callers: the warehouse
@@ -30,8 +30,10 @@ import {
 } from './receipt.rules';
 import {
   ListReceivableOrdersQuerySchema,
+  ListReceivedOrdersQuerySchema,
   ReceivableOrdersService,
   type ReceivableOrderDto,
+  type ReceivedOrderDto,
 } from './receivable-orders.service';
 import { ReceiptsService } from './receipts.service';
 import {
@@ -136,6 +138,22 @@ export class ReceivableOrdersController {
   @Can('procurement.receipt.confirm')
   list(@Query() query: unknown): Promise<ReceivableOrderDto[]> {
     return this.orders.list(parseOr400(ListReceivableOrdersQuerySchema, query));
+  }
+}
+
+/**
+ * The orders the warehouse has finished with (U18-Q3): fully received, closed or short-closed, the most recently
+ * received first. Read-only; the same grant as the receiving list, which these orders have left.
+ */
+@Controller('v1/procurement/received-orders')
+export class ReceivedOrdersController {
+  constructor(private readonly orders: ReceivableOrdersService) {}
+
+  /** Query: `limit` (default 20, at most 100). */
+  @Get()
+  @Can('procurement.receipt.confirm')
+  list(@Query() query: unknown): Promise<ReceivedOrderDto[]> {
+    return this.orders.listReceived(parseOr400(ListReceivedOrdersQuerySchema, query));
   }
 }
 

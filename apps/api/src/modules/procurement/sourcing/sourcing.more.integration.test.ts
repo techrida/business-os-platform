@@ -317,7 +317,9 @@ async function doc(): Promise<string> {
   return (rows[0] as { id: string }).id;
 }
 
-const deadline = '2026-11-20T10:00:00+05:45';
+// Far ahead: an inbox submission is received at the database's own time, which must stay before the deadline
+// (F1-Q47 refuses a later one).
+const deadline = '2030-11-20T10:00:00+05:45';
 
 /** An open RFQ inviting `count` approved vendors; nobody has quoted yet. */
 async function openRfq(count: number) {
@@ -610,6 +612,99 @@ describe('inbox conversion', () => {
     expect(e.getStatus()).toBe(409);
     expect(messageOf(e)).toMatch(/is converted/);
     expect(await quotesOf(rfq.id)).toHaveLength(1);
+  });
+});
+
+// ---------------------------------------------------------------------------------------- quotation deadline
+
+describe('the quotation deadline (F1-Q47)', () => {
+  const recordOne = (rfqId: string, vendorId: string, lineId: string) =>
+    doc().then((documentId) =>
+      service.recordQuotation(
+        rfqId,
+        {
+          vendorId,
+          documentId,
+          currency: 'NPR',
+          lines: [{ prLineId: lineId, quantity: '1', unitPrice: '1000.00', taxCodeId: vatCode }],
+        },
+        randomUUID(),
+      ),
+    );
+  const passDeadline = (rfqId: string) =>
+    exec(scopeA, sql`UPDATE app.rfqs SET deadline = '2026-11-08T00:00:00Z' WHERE id = ${rfqId}`);
+
+  it('refuses a quotation typed in after the deadline with 409 rfq_deadline_passed', async () => {
+    const { rfq, pr, vendorIds } = await openRfq(1);
+    await passDeadline(rfq.id);
+    const e = await httpErrorOf(recordOne(rfq.id, vendorIds[0]!, pr.lineId));
+    expect(e.getStatus()).toBe(409);
+    expect((e.getResponse() as { code?: string }).code).toBe('rfq_deadline_passed');
+    expect(await quotesOf(rfq.id)).toHaveLength(0);
+  });
+
+  it('refuses to convert an upload received after the deadline and leaves it received', async () => {
+    const { rfq, pr, vendorIds } = await openRfq(1);
+    const sub = await submission({ vendorId: vendorIds[0]!, rfqId: rfq.id });
+    await exec(
+      scopeA,
+      sql`UPDATE app.vendor_quotation_submissions
+             SET received_at = (SELECT deadline + interval '1 second' FROM app.rfqs WHERE id = ${rfq.id})
+           WHERE id = ${sub.id}`,
+    );
+    const e = await httpErrorOf(
+      service.convertSubmission(rfq.id, convertBody(sub.id, pr.lineId), randomUUID()),
+    );
+    expect(e.getStatus()).toBe(409);
+    expect((e.getResponse() as { code?: string }).code).toBe('rfq_deadline_passed');
+    expect((await submissionRow(sub.id)).status).toBe('received');
+    expect(await quotesOf(rfq.id)).toHaveLength(0);
+  });
+
+  it('extends a passed deadline, audited, and then takes quotations again', async () => {
+    const { rfq, pr, vendorIds } = await openRfq(1);
+    await passDeadline(rfq.id);
+    const before = await rfqRow(rfq.id);
+    const dto = await service.extendDeadline(
+      rfq.id,
+      { deadline: '2026-11-12T10:00:00+05:45' },
+      randomUUID(),
+    );
+    expect(dto.deadline).toBe('2026-11-12T04:15:00.000Z');
+    expect(dto.version).toBe(before.version + 1);
+    expect((await rfqRow(rfq.id)).deadline.toISOString()).toBe('2026-11-12T04:15:00.000Z');
+    expect(await rfqActions(rfq.id)).toContain('procurement.rfq.deadline_extended');
+    await recordOne(rfq.id, vendorIds[0]!, pr.lineId);
+    expect(await quotesOf(rfq.id)).toHaveLength(1);
+  });
+
+  it('refuses an extension to the past, to before the current deadline, or of a closed RFQ', async () => {
+    const { rfq } = await openRfq(1);
+    const past = await httpErrorOf(
+      service.extendDeadline(rfq.id, { deadline: '2026-11-01T10:00:00+05:45' }, randomUUID()),
+    );
+    expect(past.getStatus()).toBe(400);
+    expect((past.getResponse() as { reason?: string }).reason).toBe('deadline_in_past');
+    const earlier = await httpErrorOf(
+      service.extendDeadline(rfq.id, { deadline: '2030-11-19T10:00:00+05:45' }, randomUUID()),
+    );
+    expect(earlier.getStatus()).toBe(400);
+    await exec(scopeA, sql`UPDATE app.rfqs SET status = 'closed' WHERE id = ${rfq.id}`);
+    const closed = await httpErrorOf(
+      service.extendDeadline(rfq.id, { deadline: '2031-01-01T10:00:00+05:45' }, randomUUID()),
+    );
+    expect(closed.getStatus()).toBe(409);
+    expect((await rfqRow(rfq.id)).deadline.toISOString()).toBe(new Date(deadline).toISOString());
+    expect(await rfqActions(rfq.id)).not.toContain('procurement.rfq.deadline_extended');
+  });
+
+  it("is a 404 for another entity's RFQ", async () => {
+    const { rfq } = await openRfq(1);
+    current.scope = scopeB;
+    const e = await httpErrorOf(
+      service.extendDeadline(rfq.id, { deadline: '2031-01-01T10:00:00+05:45' }, randomUUID()),
+    );
+    expect(e.getStatus()).toBe(404);
   });
 });
 

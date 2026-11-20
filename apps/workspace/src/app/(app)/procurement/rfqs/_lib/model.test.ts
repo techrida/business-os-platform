@@ -4,8 +4,11 @@ import { describe, expect, it, vi } from 'vitest';
 import { permissionsFrom } from '@/lib/live-permissions';
 
 import {
+  arrivedLate,
   canCommit,
+  canExtendDeadline,
   canStartRfq,
+  deadlinePassed,
   RFQ_STATUS_LABEL,
   RFQ_STATUS_NOTE,
   rfqGrants,
@@ -114,5 +117,32 @@ describe('canCommit', () => {
     const r = canCommit({ ...ok, prStatus: null }, SOURCING);
     expect(r.show).toBe(false);
     expect(r.why).toMatch(/purchase request/i);
+  });
+});
+
+describe('the quotation deadline (F1-Q47)', () => {
+  const deadline = '2026-11-20T04:15:00.000Z';
+  it('has passed only strictly after the deadline instant', () => {
+    expect(deadlinePassed(deadline, new Date('2026-11-20T04:15:00.000Z'))).toBe(false);
+    expect(deadlinePassed(deadline, new Date('2026-11-20T04:15:00.001Z'))).toBe(true);
+    expect(deadlinePassed('2026-11-20T10:00:00+05:45', new Date('2026-11-20T04:14:59Z'))).toBe(
+      false,
+    );
+  });
+  it('marks an upload sent after the deadline as late, whatever its scan says', () => {
+    expect(arrivedLate('2026-11-20T04:15:00.000Z', deadline)).toBe(false);
+    expect(arrivedLate('2026-11-20T04:16:00.000Z', deadline)).toBe(true);
+    const late = submissionConvertibility('clean', true);
+    expect(late.convertible).toBe(false);
+    expect(late.label).toBe('Arrived late');
+    expect(late.reason).toMatch(/after the quotation deadline/);
+    expect(submissionConvertibility('clean', false).convertible).toBe(true);
+  });
+  it('is extended only on an open RFQ, by someone who may source', () => {
+    expect(canExtendDeadline('open', SOURCING)).toBe(true);
+    expect(canExtendDeadline('open', NONE)).toBe(false);
+    for (const status of ['closed', 'recommended', 'cancelled'] as const) {
+      expect(canExtendDeadline(status, SOURCING)).toBe(false);
+    }
   });
 });

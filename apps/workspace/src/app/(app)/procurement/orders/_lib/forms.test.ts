@@ -64,7 +64,15 @@ describe('parseAmend', () => {
   it('refuses when nothing changed, before any API call', () => {
     const r = parseAmend(same, current, 30);
     expect(r.ok).toBe(false);
-    if (!r.ok) expect(r.errors['lines']).toMatch(/change at least one line/i);
+    if (!r.ok)
+      expect(r.errors['lines']).toMatch(/change a quantity, a price or the payment terms/i);
+  });
+
+  it('sends a change of the payment terms alone, with no line (F1-Q40)', () => {
+    expect(parseAmend({ ...same, paymentTermsDays: '45' }, current, 30)).toEqual({
+      ok: true,
+      body: { reason: same.reason, paymentTermsDays: 45, lines: [] },
+    });
   });
 
   it('needs a reason, and refuses a quantity or price that is not a number', () => {

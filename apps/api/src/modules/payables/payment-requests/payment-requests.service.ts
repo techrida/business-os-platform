@@ -48,7 +48,7 @@ import {
   Optional,
   UnprocessableEntityException,
 } from '@nestjs/common';
-import { and, asc, desc, eq, inArray, ne, type SQL, sql } from 'drizzle-orm';
+import { and, asc, desc, eq, inArray, isNull, ne, type SQL, sql } from 'drizzle-orm';
 
 import { AuditService } from '../../../platform/audit/audit.service';
 import { scopeWhereFor } from '../../../platform/authz/authz.service';
@@ -226,11 +226,31 @@ export class PaymentRequestsService {
   /**
    * Approved bill credits with a balance left after pending and approved payment requests, of the bills the caller
    * may read (`payables.bill.read` scope, as the bills list), so a narrowed grant never lists another person's bill.
+   * Only vendors with an active verified bank account: a request snapshots that account (check 14).
    */
   async listItems(): Promise<PaymentRequestItemDto[]> {
+    return this.requestableItems('verified');
+  }
+
+  /**
+   * The items listItems leaves out for one reason only: the vendor has no active verified bank account, so a request
+   * would be refused with `no_verified_bank_account`. Every other condition (status, balance, scope, entity account)
+   * is the same, so the entry screen can say what to fix instead of blaming claimed balances (U15b-Q6).
+   */
+  async listItemsWithoutBankAccount(): Promise<PaymentRequestItemDto[]> {
+    return this.requestableItems('missing');
+  }
+
+  private async requestableItems(bank: 'verified' | 'missing'): Promise<PaymentRequestItemDto[]> {
     const { scope, actor, principal } = this.caller.current();
     return withTx(this.db, scope, actor, async (tx) => {
-      const rows = await tx
+      // The same account activeVerifiedAccount() snapshots at create and submit: the vendor's `active` one.
+      const activeBank = and(
+        eq(vendorBankAccounts.tenantId, vendorBills.tenantId),
+        eq(vendorBankAccounts.vendorId, vendorBills.vendorId),
+        eq(vendorBankAccounts.status, 'active'),
+      );
+      const base = tx
         .select({
           openItemId: openItems.id,
           vendorPartyId: vendorBills.vendorId,
@@ -263,15 +283,14 @@ export class PaymentRequestsService {
             eq(vendorAccounts.vendorId, vendorBills.vendorId),
             eq(vendorAccounts.active, true),
           ),
-        )
-        .innerJoin(
-          vendorBankAccounts,
-          and(
-            eq(vendorBankAccounts.tenantId, vendorBills.tenantId),
-            eq(vendorBankAccounts.vendorId, vendorBills.vendorId),
-            eq(vendorBankAccounts.status, 'active'),
-          ),
-        )
+        );
+      // One active account per vendor at most (vendor_bank_accounts_tenant_vendor_active_unique), so the left join
+      // never repeats a row.
+      const joined =
+        bank === 'verified'
+          ? base.innerJoin(vendorBankAccounts, activeBank)
+          : base.leftJoin(vendorBankAccounts, activeBank);
+      const rows = await joined
         .where(
           scoped(scope).where(
             openItems,
@@ -282,6 +301,7 @@ export class PaymentRequestsService {
               eq(vendorBills.kind, 'bill'),
               inArray(vendorBills.status, [...PAYABLE_BILL_STATUSES]),
               scopeWhereFor(principal, vendorBills, 'payables.bill.read'),
+              bank === 'missing' ? isNull(vendorBankAccounts.id) : undefined,
             ),
           ),
         )

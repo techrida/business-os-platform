@@ -7,6 +7,8 @@ import type { Session } from '@/lib/session';
 import {
   createBankEvidence,
   createVendor,
+  findVendorNameMatches,
+  getVendorReviewReadiness,
   grantVendorPortalAccess,
   listBankAccounts,
   listVendorContacts,
@@ -186,11 +188,12 @@ describe('writes carry the Idempotency-Key', () => {
     expect(JSON.parse(init.body as string)).toMatchObject({ kind: 'company', country: 'NP' });
   });
 
-  it('submit-kyc and activate send the key and no body', async () => {
+  it('submit-kyc sends the key and the status its button saw; activate sends no body', async () => {
     answer(reply(vendor));
-    await submitVendorKyc(session, ID_A, 'key-kyc-1234');
+    await submitVendorKyc(session, ID_A, 'key-kyc-1234', 'draft');
     expect(lastCall().url).toBe(`http://api:3001/v1/vendors/${ID_A}/submit-kyc`);
     expect(lastCall().headers.get('idempotency-key')).toBe('key-kyc-1234');
+    expect(JSON.parse(lastCall().init.body as string)).toEqual({ expectedStatus: 'draft' });
     await vendorLifecycle(session, ID_A, 'activate', 'key-act-1234');
     expect(lastCall().url).toBe(`http://api:3001/v1/vendors/${ID_A}/activate`);
     expect(lastCall().init.body).toBeUndefined();
@@ -212,9 +215,28 @@ describe('writes carry the Idempotency-Key', () => {
     expect(JSON.parse(init.body as string)).toEqual({ expectedVersion: 3, vatRegistered: false });
   });
 
+  it('asks for vendors with the same name and returns the matches', async () => {
+    const match = { id: ID_A, legalName: 'Himal Traders', status: 'approved' };
+    answer(reply({ matches: [match] }));
+    expect(await findVendorNameMatches(session, 'Himal Traders & Co')).toEqual([match]);
+    expect(lastCall().url).toBe(
+      'http://api:3001/v1/vendors/name-matches?legalName=Himal+Traders+%26+Co',
+    );
+    answer(reply({ matches: [{ ...match, status: 'gone' }] }));
+    await expect(findVendorNameMatches(session, 'Himal')).rejects.toThrow();
+  });
+
+  it('reads the KYB review readiness and refuses a body that drifts from it', async () => {
+    answer(reply({ kybSubmitted: true }));
+    expect(await getVendorReviewReadiness(session, ID_A)).toEqual({ kybSubmitted: true });
+    expect(lastCall().url).toBe(`http://api:3001/v1/vendors/${ID_A}/review-readiness`);
+    answer(reply({ kybSubmitted: 'yes' }));
+    await expect(getVendorReviewReadiness(session, ID_A)).rejects.toThrow();
+  });
+
   it('encodes an id so it cannot climb out of the route', async () => {
     answer(reply(vendor));
-    await submitVendorKyc(session, '../x', 'key-123456');
+    await submitVendorKyc(session, '../x', 'key-123456', 'draft');
     expect(lastCall().url).toBe('http://api:3001/v1/vendors/..%2Fx/submit-kyc');
   });
 });

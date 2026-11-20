@@ -964,6 +964,41 @@ describe('available bill items', () => {
     expect(available.some((item) => item.openItemId === eligibleBill.openItemId)).toBe(true);
   });
 
+  it('lists the items held back only for a missing verified bank account, so the screen can say so (U15b-Q6)', async () => {
+    const withoutBank: string[] = [];
+    for (const bank of ['none', 'proposed'] as const) {
+      withoutBank.push((await approvedBill(await vendor(bank))).openItemId);
+    }
+    const retiredVendor = await vendor();
+    withoutBank.push((await approvedBill(retiredVendor)).openItemId);
+    await exec(
+      scopeA,
+      sql`UPDATE app.vendor_bank_accounts SET status = 'retired'
+          WHERE tenant_id = ${scopeA.tenantId} AND vendor_id = ${retiredVendor}`,
+    );
+    // Held back for another reason: no active entity account. Not a bank problem, so not listed.
+    const inactiveVendor = await vendor('none');
+    const inactiveBill = await approvedBill(inactiveVendor);
+    await exec(
+      scopeA,
+      sql`UPDATE app.vendor_accounts SET active = false
+          WHERE tenant_id = ${scopeA.tenantId} AND organization_id = ${scopeA.organizationId}
+            AND vendor_id = ${inactiveVendor}`,
+    );
+    const eligibleBill = await approvedBill(await vendor());
+
+    const held = (await service.listItemsWithoutBankAccount()).map((item) => item.openItemId);
+    expect(held).toEqual(expect.arrayContaining(withoutBank));
+    expect(held).not.toContain(inactiveBill.openItemId);
+    expect(held).not.toContain(eligibleBill.openItemId);
+    // The two lists never share an item: each balance is offered or explained, never both.
+    const offered = (await service.listItems()).map((item) => item.openItemId);
+    expect(offered.filter((id) => held.includes(id))).toEqual([]);
+    // Same entity scope as the offered items.
+    current.inB = true;
+    expect(await service.listItemsWithoutBankAccount()).toEqual([]);
+  });
+
   it('returns vendor and invoice labels with ledger-derived balances less pending and approved claims', async () => {
     const v = await vendor();
     const bill = await approvedBill(v);

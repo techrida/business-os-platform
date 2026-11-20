@@ -10,7 +10,7 @@ import { toast } from '@/components/ui/toast';
 
 import styles from '../../requests/requests.module.css';
 import groups from './line-rows.module.css';
-import { MAX_SCORE_ROWS, type ScoreRowValues } from '../_lib/forms';
+import { isoToKathmanduLocal, MAX_SCORE_ROWS, type ScoreRowValues } from '../_lib/forms';
 import {
   commandStart,
   type CommandState,
@@ -359,6 +359,107 @@ export function CommitForm({
             {state.error}
           </Alert>
         ) : null}
+      </form>
+    </Dialog>
+  );
+}
+
+/**
+ * F1-Q47: moves an open RFQ's quotation deadline later, from a dialog in the page header. The new
+ * deadline starts at the current one, in Kathmandu time, and must be later than it and than now;
+ * once extended, invited vendors can send quotations again until the new deadline. A success
+ * closes the dialog with a toast; the page revalidates with the new deadline.
+ */
+export function ExtendDeadlineForm({
+  action,
+  idempotencyKey,
+  rfqId,
+  deadline,
+  deadlineText,
+  passed,
+  reloadHref,
+}: {
+  action: (prev: RfqEditState, form: FormData) => Promise<RfqEditState>;
+  idempotencyKey: string;
+  rfqId: string;
+  /** The current deadline, an ISO instant. */
+  deadline: string;
+  /** The current deadline as the page shows it. */
+  deadlineText: string;
+  passed: boolean;
+  reloadHref: string;
+}) {
+  const [open, setOpen] = useState(false);
+  const [value, setValue] = useState(() => isoToKathmanduLocal(deadline));
+  const [state, formAction, pending] = useActionState<RfqEditState, FormData>(
+    async (prev, form) => {
+      const next = await action(prev, form);
+      if (next.saved) {
+        toast.success(next.saved);
+        setOpen(false);
+      }
+      return next;
+    },
+    { key: idempotencyKey, errors: {}, count: 0 },
+  );
+  const formId = useId();
+  return (
+    <Dialog
+      open={open}
+      onOpenChange={setOpen}
+      trigger={<Button variant="secondary">Extend deadline</Button>}
+      title="Extend the quotation deadline?"
+      description={
+        passed
+          ? `The deadline passed on ${deadlineText}. Invited vendors can send quotations again until the new deadline.`
+          : `Quotations close on ${deadlineText}. Invited vendors can send quotations until the new deadline.`
+      }
+      size="small"
+      locked={pending}
+      closeOnOutsideClick={false}
+      footer={
+        <>
+          <DialogClose asChild>
+            <Button variant="secondary" disabled={pending}>
+              Cancel
+            </Button>
+          </DialogClose>
+          <Button type="submit" form={formId} disabled={pending}>
+            {pending ? 'Extending' : 'Extend deadline'}
+          </Button>
+        </>
+      }
+    >
+      <form id={formId} action={formAction} noValidate className={styles.panelForm}>
+        <input type="hidden" name="rfqId" value={rfqId} />
+        <input type="hidden" name="currentDeadline" value={deadline} />
+        <input type="hidden" name="idempotencyKey" value={state.key} />
+        {state.error ? (
+          <Alert
+            tone="error"
+            role="alert"
+            title={state.reload ? 'This page is out of date' : 'The deadline was not extended'}
+            actions={state.reload ? <a href={reloadHref}>Reload this RFQ</a> : null}
+          >
+            {state.error}
+          </Alert>
+        ) : null}
+        <Field
+          label="New quotation deadline"
+          hint="Kathmandu time. Later than the current deadline and than now."
+          error={state.errors.deadline}
+        >
+          {(control) => (
+            <Input
+              type="datetime-local"
+              name="deadline"
+              value={value}
+              onChange={(e) => setValue(e.target.value)}
+              required
+              {...control}
+            />
+          )}
+        </Field>
       </form>
     </Dialog>
   );

@@ -14,9 +14,11 @@ import {
   getPoProgress,
   listReceipts,
   listReceivableOrders,
+  listReceivedOrders,
   listRequestedOrders,
   type PoProgress,
   type ReceivableOrder,
+  type ReceivedOrder,
   type Receipt,
   type RequestedOrder,
 } from '@/lib/api-purchase-orders';
@@ -57,6 +59,83 @@ async function loadWaiting(session: Session, mayReceive: boolean): Promise<Waiti
     if (f.status === 403) return undefined;
     return { state: 'failed', message: f.message };
   }
+}
+
+/** The warehouse's recently received orders (U18-Q3): absent when not offered or refused. */
+type Received =
+  { state: 'list'; orders: readonly ReceivedOrder[] } | { state: 'failed'; message: string };
+
+async function loadReceived(session: Session, mayReceive: boolean): Promise<Received | undefined> {
+  if (!mayReceive) return undefined;
+  try {
+    return { state: 'list', orders: await listReceivedOrders(session) };
+  } catch (err) {
+    const f = receiptFailure(err, 'load');
+    if (f.status === 403) return undefined;
+    return { state: 'failed', message: f.message };
+  }
+}
+
+function ReceivedOrders({ orders }: { orders: readonly ReceivedOrder[] }) {
+  return (
+    <Panel
+      title="Recently received"
+      description="Orders that have everything, or were closed, most recently received first. Open one to look back at its receipts."
+    >
+      {orders.length === 0 ? (
+        <EmptyState title="Nothing has been fully received yet" icon="file-text" headingLevel={3}>
+          Orders appear here once everything on them has arrived, or they are closed.
+        </EmptyState>
+      ) : (
+        <Table
+          className={layout.panelTable ?? ''}
+          caption="Recently received purchase orders"
+          minWidth={720}
+        >
+          <thead>
+            <tr>
+              <Th>Order</Th>
+              <Th>Vendor</Th>
+              <Th>Kind</Th>
+              <Th>Status</Th>
+              <Th>Last received</Th>
+            </tr>
+          </thead>
+          <tbody>
+            {orders.map((o) => {
+              const status = PO_STATUS_LABEL[o.status];
+              return (
+                <tr key={o.id}>
+                  <Td>
+                    <Link
+                      href={`/procurement/receipts?po=${encodeURIComponent(o.id)}`}
+                      className={styles.name}
+                    >
+                      {o.number}
+                    </Link>
+                  </Td>
+                  <Td>
+                    <span className={styles.long}>{o.vendorName}</span>
+                  </Td>
+                  <Td nowrap>{WAITING_KIND_LABEL[o.kind]}</Td>
+                  <Td nowrap>
+                    <Badge tone={status.tone}>{status.text}</Badge>
+                  </Td>
+                  <Td nowrap>
+                    {o.lastReceivedAt !== undefined ? (
+                      <time dateTime={o.lastReceivedAt}>{when(o.lastReceivedAt, 'date')}</time>
+                    ) : (
+                      <span className={styles.quiet}>Nothing received</span>
+                    )}
+                  </Td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </Table>
+      )}
+    </Panel>
+  );
 }
 
 /** What the caller's own orders list knows: absent when the API refuses it or it is empty. */
@@ -211,14 +290,17 @@ function Picker({
   invalid,
   canOpenOrders,
   waiting,
+  received,
   mine,
 }: {
   invalid: boolean;
   canOpenOrders: boolean;
   waiting: Waiting | undefined;
+  received: Received | undefined;
   mine: Mine | undefined;
 }) {
-  const offered = waiting !== undefined || mine !== undefined || canOpenOrders;
+  const offered =
+    waiting !== undefined || received !== undefined || mine !== undefined || canOpenOrders;
   return (
     <Page width={waiting?.state === 'list' ? 'full' : 'narrow'} className={layout.detail}>
       <PageHeader
@@ -241,7 +323,13 @@ function Picker({
             {mine.message}
           </Alert>
         ) : null}
+        {received?.state === 'failed' ? (
+          <Alert tone="error" role="alert" title="The recently received orders did not load">
+            {received.message}
+          </Alert>
+        ) : null}
         {waiting?.state === 'list' ? <WaitingOrders orders={waiting.orders} /> : null}
+        {received?.state === 'list' ? <ReceivedOrders orders={received.orders} /> : null}
         {mine?.state === 'list' ? <MyOrders orders={mine.orders} /> : null}
         {canOpenOrders ? (
           <p className={styles.note}>
@@ -401,12 +489,19 @@ export default async function ReceiptsPage({
   if (!isGuid(po)) {
     const session = await requireStaffSession('/procurement/receipts');
     const grants = receiptGrants(await getPermissionCheck(session));
-    const [waiting, mine] = await Promise.all([
+    const [waiting, received, mine] = await Promise.all([
       loadWaiting(session, grants.confirm),
+      loadReceived(session, grants.confirm),
       loadMine(session),
     ]);
     return (
-      <Picker invalid={po !== ''} canOpenOrders={grants.issue} waiting={waiting} mine={mine} />
+      <Picker
+        invalid={po !== ''}
+        canOpenOrders={grants.openOrder}
+        waiting={waiting}
+        received={received}
+        mine={mine}
+      />
     );
   }
 
@@ -442,7 +537,7 @@ export default async function ReceiptsPage({
   const mayStart =
     order === undefined
       ? true
-      : isReceivable(order.status) && kindsOffered(order.lines, grants).length > 0;
+      : isReceivable(order.status) && kindsOffered(order.lines, grants, order.can).length > 0;
   const newHref = `/procurement/receipts/new?po=${encodeURIComponent(po)}`;
 
   return (
@@ -450,7 +545,7 @@ export default async function ReceiptsPage({
       <div className={layout.detailHeader}>
         <Breadcrumb
           items={
-            grants.issue
+            grants.openOrder
               ? [
                   { label: 'Purchase orders', href: '/procurement/orders' },
                   {

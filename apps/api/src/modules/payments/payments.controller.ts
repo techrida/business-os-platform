@@ -37,7 +37,11 @@ import { setMoneyTotals, setTotalCount } from '../../platform/list';
 import { parseOr400 } from '../approvals/approvals.controller';
 import { requireIdempotencyKey } from '../customers/customers.types';
 import { PaymentsCaller } from './payments.caller';
-import { type PaymentsSummary, PaymentsService } from './payments.service';
+import {
+  type PaymentReferenceMatches,
+  type PaymentsSummary,
+  PaymentsService,
+} from './payments.service';
 
 /**
  * `GET /v1/payments`. `status` and `method` may repeat; an unknown value or key or a repeated `q` is a 400.
@@ -55,6 +59,11 @@ export const ListPaymentsQuerySchema = z.strictObject({
 export const PaymentsSummaryQuerySchema = z.strictObject({
   method: multi(PaymentMethodSchema),
   q: searchParam,
+});
+
+/** `GET /v1/payments/reference-matches`: the bank reference about to be recorded, as the record form takes it. */
+export const PaymentReferenceMatchesQuerySchema = z.strictObject({
+  bankReference: z.string().trim().min(1).max(100),
 });
 
 @Controller('v1/payments')
@@ -90,6 +99,20 @@ export class PaymentsController {
     return this.payments.summary(
       this.caller.current().scope,
       parseOr400(PaymentsSummaryQuerySchema, query),
+    );
+  }
+
+  /**
+   * 200 with `{ matches }`: the acting entity's payments the caller may read whose bank reference is the same once
+   * case and spaces are set aside (TR-Q12d). A warning only; recording a payment never checks it. Declared before
+   * `:id`.
+   */
+  @Get('reference-matches')
+  @Can('payment.read')
+  referenceMatches(@Query() query: unknown): Promise<PaymentReferenceMatches> {
+    return this.payments.referenceMatches(
+      this.caller.current().scope,
+      parseOr400(PaymentReferenceMatchesQuerySchema, query),
     );
   }
 

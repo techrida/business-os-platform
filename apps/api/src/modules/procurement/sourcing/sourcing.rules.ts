@@ -6,6 +6,7 @@
 import type { PoApprovedBand } from '@bos/contracts';
 import { bandFor, parseDecimal } from '@bos/money-rules';
 import Decimal from 'decimal.js';
+import { z } from 'zod';
 
 /** approval_requests.document_type of a commitment; the document id is the RFQ id. */
 export const PR_COMMITMENT_DOCUMENT_TYPE = 'pr_commitment';
@@ -148,6 +149,55 @@ export function quoteCountVerdict(i: {
     message: `Only ${i.count} of ${i.minQuotes} quotations: fewerThanThreeReason is required`,
   };
 }
+
+// ---------------------------------------------------------------------------------------------------------------
+// Quotation deadline (F1-Q47)
+// ---------------------------------------------------------------------------------------------------------------
+
+/**
+ * The 409 code and its one sentence for a quotation that arrives after the RFQ's deadline. The workspace and the
+ * vendor portal recognise the refusal by the code, or by this exact sentence while the error filter does not yet
+ * pass the code; change both copies together.
+ */
+export const RFQ_DEADLINE_PASSED = 'rfq_deadline_passed';
+export const RFQ_DEADLINE_PASSED_MESSAGE =
+  'The quotation deadline of this RFQ has passed. Procurement can extend it to take more quotations.';
+
+/**
+ * F1-Q47: a quotation is late when it arrives strictly after the deadline (both instants, so the deadline's own
+ * offset does not matter). One that arrives at the deadline itself is in time.
+ */
+export function isLateQuotation(deadline: Date, arrivedAt: Date): boolean {
+  return arrivedAt.getTime() > deadline.getTime();
+}
+
+export type ExtendDeadlineVerdict =
+  { ok: true } | { ok: false; refusal: 'not_open' | 'deadline_in_past' | 'not_later' };
+
+/**
+ * F1-Q47: Procurement extends the deadline of an open RFQ only, to an instant after now and after the current
+ * deadline. An extension of an RFQ whose deadline passed lets the invited vendors quote again.
+ */
+export function extendDeadlineVerdict(i: {
+  status: string;
+  current: Date;
+  next: Date;
+  now: Date;
+}): ExtendDeadlineVerdict {
+  if (i.status !== 'open') return { ok: false, refusal: 'not_open' };
+  if (i.next.getTime() <= i.now.getTime()) return { ok: false, refusal: 'deadline_in_past' };
+  if (i.next.getTime() <= i.current.getTime()) return { ok: false, refusal: 'not_later' };
+  return { ok: true };
+}
+
+/**
+ * The body of `POST /v1/procurement/rfqs/:id/deadline`: the new deadline with its offset, like the create body's.
+ * Kept here, not in the contracts, until a client outside the workspace needs it.
+ */
+export const ExtendRfqDeadlineBodySchema = z.strictObject({
+  deadline: z.iso.datetime({ offset: true }),
+});
+export type ExtendRfqDeadlineBody = z.infer<typeof ExtendRfqDeadlineBodySchema>;
 
 // ---------------------------------------------------------------------------------------------------------------
 // Quotation arithmetic

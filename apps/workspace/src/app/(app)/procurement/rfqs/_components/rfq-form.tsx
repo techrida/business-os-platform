@@ -128,7 +128,7 @@ export function RfqForm({
           </Field>
           <Field
             label="Quotation deadline"
-            hint="Kathmandu time. The RFQ stays open until it is recommended."
+            hint="Kathmandu time. Quotations sent after it are refused; you can extend it while the RFQ is open."
             error={err.deadline}
           >
             {(control) => (

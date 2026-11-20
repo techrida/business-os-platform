@@ -12,8 +12,18 @@
 // is a 424 `purchase_order_pdf_failed` (staff may Retry); a file the scan refused is a 404
 // `purchase_order_pdf_unavailable`.
 // Staff only: a vendor reads through the vendor portal API, which asks the same documents module with its own checks.
+// The download is open to whoever may read the order (F1-Q52, po-read-access.ts: issuers, and read-only the bill and
+// receipt roles on the orders their grant reaches; an order out of reach is the same plain 404). Retry stays with
+// procurement.po.issue.
 import type { SignedLinkDto } from '@bos/contracts';
-import { documents, documentVersions, purchaseOrderVersions, scoped } from '@bos/db';
+import {
+  documents,
+  documentVersions,
+  purchaseOrders,
+  purchaseOrderVersions,
+  purchaseRequests,
+  scoped,
+} from '@bos/db';
 import {
   ConflictException,
   ForbiddenException,
@@ -33,6 +43,7 @@ import {
   retryGivenUpRender,
   type RenderFailureOwner,
 } from '../../../invoices/render/render-failures';
+import { assertHoldsPoRead, mayReadPo, requestFactsColumns, requestOf } from '../po-read-access';
 import { PO_AUDIT_ENTITY } from '../purchase-order.rules';
 import { PurchaseOrdersCaller } from '../purchase-orders.caller';
 import { PO_VERSION_OWNER_TYPE } from './purchase-order-version-owner.policy';
@@ -100,9 +111,16 @@ export class PurchaseOrderDocumentService {
    * once its render was given up, 404 `purchase_order_pdf_unavailable` when the scan refused it.
    */
   async link(purchaseOrderId: string, version: number): Promise<SignedLinkDto> {
-    const { scope, actor } = this.staffCaller();
+    const { scope, actor, principal } = this.staffCaller();
+    assertHoldsPoRead(principal);
     if (!Number.isInteger(version) || version < 1 || version > MAX_VERSION) throw notFound();
     const state = await withTx(this.db, scope, actor, async (tx): Promise<LinkState> => {
+      const [po] = await tx
+        .select({ request: requestFactsColumns })
+        .from(purchaseOrders)
+        .innerJoin(purchaseRequests, requestOf(purchaseOrders))
+        .where(scoped(scope).where(purchaseOrders, eq(purchaseOrders.id, purchaseOrderId)));
+      if (po === undefined || !mayReadPo(principal, po.request)) return { kind: 'hidden' };
       const versionId = await this.versionId(tx, scope, purchaseOrderId, version);
       if (versionId === undefined) return { kind: 'hidden' };
       // Every upload of every live document of the version: oldest document first, newest upload first within it.

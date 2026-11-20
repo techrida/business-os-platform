@@ -55,7 +55,7 @@ import {
   Optional,
   UnprocessableEntityException,
 } from '@nestjs/common';
-import { and, eq, inArray, isNull } from 'drizzle-orm';
+import { and, eq, inArray, isNull, sql } from 'drizzle-orm';
 import { z } from 'zod';
 
 import { AuditService } from '../../../platform/audit/audit.service';
@@ -78,6 +78,10 @@ import {
   isEditable,
   requiresExpiry,
 } from '../../verification/verification.rules';
+import {
+  RFQ_DEADLINE_PASSED,
+  RFQ_DEADLINE_PASSED_MESSAGE,
+} from '../../procurement/sourcing/sourcing.rules';
 import { VERIFICATION_OWNER_TYPE } from '../../verification/verification.types';
 import { stripAccountSpaces } from '../../vendors/bank/bank.rules';
 import { VendorBankService } from '../../vendors/bank/bank.service';
@@ -325,8 +329,9 @@ export class VendorPortalInboxService {
         { command: 'portal.vendor.quotation_submission', key: idempotencyKey, body: b },
         async () => {
           if (refusal !== undefined) throw refusal;
+          // F1-Q47: `late` is read at the database's time, the same clock that stamps `received_at`.
           const [invited] = await tx
-            .select({ id: rfqVendors.id })
+            .select({ id: rfqVendors.id, late: sql<boolean>`now() > ${rfqs.deadline}` })
             .from(rfqVendors)
             .innerJoin(
               rfqs,
@@ -347,6 +352,12 @@ export class VendorPortalInboxService {
             )
             .for('share');
           if (invited === undefined) throw notFound();
+          if (invited.late) {
+            throw new ConflictException({
+              code: RFQ_DEADLINE_PASSED,
+              message: RFQ_DEADLINE_PASSED_MESSAGE,
+            });
+          }
           await this.assertDocument(tx, who.scope, VENDOR_INTAKE_OWNER_TYPE, partyId, b.documentId);
           const [row] = await tx
             .insert(vendorQuotationSubmissions)

@@ -395,6 +395,56 @@ describe('create', () => {
   });
 });
 
+describe('same-name warning (TR-Q12d)', () => {
+  const add = async (legalName: string) => {
+    const res = await createVendor({ legalName });
+    expect(res.status, JSON.stringify(res.body)).toBe(201);
+    return VendorDtoSchema.parse(res.body);
+  };
+  const matchesFor = async (legalName: string) => {
+    const res = await api().get('/v1/vendors/name-matches').query({ legalName });
+    expect(res.status, JSON.stringify(res.body)).toBe(200);
+    return (res.body as { matches: { id: string; legalName: string; status: string }[] }).matches;
+  };
+
+  it('lists vendors whose name matches once case, spaces, punctuation and company words are ignored', async () => {
+    as('procurement', 'procurement');
+    const tag = `Dup${randomUUID().slice(0, 6)}`;
+    const first = await add(`${tag} Hardware Traders Pvt. Ltd.`);
+    await add(`${tag} Other Supplies`);
+    const found = await matchesFor(`  ${tag.toLowerCase()}   hardware-traders private limited `);
+    expect(found).toEqual([
+      { id: first.id, legalName: `${tag} Hardware Traders Pvt. Ltd.`, status: 'draft' },
+    ]);
+    expect(await matchesFor(`${tag} Hardware`)).toEqual([]);
+    // A name with nothing to match on matches nothing; an empty name is a 400.
+    expect(await matchesFor('...')).toEqual([]);
+    expect((await api().get('/v1/vendors/name-matches').query({ legalName: ' ' })).status).toBe(
+      400,
+    );
+  });
+
+  it('still creates the namesake, and the audit trail names the vendors it shares its name with', async () => {
+    as('procurement', 'procurement');
+    const tag = `Aud${randomUUID().slice(0, 6)}`;
+    const first = await add(`${tag} Traders`);
+    const firstAudit = await rowOf<{ meta: unknown }>(
+      `SELECT meta FROM audit.audit_events WHERE tenant_id = $1 AND entity_id = $2 AND action = 'vendor.created_with_same_name'`,
+      [tenantId, first.id],
+    );
+    expect(firstAudit).toEqual([]);
+
+    const second = await add(`${tag.toUpperCase()} TRADERS PVT LTD`);
+    expect(second.status).toBe('draft');
+    const rows = await rowOf<{ meta: { sameNameVendorIds: string[] } }>(
+      `SELECT meta FROM audit.audit_events WHERE tenant_id = $1 AND entity_id = $2 AND action = 'vendor.created_with_same_name'`,
+      [tenantId, second.id],
+    );
+    expect(rows).toHaveLength(1);
+    expect(rows[0]?.meta.sameNameVendorIds).toEqual([first.id]);
+  });
+});
+
 describe('list', () => {
   const mint = async (legalName: string, overrides: Record<string, unknown> = {}) => {
     const res = await createVendor({ legalName, ...overrides });
@@ -517,6 +567,58 @@ describe('lifecycle and activation', () => {
     const second = await post(`/v1/vendors/${v.id}/submit-kyc`);
     expect(second.status, JSON.stringify(second.body)).toBe(200);
     expect(second.body.status).toBe('under_review');
+  });
+
+  it('says the vendor is ready for review only once its KYB case is submitted, the state submit-kyc enforces', async () => {
+    const v = await newVendor();
+    as('procurement', 'procurement');
+    const ready = async () => {
+      const res = await api().get(`/v1/vendors/${v.id}/review-readiness`);
+      expect(res.status, JSON.stringify(res.body)).toBe(200);
+      return res.body as { kybSubmitted: boolean };
+    };
+    // A draft has no case yet.
+    expect(await ready()).toEqual({ kybSubmitted: false });
+    expect((await post(`/v1/vendors/${v.id}/submit-kyc`)).status).toBe(200);
+    // The case is open, not submitted: not ready, and the API refuses the move too.
+    expect(await ready()).toEqual({ kybSubmitted: false });
+    const early = await post(`/v1/vendors/${v.id}/submit-kyc`, { expectedStatus: 'pending_kyc' });
+    expect(early.status).toBe(409);
+    expect(early.body.error.code).toBe('kyb_not_submitted');
+    await setCase(v.id, 'submitted');
+    expect(await ready()).toEqual({ kybSubmitted: true });
+    expect(
+      (await post(`/v1/vendors/${v.id}/submit-kyc`, { expectedStatus: 'pending_kyc' })).status,
+    ).toBe(200);
+    // An unknown vendor is a 404.
+    expect((await api().get(`/v1/vendors/${randomUUID()}/review-readiness`)).status).toBe(404);
+  });
+
+  it('refuses a stale "Start KYB review" with a plain 409 instead of sending the vendor for review', async () => {
+    const v = await newVendor();
+    as('procurement', 'procurement');
+    // Tab 1 starts the review; tab 2 still shows "Start KYB review", drawn for draft.
+    const first = await post(`/v1/vendors/${v.id}/submit-kyc`, { expectedStatus: 'draft' });
+    expect(first.status, JSON.stringify(first.body)).toBe(200);
+    expect(first.body.status).toBe('pending_kyc');
+    await setCase(v.id, 'submitted');
+
+    const stale = await post(`/v1/vendors/${v.id}/submit-kyc`, { expectedStatus: 'draft' });
+    expect(stale.status, JSON.stringify(stale.body)).toBe(409);
+    expect(stale.body.error.code).toBe('conflict');
+    expect(stale.body.error.message).toMatch(/changed by someone else/);
+    const [row] = await rowOf<{ status: string }>('SELECT status FROM app.vendors WHERE id = $1', [
+      v.id,
+    ]);
+    expect(row?.status).toBe('pending_kyc');
+
+    // The button drawn for pending_kyc still works, and an unknown status is a 400.
+    expect((await post(`/v1/vendors/${v.id}/submit-kyc`, { expectedStatus: 'nope' })).status).toBe(
+      400,
+    );
+    const send = await post(`/v1/vendors/${v.id}/submit-kyc`, { expectedStatus: 'pending_kyc' });
+    expect(send.status, JSON.stringify(send.body)).toBe(200);
+    expect(send.body.status).toBe('under_review');
   });
 
   it('answers 409 to an activation without an approved KYB case', async () => {

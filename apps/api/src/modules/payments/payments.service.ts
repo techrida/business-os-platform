@@ -52,7 +52,20 @@ import {
   UnprocessableEntityException,
 } from '@nestjs/common';
 import Decimal from 'decimal.js';
-import { and, asc, count, desc, eq, inArray, isNull, lte, or, sql, type SQL } from 'drizzle-orm';
+import {
+  and,
+  asc,
+  count,
+  desc,
+  eq,
+  inArray,
+  isNull,
+  lte,
+  ne,
+  or,
+  sql,
+  type SQL,
+} from 'drizzle-orm';
 
 import { AuditService } from '../../platform/audit/audit.service';
 import { AuthzService } from '../../platform/authz/authz.service';
@@ -66,6 +79,7 @@ import { MoneyService } from '../../platform/settings/money.service';
 import { NumberingService } from '../../platform/settings/numbering.service';
 import { LedgerService } from '../ledger/ledger.service';
 import { PAYMENT_INTAKE_OWNER_TYPE, paymentRef } from './payment-owner.policy';
+import { bankReferenceKey, sameReferencePayments } from './payments.rules';
 
 /** Injection token for a test clock; production falls back to the system time. */
 export const PAYMENTS_CLOCK = Symbol('PAYMENTS_CLOCK');
@@ -88,6 +102,38 @@ export interface PaymentsSummary {
   total: number;
   byStatus: Record<PaymentStatus, number>;
 }
+
+/** An earlier payment of the acting entity with the same bank reference, as the reused-reference warning shows it. */
+export interface PaymentReferenceMatch {
+  id: string;
+  /** The RCPT number; null until the payment is verified. */
+  number: string | null;
+  /** Null for a payment with no customer party. */
+  customerName: string | null;
+  receivedOn: string;
+  amount: string;
+  currency: string;
+  status: PaymentStatus;
+}
+
+export interface PaymentReferenceMatches {
+  matches: PaymentReferenceMatch[];
+}
+
+/** Most payments one reference-match answer lists: enough to recognise the payment, small enough to read. */
+const REFERENCE_MATCH_LIMIT = 20;
+
+/**
+ * `bankReferenceKey` in SQL, applied to the column and to the bound value alike so both sides are normalised the
+ * same way: runs of white space become one space, then the ends are trimmed and case is dropped. `[[:space:]]` and
+ * not a backslash class, so nothing is lost to template-literal escaping.
+ */
+const referenceKeySql = (value: SQL) =>
+  sql`lower(btrim(regexp_replace(${value}, '[[:space:]]+', ' ', 'g')))`;
+
+/** Payments whose bank reference has the same key as `reference`; the caller re-checks with the JS rule. */
+const sameReferenceWhere = (reference: string): SQL =>
+  sql`${referenceKeySql(sql`${payments.bankReference}`)} = ${referenceKeySql(sql`${reference}::text`)}`;
 
 const SEARCH_COLUMNS = [payments.number, parties.name, payments.bankReference] as const;
 
@@ -307,6 +353,64 @@ export class PaymentsService {
     return { total, byStatus };
   }
 
+  /**
+   * The acting entity's payments, any status, whose bank reference is the same as `bankReference` once case and
+   * spaces are set aside (TR-Q12d), rejected and withdrawn ones left out, newest first, so the workspace can warn before a reference is used again. Only
+   * payments the caller may read are listed. A warning only: recording a payment never checks this.
+   */
+  async referenceMatches(
+    scope: TxScope,
+    query: { bankReference: string },
+  ): Promise<PaymentReferenceMatches> {
+    this.authz.assert('payment.read', {
+      tenantId: scope.tenantId,
+      organizationId: scope.organizationId,
+    });
+    if (bankReferenceKey(query.bankReference) === '') return { matches: [] };
+    const rows = await this.db
+      .select({
+        id: payments.id,
+        tenantId: payments.tenantId,
+        organizationId: payments.organizationId,
+        customerPartyId: payments.customerPartyId,
+        submittedBy: payments.submittedBy,
+        number: payments.number,
+        customerName: parties.name,
+        receivedOn: payments.receivedOn,
+        amount: payments.amount,
+        currency: payments.currency,
+        status: payments.status,
+        bankReference: payments.bankReference,
+      })
+      .from(payments)
+      .leftJoin(parties, customerJoin())
+      .where(
+        and(
+          eq(payments.tenantId, scope.tenantId),
+          eq(payments.organizationId, scope.organizationId),
+          // Re-recording a payment after it was rejected or withdrawn is normal, so those do not warn.
+          sql`${payments.status} not in ('rejected', 'withdrawn')`,
+          sameReferenceWhere(query.bankReference),
+        ),
+      )
+      .orderBy(desc(payments.receivedOn), desc(payments.createdAt), desc(payments.id));
+    const caller = currentPrincipal();
+    const readable = sameReferencePayments(query.bankReference, rows).filter(
+      (r) => caller === undefined || can(caller, 'payment.read', paymentRef(r)).allowed,
+    );
+    return {
+      matches: readable.slice(0, REFERENCE_MATCH_LIMIT).map((r) => ({
+        id: r.id,
+        number: r.number,
+        customerName: r.customerName,
+        receivedOn: r.receivedOn,
+        amount: money2(r.amount),
+        currency: r.currency,
+        status: r.status,
+      })),
+    };
+  }
+
   /** The entity first, then the filters; a filter only ever narrows what the entity allows. */
   private listWhere(
     scope: TxScope,
@@ -471,6 +575,7 @@ export class PaymentsService {
       entityId: row.id,
       after: { status: row.status, amount: row.amount, currency: row.currency, channel },
     });
+    await this.recordReusedReference(tx, scope.tenantId, row.id, row.bankReference);
     return this.toDto(tx, scope, row);
   }
 
@@ -815,6 +920,40 @@ export class PaymentsService {
       throw new ForbiddenException({ code: 'forbidden', reason: 'no_permission' });
     }
     return actor.id;
+  }
+
+  /**
+   * When the new payment's bank reference is already on another payment of the tenant (any entity, any status), an
+   * audit event names those payments (TR-Q12d). The payment is recorded either way: a reused reference is a warning,
+   * never a refusal.
+   */
+  private async recordReusedReference(
+    tx: DbTransaction,
+    tenantId: string,
+    id: string,
+    bankReference: string | null,
+  ): Promise<void> {
+    if (bankReference === null || bankReferenceKey(bankReference) === '') return;
+    const others = await tx
+      .select({ id: payments.id, bankReference: payments.bankReference })
+      .from(payments)
+      .where(
+        and(
+          eq(payments.tenantId, tenantId),
+          ne(payments.id, id),
+          sameReferenceWhere(bankReference),
+        ),
+      )
+      .orderBy(asc(payments.createdAt), asc(payments.id));
+    const same = sameReferencePayments(bankReference, others);
+    if (same.length === 0) return;
+    await this.audit.record(tx, {
+      action: 'payment.submitted_with_reused_reference',
+      entityType: AUDIT_ENTITY,
+      entityId: id,
+      after: { bankReference },
+      meta: { sameReferencePaymentIds: same.map((p) => p.id) },
+    });
   }
 
   private head(row: PaymentRow) {

@@ -326,3 +326,21 @@ export const PAYMENT_REQUEST_WORKFLOW_SPEC: unknown = {
   ],
   distinctApprovers: true,
 };
+
+/**
+ * Copy of EMERGENCY_REVIEW_WORKFLOW_SPEC (apps/api/src/modules/procurement/receipts/emergency-review.ts).
+ */
+export const EMERGENCY_REVIEW_WORKFLOW_SPEC: unknown = {
+  documentType: 'emergency_review',
+  steps: [
+    {
+      id: 'management',
+      kind: 'role',
+      role: 'management',
+      reason: 'Management reviews an emergency purchase after it was received',
+    },
+  ],
+  rules: [],
+  distinctApprovers: true,
+  sla: { remindAfterHours: 72, escalateAfterHours: 168, escalateTo: { role: 'founder' } },
+};

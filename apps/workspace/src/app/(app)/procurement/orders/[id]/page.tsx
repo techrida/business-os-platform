@@ -34,7 +34,6 @@ import { AmendDialog, IssueDialog, ReasonDialog } from '../_components/order-act
 import { poFailure } from '../_lib/failure';
 import {
   bandText,
-  isReceivable,
   orderActions,
   PO_STATUS_LABEL,
   poGrants,
@@ -51,7 +50,7 @@ function PanelProblem({ what, err, retry }: { what: string; err: unknown; retry:
   const f = poFailure(err, 'load');
   return f.status === 403 ? (
     <Alert tone="info" role="status" title={`Your roles do not include ${what}`}>
-      {what.charAt(0).toUpperCase() + what.slice(1)} are for the procurement team.
+      Ask an administrator if you need to see the {what}.
     </Alert>
   ) : (
     <Alert
@@ -323,7 +322,7 @@ export default async function PurchaseOrderPage({ params }: { params: Promise<{ 
           actions={f.status !== 403 ? <a href={here}>Try again</a> : null}
         >
           {f.status === 403
-            ? 'Purchase orders are for the procurement team. Ask an administrator if you need access.'
+            ? 'Purchase orders are for procurement, accounts, finance and the warehouse. Ask an administrator if you need access.'
             : f.message}
         </Alert>
       </Page>
@@ -343,8 +342,8 @@ export default async function PurchaseOrderPage({ params }: { params: Promise<{ 
     versions.status === 'fulfilled'
       ? versions.value.find((v) => v.version === po.currentVersion)
       : undefined;
-  const hasServiceLines = po.lines.some((l) => l.kind === 'service');
-  const mayReceive = isReceivable(po.status) && (grants.confirm || hasServiceLines);
+  // The order decides both from the caller's live grants on it (F1-Q52): a read-only reader gets neither.
+  const mayReceive = po.can?.receive === true;
   const mayEnterBill = po.can?.enterBill === true;
   const primary = primaryOrderAction({
     issue: can.issue,
@@ -367,10 +366,12 @@ export default async function PurchaseOrderPage({ params }: { params: Promise<{ 
     {
       key: 'vendor',
       label: 'Vendor',
-      value: (
+      value: grants.vendorRead ? (
         <Link href={`/vendors/${encodeURIComponent(po.vendorId)}`} className={styles.long}>
           {po.vendorName ?? 'Open the vendor'}
         </Link>
+      ) : (
+        <span className={styles.long}>{po.vendorName ?? 'Not recorded'}</span>
       ),
     },
     {

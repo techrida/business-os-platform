@@ -56,14 +56,19 @@ import {
   DEFAULT_MIN_QUOTES,
   PR_COMMITMENT_DOCUMENT_TYPE,
   RFQ_AUDIT_ENTITY,
+  RFQ_DEADLINE_PASSED,
+  RFQ_DEADLINE_PASSED_MESSAGE,
   RFQ_SERIES,
   commitmentFactsOf,
+  extendDeadlineVerdict,
+  isLateQuotation,
   poBandOf,
   quotationLineAmounts,
   quoteCountVerdict,
   sumMoney,
   type ConvertSubmissionBody,
   type CreateRfqBody,
+  type ExtendRfqDeadlineBody,
   type RecordQuotationBody,
   type ScoreQuotationBody,
 } from './sourcing.rules';
@@ -381,6 +386,68 @@ export class SourcingService {
     return this.toRfqDto(rfq, await this.invitedOf(this.db, scope, id));
   }
 
+  /**
+   * F1-Q47: moves the quotation deadline of an open RFQ later. 409 unless the RFQ is open; 400 `deadline_in_past`
+   * for an instant not after now, 400 for one not after the current deadline. Audited with both deadlines. An RFQ
+   * whose deadline passed takes quotations again once extended.
+   */
+  async extendDeadline(
+    rfqId: string,
+    body: ExtendRfqDeadlineBody,
+    idempotencyKey: string,
+  ): Promise<RfqDto> {
+    const { scope, actor } = this.caller.current();
+    const now = this.clock();
+    const next = new Date(body.deadline);
+    return withTx(this.db, scope, actor, async (tx) => {
+      const done = await withIdempotency(
+        tx,
+        { command: 'procurement.rfq.extend_deadline', key: idempotencyKey, body: { rfqId, body } },
+        async () => {
+          const rfq = await this.findRfq(tx, scope, rfqId, true);
+          const verdict = extendDeadlineVerdict({
+            status: rfq.status,
+            current: rfq.deadline,
+            next,
+            now,
+          });
+          if (!verdict.ok) {
+            if (verdict.refusal === 'not_open') {
+              throw conflict(
+                `Only an open RFQ's deadline can be extended; this one is ${rfq.status}`,
+              );
+            }
+            if (verdict.refusal === 'deadline_in_past') {
+              throw new BadRequestException({
+                code: 'bad_request',
+                reason: 'deadline_in_past',
+                message: 'The new deadline has passed. Choose a date and time in the future.',
+              });
+            }
+            throw badRequest('The new deadline must be later than the current one.');
+          }
+          const [row] = await tx
+            .update(rfqs)
+            .set({ deadline: next, version: sql`${rfqs.version} + 1`, updatedAt: now })
+            .where(eq(rfqs.id, rfqId))
+            .returning();
+          await this.audit.record(tx, {
+            action: 'procurement.rfq.deadline_extended',
+            entityType: RFQ_AUDIT_ENTITY,
+            entityId: rfqId,
+            before: { deadline: rfq.deadline.toISOString() },
+            after: { deadline: next.toISOString() },
+          });
+          return {
+            status: 200,
+            response: this.toRfqDto(row!, await this.invitedOf(tx, scope, rfqId)),
+          };
+        },
+      );
+      return done.response;
+    });
+  }
+
   // ------------------------------------------------------------------------------------------------- quotations
 
   /** Records a quotation of an invited vendor on an open RFQ. 409 when the vendor was not invited or already quoted. */
@@ -396,6 +463,7 @@ export class SourcingService {
         { command: 'procurement.quotation.record', key: idempotencyKey, body: { rfqId, body } },
         async () => ({
           status: 201,
+          // Typed in by staff now, so it arrives now (F1-Q47).
           response: await this.insertQuotation(
             tx,
             scope,
@@ -403,6 +471,7 @@ export class SourcingService {
             body,
             body.vendorId,
             body.documentId,
+            this.clock(),
           ),
         }),
       );
@@ -450,6 +519,7 @@ export class SourcingService {
             throw conflict('The submitted file has not scanned clean');
           }
           const { submissionId: _s, ...fields } = body;
+          // The vendor's upload arrived when the portal received it, however late staff convert it (F1-Q47).
           const quotation = await this.insertQuotation(
             tx,
             scope,
@@ -457,6 +527,7 @@ export class SourcingService {
             fields,
             sub.vendorId,
             sub.documentId,
+            sub.receivedAt,
           );
           await tx
             .update(vendorQuotationSubmissions)
@@ -801,6 +872,7 @@ export class SourcingService {
     body: Omit<RecordQuotationBody, 'vendorId' | 'documentId'>,
     vendorId: string,
     documentId: string,
+    arrivedAt: Date,
   ): Promise<QuotationDto> {
     const { principal } = this.caller.current();
     const now = this.clock();
@@ -808,6 +880,10 @@ export class SourcingService {
     await this.currencies.assertEnabled(scope, body.currency);
     const rfq = await this.findRfq(tx, scope, rfqId, true);
     if (rfq.status !== 'open') throw conflict(`A ${rfq.status} RFQ takes no quotation`);
+    // F1-Q47: nothing that arrived after the deadline is taken; Procurement extends the deadline instead.
+    if (isLateQuotation(rfq.deadline, arrivedAt)) {
+      throw conflict(RFQ_DEADLINE_PASSED_MESSAGE, RFQ_DEADLINE_PASSED);
+    }
     const invited = await this.vendorIdsOf(tx, scope, rfqId);
     if (!invited.includes(vendorId)) throw conflict('The vendor was not invited to this RFQ');
     const [doc] = await tx
