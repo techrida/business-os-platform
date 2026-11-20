@@ -287,6 +287,92 @@ describe('quotation detail page', () => {
     expect(await render()).not.toContain('href="/sales-orders/');
   });
 
+  const pendingEvidence = {
+    status: 'pending' as const,
+    policy: 'both',
+    missing: ['purchase_order' as const],
+    acceptance: {
+      actorKind: 'portal_contact',
+      acceptedByName: 'Jules',
+      evidenceKinds: ['contract' as const],
+    },
+    confirmation: null,
+    can: { confirm: true },
+  };
+
+  it('shows a portal acceptance awaiting confirmation, with Confirm evidence, then confirmed (F1-Q28)', async () => {
+    const quote = detail();
+    quote.quotation.status = 'accepted';
+    quote.versions[1]!.status = 'accepted';
+    mocks.getQuotation.mockResolvedValue(quote);
+    mocks.getEvidence.mockResolvedValue(pendingEvidence);
+    const awaiting = await render();
+    expect(mocks.getEvidence).toHaveBeenCalledWith(expect.anything(), quote.quotation.id, V2);
+    expect(awaiting).toContain('After acceptance');
+    expect(awaiting).toContain('Awaiting confirmation');
+    expect(awaiting).toContain('confirms a contract and a purchase order before the sales order');
+    expect(awaiting).toContain('>Confirm evidence</button>');
+    expect(awaiting).toContain('Confirm acceptance evidence for revision 2');
+    expect(awaiting).toContain('Your company asks for a contract and a purchase order.');
+
+    mocks.getQuotation.mockResolvedValue({
+      ...quote,
+      people: [{ userId: CUSTOMER, name: 'Asha Accountant' }],
+    });
+    mocks.getEvidence.mockResolvedValue({
+      ...pendingEvidence,
+      status: 'confirmed',
+      missing: [],
+      confirmation: {
+        evidenceKinds: ['contract', 'purchase_order'],
+        comment: null,
+        confirmedBy: CUSTOMER,
+        confirmedAt: WHEN,
+      },
+      can: { confirm: false },
+    });
+    const confirmed = await render();
+    expect(confirmed).toContain('Confirmed');
+    expect(confirmed).toContain('Contract, Purchase order by Asha Accountant on');
+    expect(confirmed).not.toContain('>Confirm evidence</button>');
+  });
+
+  it('offers no Confirm evidence when the API says the caller may not, and no evidence row without an answer', async () => {
+    const quote = detail();
+    quote.quotation.status = 'accepted';
+    quote.versions[1]!.status = 'accepted';
+    mocks.getQuotation.mockResolvedValue(quote);
+    mocks.getEvidence.mockResolvedValue({ ...pendingEvidence, can: { confirm: false } });
+    const denied = await render();
+    expect(denied).toContain('Awaiting confirmation');
+    expect(denied).not.toContain('>Confirm evidence</button>');
+
+    mocks.getEvidence.mockResolvedValue(null);
+    expect(await render()).not.toContain('Customer evidence');
+  });
+
+  it('says a staff-recorded acceptance was checked when it was recorded', async () => {
+    const quote = detail();
+    quote.quotation.status = 'accepted';
+    quote.versions[1]!.status = 'accepted';
+    mocks.getQuotation.mockResolvedValue(quote);
+    mocks.getEvidence.mockResolvedValue({
+      ...pendingEvidence,
+      status: 'confirmed',
+      acceptance: { ...pendingEvidence.acceptance, actorKind: 'staff' },
+      can: { confirm: false },
+    });
+    const html = await render();
+    expect(html).toContain('Checked when the acceptance was recorded.');
+    expect(html).not.toContain('Awaiting confirmation');
+  });
+
+  it('asks for no evidence on a quotation that is not accepted', async () => {
+    mocks.getQuotation.mockResolvedValue(detail());
+    await render();
+    expect(mocks.getEvidence).not.toHaveBeenCalled();
+  });
+
   it('shows the draft sales order created from the accepted revision, waiting for Accounts (F1-Q25)', async () => {
     const quote = detail();
     quote.quotation.status = 'accepted';
