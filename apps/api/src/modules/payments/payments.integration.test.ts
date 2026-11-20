@@ -319,6 +319,21 @@ describe('a bank reference already on file (TR-Q12d)', () => {
     ).toEqual([]);
   });
 
+  it('does not warn about an earlier payment that was rejected', async () => {
+    const w = await newWorld();
+    const first = await submit(w, { bankReference: 'NIC 99001' });
+    await service.reject(
+      w.scope,
+      w.verifier,
+      first.id,
+      { expectedVersion: 1, reason: 'Slip is for another account' },
+      randomUUID(),
+    );
+    const live = await submit(w, { bankReference: 'nic 99001' });
+    const { matches } = await service.referenceMatches(w.scope, { bankReference: 'NIC 99001' });
+    expect(matches.map((m) => m.id)).toEqual([live.id]);
+  });
+
   it('still records the payment, and the audit trail names the earlier payments with that reference', async () => {
     const w = await newWorld();
     const first = await submit(w, { bankReference: 'NIC  77812' });
