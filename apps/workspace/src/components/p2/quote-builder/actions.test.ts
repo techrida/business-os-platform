@@ -207,11 +207,13 @@ describe('saveDraftAction', () => {
     expect(api.createQuotation).not.toHaveBeenCalled();
   });
 
-  it('creates the draft with the page key and goes to its edit page', async () => {
-    api.createQuotation.mockResolvedValue({ id: QID });
-    await expect(saveDraftAction({ ...create, values: values() })).rejects.toThrow(
-      `NEXT_REDIRECT /quotations/${QID}/edit?saved=1`,
-    );
+  it('creates the draft with the page key and returns its id, without redirecting itself (TR-Q8)', async () => {
+    api.createQuotation.mockResolvedValue({ id: QID, version: 1 });
+    await expect(saveDraftAction({ ...create, values: values() })).resolves.toEqual({
+      ok: true,
+      version: 1,
+      createdId: QID,
+    });
     expect(api.createQuotation).toHaveBeenCalledWith(expect.anything(), expect.anything(), KEY);
   });
 

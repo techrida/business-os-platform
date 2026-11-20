@@ -434,6 +434,13 @@ export function QuoteBuilder({
               values,
             },
       );
+      if (res.ok && res.createdId !== undefined) {
+        // A new draft: move to its editor once. Nothing else is set, so this page does not re-render
+        // into a half-saved state on the way out.
+        leaving.current = true;
+        router.replace(`/quotations/${encodeURIComponent(res.createdId)}/edit?saved=1`);
+        return;
+      }
       if (res.ok) {
         setRowVersion(res.version);
         setSaved(JSON.stringify(values));
@@ -445,7 +452,6 @@ export function QuoteBuilder({
         fail(res.kind, res.message, res.fieldErrors);
       }
     } catch (error) {
-      // A successful create redirects through Next's server action transport.
       unstable_rethrow(error);
       fail('error', 'The save could not be confirmed. Try again.');
     } finally {
