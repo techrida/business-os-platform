@@ -7,6 +7,7 @@ import {
   CreateReceiptBodySchema,
   derivePoStatus,
   progressRowsOf,
+  repeatedSerialAcrossLines,
   reversalLinesOf,
   serialViolation,
   validateDraftLines,
@@ -66,6 +67,45 @@ describe('CreateReceiptBodySchema', () => {
         CreateReceiptBodySchema.safeParse({ ...base, lines: [line(1, quantity)] }).success,
       ).toBe(false);
     }
+  });
+});
+
+describe('serials across the lines of one receipt (TR-Q12b)', () => {
+  const serial = (serialNo: string) => ({ serialNo });
+
+  it('refuses the same serial number on two lines of one receipt', () => {
+    const v = validateDraftLines(
+      'goods',
+      [
+        line(1, '2', { serials: [serial('SN-1'), serial('SN-2')] }),
+        line(2, '1', { serials: [serial('SN-2')] }),
+      ],
+      facts(poLine(1, { requiresSerials: true }), poLine(2, { requiresSerials: true })),
+      net(),
+    );
+    expect(v?.code).toBe('serial_duplicate');
+    expect(v?.message).toBe(
+      'Serial number SN-2 is on two lines of this receipt. Each item has its own serial number, so enter it once.',
+    );
+  });
+
+  it('passes different serial numbers on different lines', () => {
+    expect(
+      validateDraftLines(
+        'goods',
+        [line(1, '1', { serials: [serial('SN-1')] }), line(2, '1', { serials: [serial('SN-2')] })],
+        facts(poLine(1, { requiresSerials: true }), poLine(2, { requiresSerials: true })),
+        net(),
+      ),
+    ).toBeNull();
+  });
+
+  it('names the first repeated serial, and leaves a repeat within one line to the line rule', () => {
+    expect(repeatedSerialAcrossLines([{ serialNos: ['A', 'B'] }, { serialNos: ['C', 'A'] }])).toBe(
+      'A',
+    );
+    expect(repeatedSerialAcrossLines([{ serialNos: ['A', 'A'] }, { serialNos: ['B'] }])).toBeNull();
+    expect(repeatedSerialAcrossLines([])).toBeNull();
   });
 });
 

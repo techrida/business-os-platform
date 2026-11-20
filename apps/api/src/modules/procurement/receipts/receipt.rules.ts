@@ -132,6 +132,30 @@ export function serialViolation(
   return null;
 }
 
+/**
+ * TR-Q12b (Kuu, 2026-11-20): a serial number names one physical item, so it may appear only once in a whole
+ * receipt, across its lines as well as within one. Returns the first repeated serial number, or null.
+ */
+export function repeatedSerialAcrossLines(
+  lines: readonly { serialNos: readonly string[] }[],
+): string | null {
+  const seen = new Set<string>();
+  for (const line of lines) {
+    for (const serialNo of new Set(line.serialNos)) {
+      if (seen.has(serialNo)) return serialNo;
+      seen.add(serialNo);
+    }
+  }
+  return null;
+}
+
+/** The answer when one serial number is on two lines of the same receipt. */
+export const serialOnTwoLines = (serialNo: string): ReceiptViolation =>
+  violation(
+    'serial_duplicate',
+    `Serial number ${serialNo} is on two lines of this receipt. Each item has its own serial number, so enter it once.`,
+  );
+
 // ------------------------------------------------------------------------------------------------- draft
 
 /**
@@ -177,7 +201,10 @@ export function validateDraftLines(
     );
     if (bad !== null) return { ...bad, message: `PO line ${po.lineNo}: ${bad.message}` };
   }
-  return null;
+  const repeated = repeatedSerialAcrossLines(
+    lines.map((l) => ({ serialNos: (l.serials ?? []).map((s) => s.serialNo) })),
+  );
+  return repeated === null ? null : serialOnTwoLines(repeated);
 }
 
 // ------------------------------------------------------------------------------------------------- PO status
