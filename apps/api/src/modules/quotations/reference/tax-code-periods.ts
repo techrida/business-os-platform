@@ -75,14 +75,26 @@ function latestOf(periods: readonly TaxCodePeriodRow[]): TaxCodePeriodRow | unde
   return [...periods].sort(byStart).at(-1);
 }
 
-/** Checks shared by a change and a retirement: the code exists, is still open-ended and was loaded fresh. */
+/** What the caller saw: the code's latest period and its version when the dialog opened. */
+export interface ExpectedPeriod {
+  expectedPeriodId: string;
+  expectedVersion: number;
+}
+
+/**
+ * Checks shared by a change and a retirement: the code exists, is still open-ended and was loaded fresh. Fresh means
+ * the same latest period at the same version: every new period starts at version 1, so a version alone would let a
+ * dialog opened before a change was scheduled act on the period scheduled after it.
+ */
 function openLatest(
   periods: readonly TaxCodePeriodRow[],
-  expectedVersion: number,
+  expected: ExpectedPeriod,
 ): PeriodRefusal | { ok: true; latest: TaxCodePeriodRow } {
   const latest = latestOf(periods);
   if (latest === undefined) return refuse(404, 'Tax code not found');
-  if (latest.version !== expectedVersion) return refuse(409, STALE_TAX_CODE_MESSAGE);
+  if (latest.id !== expected.expectedPeriodId || latest.version !== expected.expectedVersion) {
+    return refuse(409, STALE_TAX_CODE_MESSAGE);
+  }
   if (latest.effectiveTo !== null) {
     return refuse(409, `This tax code is retired from ${latest.effectiveTo} and cannot change.`);
   }
@@ -92,9 +104,9 @@ function openLatest(
 /** A new period from `effectiveFrom`: closes the last period that day. */
 export function planTaxCodeChange(
   periods: readonly TaxCodePeriodRow[],
-  input: { effectiveFrom: string; expectedVersion: number; today: string },
+  input: ExpectedPeriod & { effectiveFrom: string; today: string },
 ): PeriodPlan | PeriodRefusal {
-  const open = openLatest(periods, input.expectedVersion);
+  const open = openLatest(periods, input);
   if (!open.ok) return open;
   if (input.effectiveFrom < input.today) {
     return refuse(
@@ -121,9 +133,9 @@ export function planTaxCodeChange(
 /** Closes the last period on `effectiveTo`: from that day the code is not offered or priced. */
 export function planTaxCodeRetire(
   periods: readonly TaxCodePeriodRow[],
-  input: { effectiveTo: string; expectedVersion: number; today: string },
+  input: ExpectedPeriod & { effectiveTo: string; today: string },
 ): PeriodPlan | PeriodRefusal {
-  const open = openLatest(periods, input.expectedVersion);
+  const open = openLatest(periods, input);
   if (!open.ok) return open;
   if (input.effectiveTo < input.today) {
     return refuse(

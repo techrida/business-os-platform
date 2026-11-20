@@ -29,9 +29,13 @@ function refused(error: unknown): ActionState {
   return fail(describeError(error, 'change tax codes'));
 }
 
-/** The first problem a schema found, in the words the contract gave it. */
-function firstIssue(issues: readonly { message: string }[]): string {
-  return issues[0]?.message ?? CHECK;
+const STALE = 'That tax code changed since this page loaded. Reload the page.';
+
+/** The first problem in words; a missing or malformed period id or version means the screen is out of date. */
+function firstIssue(issues: readonly { message: string; path: readonly PropertyKey[] }[]): string {
+  const issue = issues[0];
+  if (issue?.path[0] === 'expectedPeriodId' || issue?.path[0] === 'expectedVersion') return STALE;
+  return issue?.message ?? CHECK;
 }
 
 export interface TaxCodeInput {
@@ -61,6 +65,8 @@ export interface TaxCodeChangeInput {
   rate: string;
   creditable: boolean;
   effectiveFrom: string;
+  /** The latest period the dialog was opened on: its id and version (a new period restarts at version 1). */
+  expectedPeriodId: string;
   expectedVersion: number;
 }
 
@@ -85,11 +91,15 @@ export async function changeTaxCodeAction(
 export async function retireTaxCodeAction(
   code: string,
   effectiveTo: string,
-  expectedVersion: number,
+  expected: { expectedPeriodId: string; expectedVersion: number },
 ): Promise<ActionState> {
   const session = await requireSection('tax');
   const parsedCode = TaxCodeCodeSchema.safeParse(code);
-  const parsed = RetireTaxCodeBodySchema.safeParse({ effectiveTo, expectedVersion });
+  const parsed = RetireTaxCodeBodySchema.safeParse({
+    effectiveTo,
+    expectedPeriodId: expected.expectedPeriodId,
+    expectedVersion: expected.expectedVersion,
+  });
   if (!parsedCode.success) return fail('That tax code no longer exists. Reload the page.');
   if (!parsed.success) return fail(firstIssue(parsed.error.issues));
   try {

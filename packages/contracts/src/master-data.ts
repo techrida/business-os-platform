@@ -107,6 +107,8 @@ export const ChangeTaxCodeBodySchema = z.strictObject({
   rate: TaxRatePercentSchema,
   creditable: z.boolean(),
   effectiveFrom: Day,
+  /** The code's latest period as the caller saw it: id and version, both checked (a new period restarts at 1). */
+  expectedPeriodId: z.guid(),
   expectedVersion: z.number().int().min(1),
 });
 export type ChangeTaxCodeBody = z.infer<typeof ChangeTaxCodeBodySchema>;
@@ -114,6 +116,7 @@ export type ChangeTaxCodeBody = z.infer<typeof ChangeTaxCodeBodySchema>;
 /** `POST /v1/admin/tax-codes/:code/retire`: the code stops applying from `effectiveTo` (today or later). */
 export const RetireTaxCodeBodySchema = z.strictObject({
   effectiveTo: Day,
+  expectedPeriodId: z.guid(),
   expectedVersion: z.number().int().min(1),
 });
 export type RetireTaxCodeBody = z.infer<typeof RetireTaxCodeBodySchema>;
