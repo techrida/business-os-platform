@@ -95,6 +95,7 @@ describe('TaxCodesManager', () => {
       rate: '15',
       creditable: true,
       effectiveFrom: TODAY,
+      expectedPeriodId: open.id,
       expectedVersion: 3,
     });
     await mounted.unmount();

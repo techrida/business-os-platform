@@ -145,6 +145,7 @@ describe('bad requests', () => {
         kind: 'zero',
         creditable: false,
         effectiveFrom: '2099-01-01',
+        expectedPeriodId: '00000000-0000-4000-8000-000000000001',
         expectedVersion: 1,
       }),
     ).toThrow(BadRequestException);
@@ -158,7 +159,11 @@ describe('bad requests', () => {
 
   it('answers 404 for a code that cannot exist, before any read', () => {
     expect(() =>
-      controller.retireTaxCode('vat 13', { effectiveTo: '2099-01-01', expectedVersion: 1 }),
+      controller.retireTaxCode('vat 13', {
+        effectiveTo: '2099-01-01',
+        expectedPeriodId: '00000000-0000-4000-8000-000000000001',
+        expectedVersion: 1,
+      }),
     ).toThrow(NotFoundException);
     expect(select).not.toHaveBeenCalled();
   });
