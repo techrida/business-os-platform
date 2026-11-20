@@ -814,8 +814,7 @@ describe('Retiring a department with invited members', () => {
 
   it('unassigns inactive members instead of moving them to the destination department', async () => {
     const dest = AdminDepartmentDetailSchema.parse(
-      (await request(baseUrl).post('/v1/admin/departments').send({ name: 'Dormant Landing' }))
-        .body,
+      (await request(baseUrl).post('/v1/admin/departments').send({ name: 'Dormant Landing' })).body,
     );
     const dept = AdminDepartmentDetailSchema.parse(
       (await request(baseUrl).post('/v1/admin/departments').send({ name: 'Dormant Source' })).body,
@@ -928,7 +927,9 @@ describe('Retire under concurrent access writes', () => {
     return userId;
   }
 
-  async function membershipOf(userId: string): Promise<{ department_id: string | null; level: string }> {
+  async function membershipOf(
+    userId: string,
+  ): Promise<{ department_id: string | null; level: string }> {
     const res = await ownerPool.query<{ department_id: string | null; level: string }>(
       `SELECT department_id, level FROM app.user_entities
         WHERE tenant_id = $1 AND organization_id = $2 AND user_id = $3`,

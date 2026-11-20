@@ -854,7 +854,9 @@ export class DepartmentsAdminService {
           // Demote any moved head to manager so migration 0079's trigger does not replace the
           // destination department's head.
           const movedHeadIds = movingMembers.filter((m) => m.level === 'head').map((m) => m.userId);
-          const movedOtherIds = movingMembers.filter((m) => m.level !== 'head').map((m) => m.userId);
+          const movedOtherIds = movingMembers
+            .filter((m) => m.level !== 'head')
+            .map((m) => m.userId);
           if (movedHeadIds.length > 0) {
             await tx
               .update(userEntities)
@@ -900,7 +902,10 @@ export class DepartmentsAdminService {
                 and(
                   eq(userEntities.tenantId, scope.tenantId),
                   eq(userEntities.organizationId, scope.organizationId),
-                  inArray(userEntities.userId, inactiveMembers.map((m) => m.userId)),
+                  inArray(
+                    userEntities.userId,
+                    inactiveMembers.map((m) => m.userId),
+                  ),
                 ),
               );
             for (const member of inactiveMembers) {
