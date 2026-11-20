@@ -2,6 +2,7 @@ import { ErrorBodySchema } from '@bos/contracts';
 
 import { isIdempotencyInProgress } from '@/components/p2/quote-builder/failure';
 import { ApiError } from '@/lib/api';
+import { currencyNotEnabledText } from '@/lib/kernel-ui';
 import { infectedFileMessage } from '@/lib/infected-file';
 
 import type { PrFailure } from '../../requests/_lib/failure';
@@ -101,6 +102,9 @@ export function rfqFailure(err: unknown, op: RfqOp): RfqFailure {
     return { status, message: text ?? STALE, reload: true, definite };
   }
   if (status === 422) {
+    // U16-Q14: the agreed D44 words for a currency the company switched off, not the API's sentence.
+    const switchedOff = currencyNotEnabledText(err);
+    if (switchedOff !== undefined) return { ...base, message: switchedOff, definite };
     if (code === 'NO_ELIGIBLE_APPROVER') {
       return {
         ...base,
