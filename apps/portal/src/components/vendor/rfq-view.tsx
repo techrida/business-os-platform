@@ -3,15 +3,15 @@ import type { VendorPortalRfqView } from '@bos/contracts';
 import { Alert } from '@/components/portal/alert';
 import { LinkButton } from '@/components/ui/button';
 
-import { formatDeadline, isPastDeadline } from './rfq-list';
+import { DEADLINE_PASSED_TEXT, formatDeadline, isPastDeadline } from './rfq-list';
 import styles from './vendor.module.css';
 import { trimQuantity } from './vendor-status';
 
 /**
  * One request for quotation as the vendor sees it. It reads only `VendorPortalRfqView` (a strict
  * allow-list: number, deadline and the lines to price), so there is no estimate, budget or other
- * vendor here to show. A deadline that has passed adds a warning but the quotation link stays:
- * the API decides whether a late quotation is taken. `now` comes from the page.
+ * vendor here to show. Once the deadline has passed the quotation link goes and a notice says why
+ * (F1-Q47: the API refuses a late quotation). `now` comes from the page.
  */
 export function RfqView({ view, now }: { view: VendorPortalRfqView; now: Date }) {
   const past = isPastDeadline(view.deadline, now);
@@ -23,8 +23,8 @@ export function RfqView({ view, now }: { view: VendorPortalRfqView; now: Date })
         </div>
         {past ? (
           <Alert tone="warning" title="The deadline for this request has passed">
-            Quotations closed on {formatDeadline(view.deadline)} (Nepal time). You can still try to
-            send one, but we may not be able to consider it.
+            Quotations closed on {formatDeadline(view.deadline)} (Nepal time).{' '}
+            {DEADLINE_PASSED_TEXT}
           </Alert>
         ) : null}
         <dl className={styles.facts}>
@@ -33,9 +33,11 @@ export function RfqView({ view, now }: { view: VendorPortalRfqView; now: Date })
             <dd>{formatDeadline(view.deadline)}</dd>
           </div>
         </dl>
-        <div className={styles.download}>
-          <LinkButton href={`/vendor/rfqs/${view.id}/quote`}>Submit quotation</LinkButton>
-        </div>
+        {past ? null : (
+          <div className={styles.download}>
+            <LinkButton href={`/vendor/rfqs/${view.id}/quote`}>Submit quotation</LinkButton>
+          </div>
+        )}
       </header>
 
       <section aria-labelledby="rfq-lines-heading" className={styles.section}>
