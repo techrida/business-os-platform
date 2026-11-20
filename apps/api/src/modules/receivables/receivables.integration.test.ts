@@ -640,9 +640,10 @@ describe("the invoice list carries each row's paid state (U15b-Q2)", () => {
         expect(filtered.sort()).toEqual(named.sort());
       }
     }
-    // The Total column summed over every match, per currency (U15b-Q4), and over a filter's matches only.
+    // The Total column: live money per currency over every match (U15b-Q4), so the 300.00 proforma is a row but
+    // adds nothing; and over a filter's matches only.
     const list = invoiceList(w, NOW);
-    expect((await list.list()).totals).toEqual([{ currency: 'NPR', amount: '2800.00' }]);
+    expect((await list.list()).totals).toEqual([{ currency: 'NPR', amount: '2500.00' }]);
     expect((await list.list({ settlement: ['paid'] })).totals).toEqual([
       { currency: 'NPR', amount: '500.00' },
     ]);
