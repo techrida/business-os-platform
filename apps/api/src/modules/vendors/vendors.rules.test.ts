@@ -10,12 +10,16 @@ import { describe, expect, it } from 'vitest';
 import {
   isoDay,
   kindCountryProblem,
+  kybReadyForReview,
   kindFromRow,
   kindToRow,
   lapsedTaxClearance,
   LIFECYCLE,
   lifecycleAllowed,
+  sameNameVendors,
+  submitKycMove,
   vendorPartyCode,
+  vendorNameKey,
   type LifecycleCommand,
 } from './vendors.rules';
 
@@ -99,5 +103,59 @@ describe('isoDay', () => {
   it('is the calendar day in Kathmandu (UTC+05:45), not in UTC', () => {
     expect(isoDay(new Date('2026-11-09T18:00:00Z'))).toBe('2026-11-09');
     expect(isoDay(new Date('2026-11-09T18:15:00Z'))).toBe('2026-11-10');
+  });
+});
+
+describe('submitKycMove (a stale KYB button never runs the other move)', () => {
+  it('moves draft to pending_kyc and pending_kyc to under_review when the button saw that status', () => {
+    expect(submitKycMove('draft', 'draft')).toEqual({ ok: true, to: 'pending_kyc' });
+    expect(submitKycMove('pending_kyc', 'pending_kyc')).toEqual({ ok: true, to: 'under_review' });
+  });
+
+  it('refuses a "Start KYB review" drawn for draft once the vendor is pending_kyc, instead of sending it for review', () => {
+    expect(submitKycMove('pending_kyc', 'draft')).toMatchObject({ ok: false, kind: 'stale' });
+    expect(submitKycMove('under_review', 'draft')).toMatchObject({ ok: false, kind: 'stale' });
+    expect(submitKycMove('under_review', 'pending_kyc')).toMatchObject({
+      ok: false,
+      kind: 'stale',
+    });
+  });
+
+  it('keeps the old answer for a caller that names no status', () => {
+    expect(submitKycMove('draft', undefined)).toEqual({ ok: true, to: 'pending_kyc' });
+    expect(submitKycMove('pending_kyc', undefined)).toEqual({ ok: true, to: 'under_review' });
+    for (const s of VENDOR_STATUSES.filter((x) => x !== 'draft' && x !== 'pending_kyc')) {
+      expect(submitKycMove(s, undefined)).toMatchObject({ ok: false, kind: 'invalid' });
+    }
+  });
+});
+
+describe('kybReadyForReview (the gate of "Send for review")', () => {
+  it('is true only for a submitted or approved KYB case', () => {
+    expect(kybReadyForReview('submitted')).toBe(true);
+    expect(kybReadyForReview('approved')).toBe(true);
+    for (const s of [undefined, 'open', 'draft', 'rejected', 'changes_requested', '']) {
+      expect(kybReadyForReview(s)).toBe(false);
+    }
+  });
+});
+
+describe('vendor name key (TR-Q12d same-name warning)', () => {
+  it('ignores case, spaces, punctuation and company-form words', () => {
+    const key = vendorNameKey('Himal Hardware Traders Pvt. Ltd.');
+    expect(vendorNameKey('  himal   hardware-traders  PRIVATE LIMITED ')).toBe(key);
+    expect(vendorNameKey('HIMAL HARDWARE TRADERS (P) LTD')).toBe(key);
+    expect(vendorNameKey('Himal Hardware')).not.toBe(key);
+  });
+
+  it('finds the rows with the same key, and none for a name with no letters or digits', () => {
+    const rows = [
+      { id: 'a', legalName: 'Everest Supplies Pvt Ltd' },
+      { id: 'b', legalName: 'Everest Supplies & Co.' },
+      { id: 'c', legalName: 'Everest Supply' },
+      { id: 'd', legalName: '...' },
+    ];
+    expect(sameNameVendors('everest supplies', rows).map((r) => r.id)).toEqual(['a', 'b']);
+    expect(sameNameVendors(' -- ', rows)).toEqual([]);
   });
 });

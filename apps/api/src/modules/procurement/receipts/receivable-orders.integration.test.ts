@@ -308,9 +308,10 @@ async function newPo(
     `INSERT INTO app.purchase_orders
        (tenant_id, organization_id, number, number_seq, fiscal_year, purchase_request_id, vendor_id, currency, status,
         payment_terms_days, approved_total, fx_rate, approved_total_npr, approved_band, current_version, issued_at,
-        issued_by, created_by)
+        issued_by, created_by, closed_reason)
      VALUES ($1, $2, $3, $4, '2082/83', $5, $6, 'NPR', $7, 30, 2373.00, 1, 2373.00, 'base', $8,
-             CASE WHEN $9 THEN NULL ELSE $11::timestamptz END, CASE WHEN $9 THEN NULL::uuid ELSE $10::uuid END, $10)
+             CASE WHEN $9 THEN NULL ELSE $11::timestamptz END, CASE WHEN $9 THEN NULL::uuid ELSE $10::uuid END, $10,
+             CASE WHEN $7 IN ('short_closed', 'cancelled') THEN 'Ended in a test' END)
      RETURNING id, number`,
     [
       scope.tenantId,
@@ -469,6 +470,56 @@ describe('receivable orders', () => {
     expect(idsB).not.toContain(inA.id);
     current.scope = null;
     expect((await listed()).map((r) => r.id)).not.toContain(inB.id);
+  });
+});
+
+describe('recently received orders (U18-Q3)', () => {
+  const received = async (limit = 100) => orders.listReceived({ limit });
+
+  it('lists a fully received order with when it was last received, and not an open one', async () => {
+    const done = await newPo({ lines: [GOODS3] });
+    await receive(done, '3');
+    const open = await newPo();
+    await receive(open, '1');
+    const rows = await received();
+    expect(rows.find((r) => r.id === done.id)).toEqual({
+      id: done.id,
+      number: done.number,
+      vendorId,
+      vendorName: VENDOR_NAME,
+      kind: 'goods',
+      status: 'fully_received',
+      lastReceivedAt: now.toISOString(),
+    });
+    expect(rows.map((r) => r.id)).not.toContain(open.id);
+  });
+
+  it('includes closed and short-closed orders, an order with no receipt last, and honours the limit', async () => {
+    const closed = await newPo({ status: 'closed' });
+    const shortClosed = await newPo({ status: 'short_closed' });
+    const done = await newPo({ lines: [GOODS3] });
+    await receive(done, '3');
+    const ids = (await received()).map((r) => r.id);
+    expect(ids).toEqual(expect.arrayContaining([closed.id, shortClosed.id, done.id]));
+    expect(ids.indexOf(done.id)).toBeLessThan(ids.indexOf(closed.id));
+    expect(await received(1)).toHaveLength(1);
+    for (const status of [
+      'draft',
+      'issued',
+      'partially_received',
+      'amendment_pending',
+      'cancelled',
+    ]) {
+      const po = await newPo({ status });
+      expect((await received()).map((r) => r.id)).not.toContain(po.id);
+    }
+  });
+
+  it('shows only the acting entity', async () => {
+    const inA = await newPo({ status: 'closed' });
+    current.scope = scopeB;
+    expect((await received()).map((r) => r.id)).not.toContain(inA.id);
+    current.scope = null;
   });
 });
 

@@ -1,4 +1,4 @@
-// Table tests of the purchase order rules (P4 unit P3; AD4, AD7). Pure: no database.
+// Table tests of the purchase order rules (P4 unit P3; AD4; F1-Q40). Pure: no database.
 // Run: pnpm --filter @bos/api exec vitest run src/modules/procurement/orders/purchase-order.rules.test.ts
 import { WorkflowSpecSchema } from '@bos/contracts';
 import { describe, expect, it } from 'vitest';
@@ -9,7 +9,7 @@ import {
   PO_AMENDMENT_DOCUMENT_TYPE,
   PO_AMENDMENT_WORKFLOW_SPEC,
   amendLines,
-  bandRises,
+  amendmentApprovalReasons,
   shortCloseCancelled,
   versionTotals,
   type PoLineState,
@@ -34,15 +34,30 @@ describe('PO_AMENDMENT_WORKFLOW_SPEC', () => {
   });
 });
 
-describe('bandRises (AD7)', () => {
-  it.each([
-    ['base', 'base', false],
-    ['management', 'base', true],
-    ['founder', 'management', true],
-    ['base', 'management', false],
-    ['management', 'founder', false],
-  ] as const)('%s over approved %s -> %s', (next, approved, rises) => {
-    expect(bandRises(next, approved)).toBe(rises);
+describe('amendmentApprovalReasons (F1-Q40)', () => {
+  const at = (nextTotal: string, nextTermsDays = 30) =>
+    amendmentApprovalReasons({
+      currentTotal: '90000.00',
+      nextTotal,
+      currentTermsDays: 30,
+      nextTermsDays,
+    });
+
+  it('re-runs approvals when the total rises, even inside the same band', () => {
+    expect(at('90000.01')).toEqual(['value_rises']);
+    expect(at('99000.00')).toEqual(['value_rises']);
+    expect(at('150000.00')).toEqual(['value_rises']);
+  });
+
+  it('re-runs approvals when the payment terms change, whichever way', () => {
+    expect(at('90000.00', 45)).toEqual(['terms_change']);
+    expect(at('80000.00', 15)).toEqual(['terms_change']);
+    expect(at('95000.00', 45)).toEqual(['value_rises', 'terms_change']);
+  });
+
+  it('only audits a total that stays or falls with the same terms', () => {
+    expect(at('90000.00')).toEqual([]);
+    expect(at('1.00')).toEqual([]);
   });
 });
 
@@ -68,6 +83,7 @@ describe('amendLines (done check 2 arithmetic)', () => {
     const v = amendLines([line()], [{ poLineId: 'l1', unitPrice: '87610.62' }], rate);
     expect(v.ok).toBe(true);
     if (!v.ok) return;
+    expect(v.changed).toBe(true);
     expect(v.lines[0]).toMatchObject({
       gross: '87610.62',
       taxAmount: '11389.38',
@@ -78,14 +94,13 @@ describe('amendLines (done check 2 arithmetic)', () => {
       '1',
     );
     expect(t.band).toBe('base');
-    expect(bandRises(t.band, 'base')).toBe(false);
   });
 
-  it('90,000 -> 1,50,000 rises to the management band', () => {
+  it('90,000 -> 1,50,000 lands in the management band', () => {
     const v = amendLines([line()], [{ poLineId: 'l1', unitPrice: '132743.36' }], rate);
     if (!v.ok) throw new Error(v.message);
     expect(v.lines[0]!.lineTotal).toBe('150000.00');
-    expect(bandRises(versionTotals([v.lines[0]!.lineTotal], '1').band, 'base')).toBe(true);
+    expect(versionTotals([v.lines[0]!.lineTotal], '1').band).toBe('management');
   });
 
   it('keeps a line it does not name', () => {
@@ -98,7 +113,7 @@ describe('amendLines (done check 2 arithmetic)', () => {
     expect(v.lines[1]).toMatchObject({ id: 'l2', orderedQuantity: '2.0000', lineTotal: '226.00' });
   });
 
-  it('refuses a line of another PO, a line named twice and a no-op', () => {
+  it('refuses a line of another PO and a line named twice, and marks a no-op unchanged', () => {
     expect(amendLines([line()], [{ poLineId: 'x', quantity: '2' }], rate).ok).toBe(false);
     expect(
       amendLines(
@@ -110,7 +125,11 @@ describe('amendLines (done check 2 arithmetic)', () => {
         rate,
       ).ok,
     ).toBe(false);
-    expect(amendLines([line()], [{ poLineId: 'l1', quantity: '1' }], rate).ok).toBe(false);
+    expect(amendLines([line()], [{ poLineId: 'l1', quantity: '1' }], rate)).toMatchObject({
+      ok: true,
+      changed: false,
+    });
+    expect(amendLines([line()], [], rate)).toMatchObject({ ok: true, changed: false });
   });
 
   it('refuses ordering below received plus cancelled', () => {
@@ -139,6 +158,16 @@ describe('shortCloseCancelled', () => {
 });
 
 describe('AmendPurchaseOrderBodySchema', () => {
+  it('takes a change of payment terms alone, with no line (F1-Q40)', () => {
+    expect(
+      AmendPurchaseOrderBodySchema.safeParse({
+        reason: 'Vendor asked for 45 days',
+        paymentTermsDays: 45,
+        lines: [],
+      }).success,
+    ).toBe(true);
+  });
+
   it('has no vendor field: a change of vendor is a cancel and a new PO', () => {
     const r = AmendPurchaseOrderBodySchema.safeParse({
       reason: 'Switch supplier',

@@ -2,6 +2,7 @@ import { ErrorBodySchema } from '@bos/contracts';
 
 import { isIdempotencyInProgress } from '@/components/p2/quote-builder/failure';
 import { ApiError } from '@/lib/api';
+import { currencyNotEnabledText } from '@/lib/kernel-ui';
 
 /**
  * Words for every refusal the purchase request screens can get. The kernel's `describeFailure`
@@ -94,6 +95,9 @@ export function prFailure(err: unknown, op: PrOp): PrFailure {
   }
   if (status === 409) return { status, message: STALE[op], reload: true, definite };
   if (status === 422) {
+    // U16-Q14: the agreed D44 words for a currency the company switched off, not the API's sentence.
+    const switchedOff = currencyNotEnabledText(err);
+    if (switchedOff !== undefined) return { ...base, message: switchedOff, definite };
     const text = message !== undefined && message !== '' ? message : undefined;
     if (code === 'NO_ELIGIBLE_APPROVER') {
       return {

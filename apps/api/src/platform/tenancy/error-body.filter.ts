@@ -91,6 +91,7 @@ export type ErrorCode =
   | 'VENDOR_NOT_APPROVED'
   | 'VENDOR_NOT_IN_ENTITY'
   | 'FEWER_THAN_MIN_QUOTES'
+  | 'rfq_deadline_passed'
   | 'PO_HAS_RECEIPTS'
   | 'PO_HAS_NO_LINES'
   | 'PO_AMENDMENT_INVALID'
@@ -222,6 +223,7 @@ const GENERIC_MESSAGE: Record<ErrorCode, string> = {
   VENDOR_NOT_APPROVED: 'The vendor is not approved for this action',
   VENDOR_NOT_IN_ENTITY: 'A vendor has no account in this entity',
   FEWER_THAN_MIN_QUOTES: 'There are fewer quotations than the minimum; give a reason to go on',
+  rfq_deadline_passed: 'The quotation deadline of this RFQ has passed',
   PO_HAS_RECEIPTS: 'Goods or services were received on this purchase order',
   PO_HAS_NO_LINES: 'The purchase order has no lines',
   PO_AMENDMENT_INVALID: 'This amendment cannot be applied to the purchase order',
@@ -363,6 +365,8 @@ const CONFLICT_CODES: readonly ErrorCode[] = [
   'VENDOR_NOT_APPROVED',
   'VENDOR_NOT_IN_ENTITY',
   'FEWER_THAN_MIN_QUOTES',
+  // F1-Q47: a quotation (typed in, converted or sent from the vendor portal) arrived after the RFQ's deadline.
+  'rfq_deadline_passed',
   // P4 purchase orders: issue with no lines, cancel or close after something was received. Issuing also
   // throws VENDOR_NOT_APPROVED and VENDOR_NOT_IN_ENTITY.
   'PO_HAS_RECEIPTS',

@@ -47,6 +47,39 @@ export const UpdateVendorBodySchema = z.strictObject({
 });
 export type UpdateVendorBody = z.infer<typeof UpdateVendorBodySchema>;
 
+/**
+ * POST /v1/vendors/:id/submit-kyc. `expectedStatus` is the status the caller's button was drawn for; a different
+ * current status is a 409, so a stale button never runs the other move of this endpoint. Optional for callers that
+ * send no body.
+ */
+export const SubmitKycBodySchema = z.strictObject({
+  expectedStatus: VendorStatusSchema.optional(),
+});
+export type SubmitKycBody = z.infer<typeof SubmitKycBodySchema>;
+
+/**
+ * GET /v1/vendors/name-matches?legalName=: the vendors whose legal name matches the one being added once case,
+ * spaces, punctuation and company-form words are ignored (TR-Q12d). A warning only: creating is never refused.
+ */
+export const VendorNameMatchesQuerySchema = z.strictObject({ legalName: text(200) });
+export type VendorNameMatchesQuery = z.infer<typeof VendorNameMatchesQuerySchema>;
+
+export const VendorNameMatchSchema = z.strictObject({
+  id: z.guid(),
+  legalName: z.string(),
+  status: VendorStatusSchema,
+});
+export interface VendorNameMatches {
+  matches: z.infer<typeof VendorNameMatchSchema>[];
+}
+
+/**
+ * GET /v1/vendors/:id/review-readiness: whether the vendor's KYB case is submitted (or approved), the state
+ * `submit-kyc` checks before pending_kyc -> under_review. The screens draw "Send for review" only when it is true.
+ */
+export const VendorReviewReadinessSchema = z.strictObject({ kybSubmitted: z.boolean() });
+export type VendorReviewReadiness = z.infer<typeof VendorReviewReadinessSchema>;
+
 /** Body of suspend, block and archive: why, for the audit trail (the table has no reason column). */
 export const VendorReasonBodySchema = z.strictObject({ reason: text(500) });
 export type VendorReasonBody = z.infer<typeof VendorReasonBodySchema>;

@@ -11,16 +11,20 @@ import {
   commitRfq,
   convertSubmission,
   createRfq,
+  extendRfqDeadline,
   recommendQuotation,
   recordQuotation,
   scoreQuotation,
 } from '@/lib/api-rfqs';
 import { requireStaffSession } from '@/lib/bff';
+import { when } from '@/lib/kernel-format';
 import { getPermissionCheck } from '@/lib/live-permissions';
 
 import { isDeadlineInPast, rfqFailure } from './_lib/failure';
 import {
   DEADLINE_IN_PAST,
+  DEADLINE_NOT_LATER,
+  parseExtensionValues,
   parseQuoteValues,
   parseRecommendValues,
   parseRfqValues,
@@ -253,5 +257,62 @@ export async function commitRfqAction(prev: CommandState, form: FormData): Promi
     key: randomUUID(),
     count: prev.count + 1,
     saved: 'Submitted for commitment approval. The purchase request now waits on the approvers.',
+  };
+}
+
+/**
+ * F1-Q47: moves an open RFQ's quotation deadline later, so invited vendors can quote until then,
+ * also after the old deadline passed. The new deadline is typed in Kathmandu time and must be after
+ * now and after the current deadline (the form sends the current one so the check can say so next
+ * to the field; the API checks both again against its own row).
+ */
+export async function extendDeadlineAction(
+  prev: RfqEditState,
+  form: FormData,
+): Promise<RfqEditState> {
+  const rfqId = text(form, 'rfqId');
+  const current = text(form, 'currentDeadline');
+  const key = keyOf(form);
+  if (!isGuid(rfqId) || Number.isNaN(new Date(current).getTime())) {
+    return { key, errors: {}, count: prev.count, error: INCOMPLETE, reload: true };
+  }
+  const session = await requireStaffSession(`/procurement/rfqs/${rfqId}`);
+  if (!rfqGrants(await getPermissionCheck(session)).sourcing) {
+    return { key, errors: {}, count: prev.count, error: NO_SOURCING };
+  }
+  const parsed = parseExtensionValues(text(form, 'deadline'), current);
+  if (!parsed.ok) return { key, errors: parsed.errors, count: prev.count };
+
+  let deadline: string;
+  try {
+    deadline = (await extendRfqDeadline(session, rfqId, parsed.data, key)).deadline;
+  } catch (err) {
+    const f = rfqFailure(err, 'extend');
+    // Said next to the field: the time passed meanwhile, or someone else extended it further.
+    if (isDeadlineInPast(err)) {
+      return { key: keyAfter(f, key), errors: { deadline: DEADLINE_IN_PAST }, count: prev.count };
+    }
+    if (f.status === 400) {
+      return {
+        key: keyAfter(f, key),
+        errors: { deadline: DEADLINE_NOT_LATER },
+        count: prev.count,
+      };
+    }
+    return {
+      key: keyAfter(f, key),
+      errors: {},
+      count: prev.count,
+      error: f.message,
+      ...(f.reload ? { reload: true } : {}),
+    };
+  }
+  revalidatePath('/procurement/rfqs');
+  revalidatePath(`/procurement/rfqs/${rfqId}`);
+  return {
+    key: randomUUID(),
+    errors: {},
+    count: prev.count + 1,
+    saved: `Deadline extended to ${when(deadline)}. Invited vendors can send quotations until then.`,
   };
 }

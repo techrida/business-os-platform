@@ -6,7 +6,10 @@ import { EmptyState } from '@/components/ui/empty-state';
 
 import styles from './vendor.module.css';
 
-/** True once the deadline instant has gone by. A past deadline is a warning, never a block. */
+/**
+ * True once the deadline instant has gone by, the same rule the API applies (F1-Q47): a quotation
+ * sent strictly after the deadline is refused, so the screens stop offering to send one.
+ */
 export const isPastDeadline = (deadline: string, now: Date): boolean =>
   new Date(deadline).getTime() < now.getTime();
 

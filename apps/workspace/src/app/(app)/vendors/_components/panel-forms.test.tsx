@@ -14,7 +14,7 @@ const actions = vi.hoisted(() => ({
   lifecycleAction: vi.fn(),
   proposeBankAction: vi.fn(),
 }));
-const toast = vi.hoisted(() => ({ success: vi.fn() }));
+const toast = vi.hoisted(() => ({ success: vi.fn(), error: vi.fn() }));
 
 vi.mock('../actions', () => actions);
 vi.mock('@/components/ui/toast', () => ({ toast }));
@@ -64,6 +64,7 @@ describe('vendor lifecycle confirmation', () => {
       const mounted = await mountForm(
         <LifecycleForm
           vendorId="vendor-id"
+          status={status}
           option={optionFor(status, command)}
           idempotencyKey="request-key"
         />,
@@ -107,6 +108,7 @@ describe('vendor lifecycle confirmation', () => {
       const mounted = await mountForm(
         <LifecycleForm
           vendorId="vendor-id"
+          status={status}
           option={optionFor(status, command)}
           idempotencyKey="request-key"
         />,
@@ -143,6 +145,7 @@ describe('vendor lifecycle confirmation', () => {
     const mounted = await mountForm(
       <LifecycleForm
         vendorId="vendor-id"
+        status="approved"
         option={optionFor('approved', 'block')}
         idempotencyKey="request-key"
       />,
@@ -175,6 +178,7 @@ describe('vendor lifecycle confirmation', () => {
     const mounted = await mountForm(
       <LifecycleForm
         vendorId="vendor-id"
+        status="approved"
         option={optionFor('approved', 'block')}
         idempotencyKey="request-key"
       />,
@@ -192,6 +196,61 @@ describe('vendor lifecycle confirmation', () => {
         'Duplicate record',
       );
       expect(toast.success).not.toHaveBeenCalled();
+    } finally {
+      await mounted.unmount();
+    }
+  });
+  it('sends the status the KYB button was drawn for', async () => {
+    actions.lifecycleAction.mockResolvedValue({
+      key: 'next-key',
+      errors: {},
+      saved: 'KYB review started.',
+      savedCount: 1,
+    });
+    const mounted = await mountForm(
+      <LifecycleForm
+        vendorId="vendor-id"
+        status="draft"
+        option={optionFor('draft', 'submit_kyc')}
+        idempotencyKey="request-key"
+      />,
+    );
+    try {
+      await click(mounted.container.querySelector('button'));
+      await click(document.querySelector('footer button[type="submit"]'));
+      const sent = actions.lifecycleAction.mock.calls[0]?.[1] as FormData;
+      expect(sent.get('command')).toBe('submit_kyc');
+      expect(sent.get('expectedStatus')).toBe('draft');
+    } finally {
+      await mounted.unmount();
+    }
+  });
+
+  it('a stale button: shows the refusal as a toast and closes, as the page has been redrawn', async () => {
+    actions.lifecycleAction.mockResolvedValue({
+      key: 'next-key',
+      errors: {},
+      error: 'This vendor changed since you opened it. Reload and try again.',
+      reload: true,
+      refreshed: true,
+      savedCount: 0,
+    });
+    const mounted = await mountForm(
+      <LifecycleForm
+        vendorId="vendor-id"
+        status="draft"
+        option={optionFor('draft', 'submit_kyc')}
+        idempotencyKey="request-key"
+      />,
+    );
+    try {
+      await click(mounted.container.querySelector('button'));
+      await click(document.querySelector('footer button[type="submit"]'));
+      expect(toast.error).toHaveBeenCalledExactlyOnceWith(
+        'This vendor changed since you opened it. Reload and try again.',
+      );
+      expect(toast.success).not.toHaveBeenCalled();
+      expect(document.querySelector('[role="dialog"]')).toBeNull();
     } finally {
       await mounted.unmount();
     }

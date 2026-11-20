@@ -64,6 +64,16 @@ export class PaymentRequestsController {
     return this.requests.listItems();
   }
 
+  /**
+   * Approved-bill balances held back only because the vendor has no active verified bank account, so the entry
+   * screen can name the vendor and the fix. Same permission and scope as `items`.
+   */
+  @Get('items/without-bank-account')
+  @Can('payables.payment.request')
+  itemsWithoutBankAccount(): Promise<PaymentRequestItemDto[]> {
+    return this.requests.listItemsWithoutBankAccount();
+  }
+
   /** 404 outside the acting entity. */
   @Get(':id')
   @Can('payables.payment.request')

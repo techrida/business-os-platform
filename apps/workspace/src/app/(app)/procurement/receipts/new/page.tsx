@@ -93,7 +93,7 @@ export default async function NewReceiptPage({
     );
   }
 
-  const kinds = kindsOffered(progress.lines, grants);
+  const kinds = kindsOffered(progress.lines, grants, progress.can);
   const [firstKind, ...otherKinds] = kinds;
   if (firstKind === undefined) {
     const anyRoom = progress.lines.some((l) => lineCap(l) > 0n);

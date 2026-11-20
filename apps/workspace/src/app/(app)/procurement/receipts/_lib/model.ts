@@ -1,7 +1,7 @@
 import type { PoStatus, ReceiptKind, ReceiptStatus } from '@bos/contracts';
 
 import { toScaled } from '../../orders/_lib/forms';
-import { isReceivable, qtyText, type BadgeTone } from '../../orders/_lib/model';
+import { isReceivable, PO_READ_GRANTS, qtyText, type BadgeTone } from '../../orders/_lib/model';
 
 /**
  * What the receipt screens show and offer. Pure. The API still decides every call (deny by
@@ -32,8 +32,11 @@ export const WAITING_KIND_LABEL: Record<'goods' | 'service' | 'mixed', string> =
 export interface ReceiptGrants {
   /** `procurement.receipt.confirm`: the warehouse, who receives goods. */
   confirm: boolean;
-  /** `procurement.po.issue`: procurement, who may open the purchase order itself. */
-  issue: boolean;
+  /**
+   * May open the purchase order itself: procurement, and read-only the warehouse and the bill roles (F1-Q52,
+   * PO_READ_GRANTS).
+   */
+  openOrder: boolean;
 }
 
 /**
@@ -46,7 +49,7 @@ export type ReceiptGrantSource = (permission: string) => boolean;
 export function receiptGrants(source: ReceiptGrantSource): ReceiptGrants {
   return {
     confirm: source('procurement.receipt.confirm'),
-    issue: source('procurement.po.issue'),
+    openOrder: PO_READ_GRANTS.some((g) => source(g)),
   };
 }
 
@@ -64,22 +67,35 @@ const REVERSIBLE: readonly PoStatus[] = ['issued', 'partially_received', 'fully_
 
 export interface ReceiptActions {
   confirm: boolean;
+  discard: boolean;
   reverse: boolean;
 }
 
 /**
- * Confirm a draft; reverse a confirmed receipt that is not itself a reversal. When the order's
- * status is known and no longer allows it, the button goes away; unknown means the API decides.
+ * Confirm a draft; discard a draft; reverse a confirmed receipt that is not itself a reversal. The receipt's own
+ * `can` flags decide when the API sent them (the detail and list reads: the person's live grants on this order and
+ * the statuses each command needs), so a read-only buyer sees none, a service included. Without them the screen
+ * guesses from the grants; when the order's status is known and no longer allows it, the button goes away.
  */
 export function receiptActions(
-  receipt: { status: ReceiptStatus; kind: ReceiptKind; reversesReceiptId: string | null },
+  receipt: {
+    status: ReceiptStatus;
+    kind: ReceiptKind;
+    reversesReceiptId: string | null;
+    can?: ReceiptActions | undefined;
+  },
   grants: { confirm: boolean },
   poStatus?: PoStatus,
 ): ReceiptActions {
+  if (receipt.can !== undefined) {
+    const { confirm, discard, reverse } = receipt.can;
+    return { confirm, discard, reverse };
+  }
   const may = mayHandleKind(receipt.kind, grants);
   return {
     confirm:
       may && receipt.status === 'draft' && (poStatus === undefined || isReceivable(poStatus)),
+    discard: may && receipt.status === 'draft',
     reverse:
       may &&
       receipt.status === 'confirmed' &&
@@ -127,14 +143,19 @@ export function capText(line: CapSource): string {
   return qtyText(scaledText(lineCap(line)));
 }
 
-/** The kinds a person can start a receipt for: lines with room left, and kinds they may handle. */
+/**
+ * The kinds a person can start a receipt for: lines with room left, and kinds they may handle. `allowed` is the
+ * order's own answer (the progress read's `can`, from the person's live grants on this order); without it the screen
+ * guesses from the grants as mayHandleKind does.
+ */
 export function kindsOffered(
   lines: readonly (CapSource & { kind: ReceiptKind })[],
   grants: { confirm: boolean },
+  allowed?: { goods: boolean; service: boolean },
 ): ReceiptKind[] {
   const kinds: ReceiptKind[] = [];
   for (const kind of ['goods', 'service'] as const) {
-    if (!mayHandleKind(kind, grants)) continue;
+    if (!(allowed !== undefined ? allowed[kind] : mayHandleKind(kind, grants))) continue;
     if (lines.some((l) => l.kind === kind && lineCap(l) > 0n)) kinds.push(kind);
   }
   return kinds;

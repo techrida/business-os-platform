@@ -223,6 +223,33 @@ beforeAll(async () => {
   );
 }, 180_000);
 
+/** The audit events of `action` on `entityId`, read as bos_owner (bos_app may not read the audit schema). */
+async function auditOf(w: World, entityId: string, action: string): Promise<{ meta: unknown }[]> {
+  const owner = new Pool({ connectionString: urlFor('bos_owner', OWNER_PW, 'bos'), max: 1 });
+  try {
+    const { rows } = await owner.query<{ meta: unknown }>(
+      'SELECT meta FROM audit.audit_events WHERE tenant_id = $1 AND entity_id = $2 AND action = $3',
+      [w.scope.tenantId, entityId, action],
+    );
+    return rows;
+  } finally {
+    await owner.end();
+  }
+}
+
+/** A second legal entity of `w`'s tenant, as a scope. */
+async function otherEntityOf(w: World): Promise<TxScope> {
+  const otherEntity = randomUUID();
+  const other: TxScope = { tenantId: w.scope.tenantId, organizationId: otherEntity };
+  await withTx(db, other, system, (tx) =>
+    tx.execute(
+      sql`INSERT INTO app.organizations (id, tenant_id, organization_id, code, name, legal_name, is_default)
+          VALUES (${otherEntity}, ${w.scope.tenantId}, ${otherEntity}, ${`X${otherEntity.slice(0, 6)}`}, 'Other', 'Other', false)`,
+    ),
+  );
+  return other;
+}
+
 afterAll(async () => {
   await appPool?.end();
   await container?.stop();
@@ -255,6 +282,85 @@ describe('submit', () => {
     await submit(w, { proofDocumentIds: [doc] });
     await expect(submit(w, { proofDocumentIds: [doc] })).rejects.toMatchObject({
       response: { code: 'invalid_proof' },
+    });
+  });
+});
+
+describe('a bank reference already on file (TR-Q12d)', () => {
+  const REUSED = 'payment.submitted_with_reused_reference';
+
+  it('lists the earlier payments with the same reference, whatever the case and spaces', async () => {
+    const w = await newWorld();
+    const first = await submit(w, { bankReference: 'NIC  77812', receivedOn: '2026-11-01' });
+    const second = await submit(w, {
+      bankReference: ' nic 77812 ',
+      customerId: w.otherCustomer,
+      proofDocumentIds: [await proof(w, w.otherCustomer)],
+      amount: '250.50',
+      receivedOn: '2026-11-05',
+    });
+    await submit(w, { bankReference: 'NIC-77812' });
+    await submit(w, {});
+
+    const { matches } = await service.referenceMatches(w.scope, { bankReference: 'Nic 77812' });
+    expect(matches.map((m) => m.id)).toEqual([second.id, first.id]);
+    const { customerName, ...rest } = matches[0] ?? { customerName: null };
+    expect(customerName).toMatch(/\S/);
+    expect(rest).toEqual({
+      id: second.id,
+      number: null,
+      receivedOn: '2026-11-05',
+      amount: '250.50',
+      currency: 'NPR',
+      status: 'submitted',
+    });
+    expect(
+      (await service.referenceMatches(w.scope, { bankReference: 'EBL-0001' })).matches,
+    ).toEqual([]);
+  });
+
+  it('does not warn about an earlier payment that was rejected', async () => {
+    const w = await newWorld();
+    const first = await submit(w, { bankReference: 'NIC 99001' });
+    await service.reject(
+      w.scope,
+      w.verifier,
+      first.id,
+      { expectedVersion: 1, reason: 'Slip is for another account' },
+      randomUUID(),
+    );
+    const live = await submit(w, { bankReference: 'nic 99001' });
+    const { matches } = await service.referenceMatches(w.scope, { bankReference: 'NIC 99001' });
+    expect(matches.map((m) => m.id)).toEqual([live.id]);
+  });
+
+  it('still records the payment, and the audit trail names the earlier payments with that reference', async () => {
+    const w = await newWorld();
+    const first = await submit(w, { bankReference: 'NIC  77812' });
+    expect(await auditOf(w, first.id, REUSED)).toEqual([]);
+
+    const second = await submit(w, { bankReference: ' nic 77812 ' });
+    expect(second.status).toBe('submitted');
+    expect(second.bankReference).toBe(' nic 77812 ');
+    const rows = await auditOf(w, second.id, REUSED);
+    expect(rows).toHaveLength(1);
+    expect(rows[0]?.meta).toEqual({ sameReferencePaymentIds: [first.id] });
+
+    const third = await submit(w, { bankReference: 'NIC-77812' });
+    expect(await auditOf(w, third.id, REUSED)).toEqual([]);
+  });
+
+  it('lists only the acting entity’s payments, while the audit trail looks across the tenant', async () => {
+    const w = await newWorld();
+    const first = await submit(w, { bankReference: 'EBL 4410' });
+    const other = await otherEntityOf(w);
+    const ow: World = { ...w, scope: other };
+    expect((await service.referenceMatches(other, { bankReference: 'ebl 4410' })).matches).toEqual(
+      [],
+    );
+    const second = await submit(ow, { bankReference: 'ebl 4410' });
+    expect((await auditOf(w, second.id, REUSED))[0]?.meta).toEqual({
+      sameReferencePaymentIds: [first.id],
     });
   });
 });
@@ -510,14 +616,7 @@ describe('one legal entity at a time', () => {
   it('answers 404 for a payment of another entity of the same tenant', async () => {
     const w = await newWorld();
     const p = await submit(w);
-    const otherEntity = randomUUID();
-    const other: TxScope = { tenantId: w.scope.tenantId, organizationId: otherEntity };
-    await withTx(db, other, system, (tx) =>
-      tx.execute(
-        sql`INSERT INTO app.organizations (id, tenant_id, organization_id, code, name, legal_name, is_default)
-            VALUES (${otherEntity}, ${w.scope.tenantId}, ${otherEntity}, ${`X${otherEntity.slice(0, 6)}`}, 'Other', 'Other', false)`,
-      ),
-    );
+    const other = await otherEntityOf(w);
     await expect(service.get(other, p.id)).rejects.toMatchObject({ status: 404 });
     await expect(service.allocations(other, p.id)).rejects.toMatchObject({ status: 404 });
     await expect(

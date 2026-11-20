@@ -10,7 +10,11 @@ import { describe, expect, it, vi } from 'vitest';
 
 import { ANY_AUTHENTICATED_KEY, CAN_KEY } from '../../../platform/authz/decorators';
 import type { ReceivableOrdersService } from './receivable-orders.service';
-import { ReceivableOrdersController, RequestedOrdersController } from './receipts.controller';
+import {
+  ReceivableOrdersController,
+  ReceivedOrdersController,
+  RequestedOrdersController,
+} from './receipts.controller';
 import type { RequestedOrdersService } from './requested-orders.service';
 
 function setup() {
@@ -93,6 +97,40 @@ describe('GET /v1/procurement/requested-orders', () => {
     expect(officer['procurement.pr.read']).toBe('own');
     expect(officer['procurement.po.issue']).toBeUndefined();
     expect(officer['procurement.receipt.confirm']).toBeUndefined();
+  });
+});
+
+describe('GET /v1/procurement/received-orders (U18-Q3)', () => {
+  const received = () => {
+    const service = { listReceived: vi.fn().mockResolvedValue([]) };
+    return {
+      service,
+      controller: new ReceivedOrdersController(service as unknown as ReceivableOrdersService),
+    };
+  };
+
+  it('needs procurement.receipt.confirm on the route, with no any-signed-in-user marker', () => {
+    expect(Reflect.getMetadata('path', ReceivedOrdersController)).toBe(
+      'v1/procurement/received-orders',
+    );
+    expect(Reflect.getMetadata(CAN_KEY, ReceivedOrdersController.prototype.list)).toBe(
+      'procurement.receipt.confirm',
+    );
+    expect(Reflect.getMetadata(ANY_AUTHENTICATED_KEY, ReceivedOrdersController)).toBeUndefined();
+    expect(
+      Reflect.getMetadata(ANY_AUTHENTICATED_KEY, ReceivedOrdersController.prototype.list),
+    ).toBeUndefined();
+  });
+
+  it('hands the service the parsed query, and is a 400 for a bad limit or an unknown key', async () => {
+    const { service, controller } = received();
+    await controller.list({});
+    expect(service.listReceived).toHaveBeenCalledWith({ limit: 20 });
+    await controller.list({ limit: '100' });
+    expect(service.listReceived).toHaveBeenLastCalledWith({ limit: 100 });
+    expect(() => controller.list({ limit: '101' })).toThrow(BadRequestException);
+    expect(() => controller.list({ status: 'closed' })).toThrow(BadRequestException);
+    expect(service.listReceived).toHaveBeenCalledTimes(2);
   });
 });
 
