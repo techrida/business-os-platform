@@ -746,7 +746,9 @@ describe("the deal's owner (F1-Q51)", () => {
     expect(fact?.textContent).toContain('Change owner');
     expect(fact?.querySelector('input[name="ownerUserId"]')?.getAttribute('value')).toBe(SITA);
     expect(fact?.querySelector('input[name="opportunityId"]')?.getAttribute('value')).toBe(OPP);
-    expect(fact?.textContent).toContain('Open follow-ups move to the new owner.');
+    expect(fact?.textContent).toContain(
+      "The previous owner's open follow-ups move to the new owner.",
+    );
   });
 
   it('shows the name alone to someone who cannot edit, without asking for the owners list', async () => {

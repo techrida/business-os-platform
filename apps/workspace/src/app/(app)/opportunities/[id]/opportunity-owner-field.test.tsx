@@ -116,7 +116,9 @@ it('hands the deal over with the version the page showed, and says the follow-up
   mocks.changeOpportunityOwner.mockResolvedValue(saved);
   mocks.getOpportunity.mockResolvedValue(saved);
   const { container } = await mount();
-  expect(container.textContent).toContain('Open follow-ups move to the new owner.');
+  expect(container.textContent).toContain(
+    "The previous owner's open follow-ups move to the new owner.",
+  );
   await choose(container, 'ownerUserId', 'Ram Thapa');
   await click(save(container));
   await settle();
@@ -125,7 +127,7 @@ it('hands the deal over with the version the page showed, and says the follow-up
     expectedVersion: 6,
   });
   expect(mocks.success).toHaveBeenCalledWith(
-    'Owner changed to Ram Thapa. Open follow-ups moved to them.',
+    "Owner changed to Ram Thapa. The previous owner's open follow-ups moved to them.",
   );
   expect(mocks.revalidatePath).toHaveBeenCalledWith(`/opportunities/${OPP}`);
   expect(mocks.push).not.toHaveBeenCalled();
@@ -138,7 +140,9 @@ it('returns to the list when the hand-over takes the deal out of reach (404 on t
   await choose(container, 'ownerUserId', 'Ram Thapa');
   await click(save(container));
   await settle();
-  expect(mocks.success).toHaveBeenCalledWith('Handed to Ram Thapa. Open follow-ups moved to them.');
+  expect(mocks.success).toHaveBeenCalledWith(
+    "Handed to Ram Thapa. The previous owner's open follow-ups moved to them.",
+  );
   expect(mocks.push).toHaveBeenCalledWith('/opportunities');
   // No revalidation: it would re-render this deal as not found before the move to the list.
   expect(mocks.revalidatePath).not.toHaveBeenCalled();
