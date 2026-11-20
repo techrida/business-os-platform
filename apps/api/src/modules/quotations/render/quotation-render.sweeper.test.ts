@@ -127,6 +127,8 @@ function setup(
     logo?: DocumentLogoResolver;
     /** The attempts markFailed reports after counting the failure; default 1 (tries left). */
     attemptsAfterFailure?: number;
+    /** Claims left by a worker that died, as the store finds them; default none. */
+    abandoned?: RenderCandidate[];
   } = {},
 ) {
   const calls: string[] = [];
@@ -137,6 +139,17 @@ function setup(
     candidates: vi.fn((now: Date, limit: number) => {
       calls.push(`candidates(${now.toISOString()},${limit})`);
       return Promise.resolve(opts.candidates ?? []);
+    }),
+    abandoned: vi.fn((staleBefore: Date, limit: number) => {
+      calls.push(`abandoned(${staleBefore.toISOString()},${limit})`);
+      return Promise.resolve(opts.abandoned ?? []);
+    }),
+    markAbandoned: vi.fn((_tx: DbTransaction, c: RenderCandidate) => {
+      calls.push(`abandoned:${c.versionId}`);
+      return Promise.resolve({
+        attempts: opts.attemptsAfterFailure ?? 1,
+        quotationId: `quotation-of-${c.versionId}`,
+      });
     }),
     claim: vi.fn((_tx: DbTransaction, c: RenderCandidate) => {
       calls.push(`claim:${c.versionId}`);
@@ -265,15 +278,17 @@ describe('QuotationRenderSweeper', () => {
       orphansRemoved: 0,
       failures: [],
     });
-    expect(calls.filter((x) => !x.startsWith('candidates'))).toEqual([
-      `claim:${c.versionId}`,
-      `load:${c.versionId}`,
-      `style:${c.versionId}`,
-      'pdf:html',
-      `create:${c.versionId}`,
-      'receive',
-      `rendered:${c.versionId}`,
-    ]);
+    expect(calls.filter((x) => !x.startsWith('candidates') && !x.startsWith('abandoned('))).toEqual(
+      [
+        `claim:${c.versionId}`,
+        `load:${c.versionId}`,
+        `style:${c.versionId}`,
+        'pdf:html',
+        `create:${c.versionId}`,
+        'receive',
+        `rendered:${c.versionId}`,
+      ],
+    );
     expect(documents.createGenerated).toHaveBeenCalledWith(
       TX,
       { ownerType: 'quotation_version', ownerId: c.versionId },
@@ -391,6 +406,34 @@ describe('QuotationRenderSweeper', () => {
     vi.mocked(store.markFailed).mockResolvedValueOnce(undefined);
     await expect(sweeper.sweep()).resolves.toMatchObject({ failed: 1 });
     expect(audit.record).not.toHaveBeenCalled();
+  });
+
+  it('counts a dead worker claim once: no failure and no admin entry when another worker counted it first', async () => {
+    const mine = candidate(1);
+    const theirs = candidate(2);
+    const { sweeper, audit, store } = setup({
+      abandoned: [mine, theirs],
+      attemptsAfterFailure: MAX_RENDER_ATTEMPTS,
+    });
+    vi.mocked(store.markAbandoned).mockImplementation((_tx, c) =>
+      Promise.resolve(
+        c.versionId === theirs.versionId
+          ? undefined
+          : { attempts: MAX_RENDER_ATTEMPTS, quotationId: `quotation-of-${c.versionId}` },
+      ),
+    );
+    await expect(sweeper.sweep()).resolves.toMatchObject({
+      failed: 1,
+      failures: [{ versionId: mine.versionId, kind: 'abandoned' }],
+    });
+    expect(store.abandoned).toHaveBeenCalledWith(new Date(NOW.getTime() - PENDING_STALE_MS), 50);
+    expect(audit.record).toHaveBeenCalledOnce();
+    expect(audit.record).toHaveBeenCalledWith(TX, {
+      action: 'quotation.pdf_render_failed',
+      entityType: 'quotations',
+      entityId: `quotation-of-${mine.versionId}`,
+      after: { versionId: mine.versionId, attempts: MAX_RENDER_ATTEMPTS, failureKind: 'abandoned' },
+    });
   });
 
   it('fails the version, not the sweep, when the issuing entity has no address', async () => {
@@ -711,7 +754,7 @@ describe('failureKind', () => {
 });
 
 describe('the stale and orphan windows', () => {
-  it('re-takes an abandoned claim after 10 minutes and removes an orphan after an hour', () => {
+  it('counts an abandoned claim as failed after 10 minutes and removes an orphan after an hour', () => {
     // The retry of a failure follows render-retry.ts (render-retry.test.ts).
     expect(PENDING_STALE_MS).toBe(10 * 60_000);
     expect(ORPHAN_AFTER_MS).toBe(60 * 60_000);

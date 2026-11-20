@@ -19,8 +19,8 @@ export const RETRY_PAUSE_MAX_MS = 30 * 60_000;
  * An upper bound on how long after the first try a render is given up: every pause, plus one sweep tick and one render
  * deadline per try. It is the contracts' PDF_PREPARE_WITHIN_MS, how long the screens poll a PDF that is being
  * prepared; render-retry.test.ts checks this policy fits in it. A backlog of more than one batch, or a quotation claim
- * left by a worker that died (taken again after 10 minutes, not counted as a try), can take longer: the screens then
- * offer "Check again".
+ * left by a worker that died (recorded as a failed try after 10 minutes, then paused like any failure), can take
+ * longer: the screens then offer "Check again".
  */
 export const RENDER_GIVE_UP_WITHIN_MS = PDF_PREPARE_WITHIN_MS;
 
