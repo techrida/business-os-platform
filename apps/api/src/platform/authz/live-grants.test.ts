@@ -63,7 +63,7 @@ function deps(
     },
     grants: {
       grantsFor: async (_tenant, _org, roles, level) => {
-        calls.push({ roles: [...roles], level });
+        calls.push(level === undefined ? { roles: [...roles] } : { roles: [...roles], level });
         const out = new Map<Permission, AccessScope>();
         if (roles.includes('founder')) out.set('admin.roles.write', 'all');
         if (roles.includes('sales')) out.set('admin.roles.read', 'all');
