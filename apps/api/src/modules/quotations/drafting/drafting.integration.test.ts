@@ -314,6 +314,55 @@ describe('DraftingService.create', () => {
     expect(await quotationCount(f.otherEntityOpportunityId)).toBe(0);
   });
 
+  it("answers 404 to an own-reach Sales user on another owner's opportunity, and lets them quote on their own", async () => {
+    const otherUserId = await seedOtherStaffUser(db, f);
+    const before = await quotationCount(f.opportunityId);
+    // sales holds crm.opportunity.read as `own`; the fixture opportunity is f.ownerUserId's.
+    await asCaller({ userId: otherUserId }, async () => {
+      await expect(
+        service.create(goldenCreateBody(f), 'create-unreadable-opportunity'),
+      ).rejects.toBeInstanceOf(NotFoundException);
+    });
+    expect(await quotationCount(f.opportunityId)).toBe(before);
+
+    const [theirOpportunity] = await withTx(db, scopeA, systemActor('test'), (tx) =>
+      tx
+        .insert(opportunities)
+        .values({
+          ...scopeA,
+          number: `DEAL-${randomUUID().slice(0, 8)}`,
+          name: 'Their own deal',
+          customerId: f.customerPartyId,
+          ownerUserId: otherUserId,
+          stage: 'qualified',
+        })
+        .returning({ id: opportunities.id }),
+    );
+    const mine = await asCaller({ userId: otherUserId }, () =>
+      service.create(
+        goldenCreateBody(f, { opportunityId: theirOpportunity!.id }),
+        'create-own-opportunity',
+      ),
+    );
+    expect(mine).toMatchObject({ opportunityId: theirOpportunity!.id, ownerUserId: otherUserId });
+  });
+
+  it("lets a caller who reads every opportunity of the entity quote on another owner's opportunity", async () => {
+    const otherUserId = await seedOtherStaffUser(db, f);
+    for (const [label, grants] of [
+      ['founder', grantsOf('founder')],
+      ['read-all', readsEveryOpportunity()],
+    ] as const) {
+      const created = await asCaller({ userId: otherUserId, grants }, () =>
+        service.create(goldenCreateBody(f), `create-reads-all-${label}`),
+      );
+      expect(created, label).toMatchObject({
+        opportunityId: f.opportunityId,
+        ownerUserId: otherUserId,
+      });
+    }
+  });
+
   it("answers 400 for a contact of another customer than the opportunity's", async () => {
     const contactId = await seedOtherCustomerContact();
     const before = await quotationCount(f.opportunityId);
@@ -369,6 +418,13 @@ async function asCaller<T>(
     Object.assign(current, saved);
   }
 }
+
+/**
+ * Sales grants plus every opportunity of the entity: a colleague who may quote on the fixture owner's opportunity,
+ * which `own` reach on `crm.opportunity.read` refuses.
+ */
+const readsEveryOpportunity = (): Map<Permission, Scope> =>
+  new Map([...grantsOf('sales'), ['crm.opportunity.read', 'all']]);
 
 /** The rows of one page of `service.list`; the limit is raised so earlier tests' rows never push a row off it. */
 const listRows = async (q: Partial<ListQuotationsQuery> = {}) =>
@@ -506,7 +562,7 @@ describe('DraftingService reads', () => {
 
   it("hides another owner's quotation under own scope, and shows it under all", async () => {
     const otherUserId = await seedOtherStaffUser(db, f);
-    const theirs = await asCaller({ userId: otherUserId }, () =>
+    const theirs = await asCaller({ userId: otherUserId, grants: readsEveryOpportunity() }, () =>
       service.create(goldenCreateBody(f), 'read-other-owner'),
     );
     expect(theirs.ownerUserId).toBe(otherUserId);
@@ -680,7 +736,7 @@ describe('DraftingService.updateDraft', () => {
 
   it("answers 404 for another owner's quotation under own scope", async () => {
     const otherUserId = await seedOtherStaffUser(db, f);
-    const theirs = await asCaller({ userId: otherUserId }, () =>
+    const theirs = await asCaller({ userId: otherUserId, grants: readsEveryOpportunity() }, () =>
       service.create(smallBody(), 'put-other-owner'),
     );
     const v = await asCaller({ userId: otherUserId }, () =>
@@ -780,7 +836,7 @@ describe('demo feedback guards', () => {
   it("never widens the read scope: another owner's quotation stays out of a filtered list", async () => {
     const second = await seedSecondOpportunity();
     const otherUserId = await seedOtherStaffUser(db, f);
-    const theirs = await asCaller({ userId: otherUserId }, () =>
+    const theirs = await asCaller({ userId: otherUserId, grants: readsEveryOpportunity() }, () =>
       service.create(goldenCreateBody(f, { opportunityId: second }), 'filter-other-owner'),
     );
     expect((await listRows({ opportunityId: second })).map((q) => q.id)).not.toContain(theirs.id);
@@ -980,7 +1036,7 @@ describe('DraftingService.list filters and total', () => {
       goldenCreateBody(f, { opportunityId: c.opportunityId }),
       'list-scope-mine',
     );
-    const theirs = await asCaller({ userId: otherUserId }, () =>
+    const theirs = await asCaller({ userId: otherUserId, grants: readsEveryOpportunity() }, () =>
       service.create(goldenCreateBody(f, { opportunityId: c.opportunityId }), 'list-scope-theirs'),
     );
     const scopeB: TxScope = { tenantId: f.tenantId, organizationId: f.otherEntityId };
@@ -1068,7 +1124,7 @@ describe('DraftingService.summary', () => {
     const c = await seedCustomerWithOpportunity('Summary Himalyan Traders');
     const otherUserId = await seedOtherStaffUser(db, f);
     await service.create(goldenCreateBody(f, { opportunityId: c.opportunityId }), 'sum-q-mine');
-    await asCaller({ userId: otherUserId }, () =>
+    await asCaller({ userId: otherUserId, grants: readsEveryOpportunity() }, () =>
       service.create(goldenCreateBody(f, { opportunityId: c.opportunityId }), 'sum-q-theirs'),
     );
     const scopeB: TxScope = { tenantId: f.tenantId, organizationId: f.otherEntityId };
@@ -1480,7 +1536,10 @@ describe('DraftingService.detail lead (D35)', () => {
       otherUserId,
       'Their enquiry',
     );
-    const created = await service.create(goldenCreateBody(f, { opportunityId }), 'lead-theirs');
+    // Quoting on another owner's opportunity needs read reach over it; the lead stays under `own`.
+    const created = await asCaller({ grants: readsEveryOpportunity() }, () =>
+      service.create(goldenCreateBody(f, { opportunityId }), 'lead-theirs'),
+    );
 
     const detail = QuotationDetailSchema.parse(await service.detail(created.id));
     expect('lead' in detail).toBe(false);
