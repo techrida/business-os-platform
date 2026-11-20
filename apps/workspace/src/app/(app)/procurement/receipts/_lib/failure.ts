@@ -28,7 +28,7 @@ const MOVED: Record<ReceiptOp, string> = {
     'This receipt can no longer be discarded. Only a draft can be. Reload to see where it stands.',
   load: 'This receipt changed since you opened it. Reload and try again.',
   create:
-    'This purchase order is not open for receiving. It must be issued or partly received. Reload to see where it stands.',
+    'This purchase order is not open for receiving. It must be issued or partly received. If everything ordered has already arrived, ask Procurement to amend the purchase order first. Reload to see where it stands.',
   confirm:
     'This receipt can no longer be confirmed. It may already be confirmed, or the purchase order may be closed or waiting for an amendment. Reload to see where it stands.',
   reverse:
@@ -59,9 +59,7 @@ export function receiptFailure(err: unknown, op: ReceiptOp, kind?: ReceiptKind):
     unprocessable: (code) => {
       switch (code) {
         case 'over_receipt':
-          return 'More was entered than is still open on a line. A draft or another receipt may have used some of it since you opened this page. Reload to see what is left.';
-        case 'over_receipt_exception_unknown':
-          return 'The over-receipt exception reference was not recognised.';
+          return 'More was entered than is still open on a line. A draft or another receipt may have used some of it since you opened this page. Reload to see what is left. To receive more than was ordered, ask Procurement to amend the purchase order first.';
         case 'po_line_unknown':
           return 'A line in this form is no longer on the purchase order. Reload the page and start again.';
         case 'duplicate_po_line':

@@ -489,15 +489,14 @@ describe('over-receipt', () => {
     await createDraft(po, [{ poLineId: po.goods, quantity: '2' }]);
   });
 
-  it('refuses an over-receipt exception id while there is no exceptions table', async () => {
+  it('tells the receiver to ask Procurement to amend the order first (F1-Q39)', async () => {
     const po = await newPo();
-    const err = await httpErrorOf(
-      createDraft(po, [
-        { poLineId: po.goods, quantity: '6', overReceiptExceptionId: randomUUID() },
-      ]),
-    );
+    const err = await httpErrorOf(createDraft(po, [{ poLineId: po.goods, quantity: '6' }]));
     expect(err.getStatus()).toBe(422);
-    expect(codeOf(err)).toBe('over_receipt_exception_unknown');
+    expect(codeOf(err)).toBe('over_receipt');
+    expect((err.getResponse() as { message?: string }).message).toBe(
+      'Line 1 has only 5 still open on the purchase order. To receive more, ask Procurement to amend the purchase order first.',
+    );
   });
 
   it('lets exactly one of two parallel receivers of 3 against 5 through', async () => {

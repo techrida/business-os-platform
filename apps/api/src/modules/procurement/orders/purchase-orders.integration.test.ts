@@ -594,6 +594,65 @@ describe('amend (done check 2)', () => {
   });
 });
 
+describe('receiving more than ordered (F1-Q39)', () => {
+  it('refuses the extra unit, then takes it once Procurement amended the order up', async () => {
+    const po = await issued({ quantity: '5', unitPrice: '100.00' });
+    await receive(po, '5');
+    expect((await service.get(po.id)).status).toBe('fully_received');
+
+    // The warehouse is told to ask for an amendment, and nothing is written.
+    as(U.wh, 'warehouse');
+    const refused = await httpErrorOf(
+      receiptsService.create(
+        {
+          purchaseOrderId: po.id,
+          kind: 'goods',
+          receivedAt: '2026-11-09',
+          lines: [{ poLineId: po.lineId, quantity: '1' }],
+        },
+        randomUUID(),
+      ),
+    );
+    as(U.proc, 'procurement');
+    expect(refused.getStatus()).toBe(409);
+    expect((refused.getResponse() as { message?: string }).message).toBe(
+      'Everything ordered on this purchase order has been received. To receive more, ask Procurement to amend the purchase order first.',
+    );
+    expect(await receiptsService.list(po.id)).toHaveLength(1);
+
+    // Procurement amends the fully received order from 5 to 6.
+    const amended = await service.amend(
+      po.id,
+      { reason: 'One more arrived', lines: [{ poLineId: po.lineId, quantity: '6' }] },
+      randomUUID(),
+    );
+    if (amended.outcome === 'pending_approval') {
+      await decide(U.acct, 'accountant', amended.approvalRequestId!);
+      await decide(U.fin, 'finance', amended.approvalRequestId!);
+    }
+    const after = await service.get(po.id);
+    expect(after).toMatchObject({ status: 'partially_received', currentVersion: 2 });
+    expect(after.lines[0]).toMatchObject({ orderedQuantity: '6.0000' });
+
+    // The same warehouse user now receives the sixth unit.
+    await receive(po, '1');
+    expect((await service.get(po.id)).status).toBe('fully_received');
+    const progress = await receiptsService.progress(po.id);
+    expect(progress.lines[0]).toMatchObject({ receivedQuantity: '6.0000', openQuantity: '0.0000' });
+  });
+
+  it('answers a partly received order with the amend-first sentence', async () => {
+    const po = await issued({ quantity: '5', unitPrice: '100.00' });
+    await receive(po, '3');
+    const e = await httpErrorOf(receive(po, '3'));
+    expect(e.getStatus()).toBe(422);
+    expect(codeOf(e)).toBe('over_receipt');
+    expect((e.getResponse() as { message?: string }).message).toBe(
+      'Line 1 has only 2 still open on the purchase order. To receive more, ask Procurement to amend the purchase order first.',
+    );
+  });
+});
+
 // ---------------------------------------------------------------------------------------- versions
 
 describe('versions are immutable', () => {

@@ -130,7 +130,6 @@ const receipt = {
       reversesReceiptLineId: null,
       inspection: null,
       discrepancyNote: null,
-      overReceiptExceptionId: null,
       serials: [{ serialNo: 'SN-1', batchNo: null, warrantyUntil: null }],
     },
   ],
