@@ -692,13 +692,11 @@ describe('the quotation deadline (F1-Q47)', () => {
       service.extendDeadline(rfq.id, { deadline: '2031-01-01T10:00:00+05:45' }, randomUUID()),
     );
     expect(closed.getStatus()).toBe(409);
-    expect((await rfqRow(rfq.id)).deadline.toISOString()).toBe(
-      new Date(deadline).toISOString(),
-    );
+    expect((await rfqRow(rfq.id)).deadline.toISOString()).toBe(new Date(deadline).toISOString());
     expect(await rfqActions(rfq.id)).not.toContain('procurement.rfq.deadline_extended');
   });
 
-  it('is a 404 for another entity\'s RFQ', async () => {
+  it("is a 404 for another entity's RFQ", async () => {
     const { rfq } = await openRfq(1);
     current.scope = scopeB;
     const e = await httpErrorOf(
