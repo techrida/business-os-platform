@@ -165,6 +165,23 @@ describe('issueInvoiceAction', () => {
     expect(state.reload).toBeUndefined();
   });
 
+  it('tells the creator of a note that someone else must issue it (403 separation_of_duties)', async () => {
+    mocks.apiFetch.mockImplementation(() =>
+      answer(403, {
+        error: {
+          code: 'forbidden',
+          message: 'The creator of a credit or debit note cannot issue it',
+          correlationId: 'c',
+          reason: 'separation_of_duties',
+        },
+      }),
+    );
+    const state = await issueInvoiceAction(prev, form(base()));
+    expect(state.error).toBe(
+      'You created this note, so someone else with issue access must issue it.',
+    );
+  });
+
   it('leaves out a due date that is not a plain date', async () => {
     mocks.apiFetch.mockImplementation(() =>
       answer(422, {
