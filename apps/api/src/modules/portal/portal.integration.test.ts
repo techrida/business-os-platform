@@ -611,6 +611,37 @@ describe('portal accept and reject on a real database', () => {
     });
   });
 
+  it('tells the customer an older acceptance is confirmed once staff confirmed its order, not that they still need to', async () => {
+    const w = await seedWorld();
+    const scopeA: TxScope = { tenantId: w.tenantId, organizationId: w.entityA };
+    const sent = await seedQuotation(w, w.entityA, w.partyP, 'sent');
+    const customer = await portalCustomer(w);
+    await respondFor(customer).accept(sent.versionId, `accept-${randomUUID()}`, SIGNED);
+    const view = async () => (await serviceFor(customer).get(sent.versionId)).afterAcceptance;
+    // The acceptance drafted the version's order; a draft is not a staff confirmation, so the customer waits.
+    const orders = async () =>
+      (
+        await pool.query<{ status: string }>(
+          'SELECT status FROM app.sales_orders WHERE quotation_version_id = $1',
+          [sent.versionId],
+        )
+      ).rows;
+    expect(await orders()).toEqual([{ status: 'draft' }]);
+    expect(await view()).toEqual({ status: 'pending', needs: [] });
+
+    // The order confirmed by hand: today's confirm refuses while the evidence is unconfirmed, but orders confirmed
+    // before staff confirmations existed (F1-Q28) stand on acceptances that have no confirmation row.
+    await withTx(db, scopeA, seedActor(), (tx) =>
+      tx.execute(sql`
+        UPDATE app.sales_orders
+           SET status = 'confirmed', number = ${`SO-2083/84-${randomUUID().slice(0, 8)}`}, seq = 1,
+               fiscal_year = '2083/84', confirmed_at = now()
+         WHERE quotation_version_id = ${sent.versionId}::uuid`),
+    );
+    expect(await orders()).toEqual([{ status: 'confirmed' }]);
+    expect(await view()).toEqual({ status: 'confirmed', needs: [] });
+  });
+
   it('answers 404 for another party, another entity, a draft and an unknown id, and changes nothing', async () => {
     const w = await seedWorld();
     const otherParty = await seedQuotation(w, w.entityA, w.partyQ, 'sent');
