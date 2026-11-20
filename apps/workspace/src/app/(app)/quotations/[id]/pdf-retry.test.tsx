@@ -104,6 +104,7 @@ function version(over: Record<string, unknown>) {
     renderedDocumentId: '44444444-4444-4444-8444-444444444444',
     renderedSha256: null,
     renderedScanStatus: 'clean',
+    renderFailed: false,
     supersedesVersionId: null,
     supersededByVersionId: null,
     revisionReason: null,
@@ -177,5 +178,43 @@ describe('quotation detail page: PDF Retry follows quotation.send', () => {
   it('offers Retry when any one of the roles may send', async () => {
     const html = await renderAs(['management', 'sales']);
     expect(html).toContain(`data-retry-url="/quotations/${ID}/versions/${V2}/document/retry"`);
+  });
+});
+
+describe('quotation detail page: a PDF render that was given up (R4c2: F1-Q13)', () => {
+  /** The current revision is approved and its render was given up: there is no document to open. */
+  function givenUp(): QuotationDetail {
+    const d = detail();
+    return QuotationDetailSchema.parse({
+      ...d,
+      quotation: { ...d.quotation, status: 'approved' },
+      versions: [
+        d.versions[0],
+        version({
+          id: V2,
+          revisionNo: 2,
+          status: 'approved',
+          supersedesVersionId: V1,
+          renderedDocumentId: null,
+          renderedScanStatus: null,
+          renderFailed: true,
+        }),
+      ],
+    });
+  }
+
+  it('says it could not be prepared, never "Preparing PDF", and offers Retry to a role that may send', async () => {
+    mocks.getQuotation.mockResolvedValue(givenUp());
+    const html = await renderAs(['sales']);
+    expect(html).toContain('The PDF could not be prepared.');
+    expect(html).not.toContain('Preparing PDF');
+    expect(html).toMatch(/<button[^>]*>Retry<\/button>/);
+  });
+
+  it('says it could not be prepared without a Retry to a role that may not send', async () => {
+    mocks.getQuotation.mockResolvedValue(givenUp());
+    const html = await renderAs(['management']);
+    expect(html).toContain('The PDF could not be prepared.');
+    expect(html).not.toMatch(/<button[^>]*>Retry<\/button>/);
   });
 });

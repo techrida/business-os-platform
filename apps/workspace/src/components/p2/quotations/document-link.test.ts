@@ -13,6 +13,7 @@ function version(over: Partial<PdfVersion> = {}): PdfVersion {
     status: 'approved',
     renderedDocumentId: DOCUMENT,
     renderedScanStatus: 'clean',
+    renderFailed: false,
     ...over,
   };
 }
@@ -48,22 +49,40 @@ describe('pdfLinkFor', () => {
     expect(got).toEqual({ kind: 'words', text: 'Not available' });
   });
 
-  it('says "Being scanned" while the file waits for its scan', () => {
-    const got = pdfLinkFor(QUOTATION, version({ renderedScanStatus: 'quarantined' }));
-    expect(got).toEqual({ kind: 'words', text: 'Being scanned' });
+  it('says one "Preparing PDF" while the file is stored or waits for its scan (R4c2: TR-Q4)', () => {
+    for (const scan of ['awaiting_content', 'quarantined'] as const) {
+      const got = pdfLinkFor(QUOTATION, version({ renderedScanStatus: scan }));
+      expect(got, scan).toEqual({ kind: 'words', text: 'Preparing PDF' });
+    }
   });
 
-  it('says "Being prepared" while the file is still uploading', () => {
-    const got = pdfLinkFor(QUOTATION, version({ renderedScanStatus: 'awaiting_content' }));
-    expect(got).toEqual({ kind: 'words', text: 'Being prepared' });
-  });
-
-  it('says "Being prepared" for an approved version the renderer has not reached yet', () => {
+  it('says "Preparing PDF" for an approved version the renderer has not reached yet', () => {
     const got = pdfLinkFor(
       QUOTATION,
       version({ status: 'approved', renderedDocumentId: null, renderedScanStatus: null }),
     );
-    expect(got).toEqual({ kind: 'words', text: 'Being prepared' });
+    expect(got).toEqual({ kind: 'words', text: 'Preparing PDF' });
+  });
+
+  it('says the render failed, with the retry route, once the API gave it up (R4c2: F1-Q13)', () => {
+    const got = pdfLinkFor(
+      QUOTATION,
+      version({ renderedDocumentId: null, renderedScanStatus: null, renderFailed: true }),
+    );
+    expect(got).toEqual({
+      kind: 'failed',
+      retryHref: `/quotations/${QUOTATION}/versions/${VERSION}/document/retry`,
+    });
+  });
+
+  it('keeps the words of a version that is not approved even if the flag says failed', () => {
+    for (const status of ['draft', 'superseded', 'cancelled'] as const) {
+      const got = pdfLinkFor(
+        QUOTATION,
+        version({ status, renderedDocumentId: null, renderedScanStatus: null, renderFailed: true }),
+      );
+      expect(got.kind, status).toBe('words');
+    }
   });
 
   it('says "Not available" for every file that failed or was refused', () => {

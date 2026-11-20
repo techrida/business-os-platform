@@ -57,6 +57,7 @@ function current(over: Partial<QuotationVersionDto> = {}): QuotationVersionDto {
     version: 7,
     status: 'approved',
     renderedScanStatus: 'clean',
+    renderFailed: false,
     validUntil: '2026-11-23',
     contactId: ADA,
     ...over,

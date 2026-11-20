@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { StrictMode } from 'react';
-import { afterEach, beforeEach, expect, it, vi, type Mock } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi, type Mock } from 'vitest';
 
 import { click, mountForm } from '@/test/form-interactions';
 
@@ -14,6 +14,8 @@ vi.mock('@bos/pdf-viewer', () => ({
 
 const toasts = vi.hoisted(() => ({ success: vi.fn(), error: vi.fn() }));
 vi.mock('./toast', () => ({ toast: toasts }));
+
+import { PDF_PREPARE_WITHIN_MS } from '@bos/contracts';
 
 import { FilePreviewDialog } from './file-preview-dialog';
 
@@ -313,4 +315,154 @@ it('never frames SVG or HTML', async () => {
   await flush();
   expect(fetchMock).not.toHaveBeenCalled();
   expect(document.querySelector('iframe, img, object, embed')).toBeNull();
+});
+
+// ---- R4c2 (TR-Q4): a generated PDF that is being prepared is checked again by itself, and Download stays in the app.
+
+async function advance(ms: number) {
+  const { act } = await import('react');
+  await act(async () => {
+    await vi.advanceTimersByTimeAsync(ms);
+  });
+}
+
+it('with pollWhilePreparing, checks a 409 again by itself and draws the PDF once it is there', async () => {
+  vi.useFakeTimers();
+  try {
+    fetchMock.mockImplementation(() => respond(409));
+    mounted = await mountForm(viewer({ defaultOpen: true, pollWhilePreparing: true }));
+    await advance(0);
+    expect(document.body.textContent).toContain('Preparing PDF');
+    expect(document.body.textContent).toContain('It opens here as soon as it is ready.');
+    expect([...document.querySelectorAll('button')].map((b) => b.textContent)).not.toContain(
+      'Retry',
+    );
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+
+    await advance(5_000);
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    fetchMock.mockImplementation(() => respond(200));
+    await advance(10_000);
+    expect(fetchMock).toHaveBeenCalledTimes(3);
+    expect(document.querySelector('[data-testid="pdf-pages"]')).not.toBeNull();
+
+    // Ready: no more checks.
+    await advance(5 * 60_000);
+    expect(fetchMock).toHaveBeenCalledTimes(3);
+  } finally {
+    vi.useRealTimers();
+  }
+});
+
+it('stops checking after the time a render may take and offers Check again', async () => {
+  vi.useFakeTimers();
+  try {
+    fetchMock.mockImplementation(() => respond(409));
+    mounted = await mountForm(viewer({ defaultOpen: true, pollWhilePreparing: true }));
+    await advance(PDF_PREPARE_WITHIN_MS + 60_000);
+    expect(document.body.textContent).toContain('This PDF is taking longer than usual.');
+    const calls = fetchMock.mock.calls.length;
+    await advance(10 * 60_000);
+    expect(fetchMock).toHaveBeenCalledTimes(calls);
+
+    await click(button('Check again'));
+    await advance(0);
+    expect(fetchMock).toHaveBeenCalledTimes(calls + 1);
+    await advance(5_000);
+    expect(fetchMock).toHaveBeenCalledTimes(calls + 2);
+  } finally {
+    vi.useRealTimers();
+  }
+});
+
+it('without pollWhilePreparing still never checks a 409 on its own', async () => {
+  vi.useFakeTimers();
+  try {
+    fetchMock.mockImplementation(() => respond(409));
+    mounted = await mountForm(viewer({ defaultOpen: true }));
+    await advance(PDF_PREPARE_WITHIN_MS);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  } finally {
+    vi.useRealTimers();
+  }
+});
+
+describe('Download with downloadInApp', () => {
+  const clicked: string[] = [];
+  beforeEach(() => {
+    clicked.length = 0;
+    vi.spyOn(HTMLAnchorElement.prototype, 'click').mockImplementation(function (
+      this: HTMLAnchorElement,
+    ) {
+      clicked.push(this.download);
+    });
+    vi.stubGlobal(
+      'URL',
+      Object.assign(URL, { createObjectURL: vi.fn(() => 'blob:x'), revokeObjectURL: vi.fn() }),
+    );
+  });
+  afterEach(() => vi.restoreAllMocks());
+
+  it("keeps a refusal in the app as a toast, with the route's own words, and no link in the tab", async () => {
+    fetchMock.mockImplementation((url: string) =>
+      url === DOWNLOAD
+        ? Promise.resolve(
+            new Response('This PDF is still being prepared.', {
+              status: 409,
+              headers: { 'content-type': 'text/plain; charset=utf-8' },
+            }),
+          )
+        : respond(200),
+    );
+    mounted = await mountForm(viewer({ defaultOpen: true, downloadInApp: true }));
+    await flush();
+    expect(document.querySelector(`a[href="${DOWNLOAD}"]`)).toBeNull();
+    await click(button('Download'));
+    await flush();
+    expect(fetchMock.mock.calls.filter((call) => call[0] === DOWNLOAD)).toHaveLength(1);
+    expect(toasts.error).toHaveBeenCalledWith('This PDF is still being prepared.', {
+      id: 'file-download',
+    });
+    expect(clicked).toEqual([]);
+  });
+
+  it('saves the PDF under the name the route gives, and refuses an answer that is not a PDF', async () => {
+    const onDownload = vi.fn();
+    fetchMock.mockImplementation((url: string) =>
+      url === DOWNLOAD
+        ? Promise.resolve(
+            new Response('%PDF-1.7', {
+              status: 200,
+              headers: {
+                'content-type': 'application/pdf',
+                'content-disposition': 'attachment; filename="QT-2083-84-00001-R1.pdf"',
+              },
+            }),
+          )
+        : respond(200),
+    );
+    mounted = await mountForm(viewer({ defaultOpen: true, downloadInApp: true, onDownload }));
+    await flush();
+    await click(button('Download'));
+    await flush();
+    expect(clicked).toEqual(['QT-2083-84-00001-R1.pdf']);
+    expect(onDownload).toHaveBeenCalledTimes(1);
+
+    fetchMock.mockImplementation((url: string) =>
+      url === DOWNLOAD
+        ? Promise.resolve(
+            new Response('<html>sign in</html>', {
+              status: 200,
+              headers: { 'content-type': 'text/html' },
+            }),
+          )
+        : respond(200),
+    );
+    await click(button('Download'));
+    await flush();
+    expect(clicked).toEqual(['QT-2083-84-00001-R1.pdf']);
+    expect(toasts.error).toHaveBeenCalledWith('The file could not be downloaded.', {
+      id: 'file-download',
+    });
+  });
 });
