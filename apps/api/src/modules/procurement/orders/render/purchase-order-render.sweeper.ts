@@ -37,7 +37,6 @@ import {
 } from '@bos/contracts';
 import {
   documents,
-  documentVersions,
   organizations,
   purchaseOrderVersions,
   purchaseOrders,
@@ -62,6 +61,7 @@ import { freezeEntityLogo } from '../../../invoices/render/frozen-logo';
 import {
   clearRenderFailure,
   discardUnfilledDocument,
+  filledVersion,
   recordRenderFailure,
   renderHeldBack,
   type RecordedFailure,
@@ -545,19 +545,12 @@ export function drizzlePurchaseOrderRenderStore(db: Db): RenderStore {
           documentId: documents.id,
         })
         .from(documents)
-        .innerJoin(
-          documentVersions,
-          and(
-            eq(documentVersions.tenantId, documents.tenantId),
-            eq(documentVersions.documentId, documents.id),
-          ),
-        )
         .where(
           and(
             eq(documents.ownerType, PO_VERSION_OWNER_TYPE),
             isNull(documents.removedAt),
             lt(documents.createdAt, cutoff),
-            eq(documentVersions.status, 'awaiting_content'),
+            notExists(filledVersion(db, documents.tenantId, documents.id)),
           ),
         )
         .orderBy(asc(documents.createdAt))
@@ -566,7 +559,7 @@ export function drizzlePurchaseOrderRenderStore(db: Db): RenderStore {
 
     async removeOrphan(tx, o, now) {
       // Soft remove, like DocumentsService.remove (which refuses here: nobody removes a PO file by hand). Rows are
-      // kept for the audit trail, and there are no bytes to delete: the version never left awaiting_content.
+      // kept for the audit trail, and there are no bytes to delete: the version is awaiting_content or rejected.
       await tx
         .update(documents)
         .set({ removedAt: now, updatedAt: now })
