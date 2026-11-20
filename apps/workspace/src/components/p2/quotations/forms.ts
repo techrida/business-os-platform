@@ -3,9 +3,11 @@
 // Serves the NFR "errors name the problem and the recovery": the contract's own schema decides what
 // is valid, this file only words the refusal. Nothing invalid reaches the API.
 import {
+  CancelQuotationBodySchema,
   RecordOutcomeBodySchema,
   ReviseQuotationBodySchema,
   SendQuotationBodySchema,
+  type CancelQuotationBody,
   type RecordOutcomeBody,
   type ReviseQuotationBody,
   type SendQuotationBody,
@@ -132,4 +134,18 @@ export function parseRevise(form: FormData): Parsed<ReviseQuotationBody> {
   return parsed.success
     ? { ok: true, body: parsed.data }
     : { ok: false, errors: errorsOf(parsed.error.issues) };
+}
+
+/** The cancel form: a mandatory reason and the version row. Cancelling ends the quotation for good. */
+export function parseCancel(form: FormData): Parsed<CancelQuotationBody> {
+  const parsed = CancelQuotationBodySchema.safeParse({
+    reason: text(form, 'reason'),
+    ...version(form),
+  });
+  if (parsed.success) return { ok: true, body: parsed.data };
+  const errors = errorsOf(parsed.error.issues);
+  if (errors.reason !== undefined && !/1000 characters/.test(errors.reason)) {
+    errors.reason = 'Say why you are cancelling it. The reason is kept with the quotation.';
+  }
+  return { ok: false, errors };
 }
