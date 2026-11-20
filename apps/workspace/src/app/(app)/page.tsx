@@ -34,6 +34,14 @@ import {
 
 import styles from './overview.module.css';
 
+/** The reads that let a person see an activity (its subject's read, as in ActivitiesService.list). */
+const ACTIVITY_SUBJECT_READS = [
+  'customer.read',
+  'crm.lead.read',
+  'crm.opportunity.read',
+  'quotation.read',
+] as const;
+
 export default async function OverviewPage() {
   const session = await requireStaffSession('/');
   const numberSystems = await getNumberSystems();
@@ -74,9 +82,14 @@ export default async function OverviewPage() {
     me.status === 'fulfilled' && me.value.permissions !== undefined
       ? new Set<string>(me.value.permissions.map((g) => g.permission))
       : null;
-  const tiles = quickActions(
-    granted === null ? permissionChecker(session.roles) : (permission) => granted.has(permission),
-  );
+  const allowed =
+    granted === null
+      ? permissionChecker(session.roles)
+      : (permission: string) => granted.has(permission);
+  const tiles = quickActions(allowed);
+  // The activities list answers 200 with only the rows whose subject the caller may read, so a staff
+  // member with none of those reads would see "No activity yet" when the truth is "not yours to see".
+  const showActivities = ACTIVITY_SUBJECT_READS.some((permission) => allowed(permission));
   const customerCount =
     customers.status === 'fulfilled' && customers.value.total !== null
       ? customers.value.total
@@ -246,7 +259,7 @@ export default async function OverviewPage() {
             </Table>
           </Panel>
         )}
-        {activities.status === 'fulfilled' && (
+        {showActivities && activities.status === 'fulfilled' && (
           <Panel title="Recent activities">
             {activities.value.items.length > 0 ? (
               <ul className={styles.activity}>
