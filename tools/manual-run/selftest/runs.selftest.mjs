@@ -346,6 +346,56 @@ describe('a merged result is green only when every kept step is', () => {
     );
     assert.deepEqual(tabs.videoNotes, ['no video file for tab 2']);
   });
+
+  test('a main window closed before the end is still required: missing or empty fails the run', async () => {
+    const cfg = cfgFor();
+    const page = (file) => ({ video: () => ({ path: async () => file }) });
+    const closer = { close: async () => {} };
+    // Playwright removed the closed main page from context.pages(); only another tab is listed.
+    const tab = path.join(cfg.outDir, 'tab.webm');
+    writeFileSync(tab, 'webm');
+    const missing = { videos: [] };
+    await assert.rejects(
+      finishVideos(
+        cfg,
+        missing,
+        { ...closer, pages: () => [page(tab)] },
+        { page: page(path.join(cfg.outDir, 'gone.webm')) },
+        closer,
+        'start',
+      ),
+      /the video of the main window is missing/,
+    );
+    // The tab keeps its own name; the main name is not taken by it.
+    assert.deepEqual(missing.videos, [path.join(cfg.outDir, 'start-page2.webm')]);
+    assert.ok(!existsSync(path.join(cfg.outDir, 'start.webm')));
+    // Nothing listed at all: zero videos is not a success.
+    await assert.rejects(
+      finishVideos(
+        cfg,
+        { videos: [] },
+        { ...closer, pages: () => [] },
+        { page: page(path.join(cfg.outDir, 'gone.webm')) },
+        closer,
+        'start',
+      ),
+      /the video of the main window is missing/,
+    );
+    // An empty main recording fails too.
+    const empty = path.join(cfg.outDir, 'empty.webm');
+    writeFileSync(empty, '');
+    await assert.rejects(
+      finishVideos(
+        cfg,
+        { videos: [] },
+        { ...closer, pages: () => [] },
+        { page: page(empty) },
+        closer,
+        'start',
+      ),
+      /the video of the main window is empty/,
+    );
+  });
 });
 
 describe('claimed names, temp files and the folder lock', () => {

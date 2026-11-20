@@ -1,6 +1,6 @@
 // Runs one workflow's steps in order in one recorded browser context and writes the results.
 // A failed step gets a screenshot; the steps after it are BLOCKED; the next workflow still runs.
-import { existsSync, mkdirSync, renameSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, renameSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 
 import { launch, newRecordedContext } from './browser.mjs';
@@ -257,8 +257,12 @@ export async function runWorkflow(cfg, workflow, opts = {}) {
  * take its stem too, and no file is ever replaced.
  */
 export async function finishVideos(cfg, result, context, session, browser, base) {
-  // A step that timed out closed its windows already; their pages were kept for this.
-  const pages = session?.closedPages ?? context.pages();
+  // A step that timed out closed its windows already; their pages were kept for this. Playwright
+  // drops a closed page from context.pages(), so the main window is the page Session.open created
+  // (its Video object outlives the page), never whatever the list still holds.
+  const listed = session?.closedPages ?? context.pages();
+  const mainPage = session?.page ?? listed[0] ?? null;
+  const tabs = listed.filter((p) => p !== mainPage);
   const extra = session.extraContexts ?? [];
   await context.close().catch(() => {});
   for (const c of extra) await c.context.close().catch(() => {});
@@ -273,12 +277,20 @@ export async function finishVideos(cfg, result, context, session, browser, base)
   // A tab that closed before its first frame may leave no file: that is noted, not a failure.
   // The main window and named windows always have a video, so a missing one fails the run.
   const place = async (page, claim, what, required = true) => {
-    const video = page.video();
-    if (!video) return false; // a page of a context that does not record
+    const video = page?.video() ?? null;
+    if (!video) {
+      // The run's contexts all record: a required window without a recording is a failure.
+      if (required) failures.push(`the video of ${what} is missing`);
+      return false;
+    }
     const v = await video.path().catch(() => null);
     if (!v || !existsSync(v)) {
       if (required) failures.push(`the video of ${what} is missing`);
       else (result.videoNotes ??= []).push(`no video file for ${what}`);
+      return false;
+    }
+    if (required && statSync(v).size === 0) {
+      failures.push(`the video of ${what} is empty`);
       return false;
     }
     const dest = claim();
@@ -293,13 +305,15 @@ export async function finishVideos(cfg, result, context, session, browser, base)
     }
     return true;
   };
-  let n = 0;
-  for (const p of pages) {
+  // The main window is required; tabs are numbered from 2 whether or not it was placed.
+  await place(mainPage, () => (stem(), main), 'the main window');
+  let n = 1;
+  for (const p of tabs) {
     const placed = await place(
       p,
-      () => (n === 0 ? (stem(), main) : claimPath(cfg.outDir, `${stem()}-page${n + 1}`, '.webm')),
-      n === 0 ? 'the main window' : `tab ${n + 1}`,
-      n === 0,
+      () => claimPath(cfg.outDir, `${stem()}-page${n + 1}`, '.webm'),
+      `tab ${n + 1}`,
+      false,
     );
     if (placed) n++;
   }
