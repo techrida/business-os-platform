@@ -150,6 +150,28 @@ export function paymentCapabilities(
   };
 }
 
+/**
+ * A replayed command answer with `can` worked out again for the current request principal (none without one). The
+ * stored answer keeps the flags of the first call, and the same user may have lost or gained a grant since; the
+ * rest of the stored body stays as it was, and the flags follow its status so the answer agrees with itself.
+ */
+function withCallerCan(scope: TxScope, dto: PaymentDto): PaymentDto {
+  const { can: _stored, ...rest } = dto;
+  const caller = currentPrincipal();
+  if (caller === undefined) return rest;
+  return {
+    ...rest,
+    can: paymentCapabilities(caller, {
+      tenantId: scope.tenantId,
+      organizationId: scope.organizationId,
+      // toDto writes a missing customer as ''.
+      customerPartyId: dto.customerId === '' ? null : dto.customerId,
+      status: dto.status,
+      submittedBy: dto.submittedBy,
+    }),
+  };
+}
+
 @Injectable()
 export class PaymentsService {
   constructor(
@@ -382,7 +404,7 @@ export class PaymentsService {
           response: await this.submitInTx(tx, scope, actor, body, channel),
         }),
       );
-      return done.response;
+      return done.replayed ? withCallerCan(scope, done.response) : done.response;
     });
   }
 
@@ -545,7 +567,7 @@ export class PaymentsService {
         { command, key: idempotencyKey, body: { paymentId, ...body } },
         async () => ({ status: 200, response: await run(tx) }),
       );
-      return done.response;
+      return done.replayed ? withCallerCan(scope, done.response) : done.response;
     });
   }
 
