@@ -80,12 +80,14 @@ describe('RfqView', () => {
     expect(html).toContain('<caption');
   });
 
-  it('warns after the deadline but still offers the quotation link, and keeps long text wrappable', () => {
+  it('after the deadline drops the quotation link and says why, and keeps long text wrappable (F1-Q47)', () => {
     const html = renderToStaticMarkup(<RfqView view={sampleRfq()} now={AFTER_DEADLINE} />);
     const t = text(html);
     expect(t).toContain('The deadline for this request has passed');
     expect(t).toContain('20 Nov 2026, 14:00');
-    expect(html).toContain(`href="/vendor/rfqs/${RFQ_ID}/quote"`);
+    expect(t).toContain('We can no longer take a quotation for this request.');
+    expect(html).not.toContain(`href="/vendor/rfqs/${RFQ_ID}/quote"`);
+    expect(t).not.toContain('Submit quotation');
     expect(t).toContain('five-year onsite warranty');
   });
 
