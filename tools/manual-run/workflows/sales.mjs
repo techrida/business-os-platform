@@ -929,16 +929,40 @@ export function workflow(cfg) {
             );
             const reqHeading = s.page.getByRole('heading', { name: 'Approval requirements' });
             await s.see(reqHeading, 'Approval requirements');
-            // The requirements load after the heading ("Checking approval requirements"): wait for the route itself.
-            await s.see(s.page.getByText(/Approver for step 1/).first(), 'Approver for step 1');
-            const route = await s.text(
+            // The requirements load after the heading. Ready = the "Approval steps" list is shown
+            // and neither "Checking approval requirements" nor "Updating totals" is. The approver
+            // picker ("Approver for step 1") appears only when the first step has eligible people.
+            const steps = s.page.getByRole('list', { name: 'Approval steps', exact: true });
+            const loading = ['Checking approval requirements', 'Updating totals'].map((t) =>
+              s.page.getByText(t, { exact: true }),
+            );
+            await s.see(steps, 'the approval steps');
+            for (const l of loading)
+              await l
+                .first()
+                .waitFor({ state: 'hidden', timeout: cfg.navTimeout })
+                .catch(() => {});
+            s.expect(
+              !(await visible(loading[0])) && !(await visible(loading[1])),
+              'the approval requirements finished loading',
+            );
+            const r = await s.text(steps.first());
+            // The panel (heading, steps, picker, and the warning when a step has nobody eligible).
+            const panel = await s.text(
               s.page
                 .locator('section, aside, div')
-                .filter({ has: reqHeading, hasText: /Approver for step 1/ })
+                .filter({ has: reqHeading })
+                .filter({ has: steps })
                 .last(),
             );
-            s.checks.push(`approval requirements: ${route.slice(0, 200)}`);
-            const r = route.slice(0, route.search(/Approver for step 1|$/));
+            const blockedAt = panel.indexOf('An approval step has no eligible approvers');
+            const blockReason = blockedAt >= 0 ? panel.slice(blockedAt) : '';
+            const picker = await visible(s.page.getByText('Approver for step 1').first());
+            s.checks.push(
+              `approval steps: ${r.slice(0, 200)}` +
+                (picker ? ' (approver picker shown)' : ' (no approver picker)') +
+                (blockReason ? `; blocked: ${blockReason.slice(0, 160)}` : ''),
+            );
             const a = r.search(/accountant/i);
             const f = r.search(/finance/i);
             const m = r.search(/manager|management/i);
