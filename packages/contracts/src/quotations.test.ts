@@ -30,6 +30,7 @@ import {
   TaxCodeSchema,
   UpdateQuotationDraftBodySchema,
   UpdateQuotationVersionBodySchema,
+  canCancelQuotation,
   canReviseQuotation,
   isQuotationEditable,
   quotationTransitionsFrom,
@@ -137,6 +138,7 @@ describe('quotation statuses and the transition table', () => {
         'submitted>returned',
         'submitted>rejected',
         'submitted>approved',
+        'submitted>cancelled',
         'returned>submitted',
         'returned>cancelled',
         'approved>sent',
@@ -221,6 +223,14 @@ describe('revision rules as data', () => {
       const edge = quotationTransitionsFrom(s).some((t) => t.action === 'revise');
       expect(QUOTATION_REVISION_RULES.supersededOnRevise.includes(s as never), s).toBe(edge);
     }
+  });
+
+  it('cancels only a version not yet approved: draft, returned or submitted (F1-Q27)', () => {
+    expect(QUOTATION_STATUSES.filter(canCancelQuotation).sort()).toEqual([
+      'draft',
+      'returned',
+      'submitted',
+    ]);
   });
 
   it('requires a reason to revise or cancel', () => {
