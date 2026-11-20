@@ -9,9 +9,12 @@ import { randomUUID } from 'node:crypto';
 
 import {
   AllocationDtoSchema,
+  DEFAULT_ROLE_PERMISSIONS,
   PaymentDtoSchema,
   PaymentListItemSchema,
+  type Permission,
   RejectPaymentBodySchema,
+  type Scope,
   type SubmitPaymentBody,
 } from '@bos/contracts';
 import {
@@ -33,12 +36,18 @@ import { z } from 'zod';
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 
 import { AuditService } from '../../platform/audit/audit.service';
+import type { Principal } from '../../platform/authz/can';
 import type { AuthzService } from '../../platform/authz/authz.service';
 import { type Db } from '../../platform/db/db.module';
 import { type Actor, type TxScope, systemActor, withTx } from '../../platform/db/tx';
 import { MoneyService } from '../../platform/settings/money.service';
 import { NumberingService } from '../../platform/settings/numbering.service';
 import type { SettingsService } from '../../platform/settings/settings.service';
+import {
+  bindIdentity,
+  bindPrincipal,
+  runWithRequestStore,
+} from '../../platform/tenancy/request-context';
 import { LedgerService } from '../ledger/ledger.service';
 import { PAYMENT_INTAKE_OWNER_TYPE } from './payment-owner.policy';
 import { PaymentsService, reversalSourceId } from './payments.service';
@@ -383,6 +392,108 @@ describe('verify', () => {
     await expect(
       service.verify(w.scope, w.verifier, p.id, { expectedVersion: 1 }, randomUUID()),
     ).rejects.toMatchObject({ status: 409, response: { code: 'proof_not_clean' } });
+  });
+});
+
+/** A finance user of `w`'s entity as the request principal, with the finance role defaults minus `without`. */
+function financePrincipal(w: World, userId: string, without: Permission[] = []): Principal {
+  const grants = new Map(Object.entries(DEFAULT_ROLE_PERMISSIONS.finance)) as Map<
+    Permission,
+    Scope
+  >;
+  for (const permission of without) grants.delete(permission);
+  return {
+    userId,
+    zitadelUserId: `z-${userId}`,
+    tenantId: w.scope.tenantId,
+    organizationId: w.scope.organizationId,
+    orgKind: 'staff',
+    partyId: null,
+    idpOrgId: randomUUID(),
+    roles: ['finance'],
+    departmentId: null,
+    status: 'active',
+    grants,
+  };
+}
+
+/** Runs `fn` as the HTTP request of `p`, as the tenancy interceptor binds it (so toDto sees a caller). */
+function asCaller<T>(p: Principal, fn: () => Promise<T>): Promise<T> {
+  return runWithRequestStore('it-correlation', () => {
+    bindIdentity({
+      tenantId: p.tenantId,
+      organizationId: p.organizationId,
+      orgKind: p.orgKind,
+      partyId: p.partyId,
+      idpOrgId: p.idpOrgId,
+      userId: p.zitadelUserId,
+      roles: p.roles,
+      departmentId: p.departmentId,
+      tokenExp: Math.floor(Date.now() / 1000) + 300,
+    });
+    bindPrincipal(p);
+    return fn();
+  });
+}
+
+describe('replayed answers carry the current caller’s can flags', () => {
+  it('a retried verify recomputes can for the caller instead of returning the stored flags', async () => {
+    const w = await newWorld();
+    const p = await submit(w);
+    const key = randomUUID();
+    const verify = () => service.verify(w.scope, w.verifier, p.id, { expectedVersion: 1 }, key);
+
+    const first = await asCaller(financePrincipal(w, w.verifier.id), verify);
+    expect(first.can).toEqual({
+      verify: false,
+      reject: false,
+      reverse: true,
+      verifyBlockedBySod: false,
+    });
+
+    // The same user retries the same request after payment.verify was taken away.
+    const replay = await asCaller(financePrincipal(w, w.verifier.id, ['payment.verify']), verify);
+    expect(replay.can).toEqual({
+      verify: false,
+      reject: false,
+      reverse: false,
+      verifyBlockedBySod: false,
+    });
+    const { can: _firstCan, ...firstBody } = first;
+    const { can: _replayCan, ...replayBody } = replay;
+    expect(replayBody).toEqual(firstBody);
+
+    // No request principal (a system caller): no flags at all, as on a first call.
+    const bare = await verify();
+    expect(bare).not.toHaveProperty('can');
+    expect(bare).toEqual(firstBody);
+  });
+
+  it('a retried submit recomputes can for the caller', async () => {
+    const w = await newWorld();
+    const body: SubmitPaymentBody = {
+      customerId: w.customer,
+      currency: 'NPR',
+      amount: '600.00',
+      tdsWithheld: '0.00',
+      method: 'bank_transfer',
+      receivedOn: '2026-11-08',
+      proofDocumentIds: [await proof(w)],
+    };
+    const key = randomUUID();
+    const record = () => service.submit(w.scope, w.recorder, body, 'staff', key);
+
+    const first = await asCaller(financePrincipal(w, w.recorder.id), record);
+    expect(first.can).toMatchObject({ reject: true, verifyBlockedBySod: true });
+
+    const replay = await asCaller(financePrincipal(w, w.recorder.id, ['payment.verify']), record);
+    expect(replay.id).toBe(first.id);
+    expect(replay.can).toEqual({
+      verify: false,
+      reject: false,
+      reverse: false,
+      verifyBlockedBySod: false,
+    });
   });
 });
 
