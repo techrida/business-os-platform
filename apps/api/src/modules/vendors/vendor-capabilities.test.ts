@@ -105,16 +105,57 @@ describe('vendorCapabilities', () => {
       archive: false,
     });
     expect(vendorCapabilities(founder, vendorRow('blocked'))).toMatchObject({
+      write: false,
+      proposeBank: false,
       activate: false,
       suspend: false,
       block: false,
       archive: true,
     });
     expect(vendorCapabilities(founder, vendorRow('archived'))).toMatchObject({
+      write: false,
+      proposeBank: false,
       activate: false,
       suspend: false,
       block: false,
       archive: false,
+    });
+  });
+
+  it('blocks activation when KYB is not approved or tax clearance has expired', () => {
+    const reviewer = principalOf('founder', { userId: REVIEWER });
+    expect(
+      vendorCapabilities(reviewer, vendorRow('under_review', CREATOR), {
+        approved: false,
+        kycExpired: false,
+      }),
+    ).toMatchObject({
+      activate: false,
+      activateBlockedBySod: false,
+      activateBlockedByKyb: true,
+      activateBlockedByKycExpired: false,
+    });
+    expect(
+      vendorCapabilities(reviewer, vendorRow('under_review', CREATOR), {
+        approved: true,
+        kycExpired: true,
+      }),
+    ).toMatchObject({
+      activate: false,
+      activateBlockedBySod: false,
+      activateBlockedByKyb: false,
+      activateBlockedByKycExpired: true,
+    });
+    expect(
+      vendorCapabilities(reviewer, vendorRow('under_review', CREATOR), {
+        approved: true,
+        kycExpired: false,
+      }),
+    ).toMatchObject({
+      activate: true,
+      activateBlockedBySod: false,
+      activateBlockedByKyb: false,
+      activateBlockedByKycExpired: false,
     });
   });
 
