@@ -47,7 +47,8 @@ for (const [Controller, permission] of [
       expect(can(principal('admin.users.read'), required).allowed).toBe(false);
       expect(can(principal(permission), 'admin.users.read').allowed).toBe(false);
       const listAssignmentPeople = vi.fn().mockResolvedValue({ items: [], nextAfter: null });
-      const controller = new Controller({
+      // The workflows controller also takes the db and role cache for its publish re-check; people() uses neither.
+      const controller = new (Controller as typeof AdminApprovalGroupsController)({
         listAssignmentPeople,
       } as unknown as ApprovalsAdminService);
       await controller.people({ limit: '200', after });

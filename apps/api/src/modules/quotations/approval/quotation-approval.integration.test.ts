@@ -57,7 +57,7 @@ import type { MoneyService } from '../../../platform/settings/money.service';
 import { NumberingService } from '../../../platform/settings/numbering.service';
 import { SettingsService } from '../../../platform/settings/settings.service';
 import { ApprovalsAdminService } from '../../approvals/admin.service';
-import { asSecondPerson } from '../../../../test/support/second-person';
+import { asSecondPerson, SKIP_LIVE_PUBLISHER_CHECK } from '../../../../test/support/second-person';
 import type { ApprovalEmailTemplate } from '../../approvals/ports';
 import { ApprovalsService } from '../../approvals/requests.service';
 import { CancelService } from '../drafting/cancel.service';
@@ -292,7 +292,7 @@ beforeAll(async () => {
     name: 'Quotation',
     spec: QUOTATION_VERSION_WORKFLOW_SPEC,
   });
-  await adminPublisher.publish('quotation_version', 1);
+  await adminPublisher.publish('quotation_version', 1, SKIP_LIVE_PUBLISHER_CHECK);
 
   approvals = new ApprovalsService(db, audit, notify, directory, caller, () => now);
   approvals.registerSubject(new QuotationVersionSubject(() => now));

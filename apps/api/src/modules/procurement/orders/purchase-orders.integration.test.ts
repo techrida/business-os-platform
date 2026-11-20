@@ -42,7 +42,7 @@ import type { Db, DbTransaction } from '../../../platform/db/db.module';
 import { systemActor, withTx, type TxScope } from '../../../platform/db/tx';
 import { NumberingService } from '../../../platform/settings/numbering.service';
 import { ApprovalsAdminService } from '../../approvals/admin.service';
-import { asSecondPerson } from '../../../../test/support/second-person';
+import { asSecondPerson, SKIP_LIVE_PUBLISHER_CHECK } from '../../../../test/support/second-person';
 import { ApprovalsService } from '../../approvals/requests.service';
 import { ReceiptsService } from '../receipts/receipts.service';
 import { quotationLineAmounts } from '../sourcing/sourcing.rules';
@@ -203,7 +203,7 @@ beforeAll(async () => {
     name: 'Purchase order amendment',
     spec: PO_AMENDMENT_WORKFLOW_SPEC,
   });
-  await adminPublisher.publish(PO_AMENDMENT_DOCUMENT_TYPE, 1);
+  await adminPublisher.publish(PO_AMENDMENT_DOCUMENT_TYPE, 1, SKIP_LIVE_PUBLISHER_CHECK);
 
   approvals = new ApprovalsService(db, audit, notify, directory, caller, () => now);
   approvals.registerSubject(new PoAmendmentSubject(audit, () => now));

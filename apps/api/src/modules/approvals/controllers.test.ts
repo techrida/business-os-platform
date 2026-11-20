@@ -381,14 +381,15 @@ describe('admin controllers', () => {
   };
 
   it('validates workflow bodies and passes them on', async () => {
-    const c = new AdminWorkflowsController(admin as never);
+    const c = new AdminWorkflowsController(admin as never, {} as never, {} as never);
     await c.list();
     await c.create({ key: 'test_memo', name: 'Memo', spec: {} });
     await c.addVersion('test_memo', { spec: { a: 1 } });
     await c.publish('test_memo', 2);
     expect(admin.createWorkflow).toHaveBeenCalledWith({ key: 'test_memo', name: 'Memo', spec: {} });
     expect(admin.addVersion).toHaveBeenCalledWith('test_memo', { a: 1 });
-    expect(admin.publish).toHaveBeenCalledWith('test_memo', 2);
+    // Publishing names its live re-check of the publisher's grant (run inside the publish transaction).
+    expect(admin.publish).toHaveBeenCalledWith('test_memo', 2, expect.any(Function));
     expect(() => c.create({ key: 'Bad Key', name: 'x', spec: {} })).toThrow(BadRequestException);
     expect(Reflect.getMetadata(CAN_KEY, AdminWorkflowsController.prototype.list)).toBe(
       'approvals.definitions.read',

@@ -52,7 +52,7 @@ import { MoneyService } from '../../../platform/settings/money.service';
 import { SettingsService } from '../../../platform/settings/settings.service';
 import { ErrorBodyFilter } from '../../../platform/tenancy/error-body.filter';
 import { ApprovalsAdminService } from '../../approvals/admin.service';
-import { asSecondPerson } from '../../../../test/support/second-person';
+import { asSecondPerson, SKIP_LIVE_PUBLISHER_CHECK } from '../../../../test/support/second-person';
 import { ApprovalsService } from '../../approvals/requests.service';
 import { PricingService } from '../pricing/pricing.service';
 import { QuotationPreviewController } from './quotation-preview.controller';
@@ -256,7 +256,7 @@ beforeAll(async () => {
     name: 'Quotation',
     spec: seedSpec,
   });
-  await adminSvcPublisher.publish('quotation_version', 1);
+  await adminSvcPublisher.publish('quotation_version', 1, SKIP_LIVE_PUBLISHER_CHECK);
 
   const approvals = new ApprovalsService(db, audit, notify, directory, caller, () => now);
   const pricing = new PricingService(new MoneyService(db, new SettingsService(db)));
