@@ -29,7 +29,7 @@ export function OpportunityActivities({
   canEdit?: boolean;
   /** The deal's owner, the default assignee of a new follow-up. */
   ownerUserId: string | null;
-  /** People a follow-up may go to (`GET /v1/opportunities/owners`); empty leaves it to the API. */
+  /** People a follow-up may go to (`GET /v1/opportunities/follow-up-assignees`); empty leaves it to the API. */
   owners: readonly LeadOwnerOption[];
   /** The planned follow-ups, or why they did not load. */
   planned: ReactNode;

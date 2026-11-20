@@ -48,7 +48,8 @@ export class OpportunityOwnerChangeService {
    * Checks run in this order, the first failure is the answer: out of the caller's write scope 404, stale version
    * 409, a closed deal (won or lost) 400, the same owner 400, then the new owner under the assignment rule (context
    * `reassign`: an active staff member of the entity whom the rule lets the caller hand work to and who can read
-   * opportunities, else 400 with `details.assignmentReason`). The database re-stamps the deal's department (and its
+   * and write opportunities, so a read-only role such as Management never owns a deal it cannot work; else 400
+   * with `details.assignmentReason`). The database re-stamps the deal's department (and its
    * quotations') from the new owner (D55-4). A new owner other than the caller is told (`crm.assigned`, #22).
    */
   async changeOwner(id: string, body: OpportunityOwnerChangeBody): Promise<OpportunityDto> {
@@ -77,6 +78,7 @@ export class OpportunityOwnerChangeService {
         context: 'reassign',
         rule: storedAssignmentRule(tx, scope, 'opportunities'),
         subjectRead: 'crm.opportunity.read',
+        ownerWrite: 'crm.opportunity.write',
       });
 
       const updated = await updateVersioned(tx, opportunities, id, body.expectedVersion, {
