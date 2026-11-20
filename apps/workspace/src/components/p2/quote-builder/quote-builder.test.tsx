@@ -148,6 +148,16 @@ describe('quote builder currency picker (D44: only enabled currencies)', () => {
     expect(container.textContent).toContain(message);
   });
 
+  it("shows a new quotation's switched-off customer currency as not enabled, before any save (U16-Q7)", async () => {
+    const container = await mountBuilder({ currency: 'INR', enabled: ['NPR', 'USD'] });
+    expect(container.textContent).toContain(
+      'INR is not enabled for your company. Choose NPR or USD.',
+    );
+    expect(await currencyOptionLabels()).toEqual(['NPR', 'INR (not enabled)', 'USD']);
+    await click(saveButton(container));
+    expect(mocks.saveDraftAction).not.toHaveBeenCalled();
+  });
+
   it("shows the platform's 422 CURRENCY_NOT_ENABLED through the save error path", async () => {
     const failure = describeQuoteFailure(
       {
