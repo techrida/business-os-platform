@@ -42,6 +42,11 @@ interface ActionRule {
   call: (zitadel: ZitadelAdminClient, zitadelUserId: string) => Promise<void>;
   /** The lock to store with the new status: undefined keeps it (none), null clears it. */
   lock: () => UserLock | null | undefined;
+  /**
+   * Write here first and call ZITADEL last, just before commit. For a lock: a ZITADEL lock whose database write was
+   * lost would look like a lock the app did not write. ZITADEL failing rolls the writes back.
+   */
+  identityLast?: boolean;
   /** Whether the action takes access away (then the self and last-Founder guards apply). */
   removesAccess: boolean;
   audit: string;
@@ -82,6 +87,7 @@ const RULES: Record<UserStatusAction, ActionRule> = {
     call: (zitadel, id) => zitadel.lockUser(id),
     // An admin lock never ends by itself.
     lock: () => ({ reason: 'admin', lockedAt: new Date(), until: null }),
+    identityLast: true,
     removesAccess: true,
     audit: 'users.locked',
     verb: 'lock',
@@ -138,7 +144,9 @@ export class UserStatusService {
     if (rule.removesAccess) await this.assertNotSoleFounder(tx, scope.tenantId, target, rule);
 
     const before = { status: target.status, lockReason: target.lockReason ?? null };
-    await this.identityCall(() => rule.call(this.zitadel, target.zitadelUserId));
+    const callZitadel = () =>
+      this.identityCall(() => rule.call(this.zitadel, target.zitadelUserId));
+    if (!rule.identityLast) await callZitadel();
     const lock = rule.lock();
     await this.store.updateUser(tx, target.id, {
       email: target.email,
@@ -158,6 +166,7 @@ export class UserStatusService {
         lockReason: lock === undefined ? before.lockReason : (lock?.reason ?? null),
       },
     });
+    if (rule.identityLast) await callZitadel();
   }
 
   private async assertNotSoleFounder(
