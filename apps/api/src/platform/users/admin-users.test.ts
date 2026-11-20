@@ -1186,6 +1186,52 @@ describe('POST /v1/admin/users/:id/deactivate, /reactivate, /lock and /unlock (F
     expect(store.users.find((u) => u.id === STAFF)?.status).toBe('active');
   });
 
+  it('lists a locked person with why and until when, as the directory needs to offer Unlock (F1-Q4)', async () => {
+    addUser(STAFF, { status: 'inactive', lockReason: 'failed_sign_ins' });
+    addUser(SECOND_FOUNDER, { status: 'inactive', lockReason: 'admin' });
+
+    const page = await asAdmin(['admin.users.read'], () =>
+      controller.list({}, { setHeader: vi.fn() }),
+    );
+
+    const until = store.users.find((u) => u.id === STAFF)?.lockedUntil;
+    expect(until).toMatch(/^\d{4}-\d{2}-\d{2}T/);
+    expect(page.items.find((u) => u.id === STAFF)).toMatchObject({
+      status: 'inactive',
+      lockReason: 'failed_sign_ins',
+      lockedUntil: until,
+    });
+    expect(page.items.find((u) => u.id === SECOND_FOUNDER)).toMatchObject({
+      lockReason: 'admin',
+      lockedUntil: null,
+    });
+  });
+
+  it.each(['lock', 'unlock'] as const)(
+    'answers 404 to %s for a portal user and an unknown id, before ZITADEL',
+    async (action) => {
+      addUser(STAFF, { idpOrgId: CUST_IDP, status: action === 'lock' ? 'active' : 'inactive' });
+      expect(await act(action, STAFF)).toBeInstanceOf(NotFoundException);
+      expect(await act(action, SECOND_FOUNDER)).toBeInstanceOf(NotFoundException);
+      expect(zitadel.statusCalls).toEqual([]);
+    },
+  );
+
+  it.each(['lock', 'unlock'] as const)(
+    'refuses 403 to %s without a company-wide admin.roles.write, before ZITADEL',
+    async (action) => {
+      addUser(STAFF, action === 'lock' ? {} : { status: 'inactive', lockReason: 'admin' });
+      expect(await act(action, STAFF, ['admin.users.read'])).toBeInstanceOf(ForbiddenException);
+      liveStore.roles.set(ADMIN, ['sales']);
+      const stale = await asAdmin(['admin.roles.write'], () => {
+        liveAdminGrants = new Map();
+        return controller[action](STAFF);
+      }).catch((e: unknown) => e);
+      expect(stale).toBeInstanceOf(ForbiddenException);
+      expect(zitadel.statusCalls).toEqual([]);
+    },
+  );
+
   it('reports canChangeStatus in the summary only for a company-wide grant', async () => {
     const yes = await asAdmin(['admin.users.read', 'admin.roles.write'], () =>
       controller.summary(),
@@ -1681,6 +1727,16 @@ describe('SqlUsersStore against migration 0013 (ADR 0027: tenant-scoped users)',
     });
     expect(await expiredHere(new Date('2026-11-20T10:14:59.000Z'))).toEqual([]);
     expect(await expiredHere(until)).toEqual([{ id: f.inactive, tenantId: f.scope.tenantId }]);
+    // The lock-expiry job's retry moves only the end of a failed-sign-in lock.
+    const later = new Date('2026-11-20T10:45:00.000Z');
+    await withTx(db, f.scope, systemActor('test'), (tx) =>
+      sqlStore.postponeLock(tx, f.inactive, later),
+    );
+    expect(await expiredHere(until)).toEqual([]);
+    expect(await sqlStore.findById(db, f.scope, f.inactive)).toMatchObject({
+      lockReason: 'failed_sign_ins',
+      lockedUntil: '2026-11-20T10:45:00.000000Z',
+    });
 
     // An admin lock never ends by itself: the shape check refuses one with an end time.
     const refused: unknown = await withTx(db, f.scope, systemActor('test'), (tx) =>
