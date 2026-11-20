@@ -22,7 +22,6 @@ import { Breadcrumb, Page, PageHeader } from '@/components/ui/page';
 import { FactList, Panel, type Fact } from '@/components/ui/panel';
 import { Table, Td, Th } from '@/components/ui/table';
 import { failureOf } from '@/lib/api-kernel';
-import { hasPermission } from '@/components/p2/customers/permissions';
 import {
   getCustomerAdvance,
   getCustomerStatement,
@@ -33,6 +32,7 @@ import { requireStaffSession } from '@/lib/bff';
 import { getNumberSystems } from '@/lib/display-settings';
 import { money, when } from '@/lib/kernel-format';
 import { formatBytes, scanLabel } from '@/lib/kernel-ui';
+import { getPermissionCheck } from '@/lib/live-permissions';
 
 import { actionsFor, methodLabel, paymentStatusMeta } from '../_lib/status';
 import styles from '../payments.module.css';
@@ -309,9 +309,9 @@ export default async function PaymentDetailPage({ params }: { params: Promise<{ 
   }
 
   // The rest is context: if it fails the payment itself still shows, with words in the gap.
-  // Allocating needs a verified payment and the `payment.allocate` role; the API still decides.
+  // Allocating needs a verified payment and the `payment.allocate` grant; the API still decides.
   const canAllocate =
-    payment.status === 'verified' && hasPermission(session.roles, 'payment.allocate');
+    payment.status === 'verified' && (await getPermissionCheck(session))('payment.allocate');
   const [customer, allocations, proofs, openItems, advance] = await Promise.all([
     getCustomer(session, payment.customerId).catch(() => null),
     listPaymentAllocations(session, id).catch(() => null),

@@ -11,7 +11,6 @@ import type { Metadata } from 'next';
 import Link from 'next/link';
 import type { NumberSystems } from '@bos/locale';
 
-import { hasPermission } from '@/components/p2/customers/permissions';
 import { Alert } from '@/components/ui/alert';
 import { Badge } from '@/components/ui/badge';
 import { LinkButton } from '@/components/ui/button';
@@ -38,6 +37,7 @@ import {
   type RawParams,
   readList,
 } from '@/lib/list-params';
+import { getPermissionCheck } from '@/lib/live-permissions';
 
 import { ListPager } from '../invoices/_components/list-pager';
 import layout from '@/components/p3/list.module.css';
@@ -145,7 +145,7 @@ export default async function PaymentsPage({
     const f = failureOf(err);
     problem = { message: f.message, status: f.status };
   }
-  const mayRecord = hasPermission(session.roles, 'payment.record');
+  const mayRecord = (await getPermissionCheck(session))('payment.record');
   const hiding = activeFilterLabels(
     { q, multi, single: {} },
     {

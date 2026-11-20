@@ -6,7 +6,6 @@ import Link from 'next/link';
 
 import { todayInKathmandu } from '@/app/(app)/settings/format';
 import { getCustomer, listCustomers } from '@/components/p2/customers/api';
-import { hasPermission } from '@/components/p2/customers/permissions';
 import { Alert } from '@/components/ui/alert';
 import { Button, LinkButton } from '@/components/ui/button';
 import { EmptyState } from '@/components/ui/empty-state';
@@ -16,6 +15,7 @@ import { Breadcrumb, Page, PageHeader } from '@/components/ui/page';
 import { failureOf } from '@/lib/api-kernel';
 import { requireStaffSession } from '@/lib/bff';
 import { loadEnabledCurrencies } from '@/lib/enabled-currencies.server';
+import { getPermissionCheck } from '@/lib/live-permissions';
 
 import { type CustomerOption, PaymentForm } from './payment-form';
 import styles from './payment-form.module.css';
@@ -59,7 +59,7 @@ export default async function NewPaymentPage({
   const here = params.size > 0 ? `/payments/new?${params.toString()}` : '/payments/new';
   const session = await requireStaffSession(here);
 
-  if (!hasPermission(session.roles, 'payment.record')) {
+  if (!(await getPermissionCheck(session))('payment.record')) {
     return (
       <Page width="narrow">
         <Crumbs />
