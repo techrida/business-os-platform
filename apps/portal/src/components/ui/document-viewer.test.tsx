@@ -82,13 +82,12 @@ function byText(text: string, selector = 'button'): HTMLElement | undefined {
   );
 }
 
-it('renders a View PDF button and a plain Download link, and fetches nothing before open', async () => {
+it('renders a View PDF button and a Download button, and fetches nothing before open', async () => {
   await mount(<ViewDocument {...PROPS} size="small" withDownload />);
   expect(trigger().querySelector('svg')).not.toBeNull();
-  const links = container.querySelectorAll('a');
-  expect(links).toHaveLength(1);
-  expect(links[0]?.getAttribute('href')).toBe(PROPS.downloadUrl);
-  expect(links[0]?.hasAttribute('download')).toBe(false);
+  // No link: a refused download must not replace the page (R4c2, TR-Q4).
+  expect(container.querySelectorAll('a')).toHaveLength(0);
+  expect(downloadButtons()).toHaveLength(1);
   expect(dialog().hasAttribute('open')).toBe(false);
   expect(dialog().children).toHaveLength(0);
   expect(fetchMock).not.toHaveBeenCalled();
@@ -215,17 +214,110 @@ it.each([401, 403])('shows No access on %i with no Retry', async (status) => {
   expect(fetchMock).toHaveBeenCalledTimes(1);
 });
 
-it('keeps Download a plain anchor to the download URL, in the footer and beside the button', async () => {
+function downloadButtons(): HTMLButtonElement[] {
+  return [...container.querySelectorAll('button')].filter((b) => b.textContent === 'Download');
+}
+
+/** The browser's save: an object URL and a click on a hidden `download` anchor. */
+function stubSave() {
+  const saved: { href: string; download: string }[] = [];
+  // jsdom has no object URLs; add them for this test only.
+  const urls = URL as unknown as Record<string, unknown>;
+  const before = { create: urls.createObjectURL, revoke: urls.revokeObjectURL };
+  urls.createObjectURL = vi.fn(() => 'blob:saved');
+  urls.revokeObjectURL = vi.fn();
+  const click = vi.spyOn(HTMLAnchorElement.prototype, 'click').mockImplementation(function (
+    this: HTMLAnchorElement,
+  ) {
+    saved.push({ href: this.getAttribute('href') ?? '', download: this.download });
+  });
+  const restore = () => {
+    click.mockRestore();
+    urls.createObjectURL = before.create;
+    urls.revokeObjectURL = before.revoke;
+  };
+  return { saved, restore };
+}
+
+const pdfAttachment = () =>
+  new Response('%PDF-1.7', {
+    status: 200,
+    headers: {
+      'content-type': 'application/pdf',
+      'content-disposition': 'attachment; filename="INV-0001.pdf"',
+    },
+  });
+
+it("downloads in the page, beside the button and in the footer: one request each, saved under the route's name", async () => {
   const onDownload = vi.fn();
+  const save = stubSave();
   await mount(<ViewDocument {...PROPS} withDownload onDownload={onDownload} />);
-  await open();
-  const footer = byText('Download', 'a');
-  expect(footer?.getAttribute('href')).toBe(PROPS.downloadUrl);
-  expect(footer?.hasAttribute('download')).toBe(false);
+  fetchMock.mockImplementation(() => Promise.resolve(pdfAttachment()));
+  await act(() => Promise.resolve(downloadButtons()[0]?.click()));
+  await settle();
   expect(fetchMock).toHaveBeenCalledTimes(1);
-  const outside = [...container.querySelectorAll('a')].filter((a) => !dialog().contains(a));
-  expect(outside).toHaveLength(1);
-  expect(outside[0]?.getAttribute('href')).toBe(PROPS.downloadUrl);
+  expect(fetchMock.mock.calls[0]?.[0]).toBe(PROPS.downloadUrl);
+  expect(fetchMock.mock.calls[0]?.[1]).toMatchObject({
+    credentials: 'same-origin',
+    cache: 'no-store',
+  });
+  expect(save.saved).toEqual([{ href: 'blob:saved', download: 'INV-0001.pdf' }]);
+  expect(onDownload).toHaveBeenCalledTimes(1);
+
+  await open();
+  const inDialog = byText('Download');
+  expect(inDialog?.tagName).toBe('BUTTON');
+  await act(() => Promise.resolve(inDialog?.click()));
+  await settle();
+  // The preview fetch on open, then the footer download.
+  expect(fetchMock).toHaveBeenCalledTimes(3);
+  expect(fetchMock.mock.calls[2]?.[0]).toBe(PROPS.downloadUrl);
+  expect(save.saved).toHaveLength(2);
+  expect(onDownload).toHaveBeenCalledTimes(2);
+  save.restore();
+});
+
+it("keeps a refused download in the page: the route's sentence beside the button, nothing saved", async () => {
+  const onDownload = vi.fn();
+  const save = stubSave();
+  await mount(<ViewDocument {...PROPS} withDownload onDownload={onDownload} />);
+  // What signed-file-route.ts answers while the PDF is not ready.
+  fetchMock.mockImplementation(() =>
+    Promise.resolve(
+      new Response(
+        'This PDF is not available to download yet. Please try again in a few minutes.',
+        {
+          status: 409,
+          headers: { 'content-type': 'text/plain; charset=utf-8' },
+        },
+      ),
+    ),
+  );
+  await act(() => Promise.resolve(downloadButtons()[0]?.click()));
+  await settle();
+  expect(container.querySelector('[role="alert"]')?.textContent).toBe(
+    'This PDF is not available to download yet. Please try again in a few minutes.',
+  );
+  expect(save.saved).toHaveLength(0);
+  expect(onDownload).not.toHaveBeenCalled();
+
+  // A network failure, and an answer that is not a PDF, get fixed sentences.
+  fetchMock.mockImplementation(() => Promise.reject(new TypeError('offline')));
+  await act(() => Promise.resolve(downloadButtons()[0]?.click()));
+  await settle();
+  expect(container.querySelector('[role="alert"]')?.textContent).toMatch(/did not start/);
+  fetchMock.mockImplementation(() =>
+    Promise.resolve(
+      new Response('<html>', { status: 200, headers: { 'content-type': 'text/html' } }),
+    ),
+  );
+  await act(() => Promise.resolve(downloadButtons()[0]?.click()));
+  await settle();
+  expect(container.querySelector('[role="alert"]')?.textContent).toBe(
+    'The file could not be downloaded.',
+  );
+  expect(save.saved).toHaveLength(0);
+  save.restore();
 });
 
 it('refuses a cross-origin preview URL: no request, a fallback message instead', async () => {
