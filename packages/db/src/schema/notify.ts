@@ -90,6 +90,11 @@ export const outbox = appSchema.table(
     providerMessageId: text('provider_message_id'),
     createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
     sentAt: timestamp('sent_at', { withTimezone: true }),
+    /**
+     * How many times someone resent this row from the delivery log (migration 0128). The drainer puts it in
+     * the dead-letter notice's dedupe key, so a resent email that dies again notifies the Founder again.
+     */
+    resendCount: integer('resend_count').notNull().default(0),
   },
   (t) => [
     unique('outbox_tenant_dedupe_unique').on(t.tenantId, t.dedupeKey),

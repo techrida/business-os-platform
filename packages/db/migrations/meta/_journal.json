@@ -540,6 +540,13 @@
       "when": 1783000000123,
       "tag": "0107_quotation_evidence_confirmations",
       "breakpoints": true
+    },
+    {
+      "idx": 77,
+      "version": "7",
+      "when": 1783000000128,
+      "tag": "0128_email_delivery_resend",
+      "breakpoints": true
     }
   ]
 }
