@@ -55,7 +55,18 @@ export const ZITADEL_ENDPOINTS = {
   // GetLoginPolicy, POST = AddCustomLoginPolicy, PUT = UpdateCustomLoginPolicy, on the org named by the
   // `x-zitadel-orgid` header. UNVERIFIED with this client's PAT (needs policy.write on the customer org).
   orgLoginPolicy: '/management/v1/policies/login',
+  // F1-Q4. VERIFIED GET at v4.20.1 (2026-11-20, staff org): { policy: { details, isDefault }, isDefault } with
+  // the attempt limits left out while they are 0 (no lockout). UNVERIFIED: POST = AddCustomLockoutPolicy and
+  // PUT = UpdateCustomLockoutPolicy with body { maxPasswordAttempts, maxOtpAttempts }, and that the provisioner
+  // holds policy.write on the staff org.
+  orgLockoutPolicy: '/management/v1/policies/lockout',
 } as const;
+
+/** The org lockout-policy settings a caller pins (management v1 field names). */
+export interface OrgLockoutPolicy {
+  maxPasswordAttempts: number;
+  maxOtpAttempts: number;
+}
 
 /** The ZITADEL project that holds the role keys (tools/seed-zitadel/src/personas.ts PROJECT_NAME). */
 export const BOS_PROJECT_NAME = 'business-os';
@@ -208,6 +219,17 @@ const LoginPolicyResponse = z.object({
   }),
   isDefault: z.boolean().default(false),
 });
+// uint64 fields arrive as strings, and protobuf JSON leaves out zeros (0 = no lockout).
+const Attempts = z.union([Str, z.number()]).optional();
+const LockoutPolicyResponse = z.object({
+  policy: z.looseObject({
+    isDefault: z.boolean().default(false),
+    maxPasswordAttempts: Attempts,
+    maxOtpAttempts: Attempts,
+  }),
+  isDefault: z.boolean().default(false),
+});
+const attempts = (value: string | number | undefined): number => Number(value ?? 0);
 /**
  * AddCustomLoginPolicy and UpdateCustomLoginPolicy replace the whole policy (proto3 scalars), so every
  * setting read must be sent back or it silently resets: allowUsernamePassword would become false and lock
@@ -538,6 +560,43 @@ export class ZitadelAdminClient {
   /** Lets a locked user sign in again (state ACTIVE) and resets their failed attempts. */
   async unlockUser(zitadelUserId: string): Promise<void> {
     await this.post(ZITADEL_ENDPOINTS.unlockUser, { userId: zitadelUserId });
+  }
+
+  /**
+   * Pins the attempt limits in the org's own lockout policy (F1-Q4), the same way ensureOrgLoginPolicy pins the login
+   * policy: an org that inherits the instance policy gets a custom one, a custom one that differs is updated, and a
+   * matching custom one is left alone. The org is named in `x-zitadel-orgid`.
+   */
+  async ensureOrgLockoutPolicy(
+    zitadelOrgId: string,
+    want: Readonly<OrgLockoutPolicy>,
+  ): Promise<'created' | 'updated' | 'unchanged'> {
+    const asOrg = { 'x-zitadel-orgid': zitadelOrgId };
+    const current = parse(
+      LockoutPolicyResponse,
+      await this.request('GET', ZITADEL_ENDPOINTS.orgLockoutPolicy, undefined, asOrg),
+      'GetLockoutPolicy',
+    );
+    const { policy } = current;
+    const inherited = policy.isDefault || current.isDefault;
+    const matches =
+      attempts(policy.maxPasswordAttempts) === want.maxPasswordAttempts &&
+      attempts(policy.maxOtpAttempts) === want.maxOtpAttempts;
+    if (!inherited && matches) return 'unchanged';
+    const body = { ...policy, ...want };
+    delete (body as Record<string, unknown>).details;
+    delete (body as Record<string, unknown>).isDefault;
+    if (inherited) {
+      try {
+        await this.request('POST', ZITADEL_ENDPOINTS.orgLockoutPolicy, body, asOrg);
+        return 'created';
+      } catch (error) {
+        // Another process created the custom policy a moment ago: update that one instead.
+        if (!(error instanceof ZitadelHttpError && error.status === 409)) throw error;
+      }
+    }
+    await this.request('PUT', ZITADEL_ENDPOINTS.orgLockoutPolicy, body, asOrg);
+    return 'updated';
   }
 
   async sendPasswordReset(zitadelUserId: string): Promise<void> {
