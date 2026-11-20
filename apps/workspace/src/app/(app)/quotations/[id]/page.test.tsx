@@ -282,6 +282,55 @@ describe('quotation detail page', () => {
     expect(await render()).not.toContain('href="/sales-orders/');
   });
 
+  it('shows the acceptance evidence awaiting confirmation, with Confirm evidence, then confirmed (F1-Q28)', async () => {
+    const quote = detail();
+    quote.quotation.status = 'accepted';
+    quote.versions[1]!.status = 'accepted';
+    mocks.getQuotation.mockResolvedValue({
+      ...quote,
+      lifecycle: {
+        canConfirmAcceptance: true,
+        confirmations: { [V2]: { status: 'awaiting' } },
+      },
+    });
+    const awaiting = await render();
+    expect(awaiting).toContain('After acceptance');
+    expect(awaiting).toContain('Awaiting confirmation');
+    expect(awaiting).toContain('>Confirm evidence</button>');
+    expect(awaiting).toContain('Confirm acceptance evidence for revision 2');
+
+    mocks.getQuotation.mockResolvedValue({
+      ...quote,
+      people: [{ userId: CUSTOMER, name: 'Asha Accountant' }],
+      lifecycle: {
+        canConfirmAcceptance: true,
+        confirmations: {
+          [V2]: { status: 'confirmed', confirmedAt: WHEN, confirmedByUserId: CUSTOMER },
+        },
+      },
+    });
+    const confirmed = await render();
+    expect(confirmed).toContain('Confirmed');
+    expect(confirmed).toContain('by Asha Accountant');
+    expect(confirmed).not.toContain('>Confirm evidence</button>');
+  });
+
+  it('offers no Confirm evidence to someone the API does not allow, and no evidence row without a state', async () => {
+    const quote = detail();
+    quote.quotation.status = 'accepted';
+    quote.versions[1]!.status = 'accepted';
+    mocks.getQuotation.mockResolvedValue({
+      ...quote,
+      lifecycle: { canConfirmAcceptance: false, confirmations: { [V2]: { status: 'awaiting' } } },
+    });
+    const denied = await render();
+    expect(denied).toContain('Awaiting confirmation');
+    expect(denied).not.toContain('>Confirm evidence</button>');
+
+    mocks.getQuotation.mockResolvedValue(quote);
+    expect(await render()).not.toContain('Awaiting confirmation');
+  });
+
   it('lists the superseded revision in the dialog, with its own total', async () => {
     const html = await render();
     expect(html).toContain('Superseded');
