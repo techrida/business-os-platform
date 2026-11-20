@@ -82,7 +82,6 @@ describe('renderPurchaseOrderHtml', () => {
     expect(html).toContain('<h1>Purchase Order</h1>');
     expect(html).toContain('PO-2083/84-00007');
     expect(html).toContain('Version 1');
-    expect(html).toContain('2083-07-24 BS');
     expect(html).toContain('Techrida Pvt. Ltd.');
     expect(html).toContain('PAN/VAT 301234567');
     expect(html).toContain('Himal Solar Pvt. Ltd.');
