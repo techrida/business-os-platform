@@ -408,6 +408,34 @@ describe('QuotationRenderSweeper', () => {
     expect(audit.record).not.toHaveBeenCalled();
   });
 
+  it('counts a dead worker claim once: no failure and no admin entry when another worker counted it first', async () => {
+    const mine = candidate(1);
+    const theirs = candidate(2);
+    const { sweeper, audit, store } = setup({
+      abandoned: [mine, theirs],
+      attemptsAfterFailure: MAX_RENDER_ATTEMPTS,
+    });
+    vi.mocked(store.markAbandoned).mockImplementation((_tx, c) =>
+      Promise.resolve(
+        c.versionId === theirs.versionId
+          ? undefined
+          : { attempts: MAX_RENDER_ATTEMPTS, quotationId: `quotation-of-${c.versionId}` },
+      ),
+    );
+    await expect(sweeper.sweep()).resolves.toMatchObject({
+      failed: 1,
+      failures: [{ versionId: mine.versionId, kind: 'abandoned' }],
+    });
+    expect(store.abandoned).toHaveBeenCalledWith(new Date(NOW.getTime() - PENDING_STALE_MS), 50);
+    expect(audit.record).toHaveBeenCalledOnce();
+    expect(audit.record).toHaveBeenCalledWith(TX, {
+      action: 'quotation.pdf_render_failed',
+      entityType: 'quotations',
+      entityId: `quotation-of-${mine.versionId}`,
+      after: { versionId: mine.versionId, attempts: MAX_RENDER_ATTEMPTS, failureKind: 'abandoned' },
+    });
+  });
+
   it('fails the version, not the sweep, when the issuing entity has no address', async () => {
     const c = candidate(1);
     const { sweeper, calls, htmlToPdf } = setup({
