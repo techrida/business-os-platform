@@ -168,8 +168,10 @@ describe('"Create anyway" on a possible duplicate (F1-Q55)', () => {
       await settle();
       expect(api.createCustomer).toHaveBeenCalledTimes(1);
       expect(api.createCustomer.mock.calls[0]?.[1]).not.toHaveProperty('duplicateOverrideReason');
+      // The API asks for a match on the name or on the PAN/VAT number without spaces and hyphens
+      // (123-456-789 against 123456789), which the search may not find; the title covers both.
       expect(mounted.container.textContent).toContain(
-        'An organization with this name already exists',
+        'An organization with this name or PAN/VAT number already exists',
       );
       expect(dialog()?.textContent).toContain('Create anyway?');
 
