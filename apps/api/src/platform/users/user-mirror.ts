@@ -357,6 +357,7 @@ export class UserMirror {
         changed = true;
       } else {
         userId = existing.id;
+        const statusChanged = existing.status !== status;
         if (
           existing.email !== user.email ||
           existing.displayName !== user.displayName ||
@@ -369,7 +370,7 @@ export class UserMirror {
           });
           // A status change (disabled, re-enabled) reaches every request at once: the per-request user cache
           // is keyed on the authz version, so without a bump a disabled user stays active for up to 60 s.
-          if (existing.status !== status) await this.store.bumpAuthzVersion(tx, scope);
+          if (statusChanged) await this.store.bumpAuthzVersion(tx, scope);
           changed = true;
         }
       }
