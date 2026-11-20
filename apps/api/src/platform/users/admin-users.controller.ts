@@ -223,9 +223,12 @@ export class AdminUsersController {
           await lockAccessRevision(tx, scope.tenantId);
           await assertLiveGrant(tx, this.liveGrants, scope, actor, 'admin.roles.write');
         }
+        // Checked before ZITADEL is written, under the access-revision lock every department write takes, so a
+        // department retired or given a head meanwhile cannot leave a ZITADEL invite with roles behind.
+        if (placement !== null) await this.users.assertPlacement(tx, placement);
         const invited = await this.users.invite(tx, invite);
-        if (placement !== null) await this.users.placeInvitee(tx, invited.userId, placement);
-        return invited;
+        if (placement !== null) await this.users.placeInvitee(tx, invited, placement);
+        return { userId: invited.userId };
       }),
     );
     if (assignsAccess) await this.authz.invalidate(scope.tenantId, scope.organizationId);
