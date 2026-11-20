@@ -275,7 +275,7 @@ export default async function BillPage({
       value:
         bill.purchaseOrderId === null ? (
           <span className={styles.quiet}>None</span>
-        ) : poGrants(live).issue ? (
+        ) : poGrants(live).read ? (
           <Link href={`/procurement/orders/${encodeURIComponent(bill.purchaseOrderId)}`}>
             {orderNumber ?? 'Open the order'}
           </Link>

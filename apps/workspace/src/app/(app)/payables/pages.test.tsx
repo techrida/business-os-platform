@@ -502,15 +502,14 @@ describe('bill detail', () => {
     expect(out.indexOf('</aside>')).toBeLessThan(out.indexOf('Bill lines'));
   });
 
-  it('shows Finance the order number sent with the bill, with no purchase order read of its own', async () => {
+  it('links Finance to the read-only order, and keeps the order number when that read is refused', async () => {
     session.roles = ['finance'];
     api.getBill.mockResolvedValue({ ...header, status: 'pending_approval', lines: [line] });
     api.getPoProgress.mockRejectedValue(apiError(403, 'forbidden'));
     const out = await html(BillPage({ params: Promise.resolve({ id: BILL }) }));
     expect(out).toContain('PO-2083-0007');
     expect(out).not.toContain('An order');
-    expect(out).not.toContain(`/procurement/orders/${PO}`);
-    expect(api.getPoProgress).not.toHaveBeenCalled();
+    expect(out).toContain(`/procurement/orders/${PO}`);
   });
 
   it('still shows the bill when the vendor and the order cannot be read', async () => {

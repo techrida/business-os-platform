@@ -1352,9 +1352,11 @@ describe('purchase order pickers', () => {
     await expect(receiptsService.progress(mine.id)).resolves.toMatchObject({
       purchaseOrderId: mine.id,
     });
-    await expect(receiptsService.progress(theirs.id)).rejects.toBeInstanceOf(NotFoundException);
-    expect((await orders.get(mine.id)).can).toEqual({ enterBill: true });
-    expect((await orders.get(theirs.id)).can).toEqual({ enterBill: false });
+    await expect(receiptsService.progress(theirs.id)).resolves.toMatchObject({
+      purchaseOrderId: theirs.id,
+    });
+    expect((await orders.get(mine.id)).can).toEqual({ enterBill: true, receive: false });
+    expect((await orders.get(theirs.id)).can).toEqual({ enterBill: false, receive: false });
   });
 
   it("never lists another entity's orders", async () => {
