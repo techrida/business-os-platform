@@ -138,6 +138,12 @@ describe('quotation totals when the reply never comes (TR-Q8)', () => {
     });
     expect(totalsPanel()).not.toContain('Updating totals');
     expect(totalsPanel()).toContain('The totals did not load. Try again.');
+    // A hung server action holds Next's action queue, so Try again waits behind it; a full reload
+    // is the way out, and the error says so with a link.
+    const reload = Array.from(document.querySelectorAll('aside a')).find(
+      (a) => a.textContent?.trim() === 'reload the page',
+    );
+    expect(reload?.getAttribute('href')).toBe(`/quotations/${Q}/edit`);
 
     mocks.previewQuoteAction.mockResolvedValueOnce({ ok: true, preview });
     const retry = Array.from(document.querySelectorAll('aside button')).find(
