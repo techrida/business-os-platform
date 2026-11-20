@@ -18,6 +18,11 @@ export interface OutcomeDialogProps {
   number: string;
   /** The revision the outcome is recorded on: always the current one. */
   revisionNo: number;
+  /**
+   * Why Accepted cannot be recorded now (the opportunity's stage), or null. When set, only Rejected is
+   * offered and the reason is shown in its place.
+   */
+  acceptBlocker?: string | null;
   /** Today in Kathmandu, `YYYY-MM-DD`: the default date, and the latest the form allows. */
   today: string;
   /** A UUID the server generated for this render. */
@@ -35,7 +40,7 @@ function Choices({
   children,
 }: {
   legend: string;
-  hint?: string;
+  hint?: string | undefined;
   error?: string | undefined;
   children: ReactNode;
 }) {
@@ -69,6 +74,7 @@ function Choices({
 export function OutcomeDialog({
   number,
   revisionNo,
+  acceptBlocker = null,
   quotationId,
   versionId,
   version,
@@ -98,7 +104,11 @@ export function OutcomeDialog({
     <ActionDialog
       triggerLabel="Record outcome"
       title={`Record outcome for revision ${revisionNo}`}
-      intro={`Write down what the customer answered to ${number}, revision ${revisionNo}. Accepting needs at least one kind of evidence. Rejecting needs a comment.`}
+      intro={
+        acceptBlocker === null
+          ? `Write down what the customer answered to ${number}, revision ${revisionNo}. Accepting needs at least one kind of evidence. Rejecting needs a comment.`
+          : `Write down what the customer answered to ${number}, revision ${revisionNo}. Rejecting needs a comment.`
+      }
       formId={formId}
       submitLabel="Record outcome"
       pending={pending}
@@ -126,8 +136,15 @@ export function OutcomeDialog({
               summaryRef={summaryRef}
             />
 
-            <Choices legend="What did the customer say?" error={state.errors?.outcome}>
-              {(['accepted', 'rejected'] as const).map((value) => (
+            <Choices
+              legend="What did the customer say?"
+              hint={acceptBlocker ?? undefined}
+              error={state.errors?.outcome}
+            >
+              {(acceptBlocker === null
+                ? (['accepted', 'rejected'] as const)
+                : (['rejected'] as const)
+              ).map((value) => (
                 <label key={value} className={styles.choice}>
                   <input
                     type="radio"

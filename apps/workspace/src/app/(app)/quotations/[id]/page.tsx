@@ -10,6 +10,7 @@ import { getQuotation } from '@/components/p2/quotations/api';
 import { QuotationContents } from '@/components/p2/quotations/contents';
 import styles from '@/components/p2/quotations/detail.module.css';
 import { DetailActions, hasDetailActions } from '@/components/p2/quotations/detail-actions';
+import { opportunityBlockers } from '@/components/p2/quotations/opportunity-gate';
 import { pdfLinkFor } from '@/components/p2/quotations/document-link';
 import {
   lifecycleOf,
@@ -231,6 +232,20 @@ export default async function QuotationDetailPage({
           .then((terms) => terms.find((t) => t.id === paymentTermId)?.label)
           .catch(() => undefined);
 
+  // Send and Accepted are hidden while the opportunity's stage would make the API refuse them; the
+  // reason is said here once, to whoever would otherwise have had the button.
+  const blockers = current === null ? null : opportunityBlockers(opportunity, current.id);
+  const heldBack =
+    current === null || blockers === null
+      ? null
+      : (current.status === 'approved' || current.status === 'expired') &&
+          blockers.send !== null &&
+          maySend
+        ? blockers.send
+        : current.status === 'sent' && blockers.accept !== null && mayRecordOutcome
+          ? blockers.accept
+          : null;
+
   // The quotation returns the names of the people it names (owner, history actors): no admin directory.
   const people = new Map((detail.people ?? []).map((p) => [p.userId, p.name]));
   const facts: Fact[] =
@@ -325,6 +340,8 @@ export default async function QuotationDetailPage({
             maySend,
             mayRecordOutcome,
             lifecycle,
+            opportunity,
+            versionId: current.id,
           }) ? (
             <DetailActions
               quotationId={quotation.id}
@@ -337,6 +354,7 @@ export default async function QuotationDetailPage({
               maySend={maySend}
               mayRecordOutcome={mayRecordOutcome}
               lifecycle={lifecycle}
+              opportunity={opportunity}
             />
           ) : null
         }
@@ -350,6 +368,12 @@ export default async function QuotationDetailPage({
         >
           The current revision could not be loaded. Reload to try again. Earlier revisions remain
           available below.
+        </Alert>
+      ) : null}
+
+      {heldBack !== null ? (
+        <Alert tone="info" role="status">
+          {heldBack}
         </Alert>
       ) : null}
 
