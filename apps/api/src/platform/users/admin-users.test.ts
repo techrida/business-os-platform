@@ -546,6 +546,74 @@ describe('PUT /v1/admin/users/:id/roles last-Founder guard', () => {
     expect(store.roles.get(FOUNDER_ONE)).toEqual(['management']);
     expect(authz.invalidations).toBe(1);
   });
+
+  describe('per legal entity', () => {
+    const ENTITY_B = '00000000-0000-4000-8000-0000000000bb';
+
+    const addFounder = (id: string, status: 'active' | 'inactive' = 'active') => {
+      store.users.push({
+        id,
+        tenantId: TENANT,
+        idpOrgId: STAFF_IDP,
+        zitadelUserId: `z-${id}`,
+        email: `${id}@techrida.test`,
+        displayName: 'Sita Shrestha',
+        status,
+      });
+      store.roles.set(id, ['founder']);
+    };
+
+    const removeFounder = async (): Promise<unknown> => {
+      try {
+        await asAdmin(['admin.roles.write'], () =>
+          controller.setRoles(FOUNDER_ONE, { roles: ['management'] }),
+        );
+        return null;
+      } catch (error) {
+        return error;
+      }
+    };
+
+    beforeEach(() => {
+      store.entityNames.set(ENTITY_B, 'Techrida India');
+      // Kiran is a Founder in both entities; Sita only in the default one.
+      joinEntity(FOUNDER_ONE, ENTITY_B);
+      addFounder(FOUNDER_TWO);
+      joinEntity(FOUNDER_TWO);
+    });
+
+    it("refuses removing entity B's only Founder while entity A still has Founders", async () => {
+      const caught = await removeFounder();
+      expect(caught).toBeInstanceOf(ConflictException);
+      expect((caught as ConflictException).getResponse()).toEqual({
+        code: 'last_founder',
+        message:
+          'Kiran Thapa is the only Founder of Techrida India. Make someone else a Founder there first.',
+      });
+      expect(zitadel.grants.has('z-founder-1')).toBe(false);
+      expect(store.roles.get(FOUNDER_ONE)).toEqual(['founder']);
+    });
+
+    it('does not count a Founder whose entity B membership narrows role_keys to other roles', async () => {
+      joinEntity(FOUNDER_TWO, ENTITY_B, ['sales']);
+      expect(await removeFounder()).toBeInstanceOf(ConflictException);
+      expect(store.roles.get(FOUNDER_ONE)).toEqual(['founder']);
+    });
+
+    it('does not count a deactivated Founder in entity B', async () => {
+      addFounder(INVITED_FOUNDER, 'inactive');
+      joinEntity(INVITED_FOUNDER, ENTITY_B);
+      expect(await removeFounder()).toBeInstanceOf(ConflictException);
+    });
+
+    it('allows the removal once entity B has another effective Founder', async () => {
+      // role_keys that include founder count the same as NULL (every role).
+      joinEntity(FOUNDER_TWO, ENTITY_B, ['founder', 'sales']);
+      expect(await removeFounder()).toBeNull();
+      expect(zitadel.grants.get('z-founder-1')).toEqual(['management']);
+      expect(store.roles.get(FOUNDER_ONE)).toEqual(['management']);
+    });
+  });
 });
 
 describe('SqlUsersStore.emailOf', () => {
