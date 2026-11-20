@@ -166,7 +166,7 @@ export function workflow(cfg) {
                 await s.loadList(`/memos?q=${encodeURIComponent(subject)}`, {
                   heading: 'Memos',
                   table: 'Memos, newest first',
-                  empty: 'No memos match',
+                  empty: ['No memos match', 'No memos yet'],
                 }),
                 subject,
               );

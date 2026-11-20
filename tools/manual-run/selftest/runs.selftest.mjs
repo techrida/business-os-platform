@@ -36,7 +36,8 @@ import {
   writeState,
 } from '../lib/store.mjs';
 import { uniqueValues } from '../lib/config.mjs';
-import { contactEmailFor, paymentDecision } from '../workflows/sales.mjs';
+import { emptyStateText } from '../lib/session.mjs';
+import { contactEmailFor, listIsComplete, paymentDecision } from '../workflows/sales.mjs';
 
 const WF = [
   { name: 'start', stepIds: ['start-1', 'start-2'] },
@@ -622,6 +623,43 @@ describe('payments are recorded at most once per run', () => {
     assert.deepEqual(paymentDecision({ lookup: ok([]), ref, knownUrls: [] }), {
       action: 'record',
     });
+  });
+
+  test("the live app's empty search ('No matching payments.') counts as loaded and empty", () => {
+    const empty = emptyStateText([
+      'No matching payments.',
+      'No payments match these filters.',
+      'No payments yet.',
+    ]);
+    for (const title of ['No matching payments.', 'No payments match these filters.'])
+      assert.ok(empty.test(title), title);
+    // Exact titles only: neither the hint nor the failure alert reads as an empty list.
+    for (const other of [
+      'Try another receipt number or customer name.',
+      'No matching payments. Show all payments',
+      'The payments did not load',
+      'No matching paymentsX',
+    ])
+      assert.ok(!empty.test(other), other);
+    // Zero payments for this run's customer, then: a new payment may be recorded.
+    assert.deepEqual(paymentDecision({ lookup: ok([]), ref, knownUrls: [] }), {
+      action: 'record',
+    });
+  });
+
+  test('a payments search that does not fit one page is not searched further', () => {
+    assert.deepEqual(listIsComplete({ summary: '2 payments' }), { ok: true });
+    assert.deepEqual(listIsComplete({ summary: 'Showing 1–2 of 2 payments' }), { ok: true });
+    assert.equal(listIsComplete({ summary: 'x', hasNext: true }).ok, false);
+    assert.equal(listIsComplete({ summary: 'Showing 1–5 of 7 payments' }).ok, false);
+    assert.equal(listIsComplete({ summary: 'Showing 100 of 1,204 payments' }).ok, false);
+    const d = paymentDecision({
+      lookup: { ok: false, rows: [], reason: 'the payments search is not one page (next page)' },
+      ref,
+      knownUrls: [],
+    });
+    assert.equal(d.action, 'fail');
+    assert.match(d.reason, /not one page/);
   });
 });
 

@@ -21,6 +21,15 @@ const BROKEN_PAGE = /\bdid not open\b|Application error|Internal Server Error/;
 
 export class StepFailure extends Error {}
 
+/** The exact title(s) of a list's empty state as one anchored, literal pattern. */
+export const emptyStateText = (empty) =>
+  new RegExp(
+    `^(?:${[empty]
+      .flat()
+      .map((t) => t.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'))
+      .join('|')})$`,
+  );
+
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 /** A wait that ends (rejecting with the abort reason) when `signal` aborts. */
@@ -717,8 +726,11 @@ export class Session {
    * table (found by caption) or its empty-state text, and no "… did not load" alert. A failed load
    * is retried; when the list never loads the step fails, because "not found" must never be
    * guessed from a list that did not load. Returns the table, or null for an empty list.
+   * `empty` is the empty state's exact title, or a list of them (app versions word it differently,
+   * e.g. "No matching payments." and "No payments match these filters.").
    */
   async loadList(path, { heading, table, empty, attempts = 4 }) {
+    const emptyText = emptyStateText(empty);
     const failure = () =>
       this.page.getByRole('alert').filter({ hasText: /did not load|did not open/ });
     for (let i = 1; i <= attempts; i++) {
@@ -726,7 +738,7 @@ export class Session {
         p.getByRole('heading', { level: 1, name: heading, exact: true }),
       );
       const t = this.page.getByRole('table', { name: table, exact: true });
-      const e = this.page.getByText(empty, { exact: true });
+      const e = this.page.getByText(emptyText);
       const wait = (loc, outcome) =>
         loc
           .first()

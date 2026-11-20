@@ -30,6 +30,23 @@ const DOCS = [
 const hasAmount = (text, amount) => text.replace(/,/g, '').includes(Number(amount).toFixed(2));
 
 /**
+ * Whether a loaded list shows every row it has: no enabled "Next" link, and no summary saying it
+ * shows fewer rows than it holds ("Showing 1–5 of 7 payments", "Showing 25 of 30 payments").
+ * @returns {{ ok: true } | { ok: false, reason: string }}
+ */
+export function listIsComplete({ summary = '', hasNext = false }) {
+  if (hasNext) return { ok: false, reason: 'the list has a next page' };
+  const n = (x) => Number(String(x).replace(/,/g, ''));
+  const range = /Showing\s+([\d,]+)\s*[–-]\s*([\d,]+)\s+of\s+([\d,]+)/.exec(summary);
+  if (range && n(range[2]) - n(range[1]) + 1 < n(range[3]))
+    return { ok: false, reason: `the list shows rows ${range[1]}–${range[2]} of ${range[3]}` };
+  const count = /Showing\s+([\d,]+)\s+of\s+([\d,]+)/.exec(summary);
+  if (count && n(count[1]) < n(count[2]))
+    return { ok: false, reason: `the list shows ${count[1]} of ${count[2]} rows` };
+  return { ok: true };
+}
+
+/**
  * How sales-12 and sales-15 get their payment without recording a second one.
  * @param {{ recordedUrl?: string | null, ref: string, knownUrls: string[],
  *   lookup?: { ok: boolean, rows: { url: string, ref: string | null }[] } | null }} input
@@ -48,7 +65,10 @@ const hasAmount = (text, amount) => text.replace(/,/g, '').includes(Number(amoun
 export function paymentDecision({ recordedUrl, lookup, ref, knownUrls }) {
   if (recordedUrl) return { action: 'reuse', url: recordedUrl };
   if (!lookup?.ok)
-    return { action: 'fail', reason: 'the payments list did not load, so a payment may exist' };
+    return {
+      action: 'fail',
+      reason: lookup?.reason ?? 'the payments list did not load, so a payment may exist',
+    };
   const listed = new Set(lookup.rows.map((r) => r.url));
   const missing = knownUrls.filter((u) => !listed.has(u));
   if (missing.length)
@@ -280,14 +300,28 @@ export function workflow(cfg) {
   /**
    * Every payment of this run's unique customer (any status), each with the bank reference read
    * from its own page. The Payments list rows carry no reference. Throws (fails the step) when the
-   * list does not load; a page whose reference cannot be read gives `ref: null`.
+   * list does not load; a page whose reference cannot be read gives `ref: null`. The search for
+   * the run's unique customer name (and 100 rows, where the app offers it) should fit one page;
+   * a list that still has another page is not searched further: the lookup is not ok.
    */
   const customerPayments = async (s, skipUrls) => {
-    const table = await s.loadList(`/payments?q=${encodeURIComponent(v.company)}`, {
+    const table = await s.loadList(`/payments?q=${encodeURIComponent(v.company)}&rows=100`, {
       heading: 'Payments',
       table: 'Payments',
-      empty: 'No payments match these filters.',
+      // Newer and older app versions; "No payments yet." when there are none at all.
+      empty: ['No matching payments.', 'No payments match these filters.', 'No payments yet.'],
     });
+    if (table) {
+      const complete = listIsComplete({
+        summary: await s.text(),
+        hasNext: (await s.page.getByRole('link', { name: 'Next', exact: true }).count()) > 0,
+      });
+      if (!complete.ok)
+        return {
+          ok: false,
+          reason: `the payments search for this run's customer is not one page (${complete.reason}), so a payment on a later page may exist`,
+        };
+    }
     const found = table
       ? await table.locator('tbody tr').evaluateAll((trs) =>
           trs.map((tr) => ({
@@ -484,7 +518,7 @@ export function workflow(cfg) {
             await s.loadList(`/leads?q=${encodeURIComponent(v.leadTitle)}`, {
               heading: 'Leads',
               table: 'Leads',
-              empty: 'No leads match',
+              empty: ['No leads match', 'No leads yet'],
             }),
             v.leadTitle,
           );
