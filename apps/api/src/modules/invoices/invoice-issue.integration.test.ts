@@ -575,6 +575,40 @@ describe('separation of duties (done check 10)', () => {
 });
 
 describe('issue guards', () => {
+  it('a due date that passed before issue answers 422 DUE_DATE_BEFORE_ISSUE with both dates, not a stale version (U15b-Q5)', async () => {
+    as(U.acc, 'accountant');
+    const id = (await drafting.draftManual({ ...manualBody(), dueDate: '2026-11-09' }, key()))
+      .invoice.id;
+    const version = await forceApproved(id);
+    const before = await lastInvSeq(scopeA);
+    // Three days later the due date the drafter chose (today, then) has passed.
+    const later = new InvoiceIssueService(
+      db,
+      authz,
+      audit,
+      caller,
+      new LedgerService(),
+      new NumberingService(),
+      money,
+      settings,
+      () => new Date('2026-11-12T06:00:00Z'),
+    );
+    as(U.fin, 'finance');
+    const err = await later.issue(id, { expectedVersion: version }, key()).catch((e: unknown) => e);
+    expect(statusOf(err)).toBe(422);
+    expect(responseOf(err)).toMatchObject({
+      code: 'DUE_DATE_BEFORE_ISSUE',
+      details: { dueDate: '2026-11-09', issueDate: '2026-11-12' },
+    });
+    expect((await invoiceRow(id)).status).toBe('approved');
+    expect(await lastInvSeq(scopeA)).toBe(before);
+
+    // A real stale version is still the stale answer.
+    const stale = await issueAs(id, version - 1).catch((e: unknown) => e);
+    expect(statusOf(stale)).toBe(409);
+    expect(responseOf(stale)).toMatchObject({ code: 'conflict' });
+  });
+
   it('a stale FX rate answers 409 fx_rate_stale and consumes no number', async () => {
     const id = await draftManual('USD');
     const version = await forceApproved(id);
