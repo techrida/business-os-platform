@@ -82,7 +82,7 @@ describe('PaymentsService accepts a payment in a switched-off currency', () => {
       CREATED,
     );
     expect(created).toHaveBeenCalledTimes(1);
-    expect(created.mock.calls[0]?.[3]).toMatchObject({ currency });
+    expect((created.mock.calls[0] as unknown[] | undefined)?.[3]).toMatchObject({ currency });
   });
 
   it('a caller without permission still gets 403 and nothing is written', async () => {
