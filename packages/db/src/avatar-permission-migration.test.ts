@@ -253,6 +253,7 @@ describe('0053 profile.avatar.write, applied late on a database that already ran
     expect(Object.fromEntries(Object.entries(grants).map(([role, g]) => [role, g.scope]))).toEqual({
       founder: 'all',
       user_admin: 'all',
+      accountant: 'own',
       finance: 'own',
       marketing: 'own',
       sales: 'own',
@@ -263,6 +264,7 @@ describe('0053 profile.avatar.write, applied late on a database that already ran
     expect(await avatarGrants(ahead, aheadTenant)).toEqual({
       founder: { scope: 'all', seeded: true },
       user_admin: { scope: 'all', seeded: true },
+      accountant: { scope: 'own', seeded: true },
       finance: { scope: 'own', seeded: true },
       marketing: { scope: 'own', seeded: true },
       sales: { scope: 'own', seeded: true },
