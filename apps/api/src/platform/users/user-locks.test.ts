@@ -8,6 +8,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { AuditService } from '../audit/audit.service';
 import type { Db, DbTransaction } from '../db/db.module';
 import { UserLocks } from './user-locks';
+import { lockoutPinnedCursor } from './users.constants';
 import { FakeUsersStore, STAFF_IDP, STAFF_ZORG, TENANT, zUser } from './users.fakes';
 import {
   type OrgLockoutPolicy,
@@ -255,5 +256,36 @@ describe('UserLocks.ensureLockoutPolicies (F1-Q4)', () => {
 
     expect(error).toHaveBeenCalledWith(expect.stringContaining('sign-in lockout is OFF'));
     expect(audit.record).not.toHaveBeenCalled();
+  });
+});
+
+describe('UserLocks records when the lockout policy was pinned (P2-1)', () => {
+  it('stores the first time the policy is in place on an org and keeps it on later passes', async () => {
+    const before = Date.now();
+    await locks.ensureLockoutPolicies();
+    const first = store.cursors.get(lockoutPinnedCursor(STAFF_ZORG));
+    expect(Date.parse(first ?? '')).toBeGreaterThanOrEqual(before);
+
+    zitadel.policyAnswer = 'unchanged';
+    await new Promise((resolve) => setTimeout(resolve, 5));
+    await locks.ensureLockoutPolicies();
+
+    expect(store.cursors.get(lockoutPinnedCursor(STAFF_ZORG))).toBe(first);
+  });
+
+  it('stores it for a policy already in place (unchanged) when none is stored yet', async () => {
+    zitadel.policyAnswer = 'unchanged';
+
+    await locks.ensureLockoutPolicies();
+
+    expect(store.cursors.get(lockoutPinnedCursor(STAFF_ZORG))).toBeDefined();
+  });
+
+  it('stores nothing while the policy could not be pinned', async () => {
+    zitadel.policyAnswer = new ZitadelHttpError('/management/v1/policies/lockout', 403, 'denied');
+
+    await locks.ensureLockoutPolicies();
+
+    expect(store.cursors.has(lockoutPinnedCursor(STAFF_ZORG))).toBe(false);
   });
 });
