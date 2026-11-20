@@ -97,6 +97,31 @@ const withFormat = (detail: InvoiceDetail, format: unknown): InvoiceDetail =>
 const textOf = (html: string) => html.replace(/<[^>]*>/g, ' ').replace(/\s+/g, ' ');
 
 describe('invoice detail page', () => {
+  it("shows a note's creator Issue off with the reason, from the API's issueBlockedBySod (TR-Q12f)", async () => {
+    const note = (blocked: boolean) =>
+      InvoiceDetailSchema.parse({
+        ...invoiceDetail({
+          kind: 'debit_note',
+          status: 'approved',
+          salesOrderId: null,
+          originalInvoiceId: APPROVAL,
+          noteReason: 'Extra support day',
+        }),
+        ...(blocked ? { issueBlockedBySod: true } : {}),
+      });
+    mocks.getInvoice.mockResolvedValue(note(true));
+    const blocked = await render();
+    expect(blocked).toMatch(/<button[^>]*aria-disabled="true"[^>]*>Issue debit note<\/button>/);
+    expect(blocked).toContain(
+      'You created this note, so someone else with issue access must issue it.',
+    );
+
+    mocks.getInvoice.mockResolvedValue(note(false));
+    const open = await render();
+    expect(open).not.toContain('aria-disabled="true"');
+    expect(open).not.toContain('You created this note');
+  });
+
   it('shows number, issue date (AD and BS) and the buyer, all as read-only text', async () => {
     const html = await render();
     expect(html).toContain('INV-2083/84-00001');
