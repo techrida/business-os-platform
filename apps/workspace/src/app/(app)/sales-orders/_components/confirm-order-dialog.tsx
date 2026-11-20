@@ -10,10 +10,13 @@ import { TransactionFormDialog } from '@/components/p3/transaction-form-dialog';
 
 import { confirmOrderAction } from '../_lib/actions';
 import type { ActionState } from '../_lib/state';
+import { CreditHoldHelp } from './credit-hold-help';
 
 export interface ConfirmOption {
   /** The quotation's `currentVersionId`: the version the order is confirmed from. */
   versionId: string;
+  /** The quotation's number, named in the credit override so the person knows which deal it releases. */
+  number: string;
   /** Number, customer and total, already worded by the server. */
   label: string;
 }
@@ -78,6 +81,15 @@ export function ConfirmOrderDialog({
     >
       {(state) => (
         <>
+          {state.creditHold ? (
+            <CreditHoldHelp
+              hold={state.creditHold}
+              selectedVersionId={version}
+              quotationNumber={
+                options.find((o) => o.versionId === state.creditHold?.quotationVersionId)?.number
+              }
+            />
+          ) : null}
           <Field label="Accepted quotation" error={state.errors?.quotation}>
             {(control) => (
               <Select

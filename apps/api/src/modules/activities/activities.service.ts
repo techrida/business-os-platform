@@ -51,7 +51,6 @@ import { updateVersioned, withIdempotency } from '../../platform/db/idempotency'
 import { withTx, type DbTransaction, type TxScope } from '../../platform/db/tx';
 import { searchPage } from '../../platform/list';
 import { NotifyService } from '../../platform/notify/notify.service';
-import { nameIn, personNameMap } from '../../platform/users/person-names';
 import { customerRef } from '../customers/customers.service';
 import {
   assertAssignable,
@@ -73,6 +72,7 @@ import {
   type ListActivitiesQuery,
   type SubjectKey,
 } from './activities.types';
+import { notifyFollowUpAssigned } from './follow-ups';
 
 type Q = Db | DbTransaction;
 
@@ -110,6 +110,9 @@ const AUDIT_ENTITY = 'activities';
 
 const subjectNotFound = () =>
   new NotFoundException({ code: 'not_found', message: 'Subject not found' });
+/** The subjects without assigned reach: customers are tenant master data, read `all` or `own` (D55-6). */
+const CUSTOMER_KEYS: ReadonlySet<SubjectKey> = new Set<SubjectKey>(['customerId', 'contactId']);
+
 const activityNotFound = () =>
   new NotFoundException({ code: 'not_found', message: 'Activity not found' });
 
@@ -367,7 +370,8 @@ export class ActivitiesService {
    *
    * The assignee is the exception (K5): their follow-up is theirs to do, so they may complete it on a subject they
    * can only read (assigned reach). Rescheduling or calling it off still needs the subject's write permission, and
-   * they get a 403 for it rather than a 404: the follow-up is on their own list, so it is no secret.
+   * they get a 403 for it rather than a 404: the follow-up is on their own list, so it is no secret. On a customer or
+   * contact, which has no assigned reach, the assignee completes it without reaching the customer (U20a2-Q7).
    */
   private async changePlanned(
     id: string,
@@ -391,7 +395,16 @@ export class ActivitiesService {
       const key = ACTIVITY_SUBJECT_KEYS.find((k) => row[k] !== null);
       if (key === undefined) throw activityNotFound();
       // Out of scope answers exactly like an unknown id, so a guessed activity id learns nothing.
-      if (row.assigneeUserId === principal.userId) {
+      if (
+        row.assigneeUserId === principal.userId &&
+        what === 'complete' &&
+        CUSTOMER_KEYS.has(key)
+      ) {
+        // U20a2-Q7: customers have no assigned reach, so an `own` reader who is handed a follow-up on someone
+        // else's customer could list it (readableSubjects) but never finish it. Completing their own follow-up
+        // needs only the customer read grant at some scope; the customer record itself stays out of reach.
+        this.authz.assert(SUBJECT_PERMISSION[key].read);
+      } else if (row.assigneeUserId === principal.userId) {
         const ref = await this.assertSubject(tx, key, row[key]!, 'read', activityNotFound);
         if (what !== 'complete') this.authz.assert(SUBJECT_PERMISSION[key].write, ref);
       } else {
@@ -440,10 +453,10 @@ export class ActivitiesService {
     id: string,
     mode: 'read' | 'write',
     notFound: () => NotFoundException = subjectNotFound,
-    lockLead = false,
+    lockOwned = false,
   ): Promise<ResourceRef> {
     const { scope, principal } = this.caller.current();
-    const ref = await this.refOf(q, key, id, scope, principal, mode === 'read', lockLead);
+    const ref = await this.refOf(q, key, id, scope, principal, mode === 'read', lockOwned);
     if (ref === undefined) throw notFound();
     const action: Permission = SUBJECT_PERMISSION[key][mode];
     try {
@@ -462,9 +475,10 @@ export class ActivitiesService {
   /**
    * The ResourceRef of the subject, undefined when it is not in this entity (tenant, for a customer). With
    * `readers`, a lead, opportunity or quotation ref also names its creator and assignees (record-reach.ts): only a
-   * read permission looks at them, so a write check skips the query. `lockLead` reads a lead FOR SHARE until the
-   * transaction ends: a follow-up planned on it then waits out an owner change in flight (which moves the old
-   * owner's follow-ups, leads.service.ts) and goes to the new owner, instead of landing on the old one unmoved.
+   * read permission looks at them, so a write check skips the query. `lockOwned` reads a lead or opportunity FOR
+   * SHARE until the transaction ends: a follow-up planned on it then waits out an owner change in flight (which locks
+   * the row FOR UPDATE and moves the old owner's follow-ups: leads.service.ts, opportunity-owner-change.service.ts)
+   * and goes to the new owner, instead of landing on the old one unmoved.
    */
   private async refOf(
     q: Q,
@@ -473,7 +487,7 @@ export class ActivitiesService {
     scope: TxScope,
     principal: Principal,
     readers: boolean,
-    lockLead = false,
+    lockOwned = false,
   ): Promise<ResourceRef | undefined> {
     switch (key) {
       case 'leadId': {
@@ -481,15 +495,16 @@ export class ActivitiesService {
           .select()
           .from(leads)
           .where(scoped(scope).where(leads, eq(leads.id, id)));
-        const [row] = lockLead ? await select.for('share') : await select;
+        const [row] = lockOwned ? await select.for('share') : await select;
         if (row === undefined) return undefined;
         return leadRef(row, readers ? await loadRecordReaders(q, scope, leads, id) : undefined);
       }
       case 'opportunityId': {
-        const [row] = await q
+        const select = q
           .select()
           .from(opportunities)
           .where(scoped(scope).where(opportunities, eq(opportunities.id, id)));
+        const [row] = lockOwned ? await select.for('share') : await select;
         if (row === undefined) return undefined;
         return opportunityRef(
           row,
@@ -619,20 +634,6 @@ export class ActivitiesService {
     row: ActivityRow,
     by: Principal,
   ): Promise<void> {
-    const assigneeUserId = row.assigneeUserId;
-    if (assigneeUserId === null) return;
-    const assignerName = nameIn(await personNameMap(tx, row.tenantId, [by.userId]), by.userId)!;
-    const link = assignedLink(key, row[key]!);
-    await this.notify.notifyUser(tx, {
-      userId: assigneeUserId,
-      title: `Follow-up assigned to you: ${row.subject}`,
-      body: `${assignerName} assigned you the follow-up "${row.subject}".`,
-      link,
-      email: {
-        template: 'crm.assigned',
-        vars: { entityType: 'follow-up', entityName: row.subject, assignerName, linkPath: link },
-      },
-      dedupeKey: `crm.assigned:activity:${row.id}:${row.version}`,
-    });
+    await notifyFollowUpAssigned(tx, this.notify, row, assignedLink(key, row[key]!), by);
   }
 }

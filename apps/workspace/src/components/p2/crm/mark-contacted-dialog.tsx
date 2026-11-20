@@ -1,6 +1,6 @@
 'use client';
 
-import { useId, useState, useTransition, type FormEvent } from 'react';
+import { useEffect, useId, useRef, useState, useTransition, type FormEvent } from 'react';
 
 import { Button } from '@/components/ui/button';
 import { Dialog, DialogClose } from '@/components/ui/dialog';
@@ -44,6 +44,14 @@ export function MarkContactedDialog({ action, id, number, version }: MarkContact
   const [fieldErrors, setFieldErrors] = useState<Partial<Record<string, string>>>({});
   const [pending, startTransition] = useTransition();
   const [round, setRound] = useState(0);
+  const formRef = useRef<HTMLFormElement>(null);
+  // Bumped on every refused submit: focus moves to the first field in error, so a screen reader
+  // reads its label and error at once instead of the refusal going unannounced.
+  const [refusals, setRefusals] = useState(0);
+
+  useEffect(() => {
+    if (refusals > 0) formRef.current?.querySelector<HTMLElement>('[aria-invalid="true"]')?.focus();
+  }, [refusals]);
 
   function setOpen(next: boolean) {
     if (next) {
@@ -64,7 +72,10 @@ export function MarkContactedDialog({ action, id, number, version }: MarkContact
     if (subject.length > 200) missing['contactSubject'] = SUBJECT_TOO_LONG;
     if (!body || body.length > 10000) missing['contactBody'] = BODY_REQUIRED;
     setFieldErrors(missing);
-    if (missing['contactSubject'] || missing['contactBody']) return;
+    if (missing['contactSubject'] || missing['contactBody']) {
+      setRefusals((n) => n + 1);
+      return;
+    }
     data.set('contactBody', body);
     if (subject) data.set('contactSubject', subject);
     else data.delete('contactSubject');
@@ -77,6 +88,7 @@ export function MarkContactedDialog({ action, id, number, version }: MarkContact
         return;
       }
       setFieldErrors(result.fieldErrors ?? {});
+      if (result.fieldErrors) setRefusals((n) => n + 1);
       toast.error(
         result.error ??
           result.fieldErrors?.['stage'] ??
@@ -112,7 +124,14 @@ export function MarkContactedDialog({ action, id, number, version }: MarkContact
         </>
       }
     >
-      <form key={round} id={formId} noValidate onSubmit={onSubmit} className={styles.moveForm}>
+      <form
+        ref={formRef}
+        key={round}
+        id={formId}
+        noValidate
+        onSubmit={onSubmit}
+        className={styles.moveForm}
+      >
         <input type="hidden" name="recordId" value={id} />
         <input type="hidden" name="expectedVersion" value={version} />
         <input type="hidden" name="stage" value="contacted" />

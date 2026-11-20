@@ -146,3 +146,23 @@ it('names an owner outside the list from the lead and starts on an empty choice'
   expect(container.querySelector<HTMLInputElement>('input[name="ownerUserId"]')?.value).toBe('');
   expect(save(container)?.disabled).toBe(true);
 });
+
+it('words an assignment-rule refusal from its code, next to the control (F1-Q51)', async () => {
+  mocks.updateLead.mockRejectedValue(
+    new ApiError(400, 'refused', {
+      error: {
+        code: 'bad_request',
+        message: 'ownerUserId cannot be someone more senior than you',
+        correlationId: 'corr-12345678',
+        details: { assignmentReason: 'upward' },
+      },
+    }),
+  );
+  const { container } = await mount();
+  await choose(container, 'ownerUserId', 'Ram Thapa');
+  await click(save(container));
+  await settle();
+  expect(container.textContent).toContain('The new owner cannot be someone more senior than you.');
+  expect(container.textContent).not.toContain('ownerUserId');
+  expect(mocks.error).toHaveBeenCalledWith('The new owner cannot be someone more senior than you.');
+});

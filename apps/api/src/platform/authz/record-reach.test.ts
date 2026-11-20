@@ -14,9 +14,10 @@ describe('record-reach registry', () => {
     expect([...reaching].sort()).toEqual([...RECORD_REACH_READ_PERMISSIONS].sort());
   });
 
-  it('honours the creator on leads only, and assignees on leads, opportunities and quotations', () => {
+  it('honours the creator on leads and (as the lead creator, FX-Q1) opportunities, and assignees on leads, opportunities and quotations', () => {
     expect(readReachOf('crm.lead.read')).toEqual({ creator: true, assignee: true });
-    expect(readReachOf('crm.opportunity.read')).toEqual({ creator: false, assignee: true });
+    expect(readReachOf('crm.opportunity.read')).toEqual({ creator: true, assignee: true });
+    expect(recordReachOf(opportunities)?.creator).toBe(opportunities.leadCreatorUserId);
     expect(readReachOf('quotation.read')).toEqual({ creator: false, assignee: true });
     expect(readReachOf('crm.lead.write')).toBeUndefined();
   });

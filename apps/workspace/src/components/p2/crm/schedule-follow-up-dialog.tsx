@@ -15,6 +15,7 @@ import { Field, Input, Select, Textarea } from '@/components/ui/field';
 import { toast } from '@/components/ui/toast';
 
 import { ActivityTypeButtons } from './activity-type-buttons';
+import { ownerOptionName } from './owner-field';
 import { subjectOf, type FollowUpSubjectKind } from './follow-up-subject';
 import { SCHEDULE_ACTIVITY_KINDS, type FieldErrors } from './forms';
 import styles from './follow-ups-card.module.css';
@@ -95,7 +96,7 @@ function FormAlert({ error }: { error: string | undefined }) {
 
 /** The people a follow-up can go to; `empty` adds a first choice that leaves it to the API. */
 function assigneeOptions(owners: readonly LeadOwnerOption[], empty?: string) {
-  const people = owners.map((o) => ({ value: o.userId, label: o.displayName || o.email }));
+  const people = owners.map((o) => ({ value: o.userId, label: ownerOptionName(o) }));
   return empty === undefined ? people : [{ value: '', label: empty }, ...people];
 }
 
@@ -103,10 +104,12 @@ const has = (owners: readonly LeadOwnerOption[], id: string | null | undefined) 
   id !== null && id !== undefined && owners.some((o) => o.userId === id);
 
 export interface ScheduleFollowUpDialogProps {
-  leadId: string;
-  /** The lead owner, the default assignee. */
+  /** The record the follow-up is planned on. Default kind: a lead. */
+  subjectKind?: Extract<FollowUpSubjectKind, 'leadId' | 'opportunityId'> | undefined;
+  subjectId: string;
+  /** The record's owner, the default assignee. */
   ownerUserId: string | null;
-  /** People the caller may assign to (`GET /v1/leads/owners`). */
+  /** People the caller may assign to (`GET /v1/leads/owners`, or `/v1/opportunities/follow-up-assignees`). */
   owners: readonly LeadOwnerOption[];
   /** The opening control. Default: a secondary "Schedule follow-up" button. */
   trigger?: ReactNode;
@@ -114,11 +117,12 @@ export interface ScheduleFollowUpDialogProps {
 
 /**
  * Schedule follow-up (D39, D40): type buttons (call, meeting, email), an optional subject that
- * defaults to the type's label, the due time in Kathmandu time, the assignee (the lead owner by
- * default) and a note. Saving plans an activity on the lead; it shows on the Follow-ups card.
+ * defaults to the type's label, the due time in Kathmandu time, the assignee (the record's owner by
+ * default) and a note. Saving plans an activity on the lead or deal; it shows with its planned ones.
  */
 export function ScheduleFollowUpDialog({
-  leadId,
+  subjectKind = 'leadId',
+  subjectId,
   ownerUserId,
   owners,
   trigger,
@@ -138,7 +142,17 @@ export function ScheduleFollowUpDialog({
 
   const ownerListed = has(owners, ownerUserId);
   const defaultAssignee = ownerListed ? (ownerUserId ?? '') : '';
-  const options = assigneeOptions(owners, ownerListed ? undefined : 'Lead owner');
+  // Left empty, the API picks the record's owner, or the person scheduling when it has none.
+  const options = assigneeOptions(
+    owners,
+    ownerListed
+      ? undefined
+      : ownerUserId === null
+        ? 'Me'
+        : subjectKind === 'leadId'
+          ? 'Lead owner'
+          : 'Opportunity owner',
+  );
   const shown = dialog.outcome.fieldErrors ?? {};
 
   return (
@@ -167,8 +181,8 @@ export function ScheduleFollowUpDialog({
         onSubmit={dialog.onSubmit}
         className={styles.dialogForm}
       >
-        <input type="hidden" name="subjectKind" value="leadId" />
-        <input type="hidden" name="subjectId" value={leadId} />
+        <input type="hidden" name="subjectKind" value={subjectKind} />
+        <input type="hidden" name="subjectId" value={subjectId} />
         <FormAlert error={dialog.outcome.error} />
         <ActivityTypeButtons
           kinds={SCHEDULE_ACTIVITY_KINDS}

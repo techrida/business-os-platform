@@ -225,6 +225,31 @@ describe('parseSettingInput: the delivery-hold threshold (F1-Q32)', () => {
   });
 });
 
+describe('parseSettingInput: the default lead owner (F1-Q21)', () => {
+  const key = 'crm.default_lead_owner';
+  const PERSON = '3f0c5a52-7c2e-4d0b-9a55-0e8d1d6a3b11';
+
+  it('saves the picked person as their user id', () => {
+    expect(parseSettingInput(key, { kind: 'text', value: PERSON })).toEqual({
+      ok: true,
+      value: PERSON,
+    });
+  });
+
+  it('saves the empty choice as null, which is the Sales head and the default', () => {
+    expect(parseSettingInput(key, { kind: 'text', value: '' })).toEqual({ ok: true, value: null });
+    expect(isFieldAtDefault(key, { kind: 'text', value: '' })).toBe(true);
+    expect(isFieldAtDefault(key, { kind: 'text', value: PERSON })).toBe(false);
+  });
+
+  it('refuses anything that is not a user id with a plain sentence', () => {
+    expect(parseSettingInput(key, { kind: 'text', value: 'sita' })).toEqual({
+      ok: false,
+      message: 'Choose a person from the list.',
+    });
+  });
+});
+
 describe('parseSettingInput: the P2 keys', () => {
   it.each(['fx.max_rate_age_days', 'quotation.validity_days'] as const)(
     'parses %s as a strict whole number',

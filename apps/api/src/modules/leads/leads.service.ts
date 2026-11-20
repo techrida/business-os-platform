@@ -31,17 +31,7 @@ import {
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
-import {
-  and,
-  count,
-  desc,
-  eq,
-  getTableColumns,
-  inArray,
-  isNotNull,
-  type SQL,
-  sql,
-} from 'drizzle-orm';
+import { and, count, desc, eq, getTableColumns, inArray, isNotNull, type SQL } from 'drizzle-orm';
 
 import { AuditService } from '../../platform/audit/audit.service';
 import { AuthzService, scopeWhereFor } from '../../platform/authz/authz.service';
@@ -55,8 +45,10 @@ import { NotifyService } from '../../platform/notify/notify.service';
 import { CurrencyEnabledService } from '../../platform/settings/currency-enabled';
 import { searchPage } from '../../platform/list';
 import { NumberingService } from '../../platform/settings/numbering.service';
+import { readSetting } from '../../platform/settings/settings.service';
 import { nameIn, personNameMap, personNames } from '../../platform/users/person-names';
-import { isPlannedSql, nextFollowUpSql } from '../activities/activities.types';
+import { nextFollowUpSql } from '../activities/activities.types';
+import { moveOpenFollowUps, notifyFollowUpAssigned } from '../activities/follow-ups';
 import {
   actorParty,
   type AssignmentCheck,
@@ -352,13 +344,19 @@ export class LeadsService {
             assigneeUserId,
             createdByUserId: principal.userId,
           })
-          .returning({ id: activities.id });
+          .returning();
         await this.audit.record(tx, {
           action: 'activity.scheduled',
           entityType: 'activities',
           entityId: planned!.id,
           after: { kind: followUp.kind, leadId: row!.id, dueAt: followUp.dueAt, assigneeUserId },
         });
+        // U20a2-Q8: a first follow-up handed to someone else tells them (#22), unless they are the owner, whom the
+        // lead's own notice above already told.
+        if (assigneeUserId !== principal.userId && assigneeUserId !== ownerUserId) {
+          await notifyFollowUpAssigned(tx, this.notify, planned!, `/leads/${row!.id}`, principal);
+          sent.notice = true;
+        }
         // The only planned activity of a new lead, so it is the next follow-up.
         return toLeadDto(row!, dueAt, ownerName, null, principal);
       };
@@ -404,6 +402,7 @@ export class LeadsService {
         reason: body.stage === 'lost' ? 'probe' : body.reason,
         note: body.note,
         expectedVersion: body.expectedVersion,
+        heldFromStage: row.heldFromStage,
       });
       if (!planProbe.ok) throw refusalToException(planProbe.kind, planProbe.message);
       if (body.stage === 'lost') {
@@ -419,6 +418,7 @@ export class LeadsService {
         reason,
         note: body.note,
         expectedVersion: body.expectedVersion,
+        heldFromStage: row.heldFromStage,
       });
       if (!plan.ok) throw refusalToException(plan.kind, plan.message);
 
@@ -450,7 +450,14 @@ export class LeadsService {
         entityId: id,
         before: { stage: row.stage, version: row.version },
         after: { stage: updated.stage, version: updated.version },
-        meta: { reason: plan.set.stageReason, note: plan.set.stageNote, lostReasonId },
+        meta: {
+          reason: plan.set.stageReason,
+          note: plan.set.stageNote,
+          lostReasonId,
+          ...(row.stage === 'on_hold' || updated.stage === 'on_hold'
+            ? { heldFromStage: row.heldFromStage ?? plan.set.heldFromStage }
+            : {}),
+        },
       });
       if (body.contactActivity !== undefined) {
         const [actRow] = await tx
@@ -569,7 +576,13 @@ export class LeadsService {
           before: { ownerUserId: row.ownerUserId },
           after: { ownerUserId: newOwner },
         });
-        await this.moveFollowUps(tx, scope, id, row.ownerUserId, newOwner);
+        await moveOpenFollowUps(tx, scope, this.audit, {
+          subject: 'leadId',
+          subjectId: id,
+          from: row.ownerUserId,
+          to: newOwner,
+          reason: 'lead_owner_changed',
+        });
         if (newOwner !== principal.userId) {
           await this.notifyAssigned(tx, principal, updated);
           sent.notice = true;
@@ -719,7 +732,12 @@ export class LeadsService {
       return principal.userId;
     }
     if (decision.reason === 'sales_owner_required') {
-      const owner = defaultSalesOwner(await assignableParties(tx, principal, scope, check));
+      const parties = await assignableParties(tx, principal, scope, check);
+      // F1-Q21: the entity's default lead owner when set and still someone this lead may be handed to; else the
+      // Sales head as before.
+      const configured = (await readSetting(tx, scope, 'crm.default_lead_owner')).value;
+      if (configured !== null && parties.some((p) => p.userId === configured)) return configured;
+      const owner = defaultSalesOwner(parties);
       if (owner !== null) return owner;
     }
     throw assignmentRefused('ownerUserId', decision.reason);
@@ -781,42 +799,6 @@ export class LeadsService {
       .for('update');
     if (row === undefined) throw notFound();
     return row;
-  }
-
-  /**
-   * D45: follow-ups follow the owner. The lead's open planned activities assigned to the old owner move to the new
-   * one, in the owner change's own transaction; one by one so each gets its own audit row. Follow-ups assigned to
-   * anyone else (or to no one), and completed or cancelled ones, stay as they are. The version moves with the
-   * assignee, so a form open on the old assignee gets a 409 instead of silently putting it back.
-   */
-  private async moveFollowUps(
-    tx: DbTransaction,
-    scope: TxScope,
-    leadId: string,
-    from: string | null,
-    to: string,
-  ): Promise<void> {
-    if (from === null || from === to) return;
-    const moved = await tx
-      .update(activities)
-      .set({ assigneeUserId: to, updatedAt: new Date(), version: sql`${activities.version} + 1` })
-      .where(
-        scoped(scope).where(
-          activities,
-          and(eq(activities.leadId, leadId), eq(activities.assigneeUserId, from), isPlannedSql),
-        ),
-      )
-      .returning({ id: activities.id });
-    for (const { id } of moved) {
-      await this.audit.record(tx, {
-        action: 'activity.reassigned',
-        entityType: 'activities',
-        entityId: id,
-        before: { assigneeUserId: from },
-        after: { assigneeUserId: to },
-        meta: { reason: 'lead_owner_changed', leadId },
-      });
-    }
   }
 
   /** The lost reason option of a lead, by its current label (D49); null for a lead without one. */

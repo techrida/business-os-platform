@@ -135,11 +135,9 @@ export function MarkLostDialog({
       open={open}
       onOpenChange={setOpen}
       title={noun === 'lead' ? 'Mark this lead lost?' : 'Mark this opportunity lost?'}
-      description={
-        noun === 'lead'
-          ? `${number} will move to Lost. A manager can reopen it later.`
-          : `${number} will move to Lost.`
-      }
+      // No promise about reopening (U22-Q1): who may reopen is the server's call, and the record
+      // carries no reopen capability before it is lost.
+      description={`${number} will move to Lost.`}
       tone="destructive"
       locked={pending}
       closeOnOutsideClick={false}

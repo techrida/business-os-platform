@@ -130,6 +130,7 @@ describe('P3 error codes', () => {
       already_issued: 200,
       fx_rate_stale: 409,
       evidence_policy_unmet: 422,
+      credit_hold: 409,
     });
   });
 

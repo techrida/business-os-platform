@@ -42,8 +42,9 @@ import {
   Optional,
   UnprocessableEntityException,
 } from '@nestjs/common';
-import { and, asc, eq, inArray, isNotNull, ne, sql, type SQL } from 'drizzle-orm';
+import { and, asc, eq, inArray, isNotNull, isNull, ne, sql, type SQL } from 'drizzle-orm';
 
+import { AuditService } from '../../platform/audit/audit.service';
 import { can as decide, type Principal, type ResourceRef } from '../../platform/authz/can';
 import { AuthzService } from '../../platform/authz/authz.service';
 import { DB, type Db, type DbTransaction } from '../../platform/db/db.module';
@@ -51,10 +52,16 @@ import { updateVersioned, withIdempotency } from '../../platform/db/idempotency'
 import { withTx, type TxScope } from '../../platform/db/tx';
 import { searchPage } from '../../platform/list';
 import { NumberingService } from '../../platform/settings/numbering.service';
-import { personNames } from '../../platform/users/person-names';
+import { nameIn, personNameMap, personNames } from '../../platform/users/person-names';
 import { customerHasPortalUser, firstAdminRule } from '../portal-access/first-admin';
 import { CustomersCaller } from './customers.caller';
-import { escapeLike, normalizeEmail, normalizeName, normalizePan } from './customers.normalize';
+import {
+  escapeLike,
+  normalizeEmail,
+  normalizeName,
+  normalizePan,
+  panMatchKey,
+} from './customers.normalize';
 import {
   type CustomerDetailDto,
   type CustomerList,
@@ -224,6 +231,7 @@ export class CustomersService {
     private readonly numbering: NumberingService,
     private readonly authz: AuthzService,
     private readonly caller: CustomersCaller,
+    private readonly audit: AuditService,
     @Optional() @Inject(CUSTOMERS_CLOCK) private readonly clock: () => Date = () => new Date(),
   ) {}
 
@@ -271,7 +279,17 @@ export class CustomersService {
         return count?.n ?? 0;
       },
     });
-    return { items: rows.map(toCustomerDto), total };
+    if (principal.orgKind !== 'staff') return { items: rows.map(toCustomerDto), total };
+    // U15a-Q3: the owner by name only (D46), read in the tenant, so the list needs no directory access.
+    const names = await personNameMap(
+      this.db,
+      scope.tenantId,
+      rows.map((r) => r.ownerUserId),
+    );
+    return {
+      items: rows.map((r) => ({ ...toCustomerDto(r), ownerName: nameIn(names, r.ownerUserId) })),
+      total,
+    };
   }
 
   /** The industries in use among the customers the caller may read, for the list's Industry filter. */
@@ -344,13 +362,47 @@ export class CustomersService {
     const { scope, actor, principal } = this.caller.current();
     this.assertStaff(principal);
     const now = this.clock();
-    const { contact, ...fields } = body;
+    const { contact, duplicateOverrideReason, ...fields } = body;
     return withTx(this.db, scope, actor, async (tx) => {
       const done = await withIdempotency(
         tx,
         { command: 'customer.create', key: idempotencyKey, body },
         async () => {
+          // The same PAN as stored is refused outright (409) before any reason is asked for, so a reason is
+          // never asked for a create that cannot succeed.
+          if (fields.panVatNo !== undefined) {
+            await this.assertPanFree(tx, scope.tenantId, normalizePan(fields.panVatNo));
+          }
+          const matches = await this.duplicateCandidates(tx, scope.tenantId, principal, fields);
+          if (matches.length > 0 && duplicateOverrideReason === undefined) {
+            const onPan = matches.some((m) => m.on.includes('pan_vat'));
+            const onName = matches.some((m) => m.on.includes('name'));
+            const what =
+              onPan && onName
+                ? 'this name or PAN/VAT number'
+                : onPan
+                  ? 'this PAN/VAT number'
+                  : 'this name';
+            throw new BadRequestException({
+              code: 'bad_request',
+              reason: 'duplicate_reason_required',
+              message: `A customer with ${what} already exists; give a reason to create another one`,
+            });
+          }
           const customer = await this.createInTx(tx, scope, fields, now);
+          if (matches.length > 0) {
+            await this.audit.record(tx, {
+              action: 'customer.duplicate_override',
+              entityType: 'customers',
+              entityId: customer.id,
+              after: { legalName: customer.legalName },
+              meta: {
+                reason: duplicateOverrideReason,
+                matchedCustomerIds: matches.map((m) => m.customerId),
+                matches,
+              },
+            });
+          }
           await this.createContactInTx(
             tx,
             scope,
@@ -363,6 +415,50 @@ export class CustomersService {
       );
       return done.response;
     });
+  }
+
+  /**
+   * F1-Q55: the live customers (not merged away) the caller can read that the workspace's advisory check
+   * (`duplicate-check.ts`) would flag: the same normalised name, or the same PAN/VAT number once spaces and
+   * hyphens are dropped ("123-456-789" against "123456789"). Each says which rules it matched. Limited to the
+   * caller's read scope, so the check never reveals a customer they could not have been warned about. The very
+   * same PAN as stored is refused on its own before this (409 `duplicate_pan_vat`).
+   */
+  private async duplicateCandidates(
+    tx: DbTransaction,
+    tenantId: string,
+    principal: Principal,
+    fields: Pick<CustomerFields, 'legalName' | 'panVatNo'>,
+  ): Promise<{ customerId: string; on: ('name' | 'pan_vat')[] }[]> {
+    const name = normalizeName(fields.legalName);
+    const pan = fields.panVatNo === undefined ? null : panMatchKey(fields.panVatNo);
+    const panKey = sql`regexp_replace(${customers.panVatNo}, '[[:space:]-]', '', 'g')`;
+    const rows = await tx
+      .select({
+        id: customers.id,
+        sameName: sql<boolean>`${customers.nameNorm} = ${name}`,
+        samePan:
+          pan === null ? sql<boolean>`false` : sql<boolean>`coalesce(${panKey} = ${pan}, false)`,
+      })
+      .from(customers)
+      .where(
+        and(
+          this.visibleWhere(tenantId, principal, 'customer.read'),
+          isNull(customers.mergedIntoId),
+          pan === null
+            ? eq(customers.nameNorm, name)
+            : sql`(${customers.nameNorm} = ${name} OR ${panKey} = ${pan})`,
+        ),
+      )
+      .orderBy(asc(customers.id))
+      .limit(20);
+    return rows.map((r) => ({
+      customerId: r.id,
+      on: [
+        ...(r.samePan ? (['pan_vat'] as const) : []),
+        ...(r.sameName ? (['name'] as const) : []),
+      ],
+    }));
   }
 
   /**

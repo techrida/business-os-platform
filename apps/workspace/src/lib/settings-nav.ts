@@ -221,7 +221,7 @@ export const SETTINGS_GROUPS: readonly SettingsGroup[] = [
         href: '/settings/sales',
         icon: 'trending-up',
         description:
-          'Quotation validity, evidence for won deals, the billing schedule and delivery holds.',
+          'Lead owner, quotation validity, evidence for won deals, the billing schedule and delivery holds.',
         permission: 'admin.settings.write',
         ready: true,
       },

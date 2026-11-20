@@ -487,6 +487,15 @@ describe('describeBillingFailure', () => {
     expect(evidence.message).toMatch(/evidence/i);
   });
 
+  it('words a credit hold without a reload (F1-Q20/F1-Q26)', () => {
+    // Fails on the old code: an unnamed 409 read as "the page is out of date".
+    expect(describeBillingFailure(refusal(409, 'credit_hold'))).toMatchObject({
+      kind: 'credit_hold',
+      reload: false,
+      definite: true,
+    });
+  });
+
   it('treats a stale row version as a reload, and an unnamed 409 the same way', () => {
     const f = describeBillingFailure(refusal(409, 'conflict'));
     expect(f).toMatchObject({ kind: 'stale', reload: true, definite: true });

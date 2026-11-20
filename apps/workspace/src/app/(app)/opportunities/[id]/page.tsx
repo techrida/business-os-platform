@@ -1,18 +1,36 @@
-import type { LeadLostReason, OpportunityDto } from '@bos/contracts';
+import type {
+  CreditHoldDto,
+  LeadLostReason,
+  LeadOwnerOption,
+  OpportunityDto,
+  QuotationListItem,
+} from '@bos/contracts';
 import type { Metadata } from 'next';
+import type { ReactNode } from 'react';
 import Link from 'next/link';
 import { notFound } from 'next/navigation';
 import type { NumberSystems } from '@bos/locale';
 
-import { getOpportunity, listActivities } from '@/components/p2/crm/crm-api';
-import { FollowUpsCard } from '@/components/p2/crm/follow-ups-card';
+import {
+  getCreditHold,
+  getOpportunity,
+  listActivities,
+  listOpportunityFollowUpAssignees,
+  listOpportunityOwners,
+} from '@/components/p2/crm/crm-api';
+import { FollowUpList } from '@/components/p2/crm/follow-ups-card';
 import { moneyOrNull } from '@/components/p2/crm/format';
 import { MarkLostDialog } from '@/components/p2/crm/mark-lost-dialog';
-import { canAssignFollowUps, loadPeople } from '@/components/p2/crm/people';
 import { PutOnHoldDialog } from '@/components/p2/crm/put-on-hold-dialog';
 import { ActivityList, LoadProblem, StageBadge } from '@/components/p2/crm/server-bits';
 import { StageConfirmDialog } from '@/components/p2/crm/stage-confirm-dialog';
-import { resolvedMoves, stageLabel, type Move } from '@/components/p2/crm/stages';
+import {
+  resolvedMoves,
+  resumeMove,
+  stageLabel,
+  stagesBefore,
+  type Move,
+} from '@/components/p2/crm/stages';
 import { listQuotations } from '@/components/p2/quotations/api';
 import {
   editQuotationHref,
@@ -23,8 +41,10 @@ import {
 } from '@/components/p2/quotations/resume';
 import { QuotationStatusBadge } from '@/components/p2/quotations/status-badge';
 import { Alert } from '@/components/ui/alert';
+import { Badge } from '@/components/ui/badge';
 import { LinkButton } from '@/components/ui/button';
 import { Card } from '@/components/ui/card';
+import { Icon } from '@/components/ui/icon';
 import { Breadcrumb, Page, PageHeader } from '@/components/ui/page';
 import { FactList, Panel, type Fact } from '@/components/ui/panel';
 import { StatusTimeline, type TimelineStep } from '@/components/ui/status-timeline';
@@ -39,7 +59,10 @@ import { getCustomer } from '@/components/p2/customers/api';
 
 import { moveOpportunityStageAction } from '../actions';
 import { OpportunityActivities } from './activity-panel';
+import { CreditOverrideDialog } from './credit-override-dialog';
+import { OpportunityOwnerField } from './opportunity-owner-field';
 import styles from './detail.module.css';
+import { OwnerCell } from '../../leads/lead-cells';
 
 export const metadata: Metadata = { title: 'Opportunity · Business OS' };
 export const dynamic = 'force-dynamic';
@@ -103,14 +126,16 @@ function primaryOpportunityMove(
       errorMessage: 'The opportunity stage could not be updated.',
     };
   }
-  if (opp.stage === 'on_hold' && has('negotiation')) {
+  // A held deal resumes only to the stage it was held at (F1-Q53): the server sends that one move.
+  const resume = resumeMove(opp.stage, moves);
+  if (resume) {
     return {
-      stage: 'negotiation',
+      stage: resume.stage,
       triggerLabel: 'Resume',
       title: 'Resume this opportunity?',
-      description: `${opp.number} will move from On Hold back to Negotiation.`,
+      description: `${opp.number} will move from On Hold back to ${resume.label}.`,
       confirmLabel: 'Resume opportunity',
-      successMessage: 'Moved to Negotiation.',
+      successMessage: `Moved to ${resume.label}.`,
       errorMessage: 'The opportunity could not be resumed.',
     };
   }
@@ -128,73 +153,49 @@ function primaryOpportunityMove(
   return null;
 }
 
+/** A quotation in one of these states was sent to the customer, so the deal reached Quotation Sent. */
+const SENT_STATUSES: ReadonlySet<string> = new Set(['sent', 'accepted', 'rejected', 'expired']);
+
+/**
+ * The stages this deal has actually reached. The API records no stage history for deals, so only
+ * what the record proves counts: Qualified (deals start there), the stage it stands at or was held
+ * at, Quotation Sent once a quotation went out, and the stages the state machine says it passed
+ * through (`stagesBefore`). A stage it may have skipped reads "Not recorded", never "Reached".
+ */
 function opportunityTimeline(
-  opp: Pick<OpportunityDto, 'stage'>,
-  hasQuotations: boolean,
+  opp: Pick<OpportunityDto, 'stage' | 'heldFromStage'>,
+  quotations: readonly Pick<QuotationListItem, 'status'>[],
 ): TimelineStep[] {
-  const currentIndex = LINEAR_STAGES.findIndex((stage) => stage === opp.stage);
-  if (currentIndex !== -1) {
-    return LINEAR_STAGES.map((stage, index): TimelineStep => {
-      if (index < currentIndex) {
-        return {
-          key: stage,
-          title: <span>{stageLabel('opportunity', stage)}</span>,
-          status: 'Reached',
-          tone: 'done',
-        };
-      }
-      if (index === currentIndex) {
-        const won = stage === 'won';
-        return {
-          key: stage,
-          title: <span>{stageLabel('opportunity', stage)}</span>,
-          status: won ? 'Won' : 'Current',
-          tone: won ? 'done' : 'current',
-        };
-      }
-      return {
-        key: stage,
-        title: <span>{stageLabel('opportunity', stage)}</span>,
-        status: 'Not yet',
-        tone: 'upcoming',
-      };
-    });
+  const heldAt = opp.stage === 'on_hold' ? (opp.heldFromStage ?? 'negotiation') : null;
+  const reached = new Set<string>(['qualified']);
+  const add = (stage: string) => {
+    reached.add(stage);
+    for (const before of stagesBefore('opportunity', stage)) reached.add(before);
+  };
+  add(opp.stage);
+  if (heldAt) add(heldAt);
+  if (opp.stage === 'won' || quotations.some((q) => SENT_STATUSES.has(q.status))) {
+    add('quotation_sent');
   }
+  // How far along the deal is known to be: earlier stages without proof were maybe skipped.
+  const furthest = Math.max(...LINEAR_STAGES.map((stage, i) => (reached.has(stage) ? i : -1)));
 
+  const steps = LINEAR_STAGES.map((stage, index): TimelineStep => {
+    const title = <span>{stageLabel('opportunity', stage)}</span>;
+    if (stage === opp.stage) {
+      const won = stage === 'won';
+      return { key: stage, title, status: won ? 'Won' : 'Current', tone: won ? 'done' : 'current' };
+    }
+    if (reached.has(stage)) return { key: stage, title, status: 'Reached', tone: 'done' };
+    return index < furthest
+      ? { key: stage, title, status: 'Not recorded', tone: 'muted' }
+      : { key: stage, title, status: 'Not yet', tone: 'upcoming' };
+  });
   if (opp.stage === 'on_hold') {
-    const steps: TimelineStep[] = LINEAR_STAGES.map((stage): TimelineStep => {
-      const reached = stage !== 'won';
-      return {
-        key: stage,
-        title: <span>{stageLabel('opportunity', stage)}</span>,
-        status: reached ? 'Reached' : 'Not yet',
-        tone: reached ? 'done' : 'upcoming',
-      };
-    });
-    steps.push({
-      key: 'on_hold',
-      title: <span>On Hold</span>,
-      status: 'Current',
-      tone: 'warning',
-    });
-    return steps;
+    steps.push({ key: 'on_hold', title: <span>On Hold</span>, status: 'Current', tone: 'warning' });
+  } else if (opp.stage === 'lost') {
+    steps.push({ key: 'lost', title: <span>Lost</span>, status: 'Current', tone: 'error' });
   }
-
-  const steps: TimelineStep[] = LINEAR_STAGES.map((stage): TimelineStep => {
-    const reached = stage === 'qualified' || (stage === 'quotation_sent' && hasQuotations);
-    return {
-      key: stage,
-      title: <span>{stageLabel('opportunity', stage)}</span>,
-      status: reached ? 'Reached' : 'Not yet',
-      tone: reached ? 'done' : 'upcoming',
-    };
-  });
-  steps.push({
-    key: 'lost',
-    title: <span>Lost</span>,
-    status: 'Current',
-    tone: 'error',
-  });
   return steps;
 }
 
@@ -202,23 +203,71 @@ function opportunityStageMessage(
   stage: OpportunityDto['stage'],
   canEdit: boolean,
   canReopen: boolean,
+  resumeLabel: string | null,
 ): string {
   if (!canEdit) return 'You have read-only access to this opportunity.';
   if (stage === 'won') return 'This opportunity is won. Its stage is final.';
   if (stage === 'lost') {
     return canReopen
       ? 'This opportunity is lost. Use Reopen in the header to return it to Qualified.'
-      : 'Only a manager can reopen a lost opportunity.';
+      : 'This opportunity is lost. Reopening needs reopen access.';
   }
   if (stage === 'on_hold') {
-    return 'This opportunity is on hold. Use Resume in the header to return it to Negotiation.';
+    return resumeLabel
+      ? `This opportunity is on hold. Use Resume in the header to return it to ${resumeLabel}.`
+      : 'This opportunity is on hold.';
   }
   return 'Sending and accepting quotations update the stage automatically.';
 }
 
-function facts(o: OpportunityDto, customerName: string, numberSystems: NumberSystems): Fact[] {
+/**
+ * Why a deal is on credit hold (F1-Q20), for everyone who can read it. Holders of `credit.override`
+ * also get the amounts (when they load) and the Override action; anyone else is told who can
+ * override, with no button that would only be refused.
+ */
+function CreditHoldBanner({
+  opp,
+  canOverride,
+  hold,
+  numberSystems,
+}: {
+  opp: OpportunityDto;
+  canOverride: boolean;
+  hold: CreditHoldDto | null;
+  numberSystems: NumberSystems;
+}) {
+  const amounts =
+    hold && hold.creditLimit !== null
+      ? ` It owes ${money(hold.exposure, hold.currency, numberSystems)} against a limit of ${money(hold.creditLimit, hold.currency, numberSystems)}.`
+      : '';
+  return (
+    <Alert
+      tone="warning"
+      role="status"
+      title="Credit hold"
+      actions={
+        canOverride ? (
+          <CreditOverrideDialog opportunityId={opp.id} number={opp.number} />
+        ) : undefined
+      }
+    >
+      {`This customer is over its credit limit, so an accepted quotation on this deal cannot become a sales order until the hold is overridden or lifted.${amounts} `}
+      {canOverride
+        ? 'Override the hold to let it go ahead, or wait for a payment to bring the customer under the limit.'
+        : 'Someone with credit override access can override the hold. A payment that brings the customer under the limit also lifts it.'}
+    </Alert>
+  );
+}
+
+function facts(
+  o: OpportunityDto,
+  customerName: string,
+  numberSystems: NumberSystems,
+  owner: ReactNode,
+): Fact[] {
   const dash = <span className={styles.quiet}>Not set</span>;
   return [
+    { key: 'owner', label: 'Owner', value: owner },
     {
       key: 'value',
       label: 'Estimated value',
@@ -262,17 +311,13 @@ export default async function OpportunityPage({ params }: { params: Promise<{ id
   const session = await requireStaffSession(`/opportunities/${id}`);
   const numberSystems = await getNumberSystems();
 
-  const [oppResult, activityResult, plannedResult, quotationsResult, peopleResult] =
-    await Promise.allSettled([
-      getOpportunity(session, id),
-      listActivities(session, { opportunityId: id, status: 'logged', limit: 100 }),
-      // Planned follow-ups on the deal itself (migrated open tasks included).
-      listActivities(session, { opportunityId: id, status: 'planned', limit: 100 }),
-      listQuotations(session, { opportunityId: id }),
-      // The owners list (the Reschedule choices) needs crm.lead.write, so it is only asked for with it;
-      // names on the page come from the records themselves (D46).
-      canAssignFollowUps(session).then((owners) => loadPeople(session, { owners })),
-    ]);
+  const [oppResult, activityResult, plannedResult, quotationsResult] = await Promise.allSettled([
+    getOpportunity(session, id),
+    listActivities(session, { opportunityId: id, status: 'logged', limit: 100 }),
+    // Planned follow-ups on the deal itself (migrated open tasks included).
+    listActivities(session, { opportunityId: id, status: 'planned', limit: 100 }),
+    listQuotations(session, { opportunityId: id }),
+  ]);
 
   if (oppResult.status === 'rejected') {
     const f = failureOf(oppResult.reason);
@@ -295,18 +340,18 @@ export default async function OpportunityPage({ params }: { params: Promise<{ id
   const customer = await getCustomer(session, opp.customerId).catch(() => null);
   const can = await getPermissionCheck(session);
   const canEdit = opp.canEdit ?? can('crm.opportunity.write');
-  // Quotations follow their own grant (the API asks for quotation.draft plus read of the opportunity),
-  // not write access to the opportunity.
-  const canDraft = can('quotation.draft');
+  // Quotations follow the server's own answer for this deal (FX-Q1, FX-Q2): quotation.draft plus reach
+  // as owner, department or lead creator. An assigned follow-up alone does not count; omitted means no.
+  const canDraft = opp.canDraftQuotation === true;
   const currentUserId = (await getMeOrNull(session.accessToken))?.id ?? null;
   const moves = resolvedMoves(
     'opportunity',
     opp.stage,
     opp.allowedMoves ?? (canEdit ? undefined : []),
+    opp.heldFromStage,
   );
   const activityProblem =
     activityResult.status === 'rejected' ? failureOf(activityResult.reason) : null;
-  const { owners } = peopleResult.status === 'fulfilled' ? peopleResult.value : { owners: [] };
   const plannedProblem =
     plannedResult.status === 'rejected' ? failureOf(plannedResult.reason).message : null;
   // Overdue is measured against the server's clock for this render.
@@ -330,6 +375,38 @@ export default async function OpportunityPage({ params }: { params: Promise<{ id
       if (failureOf(err).status === 403) canMarkLost = false;
     }
   }
+  // The people an editor may hand the deal to (F1-Q51), and the wider list its follow-ups may go to
+  // (a reader is enough for a follow-up, not for an owner). Anyone else, or a failed list, sees the
+  // owner's name alone; a follow-up then goes to whoever schedules it.
+  let ownerChoices: LeadOwnerOption[] = [];
+  let assigneeChoices: LeadOwnerOption[] = [];
+  if (canEdit) {
+    [ownerChoices, assigneeChoices] = await Promise.all([
+      listOpportunityOwners(session).catch(() => []),
+      listOpportunityFollowUpAssignees(session).catch(() => []),
+    ]);
+  }
+  const ownerFact =
+    open && ownerChoices.length > 1 ? (
+      <OpportunityOwnerField
+        opportunityId={opp.id}
+        version={opp.version}
+        ownerUserId={opp.ownerUserId}
+        ownerName={opp.ownerName ?? null}
+        owners={ownerChoices}
+      />
+    ) : (
+      <OwnerCell name={opp.ownerName ?? null} seedId={opp.ownerUserId} />
+    );
+  // F1-Q20: the deal's flag is booleans only; the amounts are for credit.override holders. The hold
+  // matters only while a sales order can still come: on an open deal, or a won one whose order has not
+  // gone ahead. A lost deal, or a won one with its order, shows no hold and offers no override.
+  const creditHeld =
+    opp.creditHold?.held === true &&
+    opp.creditHold.overridden !== true &&
+    (open || (opp.stage === 'won' && opp.creditHold.ordered !== true));
+  const canOverride = creditHeld && can('credit.override');
+  const creditHold = canOverride ? await getCreditHold(session, opp.id).catch(() => null) : null;
   const reasonLabel = opp.lostReason?.label ?? opp.stageReason;
   // A list that did not load falls back to New:
   // the New page checks again before it shows the builder.
@@ -347,6 +424,16 @@ export default async function OpportunityPage({ params }: { params: Promise<{ id
           description={
             <span className={styles.metadata}>
               <StageBadge kind="opportunity" stage={opp.stage} />
+              {creditHeld ? (
+                <Badge
+                  tone="warning"
+                  className={styles.holdBadge}
+                  title="The customer is over its credit limit: no sales order until the hold is overridden or lifted."
+                >
+                  <Icon name="credit-card" size={12} />
+                  Credit hold
+                </Badge>
+              ) : null}
               <span>{opp.number}</span>
             </span>
           }
@@ -432,12 +519,20 @@ export default async function OpportunityPage({ params }: { params: Promise<{ id
             </>
           }
         />
+        {creditHeld ? (
+          <CreditHoldBanner
+            opp={opp}
+            canOverride={canOverride}
+            hold={creditHold}
+            numberSystems={numberSystems}
+          />
+        ) : null}
       </div>
 
       <Card as="aside" aria-label="Stage" className={styles.stageCard}>
         <StatusTimeline
           label="Opportunity stages"
-          steps={opportunityTimeline(opp, quotations.length > 0)}
+          steps={opportunityTimeline(opp, quotations)}
           className={styles.pipeline ?? ''}
         />
         <div className={styles.stageControls}>
@@ -457,6 +552,7 @@ export default async function OpportunityPage({ params }: { params: Promise<{ id
               opp.stage,
               canEdit,
               moves.some((move) => move.stage === 'qualified'),
+              resumeMove(opp.stage, moves)?.label ?? null,
             )}
           </p>
         </div>
@@ -468,6 +564,7 @@ export default async function OpportunityPage({ params }: { params: Promise<{ id
             opp,
             customer ? `${customer.legalName} · ${customer.number}` : 'Customer name unavailable',
             numberSystems,
+            ownerFact,
           )}
           className={styles.facts ?? ''}
         />
@@ -526,31 +623,34 @@ export default async function OpportunityPage({ params }: { params: Promise<{ id
         )}
       </Panel>
 
-      {plannedProblem !== null ? (
-        // An empty card would claim nothing is planned; say the list did not load instead.
-        <Panel title="Follow-ups" className={styles.records} as="aside">
-          <Alert
-            tone="error"
-            role="alert"
-            title="Follow-ups did not load"
-            actions={<Link href={`/opportunities/${id}`}>Reload</Link>}
-          >
-            {plannedProblem}
-          </Alert>
-        </Panel>
-      ) : (
-        <FollowUpsCard
-          items={plannedResult.status === 'fulfilled' ? plannedResult.value : []}
-          owners={owners}
-          schedule={false}
-          canEdit={canEdit}
-          currentUserId={currentUserId}
-          now={now}
-          className={styles.records}
-        />
-      )}
-
-      <OpportunityActivities opportunityId={opp.id} canEdit={canEdit}>
+      <OpportunityActivities
+        opportunityId={opp.id}
+        canEdit={canEdit}
+        ownerUserId={opp.ownerUserId}
+        owners={assigneeChoices}
+        planned={
+          plannedProblem !== null ? (
+            // An empty list would claim nothing is planned; say the list did not load instead.
+            <Alert
+              tone="error"
+              role="alert"
+              title="Follow-ups did not load"
+              actions={<Link href={`/opportunities/${id}`}>Reload</Link>}
+            >
+              {plannedProblem}
+            </Alert>
+          ) : (
+            <FollowUpList
+              items={plannedResult.status === 'fulfilled' ? plannedResult.value : []}
+              owners={assigneeChoices}
+              canEdit={canEdit}
+              currentUserId={currentUserId}
+              now={now}
+              empty={<p className={styles.quiet}>Nothing planned.</p>}
+            />
+          )
+        }
+      >
         {activityProblem ? (
           <LoadProblem
             status={activityProblem.status}

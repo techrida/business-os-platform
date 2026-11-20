@@ -1,6 +1,6 @@
 'use client';
 
-import { useId, useState, useTransition, type FormEvent } from 'react';
+import { useEffect, useId, useRef, useState, useTransition, type FormEvent } from 'react';
 
 import { Button } from '@/components/ui/button';
 import { Dialog, DialogClose } from '@/components/ui/dialog';
@@ -41,6 +41,14 @@ export function PutOnHoldDialog({ noun, action, id, number, version }: PutOnHold
   const [fieldErrors, setFieldErrors] = useState<Partial<Record<string, string>>>({});
   const [pending, startTransition] = useTransition();
   const [round, setRound] = useState(0);
+  const formRef = useRef<HTMLFormElement>(null);
+  // Bumped on every refused submit: focus moves to the first field in error, so a screen reader
+  // reads its label and error at once instead of the refusal going unannounced.
+  const [refusals, setRefusals] = useState(0);
+
+  useEffect(() => {
+    if (refusals > 0) formRef.current?.querySelector<HTMLElement>('[aria-invalid="true"]')?.focus();
+  }, [refusals]);
 
   function setOpen(next: boolean) {
     if (next) {
@@ -60,7 +68,10 @@ export function PutOnHoldDialog({ noun, action, id, number, version }: PutOnHold
     if (!reason || reason.length > 200) missing['reason'] = REASON_REQUIRED;
     if (!note || note.length > 2000) missing['note'] = NOTE_REQUIRED;
     setFieldErrors(missing);
-    if (missing['reason'] || missing['note']) return;
+    if (missing['reason'] || missing['note']) {
+      setRefusals((n) => n + 1);
+      return;
+    }
     data.set('reason', reason);
     data.set('note', note);
 
@@ -72,6 +83,7 @@ export function PutOnHoldDialog({ noun, action, id, number, version }: PutOnHold
         return;
       }
       setFieldErrors(result.fieldErrors ?? {});
+      if (result.fieldErrors) setRefusals((n) => n + 1);
       toast.error(
         result.error ??
           result.fieldErrors?.['stage'] ??
@@ -107,7 +119,14 @@ export function PutOnHoldDialog({ noun, action, id, number, version }: PutOnHold
         </>
       }
     >
-      <form key={round} id={formId} noValidate onSubmit={onSubmit} className={styles.moveForm}>
+      <form
+        ref={formRef}
+        key={round}
+        id={formId}
+        noValidate
+        onSubmit={onSubmit}
+        className={styles.moveForm}
+      >
         <input type="hidden" name="recordId" value={id} />
         <input type="hidden" name="expectedVersion" value={version} />
         <input type="hidden" name="stage" value="on_hold" />

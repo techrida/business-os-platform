@@ -7,7 +7,9 @@ import {
   groupByStage,
   isSetBySystem,
   resolvedMoves,
+  resumeMove,
   stageLabel,
+  stagesBefore,
   userMoves,
 } from './stages';
 
@@ -33,8 +35,19 @@ describe('userMoves', () => {
     expect(codes('opportunity', 'lost')).toEqual([]);
   });
 
-  it('lets a held lead return to contacted', () => {
+  it('resumes a held record only to the stage it was held at (F1-Q53)', () => {
+    const held = (kind: 'lead' | 'opportunity', at: string | null) =>
+      userMoves(kind, 'on_hold', at).map((m) => m.stage);
+    expect(held('lead', 'new')).toEqual(['new']);
+    expect(held('lead', 'contacted')).toEqual(['contacted']);
+    expect(held('lead', 'qualified')).toEqual(['qualified']);
+    expect(held('opportunity', 'negotiation')).toEqual(['negotiation']);
+  });
+
+  it('resumes a hold older than heldFromStage to the old fixed stage', () => {
     expect(codes('lead', 'on_hold')).toEqual(['contacted']);
+    expect(userMoves('lead', 'on_hold', null).map((m) => m.stage)).toEqual(['contacted']);
+    expect(codes('opportunity', 'on_hold')).toEqual(['negotiation']);
   });
 
   it('never offers won or quotation_sent to a user, from any stage', () => {
@@ -91,23 +104,60 @@ describe('resolvedMoves', () => {
       userMoves('opportunity', 'qualified'),
     );
     expect(resolvedMoves('lead', 'lost')).toEqual([]);
+    expect(resolvedMoves('lead', 'on_hold', undefined, 'qualified').map((m) => m.stage)).toEqual([
+      'qualified',
+    ]);
+  });
+
+  it("takes a held lead's one resume target from allowedMoves, whatever the stage", () => {
+    expect(resolvedMoves('lead', 'on_hold', ['new'])).toEqual([
+      { stage: 'new', label: 'New', needsReason: false },
+    ]);
+  });
+});
+
+describe('resumeMove', () => {
+  it('is the one move out of On Hold, and nothing for any other stage', () => {
+    expect(resumeMove('on_hold', resolvedMoves('lead', 'on_hold', ['qualified']))?.label).toBe(
+      'Qualified',
+    );
+    expect(resumeMove('on_hold', resolvedMoves('lead', 'on_hold', ['new']))?.stage).toBe('new');
+    // A viewer the server gives no moves gets no Resume.
+    expect(resumeMove('on_hold', resolvedMoves('lead', 'on_hold', []))).toBeNull();
+    expect(resumeMove('contacted', resolvedMoves('lead', 'contacted', ['on_hold']))).toBeNull();
   });
 });
 
 describe('boardMoves', () => {
   it('excludes lost from every lead and opportunity stage while keeping the other user moves', () => {
-    for (const from of LEAD_STAGES) {
-      expect(boardMoves('lead', from).map((m) => m.stage)).not.toContain('lost');
+    const stagesOf = (kind: 'lead' | 'opportunity', record: Parameters<typeof boardMoves>[1]) =>
+      boardMoves(kind, record).map((m) => m.stage);
+    for (const stage of LEAD_STAGES) expect(stagesOf('lead', { stage })).not.toContain('lost');
+    for (const stage of OPPORTUNITY_STAGES) {
+      expect(stagesOf('opportunity', { stage })).not.toContain('lost');
     }
-    for (const from of OPPORTUNITY_STAGES) {
-      expect(boardMoves('opportunity', from).map((m) => m.stage)).not.toContain('lost');
-    }
-    expect(boardMoves('lead', 'new').map((m) => m.stage)).toEqual(['contacted', 'on_hold']);
-    expect(boardMoves('lead', 'qualified').map((m) => m.stage)).toEqual(['on_hold']);
-    expect(boardMoves('opportunity', 'qualified').map((m) => m.stage)).toEqual([
-      'requirement_received',
-    ]);
-    expect(boardMoves('opportunity', 'negotiation').map((m) => m.stage)).toEqual(['on_hold']);
+    expect(stagesOf('lead', { stage: 'new' })).toEqual(['contacted', 'on_hold']);
+    expect(stagesOf('lead', { stage: 'qualified' })).toEqual(['on_hold']);
+    expect(stagesOf('opportunity', { stage: 'qualified' })).toEqual(['requirement_received']);
+    expect(stagesOf('opportunity', { stage: 'negotiation' })).toEqual(['on_hold']);
+  });
+
+  it("uses the record's own allowedMoves: none for a read-only viewer, lost dropped", () => {
+    expect(boardMoves('lead', { stage: 'new', allowedMoves: [] })).toEqual([]);
+    expect(
+      boardMoves('lead', { stage: 'new', allowedMoves: ['contacted', 'lost'] }).map((m) => m.stage),
+    ).toEqual(['contacted']);
+  });
+
+  it('offers a held card only the stage it was held at (F1-Q53, FR-6 stage order)', () => {
+    // From the server: one target.
+    expect(
+      boardMoves('lead', { stage: 'on_hold', allowedMoves: ['new'] }).map((m) => m.stage),
+    ).toEqual(['new']);
+    // An older payload without moves: the held stage decides, so New never jumps to Contacted.
+    expect(
+      boardMoves('lead', { stage: 'on_hold', heldFromStage: 'new' }).map((m) => m.stage),
+    ).toEqual(['new']);
   });
 });
 
@@ -152,5 +202,24 @@ describe('boardColumns and groupByStage', () => {
 
   it('labels stages from the catalogue', () => {
     expect(stageLabel('opportunity', 'requirement_received')).toBe('Requirement Received');
+  });
+});
+
+describe('stagesBefore', () => {
+  it('follows the only way into a stage back to the start', () => {
+    expect(stagesBefore('lead', 'converted')).toEqual(['qualified', 'contacted', 'new']);
+    expect(stagesBefore('lead', 'new')).toEqual([]);
+    expect(stagesBefore('opportunity', 'proposal_sent')).toEqual([
+      'requirement_received',
+      'qualified',
+    ]);
+    expect(stagesBefore('opportunity', 'negotiation')).toEqual(['quotation_sent']);
+  });
+
+  it('stops where a stage has several ways in, so nothing is claimed by position', () => {
+    // A quotation can be sent from Qualified, Requirement Received or Proposal Sent.
+    expect(stagesBefore('opportunity', 'quotation_sent')).toEqual([]);
+    expect(stagesBefore('opportunity', 'won')).toEqual([]);
+    expect(stagesBefore('lead', 'lost')).toEqual([]);
   });
 });

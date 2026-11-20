@@ -145,6 +145,7 @@ export default async function SalesOrdersPage({
           (items): ConfirmOption[] =>
             items.map((q) => ({
               versionId: q.currentVersionId,
+              number: q.number,
               label: `${q.number} · ${q.customerName} · ${money(q.total, q.currency, numberSystems)}`,
             })),
           () => null,

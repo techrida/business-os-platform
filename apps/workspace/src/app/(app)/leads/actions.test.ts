@@ -237,8 +237,15 @@ describe('scheduleFollowUpAction', () => {
     expect(api.createActivity).not.toHaveBeenCalled();
   });
 
-  it('refuses any subject other than a lead', async () => {
-    const res = await scheduleFollowUpAction(empty, scheduleForm({ subjectKind: 'opportunityId' }));
+  it('plans on an opportunity too (U16-Q6), and refuses any other subject', async () => {
+    api.createActivity.mockResolvedValue({ id: 'a' });
+    const ok = await scheduleFollowUpAction(empty, scheduleForm({ subjectKind: 'opportunityId' }));
+    expect(ok.ok).toBe(true);
+    expect(api.createActivity.mock.calls[0]?.[1]).toHaveProperty('opportunityId');
+    expect(api.createActivity.mock.calls[0]?.[1]).not.toHaveProperty('leadId');
+
+    api.createActivity.mockClear();
+    const res = await scheduleFollowUpAction(empty, scheduleForm({ subjectKind: 'customerId' }));
     expect(res.error).toMatch(/incomplete/i);
     expect(api.createActivity).not.toHaveBeenCalled();
   });

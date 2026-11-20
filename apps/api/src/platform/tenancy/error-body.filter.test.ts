@@ -126,6 +126,25 @@ describe('ErrorBodyFilter', () => {
     expect(ErrorBodySchema.parse(out.body).error.code).toBe('forbidden');
   });
 
+  it('keeps credit_hold and the deal it names on a 409, and only on a 409 (F1-Q20/F1-Q26)', () => {
+    const out = filter(
+      new ConflictException({
+        code: 'credit_hold',
+        message: 'm',
+        details: { opportunityId: '0d6c1f63-62a5-4e8f-9d3c-6b4a4a1f2b11' },
+      }),
+    );
+    expect(out.status).toBe(409);
+    expect(ErrorBodySchema.parse(out.body).error).toMatchObject({
+      code: 'credit_hold',
+      details: { opportunityId: '0d6c1f63-62a5-4e8f-9d3c-6b4a4a1f2b11' },
+    });
+    const wrongStatus = filter(
+      new UnprocessableEntityException({ code: 'credit_hold', message: 'm' }),
+    );
+    expect(ErrorBodySchema.parse(wrongStatus.body).error.code).toBe('bad_request');
+  });
+
   it('keeps fx_rate_stale and its details on a 409 so the client can say which rate is old', () => {
     const out = filter(
       new ConflictException({

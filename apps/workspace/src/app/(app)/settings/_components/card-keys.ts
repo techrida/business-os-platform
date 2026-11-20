@@ -13,6 +13,7 @@ export const CARD_KEYS = {
     'sales.evidence_policy',
     'sales.default_schedule',
     'sales.delivery_hold.management_npr',
+    'crm.default_lead_owner',
   ],
   purchasing: [
     'procurement.min_quotes',

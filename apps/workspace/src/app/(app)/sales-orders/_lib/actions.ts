@@ -3,7 +3,9 @@
 import { revalidatePath } from 'next/cache';
 import { redirect } from 'next/navigation';
 
+import { getOpportunity } from '@/components/p2/crm/crm-api';
 import { keyOf } from '@/components/p2/crm/idempotency';
+import { apiDetailOf } from '@/lib/api-code';
 import {
   confirmSalesOrder,
   describeBillingFailure,
@@ -13,6 +15,7 @@ import {
   markScheduleLineBillable,
 } from '@/lib/api-billing';
 import { requireStaffSession } from '@/lib/bff';
+import { getPermissionCheck } from '@/lib/live-permissions';
 import type { Session } from '@/lib/session';
 
 import { confirmRefusalText } from './confirm-refusal';
@@ -46,6 +49,35 @@ function failed(err: unknown, key: string): ActionState {
     key: keyAfterFailure(err, key),
     error: failure.message,
     ...(failure.reload ? { reload: true } : {}),
+  };
+}
+
+/**
+ * The deal a `credit_hold` refusal names (F1-Q20), with what the caller may do about it: open the
+ * deal (read as them; Finance often cannot, since it reads deals only at `own`) and override the
+ * hold (`credit.override`). The refusal carries the deal's id only, never amounts.
+ */
+async function creditHoldOf(
+  session: Session,
+  err: unknown,
+  quotationVersionId: string,
+): Promise<ActionState['creditHold'] | undefined> {
+  if (describeBillingFailure(err).kind !== 'credit_hold') return undefined;
+  const id = apiDetailOf(err, 'opportunityId');
+  if (typeof id !== 'string' || !isGuid(id)) return undefined;
+  const [deal, canOverride] = await Promise.all([
+    getOpportunity(session, id).catch(() => null),
+    getPermissionCheck(session).then(
+      (can) => can('credit.override'),
+      () => false,
+    ),
+  ]);
+  return {
+    opportunityId: id,
+    number: deal?.number ?? null,
+    canOpen: deal !== null,
+    canOverride,
+    quotationVersionId,
   };
 }
 
@@ -105,7 +137,9 @@ export async function confirmOrderAction(_prev: ActionState, form: FormData): Pr
     orderId = (await confirmSalesOrder(session, parsed.body, key)).order.id;
   } catch (err) {
     const own = confirmRefusalText(err);
-    return own !== undefined ? { key: keyAfterFailure(err, key), error: own } : failed(err, key);
+    if (own !== undefined) return { key: keyAfterFailure(err, key), error: own };
+    const creditHold = await creditHoldOf(session, err, parsed.body.quotationVersionId);
+    return { ...failed(err, key), ...(creditHold ? { creditHold } : {}) };
   }
   revalidatePath('/sales-orders');
   // `redirect` throws, so it stays outside the try block.

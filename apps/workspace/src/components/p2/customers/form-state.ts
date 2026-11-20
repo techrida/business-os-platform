@@ -20,6 +20,11 @@ export interface CustomerFormState {
   duplicates?: DuplicateMatch[];
   /** The name and PAN/VAT the duplicate search ran on, so a changed name is searched again. */
   checked?: { legalName: string; panVatNo: string };
+  /**
+   * The API refused "Create anyway" without a reason (F1-Q55: 400 `duplicate_reason_required`), for
+   * example a same-name organization added since the search. The form asks for the reason.
+   */
+  needsReason?: boolean;
 }
 
 /** What the add-contact action hands back. `savedCount` rises on each success and resets the form. */

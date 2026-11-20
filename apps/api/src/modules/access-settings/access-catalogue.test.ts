@@ -1,5 +1,5 @@
 // Pure unit tests for the Access Settings catalogue and plain-language summaries:
-// covers all 72 PERMISSIONS, all 13 ROLE_KEYS, all 9 areas, scope filtering rules (R2, R3),
+// covers all 73 PERMISSIONS, all 13 ROLE_KEYS, all 9 areas, scope filtering rules (R2, R3),
 // default-grant validity, and Spec section 9 plain-language vocabulary rules.
 import {
   ACCESS_SETTING_AREA_KEYS,

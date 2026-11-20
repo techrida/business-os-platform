@@ -52,7 +52,7 @@ import { Pool } from 'pg';
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { AuditService } from '../../../platform/audit/audit.service';
-import { AuthzService } from '../../../platform/authz/authz.service';
+import { AuthzService, scopeWhereFor } from '../../../platform/authz/authz.service';
 import { can } from '../../../platform/authz/can';
 import type { Principal } from '../../../platform/authz/principal';
 import { RoleCache } from '../../../platform/authz/role-cache';
@@ -345,6 +345,104 @@ describe('DraftingService.create', () => {
       ),
     );
     expect(mine).toMatchObject({ opportunityId: theirOpportunity!.id, ownerUserId: otherUserId });
+  });
+
+  it('refuses a quotation to a colleague who only holds a follow-up on the opportunity (FX-Q2), 404 and nothing written', async () => {
+    const otherUserId = await seedOtherStaffUser(db, f);
+    const [deal] = await withTx(db, scopeA, systemActor('test'), (tx) =>
+      tx
+        .insert(opportunities)
+        .values({
+          ...scopeA,
+          number: `DEAL-${randomUUID().slice(0, 8)}`,
+          name: 'Followed-up deal',
+          customerId: f.customerPartyId,
+          ownerUserId: f.ownerUserId,
+          stage: 'qualified',
+        })
+        .returning({ id: opportunities.id }),
+    );
+    await withTx(db, scopeA, systemActor('test'), (tx) =>
+      tx.insert(activities).values({
+        ...scopeA,
+        kind: 'call',
+        subject: 'Call the buyer',
+        opportunityId: deal!.id,
+        dueAt: new Date(Date.now() + 86_400_000),
+        assigneeUserId: otherUserId,
+        createdByUserId: f.ownerUserId,
+      }),
+    );
+    // The follow-up still lets them read the deal (D55-5) ...
+    const readable = await withTx(db, scopeA, systemActor('test'), (tx) =>
+      tx
+        .select({ id: opportunities.id })
+        .from(opportunities)
+        .where(
+          and(
+            eq(opportunities.id, deal!.id),
+            scopeWhereFor(
+              { ...principalNow(), userId: otherUserId },
+              opportunities,
+              'crm.opportunity.read',
+            ),
+          ),
+        ),
+    );
+    expect(readable).toHaveLength(1);
+    // ... but not quote on it: sending the quotation would move someone else's deal.
+    await asCaller({ userId: otherUserId }, async () => {
+      await expect(
+        service.create(
+          goldenCreateBody(f, { opportunityId: deal!.id }),
+          'create-assignee-only-opportunity',
+        ),
+      ).rejects.toBeInstanceOf(NotFoundException);
+    });
+    expect(await quotationCount(deal!.id)).toBe(0);
+  });
+
+  it('lets the creator of the lead an opportunity came from quote on it (FX-Q1)', async () => {
+    const creatorUserId = await seedOtherStaffUser(db, f);
+    const [deal] = await withTx(db, scopeA, systemActor('test'), (tx) =>
+      tx
+        .insert(opportunities)
+        .values({
+          ...scopeA,
+          number: `DEAL-${randomUUID().slice(0, 8)}`,
+          name: 'Deal from a PMO lead',
+          customerId: f.customerPartyId,
+          ownerUserId: f.ownerUserId,
+          leadCreatorUserId: creatorUserId,
+          stage: 'qualified',
+        })
+        .returning({ id: opportunities.id }),
+    );
+    // PMO's default grants: crm.opportunity.read and quotation.draft at `own` (Finance and Accountant read every
+    // opportunity since U20a2-Q4, so they would reach the deal without the lead creator).
+    const created = await asCaller({ userId: creatorUserId, grants: grantsOf('pmo') }, () =>
+      service.create(goldenCreateBody(f, { opportunityId: deal!.id }), 'create-lead-creator'),
+    );
+    expect(created).toMatchObject({ opportunityId: deal!.id, ownerUserId: creatorUserId });
+    // Without the lead creator recorded, the same caller cannot.
+    const [other] = await withTx(db, scopeA, systemActor('test'), (tx) =>
+      tx
+        .insert(opportunities)
+        .values({
+          ...scopeA,
+          number: `DEAL-${randomUUID().slice(0, 8)}`,
+          name: 'Deal from someone else',
+          customerId: f.customerPartyId,
+          ownerUserId: f.ownerUserId,
+          stage: 'qualified',
+        })
+        .returning({ id: opportunities.id }),
+    );
+    await asCaller({ userId: creatorUserId, grants: grantsOf('pmo') }, async () => {
+      await expect(
+        service.create(goldenCreateBody(f, { opportunityId: other!.id }), 'create-not-creator'),
+      ).rejects.toBeInstanceOf(NotFoundException);
+    });
   });
 
   it("lets a caller who reads every opportunity of the entity quote on another owner's opportunity", async () => {

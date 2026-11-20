@@ -13,7 +13,7 @@ import {
   type OpportunityStageChangeBody,
   type Permission,
 } from '@bos/contracts';
-import { customers, opportunities, scoped } from '@bos/db';
+import { customers, opportunities, quotations, salesOrders, scoped } from '@bos/db';
 import {
   BadRequestException,
   ConflictException,
@@ -34,6 +34,7 @@ import { readTxContext } from '../../platform/documents/tx-context';
 import { nameIn, personNameMap } from '../../platform/users/person-names';
 import { searchPage } from '../../platform/list';
 import { LeadLostReasonsService, lostReasonRefs } from '../leads/lost-reasons.service';
+import { creditPosition } from './credit-hold';
 import { OpportunitiesCaller } from './opportunities.caller';
 import type { OpportunityLostHandler } from './opportunities.ports';
 import {
@@ -160,7 +161,7 @@ export class OpportunitiesService {
   }
 
   async get(id: string): Promise<OpportunityDto> {
-    const { scope, principal } = this.caller.current();
+    const { scope, actor, principal } = this.caller.current();
     const [row] = await this.db
       .select()
       .from(opportunities)
@@ -172,12 +173,47 @@ export class OpportunitiesService {
       row,
       await loadRecordReaders(this.db, scope, opportunities, id),
     );
-    return toOpportunityDto(
-      row,
-      await this.ownerNameOf(this.db, row),
-      await this.lostReasonOf(this.db, row),
-      principal,
-    );
+    // F1-Q20/F1-Q26: the flag only (the amounts are for credit.override holders), and whether a sales order already
+    // went ahead (a draft one is what the hold keeps waiting). In a transaction, so the ledger and the orders are
+    // read under the entity's row security rather than seen as empty.
+    const { credit, ordered } = await withTx(this.db, scope, actor, async (tx) => ({
+      credit: await creditPosition(tx, scope, row.customerId),
+      ordered: await this.hasSalesOrder(tx, scope, row.id),
+    }));
+    return {
+      ...toOpportunityDto(
+        row,
+        await this.ownerNameOf(this.db, row),
+        await this.lostReasonOf(this.db, row),
+        principal,
+      ),
+      creditHold: { held: credit.held, overridden: row.creditOverrideAt !== null, ordered },
+    };
+  }
+
+  /** Whether one of the deal's quotations became a confirmed or completed sales order (not a draft, not cancelled). */
+  private async hasSalesOrder(tx: DbTransaction, scope: TxScope, id: string): Promise<boolean> {
+    const [order] = await tx
+      .select({ id: salesOrders.id })
+      .from(salesOrders)
+      .innerJoin(
+        quotations,
+        and(
+          eq(quotations.tenantId, salesOrders.tenantId),
+          eq(quotations.id, salesOrders.quotationId),
+        ),
+      )
+      .where(
+        scoped(scope).where(
+          salesOrders,
+          and(
+            eq(quotations.opportunityId, id),
+            inArray(salesOrders.status, ['confirmed', 'completed']),
+          ),
+        ),
+      )
+      .limit(1);
+    return order !== undefined;
   }
 
   // ------------------------------------------------------------------------------------------ stage change
@@ -213,6 +249,7 @@ export class OpportunitiesService {
         reason: body.stage === 'lost' ? 'probe' : body.reason,
         note: body.note,
         expectedVersion: body.expectedVersion,
+        heldFromStage: row.heldFromStage,
       });
       if (!planProbe.ok) throw refusalToException(planProbe.kind, planProbe.message);
       if (body.stage === 'lost') {
@@ -228,6 +265,7 @@ export class OpportunitiesService {
         reason,
         note: body.note,
         expectedVersion: body.expectedVersion,
+        heldFromStage: row.heldFromStage,
       });
       if (!plan.ok) throw refusalToException(plan.kind, plan.message);
 
@@ -243,7 +281,14 @@ export class OpportunitiesService {
         entityId: id,
         before: { stage: row.stage, version: row.version },
         after: { stage: updated.stage, version: updated.version },
-        meta: { reason: plan.set.stageReason, note: plan.set.stageNote, lostReasonId },
+        meta: {
+          reason: plan.set.stageReason,
+          note: plan.set.stageNote,
+          lostReasonId,
+          ...(row.stage === 'on_hold' || updated.stage === 'on_hold'
+            ? { heldFromStage: row.heldFromStage ?? plan.set.heldFromStage }
+            : {}),
+        },
       });
       if (updated.stage === 'lost') {
         // Same transaction: a handler that throws rolls the loss back.

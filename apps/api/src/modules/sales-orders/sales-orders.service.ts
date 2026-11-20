@@ -42,6 +42,7 @@ import {
   documents,
   invoices,
   openItems,
+  opportunities,
   quotations,
   quotationVersions,
   salesOrderEvidence,
@@ -73,6 +74,7 @@ import { searchPage, type SearchColumn } from '../../platform/list';
 import { NumberingService } from '../../platform/settings/numbering.service';
 import { SettingsService } from '../../platform/settings/settings.service';
 import { LedgerService } from '../ledger/ledger.service';
+import { creditPosition } from '../opportunities/credit-hold';
 import { missingEvidence } from '../quotations/outcome/evidence-policy';
 import { readEvidenceState } from '../quotations/outcome/evidence-state';
 import { insertDraftOrder, liveOrderOf, planDraftOrder } from './draft-order';
@@ -381,6 +383,29 @@ export class SalesOrdersService {
         `A ${version.status} quotation cannot be confirmed; only an accepted one can`,
       );
     }
+    const customerPartyId = quotation.customerPartyId;
+    if (customerPartyId === null) throw new Error(`quotation ${quotation.number} has no customer`);
+
+    // F1-Q20/F1-Q26: a customer over its credit limit with this entity holds the deal here, the hand-over to a
+    // sales order, until a holder of credit.override overrides the hold on the deal with a reason. The refusal names
+    // the deal only: the limit and the balance are for holders of credit.override
+    // (GET /v1/opportunities/:id/credit-hold).
+    const credit = await creditPosition(tx, scope, customerPartyId);
+    if (credit.held) {
+      const [deal] = await tx
+        .select({ creditOverrideAt: opportunities.creditOverrideAt })
+        .from(opportunities)
+        .where(scoped(scope).where(opportunities, eq(opportunities.id, quotation.opportunityId)));
+      if (deal?.creditOverrideAt == null) {
+        throw new ConflictException({
+          code: 'credit_hold',
+          message:
+            'The customer is over its credit limit; someone with credit override access must override the credit hold on the deal first',
+          details: { opportunityId: quotation.opportunityId },
+        });
+      }
+    }
+
     if (live !== undefined && live.quotationVersionId !== version.id) {
       throw conflict(
         'draft_of_other_revision',
