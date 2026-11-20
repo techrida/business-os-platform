@@ -29,11 +29,15 @@ import { VendorsService } from './vendors.service';
 import {
   CreateVendorAccountBodySchema,
   ListVendorsQuerySchema,
+  SubmitKycBodySchema,
   UpdateVendorBodySchema,
   UpdateVendorContactBodySchema,
+  VendorNameMatchesQuerySchema,
   VendorReasonBodySchema,
   type VendorContactDto,
   type VendorList,
+  type VendorNameMatches,
+  type VendorReviewReadiness,
 } from './vendors.types';
 
 @Controller('v1/vendors')
@@ -45,6 +49,17 @@ export class VendorsController {
   @Can('vendor.read')
   list(@Query() query: Record<string, unknown>): Promise<VendorList> {
     return this.vendors.list(parseOr400(ListVendorsQuerySchema, query));
+  }
+
+  /**
+   * 200 `{ matches }`: the vendors whose legal name matches `?legalName=` once case, spaces, punctuation and
+   * company-form words are ignored. For the add form's warning (TR-Q12d); a create is never refused for a name.
+   * Declared before `:id` so the static path is not read as an id.
+   */
+  @Get('name-matches')
+  @Can('vendor.read')
+  nameMatches(@Query() query: Record<string, unknown>): Promise<VendorNameMatches> {
+    return this.vendors.nameMatches(parseOr400(VendorNameMatchesQuerySchema, query));
   }
 
   /** 201 with the new VendorDto (status draft). 409 `duplicate_pan` for a PAN the tenant already holds. */
@@ -64,6 +79,13 @@ export class VendorsController {
     return this.vendors.get(id);
   }
 
+  /** 200 `{ kybSubmitted }`: whether "Send for review" (pending_kyc -> under_review) would be taken now. */
+  @Get(':id/review-readiness')
+  @Can('vendor.read')
+  reviewReadiness(@Param('id', ParseUUIDPipe) id: string): Promise<VendorReviewReadiness> {
+    return this.vendors.reviewReadiness(id);
+  }
+
   /** 200 with the updated VendorDto. 409 when `expectedVersion` is stale. Only the keys sent are changed. */
   @Patch(':id')
   @Can('vendor.write')
@@ -75,15 +97,20 @@ export class VendorsController {
 
   // ------------------------------------------------------------------------------------------ lifecycle
 
-  /** draft -> pending_kyc (opens the KYB case); pending_kyc -> under_review once the case is submitted. */
+  /**
+   * draft -> pending_kyc (opens the KYB case); pending_kyc -> under_review once the case is submitted. Body
+   * `{ expectedStatus? }`: 409 when the vendor is no longer in that status (a stale button in another tab).
+   */
   @Post(':id/submit-kyc')
   @HttpCode(200)
   @Can('vendor.write')
   submitKyc(
     @Param('id', ParseUUIDPipe) id: string,
     @Headers('idempotency-key') idempotencyKey: string | undefined,
+    @Body() body: unknown,
   ): Promise<VendorDto> {
-    return this.vendors.submitKyc(id, requireIdempotencyKey(idempotencyKey));
+    const { expectedStatus } = parseOr400(SubmitKycBodySchema, body ?? {});
+    return this.vendors.submitKyc(id, requireIdempotencyKey(idempotencyKey), expectedStatus);
   }
 
   /** 200 approved. 409 without an approved KYB case; 403 for the vendor's creator. */

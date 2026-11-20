@@ -1,3 +1,5 @@
+import type { VendorStatus } from '@bos/contracts';
+
 import type { FieldErrors, VendorField } from './forms';
 
 /** What the vendor create and edit actions hand back to their form. */
@@ -9,6 +11,11 @@ export interface VendorFormState {
   error?: string;
   /** The page is out of date: offer a reload instead of a retry. */
   reload?: boolean;
+  /**
+   * TR-Q12d: vendors whose legal name matches the one being added. Nothing was created; the form
+   * shows them and asks the person to confirm it is a different vendor before adding it.
+   */
+  sameName?: { id: string; legalName: string; status: VendorStatus }[];
 }
 
 /**
@@ -22,6 +29,11 @@ export interface PanelState<K extends string = string> {
   reload?: boolean;
   /** A short confirmation, such as "Sita Sharma was added." */
   saved?: string;
+  /**
+   * The vendor had moved on since the page was drawn (a stale button), and the action has refreshed the page.
+   * The form that sent it may be gone from the new page, so the refusal is raised as a toast.
+   */
+  refreshed?: boolean;
   savedCount: number;
 }
 

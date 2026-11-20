@@ -36,3 +36,24 @@ export function requestableItem(
       enabledCurrencies.includes(item.currency),
   );
 }
+
+/**
+ * What to do when a vendor has no verified bank account, worded for what the reader may do (live
+ * `vendor.bank.propose`): the same people and order the vendor page describes.
+ */
+export function addBankAccountText(mayPropose: boolean): string {
+  return mayPropose
+    ? 'Propose a bank account on the vendor’s page. Someone other than the proposer verifies it after a call-back to the bank, and then the bill can be requested.'
+    : 'Procurement proposes an account on the vendor’s page; finance verifies it after a call-back to the bank. Then the bill can be requested.';
+}
+
+/** The vendors, by name and in first-seen order, of the items held back for a missing verified bank account. */
+export function vendorsWithoutBankAccount(
+  held: readonly PaymentRequestItem[],
+): { id: string; name: string }[] {
+  const seen = new Map<string, string>();
+  for (const item of held) {
+    if (!seen.has(item.vendorPartyId)) seen.set(item.vendorPartyId, item.vendorName);
+  }
+  return [...seen].map(([id, name]) => ({ id, name }));
+}

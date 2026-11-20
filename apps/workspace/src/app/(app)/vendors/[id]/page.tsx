@@ -26,6 +26,7 @@ import { FactList, Panel, type Fact } from '@/components/ui/panel';
 import { CellTitle, Table, Td, Th } from '@/components/ui/table';
 import {
   getVendor,
+  getVendorReviewReadiness,
   listBankAccounts,
   listVendorAccounts,
   listVendorContacts,
@@ -48,6 +49,7 @@ import {
   isEditable,
   lifecycleOptions,
   mayGrantPortal,
+  sendForReviewHint,
   VENDOR_KIND_LABEL,
   VENDOR_STATUS_LABEL,
   type VendorGrants,
@@ -417,17 +419,27 @@ export default async function VendorPage({
     verify: vendor.can?.verifyBank ?? allowed('vendor.bank.verify'),
   };
   const maySeeKyb = allowed('verification.read');
+  const lifecycleCan = vendor.can ?? grants;
+  // "Send for review" needs the KYB case submitted, the state the API checks; asked only when it could show.
+  const askReadiness = vendor.status === 'pending_kyc' && lifecycleCan.write;
   // The panels below load on their own: one failing leaves the profile and the other panels usable.
-  const [contacts, accounts, banks, cases] = await Promise.allSettled([
+  const [contacts, accounts, banks, cases, readiness] = await Promise.allSettled([
     listVendorContacts(session, id),
     listVendorAccounts(session, id),
     listBankAccounts(session, id),
     maySeeKyb ? listVerificationCases(session, { partyId: id }) : Promise.resolve(null),
+    askReadiness ? getVendorReviewReadiness(session, id) : Promise.resolve(null),
   ]);
+  // Unknown (not asked, or the read failed) counts as not submitted: the button stays hidden.
+  const kybSubmitted =
+    readiness.status === 'fulfilled' && readiness.value !== null
+      ? readiness.value.kybSubmitted
+      : undefined;
 
   const status = VENDOR_STATUS_LABEL[vendor.status];
   const editable = isEditable(vendor.status);
-  const options = lifecycleOptions(vendor.status, vendor.can ?? grants);
+  const options = lifecycleOptions(vendor.status, lifecycleCan, kybSubmitted);
+  const reviewHint = sendForReviewHint(vendor.status, lifecycleCan.write, kybSubmitted);
   const canEdit = grants.write && editable;
   const hasPrimaryMove = options.some((o) => o.tone === 'primary');
   const hasHeaderActions = options.length > 0 || canEdit;
@@ -499,6 +511,7 @@ export default async function VendorPage({
                 <LifecycleForm
                   key={o.command}
                   vendorId={vendor.id}
+                  status={vendor.status}
                   option={o}
                   idempotencyKey={randomUUID()}
                 />
@@ -567,9 +580,11 @@ export default async function VendorPage({
                 ? 'This vendor is archived. Nothing more can be done.'
                 : activationBlock !== null
                   ? activationBlock.message
-                  : options.length === 0
-                    ? 'No status action is open to your current permissions at this status.'
-                    : 'Use the header actions to move this vendor to the next stage.'}
+                  : reviewHint !== null
+                    ? reviewHint
+                    : options.length === 0
+                      ? 'No status action is open to your current permissions at this status.'
+                      : 'Use the header actions to move this vendor to the next stage.'}
             </p>
           </Panel>
           <Kyb

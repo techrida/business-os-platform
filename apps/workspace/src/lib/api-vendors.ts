@@ -177,6 +177,42 @@ export function getVendor(session: Session, id: string): Promise<VendorDto> {
   return call(session, `/v1/vendors/${seg(id)}`, VendorDtoSchema);
 }
 
+const VendorNameMatchesSchema = z.strictObject({
+  matches: z.array(
+    z.strictObject({ id: z.guid(), legalName: z.string(), status: VendorStatusSchema }),
+  ),
+});
+export type VendorNameMatch = z.infer<typeof VendorNameMatchesSchema>['matches'][number];
+
+/**
+ * `GET /v1/vendors/name-matches?legalName=`: the vendors whose legal name matches once case, spaces,
+ * punctuation and company-form words are ignored. A warning for the add form; the API never refuses
+ * a create for a name.
+ */
+export function findVendorNameMatches(
+  session: Session,
+  legalName: string,
+): Promise<VendorNameMatch[]> {
+  return call(
+    session,
+    withQuery('/v1/vendors/name-matches', { legalName }),
+    VendorNameMatchesSchema,
+  ).then((r) => r.matches);
+}
+
+const VendorReviewReadinessSchema = z.strictObject({ kybSubmitted: z.boolean() });
+
+/**
+ * `GET /v1/vendors/:id/review-readiness`: whether the vendor's KYB case is submitted (or approved), the
+ * state the API checks before "Send for review" (pending_kyc -> under_review).
+ */
+export function getVendorReviewReadiness(
+  session: Session,
+  id: string,
+): Promise<{ kybSubmitted: boolean }> {
+  return call(session, `/v1/vendors/${seg(id)}/review-readiness`, VendorReviewReadinessSchema);
+}
+
 /** `POST /v1/vendors` (needs `vendor.write`): a draft vendor. 409 `duplicate_pan_vat` for a PAN already held. */
 export function createVendor(
   session: Session,
@@ -195,16 +231,23 @@ export function updateVendor(
   return call(session, `/v1/vendors/${seg(id)}`, VendorDtoSchema, jsonInit('PATCH', body));
 }
 
-/** `POST /v1/vendors/:id/submit-kyc`: draft to pending_kyc (opens the KYB case), then to under_review. */
+/**
+ * `POST /v1/vendors/:id/submit-kyc`: draft to pending_kyc (opens the KYB case), then to under_review.
+ * `expectedStatus` is the status the button was drawn for: the API answers 409 when the vendor has
+ * moved on since, so a stale "Start KYB review" never sends the vendor for review.
+ */
 export function submitVendorKyc(
   session: Session,
   id: string,
   idempotencyKey: string,
+  expectedStatus: VendorStatus,
 ): Promise<VendorDto> {
-  return call(session, `/v1/vendors/${seg(id)}/submit-kyc`, VendorDtoSchema, {
-    method: 'POST',
-    headers: { 'idempotency-key': idempotencyKey },
-  });
+  return call(
+    session,
+    `/v1/vendors/${seg(id)}/submit-kyc`,
+    VendorDtoSchema,
+    jsonInit('POST', { expectedStatus }, idempotencyKey),
+  );
 }
 
 /**

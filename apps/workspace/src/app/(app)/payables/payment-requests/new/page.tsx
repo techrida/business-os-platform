@@ -9,14 +9,23 @@ import { Breadcrumb, Page, PageHeader } from '@/components/ui/page';
 import { requireStaffSession } from '@/lib/bff';
 import { getGrants, hasGrant } from '@/lib/grants';
 import { loadEnabledCurrencies } from '@/lib/enabled-currencies.server';
-import { listPaymentRequestItems, type PaymentRequestItem } from '@/lib/api-payables';
+import {
+  listPaymentRequestItems,
+  listPaymentRequestItemsWithoutBankAccount,
+  type PaymentRequestItem,
+} from '@/lib/api-payables';
 import { listPaymentRequestOrders } from '@/lib/api-payables-orders';
 
 import { PO_STATUS_LABEL } from '../../../procurement/orders/_lib/model';
 
 import { PaymentRequestEntry } from '../forms';
 import { paymentRequestFailure } from '../failure';
-import { NEW_REQUEST_HEADING, requestableItem } from '../model';
+import {
+  addBankAccountText,
+  NEW_REQUEST_HEADING,
+  requestableItem,
+  vendorsWithoutBankAccount,
+} from '../model';
 
 export const metadata: Metadata = { title: 'New payment request · Business OS' };
 export const dynamic = 'force-dynamic';
@@ -33,17 +42,28 @@ export default async function NewPaymentRequestPage({
     `/payables/payment-requests/new${billId !== undefined ? `?bill=${billId}` : ''}`,
   );
   // Live grants (GET /v1/me), not the role defaults: an admin may grant payment requests to any role, at any scope.
-  const allowed = hasGrant(await getGrants(session), 'payables.payment.request');
+  const grants = await getGrants(session);
+  const allowed = hasGrant(grants, 'payables.payment.request');
+  // For a vendor without a verified bank account: what this reader can do about it, and whether its page opens.
+  const addBank = addBankAccountText(hasGrant(grants, 'vendor.bank.propose'));
+  const linkVendors = hasGrant(grants, 'vendor.read');
   let items: PaymentRequestItem[] = [];
+  // Balances held back only because the vendor has no verified bank account: named so the person knows what to fix.
+  // Optional: if it does not load, the page says what it said before.
+  let held: PaymentRequestItem[] = [];
   let orders: { id: string; vendorId: string; label: string }[] = [];
   let problem: string | undefined;
   const enabledCurrencies = allowed ? await loadEnabledCurrencies(session) : [];
   if (allowed) {
+    const heldRead = listPaymentRequestItemsWithoutBankAccount(session).catch(
+      () => [] as PaymentRequestItem[],
+    );
     try {
       items = await listPaymentRequestItems(session);
     } catch (err) {
       problem = paymentRequestFailure(err).message;
     }
+    held = await heldRead;
     // The order is optional on a request: if the picker does not load, the request goes without one.
     orders = await listPaymentRequestOrders(session).then(
       (rows) =>
@@ -55,6 +75,8 @@ export default async function NewPaymentRequestPage({
       () => [],
     );
   }
+  const heldBill =
+    billId !== undefined ? held.find((item) => item.vendorBillId === billId) : undefined;
   return (
     <Page>
       <Breadcrumb
@@ -80,20 +102,40 @@ export default async function NewPaymentRequestPage({
             {problem}
           </Alert>
         ) : items.length === 0 ? (
-          <Alert tone="info" role="status">
-            No approved bill balances are available for a payment request. Existing requests may
-            have claimed the remaining balances.
-          </Alert>
+          held.length > 0 ? (
+            <Alert tone="info" role="status" title="A vendor has no verified bank account">
+              Approved bills from <VendorNames held={held} link={linkVendors} /> cannot be requested
+              yet: a payment goes only to a verified bank account, and{' '}
+              {vendorsWithoutBankAccount(held).length === 1
+                ? 'this vendor has'
+                : 'these vendors have'}{' '}
+              none. {addBank}
+            </Alert>
+          ) : (
+            <Alert tone="info" role="status">
+              No approved bill balances are available for a payment request. Existing requests may
+              have claimed the remaining balances.
+            </Alert>
+          )
         ) : (
-          <PaymentRequestEntry
-            idempotencyKey={randomUUID()}
-            items={items}
-            orders={orders}
-            enabledCurrencies={enabledCurrencies}
-            start={
-              billId !== undefined ? requestableItem(items, billId, enabledCurrencies) : undefined
-            }
-          />
+          <>
+            {heldBill !== undefined ? (
+              <Alert tone="warning" role="status" title="This bill cannot be requested yet">
+                {heldBill.billNumber ?? heldBill.vendorInvoiceNo} from{' '}
+                <VendorNames held={[heldBill]} link={linkVendors} /> cannot be requested yet: a
+                payment goes only to a verified bank account, and this vendor has none. {addBank}
+              </Alert>
+            ) : null}
+            <PaymentRequestEntry
+              idempotencyKey={randomUUID()}
+              items={items}
+              orders={orders}
+              enabledCurrencies={enabledCurrencies}
+              start={
+                billId !== undefined ? requestableItem(items, billId, enabledCurrencies) : undefined
+              }
+            />
+          </>
         )
       ) : (
         <Alert tone="info" role="alert">
@@ -101,5 +143,20 @@ export default async function NewPaymentRequestPage({
         </Alert>
       )}
     </Page>
+  );
+}
+
+/** The vendors of `held`, each linked to its page (where a bank account is proposed) when the reader may open it. */
+function VendorNames({ held, link }: { held: readonly PaymentRequestItem[]; link: boolean }) {
+  const vendors = vendorsWithoutBankAccount(held);
+  return (
+    <>
+      {vendors.map((v, n) => (
+        <span key={v.id}>
+          {n > 0 ? (n === vendors.length - 1 ? ' and ' : ', ') : null}
+          {link ? <Link href={`/vendors/${encodeURIComponent(v.id)}`}>{v.name}</Link> : v.name}
+        </span>
+      ))}
+    </>
   );
 }
