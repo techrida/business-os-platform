@@ -6,7 +6,7 @@ import { toast } from '@/components/ui/toast';
 
 import { changeUserStatusAction } from './actions';
 
-type Action = 'deactivate' | 'reactivate';
+type Action = 'deactivate' | 'reactivate' | 'lock' | 'unlock';
 
 const COPY: Record<
   Action,
@@ -25,9 +25,25 @@ const COPY: Record<
     description: (name) => `${name} can sign in again with their existing roles.`,
     confirm: 'Reactivate',
   },
+  lock: {
+    label: 'Lock',
+    title: 'Lock this user?',
+    description: (name) =>
+      `${name} is signed out and cannot sign in until someone unlocks them. Their records stay as they are.`,
+    confirm: 'Lock',
+  },
+  unlock: {
+    label: 'Unlock',
+    title: 'Unlock this user?',
+    description: (name) => `${name} can sign in again with their existing roles.`,
+    confirm: 'Unlock',
+  },
 };
 
-/** Deactivate or reactivate one person (F1-Q5). The API refuses your own account and the last Founder. */
+/**
+ * Deactivate, reactivate, lock or unlock one person (F1-Q5, F1-Q4). The API refuses your own account and the last
+ * Founder.
+ */
 export function StatusAction({
   userId,
   name,
@@ -52,7 +68,7 @@ export function StatusAction({
       title={copy.title}
       description={copy.description(name)}
       confirmLabel={copy.confirm}
-      destructive={action === 'deactivate'}
+      destructive={action === 'deactivate' || action === 'lock'}
       onConfirm={async () => {
         try {
           const result = await changeUserStatusAction(userId, action);

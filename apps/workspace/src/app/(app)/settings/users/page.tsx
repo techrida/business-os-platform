@@ -63,6 +63,18 @@ const STATUS_LABELS: Record<AdminUser['status'], string> = {
   inactive: 'Deactivated',
 };
 
+/**
+ * The account actions a row offers (F1-Q5, F1-Q4): an active person can be locked or deactivated, a locked person
+ * unlocked (ZITADEL holds them LOCKED, so reactivate would not fit), a deactivated person reactivated, an open invite
+ * nothing.
+ */
+function statusActions(user: AdminUser): ('lock' | 'deactivate' | 'unlock' | 'reactivate')[] {
+  if (user.lockReason) return ['unlock'];
+  if (user.status === 'active') return ['lock', 'deactivate'];
+  if (user.status === 'inactive') return ['reactivate'];
+  return [];
+}
+
 /** Up to five page numbers around the current one. */
 function pageNumbers(current: number, count: number): number[] {
   const last = Math.min(count, ADMIN_USERS_MAX_PAGE);
@@ -282,18 +294,35 @@ export default async function UsersPage({ searchParams }: { searchParams: Promis
                           )}
                         </Td>
                         <Td>
-                          <Badge
-                            tone={
-                              user.status === 'active'
-                                ? 'success'
-                                : user.status === 'invited'
-                                  ? 'pending'
-                                  : 'neutral'
-                            }
-                            className={styles.status ?? ''}
-                          >
-                            {STATUS_LABELS[user.status]}
-                          </Badge>
+                          {user.lockReason ? (
+                            <>
+                              <Badge tone="error" className={styles.status ?? ''}>
+                                Locked
+                              </Badge>
+                              {user.lockedUntil && (
+                                <span className={styles.muted}>
+                                  {' '}
+                                  until{' '}
+                                  <time dateTime={user.lockedUntil}>
+                                    {formatInstant(user.lockedUntil)}
+                                  </time>
+                                </span>
+                              )}
+                            </>
+                          ) : (
+                            <Badge
+                              tone={
+                                user.status === 'active'
+                                  ? 'success'
+                                  : user.status === 'invited'
+                                    ? 'pending'
+                                    : 'neutral'
+                              }
+                              className={styles.status ?? ''}
+                            >
+                              {STATUS_LABELS[user.status]}
+                            </Badge>
+                          )}
                         </Td>
                         <Td align="end">
                           <div className={styles.rowActions}>
@@ -322,14 +351,15 @@ export default async function UsersPage({ searchParams }: { searchParams: Promis
                               )}
                             {canChangeStatus &&
                               user.id !== me?.id &&
-                              (user.status === 'active' || user.status === 'inactive') && (
+                              statusActions(user).map((action) => (
                                 <StatusAction
+                                  key={action}
                                   userId={user.id}
                                   name={name}
                                   label={label}
-                                  action={user.status === 'active' ? 'deactivate' : 'reactivate'}
+                                  action={action}
                                 />
-                              )}
+                              ))}
                           </div>
                         </Td>
                       </tr>

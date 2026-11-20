@@ -145,9 +145,9 @@ export class AdminUsersController {
   }
 
   /**
-   * POST /v1/admin/users/:id/deactivate and /reactivate (F1-Q5). 204 on success; 409 for the caller's own account, the
-   * last Founder of an entity, a status the action does not fit, or a change ZITADEL refused; 404 for anyone who is
-   * not a staff user of the tenant.
+   * POST /v1/admin/users/:id/deactivate, /reactivate, /lock and /unlock (F1-Q5, F1-Q4). 204 on success; 409 for the
+   * caller's own account, the last Founder of an entity, a status or lock the action does not fit, or a change ZITADEL
+   * refused; 404 for anyone who is not a staff user of the tenant.
    */
   @Post(':id/deactivate')
   @HttpCode(204)
@@ -161,6 +161,20 @@ export class AdminUsersController {
   @Can(STATUS_PERMISSION)
   reactivate(@Param('id', ParseUUIDPipe) id: string): Promise<void> {
     return this.runStatusAction(id, 'reactivate');
+  }
+
+  @Post(':id/lock')
+  @HttpCode(204)
+  @Can(STATUS_PERMISSION)
+  lock(@Param('id', ParseUUIDPipe) id: string): Promise<void> {
+    return this.runStatusAction(id, 'lock');
+  }
+
+  @Post(':id/unlock')
+  @HttpCode(204)
+  @Can(STATUS_PERMISSION)
+  unlock(@Param('id', ParseUUIDPipe) id: string): Promise<void> {
+    return this.runStatusAction(id, 'unlock');
   }
 
   private async runStatusAction(id: string, action: UserStatusAction): Promise<void> {

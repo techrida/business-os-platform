@@ -336,3 +336,21 @@ describe('user lock state (F1-Q4)', () => {
     });
   });
 });
+
+describe('lockUser and unlockUser (F1-Q5)', () => {
+  it.each([
+    ['lockUser', '/zitadel.user.v2.UserService/LockUser'],
+    ['unlockUser', '/zitadel.user.v2.UserService/UnlockUser'],
+  ] as const)('%s posts { userId } to %s', async (method, path) => {
+    await client()[method]('u-1');
+
+    expect(calls).toEqual([{ path, body: { userId: 'u-1' } }]);
+    expect(sent[0]?.method).toBe('POST');
+  });
+
+  it('turns a refusal into a ZitadelHttpError with the status', async () => {
+    answers.push({ status: 400, body: { code: 'failed_precondition', message: 'not active' } });
+
+    await expect(client().lockUser('u-1')).rejects.toMatchObject({ status: 400 });
+  });
+});

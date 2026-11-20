@@ -1,7 +1,7 @@
 import { afterEach, expect, it, vi } from 'vitest';
 
 import { IDLE } from '../action-state';
-import { inviteUserAction, setRolesAction } from './actions';
+import { changeUserStatusAction, inviteUserAction, setRolesAction } from './actions';
 
 vi.mock('server-only', () => ({}));
 vi.mock('../guard', () => ({ requireSection: () => ({ accessToken: 'test-token' }) }));
@@ -113,4 +113,35 @@ it('asks for a department before inviting a department head, keeping the chosen 
   });
   expect(result.fields).toMatchObject({ level: 'head', departmentId: '' });
   expect(fetch).not.toHaveBeenCalled();
+});
+
+it.each([
+  ['lock', 'User locked.'],
+  ['unlock', 'User unlocked.'],
+] as const)('sends %s to its own admin route and reports it (F1-Q5)', async (action, message) => {
+  const userId = '00000000-0000-4000-8000-000000000001';
+  const fetch = vi
+    .spyOn(globalThis, 'fetch')
+    .mockResolvedValueOnce(new Response(null, { status: 204 }));
+
+  expect(await changeUserStatusAction(userId, action)).toMatchObject({ status: 'ok', message });
+
+  const [url, init] = fetch.mock.calls[0] ?? [];
+  expect(url instanceof Request ? url.url : new URL(url ?? '').href).toBe(
+    `http://api.test/v1/admin/users/${userId}/${action}`,
+  );
+  expect(init?.method).toBe('POST');
+});
+
+it("shows the API's refusal of a lock in the user's words", async () => {
+  vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce(
+    Response.json(
+      { code: 'last_founder', message: 'Mina is the only Founder of Techrida Nepal.' },
+      { status: 409 },
+    ),
+  );
+
+  const result = await changeUserStatusAction('00000000-0000-4000-8000-000000000001', 'lock');
+
+  expect(result.status).toBe('error');
 });

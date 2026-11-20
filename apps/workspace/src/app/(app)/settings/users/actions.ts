@@ -124,6 +124,8 @@ export async function sendPasswordResetAction(userId: string): Promise<ActionSta
 const STATUS_DONE: Record<UserStatusAction, { done: string; action: string }> = {
   deactivate: { done: 'User deactivated.', action: 'deactivate users' },
   reactivate: { done: 'User reactivated.', action: 'reactivate users' },
+  lock: { done: 'User locked.', action: 'lock users' },
+  unlock: { done: 'User unlocked.', action: 'unlock users' },
 };
 
 export async function changeUserStatusAction(

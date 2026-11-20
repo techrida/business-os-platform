@@ -202,7 +202,7 @@ export async function sendPasswordReset(session: Session, userId: string): Promi
 }
 
 /** F1-Q5 account actions in Settings > Users; each answers 204, and 409 with a message the page shows. */
-export type UserStatusAction = 'deactivate' | 'reactivate';
+export type UserStatusAction = 'deactivate' | 'reactivate' | 'lock' | 'unlock';
 
 export async function changeUserStatus(
   session: Session,

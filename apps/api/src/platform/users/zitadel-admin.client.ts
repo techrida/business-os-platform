@@ -27,6 +27,8 @@ export const ZITADEL_ENDPOINTS = {
   // an active one) with a precondition error.
   deactivateUser: '/zitadel.user.v2.UserService/DeactivateUser',
   reactivateUser: '/zitadel.user.v2.UserService/ReactivateUser',
+  lockUser: '/zitadel.user.v2.UserService/LockUser',
+  unlockUser: '/zitadel.user.v2.UserService/UnlockUser',
   // VERIFIED path and organizationIdQuery (seed findUser). UNVERIFIED: the `query` paging object, the
   // `sortingColumn` value and the `details.totalResult` answer. reconcile does not trust any of them:
   // it aborts when the walk shows paging is not working (see UserMirror.reconcile).
@@ -526,6 +528,16 @@ export class ZitadelAdminClient {
   /** Lets a deactivated user sign in again (state ACTIVE). */
   async reactivateUser(zitadelUserId: string): Promise<void> {
     await this.post(ZITADEL_ENDPOINTS.reactivateUser, { userId: zitadelUserId });
+  }
+
+  /** Shuts the user out of every sign-in (state LOCKED) until unlocked. */
+  async lockUser(zitadelUserId: string): Promise<void> {
+    await this.post(ZITADEL_ENDPOINTS.lockUser, { userId: zitadelUserId });
+  }
+
+  /** Lets a locked user sign in again (state ACTIVE) and resets their failed attempts. */
+  async unlockUser(zitadelUserId: string): Promise<void> {
+    await this.post(ZITADEL_ENDPOINTS.unlockUser, { userId: zitadelUserId });
   }
 
   async sendPasswordReset(zitadelUserId: string): Promise<void> {
