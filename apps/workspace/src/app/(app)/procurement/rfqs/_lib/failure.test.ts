@@ -97,3 +97,29 @@ describe('rfqFailure', () => {
     expect(rfqFailure(err(403), 'create').message).toMatch(/roles do not allow/);
   });
 });
+
+describe('a currency switched off (U16-Q14, D44)', () => {
+  const notEnabled = (code: string) =>
+    new ApiError(422, 'x', {
+      error: {
+        code,
+        message: 'Currency INR is not enabled for this company',
+        correlationId: 'corr-12345678',
+        ...(code === 'CURRENCY_NOT_ENABLED' ? { details: { currency: 'INR' } } : {}),
+      },
+    });
+
+  it.each(['CURRENCY_NOT_ENABLED', 'bad_request'])(
+    'shows the agreed wording, not the API sentence, for a %s 422',
+    (code) => {
+      for (const op of ['record', 'convert'] as const) {
+        const f = rfqFailure(notEnabled(code), op);
+        expect(f.message).toBe(
+          'INR is switched off for your company. Choose another currency, or ask an administrator to switch it on in Settings.',
+        );
+        expect(f.message).not.toContain('is not enabled for this company');
+        expect(f.definite).toBe(true);
+      }
+    },
+  );
+});
