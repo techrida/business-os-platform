@@ -223,6 +223,12 @@ export const InvoiceDetailSchema = z.object({
    * still parses.
    */
   format: DocumentFormatSnapshotSchema.nullable().optional(),
+  /**
+   * True when the caller created this credit or debit note, so may not issue it (TR-Q12f, separation of duties): the
+   * workspace shows Issue disabled with the reason. Only `GET /v1/invoices/:id` sets it, and only when true; optional
+   * so an older API answer still parses.
+   */
+  issueBlockedBySod: z.boolean().optional(),
 });
 export type InvoiceDetail = z.infer<typeof InvoiceDetailSchema>;
 

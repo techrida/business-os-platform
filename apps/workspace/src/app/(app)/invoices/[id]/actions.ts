@@ -17,6 +17,8 @@ import {
 import { requireStaffSession } from '@/lib/bff';
 import type { Session } from '@/lib/session';
 
+import { NOTE_CREATOR_CANNOT_ISSUE } from '../_lib/gates';
+
 /**
  * Submit, issue and discard one invoice. Serves the NFR "no double issue, no double decision": each
  * form carries an Idempotency-Key that the page generated once per render, and `expectedVersion`,
@@ -120,10 +122,17 @@ const ISO_DAY = /^\d{4}-\d{2}-\d{2}$/;
 
 /** The issue refusals the billing client would word generically, in the invoice's own terms. */
 function issueRefusal(err: unknown): string | undefined {
-  if (!(err instanceof ApiError) || err.status !== 422) return undefined;
-  const error = (err.body as { error?: { code?: unknown; details?: Record<string, unknown> } })
-    ?.error;
-  if (error?.code !== 'DUE_DATE_BEFORE_ISSUE') return undefined;
+  if (!(err instanceof ApiError)) return undefined;
+  const error = (
+    err.body as {
+      error?: { code?: unknown; reason?: unknown; details?: Record<string, unknown> };
+    }
+  )?.error;
+  // TR-Q12f: the creator of a credit or debit note may not issue it.
+  if (err.status === 403 && error?.reason === 'separation_of_duties') {
+    return NOTE_CREATOR_CANNOT_ISSUE;
+  }
+  if (err.status !== 422 || error?.code !== 'DUE_DATE_BEFORE_ISSUE') return undefined;
   // Only a plain date is echoed from `details`.
   const due = error.details?.['dueDate'];
   const when = typeof due === 'string' && ISO_DAY.test(due) ? ` (${formatCustomerDate(due)})` : '';
