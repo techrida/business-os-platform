@@ -15,7 +15,6 @@ import {
   issuePoDocumentLink,
   issuePurchaseOrder,
   listPoVersions,
-  listPurchaseOrders,
   listPurchaseOrdersPage,
   listReceipts,
   listReceivableOrders,
@@ -174,17 +173,6 @@ afterEach(() => {
 });
 
 describe('purchase order reads', () => {
-  it('lists with only the status the API accepts (its query is strict)', async () => {
-    answer(reply([listFields]));
-    const out = await listPurchaseOrders(session, 'issued');
-    expect(out[0]?.number).toBe('PO-2082-0001');
-    expect(lastCall().url).toBe('http://api:3001/v1/procurement/purchase-orders?status=issued');
-    expect(lastCall().headers.get('authorization')).toBe('Bearer eyJ.secret-access-token.sig');
-    answer(reply([]));
-    await listPurchaseOrders(session);
-    expect(lastCall().url).toBe('http://api:3001/v1/procurement/purchase-orders');
-  });
-
   it('lists a page with repeated statuses, a search and an offset, and reads the total', async () => {
     fetchMock.mockImplementation(() =>
       Promise.resolve(

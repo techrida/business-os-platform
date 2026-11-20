@@ -18,12 +18,7 @@ import { scanPollDelays } from './scan-poll';
 import { toast } from './toast';
 import styles from './image-upload.module.css';
 
-export {
-  SCAN_POLL_BUDGET_MS,
-  SCAN_POLL_CAP_MS,
-  SCAN_POLL_FIRST_MS,
-  scanPollDelays,
-} from './scan-poll';
+export { scanPollDelays } from './scan-poll';
 
 const UPLOAD_FAILED = 'The picture could not be uploaded. Try again.';
 const REMOVE_FAILED = 'The picture could not be removed. Try again.';

@@ -8,7 +8,6 @@ import {
   completeActivity,
   listActivities,
   listLeadOwners,
-  listOpportunities,
   ownerFilterNames,
   rescheduleActivity,
   updateLead,
@@ -39,31 +38,6 @@ const session: Session = {
   createdAt: 1_700_000_000,
   lastSeenAt: 1_700_000_000,
 };
-
-it('serializes selected stages as repeated parameters and preserves single-stage queries', async () => {
-  vi.mocked(apiFetch).mockImplementation(() => Promise.resolve(Response.json([])));
-
-  await listOpportunities(session, {
-    stage: ['qualified', 'negotiation'],
-    q: 'North & West',
-    limit: 2,
-  });
-  expect(apiFetch).toHaveBeenLastCalledWith(
-    session,
-    '/v1/opportunities?stage=qualified&stage=negotiation&q=North+%26+West&limit=2',
-    undefined,
-  );
-
-  await listOpportunities(session, { stage: 'qualified' });
-  expect(apiFetch).toHaveBeenLastCalledWith(
-    session,
-    '/v1/opportunities?stage=qualified',
-    undefined,
-  );
-
-  await listOpportunities(session, { stage: [] });
-  expect(apiFetch).toHaveBeenLastCalledWith(session, '/v1/opportunities', undefined);
-});
 
 const ACTIVITY = {
   id: '3f2b8c1e-4d5a-4b6c-8d7e-9f0a1b2c3d4e',

@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { findDuplicates, normalizeName, normalizePanVat, parsePage } from './duplicates';
+import { findDuplicates, normalizeName, normalizePanVat } from './duplicates';
 
 const c = (id: string, legalName: string, panVatNo: string | null) => ({ id, legalName, panVatNo });
 
@@ -47,18 +47,5 @@ describe('findDuplicates', () => {
   it('never flags a record against itself or on an empty PAN/VAT', () => {
     expect(findDuplicates([c('a', 'Solo', null)]).size).toBe(0);
     expect(findDuplicates([c('a', 'One', null), c('b', 'Two', null)]).size).toBe(0);
-  });
-});
-
-describe('parsePage', () => {
-  it('reads a 1-based page and falls back to the first on anything odd', () => {
-    expect(parsePage('3')).toBe(3);
-    expect(parsePage(undefined)).toBe(1);
-    expect(parsePage('0')).toBe(1);
-    expect(parsePage('-2')).toBe(1);
-    expect(parsePage('1.5')).toBe(1);
-    expect(parsePage('abc')).toBe(1);
-    expect(parsePage(['2', '3'])).toBe(1);
-    expect(parsePage('99999999')).toBe(1);
   });
 });

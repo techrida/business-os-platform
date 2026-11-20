@@ -36,8 +36,6 @@ export interface RfqValues {
   vendorIds: string[];
 }
 
-export const EMPTY_RFQ_VALUES: RfqValues = { purchaseRequestId: '', deadline: '', vendorIds: [] };
-
 export function rfqValuesFromForm(form: FormData): RfqValues {
   return {
     purchaseRequestId: str(form, 'purchaseRequestId'),

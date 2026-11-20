@@ -48,7 +48,6 @@ export const PoLineSchema = z.object({
   lineTotal: Text,
   requiresSerials: z.boolean(),
 });
-export type PoLine = z.infer<typeof PoLineSchema>;
 
 const poFields = {
   id: z.guid(),
@@ -237,13 +236,6 @@ const PO = '/v1/procurement/purchase-orders';
 const GRN = '/v1/procurement/receipts';
 
 // ------------------------------------------------------------------------------- purchase orders
-
-/** `GET .../purchase-orders[?status=]` (needs `procurement.po.issue`): a bare array, newest first. The query is strict: only `status`. */
-export function listPurchaseOrders(session: Session, status?: PoStatus): Promise<PoListItem[]> {
-  const path =
-    status === undefined ? PO : `${PO}?status=${encodeURIComponent(PoStatusSchema.parse(status))}`;
-  return call(session, path, z.array(PoListItemSchema));
-}
 
 /** One page of the purchase orders with several statuses, a search over number and vendor, and `offset`, plus the total of all matches. */
 export function listPurchaseOrdersPage(
