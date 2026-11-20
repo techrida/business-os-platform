@@ -71,7 +71,8 @@ export default async function NewPaymentPage({
     );
   }
 
-  // Never throws: a failed read gives the default list, and the API still refuses a disabled one.
+  // Never throws: a failed read gives the default list. It only marks which currencies are switched off;
+  // a payment is accepted in any of them (U16-Q1).
   const enabledCurrencies = loadEnabledCurrencies(session);
   let customers: CustomerOption[] = [];
   let truncated = false;
