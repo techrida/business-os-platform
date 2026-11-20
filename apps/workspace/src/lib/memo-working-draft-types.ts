@@ -35,11 +35,9 @@ export const MemoDraftPutBodySchema = z.strictObject({
   revision: MemoDraftRevisionSchema,
   values: MemoDraftValuesSchema,
 });
-export type MemoDraftPutBody = z.infer<typeof MemoDraftPutBodySchema>;
 
 /** `DELETE` body. */
 export const MemoDraftDeleteBodySchema = z.strictObject({ revision: MemoDraftRevisionSchema });
-export type MemoDraftDeleteBody = z.infer<typeof MemoDraftDeleteBodySchema>;
 
 /**
  * What GET, PUT and DELETE answer with.

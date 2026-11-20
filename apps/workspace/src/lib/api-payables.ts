@@ -51,7 +51,6 @@ export const BillLineMatchSchema = z.object({
   priceVariance: Text,
   taxVariance: Text,
 });
-export type BillLineMatch = z.infer<typeof BillLineMatchSchema>;
 
 export const BillLineSchema = z.object({
   id: z.guid(),
@@ -69,7 +68,6 @@ export const BillLineSchema = z.object({
   tdsAmount: Text,
   match: BillLineMatchSchema.nullable(),
 });
-export type BillLine = z.infer<typeof BillLineSchema>;
 
 const billFields = {
   id: z.guid(),
@@ -198,15 +196,6 @@ const BILLS = '/v1/payables/bills';
 const SUBMISSIONS = '/v1/payables/bill-submissions';
 
 // ------------------------------------------------------------------------------------------ bills
-
-/** `GET .../bills[?status=]` (needs `payables.bill.read`): a bare array, newest first. The query is strict: only `status`. */
-export function listBills(session: Session, status?: BillStatus): Promise<BillListItem[]> {
-  const path =
-    status === undefined
-      ? BILLS
-      : `${BILLS}?status=${encodeURIComponent(BillStatusSchema.parse(status))}`;
-  return call(session, path, z.array(BillListItemSchema));
-}
 
 /**
  * One page of `GET .../bills` with several statuses, a search over number, vendor invoice and vendor name, and
@@ -463,14 +452,6 @@ export type PaymentRequestItem = z.infer<typeof PaymentRequestItemSchema>;
 /** Approved bill items with availability calculated by the server after existing payment requests. */
 export function listPaymentRequestItems(session: Session): Promise<PaymentRequestItem[]> {
   return call(session, `${REQUESTS}/items`, z.array(PaymentRequestItemSchema));
-}
-
-export function listPaymentRequests(
-  session: Session,
-  status?: PaymentRequestStatus,
-): Promise<PaymentRequestListItem[]> {
-  const query = status === undefined ? '' : `?status=${PaymentRequestStatusSchema.parse(status)}`;
-  return call(session, `${REQUESTS}${query}`, z.array(PaymentRequestListSchema));
 }
 
 /**

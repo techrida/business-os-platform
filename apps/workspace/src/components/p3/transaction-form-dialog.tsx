@@ -7,7 +7,7 @@ import { Alert } from '@/components/ui/alert';
 import { Button } from '@/components/ui/button';
 import { Dialog, DialogClose } from '@/components/ui/dialog';
 import { toast } from '@/components/ui/toast';
-import { useFocusOnProblem } from '@/components/ui/transaction-dialog';
+import { useFocusOnProblem } from '@/components/p2/quotations/action-dialog';
 
 import styles from './transaction-form-dialog.module.css';
 

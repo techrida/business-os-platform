@@ -7,7 +7,6 @@ import {
   isBuilt,
   ownsPath,
   searchNavGroups,
-  titleForPath,
   visibleGroups,
 } from './nav';
 
@@ -290,10 +289,6 @@ describe('NAV_GROUPS', () => {
         permission: 'payables.vat_register.read',
       }),
     ]);
-    expect(titleForPath('/payables/bills/new')).toBe('Bills');
-    expect(titleForPath('/payables/payment-requests/11111111-1111-4111-8111-111111111111')).toBe(
-      'Payment requests',
-    );
     const denied = visibleGroups(false, () => false);
     expect(denied.find((group) => group.label === 'Payables')).toBeUndefined();
     const requestOnly = visibleGroups(
@@ -411,44 +406,6 @@ describe('ownsPath', () => {
     expect(ownsPath('/inbox', '/inbox-archive')).toBe(false);
     expect(ownsPath('/', '/')).toBe(true);
     expect(ownsPath('/', '/inbox')).toBe(false);
-  });
-});
-
-describe('titleForPath', () => {
-  it('names the built page', () => {
-    expect(titleForPath('/')).toBe('Overview');
-    expect(titleForPath('/inbox')).toBe('Inbox');
-  });
-
-  it('names a page under a built page by its owner', () => {
-    expect(titleForPath('/inbox/0f3a')).toBe('Inbox');
-    expect(titleForPath('/memos/new')).toBe('Memos');
-    expect(titleForPath('/settings/users/new')).toBe('Settings');
-  });
-
-  it('names the P2 pages and the pages under them', () => {
-    expect(titleForPath('/customers')).toBe('Customers');
-    expect(titleForPath('/customers/0f3a/edit')).toBe('Customers');
-    expect(titleForPath('/verification/0f3a')).toBe('Verification');
-  });
-
-  it('names the P3 billing pages and the pages under them', () => {
-    expect(titleForPath('/sales-orders')).toBe('Sales Orders');
-    expect(titleForPath('/invoices/0f3a')).toBe('Invoices');
-    expect(titleForPath('/payments/0f3a')).toBe('Payments');
-    expect(titleForPath('/receivables/aging')).toBe('Receivables');
-  });
-
-  it('names the procurement pages and their detail routes', () => {
-    expect(titleForPath('/procurement/requests/new')).toBe('Purchase requests');
-    expect(titleForPath('/procurement/rfqs/one/quotations/new')).toBe('Requests for quotation');
-    expect(titleForPath('/procurement/orders/one')).toBe('Purchase orders');
-    expect(titleForPath('/procurement/receipts/one')).toBe('Receipts');
-    expect(titleForPath('/vendors/one')).toBe('Vendors');
-  });
-
-  it('falls back to the app name for any other path', () => {
-    expect(titleForPath('/somewhere-else')).toBe('Business OS');
   });
 });
 

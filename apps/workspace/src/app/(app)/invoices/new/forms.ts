@@ -99,7 +99,7 @@ function listInWords(codes: readonly string[]): string {
 /**
  * `enabled` is the company's switched-on currencies (`currency.enabled`, D44) as the page read them;
  * without it every platform currency passes. The API checks again and answers 422
- * CURRENCY_NOT_ENABLED, which `currencyNotEnabledMessage` words for the form.
+ * CURRENCY_NOT_ENABLED.
  */
 export function parseManualInvoice(
   values: ManualInvoiceValues,
@@ -141,27 +141,6 @@ export function parseManualInvoice(
   return checked.success
     ? { ok: true, data: checked.data }
     : { ok: false, errors: { form: INCOMPLETE } };
-}
-
-/**
- * The words for the API's 422 CURRENCY_NOT_ENABLED (the currency was switched off after the page
- * loaded), or undefined for any other failure. Only a known currency code is echoed from `details`.
- * Reads the `ApiError` shape (`status`, `body`) without importing it: `@/lib/api` is server-only and
- * this file stays plain validation.
- */
-export function currencyNotEnabledMessage(err: unknown): string | undefined {
-  if (typeof err !== 'object' || err === null) return undefined;
-  const { status, body } = err as { status?: unknown; body?: unknown };
-  if (status !== 422) return undefined;
-  const error = (body as { error?: { code?: unknown; details?: unknown } } | undefined)?.error;
-  if (error?.code !== 'CURRENCY_NOT_ENABLED') return undefined;
-  const details = error.details as { currency?: unknown } | undefined;
-  const code = details?.currency;
-  const named =
-    typeof code === 'string' && (CURRENCIES as readonly string[]).includes(code)
-      ? code
-      : 'This currency';
-  return `${named} is no longer switched on for your company. Reload the page and choose another currency.`;
 }
 
 export function parseCreditNote(input: {

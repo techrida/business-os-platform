@@ -171,24 +171,6 @@ export const AdminDepartmentDetailSchema = z.object({
 });
 export type AdminDepartmentDetail = z.infer<typeof AdminDepartmentDetailSchema>;
 
-export const DepartmentChangeEffectSchema = z.object({
-  kind: z.enum([
-    'memberLevel',
-    'memberAdd',
-    'memberRemove',
-    'memberMove',
-    'memberJobTitle',
-    'head',
-    'headDemoted',
-  ]),
-  summary: z.string(),
-  alsoChanges: z.boolean(),
-  departmentId: z.guid(),
-  userId: z.guid().nullable(),
-  fromDepartmentId: z.guid().nullable().optional(),
-});
-export type DepartmentChangeEffect = z.infer<typeof DepartmentChangeEffectSchema>;
-
 export const UnassignedPersonSchema = z.object({
   userId: z.guid(),
   name: z.string(),

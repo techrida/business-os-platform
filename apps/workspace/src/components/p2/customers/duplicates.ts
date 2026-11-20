@@ -74,12 +74,3 @@ export function findDuplicates(customers: readonly Comparable[]): Map<string, Du
   }
   return found;
 }
-
-const MAX_PAGE = 10_000;
-
-/** A 1-based page number from `?page=`; anything that is not a plain positive integer is page 1. */
-export function parsePage(raw: string | string[] | undefined): number {
-  if (typeof raw !== 'string' || !/^[1-9]\d{0,8}$/.test(raw)) return 1;
-  const n = Number(raw);
-  return n <= MAX_PAGE ? n : 1;
-}

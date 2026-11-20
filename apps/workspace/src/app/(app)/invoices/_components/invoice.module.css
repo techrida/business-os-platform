@@ -198,17 +198,6 @@
   line-height: var(--line-height-body-large);
 }
 
-/* Cells in the lines table: descriptions wrap, figures keep their digits aligned. */
-.lineText {
-  min-width: 18ch;
-  max-width: 48ch;
-  overflow-wrap: anywhere;
-}
-
-.figure {
-  font-variant-numeric: tabular-nums;
-}
-
 /* The per-line breakdown in the side column: one short list per line. */
 .breakdown {
   display: grid;

@@ -1,12 +1,9 @@
 import { CreateManualInvoiceBodySchema, CreditNoteBodySchema } from '@bos/contracts';
 import { describe, expect, it, vi } from 'vitest';
 
-import { ApiError } from '@/lib/api';
-
 import { CUSTOMER, ID, TAX } from '../_lib/test-fixtures';
 
 import {
-  currencyNotEnabledMessage,
   parseCreditNote,
   parseDebitNote,
   parseDiscount,
@@ -108,33 +105,6 @@ describe('parseManualInvoice', () => {
     const out = parseManualInvoice(values({ lines: [{ ...goodLine, quantity: '' }] }));
     expect(out.ok).toBe(false);
     if (!out.ok) expect(out.errors['lines.0.quantity']).toBeTruthy();
-  });
-});
-
-describe('currencyNotEnabledMessage', () => {
-  const refusal = (body: unknown, status = 422) => new ApiError(status, 'refused', body);
-
-  it("words the API's 422 CURRENCY_NOT_ENABLED with the refused currency", () => {
-    const err = refusal({
-      error: {
-        code: 'CURRENCY_NOT_ENABLED',
-        message: 'Currency INR is not enabled for this company',
-        details: { currency: 'INR' },
-      },
-    });
-    expect(currencyNotEnabledMessage(err)).toBe(
-      'INR is no longer switched on for your company. Reload the page and choose another currency.',
-    );
-  });
-
-  it('echoes only a known currency code and ignores every other failure', () => {
-    const odd = refusal({ error: { code: 'CURRENCY_NOT_ENABLED', details: { currency: '<b>' } } });
-    expect(currencyNotEnabledMessage(odd)).toMatch(/^This currency is no longer/);
-    expect(currencyNotEnabledMessage(refusal({ error: { code: 'OTHER' } }))).toBeUndefined();
-    expect(
-      currencyNotEnabledMessage(refusal({ error: { code: 'CURRENCY_NOT_ENABLED' } }, 409)),
-    ).toBeUndefined();
-    expect(currencyNotEnabledMessage(new Error('offline'))).toBeUndefined();
   });
 });
 

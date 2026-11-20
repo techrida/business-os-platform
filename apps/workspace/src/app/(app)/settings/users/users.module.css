@@ -4,34 +4,6 @@
   gap: clamp(12px, 2vw, 32px);
 }
 
-.filters,
-.filterActions {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 10px;
-}
-
-.filters {
-  justify-content: space-between;
-  margin-top: 12px;
-}
-
-.search {
-  flex: 0 1 280px;
-}
-
-.filterActions select {
-  min-height: 36px;
-  padding-block: 4px;
-  border-color: var(--action-primary);
-  color: var(--action-primary);
-}
-
-.filterActions a {
-  color: var(--text-link);
-}
-
 .results {
   display: grid;
   grid-template-columns: minmax(0, 1fr);
@@ -106,15 +78,6 @@
 }
 
 @media (max-width: 600px) {
-  .filters {
-    align-items: stretch;
-  }
-  .search {
-    flex-basis: 100%;
-  }
-  .filterActions {
-    gap: 8px;
-  }
   .directory tbody tr {
     height: 64px;
   }
@@ -292,16 +255,6 @@
   }
 }
 
-/* Directory additions are kept within the table's own scroll region. */
-.filterActions {
-  max-width: 100%;
-}
-
-.filterActions > * {
-  min-width: 0;
-  max-width: 100%;
-}
-
 .name,
 .department {
   overflow-wrap: anywhere;
@@ -325,16 +278,4 @@
 .rowActions button {
   min-width: 40px;
   min-height: 40px;
-}
-
-@media (max-width: 600px) {
-  .filterActions {
-    display: grid;
-    width: 100%;
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-  }
-
-  .filterActions select {
-    width: 100%;
-  }
 }

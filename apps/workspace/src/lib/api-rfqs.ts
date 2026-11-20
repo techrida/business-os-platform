@@ -78,34 +78,7 @@ export const ComparisonRowSchema = QuotationDtoSchema.extend({
 });
 export type ComparisonRow = z.infer<typeof ComparisonRowSchema>;
 
-function withQuery(path: string, params: Record<string, string | number | undefined>): string {
-  const query = new URLSearchParams();
-  for (const [name, value] of Object.entries(params)) {
-    if (value !== undefined && value !== '') query.set(name, String(value));
-  }
-  const text = query.toString();
-  return text === '' ? path : `${path}?${text}`;
-}
-
 const RFQ_PATH = '/v1/procurement/rfqs';
-
-/**
- * `GET /v1/procurement/rfqs?status=&limit=`: a bare array, newest first. The query is strict (only
- * `status` and `limit`, at most 200).
- */
-export function listRfqs(
-  session: Session,
-  query: { status?: RfqStatus; limit?: number },
-): Promise<RfqListItem[]> {
-  return call(
-    session,
-    withQuery(RFQ_PATH, {
-      status: query.status !== undefined ? RfqStatusSchema.parse(query.status) : undefined,
-      limit: query.limit,
-    }),
-    z.array(RfqListItemSchema),
-  );
-}
 
 /** One page of `GET /v1/procurement/rfqs` with several statuses, a search and `offset`, plus the total of all matches. */
 export function listRfqsPage(

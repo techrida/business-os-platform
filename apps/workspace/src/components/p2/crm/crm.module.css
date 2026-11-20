@@ -7,34 +7,7 @@
   line-height: var(--line-height-body-small);
 }
 
-.long {
-  overflow-wrap: anywhere;
-}
-
-.num {
-  font-variant-numeric: tabular-nums;
-}
-
-/* ---- Toolbar: view switch and filters ---- */
-
-.toolbar {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: end;
-  justify-content: space-between;
-  gap: 16px;
-}
-
-.filters {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: end;
-  gap: 12px;
-}
-
-.filters > * {
-  min-width: 160px;
-}
+/* ---- View switch ---- */
 
 .views {
   display: inline-flex;
@@ -207,90 +180,6 @@
   padding-top: 8px;
 }
 
-/* ---- Forms ---- */
-
-.form {
-  display: grid;
-  gap: 20px;
-}
-
-.formGrid {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(min(100%, 240px), 1fr));
-  gap: 16px;
-}
-
-.formActions {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 12px;
-}
-
-.fieldset {
-  display: grid;
-  gap: 12px;
-  min-width: 0;
-  margin: 0;
-  padding: 0;
-  border: 0;
-}
-
-.legend {
-  padding: 0;
-  font-size: var(--font-size-body-small);
-  font-weight: var(--font-weight-medium);
-}
-
-.choice {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  min-height: 32px;
-  font-size: var(--font-size-body);
-}
-
-.choice input {
-  width: 16px;
-  height: 16px;
-  accent-color: var(--brand-600);
-}
-
-/* ---- Detail layout ---- */
-
-.columns {
-  display: grid;
-  gap: 24px;
-  align-items: start;
-}
-
-.main {
-  display: grid;
-  gap: 24px;
-  min-width: 0;
-}
-
-.side {
-  display: grid;
-  gap: 24px;
-  min-width: 0;
-}
-
-@media (min-width: 1100px) {
-  .columns {
-    grid-template-columns: minmax(0, 1fr) 340px;
-  }
-}
-
-.reasonBox {
-  display: grid;
-  gap: 2px;
-  padding: 12px;
-  border-radius: var(--radius-lg);
-  background: var(--surface-muted);
-  font-size: var(--font-size-body-small);
-  overflow-wrap: anywhere;
-}
-
 /* ---- Activity list ---- */
 
 .timeline {
@@ -336,50 +225,4 @@
 .entryWhen {
   color: var(--text-secondary);
   font-size: var(--font-size-caption);
-}
-
-/* ---- Convert dialog ---- */
-
-.convertDialog.convertDialog {
-  --dialog-width: 720px;
-}
-
-.convertFields {
-  display: grid;
-  gap: 20px;
-  min-width: 0;
-  margin: 0;
-  padding: 0;
-  border: 0;
-}
-
-.section {
-  display: grid;
-  gap: 12px;
-  padding: 16px;
-  border: var(--border-width-thin) solid var(--border-default);
-  border-radius: var(--radius-lg);
-}
-
-.candidates {
-  display: grid;
-  gap: 8px;
-  margin: 0;
-  padding: 0;
-  list-style: none;
-}
-
-.candidate {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  justify-content: space-between;
-  gap: 8px 16px;
-  min-width: 0;
-}
-
-.candidateText {
-  display: grid;
-  min-width: 0;
-  overflow-wrap: anywhere;
 }

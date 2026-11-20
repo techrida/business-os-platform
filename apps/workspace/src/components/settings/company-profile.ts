@@ -388,12 +388,6 @@ export type CompanyKey = 'entity.profile' | 'entity.address' | 'entity.pan_vat_n
 /** The version of each setting as the page loaded it; null when the page loaded the default. */
 export type CompanyVersions = Record<CompanyKey, number | null>;
 
-export const NO_VERSIONS: CompanyVersions = {
-  'entity.profile': null,
-  'entity.address': null,
-  'entity.pan_vat_no': null,
-};
-
 /** The form field that carries the loaded version of one setting. An empty value means "the default". */
 export const versionFieldName = (key: CompanyKey): string => `expectedVersion:${key}`;
 

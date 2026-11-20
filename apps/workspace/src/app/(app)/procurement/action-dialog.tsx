@@ -4,7 +4,11 @@ import { useActionState, useId, useRef, type ReactNode } from 'react';
 
 import { Button } from '@/components/ui/button';
 import { Dialog, DialogClose, type DialogSize } from '@/components/ui/dialog';
-import { ErrorSummary, PendingLine, useFocusOnProblem } from '@/components/ui/transaction-dialog';
+import {
+  ErrorSummary,
+  PendingLine,
+  useFocusOnProblem,
+} from '@/components/p2/quotations/action-dialog';
 
 import type { ActionState } from './orders/_lib/state';
 import styles from './procurement.module.css';

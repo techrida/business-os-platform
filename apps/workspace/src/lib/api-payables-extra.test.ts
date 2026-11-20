@@ -8,7 +8,6 @@ import {
   createPaymentRequest,
   getPaymentRequest,
   getVatRegister,
-  listPaymentRequests,
   listPaymentRequestsPage,
   listPaymentRequestItems,
   requestBillException,
@@ -213,18 +212,6 @@ describe('payment request pages', () => {
 });
 
 describe('payment request client', () => {
-  it('reads the list without lines and validates its optional status', async () => {
-    const { lines: _lines, ...row } = request;
-    reply([row]);
-    expect((await listPaymentRequests(session, 'draft'))[0]?.totalAmount).toBe('111500.00');
-    expect(apiFetch).toHaveBeenLastCalledWith(
-      session,
-      '/v1/payables/payment-requests?status=draft',
-      undefined,
-    );
-    expect(() => listPaymentRequests(session, 'other' as never)).toThrow();
-  });
-
   it('encodes ids and keeps amounts and the bank snapshot as server values', async () => {
     reply({ ...request, vendorName: 'Himal Supplies', can: { readVendor: false } });
     const result = await getPaymentRequest(session, '../private?x');

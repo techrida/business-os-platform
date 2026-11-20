@@ -197,11 +197,6 @@ export function guessMime(filename: string, browserType: string): string {
   return byExt ?? (browserType !== '' ? browserType : 'application/octet-stream');
 }
 
-/** The last 8 characters of an id, for places where a person's name is not available. */
-export function shortId(id: string): string {
-  return id.length > 8 ? id.slice(-8) : id;
-}
-
 export interface ScanLabel {
   text: string;
   tone: 'good' | 'wait' | 'bad';
