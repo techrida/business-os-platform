@@ -21,7 +21,7 @@ import type { Session } from '@/lib/session';
 
 import { InvoiceKindBadge, InvoiceStatusBadge } from '../_components/badges';
 import { LineBreakdown, NprSnapshot } from '../_components/detail-parts';
-import { documentFormat } from '../_components/document/format';
+import { documentContact, documentFormat } from '../_components/document/format';
 import { InvoiceDocument } from '../_components/document/invoice-document';
 import { InvoiceActions } from '../_components/invoice-actions';
 import { InvoicePreview } from '../_components/invoice-preview';
@@ -234,7 +234,12 @@ export default async function InvoiceDetailPage({ params }: { params: Promise<{ 
             <>
               <InvoiceActions invoice={invoice} gates={gates} reloadHref={path} />
               {pdfNumber ? (
-                <InvoicePreview documentUrl={`${path}/document`} number={pdfNumber} />
+                <InvoicePreview
+                  documentUrl={`${path}/document`}
+                  number={pdfNumber}
+                  // The API's Retry needs invoice.issue on this invoice: the grant, and its scope reaching it.
+                  mayRetry={can('invoice.issue') && detail.can?.issue !== false}
+                />
               ) : null}
               {recordPayment ? <LinkButton href={recordPayment}>Record payment</LinkButton> : null}
             </>
@@ -256,7 +261,7 @@ export default async function InvoiceDetailPage({ params }: { params: Promise<{ 
             detail={detail}
             customerName={customerName}
             format={format}
-            sellerContact={display.sellerContact}
+            sellerContact={documentContact(detail.format, display.sellerContact)}
           />
         </div>
         <div className={styles.side}>

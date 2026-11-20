@@ -39,7 +39,12 @@ import {
   type Scope,
 } from '@bos/contracts';
 import { createParty, createTenantWithEntity, runMigrations } from '@bos/db';
-import { ForbiddenException, NotFoundException } from '@nestjs/common';
+import {
+  ConflictException,
+  ForbiddenException,
+  HttpException,
+  NotFoundException,
+} from '@nestjs/common';
 import { PostgreSqlContainer, type StartedPostgreSqlContainer } from '@testcontainers/postgresql';
 import type { Queue } from 'bullmq';
 import { sql } from 'drizzle-orm';
@@ -47,6 +52,7 @@ import { drizzle } from 'drizzle-orm/node-postgres';
 import { Pool } from 'pg';
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 
+import { AuditService } from '../../../platform/audit/audit.service';
 import type { Principal } from '../../../platform/authz/principal';
 import type { Db, DbTransaction } from '../../../platform/db/db.module';
 import { systemActor, withTx, type TxScope } from '../../../platform/db/tx';
@@ -66,6 +72,7 @@ import type {
   RenderSettings,
   RunInTx,
 } from '../../quotations/render/quotation-render.sweeper';
+import { MAX_RENDER_ATTEMPTS, RETRY_PAUSE_MAX_MS } from '../../quotations/render/render-retry';
 import {
   drizzleInvoiceHeadLoader,
   INVOICE_OWNER_TYPE,
@@ -75,7 +82,6 @@ import {
 import { InvoiceDocumentService } from './invoice-document.service';
 import {
   drizzleInvoiceRenderStore,
-  FAILED_RETRY_MS,
   InvoiceRenderSweeper,
   ORPHAN_AFTER_MS,
   type RenderCandidate,
@@ -120,6 +126,8 @@ let gotenbergServer: Server;
 let sweeper: InvoiceRenderSweeper;
 let store: ReturnType<typeof drizzleInvoiceRenderStore>;
 let service: InvoiceDocumentService;
+/** The real audit trail: a given-up render and a Retry must write their entries. */
+let renderAudit: AuditService;
 
 const gotenberg = { mode: 'ok' as 'ok' | 'error', requests: [] as string[] };
 const authz = { assert: vi.fn() };
@@ -147,9 +155,10 @@ const renderActor = () => systemActor(INVOICE_RENDER_JOB_PREFIX);
 const grantsOf = (role: RoleKey) =>
   new Map(Object.entries(DEFAULT_ROLE_PERMISSIONS[role])) as Map<Permission, Scope>;
 /** The caller of the route; each test sets it. */
-const current: { scope: TxScope; orgKind: Principal['orgKind'] } = {
+const current: { scope: TxScope; orgKind: Principal['orgKind']; role: RoleKey } = {
   scope: { tenantId: '', organizationId: '' },
   orgKind: 'staff',
+  role: 'accountant',
 };
 const caller = {
   current: () => ({
@@ -165,7 +174,7 @@ const caller = {
       roles: [],
       departmentId: null,
       status: 'active',
-      grants: grantsOf('accountant'),
+      grants: grantsOf(current.role),
     } satisfies Principal,
   }),
 };
@@ -230,6 +239,7 @@ beforeAll(async () => {
   // The real policy of an invoice, as the worker module registers it.
   documents.registerOwner(new InvoiceOwnerPolicy(drizzleInvoiceHeadLoader(db)));
   store = drizzleInvoiceRenderStore(db);
+  renderAudit = new AuditService(db);
 
   fakeClamd = await startFakeClamd();
   processor = new ScanProcessor(
@@ -242,7 +252,7 @@ beforeAll(async () => {
   sweeper = makeSweeper(
     new GotenbergClient(gotenbergUrl, { timeoutMs: 10_000, maxBytes: 1_000_000 }),
   );
-  service = new InvoiceDocumentService(db, documents, caller);
+  service = new InvoiceDocumentService(db, documents, caller, renderAudit);
 });
 
 afterAll(async () => {
@@ -263,6 +273,7 @@ beforeEach(() => {
   audit.record.mockClear();
   queue.add.mockReset().mockResolvedValue({});
   resetSettings();
+  current.role = 'accountant';
 });
 
 // ---------------------------------------------------------------------------------------- helpers
@@ -276,6 +287,7 @@ function makeSweeper(pdf: GotenbergClient): InvoiceRenderSweeper {
     pdf,
     () => new Date(),
     NO_LOGOS,
+    renderAudit,
   );
 }
 
@@ -470,12 +482,13 @@ describe('invoice render', () => {
       pdf,
       () => clock,
       NO_LOGOS,
+      renderAudit,
     );
 
-    // Every retry has expired before the next tick. The oldest-first query used to pick the same ten forever.
+    // Every pause has expired before the next tick. The oldest-first query used to pick the same ten forever.
     for (let tick = 0; tick < 3; tick += 1) {
       await worker.sweep();
-      clock = new Date(clock.getTime() + FAILED_RETRY_MS + 1);
+      clock = new Date(clock.getTime() + RETRY_PAUSE_MAX_MS + 1);
     }
     expect(await documentRows(healthy.invoiceId)).toHaveLength(1);
     expect(await printRows(healthy.invoiceId)).toEqual([{ print_no: 1, printed_by: null }]);
@@ -494,9 +507,13 @@ describe('invoice render', () => {
       [failed.map((c) => c.invoiceId)],
     );
     expect(load.mock.calls.map(([, c]) => c.invoiceId)).toEqual(oldest.map((r) => r.id));
-    expect((await fairStore.candidates(10, [], randomUUID())).map((c) => c.invoiceId)).toEqual(
-      oldest.map((r) => r.id),
-    );
+    // They just failed again, so they wait out their pause first; after it they lead the batch again.
+    const afterPause = new Date(clock.getTime() + RETRY_PAUSE_MAX_MS + 1);
+    const dueNow = (await fairStore.candidates(clock, 100, randomUUID())).map((c) => c.invoiceId);
+    expect(dueNow.filter((id) => oldest.some((r) => r.id === id))).toEqual([]);
+    expect(
+      (await fairStore.candidates(afterPause, 10, randomUUID())).map((c) => c.invoiceId),
+    ).toEqual(oldest.map((r) => r.id));
   });
 
   it('renders its invoice without depending on the global sweep batch', async () => {
@@ -504,7 +521,7 @@ describe('invoice render', () => {
     for (let i = 0; i < 10; i += 1) await seedInvoice(older);
     const scope = await newScope();
     const inv = await seedInvoice(scope);
-    const batch = await store.candidates(10, []);
+    const batch = await store.candidates(new Date(), 10);
     expect(batch).toHaveLength(10);
     expect(batch.some((candidate) => candidate.invoiceId === inv.invoiceId)).toBe(false);
 
@@ -647,15 +664,12 @@ describe('invoice render', () => {
     const rendered = await seedInvoice(scope);
     expect(await sweeper.renderOne(rendered)).toBe('rendered');
 
-    const picked = (await store.candidates(1_000, [])).map((c) => c.invoiceId);
+    const picked = (await store.candidates(new Date(), 1_000)).map((c) => c.invoiceId);
 
     expect(picked).toContain(fresh.invoiceId);
     expect(picked).toContain(proforma.invoiceId);
     expect(picked).not.toContain(draft.invoiceId);
     expect(picked).not.toContain(rendered.invoiceId);
-    expect(
-      (await store.candidates(1_000, [fresh.invoiceId])).map((c) => c.invoiceId),
-    ).not.toContain(fresh.invoiceId);
   });
 
   it('two renders at once give one document and one print', async () => {
@@ -734,8 +748,8 @@ describe('GET /v1/invoices/:id/document', () => {
     const scope = await newScope();
     asStaff(scope);
     const inv = await seedInvoice(scope);
-    // Not rendered yet: nothing to serve.
-    await expect(service.link(inv.invoiceId)).rejects.toBeInstanceOf(NotFoundException);
+    // Not rendered yet: being prepared (409), never a "not found".
+    await expect(service.link(inv.invoiceId)).rejects.toBeInstanceOf(ConflictException);
     expect(await sweeper.renderOne(inv)).toBe('rendered');
 
     const link = await service.link(inv.invoiceId);
@@ -743,7 +757,7 @@ describe('GET /v1/invoices/:id/document', () => {
     expect(Number.isNaN(Date.parse(link.expiresAt))).toBe(false);
   });
 
-  it('is a 404 for a draft, for another entity, for a random id and before any render', async () => {
+  it('is a 404 for a draft, for another entity and for a random id; 409 before any render', async () => {
     const scope = await newScope();
     const other = await newScope();
     const draft = await seedInvoice(scope, { status: 'draft' });
@@ -753,7 +767,7 @@ describe('GET /v1/invoices/:id/document', () => {
 
     asStaff(scope);
     await expect(service.link(draft.invoiceId)).rejects.toBeInstanceOf(NotFoundException);
-    await expect(service.link(unrendered.invoiceId)).rejects.toBeInstanceOf(NotFoundException);
+    await expect(service.link(unrendered.invoiceId)).rejects.toBeInstanceOf(ConflictException);
     await expect(service.link(randomUUID())).rejects.toBeInstanceOf(NotFoundException);
     await expect(service.link(issued.invoiceId)).resolves.toBeDefined();
 
@@ -769,5 +783,145 @@ describe('GET /v1/invoices/:id/document', () => {
     current.scope = scope;
     current.orgKind = 'customer';
     await expect(service.link(inv.invoiceId)).rejects.toBeInstanceOf(ForbiddenException);
+  });
+});
+
+describe('a render that keeps failing (R4c2: TR-Q4, F1-Q13)', () => {
+  const asStaff = (scope: TxScope, role: RoleKey = 'accountant') => {
+    current.scope = scope;
+    current.orgKind = 'staff';
+    current.role = role;
+  };
+  const ids = (cs: RenderCandidate[]) => cs.map((c) => c.invoiceId);
+  async function failureRow(invoiceId: string) {
+    const { rows } = await pool.query<{
+      attempts: number;
+      last_failure_kind: string;
+      next_attempt_at: Date | null;
+      exhausted_at: Date | null;
+    }>(
+      `SELECT attempts, last_failure_kind, next_attempt_at, exhausted_at
+         FROM app.document_render_failures WHERE owner_type = 'invoice' AND owner_id = $1`,
+      [invoiceId],
+    );
+    return rows[0];
+  }
+  async function actions(scope: TxScope, invoiceId: string): Promise<string[]> {
+    const events = await renderAudit.list(scope, {
+      entityType: 'invoices',
+      entityId: invoiceId,
+      limit: 100,
+    });
+    return events.map((e) => e.action).filter((a) => a.startsWith('invoice.pdf_'));
+  }
+  const failingWorker = (clock: () => Date) =>
+    new InvoiceRenderSweeper(
+      store,
+      runTx,
+      documents,
+      settings,
+      { htmlToPdf: vi.fn().mockRejectedValue(new Error('chromium gone')) },
+      clock,
+      NO_LOGOS,
+      renderAudit,
+    );
+
+  it('retries with a growing pause, then gives up with one admin entry and a 424; Retry by an issuer starts again', async () => {
+    const scope = await newScope();
+    const inv = await seedInvoice(scope);
+    asStaff(scope);
+    let clock = new Date();
+    const worker = failingWorker(() => clock);
+
+    let previousPause = 0;
+    for (let n = 1; n <= MAX_RENDER_ATTEMPTS; n += 1) {
+      expect(await worker.renderOne(inv)).toBe('failed');
+      const row = await failureRow(inv.invoiceId);
+      expect(row).toMatchObject({ attempts: n, last_failure_kind: 'error' });
+      if (n === MAX_RENDER_ATTEMPTS) break;
+      // Still being tried: held back during its pause, due after it, and the screen reads "being prepared".
+      expect(row?.exhausted_at).toBeNull();
+      const due = row?.next_attempt_at ?? new Date(0);
+      const pause = due.getTime() - clock.getTime();
+      expect(pause).toBeGreaterThan(previousPause);
+      previousPause = pause;
+      expect(ids(await store.candidates(clock, 1_000))).not.toContain(inv.invoiceId);
+      clock = new Date(due.getTime() + 1);
+      expect(ids(await store.candidates(clock, 1_000))).toContain(inv.invoiceId);
+      await expect(service.link(inv.invoiceId)).rejects.toBeInstanceOf(ConflictException);
+      expect(await actions(scope, inv.invoiceId)).toEqual([]);
+    }
+
+    // Given up: never picked again, the download says it failed, and one admin entry says so.
+    const given = await failureRow(inv.invoiceId);
+    expect(given?.exhausted_at).not.toBeNull();
+    expect(given?.next_attempt_at).toBeNull();
+    const farFuture = new Date(clock.getTime() + 365 * 24 * 60 * 60_000);
+    expect(ids(await store.candidates(farFuture, 1_000))).not.toContain(inv.invoiceId);
+    const refused = await service.link(inv.invoiceId).catch((e: unknown) => e);
+    expect(refused).toBeInstanceOf(HttpException);
+    expect((refused as HttpException).getStatus()).toBe(424);
+    expect(await actions(scope, inv.invoiceId)).toEqual(['invoice.pdf_render_failed']);
+    // Another failure after giving up changes nothing and writes no second entry.
+    expect(await worker.renderOne(inv)).toBe('failed');
+    expect(await failureRow(inv.invoiceId)).toMatchObject({ attempts: MAX_RENDER_ATTEMPTS });
+    expect(await actions(scope, inv.invoiceId)).toEqual(['invoice.pdf_render_failed']);
+
+    // Retry needs invoice.issue on the invoice: a reader who may not issue sees the same 404 as a stranger.
+    await expect(service.retry(inv.invoiceId)).rejects.toBeInstanceOf(NotFoundException);
+    asStaff(scope, 'finance');
+    await expect(service.retry(inv.invoiceId)).resolves.toEqual({ state: 'queued' });
+    expect(await failureRow(inv.invoiceId)).toBeUndefined();
+    await expect(service.retry(inv.invoiceId)).rejects.toBeInstanceOf(ConflictException);
+    expect(await actions(scope, inv.invoiceId)).toEqual([
+      'invoice.pdf_render_failed',
+      'invoice.pdf_retry_requested',
+    ]);
+    // Back to "being prepared", due at once, and a healthy render now serves the PDF.
+    await expect(service.link(inv.invoiceId)).rejects.toBeInstanceOf(ConflictException);
+    expect(ids(await store.candidates(clock, 1_000))).toContain(inv.invoiceId);
+    await renderClean(inv);
+    await expect(service.link(inv.invoiceId)).resolves.toBeDefined();
+  });
+
+  it('forgets earlier failures once a render succeeds', async () => {
+    const scope = await newScope();
+    const inv = await seedInvoice(scope);
+    expect(await failingWorker(() => new Date()).renderOne(inv)).toBe('failed');
+    expect(await failureRow(inv.invoiceId)).toMatchObject({ attempts: 1 });
+    await renderClean(inv);
+    expect(await failureRow(inv.invoiceId)).toBeUndefined();
+  });
+
+  it('removes the document of a try whose bytes were never stored, so the next try is not blocked', async () => {
+    const scope = await newScope();
+    const inv = await seedInvoice(scope);
+    const brokenDisk = {
+      createGenerated: documents.createGenerated.bind(documents),
+      receiveGenerated: vi.fn().mockRejectedValue(new Error('disk full')),
+    };
+    let clock = new Date();
+    const worker = new InvoiceRenderSweeper(
+      store,
+      runTx,
+      brokenDisk,
+      settings,
+      { htmlToPdf: vi.fn().mockResolvedValue(PDF) },
+      () => clock,
+      NO_LOGOS,
+      renderAudit,
+    );
+    expect(await worker.renderOne(inv)).toBe('failed');
+    const [doc] = await documentRows(inv.invoiceId);
+    expect(doc?.status).toBe('awaiting_content');
+    expect(doc?.removed_at).not.toBeNull();
+    const row = await failureRow(inv.invoiceId);
+    clock = new Date((row?.next_attempt_at ?? new Date()).getTime() + 1);
+    expect(ids(await store.candidates(clock, 1_000))).toContain(inv.invoiceId);
+    expect(await sweeper.renderOne(inv)).toBe('rendered');
+    expect((await documentRows(inv.invoiceId)).map((d) => d.status)).toEqual([
+      'awaiting_content',
+      'clean',
+    ]);
   });
 });

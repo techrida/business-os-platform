@@ -31,6 +31,7 @@ import type {
   quotationVersions,
 } from '@bos/db';
 
+import { quotationRenderGivenUp } from '../render/render-retry';
 import { paymentScheduleAmounts } from './payment-schedule';
 
 export type QuotationRow = typeof quotations.$inferSelect;
@@ -172,6 +173,8 @@ export function toQuotationVersionDto(parts: QuotationVersionParts): QuotationVe
     renderedDocumentId: v.renderedDocumentId,
     renderedSha256: hex(v.renderedSha256),
     renderedScanStatus: parts.renderedScanStatus,
+    // Only an approved version is rendered (and retried); any other status never offers a Retry.
+    renderFailed: v.status === 'approved' && quotationRenderGivenUp(v),
     supersedesVersionId: v.supersedesVersionId,
     supersededByVersionId: v.supersededByVersionId,
     revisionReason: v.revisionReason,

@@ -53,6 +53,17 @@ export interface DocumentOwnerPolicy {
    */
   uploadPermission?: Permission | readonly Permission[];
   /**
+   * Owning-module actions a caller may name for a staff upload (U20a2-Q3). The owning module's own route passes the
+   * action (`UploadAction`) to create, createVersion and receiveContent; it is never read from a request body. When
+   * the action is listed here it is checked on the uploader's own file: a new file belongs to whoever uploads it,
+   * a new version to the document's creator, the bytes to the version's uploader. So an `own` grant of that action
+   * covers the caller's own files, exactly as it covers the records they enter. Passing it is enough; otherwise the
+   * usual check (`uploadPermission` on the owner ref) still runs, so nobody loses access. An action not listed here,
+   * or none, means the usual check alone (deny by default). The owner must still exist (404) and `canAttach`, the
+   * type, size and scan rules still apply. P4: `payables.bill.enter` for staff invoice files.
+   */
+  uploadActions?: readonly Permission[];
+  /**
    * A permission that also authorises a staff read of this owner's files (get, download link), checked on the
    * owner ref. It is in addition to `documents.read`, never instead: a caller passes with either. Lets the owning
    * module's own read grant open its records' files without widening `documents.read` (P4: `vendor.read` for a

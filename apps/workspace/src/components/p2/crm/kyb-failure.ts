@@ -10,6 +10,7 @@
 import { CHECKLIST_ITEM_KEYS, type ChecklistItem } from '@bos/contracts';
 
 import { describeFailure } from '@/lib/kernel-ui';
+import { infectedFileMessage } from '@/lib/infected-file';
 
 import { CHECKLIST_LABEL } from '../customers/format';
 import { isIdempotencyInProgress, STILL_SAVING_MESSAGE } from '../quote-builder/failure';
@@ -57,6 +58,8 @@ export function kybFailure(err: unknown, context: KybContext): KybFailure {
 
   if (status === 409) {
     if (isIdempotencyInProgress(err)) return { message: STILL_SAVING_MESSAGE, reload: false };
+    const infected = infectedFileMessage(err);
+    if (infected !== undefined) return { message: infected, reload: false };
 
     if (MISSING.test(message)) {
       const labels = missingLabels(message);

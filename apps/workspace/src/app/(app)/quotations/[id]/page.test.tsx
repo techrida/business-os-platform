@@ -165,6 +165,7 @@ function version(over: Record<string, unknown>) {
     renderedDocumentId: null,
     renderedSha256: null,
     renderedScanStatus: null,
+    renderFailed: false,
     supersedesVersionId: null,
     supersededByVersionId: null,
     revisionReason: null,
@@ -436,7 +437,9 @@ describe('quotation detail page', () => {
 
   it('offers the PDF link only for the clean revision, words for the other', async () => {
     const html = await render();
-    expect(html).toContain(`href="/quotations/${ID}/versions/${V2}/document"`);
+    // Download stays in the app (R4c2): the viewer and its Download button get the route, no anchor does.
+    expect(html).toContain(`data-download-url="/quotations/${ID}/versions/${V2}/document"`);
+    expect(html).not.toContain(`href="/quotations/${ID}/versions/${V2}/document"`);
     expect(html).not.toContain(`/versions/${V1}/document`);
     expect(html).toContain('Not available');
   });
@@ -469,7 +472,7 @@ describe('quotation detail page', () => {
       ),
     });
     const html = await render();
-    expect(html).toContain('Being scanned');
+    expect(html).toContain('Preparing PDF');
     expect(html).not.toContain('/document"');
     expect(html).not.toContain('View PDF');
   });
@@ -826,7 +829,7 @@ describe('quotation detail page: a selected revision', () => {
     ];
     mocks.getQuotation.mockResolvedValue(d);
     const html = await render(ID, V1);
-    expect(html).toContain(`href="/quotations/${ID}/versions/${V1}/document"`);
+    expect(html).toContain(`data-download-url="/quotations/${ID}/versions/${V1}/document"`);
     expect(html).toContain('View PDF');
   });
 

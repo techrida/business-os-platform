@@ -2,6 +2,7 @@ import { ErrorBodySchema } from '@bos/contracts';
 
 import { isIdempotencyInProgress } from '@/components/p2/quote-builder/failure';
 import { ApiError } from '@/lib/api';
+import { infectedFileMessage } from '@/lib/infected-file';
 
 import type { PrFailure } from '../../requests/_lib/failure';
 
@@ -86,6 +87,8 @@ export function rfqFailure(err: unknown, op: RfqOp): RfqFailure {
   if (status === 403) return { ...base, message: forbidden(reason), definite };
   if (status === 404) return { ...base, message: NOT_FOUND[op], definite };
   if (status === 409) {
+    const infected = infectedFileMessage(err);
+    if (infected !== undefined) return { ...base, message: infected, definite };
     if (code === 'FEWER_THAN_MIN_QUOTES') {
       return {
         status,

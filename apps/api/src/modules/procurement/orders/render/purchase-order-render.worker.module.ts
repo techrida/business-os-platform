@@ -36,6 +36,7 @@ import { GotenbergClient } from '../../../quotations/render/gotenberg.client';
 import type { RunInTx } from '../../../quotations/render/quotation-render.sweeper';
 import {
   drizzlePurchaseOrderRenderStore,
+  PO_RENDER_AUDIT,
   PO_RENDER_CLOCK,
   PO_RENDER_DOCUMENTS,
   PO_RENDER_LOGOS,
@@ -112,6 +113,7 @@ import {
     },
     { provide: PO_RENDER_CLOCK, useValue: () => new Date() },
     { provide: PO_RENDER_LOGOS, useExisting: DocumentLogoResolverFactory },
+    { provide: PO_RENDER_AUDIT, useExisting: AuditService },
     PurchaseOrderRenderSweeper,
     PurchaseOrderRenderProcessor,
     PurchaseOrderRenderScheduler,

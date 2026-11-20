@@ -13,6 +13,7 @@ import styles from '@/components/p2/quotations/detail.module.css';
 import { DetailActions, hasDetailActions } from '@/components/p2/quotations/detail-actions';
 import { opportunityBlockers } from '@/components/p2/quotations/opportunity-gate';
 import { pdfLinkFor } from '@/components/p2/quotations/document-link';
+import { PdfFailed } from '@/components/p2/quotations/pdf-failed';
 import { PreparingRefresh } from '@/components/p2/quotations/preparing-refresh';
 import { QuotationStatusBadge } from '@/components/p2/quotations/status-badge';
 import { StatusHistory } from '@/components/p2/quotations/status-history';
@@ -40,7 +41,9 @@ const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
  * a button that fetches the preview when it is opened, and a plain Download anchor (never
  * `next/link`, which would prefetch it). The words go through `PreparingRefresh`, which re-renders
  * the page while a file is on its way and does nothing for words that will not change. It is a
- * client module, so the server cannot ask it `shouldAutoRefresh`: it asks itself.
+ * client module, so the server cannot ask it `shouldAutoRefresh`: it asks itself. A render the API
+ * gave up on reads "could not be prepared", with Retry for a viewer who may send (round 4, R4c2).
+ * Download stays in the app: a refusal is a toast, not an error page in the tab.
  */
 function Pdf({
   quotation,
@@ -61,9 +64,15 @@ function Pdf({
       label="View PDF"
       variant="link"
       withDownload
+      downloadInApp
+      pollWhilePreparing
       retryUrl={retry ? `${pdf.href}/retry` : undefined}
       context={`of revision ${version.revisionNo}`}
     />
+  ) : pdf.kind === 'failed' ? (
+    <span className={styles.pdfWords}>
+      <PdfFailed retryHref={retry ? pdf.retryHref : undefined} />
+    </span>
   ) : (
     <span className={styles.pdfWords}>
       <PreparingRefresh text={pdf.text} />

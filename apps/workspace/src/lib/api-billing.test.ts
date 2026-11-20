@@ -420,6 +420,13 @@ function refusal(status: number, code: string, extra: Record<string, unknown> = 
 }
 
 describe('describeBillingFailure', () => {
+  it('shows an infected evidence file refusal in the API words, which name the file (TR-Q12e)', () => {
+    const message =
+      'A virus was found in “eicar.pdf”. Remove it or upload a clean copy, then try again.';
+    const f = describeBillingFailure(refusal(409, 'document_infected', { message }));
+    expect(f).toMatchObject({ kind: 'infected', message, reload: false, definite: true });
+  });
+
   it('says plainly that the schedule line already has a draft, and does not ask for a reload', () => {
     const f = describeBillingFailure(refusal(409, 'SCHEDULE_LINE_TAKEN'));
     expect(f.kind).toBe('line_taken');

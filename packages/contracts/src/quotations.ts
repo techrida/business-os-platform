@@ -529,6 +529,12 @@ export const QuotationVersionDtoSchema = z
      * when it is `clean` (deny by default).
      */
     renderedScanStatus: DocumentVersionStatusSchema.nullable(),
+    /**
+     * True when the PDF render of this approved version was given up after its last try (round 4, R4c2): the screen
+     * shows that it could not be prepared, with Retry for a viewer who may send, instead of "Preparing PDF" for ever.
+     * False while it is being rendered or retried, once it is rendered, and for any other status.
+     */
+    renderFailed: z.boolean(),
     supersedesVersionId: z.guid().nullable(),
     supersededByVersionId: z.guid().nullable(),
     revisionReason: z.string().nullable(),

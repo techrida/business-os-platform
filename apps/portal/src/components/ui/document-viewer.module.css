@@ -173,3 +173,12 @@
     width: 100%;
   }
 }
+
+/* A Download that was refused says why beside the button; the page stays where it was. */
+.downloadError {
+  flex-basis: 100%;
+  color: var(--error-700);
+  font-size: var(--font-size-body-small);
+  line-height: var(--line-height-body-small);
+  overflow-wrap: anywhere;
+}

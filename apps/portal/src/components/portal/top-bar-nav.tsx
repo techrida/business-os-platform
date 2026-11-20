@@ -5,9 +5,10 @@ import { usePathname } from 'next/navigation';
 
 import styles from './top-bar.module.css';
 
-/** The customer's three areas. Quotations is the landing page, so it owns `/` as well. */
+/** The customer's four areas. Quotations is the landing page, so it owns `/` as well. */
 const LINKS = [
   { label: 'Quotations', href: '/', owns: ['/', '/quotations'] },
+  { label: 'Milestones', href: '/milestones', owns: ['/milestones'] },
   { label: 'Invoices', href: '/invoices', owns: ['/invoices'] },
   { label: 'Payments', href: '/payments', owns: ['/payments'] },
 ] as const;

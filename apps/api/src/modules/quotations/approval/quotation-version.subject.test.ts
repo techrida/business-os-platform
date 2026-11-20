@@ -92,6 +92,7 @@ function submittedRow(extra: Partial<VersionRow> = {}): VersionRow {
     renderedSha256: null,
     renderState: 'none',
     documentStyle: null,
+    renderAttempts: 0,
     supersedesVersionId: null,
     supersededByVersionId: null,
     revisionReason: null,
