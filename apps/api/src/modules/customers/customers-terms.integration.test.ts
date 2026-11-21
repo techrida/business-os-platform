@@ -79,12 +79,14 @@ const current: {
   userId: string;
   grants: Map<Permission, Scope>;
   orgKind: Principal['orgKind'];
+  roles: RoleKey[];
 } = {
   tenant: undefined as never,
   organizationId: '',
   userId: '',
   grants: new Map(),
   orgKind: 'staff',
+  roles: [],
 };
 const grantsOf = (role: RoleKey) =>
   new Map(Object.entries(DEFAULT_ROLE_PERMISSIONS[role])) as Map<Permission, Scope>;
@@ -100,6 +102,7 @@ const as = (
   current.userId = userId;
   current.grants = grantsOf(role);
   current.orgKind = 'staff';
+  current.roles = [role];
 };
 
 const principalNow = (): Principal => ({
@@ -110,7 +113,7 @@ const principalNow = (): Principal => ({
   orgKind: current.orgKind,
   partyId: current.orgKind === 'staff' ? null : randomUUID(),
   idpOrgId: current.tenant.idpOrgId,
-  roles: [],
+  roles: current.roles,
   departmentId: null,
   status: 'active',
   grants: current.grants,
@@ -766,5 +769,29 @@ describe('the terms of an entity are read by the roles of the membership there (
     expect(body.accounts?.map((x) => PartyAccountDtoSchema.parse(x).organizationId).sort()).toEqual(
       [a.organizationId, entityA2].sort(),
     );
+  });
+
+  it('does not open an entity through a role added after the token was issued', async () => {
+    const customer = await createCustomer();
+    as('finance', entityA2);
+    expect((await putTerms(customer.id, { creditLimit: '222222.00' })).status).toBe(200);
+    // The token says Sales; the database has since given the user Finance too, and entity A2 allows Finance only.
+    const { userId } = await createStaffUser(appPool, { ...a, roleKeys: ['sales', 'finance'] });
+    await withTx(
+      db,
+      { tenantId: a.tenantId, organizationId: entityA2 },
+      systemActor('test'),
+      (tx) =>
+        tx.insert(userEntities).values({
+          tenantId: a.tenantId,
+          organizationId: entityA2,
+          userId,
+          isDefault: false,
+          roleKeys: ['finance'],
+        }),
+    );
+    as('sales', a.organizationId, a, userId);
+    const body = await detail(customer.id);
+    expect(JSON.stringify(body)).not.toContain('222222');
   });
 });

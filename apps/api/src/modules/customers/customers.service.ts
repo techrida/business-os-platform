@@ -1190,7 +1190,7 @@ export class CustomersService {
 
   /**
    * Whether the caller reads this customer in legal entity `organizationId`: `customer.read` at a scope that
-   * reaches the record, by the roles of their membership there. The acting entity is the request's principal; any
+   * reaches the record, by the roles of their membership there, held in their token as well. The acting entity is the request's principal; any
    * other entity is read from the database now (liveGrantsOf), so a role taken away shows at once.
    */
   private async mayReadIn(
@@ -1202,9 +1202,24 @@ export class CustomersService {
     if (organizationId.toLowerCase() === principal.organizationId.toLowerCase()) {
       return decide(principal, 'customer.read', customerRef(customer, principal)).allowed;
     }
+    // The token's roles bound what the user may do here too: a role added to the database since the token was
+    // issued does not open another entity's terms through this one, as it would not open a request acting there.
+    const tokenRoles = new Set<string>(principal.roles);
+    const bounded: LiveGrantDeps = {
+      grants: this.liveGrants.grants,
+      users: {
+        findById: (q, sc, userId) => this.liveGrants.users.findById(q, sc, userId),
+        membershipsOf: (q, tenantId, userId) =>
+          this.liveGrants.users.membershipsOf(q, tenantId, userId),
+        rolesOf: async (q, tenantId, userId) =>
+          (await this.liveGrants.users.rolesOf(q, tenantId, userId)).filter((r) =>
+            tokenRoles.has(r),
+          ),
+      },
+    };
     const live = await liveGrantsOf(
       tx,
-      this.liveGrants,
+      bounded,
       { tenantId: principal.tenantId, organizationId },
       principal.userId,
     );

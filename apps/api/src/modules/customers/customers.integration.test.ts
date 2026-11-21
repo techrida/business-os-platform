@@ -117,7 +117,7 @@ const principalNow = (): Principal => ({
   orgKind: current.orgKind,
   partyId: current.partyId,
   idpOrgId: current.tenant.idpOrgId,
-  roles: [],
+  roles: ['sales'],
   departmentId: null,
   status: 'active',
   grants: current.grants,
