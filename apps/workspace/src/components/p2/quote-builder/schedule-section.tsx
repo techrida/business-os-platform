@@ -6,6 +6,7 @@ import { Dec, formatMoney } from '@bos/locale';
 import { Button } from '@/components/ui/button';
 import { DatePicker } from '@/components/ui/date-picker';
 import { Field, Input } from '@/components/ui/field';
+import { MoneyInput, PercentInput } from '@/components/ui/number-input';
 import { useNumberSystems } from '@/components/ui/number-system-context';
 
 import {
@@ -141,19 +142,8 @@ export function ScheduleSection({
                 <div className={styles.grid2}>
                   <Field label="Percent (%)" error={error('percent') ?? scheduleError}>
                     {(control) => (
-                      <Input
-                        {...control}
-                        type="number"
-                        inputMode="decimal"
-                        min="0"
-                        max="100"
-                        step="0.0001"
-                        className={styles.numInput}
-                        value={m.percent}
-                        onChange={(ev) => {
-                          onAmountDraft(m.key, undefined);
-                          onChange(m.key, { percent: ev.target.value });
-                        }}
+                      // The number inputs take no blur handler; blur bubbles from the box to here.
+                      <div
                         onBlur={() => {
                           const result = reconcileMilestone(
                             m.percent,
@@ -164,7 +154,16 @@ export function ScheduleSection({
                           const percent = trimPercent(result.percent);
                           if (percent !== m.percent) onChange(m.key, { percent });
                         }}
-                      />
+                      >
+                        <PercentInput
+                          {...control}
+                          value={m.percent}
+                          onValueChange={(value) => {
+                            onAmountDraft(m.key, undefined);
+                            onChange(m.key, { percent: value });
+                          }}
+                        />
+                      </div>
                     )}
                   </Field>
                   <Field
@@ -181,22 +180,7 @@ export function ScheduleSection({
                     }
                   >
                     {(control) => (
-                      <Input
-                        {...control}
-                        type="number"
-                        inputMode="decimal"
-                        min="0"
-                        max={total ?? undefined}
-                        step="0.01"
-                        className={styles.numInput}
-                        disabled={total === null}
-                        readOnly={zeroTotal}
-                        value={
-                          total === null
-                            ? ''
-                            : (draft?.value ?? amount ?? (zeroTotal ? '0.00' : ''))
-                        }
-                        onChange={(ev) => changeAmount(m, ev.target.value, amount)}
+                      <div
                         onBlur={() => {
                           if (draft && !draft.error) onAmountDraft(m.key, undefined);
                         }}
@@ -206,7 +190,21 @@ export function ScheduleSection({
                             onAmountDraft(m.key, undefined);
                           }
                         }}
-                      />
+                      >
+                        <MoneyInput
+                          {...control}
+                          currency={currency}
+                          max={total ?? undefined}
+                          disabled={total === null}
+                          readOnly={zeroTotal}
+                          value={
+                            total === null
+                              ? ''
+                              : (draft?.value ?? amount ?? (zeroTotal ? '0.00' : ''))
+                          }
+                          onValueChange={(value) => changeAmount(m, value, amount)}
+                        />
+                      </div>
                     )}
                   </Field>
                 </div>

@@ -1,5 +1,6 @@
 'use client';
 
+import type { Currency } from '@bos/locale';
 import { useActionState, useEffect, useId, useRef, useState, type ReactNode } from 'react';
 
 import styles from '@/app/(app)/leads/leads.module.css';
@@ -7,6 +8,7 @@ import { Alert } from '@/components/ui/alert';
 import { Button, LinkButton } from '@/components/ui/button';
 import { DatePicker } from '@/components/ui/date-picker';
 import { Field, Input, Select, Textarea } from '@/components/ui/field';
+import { MoneyInput, PercentInput } from '@/components/ui/number-input';
 import { PageHeader } from '@/components/ui/page';
 import { Panel } from '@/components/ui/panel';
 import { toast } from '@/components/ui/toast';
@@ -353,22 +355,6 @@ export function LeadForm({
 
         <Panel title={<SectionTitle eyebrow="02 · The story">Commercial details</SectionTitle>}>
           <div className={styles.formGrid}>
-            <Field
-              label="Expected value"
-              hint="Optional. For example 12,50,000."
-              error={err['expectedValue']}
-            >
-              {(c) => (
-                <Input
-                  name="expectedValue"
-                  inputMode="decimal"
-                  autoComplete="off"
-                  value={values['expectedValue']}
-                  onChange={set('expectedValue')}
-                  {...c}
-                />
-              )}
-            </Field>
             <Field label="Currency" error={err['currency']}>
               {(c) => (
                 <Select
@@ -385,17 +371,28 @@ export function LeadForm({
                 </Select>
               )}
             </Field>
+            <Field
+              label="Expected value"
+              hint="Optional. For example 12,50,000."
+              error={err['expectedValue']}
+            >
+              {(c) => (
+                <MoneyInput
+                  name="expectedValue"
+                  currency={values['currency'] as Currency}
+                  value={values['expectedValue']}
+                  onValueChange={(value) => update('expectedValue', value)}
+                  {...c}
+                />
+              )}
+            </Field>
             <Field label="Probability (%)" hint="Optional. 0 to 100." error={err['probability']}>
               {(c) => (
-                <Input
+                <PercentInput
                   name="probability"
-                  type="number"
-                  min={0}
-                  max={100}
-                  step={1}
-                  autoComplete="off"
+                  scale={0}
                   value={values['probability']}
-                  onChange={set('probability')}
+                  onValueChange={(value) => update('probability', value)}
                   {...c}
                 />
               )}

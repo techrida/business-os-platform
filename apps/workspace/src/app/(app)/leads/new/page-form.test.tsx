@@ -40,7 +40,10 @@ it('submits the lead form from the page header with the action’s original fiel
     await choose(container, 'source', 'Referral');
     await fill(container.querySelector('[name="companyName"]'), 'Binford Ltd.');
     await fill(container.querySelector('[name="contactName"]'), 'Sunita Shrestha');
-    await fill(container.querySelector('[name="probability"]'), '40');
+    const probabilityLabel = Array.from(container.querySelectorAll('label')).find((l) =>
+      l.textContent?.startsWith('Probability'),
+    );
+    await fill(document.getElementById(probabilityLabel?.htmlFor ?? ''), '40');
 
     const submitButton = container.querySelector('button[type="submit"]');
     expect(submitButton?.closest('form')).toBeNull();
