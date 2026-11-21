@@ -11,6 +11,7 @@ import {
   type MouseEvent,
 } from 'react';
 
+import { signInHref, useShellCounts } from '@/components/shell/shell-counts';
 import {
   BELL_AFTER_DOT_MS,
   createBellRing,
@@ -22,10 +23,12 @@ import { safeLocalPath } from '@/lib/kernel-ui';
 import styles from './notifications-bell.module.css';
 
 /**
- * The notifications bell, in the header. It polls a BFF route for the unread count every 15 s and
- * whenever the window regains focus, and opens a list from `/api/notifications`. The browser only
- * ever talks to this app's own routes: the API token stays on the server. Serves the NFR "an
- * approver learns about waiting work without reloading".
+ * The notifications bell, in the header. Its unread count comes from the shell's one counts poll
+ * (components/shell/shell-counts.tsx: every 15 s, on focus and on page change, never in a hidden
+ * tab); it opens a list from `/api/notifications`. Outside that provider it shows `initialCount`
+ * and makes no reads of its own. The browser only ever talks to this app's own routes: the API
+ * token stays on the server. Serves the NFR "an approver learns about waiting work without
+ * reloading".
  *
  * It is a disclosure, not a menu: a button that shows or hides a region of links, so Tab walks
  * through the rows. Escape closes it and returns focus to the bell; so does tabbing out or a
@@ -35,8 +38,6 @@ import styles from './notifications-bell.module.css';
  * opening the panel with a pointer rings it too. Page load, polls with no rise and keyboard opening
  * stay still. Opening never marks anything read.
  */
-
-const POLL_MS = 15_000;
 
 interface Item {
   id: string;
@@ -50,14 +51,17 @@ interface Item {
 type Load = 'idle' | 'loading' | 'error';
 
 export function NotificationsBell({ initialCount = 0 }: { initialCount?: number }) {
-  const [count, setCount] = useState(initialCount);
+  const shell = useShellCounts();
+  const shared = shell?.notifications;
+  // Used until the shell knows a number, and always outside the provider.
+  const [ownCount, setOwnCount] = useState(initialCount);
+  const count = shared ?? ownCount;
   const [open, setOpen] = useState(false);
   const [items, setItems] = useState<Item[]>([]);
   const [load, setLoad] = useState<Load>('idle');
   const [announce, setAnnounce] = useState('');
   const wrapRef = useRef<HTMLDivElement>(null);
   const buttonRef = useRef<HTMLButtonElement>(null);
-  const lastCount = useRef(initialCount);
   const panelId = useId();
   const swingRef = useRef<HTMLSpanElement>(null);
   const clapperRef = useRef<HTMLSpanElement>(null);
@@ -69,32 +73,26 @@ export function NotificationsBell({ initialCount = 0 }: { initialCount?: number 
     fromZero: false,
   });
 
-  const refreshCount = useCallback(async (quiet = false) => {
-    if (document.hidden) return;
-    try {
-      const res = await fetch('/api/notifications/unread-count', { cache: 'no-store' });
-      if (res.status === 401) {
-        // The session ended while the tab was open: send the person to sign in and back here.
-        // /auth/login is a Route Handler, not a page: it needs a real navigation.
-        // eslint-disable-next-line @next/next/no-location-assign-relative-destination
-        window.location.href = `/auth/login?returnTo=${encodeURIComponent(window.location.pathname + window.location.search)}`;
-        return;
-      }
-      if (!res.ok) return;
-      const data = (await res.json()) as { count?: unknown };
-      if (typeof data.count !== 'number') return;
-      setCount(data.count);
-      // Tell screen readers only about new items, not on every poll or on page load.
-      if (!quiet && data.count > lastCount.current) {
-        setAnnounce(`${data.count} unread notification${data.count === 1 ? '' : 's'}`);
-        const fromZero = lastCount.current === 0;
-        setArrival((a) => ({ seq: a.seq + 1, fromZero }));
-      }
-      lastCount.current = data.count;
-    } catch {
-      // Offline or API restarting: keep the last count and try again at the next tick.
+  // The last shared count this bell has seen. Compared during render (React's adjust-state-on-change
+  // pattern, no refs): the first known number, including the one on page load, stays quiet; after
+  // that only a rise is announced and rings. A fall (items marked read) stays still.
+  const [seen, setSeen] = useState(shared);
+  if (seen !== shared) {
+    setSeen(shared);
+    if (seen !== undefined && shared !== undefined && shared > seen) {
+      setAnnounce(`${shared} unread notification${shared === 1 ? '' : 's'}`);
+      const fromZero = seen === 0;
+      setArrival((a) => ({ seq: a.seq + 1, fromZero }));
     }
-  }, []);
+  }
+
+  const signedOut = shell?.signedOut === true;
+  useEffect(() => {
+    if (!signedOut) return;
+    // The session ended while the tab was open: send the person to sign in and back here.
+    // /auth/login is a Route Handler, not a page: it needs a real navigation.
+    window.location.href = signInHref(window.location);
+  }, [signedOut]);
 
   const loadItems = useCallback(async () => {
     setLoad('loading');
@@ -108,21 +106,6 @@ export function NotificationsBell({ initialCount = 0 }: { initialCount?: number 
       setLoad('error');
     }
   }, []);
-
-  useEffect(() => {
-    // The layout does not know the count, so read it once on arrival (quietly), then poll.
-    const first = window.setTimeout(() => void refreshCount(true), 0);
-    const timer = window.setInterval(() => void refreshCount(), POLL_MS);
-    const onFocus = () => void refreshCount();
-    window.addEventListener('focus', onFocus);
-    document.addEventListener('visibilitychange', onFocus);
-    return () => {
-      window.clearTimeout(first);
-      window.clearInterval(timer);
-      window.removeEventListener('focus', onFocus);
-      document.removeEventListener('visibilitychange', onFocus);
-    };
-  }, [refreshCount]);
 
   useEffect(() => {
     if (!swingRef.current || !clapperRef.current) return;
@@ -182,17 +165,19 @@ export function NotificationsBell({ initialCount = 0 }: { initialCount?: number 
     }).catch(() => undefined);
   }, []);
 
+  // Marking items read lowers the count at once; the next shared read replaces it with the server's.
+  const lowerCount = (by: number) => {
+    if (shell && shared !== undefined) shell.lowerNotifications(by);
+    else setOwnCount((c) => Math.max(0, c - by));
+  };
+
   const onItemClick = (item: Item) => {
     if (item.readAt !== null) return;
     markRead(item.id);
     setItems((prev) =>
       prev.map((i) => (i.id === item.id ? { ...i, readAt: new Date().toISOString() } : i)),
     );
-    setCount((c) => {
-      const next = Math.max(0, c - 1);
-      lastCount.current = next;
-      return next;
-    });
+    lowerCount(1);
     setOpen(false);
   };
 
@@ -201,11 +186,7 @@ export function NotificationsBell({ initialCount = 0 }: { initialCount?: number 
     for (const item of unreadItems) markRead(item.id);
     const stamp = new Date().toISOString();
     setItems((prev) => prev.map((i) => (i.readAt === null ? { ...i, readAt: stamp } : i)));
-    setCount((c) => {
-      const next = Math.max(0, c - unreadItems.length);
-      lastCount.current = next;
-      return next;
-    });
+    lowerCount(unreadItems.length);
   };
 
   return (

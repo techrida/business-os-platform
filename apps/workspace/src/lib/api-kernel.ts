@@ -195,6 +195,17 @@ export async function getInboxPage(
   return { items: items.data, total };
 }
 
+const InboxCountSchema = z.object({ count: z.number().int().nonnegative() });
+
+/**
+ * `GET /v1/approvals/inbox/count`: how many inbox items wait on the caller, counted by the API without
+ * reading the rows. A caller with no approval assignment gets 403 `out_of_scope`, which is normal for
+ * non-approvers; it throws like any other refusal, so the caller leaves the badge out instead of showing 0.
+ */
+export function getInboxCount(session: Session): Promise<{ count: number }> {
+  return call(session, '/v1/approvals/inbox/count', InboxCountSchema);
+}
+
 export function getApprovalRequest(session: Session, id: string): Promise<ApprovalRequestDto> {
   return call(session, `/v1/approvals/requests/${seg(id)}`, ApprovalRequestDtoSchema);
 }
