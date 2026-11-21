@@ -80,6 +80,7 @@ export default async function NewBillPage({
         orders={choices}
         initialOrderId={initialOrderId}
         currencies={portalEnabledCurrencies(shown)}
+        numberSystems={shown.numberSystems}
       />
       <p className={styles.back}>
         <Link href="/vendor/bills">Back to your bills</Link>

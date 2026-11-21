@@ -17,7 +17,8 @@ import { Button, LinkButton } from '@/components/ui/button';
 import { Card } from '@/components/ui/card';
 import { DatePicker } from '@/components/ui/date-picker';
 import { ConfirmDialog } from '@/components/ui/dialog';
-import { Field, Input, Select } from '@/components/ui/field';
+import { Field, Select } from '@/components/ui/field';
+import { MoneyInput, PercentInput } from '@/components/ui/number-input';
 import { PageHeader } from '@/components/ui/page';
 import { Panel } from '@/components/ui/panel';
 import { toast } from '@/components/ui/toast';
@@ -236,7 +237,10 @@ export function QuoteBuilder({
     values.issueDate,
     values.currency,
     values.discountMode,
-    values.discountValue,
+    // Blur pads `100` to `100.00`; the same amount must not look like a new price request.
+    values.discountValue.includes('.')
+      ? values.discountValue.replace(/0+$/, '').replace(/\.$/, '')
+      : values.discountValue,
     values.lines.map((l) => [
       l.description,
       l.uom,
@@ -762,7 +766,7 @@ export function QuoteBuilder({
                       edit((v) => ({
                         ...v,
                         discountMode: e.target.value as DiscountMode,
-                        discountValue: e.target.value === 'none' ? '' : v.discountValue,
+                        discountValue: '',
                       }))
                     }
                     {...control}
@@ -785,20 +789,22 @@ export function QuoteBuilder({
                   hint="A discount above 12% of the subtotal needs extra approval."
                   error={errors['discount.value'] ?? errors['discount']}
                 >
-                  {(control) => (
-                    <Input
-                      type="number"
-                      min="0"
-                      max={values.discountMode === 'pct' ? '100' : undefined}
-                      step={values.discountMode === 'pct' ? '0.0001' : '0.01'}
-                      inputMode="decimal"
-                      autoComplete="off"
-                      className={styles.numInput}
-                      value={values.discountValue}
-                      onChange={(e) => set('discountValue')(e.target.value)}
-                      {...control}
-                    />
-                  )}
+                  {(control) =>
+                    values.discountMode === 'pct' ? (
+                      <PercentInput
+                        value={values.discountValue}
+                        onValueChange={set('discountValue')}
+                        {...control}
+                      />
+                    ) : (
+                      <MoneyInput
+                        currency={values.currency}
+                        value={values.discountValue}
+                        onValueChange={set('discountValue')}
+                        {...control}
+                      />
+                    )
+                  }
                 </Field>
               ) : null}
             </div>
