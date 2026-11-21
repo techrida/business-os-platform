@@ -963,6 +963,32 @@ describe('a render that keeps failing (R4c2: TR-Q4, F1-Q13)', () => {
     await expect(service.link(inv.invoiceId)).resolves.toBeDefined();
   });
 
+  it('counts a document left by a worker that crashed as a failed try, and gives up at the limit', async () => {
+    const scope = await newScope();
+    const inv = await seedInvoice(scope);
+    let clock = new Date();
+    const worker = failingWorker(() => clock);
+    for (let n = 1; n < MAX_RENDER_ATTEMPTS; n += 1) {
+      expect(await worker.renderOne(inv)).toBe('failed');
+      clock = new Date((await failureRow(inv.invoiceId))?.next_attempt_at ?? clock);
+    }
+    expect(await failureRow(inv.invoiceId)).toMatchObject({ attempts: MAX_RENDER_ATTEMPTS - 1 });
+    // The last try's worker died after createGenerated: no failure was recorded, only the unfilled document.
+    const orphan = await createOrphan(scope, inv.invoiceId, ORPHAN_AFTER_MS + 60_000);
+
+    await sweeper.sweep();
+
+    const [doc] = (await documentRows(inv.invoiceId)).filter((d) => d.document_id === orphan);
+    expect(doc?.removed_at).not.toBeNull();
+    const given = await failureRow(inv.invoiceId);
+    expect(given).toMatchObject({ attempts: MAX_RENDER_ATTEMPTS, last_failure_kind: 'abandoned' });
+    expect(given?.exhausted_at).not.toBeNull();
+    expect(await actions(scope, inv.invoiceId)).toEqual(['invoice.pdf_render_failed']);
+    // Given up, so the crash loop ends: no later sweep takes it again.
+    const farFuture = new Date(Date.now() + 365 * 24 * 60 * 60_000);
+    expect(ids(await store.candidates(farFuture, 1_000))).not.toContain(inv.invoiceId);
+  });
+
   /** A worker over the real store whose print log write fails `failures` times, then goes to the real table. */
   const flakyPrintLog = (failures: number) => {
     let left = failures;
