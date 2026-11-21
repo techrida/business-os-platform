@@ -659,7 +659,10 @@ export class PurchaseOrdersService {
               .select({ requesterUserId: purchaseRequests.requesterUserId })
               .from(purchaseRequests)
               .where(
-                scoped(scope).where(purchaseRequests, eq(purchaseRequests.id, po.purchaseRequestId)),
+                scoped(scope).where(
+                  purchaseRequests,
+                  eq(purchaseRequests.id, po.purchaseRequestId),
+                ),
               );
             const proposal = proposalOf(po, quote, vendor?.legalName ?? null, acknowledged);
             const request = await this.approvals.submit(tx, {

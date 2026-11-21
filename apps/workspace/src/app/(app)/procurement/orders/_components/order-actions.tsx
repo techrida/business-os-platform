@@ -139,7 +139,9 @@ function VendorField({
           {problem}
         </Alert>
       ) : null}
-      {errors['acknowledgeVatWarning'] !== undefined ? <VatAcknowledge message={errors['acknowledgeVatWarning']} /> : null}
+      {errors['acknowledgeVatWarning'] !== undefined ? (
+        <VatAcknowledge message={errors['acknowledgeVatWarning']} />
+      ) : null}
       <Field
         label="New vendor"
         hint="Only approved vendors are listed. The vendor also needs an active account with your legal entity and a verified bank account."

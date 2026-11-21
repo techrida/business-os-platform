@@ -286,11 +286,13 @@ const GENERIC_MESSAGE: Record<ErrorCode, string> = {
   PO_HAS_NO_LINES: 'The purchase order has no lines',
   PO_VENDOR_CHANGE_NOT_DRAFT: 'Cancel this order and create a new one',
   PO_VENDOR_UNCHANGED: 'The purchase order already has this vendor',
-  PO_VENDOR_CHANGE_NO_RFQ: 'This draft has no RFQ, so the new vendor has no quotation; create a new purchase order',
+  PO_VENDOR_CHANGE_NO_RFQ:
+    'This draft has no RFQ, so the new vendor has no quotation; create a new purchase order',
   PO_VENDOR_NO_QUOTATION: "The new vendor has no quotation on this order's RFQ",
   PO_VENDOR_CHANGE_PENDING: 'A change of vendor on this order is waiting for approval',
   VENDOR_CURRENCY_NOT_SUPPORTED: 'The vendor cannot trade in the currency of this order',
-  VENDOR_NOT_VAT_REGISTERED: 'The order carries VAT and the vendor is not VAT registered; confirm to go on',
+  VENDOR_NOT_VAT_REGISTERED:
+    'The order carries VAT and the vendor is not VAT registered; confirm to go on',
   PO_REFERENCED:
     'Payment requests or bills already refer to this order; cancel it and create a new one',
   PO_CHANGED: 'This purchase order changed since you opened it. Reload and try again.',

@@ -733,9 +733,7 @@ describe('live vendor bills block cancel and cancelAndRecreate (K3 Q3)', () => {
     await service.issue(id, randomUUID());
     await insertVendorBill({ poId: id, vendorId, number: 'BILL-2082/83-0101', status: 'approved' });
 
-    const refused = await httpErrorOf(
-      service.cancel(id, { reason: 'Wrong order' }, randomUUID()),
-    );
+    const refused = await httpErrorOf(service.cancel(id, { reason: 'Wrong order' }, randomUUID()));
     expect(refused.getStatus()).toBe(409);
     expect(codeOf(refused)).toBe('PO_HAS_BILLS');
     expect(messageOf(refused)).toContain('BILL-2082/83-0101');
@@ -800,9 +798,7 @@ describe('live vendor bills block cancel and cancelAndRecreate (K3 Q3)', () => {
     });
     expect(
       codeOf(
-        await httpErrorOf(
-          service.cancelAndRecreate(po2.id, { reason: 'Try early' }, randomUUID()),
-        ),
+        await httpErrorOf(service.cancelAndRecreate(po2.id, { reason: 'Try early' }, randomUUID())),
       ),
     ).toBe('PO_HAS_BILLS');
     await voidVendorBill(bill2);
@@ -877,7 +873,9 @@ describe('live vendor bills block cancel and cancelAndRecreate (K3 Q3)', () => {
 
     // Entity A cannot reach entity B's PO (404, never leaks PO_HAS_BILLS).
     expect(
-      (await httpErrorOf(service.cancel(poB.id, { reason: 'cross-entity' }, randomUUID()))).getStatus(),
+      (
+        await httpErrorOf(service.cancel(poB.id, { reason: 'cross-entity' }, randomUUID()))
+      ).getStatus(),
     ).toBe(404);
     expect(
       (
@@ -916,4 +914,3 @@ describe('live vendor bills block cancel and cancelAndRecreate (K3 Q3)', () => {
     expect(await posOfRequest(prId)).toHaveLength(1);
   });
 });
-

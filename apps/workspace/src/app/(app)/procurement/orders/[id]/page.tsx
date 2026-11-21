@@ -530,7 +530,8 @@ export default async function PurchaseOrderPage({ params }: { params: Promise<{ 
 
       {po.pendingVendorChange ? (
         <Alert tone="warning" role="status" title="A change of vendor is waiting for approval">
-          This order stays with its current vendor, and cannot be issued, until the approvers decide.
+          This order stays with its current vendor, and cannot be issued, until the approvers
+          decide.
         </Alert>
       ) : null}
 
