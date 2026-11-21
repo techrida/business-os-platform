@@ -377,7 +377,10 @@ export class ReviseService {
       .select({ approvalRequestId: quotationVersions.approvalRequestId })
       .from(quotationVersions)
       .where(
-        scoped(scope).where(quotationVersions, eq(quotationVersions.id, quotation.currentVersionId)),
+        scoped(scope).where(
+          quotationVersions,
+          eq(quotationVersions.id, quotation.currentVersionId),
+        ),
       );
     const requestId = peek?.approvalRequestId ?? null;
     if (requestId === null) return null;

@@ -98,7 +98,10 @@ const DAY_MS = 24 * 60 * 60 * 1000;
  * The instants a due-day range covers: from the start of `dueFrom` to before the start of the day after `dueTo`,
  * both in Asia/Kathmandu. Half-open at the top, so a follow-up due at 23:59 on `dueTo` is in.
  */
-export function dueRangeBounds(range: { dueFrom?: string | undefined; dueTo?: string | undefined }): {
+export function dueRangeBounds(range: {
+  dueFrom?: string | undefined;
+  dueTo?: string | undefined;
+}): {
   from?: Date;
   before?: Date;
 } {
