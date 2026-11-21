@@ -171,6 +171,23 @@ it('renders rows with BS dates, document kinds, links, negative credit notes and
   expect(html).toContain('VAT charged (USD)');
 });
 
+it('shows the frozen rate digit for digit, not a float', async () => {
+  const row = register.rows[1]!;
+  api.getSalesVatRegister.mockResolvedValue({
+    ...register,
+    rows: [{ ...row, fxRate: '133.123457' }, { ...row, number: 'CN-2', fxRate: '100.000000' }],
+  });
+  const html = await render();
+  expect(html).toContain('>133.123457<');
+  expect(html).toContain('>100<');
+  // A float would print the long tail of the nearest double for a 12-digit rate.
+  api.getSalesVatRegister.mockResolvedValue({
+    ...register,
+    rows: [{ ...row, fxRate: '123456789012.123456' }],
+  });
+  expect(await render()).toContain('>123456789012.123456<');
+});
+
 it('shows the empty period result and still permits exporting', async () => {
   api.getSalesVatRegister.mockResolvedValue({ ...register, rows: [], totals: [] });
   const html = await render();

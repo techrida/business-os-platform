@@ -30,6 +30,9 @@ const KIND_LABEL = {
   debit_note: 'Debit note',
 } as const;
 
+/** The frozen rate as the decimal string it is (up to 6 decimals), without trailing zeros; never through a float. */
+const rateText = (rate: string): string => (rate.includes('.') ? rate.replace(/\.?0+$/, '') : rate);
+
 export default async function SalesVatRegisterPage({
   searchParams,
 }: {
@@ -175,7 +178,7 @@ export default async function SalesVatRegisterPage({
                     <Td align="end">{poMoney(row.exemptAmount, row.currency, numberSystems)}</Td>
                     <Td align="end">{poMoney(row.zeroRatedAmount, row.currency, numberSystems)}</Td>
                     <Td align="end">{poMoney(row.totalAmount, row.currency, numberSystems)}</Td>
-                    <Td align="end">{Number(row.fxRate)}</Td>
+                    <Td align="end">{rateText(row.fxRate)}</Td>
                     <Td align="end">{poMoney(row.nprTaxableAmount, 'NPR', numberSystems)}</Td>
                     <Td align="end">{poMoney(row.nprVatAmount, 'NPR', numberSystems)}</Td>
                     <Td align="end">{poMoney(row.nprExemptAmount, 'NPR', numberSystems)}</Td>
