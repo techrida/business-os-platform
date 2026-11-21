@@ -193,6 +193,17 @@ describe('toContent', () => {
     expect(c).not.toHaveProperty('scope');
     expect(c).not.toHaveProperty('paymentSchedule');
   });
+  it('does not read a decimal comma as grouping ("1,5" is not 15)', () => {
+    const v = filled();
+    v.lines[0]!.unitPrice = '10,50';
+    v.lines[0]!.quantity = '1,5';
+    v.discountMode = 'amount';
+    v.discountValue = '1,25';
+    const c = toContent(v);
+    expect(c.lines[0]?.unitPrice).toBe('10,50');
+    expect(c.lines[0]?.quantity).toBe('1,5');
+    expect(c.discount).toEqual({ mode: 'amount', value: '1,25' });
+  });
   it('omits the discount when mode is none', () => {
     expect(toContent(filled())).not.toHaveProperty('discount');
   });

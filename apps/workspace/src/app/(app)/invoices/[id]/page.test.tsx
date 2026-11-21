@@ -1,9 +1,4 @@
-import {
-  InvoiceDetailSchema,
-  InvoiceSettlementSchema,
-  PaymentPromiseListSchema,
-  type InvoiceDetail,
-} from '@bos/contracts';
+import { InvoiceDetailSchema, PaymentPromiseListSchema, type InvoiceDetail } from '@bos/contracts';
 import { DEFAULT_NUMBER_SYSTEMS } from '@bos/locale';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
@@ -45,7 +40,13 @@ vi.mock('@/lib/api-receivables', () => ({ getCustomerStatement: mocks.getCustome
 vi.mock('@/lib/live-permissions', async () => {
   const { permissionChecker } = await import('@/components/p2/customers/permissions');
   return {
-    getPermissionCheck: (s: { roles: string[] }) => Promise.resolve(permissionChecker(s.roles)),
+    // A session may name its exact permissions instead, for a mix no default role has.
+    getPermissionCheck: (s: { roles: string[]; permissions?: string[] }) =>
+      Promise.resolve(
+        s.permissions !== undefined
+          ? (p: string) => s.permissions?.includes(p) === true
+          : permissionChecker(s.roles),
+      ),
   };
 });
 vi.mock('next/navigation', () => ({ notFound: mocks.notFound, redirect: vi.fn() }));
@@ -182,92 +183,78 @@ describe('invoice detail page', () => {
     expect(text).not.toContain('New Name Pvt. Ltd.');
   });
 
-  /** A statement row as the receivables API sends it, checked against the contract. */
-  const statementRow = (over: Record<string, unknown> = {}) =>
-    InvoiceSettlementSchema.parse({
-      invoiceId: ID,
-      number: 'INV-2083/84-00001',
-      kind: 'tax_invoice',
-      customerId: CUSTOMER,
-      currency: 'NPR',
-      issueDate: '2026-11-08',
-      total: '2018180.00',
-      allocatedAmount: '2018180.00',
-      openAmount: '0.00',
-      dueDate: '2026-12-08',
-      daysOverdue: 0,
-      settlement: 'paid',
-      ...over,
-    });
+  /** An issued invoice with the settlement `GET /v1/invoices/:id` derives, checked against the contract. */
+  const settled = (settlement: string | null, openAmount: string | null) =>
+    InvoiceDetailSchema.parse({ ...issued(), settlement, openAmount });
 
-  it('shows a fully paid invoice as Paid with a zero open amount, from the receivables statement', async () => {
-    mocks.getCustomerStatement.mockResolvedValue([
-      statementRow({ invoiceId: CUSTOMER, settlement: 'unpaid', openAmount: '5.00' }),
-      statementRow(),
-    ]);
-    const text = (await render()).replace(/<[^>]*>/g, ' ');
-    expect(mocks.getCustomerStatement).toHaveBeenCalledWith(expect.anything(), CUSTOMER, {
-      currency: 'NPR',
-    });
+  it('shows a fully paid invoice as Paid with a zero open amount, from the detail', async () => {
+    mocks.getInvoice.mockResolvedValue(settled('paid', '0.00'));
+    const text = textOf(await render());
     expect(text).toContain('Paid');
     expect(text).toMatch(/Open amount\s+[^0-9]*0\.00/);
+    // The settlement rides on the detail; the ar.read-gated statement is never asked.
+    expect(mocks.getCustomerStatement).not.toHaveBeenCalled();
   });
 
   it('shows a partly paid invoice with its open amount in lakh grouping', async () => {
-    mocks.getCustomerStatement.mockResolvedValue([
-      statementRow({
-        allocatedAmount: '1000000.00',
-        openAmount: '1018180.00',
-        settlement: 'partly_paid',
-      }),
-    ]);
-    const text = (await render()).replace(/<[^>]*>/g, ' ');
+    mocks.getInvoice.mockResolvedValue(settled('partly_paid', '1018180.00'));
+    const text = textOf(await render());
     expect(text).toContain('Partly paid');
     expect(text).toContain('10,18,180.00');
   });
 
-  it('asks for no payment position on a draft, or for a role without ar.read', async () => {
-    mocks.getInvoice.mockResolvedValue(invoiceDetail({ status: 'draft' }));
-    let text = (await render()).replace(/<[^>]*>/g, ' ');
-    expect(text).not.toContain('Open amount');
+  it('shows no payment position on a draft, or when the detail carries none', async () => {
+    mocks.getInvoice.mockResolvedValue(
+      InvoiceDetailSchema.parse({
+        ...invoiceDetail({ status: 'draft' }),
+        settlement: null,
+        openAmount: null,
+      }),
+    );
+    expect(textOf(await render())).not.toContain('Open amount');
 
+    // An older API answer without the fields.
     mocks.getInvoice.mockResolvedValue(issued());
-    mocks.requireStaffSession.mockResolvedValue({ accessToken: 't', roles: ['sales'] });
-    text = (await render()).replace(/<[^>]*>/g, ' ');
-    expect(mocks.getCustomerStatement).not.toHaveBeenCalled();
-    expect(text).not.toContain('Open amount');
+    expect(textOf(await render())).not.toContain('Open amount');
   });
 
   it('offers Record payment for the customer while the invoice is still owed', async () => {
     const RECORD = `href="/payments/new?customerId=${CUSTOMER}&amp;invoiceId=${ID}"`;
     mocks.requireStaffSession.mockResolvedValue({ accessToken: 't', roles: ['accountant'] });
-    mocks.getCustomerStatement.mockResolvedValue([
-      statementRow({ allocatedAmount: '0.00', openAmount: '2018180.00', settlement: 'overdue' }),
-    ]);
+    mocks.getInvoice.mockResolvedValue(settled('overdue', '2018180.00'));
     expect(await render()).toContain(RECORD);
 
     // Paid: nothing left to record against it.
-    mocks.getCustomerStatement.mockResolvedValue([statementRow()]);
+    mocks.getInvoice.mockResolvedValue(settled('paid', '0.00'));
     expect(await render()).not.toContain('Record payment');
 
     // Owed, but the role does not record payments.
     mocks.requireStaffSession.mockResolvedValue({ accessToken: 't', roles: ['management'] });
-    mocks.getCustomerStatement.mockResolvedValue([statementRow({ settlement: 'unpaid' })]);
+    mocks.getInvoice.mockResolvedValue(settled('unpaid', '2018180.00'));
     expect(await render()).not.toContain('Record payment');
+  });
+
+  it('offers Record payment to someone with invoice.read and payment.record but no ar.read', async () => {
+    mocks.requireStaffSession.mockResolvedValue({
+      accessToken: 't',
+      roles: [],
+      permissions: ['invoice.read', 'payment.record'],
+    });
+    mocks.getInvoice.mockResolvedValue(settled('unpaid', '2018180.00'));
+    const html = await render();
+    // Old code read the settlement from the ar.read-gated statement, so the button hid here.
+    expect(html).toContain(`href="/payments/new?customerId=${CUSTOMER}"`);
+    expect(html).toContain('Record payment');
+    expect(textOf(html)).toMatch(/Open amount\s+[^0-9]*20,18,180\.00/);
   });
 
   it('offers no Record payment when the settlement is unknown', async () => {
-    mocks.getCustomerStatement.mockRejectedValue(new ApiError(500, 'down'));
+    mocks.requireStaffSession.mockResolvedValue({ accessToken: 't', roles: ['accountant'] });
+    // Left out by an older API: never read as "offer on every issued invoice".
+    mocks.getInvoice.mockResolvedValue(issued());
     expect(await render()).not.toContain('Record payment');
-    mocks.getCustomerStatement.mockResolvedValue([]);
+    mocks.getInvoice.mockResolvedValue(settled(null, null));
     expect(await render()).not.toContain('Record payment');
-  });
-
-  it('still renders the invoice when the statement fails to load', async () => {
-    mocks.getCustomerStatement.mockRejectedValue(new ApiError(500, 'down'));
-    const text = (await render()).replace(/<[^>]*>/g, ' ');
-    expect(text).toContain('INV-2083/84-00001');
-    expect(text).not.toContain('Open amount');
   });
 
   it('uses readable relationship labels without exposing database IDs', async () => {
@@ -690,23 +677,9 @@ describe('invoice detail under the per-invoice can flags', () => {
   const SUBMIT = />Submit for approval</;
   const ISSUE = />Issue tax invoice</;
   const NOTE = />Credit note</;
+  /** An issued invoice still owed in full, as the detail derives it. */
   const owed = () =>
-    mocks.getCustomerStatement.mockResolvedValue([
-      InvoiceSettlementSchema.parse({
-        invoiceId: ID,
-        number: 'INV-2083/84-00001',
-        kind: 'tax_invoice',
-        customerId: CUSTOMER,
-        currency: 'NPR',
-        issueDate: '2026-11-08',
-        total: '2018180.00',
-        allocatedAmount: '0.00',
-        openAmount: '2018180.00',
-        dueDate: '2026-12-08',
-        daysOverdue: 0,
-        settlement: 'unpaid',
-      }),
-    ]);
+    InvoiceDetailSchema.parse({ ...issued(), settlement: 'unpaid', openAmount: '2018180.00' });
 
   it("hides Submit, Issue, the notes and Record payment on another person's invoice", async () => {
     // Finance holds every one of these permissions; only the API's can says this invoice is out of reach.
@@ -714,8 +687,7 @@ describe('invoice detail under the per-invoice can flags', () => {
     expect(await render()).not.toMatch(SUBMIT);
     mocks.getInvoice.mockResolvedValue({ ...invoiceDetail({ status: 'approved' }), can: OTHERS });
     expect(await render()).not.toMatch(ISSUE);
-    owed();
-    mocks.getInvoice.mockResolvedValue({ ...issued(), can: OTHERS });
+    mocks.getInvoice.mockResolvedValue({ ...owed(), can: OTHERS });
     const out = await render();
     expect(out).not.toMatch(NOTE);
     expect(out).not.toContain(RECORD);
@@ -726,8 +698,7 @@ describe('invoice detail under the per-invoice can flags', () => {
     expect(await render()).toMatch(SUBMIT);
     mocks.getInvoice.mockResolvedValue({ ...invoiceDetail({ status: 'approved' }), can: OWN });
     expect(await render()).toMatch(ISSUE);
-    owed();
-    mocks.getInvoice.mockResolvedValue({ ...issued(), can: OWN });
+    mocks.getInvoice.mockResolvedValue({ ...owed(), can: OWN });
     const out = await render();
     expect(out).toMatch(NOTE);
     expect(out).toContain(RECORD);
@@ -764,8 +735,7 @@ describe('invoice detail under the per-invoice can flags', () => {
   it('keeps the grant-only behaviour when the detail comes without can', async () => {
     mocks.getInvoice.mockResolvedValue(invoiceDetail({ status: 'draft' }));
     expect(await render()).toMatch(SUBMIT);
-    owed();
-    mocks.getInvoice.mockResolvedValue(issued());
+    mocks.getInvoice.mockResolvedValue(owed());
     const out = await render();
     expect(out).toMatch(NOTE);
     expect(out).toContain(RECORD);

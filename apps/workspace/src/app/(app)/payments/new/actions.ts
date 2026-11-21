@@ -3,6 +3,7 @@
 import { randomUUID } from 'node:crypto';
 
 import { SubmitPaymentBodySchema } from '@bos/contracts';
+import { USE_A_POINT, hasStrayComma, plainAmount } from '@bos/locale';
 import { revalidatePath } from 'next/cache';
 import { redirect } from 'next/navigation';
 
@@ -64,7 +65,7 @@ function text(form: FormData, name: string): string {
 
 /** Lakh grouping ("20,18,180.00") is typed naturally; the contract wants plain digits. A string clean-up, not arithmetic. */
 function normalizeAmount(raw: string): string {
-  return raw.replace(/[,\s]/g, '');
+  return plainAmount(raw);
 }
 
 function codeOf(err: unknown): string {
@@ -134,6 +135,13 @@ export async function recordPaymentAction(
         head === 'proofDocumentIds' ? 'proof' : (head as RecordPaymentField | undefined);
       if (field !== undefined && field in FIELD_MESSAGE) fieldErrors[field] = FIELD_MESSAGE[field];
     }
+  }
+  // A comma that is not grouping ("10,50") is a decimal comma: say so, since the digits alone look fine to the person.
+  if (fieldErrors.amount !== undefined && hasStrayComma(text(form, 'amount'))) {
+    fieldErrors.amount = `${USE_A_POINT} ${fieldErrors.amount}`;
+  }
+  if (fieldErrors.tdsWithheld !== undefined && hasStrayComma(text(form, 'tdsWithheld'))) {
+    fieldErrors.tdsWithheld = `${USE_A_POINT} ${fieldErrors.tdsWithheld}`;
   }
   // Tax withheld needs its code. The contract says so too, but its object-level check may not run
   // when another field already failed, so the person is told about every wrong field at once.

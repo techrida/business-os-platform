@@ -320,9 +320,23 @@ describe('manual invoice (done check 1, golden case)', () => {
   });
 
   it('refuses a manual invoice whose discount takes the whole amount (a zero total cannot be issued)', async () => {
-    await expect(
-      drafting.draftManual({ ...manualBody(), discount: { mode: 'pct', value: '100' } }, key()),
-    ).rejects.toMatchObject({ status: 400 });
+    const refused = await drafting
+      .draftManual({ ...manualBody(), discount: { mode: 'pct', value: '100' } }, key())
+      .catch((e: unknown) => e);
+    expect(refused).toMatchObject({ status: 400 });
+    expect(codeOf(refused)).toMatchObject({
+      message: 'The invoice total must be above zero: a discount cannot take the whole amount',
+    });
+  });
+
+  it('refuses a zero-priced manual invoice without blaming a discount it does not have', async () => {
+    const refused = await drafting.draftManual(manualBody('0.00'), key()).catch((e: unknown) => e);
+    expect(refused).toMatchObject({ status: 400 });
+    // Old code named a discount here too.
+    expect(codeOf(refused)).toEqual({
+      code: 'bad_request',
+      message: 'The invoice total must be above zero',
+    });
   });
 
   it('refuses a caller without invoice.draft', async () => {
