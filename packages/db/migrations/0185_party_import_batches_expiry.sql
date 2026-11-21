@@ -1,6 +1,6 @@
 -- 0185_party_import_batches_expiry: a previewed CSV import that nobody committed expires after 7 days (round 5, FU11;
 -- Kuu decision K1 Q5 b). The preview holds the uploaded names, addresses, emails and phones, so it must not wait forever.
---   * status gains `expired`: the daily worker job moves a `previewed` batch there once it is older than 7 days, and
+--   * status gains `expired`: the worker job (every 6 hours) moves a `previewed` batch there once it is older than 7 days, and
 --     clears its `rows` to an empty array, so the uploaded personal data goes with it. The counts and the file name stay,
 --     as the record of the attempt. A batch's `rows` is only checked against `row_count` while it is not expired.
 --   * an expired batch is final, like a committed one: the guard trigger refuses any UPDATE of it, and DELETE of any batch
@@ -36,3 +36,5 @@ END;
 $$;
 --> statement-breakpoint
 CREATE INDEX "party_import_batches_previewed_created_idx" ON "app"."party_import_batches" USING btree ("created_at") WHERE "status" = 'previewed';
+--> statement-breakpoint
+RESET lock_timeout;

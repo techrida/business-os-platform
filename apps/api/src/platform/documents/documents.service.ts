@@ -900,7 +900,7 @@ export class DocumentsService {
         `could not queue the scan for version ${versionId}, the sweeper will: ${describe(error)}`,
       );
       throw new ServiceUnavailableException(
-        'The file was received but its virus scan could not be queued yet. It will be scanned shortly.',
+        'The file was received but its virus scan could not be queued yet. It is scanned as soon as the queue is back.',
       );
     }
     return toVersionDto(updated);
@@ -1652,15 +1652,13 @@ export class DocumentsService {
   /** Puts a half-received version back to awaiting_content so the client can send the content again. */
   private async reopen(who: { scope: TxScope; actor: Actor }, version: VersionRow): Promise<void> {
     const s = scoped(who.scope);
-    // The row first, then the file: a failure between the two leaves an open version with a stray file the next
-    // upload overwrites, never a quarantined version with no bytes.
+    await this.storage.removeQuarantine(version.storageKey);
     await withTx(this.db, who.scope, who.actor, async (tx) => {
       await tx
         .update(documentVersions)
         .set({ status: 'awaiting_content', updatedAt: new Date() })
         .where(s.where(documentVersions, eq(documentVersions.id, version.id)));
     });
-    await this.storage.removeQuarantine(version.storageKey);
   }
 }
 
