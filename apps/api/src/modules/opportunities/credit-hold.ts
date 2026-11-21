@@ -72,12 +72,14 @@ export function overrideCovers(overrideOrderValue: string | null, orderValue: st
 
 /**
  * What the customer's confirmed or completed sales orders with this entity have not billed yet (R5 FU4): per order,
- * its NPR value less its issued tax invoices (an invoice credited in full counts as not billed, as its schedule
- * line is free again), never below zero, summed. A tax invoice enters the receivables when it is issued and an
- * order counts here only for what no issued invoice covers, so nothing is counted twice; a draft, submitted or
- * proforma invoice is no receivable and does not reduce it. A draft order (made on acceptance, F1-Q25) is not
- * confirmed and counts through the quotation's pending value instead (pendingOrderValue). NPR snapshots, two
- * decimals as stored (D22).
+ * its total less its issued tax invoices in the order's own currency (an invoice credited in full counts as not
+ * billed, as its schedule line is free again), never below zero, converted to NPR at the order's rate and rounded
+ * half-up to two decimals (D22), then summed. The remainder is worked out in the order's currency because an
+ * invoice freezes its own NPR rate when it is issued: subtracting NPR snapshots taken at two rates would leave a
+ * phantom balance (or hide a real one) on every foreign-currency order. A tax invoice enters the receivables when
+ * it is issued and an order counts here only for what no issued invoice covers, so nothing is counted twice; a
+ * draft, submitted or proforma invoice is no receivable and does not reduce it. A draft order (made on acceptance,
+ * F1-Q25) is not confirmed and counts through the quotation's pending value instead (pendingOrderValue).
  */
 export async function uninvoicedOrderBalance(
   tx: DbTransaction,
@@ -85,17 +87,18 @@ export async function uninvoicedOrderBalance(
   customerPartyId: string,
 ): Promise<string> {
   const rows = await tx.execute<{ uninvoiced: string }>(sql`
-    SELECT coalesce(sum(greatest(so.amount_npr - coalesce(billed.amount, 0), 0)), 0)::numeric(18, 2)::text
+    SELECT coalesce(sum(round(greatest(so.total - coalesce(billed.amount, 0), 0) * so.fx_rate, 2)), 0)::numeric(18, 2)::text
              AS uninvoiced
       FROM app.sales_orders so
       LEFT JOIN LATERAL (
-             SELECT sum(i.amount_npr) AS amount
+             SELECT sum(i.total) AS amount
                FROM app.invoices i
               WHERE i.tenant_id = so.tenant_id
                 AND i.organization_id = so.organization_id
                 AND i.sales_order_id = so.id
                 AND i.kind = 'tax_invoice'
                 AND i.status = 'issued'
+                AND i.currency = so.currency
                 AND i.credited_in_full_at IS NULL) billed ON true
      WHERE so.tenant_id = ${scope.tenantId}::uuid
        AND so.organization_id = ${scope.organizationId}::uuid
