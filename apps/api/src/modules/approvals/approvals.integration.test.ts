@@ -2219,6 +2219,177 @@ describe('quotation snapshot cost figures follow the viewer (D29)', () => {
   });
 });
 
+// Runs after the D29 block: that block's beforeAll creates the quotation_version workflow unguarded.
+describe('inbox count: the badge equals the list total for every kind of approver', () => {
+  let prHead = '';
+  let salesUser = '';
+  let prDepartmentId = '';
+
+  /** Count and list for the current caller; they must agree, and the count is returned. */
+  const countAndTotal = async () => {
+    const { count } = await service.inboxCount();
+    const page = await service.inboxPage({});
+    expect(count).toBe(page.total);
+    expect(page.items).toHaveLength(count);
+    return count;
+  };
+  /** Takes the caller's count, runs `change`, and returns how much the count moved (list and count agreeing). */
+  const deltaAs = async (who: string, change: () => Promise<unknown>) => {
+    me = who;
+    const before = await countAndTotal();
+    await change();
+    me = who;
+    return (await countAndTotal()) - before;
+  };
+
+  beforeAll(async () => {
+    const staff = async (roleKeys: RoleKey[]) =>
+      (
+        await createStaffUser(ownerPool, {
+          tenantId: scope.tenantId,
+          organizationId: scope.organizationId,
+          idpOrgId: staffIdpOrgId,
+          roleKeys,
+        })
+      ).userId;
+    prHead = await staff([]);
+    salesUser = await staff(['sales']);
+    const { departmentId } = await createDepartment(ownerPool, scope);
+    prDepartmentId = departmentId;
+    await withTx(db, scope, systemActor('inbox-count-seed'), (tx) =>
+      tx.execute(
+        sql`UPDATE app.departments SET head_user_id = ${prHead} WHERE id = ${departmentId}`,
+      ),
+    );
+    // The inbox filter tests above may already have created the head route and its subject.
+    me = U.founder;
+    try {
+      await admin.createWorkflow({
+        key: 'purchase_request',
+        name: 'Head approval',
+        spec: {
+          documentType: 'purchase_request',
+          steps: [
+            {
+              id: 'head',
+              kind: 'department_head',
+              fallbackRole: 'operations_head',
+              reason: 'Head approves',
+            },
+          ],
+          rules: [],
+        },
+      });
+      await publishSeconded('purchase_request', 1);
+    } catch {
+      /* already there */
+    }
+    try {
+      service.registerSubject({ documentType: 'purchase_request', onDecided });
+    } catch {
+      /* already registered */
+    }
+  });
+
+  it('counts a role step for its role holder with the generic grant', async () => {
+    expect(await deltaAs(U.acc, () => submit())).toBe(1);
+  });
+
+  it('does not count a role step for a generic approver without the role', async () => {
+    expect(await deltaAs(U.mgmt, () => submit())).toBe(0);
+  });
+
+  it('counts a named-user step for that user', async () => {
+    expect(
+      await deltaAs(U.deputy, () =>
+        submit({ facts: {}, explicitSteps: [{ userId: U.deputy, reason: 'Selected approver' }] }),
+      ),
+    ).toBe(1);
+  });
+
+  it('counts the delegator’s step for an active delegate', async () => {
+    me = U.founder;
+    const { id } = await admin.createDelegation({
+      fromUserId: U.acc,
+      toUserId: U.stranger,
+      startsAt: new Date('2026-11-01T00:00:00Z'),
+      endsAt: new Date('2026-11-10T00:00:00Z'),
+      documentType: 'test_memo',
+    });
+    try {
+      expect(await deltaAs(U.stranger, () => submit())).toBe(1);
+    } finally {
+      me = U.founder;
+      await admin.revokeDelegation(id);
+    }
+  });
+
+  it('counts a purchase request for its department head, who has no generic grant', async () => {
+    grants = new Map();
+    expect(
+      await deltaAs(prHead, () =>
+        submit({
+          title: 'Head request',
+          documentType: 'purchase_request',
+          facts: { departmentId: prDepartmentId },
+        }),
+      ),
+    ).toBe(1);
+  });
+
+  it('counts a quotation step for a Sales user named outside the step’s role', async () => {
+    roles.sales = [salesUser];
+    try {
+      grants = new Map();
+      expect(
+        await deltaAs(salesUser, () =>
+          submit({
+            documentType: 'quotation_version',
+            title: 'Quotation for the badge',
+            assigneeUserId: salesUser,
+          }),
+        ),
+      ).toBe(1);
+    } finally {
+      delete roles.sales;
+    }
+  });
+
+  it('does not count a request the caller is separated from (separation of duties)', async () => {
+    expect(
+      await deltaAs(U.acc, () => submit({ requesterUserId: U.acc, sodUserIds: [U.acc] })),
+    ).toBe(0);
+    // Control: the same request counts for another accountant.
+    expect(
+      await deltaAs(U.both, () => submit({ requesterUserId: U.acc, sodUserIds: [U.acc] })),
+    ).toBe(1);
+  });
+
+  it('does not count a later step for whoever decided an earlier one (distinctApprovers)', async () => {
+    let requestId = '';
+    me = U.fin;
+    const finBefore = await countAndTotal();
+    expect(
+      await deltaAs(U.both, async () => {
+        requestId = (await submit()).requestId;
+        await act(U.both, requestId, { action: 'approve', expectedVersion: 1 });
+      }),
+    ).toBe(0);
+    // Control: the finance step is now open and counts for a finance holder who did not decide step 1.
+    me = U.fin;
+    expect((await countAndTotal()) - finBefore).toBe(1);
+  });
+
+  it('refuses a caller with no approval assignment with the same 403 as the list, never 0', async () => {
+    await submit();
+    me = U.stranger;
+    grants = new Map();
+    const refusal = { status: 403, response: { reason: 'out_of_scope' } };
+    await expect(service.inboxCount()).rejects.toMatchObject(refusal);
+    await expect(service.inboxPage({})).rejects.toMatchObject(refusal);
+  });
+});
+
 /**
  * A Db that records every call made on it while a transaction it opened is still open. Such a call takes a second
  * pooled connection while the transaction holds the first, so under load the pool can run dry and stall.

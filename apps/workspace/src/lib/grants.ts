@@ -1,9 +1,8 @@
 import 'server-only';
 
 import type { AccessScope, Permission } from '@bos/contracts';
-import { cache } from 'react';
 
-import { getMe } from './api';
+import { getMeOrNull, liveGrantRows } from './live-permissions';
 import type { Session } from './session';
 
 /** The caller's live grants: each permission they hold, with the widest scope their roles give it. */
@@ -12,25 +11,15 @@ export type Grants = ReadonlyMap<Permission, AccessScope>;
 const NONE: Grants = new Map();
 
 /**
- * One `GET /v1/me` per render (React `cache` keys on the access token). Server Actions and Route Handlers are not
- * a render pass, so there it is a plain call per use (Next docs, data security). A failed call answers "no
- * grants": a control the API would refuse stays hidden, and the API still decides every request.
- */
-const grantsFor = cache(async (accessToken: string): Promise<Grants> => {
-  try {
-    const me = await getMe({ accessToken });
-    return new Map((me.permissions ?? []).map((g) => [g.permission, g.scope]));
-  } catch {
-    return NONE;
-  }
-});
-
-/**
  * The session user's effective grants, from the API's live role rows (not `DEFAULT_ROLE_PERMISSIONS`), so a grant
- * an admin added or removed in the roles screen shows at once. Server-side only.
+ * an admin added or removed in the roles screen shows at once. Reads the shared per-render `getMeOrNull`; when
+ * that read fails or sends no list it answers no grants, so action controls hide (`liveGrantRows`). Server-side
+ * only.
  */
-export function getGrants(session: Pick<Session, 'accessToken'>): Promise<Grants> {
-  return grantsFor(session.accessToken);
+export async function getGrants(session: Pick<Session, 'accessToken'>): Promise<Grants> {
+  const rows = liveGrantRows(await getMeOrNull(session.accessToken));
+  if (rows === undefined) return NONE;
+  return new Map(rows.map((g) => [g.permission, g.scope]));
 }
 
 /**

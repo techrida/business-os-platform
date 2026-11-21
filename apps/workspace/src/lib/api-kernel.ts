@@ -12,6 +12,7 @@ import {
   DocumentVersionDtoSchema,
   ErrorBodySchema,
   type InboxItemDto,
+  InboxCountDtoSchema,
   InboxItemDtoSchema,
   type MemoList,
   MemoListSchema,
@@ -194,6 +195,15 @@ export async function getInboxPage(
     throw new ApiError(502, `${label} returned an invalid body`, items.error?.issues);
   }
   return { items: items.data, total };
+}
+
+/**
+ * `GET /v1/approvals/inbox/count`: how many inbox items wait on the caller, from the same eligibility checks as the list (the API
+ * skips only building the items). A caller with no approval assignment gets 403 `out_of_scope`, which is normal for
+ * non-approvers; it throws like any other refusal, so the caller leaves the badge out instead of showing 0.
+ */
+export function getInboxCount(session: Session): Promise<{ count: number }> {
+  return call(session, '/v1/approvals/inbox/count', InboxCountDtoSchema);
 }
 
 export function getApprovalRequest(session: Session, id: string): Promise<ApprovalRequestDto> {
