@@ -119,6 +119,8 @@ export function CommercialTerms({
   const entityName = actingEntity?.name || 'your legal entity';
   // Without the entity or the terms list the version is unknown, so nothing about the terms can be changed.
   const termsKnown = actingEntity !== undefined && accounts !== undefined;
+  // Sent with each terms save: the API refuses it once the person acts for another entity (switched in another tab).
+  const entityId = termsKnown ? actingEntity.organizationId : '';
   const account = termsKnown
     ? accounts.find((a) => a.organizationId === actingEntity.organizationId)
     : undefined;
@@ -162,6 +164,7 @@ export function CommercialTerms({
       <PaymentTermForm
         action={setPaymentTermAction}
         customerId={customerId}
+        organizationId={entityId}
         version={version}
         current={termId}
         terms={terms}
@@ -185,7 +188,7 @@ export function CommercialTerms({
     : limit === null
       ? 'Orders are never held for credit.'
       : sameLimit(limit, '0')
-        ? `A zero limit holds every order until someone overrides the hold. ${CREDIT_LIMIT_NOTE}`
+        ? `A zero limit holds any order unless the customer has enough credit on account to cover it. ${CREDIT_LIMIT_NOTE}`
         : CREDIT_LIMIT_NOTE;
 
   return (
@@ -213,6 +216,7 @@ export function CommercialTerms({
               <CreditLimitForm
                 action={setCreditLimitAction}
                 customerId={customerId}
+                organizationId={entityId}
                 version={version}
                 current={limit}
                 entityName={entityName}

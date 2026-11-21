@@ -1,5 +1,5 @@
 // The credit limit the Commercial terms card sends: NPR, at most two decimals, never negative; "No limit" is null,
-// and an empty amount is an error, never null or 0.00 (zero is a real limit that holds every order).
+// and an empty amount is an error, never null or 0.00 (zero is a real limit).
 import { describe, expect, it } from 'vitest';
 
 import {

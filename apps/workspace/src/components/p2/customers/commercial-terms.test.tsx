@@ -1,8 +1,10 @@
 // The customer page's Commercial terms card, per role: each field shows its own Change control only when the API's
 // `can` flag for it is true (never a control the API would refuse); no limit and a 0.00 limit read differently; the
-// terms are the acting entity's, named; and a list that did not load says so instead of offering a broken edit.
+// terms are the acting entity's, named, and their dialogs carry that entity's id; and a list that did not load says
+// so instead of offering a broken edit.
 import type { CustomerCan, PartyAccountDto } from '@bos/contracts';
 import { DEFAULT_NUMBER_SYSTEMS } from '@bos/locale';
+import type { FC, ReactNode } from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { describe, expect, it, vi } from 'vitest';
 
@@ -14,6 +16,24 @@ vi.mock('./terms-actions', () => ({
   setCreditLimitAction: vi.fn(),
   setPaymentTermAction: vi.fn(),
 }));
+
+// The real dialogs, wrapped to record what the card hands them.
+const formProps = vi.hoisted(() => [] as Array<{ kind: string; organizationId?: unknown }>);
+vi.mock('./terms-forms', async (importOriginal) => {
+  const real = await importOriginal<typeof import('./terms-forms')>();
+  const { createElement } = await import('react');
+  const record =
+    <P extends object>(kind: string, Form: (p: P) => ReactNode) =>
+    (p: P) => {
+      formProps.push({ kind, ...p });
+      return createElement(Form as FC<P>, p);
+    };
+  return {
+    ...real,
+    CreditLimitForm: record('creditLimit', real.CreditLimitForm),
+    PaymentTermForm: record('paymentTerms', real.PaymentTermForm),
+  };
+});
 
 const { CommercialTerms } = await import('./commercial-terms');
 type Props = Parameters<typeof CommercialTerms>[0];
@@ -129,6 +149,17 @@ describe('who may change what', () => {
   });
 });
 
+describe('the entity the terms dialogs are for', () => {
+  it('hands both terms dialogs the acting entity id, so a save after an entity switch is refused', () => {
+    formProps.length = 0;
+    render(as('founder', { accounts: [account(), account({ organizationId: OTHER_ENTITY })] }));
+    expect(formProps.map((p) => [p.kind, p.organizationId])).toEqual([
+      ['paymentTerms', ENTITY],
+      ['creditLimit', ENTITY],
+    ]);
+  });
+});
+
 describe('the credit limit', () => {
   it('reads no limit differently from a zero limit', () => {
     const none = render(as('reader', { accounts: [account({ creditLimit: null })] }));
@@ -138,7 +169,10 @@ describe('the credit limit', () => {
 
     const zero = render(as('reader', { accounts: [account({ creditLimit: '0.00' })] }));
     expect(zero).toContain(money('0.00', 'NPR', DEFAULT_NUMBER_SYSTEMS));
-    expect(zero).toContain('A zero limit holds every order');
+    expect(zero).toContain(
+      'A zero limit holds any order unless the customer has enough credit on account to cover it.',
+    );
+    expect(zero).not.toContain('holds every order');
     expect(zero).not.toContain('No limit set');
   });
 

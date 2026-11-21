@@ -100,6 +100,14 @@ const staleTerms = () =>
     message: "This customer's terms were changed by someone else; reload them and try again",
   });
 
+/** 409: the terms form was rendered for another acting entity than the one the caller acts for now. */
+const entityChanged = () =>
+  new ConflictException({
+    code: 'conflict',
+    reason: 'entity_changed',
+    message: 'You switched legal entity since this page loaded; reload and try again',
+  });
+
 /** 422 `unprocessable` naming `paymentTermId`: the term is not one of the tenant's, or it is switched off. */
 const badPaymentTerm = (message: string) =>
   new UnprocessableEntityException({
@@ -702,6 +710,8 @@ export class CustomersService {
    * write here names the tenant AND the acting entity. Checks, all before any write:
    * - staff only, holding customer.write or `customers.credit_limit.write` at all (the route is
    *   @AnyAuthenticated because no one permission fits Finance, who sets limits without customer.write);
+   * - `organizationId` (the entity the form was rendered for) is the acting entity: 409 `entity_changed` otherwise,
+   *   so a form left open across an entity switch in another tab never writes the other entity's row;
    * - the customer is of this tenant and readable by the caller (404 otherwise);
    * - `creditLimit` sent: `customers.credit_limit.write` (403, never silently dropped);
    * - `paymentTermId` sent: customer.write on the record, as PATCH /v1/customers/:id; a changed term must be an
@@ -714,6 +724,7 @@ export class CustomersService {
     const { scope, actor, principal } = this.caller.current();
     this.assertStaff(principal);
     this.assertHoldsAny(principal, ['customer.write', 'customers.credit_limit.write']);
+    if (body.organizationId !== scope.organizationId) throw entityChanged();
     const now = this.clock();
     return withTx(this.db, scope, actor, async (tx) => {
       const row = await this.find(tx, scope.tenantId, id);
@@ -772,8 +783,22 @@ export class CustomersService {
         }
       } else {
         if (body.expectedVersion !== existing.version) throw staleTerms();
-        // updateVersioned matches the id (looked up above by tenant, entity and party) and the tenant.
-        saved = await updateVersioned(tx, partyAccounts, existing.id, existing.version, set);
+        // Every key of the row in the predicate, not only id and version: row security is off for party_accounts.
+        const [updated] = await tx
+          .update(partyAccounts)
+          .set({ ...set, version: sql`${partyAccounts.version} + 1` })
+          .where(
+            and(
+              eq(partyAccounts.tenantId, scope.tenantId),
+              eq(partyAccounts.organizationId, scope.organizationId),
+              eq(partyAccounts.partyId, id),
+              eq(partyAccounts.id, existing.id),
+              eq(partyAccounts.version, existing.version),
+            ),
+          )
+          .returning();
+        if (updated === undefined) throw staleTerms();
+        saved = updated;
       }
 
       const termsOf = (r: Pick<PartyAccountRow, 'paymentTermId' | 'creditLimit'> | undefined) => ({

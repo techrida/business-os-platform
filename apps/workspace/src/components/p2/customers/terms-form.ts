@@ -18,6 +18,12 @@ export interface TermsEditState {
    * value and version; saving again is a fresh, informed decision.
    */
   stale?: boolean;
+  /**
+   * The person switched legal entity (in another tab) after this page loaded (409 `entity_changed`). Nothing was
+   * saved and the page data is NOT reloaded: a reload would point the open dialog at the other entity's terms, so
+   * the next Save would land there. The dialog stays open to read the message, cancel and reload.
+   */
+  entityChanged?: boolean;
   /** A short confirmation, shown as a toast. */
   saved?: string;
   savedCount: number;
@@ -43,6 +49,10 @@ export function staleMessage(field: TermsField): string {
   return `Someone else changed ${what} while you were editing. The page now shows what they saved; check it, then save again if you still want your change.`;
 }
 
+/** A 409 `entity_changed`: the form was rendered for another legal entity than the one the person acts for now. */
+export const ENTITY_CHANGED =
+  'You switched to another legal entity since this page loaded, so nothing was saved. Reload the page to see the terms of the entity you act for now, then save again.';
+
 export const NOTHING_CHANGED = 'Nothing has changed, so there is nothing to save.';
 export const INCOMPLETE = 'This form is incomplete. Reload the page and try again.';
 export const CUSTOMER_GONE =
@@ -67,7 +77,8 @@ export type CreditLimitMode = 'limit' | 'none';
 /**
  * The credit limit to send, from the dialog's choice and the typed amount. "No limit" is null; a typed amount is
  * NPR with up to two decimals, never negative, and lakh grouping ("1,00,000.00") is accepted. An empty amount with
- * "Set a limit" chosen is an error, never null and never 0.00: zero is a real limit that holds every order.
+ * "Set a limit" chosen is an error, never null and never 0.00: zero is a real limit (it holds any order that credit
+ * on account does not cover).
  */
 export function parseCreditLimit(
   mode: string,

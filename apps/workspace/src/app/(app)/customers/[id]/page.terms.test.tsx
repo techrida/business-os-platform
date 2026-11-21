@@ -171,7 +171,7 @@ describe('the Commercial terms card on the page', () => {
     expect(text).toContain('Commercial terms');
     expect(text).toContain('agreed with Techrida Nepal Pvt. Ltd.');
     // The acting entity's zero limit, not the other entity's "no limit".
-    expect(text).toContain('A zero limit holds every order');
+    expect(text).toContain('A zero limit holds any order unless the customer has enough credit');
     expect(text).toContain('Techrida Trading');
     expect(text).not.toContain('Change ');
   });

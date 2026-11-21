@@ -239,10 +239,12 @@ async function createCustomer(tenant: Tenant = a) {
   return CustomerDtoSchema.parse(res.body);
 }
 
-const putTerms = (id: string, body: unknown) =>
-  request(baseUrl)
-    .patch(`/v1/customers/${id}/terms`)
-    .send(body as object);
+/** A terms save as the workspace sends it: the form names the acting entity it was rendered for. */
+const putTerms = (id: string, body: object) =>
+  putRaw(id, { organizationId: current.organizationId, ...body });
+/** A terms save sent exactly as given (no entity added). */
+const putRaw = (id: string, body: object) =>
+  request(baseUrl).patch(`/v1/customers/${id}/terms`).send(body);
 
 const errorOf = (body: unknown) => ErrorBodySchema.parse(body).error;
 
@@ -510,6 +512,74 @@ describe('entity isolation (row security is off for party_accounts)', () => {
     expect(await storedRow(customer.id, entityA2)).toEqual([
       { credit_limit: '6.00', payment_term_id: null, version: 2 },
     ]);
+  });
+});
+
+describe('the entity the form was rendered for (organizationId)', () => {
+  it("is 409 entity_changed for another entity's id and leaves both entities' rows untouched", async () => {
+    const customer = await createCustomer();
+    as('founder', a.organizationId);
+    expect(
+      (await putTerms(customer.id, { creditLimit: '1000.00', paymentTermId: net30 })).status,
+    ).toBe(200);
+    as('founder', entityA2);
+    expect((await putTerms(customer.id, { creditLimit: '5.00' })).status).toBe(200);
+    // The form was rendered for A2; the caller has since switched to the default entity in another tab.
+    as('founder', a.organizationId);
+    for (const body of [
+      { creditLimit: '9.00', expectedVersion: 1 },
+      { paymentTermId: net60, expectedVersion: 1 },
+      { creditLimit: null },
+    ]) {
+      const res = await putRaw(customer.id, { organizationId: entityA2, ...body });
+      expect(res.status, JSON.stringify(res.body)).toBe(409);
+      expect(errorOf(res.body)).toMatchObject({
+        code: 'conflict',
+        reason: 'entity_changed',
+        message: 'You switched legal entity since this page loaded; reload and try again',
+      });
+    }
+    expect(await storedRow(customer.id, a.organizationId)).toEqual([
+      { credit_limit: '1000.00', payment_term_id: net30, version: 1 },
+    ]);
+    expect(await storedRow(customer.id, entityA2)).toEqual([
+      { credit_limit: '5.00', payment_term_id: null, version: 1 },
+    ]);
+    const { rows } = await ownerPool.query(
+      `SELECT 1 FROM audit.audit_events WHERE tenant_id = $1 AND entity_id = $2 AND action = 'customer.terms_changed'`,
+      [a.tenantId, customer.id],
+    );
+    expect(rows).toHaveLength(2);
+  });
+
+  it('is 409 for a first save named for another entity, and writes no row', async () => {
+    const customer = await createCustomer();
+    as('finance', a.organizationId);
+    const res = await putRaw(customer.id, { organizationId: entityA2, creditLimit: '1.00' });
+    expect(res.status).toBe(409);
+    expect(await storedRow(customer.id, a.organizationId)).toEqual([]);
+    expect(await storedRow(customer.id, entityA2)).toEqual([]);
+  });
+
+  it('saves when the id is the acting entity', async () => {
+    const customer = await createCustomer();
+    as('finance', entityA2);
+    const res = await putRaw(customer.id, { organizationId: entityA2, creditLimit: '42.00' });
+    expect(res.status, JSON.stringify(res.body)).toBe(200);
+    expect(PartyAccountDtoSchema.parse(res.body)).toMatchObject({
+      organizationId: entityA2,
+      creditLimit: '42.00',
+      version: 1,
+    });
+  });
+
+  it('is 400 without the id or with a non-uuid id, and writes nothing', async () => {
+    const customer = await createCustomer();
+    expect((await putRaw(customer.id, { creditLimit: '1.00' })).status).toBe(400);
+    expect((await putRaw(customer.id, { organizationId: 'TA', creditLimit: '1.00' })).status).toBe(
+      400,
+    );
+    expect(await storedRow(customer.id, a.organizationId)).toEqual([]);
   });
 });
 
