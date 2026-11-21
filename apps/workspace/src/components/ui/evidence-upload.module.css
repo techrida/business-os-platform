@@ -1,0 +1,237 @@
+/* An evidence file in a form: a drop zone that is also the file chooser, then a chip with the file's name, size and
+   scan, and a remove button. Tokens only, light theme. Motion: colour changes, the progress fill and the spinner,
+   all still under reduced motion except colour. */
+
+.root {
+  --evidence-ease: cubic-bezier(0.23, 1, 0.32, 1);
+
+  display: grid;
+  gap: 6px;
+  min-width: 0;
+  container: evidence-upload / inline-size;
+}
+
+.label {
+  color: var(--text-primary);
+  font-size: var(--font-size-body-small);
+  font-weight: var(--font-weight-medium);
+  line-height: var(--line-height-body-small);
+  letter-spacing: var(--letter-spacing-medium);
+}
+
+.hint {
+  color: var(--text-secondary);
+  overflow-wrap: anywhere;
+  font-size: var(--font-size-caption);
+  line-height: var(--line-height-caption);
+}
+
+.error {
+  color: var(--status-error);
+  overflow-wrap: anywhere;
+  font-size: var(--font-size-caption);
+  font-weight: var(--font-weight-medium);
+  line-height: var(--line-height-caption);
+}
+
+/* ---- drop zone ---------------------------------------------------------------------------------- */
+
+.drop {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: var(--spacing-content-gap);
+  align-items: center;
+  min-width: 0;
+  min-height: 64px;
+  padding: 12px 16px;
+  border: var(--border-width-thin) dashed var(--border-strong);
+  border-radius: var(--radius-lg);
+  background: var(--surface-subtle);
+  color: var(--text-primary);
+  cursor: pointer;
+  transition:
+    border-color 120ms ease,
+    background-color 120ms ease,
+    transform 160ms var(--evidence-ease);
+}
+
+.drop:active:not([data-busy='true'], [data-disabled='true']) {
+  transform: scale(0.99);
+}
+
+@media (hover: hover) and (pointer: fine) {
+  .drop:hover:not([data-busy='true'], [data-disabled='true']) {
+    border-color: var(--action-primary);
+    background: var(--action-primary-subtle);
+  }
+}
+
+.drop[data-over='true'] {
+  border-style: solid;
+  border-color: var(--action-primary);
+  background: var(--action-primary-subtle);
+}
+
+.drop[data-invalid='true'] {
+  border-color: var(--input-error-border);
+}
+
+.drop:has(input:focus-visible) {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: 2px;
+}
+
+.drop[data-busy='true'] {
+  border-style: solid;
+  cursor: progress;
+}
+
+.drop[data-disabled='true'] {
+  border-color: var(--border-default);
+  color: var(--text-disabled);
+  cursor: not-allowed;
+}
+
+.dropIcon {
+  display: grid;
+  place-items: center;
+  color: var(--text-secondary);
+}
+
+.drop[data-over='true'] .dropIcon {
+  color: var(--action-primary);
+}
+
+.dropText {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+}
+
+.dropTitle {
+  overflow: hidden;
+  font-size: var(--font-size-body);
+  font-weight: var(--font-weight-medium);
+  line-height: var(--line-height-body);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.dropHint {
+  color: var(--text-secondary);
+  overflow-wrap: anywhere;
+  font-size: var(--font-size-caption);
+  line-height: var(--line-height-caption);
+}
+
+.drop[data-disabled='true'] .dropHint,
+.drop[data-disabled='true'] .dropIcon {
+  color: var(--text-disabled);
+}
+
+.progress {
+  display: block;
+  overflow: hidden;
+  height: 6px;
+  border-radius: var(--radius-full);
+  background: var(--progress-track-bg);
+}
+
+.progressFill {
+  display: block;
+  height: 100%;
+  border-radius: inherit;
+  background: var(--progress-fill-bg);
+  transition: width 160ms linear;
+}
+
+/* ---- file chip ---------------------------------------------------------------------------------- */
+
+.chip {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto auto;
+  gap: var(--spacing-content-gap);
+  align-items: center;
+  min-width: 0;
+  min-height: 64px;
+  padding: 8px 8px 8px 16px;
+  border: var(--border-width-thin) solid var(--border-default);
+  border-radius: var(--radius-lg);
+  background: var(--surface-default);
+}
+
+.chip[data-bad='true'] {
+  border-color: var(--input-error-border);
+}
+
+.chipIcon {
+  display: grid;
+  place-items: center;
+  color: var(--text-secondary);
+}
+
+.chipText {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+}
+
+.chipName {
+  overflow: hidden;
+  color: var(--text-primary);
+  font-size: var(--font-size-body);
+  font-weight: var(--font-weight-medium);
+  line-height: var(--line-height-body);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.chipMeta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+  color: var(--text-secondary);
+  font-size: var(--font-size-caption);
+  line-height: var(--line-height-caption);
+}
+
+/* 44px hit area for the chip's buttons (scoped, so it wins over the button's own size). */
+.chip .action {
+  gap: 6px;
+  min-width: 44px;
+  min-height: 44px;
+}
+
+@container evidence-upload (max-width: 360px) {
+  .actionText {
+    display: none;
+  }
+}
+
+/* ---- motion ------------------------------------------------------------------------------------- */
+
+.spinner {
+  animation: evidence-upload-spin 700ms linear infinite;
+}
+
+@keyframes evidence-upload-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .spinner {
+    animation: none;
+  }
+
+  .drop,
+  .progressFill {
+    transition: none;
+  }
+
+  .drop:active:not([data-busy='true'], [data-disabled='true']) {
+    transform: none;
+  }
+}

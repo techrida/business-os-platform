@@ -1589,6 +1589,62 @@ describe('subject hooks (K1): link and onCancelled', () => {
   });
 });
 
+describe('subject hooks (S3): afterDecided runs once the decision commits', () => {
+  /** The request's status as another connection reads it when the hook runs: committed or not. */
+  const seen: string[] = [];
+  const afterDecided = vi.fn(async (d: { documentId: string }) => {
+    const [row] = await db
+      .select({ status: approvalRequests.status })
+      .from(approvalRequests)
+      .where(eq(approvalRequests.documentId, d.documentId));
+    seen.push(row?.status ?? 'missing');
+  });
+  beforeAll(async () => {
+    me = U.founder;
+    await admin.createWorkflow({
+      key: 's3_after',
+      name: 'S3 after decided',
+      spec: { documentType: 's3_after', steps: [seedSpec.steps[0]!] },
+    });
+    await publishSeconded('s3_after', 1);
+    service.registerSubject({ documentType: 's3_after', onDecided, afterDecided });
+  });
+  beforeEach(() => {
+    seen.length = 0;
+    afterDecided.mockClear();
+  });
+
+  it('hands the subject the scope, document, outcome and snapshot after the commit', async () => {
+    const documentId = randomUUID();
+    const { requestId } = await submit({ documentType: 's3_after', documentId });
+    await act(U.acc, requestId, { action: 'approve', expectedVersion: 1 });
+    expect(afterDecided).toHaveBeenCalledTimes(1);
+    expect(afterDecided).toHaveBeenCalledWith({
+      scope,
+      documentId,
+      outcome: 'approved',
+      snapshot: { title: 'Office chairs', amount: '50000.00', currency: 'NPR' },
+    });
+    // Read from another connection inside the hook: the decision was already committed.
+    expect(seen).toEqual(['approved']);
+  });
+
+  it('keeps the decision when the hook fails, and is not called again for a replay', async () => {
+    const { requestId } = await submit({ documentType: 's3_after' });
+    afterDecided.mockRejectedValueOnce(new Error('queue down'));
+    const key = randomUUID();
+    const body = { action: 'reject', comment: 'No', expectedVersion: 1 };
+    await expect(act(U.acc, requestId, body, key)).resolves.toMatchObject({ status: 'rejected' });
+    await expect(act(U.acc, requestId, body, key)).resolves.toMatchObject({ status: 'rejected' });
+    expect(afterDecided).toHaveBeenCalledTimes(1);
+    const [row] = await db
+      .select({ status: approvalRequests.status })
+      .from(approvalRequests)
+      .where(eq(approvalRequests.id, requestId));
+    expect(row?.status).toBe('rejected');
+  });
+});
+
 describe('request eligibility before disclosure or locking', () => {
   const action = { action: 'approve' as const, expectedVersion: 1 };
 

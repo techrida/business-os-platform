@@ -55,7 +55,7 @@ import {
   HttpException,
   NotFoundException,
 } from '@nestjs/common';
-import type { Queue } from 'bullmq';
+import type { Job, Queue } from 'bullmq';
 import { sql } from 'drizzle-orm';
 import { drizzle } from 'drizzle-orm/node-postgres';
 import { Pool } from 'pg';
@@ -89,6 +89,8 @@ import { PurchaseOrderDocumentService } from './purchase-order-document.service'
 import {
   drizzlePurchaseOrderRenderStore,
   ORPHAN_AFTER_MS,
+  PO_RENDER_ONE_JOB,
+  PurchaseOrderRenderProcessor,
   PurchaseOrderRenderSweeper,
   type RenderCandidate,
 } from './purchase-order-render.sweeper';
@@ -938,5 +940,86 @@ describe('a render that keeps failing (R4c2: TR-Q4, F1-Q13)', () => {
     expect(ids(await store.candidates(clock, 1_000))).toContain(c.versionId);
     expect(await sweeper.renderOne(c)).toBe('rendered');
     await expect(service.link(po.id, 1)).resolves.toBeDefined();
+  });
+
+  it('counts a document left by a worker that crashed as a failed try, and gives up at the limit', async () => {
+    const po = await issuedPo();
+    const c = await candidateOf(po, 1);
+    let clock = new Date();
+    const worker = failingWorker(() => clock);
+    for (let n = 1; n < MAX_RENDER_ATTEMPTS; n += 1) {
+      expect(await worker.renderOne(c)).toBe('failed');
+      clock = new Date((await failureRow(c.versionId))?.next_attempt_at ?? clock);
+    }
+    expect(await failureRow(c.versionId)).toMatchObject({ attempts: MAX_RENDER_ATTEMPTS - 1 });
+    // The last try's worker died after createGenerated: no failure was recorded, only the unfilled document.
+    const orphan = await createOrphan(c, ORPHAN_AFTER_MS + 60_000);
+
+    await sweeper.sweep();
+
+    const [doc] = (await documentRows(c.versionId)).filter((d) => d.document_id === orphan);
+    expect(doc?.removed_at).not.toBeNull();
+    const given = await failureRow(c.versionId);
+    expect(given).toMatchObject({ attempts: MAX_RENDER_ATTEMPTS, last_failure_kind: 'abandoned' });
+    expect(given?.exhausted_at).not.toBeNull();
+    expect(await actions(scopeA, po.id)).toEqual(['purchase_order.pdf_render_failed']);
+    // Given up, so the crash loop ends: no later sweep takes it again.
+    const farFuture = new Date(Date.now() + 365 * 24 * 60 * 60_000);
+    expect(ids(await store.candidates(farFuture, 1_000))).not.toContain(c.versionId);
+  });
+
+  it('does not let a live document whose only upload was rejected block the next try or a Retry', async () => {
+    const po = await issuedPo();
+    const c = await candidateOf(po, 1);
+    current.scope = scopeA;
+    // The type check refused the bytes and the failure path could not remove the document (or the worker died
+    // between the two), on the last try: the render is given up and the rejected document is still live.
+    const orphan = await createOrphan(c, 0);
+    // The way the receive moves it: claimed (quarantined), then refused by the type check.
+    for (const status of ['quarantined', 'rejected']) {
+      await exec(
+        c,
+        sql`UPDATE app.document_versions SET status = ${status} WHERE document_id = ${orphan}::uuid`,
+      );
+    }
+    let clock = new Date();
+    const worker = failingWorker(() => clock);
+    for (let n = 1; n <= MAX_RENDER_ATTEMPTS; n += 1) {
+      expect(await worker.renderOne(c)).toBe('failed');
+      clock = new Date((await failureRow(c.versionId))?.next_attempt_at ?? clock);
+    }
+    expect((await failureRow(c.versionId))?.exhausted_at).not.toBeNull();
+
+    await expect(service.retry(po.id, 1)).resolves.toEqual({ state: 'queued' });
+    // Retried, well inside the orphan cutoff: due at once, and the healthy render stores the PDF.
+    expect(ids(await store.candidates(new Date(), 1_000))).toContain(c.versionId);
+    expect(await sweeper.renderOne(c)).toBe('rendered');
+    await expect(service.link(po.id, 1)).resolves.toBeDefined();
+  });
+});
+
+describe('render on commit (S3): the purchase-order.render.one job on the real tables', () => {
+  const jobFor = (po: IssuedPo) =>
+    ({ name: PO_RENDER_ONE_JOB, data: { ...po.scope, id: po.id } }) as unknown as Job;
+
+  it("renders the order's due versions, then nothing on a second run, and leaves other orders alone", async () => {
+    const po = await issuedPo();
+    await amend(po, '1500000.00');
+    const other = await issuedPo();
+    const v1 = await candidateOf(po, 1);
+    const v2 = await candidateOf(po, 2);
+    const otherV1 = await candidateOf(other, 1);
+    const processor = new PurchaseOrderRenderProcessor(sweeper);
+    gotenberg.requests.length = 0;
+
+    await processor.process(jobFor(po));
+    expect(gotenberg.requests).toHaveLength(2);
+    expect(await documentRows(v1.versionId)).toHaveLength(1);
+    expect(await documentRows(v2.versionId)).toHaveLength(1);
+    expect(await documentRows(otherV1.versionId)).toEqual([]);
+
+    await processor.process(jobFor(po));
+    expect(gotenberg.requests).toHaveLength(2);
+    expect(await documentRows(v2.versionId)).toHaveLength(1);
   });
 });

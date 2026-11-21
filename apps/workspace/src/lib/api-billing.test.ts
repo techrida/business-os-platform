@@ -487,6 +487,18 @@ describe('describeBillingFailure', () => {
     expect(evidence.message).toMatch(/evidence/i);
   });
 
+  it('words a file that is not evidence of this order, and a missing one, without a reload (round 5 P2)', () => {
+    // Fails on the old code: both read as the generic "The platform did not accept this".
+    expect(describeBillingFailure(refusal(422, 'invalid_evidence_document'))).toMatchObject({
+      kind: 'evidence',
+      message: expect.stringMatching(/not evidence uploaded to this record/) as string,
+      reload: false,
+    });
+    expect(describeBillingFailure(refusal(422, 'evidence_required')).message).toBe(
+      'Upload the document that shows this step was done.',
+    );
+  });
+
   it('words a credit hold without a reload (F1-Q20/F1-Q26)', () => {
     // Fails on the old code: an unnamed 409 read as "the page is out of date".
     expect(describeBillingFailure(refusal(409, 'credit_hold'))).toMatchObject({

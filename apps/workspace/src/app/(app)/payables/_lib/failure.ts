@@ -1,3 +1,5 @@
+import { INVALID_EVIDENCE } from '@/lib/evidence';
+
 import { failureWith, type ProcFailure } from '../../procurement/orders/_lib/failure-core';
 
 /**
@@ -119,7 +121,11 @@ export function billFailure(err: unknown, op: BillOp): ProcFailure {
         case 'RECEIPT_LINE_NOT_FOUND':
           return 'A receipt line is not a receipt of its order line. Check the receipt you chose.';
         case 'DOCUMENT_NOT_FOUND':
-          return 'The invoice file could not be found. Ask the vendor to send it again.';
+          return op === 'exception'
+            ? INVALID_EVIDENCE
+            : 'The invoice file could not be found. Ask the vendor to send it again.';
+        case 'invalid_evidence_document':
+          return INVALID_EVIDENCE;
         case 'TAX_CODE_NOT_FOUND':
           return 'A VAT code on a line is not one of yours. Choose the VAT treatment again.';
         case 'WITHHOLDING_CODE_NOT_FOUND':

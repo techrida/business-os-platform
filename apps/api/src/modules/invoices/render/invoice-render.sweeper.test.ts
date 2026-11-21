@@ -9,6 +9,7 @@ import type { DocumentLogoResolver } from '../../quotations/render/issuer';
 import type { RenderSettings, RunInTx } from '../../quotations/render/quotation-render.sweeper';
 import {
   failureKind,
+  InvoiceRenderProcessor,
   InvoiceRenderSweeper,
   RenderSourceMissingError,
   type RenderCandidate,
@@ -74,6 +75,8 @@ function fixture(
     src?: RenderSource | undefined;
     hasDocument?: boolean;
     candidates?: RenderCandidate[];
+    /** What the store answers for one invoice's eligibility (renderNow); omitted, a candidate. */
+    isCandidate?: boolean;
     /** The raw `format.number_systems` value; an omitted key reads as lakh grouping for every currency. */
     numberSystems?: unknown;
     /** The raw `format.date` value; an omitted key reads as the stored default. */
@@ -87,6 +90,7 @@ function fixture(
   let now = NOW;
   const store = {
     candidates: vi.fn().mockResolvedValue(over.candidates ?? []),
+    isCandidate: vi.fn().mockResolvedValue(over.isCandidate ?? true),
     load: vi.fn().mockResolvedValue('src' in over ? over.src : source()),
     lockAndHasDocument: vi.fn().mockResolvedValue(over.hasDocument ?? false),
     recordPrint: vi.fn().mockResolvedValue(undefined),
@@ -95,6 +99,9 @@ function fixture(
     discardUnfilled: vi.fn().mockResolvedValue(undefined),
     recordFailure: vi.fn().mockResolvedValue({ attempts: 1, givenUp: false }),
     clearFailure: vi.fn().mockResolvedValue(undefined),
+    savePendingPrint: vi.fn().mockResolvedValue(undefined),
+    clearPendingPrint: vi.fn().mockResolvedValue(undefined),
+    owedPrints: vi.fn().mockResolvedValue([]),
   } satisfies RenderStore;
   const audit = { record: vi.fn().mockResolvedValue(undefined) };
   const documents = {
@@ -444,9 +451,21 @@ describe('InvoiceRenderSweeper.sweep', () => {
     f.store.orphans.mockResolvedValue([
       { tenantId: 'tenant-1', organizationId: 'org-1', documentId: 'doc-9' },
     ]);
+    f.store.removeOrphan.mockResolvedValue({
+      tenantId: 'tenant-1',
+      organizationId: 'org-1',
+      invoiceId: 'inv-9',
+    });
     const result = await f.sweeper.sweep();
     expect(result.orphansRemoved).toBe(1);
     expect(f.store.removeOrphan).toHaveBeenCalledOnce();
+    // The crashed render's try is counted once, as `abandoned`.
+    expect(f.store.recordFailure).toHaveBeenCalledWith(
+      expect.anything(),
+      { tenantId: 'tenant-1', organizationId: 'org-1', invoiceId: 'inv-9' },
+      'abandoned',
+      NOW,
+    );
     const cutoff = f.store.orphans.mock.calls[0]?.[0] as Date;
     expect(NOW.getTime() - cutoff.getTime()).toBe(10 * 60_000);
   });
@@ -661,5 +680,55 @@ describe('InvoiceRenderSweeper: amount in words, signatory and seller contact (U
     expect(htmlOf(f)).toContain('Authorised signatory');
     const stored = f.store.recordPrint.mock.calls[0]?.[4] as DocumentFormatSnapshot;
     expect(stored.sellerContact).toBeNull();
+  });
+});
+
+describe('InvoiceRenderSweeper.renderNow and the invoice.render.one job (render on commit)', () => {
+  it('renders an invoice that is still a candidate, checking it by the candidate rule first', async () => {
+    const f = fixture();
+    const c = candidate(1);
+    await expect(f.sweeper.renderNow(c)).resolves.toBe('rendered');
+    expect(f.store.isCandidate).toHaveBeenCalledWith(c, NOW);
+    expect(f.pdf.htmlToPdf).toHaveBeenCalledTimes(1);
+    expect(f.store.recordPrint).toHaveBeenCalledTimes(1);
+  });
+
+  it('skips, without rendering or counting a failure, an invoice that is no longer a candidate', async () => {
+    const f = fixture({ isCandidate: false });
+    await expect(f.sweeper.renderNow(candidate(1))).resolves.toBe('skipped');
+    expect(f.store.load).not.toHaveBeenCalled();
+    expect(f.pdf.htmlToPdf).not.toHaveBeenCalled();
+    expect(f.store.recordFailure).not.toHaveBeenCalled();
+  });
+
+  it('routes invoice.render.one to renderNow with the job data, and still runs the sweep', async () => {
+    const renderNow = vi.fn(() => Promise.resolve('rendered' as const));
+    const sweep = vi.fn(() => Promise.resolve({} as never));
+    const processor = new InvoiceRenderProcessor({ renderNow, sweep } as never);
+    const data = {
+      tenantId: '00000000-0000-4000-8000-0000000000a1',
+      organizationId: '00000000-0000-4000-8000-0000000000b1',
+      id: '00000000-0000-4000-8000-0000000000c1',
+    };
+    await processor.process({ name: 'invoice.render.one', data } as never);
+    expect(renderNow).toHaveBeenCalledWith({
+      tenantId: data.tenantId,
+      organizationId: data.organizationId,
+      invoiceId: data.id,
+    });
+    await processor.process({ name: 'invoice.render.sweep' } as never);
+    expect(sweep).toHaveBeenCalledTimes(1);
+  });
+
+  it('fails a one-render job whose data is not ids, and a job nobody handles', async () => {
+    const renderNow = vi.fn();
+    const processor = new InvoiceRenderProcessor({ renderNow } as never);
+    await expect(
+      processor.process({ name: 'invoice.render.one', data: { id: 'x' } } as never),
+    ).rejects.toThrow();
+    expect(renderNow).not.toHaveBeenCalled();
+    await expect(processor.process({ name: 'other' } as never)).rejects.toThrow(
+      'Unknown invoice render job',
+    );
   });
 });

@@ -45,6 +45,7 @@ import { DB, type Db, type DbTransaction } from '../../../platform/db/db.module'
 import { withIdempotency } from '../../../platform/db/idempotency';
 import { withTx, type TxScope } from '../../../platform/db/tx';
 import { assertNotInfected } from '../../../platform/documents/documents.service';
+import { assertEvidenceDocument } from '../../../platform/documents/evidence-document';
 import { CurrencyEnabledService } from '../../../platform/settings/currency-enabled';
 import { searchPage } from '../../../platform/list';
 import { MoneyService } from '../../../platform/settings/money.service';
@@ -450,7 +451,12 @@ export class SourcingService {
 
   // ------------------------------------------------------------------------------------------------- quotations
 
-  /** Records a quotation of an invited vendor on an open RFQ. 409 when the vendor was not invited or already quoted. */
+  /**
+   * Records a quotation of an invited vendor on an open RFQ. 409 when the vendor was not invited or already quoted.
+   * The quotation file must be evidence uploaded to this RFQ (round 5 P2): 422 `invalid_evidence_document` for any
+   * other file (a picture, a vendor-inbox upload, a file of another record), 409 `document_infected`. Only this staff
+   * path checks it: convertSubmission takes the vendor's own inbox file.
+   */
   async recordQuotation(
     rfqId: string,
     body: RecordQuotationBody,
@@ -472,6 +478,7 @@ export class SourcingService {
             body.vendorId,
             body.documentId,
             this.clock(),
+            { staffEvidence: true },
           ),
         }),
       );
@@ -873,6 +880,7 @@ export class SourcingService {
     vendorId: string,
     documentId: string,
     arrivedAt: Date,
+    opts: { staffEvidence?: boolean } = {},
   ): Promise<QuotationDto> {
     const { principal } = this.caller.current();
     const now = this.clock();
@@ -886,17 +894,23 @@ export class SourcingService {
     }
     const invited = await this.vendorIdsOf(tx, scope, rfqId);
     if (!invited.includes(vendorId)) throw conflict('The vendor was not invited to this RFQ');
-    const [doc] = await tx
-      .select({ id: documents.id })
-      .from(documents)
-      .where(
-        scoped(scope).where(
-          documents,
-          and(eq(documents.id, documentId), isNull(documents.removedAt)),
-        ),
-      );
-    if (doc === undefined) throw badRequest('Unknown document');
-    await assertNotInfected(tx, scope, [documentId]);
+    if (opts.staffEvidence === true) {
+      // Round 5 P2, staff only: a file uploaded to this RFQ as its evidence (422 invalid_evidence_document).
+      await assertEvidenceDocument(tx, scope, documentId, rfqId);
+    } else {
+      // The inbox conversion: the vendor's own submission file, which its caller already checked is clean.
+      const [doc] = await tx
+        .select({ id: documents.id })
+        .from(documents)
+        .where(
+          scoped(scope).where(
+            documents,
+            and(eq(documents.id, documentId), isNull(documents.removedAt)),
+          ),
+        );
+      if (doc === undefined) throw badRequest('Unknown document');
+      await assertNotInfected(tx, scope, [documentId]);
+    }
 
     const prLines = await tx
       .select({ id: purchaseRequestLines.id })

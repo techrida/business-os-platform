@@ -209,7 +209,7 @@ export async function requestExceptionAction(
       errors[field] =
         field === 'reason'
           ? 'Give a reason of 1 to 1,000 characters.'
-          : 'Paste the evidence document ID, or leave it empty.';
+          : 'That file could not be used. Upload it again, or remove it.';
     }
     return { key: r.o.key, errors };
   }
