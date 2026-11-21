@@ -943,6 +943,45 @@ describe('short-close and cancel', () => {
     expect(codeOf(e2)).toBe('PO_HAS_RECEIPTS');
     expect((await service.get(drafted.id)).status).toBe('issued');
   });
+
+  it('refuses cancel while a non-voided vendor bill names the PO (409 PO_HAS_BILLS) and allows it once voided', async () => {
+    const vendorId = await vendor('approved', { accountIn: [scopeA] });
+    const po = await issued({ vendorId });
+    const docId = (
+      await exec(
+        scopeA,
+        sql`INSERT INTO app.documents (tenant_id, organization_id, owner_type, owner_id)
+            VALUES (${scopeA.tenantId}, ${scopeA.organizationId}, 'vendor_bill_intake', ${randomUUID()})
+            RETURNING id`,
+      )
+    ).rows[0] as { id: string };
+    const billId = randomUUID();
+    await exec(
+      scopeA,
+      sql`INSERT INTO app.vendor_bills (id, tenant_id, organization_id, number, vendor_id, vendor_invoice_no,
+            invoice_date, fiscal_year, currency, purchase_order_id, document_id, status,
+            net_total, vat_total, tds_total, payable_total, fx_rate, payable_total_npr, entered_by)
+          VALUES (${billId}, ${scopeA.tenantId}, ${scopeA.organizationId}, 'BILL-2082/83-9001', ${vendorId},
+                  'INV-PO-9001', '2026-11-09', '2082/83', 'NPR', ${po.id}, ${docId.id}, 'draft',
+                  1000.00, 130.00, 0.00, 1130.00, 1, 1130.00, ${U.acct})`,
+    );
+
+    const refused = await httpErrorOf(service.cancel(po.id, { reason: 'x' }, randomUUID()));
+    expect(refused.getStatus()).toBe(409);
+    expect(codeOf(refused)).toBe('PO_HAS_BILLS');
+    expect((refused.getResponse() as { message?: string }).message).toContain('BILL-2082/83-9001');
+    expect((await service.get(po.id)).status).toBe('issued');
+
+    await exec(
+      scopeA,
+      sql`UPDATE app.vendor_bills
+          SET status = 'voided', voided_by = ${U.acct}, voided_at = ${now.toISOString()}, void_reason = 'Duplicate'
+          WHERE id = ${billId}`,
+    );
+    expect((await service.cancel(po.id, { reason: 'Bill voided' }, randomUUID())).status).toBe(
+      'cancelled',
+    );
+  });
 });
 
 // ---------------------------------------------------------------------------------------- vendor name
