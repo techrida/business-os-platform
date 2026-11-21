@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 
 import {
   buildRows,
+  clip,
   checkLine,
   countStatuses,
   identityKey,
@@ -118,6 +119,39 @@ describe('review fixes', () => {
         contact_phone: '',
       }).issues.map((i) => i.column),
     ).toEqual(['contact_name']);
+  });
+});
+
+describe('second review fixes', () => {
+  const rec = (line: number, over: Partial<Record<string, string>>) => ({
+    line,
+    cells: customerLine(over),
+  });
+
+  it('a name-only line cannot repeat a company an earlier line carries a PAN for', () => {
+    const rows = buildRows('customer', [
+      rec(2, { legal_name: 'Acme Ltd', pan_vat_no: '555555555' }),
+      rec(3, { legal_name: 'ACME PRIVATE LIMITED', pan_vat_no: '' }),
+    ]);
+    expect(rows.map((r) => r.status)).toEqual(['valid', 'duplicate']);
+    expect(rows[1]!.issues[0]!.message).toBe('Same name as line 2 of this file');
+  });
+
+  it('keeps a line with its own PAN valid even when the name matches an earlier name-only line', () => {
+    const rows = buildRows('customer', [
+      rec(2, { legal_name: 'Acme Ltd', pan_vat_no: '' }),
+      rec(3, { legal_name: 'Acme Private Limited', pan_vat_no: '555555555' }),
+    ]);
+    expect(rows.map((r) => r.status)).toEqual(['valid', 'valid']);
+  });
+
+  it('clips without splitting a surrogate pair', () => {
+    expect(clip('ab', 5)).toBe('ab');
+    expect(clip('a\u{1F600}', 2)).toBe('a');
+    const row = buildRows('customer', [
+      rec(2, { legal_name: `${'x'.repeat(499)}\u{1F600}`, pan_vat_no: '' }),
+    ])[0]!;
+    expect(JSON.parse(JSON.stringify(row)).name).toHaveLength(499);
   });
 });
 

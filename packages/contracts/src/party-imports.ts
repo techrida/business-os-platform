@@ -125,7 +125,14 @@ export type PartyImportDetail = z.infer<typeof PartyImportDetailSchema>;
 
 /** `POST /v1/imports/:kind?filename=` takes the CSV as the raw `text/csv` body; this is its query. */
 export const PreviewPartyImportQuerySchema = z.strictObject({
-  filename: z.string().trim().min(1).max(200).default('import.csv'),
+  filename: z
+    .string()
+    .trim()
+    .min(1)
+    .max(200)
+    // eslint-disable-next-line no-control-regex -- refusing control characters is the point
+    .refine((v) => !/[\u0000-\u001F\u007F]/.test(v), 'must not contain control characters')
+    .default('import.csv'),
 });
 
 export const ListPartyImportsQuerySchema = z.strictObject({

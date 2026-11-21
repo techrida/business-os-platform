@@ -153,11 +153,9 @@ describe('0176_party_import_batches and src/schema/party-imports.ts', () => {
     expect(list('party_import_batches_status_check')).toEqual([...PARTY_IMPORT_BATCH_STATUSES]);
   });
 
-  it('is audited and guarded against change after the commit', () => {
-    const attached = [...SQL_TEXT.matchAll(/SELECT audit\.attach\('app\.(\w+)'\);/g)].map(
-      (m) => m[1],
-    );
-    expect(attached).toEqual(Object.keys(DRIZZLE));
+  it('is not row-audited (its rows hold uploaded personal data) and is guarded against change after the commit', () => {
+    expect(SQL_TEXT).not.toMatch(/SELECT audit\.attach\(/);
+    expect(Object.keys(DRIZZLE)).toEqual(['party_import_batches']);
     expect(SQL_TEXT).toContain(
       'CREATE TRIGGER "party_import_batches_guard" BEFORE UPDATE OR DELETE',
     );

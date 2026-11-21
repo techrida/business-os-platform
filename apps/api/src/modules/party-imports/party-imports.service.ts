@@ -160,6 +160,12 @@ export class PartyImportsService {
           createdAt: this.clock(),
         })
         .returning();
+      await this.audit.record(tx, {
+        action: 'party_import.previewed',
+        entityType: 'party_import_batch',
+        entityId: row!.id,
+        after: { kind, fileName, ...countStatuses(rows) },
+      });
       return toDetail(row!);
     });
   }
@@ -362,13 +368,8 @@ export class PartyImportsService {
         const found = await tx
           .select({ key: panKey })
           .from(customers)
-          .where(
-            and(
-              eq(customers.tenantId, scope.tenantId),
-              isNull(customers.mergedIntoId),
-              inArray(panKey, panKeys),
-            ),
-          );
+          // Merged customers keep their PAN and the unique index still covers it, so they count here.
+          .where(and(eq(customers.tenantId, scope.tenantId), inArray(panKey, panKeys)));
         for (const f of found) existing.add(`pan:${f.key}`);
       }
       if (nameKeys.length > 0) {

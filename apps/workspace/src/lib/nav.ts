@@ -329,7 +329,15 @@ export function visibleGroups(
 
 /** True when `pathname` is the item's page or one under it (`/inbox` owns `/inbox/abc`). */
 export function ownsPath(href: string, pathname: string): boolean {
-  return href === '/' ? pathname === '/' : pathname === href || pathname.startsWith(`${href}/`);
+  const under = (base: string) =>
+    base === '/' ? pathname === '/' : pathname === base || pathname.startsWith(`${base}/`);
+  if (!under(href)) return false;
+  // A page that has its own item (the sales VAT register under /invoices) belongs to that item alone.
+  return !NAV_GROUPS.some((group) =>
+    group.items.some(
+      (item) => item.href !== undefined && item.href.length > href.length && under(item.href),
+    ),
+  );
 }
 
 /** Filter already-authorized, built navigation by group or destination name. */
