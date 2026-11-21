@@ -1,5 +1,5 @@
 // P3 exit test (P3-BUILD-PLAN done check 13) over real HTTP: a quote accepted in the portal becomes a sales order split
-// 60/20/20; the advance invoice is drafted, submitted, approved accountant -> finance and issued; the render sweeper
+// 60/20/20; the advance invoice is drafted, submitted, approved by finance alone (F1-Q30) and issued; the render sweeper
 // renders its PDF and the scan marks it clean; the customer sees it in the portal and uploads proof of payment; a
 // different Finance user verifies the payment and allocates it with an excess, which shows as the customer's advance;
 // the milestone invoice is issued; a partial credit note is issued on it; aging equals the open receivable total and
@@ -220,10 +220,16 @@ async function getOrder(): Promise<SalesOrderDetail> {
   return SalesOrderDetailSchema.parse(res.body);
 }
 
-/** Submit by the preparer (or `submitter`), approve accountant -> finance, issue by finance. Returns the number. */
+// F1-Q30 (migration 0110): an invoice drafted from an approved billing schedule needs Finance only; a credit or debit
+// note keeps Accountant then Finance. The advance and the milestone here are schedule invoices.
+const SCHEDULE_INVOICE_ROUTE = ['finance'];
+const NOTE_ROUTE = ['accountant', 'finance'];
+
+/** Submit by the preparer (or `submitter`), approve along `route`, issue by finance. Returns the number. */
 async function submitApproveIssue(
   invoiceId: string,
   submitter: P3PersonaKey = 'preparer',
+  route: string[] = SCHEDULE_INVOICE_ROUTE,
 ): Promise<string> {
   const draft = await getInvoice(invoiceId, submitter);
   const submitted = await t
@@ -237,8 +243,8 @@ async function submitApproveIssue(
   expect(sub.status).toBe('submitted');
   expect(sub.approvalRequestId).not.toBeNull();
 
-  // Plan A5: Accountant -> Finance, two distinct users, neither of them the submitter.
-  expect(await approveAll(sub.approvalRequestId!)).toEqual(['accountant', 'finance']);
+  // A schedule invoice: Finance alone. A note: Accountant -> Finance, two distinct users, neither the submitter.
+  expect(await approveAll(sub.approvalRequestId!)).toEqual(route);
   const approved = await getInvoice(invoiceId);
   expect(approved.invoice.status).toBe('approved');
 
@@ -478,7 +484,7 @@ describe('P3 exit: quote to cash over HTTP', () => {
     expect(detail.deliveryReleased).toBe(false);
   });
 
-  it('4. the advance invoice is drafted, submitted, approved accountant -> finance and issued', async () => {
+  it('4. the advance invoice is drafted, submitted, approved by finance alone (F1-Q30) and issued', async () => {
     const preparer = await auth('preparer');
     let order = await getOrder();
     const advance = order.schedule.find((l) => l.id === s.scheduleLineIds[0])!;
@@ -514,7 +520,9 @@ describe('P3 exit: quote to cash over HTTP', () => {
 
   it('5. the render sweeper renders the advance PDF (fake Gotenberg) and the scan marks it clean (fake clamd)', async () => {
     const finance = await auth('finance');
-    // Before the scan the document route answers 404: no unscanned file is ever linked.
+    // Before the scan no unscanned file is ever linked: the route answers 409 while the PDF is being prepared or
+    // scanned (TR-Q4, R4c2; the screen shows "Preparing PDF"), or 404 before any render exists. A given-up render is 424
+    // and fails the wait at once; a scan-refused file is also a plain 404 on the wire, so only the 60 s timeout ends it.
     const link = await pollUntil(
       'the advance invoice PDF to scan clean',
       async () => {
@@ -526,7 +534,14 @@ describe('P3 exit: quote to cash over HTTP', () => {
           .http()
           .get(`/v1/invoices/${s.advanceId}/document`)
           .set('authorization', finance);
-        if (res.status !== 200 && res.status !== 404) throw new Error(show(res));
+        // The service tags the 409 `invoice_pdf_not_ready`, but the error filter only keeps codes on its allowlist (it has
+        // `quotation_pdf_not_ready`, not the invoice one), so the wire code is `conflict`: match the 409 by its message.
+        const error = (res.body as { error?: { code?: string; message?: string } }).error;
+        const waiting =
+          (res.status === 409 &&
+            error?.message === 'The PDF of this invoice is still being prepared') ||
+          (res.status === 404 && error?.code === 'not_found');
+        if (res.status !== 200 && !waiting) throw new Error(show(res));
         const body = res.body as unknown;
         return {
           done: res.status === 200 ? SignedLinkDtoSchema.parse(body) : undefined,
@@ -665,7 +680,7 @@ describe('P3 exit: quote to cash over HTTP', () => {
     expect((await getOrder()).deliveryReleased).toBe(true);
   });
 
-  it('10. the milestone line is marked billable with evidence, and its invoice is issued', async () => {
+  it('10. the milestone line is marked billable with evidence, and its invoice is issued after finance approves it', async () => {
     const preparer = await auth('preparer');
     // SHORTCUT: the evidence file is seeded by SQL (no route attaches a file to an order).
     const evidenceDocumentId = await seedEvidenceDocument(world);
@@ -717,7 +732,7 @@ describe('P3 exit: quote to cash over HTTP', () => {
     });
     s.creditNoteId = note.id;
 
-    const number = await submitApproveIssue(s.creditNoteId, 'finance2');
+    const number = await submitApproveIssue(s.creditNoteId, 'finance2', NOTE_ROUTE);
     expect(number).toMatch(/^CN-\d{4}\/\d{2}-\d{5}$/);
     const issued = (await getInvoice(s.creditNoteId)).invoice;
     expect(issued.status).toBe('issued');

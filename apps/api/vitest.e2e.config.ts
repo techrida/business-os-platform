@@ -19,6 +19,8 @@ export default defineConfig({
       '@bos/db': source('../../packages/db/src/index.ts'),
       '@bos/locale': source('../../packages/locale/src/index.ts'),
       '@bos/money-rules': source('../../packages/money-rules/src/index.ts'),
+      // The BFF contract test loads the workspace's real API clients, which import through the workspace's own `@/` alias.
+      '@': source('../workspace/src'),
     },
   },
   test: {
