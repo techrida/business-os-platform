@@ -22,6 +22,7 @@ import {
 import {
   createStaffUser,
   createTenantWithEntity,
+  customers,
   organizations,
   partyAccounts,
   paymentTerms,
@@ -404,6 +405,28 @@ describe('the record, the tenant and the version', () => {
     expect((await putTerms(randomUUID(), { creditLimit: '1.00' })).status).toBe(404);
     expect(await storedRow(theirs.id, a.organizationId, b)).toEqual([]);
     expect(await storedRow(theirs.id, b.organizationId, b)).toEqual([]);
+  });
+
+  it('is 404 for a customer merged into another, and writes no terms row; the surviving customer takes them', async () => {
+    const survivor = await createCustomer();
+    const merged = await createCustomer();
+    // No merge route exists yet, so the merge is set on the row as a merge would leave it.
+    await withTx(db, a, systemActor('test'), (tx) =>
+      tx
+        .update(customers)
+        .set({ mergedIntoId: survivor.id })
+        .where(and(eq(customers.tenantId, a.tenantId), eq(customers.id, merged.id))),
+    );
+    as('founder');
+    for (const body of [{ creditLimit: '1000.00' }, { paymentTermId: net30 }]) {
+      const res = await putTerms(merged.id, body);
+      expect(res.status, JSON.stringify(res.body)).toBe(404);
+      expect(errorOf(res.body).code).toBe('not_found');
+    }
+    expect(await storedRow(merged.id, a.organizationId)).toEqual([]);
+    // The control: the same save on the customer it was merged into goes through.
+    expect((await putTerms(survivor.id, { creditLimit: '1000.00' })).status).toBe(200);
+    expect(await storedRow(survivor.id, a.organizationId)).toHaveLength(1);
   });
 
   it('is 409 for a stale version, a missing version once the row exists, and a version before the row exists', async () => {

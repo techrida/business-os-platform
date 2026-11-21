@@ -307,13 +307,20 @@ export class LeadConvertService {
         reason: 'no_permission',
       });
     }
-    // The owner the row will get (createInTx stores none when the body names none), so an `own` grant agrees.
+    // The owner the row will get (createInTx stores the caller when the body names none), so an `own` grant agrees.
     const ref: ResourceRef = {
       tenantId: scope.tenantId,
       organizationId: scope.organizationId,
       ownerUserId: body.ownerUserId ?? null,
     };
     this.authz.assert('customer.write', ref);
+    // Naming someone else as the owner is an owner change, as on POST /v1/customers (R4c2 Q5a/Q6b).
+    if (body.ownerUserId !== undefined && body.ownerUserId !== p.userId) {
+      this.authz.assert('customers.owner.write', {
+        tenantId: scope.tenantId,
+        organizationId: scope.organizationId,
+      });
+    }
   }
 
   /** An existing customer: of this tenant (404), readable by the caller (404 when out of scope), not merged (409). */

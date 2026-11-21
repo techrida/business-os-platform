@@ -55,7 +55,7 @@ import { can as decide, type Principal, type ResourceRef } from '../../platform/
 import { AuthzService } from '../../platform/authz/authz.service';
 import { DB, type Db, type DbTransaction } from '../../platform/db/db.module';
 import { updateVersioned, withIdempotency } from '../../platform/db/idempotency';
-import { withTx, type TxScope } from '../../platform/db/tx';
+import { READ_ONLY, withTx, type TxScope } from '../../platform/db/tx';
 import { searchPage } from '../../platform/list';
 import { NumberingService } from '../../platform/settings/numbering.service';
 import { nameIn, personLabel, personNameMap, personNames } from '../../platform/users/person-names';
@@ -355,21 +355,26 @@ export class CustomersService {
       tenantId: scope.tenantId,
       organizationId: scope.organizationId,
     });
-    const rows = await withTx(this.db, scope, actor, (tx) =>
-      tx
-        .select({ userId: users.id, displayName: users.displayName })
-        .from(users)
-        .innerJoin(
-          idpOrgs,
-          and(eq(idpOrgs.tenantId, users.tenantId), eq(idpOrgs.id, users.idpOrgId)),
-        )
-        .where(
-          and(
-            eq(users.tenantId, scope.tenantId),
-            eq(idpOrgs.kind, 'staff'),
-            eq(users.status, 'active'),
+    const rows = await withTx(
+      this.db,
+      scope,
+      actor,
+      (tx) =>
+        tx
+          .select({ userId: users.id, displayName: users.displayName })
+          .from(users)
+          .innerJoin(
+            idpOrgs,
+            and(eq(idpOrgs.tenantId, users.tenantId), eq(idpOrgs.id, users.idpOrgId)),
+          )
+          .where(
+            and(
+              eq(users.tenantId, scope.tenantId),
+              eq(idpOrgs.kind, 'staff'),
+              eq(users.status, 'active'),
+            ),
           ),
-        ),
+      READ_ONLY,
     );
     return rows
       .map((r) => ({ userId: r.userId, displayName: personLabel(r.displayName) }))
@@ -714,6 +719,8 @@ export class CustomersService {
       const row = await this.find(tx, scope.tenantId, id);
       if (row === undefined) throw customerNotFound();
       this.assertVisible('customer.read', row, principal);
+      // A customer merged into another carries no terms of its own; the terms belong to the surviving one.
+      if (row.mergedIntoId !== null) throw customerNotFound();
       if (body.creditLimit !== undefined) {
         this.authz.assert('customers.credit_limit.write', customerRef(row, principal));
       }

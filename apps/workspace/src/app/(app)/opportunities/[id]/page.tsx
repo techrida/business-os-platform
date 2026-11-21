@@ -256,7 +256,7 @@ function CreditHoldBanner({
         ) : undefined
       }
     >
-      {`With this deal's order, this customer is over its credit limit, so an accepted quotation on this deal cannot become a sales order until the hold is overridden or lifted.${amounts} `}
+      {`${hold !== null && Number(hold.orderValue) === 0 ? 'This' : "With this deal's order, this"} customer is over its credit limit, so an accepted quotation on this deal cannot become a sales order until the hold is overridden or lifted.${amounts} `}
       {canOverride
         ? 'Override the hold to let it go ahead, or wait for a payment to bring the customer under the limit.'
         : 'Someone with credit override access can override the hold. A payment that brings the customer under the limit also lifts it.'}
