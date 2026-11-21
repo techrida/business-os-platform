@@ -28,7 +28,12 @@ import type { Db, DbTransaction } from '../../../platform/db/db.module';
 import type { TxScope } from '../../../platform/db/tx';
 import { fact } from '../../approvals/context';
 import type { ApprovalSubject, ApprovalsService } from '../../approvals/requests.service';
-import { mayReadPo, requestFactsColumns, requestOf } from '../orders/po-read-access';
+import {
+  approvesRequestOf,
+  mayReadPo,
+  requestFactsColumns,
+  requestOf,
+} from '../orders/po-read-access';
 import { idAt, procurementReferenceNames } from '../reference-names';
 
 /** approval_requests.document_type of the review; the document id is the purchase order's id. */
@@ -164,7 +169,11 @@ export async function requestEmergencyReview(
 export class EmergencyReviewSubject implements ApprovalSubject {
   readonly documentType = EMERGENCY_REVIEW_DOCUMENT_TYPE;
 
-  constructor(private readonly audit: AuditService) {}
+  constructor(
+    private readonly audit: AuditService,
+    /** The reader's inbox, for whether the review waits for them now (the order link). */
+    private readonly approvals: Pick<ApprovalsService, 'inbox'>,
+  ) {}
 
   /** The order by number and its vendor by legal name. */
   referenceNames(q: Db, scope: TxScope, snapshot: unknown) {
@@ -176,7 +185,8 @@ export class EmergencyReviewSubject implements ApprovalSubject {
 
   /**
    * The order as it stands now, with why it was an emergency. Linked only for a viewer the order's detail route lets
-   * in (po-read-access.ts); Management, who reviews, reads everything it needs here and gets no link by default.
+   * in (po-read-access.ts): a reader of the order, or an approver of this review (it waits for them, or they decided
+   * it), who opens the detail read-only. Whoever only submitted it gets no link.
    */
   async context(
     q: Db,
@@ -203,6 +213,15 @@ export class EmergencyReviewSubject implements ApprovalSubject {
       .innerJoin(purchaseRequests, requestOf(purchaseOrders))
       .where(scoped(scope).where(purchaseOrders, eq(purchaseOrders.id, request.documentId)));
     if (po === undefined) return null;
+    const linked =
+      mayReadPo(viewer, po.request) ||
+      (await approvesRequestOf(
+        q,
+        scope,
+        viewer,
+        { documentType: EMERGENCY_REVIEW_DOCUMENT_TYPE, documentId: request.documentId },
+        () => this.approvals.inbox(),
+      ));
     return {
       title: `Purchase order ${po.number}`,
       fields: [
@@ -212,7 +231,7 @@ export class EmergencyReviewSubject implements ApprovalSubject {
         ...fact.status(po.status),
       ],
       documents: [],
-      href: mayReadPo(viewer, po.request) ? `/procurement/orders/${po.id}` : null,
+      href: linked ? `/procurement/orders/${po.id}` : null,
     };
   }
 
