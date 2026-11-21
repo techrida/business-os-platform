@@ -191,8 +191,13 @@ const CONTACT_KINDS: ReadonlySet<string> = new Set(['call', 'email', 'meeting'])
  * server needs before any move to Contacted (FR-6, D48). A list that did not load counts as no.
  */
 function hasLoggedContact(logged: readonly ActivityDto[] | null): boolean {
+  const now = Date.now();
+  // The server's own test: completed, or never scheduled and already occurred (a future-dated one does not count).
   return (logged ?? []).some(
-    (item) => CONTACT_KINDS.has(item.kind) && !item.planned && item.cancelledAt === null,
+    (item) =>
+      CONTACT_KINDS.has(item.kind) &&
+      item.cancelledAt === null &&
+      (item.completedAt !== null || (item.dueAt === null && Date.parse(item.occurredAt) <= now)),
   );
 }
 

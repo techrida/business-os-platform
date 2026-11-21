@@ -81,7 +81,6 @@ import { type Decision, type Principal } from '../../platform/authz/principal';
 import { liveGrantsOf } from '../../platform/authz/live-grants';
 import { RoleCache } from '../../platform/authz/role-cache';
 import { SqlUsersStore } from '../../platform/users/users.store';
-import { lockAccessRevision } from '../access-settings/access-revision';
 import { isSoleEligible, otherEligibleUsers } from '../../platform/authz/sole-eligible';
 import { DB, type Db, type DbTransaction } from '../../platform/db/db.module';
 import { updateVersioned, withIdempotency } from '../../platform/db/idempotency';
@@ -975,12 +974,11 @@ export class SalesOrdersService {
     principal: Principal,
     order: Pick<OrderRow, 'amountNpr' | 'createdBy'>,
     thresholdNpr: string,
-    /** True on the command: take the access-revision lock first and read the caller's roles live, not from the token. */
+    /** True on the command: read the caller's roles live, not from the token. */
     live = false,
   ): Promise<boolean> {
     if (!principal.roles.includes('founder')) return false;
     if (live) {
-      await lockAccessRevision(tx, scope.tenantId);
       const now = await liveGrantsOf(
         tx,
         { users: new SqlUsersStore(this.db), grants: this.roleCache },
