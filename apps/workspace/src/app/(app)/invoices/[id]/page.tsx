@@ -28,6 +28,7 @@ import { InvoicePreview } from '../_components/invoice-preview';
 import { InvoiceProgress } from '../_components/invoice-progress';
 import styles from '../_components/invoice.module.css';
 import { InvoiceNoteActions } from '../_components/notes/note-actions';
+import { ApprovalHistory, loadApproval } from '../../payables/_components/approval-history';
 import { type Can, invoiceGates, recordPaymentHref } from '../_lib/gates';
 import { approvalWords, kindMeta } from '../_lib/meta';
 import { settlementMeta } from '../../receivables/_lib/settlement';
@@ -202,9 +203,11 @@ export default async function InvoiceDetailPage({ params }: { params: Promise<{ 
   const kind = kindMeta(invoice.kind).label;
   // Only a debit note needs the tax codes, and only the people who may write one are shown the button.
   // A list that fails to load degrades the dialog (it says so); it never fails the page.
-  const [taxCodes, settlement] = await Promise.all([
+  const [taxCodes, settlement, approval] = await Promise.all([
     gates.notes ? listTaxCodes(session).catch((): null => null) : Promise.resolve(null),
     settlementOf(session, invoice, can),
+    // The approval's own read, as this person; a refused or failed read leaves the panel out.
+    loadApproval(session, invoice.approvalRequestId),
   ]);
   const payment = settlement === null ? null : settlementMeta(settlement.settlement);
   // Only while something is still owed, as the server's settlement says; unknown settlement offers nothing.
@@ -289,6 +292,7 @@ export default async function InvoiceDetailPage({ params }: { params: Promise<{ 
             dateFormat={format.dateFormat}
           />
           <LineBreakdown detail={detail} numberSystems={numberSystems} />
+          {approval !== null ? <ApprovalHistory approval={approval} /> : null}
           {gates.notes ? (
             <Panel as="aside" title="Adjustments">
               <div className={styles.noteSlot} data-slot="invoice-note-actions">
