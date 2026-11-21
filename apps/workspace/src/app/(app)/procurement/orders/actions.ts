@@ -81,11 +81,19 @@ function settled(o: Opened, done: string): ActionState {
   return { key: randomUUID(), done };
 }
 
+/**
+ * Issue sends the `version` the page showed, so the API refuses (`PO_CHANGED`) an order edited since. A form from
+ * before the guard sends none and issues as before; anything other than a positive whole number is refused here.
+ */
 export async function issueAction(prev: ActionState, form: FormData): Promise<ActionState> {
   const r = await open(prev, form);
   if (!r.ok) return r.state;
+  const seen = text(form, 'expectedVersion');
+  if (seen !== '' && !/^[1-9]\d{0,8}$/.test(seen))
+    return { key: r.o.key, error: INCOMPLETE, reload: true };
   try {
-    await issuePurchaseOrder(r.o.session, r.o.id, r.o.key);
+    if (seen === '') await issuePurchaseOrder(r.o.session, r.o.id, r.o.key);
+    else await issuePurchaseOrder(r.o.session, r.o.id, r.o.key, Number(seen));
   } catch (err) {
     return refused(r.o, err, 'issue');
   }

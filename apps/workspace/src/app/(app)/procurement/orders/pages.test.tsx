@@ -64,6 +64,18 @@ const VENDOR = '33333333-3333-4333-8333-333333333333';
 
 // The real viewer, with the routes it was given written beside its trigger, so a test can see whether Retry is
 // offered (the dialog only asks for it once opened).
+// The real issue dialog, with the version it was given written beside it (its hidden field renders only once opened).
+vi.mock('./_components/order-actions', async (importOriginal) => {
+  const real = await importOriginal<typeof import('./_components/order-actions')>();
+  return {
+    ...real,
+    IssueDialog: (props: Parameters<typeof real.IssueDialog>[0]) => (
+      <span data-issue-version={props.version}>
+        <real.IssueDialog {...props} />
+      </span>
+    ),
+  };
+});
 vi.mock('@/components/ui/file-preview-dialog', async (importOriginal) => {
   const real = await importOriginal<typeof import('@/components/ui/file-preview-dialog')>();
   return {
@@ -338,6 +350,8 @@ describe('the purchase order page', () => {
     api.listPoVersions.mockResolvedValue([]);
     const out = await detail();
     expect(out).toContain('Issue purchase order');
+    // The row version the page read (3), not the document version (0): issue is refused if the order changed since.
+    expect(out).toContain('data-issue-version="3"');
     expect(out).not.toContain('Amend order');
     expect(out).toContain('Not issued yet.');
   });

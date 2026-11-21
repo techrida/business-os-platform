@@ -125,23 +125,24 @@ describe('payment form, opened from an invoice (U16-Q8 a)', () => {
     // Opening React Aria pickers in jsdom takes a few seconds; room for a loaded full suite.
   }, 15_000);
 
-  it('stops calling an untouched amount the open amount once another currency is chosen', async () => {
+  it('clears an untouched open amount once another currency is chosen, and never a typed one', async () => {
     const mounted = await mount();
     try {
       const box = mounted.container;
       expect(box.textContent).toContain('The open amount of INV-2083/84-00001.');
       await pick(box, 'Currency', 'INR (Indian rupee)');
       expect(value(box, 'currency')).toBe('INR');
-      // The figure the person sees is kept: only the claim about it goes. Old code still showed the hint here.
-      expect(value(box, 'amount')).toBe('750.00');
+      // 750.00 is a USD figure: the person enters what arrived in INR. Old code kept 750.00 and submitted it as INR.
+      expect(value(box, 'amount')).toBe('');
       expect(box.textContent).not.toContain('The open amount of');
       expect(box.textContent).toContain('The cash that arrived');
-      // Back in the invoice's currency, the untouched amount is the open amount again.
-      await pick(box, 'Currency', 'USD (US dollar)');
-      expect(value(box, 'currency')).toBe('USD');
-      expect(box.textContent).toContain('The open amount of INV-2083/84-00001.');
+      // A typed amount survives a currency change, even one equal to the open amount.
+      await fill(box.querySelector('input[name="amount"]'), '750.00');
+      await pick(box, 'Currency', 'NPR (Nepalese rupee)');
+      expect(value(box, 'currency')).toBe('NPR');
+      expect(value(box, 'amount')).toBe('750.00');
     } finally {
       await mounted.unmount();
     }
-  }, 15_000);
+  }, 20_000);
 });

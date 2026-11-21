@@ -92,6 +92,34 @@ describe('issueAction', () => {
     expect(out.error).toBeUndefined();
   });
 
+  it('sends the version the page showed, so an order edited since is not issued', async () => {
+    api.issuePurchaseOrder.mockResolvedValue({ ...currentOrder, number: 'PO-1' });
+    const out = await issueAction(prev, form({ ...base, expectedVersion: '3' }));
+    // Old code dropped the field: the API could not tell an edited order from the one reviewed.
+    expect(api.issuePurchaseOrder).toHaveBeenCalledWith(expect.anything(), PO, KEY, 3);
+    expect(out.done).toMatch(/issued/i);
+  });
+
+  it('refuses a malformed version before any API call', async () => {
+    for (const bad of ['0', '-1', '2.5', 'abc', '1e3', '9999999999']) {
+      api.issuePurchaseOrder.mockClear();
+      const out = await issueAction(prev, form({ ...base, expectedVersion: bad }));
+      expect(out.error).toMatch(/form is incomplete/i);
+      expect(out.reload).toBe(true);
+      expect(api.issuePurchaseOrder).not.toHaveBeenCalled();
+    }
+  });
+
+  it('words PO_CHANGED as a changed order to reload, and rotates the key', async () => {
+    api.issuePurchaseOrder.mockRejectedValue(apiError(409, 'PO_CHANGED'));
+    const out = await issueAction(prev, form({ ...base, expectedVersion: '3' }));
+    expect(out.error).toBe(
+      'This purchase order changed since you opened it. Reload and try again.',
+    );
+    expect(out.reload).toBe(true);
+    expect(out.key).not.toBe(KEY);
+  });
+
   it('shows VENDOR_NOT_APPROVED plainly and rotates the key (a definite answer)', async () => {
     api.issuePurchaseOrder.mockRejectedValue(apiError(409, 'VENDOR_NOT_APPROVED'));
     const out = await issueAction(prev, form(base));
@@ -274,13 +302,15 @@ describe('changeVendorAction', () => {
       ['VENDOR_NOT_APPROVED', /cannot move to it/i],
       ['VENDOR_NOT_IN_ENTITY', /choose another vendor/i],
       ['VENDOR_NO_VERIFIED_BANK_ACCOUNT', /no verified bank account/i],
-      ['PO_REFERENCED', /cancel it and create a new one/i],
+      ['PO_REFERENCED', /refer to this order, so its vendor cannot be changed/i],
     ];
     for (const [code, words] of cases) {
       api.changePurchaseOrderVendor.mockRejectedValue(apiError(409, code));
       const out = await changeVendorAction(prev, form({ ...base, vendorId: NEW_VENDOR }));
       expect(out.error).toMatch(words);
       expect(out.error).not.toMatch(/issued to it/i);
+      // A draft cannot be cancelled: no refusal tells the person to cancel it.
+      if (code === 'PO_REFERENCED') expect(out.error).not.toMatch(/cancel/i);
     }
   });
 

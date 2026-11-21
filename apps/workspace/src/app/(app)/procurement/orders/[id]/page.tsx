@@ -520,7 +520,9 @@ export default async function PurchaseOrderPage({ params }: { params: Promise<{ 
                   {receive}
                 </LinkButton>
               ) : null}
-              {can.issue ? <IssueDialog {...common} idempotencyKey={randomUUID()} /> : null}
+              {can.issue ? (
+                <IssueDialog {...common} version={po.version} idempotencyKey={randomUUID()} />
+              ) : null}
             </div>
           }
         />

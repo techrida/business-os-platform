@@ -251,13 +251,14 @@ export function PaymentForm({
         : undefined;
 
   // The open amount is in the invoice's currency: in any other currency the same figure is not what the invoice owes.
-  const amountHint =
+  const showsOpenAmount =
     prefill !== null &&
     customerId === prefill.customerId &&
     currency === prefill.currency &&
-    amount === prefill.amount
-      ? `The open amount of ${prefill.invoiceNumber ?? 'the invoice'}. Change it for a part payment.`
-      : 'The cash that arrived, for example 20,18,180.00.';
+    amount === prefill.amount;
+  const amountHint = showsOpenAmount
+    ? `The open amount of ${prefill?.invoiceNumber ?? 'the invoice'}. Change it for a part payment.`
+    : 'The cash that arrived, for example 20,18,180.00.';
 
   const busy = pending || uploading > 0;
   const customerLocked = proofs.length > 0 || uploading > 0;
@@ -394,7 +395,11 @@ export function PaymentForm({
                     required
                     value={currency}
                     onChange={(e) => {
-                      setCurrency(e.target.value);
+                      const next = e.target.value;
+                      // The untouched open amount is a figure in the invoice's currency: in another currency the
+                      // person enters what arrived. An amount they typed is never cleared.
+                      if (showsOpenAmount && next !== prefill?.currency) setAmount('');
+                      setCurrency(next);
                       setCurrencyChosen(true);
                     }}
                     {...control}
