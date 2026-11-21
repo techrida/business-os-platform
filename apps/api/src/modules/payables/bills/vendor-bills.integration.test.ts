@@ -1802,3 +1802,165 @@ describe('evidence uploads on a bill (round 5 P2)', () => {
     );
   });
 });
+
+// Round 5 P2: the dialog's Remove (and closing it unsaved) deletes the abandoned file through the bill's own
+// evidence route, which the Accountant reaches without documents.upload. Only the uploader, holding the bill grant
+// on this bill, removes a file of this bill that no exception took, while the bill still takes evidence.
+describe('removing evidence from a bill before save (round 5 P2)', () => {
+  const removedAt = (documentId: string) =>
+    read((tx) =>
+      tx.execute(sql`SELECT removed_at FROM app.documents WHERE id = ${documentId}`),
+    ).then((r) => (r.rows[0] as { removed_at: string | null } | undefined)?.removed_at);
+  async function varianceBill() {
+    const po = await receivedPo('1', '10000.00', '1');
+    const bill = await billFor(po, '1', '11000.00');
+    expect(bill.status).toBe('variance');
+    return bill;
+  }
+
+  it('lets the Accountant remove their unused upload: the exception then refuses it, and a second removal is the same success', async () => {
+    const bill = await varianceBill();
+    expect(principalNow().grants.has('documents.upload')).toBe(false);
+    const uploaded = await evidence.upload('vendor_bill', bill.id);
+    await evidence.service.remove('vendor_bill', bill.id, uploaded);
+    const first = await removedAt(uploaded);
+    expect(first).not.toBeNull();
+
+    const refused = await httpErrorOf(
+      service.requestException(
+        bill.id,
+        { reason: 'Vendor raised the price', evidenceDocumentId: uploaded },
+        randomUUID(),
+      ),
+    );
+    expect(refused.getStatus()).toBe(422);
+    expect(refused.getResponse()).toMatchObject({ code: 'invalid_evidence_document' });
+
+    await evidence.service.remove('vendor_bill', bill.id, uploaded);
+    expect(await removedAt(uploaded)).toEqual(first);
+  });
+
+  it('answers 404 for a file of another bill, through another kind of route and for a file that is not evidence', async () => {
+    const bill = await varianceBill();
+    const other = await varianceBill();
+    const uploaded = await evidence.upload('vendor_bill', bill.id);
+    for (const [kind, id] of [
+      ['vendor_bill', other.id],
+      ['sales_order', bill.id],
+      ['rfq', bill.id],
+    ] as const) {
+      expect((await httpErrorOf(evidence.service.remove(kind, id, uploaded))).getStatus()).toBe(
+        404,
+      );
+    }
+    // The bill's own invoice document is the bill's file, but not evidence uploaded to it.
+    // Neither is a file of another owner type that names the bill's id.
+    const invoiceDoc = bill.documentId;
+    const otherType = await ownedDoc('test_evidence', bill.id, ['quarantined']);
+    for (const id of [invoiceDoc, otherType]) {
+      expect(
+        (await httpErrorOf(evidence.service.remove('vendor_bill', bill.id, id))).getStatus(),
+      ).toBe(404);
+      expect(await removedAt(id)).toBeNull();
+    }
+    expect(await removedAt(uploaded)).toBeNull();
+  });
+
+  it('refuses a file the exception took (409) and an unused file once the bill stopped taking evidence (409)', async () => {
+    const bill = await varianceBill();
+    const taken = await evidence.upload('vendor_bill', bill.id);
+    const unused = await evidence.upload('vendor_bill', bill.id);
+    await service.requestException(
+      bill.id,
+      { reason: 'Vendor raised the price', evidenceDocumentId: taken },
+      randomUUID(),
+    );
+    expect(
+      (await httpErrorOf(evidence.service.remove('vendor_bill', bill.id, taken))).getStatus(),
+    ).toBe(409);
+    expect(await removedAt(taken)).toBeNull();
+    // The exception is pending: the bill still takes evidence, so the unused file goes.
+    await evidence.service.remove('vendor_bill', bill.id, unused);
+    expect(await removedAt(unused)).not.toBeNull();
+
+    const draft = await billWithoutPo(await doc());
+    const left = await evidence.upload('vendor_bill', draft.id);
+    await service.discard(draft.id, randomUUID());
+    expect(
+      (await httpErrorOf(evidence.service.remove('vendor_bill', draft.id, left))).getStatus(),
+    ).toBe(409);
+    expect(await removedAt(left)).toBeNull();
+  });
+
+  it('refuses another entity, another tenant (both ways) and a portal caller', async () => {
+    const bill = await varianceBill();
+    const uploaded = await evidence.upload('vendor_bill', bill.id);
+
+    current.scope = scopeB;
+    expect(
+      (await httpErrorOf(evidence.service.remove('vendor_bill', bill.id, uploaded))).getStatus(),
+    ).toBe(404);
+
+    const other = await createTenantWithEntity(appPool);
+    const scopeC: TxScope = { tenantId: other.tenantId, organizationId: other.organizationId };
+    current.scope = scopeC;
+    current.grants = new Map<Permission, Scope>([['payables.bill.enter', 'all']]);
+    expect(
+      (await httpErrorOf(evidence.service.remove('vendor_bill', bill.id, uploaded))).getStatus(),
+    ).toBe(404);
+    current.scope = null;
+    current.grants = undefined;
+    // A tenant C file filed as evidence on the same id is not this bill's.
+    const foreign = await ownedDoc('evidence', bill.id, ['quarantined'], scopeC);
+    expect(
+      (await httpErrorOf(evidence.service.remove('vendor_bill', bill.id, foreign))).getStatus(),
+    ).toBe(404);
+
+    const portal = {
+      current: () => ({
+        ...caller.current(),
+        principal: { ...principalNow(), orgKind: 'vendor' as const },
+      }),
+    };
+    const asPortal = new EvidenceDocumentsService(
+      db,
+      drizzleEvidenceRecordLoader(db),
+      portal,
+      evidence.documents,
+    );
+    expect((await httpErrorOf(asPortal.remove('vendor_bill', bill.id, uploaded))).getStatus()).toBe(
+      403,
+    );
+    expect(await removedAt(uploaded)).toBeNull();
+  });
+
+  it('refuses a caller without the bill grant on this bill, and anyone but the uploader', async () => {
+    const bill = await varianceBill();
+    const uploaded = await evidence.upload('vendor_bill', bill.id);
+
+    // documents.upload alone (the generic grant) does not reach the bill route.
+    current.grants = new Map<Permission, Scope>([['documents.upload', 'all']]);
+    expect(
+      (await httpErrorOf(evidence.service.remove('vendor_bill', bill.id, uploaded))).getStatus(),
+    ).toBe(403);
+    // Another Accountant with the grant on every bill is not the uploader.
+    as(U.acct2, 'accountant');
+    expect(
+      (await httpErrorOf(evidence.service.remove('vendor_bill', bill.id, uploaded))).getStatus(),
+    ).toBe(403);
+    expect(await removedAt(uploaded)).toBeNull();
+
+    // An uploader whose grant no longer reaches the bill (own enterer; U.acct entered it) is refused, before and
+    // after the file is removed: an already-removed file is no way around the grant.
+    const theirs = await evidence.upload('vendor_bill', bill.id);
+    const later = await evidence.upload('vendor_bill', bill.id);
+    await evidence.service.remove('vendor_bill', bill.id, theirs);
+    current.grants = new Map<Permission, Scope>([['payables.bill.enter', 'own']]);
+    for (const id of [later, theirs]) {
+      expect(
+        (await httpErrorOf(evidence.service.remove('vendor_bill', bill.id, id))).getStatus(),
+      ).toBe(403);
+    }
+    expect(await removedAt(later)).toBeNull();
+  });
+});
