@@ -349,59 +349,88 @@ export class VendorsService {
       const done = await withIdempotency(
         tx,
         { command: 'vendor.create', key: idempotencyKey, body },
-        async () => {
-          const pan = body.pan ?? null;
-          if (pan !== null) await this.assertPanFree(tx, scope.tenantId, pan);
-          const id = randomUUID();
-          try {
-            await tx.insert(parties).values({
-              id,
-              tenantId: scope.tenantId,
-              kind: 'vendor',
-              code: vendorPartyCode(id),
-              name: body.legalName,
-              createdAt: now,
-              updatedAt: now,
-            });
-            const [row] = await tx
-              .insert(vendors)
-              .values({
-                id,
-                tenantId: scope.tenantId,
-                legalName: body.legalName,
-                kind: kindToRow(body.kind),
-                pan,
-                vatRegistered: body.vatRegistered,
-                country: body.country,
-                status: 'draft',
-                ownerUserId: actor.id,
-                createdBy: actor.id,
-                version: 1,
-                createdAt: now,
-                updatedAt: now,
-              })
-              .returning();
-            await tx.insert(vendorAccounts).values({
-              tenantId: scope.tenantId,
-              organizationId: scope.organizationId,
-              vendorId: id,
-              defaultCurrency: 'NPR',
-              active: true,
-              version: 1,
-              createdAt: now,
-              updatedAt: now,
-            });
-            await this.recordSameName(tx, scope.tenantId, id, body.legalName);
-            return { status: 201, response: toVendorDto(row!, principal) };
-          } catch (error) {
-            // Two creates with the same PAN can both pass the pre-check; the unique index decides.
-            if (pan !== null && isUnique(error, PAN_INDEX)) throw duplicatePan(pan);
-            throw error;
-          }
-        },
+        async () => ({ status: 201, response: await this.createInTx(tx, body, now) }),
       );
       return done.response;
     });
+  }
+
+  /**
+   * The vendor insert of create(), inside a transaction that withTx opened for the caller's scope: the PAN pre-check,
+   * the party and vendors rows (status `draft`, so an unverified vendor like a hand-created one), the account with the
+   * acting entity, the same-name audit note and, when given, the first contact. It has no idempotency and no caller
+   * checks and does not look at the kind and country pairing (create() does); the caller of this method decides who
+   * may write. The CSV import (round 5, K1) calls it once per row inside its own batch transaction.
+   */
+  async createInTx(
+    tx: DbTransaction,
+    body: CreateVendorBody,
+    now: Date,
+    contact?: { name: string; email?: string; phone?: string },
+  ): Promise<VendorDto> {
+    const { scope, actor, principal } = this.caller.current();
+    const pan = body.pan ?? null;
+    if (pan !== null) await this.assertPanFree(tx, scope.tenantId, pan);
+    const id = randomUUID();
+    try {
+      await tx.insert(parties).values({
+        id,
+        tenantId: scope.tenantId,
+        kind: 'vendor',
+        code: vendorPartyCode(id),
+        name: body.legalName,
+        createdAt: now,
+        updatedAt: now,
+      });
+      const [row] = await tx
+        .insert(vendors)
+        .values({
+          id,
+          tenantId: scope.tenantId,
+          legalName: body.legalName,
+          kind: kindToRow(body.kind),
+          pan,
+          vatRegistered: body.vatRegistered,
+          country: body.country,
+          status: 'draft',
+          ownerUserId: actor.id,
+          createdBy: actor.id,
+          version: 1,
+          createdAt: now,
+          updatedAt: now,
+        })
+        .returning();
+      await tx.insert(vendorAccounts).values({
+        tenantId: scope.tenantId,
+        organizationId: scope.organizationId,
+        vendorId: id,
+        defaultCurrency: 'NPR',
+        active: true,
+        version: 1,
+        createdAt: now,
+        updatedAt: now,
+      });
+      await this.recordSameName(tx, scope.tenantId, id, body.legalName);
+      if (contact !== undefined) {
+        await tx.insert(vendorContacts).values({
+          tenantId: scope.tenantId,
+          vendorId: id,
+          fullName: contact.name,
+          emailNorm: contact.email === undefined ? null : normalizeEmail(contact.email),
+          phoneE164: contact.phone ?? null,
+          title: null,
+          isPrimary: true,
+          version: 1,
+          createdAt: now,
+          updatedAt: now,
+        });
+      }
+      return toVendorDto(row!, principal);
+    } catch (error) {
+      // Two creates with the same PAN can both pass the pre-check; the unique index decides.
+      if (pan !== null && isUnique(error, PAN_INDEX)) throw duplicatePan(pan);
+      throw error;
+    }
   }
 
   // ------------------------------------------------------------------------------------------------ update
