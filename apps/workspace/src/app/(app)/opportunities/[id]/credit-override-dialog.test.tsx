@@ -32,6 +32,8 @@ const overridden = CreditHoldDtoSchema.parse({
   currency: 'NPR',
   creditLimit: '500000.00',
   exposure: '512345.50',
+  orderValue: '0.00',
+  exposureWithOrder: '512345.50',
   held: true,
   override: {
     reason: 'Paid by cheque today.',

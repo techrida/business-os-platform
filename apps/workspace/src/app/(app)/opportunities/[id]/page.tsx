@@ -236,9 +236,14 @@ function CreditHoldBanner({
   hold: CreditHoldDto | null;
   numberSystems: NumberSystems;
 }) {
+  // The hold counts the deal's accepted quotation on top of what the customer owes (Kuu R4a Q1b),
+  // so the amounts name both: open receivables alone may be under the limit.
+  const amount = (value: string) => money(value, hold?.currency ?? 'NPR', numberSystems);
   const amounts =
     hold && hold.creditLimit !== null
-      ? ` It owes ${money(hold.exposure, hold.currency, numberSystems)} against a limit of ${money(hold.creditLimit, hold.currency, numberSystems)}.`
+      ? Number(hold.orderValue) > 0
+        ? ` Open receivables are ${amount(hold.exposure)} and this deal's order is ${amount(hold.orderValue)}: ${amount(hold.exposureWithOrder)} against a limit of ${amount(hold.creditLimit)}.`
+        : ` It owes ${amount(hold.exposure)} against a limit of ${amount(hold.creditLimit)}.`
       : '';
   return (
     <Alert
@@ -251,7 +256,7 @@ function CreditHoldBanner({
         ) : undefined
       }
     >
-      {`This customer is over its credit limit, so an accepted quotation on this deal cannot become a sales order until the hold is overridden or lifted.${amounts} `}
+      {`${hold !== null && Number(hold.orderValue) === 0 ? 'This' : "With this deal's order, this"} customer is over its credit limit, so an accepted quotation on this deal cannot become a sales order until the hold is overridden or lifted.${amounts} `}
       {canOverride
         ? 'Override the hold to let it go ahead, or wait for a payment to bring the customer under the limit.'
         : 'Someone with credit override access can override the hold. A payment that brings the customer under the limit also lifts it.'}
@@ -428,7 +433,7 @@ export default async function OpportunityPage({ params }: { params: Promise<{ id
                 <Badge
                   tone="warning"
                   className={styles.holdBadge}
-                  title="The customer is over its credit limit: no sales order until the hold is overridden or lifted."
+                  title="With this deal's order the customer is over its credit limit: no sales order until the hold is overridden or lifted."
                 >
                   <Icon name="credit-card" size={12} />
                   Credit hold

@@ -526,6 +526,23 @@ describe('ErrorBodyFilter', () => {
     });
   });
 
+  it('passes entity_changed through on a 409 conflict (customer terms), and other reasons not', () => {
+    const message = 'You switched legal entity since this page loaded; reload and try again';
+    const out = filter(
+      new ConflictException({ code: 'conflict', reason: 'entity_changed', message }),
+    );
+    expect(out.status).toBe(409);
+    expect(ErrorBodySchema.parse(out.body).error).toMatchObject({
+      code: 'conflict',
+      reason: 'entity_changed',
+      message,
+    });
+    const other = filter(
+      new ConflictException({ code: 'conflict', reason: 'out_of_scope', message }),
+    );
+    expect(ErrorBodySchema.parse(other.body).error.reason).toBeUndefined();
+  });
+
   it('logs every 403 as one structured line with its reason, the route pattern and no user data', () => {
     const warn = vi.spyOn(Logger.prototype, 'warn').mockImplementation(() => undefined);
     try {

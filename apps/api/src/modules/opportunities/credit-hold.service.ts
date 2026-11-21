@@ -53,8 +53,8 @@ export class CreditHoldService {
    * `POST /v1/opportunities/:id/credit-override`: lets the held deal's accepted quotation become a sales order. 404
    * for a deal of another entity; 409 `conflict` when the deal is not on hold (nothing to override). A deal already
    * overridden is returned as it is: the first override stands, and nothing new is written. The override is kept on
-   * the deal (who, when, why) and audited (`opportunity.credit_overridden`, with the limit and exposure it was given
-   * against). The deal's version moves, so a form open on it reloads.
+   * the deal (who, when, why) and audited (`opportunity.credit_overridden`, with the limit, the exposure and the
+   * pending order's value it was given against). The deal's version moves, so a form open on it reloads.
    */
   async override(id: string, body: CreditOverrideBody): Promise<CreditHoldDto> {
     const { scope, actor, principal } = this.caller.current();
@@ -67,7 +67,9 @@ export class CreditHoldService {
         .for('update');
       if (row === undefined) throw notFound();
       if (row.creditOverrideAt !== null) return this.toDto(tx, scope, row);
-      const position = await creditPosition(tx, scope, row.customerId);
+      // The gate's rule (credit-hold.ts): receivables plus the deal's pending order, else a deal the gate holds
+      // could never be overridden.
+      const position = await creditPosition(tx, scope, row.customerId, { opportunityId: row.id });
       if (!position.held) {
         throw new ConflictException({
           code: 'conflict',
@@ -96,6 +98,7 @@ export class CreditHoldService {
           reason: body.reason,
           creditLimit: position.creditLimit,
           exposure: position.exposure,
+          orderValue: position.orderValue,
           currency: 'NPR',
         },
       });
@@ -116,7 +119,7 @@ export class CreditHoldService {
     scope: TxScope,
     row: OpportunityRow,
   ): Promise<CreditHoldDto> {
-    const position = await creditPosition(tx, scope, row.customerId);
+    const position = await creditPosition(tx, scope, row.customerId, { opportunityId: row.id });
     const by = row.creditOverrideByUserId;
     const names =
       by === null ? new Map<string, string>() : await personNameMap(tx, row.tenantId, [by]);
@@ -126,6 +129,8 @@ export class CreditHoldService {
       currency: 'NPR',
       creditLimit: position.creditLimit,
       exposure: position.exposure,
+      orderValue: position.orderValue,
+      exposureWithOrder: position.exposureWithOrder,
       held: position.held,
       override:
         row.creditOverrideAt === null || row.creditOverrideReason === null || by === null

@@ -13,8 +13,10 @@ import {
   AdminUsersPageSchema,
   AdminUsersSummarySchema,
   SettingKeySchema,
+  SettingsPersonSchema,
   type RoleKey,
   type SettingKey,
+  type SettingsPerson,
 } from '@bos/contracts';
 import { z } from 'zod';
 
@@ -279,6 +281,16 @@ export async function setUserRoles(
 
 export function getSetting(session: Session, key: SettingKey): Promise<SettingCurrent> {
   return requestParsed(session, 'GET', `/v1/admin/settings/${seg(key)}`, SettingCurrentSchema);
+}
+
+/** The people the Lead owner card may pick: read with the setting's own permission, not lead access. */
+export function listDefaultLeadOwnerPeople(session: Session): Promise<SettingsPerson[]> {
+  return requestParsed(
+    session,
+    'GET',
+    '/v1/admin/settings/crm.default_lead_owner/people',
+    SettingsPersonSchema.array(),
+  );
 }
 
 /**

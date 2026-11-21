@@ -173,7 +173,8 @@ export class OpportunitiesService {
       row,
       await loadRecordReaders(this.db, scope, opportunities, id),
     );
-    // F1-Q20/F1-Q26: the flag only (the amounts are for credit.override holders), and whether a sales order already
+    // F1-Q20/F1-Q26: the flag only (the amounts are for credit.override holders), counting the accepted quotation's
+    // order the way the sales order gate does (credit-hold.ts), and whether a sales order already
     // went ahead (a draft one is what the hold keeps waiting). In a transaction, so the ledger and the orders are
     // read under the entity's row security rather than seen as empty.
     const { credit, ordered } = await withTx(
@@ -181,7 +182,7 @@ export class OpportunitiesService {
       scope,
       actor,
       async (tx) => ({
-        credit: await creditPosition(tx, scope, row.customerId),
+        credit: await creditPosition(tx, scope, row.customerId, { opportunityId: row.id }),
         ordered: await this.hasSalesOrder(tx, scope, row.id),
       }),
       READ_ONLY,

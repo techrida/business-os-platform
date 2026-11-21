@@ -325,7 +325,14 @@ describe('BFF contract: workspace clients against the real API', () => {
     // design, `getCustomerDetail` (CustomerDetailSchema) is the reader that keeps them. Beside `accounts`, later rounds
     // added `people` (account owner names), `can` (record capabilities, D50), `verification` (case presence) and
     // `portalAccess` (F1-Q31), all read through the detail reader below. Stale before: only `accounts` was allowed.
-    const detailOnly = ['accounts', 'people', 'can', 'verification', 'portalAccess'];
+    const detailOnly = [
+      'accounts',
+      'actingEntity',
+      'people',
+      'can',
+      'verification',
+      'portalAccess',
+    ];
     const customer = await seen(() => bff.customers.getCustomer(sales(), s.customerId), {
       allowDropped: detailOnly,
     });

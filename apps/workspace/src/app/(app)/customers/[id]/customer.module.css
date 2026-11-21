@@ -34,7 +34,7 @@
   min-width: 0;
 }
 
-/* Verification and portal access stack in the side column. */
+/* Commercial terms and verification stack in the side column. */
 .verification {
   display: grid;
   gap: var(--spacing-section);

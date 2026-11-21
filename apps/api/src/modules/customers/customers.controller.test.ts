@@ -6,7 +6,7 @@ import 'reflect-metadata';
 import { BadRequestException } from '@nestjs/common';
 import { describe, expect, it, vi } from 'vitest';
 
-import { CAN_KEY } from '../../platform/authz/decorators';
+import { ANY_AUTHENTICATED_KEY, CAN_KEY } from '../../platform/authz/decorators';
 import { CustomersController } from './customers.controller';
 import type { CustomersService } from './customers.service';
 
@@ -19,6 +19,7 @@ function setup() {
     create: vi.fn().mockResolvedValue({}),
     get: vi.fn().mockResolvedValue({}),
     update: vi.fn().mockResolvedValue({}),
+    updateTerms: vi.fn().mockResolvedValue({}),
     listContacts: vi.fn().mockResolvedValue([]),
     createContact: vi.fn().mockResolvedValue({}),
   };
@@ -140,12 +141,46 @@ describe('route permissions', () => {
   const needs = (method: keyof CustomersController): unknown =>
     Reflect.getMetadata(CAN_KEY, CustomersController.prototype[method]);
 
+  const anyAuthenticated = (method: keyof CustomersController): unknown =>
+    Reflect.getMetadata(ANY_AUTHENTICATED_KEY, CustomersController.prototype[method]);
+
   it('reads need customer.read and writes need customer.write (merge is not routed here)', () => {
     expect(needs('list')).toBe('customer.read');
     expect(needs('get')).toBe('customer.read');
     expect(needs('contacts')).toBe('customer.read');
     expect(needs('create')).toBe('customer.write');
-    expect(needs('update')).toBe('customer.write');
     expect(needs('createContact')).toBe('customer.write');
+  });
+
+  it('opens the edit and the terms to any signed-in user, so the service decides between two permissions', () => {
+    // PATCH :id: customer.write or customers.owner.write; PATCH :id/terms: customer.write or
+    // customers.credit_limit.write. A @Can here would shut out Management (owner) or Finance (credit limit).
+    for (const method of ['update', 'updateTerms'] as const) {
+      expect(needs(method)).toBeUndefined();
+      expect(anyAuthenticated(method)).toBe(true);
+    }
+  });
+});
+
+describe('PATCH /v1/customers/:id/terms', () => {
+  it('passes the parsed body through, keeping null apart from absent', async () => {
+    const { service, controller } = setup();
+    const body = { organizationId: ID, creditLimit: null, expectedVersion: 2 };
+    await controller.updateTerms(ID, body);
+    expect(service.updateTerms).toHaveBeenCalledWith(ID, body);
+  });
+
+  it('is a 400 for an empty body, no entity, three decimals or an unknown key, before the service is called', () => {
+    const { service, controller } = setup();
+    const organizationId = ID;
+    expect(() => controller.updateTerms(ID, { organizationId })).toThrow(BadRequestException);
+    expect(() => controller.updateTerms(ID, { creditLimit: '1.00' })).toThrow(BadRequestException);
+    expect(() => controller.updateTerms(ID, { organizationId, creditLimit: '1.005' })).toThrow(
+      BadRequestException,
+    );
+    expect(() =>
+      controller.updateTerms(ID, { organizationId, creditLimit: '1.00', owner: 'x' }),
+    ).toThrow(BadRequestException);
+    expect(service.updateTerms).not.toHaveBeenCalled();
   });
 });

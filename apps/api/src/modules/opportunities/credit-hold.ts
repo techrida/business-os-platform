@@ -1,7 +1,9 @@
-// A deal's credit hold (F1-Q20, F1-Q26). The customer is over its credit limit when what it owes the acting entity
-// now is more than the limit that entity gave it (`party_accounts.credit_limit`, NPR). Derived from the ledger on
-// every read, never stored, so a payment or a new invoice changes it at once. The one rule for the opportunity's
-// flag, the credit-hold page and the sales order gate.
+// A deal's credit hold (F1-Q20, F1-Q26; Kuu R4a Q1b). The deal is held when what the customer owes the acting
+// entity now plus the value of the order the deal is about to become is more than the limit that entity gave it
+// (`party_accounts.credit_limit`, NPR): a customer at 90,000 of a 100,000 limit is held for a 20,000 order. Derived
+// from the ledger and the deal's accepted quotation on every read, never stored, so a payment or a new invoice
+// changes it at once. The one rule for the opportunity's flag, the credit-hold page, the override and the sales
+// order gate: they must agree, or a deal the gate holds could not be overridden.
 import Decimal from 'decimal.js';
 import { sql } from 'drizzle-orm';
 
@@ -10,18 +12,91 @@ import type { DbTransaction, TxScope } from '../../platform/db/tx';
 export interface CreditPosition {
   /** NPR, two decimals; null when the entity set no limit (then never held). */
   creditLimit: string | null;
-  /** NPR, two decimals; may be negative when the customer is in credit. */
+  /** Open receivables: NPR, two decimals; may be negative when the customer is in credit. */
   exposure: string;
+  /** The pending order's gross NPR value (with VAT), two decimals; '0.00' when the deal has none pending. */
+  orderValue: string;
+  /** exposure + orderValue: what `held` compares with the limit. */
+  exposureWithOrder: string;
   held: boolean;
 }
 
-/** Over the limit: strictly more than it. No limit is no hold. */
+/** The NPR snapshot columns of a quotation version (`quotation_versions`). */
+export interface VersionNprSnapshot {
+  currency: string;
+  total: string;
+  amountNpr: string | null;
+}
+
+/**
+ * The order whose value counts on top of the receivables. `version`: the accepted version being confirmed (the
+ * gate). `opportunityId`: the deal's accepted version that would be confirmed (the deal flag, the credit-hold page
+ * and the override).
+ */
+export type PendingOrder = { version: VersionNprSnapshot } | { opportunityId: string };
+
+/** Over the limit: strictly more than it. No limit is no hold; a 0.00 limit holds any positive amount. */
 export function isOverLimit(creditLimit: string | null, exposure: string): boolean {
   return creditLimit !== null && new Decimal(exposure).gt(new Decimal(creditLimit));
 }
 
 /**
- * The customer's credit position with the acting entity: its open receivable debits (invoices, debit notes) less
+ * The gross NPR total an order of `version` carries: the version's NPR snapshot (`amount_npr`, VAT included, the
+ * figure planDraftOrder copies to the order and its invoices then bill), NPR's own total when it is NPR, rounded
+ * half-up to two decimals (D22). Gross like the receivables it is added to. An accepted version always has the
+ * snapshot (quotation_versions check); one without it is a server error, never a value of zero.
+ */
+export function orderValueOf(version: VersionNprSnapshot): string {
+  const amountNpr = version.amountNpr ?? (version.currency === 'NPR' ? version.total : null);
+  if (amountNpr === null) throw new Error('quotation version has no NPR snapshot');
+  return new Decimal(amountNpr).toDecimalPlaces(2, Decimal.ROUND_HALF_UP).toFixed(2);
+}
+
+/**
+ * The pending order's value (see PendingOrder). A version's value counts only while its quotation has no confirmed
+ * or completed sales order: once it has, the order's invoices are (or will be) the receivables, and counting the
+ * quotation as well would count it twice. A draft order (made on acceptance, F1-Q25) is still pending. At the gate
+ * the version being confirmed always counts (the confirm returns early for a quotation already ordered). For a
+ * deal, its accepted versions still pending; none is zero, and of several (one per quotation) the largest counts,
+ * so the deal is held whenever the gate would hold any of them and an override is never refused for a hold the
+ * gate applies.
+ */
+export async function pendingOrderValue(
+  tx: DbTransaction,
+  scope: TxScope,
+  pending: PendingOrder,
+): Promise<string> {
+  if ('version' in pending) return orderValueOf(pending.version);
+  const rows = await tx.execute<{ currency: string; total: string; amount_npr: string | null }>(sql`
+    SELECT v.currency, v.total::text AS total, v.amount_npr::text AS amount_npr
+      FROM app.quotation_versions v
+      JOIN app.quotations q
+        ON q.tenant_id = v.tenant_id AND q.organization_id = v.organization_id AND q.id = v.quotation_id
+     WHERE v.tenant_id = ${scope.tenantId}::uuid
+       AND v.organization_id = ${scope.organizationId}::uuid
+       AND q.opportunity_id = ${pending.opportunityId}::uuid
+       AND v.status = 'accepted'
+       AND NOT EXISTS (
+             SELECT 1
+               FROM app.sales_orders so
+              WHERE so.tenant_id = q.tenant_id
+                AND so.organization_id = q.organization_id
+                AND so.quotation_id = q.id
+                AND so.status IN ('confirmed', 'completed'))`);
+  return rows.rows
+    .map(
+      (r) =>
+        new Decimal(
+          orderValueOf({ currency: r.currency, total: r.total, amountNpr: r.amount_npr }),
+        ),
+    )
+    .reduce((max, v) => Decimal.max(max, v), new Decimal(0))
+    .toFixed(2);
+}
+
+/**
+ * The customer's credit position with the acting entity, counting `pending` (pendingOrderValue) on top of the
+ * receivables. The receivables are its open receivable debits (invoices, debit notes) less
  * its open receivable credits (unapplied payments, credit notes), each converted at its own NPR rate
  * (`open_items.fx_rate`) and rounded half-up to two decimals on its own (D22; Postgres `round` takes a half away
  * from zero, so a credit rounds like a debit), then summed: the exposure is the sum of the NPR amounts a statement
@@ -33,6 +108,7 @@ export async function creditPosition(
   tx: DbTransaction,
   scope: TxScope,
   customerPartyId: string,
+  pending: PendingOrder,
 ): Promise<CreditPosition> {
   const exposureRows = await tx.execute<{ exposure: string }>(sql`
     SELECT coalesce(sum(round(
@@ -54,5 +130,13 @@ export async function creditPosition(
   const exposure = new Decimal(exposureRows.rows[0]?.exposure ?? '0').toFixed(2);
   const creditLimit = limitRows.rows[0]?.credit_limit ?? null;
   const limit = creditLimit === null ? null : new Decimal(creditLimit).toFixed(2);
-  return { creditLimit: limit, exposure, held: isOverLimit(limit, exposure) };
+  const orderValue = await pendingOrderValue(tx, scope, pending);
+  const exposureWithOrder = new Decimal(exposure).plus(orderValue).toFixed(2);
+  return {
+    creditLimit: limit,
+    exposure,
+    orderValue,
+    exposureWithOrder,
+    held: isOverLimit(limit, exposureWithOrder),
+  };
 }

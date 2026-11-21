@@ -690,9 +690,14 @@ export class ErrorBodyFilter implements ExceptionFilter {
     if (exception instanceof HttpException) {
       status = exception.getStatus();
       exposedMessage = messageOf(exception);
-      // 403 for authz denials; 400 for `invalid_entity` (a malformed X-Entity-Id, ADR 0027 §4).
+      // 403 for authz denials; 400 for `invalid_entity` (a malformed X-Entity-Id, ADR 0027 §4); 409 for a stale
+      // memo or a customer-terms form rendered for another acting entity (`entity_changed`).
       const reportedReason = reasonOf(exception);
-      if (status === 403 || status === 400 || (status === 409 && reportedReason === 'stale_memo')) {
+      if (
+        status === 403 ||
+        status === 400 ||
+        (status === 409 && (reportedReason === 'stale_memo' || reportedReason === 'entity_changed'))
+      ) {
         reason = reportedReason;
       }
       stepUp = isStepUp(exception);
