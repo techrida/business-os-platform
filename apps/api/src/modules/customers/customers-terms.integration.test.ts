@@ -709,3 +709,62 @@ describe('end to end: what the endpoint writes is what the readers read', () => 
     expect(await netDaysFor(a.organizationId, customer.id)).toBeUndefined();
   });
 });
+
+describe('the terms of an entity are read by the roles of the membership there (R5 FU4)', () => {
+  /**
+   * Finance in the default entity A, and a membership of the second entity that allows Warehouse only (the user's
+   * roles are Finance and Warehouse; `role_keys` of the second membership narrows them to Warehouse, which holds no
+   * customer.read).
+   */
+  async function financeHereWarehouseThere(): Promise<string> {
+    const { userId } = await createStaffUser(appPool, {
+      ...a,
+      roleKeys: ['finance', 'warehouse'],
+    });
+    await withTx(
+      db,
+      { tenantId: a.tenantId, organizationId: entityA2 },
+      systemActor('test'),
+      (tx) =>
+        tx.insert(userEntities).values({
+          tenantId: a.tenantId,
+          organizationId: entityA2,
+          userId,
+          isDefault: false,
+          roleKeys: ['warehouse'],
+        }),
+    );
+    return userId;
+  }
+
+  it('hides the credit limit and term of an entity where the membership allows no customer.read', async () => {
+    const customer = await createCustomer();
+    // Each entity's terms are set by a Finance user acting there.
+    as('finance', a.organizationId);
+    expect((await putTerms(customer.id, { creditLimit: '111111.00' })).status).toBe(200);
+    as('finance', entityA2);
+    expect((await putTerms(customer.id, { creditLimit: '222222.00' })).status).toBe(200);
+
+    const mixed = await financeHereWarehouseThere();
+    as('finance', a.organizationId, a, mixed);
+    const body = await detail(customer.id);
+    expect(body.accounts?.map((x) => PartyAccountDtoSchema.parse(x).organizationId)).toEqual([
+      a.organizationId,
+    ]);
+    expect(JSON.stringify(body)).not.toContain('222222');
+  });
+
+  it('still shows both entities to a user whose roles there both read customers', async () => {
+    const customer = await createCustomer();
+    as('finance', a.organizationId);
+    await putTerms(customer.id, { creditLimit: '111111.00' });
+    as('finance', entityA2);
+    await putTerms(customer.id, { creditLimit: '222222.00' });
+
+    as('finance', a.organizationId);
+    const body = await detail(customer.id);
+    expect(body.accounts?.map((x) => PartyAccountDtoSchema.parse(x).organizationId).sort()).toEqual(
+      [a.organizationId, entityA2].sort(),
+    );
+  });
+});
