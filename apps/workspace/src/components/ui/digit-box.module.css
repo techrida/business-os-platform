@@ -92,6 +92,10 @@
   margin-top: 6px;
 }
 
+.status > span {
+  display: block;
+}
+
 .status[data-tone='error'] {
   color: var(--status-error);
   font-weight: var(--font-weight-medium);

@@ -2,10 +2,11 @@
 
 import { Time, parseTime } from '@internationalized/date';
 import { DateInput, DateSegment, Group, TimeField } from 'react-aria-components';
-import { useState } from 'react';
+import { useId, useRef, useState } from 'react';
 
 import { DatePicker } from './date-picker';
 import pickerStyles from './date-picker.module.css';
+import { useFormReset } from './use-form-reset';
 import styles from './date-time-picker.module.css';
 
 /** `YYYY-MM-DDTHH:mm` split into its day and its time, or two empty strings. */
@@ -85,15 +86,21 @@ export function DateTimePicker({
   popoverContainer,
   showBs,
 }: DateTimePickerProps) {
+  const timeId = useId();
+  const rootRef = useRef<HTMLDivElement>(null);
   const [parts, setParts] = useState(() => split(value ?? defaultValue));
+  // A form reset after a function action must not wipe a controlled value (see DatePicker).
+  const isResetting = useFormReset(rootRef, () => setParts(split(defaultValue)));
   const [day, time] = parts;
   const posted = compose(day, time);
 
   // A controlled parent that holds another value wins. A partly filled box reports '' and the
   // parent echoes '', which already equals what the box composes, so typing is never undone.
-  if (value !== undefined && value !== posted) setParts(split(value));
+  // Compared as the box would show it, so a value with seconds or garbage settles after one pass.
+  if (value !== undefined && compose(...split(value)) !== posted) setParts(split(value));
 
   function update(nextDay: string, nextTime: string) {
+    if (isResetting()) return;
     setParts([nextDay, nextTime]);
     const next = compose(nextDay, nextTime);
     if (next !== posted) onChange?.(next);
@@ -102,7 +109,7 @@ export function DateTimePicker({
   const isInvalid = invalid === true || ariaInvalid === true || ariaInvalid === 'true';
 
   return (
-    <div className={[styles.row, className].filter(Boolean).join(' ')}>
+    <div ref={rootRef} className={[styles.row, className].filter(Boolean).join(' ')}>
       <DatePicker
         {...(id === undefined ? {} : { id })}
         className={styles.date ?? ''}
@@ -125,7 +132,11 @@ export function DateTimePicker({
         value={toTime(time)}
         onChange={(next) => update(day, next ? `${pad(next.hour)}:${pad(next.minute)}` : '')}
         granularity="minute"
-        aria-label="Time"
+        // The time is named by the field's own label plus "Time", and shares its hint and error.
+        {...(labelledBy === undefined
+          ? { 'aria-label': ariaLabel === undefined ? 'Time' : `${ariaLabel}, time` }
+          : { 'aria-labelledby': `${labelledBy} ${timeId}` })}
+        {...(describedBy === undefined ? {} : { 'aria-describedby': describedBy })}
         isDisabled={disabled === true}
         isReadOnly={readOnly === true}
         isRequired={required === true}
@@ -137,6 +148,9 @@ export function DateTimePicker({
           </DateInput>
         </Group>
       </TimeField>
+      <span id={timeId} hidden>
+        Time
+      </span>
       {name ? (
         <input type="hidden" name={name} value={posted} disabled={disabled === true} />
       ) : null}

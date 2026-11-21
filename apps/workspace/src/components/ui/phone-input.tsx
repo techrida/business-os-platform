@@ -1,6 +1,6 @@
 'use client';
 
-import { useState } from 'react';
+import { useLayoutEffect, useRef, useState } from 'react';
 
 import { DigitBox, type DigitBoxProps, type DigitRules } from './digit-box';
 import styles from './digit-box.module.css';
@@ -26,6 +26,9 @@ const E164_MAX = 15;
 
 const isMobile = (digits: string) => digits.startsWith('9');
 
+const LEADING_ZERO = `Leave out the leading 0. ${NEPAL_PREFIX} is already there.`;
+const CODE_ZERO = 'A country code does not start with 0.';
+
 const NEPAL_RULES: DigitRules = {
   noun: 'phone number',
   // The stored form is E.164, `+9779812345678`. Anything else is shown as given and flagged.
@@ -44,8 +47,7 @@ const NEPAL_RULES: DigitRules = {
     // `01 4123456`: the trunk 0 is not part of the E.164 number.
     return bare.startsWith('0') ? bare.slice(1) : bare;
   },
-  refuseDigits: (digits) =>
-    digits.startsWith('0') ? `Leave out the leading 0. ${NEPAL_PREFIX} is already there.` : null,
+  refuseDigits: (digits) => (digits.startsWith('0') ? LEADING_ZERO : null),
   tooLong: (digits) =>
     isMobile(digits)
       ? `A mobile number has ${MOBILE_DIGITS} digits.`
@@ -55,6 +57,8 @@ const NEPAL_RULES: DigitRules = {
     if (!ALL_DIGITS.test(digits)) {
       return `Start with ${NEPAL_PREFIX} and type digits only, for example ${NEPAL_PREFIX}9812345678.`;
     }
+    // Deleting the first digit can leave a 0 in front; it is refused when typed and flagged here.
+    if (digits.startsWith('0')) return LEADING_ZERO;
     if (isMobile(digits)) {
       return digits.length === MOBILE_DIGITS
         ? null
@@ -82,12 +86,12 @@ const INTERNATIONAL_RULES: DigitRules = {
   post: (digits) => (digits === '' ? '' : `+${digits}`),
   maxFor: () => E164_MAX,
   cleanPaste: (pasted) => pasted.replace(NOISE, '').replace(/^\+/, '').replace(/^00/, ''),
-  refuseDigits: (digits) =>
-    digits.startsWith('0') ? 'A country code does not start with 0.' : null,
+  refuseDigits: (digits) => (digits.startsWith('0') ? CODE_ZERO : null),
   tooLong: () => `A phone number has at most ${E164_MAX} digits, country code included.`,
   problem: (digits) => {
     if (digits === '') return null;
     if (!ALL_DIGITS.test(digits)) return 'Type the country code and number as digits only.';
+    if (digits.startsWith('0')) return CODE_ZERO;
     return digits.length >= E164_MIN
       ? null
       : `A phone number has at least ${E164_MIN} digits, country code included; this has ${digits.length}.`;
@@ -112,38 +116,53 @@ export type PhoneInputProps = DigitBoxProps;
  *   <Field label="Phone">{(control) => <PhoneInput {...control} name="phone" />}</Field>
  */
 export function PhoneInput(props: PhoneInputProps) {
-  const start = props.value ?? props.defaultValue ?? '';
+  const { value, defaultValue, onValueChange, className, ...rest } = props;
+  const start = value ?? defaultValue ?? '';
   const [international, setInternational] = useState(
     start !== '' && !start.startsWith(NEPAL_PREFIX),
   );
-  // After the user switches countries the box starts empty: a number typed for one set of rules
-  // does not carry over to the other.
-  const [switched, setSwitched] = useState(false);
-  const { value, defaultValue, onValueChange, ...rest } = props;
+  // What an uncontrolled box starts with after a switch, and what each country's box held when it was
+  // left, so switching by mistake and back does not lose a stored number.
+  const [seed, setSeed] = useState(defaultValue ?? '');
+  const current = useRef(start);
+  useLayoutEffect(() => {
+    if (value !== undefined) current.current = value;
+  });
+  const left = useRef<{ international: boolean; posted: string } | null>(null);
   const locked = props.disabled === true || props.readOnly === true;
 
   function toggle() {
-    setInternational((was) => !was);
-    setSwitched(true);
-    onValueChange?.('');
+    const next = !international;
+    const restored = left.current?.international === next ? left.current.posted : '';
+    left.current = { international, posted: current.current };
+    current.current = restored;
+    setInternational(next);
+    setSeed(restored);
+    onValueChange?.(restored);
   }
 
   return (
-    <DigitBox
-      // The rules change with the country, so the box remounts.
-      key={international ? 'international' : 'nepal'}
-      {...rest}
-      {...(value === undefined ? {} : { value })}
-      {...(onValueChange === undefined ? {} : { onValueChange })}
-      {...(defaultValue === undefined || switched ? {} : { defaultValue })}
-      rules={international ? INTERNATIONAL_RULES : NEPAL_RULES}
-      prefix={international ? '+' : NEPAL_PREFIX}
-    >
+    <div className={[styles.root, className].filter(Boolean).join(' ')}>
+      <DigitBox
+        // The rules change with the country, so the box remounts. The switch button is outside it,
+        // so it keeps focus.
+        key={international ? 'international' : 'nepal'}
+        {...rest}
+        {...(value === undefined ? { defaultValue: seed } : { value })}
+        onValueChange={(posted) => {
+          current.current = posted;
+          onValueChange?.(posted);
+        }}
+        rules={international ? INTERNATIONAL_RULES : NEPAL_RULES}
+        prefix={international ? '+' : NEPAL_PREFIX}
+      />
       {locked ? null : (
         <button type="button" className={styles.mode} onClick={toggle}>
-          {international ? `Use a Nepal number (${NEPAL_PREFIX})` : 'Number from another country'}
+          {international
+            ? 'Use a Nepal number (' + NEPAL_PREFIX + ')'
+            : 'Number from another country'}
         </button>
       )}
-    </DigitBox>
+    </div>
   );
 }

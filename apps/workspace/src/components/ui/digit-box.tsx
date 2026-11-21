@@ -9,7 +9,6 @@ import {
   useState,
   type ChangeEvent,
   type ClipboardEvent,
-  type ReactNode,
 } from 'react';
 
 import { useFormReset } from './use-form-reset';
@@ -71,8 +70,6 @@ interface EngineProps extends DigitBoxProps {
   rules: DigitRules;
   /** Fixed text before the digits (`+977`). It is part of the posted value, not the box. */
   prefix?: string | undefined;
-  /** Remount key material: a change of rules (Nepal to another country) starts the box afresh. */
-  children?: ReactNode;
 }
 
 const DIGITS = /^\d*$/;
@@ -94,7 +91,6 @@ export function DigitBox({
   className,
   rules,
   prefix,
-  children,
 }: EngineProps) {
   const base = useId();
   const prefixId = `${base}-prefix`;
@@ -164,13 +160,14 @@ export function DigitBox({
   }
 
   /** Why `next` may not become the box's text, or null. Used for a key, a paste and a whole new text. */
-  function refusalOf(next: string): string | null {
+  function refusalOf(next: string, deleting = false): string | null {
     if (!DIGITS.test(next)) {
       return /^[\d\s-]*$/.test(next)
         ? `Spaces and dashes are not needed. Type the digits only.`
         : `A ${rules.noun} takes digits only.`;
     }
-    const barred = rules.refuseDigits?.(next);
+    // A delete is never refused: what it leaves (a 0 in front) is flagged when the box is left.
+    const barred = deleting ? null : rules.refuseDigits?.(next);
     if (barred) return barred;
     if (next.length > rules.maxFor(next)) return rules.tooLong(next);
     return null;
@@ -230,7 +227,7 @@ export function DigitBox({
     const current = textRef.current;
     // Editing a stored value the box cannot hold: deleting is always allowed, so it can be repaired.
     if (foreign(current) && raw.length <= current.length) return accept(raw, caret);
-    const reason = refusalOf(raw);
+    const reason = refusalOf(raw, raw.length < current.length);
     if (reason) {
       refuse(reason);
       placeCaret(Math.max(0, Math.min(current.length, caret - (raw.length - current.length))));
@@ -331,7 +328,9 @@ export function DigitBox({
           className={styles.status}
           data-tone={status ? 'error' : undefined}
         >
-          {status ? <span key={notice.text ? notice.seq : 'error'}>{status}</span> : null}
+          {/* Two spans, so a standing blur error is not read out again when a refusal comes and goes. */}
+          {notice.text ? <span key={notice.seq}>{notice.text}</span> : null}
+          {error ? <span key="error">{error}</span> : null}
         </div>
         {countText ? (
           <span id={countId} className={styles.count}>
@@ -339,7 +338,6 @@ export function DigitBox({
           </span>
         ) : null}
       </div>
-      {children}
     </div>
   );
 }

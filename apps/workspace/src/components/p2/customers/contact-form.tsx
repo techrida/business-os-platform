@@ -81,6 +81,8 @@ export function ContactForm({
         </Alert>
       ) : null}
       <ContactFields
+        // A saved contact empties the form; fresh fields also drop the phone's other-country switch.
+        key={state.savedCount}
         values={values}
         onChange={(next) => setDraft({ savedCount: state.savedCount, values: next })}
         errors={state.errors}
