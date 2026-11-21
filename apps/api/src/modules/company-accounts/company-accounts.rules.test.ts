@@ -7,17 +7,18 @@ import {
   expenseAccountsViolation,
   idsToCheck,
   isAccountId,
+  retiredBankAccountViolation,
 } from './company-accounts.rules';
 
 const A = '11111111-1111-4111-8111-111111111111';
 const B = '22222222-2222-4222-8222-222222222222';
 
 describe('idsToCheck', () => {
-  it('lowercases, dedupes and drops the unchanged ids whatever their case', () => {
-    expect(idsToCheck([A.toUpperCase(), A, B], new Set([B.toUpperCase()]))).toEqual([A]);
+  it('lowercases and dedupes whatever the case', () => {
+    expect(idsToCheck([A.toUpperCase(), A, B])).toEqual([A, B]);
   });
 
-  it('checks everything when nothing is unchanged', () => {
+  it('keeps the order the ids were first seen in', () => {
     expect(idsToCheck([B, A])).toEqual([B, A]);
   });
 });
@@ -80,5 +81,17 @@ describe('bankAccountViolation', () => {
     expect(bankAccountViolation({ status: 'retired', currency: 'USD' }, 'NPR')?.code).toBe(
       'BANK_ACCOUNT_INVALID',
     );
+  });
+});
+
+describe('retiredBankAccountViolation', () => {
+  it('refuses only a retired row, with the words the submit dialog shows', () => {
+    expect(retiredBankAccountViolation({ status: 'retired' })).toEqual({
+      code: 'BANK_ACCOUNT_INVALID',
+      message: 'This bank account was retired. Create a new request from an active account.',
+    });
+    expect(retiredBankAccountViolation({ status: 'active' })).toBeNull();
+    // No row: a draft made before the account list keeps working.
+    expect(retiredBankAccountViolation(undefined)).toBeNull();
   });
 });

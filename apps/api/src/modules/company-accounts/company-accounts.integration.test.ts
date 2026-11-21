@@ -302,24 +302,19 @@ describe('CompanyAccountsLookup', () => {
     withTx(db, scopeA, systemActor('test'), run);
 
   it('applies the expense account rules', async () => {
-    const check = (ids: string[], unchanged?: Set<string>) =>
-      outcome(() => inTx((tx) => lookup.assertExpenseAccountsUsable(tx, scopeA, ids, unchanged)));
+    const check = (ids: string[]) =>
+      outcome(() => inTx((tx) => lookup.assertExpenseAccountsUsable(tx, scopeA, ids)));
     expect(await check([activeExpense, activeExpense.toUpperCase()])).toBe('ok');
     expect(await check([])).toBe('ok');
     expect(await check([activeExpense, retiredExpense])).toBe('EXPENSE_ACCOUNT_INVALID');
     expect(await check([otherExpense])).toBe('EXPENSE_ACCOUNT_INVALID');
     expect(await check([randomUUID()])).toBe('EXPENSE_ACCOUNT_INVALID');
     expect(await check(['not-a-uuid'])).toBe('EXPENSE_ACCOUNT_INVALID');
-    expect(
-      await check([activeExpense, retiredExpense], new Set([retiredExpense.toUpperCase()])),
-    ).toBe('ok');
   });
 
   it('applies the bank account rules', async () => {
-    const check = (id: string, currency: string, unchanged?: boolean) =>
-      outcome(() =>
-        inTx((tx) => lookup.assertBankAccountUsable(tx, scopeA, id, currency, unchanged)),
-      );
+    const check = (id: string, currency: string) =>
+      outcome(() => inTx((tx) => lookup.assertBankAccountUsable(tx, scopeA, id, currency)));
     expect(await check(nprBank, 'NPR')).toBe('ok');
     expect(await check(nprBank.toUpperCase(), 'NPR')).toBe('ok');
     expect(await check(nprBank, 'USD')).toBe('BANK_ACCOUNT_CURRENCY_MISMATCH');
@@ -327,7 +322,17 @@ describe('CompanyAccountsLookup', () => {
     expect(await check(otherBank, 'NPR')).toBe('BANK_ACCOUNT_INVALID');
     expect(await check(randomUUID(), 'NPR')).toBe('BANK_ACCOUNT_INVALID');
     expect(await check('garbage', 'NPR')).toBe('BANK_ACCOUNT_INVALID');
-    expect(await check(retiredBank, 'USD', true)).toBe('ok');
+  });
+
+  it('refuses at submit only an id that names a retired bank account of the entity', async () => {
+    const check = (id: string) =>
+      outcome(() => inTx((tx) => lookup.assertBankAccountNotRetired(tx, scopeA, id)));
+    expect(await check(retiredBank)).toBe('BANK_ACCOUNT_INVALID');
+    expect(await check(retiredBank.toUpperCase())).toBe('BANK_ACCOUNT_INVALID');
+    expect(await check(nprBank)).toBe('ok');
+    expect(await check(randomUUID())).toBe('ok');
+    expect(await check(otherBank)).toBe('ok');
+    expect(await check('garbage')).toBe('ok');
   });
 
   it("leaves the caller's transaction usable after a non-uuid id", async () => {
