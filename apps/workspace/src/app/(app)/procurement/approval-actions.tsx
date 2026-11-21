@@ -31,6 +31,13 @@ export function ApprovalActions({
   if (actions === undefined || actions.length === 0) return null;
   const names = new Map((people ?? []).map((p) => [p.userId.toLowerCase(), p.name] as const));
   const who = (id: string): string => names.get(id.toLowerCase()) ?? 'Person name unavailable';
+  const UUID = /[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/gi;
+  // A comment the engine wrote itself can carry a user id ("Step 2 (user <id>)"): show the name, never the id.
+  const readable = (comment: string): string =>
+    comment.replace(UUID, (id) => names.get(id.toLowerCase()) ?? 'an approver');
+  // The engine writes these itself, so no one is named as having acted.
+  const automatic = (a: { action: string; actorUserId: string }): boolean =>
+    a.actorUserId === 'system' || a.action === 'block';
   return (
     <section className={styles.wrap} aria-labelledby="approval-actions-title">
       <h3 id="approval-actions-title" className={styles.title}>
@@ -42,14 +49,14 @@ export function ApprovalActions({
             <div className={styles.head}>
               <span className={styles.name}>{ACTION_LABEL[a.action] ?? a.action}</span>
               <span className={styles.meta}>
-                {a.actorUserId === 'system' ? 'automatically' : `by ${who(a.actorUserId)}`}
+                {automatic(a) ? 'automatically' : `by ${who(a.actorUserId)}`}
                 {a.onBehalfOfUserId ? ` for ${who(a.onBehalfOfUserId)}` : ''}
               </span>
               <time className={styles.meta} dateTime={a.createdAt}>
                 {when(a.createdAt)}
               </time>
             </div>
-            {a.comment ? <p className={styles.comment}>{a.comment}</p> : null}
+            {a.comment ? <p className={styles.comment}>{readable(a.comment)}</p> : null}
           </li>
         ))}
       </ol>

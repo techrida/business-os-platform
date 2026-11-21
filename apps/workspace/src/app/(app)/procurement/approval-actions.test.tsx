@@ -68,6 +68,27 @@ describe('ApprovalActions', () => {
     expect(html).not.toContain('Person name unavailable');
   });
 
+  it('names no one for a block, and never prints an id inside a comment', () => {
+    const html = renderToStaticMarkup(
+      <ApprovalActions
+        actions={[
+          {
+            action: 'block',
+            actorUserId: ADA,
+            onBehalfOfUserId: null,
+            comment: `Step 2 (user ${BEN}) cannot approve`,
+            createdAt: '2026-11-21T06:00:00.000Z',
+          },
+        ]}
+        people={[{ userId: ADA, name: 'Ada Lovelace' }]}
+      />,
+    );
+    expect(html).toContain('automatically');
+    expect(html).not.toContain('by Ada Lovelace');
+    expect(html).not.toContain(BEN);
+    expect(html).toContain('Step 2 (user an approver) cannot approve');
+  });
+
   it('draws nothing before the first action', () => {
     expect(renderToStaticMarkup(<ApprovalActions actions={[]} people={[]} />)).toBe('');
   });

@@ -292,7 +292,10 @@ export default async function InvoiceDetailPage({ params }: { params: Promise<{ 
             dateFormat={format.dateFormat}
           />
           <LineBreakdown detail={detail} numberSystems={numberSystems} />
-          {approval !== null ? <ApprovalHistory approval={approval} /> : null}
+          {/* A draft sent back to draft keeps its earlier request id; its history would read as an approval it no longer has. */}
+          {approval !== null && invoice.status !== 'draft' ? (
+            <ApprovalHistory approval={approval} />
+          ) : null}
           {gates.notes ? (
             <Panel as="aside" title="Adjustments">
               <div className={styles.noteSlot} data-slot="invoice-note-actions">
