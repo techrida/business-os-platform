@@ -49,7 +49,9 @@ beforeEach(() => {
   Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true });
   vi.clearAllMocks();
   mocks.uploads = [];
-  fetchMock = vi.fn(() => Promise.resolve(new Response(null, { status: 204 })));
+  fetchMock = vi.fn<(url: string, init?: RequestInit) => Promise<Response>>(() =>
+    Promise.resolve(new Response(null, { status: 204 })),
+  );
   vi.stubGlobal('fetch', fetchMock);
   vi.stubGlobal(
     'ResizeObserver',

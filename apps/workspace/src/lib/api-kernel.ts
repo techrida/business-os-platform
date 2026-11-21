@@ -320,6 +320,12 @@ function contentPath(created: Pick<CreatedDocument, 'documentId' | 'versionId' |
   return created.uploadPath;
 }
 
+interface ContentUpload {
+  body: ReadableStream<Uint8Array>;
+  contentLength: number;
+  contentType: string;
+}
+
 /**
  * Step 2 of an upload: stream the bytes. The API reads the raw request body and requires
  * `Content-Length` (411 without it), so the browser's length is forwarded and the body is never
@@ -331,12 +337,6 @@ export async function uploadDocumentContent(
   upload: ContentUpload,
 ): Promise<z.infer<typeof DocumentVersionDtoSchema>> {
   return await streamContent(session, contentPath(created), upload);
-}
-
-interface ContentUpload {
-  body: ReadableStream<Uint8Array>;
-  contentLength: number;
-  contentType: string;
 }
 
 async function streamContent(
