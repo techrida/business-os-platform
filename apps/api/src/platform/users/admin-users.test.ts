@@ -199,6 +199,7 @@ function asAdmin<T>(permissions: Permission[], fn: () => Promise<T>): Promise<T>
   });
 }
 
+let db: ReturnType<typeof fakeDb>;
 let store: FakeUsersStore;
 let liveStore: FakeUsersStore;
 let zitadel: RepairableZitadel;
@@ -209,7 +210,7 @@ let audit: AuditService;
 beforeEach(() => {
   store = new FakeUsersStore();
   zitadel = new RepairableZitadel();
-  const db = fakeDb();
+  db = fakeDb();
   const client = zitadel as never;
   const mirror = new UserMirror(db, store, client, fakeQueue() as unknown as Queue<UsersSyncData>);
   authz = new TestAuthz(db, {} as RoleCache);
@@ -237,12 +238,11 @@ beforeEach(() => {
   liveAdminGrants = new Map();
   const roleCache = { grantsFor: () => Promise.resolve(liveAdminGrants) } as unknown as RoleCache;
   controller = new AdminUsersController(
-    db,
     new UsersService(mirror, store, client, db, audit),
     authz,
     liveStore,
     roleCache,
-    new UserStatusService(store, client, audit),
+    new UserStatusService(db, store, client, audit),
   );
 });
 
@@ -1051,18 +1051,32 @@ describe('POST /v1/admin/users/:id/deactivate, /reactivate, /lock and /unlock (F
     });
   });
 
-  it('writes the admin lock here before it locks the person in ZITADEL, so a lost write never leaves a lock the app did not record (P2-1)', async () => {
+  it('calls ZITADEL outside any transaction before writing the admin lock, and compensates on DB failure (FU1)', async () => {
     addUser(STAFF);
+    let openWhenZitadelLocked: number | undefined;
     let storedWhenZitadelLocked: unknown;
     const lockUser = zitadel.lockUser.bind(zitadel);
     vi.spyOn(zitadel, 'lockUser').mockImplementation((id: string) => {
+      openWhenZitadelLocked = db.open;
       storedWhenZitadelLocked = store.users.find((u) => u.id === STAFF)?.lockReason;
       return lockUser(id);
     });
 
     expect(await act('lock', STAFF)).toBeNull();
+    expect(openWhenZitadelLocked).toBe(0);
+    expect(storedWhenZitadelLocked).toBeNull();
+    expect(store.users.find((u) => u.id === STAFF)?.lockReason).toBe('admin');
 
-    expect(storedWhenZitadelLocked).toBe('admin');
+    // When Phase (C) fails after ZITADEL unlocked, compensation locks ZITADEL again.
+    vi.spyOn(store, 'updateUser').mockRejectedValueOnce(new Error('db write failed'));
+    const error = await act('unlock', STAFF);
+    expect(error).toBeInstanceOf(Error);
+    expect(zitadel.statusCalls).toEqual([
+      `lock:z-${STAFF}`,
+      `unlock:z-${STAFF}`,
+      `lock:z-${STAFF}`,
+    ]);
+    expect(zitadel.users.get(`z-${STAFF}`)).toMatchObject({ status: 'inactive', locked: true });
   });
 
   it.each(['admin', 'failed_sign_ins'] as const)(
@@ -1089,13 +1103,17 @@ describe('POST /v1/admin/users/:id/deactivate, /reactivate, /lock and /unlock (F
     },
   );
 
-  it('keeps a timed lock for good: lock turns failed_sign_ins into an admin lock without calling ZITADEL (P2-2)', async () => {
+  it('keeps a timed lock for good: lock under failed_sign_ins calls ZITADEL lockUser and survives a sync that read unlocked (FU1)', async () => {
     addUser(STAFF, { status: 'inactive', lockReason: 'failed_sign_ins' });
+    // Simulate a lock-expiry worker having already unlocked the user in ZITADEL before the admin clicks Lock.
+    Object.assign(zitadel.users.get(`z-${STAFF}`)!, { status: 'active', locked: false });
+    const staleUnlocked = { ...zitadel.users.get(`z-${STAFF}`)! };
     const record = vi.spyOn(audit, 'record');
 
     expect(await act('lock', STAFF)).toBeNull();
 
-    expect(zitadel.statusCalls).toEqual([]);
+    expect(zitadel.statusCalls).toEqual([`lock:z-${STAFF}`]);
+    expect(zitadel.users.get(`z-${STAFF}`)).toMatchObject({ status: 'inactive', locked: true });
     expect(store.users.find((u) => u.id === STAFF)).toMatchObject({
       status: 'inactive',
       lockReason: 'admin',
@@ -1108,6 +1126,39 @@ describe('POST /v1/admin/users/:id/deactivate, /reactivate, /lock and /unlock (F
       before: { status: 'inactive', lockReason: 'failed_sign_ins' },
       after: { status: 'inactive', lockReason: 'admin' },
     });
+
+    // A UserMirror.syncUser pass whose first read saw ZITADEL unlocked re-reads behind the lock and sees it locked:
+    // the admin lock is NOT wiped.
+    const mirror = new UserMirror(
+      fakeDb(),
+      store,
+      zitadel as unknown as ZitadelAdminClient,
+      fakeQueue() as unknown as Queue<UsersSyncData>,
+    );
+    const realGetUser = zitadel.getUser.bind(zitadel);
+    let first = true;
+    vi.spyOn(zitadel, 'getUser').mockImplementation((id: string) => {
+      if (!first) return realGetUser(id);
+      first = false;
+      return Promise.resolve(staleUnlocked);
+    });
+    await mirror.syncUser(`z-${STAFF}`);
+    expect(store.users.find((u) => u.id === STAFF)).toMatchObject({
+      status: 'inactive',
+      lockReason: 'admin',
+      lockedUntil: null,
+    });
+  });
+
+  it('fails closed (no unlock compensation) when the DB write fails after locking a failed_sign_ins user (FU1)', async () => {
+    addUser(STAFF, { status: 'inactive', lockReason: 'failed_sign_ins' });
+    vi.spyOn(store, 'updateUser').mockRejectedValueOnce(new Error('db write failed'));
+
+    const error = await act('lock', STAFF);
+
+    expect(error).toBeInstanceOf(Error);
+    expect(zitadel.statusCalls).toEqual([`lock:z-${STAFF}`]);
+    expect(zitadel.users.get(`z-${STAFF}`)).toMatchObject({ status: 'inactive', locked: true });
   });
 
   it('refuses to lock someone already under an admin lock', async () => {
@@ -1143,6 +1194,45 @@ describe('POST /v1/admin/users/:id/deactivate, /reactivate, /lock and /unlock (F
       });
     },
   );
+
+  it('compensates a deactivated-from-locked user (reactivate then lock) when the DB write fails (FU1)', async () => {
+    addUser(STAFF, { status: 'inactive', lockReason: 'admin' });
+    vi.spyOn(store, 'updateUser').mockRejectedValueOnce(new Error('db write failed'));
+
+    const error = await act('deactivate', STAFF);
+
+    expect(error).toBeInstanceOf(Error);
+    expect(zitadel.statusCalls).toEqual([
+      `unlock:z-${STAFF}`,
+      `deactivate:z-${STAFF}`,
+      `reactivate:z-${STAFF}`,
+      `lock:z-${STAFF}`,
+    ]);
+    expect(zitadel.users.get(`z-${STAFF}`)).toMatchObject({ status: 'inactive', locked: true });
+  });
+
+  it('returns success without undoing when a concurrent write already achieved the same status outcome (FU1)', async () => {
+    addUser(STAFF);
+    const lockUser = zitadel.lockUser.bind(zitadel);
+    vi.spyOn(zitadel, 'lockUser').mockImplementationOnce(async (id: string) => {
+      await lockUser(id);
+      const row = store.users.find((u) => u.id === STAFF)!;
+      await store.updateUser({} as never, STAFF, {
+        email: row.email,
+        displayName: row.displayName,
+        status: 'inactive',
+        lock: { reason: 'admin', lockedAt: new Date(), until: null },
+      });
+    });
+
+    expect(await act('lock', STAFF)).toBeNull();
+    // Only the original lock call; no unlock compensation.
+    expect(zitadel.statusCalls).toEqual([`lock:z-${STAFF}`]);
+    expect(store.users.find((u) => u.id === STAFF)).toMatchObject({
+      status: 'inactive',
+      lockReason: 'admin',
+    });
+  });
 
   it('locks a person again in ZITADEL when deactivating them fails after the unlock, and changes nothing here', async () => {
     addUser(STAFF, { status: 'inactive', lockReason: 'admin' });
@@ -1654,9 +1744,7 @@ describe('SqlUsersStore against migration 0013 (ADR 0027: tenant-scoped users)',
     );
     // Sita is a Founder in Alpha but not in Beta, so Kiran is Beta's only effective Founder.
     await expect(
-      withTx(db, scope, systemActor('test'), (tx) =>
-        mirror.setRoles(tx, ids.kiran, ['management']),
-      ),
+      mirror.setRoles(scope, systemActor('test'), ids.kiran, ['management']),
     ).rejects.toBeInstanceOf(ConflictException);
     expect(zitadel.setGrantsCalls).toEqual([]);
     expect(await sqlStore.rolesOf(db, tenantId, ids.kiran)).toEqual(['founder']);
@@ -1668,9 +1756,7 @@ describe('SqlUsersStore against migration 0013 (ADR 0027: tenant-scoped users)',
             WHERE tenant_id = ${tenantId} AND organization_id = ${entityB} AND user_id = ${ids.sita}`,
       ),
     );
-    await withTx(db, scope, systemActor('test'), (tx) =>
-      mirror.setRoles(tx, ids.kiran, ['management']),
-    );
+    await mirror.setRoles(scope, systemActor('test'), ids.kiran, ['management']);
     expect(await sqlStore.rolesOf(db, tenantId, ids.kiran)).toEqual(['management']);
   }, 60_000);
 
