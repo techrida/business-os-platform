@@ -306,6 +306,15 @@ describe('GET /v1/customers/payment-terms', () => {
     expect(body.map((t) => t.label)).toEqual(['Net 15 days', 'Net 30 days']);
   });
 
+  it('serves an editor whose customer.read is limited to their own customers', async () => {
+    current.grants = new Map([
+      ['customer.read', 'own'],
+      ['customer.write', 'own'],
+    ]);
+    const res = await terms();
+    expect(res.status, JSON.stringify(res.body)).toBe(200);
+  });
+
   it('serves an editor of customer terms who does not hold quotation.read', async () => {
     asGrants('customer.read', 'customer.write');
     const res = await terms();
