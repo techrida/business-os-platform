@@ -2,6 +2,7 @@ import type { CustomerInvoiceView, PortalDisplay } from '@bos/contracts';
 import { amountInWords, bsLongOfDay, formatBsLong } from '@bos/locale';
 
 import { Alert } from '@/components/portal/alert';
+import { PdfNotReady } from '@/components/portal/pdf-not-ready';
 import { Badge } from '@/components/ui/badge';
 import { LinkButton } from '@/components/ui/button';
 import { ViewDocument } from '@/components/ui/document-viewer';
@@ -86,7 +87,7 @@ export function InvoiceView({
                 withDownload
               />
             ) : (
-              <p className={styles.muted}>The PDF copy is being prepared.</p>
+              <PdfNotReady failed={view.renderFailed === true} className={styles.muted} />
             )}
             {settlement && canPay(view.kind, settlement.settlement) ? (
               <LinkButton size="small" href={`/payments/new?invoice=${view.id}`}>

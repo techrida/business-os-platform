@@ -12,7 +12,12 @@ import {
   PortalDisplaySchema,
   type PortalDisplay,
 } from '@bos/contracts';
-import { ForbiddenException, NotFoundException, ServiceUnavailableException } from '@nestjs/common';
+import {
+  ForbiddenException,
+  HttpException,
+  NotFoundException,
+  ServiceUnavailableException,
+} from '@nestjs/common';
 import { describe, expect, it, vi } from 'vitest';
 
 import type { Principal } from '../../platform/authz/principal';
@@ -111,6 +116,7 @@ function sourceOf(s: Seed): PortalViewSource {
     taxSummary: [{ label: 'VAT', rate: '13.0000', base: '540000.00', tax: '70200.00' }],
     issuerLegalName: 'Techrida Pvt. Ltd.',
     documentStyle: s.documentStyle ?? null,
+    renderAttempts: 0,
   };
 }
 
@@ -167,6 +173,7 @@ function fakeStore(seeds: Seed[]) {
               status: s.status,
               rejectionSource: s.rejectionSource ?? null,
               renderState: s.rendered === true ? ('rendered' as const) : ('none' as const),
+              renderAttempts: 0,
               renderedDocumentId: s.rendered === true ? DOC : null,
             },
       );
@@ -741,17 +748,24 @@ describe('PortalService.quotationPdfLink', () => {
     expect(documents.issueLinkForOwner).not.toHaveBeenCalled();
   });
 
-  it('answers 404 when nothing is rendered, or the rendered document is not clean', async () => {
-    const notRendered = setup([SENT]);
-    await expect(notRendered.service.quotationPdfLink(SENT.versionId)).rejects.toBeInstanceOf(
-      NotFoundException,
-    );
-    expect(notRendered.documents.issueLinkForOwner).not.toHaveBeenCalled();
-    for (const status of ['quarantined', 'scanning', 'infected', 'failed', 'rejected']) {
-      const { service, documents } = setup([RENDERED], { docStatus: status });
-      await expect(service.quotationPdfLink(SENT.versionId), status).rejects.toBeInstanceOf(
-        NotFoundException,
+  it('answers 409 while the PDF is being prepared and 424 once it will not come, without a link', async () => {
+    const statusOf = async (promise: Promise<unknown>) =>
+      promise.then(
+        () => 200,
+        (error: unknown) => (error instanceof HttpException ? error.getStatus() : -1),
       );
+    const notRendered = setup([SENT]);
+    expect(await statusOf(notRendered.service.quotationPdfLink(SENT.versionId))).toBe(409);
+    expect(notRendered.documents.issueLinkForOwner).not.toHaveBeenCalled();
+    for (const [status, expected] of [
+      ['awaiting_content', 409],
+      ['quarantined', 409],
+      ['infected', 424],
+      ['scan_failed', 424],
+      ['rejected', 424],
+    ] as const) {
+      const { service, documents } = setup([RENDERED], { docStatus: status });
+      expect(await statusOf(service.quotationPdfLink(SENT.versionId)), status).toBe(expected);
       expect(documents.issueLinkForOwner, status).not.toHaveBeenCalled();
     }
   });

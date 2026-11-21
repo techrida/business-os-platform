@@ -53,13 +53,20 @@ import styles from '../orders.module.css';
 export const metadata: Metadata = { title: 'Purchase order · Business OS' };
 export const dynamic = 'force-dynamic';
 
+/**
+ * A part of the order the API keeps from this reader: an approver who opens the order they approve sees its details
+ * and lines only, and gets a 403 (no order grant) or a 404 (a grant that does not reach the order) for the rest. The
+ * order itself loaded, so the part is left out quietly rather than shown as a failure.
+ */
+function closedToReader(result: PromiseSettledResult<unknown>): boolean {
+  if (result.status === 'fulfilled') return false;
+  const { status } = poFailure(result.reason, 'load');
+  return status === 403 || status === 404;
+}
+
 function PanelProblem({ what, err, retry }: { what: string; err: unknown; retry: string }) {
   const f = poFailure(err, 'load');
-  return f.status === 403 ? (
-    <Alert tone="info" role="status" title={`Your roles do not include ${what}`}>
-      Ask an administrator if you need to see the {what}.
-    </Alert>
-  ) : (
+  return (
     <Alert
       tone="error"
       role="alert"
@@ -191,7 +198,7 @@ function Lines({
           </tbody>
         </Table>
       )}
-      {progress.status === 'rejected' ? (
+      {progress.status === 'rejected' && !closedToReader(progress) ? (
         <PanelProblem
           what="receipt progress"
           err={progress.reason as unknown}
@@ -450,7 +457,7 @@ export default async function PurchaseOrderPage({ params }: { params: Promise<{ 
           status={<Badge tone={status.tone}>{status.text}</Badge>}
           actions={
             <div className={styles.headActions}>
-              {po.status !== 'draft' ? (
+              {po.status !== 'draft' && !closedToReader(versions) ? (
                 <LinkButton
                   href={`/procurement/receipts?po=${encodeURIComponent(po.id)}`}
                   variant="secondary"
@@ -535,13 +542,15 @@ export default async function PurchaseOrderPage({ params }: { params: Promise<{ 
       </div>
 
       <Lines numberSystems={numberSystems} po={po} progress={progress} />
-      <Versions
-        numberSystems={numberSystems}
-        po={po}
-        result={versions}
-        here={here}
-        mayRetryPdf={grants.issue}
-      />
+      {closedToReader(versions) ? null : (
+        <Versions
+          numberSystems={numberSystems}
+          po={po}
+          result={versions}
+          here={here}
+          mayRetryPdf={grants.issue}
+        />
+      )}
     </Page>
   );
 }

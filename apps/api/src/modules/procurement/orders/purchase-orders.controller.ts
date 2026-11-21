@@ -2,7 +2,8 @@
 // procurement.ts), every rule in PurchaseOrdersService. Every write needs an Idempotency-Key and procurement.po.issue
 // at route level. The reads (list, detail, versions) are also open read-only to whoever enters or reads vendor bills or
 // receives goods (F1-Q52): they carry @AnyAuthenticated and the service decides (po-read-access.ts), 403 without any
-// of those grants. Another entity's PO is a 404. Shares the `v1/procurement/purchase-orders` prefix with
+// of those grants, except the detail, which an approver of an approval about the order also opens (R4f Q1 b) and
+// which is a 404 for other active staff. Another entity's PO is a 404. Shares the `v1/procurement/purchase-orders` prefix with
 // the receipts unit's PurchaseOrderProgressController (GET :id/progress), which this class does not touch.
 import {
   Body,
@@ -58,7 +59,7 @@ export class PurchaseOrdersController {
     });
   }
 
-  /** 404 outside the acting entity. */
+  /** 404 outside the acting entity. Also open, read-only, to an approver of an approval about the order. */
   @Get(':id')
   @AnyAuthenticated()
   get(@Param('id', ParseUUIDPipe) id: string): Promise<PurchaseOrderDto> {

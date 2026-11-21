@@ -99,6 +99,40 @@ describe('InvoiceView', () => {
     expect(none).toContain('being prepared');
   });
 
+  it('says the PDF is being prepared, is delayed after a failed render, or offers it when ready', () => {
+    const pending = renderToStaticMarkup(
+      <InvoiceView
+        view={sampleInvoice({ file: null, renderFailed: false })}
+        settlement={sampleSettlement()}
+      />,
+    );
+    expect(pending).toContain('The PDF copy is being prepared.');
+    expect(pending).not.toContain('delayed');
+    // An older payload without the flag reads as pending.
+    const { renderFailed: _r, ...older } = sampleInvoice({ file: null });
+    expect(
+      renderToStaticMarkup(<InvoiceView view={older} settlement={sampleSettlement()} />),
+    ).toContain('The PDF copy is being prepared.');
+
+    const failed = renderToStaticMarkup(
+      <InvoiceView
+        view={sampleInvoice({ file: null, renderFailed: true })}
+        settlement={sampleSettlement()}
+      />,
+    );
+    expect(failed).toContain('This PDF is delayed. Our team has been told.');
+    expect(failed).not.toContain('being prepared');
+    expect(failed).not.toMatch(/retry|try again/i);
+    expect(failed).not.toContain('View PDF');
+
+    const ready = renderToStaticMarkup(
+      <InvoiceView view={sampleInvoice({ renderFailed: true })} settlement={sampleSettlement()} />,
+    );
+    expect(ready).toContain('View PDF');
+    expect(ready).not.toContain('delayed');
+    expect(ready).not.toContain('being prepared');
+  });
+
   it('offers payment only while something is owed, and never on a credit note', () => {
     const owed = renderToStaticMarkup(
       <InvoiceView view={sampleInvoice()} settlement={sampleSettlement()} />,
