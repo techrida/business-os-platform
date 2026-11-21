@@ -147,7 +147,11 @@ async function qualifiedLeadWithFollowUp() {
     contactName: 'Sita Rai',
     currency: 'NPR',
   });
-  await leadsService.changeStage(lead.id, { stage: 'contacted', expectedVersion: 1 });
+  await leadsService.changeStage(lead.id, {
+    stage: 'contacted',
+    expectedVersion: 1,
+    contactActivity: { kind: 'call', body: 'Intro call' },
+  });
   await leadsService.changeStage(lead.id, { stage: 'qualified', expectedVersion: 2 });
   const followUp = await followUps.create({
     kind: 'call',

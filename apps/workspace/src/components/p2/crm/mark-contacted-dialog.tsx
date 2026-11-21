@@ -1,6 +1,14 @@
 'use client';
 
-import { useEffect, useId, useRef, useState, useTransition, type FormEvent } from 'react';
+import {
+  useEffect,
+  useId,
+  useRef,
+  useState,
+  useTransition,
+  type ComponentProps,
+  type FormEvent,
+} from 'react';
 
 import { Button } from '@/components/ui/button';
 import { Dialog, DialogClose } from '@/components/ui/dialog';
@@ -11,10 +19,10 @@ import { ActivityTypeButtons } from './activity-type-buttons';
 import styles from './crm.module.css';
 import type { MoveAction, MoveState } from './types';
 
-const CONTACT_KINDS = ['call', 'email'] as const;
+const CONTACT_KINDS = ['call', 'email', 'meeting'] as const;
 type ContactKind = (typeof CONTACT_KINDS)[number];
 
-const BODY_REQUIRED = 'Add a note about the call or email, up to 10,000 characters.';
+const BODY_REQUIRED = 'Add a note about the call, email or meeting, up to 10,000 characters.';
 const SUBJECT_TOO_LONG = 'Say what the contact was about, up to 200 characters.';
 
 const text = (data: FormData, name: string): string => {
@@ -30,16 +38,48 @@ export interface MarkContactedDialogProps {
   number: string;
   /** The version the page shows; a stale one comes back as 409 and offers a reload. */
   version: number;
+  /** The trigger's text. Defaults to "Mark contacted". */
+  triggerLabel?: string | undefined;
+  /** The trigger's button look. Defaults to primary. */
+  triggerVariant?: ComponentProps<typeof Button>['variant'];
+  /** The stage the lead moves from, named in the description. Defaults to "New". */
+  fromLabel?: string | undefined;
+  /** The dialog heading. Defaults to "Mark this lead contacted?". */
+  title?: string | undefined;
+  /** The submit button's text. Defaults to "Mark contacted". */
+  confirmLabel?: string | undefined;
+  /** Controlled open state. When given, no trigger renders: the caller opens the dialog. */
+  open?: boolean | undefined;
+  /** Called whenever the dialog opens or closes, including the close after a successful move. */
+  onOpenChange?: ((open: boolean) => void) | undefined;
+  /** Called after a successful move with the stage label moved to. */
+  onMoved?: ((movedTo: string) => void) | undefined;
 }
 
 /**
- * The Mark contacted header action for a New lead (D48): logs the initial call or email and moves
+ * The Mark contacted action for a lead (D48): logs the initial call, email or meeting and moves
  * the lead to Contacted in one request. Actions sit in the fixed footer (UIP-DLG-001); success
  * closes with a toast (UIP-FEED-001); a stale page (409) toasts with Reload and keeps what was typed.
+ * Pass `open` and `onOpenChange` to open it from elsewhere (a board drop) without its own trigger.
  */
-export function MarkContactedDialog({ action, id, number, version }: MarkContactedDialogProps) {
+export function MarkContactedDialog({
+  action,
+  id,
+  number,
+  version,
+  triggerLabel = 'Mark contacted',
+  triggerVariant = 'primary',
+  fromLabel = 'New',
+  title = 'Mark this lead contacted?',
+  confirmLabel = 'Mark contacted',
+  open: openProp,
+  onOpenChange,
+  onMoved,
+}: MarkContactedDialogProps) {
   const formId = useId();
-  const [open, setOpenState] = useState(false);
+  const controlled = openProp !== undefined;
+  const [innerOpen, setInnerOpen] = useState(false);
+  const open = controlled ? openProp : innerOpen;
   const [kind, setKind] = useState<ContactKind>('call');
   const [fieldErrors, setFieldErrors] = useState<Partial<Record<string, string>>>({});
   const [pending, startTransition] = useTransition();
@@ -53,13 +93,22 @@ export function MarkContactedDialog({ action, id, number, version }: MarkContact
     if (refusals > 0) formRef.current?.querySelector<HTMLElement>('[aria-invalid="true"]')?.focus();
   }, [refusals]);
 
-  function setOpen(next: boolean) {
-    if (next) {
+  // Every close clears the form (whoever closed it), so the next open, by trigger or by the
+  // caller's `open`, starts on Call with nothing typed and no errors. Adjusted during render when
+  // `open` changes, as React recommends over an effect.
+  const [wasOpen, setWasOpen] = useState(open);
+  if (wasOpen !== open) {
+    setWasOpen(open);
+    if (!open) {
       setKind('call');
       setFieldErrors({});
       setRound((r) => r + 1);
     }
-    setOpenState(next);
+  }
+
+  function setOpen(next: boolean) {
+    if (!controlled) setInnerOpen(next);
+    onOpenChange?.(next);
   }
 
   function onSubmit(event: FormEvent<HTMLFormElement>) {
@@ -83,8 +132,10 @@ export function MarkContactedDialog({ action, id, number, version }: MarkContact
     startTransition(async () => {
       const result: MoveState = await action({}, data);
       if (result.ok) {
-        setOpenState(false);
-        toast.success(`Moved to ${result.movedTo ?? 'Contacted'}.`);
+        const movedTo = result.movedTo ?? 'Contacted';
+        setOpen(false);
+        toast.success(`Moved to ${movedTo}.`);
+        onMoved?.(movedTo);
         return;
       }
       setFieldErrors(result.fieldErrors ?? {});
@@ -104,11 +155,11 @@ export function MarkContactedDialog({ action, id, number, version }: MarkContact
 
   return (
     <Dialog
-      trigger={<Button variant="primary">Mark contacted</Button>}
+      trigger={controlled ? undefined : <Button variant={triggerVariant}>{triggerLabel}</Button>}
       open={open}
       onOpenChange={setOpen}
-      title="Mark this lead contacted?"
-      description={`${number} will move from New to Contacted after you log your call or email.`}
+      title={title}
+      description={`${number} will move from ${fromLabel} to Contacted after you log your call, email or meeting.`}
       locked={pending}
       closeOnOutsideClick={false}
       footer={
@@ -119,7 +170,7 @@ export function MarkContactedDialog({ action, id, number, version }: MarkContact
             </Button>
           </DialogClose>
           <Button type="submit" form={formId} disabled={pending} aria-busy={pending || undefined}>
-            {pending ? 'Saving' : 'Mark contacted'}
+            {pending ? 'Saving' : confirmLabel}
           </Button>
         </>
       }
@@ -146,11 +197,7 @@ export function MarkContactedDialog({ action, id, number, version }: MarkContact
             : {})}
           disabled={pending}
         />
-        <Field
-          label="Subject"
-          hint="Optional. Defaults to Initial call or Initial email."
-          error={fieldErrors['contactSubject']}
-        >
+        <Field label="Subject" hint="Optional." error={fieldErrors['contactSubject']}>
           {(control) => <Input name="contactSubject" maxLength={200} {...control} />}
         </Field>
         <Field label="Note" error={fieldErrors['contactBody']}>

@@ -11,6 +11,8 @@
 // Converted is never set here: it belongs to the convert action (a later unit).
 import {
   type AssignmentContext,
+  CONTACT_ACTIVITY_KINDS,
+  type ContactActivityKind,
   type CreateLeadBody,
   LEAD_STAGES,
   type LeadDto,
@@ -31,7 +33,19 @@ import {
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
-import { and, count, desc, eq, getTableColumns, inArray, isNotNull, type SQL } from 'drizzle-orm';
+import {
+  and,
+  count,
+  desc,
+  eq,
+  getTableColumns,
+  inArray,
+  isNotNull,
+  isNull,
+  lte,
+  or,
+  type SQL,
+} from 'drizzle-orm';
 
 import { AuditService } from '../../platform/audit/audit.service';
 import { AuthzService, scopeWhereFor } from '../../platform/authz/authz.service';
@@ -115,6 +129,17 @@ const SEARCH_COLUMNS = [
   leads.phoneE164,
   leads.campaign,
 ];
+
+/** FR-6 (D48): the 409 a move to contacted gets when the lead has no contact yet and the request logs none. */
+export const CONTACT_REQUIRED_MESSAGE =
+  'Log a call, email or meeting before moving this lead to Contacted.';
+
+/** The subject a contact logged with a move to contacted gets when the caller types none. */
+const INITIAL_CONTACT_SUBJECT: Record<ContactActivityKind, string> = {
+  call: 'Initial call',
+  email: 'Initial email',
+  meeting: 'Initial meeting',
+};
 
 function refusalToException(kind: LeadStageRefusal, message: string): Error {
   switch (kind) {
@@ -378,8 +403,9 @@ export class LeadsService {
   /**
    * A user's move along LEAD_TRANSITIONS. Converted is refused (the schema already keeps it out of the body, and
    * the planner refuses it for a caller that skips the controller). A manager, head or founder with write scope
-   * may also take the manager edge (reopening a lost lead). Moving a new lead to contacted may atomically log an
-   * initial call or email activity (D48).
+   * may also take the manager edge (reopening a lost lead). Any move to contacted needs a contact
+   * (FR-6, D48): a call, email or meeting logged atomically in the same request, or one already done on the lead;
+   * otherwise 409 `contact_activity_required`.
    */
   async changeStage(id: string, body: LeadStageChangeBody): Promise<LeadDto> {
     const { scope, actor, principal } = this.caller.current();
@@ -422,19 +448,24 @@ export class LeadsService {
       });
       if (!plan.ok) throw refusalToException(plan.kind, plan.message);
 
-      if (body.contactActivity !== undefined) {
-        if (body.stage !== 'contacted') {
-          throw new BadRequestException({
-            code: 'bad_request',
-            message: 'A contact activity can only be logged when moving a lead to contacted',
-          });
-        }
-        if (row.stage !== 'new') {
-          throw new ConflictException({
-            code: 'conflict',
-            message: 'A contact activity can only be logged when moving a new lead to contacted',
-          });
-        }
+      if (body.contactActivity !== undefined && body.stage !== 'contacted') {
+        throw new BadRequestException({
+          code: 'bad_request',
+          message: 'A contact activity can only be logged when moving a lead to contacted',
+        });
+      }
+      // FR-6 (D48): every move to contacted (from new, a resume from on_hold, a manager's reopen of a lost lead) needs
+      // a contact: logged in this request, or already done on the lead. Read after the row lock, so two racing moves
+      // see the same answer and the version check lets only one through.
+      if (
+        body.stage === 'contacted' &&
+        body.contactActivity === undefined &&
+        !(await this.hasDoneContact(tx, id))
+      ) {
+        throw new ConflictException({
+          code: 'contact_activity_required',
+          message: CONTACT_REQUIRED_MESSAGE,
+        });
       }
 
       const now = new Date();
@@ -454,6 +485,7 @@ export class LeadsService {
           reason: plan.set.stageReason,
           note: plan.set.stageNote,
           lostReasonId,
+          ...(body.contactActivity !== undefined ? { loggedContact: true } : {}),
           ...(row.stage === 'on_hold' || updated.stage === 'on_hold'
             ? { heldFromStage: row.heldFromStage ?? plan.set.heldFromStage }
             : {}),
@@ -466,8 +498,7 @@ export class LeadsService {
             ...scope,
             kind: body.contactActivity.kind,
             subject:
-              body.contactActivity.subject ??
-              (body.contactActivity.kind === 'call' ? 'Initial call' : 'Initial email'),
+              body.contactActivity.subject ?? INITIAL_CONTACT_SUBJECT[body.contactActivity.kind],
             body: body.contactActivity.body,
             leadId: id,
             createdByUserId: principal.userId,
@@ -832,6 +863,30 @@ export class LeadsService {
     row: Pick<LeadRow, 'tenantId' | 'ownerUserId'>,
   ): Promise<string | null> {
     return nameIn(await personNameMap(q, row.tenantId, [row.ownerUserId]), row.ownerUserId);
+  }
+
+  /**
+   * Whether the lead already has a contact that happened (FR-6): a call, email or meeting that is not cancelled and
+   * is either completed, or was logged (no due time) at or before now. A planned follow-up, even an overdue one, a
+   * note and a stage_change row do not count.
+   */
+  private async hasDoneContact(tx: DbTransaction, id: string): Promise<boolean> {
+    const [row] = await tx
+      .select({ id: activities.id })
+      .from(activities)
+      .where(
+        and(
+          eq(activities.leadId, id),
+          inArray(activities.kind, [...CONTACT_ACTIVITY_KINDS]),
+          isNull(activities.cancelledAt),
+          or(
+            isNotNull(activities.completedAt),
+            and(isNull(activities.dueAt), lte(activities.occurredAt, new Date())),
+          ),
+        ),
+      )
+      .limit(1);
+    return row !== undefined;
   }
 
   /** The derived next follow-up of one lead (see toLeadDto), read inside the caller's transaction. */

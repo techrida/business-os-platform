@@ -336,7 +336,7 @@ describe('stage change bodies', () => {
     ).toBe(false);
   });
 
-  it('accepts contactActivity only on contacted and only for call or email', () => {
+  it('accepts contactActivity only on contacted and only for call, email or meeting', () => {
     expect(
       LeadStageChangeBodySchema.safeParse({
         stage: 'contacted',
@@ -349,6 +349,13 @@ describe('stage change bodies', () => {
         stage: 'contacted',
         expectedVersion: 1,
         contactActivity: { kind: 'email', subject: 'Intro', body: 'Sent brochure' },
+      }).success,
+    ).toBe(true);
+    expect(
+      LeadStageChangeBodySchema.safeParse({
+        stage: 'contacted',
+        expectedVersion: 1,
+        contactActivity: { kind: 'meeting', body: 'Met at their office' },
       }).success,
     ).toBe(true);
 
@@ -374,7 +381,7 @@ describe('stage change bodies', () => {
       }
     }
 
-    for (const badKind of ['note', 'meeting'] as const) {
+    for (const badKind of ['note', 'stage_change', 'collection_call'] as const) {
       expect(
         LeadStageChangeBodySchema.safeParse({
           stage: 'contacted',

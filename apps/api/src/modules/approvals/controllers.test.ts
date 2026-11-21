@@ -389,7 +389,13 @@ describe('admin controllers', () => {
     expect(admin.createWorkflow).toHaveBeenCalledWith({ key: 'test_memo', name: 'Memo', spec: {} });
     expect(admin.addVersion).toHaveBeenCalledWith('test_memo', { a: 1 });
     // Publishing names its live re-check of the publisher's grant (run inside the publish transaction).
-    expect(admin.publish).toHaveBeenCalledWith('test_memo', 2, expect.any(Function));
+    expect(admin.publish).toHaveBeenCalledWith('test_memo', 2, expect.any(Function), {});
+    // The small-team rule's reason (F1-Q11 a) is trimmed and passed on; unknown body fields are refused.
+    await c.publish('test_memo', 3, { reason: '  Only Founder  ' });
+    expect(admin.publish).toHaveBeenLastCalledWith('test_memo', 3, expect.any(Function), {
+      reason: 'Only Founder',
+    });
+    expect(() => c.publish('test_memo', 3, { soleEligible: true })).toThrow(BadRequestException);
     expect(() => c.create({ key: 'Bad Key', name: 'x', spec: {} })).toThrow(BadRequestException);
     expect(Reflect.getMetadata(CAN_KEY, AdminWorkflowsController.prototype.list)).toBe(
       'approvals.definitions.read',

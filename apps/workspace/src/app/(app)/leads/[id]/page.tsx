@@ -184,6 +184,23 @@ function leadTimeline(lead: LeadDto, history: readonly ActivityDto[] | null): Ti
   return steps;
 }
 
+const CONTACT_KINDS: ReadonlySet<string> = new Set(['call', 'email', 'meeting']);
+
+/**
+ * Whether the loaded logged activities already hold a done call, email or meeting, the contact the
+ * server needs before any move to Contacted (FR-6, D48). A list that did not load counts as no.
+ */
+function hasLoggedContact(logged: readonly ActivityDto[] | null): boolean {
+  const now = Date.now();
+  // The server's own test: completed, or never scheduled and already occurred (a future-dated one does not count).
+  return (logged ?? []).some(
+    (item) =>
+      CONTACT_KINDS.has(item.kind) &&
+      item.cancelledAt === null &&
+      (item.completedAt !== null || (item.dueAt === null && Date.parse(item.occurredAt) <= now)),
+  );
+}
+
 function leadStageMessage(
   stage: LeadDto['stage'],
   canEdit: boolean,
@@ -192,7 +209,7 @@ function leadStageMessage(
 ): string {
   if (!canEdit) return 'You have read-only access to this lead.';
   if (stage === 'new') {
-    return 'Log a call or email with Mark contacted to move this lead to Contacted.';
+    return 'Log a call, email or meeting with Mark contacted to move this lead to Contacted.';
   }
   if (stage === 'contacted') {
     return 'Use the header actions to qualify this lead, put it on hold, or mark it lost.';
@@ -272,6 +289,8 @@ export default async function LeadPage({ params }: { params: Promise<{ id: strin
   const resume = resumeMove(lead.stage, moves);
   const canResume = resume !== null;
   const canReopen = lead.stage === 'lost' && hasMove('contacted');
+  // Resume and Reopen to Contacted log the contact in the same step unless one is already done (FR-6, D48).
+  const needsContact = !hasLoggedContact(logged);
   // Convert is its own action, not a stage move: the qualified lead's editors get it in the header.
   const canConvert = lead.stage === 'qualified' && canEdit;
   const canPutOnHold = hasMove('on_hold');
@@ -340,7 +359,18 @@ export default async function LeadPage({ params }: { params: Promise<{ id: strin
                   }}
                 />
               ) : null}
-              {resume ? (
+              {resume && resume.stage === 'contacted' && needsContact ? (
+                <MarkContactedDialog
+                  action={moveLeadStageAction}
+                  id={lead.id}
+                  number={lead.number}
+                  version={lead.version}
+                  triggerLabel="Resume"
+                  fromLabel="On Hold"
+                  title="Resume this lead?"
+                  confirmLabel="Resume lead"
+                />
+              ) : resume ? (
                 <StageConfirmDialog
                   action={moveLeadStageAction}
                   id={lead.id}
@@ -355,7 +385,18 @@ export default async function LeadPage({ params }: { params: Promise<{ id: strin
                   errorMessage="The lead could not be resumed."
                 />
               ) : null}
-              {canReopen ? (
+              {canReopen && needsContact ? (
+                <MarkContactedDialog
+                  action={moveLeadStageAction}
+                  id={lead.id}
+                  number={lead.number}
+                  version={lead.version}
+                  triggerLabel="Reopen"
+                  fromLabel="Lost"
+                  title="Reopen this lead?"
+                  confirmLabel="Reopen lead"
+                />
+              ) : canReopen ? (
                 <StageConfirmDialog
                   action={moveLeadStageAction}
                   id={lead.id}

@@ -63,6 +63,7 @@ import {
   type DeliveryHoldReleaserRole,
 } from '@bos/money-rules';
 import {
+  BadRequestException,
   ConflictException,
   ForbiddenException,
   Inject,
@@ -77,6 +78,10 @@ import { AuditService } from '../../platform/audit/audit.service';
 import { scopeWhereFor } from '../../platform/authz/authz.service';
 import { can } from '../../platform/authz/can';
 import { type Decision, type Principal } from '../../platform/authz/principal';
+import { liveGrantsOf } from '../../platform/authz/live-grants';
+import { RoleCache } from '../../platform/authz/role-cache';
+import { SqlUsersStore } from '../../platform/users/users.store';
+import { isSoleEligible, otherEligibleUsers } from '../../platform/authz/sole-eligible';
 import { DB, type Db, type DbTransaction } from '../../platform/db/db.module';
 import { updateVersioned, withIdempotency } from '../../platform/db/idempotency';
 import { withTx, type Actor, type TxScope, READ_ONLY } from '../../platform/db/tx';
@@ -187,6 +192,9 @@ export class SalesOrdersService {
     @Optional()
     @Inject(SALES_ORDERS_CLOCK)
     private readonly clock: () => Date = () => new Date(),
+    // The small-team rule reads who else may release (F1-Q11 a). AuthzModule is global, so Nest injects the one
+    // RoleCache; a test that builds the service by hand gets a fresh one on the same database.
+    @Optional() private readonly roleCache: RoleCache = new RoleCache(db),
   ) {}
 
   // ------------------------------------------------------------------------------------------- reads
@@ -789,7 +797,9 @@ export class SalesOrdersService {
    * `role_cannot_release_amount` (no role of the caller's may release this amount under the live threshold:
    * Finance above it, Management at or below it; the detail's `can.releaseDeliveryAllowedRoles` names who may); 409
    * `sales_order_not_open` for an order that is not confirmed, `delivery_already_released` when the advance is paid
-   * or a release exists. A retry with the same key replays.
+   * or a release exists. A retry with the same key replays. The small-team rule (F1-Q11 a) lifts
+   * `requester_cannot_release` for a Founder whom nobody else could stand in for: the release then needs a reason
+   * (400 `sole_eligible_reason_required`) and is audited as `sales_order.delivery_released_sole_eligible`.
    */
   async releaseDelivery(
     orderId: string,
@@ -874,7 +884,12 @@ export class SalesOrdersService {
     // The threshold is read now, not from the page the caller loaded: a Founder's edit applies at once.
     const thresholdNpr = await deliveryHoldThresholdNpr(tx, scope);
     const refusal = this.releaseRefusal(principal, order, thresholdNpr);
-    if (refusal !== null) {
+    // The small-team rule (F1-Q11 a): a Founder who created the order may release it alone when nobody else may,
+    // read now on this transaction. Anyone else, or a Founder with a second releaser (even one away), keeps the 403.
+    const soleEligible =
+      refusal === 'requester_cannot_release' &&
+      (await this.soleEligibleToRelease(tx, scope, principal, order, thresholdNpr, true));
+    if (refusal !== null && !soleEligible) {
       const allowedRoles = deliveryHoldReleaser(new Dec(order.amountNpr), thresholdNpr);
       throw new ForbiddenException({
         code: 'forbidden',
@@ -885,6 +900,16 @@ export class SalesOrdersService {
         reason: refusal,
       });
     }
+    // The body schema already demands a reason; the sole-eligible release checks it again, since the reason is
+    // what stands in for the second person.
+    const reason = body.reason.trim();
+    if (soleEligible && reason.length === 0) {
+      throw new BadRequestException({
+        code: 'bad_request',
+        reason: 'sole_eligible_reason_required',
+        message: 'Nobody else may release this delivery; give a reason to release it yourself',
+      });
+    }
 
     const now = this.clock();
     await tx.insert(salesOrderDeliveryReleases).values({
@@ -892,23 +917,26 @@ export class SalesOrdersService {
       organizationId: scope.organizationId,
       salesOrderId: orderId,
       releasedByUserId: principal.userId,
-      reason: body.reason,
+      reason,
       orderAmountNpr: order.amountNpr,
       thresholdNpr,
       releasedAt: now,
     });
     await this.audit.record(tx, {
-      action: 'sales_order.delivery_released',
+      action: soleEligible
+        ? 'sales_order.delivery_released_sole_eligible'
+        : 'sales_order.delivery_released',
       entityType: AUDIT_ENTITY,
       entityId: orderId,
       before: { deliveryReleased: false },
       after: {
         deliveryReleased: true,
-        reason: body.reason,
+        reason,
         amountNpr: order.amountNpr,
         thresholdNpr,
         releaserRoles: [...principal.roles],
         allowedRoles: [...deliveryHoldReleaser(new Dec(order.amountNpr), thresholdNpr)],
+        ...(soleEligible ? { soleEligible: true } : {}),
       },
     });
     return this.loadDetail(tx, scope, orderId);
@@ -934,6 +962,47 @@ export class SalesOrdersService {
     return order.createdBy !== null && order.createdBy === principal.userId
       ? 'requester_cannot_release'
       : 'role_cannot_release_amount';
+  }
+
+  /**
+   * The small-team rule (F1-Q11 a) for a caller `releaseRefusal` refuses as the order's creator: true when they are
+   * a Founder and no other active, unlocked member of the entity holds `sales_order.delivery_release` and a role
+   * `deliveryHoldReleaser` allows at this amount. The creator counts as nobody else. Run on the caller's
+   * transaction, one read after another (it shares the transaction's single connection).
+   */
+  private async soleEligibleToRelease(
+    tx: DbTransaction,
+    scope: TxScope,
+    principal: Principal,
+    order: Pick<OrderRow, 'amountNpr' | 'createdBy'>,
+    thresholdNpr: string,
+    /** True on the command: read the caller's roles live, not from the token. */
+    live = false,
+  ): Promise<boolean> {
+    if (!principal.roles.includes('founder')) return false;
+    if (live) {
+      const now = await liveGrantsOf(
+        tx,
+        { users: new SqlUsersStore(this.db), grants: this.roleCache },
+        scope,
+        principal.userId,
+      );
+      if (now.status !== 'active' || !now.roles.includes('founder')) return false;
+    }
+    const allowed: readonly string[] = deliveryHoldReleaser(new Dec(order.amountNpr), thresholdNpr);
+    const others = await otherEligibleUsers(
+      tx,
+      { grants: this.roleCache },
+      scope,
+      'sales_order.delivery_release',
+      {
+        excludeUserIds:
+          order.createdBy === null ? [principal.userId] : [principal.userId, order.createdBy],
+        entityScoped: true,
+        roleOk: (roles) => roles.some((r) => allowed.includes(r)),
+      },
+    );
+    return isSoleEligible(principal.roles, others);
   }
 
   // ----------------------------------------------------------------------------------------- helpers
@@ -1076,6 +1145,7 @@ export class SalesOrdersService {
     // is read only for a caller with the permission on a held order, so most detail reads skip it.
     let releaseDeliveryBlockedBy: ReleaseBlocker | null = null;
     let releaseDeliveryAllowedRoles: DeliveryHoldReleaserRole[] = [];
+    let releaseSoleEligible = false;
     if (staff && order.status === 'confirmed' && deliveryRelease === null) {
       if (!canOnOrder(principal, 'sales_order.delivery_release', owners).allowed) {
         releaseDeliveryBlockedBy = 'permission';
@@ -1085,8 +1155,16 @@ export class SalesOrdersService {
           ...deliveryHoldReleaser(new Dec(order.amountNpr), thresholdNpr),
         ];
         const refusal = this.releaseRefusal(principal, order, thresholdNpr);
+        // The same small-team rule the command applies: a sole-eligible Founder creator is not blocked.
+        releaseSoleEligible =
+          refusal === 'requester_cannot_release' &&
+          (await this.soleEligibleToRelease(tx, scope, principal, order, thresholdNpr));
         releaseDeliveryBlockedBy =
-          refusal === null ? null : refusal === 'requester_cannot_release' ? 'requester' : 'amount';
+          refusal === null || releaseSoleEligible
+            ? null
+            : refusal === 'requester_cannot_release'
+              ? 'requester'
+              : 'amount';
       }
     }
     const releaseDelivery =
@@ -1172,6 +1250,7 @@ export class SalesOrdersService {
         releaseDelivery,
         releaseDeliveryBlockedBy,
         releaseDeliveryAllowedRoles,
+        releaseSoleEligible,
       },
     };
   }

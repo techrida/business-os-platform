@@ -320,6 +320,8 @@ describe('0123 Finance and Accountant base reads', () => {
       'accountant vat.sales.read': 'all true',
       'finance vat.sales.read': 'all true',
       'founder vat.sales.read': 'all true',
+      // 0178 seeds the Accountant's quotation acceptance grant to a tenant that stores grants.
+      'accountant quotation.record_acceptance': 'all true',
       'founder approvals.definitions.publish': 'all true',
       'founder email_delivery.read': 'all true',
       'founder email_delivery.resend': 'all true',
@@ -378,7 +380,7 @@ describe('0123 level rows', () => {
 });
 
 describe('0123 tenants and versions', () => {
-  it('bumps the authz version once for each tenant whose rows changed, and only those (0104, 0127, 0128, 0150, 0155 and 0175 add six more bumps where they seed rows)', async () => {
+  it('bumps the authz version once for each tenant whose rows changed, and only those (0104, 0127, 0128, 0150, 0155, 0175 and 0178 add seven more bumps where they seed rows)', async () => {
     expect(await authzVersion(tenantSeeded.tenantId)).toBe(10);
     expect(await authzVersion(tenantMaterialized.tenantId)).toBe(8);
     expect(await authzVersion(tenantFounder.tenantId)).toBe(8);
