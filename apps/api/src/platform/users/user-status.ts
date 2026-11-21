@@ -7,17 +7,20 @@
 //   (A) short READ_ONLY tx: lock access-revision, check live grant, read user and version, run all guards.
 //   (B) ZITADEL calls with no transaction open (with in-order undo if a later step fails).
 //   (C) short tx: lock access-revision, re-check live grant, re-read user FOR NO KEY UPDATE, re-run guards, and write
-//       only while the row version is unchanged. If the row already shows the desired outcome, return success; on any
-//       other change or DB failure, compensate ZITADEL back to the pre-state (never throwing) and rethrow.
+//       only while the row version is unchanged (or upgrading a concurrent failed_sign_ins lock to an admin lock).
+//       If the row already shows the desired outcome, record the audit row and return success; on any other change or
+//       DB failure, compensate from the committed DB row + live ZITADEL state (never opening access when either shows
+//       the person shut out, and only undoing to the plan's pre-state when the row is unchanged since phase A).
 //
 // What each action does depends on the person's status and lock (planFor):
-//   deactivate  active: ZITADEL deactivate (compensate: reactivate). Locked (either kind): ZITADEL unlock, then
-//               deactivate (if deactivate fails: lockUser; if phase C fails: reactivate, then lock).
-//   reactivate  deactivated and not locked: ZITADEL reactivate (compensate: deactivate).
-//   lock        active: ZITADEL lock (compensate: unlock). Under a failed-sign-in lock: ZITADEL lock too (idempotent:
-//               lock-expiry may have just unlocked them in ZITADEL while the mirror still shows the timed lock);
-//               compensate: none (stay locked: fail closed).
-//   unlock      locked (either kind): ZITADEL unlock (compensate: lock).
+//   deactivate  active: ZITADEL deactivate (plain-failure undo: reactivate). Locked (either kind): ZITADEL unlock,
+//               then deactivate (if deactivate fails: lockUser; plain-failure undo: reactivate then lock with retries
+//               and deactivate fallback so it fails closed).
+//   reactivate  deactivated and not locked: ZITADEL reactivate (undo: deactivate).
+//   lock        active: ZITADEL lock (plain-failure undo: unlock). Under a failed-sign-in lock: read ZITADEL first
+//               and call lockUser only when ZITADEL reports unlocked (real ZITADEL v4.20.1 refuses lockUser on an
+//               already-locked user); undo: none (stay locked: fail closed).
+//   unlock      locked (either kind): ZITADEL unlock (undo: lock, or deactivate if the row is now deactivated).
 import {
   ConflictException,
   Inject,
@@ -38,12 +41,16 @@ import {
   ZitadelAdminClient,
   ZitadelHttpError,
   ZitadelNotConfiguredError,
+  type ZitadelUser,
 } from './zitadel-admin.client';
 
 export const USER_STATUS_ACTIONS = ['deactivate', 'reactivate', 'lock', 'unlock'] as const;
 export type UserStatusAction = (typeof USER_STATUS_ACTIONS)[number];
 
 type ZitadelStep = (zitadel: ZitadelAdminClient, zitadelUserId: string) => Promise<void>;
+
+type CompensationKind =
+  'none' | 'reactivate' | 'unlock' | 'reactivate_then_lock' | 'deactivate' | 'lock';
 
 /** What one action does to one person, decided from their status and lock. */
 interface Plan {
@@ -52,8 +59,8 @@ interface Plan {
   steps: ZitadelStep[];
   /** Puts ZITADEL back when a later step in `steps` fails after an earlier one succeeded. */
   stepUndo?: ZitadelStep;
-  /** Puts ZITADEL back to the pre-state when phase (C) fails after `steps` all succeeded. */
-  compensate: ZitadelStep[];
+  /** How to restore ZITADEL to the pre-state after a plain DB write failure (row unchanged since phase A). */
+  compensation: CompensationKind;
   /** The lock to store with the new status: undefined keeps it, null clears it. */
   lock: UserLock | null | undefined;
   /** Whether the action takes or keeps access away (then the self and last-Founder guards apply). */
@@ -66,6 +73,17 @@ const adminLock = (): UserLock => ({ reason: 'admin', lockedAt: new Date(), unti
 // Takes the access-revision lock and user row lock before the first audited write, matching DepartmentsAdminService,
 // AccessSettingsService, UserMirror.apply and UserLocks.whileLockHeld so lock ordering never inverts into 40P01.
 const AFTER_ACCESS_LOCK: TxOptions = { audit: 'lazy' };
+
+/** Waits before each try of locking a person in ZITADEL again during compensation; the first try is at once. */
+const RELOCK_DELAYS_MS = [0, 250, 1_000] as const;
+
+const errorName = (error: unknown): string => (error instanceof Error ? error.name : 'error');
+
+const isRowShutOut = (row: UserRow): boolean =>
+  row.status !== 'active' || (row.lockReason ?? null) !== null;
+
+const isZitadelOpen = (live: ZitadelUser | null | undefined): boolean =>
+  live !== null && live !== undefined && live.status === 'active' && !live.locked;
 
 /** "You cannot <verb> your own account." */
 const VERBS: Record<UserStatusAction, string> = {
@@ -115,7 +133,7 @@ function planFor(action: UserStatusAction, target: UserRow): Plan | null {
         return {
           to: 'inactive',
           steps: [(z, id) => z.deactivateUser(id)],
-          compensate: [(z, id) => z.reactivateUser(id)],
+          compensation: 'reactivate',
           lock: undefined,
           removesAccess: true,
           audit: 'users.deactivated',
@@ -126,7 +144,7 @@ function planFor(action: UserStatusAction, target: UserRow): Plan | null {
         to: 'inactive',
         steps: [(z, id) => z.unlockUser(id), (z, id) => z.deactivateUser(id)],
         stepUndo: (z, id) => z.lockUser(id),
-        compensate: [(z, id) => z.reactivateUser(id), (z, id) => z.lockUser(id)],
+        compensation: 'reactivate_then_lock',
         lock: null,
         removesAccess: true,
         audit: 'users.deactivated',
@@ -136,7 +154,7 @@ function planFor(action: UserStatusAction, target: UserRow): Plan | null {
       return {
         to: 'active',
         steps: [(z, id) => z.reactivateUser(id)],
-        compensate: [(z, id) => z.deactivateUser(id)],
+        compensation: 'deactivate',
         lock: undefined,
         removesAccess: false,
         audit: 'users.reactivated',
@@ -146,20 +164,26 @@ function planFor(action: UserStatusAction, target: UserRow): Plan | null {
         return {
           to: 'inactive',
           steps: [(z, id) => z.lockUser(id)],
-          compensate: [(z, id) => z.unlockUser(id)],
+          compensation: 'unlock',
           lock: adminLock(),
           removesAccess: true,
           audit: 'users.locked',
         };
       }
       if (reason !== 'failed_sign_ins') return null;
-      // Still call lockUser (idempotent): lock-expiry may have just unlocked them in ZITADEL while the row still
-      // shows the timed lock, and without locking again the next sync would clear the admin lock. No compensation on
-      // failure: stay locked (fail closed).
+      // Real ZITADEL v4.20.1 refuses lockUser on an already-locked user with 4xx: read first and call lockUser only
+      // when ZITADEL reports unlocked (e.g. lock-expiry just unlocked them while the mirror still shows the timed
+      // lock). No compensation on failure: stay locked (fail closed).
       return {
         to: 'inactive',
-        steps: [(z, id) => z.lockUser(id)],
-        compensate: [],
+        steps: [
+          async (z, id) => {
+            const live = await z.getUser(id);
+            if (live?.locked) return;
+            await z.lockUser(id);
+          },
+        ],
+        compensation: 'none',
         lock: adminLock(),
         removesAccess: true,
         audit: 'users.locked',
@@ -169,7 +193,7 @@ function planFor(action: UserStatusAction, target: UserRow): Plan | null {
       return {
         to: 'active',
         steps: [(z, id) => z.unlockUser(id)],
-        compensate: [(z, id) => z.lockUser(id)],
+        compensation: 'lock',
         lock: null,
         removesAccess: false,
         audit: 'users.unlocked',
@@ -190,8 +214,8 @@ export class UserStatusService {
 
   /**
    * Runs `action` on `userId` with ZITADEL called outside any transaction: (A) guard + version snapshot tx,
-   * (B) ZITADEL steps, (C) re-checked versioned write tx, compensating ZITADEL if (C) fails. The caller invalidates
-   * the authz cache after this resolves.
+   * (B) ZITADEL steps, (C) re-checked versioned write tx, compensating ZITADEL from live DB/ZITADEL state if (C)
+   * fails. The caller invalidates the authz cache after this resolves.
    */
   async apply(
     scope: TxScope,
@@ -232,8 +256,24 @@ export class UserStatusService {
           const current = await this.store.findById(tx, scope, userId, true);
           if (!current || current.idpOrgId !== idpOrgId) throw userChangedConflict();
           if ((current.version ?? null) !== (target.version ?? null)) {
-            if (alreadyMatchesOutcome(action, current)) return;
-            throw userChangedConflict();
+            if (alreadyMatchesOutcome(action, current)) {
+              const state = { status: current.status, lockReason: current.lockReason ?? null };
+              await this.audit.record(tx, {
+                action: plan.audit,
+                entityType: 'users',
+                entityId: current.id,
+                before: state,
+                after: state,
+              });
+              return;
+            }
+            // A sync turning an active row into a timed failed_sign_ins lock while phase B ran is upgraded to the
+            // admin lock in place rather than failing with 409.
+            const canUpgradeTimedLock =
+              action === 'lock' &&
+              current.status === 'inactive' &&
+              current.lockReason === 'failed_sign_ins';
+            if (!canUpgradeTimedLock) throw userChangedConflict();
           }
           const verified = await this.guardAndPlan(tx, scope.tenantId, actor, current, action);
           const before = { status: current.status, lockReason: current.lockReason ?? null };
@@ -260,7 +300,7 @@ export class UserStatusService {
         AFTER_ACCESS_LOCK,
       );
     } catch (error) {
-      await this.compensate(plan, target);
+      await this.compensate(scope, plan, target);
       throw error;
     }
   }
@@ -297,9 +337,8 @@ export class UserStatusService {
       } catch (error) {
         if (index > 0 && plan.stepUndo) {
           await plan.stepUndo(this.zitadel, target.zitadelUserId).catch((undoError: unknown) => {
-            const kind = undoError instanceof Error ? undoError.name : 'error';
             this.logger.error(
-              `users.status: could not lock ${target.id} again in ZITADEL after a failed change (kind=${kind}); the next sync mirrors what ZITADEL holds`,
+              `users.status: could not lock ${target.id} again in ZITADEL after a failed change (kind=${errorName(undoError)}); the next sync mirrors what ZITADEL holds`,
             );
           });
         }
@@ -309,20 +348,146 @@ export class UserStatusService {
   }
 
   /**
-   * Restores ZITADEL to the pre-state after phase (C) fails or finds a changed row. Never throws; logs only the error
-   * name so the original error propagates untouched.
+   * Compensates ZITADEL after phase (C) fails or conflicts, computed from the committed DB row as it is NOW and the
+   * freshly read ZITADEL state (never the phase-A snapshot). Only undoes to the plan's pre-state when the row is
+   * unchanged since phase A (a plain DB write failure); never runs a step that opens access (reactivate/unlock) when
+   * the committed row or freshly read ZITADEL state shows the person shut out. Never throws; logs only error names.
    */
-  private async compensate(plan: Plan, target: UserRow): Promise<void> {
-    for (const step of plan.compensate) {
-      try {
-        await step(this.zitadel, target.zitadelUserId);
-      } catch (undoError) {
-        const kind = undoError instanceof Error ? undoError.name : 'error';
-        this.logger.error(
-          `users.status: could not restore ${target.id} in ZITADEL after a failed write (kind=${kind}); the next sync mirrors what ZITADEL holds`,
-        );
-        return;
+  private async compensate(scope: TxScope, plan: Plan, target: UserRow): Promise<void> {
+    if (plan.compensation === 'none') return;
+
+    let current: UserRow | null | undefined;
+    try {
+      current = await this.store.findById(this.db, scope, target.id);
+    } catch {
+      current = undefined;
+    }
+
+    let live: ZitadelUser | null | undefined;
+    try {
+      live = await this.zitadel.getUser(target.zitadelUserId);
+    } catch {
+      live = undefined;
+    }
+
+    const rowUnchanged =
+      current !== null &&
+      current !== undefined &&
+      (current.version ?? null) === (target.version ?? null);
+
+    if (rowUnchanged) {
+      await this.undoToPreState(plan.compensation, target, live);
+      return;
+    }
+
+    // Row changed since phase A (or could not be read): never open access when the row or ZITADEL shows shut out.
+    if (current === undefined) {
+      if (
+        (plan.compensation === 'lock' || plan.compensation === 'deactivate') &&
+        (live === undefined || isZitadelOpen(live))
+      ) {
+        await this.runCloseStep(plan.compensation, target);
       }
+      return;
+    }
+
+    if (current === null) {
+      if (isZitadelOpen(live)) await this.runCloseStep('deactivate', target);
+      return;
+    }
+
+    if (isRowShutOut(current)) {
+      if (isZitadelOpen(live)) {
+        await this.runCloseStep(current.lockReason ? 'lock' : 'deactivate', target);
+      }
+      return;
+    }
+
+    // Row is active but changed since phase A: if freshly read ZITADEL shows shut out (or unreadable), fail closed
+    // and let the next sync mirror it rather than opening access.
+  }
+
+  private async undoToPreState(
+    compensation: Exclude<CompensationKind, 'none'>,
+    target: UserRow,
+    live: ZitadelUser | null | undefined,
+  ): Promise<void> {
+    switch (compensation) {
+      case 'reactivate':
+        // Only undo our own deactivation (inactive and not locked). If ZITADEL now shows locked or unreadable,
+        // fail closed.
+        if (live !== null && live !== undefined && live.status === 'inactive' && !live.locked) {
+          await this.safeStep(target.id, () => this.zitadel.reactivateUser(target.zitadelUserId));
+        }
+        return;
+      case 'unlock':
+        // Only undo our own lock. If ZITADEL now shows deactivated or unreadable, fail closed.
+        if (live !== null && live !== undefined && live.locked === true) {
+          await this.safeStep(target.id, () => this.zitadel.unlockUser(target.zitadelUserId));
+        }
+        return;
+      case 'reactivate_then_lock':
+        if (live?.locked) return;
+        if (isZitadelOpen(live)) {
+          await this.relockOrDeactivate(target);
+          return;
+        }
+        if (live !== null && live !== undefined && live.status === 'inactive' && !live.locked) {
+          const reactivated = await this.safeStep(target.id, () =>
+            this.zitadel.reactivateUser(target.zitadelUserId),
+          );
+          if (!reactivated) return;
+          await this.relockOrDeactivate(target);
+        }
+        return;
+      case 'lock':
+      case 'deactivate':
+        if (live === undefined || isZitadelOpen(live)) {
+          await this.runCloseStep(compensation, target);
+        }
+        return;
+    }
+  }
+
+  private async runCloseStep(kind: 'lock' | 'deactivate', target: UserRow): Promise<void> {
+    await this.safeStep(target.id, () =>
+      kind === 'lock'
+        ? this.zitadel.lockUser(target.zitadelUserId)
+        : this.zitadel.deactivateUser(target.zitadelUserId),
+    );
+  }
+
+  /**
+   * After reactivating a deactivated-from-locked user during compensation, retries lockUser a few times and falls
+   * back to deactivateUser if locking still fails so the person is never left open. Never throws; logs error names.
+   */
+  private async relockOrDeactivate(target: UserRow): Promise<void> {
+    let last: unknown;
+    for (const delay of RELOCK_DELAYS_MS) {
+      if (delay > 0) await new Promise((resolve) => setTimeout(resolve, delay));
+      try {
+        await this.zitadel.lockUser(target.zitadelUserId);
+        return;
+      } catch (error) {
+        last = error;
+        if (error instanceof ZitadelNotConfiguredError) break;
+      }
+    }
+    this.logger.error(
+      `users.status: could not lock ${target.id} again in ZITADEL during compensation (kind=${errorName(last)}); deactivating again to fail closed`,
+    );
+    await this.safeStep(target.id, () => this.zitadel.deactivateUser(target.zitadelUserId));
+  }
+
+  private async safeStep(userId: string, step: () => Promise<void>): Promise<boolean> {
+    try {
+      await step();
+      return true;
+    } catch (undoError) {
+      this.logger.error(
+        `users.status: could not restore ${userId} in ZITADEL after a failed write (kind=${errorName(undoError)}); the next sync mirrors what ZITADEL holds`,
+      );
+      return false;
     }
   }
 

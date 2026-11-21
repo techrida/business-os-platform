@@ -202,7 +202,7 @@ export class UsersService extends UserDirectory {
           }
           return id;
         },
-        assignsAccess || !prepared.created ? AFTER_ACCESS_LOCK : undefined,
+        AFTER_ACCESS_LOCK,
       );
       return { userId, zitadelUserId: prepared.zitadelUserId, created: prepared.created };
     } catch (error) {
@@ -284,7 +284,7 @@ export class UsersService extends UserDirectory {
   private async prepareInviteInZitadel(
     org: IdpOrgRow,
     b: InviteInput,
-  ): Promise<{ zitadelUserId: string; created: boolean }> {
+  ): Promise<{ zitadelUserId: string; created: boolean; previousGrants?: RoleKey[] }> {
     let zitadelUserId: string | null = null;
     try {
       zitadelUserId = await this.zitadel.createHuman(org.zitadelOrgId, b);
@@ -303,11 +303,14 @@ export class UsersService extends UserDirectory {
     const row = await this.store.findByZitadelId(this.db, open.id);
     if (row && row.status !== 'invited') throw conflict;
 
+    // Read the existing grants before replacing them so takeBackInvite can restore them instead of wiping grants if
+    // phase (C) fails while the user is still invited.
+    const previousGrants = await this.zitadel.listGrants(open.id);
     // The same steps as a first invite, in the same order. Each one is safe to repeat: setGrants replaces the whole
     // set, and sendInviteCode resends the invite link.
     await this.zitadel.setGrants(open.id, org.zitadelOrgId, b.roles);
     await this.zitadel.sendInviteCode(open.id);
-    return { zitadelUserId: open.id, created: false };
+    return { zitadelUserId: open.id, created: false, previousGrants };
   }
 
   /** ZITADEL has no lookup by email in our client, so walk the org's pages for an open invite. */

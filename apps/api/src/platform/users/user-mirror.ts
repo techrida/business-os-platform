@@ -377,8 +377,12 @@ export class UserMirror {
     await this.zitadel.sendInviteCode(zitadelUserId);
 
     try {
-      const userId = await withTx(this.db, scope, actor, (tx) =>
-        this.writeInvitedUser(tx, org, scope, zitadelUserId, b),
+      const userId = await withTx(
+        this.db,
+        scope,
+        actor,
+        (tx) => this.writeInvitedUser(tx, org, scope, zitadelUserId, b),
+        LOCKS_USER_ROW,
       );
       return { userId, zitadelUserId, created: true };
     } catch (error) {
@@ -410,33 +414,69 @@ export class UserMirror {
     return userId;
   }
 
-  /** Undoes what an invite wrote to ZITADEL after a failed DB write. Never throws; logs only the error name. */
+  /**
+   * Undoes what an invite wrote to ZITADEL after a failed DB write. For a fresh identity (`created: true`), clears
+   * grants and deletes the identity. For a reused open invite (`created: false`), checks both the mirror and ZITADEL
+   * first and skips the undo if the person is no longer `'invited'` (e.g. finished sign-up); otherwise restores the
+   * grants read before the invite. Never throws; logs only the error name.
+   */
   async takeBackInvite(
     org: IdpOrgRow,
-    invited: { zitadelUserId: string; created: boolean },
+    invited: { zitadelUserId: string; created: boolean; previousGrants?: readonly RoleKey[] },
   ): Promise<void> {
     const kind = (error: unknown) => (error instanceof Error ? error.name : 'error');
-    try {
-      await this.zitadel.setGrants(invited.zitadelUserId, org.zitadelOrgId, []);
-    } catch (error) {
-      this.logger.error(
-        `users.invite: could not take back the roles of ${invited.zitadelUserId} in ZITADEL (kind=${kind(error)})`,
-      );
+    if (invited.created) {
+      try {
+        await this.zitadel.setGrants(invited.zitadelUserId, org.zitadelOrgId, []);
+      } catch (error) {
+        this.logger.error(
+          `users.invite: could not take back the roles of ${invited.zitadelUserId} in ZITADEL (kind=${kind(error)})`,
+        );
+      }
+      try {
+        await this.zitadel.deleteUser(invited.zitadelUserId);
+      } catch (error) {
+        this.logger.error(
+          `users.invite: could not delete the identity ${invited.zitadelUserId} the failed invite created (kind=${kind(error)})`,
+        );
+      }
+      return;
     }
-    if (!invited.created) return;
+
+    // Reused identity: never touch grants of a person who finished sign-up or is no longer an open invite.
     try {
-      await this.zitadel.deleteUser(invited.zitadelUserId);
+      const row = await this.store.findByZitadelId(this.db, invited.zitadelUserId);
+      if (row && row.status !== 'invited') return;
     } catch (error) {
       this.logger.error(
-        `users.invite: could not delete the identity ${invited.zitadelUserId} the failed invite created (kind=${kind(error)})`,
+        `users.invite: could not check mirror status of ${invited.zitadelUserId} before taking back invite grants (kind=${kind(error)})`,
+      );
+      return;
+    }
+    try {
+      const live = await this.zitadel.getUser(invited.zitadelUserId);
+      if (!live || live.status !== 'invited') return;
+    } catch (error) {
+      this.logger.error(
+        `users.invite: could not check ZITADEL status of ${invited.zitadelUserId} before taking back invite grants (kind=${kind(error)})`,
+      );
+      return;
+    }
+    try {
+      await this.zitadel.setGrants(invited.zitadelUserId, org.zitadelOrgId, [
+        ...(invited.previousGrants ?? []),
+      ]);
+    } catch (error) {
+      this.logger.error(
+        `users.invite: could not restore the roles of ${invited.zitadelUserId} in ZITADEL (kind=${kind(error)})`,
       );
     }
   }
 
   /**
    * Sets a staff user's roles with ZITADEL called outside any transaction: (A) guard + version/roles snapshot tx,
-   * (B) ZITADEL setGrants, (C) re-checked versioned write tx, restoring previous roles in ZITADEL on failure.
-   * The caller invalidates authz after this resolves.
+   * (B) ZITADEL setGrants, (C) re-checked versioned write tx, restoring ZITADEL to the committed DB roles on failure
+   * or conflict. The caller invalidates authz after this resolves.
    */
   async setRoles(
     scope: TxScope,
@@ -492,17 +532,31 @@ export class UserMirror {
         LOCKS_USER_ROW,
       );
     } catch (error) {
+      let rolesToRestore: RoleKey[] | null = plan.previousRoles;
       try {
-        await this.zitadel.setGrants(
-          plan.user.zitadelUserId,
-          plan.org.zitadelOrgId,
-          plan.previousRoles,
-        );
-      } catch (undoError) {
-        const kind = undoError instanceof Error ? undoError.name : 'error';
-        this.logger.error(
-          `users.setRoles: could not restore roles of ${userId} in ZITADEL after a failed write (kind=${kind}); the next sync mirrors what ZITADEL holds`,
-        );
+        const current = await this.store.findById(this.db, scope, userId);
+        if (!current || current.idpOrgId !== plan.org.idpOrgId) {
+          rolesToRestore = null;
+        } else {
+          rolesToRestore = await this.store.rolesOf(this.db, scope.tenantId, userId);
+        }
+      } catch {
+        // DB unreadable: fall back to the phase-A snapshot.
+        rolesToRestore = plan.previousRoles;
+      }
+      if (rolesToRestore !== null && !sameRoles(rolesToRestore, roles)) {
+        try {
+          await this.zitadel.setGrants(
+            plan.user.zitadelUserId,
+            plan.org.zitadelOrgId,
+            rolesToRestore,
+          );
+        } catch (undoError) {
+          const kind = undoError instanceof Error ? undoError.name : 'error';
+          this.logger.error(
+            `users.setRoles: could not restore roles of ${userId} in ZITADEL after a failed write (kind=${kind}); the next sync mirrors what ZITADEL holds`,
+          );
+        }
       }
       throw error;
     }
