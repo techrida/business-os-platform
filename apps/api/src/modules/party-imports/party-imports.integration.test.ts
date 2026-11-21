@@ -759,4 +759,17 @@ ${name} ${uniq()},,,R,C,NP,,e@example.com,
       ]),
     ).rejects.toThrow(/final/);
   });
+
+  it('refuses an expired batch that still holds rows (the check, not only the job, clears the personal data)', async () => {
+    const kept = await preview('Kept');
+    // Old check let `expired` keep any array; the finality trigger then blocked clearing it.
+    await expect(
+      ownerPool.query(`UPDATE app.party_import_batches SET status = 'expired' WHERE id = $1`, [kept.id]),
+    ).rejects.toThrow(/party_import_batches_rows_check/);
+    await ownerPool.query(
+      `UPDATE app.party_import_batches SET status = 'expired', rows = '[]'::jsonb WHERE id = $1`,
+      [kept.id],
+    );
+    expect((await batch(kept.id)).status).toBe('expired');
+  });
 });
