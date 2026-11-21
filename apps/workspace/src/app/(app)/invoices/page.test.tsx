@@ -422,6 +422,8 @@ describe('total row', () => {
     expect(foot).toContain('20,18,180.00');
     expect(foot).toContain('Total, all pages · USD');
     expect(foot).toContain('colSpan="5"');
+    // The sum and the two columns after it are pinned like the Total, Status and Action cells above them.
+    expect(foot.match(/data-pinned/g)).toHaveLength(6);
   });
 
   it('says plain Total when every match is on the page, and shows none without totals', async () => {

@@ -17,6 +17,7 @@ const mocks = vi.hoisted(() => ({
   getInvoice: vi.fn(),
   listTaxCodes: vi.fn(),
   getCustomerStatement: vi.fn(),
+  getApprovalRequest: vi.fn(),
   notFound: vi.fn(() => {
     throw new Error('NEXT_NOT_FOUND');
   }),
@@ -28,6 +29,10 @@ vi.mock('@/lib/bff', () => ({ requireStaffSession: mocks.requireStaffSession }))
 vi.mock('@/lib/api-billing', async (importOriginal) => ({
   ...(await importOriginal<typeof import('@/lib/api-billing')>()),
   getInvoice: mocks.getInvoice,
+}));
+vi.mock('@/lib/api-kernel', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@/lib/api-kernel')>()),
+  getApprovalRequest: mocks.getApprovalRequest,
 }));
 vi.mock('@/lib/api-tax-codes', () => ({ listTaxCodes: mocks.listTaxCodes }));
 vi.mock('@/lib/api-receivables', () => ({ getCustomerStatement: mocks.getCustomerStatement }));
@@ -85,6 +90,7 @@ beforeEach(() => {
   mocks.getInvoice.mockReset().mockResolvedValue(issued());
   mocks.listTaxCodes.mockReset().mockResolvedValue([{ id: TAX, label: 'VAT 13%' }]);
   mocks.getCustomerStatement.mockReset().mockResolvedValue([]);
+  mocks.getApprovalRequest.mockReset().mockRejectedValue(new Error('not read'));
   mocks.notFound.mockClear();
   mocks.getSession.mockReset().mockResolvedValue(null);
   mocks.apiFetch.mockReset();
@@ -450,6 +456,62 @@ describe('invoice detail page', () => {
     const other = await render();
     expect(other).not.toMatch(/>Credit note<\/button>/);
     expect(mocks.listTaxCodes).not.toHaveBeenCalled();
+  });
+
+  it('labels a debit note by its kind: Issued to, Debit note no., Debit note details, never "Invoice"', async () => {
+    mocks.getInvoice.mockResolvedValue(
+      InvoiceDetailSchema.parse({
+        ...invoiceDetail({
+          kind: 'debit_note',
+          status: 'approved',
+          salesOrderId: null,
+          originalInvoiceId: APPROVAL,
+          noteReason: 'Extra support day',
+        }),
+      }),
+    );
+    const html = textOf(await render());
+    expect(html).toContain('Issued to');
+    expect(html).toContain('Debit note no.');
+    expect(html).toContain('Debit note details');
+    expect(html).not.toContain('Invoice to');
+    expect(html).not.toContain('Invoice no.');
+    expect(html).not.toContain('Invoice details');
+  });
+
+  it('shows who acted and when from the approval read, and leaves the panel out when it is refused', async () => {
+    const approval = {
+      requestId: APPROVAL,
+      documentType: 'tax_invoice',
+      documentId: ID,
+      documentNumber: 'INV-1',
+      status: 'approved',
+      blockReason: null,
+      currentSeq: 1,
+      version: 1,
+      requesterUserId: CUSTOMER,
+      snapshot: {},
+      steps: [],
+      actions: [
+        {
+          action: 'approve',
+          actorUserId: CUSTOMER,
+          onBehalfOfUserId: null,
+          comment: 'Checked against the order',
+          createdAt: '2026-11-20T06:00:00.000Z',
+        },
+      ],
+      people: [{ userId: CUSTOMER, name: 'Ada Lovelace' }],
+      submittedAt: '2026-11-19T06:00:00.000Z',
+      decidedAt: '2026-11-20T06:00:00.000Z',
+    };
+    mocks.getApprovalRequest.mockResolvedValue(approval);
+    const html = textOf(await render());
+    expect(html).toContain('Approval history');
+    expect(html).toContain('Approved by Ada Lovelace');
+    expect(html).toContain('Checked against the order');
+    mocks.getApprovalRequest.mockRejectedValue(new Error('forbidden'));
+    expect(textOf(await render())).not.toContain('Approval history');
   });
 
   it('still opens the detail and offers the note dialogs when tax codes fail to load', async () => {

@@ -96,7 +96,7 @@ function InvoiceRow({
           <span className={styles.quiet}>—</span>
         )}
       </Td>
-      <Td align="end" nowrap>
+      <Td align="end" nowrap pinned>
         <span className={styles.amount}>{money(item.total, item.currency, numberSystems)}</span>
       </Td>
       <Td nowrap pinned>
@@ -328,7 +328,9 @@ export default async function InvoicesPage({ searchParams }: { searchParams: Pro
                 <Th>Kind</Th>
                 <Th>Issued on</Th>
                 <Th>Due</Th>
-                <Th align="end">Total</Th>
+                <Th align="end" pinned>
+                  Total
+                </Th>
                 <Th pinned>Status</Th>
                 <Th pinned>Action</Th>
               </tr>
@@ -342,6 +344,7 @@ export default async function InvoicesPage({ searchParams }: { searchParams: Pro
               totals={totals}
               column={5}
               columns={8}
+              pinned
               allPages={total > items.length}
               format={(amount, currency) => money(amount, currency, numberSystems)}
             />

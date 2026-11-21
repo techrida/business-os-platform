@@ -134,6 +134,23 @@ describe('renderInvoiceHtml', () => {
     expect(debit).toContain('<h2>Debit Note total</h2>');
   });
 
+  it('labels the number and the party by document kind, so a note never says "Invoice"', () => {
+    const tax = renderInvoiceHtml(sample({ kind: 'tax_invoice' }));
+    const credit = renderInvoiceHtml(sample({ kind: 'credit_note', number: 'CN-2083/84-00001' }));
+    const debit = renderInvoiceHtml(sample({ kind: 'debit_note', number: 'DN-2083/84-00001' }));
+    expect(tax).toContain('Invoice to');
+    expect(tax).toContain('Invoice no.');
+    for (const [html, number] of [
+      [credit, 'Credit note no.'],
+      [debit, 'Debit note no.'],
+    ] as const) {
+      expect(html).toContain('Issued to');
+      expect(html).toContain(number);
+      expect(html).not.toContain('Invoice to');
+      expect(html).not.toContain('Invoice no.');
+    }
+  });
+
   it('formats a foreign currency in its own style', () => {
     const html = renderInvoiceHtml(sample({ currency: 'USD' }));
     expect(html).toContain('USD');
