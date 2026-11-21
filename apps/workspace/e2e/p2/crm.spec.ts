@@ -1,11 +1,22 @@
-import { expect, test } from '@playwright/test';
+import { expect, test, type Page } from '@playwright/test';
 
 import { signInAs } from '../helpers/memo-flow';
 import { chooseOption, optionLabels, selectByName } from '../helpers/select';
 
+/** Moves a New lead to Contacted: the move needs the call, email or meeting that made the contact (D48). */
+async function markContacted(page: Page) {
+  await page.getByRole('button', { name: 'Mark contacted', exact: true }).click();
+  const dialog = page.getByRole('dialog', { name: 'Mark this lead contacted?' });
+  await dialog.getByRole('radio', { name: 'Call', exact: true }).click();
+  await dialog.getByLabel('Note', { exact: true }).fill('Intro call');
+  await dialog.getByRole('button', { name: 'Mark contacted', exact: true }).click();
+  await expect(dialog).toBeHidden();
+  await expect(page.getByText('Moved to Contacted.')).toBeVisible();
+}
+
 /**
  * The CRM screens against the real stack, as the sales persona: create a lead, log a call, move
- * it with the keyboard control, see the board, and check that system-only stages are never
+ * it to Contacted with Mark contacted, see the board, and check that system-only stages are never
  * offered. Needs the P2 API routes (leads, opportunities, activities) and the CRM nav wired in.
  * NOT RUN by the unit that wrote it; the lead runs it with the stack up.
  */
@@ -51,10 +62,8 @@ test('a salesperson creates a lead, logs a call and moves it with the Move contr
       await expect(page.getByText('Intro call')).toBeVisible();
     });
 
-    await test.step('move to Contacted with the select, no mouse drag', async () => {
-      await chooseOption(selectByName(page, 'stage'), 'contacted');
-      await page.getByRole('button', { name: 'Move', exact: true }).click();
-      await expect(page.getByText('Moved to Contacted.')).toBeVisible();
+    await test.step('move to Contacted through Mark contacted, no mouse drag', async () => {
+      await markContacted(page);
     });
 
     await test.step('Mark lost needs a reason and a note', async () => {
@@ -106,9 +115,7 @@ test('opportunities never offer Won or Quotation Sent as a move', async ({ brows
       await page.waitForLoadState('networkidle');
 
       // A lead must be Qualified before it can be converted: New, Contacted, Qualified.
-      await chooseOption(selectByName(page, 'stage'), 'contacted');
-      await page.getByRole('button', { name: 'Move', exact: true }).click();
-      await expect(page.getByText('Moved to Contacted.')).toBeVisible();
+      await markContacted(page);
       await page.getByRole('button', { name: 'Qualify', exact: true }).click();
       await page
         .getByRole('dialog', { name: 'Qualify this lead?' })
