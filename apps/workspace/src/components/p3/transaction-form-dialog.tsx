@@ -32,6 +32,7 @@ export function TransactionFormDialog<State extends TransactionState>({
   reloadHref,
   children,
   size = 'small',
+  blocked = false,
 }: {
   trigger: string;
   primary?: boolean;
@@ -45,6 +46,8 @@ export function TransactionFormDialog<State extends TransactionState>({
   reloadHref: string;
   children: (state: State) => ReactNode;
   size?: 'small' | 'large';
+  /** Keeps the submit button off while a field is not ready (a file still uploading, an infected file). */
+  blocked?: boolean | undefined;
 }) {
   const router = useRouter();
   const [open, setOpen] = useState(false);
@@ -88,7 +91,7 @@ export function TransactionFormDialog<State extends TransactionState>({
             className={destructive ? styles.danger : undefined}
             type="submit"
             form={formId}
-            disabled={pending}
+            disabled={pending || blocked}
             aria-busy={pending || undefined}
           >
             {submit}

@@ -282,8 +282,28 @@ describe('markBillableAction', () => {
   it('refuses a form with no document before the API is called', async () => {
     const state = await markBillableAction(prev, markForm({ evidenceDocumentId: '' }));
     expect(mocks.apiFetch).not.toHaveBeenCalled();
-    expect(state.errors?.document).toMatch(/Choose the document/);
+    expect(state.errors?.document).toBe('Upload the document that shows this step was done.');
     expect(state.key).toBe(KEY);
+  });
+
+  it('posts an uploaded file as the evidence when one was uploaded', async () => {
+    await markBillableAction(prev, markForm({ otherDocumentId: IDS.contract }));
+    const [, , init] = call();
+    expect(JSON.parse(init.body as string)).toMatchObject({ evidenceDocumentId: IDS.contract });
+  });
+
+  it('words a file that is not evidence of this order, and an infected file, plainly', async () => {
+    mocks.apiFetch.mockImplementationOnce(() => refusal(422, 'invalid_evidence_document'));
+    const foreign = await markBillableAction(prev, markForm({ otherDocumentId: IDS.contract }));
+    expect(foreign.error).toMatch(/not evidence uploaded to this record/);
+    expect(foreign.reload).toBeUndefined();
+
+    const virus =
+      'A virus was found in this file. Remove it or upload a clean copy, then try again.';
+    mocks.apiFetch.mockImplementationOnce(() => refusal(409, 'document_infected', virus));
+    const infected = await markBillableAction(prev, markForm({ otherDocumentId: IDS.contract }));
+    expect(infected.error).toBe(virus);
+    expect(infected.reload).toBeUndefined();
   });
 
   it('asks for a reload on 409 because the order version moved, and rotates the key', async () => {

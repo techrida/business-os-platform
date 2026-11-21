@@ -104,3 +104,27 @@ describe('line items as table rows', () => {
     expect(out).toMatch(/aria-hidden="true"[^>]*><span>#<\/span>/);
   });
 });
+
+describe('quotation document upload', () => {
+  it('takes the vendor’s file as an upload in record mode, not a typed id', () => {
+    const out = renderToStaticMarkup(
+      <QuoteForm
+        action={vi.fn()}
+        idempotencyKey="key"
+        rfqId="rfq"
+        mode="record"
+        vendors={[{ id: 'vendor', name: 'Vendor' }]}
+        prLines={[{ id: 'line', lineNo: 1, description: 'Chair', uom: 'pcs', quantity: '1' }]}
+        taxCodes={[{ id: '22222222-2222-4222-8222-222222222222', label: 'VAT 13%' }]}
+        enabledCurrencies={['NPR']}
+        cancelHref="/procurement/rfqs/rfq"
+        reloadHref="/procurement/rfqs/rfq/quotations/new"
+      />,
+    );
+    expect(out).toContain('Quotation document');
+    expect(out).toMatch(/<input type="hidden" name="documentId" value=""\/>/);
+    expect(out).toMatch(/<input type="file"/);
+    expect(out).not.toMatch(/<input[^>]*name="documentId"[^>]*class=/);
+    expect(out).not.toMatch(/already uploaded to documents/);
+  });
+});

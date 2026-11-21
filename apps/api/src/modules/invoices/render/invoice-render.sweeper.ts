@@ -29,9 +29,13 @@
 // deletes the row). A success deletes the row. A rotating cursor keeps the oldest invoices from filling every batch; a
 // restart forgets only the cursor. A document created by a render that failed before its bytes were stored is removed
 // in the same failure path, so the next try is not blocked by it; one left by a crash between the two steps is
-// soft-removed after ORPHAN_AFTER_MS, which makes its invoice a candidate again. A PDF whose bytes were stored is never
+// soft-removed after ORPHAN_AFTER_MS, which makes its invoice a candidate again; that removal counts as one failed try
+// (kind `abandoned`, in the same transaction), so a worker that crashes on every try ends given up like any other
+// failure instead of being rendered again forever. A PDF whose bytes were stored is never
 // removed, even when its print row cannot be written (it may already have been downloaded): that write is tried twice
-// and then logged, with no failure counted (see recordPrintWithRetry).
+// and then logged, with no failure counted (see recordPrintWithRetry). The print the PDF is (its number and frozen
+// format) is stored with the document, in the transaction that creates it (`invoice_pending_prints`, 0157), and
+// deleted with the print row's insert; each sweep writes any print row that is still owed from it.
 //
 // The tests drive the sweeper through a RenderStore fake; the drizzle store below is checked by the integration test.
 import { InjectQueue, Processor, WorkerHost } from '@nestjs/bullmq';
@@ -45,7 +49,9 @@ import {
 } from '@bos/contracts';
 import {
   documents,
+  documentVersions,
   invoiceLines,
+  invoicePendingPrints,
   invoicePrintLog,
   invoices,
   invoiceTaxSummary,
@@ -59,27 +65,30 @@ import {
   type OnApplicationBootstrap,
 } from '@nestjs/common';
 import { type Job, Queue } from 'bullmq';
-import { and, asc, desc, eq, inArray, isNull, lt, not, notExists, sql } from 'drizzle-orm';
+import { and, asc, desc, eq, exists, inArray, isNull, lt, not, notExists, sql } from 'drizzle-orm';
 
 import type { Db, DbTransaction } from '../../../platform/db/db.module';
 import { READ_ONLY, systemActor, type TxScope } from '../../../platform/db/tx';
 import { GotenbergError } from '../../quotations/render/gotenberg.client';
 import { DocumentLogoUnavailableError } from '../../quotations/render/issuer';
-import type {
-  Clock,
-  PdfRenderer,
-  RenderDocuments,
-  RenderAudit,
-  RenderLogos,
-  RenderSettings,
-  RunInTx,
+import {
+  ABANDONED_KIND,
+  type Clock,
+  type PdfRenderer,
+  type RenderDocuments,
+  type RenderAudit,
+  type RenderLogos,
+  type RenderSettings,
+  type RunInTx,
 } from '../../quotations/render/quotation-render.sweeper';
 import {
   GENERATED_ORPHAN_AFTER_MS,
   RENDER_GIVEN_UP_ACTION,
 } from '../../quotations/render/render-retry';
 import { INVOICE_OWNER_TYPE, INVOICE_RENDER_JOB_PREFIX } from '../invoice-owner.policy';
+import { RenderOneJobSchema } from '../../quotations/render/render-nudge';
 import { freezeEntityLogo } from './frozen-logo';
+import { INVOICE_RENDER_ONE_JOB, INVOICE_RENDER_QUEUE } from './invoice-render.nudge';
 import { renderInvoiceHtml } from './invoice-html';
 import {
   clearRenderFailure,
@@ -87,6 +96,7 @@ import {
   filledVersion,
   recordRenderFailure,
   renderHeldBack,
+  unrefusedUpload,
   type RecordedFailure,
   type RenderFailureOwner,
 } from './render-failures';
@@ -98,7 +108,7 @@ import {
   type InvoiceViewInput,
 } from './invoice-view';
 
-export const INVOICE_RENDER_QUEUE = 'invoice.render';
+export { INVOICE_RENDER_ONE_JOB, INVOICE_RENDER_QUEUE } from './invoice-render.nudge';
 export const INVOICE_RENDER_SWEEP_JOB = 'invoice.render.sweep';
 export const SWEEP_EVERY_MS = 60_000;
 /** A generated document still without its bytes after this long was left by a render that crashed midway. */
@@ -139,6 +149,14 @@ export interface OrphanDocument {
   documentId: string;
 }
 
+/** A stored, clean PDF whose print row was never written: the print it is, as stored with its document. */
+export interface OwedPrint extends RenderCandidate {
+  documentId: string;
+  printNo: number;
+  /** The DocumentFormatSnapshot stored with the document, as read (unchecked). */
+  format: unknown;
+}
+
 /** The sweeper's database access, as a port. `tx` is the transaction `INVOICE_RENDER_TX` opened for the invoice's scope. */
 export interface RenderStore {
   /**
@@ -146,6 +164,8 @@ export interface RenderStore {
    * up), oldest first after `after`, wrapping when exhausted.
    */
   candidates(now: Date, limit: number, after?: string): Promise<RenderCandidate[]>;
+  /** Whether this one invoice is a candidate at `now`, by the same rule as `candidates`. */
+  isCandidate(c: RenderCandidate, now: Date): Promise<boolean>;
   load(tx: DbTransaction, c: RenderCandidate): Promise<RenderSource | undefined>;
   /**
    * Takes this invoice's render lock for the rest of `tx` and answers whether it already has a live document. The lock
@@ -164,7 +184,15 @@ export interface RenderStore {
     format: DocumentFormatSnapshot | null,
   ): Promise<void>;
   orphans(cutoff: Date, limit: number): Promise<OrphanDocument[]>;
-  removeOrphan(tx: DbTransaction, o: OrphanDocument, now: Date): Promise<void>;
+  /**
+   * Soft-removes the orphan if it is still live and still has no bytes, and answers whose it was; undefined when
+   * there was nothing to remove (the bytes landed meanwhile, or another worker removed it first).
+   */
+  removeOrphan(
+    tx: DbTransaction,
+    o: OrphanDocument,
+    now: Date,
+  ): Promise<RenderCandidate | undefined>;
   /**
    * Soft-removes the invoice's document `documentId` when none of its versions got bytes (still awaiting_content):
    * the render that created it failed before storing them. A document that got its bytes is left alone.
@@ -184,6 +212,18 @@ export interface RenderStore {
   ): Promise<RecordedFailure>;
   /** Forgets the invoice's failures after a success. */
   clearFailure(tx: DbTransaction, c: RenderCandidate): Promise<void>;
+  /** Stores the print document `documentId` is, in the transaction that created the document. */
+  savePendingPrint(
+    tx: DbTransaction,
+    c: RenderCandidate,
+    documentId: string,
+    printNo: number,
+    format: DocumentFormatSnapshot,
+  ): Promise<void>;
+  /** Forgets it: its print row is written in the same transaction. */
+  clearPendingPrint(tx: DbTransaction, c: RenderCandidate, documentId: string): Promise<void>;
+  /** Pending prints whose document is live and holds a clean PDF: print rows that are owed, oldest first. */
+  owedPrints(limit: number): Promise<OwedPrint[]>;
 }
 
 export type RenderOutcome = 'rendered' | 'failed' | 'skipped';
@@ -197,6 +237,8 @@ export interface SweepResult {
   failed: number;
   skipped: number;
   orphansRemoved: number;
+  /** Print rows written from the print stored with a PDF whose own print write had failed. */
+  printsRestored: number;
   /** Each invoice that failed in this pass, so a caller (a test, an admin tool) can say why without the log. */
   failures: RenderFailure[];
 }
@@ -249,6 +291,7 @@ export class InvoiceRenderSweeper {
       failed: 0,
       skipped: 0,
       orphansRemoved: 0,
+      printsRestored: 0,
       failures: [],
     };
     const candidates = await this.store.candidates(this.clock(), BATCH, this.after);
@@ -260,10 +303,21 @@ export class InvoiceRenderSweeper {
       if (kind !== undefined) result.failures.push({ invoiceId: c.invoiceId, kind });
     }
     result.orphansRemoved = await this.removeOrphans();
+    result.printsRestored = await this.restoreOwedPrints();
     return result;
   }
 
   async renderOne(c: RenderCandidate): Promise<RenderOutcome> {
+    return (await this.attempt(c)).outcome;
+  }
+
+  /**
+   * The render a commit asked for (`invoice.render.one`): this invoice now, if it is a candidate. The check spares a
+   * Chromium render when the sweep got there first, the PDF is already live, or a failure's pause is still running,
+   * since attempt() would only find out after rendering. A skip is fine: the sweep stays the safety net.
+   */
+  async renderNow(c: RenderCandidate): Promise<RenderOutcome> {
+    if (!(await this.store.isCandidate(c, this.clock()))) return 'skipped';
     return (await this.attempt(c)).outcome;
   }
 
@@ -273,15 +327,14 @@ export class InvoiceRenderSweeper {
     const actor = systemActor(INVOICE_RENDER_JOB_PREFIX);
     /** The document this try created, if it got that far: a failure after it must not leave it blocking the next. */
     let created: { documentId: string } | undefined;
-    /** The print the stored PDF is: its number and the format it printed with. */
-    let print: { printNo: number; format: DocumentFormatSnapshot };
+    /** The print the stored PDF is: its document, its number and the format it printed with. */
+    let print: { documentId: string; printNo: number; format: DocumentFormatSnapshot };
     try {
       const source = await this.runTx(scope, actor, (tx) => this.store.load(tx, c), READ_ONLY);
       if (source === undefined) throw new RenderSourceMissingError();
       const { nextPrintNo, originalFormat, ...rows } = source;
       const view = toInvoiceRenderView({ ...rows, printNo: nextPrintNo });
       const format = await this.formatFor(scope, nextPrintNo, originalFormat);
-      print = { printNo: nextPrintNo, format };
       const bytes = await this.pdf.htmlToPdf(
         renderInvoiceHtml(view, {
           numberSystems: format.numberSystems,
@@ -297,17 +350,20 @@ export class InvoiceRenderSweeper {
       };
 
       // The lock and the re-check make "no live document yet" true until this commits, so only one racer stores.
-      const generated = await this.runTx(scope, actor, async (tx) =>
-        (await this.store.lockAndHasDocument(tx, c))
-          ? undefined
-          : this.documents.createGenerated(
-              tx,
-              { ownerType: INVOICE_OWNER_TYPE, ownerId: c.invoiceId },
-              file,
-            ),
-      );
+      // The print it will be is stored with the document, so a print row that cannot be written later is not lost.
+      const generated = await this.runTx(scope, actor, async (tx) => {
+        if (await this.store.lockAndHasDocument(tx, c)) return undefined;
+        const made = await this.documents.createGenerated(
+          tx,
+          { ownerType: INVOICE_OWNER_TYPE, ownerId: c.invoiceId },
+          file,
+        );
+        await this.store.savePendingPrint(tx, c, made.documentId, nextPrintNo, format);
+        return made;
+      });
       if (generated === undefined) return { outcome: 'skipped' };
       created = generated;
+      print = { documentId: generated.documentId, printNo: nextPrintNo, format };
       // After the commit above: the content step opens its own transactions and the scan worker reads the row.
       await this.documents.receiveGenerated(generated, file, { scope, actor });
     } catch (error) {
@@ -321,30 +377,25 @@ export class InvoiceRenderSweeper {
     // never removed and never rendered again (a second original could differ in format). What is left is its print
     // row, which also forgets earlier failures. A failed write is tried once more with the same print number and
     // format; recordPrint ignores a print number already logged, so a first write that did commit is not doubled.
-    await this.recordPrintWithRetry(c, scope, print.printNo, print.format);
+    await this.recordPrintWithRetry(c, scope, print.documentId, print.printNo, print.format);
     return { outcome: 'rendered' };
   }
 
   /**
    * Writes the print row of a stored PDF, trying twice. When both tries fail, it logs and gives up without counting a
-   * render failure: the PDF stays live, so the invoice is no longer a candidate and is never rendered again.
-   *
-   * Known limitation: the invoice then has a downloadable PDF but no print row, so print 1's format is not stored; a
-   * later reprint (after the document is removed) would number itself print 1 and use the settings in force then.
-   * The log line below is what tells an operator to add the row by hand.
+   * render failure: the PDF stays live, so the invoice is no longer a candidate and is never rendered again. Its print
+   * (number and format) stays stored with the document, and the next sweep writes the row from it (restoreOwedPrints).
    */
   private async recordPrintWithRetry(
     c: RenderCandidate,
     scope: TxScope,
+    documentId: string,
     printNo: number,
     format: DocumentFormatSnapshot,
   ): Promise<void> {
     const actor = systemActor(INVOICE_RENDER_JOB_PREFIX);
     const write = () =>
-      this.runTx(scope, actor, async (tx) => {
-        await this.store.recordPrint(tx, c, printNo, this.clock(), printNo === 1 ? format : null);
-        await this.store.clearFailure(tx, c);
-      });
+      this.runTx(scope, actor, (tx) => this.writePrint(tx, c, documentId, printNo, format));
     try {
       await write();
       return;
@@ -357,9 +408,55 @@ export class InvoiceRenderSweeper {
       await write();
     } catch (error) {
       this.logger.error(
-        `invoice render: stored PDF has no print row: invoice=${c.invoiceId} print=${printNo} kind=${failureKind(error)}`,
+        `invoice render: stored PDF has no print row yet, the next sweep writes it: invoice=${c.invoiceId} print=${printNo} kind=${failureKind(error)}`,
       );
     }
+  }
+
+  /** One transaction: the print row (print 1 keeps its format), the stored print forgotten, earlier failures too. */
+  private async writePrint(
+    tx: DbTransaction,
+    c: RenderCandidate,
+    documentId: string,
+    printNo: number,
+    format: DocumentFormatSnapshot | null,
+  ): Promise<void> {
+    await this.store.recordPrint(tx, c, printNo, this.clock(), printNo === 1 ? format : null);
+    await this.store.clearPendingPrint(tx, c, documentId);
+    await this.store.clearFailure(tx, c);
+  }
+
+  /**
+   * Writes the print rows that are owed: a clean PDF whose print write failed twice. Each comes from the print stored
+   * with its document (number and frozen format), so print 1 keeps what the PDF printed with whatever the settings say
+   * now. A stored format that no longer parses (a hand-edited row) is written as none, like a print before 0051.
+   */
+  private async restoreOwedPrints(): Promise<number> {
+    let restored = 0;
+    for (const owed of await this.store.owedPrints(ORPHAN_BATCH)) {
+      const scope: TxScope = { tenantId: owed.tenantId, organizationId: owed.organizationId };
+      const format = DocumentFormatSnapshotSchema.safeParse(owed.format);
+      try {
+        await this.runTx(scope, systemActor(INVOICE_RENDER_JOB_PREFIX), (tx) =>
+          this.writePrint(
+            tx,
+            owed,
+            owed.documentId,
+            owed.printNo,
+            format.success ? format.data : null,
+          ),
+        );
+        restored += 1;
+        this.logger.warn(
+          `invoice render: wrote the owed print row: invoice=${owed.invoiceId} print=${owed.printNo}`,
+        );
+      } catch (error) {
+        this.logger.error(
+          `invoice render: could not write the owed print row: invoice=${owed.invoiceId} kind=${failureKind(error)}`,
+        );
+      }
+    }
+    return restored;
   }
 
   /**
@@ -388,25 +485,32 @@ export class InvoiceRenderSweeper {
       }
     }
     try {
-      await this.runTx(scope, actor, async (tx) => {
-        const now = this.clock();
-        const recorded = await this.store.recordFailure(tx, c, kind, now);
-        if (!recorded.givenUp) return;
-        await this.audit.record(tx, {
-          action: RENDER_GIVEN_UP_ACTION.invoice,
-          entityType: 'invoices',
-          entityId: c.invoiceId,
-          after: { attempts: recorded.attempts, failureKind: kind },
-        });
-        this.logger.error(
-          `invoice render given up: invoice=${c.invoiceId} attempts=${recorded.attempts} kind=${kind}`,
-        );
-      });
+      await this.runTx(scope, actor, (tx) => this.countFailure(tx, c, kind, this.clock()));
     } catch (error) {
       this.logger.error(
         `invoice render: could not record the failure: invoice=${c.invoiceId} kind=${failureKind(error)}`,
       );
     }
+  }
+
+  /** Counts one failed try in `tx` and, when that used up the last one, writes the admin entry there too. */
+  private async countFailure(
+    tx: DbTransaction,
+    c: RenderCandidate,
+    kind: string,
+    now: Date,
+  ): Promise<void> {
+    const recorded = await this.store.recordFailure(tx, c, kind, now);
+    if (!recorded.givenUp) return;
+    await this.audit.record(tx, {
+      action: RENDER_GIVEN_UP_ACTION.invoice,
+      entityType: 'invoices',
+      entityId: c.invoiceId,
+      after: { attempts: recorded.attempts, failureKind: kind },
+    });
+    this.logger.error(
+      `invoice render given up: invoice=${c.invoiceId} attempts=${recorded.attempts} kind=${kind}`,
+    );
   }
 
   /**
@@ -443,7 +547,11 @@ export class InvoiceRenderSweeper {
     };
   }
 
-  /** Generated documents that never got their bytes (the render crashed between the two steps) are soft-removed. */
+  /**
+   * Generated documents that never got their bytes (the render crashed between the two steps) are soft-removed. The
+   * crashed render never counted its try, so the removal counts it, in the same transaction: a worker that dies on
+   * every try is given up at the limit, like any failure, and the removal is undone if the count cannot be written.
+   */
   private async removeOrphans(): Promise<number> {
     const now = this.clock();
     const orphans = await this.store.orphans(
@@ -454,8 +562,19 @@ export class InvoiceRenderSweeper {
     for (const o of orphans) {
       try {
         const scope: TxScope = { tenantId: o.tenantId, organizationId: o.organizationId };
-        await this.runTx(scope, systemActor(INVOICE_RENDER_JOB_PREFIX), (tx) =>
-          this.store.removeOrphan(tx, o, now),
+        const owner = await this.runTx(
+          scope,
+          systemActor(INVOICE_RENDER_JOB_PREFIX),
+          async (tx) => {
+            const removedFrom = await this.store.removeOrphan(tx, o, now);
+            if (removedFrom !== undefined)
+              await this.countFailure(tx, removedFrom, ABANDONED_KIND, now);
+            return removedFrom;
+          },
+        );
+        if (owner === undefined) continue;
+        this.logger.warn(
+          `invoice render failed: invoice=${owner.invoiceId} kind=${ABANDONED_KIND}`,
         );
         removed += 1;
       } catch (error) {
@@ -475,22 +594,43 @@ const ownerOf = (c: RenderCandidate): RenderFailureOwner => ({
   ownerId: c.invoiceId,
 });
 
+/**
+ * The candidate rule, on the outer `invoices` row: issued, of a kind this unit prints, with no live document that
+ * holds or awaits a PDF, and not held back by a failure (pausing or given up).
+ */
+function renderDue(db: Db, now: Date) {
+  const hasLiveDocument = db
+    .select({ one: sql`1` })
+    .from(documents)
+    .where(
+      and(
+        eq(documents.tenantId, invoices.tenantId),
+        eq(documents.organizationId, invoices.organizationId),
+        eq(documents.ownerType, INVOICE_OWNER_TYPE),
+        eq(documents.ownerId, invoices.id),
+        isNull(documents.removedAt),
+        exists(unrefusedUpload(db, documents.tenantId, documents.id)),
+      ),
+    );
+  return and(
+    eq(invoices.status, 'issued'),
+    inArray(invoices.kind, [...RENDERABLE_INVOICE_KINDS]),
+    notExists(hasLiveDocument),
+    not(
+      renderHeldBack(
+        db,
+        INVOICE_OWNER_TYPE,
+        { tenantId: invoices.tenantId, organizationId: invoices.organizationId, id: invoices.id },
+        now,
+      ),
+    ),
+  );
+}
+
 /** The store on the real tables. Every query names the tenant and the acting entity. */
 export function drizzleInvoiceRenderStore(db: Db): RenderStore {
   return {
     async candidates(now, limit, after) {
-      const hasLiveDocument = db
-        .select({ one: sql`1` })
-        .from(documents)
-        .where(
-          and(
-            eq(documents.tenantId, invoices.tenantId),
-            eq(documents.organizationId, invoices.organizationId),
-            eq(documents.ownerType, INVOICE_OWNER_TYPE),
-            eq(documents.ownerId, invoices.id),
-            isNull(documents.removedAt),
-          ),
-        );
       const page = (cursor?: string) =>
         db
           .select({
@@ -501,21 +641,7 @@ export function drizzleInvoiceRenderStore(db: Db): RenderStore {
           .from(invoices)
           .where(
             and(
-              eq(invoices.status, 'issued'),
-              inArray(invoices.kind, [...RENDERABLE_INVOICE_KINDS]),
-              notExists(hasLiveDocument),
-              not(
-                renderHeldBack(
-                  db,
-                  INVOICE_OWNER_TYPE,
-                  {
-                    tenantId: invoices.tenantId,
-                    organizationId: invoices.organizationId,
-                    id: invoices.id,
-                  },
-                  now,
-                ),
-              ),
+              renderDue(db, now),
               cursor === undefined
                 ? undefined
                 : sql`(${invoices.issuedAt}, ${invoices.id}) >
@@ -528,6 +654,22 @@ export function drizzleInvoiceRenderStore(db: Db): RenderStore {
       // a missing cursor yields an empty page and safely restarts from the beginning.
       const next = await page(after);
       return next.length > 0 || after === undefined ? next : page();
+    },
+
+    async isCandidate(c, now) {
+      const [row] = await db
+        .select({ one: sql`1` })
+        .from(invoices)
+        .where(
+          and(
+            eq(invoices.tenantId, c.tenantId),
+            eq(invoices.organizationId, c.organizationId),
+            eq(invoices.id, c.invoiceId),
+            renderDue(db, now),
+          ),
+        )
+        .limit(1);
+      return row !== undefined;
     },
 
     async load(tx, c) {
@@ -621,6 +763,7 @@ export function drizzleInvoiceRenderStore(db: Db): RenderStore {
               eq(documents.ownerType, INVOICE_OWNER_TYPE),
               eq(documents.ownerId, c.invoiceId),
               isNull(documents.removedAt),
+              exists(unrefusedUpload(tx, documents.tenantId, documents.id)),
             ),
           ),
         )
@@ -676,10 +819,69 @@ export function drizzleInvoiceRenderStore(db: Db): RenderStore {
       return clearRenderFailure(tx, ownerOf(c));
     },
 
+    async savePendingPrint(tx, c, documentId, printNo, format) {
+      await tx.insert(invoicePendingPrints).values(
+        scoped({ tenantId: c.tenantId, organizationId: c.organizationId }).values({
+          invoiceId: c.invoiceId,
+          documentId,
+          printNo,
+          renderFormat: format,
+        }),
+      );
+    },
+
+    async clearPendingPrint(tx, c, documentId) {
+      await tx
+        .delete(invoicePendingPrints)
+        .where(
+          scoped({ tenantId: c.tenantId, organizationId: c.organizationId }).where(
+            invoicePendingPrints,
+            and(
+              eq(invoicePendingPrints.invoiceId, c.invoiceId),
+              eq(invoicePendingPrints.documentId, documentId),
+            ),
+          ),
+        );
+    },
+
+    async owedPrints(limit) {
+      const cleanUpload = db
+        .select({ one: sql`1` })
+        .from(documentVersions)
+        .where(
+          and(
+            eq(documentVersions.tenantId, documents.tenantId),
+            eq(documentVersions.documentId, documents.id),
+            eq(documentVersions.status, 'clean'),
+          ),
+        );
+      return db
+        .select({
+          tenantId: invoicePendingPrints.tenantId,
+          organizationId: invoicePendingPrints.organizationId,
+          invoiceId: invoicePendingPrints.invoiceId,
+          documentId: invoicePendingPrints.documentId,
+          printNo: invoicePendingPrints.printNo,
+          format: invoicePendingPrints.renderFormat,
+        })
+        .from(invoicePendingPrints)
+        .innerJoin(
+          documents,
+          and(
+            eq(documents.tenantId, invoicePendingPrints.tenantId),
+            eq(documents.organizationId, invoicePendingPrints.organizationId),
+            eq(documents.id, invoicePendingPrints.documentId),
+          ),
+        )
+        .where(and(isNull(documents.removedAt), exists(cleanUpload)))
+        .orderBy(asc(invoicePendingPrints.createdAt))
+        .limit(limit);
+    },
+
     async removeOrphan(tx, o, now) {
       // Soft remove, like DocumentsService.remove (which refuses here: nobody removes an invoice file by hand). Rows
       // are kept for the audit trail, and there are no bytes to delete: the version is awaiting_content or rejected.
-      await tx
+      const [removed] = await tx
         .update(documents)
         .set({ removedAt: now, updatedAt: now })
         .where(
@@ -687,11 +889,17 @@ export function drizzleInvoiceRenderStore(db: Db): RenderStore {
             eq(documents.tenantId, o.tenantId),
             eq(documents.organizationId, o.organizationId),
             eq(documents.id, o.documentId),
+            // The owner it answers with is an invoice: never touch another owner type's document.
+            eq(documents.ownerType, INVOICE_OWNER_TYPE),
             isNull(documents.removedAt),
             // Re-checked here: the bytes may have landed between the listing and this update.
             notExists(filledVersion(tx, documents.tenantId, documents.id)),
           ),
-        );
+        )
+        .returning({ invoiceId: documents.ownerId });
+      return removed === undefined
+        ? undefined
+        : { tenantId: o.tenantId, organizationId: o.organizationId, invoiceId: removed.invoiceId };
     },
   };
 }
@@ -705,6 +913,11 @@ export class InvoiceRenderProcessor extends WorkerHost {
   async process(job: Job): Promise<void> {
     if (job.name === INVOICE_RENDER_SWEEP_JOB) {
       await this.sweeper.sweep();
+      return;
+    }
+    if (job.name === INVOICE_RENDER_ONE_JOB) {
+      const { tenantId, organizationId, id } = RenderOneJobSchema.parse(job.data);
+      await this.sweeper.renderNow({ tenantId, organizationId, invoiceId: id });
       return;
     }
     // A job name nobody handles is a bug; failing keeps it visible instead of silently dropping it.

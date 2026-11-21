@@ -47,7 +47,7 @@ import {
   HttpException,
   NotFoundException,
 } from '@nestjs/common';
-import type { Queue } from 'bullmq';
+import type { Job, Queue } from 'bullmq';
 import { sql } from 'drizzle-orm';
 import { drizzle } from 'drizzle-orm/node-postgres';
 import { Pool } from 'pg';
@@ -80,9 +80,17 @@ import {
   INVOICE_RENDER_JOB_PREFIX,
   InvoiceOwnerPolicy,
 } from '../invoice-owner.policy';
+import { InvoiceIssueService } from '../invoice-issue.service';
+import { LedgerService } from '../../ledger/ledger.service';
+import type { MoneyService } from '../../../platform/settings/money.service';
+import { NumberingService } from '../../../platform/settings/numbering.service';
+import type { SettingsService } from '../../../platform/settings/settings.service';
+import type { AuthzService } from '../../../platform/authz/authz.service';
 import { InvoiceDocumentService } from './invoice-document.service';
+import { INVOICE_RENDER_ONE_JOB, InvoiceRenderNudge } from './invoice-render.nudge';
 import {
   drizzleInvoiceRenderStore,
+  InvoiceRenderProcessor,
   InvoiceRenderSweeper,
   ORPHAN_AFTER_MS,
   type RenderCandidate,
@@ -765,6 +773,50 @@ describe('GET /v1/invoices/:id/document', () => {
     current.orgKind = 'customer';
     await expect(service.link(inv.invoiceId)).rejects.toBeInstanceOf(ForbiddenException);
   });
+  /** A document of the invoice whose only upload moved through `statuses` (from awaiting_content). */
+  async function documentWith(scope: TestScope, invoiceId: string, statuses: string[]) {
+    const documentId = await createOrphan(scope, invoiceId, 0);
+    for (const status of statuses) {
+      await withTx(db, scope, seedActor(), (tx) =>
+        tx.execute(
+          sql`UPDATE app.document_versions SET status = ${status} WHERE document_id = ${documentId}::uuid`,
+        ),
+      );
+    }
+  }
+
+  const codeOf = async (invoiceId: string) => {
+    const refused = await service.link(invoiceId).catch((e: unknown) => e);
+    expect(refused).toBeInstanceOf(HttpException);
+    const response = (refused as HttpException).getResponse() as { code?: string };
+    return { status: (refused as HttpException).getStatus(), code: response.code };
+  };
+
+  it('names a PDF the virus scan refused with its own code, apart from a missing one', async () => {
+    const scope = await newScope();
+    asStaff(scope);
+    const infected = await seedInvoice(scope);
+    await documentWith(scope, infected.invoiceId, ['quarantined', 'infected']);
+    const scanFailed = await seedInvoice(scope);
+    await documentWith(scope, scanFailed.invoiceId, ['quarantined', 'scan_failed']);
+
+    expect(await codeOf(infected.invoiceId)).toEqual({
+      status: 404,
+      code: 'invoice_pdf_scan_refused',
+    });
+    expect(await codeOf(scanFailed.invoiceId)).toEqual({
+      status: 404,
+      code: 'invoice_pdf_scan_refused',
+    });
+  });
+
+  it('reads a live document whose only upload was rejected as being prepared: the render tries again', async () => {
+    const scope = await newScope();
+    asStaff(scope);
+    const inv = await seedInvoice(scope);
+    await documentWith(scope, inv.invoiceId, ['quarantined', 'rejected']);
+    expect(await codeOf(inv.invoiceId)).toEqual({ status: 409, code: 'invoice_pdf_not_ready' });
+  });
 });
 
 describe('a render that keeps failing (R4c2: TR-Q4, F1-Q13)', () => {
@@ -933,6 +985,105 @@ describe('a render that keeps failing (R4c2: TR-Q4, F1-Q13)', () => {
     expect((await documentRows(inv.invoiceId)).map((d) => d.status)).toEqual(['rejected', 'clean']);
   });
 
+  it('does not let a live document whose only upload was rejected block the next try or a Retry', async () => {
+    const scope = await newScope();
+    const inv = await seedInvoice(scope);
+    asStaff(scope, 'finance');
+    // The type check refused the bytes and the failure path could not remove the document (or the worker died
+    // between the two), on the last try: the render is given up and the rejected document is still live.
+    const orphan = await createOrphan(scope, inv.invoiceId, 0);
+    // The way the receive moves it: claimed (quarantined), then refused by the type check.
+    for (const status of ['quarantined', 'rejected']) {
+      await withTx(db, scope, seedActor(), (tx) =>
+        tx.execute(
+          sql`UPDATE app.document_versions SET status = ${status} WHERE document_id = ${orphan}::uuid`,
+        ),
+      );
+    }
+    let clock = new Date();
+    const worker = failingWorker(() => clock);
+    for (let n = 1; n <= MAX_RENDER_ATTEMPTS; n += 1) {
+      expect(await worker.renderOne(inv)).toBe('failed');
+      clock = new Date((await failureRow(inv.invoiceId))?.next_attempt_at ?? clock);
+    }
+    expect((await failureRow(inv.invoiceId))?.exhausted_at).not.toBeNull();
+
+    await expect(service.retry(inv.invoiceId)).resolves.toEqual({ state: 'queued' });
+    // Retried, well inside the orphan cutoff: due at once, and the healthy render stores the PDF.
+    expect(ids(await store.candidates(new Date(), 1_000))).toContain(inv.invoiceId);
+    expect(await sweeper.renderOne(inv)).toBe('rendered');
+    await expect(service.link(inv.invoiceId)).resolves.toBeDefined();
+  });
+
+  it('does not leave the owner on "Preparing PDF" when the stored PDF cannot be marked clean', async () => {
+    const scope = await newScope();
+    const inv = await seedInvoice(scope);
+    asStaff(scope);
+    // The bytes passed the type check, then moving them to clean storage failed (a disk or database blip).
+    const failingDisk = Object.create(storage) as DiskStorageAdapter;
+    failingDisk.promote = () => Promise.reject(new Error('disk is away'));
+    const flakyDocuments = new DocumentsService(
+      db,
+      failingDisk,
+      new SignedLinks(SECRET, new MemoryStore(), () => Date.now()),
+      queue as unknown as Queue,
+      authz,
+      audit,
+    );
+    flakyDocuments.registerOwner(new InvoiceOwnerPolicy(drizzleInvoiceHeadLoader(db)));
+    let clock = new Date();
+    const worker = new InvoiceRenderSweeper(
+      store,
+      runTx,
+      flakyDocuments,
+      settings,
+      { htmlToPdf: vi.fn().mockResolvedValue(PDF) },
+      () => clock,
+      NO_LOGOS,
+      renderAudit,
+    );
+    expect(await worker.renderOne(inv)).toBe('failed');
+
+    // The try is counted and its document is out of the way: the next try comes after the pause, not after a scan
+    // or the orphan cleanup, and the screen keeps saying "being prepared" until then.
+    const row = await failureRow(inv.invoiceId);
+    expect(row).toMatchObject({ attempts: 1 });
+    const [doc] = await documentRows(inv.invoiceId);
+    expect(doc?.status).toBe('rejected');
+    expect(doc?.removed_at).not.toBeNull();
+    await expect(service.link(inv.invoiceId)).rejects.toBeInstanceOf(ConflictException);
+    clock = new Date((row?.next_attempt_at ?? new Date()).getTime() + 1);
+    expect(ids(await store.candidates(clock, 1_000))).toContain(inv.invoiceId);
+    expect(await sweeper.renderOne(inv)).toBe('rendered');
+    await expect(service.link(inv.invoiceId)).resolves.toBeDefined();
+  });
+
+  it('counts a document left by a worker that crashed as a failed try, and gives up at the limit', async () => {
+    const scope = await newScope();
+    const inv = await seedInvoice(scope);
+    let clock = new Date();
+    const worker = failingWorker(() => clock);
+    for (let n = 1; n < MAX_RENDER_ATTEMPTS; n += 1) {
+      expect(await worker.renderOne(inv)).toBe('failed');
+      clock = new Date((await failureRow(inv.invoiceId))?.next_attempt_at ?? clock);
+    }
+    expect(await failureRow(inv.invoiceId)).toMatchObject({ attempts: MAX_RENDER_ATTEMPTS - 1 });
+    // The last try's worker died after createGenerated: no failure was recorded, only the unfilled document.
+    const orphan = await createOrphan(scope, inv.invoiceId, ORPHAN_AFTER_MS + 60_000);
+
+    await sweeper.sweep();
+
+    const [doc] = (await documentRows(inv.invoiceId)).filter((d) => d.document_id === orphan);
+    expect(doc?.removed_at).not.toBeNull();
+    const given = await failureRow(inv.invoiceId);
+    expect(given).toMatchObject({ attempts: MAX_RENDER_ATTEMPTS, last_failure_kind: 'abandoned' });
+    expect(given?.exhausted_at).not.toBeNull();
+    expect(await actions(scope, inv.invoiceId)).toEqual(['invoice.pdf_render_failed']);
+    // Given up, so the crash loop ends: no later sweep takes it again.
+    const farFuture = new Date(Date.now() + 365 * 24 * 60 * 60_000);
+    expect(ids(await store.candidates(farFuture, 1_000))).not.toContain(inv.invoiceId);
+  });
+
   /** A worker over the real store whose print log write fails `failures` times, then goes to the real table. */
   const flakyPrintLog = (failures: number) => {
     let left = failures;
@@ -981,7 +1132,7 @@ describe('a render that keeps failing (R4c2: TR-Q4, F1-Q13)', () => {
     const [doc] = await documentRows(inv.invoiceId);
     expect(doc?.status).toBe('clean');
     expect(doc?.removed_at).toBeNull();
-    // Known limitation: no print row, and no failure counted either.
+    // No print row yet (the next sweep writes it from the print stored with the PDF), and no failure counted.
     expect(await printFormats(inv.invoiceId)).toEqual([]);
     expect(await failureRow(inv.invoiceId)).toBeUndefined();
     // The live PDF keeps the invoice out of the candidates, so no later sweep prints another original.
@@ -991,4 +1142,120 @@ describe('a render that keeps failing (R4c2: TR-Q4, F1-Q13)', () => {
     expect(await documentRows(inv.invoiceId)).toHaveLength(1);
     expect(await printFormats(inv.invoiceId)).toEqual([]);
   });
+
+  it('restores print 1 with its frozen format on the next sweep when both print writes failed', async () => {
+    const scope = await newScope();
+    const inv = await seedInvoice(scope);
+    const { worker } = flakyPrintLog(2);
+    expect(await worker.renderOne(inv)).toBe('rendered');
+    expect(await printFormats(inv.invoiceId)).toEqual([]);
+    // The settings change before the next sweep: print 1 must keep what the stored PDF printed with.
+    liveSettings['format.date'] = 'yyyy-MM-dd';
+
+    await sweeper.sweep();
+
+    const prints = await printFormats(inv.invoiceId);
+    expect(prints.map((p) => p.print_no)).toEqual([1]);
+    const format = DocumentFormatSnapshotSchema.parse(prints[0]?.render_format);
+    expect(format.dateFormat).toBe('dd MMM yyyy');
+    // Restored once: a second sweep writes nothing more.
+    await sweeper.sweep();
+    expect((await printFormats(inv.invoiceId)).map((p) => p.print_no)).toEqual([1]);
+  });
+});
+
+describe('render on commit (S3): the issue enqueues the render, the worker renders it at once', () => {
+  /** NPR at 1, as the issue tests price it. */
+  const money = {
+    toNprSnapshot: (_tx: unknown, _scope: unknown, m: { amount: string }) =>
+      Promise.resolve({
+        amountNpr: m.amount,
+        rate: '1',
+        rateSource: 'NPR',
+        rateDate: '2026-11-09',
+      }),
+  } as unknown as MoneyService;
+  /** The seller the issue snapshots: an address and a PAN, nothing else. */
+  const issueSettings = {
+    get: (_scope: unknown, key: string) =>
+      Promise.resolve(
+        key === 'entity.address'
+          ? { line1: '1 Durbar Marg', city: 'Kathmandu', country: 'NP' }
+          : key === 'entity.pan_vat_no'
+            ? PAN
+            : null,
+      ),
+  } as unknown as SettingsService;
+
+  it('has the PDF of an issued proforma ready within 10 s of the issue, with the sweep never run', async () => {
+    const scope = await newScope();
+    current.scope = scope;
+    current.orgKind = 'staff';
+    const draft = await seedInvoice(scope, { kind: 'proforma', status: 'draft' });
+    // The issue snapshots the buyer's address, which needs a city.
+    await withTx(db, scope, seedActor(), (tx) =>
+      tx.execute(sql`
+        UPDATE app.customers SET address = '{"line1":"Thamel 4","city":"Kathmandu","country":"NP"}'::jsonb
+         WHERE id = ${scope.customerId}::uuid`),
+    );
+    // The API side: the real nudge on a queue that hands over what was enqueued.
+    const renderQueue = { add: vi.fn().mockResolvedValue({}) };
+    const issuing = new InvoiceIssueService(
+      db,
+      authz as unknown as AuthzService,
+      renderAudit,
+      caller,
+      new LedgerService(),
+      new NumberingService(),
+      money,
+      issueSettings,
+      () => new Date(),
+      undefined,
+      new InvoiceRenderNudge(renderQueue as unknown as Queue),
+    );
+    const sweep = vi.spyOn(sweeper, 'sweep');
+    const started = Date.now();
+
+    const result = await issuing.issue(draft.invoiceId, { expectedVersion: 1 }, randomUUID());
+    expect(result).toMatchObject({ kind: 'issued', invoiceId: draft.invoiceId });
+
+    // One job, enqueued after the commit, named and keyed by the invoice.
+    expect(renderQueue.add).toHaveBeenCalledTimes(1);
+    const [name, data, opts] = renderQueue.add.mock.calls[0] as [string, unknown, object];
+    expect(name).toBe(INVOICE_RENDER_ONE_JOB);
+    expect(data).toEqual({ ...scope_(scope), id: draft.invoiceId });
+    expect(opts).toMatchObject({
+      jobId: `invoice.render.one-${draft.invoiceId}`,
+      removeOnComplete: true,
+    });
+
+    // The worker side: the real processor runs the job it was handed.
+    await new InvoiceRenderProcessor(sweeper).process({ name, data } as unknown as Job);
+
+    const link = await service.link(draft.invoiceId);
+    expect(link.url.length).toBeGreaterThan(0);
+    expect(Date.now() - started).toBeLessThan(10_000);
+    expect(sweep).not.toHaveBeenCalled();
+    expect(gotenberg.requests).toHaveLength(1);
+    sweep.mockRestore();
+  });
+
+  it('does not render twice when the job runs again after the PDF is live', async () => {
+    const scope = await newScope();
+    const inv = await seedInvoice(scope);
+    const job = {
+      name: INVOICE_RENDER_ONE_JOB,
+      data: { ...scope_(scope), id: inv.invoiceId },
+    } as unknown as Job;
+    const processor = new InvoiceRenderProcessor(sweeper);
+    await processor.process(job);
+    await processor.process(job);
+    expect(gotenberg.requests).toHaveLength(1);
+    expect(await documentRows(inv.invoiceId)).toHaveLength(1);
+  });
+});
+
+const scope_ = (s: TxScope): TxScope => ({
+  tenantId: s.tenantId,
+  organizationId: s.organizationId,
 });

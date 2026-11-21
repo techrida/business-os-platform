@@ -95,26 +95,6 @@ export async function seedP3World(e2e: E2eContext, idPrefix: string): Promise<P3
 }
 
 /**
- * A live document of the entity, for the evidence a milestone line needs to become billable. A SHORTCUT, the same one
- * sales-orders.integration.test.ts takes: P3 has no route to attach a file to a sales order (no owner policy lets
- * staff attach to one), and `markBillable` only checks that the evidence is a live document of the entity.
- */
-export async function seedEvidenceDocument(world: P3World): Promise<string> {
-  const [row] = await withTx(
-    drizzle({ client: world.pool }),
-    world.scope,
-    systemActor('e2e-p3-evidence'),
-    (tx) =>
-      tx
-        .insert(documents)
-        .values({ ...world.scope, ownerType: 'test_evidence', ownerId: randomUUID() })
-        .returning({ id: documents.id }),
-  );
-  if (row === undefined) throw new Error('evidence document insert returned no row');
-  return row.id;
-}
-
-/**
  * A clean payment proof for `customerId`, as if `uploadedBy` had uploaded a bank slip through the staff proof route and
  * the scan had cleared it. A SHORTCUT, the same rows payments.integration.test.ts seeds (`proof()`): one document
  * owned by `payment_intake` / the customer and one `clean` version. It skips only the upload and the virus scan, which

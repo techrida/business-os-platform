@@ -76,9 +76,11 @@ import {
   parseStoredDocumentStyle,
 } from './issuer';
 import { renderQuotationHtml } from './quotation-html';
+import { QUOTATION_RENDER_ONE_JOB, QUOTATION_RENDER_QUEUE } from './quotation-render.nudge';
+import { RenderOneJobSchema } from './render-nudge';
 import { MAX_RENDER_ATTEMPTS, nextRetryPauseMs, RENDER_GIVEN_UP_ACTION } from './render-retry';
 
-export const QUOTATION_RENDER_QUEUE = 'quotation.render';
+export { QUOTATION_RENDER_ONE_JOB, QUOTATION_RENDER_QUEUE } from './quotation-render.nudge';
 export const QUOTATION_RENDER_SWEEP_JOB = 'quotation.render.sweep';
 export const SWEEP_EVERY_MS = 60_000;
 /** A version still `pending` after this long was claimed by a worker that died; that try counts as failed. */
@@ -273,6 +275,11 @@ export class QuotationRenderSweeper {
     return result;
   }
 
+  /**
+   * One version now: the sweep's single try, and the render an approval asked for (`quotation.render.one`). The claim
+   * is the eligibility check (approved, not rendered, not pausing, not given up), so a version the sweep already took
+   * is skipped before anything renders.
+   */
   async renderOne(c: RenderCandidate): Promise<RenderOutcome> {
     return (await this.attempt(c)).outcome;
   }
@@ -765,6 +772,11 @@ export class QuotationRenderProcessor extends WorkerHost {
   async process(job: Job): Promise<void> {
     if (job.name === QUOTATION_RENDER_SWEEP_JOB) {
       await this.sweeper.sweep();
+      return;
+    }
+    if (job.name === QUOTATION_RENDER_ONE_JOB) {
+      const { tenantId, organizationId, id } = RenderOneJobSchema.parse(job.data);
+      await this.sweeper.renderOne({ tenantId, organizationId, versionId: id });
       return;
     }
     // A job name nobody handles is a bug; failing keeps it visible instead of silently dropping it.

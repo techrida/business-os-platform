@@ -29,6 +29,7 @@ import {
 import { ForbiddenException, HttpException } from '@nestjs/common';
 import { asc, eq, sql } from 'drizzle-orm';
 import { drizzle } from 'drizzle-orm/node-postgres';
+import type { Queue } from 'bullmq';
 import { Pool } from 'pg';
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 
@@ -52,6 +53,7 @@ import { quotationLineAmounts } from '../sourcing/sourcing.rules';
 import { PoAmendmentSubject } from './po-amendment.subject';
 import { PO_AMENDMENT_DOCUMENT_TYPE, PO_AMENDMENT_WORKFLOW_SPEC } from './purchase-order.rules';
 import { PurchaseOrdersService } from './purchase-orders.service';
+import { PurchaseOrderRenderNudge } from './render/purchase-order-render.nudge';
 import { createTestDatabase, type TestDatabase } from '@bos/db/testing';
 
 vi.setConfig({ testTimeout: 60_000, hookTimeout: 180_000 });
@@ -204,9 +206,18 @@ beforeAll(async () => {
   await adminPublisher.publish(EMERGENCY_REVIEW_DOCUMENT_TYPE, 1, SKIP_LIVE_PUBLISHER_CHECK);
 
   approvals = new ApprovalsService(db, audit, notify, directory, caller, () => now);
-  approvals.registerSubject(new PoAmendmentSubject(audit, approvals, () => now));
+  const renderNudge = new PurchaseOrderRenderNudge(renderQueue as unknown as Queue);
+  approvals.registerSubject(new PoAmendmentSubject(audit, approvals, () => now, renderNudge));
   approvals.registerSubject(new EmergencyReviewSubject(audit));
-  service = new PurchaseOrdersService(db, approvals, audit, caller, () => now);
+  service = new PurchaseOrdersService(
+    db,
+    approvals,
+    audit,
+    caller,
+    () => now,
+    undefined,
+    renderNudge,
+  );
   receiptsService = new ReceiptsService(
     db,
     authz as unknown as AuthzService,
@@ -405,6 +416,11 @@ async function decide(
 }
 
 const reason = 'Vendor revised the price';
+
+/** The render queue the nudge enqueues on (render on commit, S3); each test reads what was enqueued. */
+const renderQueue = { add: vi.fn((..._args: unknown[]) => Promise.resolve({})) };
+/** The job ids enqueued so far, in order. */
+const renderJobIds = () => renderQueue.add.mock.calls.map((c) => (c[2] as { jobId: string }).jobId);
 
 // ---------------------------------------------------------------------------------------- issue
 
@@ -1184,5 +1200,65 @@ describe("names on an amendment's approval (U18 #3)", () => {
         expect.objectContaining({ key: 'status', value: 'amendment_pending' }),
       ]),
     );
+  });
+});
+
+// ---------------------------------------------------------------------------------------- render on commit (S3)
+
+describe('render on commit (S3): each new version enqueues its render once it commits', () => {
+  it('issue enqueues one purchase-order.render.one job for version 1, keyed by the order and version', async () => {
+    const po = await draftPo();
+    renderQueue.add.mockClear();
+    await service.issue(po.id, randomUUID());
+    expect(renderQueue.add).toHaveBeenCalledTimes(1);
+    expect(renderQueue.add).toHaveBeenCalledWith(
+      'purchase-order.render.one',
+      { ...scopeA, id: po.id },
+      {
+        jobId: `purchase-order.render.one-${po.id}-v1`,
+        removeOnComplete: true,
+        removeOnFail: true,
+      },
+    );
+  });
+
+  it('an amendment applied at once enqueues version 2', async () => {
+    const po = await issued();
+    renderQueue.add.mockClear();
+    await service.amend(
+      po.id,
+      { reason, lines: [{ poLineId: po.lineId, unitPrice: '71681.42' }] },
+      randomUUID(),
+    );
+    expect(renderJobIds()).toEqual([`purchase-order.render.one-${po.id}-v2`]);
+  });
+
+  it('an amendment waiting for approval enqueues nothing until the last approval commits', async () => {
+    const po = await issued();
+    renderQueue.add.mockClear();
+    const r = await service.amend(
+      po.id,
+      { reason, lines: [{ poLineId: po.lineId, unitPrice: '132743.36' }] },
+      randomUUID(),
+    );
+    const requestId = r.approvalRequestId!;
+    await decide(U.acct, 'accountant', requestId);
+    await decide(U.fin, 'finance', requestId);
+    expect(renderJobIds()).toEqual([]);
+    await decide(U.mgmt, 'management', requestId);
+    expect(renderJobIds()).toEqual([`purchase-order.render.one-${po.id}-v2`]);
+  });
+
+  it('a rejected amendment enqueues nothing', async () => {
+    const po = await issued();
+    renderQueue.add.mockClear();
+    const r = await service.amend(
+      po.id,
+      { reason, lines: [{ poLineId: po.lineId, unitPrice: '132743.36' }] },
+      randomUUID(),
+    );
+    expect(r.outcome).toBe('pending_approval');
+    await decide(U.acct, 'accountant', r.approvalRequestId!, 'reject');
+    expect(renderJobIds()).toEqual([]);
   });
 });
