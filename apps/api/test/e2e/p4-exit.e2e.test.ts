@@ -233,13 +233,16 @@ async function expectPastApproverReadsButCannotAct(
     .set('authorization', authorization)
     .set('idempotency-key', randomUUID())
     .send({ action: 'approve', expectedVersion });
-  expect(action.status, show(action)).not.toBe(200);
-  expect(action.status, show(action)).not.toBe(201);
+  // Reading is all the rule grants: a second decision from a past approver is still refused as not found.
+  expect(action.status, show(action)).toBe(404);
   const after = await t
     .http()
     .get(`/v1/approvals/requests/${id}`)
     .set('authorization', authorization);
-  expect(ApprovalRequestDtoSchema.parse(after.body).status).toBe('approved');
+  expect(after.status, show(after)).toBe(200);
+  const unchanged = ApprovalRequestDtoSchema.parse(after.body);
+  expect(unchanged.status).toBe('approved');
+  expect(unchanged.version).toBe(read.version);
 }
 
 async function cleanDocument(documentId: string) {
