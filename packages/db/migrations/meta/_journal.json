@@ -680,6 +680,20 @@
       "when": 1783000000142,
       "tag": "0155_sales_order_delivery_releases",
       "breakpoints": true
+    },
+    {
+      "idx": 97,
+      "version": "7",
+      "when": 1783000000143,
+      "tag": "0170_credit_override_order_value",
+      "breakpoints": true
+    },
+    {
+      "idx": 98,
+      "version": "7",
+      "when": 1783000000144,
+      "tag": "0171_credit_override_order_value_backfill",
+      "breakpoints": true
     }
   ]
 }

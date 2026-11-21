@@ -229,6 +229,14 @@ describe('0015_crm and src/schema/crm.ts', () => {
       'utf8',
     ),
   );
+  // 0170 adds the order value the override was given for (with its check).
+  applyAlters(
+    parsed,
+    readFileSync(
+      new URL('../migrations/0170_credit_override_order_value.sql', import.meta.url),
+      'utf8',
+    ),
+  );
 
   it('create the same nine tables', () => {
     expect([...parsed.keys()].sort()).toEqual(Object.keys(DRIZZLE).sort());
