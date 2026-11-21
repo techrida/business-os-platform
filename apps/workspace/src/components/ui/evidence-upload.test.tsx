@@ -64,7 +64,9 @@ beforeEach(() => {
   transport.calls = [];
   blocking = vi.fn();
   Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true });
-  fetchMock = vi.fn(() => Promise.resolve(new Response(null, { status: 204 })));
+  fetchMock = vi.fn<(url: string, init?: RequestInit) => Promise<Response>>(() =>
+    Promise.resolve(new Response(null, { status: 204 })),
+  );
   vi.stubGlobal('fetch', fetchMock);
 });
 
@@ -180,6 +182,30 @@ describe('EvidenceUpload', () => {
     expect(removeButton()).not.toBeNull();
     // No document id is shown to the person.
     expect(document.body.textContent).not.toContain(DOC);
+  });
+
+  it('leaves focus where the person was typing while the file uploaded', async () => {
+    mounted = await mountForm(
+      <form onSubmit={(event) => event.preventDefault()}>
+        <input aria-label="Reference" />
+        <EvidenceUpload kind="rfq" ownerId={ORDER} name="otherDocumentId" label="Quotation" />
+      </form>,
+    );
+    await choose(pdf());
+    const other = document.querySelector<HTMLInputElement>('input[aria-label="Reference"]')!;
+    other.focus();
+    await answer(201, staged());
+    await act(() => new Promise<void>((resolve) => requestAnimationFrame(() => resolve())));
+    expect(document.activeElement).toBe(other);
+  });
+
+  it('moves focus to Remove when the upload was started from the control', async () => {
+    mounted = await mountForm(inForm());
+    document.querySelector<HTMLInputElement>('input[type="file"]')!.focus();
+    await choose(pdf());
+    await answer(201, staged());
+    await act(() => new Promise<void>((resolve) => requestAnimationFrame(() => resolve())));
+    expect(document.activeElement).toBe(removeButton());
   });
 
   it('removing before save deletes the staged document and clears the field', async () => {
