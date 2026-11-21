@@ -26,7 +26,7 @@ import {
   userRoles,
   users as usersTable,
 } from '@bos/db';
-import { createTestDatabase } from '@bos/db/testing';
+import { createTestDatabase, type TestDatabase } from '@bos/db/testing';
 import { ForbiddenException } from '@nestjs/common';
 import type { Queue } from 'bullmq';
 import { and, eq, sql } from 'drizzle-orm';
@@ -145,13 +145,29 @@ const ROLE_KEY_SET: ReadonlySet<string> = new Set(ROLE_KEYS);
 const defaultsOf = (role: RoleKey): ReadonlyMap<Permission, AccessScope> =>
   new Map(Object.entries(DEFAULT_ROLE_PERMISSIONS[role]) as [Permission, AccessScope][]);
 
-export async function startHarness({ Pool, drizzle }: Driver): Promise<Harness> {
+export async function startHarness(driver: Driver): Promise<Harness> {
   // A copy of the migrated template: roles, public-schema grants and default privileges as
   // infra/postgres/init-dbs.sh sets them (pg_trgm lives in public, so a missing grant shows up in the tests).
   const testDb = await createTestDatabase();
+  const ownerPool = new driver.Pool({ connectionString: testDb.ownerUrl, max: 2 });
+  const appPool = new driver.Pool({ connectionString: testDb.appUrl, max: 8 });
+  try {
+    return await buildHarness(driver, testDb, ownerPool, appPool);
+  } catch (error) {
+    // The caller never receives a handle on a failed start, so nothing else would clean up.
+    await appPool.end();
+    await ownerPool.end();
+    await testDb.drop();
+    throw error;
+  }
+}
 
-  const ownerPool = new Pool({ connectionString: testDb.ownerUrl, max: 2 });
-  const appPool = new Pool({ connectionString: testDb.appUrl, max: 8 });
+async function buildHarness(
+  { drizzle }: Driver,
+  testDb: TestDatabase,
+  ownerPool: InstanceType<Driver['Pool']>,
+  appPool: InstanceType<Driver['Pool']>,
+): Promise<Harness> {
   const db: Db = drizzle({ client: appPool as never });
   const pool = appPool as unknown as AppPool;
 
