@@ -1,0 +1,132 @@
+/* The number inputs. The box carries the field look from field.module.css (height, radius, border,
+   padding) so the currency prefix, unit and stepper buttons sit inside it; the real input inside is
+   bare. Focus repeats the portal's field treatment on the box: the focus border plus the global
+   keyboard ring from globals.css. */
+
+.root {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.box {
+  composes: control from '../portal/field.module.css';
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  cursor: text;
+}
+
+.box:focus-within {
+  border-color: var(--input-focus-border);
+}
+
+.box:has(.input:focus-visible) {
+  box-shadow: var(--bos-focus-shadow);
+}
+
+.box[data-invalid] {
+  border-color: var(--input-error-border);
+}
+
+.box:has(.input:disabled),
+.box:has(.input:disabled):hover {
+  border-color: var(--input-border);
+  background: var(--input-disabled-bg);
+  color: var(--input-disabled-text);
+  cursor: not-allowed;
+}
+
+/* Above the global :focus-visible ring: the box shows focus, not the input inside it. */
+.box .input,
+.box .input:focus-visible {
+  flex: 1 1 auto;
+  width: 100%;
+  min-width: 0;
+  padding: 0;
+  border: 0;
+  outline: none;
+  background: transparent;
+  box-shadow: none;
+  color: inherit;
+  font: inherit;
+  font-variant-numeric: tabular-nums;
+  text-align: end;
+}
+
+.box .input::placeholder {
+  color: var(--input-placeholder);
+}
+
+.box .input:disabled {
+  cursor: not-allowed;
+}
+
+.affix {
+  flex: none;
+  color: var(--text-secondary);
+  font-weight: var(--font-weight-medium);
+  white-space: nowrap;
+  user-select: none;
+}
+
+.steppers {
+  display: flex;
+  flex: none;
+  gap: 2px;
+  margin-inline-end: -6px;
+}
+
+.stepper {
+  display: inline-grid;
+  place-items: center;
+  width: 28px;
+  height: 28px;
+  border: 0;
+  border-radius: var(--radius-md);
+  background: transparent;
+  color: var(--icon-secondary);
+  cursor: pointer;
+}
+
+.stepper:hover:not(:disabled) {
+  background: var(--surface-muted);
+  color: var(--text-primary);
+}
+
+.stepper:disabled {
+  color: var(--input-disabled-text);
+  cursor: not-allowed;
+}
+
+.words {
+  margin-top: 6px;
+  color: var(--text-secondary);
+  overflow-wrap: anywhere;
+  font-size: var(--font-size-caption);
+  line-height: var(--line-height-caption);
+}
+
+.status {
+  color: var(--text-secondary);
+  overflow-wrap: anywhere;
+  font-size: var(--font-size-caption);
+  line-height: var(--line-height-caption);
+}
+
+/* Empty but present, so the live region exists before its first message. */
+.status:not(:empty) {
+  margin-top: 6px;
+}
+
+.status[data-tone='error'] {
+  color: var(--status-error);
+  font-weight: var(--font-weight-medium);
+}
+
+/* Forced-colours mode drops box-shadow and recolours borders, so the box needs a real outline. */
+@media (forced-colors: active) {
+  .box:focus-within {
+    outline: 2px solid Highlight;
+  }
+}

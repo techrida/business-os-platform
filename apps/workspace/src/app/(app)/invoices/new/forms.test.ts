@@ -176,6 +176,13 @@ describe('parseDiscount: a decimal comma is never grouping', () => {
 });
 
 describe('parseDiscount', () => {
+  it.each(['1 5', '1 0.5'])(
+    'refuses the percentage %j: a space inside is not grouping',
+    (typed) => {
+      expect(parseDiscount('pct', typed).ok).toBe(false);
+    },
+  );
+
   it.each<[string | undefined, string | undefined, unknown]>([
     [undefined, undefined, undefined],
     ['', '', undefined],
