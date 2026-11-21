@@ -43,6 +43,7 @@ import {
   retryGivenUpRender,
   type RenderFailureOwner,
 } from '../../../invoices/render/render-failures';
+import { generatedPdfState } from '../../../invoices/render/render-state';
 import { assertHoldsPoRead, mayReadPo, requestFactsColumns, requestOf } from '../po-read-access';
 import { PO_AUDIT_ENTITY } from '../purchase-order.rules';
 import { PurchaseOrdersCaller } from '../purchase-orders.caller';
@@ -145,14 +146,10 @@ export class PurchaseOrderDocumentService {
           ),
         )
         .orderBy(asc(documents.createdAt), asc(documents.id), desc(documentVersions.version));
-      const clean = uploads.find((u) => u.status === 'clean');
-      if (clean !== undefined) return { kind: 'clean', versionId, documentId: clean.documentId };
-      if (uploads.some((u) => u.status === 'awaiting_content' || u.status === 'quarantined')) {
-        return { kind: 'preparing' };
-      }
-      if (await renderGivenUp(tx, ownerOf(scope, versionId))) return { kind: 'failed' };
-      // A live document whose uploads the scan refused will never be offered; no document yet is on its way.
-      return uploads.length > 0 ? { kind: 'unavailable' } : { kind: 'preparing' };
+      const pdf = generatedPdfState(uploads, await renderGivenUp(tx, ownerOf(scope, versionId)));
+      if (pdf.kind === 'clean') return { kind: 'clean', versionId, documentId: pdf.documentId };
+      // A file the scan refused will never be offered: there is nothing to serve.
+      return pdf.kind === 'scan_refused' ? { kind: 'unavailable' } : pdf;
     });
     if (state.kind === 'hidden') throw notFound();
     if (state.kind === 'preparing') throw notReady();
