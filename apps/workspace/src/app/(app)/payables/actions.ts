@@ -33,9 +33,11 @@ import type { ActionState } from '../procurement/orders/_lib/state';
 import { billFailure, type BillOp } from './_lib/failure';
 import {
   EMPTY_ROW,
+  ACTIVE_ACCOUNT_IDS_FIELD,
   EXPENSE_ACCOUNT_INVALID,
   MAX_LINES,
   expenseAccountErrors,
+  parseActiveAccountIds,
   parseBillLines,
   type LineRow,
 } from './_lib/forms';
@@ -74,13 +76,21 @@ function refused(key: string, err: unknown, op: BillOp): ActionState {
 
 /**
  * A refusal of the lines' expense accounts (422 `EXPENSE_ACCOUNT_INVALID`) as field errors on the account
- * pickers, with a fresh key (the answer is definite); undefined for any other failure.
+ * pickers of the lines whose account is not among the active ones the page loaded, with a fresh key (the answer
+ * is definite); undefined for any other failure.
  */
-function accountRefusal(err: unknown, rows: readonly LineRow[]): ActionState | undefined {
+function accountRefusal(
+  err: unknown,
+  rows: readonly LineRow[],
+  form: FormData,
+): ActionState | undefined {
   if (!(err instanceof ApiError) || err.status !== 422) return undefined;
   const parsed = ErrorBodySchema.safeParse(err.body);
   if (!parsed.success || parsed.data.error.code !== EXPENSE_ACCOUNT_INVALID) return undefined;
-  const errors = expenseAccountErrors(rows);
+  const errors = expenseAccountErrors(
+    rows,
+    parseActiveAccountIds(form.get(ACTIVE_ACCOUNT_IDS_FIELD)),
+  );
   return Object.keys(errors).length > 0 ? { key: randomUUID(), errors } : undefined;
 }
 
@@ -252,7 +262,7 @@ export async function convertSubmissionAction(
   try {
     bill = await convertBillSubmission(r.o.session, r.o.id, parsed.lines, r.o.key);
   } catch (err) {
-    return accountRefusal(err, rows) ?? refused(r.o.key, err, 'convert');
+    return accountRefusal(err, rows, form) ?? refused(r.o.key, err, 'convert');
   }
   revalidatePath('/payables/inbox');
   revalidatePath('/payables/bills');
@@ -299,7 +309,7 @@ export async function createBillAction(_prev: ActionState, form: FormData): Prom
   try {
     bill = await createBill(session, parsed.data, key);
   } catch (err) {
-    return accountRefusal(err, rows) ?? refused(key, err, 'create');
+    return accountRefusal(err, rows, form) ?? refused(key, err, 'create');
   }
   revalidatePath('/payables/bills');
   redirect(`${billPath(encodeURIComponent(bill.id))}?created=1`);

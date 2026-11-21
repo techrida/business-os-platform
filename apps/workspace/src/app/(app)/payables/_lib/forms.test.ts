@@ -5,6 +5,7 @@ import {
   EMPTY_ROW,
   EXPENSE_ACCOUNT_REFUSED,
   expenseAccountErrors,
+  parseActiveAccountIds,
   parseBillLines,
   type LineRow,
 } from './forms';
@@ -92,10 +93,36 @@ describe('expenseAccountErrors', () => {
     });
   });
 
+  it('marks only the rows whose account is not among the active ones, whatever its case', () => {
+    const retired = '66666666-6666-4666-8666-666666666666';
+    const rows = [row({ accountId: ACCOUNT.toUpperCase() }), row({ accountId: retired })];
+    // Fails on the old code: it marked the active line too.
+    expect(expenseAccountErrors(rows, new Set([ACCOUNT]))).toEqual({
+      '1.accountId': EXPENSE_ACCOUNT_REFUSED,
+    });
+  });
+
+  it('marks every sent row when each one looks active (retired after the page loaded)', () => {
+    expect(expenseAccountErrors([row(), row()], new Set([ACCOUNT]))).toEqual({
+      '0.accountId': EXPENSE_ACCOUNT_REFUSED,
+      '1.accountId': EXPENSE_ACCOUNT_REFUSED,
+    });
+  });
+
   it('asks to choose an account when a row has none', () => {
     const out = parseBillLines([row({ accountId: '' })]);
     expect(out.ok).toBe(false);
     if (out.ok) return;
     expect(out.errors['0.accountId']).toBe('Choose the expense account this line is booked to.');
+  });
+});
+
+describe('parseActiveAccountIds', () => {
+  it('reads the posted ids lowercase, and nothing when the field was not sent', () => {
+    expect(parseActiveAccountIds(` ${ACCOUNT.toUpperCase()},${TAX}, `)).toEqual(
+      new Set([ACCOUNT, TAX]),
+    );
+    expect(parseActiveAccountIds('')).toEqual(new Set());
+    expect(parseActiveAccountIds(null)).toBeUndefined();
   });
 });
