@@ -72,7 +72,7 @@ import { AuthzService } from '../../platform/authz/authz.service';
 import { can, type Principal } from '../../platform/authz/can';
 import { DB, type Db, type DbTransaction } from '../../platform/db/db.module';
 import { updateVersioned, withIdempotency } from '../../platform/db/idempotency';
-import { withTx, type Actor, type TxScope } from '../../platform/db/tx';
+import { withTx, type Actor, type TxScope, READ_ONLY } from '../../platform/db/tx';
 import { currentPrincipal } from '../../platform/tenancy/request-context';
 import { NO_LIMIT, searchPage, sumByCurrency } from '../../platform/list';
 import { MoneyService } from '../../platform/settings/money.service';
@@ -431,11 +431,17 @@ export class PaymentsService {
 
   /** One payment of the acting entity; 404 for another entity's or an unknown id. */
   async get(scope: TxScope, paymentId: string): Promise<PaymentDto> {
-    return withTx(this.db, scope, this.readActor(), async (tx) => {
-      const row = await this.load(tx, scope, paymentId);
-      this.authz.assert('payment.read', paymentRef(this.head(row)));
-      return this.toDto(tx, scope, row);
-    });
+    return withTx(
+      this.db,
+      scope,
+      this.readActor(),
+      async (tx) => {
+        const row = await this.load(tx, scope, paymentId);
+        this.authz.assert('payment.read', paymentRef(this.head(row)));
+        return this.toDto(tx, scope, row);
+      },
+      READ_ONLY,
+    );
   }
 
   /**
@@ -444,42 +450,48 @@ export class PaymentsService {
    * is left out.
    */
   async allocations(scope: TxScope, paymentId: string): Promise<AllocationDto[]> {
-    return withTx(this.db, scope, this.readActor(), async (tx) => {
-      const row = await this.load(tx, scope, paymentId);
-      this.authz.assert('payment.read', paymentRef(this.head(row)));
-      const credit = await this.creditItem(tx, scope, paymentId);
-      if (credit === undefined) return [];
-      const rows = await tx
-        .select({ a: openItemAllocations, debitSource: openItems.sourceId })
-        .from(openItemAllocations)
-        .innerJoin(
-          openItems,
-          and(
-            eq(openItems.tenantId, openItemAllocations.tenantId),
-            eq(openItems.id, openItemAllocations.debitItemId),
-          ),
-        )
-        .where(
-          and(
-            eq(openItemAllocations.tenantId, scope.tenantId),
-            eq(openItemAllocations.organizationId, scope.organizationId),
-            eq(openItemAllocations.creditItemId, credit.id),
-            inArray(openItems.sourceType, ['tax_invoice', 'debit_note']),
-          ),
-        )
-        .orderBy(asc(openItemAllocations.createdAt), asc(openItemAllocations.id));
-      return rows.map(({ a, debitSource }) => ({
-        id: a.id,
-        invoiceId: debitSource,
-        paymentId,
-        creditNoteId: null,
-        amount: money2(a.amount),
-        reversesAllocationId: a.reversesAllocationId,
-        reason: a.reason,
-        createdBy: a.createdBy ?? '',
-        createdAt: a.createdAt.toISOString(),
-      }));
-    });
+    return withTx(
+      this.db,
+      scope,
+      this.readActor(),
+      async (tx) => {
+        const row = await this.load(tx, scope, paymentId);
+        this.authz.assert('payment.read', paymentRef(this.head(row)));
+        const credit = await this.creditItem(tx, scope, paymentId);
+        if (credit === undefined) return [];
+        const rows = await tx
+          .select({ a: openItemAllocations, debitSource: openItems.sourceId })
+          .from(openItemAllocations)
+          .innerJoin(
+            openItems,
+            and(
+              eq(openItems.tenantId, openItemAllocations.tenantId),
+              eq(openItems.id, openItemAllocations.debitItemId),
+            ),
+          )
+          .where(
+            and(
+              eq(openItemAllocations.tenantId, scope.tenantId),
+              eq(openItemAllocations.organizationId, scope.organizationId),
+              eq(openItemAllocations.creditItemId, credit.id),
+              inArray(openItems.sourceType, ['tax_invoice', 'debit_note']),
+            ),
+          )
+          .orderBy(asc(openItemAllocations.createdAt), asc(openItemAllocations.id));
+        return rows.map(({ a, debitSource }) => ({
+          id: a.id,
+          invoiceId: debitSource,
+          paymentId,
+          creditNoteId: null,
+          amount: money2(a.amount),
+          reversesAllocationId: a.reversesAllocationId,
+          reason: a.reason,
+          createdBy: a.createdBy ?? '',
+          createdAt: a.createdAt.toISOString(),
+        }));
+      },
+      READ_ONLY,
+    );
   }
 
   // --------------------------------------------------------------------------------------- commands

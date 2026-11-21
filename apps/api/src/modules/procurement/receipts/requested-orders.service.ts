@@ -13,7 +13,7 @@ import { and, desc, eq, notInArray } from 'drizzle-orm';
 import { z } from 'zod';
 
 import { DB, type Db } from '../../../platform/db/db.module';
-import { withTx } from '../../../platform/db/tx';
+import { withTx, READ_ONLY } from '../../../platform/db/tx';
 import { purchaseRequestScopeWhere } from '../requests/purchase-requests.service';
 import { ReceiptsCaller } from './receipts.caller';
 
@@ -43,42 +43,47 @@ export class RequestedOrdersService {
 
   list(query: ListRequestedOrdersQuery): Promise<RequestedOrderDto[]> {
     const { scope, actor, principal } = this.caller.current();
-    return withTx(this.db, scope, actor, (tx) =>
-      tx
-        .select({
-          id: purchaseOrders.id,
-          number: purchaseOrders.number,
-          status: purchaseOrders.status,
-          vendorName: vendors.legalName,
-        })
-        .from(purchaseOrders)
-        .innerJoin(
-          purchaseRequests,
-          and(
-            eq(purchaseRequests.tenantId, purchaseOrders.tenantId),
-            eq(purchaseRequests.organizationId, purchaseOrders.organizationId),
-            eq(purchaseRequests.id, purchaseOrders.purchaseRequestId),
-          ),
-        )
-        .innerJoin(
-          vendors,
-          and(
-            eq(vendors.tenantId, purchaseOrders.tenantId),
-            eq(vendors.id, purchaseOrders.vendorId),
-          ),
-        )
-        .where(
-          scoped(scope).where(
-            purchaseOrders,
+    return withTx(
+      this.db,
+      scope,
+      actor,
+      (tx) =>
+        tx
+          .select({
+            id: purchaseOrders.id,
+            number: purchaseOrders.number,
+            status: purchaseOrders.status,
+            vendorName: vendors.legalName,
+          })
+          .from(purchaseOrders)
+          .innerJoin(
+            purchaseRequests,
             and(
-              eq(purchaseRequests.requesterUserId, principal.userId),
-              purchaseRequestScopeWhere(principal, 'procurement.pr.read'),
-              notInArray(purchaseOrders.status, [...HIDDEN_STATUSES]),
+              eq(purchaseRequests.tenantId, purchaseOrders.tenantId),
+              eq(purchaseRequests.organizationId, purchaseOrders.organizationId),
+              eq(purchaseRequests.id, purchaseOrders.purchaseRequestId),
             ),
-          ),
-        )
-        .orderBy(desc(purchaseOrders.issuedAt), desc(purchaseOrders.number))
-        .limit(query.limit),
+          )
+          .innerJoin(
+            vendors,
+            and(
+              eq(vendors.tenantId, purchaseOrders.tenantId),
+              eq(vendors.id, purchaseOrders.vendorId),
+            ),
+          )
+          .where(
+            scoped(scope).where(
+              purchaseOrders,
+              and(
+                eq(purchaseRequests.requesterUserId, principal.userId),
+                purchaseRequestScopeWhere(principal, 'procurement.pr.read'),
+                notInArray(purchaseOrders.status, [...HIDDEN_STATUSES]),
+              ),
+            ),
+          )
+          .orderBy(desc(purchaseOrders.issuedAt), desc(purchaseOrders.number))
+          .limit(query.limit),
+      READ_ONLY,
     );
   }
 }

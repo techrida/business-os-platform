@@ -28,6 +28,7 @@ import {
   approvalRequests,
   approvalSteps,
   createDepartment,
+  createExpenseAccount,
   createParty,
   createStaffUser,
   createTenantWithEntity,
@@ -95,6 +96,8 @@ let deptA = '';
 let vatCode = '';
 /** Evidence uploads through the real routes' service, DocumentsService and the `evidence` owner policy. */
 let evidence: EvidenceFixture;
+/** An active expense account of entity A: bill lines must book to one (round 5, unit P1). */
+let expenseAccountId = '';
 
 const U = { req: '', proc: '', acct: '', acct2: '', fin: '', mgmt: '', founder: '', wh: '' };
 const roles: Partial<Record<RoleKey, string[]>> = {};
@@ -208,6 +211,7 @@ beforeAll(async () => {
         VALUES (${scopeA.tenantId}, 'VAT13', 'VAT 13%', 'vat', 1300, true, '2020-01-01') RETURNING id`,
   );
   vatCode = (rows[0] as { id: string }).id;
+  expenseAccountId = (await createExpenseAccount(appPool, scopeA)).id;
 
   const audit = new AuditService(db);
   as(U.founder, 'founder');
@@ -437,7 +441,9 @@ async function billWithoutPo(documentId: string, vendorPartyId?: string) {
       invoiceDate: '2026-11-09',
       currency: 'NPR',
       documentId,
-      lines: [{ accountId: randomUUID(), quantity: '1', unitPrice: '1000.00', taxCodeId: vatCode }],
+      lines: [
+        { accountId: expenseAccountId, quantity: '1', unitPrice: '1000.00', taxCodeId: vatCode },
+      ],
     },
     randomUUID(),
   );
@@ -460,7 +466,13 @@ async function billFor(
       purchaseOrderId: po.id,
       documentId: await doc(['clean'], po.vendorId),
       lines: [
-        { poLineId: po.lineId, accountId: randomUUID(), quantity, unitPrice, taxCodeId: vatCode },
+        {
+          poLineId: po.lineId,
+          accountId: expenseAccountId,
+          quantity,
+          unitPrice,
+          taxCodeId: vatCode,
+        },
       ],
     },
     key,
@@ -521,7 +533,7 @@ describe('discard draft bills', () => {
         currency: 'NPR',
         documentId,
         lines: [
-          { accountId: randomUUID(), quantity: '1', unitPrice: '1000.00', taxCodeId: vatCode },
+          { accountId: expenseAccountId, quantity: '1', unitPrice: '1000.00', taxCodeId: vatCode },
         ],
       },
       randomUUID(),
@@ -1266,7 +1278,7 @@ describe('duplicates (check 8) and replays', () => {
       lines: [
         {
           poLineId: po.lineId,
-          accountId: randomUUID(),
+          accountId: expenseAccountId,
           quantity: '1',
           unitPrice: '1000.00',
           taxCodeId: vatCode,
@@ -1347,7 +1359,7 @@ describe('entity wall', () => {
           lines: [
             {
               poLineId: other.lineId,
-              accountId: randomUUID(),
+              accountId: expenseAccountId,
               quantity: '1',
               unitPrice: '1000.00',
               taxCodeId: vatCode,
@@ -1988,5 +2000,94 @@ describe('removing evidence from a bill before save (round 5 P2)', () => {
       ).toBe(403);
     }
     expect(await removedAt(later)).toBeNull();
+  });
+});
+
+// ---------------------------------------------------------------------------------------- expense accounts
+
+describe('bill line expense accounts (round 5, unit P1)', () => {
+  const nprBody = (documentId: string, accountIds: readonly string[]) => ({
+    vendorPartyId: documentVendors.get(documentId)!,
+    kind: 'bill' as const,
+    vendorInvoiceNo: `ACC-${randomUUID().slice(0, 8)}`,
+    invoiceDate: '2026-11-09',
+    currency: 'NPR' as const,
+    documentId,
+    lines: accountIds.map((accountId) => ({
+      accountId,
+      quantity: '1',
+      unitPrice: '500.00',
+      taxCodeId: vatCode,
+    })),
+  });
+  const billCounter = async () => {
+    const result = await read((tx) =>
+      tx.execute<{ next_value: string }>(sql`
+        SELECT next_value::text FROM app.number_series
+         WHERE tenant_id = ${scopeA.tenantId} AND organization_id = ${scopeA.organizationId}
+           AND key = 'BILL'`),
+    );
+    return Number(result.rows[0]?.next_value ?? '1');
+  };
+  const enteredAudits = async () => {
+    const result = await ownerPool.query<{ count: string }>(
+      "SELECT count(*) FROM audit.audit_events WHERE tenant_id = $1 AND action = 'payables.bill.entered'",
+      [scopeA.tenantId],
+    );
+    return Number(result.rows[0]?.count);
+  };
+
+  it.each([
+    ['an unknown id', () => Promise.resolve(randomUUID())],
+    [
+      'a retired account',
+      async () => (await createExpenseAccount(appPool, { ...scopeA, status: 'retired' })).id,
+    ],
+    ["another entity's account", async () => (await createExpenseAccount(appPool, scopeB)).id],
+  ])('%s: 422 EXPENSE_ACCOUNT_INVALID and no bill, line, number or audit', async (_label, bad) => {
+    const badId = await bad();
+    const documentId = await doc();
+    const body = nprBody(documentId, [expenseAccountId, badId]);
+    const counterBefore = await billCounter();
+    const auditsBefore = await enteredAudits();
+
+    const e = await httpErrorOf(service.create(body, randomUUID()));
+    expect(e.getStatus()).toBe(422);
+    expect(codeOf(e)).toBe('EXPENSE_ACCOUNT_INVALID');
+
+    const rows = await read((tx) =>
+      tx
+        .select({ id: vendorBills.id })
+        .from(vendorBills)
+        .where(eq(vendorBills.vendorInvoiceNo, body.vendorInvoiceNo)),
+    );
+    expect(rows).toHaveLength(0);
+    expect(await billCounter()).toBe(counterBefore);
+    expect(await enteredAudits()).toBe(auditsBefore);
+  });
+
+  it('an active account of this entity is accepted, and two lines may share it', async () => {
+    const bill = await service.create(
+      nprBody(await doc(), [expenseAccountId, expenseAccountId]),
+      randomUUID(),
+    );
+    expect(bill.status).toBe('draft');
+    expect(bill.lines.map((l) => l.accountId)).toEqual([expenseAccountId, expenseAccountId]);
+  });
+
+  it('a replayed key returns the stored bill even after its account is retired', async () => {
+    const account = await createExpenseAccount(appPool, scopeA);
+    const body = nprBody(await doc(), [account.id]);
+    const key = randomUUID();
+    const first = await service.create(body, key);
+    await exec(
+      scopeA,
+      sql`UPDATE app.expense_accounts SET status = 'retired', retired_at = now() WHERE id = ${account.id}`,
+    );
+    const again = await service.create(body, key);
+    expect(again.id).toBe(first.id);
+    // A new key with the now-retired account is refused.
+    const e = await httpErrorOf(service.create(body, randomUUID()));
+    expect(codeOf(e)).toBe('EXPENSE_ACCOUNT_INVALID');
   });
 });

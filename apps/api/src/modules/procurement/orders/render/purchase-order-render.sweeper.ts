@@ -56,7 +56,7 @@ import { type Job, Queue } from 'bullmq';
 import { and, asc, eq, inArray, isNull, lt, not, notExists, sql } from 'drizzle-orm';
 
 import type { Db, DbTransaction } from '../../../../platform/db/db.module';
-import { systemActor, type TxScope } from '../../../../platform/db/tx';
+import { READ_ONLY, systemActor, type TxScope } from '../../../../platform/db/tx';
 import { freezeEntityLogo } from '../../../invoices/render/frozen-logo';
 import {
   clearRenderFailure,
@@ -251,7 +251,7 @@ export class PurchaseOrderRenderSweeper {
     /** The document this try created, if it got that far: a failure after it must not leave it blocking the next. */
     let created: { documentId: string } | undefined;
     try {
-      const source = await this.runTx(scope, actor, (tx) => this.store.load(tx, c));
+      const source = await this.runTx(scope, actor, (tx) => this.store.load(tx, c), READ_ONLY);
       if (source === undefined) throw new RenderSourceMissingError();
       const { buyerLegalName, ...rows } = source;
       // A missing PAN prints nothing; it is not an error (a new entity may be pre-registration). A row that was

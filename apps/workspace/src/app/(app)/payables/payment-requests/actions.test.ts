@@ -138,6 +138,37 @@ describe('payment request actions', () => {
     expect(out.key).not.toBe(key);
   });
 
+  it.each([
+    ['BANK_ACCOUNT_INVALID', /not an active account of your company/],
+    ['BANK_ACCOUNT_CURRENCY_MISMATCH', /different currency/],
+  ])(
+    'shows a refused paying account (422 %s) under its field and rotates the key',
+    async (code, words) => {
+      api.createPaymentRequest.mockRejectedValueOnce(
+        new ApiError(422, 'refused', {
+          error: { code, message: 'internal', correlationId: 'correlation-1234' },
+        }),
+      );
+      const out = await createPaymentRequestAction(prev, form());
+      expect(out.errors?.['fromBankAccountId']).toMatch(words);
+      expect(out.error).toBeUndefined();
+      expect(out.key).not.toBe(key);
+      // The submit dialog has no such field: it shows the same words as its refusal.
+      api.submitPaymentRequest.mockRejectedValueOnce(
+        new ApiError(422, 'refused', {
+          error: { code, message: 'internal', correlationId: 'correlation-1234' },
+        }),
+      );
+      expect((await submitPaymentRequestAction(prev, form())).error).toMatch(words);
+    },
+  );
+
+  it('asks for a bank account when none was chosen', async () => {
+    const out = await createPaymentRequestAction(prev, form({ fromBankAccountId: '' }));
+    expect(out.errors?.['fromBankAccountId']).toBe('Choose the bank account to pay from.');
+    expect(api.createPaymentRequest).not.toHaveBeenCalled();
+  });
+
   it('requires a cancellation reason and sends it trimmed with the key', async () => {
     expect(
       (await cancelPaymentRequestAction(prev, form({ reason: ' ' }))).errors?.['reason'],

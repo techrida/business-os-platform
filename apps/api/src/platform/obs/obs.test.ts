@@ -21,7 +21,7 @@ import { ConfigModule } from '../config/config.module';
 import { newCorrelationId } from './correlation';
 import { REDACT_PATHS, buildLoggerParams, genReqId } from './logger';
 import { MetricsServer } from './metrics.server';
-import { MetricsService } from './metrics.service';
+import { MetricsService, TX_DURATION_BUCKETS, TX_SETUP_BUCKETS } from './metrics.service';
 import { ObsModule } from './obs.module';
 
 const env = {
@@ -190,6 +190,41 @@ describe('MetricsService', () => {
     expect(text).toContain('process_cpu_user_seconds_total');
     expect(text).toContain('worker_last_heartbeat_seconds 1700000000');
     expect(metrics.lastHeartbeatSeconds).toBe(1_700_000_000);
+  });
+
+  it('reads the pool counts at scrape time', async () => {
+    const metrics = new MetricsService();
+    const pool = { totalCount: 4, idleCount: 1, waitingCount: 2 };
+    metrics.observePool(pool);
+    let text = await metrics.render();
+    expect(text).toMatch(/^db_pool_connections 4$/m);
+    expect(text).toMatch(/^db_pool_idle_connections 1$/m);
+    expect(text).toMatch(/^db_pool_waiting_clients 2$/m);
+    pool.waitingCount = 0;
+    text = await metrics.render();
+    expect(text).toMatch(/^db_pool_waiting_clients 0$/m);
+  });
+
+  it('counts busy rollbacks by kind and times transactions by outcome', async () => {
+    const metrics = new MetricsService();
+    metrics.countDbBusy('deadlock');
+    metrics.countDbBusy('lock_timeout');
+    metrics.countDbBusy('lock_timeout');
+    metrics.observeTx('commit', 0.002, 0.04);
+    metrics.observeTx('rollback', undefined, 6);
+    const text = await metrics.render();
+    expect(text).toContain('db_busy_errors_total{kind="deadlock"} 1');
+    expect(text).toContain('db_busy_errors_total{kind="lock_timeout"} 2');
+    expect(text).toContain('db_tx_duration_seconds_count{outcome="commit"} 1');
+    expect(text).toContain('db_tx_duration_seconds_count{outcome="rollback"} 1');
+    expect(text).toMatch(/^db_tx_setup_seconds_count 1$/m);
+    expect(bucketBounds(text, 'db_tx_setup_seconds')).toEqual([
+      ...TX_SETUP_BUCKETS.map(String),
+      '+Inf',
+    ]);
+    expect(new Set(bucketBounds(text, 'db_tx_duration_seconds'))).toEqual(
+      new Set([...TX_DURATION_BUCKETS.map(String), '+Inf']),
+    );
   });
 
   it('keeps separate registries per instance (several Nest apps may share a process)', () => {
