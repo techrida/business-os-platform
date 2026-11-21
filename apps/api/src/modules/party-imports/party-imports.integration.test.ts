@@ -383,6 +383,73 @@ describe('customer import', () => {
     expect((await request(baseUrl).get(`/v1/imports/${inA.id}`)).status).toBe(404);
   });
 
+  it('counts a merged customer PAN as taken, so its row is a duplicate and no commit is aborted', async () => {
+    const tag = uniq();
+    const panA = tag.replace(/\D/g, '4').padEnd(9, '4').slice(0, 9);
+    const make = async (pan: string, name: string) => {
+      const b = detailOf(
+        (
+          await upload(
+            'customers',
+            `${CUSTOMER_HEADER}\n${name},${pan},,R,C,NP,,m-${uniq()}@example.com,\n`,
+          )
+        ).body,
+      );
+      return detailOf((await request(baseUrl).post(`/v1/imports/${b.id}/commit`)).body).rows[0]!
+        .recordId!;
+    };
+    const merged = await make(panA, `Merged ${tag}`);
+    const keep = await make(tag.replace(/\D/g, '3').padEnd(9, '3').slice(0, 9), `Keep ${tag}`);
+    const client = await ownerPool.connect();
+    try {
+      await client.query('BEGIN');
+      await client.query(
+        `SELECT set_config('bos.actor_kind', 'system', true), set_config('bos.actor_id', 'merge-test', true),
+                set_config('bos.correlation_id', $1, true), set_config('bos.organization_id', $2, true)`,
+        [randomUUID(), a.organizationId],
+      );
+      await client.query('UPDATE app.customers SET merged_into_id = $1 WHERE id = $2', [
+        keep,
+        merged,
+      ]);
+      await client.query('COMMIT');
+    } finally {
+      client.release();
+    }
+    const preview = detailOf(
+      (
+        await upload(
+          'customers',
+          `${CUSTOMER_HEADER}\nNew Name ${tag},${panA},,R,C,NP,,x-${tag}@example.com,\n`,
+        )
+      ).body,
+    );
+    expect(preview).toMatchObject({ validCount: 0, duplicateCount: 1 });
+  });
+
+  it('does not copy the uploaded rows into the audit log, only the counts', async () => {
+    const tag = uniq();
+    const batch = detailOf(
+      (
+        await upload(
+          'customers',
+          `${CUSTOMER_HEADER}\nAudit ${tag},,,R,C,NP,,audit-${tag}@example.com,+9779812345678\n`,
+        )
+      ).body,
+    );
+    const { rows } = await ownerPool.query<{ n: string }>(
+      `SELECT count(*) AS n FROM audit.audit_events WHERE tenant_id = $1 AND (before::text LIKE $2 OR after::text LIKE $2 OR meta::text LIKE $2)`,
+      [a.tenantId, `%audit-${tag}@example.com%`],
+    );
+    expect(Number(rows[0]!.n)).toBe(0);
+    expect(
+      await count(
+        `SELECT count(*) AS n FROM audit.audit_events WHERE tenant_id = $1 AND entity_id = $2 AND action = 'party_import.previewed'`,
+        [a.tenantId, batch.id],
+      ),
+    ).toBe(1);
+  });
+
   it('refuses a formula-injection cell, in every text column, and never stores it', async () => {
     const tag = uniq();
     const before = await customersOf(a);

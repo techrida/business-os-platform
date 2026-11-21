@@ -151,6 +151,14 @@ export function readPartyCsv(kind: PartyImportKind, input: string): ReadCsv {
   return { records };
 }
 
+/** At most `max` UTF-16 units without splitting a character, so a cut never leaves half of a surrogate pair. */
+export function clip(value: string, max: number): string {
+  if (value.length <= max) return value;
+  const cut = value.slice(0, max);
+  const last = cut.charCodeAt(cut.length - 1);
+  return last >= 0xd800 && last <= 0xdbff ? cut.slice(0, -1) : cut;
+}
+
 const issue = (column: string | null, message: string): PartyImportIssue => ({ column, message });
 const upper = (v: string) => v.toUpperCase();
 
@@ -280,7 +288,7 @@ export function checkLine(kind: PartyImportKind, cells: Record<string, string>):
     out.contact_phone = phone();
     const hasContact = out.contact_email !== '' || out.contact_phone !== '';
     const contactName = text('contact_name', 120, false);
-    out.contact_name = contactName !== '' ? contactName : hasContact ? legalName.slice(0, 120) : '';
+    out.contact_name = contactName !== '' ? contactName : hasContact ? clip(legalName, 120) : '';
   }
   return issues.length === 0
     ? {
@@ -313,17 +321,28 @@ export function buildRows(
   records: readonly { line: number; cells: Record<string, string> }[],
 ): PartyImportRow[] {
   const firstLine = new Map<string, number>();
+  // Every accepted line also reserves its name, so a later line without a PAN cannot repeat a company that an
+  // earlier line created with one (the database matches a name-only line against all customers).
+  const nameLine = new Map<string, number>();
   return records.map(({ line, cells }): PartyImportRow => {
     const checked = checkLine(kind, cells);
     const base = {
       line,
-      name: checked.name.slice(0, 500),
-      pan: checked.pan?.slice(0, 100) ?? null,
+      name: clip(checked.name, 500),
+      pan: checked.pan === null ? null : clip(checked.pan, 100),
     };
     if (checked.values === undefined) return { ...base, status: 'error', issues: checked.issues };
     const key = identityKey(kind, checked.values);
-    const earlier = key === null ? undefined : firstLine.get(key);
+    const nameKey = identityKey(kind, { legal_name: checked.values.legal_name ?? '' });
+    const earlier =
+      key === null
+        ? undefined
+        : key.startsWith('name:')
+          ? (nameLine.get(key) ?? firstLine.get(key))
+          : firstLine.get(key);
     if (key !== null && earlier === undefined) firstLine.set(key, line);
+    if (earlier === undefined && nameKey !== null && !nameLine.has(nameKey))
+      nameLine.set(nameKey, line);
     if (earlier !== undefined)
       return {
         ...base,

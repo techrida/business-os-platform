@@ -431,4 +431,10 @@ describe('searchNavGroups', () => {
     ).toEqual(['Settings']);
     expect(searchNavGroups(NAV_GROUPS, 'department')).toEqual([]);
   });
+
+  it('gives a nested page to its own item only (the sales VAT register is not also Invoices)', () => {
+    expect(ownsPath('/invoices', '/invoices/abc')).toBe(true);
+    expect(ownsPath('/invoices', '/invoices/vat-register')).toBe(false);
+    expect(ownsPath('/invoices/vat-register', '/invoices/vat-register')).toBe(true);
+  });
 });
