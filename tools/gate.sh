@@ -16,15 +16,16 @@ LOCK_FILE="${BOS_GATE_LOCK:-/tmp/bos-gate.lock}"
 
 if [[ "${BOS_GATE_LOCKED:-}" != "1" ]]; then
   # Hold the lock on file descriptor 9 for the whole run; the kernel releases it when this process ends.
-  exec 9>"$LOCK_FILE"
+  command -v flock >/dev/null || { echo "gate: flock is not installed; cannot take the gate lock" >&2; exit 2; }
+  exec 9>"$LOCK_FILE" || { echo "gate: cannot open $LOCK_FILE" >&2; exit 2; }
   if ! flock --nonblock 9; then
     echo "gate: another gate holds $LOCK_FILE; waiting for it" >&2
-    flock 9
+    flock 9 || { echo "gate: could not take the lock on $LOCK_FILE" >&2; exit 2; }
   fi
   export BOS_GATE_LOCKED=1
 fi
 
-LOG_DIR="${BOS_GATE_LOG_DIR:-/tmp/bos-gate-logs/$(date +%Y%m%d-%H%M%S)}"
+LOG_DIR="$(realpath -m "${BOS_GATE_LOG_DIR:-/tmp/bos-gate-logs/$(date +%Y%m%d-%H%M%S)}")"
 mkdir -p "$LOG_DIR"
 cd "$REPO_ROOT"
 

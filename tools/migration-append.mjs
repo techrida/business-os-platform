@@ -24,6 +24,8 @@ function fail(message) {
 
 const args = process.argv.slice(2);
 const dryRun = args.includes('--dry-run');
+const unknown = args.filter((arg) => arg.startsWith('--') && arg !== '--dry-run');
+if (unknown.length > 0) fail(`unknown option ${unknown.join(' ')}; the only option is --dry-run`);
 const positional = args.filter((arg) => !arg.startsWith('--'));
 if (positional.length !== 1) fail('usage: node tools/migration-append.mjs <file.sql> [--dry-run]');
 
