@@ -656,6 +656,65 @@ describe('SalesOrdersService.confirmFromQuotation', () => {
     expect(await orderStatuses(q.id)).toEqual(['draft']);
   });
 
+  // Round 5 P2: a file uploaded as the evidence of another record (an order, a vendor bill, an RFQ) is that
+  // record's own. Filed here, Mark billable would take it as this order's evidence. A file of an older owner type
+  // (filed before evidence had its own owner type) still confirms.
+  it.each<[string, () => Promise<string>]>([
+    [
+      'evidence uploaded to another order',
+      async () => {
+        const other = await confirm(await acceptedQuotation());
+        current.grants = grantsOf('accountant');
+        try {
+          return await evidence.upload('sales_order', other.order.id);
+        } finally {
+          current.grants = grantsOf('sales');
+        }
+      },
+    ],
+    [
+      "a vendor bill's evidence",
+      () => seedDocument(scopeA, { ownerType: 'evidence', ownerId: randomUUID() }),
+    ],
+    [
+      "an RFQ's evidence",
+      () => seedDocument(scopeA, { ownerType: 'evidence', ownerId: randomUUID() }),
+    ],
+  ])(
+    'refuses %s with 422 invalid_evidence_document and leaves the order a draft',
+    async (_label, docOf) => {
+      const q = await acceptedQuotation();
+      const foreign = await docOf();
+      const legacy = await seedDocument();
+      const refused = await confirm(q, [legacy, foreign]).then(
+        () => undefined,
+        (error: unknown) => error,
+      );
+      expect(refused).toBeInstanceOf(HttpException);
+      expect((refused as HttpException).getStatus()).toBe(422);
+      expect((refused as HttpException).getResponse()).toMatchObject({
+        code: 'invalid_evidence_document',
+        message: expect.not.stringMatching(/[0-9a-f]{8}-[0-9a-f]{4}-/),
+      });
+      expect(await orderStatuses(q.id)).toEqual(['draft']);
+
+      const detail = parsed(await confirm(q, [legacy]));
+      expect(detail.evidence).toEqual([{ documentId: legacy, kind: 'signed_quote' }]);
+    },
+  );
+
+  it("leaves another record's evidence out of the files an acceptance recorded, and files the rest", async () => {
+    const q = await portalAcceptedQuotation();
+    const foreign = await seedDocument(scopeA, { ownerType: 'evidence', ownerId: randomUUID() });
+    const legacy = await seedDocument();
+    await confirmEvidence(q, {
+      evidenceKinds: ['signed_quote'],
+      evidenceDocumentIds: [foreign, legacy],
+    });
+    const detail = parsed(await confirm(q));
+    expect(detail.evidence).toEqual([{ documentId: legacy, kind: 'signed_quote' }]);
+  });
+
   it('takes consecutive SO numbers for consecutive orders', async () => {
     const first = await confirm(await acceptedQuotation());
     const second = await confirm(await acceptedQuotation());
@@ -1546,6 +1605,43 @@ describe('SalesOrdersService.markBillable', () => {
       billableEvidenceDocumentId: filed,
     });
   });
+
+  // Round 5 P2: the order's filed list keeps older owner types working, but a file uploaded as another record's
+  // evidence is never this order's, even when a row of the list names it.
+  it.each<[string, (otherOrderId: string) => Promise<string>]>([
+    ['evidence uploaded to another order', (otherId) => evidence.upload('sales_order', otherId)],
+    [
+      "a vendor bill's evidence",
+      () => seedDocument(scopeA, { ownerType: 'evidence', ownerId: randomUUID() }),
+    ],
+    [
+      "an RFQ's evidence",
+      () => seedDocument(scopeA, { ownerType: 'evidence', ownerId: randomUUID() }),
+    ],
+  ])(
+    'refuses %s found in the filed list with 422 and leaves the line planned',
+    async (_label, docOf) => {
+      const detail = await confirm(await acceptedQuotation());
+      const other = await confirm(await acceptedQuotation());
+      const foreign = await docOf(other.order.id);
+      await withTx(db, scopeA, systemActor('test'), (tx) =>
+        tx.insert(salesOrderEvidence).values({
+          ...scopeA,
+          salesOrderId: detail.order.id,
+          evidenceKind: 'signed_quote',
+          documentId: foreign,
+          createdBy: f.ownerUserId,
+        }),
+      );
+      expect(await statusOf(mark(detail, 1, { evidenceDocumentId: foreign }))).toEqual({
+        status: 422,
+        code: 'invalid_evidence_document',
+      });
+      const after = await service.detail(detail.order.id);
+      expect(after.schedule[1]!.status).toBe('planned');
+      expect(after.order.version).toBe(1);
+    },
+  );
 
   it('lets only a mark_billable holder upload evidence to the order, and only while a line is planned', async () => {
     const detail = await confirm(await acceptedQuotation());

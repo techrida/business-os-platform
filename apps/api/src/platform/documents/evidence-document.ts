@@ -6,7 +6,7 @@
 // picture (logo, avatar), a payment proof, a vendor-inbox file or a file of another record, even of the same entity.
 import { documents, documentVersions, scoped } from '@bos/db';
 import { UnprocessableEntityException } from '@nestjs/common';
-import { and, eq, inArray, isNull, or } from 'drizzle-orm';
+import { and, eq, inArray, isNull, ne, or } from 'drizzle-orm';
 import { z } from 'zod';
 
 import type { Db } from '../db/db.module';
@@ -43,7 +43,9 @@ export function evidenceNotUploaded(): UnprocessableEntityException {
 
 /**
  * Passes when `documentId` is a live document of this scope that is evidence of `ownerId` (owner type `evidence`),
- * or is one of `alsoAccept` (ids the record already recorded as its evidence, any owner type) and still live.
+ * or is one of `alsoAccept` (ids the record already recorded as its evidence, of an older owner type) and still
+ * live. A list entry of owner type `evidence` counts only when it is evidence of `ownerId`: a file uploaded as the
+ * evidence of another record stays that record's own, whatever a list names.
  * Otherwise 422 `invalid_evidence_document`; then 409 `document_infected` when its newest version is infected
  * (TR-Q12e). The record's own evidence must also hold its bytes: its newest version that was not rejected is
  * `quarantined` (still scanning, each later step keeps its own clean-file rule) or `clean`; anything else (no such
@@ -75,7 +77,12 @@ export async function assertEvidenceDocument(
         and(
           eq(documents.id, documentId),
           isNull(documents.removedAt),
-          accepted.length === 0 ? ownEvidence : or(ownEvidence, inArray(documents.id, accepted)),
+          accepted.length === 0
+            ? ownEvidence
+            : or(
+                ownEvidence,
+                and(inArray(documents.id, accepted), ne(documents.ownerType, EVIDENCE_OWNER_TYPE)),
+              ),
         ),
       ),
     )
@@ -83,6 +90,42 @@ export async function assertEvidenceDocument(
   if (found === undefined) throw invalidEvidenceDocument();
   await assertNotInfected(reader, scope, [documentId]);
   if (found.ownerType !== EVIDENCE_OWNER_TYPE || found.ownerId !== ownerId) return;
+  await assertHoldsBytes(reader, scope, documentId);
+}
+
+/**
+ * For a record that files documents of any older owner type as its evidence (a sales order's confirm): every id of
+ * owner type `evidence` must be evidence of `ownerId` (none when the record does not exist yet) and hold its bytes,
+ * as `assertEvidenceDocument` asks. Otherwise 422 `invalid_evidence_document`. Other owner types pass untouched;
+ * the caller checks them as before.
+ */
+export async function assertNoForeignEvidence(
+  reader: Pick<Db, 'select'>,
+  scope: TxScope,
+  documentIds: readonly string[],
+  ownerId: string | null,
+): Promise<void> {
+  const ids = documentIds.filter((id) => Id.safeParse(id).success);
+  if (ids.length === 0) return;
+  const rows = await reader
+    .select({ id: documents.id, ownerId: documents.ownerId })
+    .from(documents)
+    .where(
+      scoped(scope).where(
+        documents,
+        and(inArray(documents.id, ids), eq(documents.ownerType, EVIDENCE_OWNER_TYPE)),
+      ),
+    );
+  if (rows.some((r) => r.ownerId !== ownerId)) throw invalidEvidenceDocument();
+  for (const row of rows) await assertHoldsBytes(reader, scope, row.id);
+}
+
+/** The newest version that was not rejected is `quarantined` or `clean`, else 422 (see `evidenceNotUploaded`). */
+async function assertHoldsBytes(
+  reader: Pick<Db, 'select'>,
+  scope: TxScope,
+  documentId: string,
+): Promise<void> {
   const versions = await reader
     .select({ version: documentVersions.version, status: documentVersions.status })
     .from(documentVersions)
