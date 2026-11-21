@@ -266,16 +266,22 @@ export class UserMirror {
       const org = await this.store.idpOrgById(i.idpOrgId);
       if (!org || org.tenantId !== i.tenantId) throw new Error('JIT user insert: unknown IdP org');
       const scope = await this.entityScope(org.tenantId);
-      await withTx(this.db, scope, zitadelActor(), async (tx) => {
-        const userId = await this.store.insertUser(tx, scope, {
-          zitadelUserId: i.zitadelUserId,
-          idpOrgId: org.idpOrgId,
-          email: null,
-          displayName: null,
-          status: 'active',
-        });
-        await this.bootstrap(tx, org, scope, userId);
-      });
+      await withTx(
+        this.db,
+        scope,
+        zitadelActor(),
+        async (tx) => {
+          const userId = await this.store.insertUser(tx, scope, {
+            zitadelUserId: i.zitadelUserId,
+            idpOrgId: org.idpOrgId,
+            email: null,
+            displayName: null,
+            status: 'active',
+          });
+          await this.bootstrap(tx, org, scope, userId);
+        },
+        LOCKS_USER_ROW,
+      );
       await this.enqueueSync(i.zitadelUserId);
       row = await this.store.findByZitadelId(this.db, i.zitadelUserId);
       if (!row) throw new Error('JIT user insert left no row');
