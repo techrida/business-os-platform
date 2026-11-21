@@ -710,6 +710,7 @@ describe('0013 data move on a database that already has rows (K1-U1b)', () => {
     // 0120 and 0121 add the settings and reopen rows to a tenant that stores grants; the credit.override rows are
     // 0104's (Founder, Management and Finance in every tenant with rows), and so are 0155's delivery_release rows, and 0175's vat.sales.read rows.
     expect(rp.rows).toEqual([
+      { role_key: 'accountant', permission: 'quotation.record_acceptance', scope: 'all' },
       { role_key: 'accountant', permission: 'settings.finance.write', scope: 'all' },
       { role_key: 'accountant', permission: 'vat.sales.read', scope: 'all' },
       { role_key: 'finance', permission: 'credit.override', scope: 'all' },
@@ -743,8 +744,8 @@ describe('0013 data move on a database that already has rows (K1-U1b)', () => {
       tenantId,
     ]);
     // 5 after the 0013 dedupe, plus one when 0053 grants profile.avatar.write to the finance role in the seeded
-    // tenant, plus one when 0083 gives the tenant its Marketing rows, plus one when 0088 widens the access model, plus one each when 0120 and 0121 seed the settings and reopen rows, plus one when 0127 seeds the workflow publish rows, plus one when 0128 seeds the email delivery rows. plus one when 0104 adds credit.override, plus one when 0150 adds the customer terms permissions, plus one when 0155 adds sales_order.delivery_release.
-    expect(av.rows).toEqual([{ version: '16' }]);
+    // tenant, plus one when 0083 gives the tenant its Marketing rows, plus one when 0088 widens the access model, plus one each when 0120 and 0121 seed the settings and reopen rows, plus one when 0127 seeds the workflow publish rows, plus one when 0128 seeds the email delivery rows. plus one when 0104 adds credit.override, plus one when 0150 adds the customer terms permissions, plus one when 0155 adds sales_order.delivery_release, plus one when 0175 adds vat.sales.read, plus one when 0178 adds the Accountant's quotation.record_acceptance.
+    expect(av.rows).toEqual([{ version: '17' }]);
     const ur = await pool.query(
       'SELECT user_id, role_key FROM app.user_roles WHERE tenant_id = $1 ORDER BY role_key',
       [tenantId],

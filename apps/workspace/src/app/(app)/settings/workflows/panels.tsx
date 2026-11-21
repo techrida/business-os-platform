@@ -5,7 +5,7 @@ import { useActionState } from 'react';
 import { Button } from '@/components/ui/button';
 import { ConfirmDialog } from '@/components/ui/dialog';
 import { toast } from '@/components/ui/toast';
-import { Field, Input } from '@/components/ui/field';
+import { Field, Input, Textarea } from '@/components/ui/field';
 import { SuggestInput } from '@/components/ui/suggest-input';
 
 import adminStyles from '../admin.module.css';
@@ -101,6 +101,46 @@ export function ActionButton({
         <input key={name} type="hidden" name={name} value={value} />
       ))}
       {button}
+      <FormStatus state={state} pending={pending} />
+    </form>
+  );
+}
+
+/**
+ * Publish for the small-team rule (F1-Q11 a): the caller saved this draft and nobody else may publish it,
+ * so they may, with a reason the API audits. The reason box replaces the usual confirm dialog, and the
+ * sentence that dialog would show sits beside it.
+ */
+export function SoleEligiblePublishForm({
+  action,
+  fields,
+  hiddenLabel,
+}: {
+  action: ServerAction;
+  fields: Record<string, string>;
+  hiddenLabel?: string;
+}) {
+  const [state, formAction, pending] = useActionState(action, IDLE);
+  return (
+    <form action={formAction} className={styles.form}>
+      {Object.entries(fields).map(([name, value]) => (
+        <input key={name} type="hidden" name={name} value={value} />
+      ))}
+      <span className={styles.hint}>
+        You are the only person who can publish this; a reason is required.
+      </span>
+      <Field
+        label="Reason for publishing"
+        hint="New requests will use this version, and the version in use will be retired."
+      >
+        {(control) => <Textarea {...control} name="reason" required maxLength={500} rows={2} />}
+      </Field>
+      <div className={styles.formActions}>
+        <Button type="submit" variant="primary" size="small" disabled={pending}>
+          Publish
+          {hiddenLabel ? <span className="sr-only"> {hiddenLabel}</span> : null}
+        </Button>
+      </div>
       <FormStatus state={state} pending={pending} />
     </form>
   );

@@ -1,6 +1,7 @@
 // The credit position's money rule (D22, F1-Q20, Kuu R4a Q1b): each open item's NPR amount is rounded half-up to
 // two decimals before the items are summed, so the exposure is the sum of the amounts a statement would print, and
-// the hold compares that sum plus the pending order's gross NPR value with the limit, strictly. Real: migrations,
+// the hold compares that sum plus the uninvoiced confirmed orders and the pending order's gross NPR value with the
+// limit, strictly. Real: migrations,
 // the ledger views and row security, LedgerService. The deal-level pending order (accepted quotations, sales
 // orders) is covered with real quotations in sales-orders.integration.test.ts.
 import 'reflect-metadata';
@@ -96,6 +97,7 @@ describe('the credit exposure rounds each item, then sums (D22)', () => {
     expect(await positionOf(party)).toEqual({
       creditLimit: '100000.00',
       exposure: '100000.00',
+      uninvoiced: '0.00',
       orderValue: '0.00',
       exposureWithOrder: '100000.00',
       held: false,
@@ -110,6 +112,7 @@ describe('the credit exposure rounds each item, then sums (D22)', () => {
     expect(await positionOf(party)).toEqual({
       creditLimit: '100000.00',
       exposure: '100000.01',
+      uninvoiced: '0.00',
       orderValue: '0.00',
       exposureWithOrder: '100000.01',
       held: true,
@@ -124,6 +127,7 @@ describe('the credit exposure rounds each item, then sums (D22)', () => {
     expect(await positionOf(party)).toEqual({
       creditLimit: '100000.00',
       exposure: '100000.00',
+      uninvoiced: '0.00',
       orderValue: '0.00',
       exposureWithOrder: '100000.00',
       held: false,
@@ -139,6 +143,7 @@ describe('the hold counts the order being confirmed on top of the receivables (K
     expect(await positionOf(party, nprOrder('20000.00'))).toEqual({
       creditLimit: '100000.00',
       exposure: '90000.00',
+      uninvoiced: '0.00',
       orderValue: '20000.00',
       exposureWithOrder: '110000.00',
       held: true,

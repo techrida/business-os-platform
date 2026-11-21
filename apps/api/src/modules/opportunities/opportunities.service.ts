@@ -33,7 +33,7 @@ import { readTxContext } from '../../platform/documents/tx-context';
 import { nameIn, personNameMap } from '../../platform/users/person-names';
 import { searchPage } from '../../platform/list';
 import { LeadLostReasonsService, lostReasonRefs } from '../leads/lost-reasons.service';
-import { creditPosition } from './credit-hold';
+import { creditPosition, overrideCovers } from './credit-hold';
 import { OpportunitiesCaller } from './opportunities.caller';
 import type { OpportunityLostHandler } from './opportunities.ports';
 import {
@@ -203,7 +203,14 @@ export class OpportunitiesService {
         await this.lostReasonOf(this.db, row),
         principal,
       ),
-      creditHold: { held: credit.held, overridden: row.creditOverrideAt !== null, ordered },
+      creditHold: {
+        held: credit.held,
+        // An override covers the order it was given for: a bigger pending order is held again (R5 FU4).
+        overridden:
+          row.creditOverrideAt !== null &&
+          overrideCovers(row.creditOverrideOrderValue, credit.orderValue),
+        ordered,
+      },
       stageHistory: toStageHistoryDto(history, actorNames),
     };
   }

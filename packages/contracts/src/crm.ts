@@ -501,8 +501,11 @@ export function lostReasonsToken(
   return (4294967296 * (2097151 & h2) + (h1 >>> 0)).toString(16).padStart(14, '0');
 }
 
-/** The kinds of contact activity logged when moving a new lead to contacted (D48). */
-export const CONTACT_ACTIVITY_KINDS = ['call', 'email'] as const;
+/**
+ * The kinds of contact activity logged when moving a lead to contacted (D48). A move to contacted needs one: logged
+ * in the same request, or already done on the lead (FR-6, `contact_activity_required`).
+ */
+export const CONTACT_ACTIVITY_KINDS = ['call', 'email', 'meeting'] as const;
 export const ContactActivityKindSchema = z.enum(CONTACT_ACTIVITY_KINDS);
 export type ContactActivityKind = z.infer<typeof ContactActivityKindSchema>;
 
@@ -589,17 +592,32 @@ export const OpportunityStageChangeBodySchema = z
   });
 export type OpportunityStageChangeBody = z.infer<typeof OpportunityStageChangeBodySchema>;
 
-/** `POST /v1/opportunities/:id/credit-override` (F1-Q20/F1-Q26): why the deal may go ahead over the limit. */
-export const CreditOverrideBodySchema = z.strictObject({ reason: text(500) });
+/** `POST /v1/opportunities/:id/credit-override` (F1-Q20/F1-Q26): why the deal may go ahead over the limit, and for which order value. */
+export const CreditOverrideBodySchema = z.strictObject({
+  reason: text(500),
+  /**
+   * The pending order's value (NPR, two decimals) the person saw when they gave the override. When sent, the API
+   * refuses the override (409) if the order is worth something else by then, so an override never covers an order
+   * nobody reviewed (R5 FU4). The workspace always sends it.
+   */
+  orderValue: z
+    .string()
+    .regex(/^\d+\.\d{2}$/)
+    .optional(),
+});
 export type CreditOverrideBody = z.infer<typeof CreditOverrideBodySchema>;
 
 /**
- * A deal's credit position (F1-Q20/F1-Q26, Kuu R4a Q1b), for holders of `credit.override`. Amounts are NPR with
- * two decimals (D22). `exposure` is what the customer owes the acting entity now: its open receivable debits less
- * its open credits (unapplied payments, credit notes), each at its own NPR rate. `orderValue` is the gross NPR
- * value (VAT included) of the deal's accepted quotation that has not become a confirmed sales order yet ('0.00'
- * when none). `held` is `exposureWithOrder > creditLimit`, where `exposureWithOrder = exposure + orderValue`; never
- * held without a limit. The override, once given, lets the deal's accepted quotation become a sales order.
+ * A deal's credit position (F1-Q20/F1-Q26, Kuu R4a Q1b, R5 FU4), for holders of `credit.override`. Amounts are NPR
+ * with two decimals (D22). `exposure` is what the customer owes the acting entity now: its open receivable debits
+ * less its open credits (unapplied payments, credit notes), each at its own NPR rate. `uninvoiced` is what its
+ * confirmed sales orders with the entity have not billed yet (an order without an issued tax invoice counts in full,
+ * a part-billed one for the rest), so an order is never counted both here and in `exposure`. `orderValue` is the
+ * gross NPR value (VAT included) of the deal's accepted quotation that has not become a confirmed sales order yet
+ * ('0.00' when none). `held` is `exposureWithOrder > creditLimit`, where
+ * `exposureWithOrder = exposure + uninvoiced + orderValue`; never held without a limit. The override, once given for
+ * an order of some value (`override.orderValue`), lets the deal's accepted quotation become a sales order as long as
+ * the order is not worth more than that; `overrideCovers` says whether it covers `orderValue` now.
  */
 export const CreditHoldDtoSchema = z.object({
   opportunityId: z.guid(),
@@ -607,6 +625,7 @@ export const CreditHoldDtoSchema = z.object({
   currency: z.literal('NPR'),
   creditLimit: DecimalString.nullable(),
   exposure: z.string().regex(/^-?\d+\.\d{2}$/),
+  uninvoiced: z.string().regex(/^\d+\.\d{2}$/),
   orderValue: z.string().regex(/^\d+\.\d{2}$/),
   exposureWithOrder: z.string().regex(/^-?\d+\.\d{2}$/),
   held: z.boolean(),
@@ -616,8 +635,14 @@ export const CreditHoldDtoSchema = z.object({
       byUserId: z.guid(),
       byName: z.string(),
       at: isoDateTime,
+      /** The gross NPR value of the order it was given against; null for one given before that was kept. */
+      orderValue: z
+        .string()
+        .regex(/^\d+\.\d{2}$/)
+        .nullable(),
     })
     .nullable(),
+  overrideCovers: z.boolean(),
 });
 export type CreditHoldDto = z.infer<typeof CreditHoldDtoSchema>;
 

@@ -40,6 +40,7 @@ const CONFLICT_CODES: Record<string, string> = {
   duplicate_pan_vat: 'Another customer already has this PAN/VAT number.',
   primary_contact_exists: 'This customer already has a primary contact.',
   kyb_not_verified: "This customer's verification must be approved first.",
+  contact_activity_required: 'Log a call, email or meeting before moving this lead to Contacted.',
 };
 
 /** Turns an API status, code and 403 reason into the sentence the user sees. */

@@ -3,12 +3,15 @@
 import { randomUUID } from 'node:crypto';
 
 import { revalidatePath } from 'next/cache';
+import { redirect } from 'next/navigation';
 
 import { keyOf } from '@/components/p2/crm/idempotency';
 import { isGuid } from '@/components/p2/customers/format';
 import {
   amendPurchaseOrder,
+  cancelAndRecreatePurchaseOrder,
   cancelPurchaseOrder,
+  changePurchaseOrderVendor,
   getPurchaseOrder,
   issuePurchaseOrder,
   shortClosePurchaseOrder,
@@ -23,7 +26,8 @@ import { poGrants } from './_lib/model';
 import type { ActionState } from './_lib/state';
 
 /**
- * Server actions of the purchase order screens: issue, amend, short-close, cancel. Each one checks
+ * Server actions of the purchase order screens: issue, amend, short-close, cancel, change the vendor of a
+ * draft, and cancel and recreate an issued order. Each one checks
  * the id, asks `requireStaffSession`, checks `procurement.po.issue` (deny by default; the API still
  * decides every call), validates, and words any refusal for a person.
  *
@@ -77,11 +81,19 @@ function settled(o: Opened, done: string): ActionState {
   return { key: randomUUID(), done };
 }
 
+/**
+ * Issue sends the `version` the page showed, so the API refuses (`PO_CHANGED`) an order edited since. A form from
+ * before the guard sends none and issues as before; anything other than a positive whole number is refused here.
+ */
 export async function issueAction(prev: ActionState, form: FormData): Promise<ActionState> {
   const r = await open(prev, form);
   if (!r.ok) return r.state;
+  const seen = text(form, 'expectedVersion');
+  if (seen !== '' && !/^[1-9]\d{0,8}$/.test(seen))
+    return { key: r.o.key, error: INCOMPLETE, reload: true };
   try {
-    await issuePurchaseOrder(r.o.session, r.o.id, r.o.key);
+    if (seen === '') await issuePurchaseOrder(r.o.session, r.o.id, r.o.key);
+    else await issuePurchaseOrder(r.o.session, r.o.id, r.o.key, Number(seen));
   } catch (err) {
     return refused(r.o, err, 'issue');
   }
@@ -160,4 +172,46 @@ export async function cancelAction(prev: ActionState, form: FormData): Promise<A
     return refused(r.o, err, 'cancel');
   }
   return settled(r.o, 'The purchase order was cancelled.');
+}
+
+/** Moves a draft to another vendor (F1-Q40 a). The API checks the vendor and has the last word. */
+export async function changeVendorAction(prev: ActionState, form: FormData): Promise<ActionState> {
+  const r = await open(prev, form);
+  if (!r.ok) return r.state;
+  const vendorId = text(form, 'vendorId');
+  if (!isGuid(vendorId)) return { key: r.o.key, errors: { vendorId: 'Choose a vendor.' } };
+  try {
+    await changePurchaseOrderVendor(r.o.session, r.o.id, vendorId, r.o.key);
+  } catch (err) {
+    return refused(r.o, err, 'changeVendor');
+  }
+  return settled(
+    r.o,
+    "The vendor was changed. The lines, prices and total stay as approved, and the payment terms are now the new vendor's.",
+  );
+}
+
+/**
+ * Cancels an issued order and raises a new draft from it in one step, then opens the new draft, where its vendor
+ * can be changed before it is issued again.
+ */
+export async function cancelAndRecreateAction(
+  prev: ActionState,
+  form: FormData,
+): Promise<ActionState> {
+  const r = await open(prev, form);
+  if (!r.ok) return r.state;
+  const reason = parseReason(text(form, 'reason'));
+  if (!reason.ok) return { key: r.o.key, errors: { reason: reason.error } };
+  let draftId: string;
+  try {
+    draftId = (await cancelAndRecreatePurchaseOrder(r.o.session, r.o.id, reason.data, r.o.key)).id;
+  } catch (err) {
+    return refused(r.o, err, 'recreate');
+  }
+  revalidatePath('/procurement/orders');
+  revalidatePath(`/procurement/orders/${r.o.id}`);
+  revalidatePath(`/procurement/orders/${draftId}`);
+  // `redirect` throws, so it stays outside the try block.
+  redirect(`/procurement/orders/${encodeURIComponent(draftId)}`);
 }

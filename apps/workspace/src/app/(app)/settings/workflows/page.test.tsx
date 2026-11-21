@@ -6,7 +6,12 @@ import { apiFetch } from '@/lib/api';
 import { listApprovalPeople } from '@/lib/api-admin';
 import type { Session } from '@/lib/session';
 import { IDLE } from '../action-state';
-import { addMemberAction, createDelegationAction, saveDraftAction } from './actions';
+import {
+  addMemberAction,
+  createDelegationAction,
+  publishVersionAction,
+  saveDraftAction,
+} from './actions';
 import WorkflowsPage from './page';
 import { WorkflowEditor } from './workflow-editor';
 
@@ -376,6 +381,7 @@ describe('publishing needs a second person (F1-Q11)', () => {
     );
   }
   const workflowsPart = (html: string) => html.slice(html.indexOf('id="workflows"'));
+  const SOLE_HINT = 'You are the only person who can publish this; a reason is required.';
 
   it('lets a Management member publish a draft someone else saved, and shows only what they can use', async () => {
     held = new Set(MANAGEMENT);
@@ -411,11 +417,92 @@ describe('publishing needs a second person (F1-Q11)', () => {
     expect(html).toContain('Waiting for a Management member other than its editor to publish it.');
   });
 
+  it('keeps the second-person explanation and no reason field when the caller is not the only publisher', async () => {
+    held = new Set([...EDITOR, 'approvals.definitions.publish']);
+    answer(draft({ savedByCaller: true, publishSoleEligible: false }));
+    const html = workflowsPart(renderToStaticMarkup(await WorkflowsPage()));
+    expect(html).toContain('You saved this draft, so another Management member publishes it.');
+    expect(html).not.toContain(SOLE_HINT);
+    expect(html).not.toContain('name="reason"');
+  });
+
+  it('asks the only possible publisher for a reason and offers Publish on their own draft', async () => {
+    held = new Set([...EDITOR, 'approvals.definitions.publish']);
+    answer(draft({ savedByCaller: true, publishSoleEligible: true }));
+    const html = workflowsPart(renderToStaticMarkup(await WorkflowsPage()));
+    expect(html).toContain(SOLE_HINT);
+    expect(html).toMatch(/<textarea[^>]*name="reason"[^>]*required=""/);
+    expect(html).toMatch(/<textarea[^>]*maxLength="500"/);
+    expect(html).toMatch(/>Publish</);
+    expect(html).not.toContain('so another Management member publishes it');
+  });
+
   it('asks for a draft with no recorded editor to be saved again', async () => {
     held = new Set(MANAGEMENT);
     answer(draft({ createdBy: null }));
     const html = workflowsPart(renderToStaticMarkup(await WorkflowsPage()));
     expect(html).not.toMatch(/>Publish</);
     expect(html).toContain('Save it again as a new draft to publish it.');
+  });
+});
+
+describe('publishVersionAction and the small-team rule (F1-Q11 a)', () => {
+  const published = {
+    ...version({}),
+    status: 'published',
+    publishedAt: '2026-11-21T00:00:00.000Z',
+  };
+  const publishCalls = () =>
+    vi.mocked(apiFetch).mock.calls.filter(([, path]) => path.endsWith('/publish'));
+
+  it('sends the typed reason, trimmed, with the publish', async () => {
+    vi.mocked(apiFetch).mockImplementation(() => Promise.resolve(Response.json(published)));
+    const result = await publishVersionAction(
+      IDLE,
+      form({ key: 'memo', version: '2', reason: '  Only founder on the team  ' }),
+    );
+    expect(result.status).toBe('ok');
+    const [call] = publishCalls();
+    expect(call?.[1]).toBe('/v1/admin/workflows/memo/versions/2/publish');
+    expect(jsonBody(call?.[2]?.body)).toEqual({ reason: 'Only founder on the team' });
+  });
+
+  it('publishes without a body when no reason is typed (the usual second-person publish)', async () => {
+    vi.mocked(apiFetch).mockImplementation(() => Promise.resolve(Response.json(published)));
+    await publishVersionAction(IDLE, form({ key: 'memo', version: '2', reason: '   ' }));
+    expect(publishCalls()[0]?.[2]?.body).toBeUndefined();
+  });
+
+  it('refuses a reason over 500 characters before calling the API', async () => {
+    const result = await publishVersionAction(
+      IDLE,
+      form({ key: 'memo', version: '2', reason: 'x'.repeat(501) }),
+    );
+    expect(result).toMatchObject({ status: 'error' });
+    expect(publishCalls()).toHaveLength(0);
+  });
+
+  it('says plainly that a reason is needed when the API refuses with sole_eligible_reason_required', async () => {
+    vi.mocked(apiFetch).mockImplementation(() =>
+      Promise.resolve(
+        Response.json(
+          {
+            error: {
+              code: 'bad_request',
+              correlationId: 'corr-1',
+              reason: 'sole_eligible_reason_required',
+              message: 'API wording that the screen replaces.',
+            },
+          },
+          { status: 400 },
+        ),
+      ),
+    );
+    const result = await publishVersionAction(IDLE, form({ key: 'memo', version: '2' }));
+    expect(result).toMatchObject({
+      status: 'error',
+      message:
+        'You are the only person who can publish this, so give a reason for publishing your own draft.',
+    });
   });
 });

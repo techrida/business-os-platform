@@ -30,6 +30,7 @@ import {
 } from '@bos/contracts';
 import {
   billingScheduleLines,
+  createParty,
   documents,
   documentVersions,
   invoices,
@@ -262,7 +263,7 @@ async function statusOf(promise: Promise<unknown>): Promise<{ status: number; co
 }
 
 /** A fresh opportunity of entity A (Won is terminal, so every accepted quotation needs its own). */
-async function seedOpportunity(): Promise<string> {
+async function seedOpportunity(customerId: string = f.customerPartyId): Promise<string> {
   const [row] = await withTx(db, scopeA, systemActor('test'), (tx) =>
     tx
       .insert(opportunities)
@@ -270,7 +271,7 @@ async function seedOpportunity(): Promise<string> {
         ...scopeA,
         number: `DEAL-${randomUUID().slice(0, 8)}`,
         name: 'Acme platform',
-        customerId: f.customerPartyId,
+        customerId,
         ownerUserId: f.ownerUserId,
         stage: 'qualified',
       })
@@ -363,8 +364,9 @@ async function setVersionStatus(
 async function draftQuotation(
   paymentSchedule?: { label: string; percent: string }[],
   unitPrice = '4465000.00',
+  customerId?: string,
 ): Promise<QuotationDto> {
-  const opportunityId = await seedOpportunity();
+  const opportunityId = await seedOpportunity(customerId);
   return drafting.create(
     {
       opportunityId,
@@ -420,12 +422,14 @@ async function acceptedQuotation(
     paymentSchedule?: { label: string; percent: string }[];
     evidenceKinds?: EvidenceKindName[];
     unitPrice?: string;
+    /** The customer of the deal; default the fixture's, which every test of the file shares. */
+    customerId?: string;
   } = {},
 ): Promise<QuotationDto> {
   // Recording the outcome is Sales' work, whoever the test then acts as.
   const held = current.grants;
   current.grants = grantsOf('sales');
-  const q = await draftQuotation(options.paymentSchedule, options.unitPrice);
+  const q = await draftQuotation(options.paymentSchedule, options.unitPrice, options.customerId);
   const expectedVersion = await sendQuotation(q);
   await recorder.record(
     q.id,
@@ -2048,6 +2052,7 @@ describe('SalesOrdersService.detail held invoices (audit #7)', () => {
       // Confirmed and held, but none of these roles holds sales_order.delivery_release.
       releaseDeliveryBlockedBy: 'permission',
       releaseDeliveryAllowedRoles: [],
+      releaseSoleEligible: false,
     });
   });
 
@@ -2066,6 +2071,7 @@ describe('SalesOrdersService.detail held invoices (audit #7)', () => {
       // Confirmed and held, but none of these roles holds sales_order.delivery_release.
       releaseDeliveryBlockedBy: 'permission',
       releaseDeliveryAllowedRoles: [],
+      releaseSoleEligible: false,
     });
 
     current.grants = new Map([...grantsOf('sales'), ['invoice.read', 'all']]);
@@ -2079,6 +2085,7 @@ describe('SalesOrdersService.detail held invoices (audit #7)', () => {
       // Confirmed and held, but none of these roles holds sales_order.delivery_release.
       releaseDeliveryBlockedBy: 'permission',
       releaseDeliveryAllowedRoles: [],
+      releaseSoleEligible: false,
     });
   });
 });
@@ -2270,6 +2277,25 @@ describe('credit hold at the hand-over to a sales order (F1-Q20, F1-Q26)', () =>
   let credit: CreditHoldService;
   let ledger: LedgerService;
   let financeUser: string;
+  /**
+   * A customer of its own for every test: a confirmed order counts against the limit until it is invoiced (R5 FU4),
+   * so the orders other tests of the file confirmed for the shared fixture customer must not count here.
+   */
+  let party: string;
+  const accepted = (options: { unitPrice?: string } = {}) =>
+    acceptedQuotation({ ...options, customerId: party });
+
+  beforeEach(async () => {
+    const { partyId } = await createParty(db.$client, { tenantId: f.tenantId, kind: 'customer' });
+    await withTx(db, scopeA, systemActor('test'), (tx) =>
+      tx.execute(
+        sql`INSERT INTO app.customers (id, tenant_id, number, legal_name, name_norm, address)
+            VALUES (${partyId}, ${f.tenantId}, ${`CUS-${partyId.slice(0, 8)}`}, 'Credit Pvt. Ltd.', 'credit',
+                    '{"line1":"Ring Road","city":"Kathmandu","country":"NP"}'::jsonb)`,
+      ),
+    );
+    party = partyId;
+  });
 
   beforeAll(async () => {
     credit = new CreditHoldService(
@@ -2286,7 +2312,7 @@ describe('credit hold at the hand-over to a sales order (F1-Q20, F1-Q26)', () =>
     await withTx(db, scopeA, systemActor('test'), (tx) =>
       tx
         .insert(partyAccounts)
-        .values({ ...scopeA, partyId: f.customerPartyId, creditLimit })
+        .values({ ...scopeA, partyId: party, creditLimit })
         .onConflictDoUpdate({
           target: [partyAccounts.tenantId, partyAccounts.organizationId, partyAccounts.partyId],
           set: { creditLimit },
@@ -2306,7 +2332,7 @@ describe('credit hold at the hand-over to a sales order (F1-Q20, F1-Q26)', () =>
       ledger.openItem(tx, scopeA, systemActor('test'), {
         side: 'receivable',
         direction,
-        partyId: f.customerPartyId,
+        partyId: party,
         sourceType: direction === 'debit' ? 'tax_invoice' : 'payment',
         sourceId: randomUUID(),
         currency,
@@ -2325,7 +2351,7 @@ describe('credit hold at the hand-over to a sales order (F1-Q20, F1-Q26)', () =>
    */
   async function settleReceivables(): Promise<void> {
     const { exposure } = await withTx(db, scopeA, systemActor('test'), (tx) =>
-      creditPosition(tx, scopeA, f.customerPartyId, {
+      creditPosition(tx, scopeA, party, {
         version: { currency: 'NPR', total: '0.00', amountNpr: null },
       }),
     );
@@ -2359,12 +2385,12 @@ describe('credit hold at the hand-over to a sales order (F1-Q20, F1-Q26)', () =>
       await openItem('debit', 'USD', '200.00', '133.50');
       await openItem('credit', 'NPR', '6700.00');
 
-      const atLimit = await acceptedQuotation({ unitPrice: '10000.00' });
+      const atLimit = await accepted({ unitPrice: '10000.00' });
       expect((await versionRow(atLimit.currentVersionId)).amountNpr).toBe('11300.00');
       expect(parsed(await confirm(atLimit)).order.status).toBe('confirmed');
 
       await openItem('debit', 'NPR', '0.01');
-      const q = await acceptedQuotation({ unitPrice: '10000.00' });
+      const q = await accepted({ unitPrice: '10000.00' });
       const key = `so-${randomUUID()}`;
       const refused = await holdOf(confirm(q, [], key));
       expect(refused.status).toBe(409);
@@ -2393,8 +2419,10 @@ describe('credit hold at the hand-over to a sales order (F1-Q20, F1-Q26)', () =>
       expect(before).toMatchObject({
         creditLimit: '111300.00',
         exposure: '100000.01',
+        // The first order (exactly at the limit) is confirmed and not invoiced yet: it counts too.
+        uninvoiced: '11300.00',
         orderValue: '11300.00',
-        exposureWithOrder: '111300.01',
+        exposureWithOrder: '122600.01',
         held: true,
         override: null,
       });
@@ -2419,6 +2447,7 @@ describe('credit hold at the hand-over to a sales order (F1-Q20, F1-Q26)', () =>
             reason: 'Advance cheque received',
             creditLimit: '111300.00',
             exposure: '100000.01',
+            uninvoiced: '11300.00',
             orderValue: '11300.00',
             currency: 'NPR',
           },
@@ -2430,10 +2459,11 @@ describe('credit hold at the hand-over to a sales order (F1-Q20, F1-Q26)', () =>
       const released = parsed(await confirm(q, [], key)).order;
       expect(released.status).toBe('confirmed');
       expect(released.id).toBe(heldDraft?.id);
-      // Ordered: the quotation no longer counts (its invoices will), and the receivables alone are under the limit.
+      // Ordered: the quotation no longer counts as pending; the order counts as uninvoiced until it is invoiced,
+      // and the customer, now holding two uninvoiced orders over the limit, is still over it for any further deal.
       expect(
         OpportunityDtoSchema.parse(await opportunitiesService.get(q.opportunityId)).creditHold,
-      ).toEqual({ held: false, overridden: true, ordered: true });
+      ).toEqual({ held: true, overridden: true, ordered: true });
     } finally {
       await setLimit(null);
     }
@@ -2464,7 +2494,7 @@ describe('credit hold at the hand-over to a sales order (F1-Q20, F1-Q26)', () =>
     try {
       await openItem('debit', 'NPR', '95000.00');
       await openItem('credit', 'NPR', '5000.00');
-      const q = await acceptedQuotation({ unitPrice: '20000.00' });
+      const q = await accepted({ unitPrice: '20000.00' });
       expect((await versionRow(q.currentVersionId)).amountNpr).toBe('22600.00');
 
       // The deal's flag (what Sales sees; receivables alone were under the limit) and the credit-hold page agree
@@ -2478,6 +2508,7 @@ describe('credit hold at the hand-over to a sales order (F1-Q20, F1-Q26)', () =>
       expect(before.page).toMatchObject({
         creditLimit: '100000.00',
         exposure: '90000.00',
+        uninvoiced: '0.00',
         orderValue: '22600.00',
         exposureWithOrder: '112600.00',
         held: true,
@@ -2506,6 +2537,7 @@ describe('credit hold at the hand-over to a sales order (F1-Q20, F1-Q26)', () =>
             reason: 'Director approved the order',
             creditLimit: '100000.00',
             exposure: '90000.00',
+            uninvoiced: '0.00',
             orderValue: '22600.00',
             currency: 'NPR',
           },
@@ -2516,14 +2548,15 @@ describe('credit hold at the hand-over to a sales order (F1-Q20, F1-Q26)', () =>
       current.userId = undefined;
       expect(parsed(await confirm(q, [], key)).order.status).toBe('confirmed');
 
-      // Confirmed: the order is no longer pending, so it is not counted twice once it is invoiced.
+      // Confirmed: the order is no longer pending; it counts as uninvoiced until an invoice replaces it (below).
       const after = await flagAndPage(q.opportunityId);
-      expect(after.flag).toEqual({ held: false, overridden: true, ordered: true });
+      expect(after.flag).toEqual({ held: true, overridden: true, ordered: true });
       expect(after.page).toMatchObject({
         exposure: '90000.00',
+        uninvoiced: '22600.00',
         orderValue: '0.00',
-        exposureWithOrder: '90000.00',
-        held: false,
+        exposureWithOrder: '112600.00',
+        held: true,
       });
     } finally {
       await setLimit(null);
@@ -2535,7 +2568,7 @@ describe('credit hold at the hand-over to a sales order (F1-Q20, F1-Q26)', () =>
     await setLimit('100000.00');
     try {
       await openItem('debit', 'NPR', '50000.00');
-      const under = await acceptedQuotation({ unitPrice: '20000.00' });
+      const under = await accepted({ unitPrice: '20000.00' });
       expect((await flagAndPage(under.opportunityId)).page).toMatchObject({
         exposureWithOrder: '72600.00',
         held: false,
@@ -2543,7 +2576,7 @@ describe('credit hold at the hand-over to a sales order (F1-Q20, F1-Q26)', () =>
       expect(parsed(await confirm(under)).order.status).toBe('confirmed');
 
       await setLimit('0.00');
-      const any = await acceptedQuotation({ unitPrice: '1.00' });
+      const any = await accepted({ unitPrice: '1.00' });
       const { flag, page } = await flagAndPage(any.opportunityId);
       expect(flag?.held).toBe(true);
       expect(page).toMatchObject({ creditLimit: '0.00', orderValue: '1.13', held: true });
@@ -2559,7 +2592,7 @@ describe('credit hold at the hand-over to a sales order (F1-Q20, F1-Q26)', () =>
   });
 
   it('refuses to override a deal that is not on hold, and answers 404 for a deal of another entity', async () => {
-    const q = await acceptedQuotation();
+    const q = await accepted();
     asFinance();
     expect(CreditHoldDtoSchema.parse(await credit.get(q.opportunityId))).toMatchObject({
       creditLimit: null,
@@ -2572,5 +2605,264 @@ describe('credit hold at the hand-over to a sales order (F1-Q20, F1-Q26)', () =>
     });
     current.scope = scopeB;
     expect((await statusOf(credit.get(q.opportunityId))).status).toBe(404);
+  });
+
+  // R5 FU4. Before: a confirmed order that no invoice covers yet counted nowhere, so a customer with no receivables
+  // and a limit of 150,000.00 could confirm two orders of 90,400.00 on different deals.
+  describe('a confirmed order counts until it is invoiced', () => {
+    /** The first of two 90,400.00 (80,000.00 + 13% VAT) orders of the customer, confirmed. */
+    async function twoOrders() {
+      await setLimit('150000.00');
+      const first = await accepted({ unitPrice: '80000.00' });
+      const second = await accepted({ unitPrice: '80000.00' });
+      expect((await versionRow(first.currentVersionId)).amountNpr).toBe('90400.00');
+      current.grants = grantsOf('sales');
+      current.userId = undefined;
+      expect(parsed(await confirm(first)).order.status).toBe('confirmed');
+      return { first, second };
+    }
+
+    let nextInvoiceSeq = 1;
+
+    /** An issued tax invoice of the order (80,000.00 + 10,400.00 VAT), with the receivable an issue leaves. */
+    async function issueInvoiceOf(
+      orderId: string,
+      foreign?: { fxRate: string; amountNpr: string },
+    ): Promise<string> {
+      const invoiceId = randomUUID();
+      const currency = foreign === undefined ? 'NPR' : 'USD';
+      const [subtotal, tax, total] =
+        foreign === undefined ? [80000, 10400, 90400] : [884.96, 115.04, 1000];
+      // Drafted, approved and issued the way the guard (invoices_guard) lets a row reach issued.
+      await withTx(db, scopeA, systemActor('test'), async (tx) => {
+        await tx.execute(sql`
+          INSERT INTO app.invoices (id, tenant_id, organization_id, kind, status, customer_party_id, sales_order_id,
+                                    currency, subtotal, taxable_vat_amount, tax_amount, total)
+          VALUES (${invoiceId}, ${f.tenantId}, ${scopeA.organizationId}, 'tax_invoice', 'draft', ${party},
+                  ${orderId}, ${currency}, ${subtotal}, ${subtotal}, ${tax}, ${total})`);
+        await tx.execute(
+          sql`UPDATE app.invoices SET status = 'approved', version = version + 1 WHERE id = ${invoiceId}`,
+        );
+        await tx.execute(sql`
+          UPDATE app.invoices
+             SET status = 'issued', number = ${`INV-${invoiceId.slice(0, 8)}`}, seq = ${nextInvoiceSeq++}, fiscal_year = '2083/84',
+                 issue_date = '2026-11-20', issue_date_bs = '2083-08-05', due_date = '2026-12-20',
+                 fx_rate = ${foreign?.fxRate ?? '1'},
+                 fx_source = ${foreign === undefined ? null : 'nrb'}, fx_date = ${foreign === undefined ? null : '2026-11-20'}, amount_npr = ${foreign?.amountNpr ?? '90400.00'}, seller_snapshot = '{}'::jsonb, buyer_snapshot = '{}'::jsonb,
+                 content_hash = sha256('invoice'::bytea), issued_at = now(), version = version + 1
+           WHERE id = ${invoiceId}`);
+      });
+      await withTx(db, scopeA, systemActor('test'), (tx) =>
+        ledger.openItem(tx, scopeA, systemActor('test'), {
+          side: 'receivable',
+          direction: 'debit',
+          partyId: party,
+          sourceType: 'tax_invoice',
+          sourceId: invoiceId,
+          currency,
+          amount: total.toFixed(2),
+          amountNpr: foreign?.amountNpr ?? '90400.00',
+          fxRate: foreign?.fxRate ?? '1',
+          ...(foreign === undefined ? {} : { fxSource: 'nrb', fxDate: DECIDED_ON }),
+          documentDate: DECIDED_ON,
+        }),
+      );
+      return invoiceId;
+    }
+
+    it('holds the second order of a customer with no receivables: the first is confirmed and not invoiced', async () => {
+      const { second } = await twoOrders();
+      expect(await holdOf(confirm(second))).toMatchObject({
+        status: 409,
+        body: { code: 'credit_hold' },
+      });
+      // The refusal is the same rule the deal's flag and the credit-hold page read (and the override acts on).
+      const { flag, page } = await flagAndPage(second.opportunityId);
+      expect(flag).toEqual({ held: true, overridden: false, ordered: false });
+      expect(page).toMatchObject({
+        creditLimit: '150000.00',
+        exposure: '0.00',
+        uninvoiced: '90400.00',
+        orderValue: '90400.00',
+        exposureWithOrder: '180800.00',
+        held: true,
+      });
+      expect(await orderStatuses(second.id)).toEqual(['draft']);
+      asFinance();
+      expect(
+        (await credit.override(second.opportunityId, { reason: 'Advance received' })).override,
+      ).toMatchObject({ reason: 'Advance received', orderValue: '90400.00' });
+      current.grants = grantsOf('sales');
+      current.userId = undefined;
+      expect(parsed(await confirm(second)).order.status).toBe('confirmed');
+    });
+
+    it('does not count it twice once an invoice is issued, and counts it again when credit notes cancel the invoice in full', async () => {
+      const { first, second } = await twoOrders();
+      const [order] = await liveOrders(first.id);
+      const invoiceId = await issueInvoiceOf(order!.id);
+
+      // The invoice is a receivable now, the order has nothing left to invoice: 90,400.00 once, not twice.
+      expect((await flagAndPage(second.opportunityId)).page).toMatchObject({
+        exposure: '90400.00',
+        uninvoiced: '0.00',
+        orderValue: '90400.00',
+        exposureWithOrder: '180800.00',
+      });
+
+      // Credit notes cancel the invoice in full: the receivable nets to nothing and the order has all of its value
+      // to invoice again (its schedule line is free for a new tax invoice).
+      await withTx(db, scopeA, systemActor('test'), (tx) =>
+        tx.execute(
+          sql`UPDATE app.invoices SET credited_in_full_at = now() WHERE id = ${invoiceId}`,
+        ),
+      );
+      await openItem('credit', 'NPR', '90400.00');
+      expect((await flagAndPage(second.opportunityId)).page).toMatchObject({
+        exposure: '0.00',
+        uninvoiced: '90400.00',
+        exposureWithOrder: '180800.00',
+      });
+    });
+
+    it("works out what is left in the order's own currency: the invoice froze another rate", async () => {
+      const { first, second } = await twoOrders();
+      const [order] = await liveOrders(first.id);
+      // The order was priced at 130 NPR per USD (USD 1,000.00 = 130,000.00) and invoiced in full when the rate was 128.
+      await withTx(db, scopeA, systemActor('test'), async (tx) => {
+        await tx.execute(sql`
+          UPDATE app.sales_orders
+             SET currency = 'USD', subtotal = 884.96, taxable_amount = 884.96, tax_amount = 115.04, total = 1000.00,
+                 fx_rate = 130, fx_source = 'nrb', fx_date = '2026-11-19', amount_npr = 130000.00
+           WHERE id = ${order!.id}`);
+        // The schedule lines follow the order total by their shares.
+        await tx.execute(sql`
+          UPDATE app.billing_schedule_lines
+             SET amount = round(1000.00 * percent / 100, 2), amount_npr = round(130000.00 * percent / 100, 2)
+           WHERE sales_order_id = ${order!.id}`);
+      });
+      expect((await flagAndPage(second.opportunityId)).page).toMatchObject({
+        exposure: '0.00',
+        uninvoiced: '130000.00',
+      });
+      await issueInvoiceOf(order!.id, { fxRate: '128', amountNpr: '128000.00' });
+      // Nothing is left to invoice. Subtracting the NPR snapshots would leave a phantom 2,000.00.
+      expect((await flagAndPage(second.opportunityId)).page).toMatchObject({
+        exposure: '128000.00',
+        uninvoiced: '0.00',
+      });
+    });
+  });
+
+  // R5 FU4. Before: any override on a deal let every later order of that deal through.
+  describe('an override covers the order value it was given for', () => {
+    /** A deal held for a 22,600.00 order, overridden by Finance. */
+    async function overriddenDeal() {
+      await setLimit('100000.00');
+      await openItem('debit', 'NPR', '90000.00');
+      const q = await accepted({ unitPrice: '20000.00' });
+      asFinance();
+      const given = CreditHoldDtoSchema.parse(
+        await credit.override(q.opportunityId, { reason: 'Director approved the order' }),
+      );
+      expect(given).toMatchObject({
+        overrideCovers: true,
+        override: { orderValue: '22600.00' },
+      });
+      current.grants = grantsOf('sales');
+      current.userId = undefined;
+      return q;
+    }
+
+    const setRecordedValue = (opportunityId: string, value: string | null) =>
+      withTx(db, scopeA, systemActor('test'), (tx) =>
+        tx
+          .update(opportunities)
+          .set({ creditOverrideOrderValue: value })
+          .where(eq(opportunities.id, opportunityId)),
+      );
+
+    it('refuses a bigger order than the override was for, and a new override replaces the old one', async () => {
+      const q = await overriddenDeal();
+      // The deal's order is now worth more than the 5,000.00 the override was given for.
+      await setRecordedValue(q.opportunityId, '5000.00');
+      expect((await flagAndPage(q.opportunityId)).flag).toEqual({
+        held: true,
+        overridden: false,
+        ordered: false,
+      });
+      expect(await holdOf(confirm(q))).toMatchObject({
+        status: 409,
+        body: { code: 'credit_hold' },
+      });
+      expect(await orderStatuses(q.id)).toEqual(['draft']);
+
+      asFinance();
+      expect(CreditHoldDtoSchema.parse(await credit.get(q.opportunityId))).toMatchObject({
+        held: true,
+        overrideCovers: false,
+        override: { orderValue: '5000.00' },
+      });
+      const renewed = CreditHoldDtoSchema.parse(
+        await credit.override(q.opportunityId, { reason: 'Approved again for the bigger order' }),
+      );
+      expect(renewed).toMatchObject({
+        overrideCovers: true,
+        override: { reason: 'Approved again for the bigger order', orderValue: '22600.00' },
+      });
+      const { rows } = await ownerPool.query<{
+        before: { creditOverrideOrderValue: string | null };
+        after: { creditOverrideOrderValue: string | null };
+      }>(
+        `SELECT before, after FROM audit.audit_events
+          WHERE tenant_id = $1 AND action = 'opportunity.credit_overridden' AND entity_id = $2
+          ORDER BY id`,
+        [f.tenantId, q.opportunityId],
+      );
+      expect(rows.map((r) => r.after.creditOverrideOrderValue)).toEqual(['22600.00', '22600.00']);
+      expect(rows[1]!.before.creditOverrideOrderValue).toBe('5000.00');
+
+      current.grants = grantsOf('sales');
+      current.userId = undefined;
+      expect(parsed(await confirm(q)).order.status).toBe('confirmed');
+    });
+
+    it("refuses an override given for another order value than the deal's order has now", async () => {
+      await setLimit('100000.00');
+      await openItem('debit', 'NPR', '90000.00');
+      const q = await accepted({ unitPrice: '20000.00' });
+      asFinance();
+      // Finance reviewed an order of 5,000.00; the order is 22,600.00 by the time the override arrives.
+      expect(
+        await statusOf(
+          credit.override(q.opportunityId, {
+            reason: 'Reviewed the small order',
+            orderValue: '5000.00',
+          }),
+        ),
+      ).toEqual({ status: 409, code: 'conflict' });
+      expect((await flagAndPage(q.opportunityId)).flag?.overridden).toBe(false);
+      const given = CreditHoldDtoSchema.parse(
+        await credit.override(q.opportunityId, {
+          reason: 'Reviewed the order of 22,600.00',
+          orderValue: '22600.00',
+        }),
+      );
+      expect(given).toMatchObject({ overrideCovers: true, override: { orderValue: '22600.00' } });
+    });
+
+    it('treats an override with no recorded value as covering nothing', async () => {
+      const q = await overriddenDeal();
+      await setRecordedValue(q.opportunityId, null);
+      expect(await holdOf(confirm(q))).toMatchObject({
+        status: 409,
+        body: { code: 'credit_hold' },
+      });
+      asFinance();
+      await credit.override(q.opportunityId, { reason: 'Approved again' });
+      current.grants = grantsOf('sales');
+      current.userId = undefined;
+      expect(parsed(await confirm(q)).order.status).toBe('confirmed');
+    });
   });
 });

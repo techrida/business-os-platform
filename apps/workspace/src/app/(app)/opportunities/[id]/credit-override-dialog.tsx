@@ -6,6 +6,7 @@ import { Button } from '@/components/ui/button';
 import { Dialog, DialogClose } from '@/components/ui/dialog';
 import { Field, Textarea } from '@/components/ui/field';
 import { toast } from '@/components/ui/toast';
+import type { CreditPositionView } from '@/components/p2/crm/credit-position';
 
 import { overrideCreditHoldAction, type CreditOverrideState } from '../actions';
 import styles from './detail.module.css';
@@ -16,12 +17,14 @@ const REASON_REQUIRED = 'Say why this deal may go ahead, up to 500 characters.';
 /**
  * Override credit hold (F1-Q20), for holders of `credit.override`: a required reason in a dialog
  * with its actions in the fixed footer (UIP-DLG-001). Success closes with a toast; a refusal keeps
- * the reason and moves focus to it, so a screen reader reads the error with the field.
+ * the reason and moves focus to it, so a screen reader reads the error with the field. `position` shows what the
+ * hold is made of (limit, receivables, orders not yet invoiced, this order), so the person overrides knowingly.
  */
 export function CreditOverrideDialog({
   opportunityId,
   number,
   quotation,
+  position,
   successMessage,
   onOverridden,
 }: {
@@ -33,6 +36,8 @@ export function CreditOverrideDialog({
    * for someone who cannot read the deal's number, and ties the override to the quotation in front of them.
    */
   quotation?: string | undefined;
+  /** The customer's position against the limit, when it could be read. */
+  position?: CreditPositionView | undefined;
   /** The toast after a save. Default: names the deal and says it can go to a sales order. */
   successMessage?: string | undefined;
   /** Called after the override is saved. */
@@ -107,7 +112,7 @@ export function CreditOverrideDialog({
       open={open}
       onOpenChange={setOpen}
       title="Override the credit hold?"
-      description={`${subject} can then be confirmed as a sales order although, with this order, the customer is over its credit limit. The override stays on this deal.`}
+      description={`${subject} can then be confirmed as a sales order although, with its receivables, its orders not yet invoiced and this order, the customer is over its credit limit. The override covers an order of this value; a bigger one needs a new override.`}
       locked={pending}
       closeOnOutsideClick={false}
       footer={
@@ -132,6 +137,20 @@ export function CreditOverrideDialog({
         className={styles.overrideForm}
       >
         <input type="hidden" name="opportunityId" value={opportunityId} />
+        {position ? <input type="hidden" name="orderValue" value={position.orderValue} /> : null}
+        {position ? (
+          <div>
+            <dl className={styles.overridePosition}>
+              {position.rows.map((row) => (
+                <div key={row.label}>
+                  <dt>{row.label}</dt>
+                  <dd>{row.value}</dd>
+                </div>
+              ))}
+            </dl>
+            {position.note ? <p>{position.note}</p> : null}
+          </div>
+        ) : null}
         <Field
           label="Reason"
           hint="Recorded with your name on the deal and in the audit log."

@@ -227,7 +227,11 @@ async function createCustomer(n: number): Promise<string> {
       .http()
       .patch(`/v1/leads/${lead.id}/stage`)
       .set('authorization', sales)
-      .send({ stage, expectedVersion: lead.version });
+      .send({
+        stage,
+        expectedVersion: lead.version,
+        ...(stage === 'contacted' ? { contactActivity: { kind: 'call', body: 'Intro call' } } : {}),
+      });
     expect(moved.status, show(moved)).toBe(200);
     lead = LeadDtoSchema.parse(moved.body);
   }

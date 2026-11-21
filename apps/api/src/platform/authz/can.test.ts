@@ -609,3 +609,53 @@ describe('default delivery-hold release permission (F1-Q32)', () => {
     }
   });
 });
+
+describe('default Accountant record acceptance (S4-Q2)', () => {
+  // The record check RecordOutcomeService runs for the evidence confirmation, the outcome record and the
+  // `can.confirm` flag of the evidence read: `quotation.record_acceptance` on quotationRef(), whose sodUserIds is [].
+  const colleaguesQuotation: ResourceRef = {
+    tenantId: TENANT,
+    organizationId: ENTITY,
+    ownerUserId: SOMEONE_ELSE,
+    departmentId: OTHER_DEPT,
+    customerPartyId: CUSTOMER_PARTY,
+    sodUserIds: [],
+  };
+
+  it('lets the Accountant confirm evidence on a quotation someone else owns, in the acting entity only', () => {
+    const accountant = principalWith(DEFAULT_ROLE_PERMISSIONS.accountant);
+    expect(can(accountant, 'quotation.record_acceptance', colleaguesQuotation)).toEqual(
+      ALLOWED('all'),
+    );
+    expect(
+      can(accountant, 'quotation.record_acceptance', {
+        ...colleaguesQuotation,
+        organizationId: OTHER_ENTITY,
+      }),
+    ).toEqual(DENIED('out_of_scope'));
+    expect(
+      can(accountant, 'quotation.record_acceptance', {
+        ...colleaguesQuotation,
+        tenantId: OTHER_TENANT,
+      }),
+    ).toEqual(DENIED('out_of_scope'));
+  });
+
+  it('still keeps the Accountant from sending, revising or drafting on that quotation', () => {
+    const accountant = principalWith(DEFAULT_ROLE_PERMISSIONS.accountant);
+    expect(can(accountant, 'quotation.send', colleaguesQuotation)).toEqual(DENIED('no_permission'));
+    expect(can(accountant, 'quotation.revise', colleaguesQuotation)).toEqual(
+      DENIED('no_permission'),
+    );
+    // The Accountant drafts only its own quotations, so a colleague's is out of scope.
+    expect(can(accountant, 'quotation.draft', colleaguesQuotation)).toEqual(DENIED('out_of_scope'));
+  });
+
+  it('is held by default only by the Founder, Sales (own) and the Accountant', () => {
+    const holders = Object.entries(DEFAULT_ROLE_PERMISSIONS)
+      .filter(([, grants]) => grants['quotation.record_acceptance'] !== undefined)
+      .map(([role, grants]) => `${role} ${String(grants['quotation.record_acceptance'])}`)
+      .sort();
+    expect(holders).toEqual(['accountant all', 'founder all', 'sales own']);
+  });
+});

@@ -12,6 +12,8 @@ import { SettingsModule } from '../../platform/settings/settings.module';
 import { CustomersModule } from '../customers/customers.module';
 import { LeadConvertController } from './convert/lead-convert.controller';
 import { LeadConvertService } from './convert/lead-convert.service';
+import { LeadDuplicatesController } from './lead-duplicates.controller';
+import { LeadDuplicatesService } from './lead-duplicates.service';
 import { LeadsCaller } from './leads.caller';
 import { LeadsController } from './leads.controller';
 import { LeadsService } from './leads.service';
@@ -20,8 +22,20 @@ import { LeadLostReasonsService } from './lost-reasons.service';
 
 @Module({
   imports: [AuditModule, SettingsModule, CustomersModule, NotifyModule],
-  controllers: [LeadsController, LeadLostReasonsController, LeadConvertController],
-  providers: [LeadsService, LeadLostReasonsService, LeadConvertService, LeadsCaller],
+  // LeadDuplicatesController first: its GET duplicates must register before LeadsController's GET ':id'.
+  controllers: [
+    LeadDuplicatesController,
+    LeadsController,
+    LeadLostReasonsController,
+    LeadConvertController,
+  ],
+  providers: [
+    LeadsService,
+    LeadLostReasonsService,
+    LeadConvertService,
+    LeadsCaller,
+    LeadDuplicatesService,
+  ],
   exports: [LeadsService, LeadLostReasonsService],
 })
 export class LeadsModule {}
