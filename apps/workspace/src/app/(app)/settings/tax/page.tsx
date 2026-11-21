@@ -8,9 +8,6 @@ import { listAdminTaxCodes } from '@/lib/api-master-data';
 import { listWithholdingCodes } from '@/lib/api-withholding-codes';
 
 import { BackToSettings } from '../_components/back-link';
-import { loadFields } from '../_components/load-fields';
-import { SettingCard } from '../_components/setting-card';
-import { SettingsForm } from '../_components/settings-form';
 import styles from '../_components/settings.module.css';
 import admin from '../admin.module.css';
 import { todayInKathmandu } from '../format';
@@ -23,10 +20,13 @@ export const metadata: Metadata = { title: 'Tax · Business OS' };
 
 const percent = (basisPoints: number): string => `${(basisPoints / 100).toFixed(2)}%`;
 
+/**
+ * VAT and withholding codes. The `tax.vat_rate` setting keeps its key, default and save/reset actions, but no card
+ * shows it, because nothing reads it (round 5, UX1; Kuu decided to hide it).
+ */
 export default async function TaxPage() {
   const session = await requireSection('tax');
-  const [rate, vat, withholding] = await Promise.all([
-    loadFields(session, ['tax.vat_rate']),
+  const [vat, withholding] = await Promise.all([
     section('view VAT codes', () => listAdminTaxCodes(session)),
     section('view withholding codes', () => listWithholdingCodes(session)),
   ]);
@@ -36,19 +36,9 @@ export default async function TaxPage() {
       <BackToSettings />
       <PageHeader
         title="Tax"
-        description="The default VAT rate, and the VAT and withholding codes documents can use. Every change is recorded in the audit trail."
+        description="The VAT and withholding codes documents can use. Every change is recorded in the audit trail."
       />
       <div className={styles.column}>
-        {rate.ok ? (
-          <div className={styles.narrow}>
-            <SettingsForm section="tax" fields={rate.data}>
-              <SettingCard title="VAT rate" fields={rate.data} />
-            </SettingsForm>
-          </div>
-        ) : (
-          <SectionError message={rate.message} />
-        )}
-
         <Panel
           title="VAT codes"
           description="The codes quotations, orders and bills can use, with the rate in force today."
