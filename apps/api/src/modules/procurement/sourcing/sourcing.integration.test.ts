@@ -617,7 +617,7 @@ describe('RFQ', () => {
     expect(e.getStatus()).toBe(422);
     expect(e.getResponse()).toMatchObject({
       code: 'invalid_evidence_document',
-      message: expect.stringMatching(/has not finished uploading/),
+      message: expect.stringMatching(/has not finished uploading/) as string,
     });
     const { rows } = await exec(
       scopeA,

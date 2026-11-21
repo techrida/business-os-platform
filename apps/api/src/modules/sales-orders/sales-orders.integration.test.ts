@@ -694,7 +694,7 @@ describe('SalesOrdersService.confirmFromQuotation', () => {
       expect((refused as HttpException).getStatus()).toBe(422);
       expect((refused as HttpException).getResponse()).toMatchObject({
         code: 'invalid_evidence_document',
-        message: expect.not.stringMatching(/[0-9a-f]{8}-[0-9a-f]{4}-/),
+        message: expect.not.stringMatching(/[0-9a-f]{8}-[0-9a-f]{4}-/) as string,
       });
       expect(await orderStatuses(q.id)).toEqual(['draft']);
 
@@ -1400,7 +1400,7 @@ describe('SalesOrdersService.markBillable', () => {
     expect((refused as HttpException).getStatus()).toBe(422);
     expect((refused as HttpException).getResponse()).toMatchObject({
       code: 'invalid_evidence_document',
-      message: expect.stringMatching(/has not finished uploading/),
+      message: expect.stringMatching(/has not finished uploading/) as string,
     });
     const after = await service.detail(detail.order.id);
     expect(after.schedule[1]!.status).toBe('planned');
@@ -1525,7 +1525,9 @@ describe('SalesOrdersService.markBillable', () => {
     };
     const managed = {
       status: 409,
-      body: expect.objectContaining({ message: expect.stringMatching(/managed from its record/) }),
+      body: expect.objectContaining({
+        message: expect.stringMatching(/managed from its record/) as string,
+      }) as Record<string, unknown>,
     };
     // Generic grants (documents.upload) and the order's own grant.
     current.grants = grantsOf('founder');

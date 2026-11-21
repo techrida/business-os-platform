@@ -491,7 +491,7 @@ describe('describeBillingFailure', () => {
     // Fails on the old code: both read as the generic "The platform did not accept this".
     expect(describeBillingFailure(refusal(422, 'invalid_evidence_document'))).toMatchObject({
       kind: 'evidence',
-      message: expect.stringMatching(/not evidence uploaded to this record/),
+      message: expect.stringMatching(/not evidence uploaded to this record/) as string,
       reload: false,
     });
     expect(describeBillingFailure(refusal(422, 'evidence_required')).message).toBe(

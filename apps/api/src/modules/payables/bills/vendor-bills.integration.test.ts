@@ -1748,7 +1748,7 @@ describe('evidence uploads on a bill (round 5 P2)', () => {
     expect(refused.getStatus()).toBe(422);
     expect(refused.getResponse()).toMatchObject({
       code: 'invalid_evidence_document',
-      message: expect.stringMatching(/has not finished uploading/),
+      message: expect.stringMatching(/has not finished uploading/) as string,
     });
     expect((await service.get(bill.id)).status).toBe('variance');
   });
