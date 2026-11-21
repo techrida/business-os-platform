@@ -13,6 +13,8 @@ import {
   TAX_INVOICE_WORKFLOW_SPEC,
   QUOTATION_VERSION_WORKFLOW_SPEC,
   TEST_MEMO_WORKFLOW_SPEC,
+  DEV_BANK_ACCOUNTS,
+  DEV_EXPENSE_ACCOUNTS,
   DEV_CUSTOMER_NAME_NORM,
   DEV_CUSTOMER_PARTY_CODE,
   DEV_DEPARTMENTS,
@@ -118,8 +120,8 @@ describe('seedKernelRows', () => {
     );
     expect(index('INTO app.fx_rates')).toBeGreaterThan(index('INTO app.workflow_versions'));
     // grants + authz bump + 13 x (definition + version + current_version_id) + fx peg
-    // + 3 tax codes + 2 payment terms + 2 withholding codes
-    expect(changed).toBe(grantCount + 1 + 13 * 3 + 1 + 3 + 2 + 2 + 3);
+    // + 3 tax codes + 2 payment terms + 2 withholding codes + 3 cost centres + 3 bank and 7 expense accounts
+    expect(changed).toBe(grantCount + 1 + 13 * 3 + 1 + 3 + 2 + 2 + 3 + 3 + 7);
   });
 
   it('rolls back and rethrows when a statement fails', async () => {
@@ -1474,5 +1476,126 @@ describe('cost centre dev seed', () => {
     expect(
       centers.every((c) => c.text.includes('ON CONFLICT') && c.text.includes('DO NOTHING')),
     ).toBe(true);
+  });
+});
+
+describe('company bank and expense account dev seed', () => {
+  it('lists two active bank accounts and one retired, with only the last four of each number', () => {
+    expect(
+      DEV_BANK_ACCOUNTS.map((b) => [b.name, b.bankName, b.last4, b.currency, b.status]),
+    ).toEqual([
+      ['Operating account', 'Nabil Bank', '4821', 'NPR', 'active'],
+      ['Dollar account', 'Standard Chartered Bank Nepal', '7305', 'USD', 'active'],
+      ['Old payroll account', 'Global IME Bank', '1190', 'NPR', 'retired'],
+    ]);
+    for (const bank of DEV_BANK_ACCOUNTS) expect(bank.last4).toMatch(/^[A-Za-z0-9]{4}$/);
+  });
+
+  it('lists six active expense accounts and one retired', () => {
+    expect(DEV_EXPENSE_ACCOUNTS.map((a) => [a.code, a.name, a.status])).toEqual([
+      ['5100', 'Office supplies', 'active'],
+      ['5200', 'Rent', 'active'],
+      ['5300', 'Utilities', 'active'],
+      ['5400', 'Travel', 'active'],
+      ['5500', 'Professional fees', 'active'],
+      ['5900', 'Other expenses', 'active'],
+      ['5800', 'Closed project costs', 'retired'],
+    ]);
+  });
+
+  it('inserts each bank account in the acting entity only when the entity has none of that name, of any status', async () => {
+    const { client, calls } = fakeClient(firstRun);
+    await seedKernelRows(client, scope);
+    const banks = calls.filter((c) => c.text.includes('INSERT INTO app.company_bank_accounts'));
+    expect(banks.map((c) => c.values)).toEqual([
+      ['tenant-1', 'org-1', 'Operating account', 'Nabil Bank', '4821', 'NPR', 'active'],
+      [
+        'tenant-1',
+        'org-1',
+        'Dollar account',
+        'Standard Chartered Bank Nepal',
+        '7305',
+        'USD',
+        'active',
+      ],
+      ['tenant-1', 'org-1', 'Old payroll account', 'Global IME Bank', '1190', 'NPR', 'retired'],
+    ]);
+    for (const c of banks) {
+      expect(c.text).toContain('WHERE NOT EXISTS');
+      expect(c.text).toContain('lower(btrim(name)) = lower(btrim($3::text))');
+      // A status filter would re-insert the retired row on every run.
+      expect(c.text.split('WHERE NOT EXISTS')[1]).not.toContain('status');
+      expect(c.text).toContain("CASE WHEN $7::text = 'retired' THEN now() END");
+    }
+  });
+
+  it('inserts each expense account conflict-safe on the entity and lower(code), retired_at only when retired', async () => {
+    const { client, calls } = fakeClient(firstRun);
+    await seedKernelRows(client, scope);
+    const accounts = calls.filter((c) => c.text.includes('INSERT INTO app.expense_accounts'));
+    expect(accounts.map((c) => c.values)).toEqual([
+      ['tenant-1', 'org-1', '5100', 'Office supplies', 'active'],
+      ['tenant-1', 'org-1', '5200', 'Rent', 'active'],
+      ['tenant-1', 'org-1', '5300', 'Utilities', 'active'],
+      ['tenant-1', 'org-1', '5400', 'Travel', 'active'],
+      ['tenant-1', 'org-1', '5500', 'Professional fees', 'active'],
+      ['tenant-1', 'org-1', '5900', 'Other expenses', 'active'],
+      ['tenant-1', 'org-1', '5800', 'Closed project costs', 'retired'],
+    ]);
+    for (const c of accounts) {
+      expect(c.text).toContain('ON CONFLICT (tenant_id, organization_id, lower(code)) DO NOTHING');
+      expect(c.text).toContain("CASE WHEN $5::text = 'retired' THEN now() END");
+    }
+  });
+
+  it('never updates or deletes an account row: the guards freeze them and a hand edit is kept', async () => {
+    const { client, calls } = fakeClient(firstRun);
+    await seedKernelRows(client, scope);
+    const touching = calls.filter((c) =>
+      /app\.(company_bank_accounts|expense_accounts)/.test(c.text),
+    );
+    expect(touching).toHaveLength(DEV_BANK_ACCOUNTS.length + DEV_EXPENSE_ACCOUNTS.length);
+    for (const c of touching) {
+      expect(c.text.startsWith('INSERT')).toBe(true);
+      expect(c.text).not.toContain('DO UPDATE');
+    }
+  });
+
+  it('writes after the seed actor, inside the one transaction', async () => {
+    const { client, calls } = fakeClient(firstRun);
+    await seedKernelRows(client, scope);
+    const actor = calls.findIndex((c) => c.text.includes("set_config('bos.actor_kind'"));
+    const first = calls.findIndex((c) => c.text.includes('INTO app.company_bank_accounts'));
+    expect(actor).toBeGreaterThan(0);
+    expect(first).toBeGreaterThan(actor);
+    expect(calls.at(-1)?.text).toBe('COMMIT');
+  });
+
+  it('counts every account on a first run and changes nothing on a second over the same keys', async () => {
+    const keys = new Set<string>();
+    // Bank accounts are keyed by entity and name, expense accounts by entity and lower(code), like the SQL.
+    const keyOf = ({ text, values }: Call): string | undefined => {
+      if (text.includes('INTO app.company_bank_accounts')) {
+        return `bank|${String(values[1])}|${String(values[2]).trim().toLowerCase()}`;
+      }
+      if (text.includes('INTO app.expense_accounts')) {
+        return `expense|${String(values[1])}|${String(values[2]).toLowerCase()}`;
+      }
+      return undefined;
+    };
+    const stateful: Script = (call) => {
+      const key = keyOf(call);
+      if (key === undefined) return nothingChanged(call);
+      if (keys.has(key)) return { rowCount: 0 };
+      keys.add(key);
+      return { rowCount: 1 };
+    };
+    expect(await seedKernelRows(fakeClient(stateful).client, scope)).toBe(
+      DEV_BANK_ACCOUNTS.length + DEV_EXPENSE_ACCOUNTS.length,
+    );
+    expect([...keys].filter((k) => k.startsWith('bank|'))).toHaveLength(3);
+    expect([...keys].filter((k) => k.startsWith('expense|'))).toHaveLength(7);
+
+    expect(await seedKernelRows(fakeClient(stateful).client, scope)).toBe(0);
   });
 });

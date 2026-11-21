@@ -43,6 +43,15 @@ beforeEach(() => {
     },
     '/v1/tax-codes': [{ id: '11111111-1111-4111-8111-111111111111', label: 'VAT 13%' }],
     '/v1/withholding-codes': [],
+    '/v1/expense-accounts': [
+      {
+        id: '33333333-3333-4333-8333-333333333333',
+        code: '5100',
+        name: 'Office supplies',
+        status: 'active',
+        retiredAt: null,
+      },
+    ],
   }));
 });
 afterEach(() => {

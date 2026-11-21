@@ -446,6 +446,9 @@ describe('ErrorBodyFilter', () => {
     'BILL_NOT_PAYABLE',
     'CURRENCY_MISMATCH',
     'PURCHASE_ORDER_NOT_FOUND',
+    'BANK_ACCOUNT_INVALID',
+    'BANK_ACCOUNT_CURRENCY_MISMATCH',
+    'EXPENSE_ACCOUNT_INVALID',
   ])('keeps the payables refusal code %s on a 422, and only on a 422', (code) => {
     const out = filter(new UnprocessableEntityException({ code, message: 'Not accepted' }));
     expect(out.status).toBe(422);

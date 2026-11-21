@@ -1,5 +1,6 @@
 import { randomUUID } from 'node:crypto';
 
+import type { CompanyBankAccount } from '@bos/contracts';
 import type { Metadata } from 'next';
 import Link from 'next/link';
 
@@ -15,6 +16,8 @@ import {
   type PaymentRequestItem,
 } from '@/lib/api-payables';
 import { listPaymentRequestOrders } from '@/lib/api-payables-orders';
+import { listCompanyBankAccounts } from '@/lib/api-company-accounts';
+import { canOpenSection, settingsSection } from '@/lib/settings-nav';
 
 import { PO_STATUS_LABEL } from '../../../procurement/orders/_lib/model';
 
@@ -47,6 +50,14 @@ export default async function NewPaymentRequestPage({
   // For a vendor without a verified bank account: what this reader can do about it, and whether its page opens.
   const addBank = addBankAccountText(hasGrant(grants, 'vendor.bank.propose'));
   const linkVendors = hasGrant(grants, 'vendor.read');
+  // Where a paying bank account is added, linked only when this person may open that Settings page.
+  const bankSettings = settingsSection('company-accounts');
+  const bankAccountsHref = canOpenSection(bankSettings, (permission) =>
+    hasGrant(grants, permission as Parameters<typeof hasGrant>[1]),
+  )
+    ? bankSettings.href
+    : undefined;
+  let bankAccounts: CompanyBankAccount[] = [];
   let items: PaymentRequestItem[] = [];
   // Balances held back only because the vendor has no verified bank account: named so the person knows what to fix.
   // Optional: if it does not load, the page says what it said before.
@@ -58,12 +69,24 @@ export default async function NewPaymentRequestPage({
     const heldRead = listPaymentRequestItemsWithoutBankAccount(session).catch(
       () => [] as PaymentRequestItem[],
     );
+    // Read beside the items: the paying account is required, so a failed read is said instead of a form.
+    const bankRead = listCompanyBankAccounts(session).then(
+      (rows) => ({ rows }),
+      (err: unknown) => ({ err }),
+    );
     try {
       items = await listPaymentRequestItems(session);
     } catch (err) {
       problem = paymentRequestFailure(err).message;
     }
     held = await heldRead;
+    const bank = await bankRead;
+    if ('rows' in bank) bankAccounts = bank.rows;
+    else
+      problem ??=
+        paymentRequestFailure(bank.err).status === 403
+          ? "Your roles do not allow reading the company's bank accounts. Ask an administrator if you need access."
+          : "The company's bank accounts did not load. Reload the page to try again.";
     // The order is optional on a request: if the picker does not load, the request goes without one.
     orders = await listPaymentRequestOrders(session).then(
       (rows) =>
@@ -131,6 +154,8 @@ export default async function NewPaymentRequestPage({
               items={items}
               orders={orders}
               enabledCurrencies={enabledCurrencies}
+              bankAccounts={bankAccounts}
+              bankAccountsHref={bankAccountsHref}
               start={
                 billId !== undefined ? requestableItem(items, billId, enabledCurrencies) : undefined
               }
