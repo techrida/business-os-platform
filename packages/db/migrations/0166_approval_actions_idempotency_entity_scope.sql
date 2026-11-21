@@ -9,8 +9,8 @@
 --
 -- A short lock_timeout: the constraint swap takes an ACCESS EXCLUSIVE lock on approval_actions, which is small, but
 -- it must give up (and fail the deploy, which a retry then repeats) instead of queueing behind a long approval
--- transaction and blocking every approval click that queues behind it. SET LOCAL ends with the migration's
--- transaction. Every later data migration should open with the same line.
+-- transaction and blocking every approval click that queues behind it. SET LOCAL lasts until the migration run's one
+-- transaction commits, so it also covers any migration after this one in the same run. Every later data migration should open with the same line.
 
 SET LOCAL lock_timeout = '5s';
 --> statement-breakpoint

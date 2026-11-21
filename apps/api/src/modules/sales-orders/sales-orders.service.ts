@@ -438,6 +438,8 @@ export class SalesOrdersService {
     // An override covers orders up to the value it was given for: a bigger order needs a new one. The refusal names
     // the deal only: the limit and the balance are for holders of credit.override
     // (GET /v1/opportunities/:id/credit-hold, the same rule).
+    // Two confirms of one tenant never reach this line together: withTx takes the tenant's audit lock first and
+    // holds it to the commit, so the second reads the first's order. Never run this under `audit: 'lazy'` (R5 FU6).
     const credit = await creditPosition(tx, scope, customerPartyId, { version });
     if (credit.held) {
       const [deal] = await tx
