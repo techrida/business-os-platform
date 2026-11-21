@@ -30,8 +30,15 @@ import { getGrants } from '@/lib/grants';
 import { when } from '@/lib/kernel-format';
 
 import layout from '../../procurement.module.css';
-import { AmendDialog, IssueDialog, ReasonDialog } from '../_components/order-actions';
-import { poFailure } from '../_lib/failure';
+import { loadVendors, vendorName } from '../../rfqs/_lib/vendors';
+import {
+  AmendDialog,
+  ChangeVendorDialog,
+  IssueDialog,
+  ReasonDialog,
+  RecreateDialog,
+} from '../_components/order-actions';
+import { poFailure, VENDOR_CHANGE_NOT_DRAFT } from '../_lib/failure';
 import {
   bandText,
   orderActions,
@@ -337,6 +344,12 @@ export default async function PurchaseOrderPage({ params }: { params: Promise<{ 
 
   const grants = poGrants(await getGrants(session));
   const can = orderActions(po.status, grants);
+  // Only a draft changes vendor (F1-Q40 a), so only a draft the person may issue asks for the approved vendors.
+  // The current vendor is left out: the API refuses a change to the same vendor.
+  const vendorLookup = can.issue ? await loadVendors(session, 'approved') : undefined;
+  const vendorChoices = (vendorLookup?.vendors ?? [])
+    .filter((v) => v.id !== po.vendorId)
+    .map((v) => ({ id: v.id, name: vendorName(v) }));
   const status = PO_STATUS_LABEL[po.status];
   const current =
     versions.status === 'fulfilled'
@@ -469,6 +482,15 @@ export default async function PurchaseOrderPage({ params }: { params: Promise<{ 
               {can.cancel ? (
                 <ReasonDialog kind="cancel" {...common} idempotencyKey={randomUUID()} />
               ) : null}
+              {can.cancel ? <RecreateDialog {...common} idempotencyKey={randomUUID()} /> : null}
+              {can.issue ? (
+                <ChangeVendorDialog
+                  {...common}
+                  idempotencyKey={randomUUID()}
+                  vendors={vendorChoices}
+                  problem={vendorLookup?.problem}
+                />
+              ) : null}
               {mayEnterBill ? (
                 <LinkButton
                   href={`/payables/bills/new?po=${encodeURIComponent(po.id)}`}
@@ -504,6 +526,11 @@ export default async function PurchaseOrderPage({ params }: { params: Promise<{ 
         </Panel>
         <Panel as="aside" title="Linked records" className={layout.linkedRecords}>
           <FactList facts={facts.filter((fact) => fact.key === 'vendor')} />
+          {can.cancel ? (
+            <p className={styles.note}>
+              Need a different vendor? {VENDOR_CHANGE_NOT_DRAFT}: use Cancel and recreate.
+            </p>
+          ) : null}
         </Panel>
       </div>
 
