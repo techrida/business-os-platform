@@ -24,7 +24,12 @@ describe('enqueueRenderOne', () => {
     const queue = { add: vi.fn().mockResolvedValue(undefined) };
     const log = { warn: vi.fn() };
 
-    await enqueueRenderOne(queue as unknown as Queue, log as unknown as Logger, 'x.render.one', job);
+    await enqueueRenderOne(
+      queue as unknown as Queue,
+      log as unknown as Logger,
+      'x.render.one',
+      job,
+    );
 
     expect(queue.add).toHaveBeenCalledExactlyOnceWith('x.render.one', job, {
       jobId: `x.render.one-${job.id}`,

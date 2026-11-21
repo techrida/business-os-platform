@@ -33,7 +33,9 @@ export function logServerErrors(
         SERVER_ERROR_LINE.test(message) &&
         rest[rest.length - 1] === FILTER_CONTEXT
       ) {
-        const stack = rest.find((part): part is string => typeof part === 'string' && part !== FILTER_CONTEXT);
+        const stack = rest.find(
+          (part): part is string => typeof part === 'string' && part !== FILTER_CONTEXT,
+        );
         sink(`[e2e server error] ${message}${stack === undefined ? '' : `\n${stack}`}`);
       }
       inner.error(message, ...rest);

@@ -283,7 +283,13 @@ beforeAll(async () => {
   sweeper = makeSweeper(
     new GotenbergClient(gotenbergUrl, { timeoutMs: 10_000, maxBytes: 1_000_000 }),
   );
-  service = new PurchaseOrderDocumentService(db, documents, caller, renderAudit, retryNudge as never);
+  service = new PurchaseOrderDocumentService(
+    db,
+    documents,
+    caller,
+    renderAudit,
+    retryNudge as never,
+  );
   // Issue and amend do not touch the approvals service while the band does not rise.
   orders = new PurchaseOrdersService(
     db,
