@@ -332,7 +332,7 @@ class Planted {
     ]);
   });
 
-  it('flags an allowed zitadelCall() transaction that is not lazy', () => {
+  it('flags a zitadelCall() transaction: not allowed any more, and not lazy', () => {
     const src = `
 class AdminUsersController {
   async setRoles(id: string) {
@@ -345,6 +345,7 @@ class AdminUsersController {
 }
 `;
     expect(offenders('platform/users/admin-users.controller.ts', src)).toEqual([
+      'platform/users/admin-users.controller.ts:5 (setRoles): a zitadelCall() transaction not in ALLOWED',
       "platform/users/admin-users.controller.ts:5 (setRoles): a zitadelCall() transaction without audit: 'lazy'",
     ]);
   });
