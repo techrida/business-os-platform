@@ -166,11 +166,11 @@ describe('PaymentForm amount boxes', () => {
   it('on a blank currency still limits digits but shows no currency code', async () => {
     await mount('INR', ['NPR', 'USD']);
     const box = boxOf(container, 'Amount paid');
-    expect(container.querySelector('input[name="amount"]')!.getAttribute('value')).toBe(
-      '1000000.00',
-    );
+    // A MoneyInput would group the prefill as 10,00,000.00 and carry an INR prefix.
+    expect(box.value).toBe('1000000.00');
+    expect(box.parentElement?.textContent).not.toContain('INR');
+    expect(posted(container, 'amount')).toBe('1000000.00');
     await fill(box, '12345678901234567');
     expect(box.value).not.toContain('12345678901234567');
-    expect(container.textContent).not.toContain('INR 1');
   });
 });
