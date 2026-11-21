@@ -1,6 +1,6 @@
 'use client';
 
-import type { Currency } from '@bos/contracts';
+import type { CompanyBankAccount, Currency } from '@bos/contracts';
 import Link from 'next/link';
 import { useActionState, useId, useRef, useState } from 'react';
 
@@ -11,11 +11,13 @@ import {
 } from '@/components/p2/quotations/action-dialog';
 import { Alert } from '@/components/ui/alert';
 import { Button, LinkButton } from '@/components/ui/button';
+import { Combobox } from '@/components/ui/combobox';
 import { useNumberSystems } from '@/components/ui/number-system-context';
 import { PageHeader } from '@/components/ui/page';
 import { Panel } from '@/components/ui/panel';
 import { Field, Input, Select, Textarea } from '@/components/ui/field';
 import type { PaymentRequestItem } from '@/lib/api-payables';
+import { bankAccountOptions } from '@/lib/company-account-options';
 import { currencyChoices } from '@/lib/enabled-currencies';
 import { money } from '@/lib/kernel-format';
 
@@ -34,6 +36,8 @@ export function PaymentRequestEntry({
   orders = [],
   enabledCurrencies,
   start,
+  bankAccounts = [],
+  bankAccountsHref,
 }: {
   idempotencyKey: string;
   items: PaymentRequestItem[];
@@ -50,6 +54,16 @@ export function PaymentRequestEntry({
    * Currency field still names that currency (U16-Q9) instead of leaving it out silently.
    */
   enabledCurrencies: readonly Currency[];
+  /**
+   * The company's active bank accounts, read once on the server. "Pay from bank account" offers those in
+   * the request currency.
+   */
+  bankAccounts?: readonly CompanyBankAccount[];
+  /**
+   * Where a bank account is added (Settings), when this person may open that page. Without it, the
+   * no-account message names the place without a link.
+   */
+  bankAccountsHref?: string | undefined;
 }) {
   const numberSystems = useNumberSystems();
   const [state, action, pending] = useActionState<ActionState, FormData>(
@@ -67,6 +81,10 @@ export function PaymentRequestEntry({
     purchaseOrderId: '',
     currency: start?.currency ?? 'NPR',
   });
+  const [bankOpen, setBankOpen] = useState(false);
+  /** The chosen account stays only while it holds `currency`; otherwise the choice is cleared. */
+  const accountFor = (id: string, currency: string) =>
+    bankAccounts.some((account) => account.id === id && account.currency === currency) ? id : '';
   const [rows, setRows] = useState([
     { openItemId: start?.openItemId ?? '', amount: start?.availableAmount ?? '' },
   ]);
@@ -96,6 +114,27 @@ export function PaymentRequestEntry({
     (item) => item.vendorPartyId === header.vendorPartyId && item.currency === header.currency,
   );
   const vendorOrders = orders.filter((o) => o.vendorId === header.vendorPartyId);
+  const bankOptions =
+    header.currency === ''
+      ? []
+      : bankAccountOptions(bankAccounts, {
+          currency: header.currency as Currency,
+          currentId: header.fromBankAccountId,
+        });
+  const noBankAccount = `No active ${header.currency} bank account.`;
+  const bankHint =
+    header.currency !== '' && bankOptions.length === 0 ? (
+      <>
+        {noBankAccount}{' '}
+        {bankAccountsHref !== undefined ? (
+          <>
+            Add one in <Link href={bankAccountsHref}>Settings &gt; Bank and expense accounts</Link>.
+          </>
+        ) : (
+          'Ask an administrator to add one in Settings > Bank and expense accounts.'
+        )}
+      </>
+    ) : undefined;
   const formId = useId();
   return (
     <>
@@ -146,15 +185,17 @@ export function PaymentRequestEntry({
                     value={header.vendorPartyId}
                     onChange={(e) => {
                       const vendorPartyId = e.target.value;
+                      const currency =
+                        items.find(
+                          (item) =>
+                            item.vendorPartyId === vendorPartyId && enabled.has(item.currency),
+                        )?.currency ?? '';
                       setHeader((current) => ({
                         ...current,
                         vendorPartyId,
                         purchaseOrderId: '',
-                        currency:
-                          items.find(
-                            (item) =>
-                              item.vendorPartyId === vendorPartyId && enabled.has(item.currency),
-                          )?.currency ?? '',
+                        currency,
+                        fromBankAccountId: accountFor(current.fromBankAccountId, currency),
                       }));
                       setRows([{ openItemId: '', amount: '' }]);
                     }}
@@ -169,18 +210,37 @@ export function PaymentRequestEntry({
                   </Select>
                 )}
               </Field>
-              <Field label="Paying entity bank account ID" error={errors['fromBankAccountId']}>
+              <Field
+                label="Pay from bank account"
+                hint={bankHint}
+                error={errors['fromBankAccountId']}
+              >
                 {(control) => (
-                  <Input
-                    name="fromBankAccountId"
-                    value={header.fromBankAccountId}
-                    onChange={(e) =>
-                      setHeader((current) => ({ ...current, fromBankAccountId: e.target.value }))
-                    }
-                    autoComplete="off"
-                    spellCheck={false}
-                    {...control}
-                  />
+                  <>
+                    <input
+                      type="hidden"
+                      name="fromBankAccountId"
+                      value={header.fromBankAccountId}
+                    />
+                    <Combobox
+                      labelledBy={control['aria-labelledby']}
+                      describedBy={control['aria-describedby']}
+                      invalid={control['aria-invalid'] === true}
+                      options={bankOptions}
+                      value={header.fromBankAccountId}
+                      onChange={(fromBankAccountId) =>
+                        setHeader((current) => ({ ...current, fromBankAccountId }))
+                      }
+                      open={bankOpen}
+                      onOpenChange={setBankOpen}
+                      placeholder="Search by bank, name or last four"
+                      emptyText={
+                        header.currency === '' ? 'Choose a currency first.' : noBankAccount
+                      }
+                      noMatchText="No bank account matches."
+                      required
+                    />
+                  </>
                 )}
               </Field>
               <Field label="Purchase order (optional)" error={errors['purchaseOrderId']}>
@@ -213,7 +273,12 @@ export function PaymentRequestEntry({
                     name="currency"
                     value={header.currency}
                     onChange={(e) => {
-                      setHeader((current) => ({ ...current, currency: e.target.value }));
+                      const currency = e.target.value;
+                      setHeader((current) => ({
+                        ...current,
+                        currency,
+                        fromBankAccountId: accountFor(current.fromBankAccountId, currency),
+                      }));
                       setRows([{ openItemId: '', amount: '' }]);
                     }}
                     disabled={header.vendorPartyId === ''}

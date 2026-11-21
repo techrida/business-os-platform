@@ -15,7 +15,9 @@ import {
   listPaymentRequestItems,
   type PaymentRequestDetail,
 } from '@/lib/api-payables';
+import { listCompanyBankAccounts } from '@/lib/api-company-accounts';
 import { requireStaffSession } from '@/lib/bff';
+import { accountLabel } from '@/lib/company-account-options';
 import { getNumberSystems } from '@/lib/display-settings';
 import { getGrants, hasGrant } from '@/lib/grants';
 
@@ -64,9 +66,11 @@ export default async function PaymentRequestPage({ params }: { params: Promise<{
     );
   }
   // The same scoped lookup used by request entry. Fully claimed or paid items may be absent.
-  const [items, approval] = await Promise.all([
+  // Retired rows too, so an account retired since the request still shows its name. Null when the read fails.
+  const [items, approval, bankAccounts] = await Promise.all([
     listPaymentRequestItems(session).catch(() => []),
     loadApproval(session, request.approvalRequestId),
+    listCompanyBankAccounts(session, { includeRetired: true }).catch(() => null),
   ]);
   const byOpenItem = new Map(items.map((item) => [item.openItemId, item]));
   // The bill link shows only when the bill page would open for this person (their live grants).
@@ -151,8 +155,11 @@ export default async function PaymentRequestPage({ params }: { params: Promise<{
               },
               {
                 key: 'source',
-                label: 'Paying entity bank account',
-                value: 'Selected paying account',
+                label: 'Paid from',
+                value:
+                  bankAccounts === null
+                    ? 'Account details unavailable'
+                    : accountLabel('bank', request.fromBankAccountId, bankAccounts),
               },
               {
                 key: 'total',

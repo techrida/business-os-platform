@@ -1,6 +1,6 @@
 import { DEFAULT_ROLE_PERMISSIONS } from '@bos/contracts';
 import { renderToStaticMarkup } from 'react-dom/server';
-import { expect, it, vi } from 'vitest';
+import { beforeEach, expect, it, vi } from 'vitest';
 
 import { getPaymentRequest } from '@/lib/api-payables';
 
@@ -17,6 +17,23 @@ vi.mock('@/lib/grants', () => ({
   hasGrant: (g: Map<string, string>, p: string) => g.has(p),
 }));
 vi.mock('../forms', () => ({ PaymentRequestCommand: () => null }));
+// The company's bank accounts, retired ones included; the request pays from the first (now retired).
+const PAYING = '33333333-3333-4333-8333-333333333333';
+const banks = vi.hoisted(() => ({ listCompanyBankAccounts: vi.fn() }));
+vi.mock('@/lib/api-company-accounts', () => banks);
+const payingAccount = {
+  id: PAYING,
+  name: 'Operating account',
+  bankName: 'Nabil Bank',
+  last4: '1234',
+  currency: 'NPR',
+  status: 'retired',
+  retiredAt: '2026-11-01T00:00:00Z',
+};
+beforeEach(() => {
+  banks.listCompanyBankAccounts.mockReset();
+  banks.listCompanyBankAccounts.mockResolvedValue([payingAccount]);
+});
 vi.mock('@/lib/api-payables', () => ({
   listPaymentRequestItems: vi.fn().mockResolvedValue([]),
   getPaymentRequest: vi.fn().mockResolvedValue({
@@ -48,7 +65,8 @@ it('shows product labels while preserving the vendor link and payment references
   const text = html.replace(/<[^>]*>/g, '');
   expect(html).toContain('href="/vendors/22222222-2222-4222-8222-222222222222"');
   expect(text).toContain('Himal Supplies Pvt Ltd');
-  expect(text).toContain('Selected paying account');
+  expect(text).toContain('Paid from');
+  expect(text).toContain('Operating account · Nabil Bank ····1234 · NPR');
   expect(text).toContain('Bill 1 of 1');
   expect(text).toContain('PAY-0042');
   expect(text).toContain('Ending 6789');
@@ -107,4 +125,32 @@ it('heads an unnumbered request by its status: a submitted one is no longer a dr
 
   vi.mocked(getPaymentRequest).mockResolvedValueOnce({ ...base, number: null, status: 'draft' });
   expect((await render()).replace(/<[^>]*>/g, ' ')).toContain('Draft payment request');
+});
+
+it('names the paying account from the list read with retired rows', async () => {
+  await render();
+  expect(banks.listCompanyBankAccounts).toHaveBeenCalledWith(expect.anything(), {
+    includeRetired: true,
+  });
+});
+
+it('shows "Unknown account" for a paying account id that matches no row, never the id', async () => {
+  // A request saved before the bank account list existed holds an arbitrary GUID.
+  banks.listCompanyBankAccounts.mockResolvedValue([
+    { ...payingAccount, id: '99999999-9999-4999-8999-999999999999', status: 'active' },
+  ]);
+  const html = await render();
+  const text = html.replace(/<[^>]*>/g, '');
+  expect(text).toContain('Unknown account');
+  expect(html).not.toContain(PAYING);
+});
+
+it('says the paying account details are unavailable when the list does not load', async () => {
+  banks.listCompanyBankAccounts.mockRejectedValue(new Error('offline'));
+  const html = await render();
+  const text = html.replace(/<[^>]*>/g, '');
+  expect(text).toContain('PAY-0042');
+  expect(text).toContain('Account details unavailable');
+  expect(text).not.toContain('Unknown account');
+  expect(html).not.toContain(PAYING);
 });
