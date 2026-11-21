@@ -933,6 +933,36 @@ describe('a render that keeps failing (R4c2: TR-Q4, F1-Q13)', () => {
     expect((await documentRows(inv.invoiceId)).map((d) => d.status)).toEqual(['rejected', 'clean']);
   });
 
+  it('does not let a live document whose only upload was rejected block the next try or a Retry', async () => {
+    const scope = await newScope();
+    const inv = await seedInvoice(scope);
+    asStaff(scope, 'finance');
+    // The type check refused the bytes and the failure path could not remove the document (or the worker died
+    // between the two), on the last try: the render is given up and the rejected document is still live.
+    const orphan = await createOrphan(scope, inv.invoiceId, 0);
+    // The way the receive moves it: claimed (quarantined), then refused by the type check.
+    for (const status of ['quarantined', 'rejected']) {
+      await withTx(db, scope, seedActor(), (tx) =>
+        tx.execute(
+          sql`UPDATE app.document_versions SET status = ${status} WHERE document_id = ${orphan}::uuid`,
+        ),
+      );
+    }
+    let clock = new Date();
+    const worker = failingWorker(() => clock);
+    for (let n = 1; n <= MAX_RENDER_ATTEMPTS; n += 1) {
+      expect(await worker.renderOne(inv)).toBe('failed');
+      clock = new Date((await failureRow(inv.invoiceId))?.next_attempt_at ?? clock);
+    }
+    expect((await failureRow(inv.invoiceId))?.exhausted_at).not.toBeNull();
+
+    await expect(service.retry(inv.invoiceId)).resolves.toEqual({ state: 'queued' });
+    // Retried, well inside the orphan cutoff: due at once, and the healthy render stores the PDF.
+    expect(ids(await store.candidates(new Date(), 1_000))).toContain(inv.invoiceId);
+    expect(await sweeper.renderOne(inv)).toBe('rendered');
+    await expect(service.link(inv.invoiceId)).resolves.toBeDefined();
+  });
+
   /** A worker over the real store whose print log write fails `failures` times, then goes to the real table. */
   const flakyPrintLog = (failures: number) => {
     let left = failures;
