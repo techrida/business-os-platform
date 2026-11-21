@@ -9,5 +9,9 @@
     "customConditions": []
   },
   "include": ["src"],
-  "exclude": ["src/**/*.test.ts", "src/testing/test-database.ts", "src/testing/vitest-global-setup.ts"]
+  "exclude": [
+    "src/**/*.test.ts",
+    "src/testing/test-database.ts",
+    "src/testing/vitest-global-setup.ts"
+  ]
 }
