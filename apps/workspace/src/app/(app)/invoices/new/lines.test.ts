@@ -21,6 +21,33 @@ const line = (over: Partial<LineValues> = {}): LineValues => ({
   ...over,
 });
 
+describe('parseLines: commas in amounts', () => {
+  it.each([
+    ['12,50,000.00', '1250000.00'],
+    ['1,250,000.50', '1250000.50'],
+  ])('reads the grouping in a price of %s', (typed, plain) => {
+    const out = parseLines([line({ unitPrice: typed })]);
+    expect(out.ok && out.data[0]?.unitPrice).toBe(plain);
+  });
+
+  it.each(['1,5', '10,50', '1,25'])('refuses %s as a price and says to use a point', (typed) => {
+    const out = parseLines([line({ unitPrice: typed })]);
+    expect(out.ok).toBe(false);
+    expect(!out.ok && out.errors['lines.0.unitPrice']).toMatch(/^Use a point for decimals\./);
+  });
+
+  it.each(['1,5', '10,50', '1,25'])('refuses %s as a quantity and says to use a point', (typed) => {
+    const out = parseLines([line({ quantity: typed })]);
+    expect(out.ok).toBe(false);
+    expect(!out.ok && out.errors['lines.0.quantity']).toMatch(/^Use a point for decimals\./);
+  });
+
+  it('keeps the plain message when the field is wrong without a stray comma', () => {
+    const out = parseLines([line({ unitPrice: 'abc' })]);
+    expect(!out.ok && out.errors['lines.0.unitPrice']).not.toMatch(/point/);
+  });
+});
+
 describe('parseLines', () => {
   it('sends description, unit, quantity, price and tax code only, trimmed and without grouping', () => {
     const out = parseLines([line({ description: '  Design  ', unitPrice: '18,80,000.00' })]);

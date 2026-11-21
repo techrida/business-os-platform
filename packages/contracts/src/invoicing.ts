@@ -277,6 +277,14 @@ export const InvoiceDetailSchema = z.object({
    * so an older API answer still parses.
    */
   issueBlockedBySod: z.boolean().optional(),
+  /**
+   * The derived settlement, as on a list row: set by `GET /v1/invoices/:id` for an issued tax invoice or debit note,
+   * null for anything without an open item. The command answers leave it out; optional so an older API answer still
+   * parses.
+   */
+  settlement: SettlementStatusSchema.nullable().optional(),
+  /** What is still owed, in the invoice's currency; null exactly when `settlement` is. */
+  openAmount: DecimalString.nullable().optional(),
   /** Set by `GET /v1/invoices/:id`; the command answers leave it out. */
   can: InvoiceCanSchema.optional(),
 });

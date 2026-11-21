@@ -81,6 +81,19 @@ export default async function EditVendorPage({ params }: { params: Promise<{ id:
     );
   }
 
+  // The vendor's own flag is the API's answer for this record (a role can hold vendor.write outside its scope).
+  if (vendor.can?.write === false) {
+    return (
+      <Page width="narrow">
+        <Breadcrumb items={crumbs} />
+        <Alert tone="info" role="status" title="You cannot edit this vendor">
+          Ask an administrator if you need to. You can still read this vendor.{' '}
+          <a href={back}>Back to the vendor</a>
+        </Alert>
+      </Page>
+    );
+  }
+
   return (
     <Page>
       <Breadcrumb items={crumbs} />
