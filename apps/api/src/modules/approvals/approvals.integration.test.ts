@@ -935,6 +935,153 @@ describe('admin: publishing a workflow needs a second person (F1-Q11)', () => {
   });
 });
 
+describe('admin: the small-team rule for publishing a workflow (F1-Q11 a)', () => {
+  const spec = {
+    documentType: 'small_team',
+    steps: [{ id: 'fin', kind: 'role', role: 'finance', reason: 'Finance signs' }],
+  };
+  type Entry = { action: string; after?: unknown };
+  const recorded = () =>
+    (audit.record.mock.calls as unknown as [unknown, Entry][]).map(([, entry]) => entry);
+
+  /**
+   * A company of its own: the shared tenant always has Management, so nobody there is ever alone. The first user
+   * holds `firstRoles` and saves version 1 of `small_team`; the others hold the given mirror roles. Leaves `me`,
+   * `callerScope` and `tokenRoles` on the first user (beforeEach resets them).
+   */
+  async function smallTeam(firstRoles: RoleKey[], ...others: RoleKey[][]) {
+    const t = await createTenantWithEntity(ownerPool);
+    const s = { tenantId: t.tenantId, organizationId: t.organizationId };
+    const staff = async (roleKeys: RoleKey[]) =>
+      (await createStaffUser(ownerPool, { ...s, idpOrgId: t.idpOrgId, roleKeys })).userId;
+    const first = await staff(firstRoles);
+    const rest: string[] = [];
+    for (const roleKeys of others) rest.push(await staff(roleKeys));
+    const svc = new ApprovalsAdminService(db, audit, caller, clock, undefined, new RoleCache(db));
+    callerScope = s;
+    me = first;
+    tokenRoles = firstRoles;
+    await svc.createWorkflow({ key: 'small_team', name: 'Small team', spec });
+    audit.record.mockClear();
+    // The HTTP route, as the app builds it: body parsing, then the live publisher check inside the transaction.
+    const routes = new AdminWorkflowsController(svc, db, new RoleCache(db));
+    const draft = async () => (await svc.listWorkflows()).find((w) => w.key === 'small_team');
+    return { s, first, rest, svc, routes, draft };
+  }
+
+  it('lets a Founder who is the only publisher publish their own draft with a reason, and audits it', async () => {
+    const { first, routes, draft } = await smallTeam(['founder']);
+    expect((await draft())?.versions[0]).toMatchObject({
+      status: 'draft',
+      savedByCaller: true,
+      publishSoleEligible: true,
+    });
+
+    await expect(
+      routes.publish('small_team', 1, { reason: '  Nobody else works here yet  ' }),
+    ).resolves.toMatchObject({ status: 'published', createdBy: first, publishedBy: first });
+    expect(
+      recorded().find((e) => e.action === 'approvals.workflow.publish_sole_eligible')?.after,
+    ).toEqual({
+      key: 'small_team',
+      version: 1,
+      editedBy: first,
+      publishedBy: first,
+      soleEligible: true,
+      reason: 'Nobody else works here yet',
+    });
+    expect(recorded().map((e) => e.action)).not.toContain('approvals.workflow.publish');
+    expect((await draft())?.versions[0]).toMatchObject({
+      status: 'published',
+      publishSoleEligible: false,
+    });
+  });
+
+  it('asks the sole Founder for a reason when it is missing or blank, and leaves the draft', async () => {
+    const { routes, draft } = await smallTeam(['founder']);
+    for (const body of [undefined, {}, { reason: '   ' }]) {
+      await expect(routes.publish('small_team', 1, body)).rejects.toMatchObject({
+        status: 400,
+        response: { reason: 'sole_eligible_reason_required' },
+      });
+    }
+    expect((await draft())?.versions[0]).toMatchObject({
+      status: 'draft',
+      publishSoleEligible: true,
+    });
+    expect(recorded().map((e) => e.action)).not.toContain(
+      'approvals.workflow.publish_sole_eligible',
+    );
+  });
+
+  it('refuses the Founder while a second Management member is active, then allows it once they are locked', async () => {
+    const { first, rest, svc, draft } = await smallTeam(['founder'], ['management']);
+    const [second] = rest;
+    expect((await draft())?.versions[0]).toMatchObject({
+      savedByCaller: true,
+      publishSoleEligible: false,
+    });
+    await expect(
+      svc.publish('small_team', 1, SKIP_LIVE_PUBLISHER_CHECK, { reason: 'Second one is away' }),
+    ).rejects.toMatchObject({ status: 403, response: { reason: 'separation_of_duties' } });
+    expect(
+      recorded().find((e) => e.action === 'approvals.workflow.publish_refused')?.after,
+    ).toEqual({ key: 'small_team', version: 1, reason: 'own_draft', editedBy: first });
+    // The second person is viewing someone else's draft: never the flag.
+    me = second!;
+    tokenRoles = ['management'];
+    expect((await draft())?.versions[0]).toMatchObject({
+      savedByCaller: false,
+      publishSoleEligible: false,
+    });
+
+    // A locked user cannot publish, so they do not count (0125: a locked person is inactive).
+    await withTx(db, callerScope, systemActor('test-seed'), (tx) =>
+      tx.execute(
+        sql`UPDATE app.users SET status = 'inactive', lock_reason = 'admin', locked_at = now()
+             WHERE id = ${second!}`,
+      ),
+    );
+    me = first;
+    tokenRoles = ['founder'];
+    expect((await draft())?.versions[0]).toMatchObject({ publishSoleEligible: true });
+    await expect(
+      svc.publish('small_team', 1, SKIP_LIVE_PUBLISHER_CHECK, { reason: 'Only one left' }),
+    ).resolves.toMatchObject({ status: 'published', publishedBy: first });
+  });
+
+  it('never applies to a non-Founder, however small the team', async () => {
+    const { svc, draft } = await smallTeam(['management']);
+    expect((await draft())?.versions[0]).toMatchObject({
+      savedByCaller: true,
+      publishSoleEligible: false,
+    });
+    await expect(
+      svc.publish('small_team', 1, SKIP_LIVE_PUBLISHER_CHECK, { reason: 'Nobody else' }),
+    ).rejects.toMatchObject({ status: 403, response: { reason: 'separation_of_duties' } });
+    expect((await draft())?.versions[0]?.status).toBe('draft');
+  });
+
+  it('does not count a second user who may not publish workflows', async () => {
+    const { first, svc, draft } = await smallTeam(['founder'], ['sales'], ['accountant']);
+    expect((await draft())?.versions[0]).toMatchObject({ publishSoleEligible: true });
+    await expect(
+      svc.publish('small_team', 1, SKIP_LIVE_PUBLISHER_CHECK, { reason: 'Sales cannot publish' }),
+    ).resolves.toMatchObject({ status: 'published', publishedBy: first });
+  });
+
+  it('fails closed without the role table: a hand-built service keeps the second-person refusal', async () => {
+    await smallTeam(['founder']);
+    const bare = new ApprovalsAdminService(db, audit, caller, clock);
+    expect(
+      (await bare.listWorkflows()).find((w) => w.key === 'small_team')?.versions[0],
+    ).toMatchObject({ publishSoleEligible: false });
+    await expect(
+      bare.publish('small_team', 1, SKIP_LIVE_PUBLISHER_CHECK, { reason: 'Nobody else' }),
+    ).rejects.toMatchObject({ status: 403 });
+  });
+});
+
 describe('admin: groups and delegations', () => {
   it('manages a group, routes a group step to its members, and refuses unknown groups on publish', async () => {
     me = U.founder;
