@@ -14,7 +14,7 @@ import { and, asc, desc, eq, inArray, ne, sql } from 'drizzle-orm';
 import { AuditService } from '../../../platform/audit/audit.service';
 import { DB, type Db, type DbTransaction } from '../../../platform/db/db.module';
 import { withIdempotency } from '../../../platform/db/idempotency';
-import { withTx, type TxScope } from '../../../platform/db/tx';
+import { READ_ONLY, withTx, type TxScope } from '../../../platform/db/tx';
 import { searchPage } from '../../../platform/list';
 import type { ListBillSubmissionsQuery, RejectBillSubmissionBody } from './bill-submissions.types';
 import { VendorBillsCaller } from './vendor-bills.caller';
@@ -98,93 +98,101 @@ export class BillSubmissionsService {
     query: ListBillSubmissionsQuery = { offset: 0 },
   ): Promise<{ rows: BillSubmissionDto[]; total: number }> {
     const { scope, actor } = this.caller.current();
-    return withTx(this.db, scope, actor, async (tx) => {
-      // The vendor is optional on a submission, so the join stays a left join in the rows and the count.
-      const vendorJoin = and(
-        eq(vendors.tenantId, vendorBillSubmissions.tenantId),
-        eq(vendors.id, vendorBillSubmissions.vendorPartyId),
-      );
-      const { rows, total } = await searchPage(tx, {
-        q: query.q,
-        columns: [vendorBillSubmissions.vendorInvoiceNo, vendors.legalName],
-        where: scoped(scope).where(
-          vendorBillSubmissions,
-          eq(vendorBillSubmissions.status, 'received'),
-        ),
-        orderBy: [asc(vendorBillSubmissions.receivedAt), asc(vendorBillSubmissions.id)],
-        limit: query.limit ?? NO_LIMIT,
-        offset: query.offset,
-        rows: (reader, p) =>
-          reader
-            .select({ sub: vendorBillSubmissions, vendorName: vendors.legalName })
-            .from(vendorBillSubmissions)
-            .leftJoin(vendors, vendorJoin)
-            .where(p.where)
-            .orderBy(...p.orderBy)
-            .limit(p.limit)
-            .offset(p.offset),
-        count: async (reader, where) => {
-          const [row] = await reader
-            .select({ n: sql<number>`count(*)::int` })
-            .from(vendorBillSubmissions)
-            .leftJoin(vendors, vendorJoin)
-            .where(where);
-          return row?.n ?? 0;
-        },
-      });
-      const documentIds = [...new Set(rows.map((r) => r.sub.documentId))];
-      const fileStatus = new Map<string, string>();
-      if (documentIds.length > 0) {
-        const versions = await tx
-          .select({ documentId: documentVersions.documentId, status: documentVersions.status })
-          .from(documentVersions)
-          .where(
-            and(
-              eq(documentVersions.tenantId, scope.tenantId),
-              eq(documentVersions.organizationId, scope.organizationId),
-              inArray(documentVersions.documentId, documentIds),
-            ),
-          )
-          .orderBy(desc(documentVersions.version));
-        // Newest first, so the first row seen for a file is its newest version.
-        for (const v of versions)
-          if (!fileStatus.has(v.documentId)) fileStatus.set(v.documentId, v.status);
-      }
-      const duplicates = await this.duplicatesOf(
-        tx,
-        scope,
-        rows.map((r) => r.sub),
-      );
-      const claims = await this.claimsOf(scope, [
-        ...rows.map((r) => r.sub.id),
-        ...[...duplicates.values()].flat().flatMap((d) => (d.kind === 'submission' ? [d.id] : [])),
-      ]);
-      const withClaim = (d: InvoiceDuplicateDto): InvoiceDuplicateDto =>
-        d.kind === 'submission'
-          ? {
-              ...d,
-              amount: claims.get(d.id)?.claimedTotal ?? null,
-              currency: claims.get(d.id)?.currency ?? null,
-            }
-          : d;
-      const items = rows.map(({ sub, vendorName }) => ({
-        id: sub.id,
-        vendorPartyId: sub.vendorPartyId,
-        vendorName: vendorName ?? null,
-        purchaseOrderId: sub.purchaseOrderId,
-        vendorInvoiceNo: sub.vendorInvoiceNo,
-        invoiceDate: sub.invoiceDate,
-        documentId: sub.documentId,
-        fileStatus: fileStatus.get(sub.documentId) ?? null,
-        note: sub.note,
-        status: 'received' as const,
-        receivedAt: sub.receivedAt.toISOString(),
-        claimedTotal: claims.get(sub.id)?.claimedTotal ?? null,
-        currency: claims.get(sub.id)?.currency ?? null,
-        duplicates: (duplicates.get(sub.id) ?? []).map(withClaim),
-      }));
-      return { rows: items, total };
-    });
+    return withTx(
+      this.db,
+      scope,
+      actor,
+      async (tx) => {
+        // The vendor is optional on a submission, so the join stays a left join in the rows and the count.
+        const vendorJoin = and(
+          eq(vendors.tenantId, vendorBillSubmissions.tenantId),
+          eq(vendors.id, vendorBillSubmissions.vendorPartyId),
+        );
+        const { rows, total } = await searchPage(tx, {
+          q: query.q,
+          columns: [vendorBillSubmissions.vendorInvoiceNo, vendors.legalName],
+          where: scoped(scope).where(
+            vendorBillSubmissions,
+            eq(vendorBillSubmissions.status, 'received'),
+          ),
+          orderBy: [asc(vendorBillSubmissions.receivedAt), asc(vendorBillSubmissions.id)],
+          limit: query.limit ?? NO_LIMIT,
+          offset: query.offset,
+          rows: (reader, p) =>
+            reader
+              .select({ sub: vendorBillSubmissions, vendorName: vendors.legalName })
+              .from(vendorBillSubmissions)
+              .leftJoin(vendors, vendorJoin)
+              .where(p.where)
+              .orderBy(...p.orderBy)
+              .limit(p.limit)
+              .offset(p.offset),
+          count: async (reader, where) => {
+            const [row] = await reader
+              .select({ n: sql<number>`count(*)::int` })
+              .from(vendorBillSubmissions)
+              .leftJoin(vendors, vendorJoin)
+              .where(where);
+            return row?.n ?? 0;
+          },
+        });
+        const documentIds = [...new Set(rows.map((r) => r.sub.documentId))];
+        const fileStatus = new Map<string, string>();
+        if (documentIds.length > 0) {
+          const versions = await tx
+            .select({ documentId: documentVersions.documentId, status: documentVersions.status })
+            .from(documentVersions)
+            .where(
+              and(
+                eq(documentVersions.tenantId, scope.tenantId),
+                eq(documentVersions.organizationId, scope.organizationId),
+                inArray(documentVersions.documentId, documentIds),
+              ),
+            )
+            .orderBy(desc(documentVersions.version));
+          // Newest first, so the first row seen for a file is its newest version.
+          for (const v of versions)
+            if (!fileStatus.has(v.documentId)) fileStatus.set(v.documentId, v.status);
+        }
+        const duplicates = await this.duplicatesOf(
+          tx,
+          scope,
+          rows.map((r) => r.sub),
+        );
+        const claims = await this.claimsOf(scope, [
+          ...rows.map((r) => r.sub.id),
+          ...[...duplicates.values()]
+            .flat()
+            .flatMap((d) => (d.kind === 'submission' ? [d.id] : [])),
+        ]);
+        const withClaim = (d: InvoiceDuplicateDto): InvoiceDuplicateDto =>
+          d.kind === 'submission'
+            ? {
+                ...d,
+                amount: claims.get(d.id)?.claimedTotal ?? null,
+                currency: claims.get(d.id)?.currency ?? null,
+              }
+            : d;
+        const items = rows.map(({ sub, vendorName }) => ({
+          id: sub.id,
+          vendorPartyId: sub.vendorPartyId,
+          vendorName: vendorName ?? null,
+          purchaseOrderId: sub.purchaseOrderId,
+          vendorInvoiceNo: sub.vendorInvoiceNo,
+          invoiceDate: sub.invoiceDate,
+          documentId: sub.documentId,
+          fileStatus: fileStatus.get(sub.documentId) ?? null,
+          note: sub.note,
+          status: 'received' as const,
+          receivedAt: sub.receivedAt.toISOString(),
+          claimedTotal: claims.get(sub.id)?.claimedTotal ?? null,
+          currency: claims.get(sub.id)?.currency ?? null,
+          duplicates: (duplicates.get(sub.id) ?? []).map(withClaim),
+        }));
+        return { rows: items, total };
+      },
+      READ_ONLY,
+    );
   }
 
   /**

@@ -420,6 +420,7 @@ describe('sales order confirm racing an invoice started on the same order', () =
 
   it('never deadlocks: the confirm succeeds, the invoice paths answer cleanly, and the rows agree', async () => {
     const rounds: Round[] = [];
+    const forcedOrder: { round: string; firstWaited: boolean; bothWaited: boolean }[] = [];
 
     const forced: [Path, 'confirm-first' | 'invoice-first'][] = [
       ['schedule', 'confirm-first'],
@@ -436,6 +437,11 @@ describe('sales order confirm racing an invoice started on the same order', () =
       console.log(
         `[S2 step4 pair1] forced ${path} ${order}: firstWaited=${r.firstWaited} bothWaited=${r.bothWaited} waiters=${JSON.stringify(r.waiters)}`,
       );
+      forcedOrder.push({
+        round: `${path} ${order}`,
+        firstWaited: r.firstWaited,
+        bothWaited: r.bothWaited,
+      });
       const [confirm, inv] = order === 'confirm-first' ? [r.first, r.second] : [r.second, r.first];
       rounds.push(await finish(o, path, 0, `forced ${order}`, confirm, inv));
     }
@@ -469,6 +475,8 @@ describe('sales order confirm racing an invoice started on the same order', () =
 
     const cleanInvoice = (r: Round) =>
       r.invoice === 'ok' || (r.path === 'schedule' && r.invoice === 'http-409:conflict');
+    // The forced rounds ran in the order they claim only if both sides were seen waiting (forcedRound).
+    expect(forcedOrder.filter((r) => !r.firstWaited || !r.bothWaited)).toEqual([]);
     expect(rounds.filter((r) => r.confirm !== 'ok' || !cleanInvoice(r))).toEqual([]);
     expect(rounds.filter((r) => !coherent(r))).toEqual([]);
   });

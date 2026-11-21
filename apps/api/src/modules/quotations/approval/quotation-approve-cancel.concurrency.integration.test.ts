@@ -152,6 +152,8 @@ let accountantApprovals: ApprovalsService;
 let financeApprovals: ApprovalsService;
 /** While set, the owner's ApprovalsService.cancel waits for it before taking the request lock. */
 let cancelGate: Promise<void> | null = null;
+/** Called when cancel reaches the gate, so the forced round knows it holds its locks and is parked. */
+let onCancelParked: (() => void) | null = null;
 
 beforeAll(async () => {
   testDb = await createTestDatabase();
@@ -204,7 +206,10 @@ beforeAll(async () => {
   financeApprovals = approvalsFor(identity(() => U.fin, 'finance').caller);
   const realCancel = ownerApprovals.cancel.bind(ownerApprovals);
   ownerApprovals.cancel = async (...args: Parameters<ApprovalsService['cancel']>) => {
-    if (cancelGate !== null) await cancelGate;
+    if (cancelGate !== null) {
+      onCancelParked?.();
+      await cancelGate;
+    }
     return realCancel(...args);
   };
 
@@ -437,25 +442,45 @@ describe('quotation approval: final approve racing the owner cancel', () => {
 
     // The forced interleaving: cancel claims its Idempotency-Key (an audited INSERT) and locks the quotation, then
     // parks before ApprovalsService.cancel; approve starts and runs until it waits on a lock; then cancel goes on.
+    // Asserted below: cancel parked and approve was seen waiting, or the round was an ordinary race.
+    let forcedSeen = false;
     {
       const q = await awaitingFinalStep();
       let release!: () => void;
       cancelGate = new Promise<void>((resolve) => (release = resolve));
+      const parked = new Promise<boolean>((resolve) => (onCancelParked = () => resolve(true)));
       const cancelP = cancelQuotation(q);
-      await sleep(300);
-      const approveP = approveFinal(q);
+      cancelP.catch(() => undefined);
+      let approveP: Promise<unknown> = Promise.resolve();
+      let cancelParked = false;
       let seen: Awaited<ReturnType<typeof waitingLocks>> = [];
-      const deadline = Date.now() + 10_000;
-      while (Date.now() < deadline) {
-        seen = await waitingLocks();
-        if (seen.length > 0) break;
-        await sleep(25);
+      try {
+        cancelParked = await Promise.race([
+          parked,
+          cancelP.then(
+            () => false,
+            () => false,
+          ),
+          sleep(5_000).then(() => false),
+        ]);
+        approveP = approveFinal(q);
+        approveP.catch(() => undefined);
+        // Released within 2 s of approve starting, well inside withTx's 5 s lock_timeout.
+        const deadline = Date.now() + 2_000;
+        while (cancelParked && Date.now() < deadline) {
+          seen = await waitingLocks();
+          if (seen.length > 0) break;
+          await sleep(25);
+        }
+      } finally {
+        release();
+        cancelGate = null;
+        onCancelParked = null;
       }
       console.log(
-        `[S2 evidence] forced round: waiting locks while cancel is parked: ${JSON.stringify(seen)}`,
+        `[S2 evidence] forced round: cancelParked=${cancelParked}; waiting locks while cancel is parked: ${JSON.stringify(seen)}`,
       );
-      release();
-      cancelGate = null;
+      forcedSeen = cancelParked && seen.length > 0;
       const [approve, cancel] = await Promise.allSettled([approveP, cancelP]);
       rounds.push(await finish(q, 0, 'forced', approve, cancel));
     }
@@ -482,6 +507,7 @@ describe('quotation approval: final approve racing the owner cancel', () => {
     console.log(`[S2 evidence] per round:\n${rounds.map((r) => JSON.stringify(r)).join('\n')}`);
     console.log(`[S2 evidence] first 40P01: ${JSON.stringify(firstDeadlock, null, 1)}`);
 
+    expect(forcedSeen).toBe(true);
     const isAnswer = (o: string) => o === 'ok' || /^http-4\d\d$/.test(o);
     expect(rounds.filter((r) => !isAnswer(r.approve) || !isAnswer(r.cancel))).toEqual([]);
     expect(

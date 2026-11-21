@@ -644,37 +644,45 @@ export class LeadsService {
    */
   async ownerFilter(): Promise<LeadOwnerOption[]> {
     const { scope, actor, principal } = this.caller.current();
-    return withTx(this.db, scope, actor, async (tx) => {
-      const owned = await tx
-        .selectDistinct({ userId: leads.ownerUserId })
-        .from(leads)
-        .where(
-          scoped(scope).where(
-            leads,
-            and(scopeWhereFor(principal, leads, 'crm.lead.read'), isNotNull(leads.ownerUserId)),
-          ),
+    return withTx(
+      this.db,
+      scope,
+      actor,
+      async (tx) => {
+        const owned = await tx
+          .selectDistinct({ userId: leads.ownerUserId })
+          .from(leads)
+          .where(
+            scoped(scope).where(
+              leads,
+              and(scopeWhereFor(principal, leads, 'crm.lead.read'), isNotNull(leads.ownerUserId)),
+            ),
+          );
+        const ids = new Set<string>();
+        for (const { userId } of owned) if (userId !== null) ids.add(userId);
+        if (can(principal, 'crm.lead.write').allowed) {
+          const targets = await assignableParties(
+            tx,
+            principal,
+            scope,
+            this.assignmentCheck(tx, scope, 'reassign'),
+          );
+          for (const { userId } of targets) ids.add(userId);
+        }
+        const named = new Map(
+          (await personNames(tx, scope.tenantId, ids)).map((p) => [p.userId, p]),
         );
-      const ids = new Set<string>();
-      for (const { userId } of owned) if (userId !== null) ids.add(userId);
-      if (can(principal, 'crm.lead.write').allowed) {
-        const targets = await assignableParties(
-          tx,
-          principal,
-          scope,
-          this.assignmentCheck(tx, scope, 'reassign'),
-        );
-        for (const { userId } of targets) ids.add(userId);
-      }
-      const named = new Map((await personNames(tx, scope.tenantId, ids)).map((p) => [p.userId, p]));
-      return [...ids]
-        .map((userId) => ({
-          userId,
-          displayName: named.get(userId)?.name ?? 'Unnamed user',
-          email: '',
-          avatarDocumentId: named.get(userId)?.avatarDocumentId ?? null,
-        }))
-        .sort(byName);
-    });
+        return [...ids]
+          .map((userId) => ({
+            userId,
+            displayName: named.get(userId)?.name ?? 'Unnamed user',
+            email: '',
+            avatarDocumentId: named.get(userId)?.avatarDocumentId ?? null,
+          }))
+          .sort(byName);
+      },
+      READ_ONLY,
+    );
   }
 
   // ----------------------------------------------------------------------------------------------- helpers

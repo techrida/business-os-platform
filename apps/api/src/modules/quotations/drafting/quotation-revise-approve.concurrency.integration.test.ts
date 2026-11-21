@@ -408,6 +408,7 @@ describe('quotation approval: final approve racing the owner revise', () => {
 
   it('never deadlocks: the approve wins, the revise gets 409, and the rows agree', async () => {
     const rounds: Round[] = [];
+    const forcedOrder: { round: string; firstWaited: boolean; bothWaited: boolean }[] = [];
 
     // Forced: revise claims its key under the held audit lock; approve takes the request and waits at its first
     // audited write; then the lock is released to revise, which next wants the request.
@@ -423,6 +424,11 @@ describe('quotation approval: final approve racing the owner revise', () => {
       console.log(
         `[S2 step4 pair2] forced round: firstWaited=${forced.firstWaited} bothWaited=${forced.bothWaited} waiters=${JSON.stringify(forced.waiters)}`,
       );
+      forcedOrder.push({
+        round: 'revise-first',
+        firstWaited: forced.firstWaited,
+        bothWaited: forced.bothWaited,
+      });
       rounds.push(await finish(q, 0, 'forced', forced.second, forced.first));
     }
 
@@ -443,6 +449,8 @@ describe('quotation approval: final approve racing the owner revise', () => {
     console.log(`[S2 step4 pair2] per round:\n${rounds.map((r) => JSON.stringify(r)).join('\n')}`);
     console.log(`[S2 step4 pair2] first 40P01: ${JSON.stringify(firstDeadlock, null, 1)}`);
 
+    // The forced rounds ran in the order they claim only if both sides were seen waiting (forcedRound).
+    expect(forcedOrder.filter((r) => !r.firstWaited || !r.bothWaited)).toEqual([]);
     expect(rounds.filter((r) => r.approve !== 'ok' || r.revise !== 'http-409:conflict')).toEqual(
       [],
     );

@@ -96,8 +96,8 @@ import {
       inject: [DB],
       useFactory:
         (db: Db): RunInTx =>
-        (scope, actor, fn) =>
-          withTx(db, scope, actor, fn),
+        (scope, actor, fn, options) =>
+          withTx(db, scope, actor, fn, options),
     },
     {
       provide: PO_RENDER_PDF,

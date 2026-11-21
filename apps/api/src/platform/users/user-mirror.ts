@@ -61,6 +61,19 @@ const MAX_DEACTIVATIONS_PER_PASS = 20;
 /** Tries of one apply when the row keeps changing between the read and the write. */
 const APPLY_ATTEMPTS = 3;
 
+/**
+ * apply gave up: the user's row changed between the read and the write on every one of its APPLY_ATTEMPTS tries.
+ * Not the same as "nothing to change": a sync job fails on it, so the queue tries the job again, and a reconcile
+ * pass logs it and goes on with the next user (who stays seen, so never a deactivation candidate).
+ */
+export class UserSyncContendedError extends Error {
+  override readonly name = 'UserSyncContendedError';
+
+  constructor(readonly zitadelUserId: string) {
+    super(`users.apply: ${zitadelUserId} kept changing while it was synced`);
+  }
+}
+
 /** What apply writes for one ZITADEL user: the user as read, the status to store and the lock (undefined keeps it). */
 interface NextState {
   user: ZitadelUser;
@@ -128,6 +141,8 @@ export class UserMirror {
    * the orgs it is a member of, so a customer or vendor user looks "not found" to it. Deactivating
    * on that locked every portal persona out on the real stack (2026-11-08). Only a complete
    * reconcile pass of the user's org may deactivate a user who is missing from ZITADEL.
+   *
+   * Throws UserSyncContendedError when the row kept changing under every try, so the job is retried.
    */
   async syncUser(zitadelUserId: string): Promise<boolean> {
     const user = await this.zitadel.getUser(zitadelUserId);
@@ -193,7 +208,13 @@ export class UserMirror {
             scanned += 1;
             seen.add(user.id);
             const roles = await this.zitadel.listGrants(user.id, org.zitadelOrgId);
-            if (await this.apply(org, user, roles)) changed += 1;
+            try {
+              if (await this.apply(org, user, roles)) changed += 1;
+            } catch (error) {
+              if (!(error instanceof UserSyncContendedError)) throw error;
+              // This user only: the pass goes on, and they are seen, so never deactivated as missing.
+              this.logger.warn(`${error.message}; left for the next pass`);
+            }
           }
           if (page.nextCursor === null) break;
           cursor = page.nextCursor;
@@ -284,10 +305,22 @@ export class UserMirror {
     };
   }
 
-  /** A Valkey hiccup must not fail the user's request: the reconcile fills the row in anyway. */
+  /**
+   * A Valkey hiccup must not fail the user's request: the reconcile fills the row in anyway. Retried like the hook's
+   * job (hooks.controller.ts), so a sync that lost to concurrent writes (UserSyncContendedError) runs again.
+   */
   private async enqueueSync(zitadelUserId: string): Promise<void> {
     await this.queue
-      .add(USERS_SYNC_JOB, { zitadelUserId }, { removeOnComplete: 100, removeOnFail: 500 })
+      .add(
+        USERS_SYNC_JOB,
+        { zitadelUserId },
+        {
+          attempts: 5,
+          backoff: { type: 'exponential', delay: 2_000 },
+          removeOnComplete: 100,
+          removeOnFail: 500,
+        },
+      )
       .catch((error: Error) => this.logger.warn(`users.sync enqueue failed: ${error.message}`));
   }
 
@@ -407,12 +440,7 @@ export class UserMirror {
         LOCKS_USER_ROW,
       );
       if (changed !== null) return changed;
-      if (attempt >= APPLY_ATTEMPTS) {
-        this.logger.warn(
-          `users.apply: ${read.id} kept changing while it was synced; left for the next pass`,
-        );
-        return false;
-      }
+      if (attempt >= APPLY_ATTEMPTS) throw new UserSyncContendedError(read.id);
     }
   }
 

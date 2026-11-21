@@ -325,26 +325,32 @@ export class InvoiceDraftingService {
     const { scope, actor, principal } = this.caller.current();
     assertStaff(principal);
     const visible = scopeWhereFor(principal, invoices, 'invoice.read');
-    return withTx(this.db, scope, actor, async (tx) => {
-      const [row] = await tx
-        .select({
-          id: invoices.id,
-          kind: invoices.kind,
-          createdBy: invoices.createdBy,
-          customerPartyId: invoices.customerPartyId,
-        })
-        .from(invoices)
-        .where(and(visible, eq(invoices.id, id)))
-        .limit(1);
-      if (row === undefined) throw invoiceNotFound();
-      const detail = await this.loadDetail(tx, scope, id);
-      // The issue route refuses the note's creator (TR-Q12f); the page says so before the click.
-      return {
-        ...detail,
-        can: invoiceCan(principal, scope, row),
-        ...(createdThisNote(row, principal.userId) ? { issueBlockedBySod: true } : {}),
-      };
-    });
+    return withTx(
+      this.db,
+      scope,
+      actor,
+      async (tx) => {
+        const [row] = await tx
+          .select({
+            id: invoices.id,
+            kind: invoices.kind,
+            createdBy: invoices.createdBy,
+            customerPartyId: invoices.customerPartyId,
+          })
+          .from(invoices)
+          .where(and(visible, eq(invoices.id, id)))
+          .limit(1);
+        if (row === undefined) throw invoiceNotFound();
+        const detail = await this.loadDetail(tx, scope, id);
+        // The issue route refuses the note's creator (TR-Q12f); the page says so before the click.
+        return {
+          ...detail,
+          can: invoiceCan(principal, scope, row),
+          ...(createdThisNote(row, principal.userId) ? { issueBlockedBySod: true } : {}),
+        };
+      },
+      READ_ONLY,
+    );
   }
 
   // ------------------------------------------------------------------------------------------------ commands

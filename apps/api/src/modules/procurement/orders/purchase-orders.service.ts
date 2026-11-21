@@ -360,47 +360,53 @@ export class PurchaseOrdersService {
   async get(id: string): Promise<PurchaseOrderDto> {
     const { scope, actor, principal } = this.caller.current();
     assertHoldsPoRead(principal);
-    return withTx(this.db, scope, actor, async (tx) => {
-      // The request's owner and department decide who reads the order and the `can` flags; neither is returned.
-      const [row] = await tx
-        .select({
-          po: purchaseOrders,
-          vendorName: vendors.legalName,
-          request: requestFactsColumns,
-        })
-        .from(purchaseOrders)
-        .innerJoin(vendors, vendorOf(purchaseOrders))
-        .innerJoin(purchaseRequests, requestOf(purchaseOrders))
-        .where(scoped(scope).where(purchaseOrders, eq(purchaseOrders.id, id)));
-      if (row === undefined || !mayReadPo(principal, row.request)) throw notFound();
-      const lines = await linesOf(tx, scope, id, false);
-      // A draft from the commitment route has no lines until issue copies them from the approved quotation:
-      // show those as the lines it will be issued with, from the same source issue() reads.
-      const proposed =
-        row.po.status === 'draft' && lines.length === 0
-          ? (await quotationLinesOf(tx, scope, row.po)).map(
-              ({ quotationLineId, ...l }): PurchaseOrderLineDto => ({
-                ...l,
-                id: quotationLineId,
-                cancelledQuantity: '0.0000',
-              }),
-            )
-          : undefined;
-      return {
-        ...toDto(row.po, lines),
-        vendorName: row.vendorName,
-        ...(proposed !== undefined ? { proposedLines: proposed } : {}),
-        can: {
-          enterBill: mayEnterBill(principal, row.po.status, row.request),
-          receive: mayReceivePo(
-            principal,
-            row.po.status,
-            row.request,
-            lines.some((l) => l.kind === 'service'),
-          ),
-        },
-      };
-    });
+    return withTx(
+      this.db,
+      scope,
+      actor,
+      async (tx) => {
+        // The request's owner and department decide who reads the order and the `can` flags; neither is returned.
+        const [row] = await tx
+          .select({
+            po: purchaseOrders,
+            vendorName: vendors.legalName,
+            request: requestFactsColumns,
+          })
+          .from(purchaseOrders)
+          .innerJoin(vendors, vendorOf(purchaseOrders))
+          .innerJoin(purchaseRequests, requestOf(purchaseOrders))
+          .where(scoped(scope).where(purchaseOrders, eq(purchaseOrders.id, id)));
+        if (row === undefined || !mayReadPo(principal, row.request)) throw notFound();
+        const lines = await linesOf(tx, scope, id, false);
+        // A draft from the commitment route has no lines until issue copies them from the approved quotation:
+        // show those as the lines it will be issued with, from the same source issue() reads.
+        const proposed =
+          row.po.status === 'draft' && lines.length === 0
+            ? (await quotationLinesOf(tx, scope, row.po)).map(
+                ({ quotationLineId, ...l }): PurchaseOrderLineDto => ({
+                  ...l,
+                  id: quotationLineId,
+                  cancelledQuantity: '0.0000',
+                }),
+              )
+            : undefined;
+        return {
+          ...toDto(row.po, lines),
+          vendorName: row.vendorName,
+          ...(proposed !== undefined ? { proposedLines: proposed } : {}),
+          can: {
+            enterBill: mayEnterBill(principal, row.po.status, row.request),
+            receive: mayReceivePo(
+              principal,
+              row.po.status,
+              row.request,
+              lines.some((l) => l.kind === 'service'),
+            ),
+          },
+        };
+      },
+      READ_ONLY,
+    );
   }
 
   /** Every issued version, oldest first. 404 outside the acting entity, and where get() is a 404. */

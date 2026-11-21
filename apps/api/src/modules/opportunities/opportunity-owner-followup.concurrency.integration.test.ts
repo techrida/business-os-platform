@@ -218,6 +218,7 @@ describe('opportunity owner change racing a follow-up planned on the same deal',
   it("never deadlocks: both succeed and the follow-up is the new owner's", async () => {
     const lockPool = h.ownerPool as unknown as ConnectPool;
     const rounds: Round[] = [];
+    const forcedOrder: { round: string; firstWaited: boolean; bothWaited: boolean }[] = [];
 
     for (const variant of ['no-key', 'keyed'] as const) {
       const keyed = variant === 'keyed';
@@ -244,6 +245,11 @@ describe('opportunity owner change racing a follow-up planned on the same deal',
         console.log(
           `[S2 step4 pair3] forced ${variant}: firstWaited=${forced.firstWaited} bothWaited=${forced.bothWaited} waiters=${JSON.stringify(forced.waiters)}`,
         );
+        forcedOrder.push({
+          round: variant,
+          firstWaited: forced.firstWaited,
+          bothWaited: forced.bothWaited,
+        });
         const [change, create] = keyed
           ? [forced.second, forced.first]
           : [forced.first, forced.second];
@@ -273,6 +279,8 @@ describe('opportunity owner change racing a follow-up planned on the same deal',
     console.log(`[S2 step4 pair3] per round:\n${rounds.map((r) => JSON.stringify(r)).join('\n')}`);
     console.log(`[S2 step4 pair3] first 40P01: ${JSON.stringify(firstDeadlock, null, 1)}`);
 
+    // The forced rounds ran in the order they claim only if both sides were seen waiting (forcedRound).
+    expect(forcedOrder.filter((r) => !r.firstWaited || !r.bothWaited)).toEqual([]);
     expect(rounds.filter((r) => r.change !== 'ok' || r.create !== 'ok')).toEqual([]);
     expect(rounds.filter((r) => r.owner !== 'peer' || r.followUps !== 'peer')).toEqual([]);
   });

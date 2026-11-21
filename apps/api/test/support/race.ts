@@ -155,7 +155,9 @@ export interface ForcedRound {
  * One forced interleaving: a third connection holds the tenant's audit-chain lock; `first` starts and runs until it
  * waits (for an operation that claims an Idempotency-Key first, at that claim); then `second` starts and runs until
  * it waits too (on the audit lock or on a row `first` holds); then the lock is released and the queue decides. The
- * release comes within about 3.5 s, inside withTx's 5 s lock_timeout.
+ * release comes within 2.5 s (1 s for `first` to wait, 1.5 s for both), half withTx's 5 s lock_timeout, so a waiter
+ * never times out under a slow machine. Callers assert `firstWaited` and `bothWaited`: without them the round is an
+ * ordinary race, not the order it claims.
  */
 export async function forcedRound(
   lockPool: ConnectPool,
@@ -174,10 +176,10 @@ export async function forcedRound(
   try {
     p1 = first().finally(() => (settled += 1));
     p1.catch(() => undefined);
-    firstWaited = (await waitForWaiters(watchPool, 1, () => settled > 0, 1500)).reached;
+    firstWaited = (await waitForWaiters(watchPool, 1, () => settled > 0, 1000)).reached;
     p2 = second().finally(() => (settled += 1));
     p2.catch(() => undefined);
-    const seen = await waitForWaiters(watchPool, 2, () => settled > 0, 2000);
+    const seen = await waitForWaiters(watchPool, 2, () => settled > 0, 1500);
     bothWaited = seen.reached;
     waiters = seen.waiters;
   } finally {
