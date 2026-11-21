@@ -786,8 +786,8 @@ export class SalesOrdersService {
    * `POST /v1/sales-orders/:id/delivery-release`: lets a confirmed order's delivery go before its advance is paid
    * (F1-Q32, D56). 404 for an order outside the entity or the caller's read; 403 without
    * `sales_order.delivery_release`, or with reason `requester_cannot_release` (the order's creator) or
-   * `role_cannot_release_amount` (no role of the caller's is in `allowedRoles` for this amount under the live
-   * threshold: Finance above it, Management at or below it); 409
+   * `role_cannot_release_amount` (no role of the caller's may release this amount under the live threshold:
+   * Finance above it, Management at or below it; the detail's `can.releaseDeliveryAllowedRoles` names who may); 409
    * `sales_order_not_open` for an order that is not confirmed, `delivery_already_released` when the advance is paid
    * or a release exists. A retry with the same key replays.
    */
@@ -870,7 +870,7 @@ export class SalesOrdersService {
       );
     }
     // The threshold is read now, not from the page the caller loaded: a Founder's edit applies at once.
-    const thresholdNpr = await deliveryHoldThresholdNpr(this.settings, scope);
+    const thresholdNpr = await deliveryHoldThresholdNpr(tx, scope);
     const refusal = this.releaseRefusal(principal, order, thresholdNpr);
     if (refusal !== null) {
       const allowedRoles = deliveryHoldReleaser(new Dec(order.amountNpr), thresholdNpr);
@@ -881,7 +881,6 @@ export class SalesOrdersService {
             ? 'The person who created this order cannot release its delivery'
             : `Only ${allowedRoles.join(' or ')} may release the delivery of an order of this amount`,
         reason: refusal,
-        allowedRoles,
       });
     }
 
@@ -1079,7 +1078,7 @@ export class SalesOrdersService {
       if (!canOnOrder(principal, 'sales_order.delivery_release', owners).allowed) {
         releaseDeliveryBlockedBy = 'permission';
       } else {
-        const thresholdNpr = await deliveryHoldThresholdNpr(this.settings, scope);
+        const thresholdNpr = await deliveryHoldThresholdNpr(tx, scope);
         releaseDeliveryAllowedRoles = [
           ...deliveryHoldReleaser(new Dec(order.amountNpr), thresholdNpr),
         ];

@@ -34,7 +34,7 @@ async function bodyOf(res: Response): Promise<unknown> {
 /**
  * Words for a refusal. The API's 403 here carries no reason the error filter lets through, so it cannot say
  * whether the caller created the order or the threshold moved; either way a reload shows the current rule.
- * An already released order comes back as a plain `conflict`.
+ * An already released order comes back as `delivery_already_released`.
  */
 function refused(err: unknown, key: string): ReleaseDeliveryState {
   const next = keyAfterFailure(err, key);
@@ -50,7 +50,7 @@ function refused(err: unknown, key: string): ReleaseDeliveryState {
   }
   const failure = describeBillingFailure(err);
   const code = status === 409 && failure.kind !== 'in_progress' ? apiCodeOf(err) : undefined;
-  if (code === 'sales_order_not_open' || code === 'conflict') {
+  if (code === 'sales_order_not_open' || code === 'delivery_already_released') {
     return {
       key: next,
       reload: true,

@@ -206,9 +206,9 @@ describe('releasing a delivery', () => {
     await mounted.unmount();
   });
 
-  it('says the delivery was already released on a 409, and that the order is not open on sales_order_not_open', async () => {
+  it('says the delivery was already released on delivery_already_released, and that the order is not open on sales_order_not_open', async () => {
     mocks.apiFetch.mockImplementation(
-      refusal(409, 'conflict', 'This delivery was already released'),
+      refusal(409, 'delivery_already_released', 'This delivery was already released'),
     );
     const mounted = await mountAllowed();
     await typeReason('Customer collects on site today');
@@ -223,6 +223,13 @@ describe('releasing a delivery', () => {
     await send();
     expect(dialog()?.querySelector('[role="alert"]')?.textContent).toContain(
       'This order is no longer confirmed, so its delivery cannot be released.',
+    );
+
+    // Any other conflict is not taken for an already released delivery.
+    mocks.apiFetch.mockImplementation(refusal(409, 'conflict', 'Conflict'));
+    await send();
+    expect(dialog()?.querySelector('[role="alert"]')?.textContent).not.toContain(
+      'already released',
     );
     await mounted.unmount();
   });
