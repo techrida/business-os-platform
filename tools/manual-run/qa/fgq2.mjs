@@ -6,7 +6,7 @@ import { mkdirSync, writeFileSync, existsSync, readFileSync } from 'node:fs';
 import path from 'node:path';
 import { openQA, EVIDENCE } from './harness.mjs';
 import { realLogin } from '../lib/session.mjs';
-import { redactText, redactUrl } from '../lib/redact.mjs';
+import { redactDeep, redactText, redactUrl } from '../lib/redact.mjs';
 
 const arg = (n, d) => {
   const i = process.argv.indexOf(`--${n}`);
@@ -19,7 +19,12 @@ const OUT = path.join(EVIDENCE, 'fgq2');
 mkdirSync(OUT, { recursive: true });
 const manifestFile = path.join(OUT, 'manifest.json');
 const manifest = existsSync(manifestFile) ? JSON.parse(readFileSync(manifestFile, 'utf8')) : [];
-const save = (row) => {
+const save = (row0) => {
+  const row = redactDeep({
+    ...row0,
+    route: row0.route ? redactUrl(row0.route) : row0.route,
+    finalUrl: row0.finalUrl ? redactUrl(row0.finalUrl) : row0.finalUrl,
+  });
   const i = manifest.findIndex((r) => r.slug === row.slug && r.role === row.role);
   if (i >= 0) manifest[i] = row;
   else manifest.push(row);

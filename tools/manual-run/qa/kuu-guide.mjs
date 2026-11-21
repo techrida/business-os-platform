@@ -12,7 +12,7 @@ const esc = (s) =>
     (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[c],
   );
 const open = rows.filter((r) => r.status === 'NOT-RUN' || r.status === 'BLOCKED');
-const out = '/home/crestia/bos-runtimes/round5/guide/QA.html';
+const out = process.env.QA_GUIDE_OUT || '/home/crestia/bos-runtimes/round5/guide/QA.html';
 mkdirSync(path.dirname(out), { recursive: true });
 let n = 0;
 let html = `<!doctype html><meta charset=utf-8><title>Round 5 QA: checks left for you</title><style>body{font:16px/1.5 system-ui,sans-serif;max-width:50rem;margin:2rem auto;padding:0 1rem;color:#1c1c1c;background:#fff}li{margin:.7rem 0}code{background:#f2f2f2;padding:0 .25rem;border-radius:3px}.n{color:#555}h2{font-size:1.1rem;margin-top:1.6rem}</style>

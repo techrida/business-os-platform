@@ -14,6 +14,10 @@ export const EVIDENCE = process.env.QA_EVIDENCE || '/home/crestia/bos-runtimes/r
 
 export async function openQA({ label = 'qa', viewport = '1440x900' } = {}) {
   scrubDebugEnv();
+  if (process.env.ALLOW_NON_LOCAL_TARGET === '1' || process.env.NETNS === '0')
+    throw new Error(
+      'QA runs only against local origins with network isolation: unset ALLOW_NON_LOCAL_TARGET and NETNS=0',
+    );
   process.env.VIDEO_DIR ||= path.join(EVIDENCE, 'run');
   const cfg = loadConfig({ label, viewport, captions: 'false' });
   mkdirSync(cfg.outDir, { recursive: true });
@@ -38,7 +42,7 @@ export async function openQA({ label = 'qa', viewport = '1440x900' } = {}) {
 export class Recorder {
   constructor(file) {
     this.file = file;
-    this.rows = existsSync(file) ? JSON.parse(readFileSync(file, 'utf8')) : [];
+    this.rows = existsSync(file) ? redactDeep(JSON.parse(readFileSync(file, 'utf8'))) : [];
     mkdirSync(path.dirname(file), { recursive: true });
   }
   put(row) {
