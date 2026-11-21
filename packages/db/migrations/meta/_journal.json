@@ -715,6 +715,27 @@
       "when": 1783000000147,
       "tag": "0177_invoices_issue_date_index",
       "breakpoints": true
+    },
+    {
+      "idx": 102,
+      "version": "7",
+      "when": 1783000000148,
+      "tag": "0178_accountant_record_acceptance",
+      "breakpoints": true
+    },
+    {
+      "idx": 103,
+      "version": "7",
+      "when": 1783000000149,
+      "tag": "0170_credit_override_order_value",
+      "breakpoints": true
+    },
+    {
+      "idx": 104,
+      "version": "7",
+      "when": 1783000000150,
+      "tag": "0171_credit_override_order_value_backfill",
+      "breakpoints": true
     }
   ]
 }

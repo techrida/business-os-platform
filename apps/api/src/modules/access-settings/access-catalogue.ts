@@ -637,7 +637,7 @@ export const ACCESS_PERMISSION_CATALOGUE: readonly AccessPermissionInfo[] = [
     'onOff',
     ON_OFF_STAFF,
     [],
-    'Lets a confirmed order be delivered before its advance is paid. Finance releases up to the delivery-hold amount, Management above it, the Founder at any amount, and never the person who created the order.',
+    'Lets a confirmed order be delivered before its advance is paid. Finance releases up to the delivery-hold amount, Management above it, the Founder at any amount, and never the person who created the order, unless that person is a Founder and nobody else may release it: then they give a written reason.',
   ),
   // Invoices
   perm('invoice.read', 'See invoices', 'record', RECORD_NO_DEPT, []),
@@ -718,7 +718,7 @@ export const ACCESS_PERMISSION_CATALOGUE: readonly AccessPermissionInfo[] = [
     'onOff',
     ON_OFF_STAFF,
     [],
-    'Puts a saved workflow draft in use. Nobody can publish a draft they saved themselves.',
+    'Puts a saved workflow draft in use. Nobody can publish a draft they saved themselves, unless they are a Founder and nobody else may publish: then they give a written reason.',
   ),
   perm('approvals.groups.write', 'Manage approval groups', 'onOff', ON_OFF_STAFF, []),
   perm('approvals.delegations.write', 'Manage approval delegations', 'onOff', ON_OFF_STAFF, []),

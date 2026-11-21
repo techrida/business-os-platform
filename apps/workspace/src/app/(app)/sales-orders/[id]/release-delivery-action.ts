@@ -39,6 +39,16 @@ async function bodyOf(res: Response): Promise<unknown> {
 function refused(err: unknown, key: string): ReleaseDeliveryState {
   const next = keyAfterFailure(err, key);
   const status = err instanceof ApiError ? err.status : 0;
+  // The small-team rule (F1-Q11 a): the only person who may release must say why, so it lands on the field.
+  if (status === 400 && apiReasonOf(err) === 'sole_eligible_reason_required') {
+    return {
+      key: next,
+      errors: {
+        reason:
+          'You are the only person who can release this delivery, so say why it is released now.',
+      },
+    };
+  }
   // An allow-listed reason (no_permission, out_of_scope ...) gets the kernel's words below.
   if (status === 403 && apiReasonOf(err) === undefined) {
     return {

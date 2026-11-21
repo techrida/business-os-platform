@@ -1,3 +1,5 @@
+import type { CreditPositionView } from '@/components/p2/crm/credit-position';
+
 import type { FieldErrors } from './forms';
 
 /** What a sales-order action answers to its form. Types only, so the `'use server'` file stays pure. */
@@ -25,6 +27,8 @@ export interface ActionState {
     number: string | null;
     canOpen: boolean;
     canOverride: boolean;
+    /** The position the hold is made of, for a `credit.override` holder (null when it could not be read). */
+    position?: CreditPositionView;
     quotationVersionId: string;
   };
 }

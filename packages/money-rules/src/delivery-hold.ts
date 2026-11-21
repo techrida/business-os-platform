@@ -30,7 +30,8 @@ export interface DeliveryHoldRelease {
   thresholdNpr: string;
   /**
    * The user who asked for the delivery. They may never release its hold, whatever roles they hold (separation of
-   * duties: the requester is not the releaser), and that includes a Founder. For a sales order this is
+   * duties: the requester is not the releaser), and that includes a Founder. (This pure rule stays strict; the small-team exception, a lone Founder with a
+   * written reason when nobody else may release, is decided by the sales-order service, F1-Q11.) For a sales order this is
    * `sales_orders.created_by`: the person who turned the accepted quotation into the order and so asked for it to
    * be delivered. Null (an order created by the system, or a creator since removed) excludes nobody: only the role
    * rule applies.

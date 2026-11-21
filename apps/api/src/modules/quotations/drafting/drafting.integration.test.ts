@@ -97,6 +97,8 @@ const current: {
   scope: TxScope | null;
   /** The caller's membership department; null (no department) unless a test sets one. */
   departmentId?: string | null;
+  /** The caller's role keys; none unless a test sets them. */
+  roles?: RoleKey[];
 } = {
   grants: grantsOf('sales'),
   userId: null,
@@ -112,7 +114,7 @@ const principalNow = (): Principal => ({
   orgKind: 'staff',
   partyId: null,
   idpOrgId: 'unused',
-  roles: [],
+  roles: current.roles ?? [],
   departmentId: current.departmentId ?? null,
   status: 'active',
   grants: current.grants,
@@ -173,6 +175,7 @@ beforeEach(() => {
   current.userId = null;
   current.scope = null;
   current.departmentId = null;
+  delete current.roles;
 });
 
 // ---------------------------------------------------------------------------------------- helpers
@@ -432,10 +435,9 @@ describe('DraftingService.create', () => {
     for (const [label, grants] of [
       ['accountant', grantsOf('accountant')],
       ['finance', grantsOf('finance')],
-      ['founder', grantsOf('founder')],
       ['read-all', readsEveryOpportunity()],
     ] as const) {
-      await asCaller({ userId: otherUserId, grants }, async () => {
+      await asCaller({ userId: otherUserId, grants, roles: [label as RoleKey] }, async () => {
         expect(await draftFlagOn(f.opportunityId), label).toBe(false);
         const refused = await service
           .create(goldenCreateBody(f), `create-reads-all-${label}`)
@@ -448,6 +450,42 @@ describe('DraftingService.create', () => {
       });
     }
     expect(await quotationCount(f.opportunityId)).toBe(before);
+  });
+
+  it('refuses Management with no tie to the deal: it holds no quotation.draft, so 403 and nothing written', async () => {
+    const otherUserId = await seedOtherStaffUser(db, f);
+    const before = await quotationCount(f.opportunityId);
+    await asCaller(
+      { userId: otherUserId, grants: grantsOf('management'), roles: ['management'] },
+      async () => {
+        expect(await draftFlagOn(f.opportunityId)).toBe(false);
+        expect(
+          await statusOf(service.create(goldenCreateBody(f), 'create-management-no-tie')),
+        ).toBe(403);
+      },
+    );
+    expect(await quotationCount(f.opportunityId)).toBe(before);
+  });
+
+  it('lets the Founder draft on any deal with no owner, department or lead-creator tie (P5-Q2), flag true', async () => {
+    const otherUserId = await seedOtherStaffUser(db, f);
+    const before = await quotationCount(f.opportunityId);
+    await asCaller(
+      { userId: otherUserId, grants: grantsOf('founder'), roles: ['founder'] },
+      async () => {
+        expect(await draftFlagOn(f.opportunityId)).toBe(true);
+        const created = await service.create(goldenCreateBody(f), 'create-founder-no-tie');
+        expect(created.ownerUserId).toBe(otherUserId);
+      },
+    );
+    expect(await quotationCount(f.opportunityId)).toBe(before + 1);
+  });
+
+  it('does not exempt a Founder grant set without the founder role key', async () => {
+    const otherUserId = await seedOtherStaffUser(db, f);
+    await asCaller({ userId: otherUserId, grants: grantsOf('founder'), roles: [] }, async () => {
+      expect(await draftFlagOn(f.opportunityId)).toBe(false);
+    });
   });
 
   it("answers 400 for a contact of another customer than the opportunity's", async () => {
@@ -497,6 +535,7 @@ async function asCaller<T>(
     scope?: TxScope;
     grants?: Map<Permission, Scope>;
     departmentId?: string | null;
+    roles?: RoleKey[];
   },
   fn: () => Promise<T>,
 ): Promise<T> {
@@ -506,9 +545,11 @@ async function asCaller<T>(
   current.grants = who.grants ?? current.grants;
   current.departmentId =
     who.departmentId === undefined ? (current.departmentId ?? null) : who.departmentId;
+  if (who.roles !== undefined) current.roles = who.roles;
   try {
     return await fn();
   } finally {
+    delete current.roles;
     Object.assign(current, saved);
   }
 }

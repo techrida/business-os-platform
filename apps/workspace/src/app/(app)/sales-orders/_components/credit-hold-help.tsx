@@ -40,6 +40,7 @@ export function CreditHoldHelp({
           opportunityId={hold.opportunityId}
           number={hold.number}
           quotation={quotationNumber}
+          position={hold.position}
           successMessage="Credit hold overridden. Confirm the order again."
           onOverridden={() => setOverridden(hold.opportunityId)}
         />

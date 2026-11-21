@@ -51,6 +51,8 @@ const WorkflowVersionSchema = z.object({
   publishedBy: z.string().nullable().optional(),
   /** The caller saved it, so the caller cannot publish it: a second person does (F1-Q11). */
   savedByCaller: z.boolean().optional(),
+  /** The caller saved it and nobody else may publish it, so they may, with a reason (F1-Q11 a). */
+  publishSoleEligible: z.boolean().optional(),
 });
 const WorkflowSchema = z.object({
   id: z.string(),
@@ -383,12 +385,15 @@ export function publishWorkflowVersion(
   session: Session,
   key: string,
   version: number,
+  /** Only for the small-team rule (F1-Q11 a); the usual second-person publish sends no body. */
+  reason?: string,
 ): Promise<WorkflowVersion> {
   return requestParsed(
     session,
     'POST',
     `/v1/admin/workflows/${seg(key)}/versions/${seg(version)}/publish`,
     WorkflowVersionSchema,
+    reason === undefined ? undefined : { reason },
   );
 }
 

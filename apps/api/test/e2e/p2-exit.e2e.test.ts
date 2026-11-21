@@ -305,7 +305,13 @@ describe('P2 exit: lead to won over HTTP', () => {
         .http()
         .patch(`/v1/leads/${lead.id}/stage`)
         .set('authorization', s.salesAuth)
-        .send({ stage, expectedVersion: lead.version });
+        .send({
+          stage,
+          expectedVersion: lead.version,
+          ...(stage === 'contacted'
+            ? { contactActivity: { kind: 'call', body: 'Intro call' } }
+            : {}),
+        });
       expect(moved.status, show(moved)).toBe(200);
       lead = LeadDtoSchema.parse(moved.body);
       expect(lead.stage).toBe(stage);

@@ -104,7 +104,8 @@ const dialogLinks = () =>
     a.getAttribute('href'),
   ]);
 
-const HELD = 'This customer is over its credit limit, so the sales order is on hold.';
+const HELD =
+  'With its open receivables, its confirmed orders not yet invoiced and this order, this customer is over its credit limit, so the sales order is on hold.';
 const OVERRIDE = 'Override credit hold';
 const buttonNamed = (label: string) =>
   [...document.querySelectorAll('button')].find((b) => b.textContent === label) ?? null;
