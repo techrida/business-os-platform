@@ -247,7 +247,7 @@ export function toCustomerInvoiceView(
       tax: t.tax,
     })),
     file,
-    renderFailed: extras.renderFailed ?? false,
+    ...(extras.renderFailed === true ? { renderFailed: true } : {}),
     format: extras.format,
     sellerContact: extras.sellerContact,
   });

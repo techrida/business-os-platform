@@ -1195,6 +1195,14 @@ describe('an approver opens the order they approve, read-only, the detail only (
     expect(page.rows.map((p) => p.id)).not.toContain(po.id);
     expect(page.total).toBe(page.rows.length);
     expect(await statusOf(service.versions(po.id))).toBe(404);
+    // An amendment whose snapshot carries the order id in capitals opens the same way.
+    await exec(
+      scopeA,
+      sql`UPDATE app.approval_requests
+            SET snapshot = jsonb_set(snapshot, '{amendment,purchaseOrderId}', to_jsonb(upper(${po.id}::text)))
+          WHERE id = ${r.approvalRequestId!}`,
+    );
+    expect(await service.get(po.id)).toMatchObject({ id: po.id });
     // Finance's step is not active yet: nothing opens.
     as(U.fin, 'finance');
     current.grants = withoutPoGrants('finance');

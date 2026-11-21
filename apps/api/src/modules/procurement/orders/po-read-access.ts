@@ -131,7 +131,7 @@ export async function approvesPo(
           ),
           and(
             eq(approvalRequests.documentType, PO_AMENDMENT_DOCUMENT_TYPE),
-            sql`${approvalRequests.snapshot} -> 'amendment' ->> 'purchaseOrderId' = ${poId.toLowerCase()}`,
+            sql`lower(${approvalRequests.snapshot} -> 'amendment' ->> 'purchaseOrderId') = ${poId.toLowerCase()}`,
           ),
         ),
       ),

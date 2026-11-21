@@ -4,7 +4,7 @@ import { z } from 'zod';
 import { LeadLostReasonRefSchema } from './crm.js';
 
 /** A calendar month in Asia/Kathmandu, for example 2026-11. */
-export const ReportMonthSchema = z.string().regex(/^\d{4}-(0[1-9]|1[0-2])$/, 'Use YYYY-MM');
+export const ReportMonthSchema = z.string().regex(/^20\d{2}-(0[1-9]|1[0-2])$/, 'Use YYYY-MM');
 
 /** The most months one report covers (five years). */
 export const LOST_REASON_REPORT_MAX_MONTHS = 60;

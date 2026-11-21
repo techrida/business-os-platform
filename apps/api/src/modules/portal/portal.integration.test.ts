@@ -726,10 +726,9 @@ describe('portal PDF link on a real database', () => {
       status: 409,
       code: 'quotation_pdf_not_ready',
     });
-    await expect(portal.get(sent.versionId)).resolves.toMatchObject({
-      file: null,
-      renderFailed: false,
-    });
+    const pending = await portal.get(sent.versionId);
+    expect(pending.file).toBeNull();
+    expect(pending.renderFailed).toBeUndefined();
 
     const scope: TxScope = { tenantId: w.tenantId, organizationId: w.entityA };
     expect(await scanner.scanVersion({ versionId: documentVersionId, ...scope }, true)).toBe(
@@ -739,7 +738,7 @@ describe('portal PDF link on a real database', () => {
     expect(link.url).toMatch(SIGNED_PATH);
     const view = await portal.get(sent.versionId);
     expect(view.file).not.toBeNull();
-    expect(view.renderFailed).toBe(false);
+    expect(view.renderFailed).toBeUndefined();
   });
 
   it('answers 404 for another party, another entity, a draft and an unknown id', async () => {
@@ -792,7 +791,7 @@ describe('portal PDF status on a real database (P5)', () => {
       ['scan refused', refused, true, { status: 424, code: 'quotation_pdf_failed' }],
     ] as const) {
       const view = await portal.get(seeded.versionId);
-      expect({ file: view.file, renderFailed: view.renderFailed }, name).toEqual({
+      expect({ file: view.file, renderFailed: view.renderFailed === true }, name).toEqual({
         file: null,
         renderFailed,
       });
@@ -800,7 +799,7 @@ describe('portal PDF status on a real database (P5)', () => {
     }
 
     const view = await portal.get(ready.versionId);
-    expect(view.renderFailed).toBe(false);
+    expect(view.renderFailed).toBeUndefined();
     expect(view.file?.documentId).toEqual(expect.any(String));
     expect((await portal.quotationPdfLink(ready.versionId)).url).toMatch(SIGNED_PATH);
   });

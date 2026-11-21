@@ -227,8 +227,7 @@ export function toCustomerQuotationView(
       dateFormat: input.display.dateFormat,
     },
     file,
-    ...(input.renderFailed === undefined
-      ? {}
-      : { renderFailed: file === null && input.renderFailed }),
+    // Sent only when true, so an older portal's strict parser still accepts every document that is not failed.
+    ...(input.renderFailed === true && file === null ? { renderFailed: true } : {}),
   });
 }
