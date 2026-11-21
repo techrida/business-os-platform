@@ -28,6 +28,11 @@ const contentSecurityPolicy = [...contentSecurityDirectives, "frame-ancestors 'n
 const filePreviewPolicy = [...contentSecurityDirectives, "frame-ancestors 'self'"].join('; ');
 
 const nextConfig: NextConfig = {
+  // The HTTPS proxy's configured host must also be allowed for the dev websocket.
+  // Otherwise Next retries the blocked connection and eventually reloads the page.
+  ...(isDev && process.env.WORKSPACE_PUBLIC_URL
+    ? { allowedDevOrigins: [new URL(process.env.WORKSPACE_PUBLIC_URL).hostname] }
+    : {}),
   output: 'standalone',
   outputFileTracingRoot: monorepoRoot,
   // Turbopack (the default bundler) has its own root setting. Keep it equal to the tracing
