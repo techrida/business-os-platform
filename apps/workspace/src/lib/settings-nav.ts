@@ -27,6 +27,7 @@ export type SettingsSectionId =
   | 'currencies'
   | 'tax'
   | 'numbering'
+  | 'company-accounts'
   | 'sales'
   | 'purchasing';
 
@@ -62,7 +63,7 @@ const COMPANY_PERMISSION = 'admin.settings.write';
 // Exchange rates are entered by Finance (`settings.fx_rate.write`). The Founder keeps the page too,
 // and alone changes which currencies are enabled and how old a rate may be (F1-Q48).
 const FX_RATE_PERMISSION = ['settings.fx_rate.write', 'admin.settings.write'] as const;
-// Tax, document numbering and saved terms: Finance or Accountant (`settings.finance.write`), or the
+// Tax, document numbering, bank and expense accounts and saved terms: Finance or Accountant (`settings.finance.write`), or the
 // Founder (F1-Q48).
 const FINANCE_SETTINGS_PERMISSION = ['settings.finance.write', 'admin.settings.write'] as const;
 
@@ -203,6 +204,15 @@ export const SETTINGS_GROUPS: readonly SettingsGroup[] = [
         href: '/settings/numbering',
         icon: 'hash',
         description: 'The numbers quotations, invoices and memos are given.',
+        permission: FINANCE_SETTINGS_PERMISSION,
+        ready: true,
+      },
+      {
+        id: 'company-accounts',
+        label: 'Bank and expense accounts',
+        href: '/settings/company-accounts',
+        icon: 'banknote',
+        description: 'The bank accounts payments leave from and the accounts bills are booked to.',
         permission: FINANCE_SETTINGS_PERMISSION,
         ready: true,
       },
