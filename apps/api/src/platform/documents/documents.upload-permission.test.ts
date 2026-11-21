@@ -356,3 +356,38 @@ describe('DocumentsService reads and the owner policy readPermission', () => {
     expect(await tryGet(policy, staff([]))).toBe('403');
   });
 });
+
+// Round 5 P2: on an owner with per-record uploadGrants (evidence), whoever may add files to that record may open
+// them, so the uploader can watch the scan on a record someone else owns; anyone else gets the read refusal.
+describe('DocumentsService reads and the owner policy uploadGrants (round 5 P2)', () => {
+  const grants: Partial<DocumentOwnerPolicy> = {
+    uploadGrants: (scope) =>
+      Promise.resolve([{ action: 'procurement.sourcing', ref: { ...scope, ownerUserId: null } }]),
+  };
+
+  it('opens with an upload grant of the record when documents.read does not reach it', async () => {
+    expect(await tryGet(grants, staff([['documents.read', 'own']]))).toBe('403');
+    expect(
+      await tryGet(
+        grants,
+        staff([
+          ['documents.read', 'own'],
+          ['procurement.sourcing', 'all'],
+        ]),
+      ),
+    ).toBe('read owner');
+    expect(await tryGet(grants, staff([['documents.read', 'all']]))).toBe('read owner');
+  });
+
+  it('does not widen reads of an owner without uploadGrants', async () => {
+    expect(
+      await tryGet(
+        {},
+        staff([
+          ['documents.read', 'own'],
+          ['procurement.sourcing', 'all'],
+        ]),
+      ),
+    ).toBe('403');
+  });
+});

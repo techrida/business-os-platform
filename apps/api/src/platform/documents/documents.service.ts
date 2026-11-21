@@ -1203,7 +1203,32 @@ export class DocumentsService {
     const ref: ResourceRef | null = await policy.resource(scope, ownerId);
     if (ref === null) throw new NotFoundException('Owner record not found');
     if (action === 'documents.upload') await this.assertUploadGrant(policy, scope, ownerId, ref);
-    else this.assertAnyOf(readPermissionsOf(policy), ref);
+    else await this.assertReader(policy, scope, ownerId, ref);
+  }
+
+  /**
+   * The staff read check on an owner that exists: `documents.read` or the policy's `readPermission` on `ref`. An owner
+   * with per-record `uploadGrants` (round 5 P2: evidence) also lets whoever may add files to that record open them,
+   * so the uploader can watch the scan of a file on a record someone else owns. A refusal is the read refusal.
+   */
+  private async assertReader(
+    policy: DocumentOwnerPolicy,
+    scope: TxScope,
+    ownerId: string,
+    ref: ResourceRef,
+  ): Promise<void> {
+    try {
+      this.assertAnyOf(readPermissionsOf(policy), ref);
+    } catch (refused) {
+      if (!(refused instanceof ForbiddenException) || policy.uploadGrants === undefined) {
+        throw refused;
+      }
+      try {
+        await this.assertUploadGrant(policy, scope, ownerId, ref);
+      } catch (error) {
+        throw error instanceof ForbiddenException ? refused : error;
+      }
+    }
   }
 
   /**
