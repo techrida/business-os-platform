@@ -680,6 +680,27 @@
       "when": 1783000000142,
       "tag": "0155_sales_order_delivery_releases",
       "breakpoints": true
+    },
+    {
+      "idx": 97,
+      "version": "7",
+      "when": 1783000000143,
+      "tag": "0175_sales_vat_register_permission",
+      "breakpoints": true
+    },
+    {
+      "idx": 98,
+      "version": "7",
+      "when": 1783000000144,
+      "tag": "0176_party_import_batches",
+      "breakpoints": true
+    },
+    {
+      "idx": 99,
+      "version": "7",
+      "when": 1783000000145,
+      "tag": "0177_invoices_issue_date_index",
+      "breakpoints": true
     }
   ]
 }

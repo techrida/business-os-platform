@@ -199,6 +199,10 @@ export const invoices = appSchema.table(
     index('invoices_tenant_customer_party_idx').on(t.tenantId, t.customerPartyId),
     index('invoices_tenant_org_status_idx').on(t.tenantId, t.organizationId, t.status),
     index('invoices_tenant_org_original_idx').on(t.tenantId, t.organizationId, t.originalInvoiceId),
+    /** The sales VAT register (0177): issued documents of one entity by issue date. */
+    index('invoices_issued_date_idx')
+      .on(t.tenantId, t.organizationId, t.issueDate)
+      .where(sql`${t.status} = 'issued'`),
     check(
       'invoices_kind_check',
       sql`${t.kind} in ('tax_invoice', 'proforma', 'credit_note', 'debit_note')`,
