@@ -10,18 +10,17 @@ const ALL_DIGITS = /^\d*$/;
 
 const PAN_RULES: DigitRules = {
   noun: 'PAN',
-  // A stored `123-456-789` is the same PAN as `123456789`; anything else is shown as given.
-  parse: (posted) => {
-    const bare = posted.replace(SEPARATORS, '');
-    return ALL_DIGITS.test(bare) ? bare : posted;
-  },
+  // A stored value is shown exactly as stored, so an edit of some other field never rewrites it. One
+  // the box cannot hold (`123-456-789`) is flagged and repaired by editing.
+  parse: (posted) => posted,
   post: (digits) => digits,
   maxFor: () => PAN_DIGITS,
   cleanPaste: (pasted) => pasted.replace(SEPARATORS, ''),
   tooLong: () => `A PAN is exactly ${PAN_DIGITS} digits.`,
   problem: (digits) => {
     if (digits === '') return null;
-    if (!ALL_DIGITS.test(digits)) return `A PAN is ${PAN_DIGITS} digits, with no letters.`;
+    if (!ALL_DIGITS.test(digits))
+      return `A PAN is ${PAN_DIGITS} digits, with no letters, spaces or dashes.`;
     if (digits.length === PAN_DIGITS) return null;
     return digits.length > PAN_DIGITS
       ? `A PAN is exactly ${PAN_DIGITS} digits; this has ${digits.length}.`

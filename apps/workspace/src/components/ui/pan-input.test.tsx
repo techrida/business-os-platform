@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { act, useState, type ReactNode } from 'react';
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { fill, mountForm, paste, submit, typeKeys } from '@/test/form-interactions';
 import { Field } from './field';
@@ -65,7 +65,8 @@ describe('PanInput', () => {
     const pan = await mount(<PanInput aria-label="PAN" name="pan" />);
     expect(pan.box.type).toBe('text');
     expect(pan.box.getAttribute('inputmode')).toBe('numeric');
-    expect(pan.box.getAttribute('pattern')).toBe('[0-9]*');
+    // No pattern attribute: it would make the browser refuse to submit a stored legacy value untouched.
+    expect(pan.box.hasAttribute('pattern')).toBe(false);
     expect(pan.box.hasAttribute('name')).toBe(false);
   });
 
@@ -106,10 +107,16 @@ describe('PanInput', () => {
     expect(pan.box.getAttribute('aria-invalid')).toBeNull();
   });
 
-  it('shows a stored 123-456-789 as nine digits and a stored bad value as given, flagged', async () => {
+  it('shows a stored value exactly as stored, so an unrelated edit never rewrites it', async () => {
     const dashed = await mount(<PanInput aria-label="PAN" name="pan" defaultValue="123-456-789" />);
-    expect(dashed.box.value).toBe('123456789');
-    expect(dashed.hidden()).toBe('123456789');
+    expect(dashed.box.value).toBe('123-456-789');
+    expect(dashed.hidden()).toBe('123-456-789');
+    expect(dashed.box.getAttribute('aria-invalid')).toBe('true');
+    // Submitting without touching it is allowed: the form's other edits must still save.
+    const submitted = vi.fn((event: Event) => event.preventDefault());
+    dashed.container.querySelector('form')!.addEventListener('submit', submitted);
+    await submit(dashed.container);
+    expect(submitted).toHaveBeenCalledTimes(1);
     await mounted.unmount();
 
     const bad = await mount(<PanInput aria-label="PAN" name="pan" defaultValue="12345678901" />);
@@ -120,6 +127,24 @@ describe('PanInput', () => {
     await typeKeys(bad.box, '{Backspace}{Backspace}');
     expect(bad.box.value).toBe('123456789');
     expect(bad.box.getAttribute('aria-invalid')).toBeNull();
+  });
+
+  it('stops a submit of a PAN the user typed but left short, and puts focus on the box', async () => {
+    const pan = await mount(<PanInput aria-label="PAN" name="pan" />);
+    const reached = vi.fn();
+    pan.container.querySelector('form')!.addEventListener('submit', (event) => {
+      reached(event.defaultPrevented);
+      event.preventDefault();
+    });
+    await typeKeys(pan.box, '12345678');
+    await submit(pan.container);
+    // The box's capture listener cancelled the submit before the page's own listener saw it.
+    expect(reached).toHaveBeenCalledWith(true);
+    expect(pan.status()).toBe('A PAN is 9 digits; this has 8.');
+    expect(document.activeElement).toBe(pan.box);
+    await typeKeys(pan.box, '9');
+    await submit(pan.container);
+    expect(reached).toHaveBeenLastCalledWith(false);
   });
 
   it('posts through a form and names the box with its Field label', async () => {
