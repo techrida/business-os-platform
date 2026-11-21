@@ -33,3 +33,4 @@ export * from './vitals.js';
 export * from './cost-centers.js';
 export * from './withholding.js';
 export * from './images.js';
+export * from './settings-people.js';
