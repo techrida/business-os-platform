@@ -21,10 +21,8 @@ import {
   createTenantWithEntity,
   purchaseOrderLines,
   purchaseOrders,
-  runMigrations,
 } from '@bos/db';
 import { ForbiddenException, HttpException, NotFoundException } from '@nestjs/common';
-import { PostgreSqlContainer, type StartedPostgreSqlContainer } from '@testcontainers/postgresql';
 import type { Queue } from 'bullmq';
 import { and, eq, sql } from 'drizzle-orm';
 import { drizzle } from 'drizzle-orm/node-postgres';
@@ -42,11 +40,10 @@ import { insertVersion } from '../procurement/orders/purchase-order.writes';
 import { quotationLineAmounts } from '../procurement/sourcing/sourcing.rules';
 import { PO_VERSION_OWNER_TYPE, VendorPortalService } from './portal-vendor.service';
 import { DrizzleVendorPortalStore } from './portal-vendor.store';
+import { createTestDatabase, type TestDatabase } from '@bos/db/testing';
 
 vi.setConfig({ testTimeout: 60_000, hookTimeout: 180_000 });
 
-const OWNER_PW = 'owner-test-pw';
-const APP_PW = 'app-test-pw';
 const SIGNING_SECRET = 'an-integration-test-secret-of-32-plus-chars';
 const NOW = new Date('2026-11-10T06:00:00Z');
 
@@ -59,7 +56,7 @@ class MemoryLinkStore implements LinkStore {
   }
 }
 
-let container: StartedPostgreSqlContainer;
+let testDb: TestDatabase;
 let appPool: Pool;
 let db: Db;
 let scopeA: TxScope;
@@ -81,13 +78,6 @@ const caller: VendorPortalCaller = {
   },
 };
 
-const urlFor = (user: string, password: string, database: string) => {
-  const url = new URL(container.getConnectionUri());
-  url.username = user;
-  url.password = password;
-  url.pathname = `/${database}`;
-  return url.toString();
-};
 const exec = (scope: TxScope, q: ReturnType<typeof sql>) =>
   withTx(db, scope, systemActor('test'), (tx) => tx.execute(q));
 
@@ -279,24 +269,13 @@ async function bill(
 }
 
 beforeAll(async () => {
-  container = await new PostgreSqlContainer('postgres:16-alpine').start();
-  const admin0 = new Pool({ connectionString: container.getConnectionUri(), max: 1 });
-  await admin0.query(`CREATE ROLE bos_owner LOGIN PASSWORD '${OWNER_PW}'`);
-  await admin0.query(`CREATE ROLE bos_app LOGIN PASSWORD '${APP_PW}'`);
-  await admin0.query('CREATE DATABASE bos OWNER bos_owner');
-  await admin0.query('GRANT CONNECT ON DATABASE bos TO bos_app');
+  testDb = await createTestDatabase();
+  const admin0 = new Pool({ connectionString: testDb.adminUrl, max: 1 });
   await admin0.end();
-  const bosAdmin = new Pool({ connectionString: urlFor('test', 'test', 'bos'), max: 1 });
-  await bosAdmin.query(
-    'ALTER DEFAULT PRIVILEGES FOR ROLE bos_owner GRANT USAGE ON SCHEMAS TO bos_app',
-  );
-  await bosAdmin.query(
-    'ALTER DEFAULT PRIVILEGES FOR ROLE bos_owner GRANT SELECT, INSERT, UPDATE, DELETE ON TABLES TO bos_app',
-  );
+  const bosAdmin = new Pool({ connectionString: testDb.adminUrl, max: 1 });
   await bosAdmin.end();
-  await runMigrations(urlFor('bos_owner', OWNER_PW, 'bos'));
 
-  appPool = new Pool({ connectionString: urlFor('bos_app', APP_PW, 'bos'), max: 8 });
+  appPool = new Pool({ connectionString: testDb.appUrl, max: 8 });
   db = drizzle({ client: appPool });
 
   const tenant = await createTenantWithEntity(appPool);
@@ -342,7 +321,7 @@ beforeAll(async () => {
 
 afterAll(async () => {
   await appPool?.end();
-  await container?.stop();
+  await testDb?.drop();
 });
 
 describe('vendor portal isolation (done check 13)', () => {

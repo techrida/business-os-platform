@@ -12,7 +12,6 @@
 // the acting entity.
 import { randomUUID } from 'node:crypto';
 
-import { PostgreSqlContainer, type StartedPostgreSqlContainer } from '@testcontainers/postgresql';
 import { eq } from 'drizzle-orm';
 import { getTableConfig, type PgTable } from 'drizzle-orm/pg-core';
 import { Pool, type PoolClient } from 'pg';
@@ -20,7 +19,6 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 
 import { checkTenancy } from './check-tenancy.js';
 import { createDb, type DbHandle } from './client.js';
-import { runMigrations } from './migrate.js';
 import {
   authzVersions,
   departments,
@@ -34,21 +32,11 @@ import {
 } from './schema/identity.js';
 import { idpOrgs, organizations, parties } from './schema/platform.js';
 import { createTenantWithEntity, type TenantWithEntity } from './testing/fixtures.js';
+import { createTestDatabase, type TestDatabase } from './testing/test-database.js';
 
-const OWNER_PW = 'owner-test-pw';
-const APP_PW = 'app-test-pw';
-
-let container: StartedPostgreSqlContainer;
+let testDb: TestDatabase;
 let owner: Pool;
 let app: DbHandle;
-
-function urlFor(user: string, password: string, database: string): string {
-  const url = new URL(container.getConnectionUri());
-  url.username = user;
-  url.password = password;
-  url.pathname = `/${database}`;
-  return url.toString();
-}
 
 /**
  * Runs `fn` in one transaction as bos_app with the bos.* actor settings set (the audit trigger needs them).
@@ -100,35 +88,22 @@ async function makeUser(
 }
 
 beforeAll(async () => {
-  container = await new PostgreSqlContainer('postgres:16-alpine').start();
+  testDb = await createTestDatabase();
 
-  const admin = new Pool({ connectionString: container.getConnectionUri(), max: 1 });
-  await admin.query(`CREATE ROLE bos_owner LOGIN PASSWORD '${OWNER_PW}'`);
-  await admin.query(`CREATE ROLE bos_app LOGIN PASSWORD '${APP_PW}'`);
-  await admin.query('CREATE DATABASE bos OWNER bos_owner');
-  await admin.query('REVOKE ALL ON DATABASE bos FROM PUBLIC');
-  await admin.query('GRANT CONNECT ON DATABASE bos TO bos_app');
+  const admin = new Pool({ connectionString: testDb.adminUrl, max: 1 });
   await admin.end();
 
-  const bosAdmin = new Pool({ connectionString: urlFor('test', 'test', 'bos'), max: 1 });
-  await bosAdmin.query(
-    'ALTER DEFAULT PRIVILEGES FOR ROLE bos_owner GRANT USAGE ON SCHEMAS TO bos_app',
-  );
-  await bosAdmin.query(
-    'ALTER DEFAULT PRIVILEGES FOR ROLE bos_owner GRANT SELECT, INSERT, UPDATE, DELETE ON TABLES TO bos_app',
-  );
+  const bosAdmin = new Pool({ connectionString: testDb.adminUrl, max: 1 });
   await bosAdmin.end();
 
-  await runMigrations(urlFor('bos_owner', OWNER_PW, 'bos'));
-
-  owner = new Pool({ connectionString: urlFor('bos_owner', OWNER_PW, 'bos'), max: 2 });
-  app = createDb(urlFor('bos_app', APP_PW, 'bos'), { max: 4 });
+  owner = new Pool({ connectionString: testDb.ownerUrl, max: 2 });
+  app = createDb(testDb.appUrl, { max: 4 });
 });
 
 afterAll(async () => {
   await app?.close();
   await owner?.end();
-  await container?.stop();
+  await testDb?.drop();
 });
 
 describe('0002 tables', () => {

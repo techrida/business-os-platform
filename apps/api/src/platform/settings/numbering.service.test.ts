@@ -5,8 +5,7 @@
 // rolled-back transaction gives its number back. The container starts with just a superuser, so beforeAll
 // creates the roles and default privileges that infra/postgres/init-dbs.sh creates in the real stack (same as
 // packages/db/src/db.test.ts), migrates as bos_owner and then works as bos_app.
-import { createTenantWithEntity, runMigrations, settings } from '@bos/db';
-import { PostgreSqlContainer, type StartedPostgreSqlContainer } from '@testcontainers/postgresql';
+import { createTenantWithEntity, settings } from '@bos/db';
 import { drizzle } from 'drizzle-orm/node-postgres';
 import { Pool } from 'pg';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
@@ -14,26 +13,16 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { type Db } from '../db/db.module';
 import { type TxScope, systemActor, withTx } from '../db/tx';
 import { NumberingService } from './numbering.service';
-
-const OWNER_PW = 'owner-test-pw';
-const APP_PW = 'app-test-pw';
+import { createTestDatabase, type TestDatabase } from '@bos/db/testing';
 
 // 2025-07-16T18:15Z is 2025-07-17 00:00 in Kathmandu: Shrawan 1, 2082 BS, the first day of fiscal year 2082/83.
 const FIRST_DAY_OF_FY = new Date('2025-07-16T18:15:00Z');
 
-let container: StartedPostgreSqlContainer;
+let testDb: TestDatabase;
 let appPool: Pool;
 let db: Db;
 let scope: TxScope;
 const numbering = new NumberingService();
-
-function urlFor(user: string, password: string, database: string): string {
-  const url = new URL(container.getConnectionUri());
-  url.username = user;
-  url.password = password;
-  url.pathname = `/${database}`;
-  return url.toString();
-}
 
 /** One number in its own committed transaction, the way a request would take it. */
 function take(key: string, at: Date = FIRST_DAY_OF_FY): Promise<string> {
@@ -41,29 +30,16 @@ function take(key: string, at: Date = FIRST_DAY_OF_FY): Promise<string> {
 }
 
 beforeAll(async () => {
-  container = await new PostgreSqlContainer('postgres:16-alpine').start();
+  testDb = await createTestDatabase();
 
-  const admin = new Pool({ connectionString: container.getConnectionUri(), max: 1 });
-  await admin.query(`CREATE ROLE bos_owner LOGIN PASSWORD '${OWNER_PW}'`);
-  await admin.query(`CREATE ROLE bos_app LOGIN PASSWORD '${APP_PW}'`);
-  await admin.query('CREATE DATABASE bos OWNER bos_owner');
-  await admin.query('REVOKE ALL ON DATABASE bos FROM PUBLIC');
-  await admin.query('GRANT CONNECT ON DATABASE bos TO bos_app');
+  const admin = new Pool({ connectionString: testDb.adminUrl, max: 1 });
   await admin.end();
 
-  const bosAdmin = new Pool({ connectionString: urlFor('test', 'test', 'bos'), max: 1 });
-  await bosAdmin.query(
-    'ALTER DEFAULT PRIVILEGES FOR ROLE bos_owner GRANT USAGE ON SCHEMAS TO bos_app',
-  );
-  await bosAdmin.query(
-    'ALTER DEFAULT PRIVILEGES FOR ROLE bos_owner GRANT SELECT, INSERT, UPDATE, DELETE ON TABLES TO bos_app',
-  );
+  const bosAdmin = new Pool({ connectionString: testDb.adminUrl, max: 1 });
   await bosAdmin.end();
 
-  await runMigrations(urlFor('bos_owner', OWNER_PW, 'bos'));
-
   // Ten connections, so the 50-way test queues on the pool as well as on the row lock.
-  appPool = new Pool({ connectionString: urlFor('bos_app', APP_PW, 'bos'), max: 10 });
+  appPool = new Pool({ connectionString: testDb.appUrl, max: 10 });
   db = drizzle({ client: appPool });
 
   // Seed a tenant with its default legal entity (ADR 0027) through the shared fixture.
@@ -73,7 +49,7 @@ beforeAll(async () => {
 
 afterAll(async () => {
   await appPool?.end();
-  await container?.stop();
+  await testDb?.drop();
 });
 
 describe('NumberingService.next', () => {

@@ -1,7 +1,7 @@
 // Integration test for the grants in migration 0053_user_avatar (U12): `profile.avatar.write` at scope all for
 // founder and any role holding admin.users.invite, scope own for the named staff roles (marketing included), the
 // authz cache version bumped once, and the `seeded` flag right in both orders 0053 can run in.
-// Needs Docker: a real postgres:16-alpine from Testcontainers. Run with:
+// Needs Docker: two unmigrated databases of its own on the run's shared postgres:16-alpine. Run with:
 //   pnpm --filter @bos/db exec vitest run src/avatar-permission-migration.test.ts
 //
 // Two databases, both seeded with role_permissions rows like a tenant that has been running:
@@ -16,14 +16,13 @@ import { copyFile, mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promi
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
-import { PostgreSqlContainer, type StartedPostgreSqlContainer } from '@testcontainers/postgresql';
 import { Pool, type PoolClient } from 'pg';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 
 import { MIGRATIONS_FOLDER, runMigrations } from './migrate.js';
 import { createTenantWithEntity, type TenantWithEntity } from './testing/fixtures.js';
+import { createTestDatabase, type TestDatabase } from './testing/test-database.js';
 
-const OWNER_PW = 'owner-test-pw';
 const TAG = '0053_user_avatar';
 const U12_TAGS = new Set([TAG, '0054_party_logos', '0058_legacy_company_logo']);
 const PERMISSION = 'profile.avatar.write';
@@ -43,8 +42,7 @@ interface Grant {
   seeded: boolean;
 }
 
-let container: StartedPostgreSqlContainer;
-let admin: Pool;
+const databases: TestDatabase[] = [];
 const folders: string[] = [];
 let sql0053: string[];
 
@@ -69,13 +67,11 @@ async function folderOf(journal: Journal, entries: JournalEntry[], name: string)
   return folder;
 }
 
-async function createDatabase(name: string): Promise<{ pool: Pool; url: string }> {
-  await admin.query(`CREATE DATABASE ${name} OWNER bos_owner`);
-  const url = new URL(container.getConnectionUri());
-  url.username = 'bos_owner';
-  url.password = OWNER_PW;
-  url.pathname = `/${name}`;
-  return { pool: new Pool({ connectionString: url.toString(), max: 2 }), url: url.toString() };
+/** A database of its own with roles and privileges but no migration applied. */
+async function createDatabase(): Promise<{ pool: Pool; url: string }> {
+  const testDb = await createTestDatabase({ migrated: false });
+  databases.push(testDb);
+  return { pool: new Pool({ connectionString: testDb.ownerUrl, max: 2 }), url: testDb.ownerUrl };
 }
 
 /** One transaction as bos_owner with the audit settings the role_permissions trigger needs. */
@@ -175,11 +171,6 @@ async function runGrantsAgain(pool: Pool): Promise<void> {
 }
 
 beforeAll(async () => {
-  container = await new PostgreSqlContainer('postgres:16-alpine').start();
-  admin = new Pool({ connectionString: container.getConnectionUri(), max: 1 });
-  await admin.query(`CREATE ROLE bos_owner LOGIN PASSWORD '${OWNER_PW}'`);
-  await admin.query('CREATE ROLE bos_app');
-
   const journal = JSON.parse(
     await readFile(join(MIGRATIONS_FOLDER, 'meta/_journal.json'), 'utf8'),
   ) as Journal;
@@ -200,12 +191,12 @@ beforeAll(async () => {
     '--> statement-breakpoint',
   );
 
-  ({ pool: inOrder, url: inOrderUrl } = await createDatabase('bos_in_order'));
+  ({ pool: inOrder, url: inOrderUrl } = await createDatabase());
   await runMigrations(inOrderUrl, before0053);
   inOrderTenant = await seedRunningTenant(inOrder);
   await runMigrations(inOrderUrl, MIGRATIONS_FOLDER);
 
-  ({ pool: ahead, url: aheadUrl } = await createDatabase('bos_ahead'));
+  ({ pool: ahead, url: aheadUrl } = await createDatabase());
   await runMigrations(aheadUrl, before0053);
   aheadTenant = await seedRunningTenant(ahead);
   await runMigrations(aheadUrl, withoutU12);
@@ -217,8 +208,7 @@ beforeAll(async () => {
 afterAll(async () => {
   await inOrder?.end();
   await ahead?.end();
-  await admin?.end();
-  await container?.stop();
+  for (const testDb of databases) await testDb.drop();
   for (const folder of folders) await rm(folder, { recursive: true, force: true });
 });
 

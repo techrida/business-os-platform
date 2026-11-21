@@ -1,5 +1,5 @@
-// Integration tests for 0020_sales_orders (P3 unit U1) on a real, empty postgres:16-alpine started by Testcontainers
-// (needs Docker). Run with: pnpm --filter @bos/db exec vitest run src/sales.test.ts
+// Integration tests for 0020_sales_orders (P3 unit U1) on a real, empty database of the shared test cluster
+// (testing/vitest-global-setup.ts, needs Docker). Run with: pnpm --filter @bos/db exec vitest run src/sales.test.ts
 //
 // What 0020 must hold, written as bos_app (the API's role) unless a case says otherwise:
 //   * the migrations apply, and checkTenancy() (strict) and checkAudit() find nothing;
@@ -16,7 +16,6 @@ import { cpSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:f
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
-import { PostgreSqlContainer, type StartedPostgreSqlContainer } from '@testcontainers/postgresql';
 import { Pool, type PoolClient } from 'pg';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 
@@ -24,9 +23,7 @@ import { checkAudit } from './check-audit.js';
 import { checkTenancy, describeViolations } from './check-tenancy.js';
 import { MIGRATIONS_FOLDER, runMigrations } from './migrate.js';
 import { createParty, createTenantWithEntity } from './testing/fixtures.js';
-
-const OWNER_PW = 'owner-test-pw';
-const APP_PW = 'app-test-pw';
+import { createTestDatabase, type TestDatabase } from './testing/test-database.js';
 
 const SALES_TABLES = [
   'sales_orders',
@@ -47,18 +44,10 @@ const GOLDEN = {
   total: '5045450.00',
 };
 
-let container: StartedPostgreSqlContainer;
+let testDb: TestDatabase;
 let owner: Pool;
 let app: Pool;
 let migratedSchedule: { scope: Scope; ids: string[] };
-
-function urlFor(user: string, password: string, database: string): string {
-  const url = new URL(container.getConnectionUri());
-  url.username = user;
-  url.password = password;
-  url.pathname = `/${database}`;
-  return url.toString();
-}
 
 interface Scope {
   tenantId: string;
@@ -230,36 +219,23 @@ const SPLIT_60_20_20: Slice[] = [
 const SUM = { code: '23514', constraint: 'billing_schedule_lines_sum_check' };
 
 beforeAll(async () => {
-  container = await new PostgreSqlContainer('postgres:16-alpine').start();
+  // Not migrated: the legacy journal below runs up to 0041 first.
+  testDb = await createTestDatabase({ migrated: false });
 
-  const admin = new Pool({ connectionString: container.getConnectionUri(), max: 1 });
-  await admin.query(`CREATE ROLE bos_owner LOGIN PASSWORD '${OWNER_PW}'`);
-  await admin.query(`CREATE ROLE bos_app LOGIN PASSWORD '${APP_PW}'`);
-  await admin.query('CREATE DATABASE bos OWNER bos_owner');
-  await admin.query('REVOKE ALL ON DATABASE bos FROM PUBLIC');
-  await admin.query('GRANT CONNECT ON DATABASE bos TO bos_app');
-  await admin.end();
-
-  const bosAdmin = new Pool({ connectionString: urlFor('test', 'test', 'bos'), max: 1 });
-  await bosAdmin.query(
-    'ALTER DEFAULT PRIVILEGES FOR ROLE bos_owner GRANT USAGE ON SCHEMAS TO bos_app',
-  );
-  await bosAdmin.query(
-    'ALTER DEFAULT PRIVILEGES FOR ROLE bos_owner GRANT SELECT, INSERT, UPDATE, DELETE ON TABLES TO bos_app',
-  );
+  const bosAdmin = new Pool({ connectionString: testDb.adminUrl, max: 1 });
   // The audit trigger refuses a write with no actor; these tests write directly, so the session supplies one.
   for (const [key, value] of [
     ['bos.actor_kind', 'system'],
     ['bos.actor_id', 'system:sales-test'],
     ['bos.correlation_id', 'sales-test-0001'],
   ]) {
-    await bosAdmin.query(`ALTER ROLE bos_app IN DATABASE bos SET ${key} = '${value}'`);
+    await bosAdmin.query(`ALTER ROLE bos_app IN DATABASE ${testDb.name} SET ${key} = '${value}'`);
   }
   await bosAdmin.end();
 
-  const ownerUrl = urlFor('bos_owner', OWNER_PW, 'bos');
+  const ownerUrl = testDb.ownerUrl;
   owner = new Pool({ connectionString: ownerUrl, max: 2 });
-  app = new Pool({ connectionString: urlFor('bos_app', APP_PW, 'bos'), max: 4 });
+  app = new Pool({ connectionString: testDb.appUrl, max: 4 });
 
   const legacy = mkdtempSync(join(tmpdir(), 'bos-billing-legacy-'));
   try {
@@ -299,7 +275,7 @@ beforeAll(async () => {
 afterAll(async () => {
   await app?.end();
   await owner?.end();
-  await container?.stop();
+  await testDb?.drop();
 });
 
 describe('0020_sales_orders on a fresh database', () => {

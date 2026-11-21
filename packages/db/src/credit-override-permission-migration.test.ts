@@ -2,21 +2,20 @@
 // Founder, Management and Finance roles of a tenant that already holds role_permissions rows, as `seeded` rows written by
 // system:migration-0104, with the authz version bumped once; a tenant still on the code defaults gets no row (a row
 // there would strip every other role's defaults); a role that already holds the permission keeps its own row.
-// Needs Docker: a real postgres:16-alpine from Testcontainers. Run with:
+// Needs Docker: an unmigrated database of its own on the run's shared postgres:16-alpine. Run with:
 //   pnpm --filter @bos/db exec vitest run src/credit-override-permission-migration.test.ts
 import { randomUUID } from 'node:crypto';
 import { copyFile, mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
-import { PostgreSqlContainer, type StartedPostgreSqlContainer } from '@testcontainers/postgresql';
 import { Pool } from 'pg';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 
 import { MIGRATIONS_FOLDER, runMigrations } from './migrate.js';
 import { createTenantWithEntity, type TenantWithEntity } from './testing/fixtures.js';
+import { createTestDatabase, type TestDatabase } from './testing/test-database.js';
 
-const OWNER_PW = 'owner-test-pw';
 const TAG = '0104_credit_override_permission';
 const PERMISSION = 'credit.override';
 
@@ -26,8 +25,7 @@ interface JournalEntry {
   tag: string;
 }
 
-let container: StartedPostgreSqlContainer;
-let admin: Pool;
+let testDb: TestDatabase;
 let pool: Pool;
 let url: string;
 let folder: string;
@@ -83,16 +81,8 @@ async function version(org: TenantWithEntity): Promise<number | undefined> {
 }
 
 beforeAll(async () => {
-  container = await new PostgreSqlContainer('postgres:16-alpine').start();
-  admin = new Pool({ connectionString: container.getConnectionUri(), max: 1 });
-  await admin.query(`CREATE ROLE bos_owner LOGIN PASSWORD '${OWNER_PW}'`);
-  await admin.query('CREATE ROLE bos_app');
-  await admin.query('CREATE DATABASE bos OWNER bos_owner');
-  const u = new URL(container.getConnectionUri());
-  u.username = 'bos_owner';
-  u.password = OWNER_PW;
-  u.pathname = '/bos';
-  url = u.toString();
+  testDb = await createTestDatabase({ migrated: false });
+  url = testDb.ownerUrl;
   pool = new Pool({ connectionString: url, max: 2 });
 
   const journal = JSON.parse(
@@ -132,8 +122,7 @@ beforeAll(async () => {
 
 afterAll(async () => {
   await pool?.end();
-  await admin?.end();
-  await container?.stop();
+  await testDb?.drop();
   if (folder !== undefined) await rm(folder, { recursive: true, force: true });
 });
 

@@ -17,15 +17,8 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { Readable } from 'node:stream';
 
-import {
-  createParty,
-  createPortalUser,
-  createTenantWithEntity,
-  runMigrations,
-  type Party,
-} from '@bos/db';
+import { createParty, createPortalUser, createTenantWithEntity, type Party } from '@bos/db';
 import { HttpException, NotFoundException, UnauthorizedException } from '@nestjs/common';
-import { PostgreSqlContainer, type StartedPostgreSqlContainer } from '@testcontainers/postgresql';
 import type { Queue } from 'bullmq';
 import { sql } from 'drizzle-orm';
 import { drizzle } from 'drizzle-orm/node-postgres';
@@ -51,6 +44,7 @@ import { QUOTATION_OWNER_TYPE } from '../quotations/quotation-owner.policy';
 import { PortalRespondService } from './portal-respond.service';
 import { PortalService } from './portal.service';
 import { DrizzlePortalQuotationStore, DrizzlePortalRespondStore } from './portal.store';
+import { createTestDatabase, type TestDatabase } from '@bos/db/testing';
 
 vi.setConfig({ testTimeout: 60_000, hookTimeout: 180_000 });
 
@@ -67,11 +61,9 @@ class MemoryLinkStore implements LinkStore {
   }
 }
 
-const OWNER_PW = 'owner-test-pw';
-const APP_PW = 'app-test-pw';
 const ADDRESS = { line1: 'Durbar Marg 1', city: 'Kathmandu', country: 'NP' };
 
-let container: StartedPostgreSqlContainer;
+let testDb: TestDatabase;
 let pool: Pool;
 let db: Db;
 let settings: SettingsService;
@@ -91,14 +83,6 @@ const notify = {
 
 const seedActor = () => systemActor('portal-test-seed');
 
-const urlFor = (user: string, password: string, database: string) => {
-  const url = new URL(container.getConnectionUri());
-  url.username = user;
-  url.password = password;
-  url.pathname = `/${database}`;
-  return url.toString();
-};
-
 function first<T>(rows: T[]): T {
   const row = rows[0];
   if (row === undefined) throw new Error('expected a row');
@@ -106,25 +90,13 @@ function first<T>(rows: T[]): T {
 }
 
 beforeAll(async () => {
-  container = await new PostgreSqlContainer('postgres:16-alpine').start();
-  const admin = new Pool({ connectionString: container.getConnectionUri(), max: 1 });
-  await admin.query(`CREATE ROLE bos_owner LOGIN PASSWORD '${OWNER_PW}'`);
-  await admin.query(`CREATE ROLE bos_app LOGIN PASSWORD '${APP_PW}'`);
-  await admin.query('CREATE DATABASE bos OWNER bos_owner');
-  await admin.query('REVOKE ALL ON DATABASE bos FROM PUBLIC');
-  await admin.query('GRANT CONNECT ON DATABASE bos TO bos_app');
+  testDb = await createTestDatabase();
+  const admin = new Pool({ connectionString: testDb.adminUrl, max: 1 });
   await admin.end();
-  const bosAdmin = new Pool({ connectionString: urlFor('test', 'test', 'bos'), max: 1 });
-  await bosAdmin.query(
-    'ALTER DEFAULT PRIVILEGES FOR ROLE bos_owner GRANT USAGE ON SCHEMAS TO bos_app',
-  );
-  await bosAdmin.query(
-    'ALTER DEFAULT PRIVILEGES FOR ROLE bos_owner GRANT SELECT, INSERT, UPDATE, DELETE ON TABLES TO bos_app',
-  );
+  const bosAdmin = new Pool({ connectionString: testDb.adminUrl, max: 1 });
   await bosAdmin.end();
-  await runMigrations(urlFor('bos_owner', OWNER_PW, 'bos'));
 
-  pool = new Pool({ connectionString: urlFor('bos_app', APP_PW, 'bos'), max: 4 });
+  pool = new Pool({ connectionString: testDb.appUrl, max: 4 });
   db = drizzle({ client: pool });
   settings = new SettingsService(db);
   const audit = new AuditService(db);
@@ -168,7 +140,7 @@ beforeAll(async () => {
 afterAll(async () => {
   await fakeClamd?.close();
   await pool?.end();
-  await container?.stop();
+  await testDb?.drop();
   if (storageRoot) await rm(storageRoot, { recursive: true, force: true });
 });
 

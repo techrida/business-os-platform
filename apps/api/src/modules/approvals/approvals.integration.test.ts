@@ -21,9 +21,7 @@ import {
   createDepartment,
   createStaffUser,
   createTenantWithEntity,
-  runMigrations,
 } from '@bos/db';
-import { PostgreSqlContainer, type StartedPostgreSqlContainer } from '@testcontainers/postgresql';
 import { and, eq, sql } from 'drizzle-orm';
 import { drizzle } from 'drizzle-orm/node-postgres';
 import { Pool } from 'pg';
@@ -45,10 +43,9 @@ import { canonicalSha256 } from '../../platform/hashing/canonical-json';
 import type { ApprovalEmailTemplate, Caller } from './ports';
 import { ApprovalsService, type SubmitInput } from './requests.service';
 import { ApprovalsSlaService } from './sla.processor';
+import { createTestDatabase, type TestDatabase } from '@bos/db/testing';
 
 const WORKSPACE_URL = 'http://workspace.test';
-const OWNER_PW = 'owner-test-pw';
-const APP_PW = 'app-test-pw';
 // The ids come from the @bos/db fixtures in beforeAll (they pick their own uuids).
 const scope = { tenantId: '', organizationId: '' };
 let staffIdpOrgId = '';
@@ -100,7 +97,7 @@ const seedSpec = {
   ],
 };
 
-let container: StartedPostgreSqlContainer;
+let testDb: TestDatabase;
 let ownerPool: Pool;
 let appPool: Pool;
 let db: Db;
@@ -182,34 +179,15 @@ let service: ApprovalsService;
 let admin: ApprovalsAdminService;
 let sla: ApprovalsSlaService;
 
-function urlFor(user: string, password: string, database: string): string {
-  const url = new URL(container.getConnectionUri());
-  url.username = user;
-  url.password = password;
-  url.pathname = `/${database}`;
-  return url.toString();
-}
-
 beforeAll(async () => {
-  container = await new PostgreSqlContainer('postgres:16-alpine').start();
-  const admin0 = new Pool({ connectionString: container.getConnectionUri(), max: 1 });
-  await admin0.query(`CREATE ROLE bos_owner LOGIN PASSWORD '${OWNER_PW}'`);
-  await admin0.query(`CREATE ROLE bos_app LOGIN PASSWORD '${APP_PW}'`);
-  await admin0.query('CREATE DATABASE bos OWNER bos_owner');
-  await admin0.query('GRANT CONNECT ON DATABASE bos TO bos_app');
+  testDb = await createTestDatabase();
+  const admin0 = new Pool({ connectionString: testDb.adminUrl, max: 1 });
   await admin0.end();
-  const bosAdmin = new Pool({ connectionString: urlFor('test', 'test', 'bos'), max: 1 });
-  await bosAdmin.query(
-    'ALTER DEFAULT PRIVILEGES FOR ROLE bos_owner GRANT USAGE ON SCHEMAS TO bos_app',
-  );
-  await bosAdmin.query(
-    'ALTER DEFAULT PRIVILEGES FOR ROLE bos_owner GRANT SELECT, INSERT, UPDATE, DELETE ON TABLES TO bos_app',
-  );
+  const bosAdmin = new Pool({ connectionString: testDb.adminUrl, max: 1 });
   await bosAdmin.end();
-  await runMigrations(urlFor('bos_owner', OWNER_PW, 'bos'));
 
-  ownerPool = new Pool({ connectionString: urlFor('bos_owner', OWNER_PW, 'bos'), max: 2 });
-  appPool = new Pool({ connectionString: urlFor('bos_app', APP_PW, 'bos'), max: 4 });
+  ownerPool = new Pool({ connectionString: testDb.ownerUrl, max: 2 });
+  appPool = new Pool({ connectionString: testDb.appUrl, max: 4 });
   db = drizzle({ client: appPool });
 
   // The tenant with its default entity (scope), a second entity (scopeB) and a staff user with a
@@ -289,7 +267,7 @@ beforeAll(async () => {
 afterAll(async () => {
   await appPool?.end();
   await ownerPool?.end();
-  await container?.stop();
+  await testDb?.drop();
 });
 
 beforeEach(() => {

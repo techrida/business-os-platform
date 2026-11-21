@@ -11,14 +11,13 @@ import { copyFile, mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promi
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
-import { PostgreSqlContainer, type StartedPostgreSqlContainer } from '@testcontainers/postgresql';
 import { Pool, type PoolClient } from 'pg';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 
 import { MIGRATIONS_FOLDER, runMigrations } from './migrate.js';
 import { createTenantWithEntity, type TenantWithEntity } from './testing/fixtures.js';
+import { createTestDatabase, type TestDatabase } from './testing/test-database.js';
 
-const OWNER_PW = 'owner-test-pw';
 const TAG = '0122_level_write_rows_for_department_reach';
 const ACTOR = 'system:migration-0122';
 
@@ -37,8 +36,7 @@ type LevelRow = [
   seeded: boolean,
 ];
 
-let container: StartedPostgreSqlContainer;
-let admin: Pool;
+let testDb: TestDatabase;
 let owner: Pool;
 /** A copy of the migrations folder that stops after `tag`, so this test is not shifted by later migrations. */
 async function folderThrough(tag: string): Promise<string> {
@@ -171,16 +169,8 @@ const salesGrants: Grant[] = [
 ];
 
 beforeAll(async () => {
-  container = await new PostgreSqlContainer('postgres:16-alpine').start();
-  admin = new Pool({ connectionString: container.getConnectionUri(), max: 1 });
-  await admin.query(`CREATE ROLE bos_owner LOGIN PASSWORD '${OWNER_PW}'`);
-  await admin.query('CREATE ROLE bos_app');
-  await admin.query('CREATE DATABASE bos OWNER bos_owner');
-  const url = new URL(container.getConnectionUri());
-  url.username = 'bos_owner';
-  url.password = OWNER_PW;
-  url.pathname = '/bos';
-  const ownerUrl = url.toString();
+  testDb = await createTestDatabase({ migrated: false });
+  const ownerUrl = testDb.ownerUrl;
   owner = new Pool({ connectionString: ownerUrl, max: 2 });
 
   const journal = JSON.parse(
@@ -272,8 +262,7 @@ beforeAll(async () => {
 
 afterAll(async () => {
   await owner?.end();
-  await admin?.end();
-  await container?.stop();
+  await testDb?.drop();
   if (beforeFolder) await rm(beforeFolder, { recursive: true, force: true });
   if (throughFolder) await rm(throughFolder, { recursive: true, force: true });
 });

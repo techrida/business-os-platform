@@ -1,7 +1,7 @@
 // Integration test for migration 0086_departments_admin: department lifecycle (status, retired_at, version),
 // case-insensitive active name uniqueness per legal entity, trigram search index, and user_entities.department_since
 // backfill + trigger.
-// Needs Docker: a real postgres:16-alpine from Testcontainers (its own database, so no compose stack is involved).
+// Needs Docker: a database of its own in the run's shared postgres:16-alpine container (no compose stack is involved).
 // Run with:
 //   pnpm --filter @bos/db exec vitest run src/departments-admin-migrations.test.ts
 import { randomUUID } from 'node:crypto';
@@ -9,7 +9,6 @@ import { copyFile, mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promi
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
-import { PostgreSqlContainer, type StartedPostgreSqlContainer } from '@testcontainers/postgresql';
 import { Pool, type PoolClient } from 'pg';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 
@@ -20,8 +19,8 @@ import {
   createTenantWithEntity,
   type TenantWithEntity,
 } from './testing/fixtures.js';
+import { createTestDatabase, type TestDatabase } from './testing/test-database.js';
 
-const OWNER_PW = 'owner-test-pw';
 const TARGET_TAG = '0086_departments_admin';
 
 interface JournalEntry {
@@ -30,8 +29,7 @@ interface JournalEntry {
   tag: string;
 }
 
-let container: StartedPostgreSqlContainer;
-let admin: Pool;
+let testDb: TestDatabase;
 let owner: Pool;
 let beforeFolder: string;
 
@@ -74,17 +72,8 @@ async function one<T>(sql: string, values: unknown[]): Promise<T> {
 }
 
 beforeAll(async () => {
-  container = await new PostgreSqlContainer('postgres:16-alpine').start();
-  admin = new Pool({ connectionString: container.getConnectionUri(), max: 1 });
-  await admin.query(`CREATE ROLE bos_owner LOGIN PASSWORD '${OWNER_PW}'`);
-  await admin.query('CREATE ROLE bos_app');
-  await admin.query('CREATE DATABASE bos OWNER bos_owner');
-
-  const url = new URL(container.getConnectionUri());
-  url.username = 'bos_owner';
-  url.password = OWNER_PW;
-  url.pathname = '/bos';
-  const ownerUrl = url.toString();
+  testDb = await createTestDatabase({ migrated: false });
+  const ownerUrl = testDb.ownerUrl;
   owner = new Pool({ connectionString: ownerUrl, max: 2 });
 
   const journal = JSON.parse(
@@ -130,8 +119,7 @@ beforeAll(async () => {
 
 afterAll(async () => {
   await owner?.end();
-  await admin?.end();
-  await container?.stop();
+  await testDb?.drop();
   if (beforeFolder) await rm(beforeFolder, { recursive: true, force: true });
 });
 

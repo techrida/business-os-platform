@@ -36,14 +36,12 @@ import {
   partyAccounts,
   quotationVersions,
   quotations,
-  runMigrations,
   salesOrderEvidence,
   salesOrderLines,
   salesOrders,
   salesOrderTaxSummary,
 } from '@bos/db';
 import { ForbiddenException, HttpException } from '@nestjs/common';
-import { PostgreSqlContainer, type StartedPostgreSqlContainer } from '@testcontainers/postgresql';
 import { eq, sql } from 'drizzle-orm';
 import { drizzle } from 'drizzle-orm/node-postgres';
 import { Pool } from 'pg';
@@ -76,11 +74,10 @@ import { QuotationOutcomeService } from '../quotations/outcome/quotation-outcome
 import { RecordOutcomeService } from '../quotations/outcome/record-outcome.service';
 import { PricingService } from '../quotations/pricing/pricing.service';
 import { SalesOrdersService } from './sales-orders.service';
+import { createTestDatabase, type TestDatabase } from '@bos/db/testing';
 
 vi.setConfig({ testTimeout: 60_000, hookTimeout: 180_000 });
 
-const OWNER_PW = 'owner-test-pw';
-const APP_PW = 'app-test-pw';
 /** 20 Nov 2026 20:00 UTC is already 21 Nov in Kathmandu (BS fiscal year 2083/84). */
 const NOW = new Date('2026-11-20T20:00:00Z');
 const DECIDED_ON = '2026-11-21';
@@ -89,7 +86,7 @@ const GOLDEN_TOTAL = '5045450.00';
 
 type EvidenceKindName = 'contract' | 'purchase_order' | 'signed_quote';
 
-let container: StartedPostgreSqlContainer;
+let testDb: TestDatabase;
 let ownerPool: Pool;
 let appPool: Pool;
 let db: QuotationFixtureDb;
@@ -152,34 +149,15 @@ const notify = {
   nudge: vi.fn(() => Promise.resolve()),
 };
 
-const urlFor = (user: string, password: string, database: string) => {
-  const url = new URL(container.getConnectionUri());
-  url.username = user;
-  url.password = password;
-  url.pathname = `/${database}`;
-  return url.toString();
-};
-
 beforeAll(async () => {
-  container = await new PostgreSqlContainer('postgres:16-alpine').start();
-  const admin0 = new Pool({ connectionString: container.getConnectionUri(), max: 1 });
-  await admin0.query(`CREATE ROLE bos_owner LOGIN PASSWORD '${OWNER_PW}'`);
-  await admin0.query(`CREATE ROLE bos_app LOGIN PASSWORD '${APP_PW}'`);
-  await admin0.query('CREATE DATABASE bos OWNER bos_owner');
-  await admin0.query('GRANT CONNECT ON DATABASE bos TO bos_app');
+  testDb = await createTestDatabase();
+  const admin0 = new Pool({ connectionString: testDb.adminUrl, max: 1 });
   await admin0.end();
-  const bosAdmin = new Pool({ connectionString: urlFor('test', 'test', 'bos'), max: 1 });
-  await bosAdmin.query(
-    'ALTER DEFAULT PRIVILEGES FOR ROLE bos_owner GRANT USAGE ON SCHEMAS TO bos_app',
-  );
-  await bosAdmin.query(
-    'ALTER DEFAULT PRIVILEGES FOR ROLE bos_owner GRANT SELECT, INSERT, UPDATE, DELETE ON TABLES TO bos_app',
-  );
+  const bosAdmin = new Pool({ connectionString: testDb.adminUrl, max: 1 });
   await bosAdmin.end();
-  await runMigrations(urlFor('bos_owner', OWNER_PW, 'bos'));
 
-  ownerPool = new Pool({ connectionString: urlFor('bos_owner', OWNER_PW, 'bos'), max: 2 });
-  appPool = new Pool({ connectionString: urlFor('bos_app', APP_PW, 'bos'), max: 8 });
+  ownerPool = new Pool({ connectionString: testDb.ownerUrl, max: 2 });
+  appPool = new Pool({ connectionString: testDb.appUrl, max: 8 });
   db = drizzle({ client: appPool });
 
   f = await seedQuotationFixture(db);
@@ -232,7 +210,7 @@ beforeAll(async () => {
 afterAll(async () => {
   await appPool?.end();
   await ownerPool?.end();
-  await container?.stop();
+  await testDb?.drop();
 });
 
 beforeEach(() => {
@@ -1402,7 +1380,7 @@ describe('confirm and a draft of the advance line at once (lock order)', () => {
     // The container's superuser holds the advance line, so the confirm stops at it; then a draft of that line starts.
     // Order first (now), the draft waits behind the confirm. Line first (the old order), the confirm waits on the
     // draft's order lock while the draft waits on the confirm's line lock: a deadlock, or a 409 for the draft.
-    const superPool = new Pool({ connectionString: urlFor('test', 'test', 'bos'), max: 2 });
+    const superPool = new Pool({ connectionString: testDb.adminUrl, max: 2 });
     const waiters = async (n: number, stop: () => boolean): Promise<boolean> => {
       const deadline = Date.now() + 20_000;
       for (;;) {

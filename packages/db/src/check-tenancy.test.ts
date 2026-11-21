@@ -10,10 +10,9 @@
 //     leads with tenant_id) and rule 5 (a foreign key between two entity-owned tables carries organization_id)
 //     are on by default; requireCompositeTenancy: false turns them off.
 //
-// Needs Docker: a bare postgres:16-alpine from Testcontainers. Each case builds a tiny `app` schema inside a
+// Needs Docker: an unmigrated database of its own on the run's shared postgres:16-alpine. Each case builds a tiny `app` schema inside a
 // transaction and rolls it back, so nothing leaks between cases and no migration has to run.
 // Run with: pnpm --filter @bos/db exec vitest run src/check-tenancy.test.ts
-import { PostgreSqlContainer, type StartedPostgreSqlContainer } from '@testcontainers/postgresql';
 import { Pool } from 'pg';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 
@@ -23,18 +22,19 @@ import {
   checkTenancy,
   describeViolations,
 } from './check-tenancy.js';
+import { createTestDatabase, type TestDatabase } from './testing/test-database.js';
 
-let container: StartedPostgreSqlContainer;
+let testDb: TestDatabase;
 let pool: Pool;
 
 beforeAll(async () => {
-  container = await new PostgreSqlContainer('postgres:16-alpine').start();
-  pool = new Pool({ connectionString: container.getConnectionUri(), max: 1 });
+  testDb = await createTestDatabase({ migrated: false });
+  pool = new Pool({ connectionString: testDb.adminUrl, max: 1 });
 });
 
 afterAll(async () => {
   await pool?.end();
-  await container?.stop();
+  await testDb?.drop();
 });
 
 // The tables every fixture needs, shaped like ADR 0027 §2. app.tenants is allowlisted by default.

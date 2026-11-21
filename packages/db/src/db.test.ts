@@ -7,7 +7,6 @@
 import { randomUUID } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 
-import { PostgreSqlContainer, type StartedPostgreSqlContainer } from '@testcontainers/postgresql';
 import { eq } from 'drizzle-orm';
 import { Pool, type PoolClient } from 'pg';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
@@ -18,22 +17,12 @@ import { runMigrations } from './migrate.js';
 import { organizations, restoreCanary, tenants } from './schema/platform.js';
 import { scoped } from './scoped.js';
 import { createTenantWithEntity } from './testing/fixtures.js';
+import { createTestDatabase, type TestDatabase } from './testing/test-database.js';
 
-const OWNER_PW = 'owner-test-pw';
-const APP_PW = 'app-test-pw';
-
-let container: StartedPostgreSqlContainer;
+let testDb: TestDatabase;
 let admin: Pool;
 let owner: Pool;
 let app: DbHandle;
-
-function urlFor(user: string, password: string, database: string): string {
-  const url = new URL(container.getConnectionUri());
-  url.username = user;
-  url.password = password;
-  url.pathname = `/${database}`;
-  return url.toString();
-}
 
 /** Inserts a tenant and one organization, a legal entity (as bos_app), and returns their ids. */
 async function insertOrg(name: string, tenantId?: string) {
@@ -84,26 +73,14 @@ function journalEntryCount(): number {
 }
 
 beforeAll(async () => {
-  container = await new PostgreSqlContainer('postgres:16-alpine').start();
+  testDb = await createTestDatabase();
 
-  admin = new Pool({ connectionString: container.getConnectionUri(), max: 1 });
-  // Same shape as infra/postgres/init-dbs.sh: plain login roles, a database owned by bos_owner, and default
+  admin = new Pool({ connectionString: testDb.adminUrl, max: 1 });
   // privileges that give bos_app DML on whatever bos_owner creates later.
-  await admin.query(`CREATE ROLE bos_owner LOGIN PASSWORD '${OWNER_PW}'`);
-  await admin.query(`CREATE ROLE bos_app LOGIN PASSWORD '${APP_PW}'`);
-  await admin.query('CREATE DATABASE bos OWNER bos_owner');
-  await admin.query('REVOKE ALL ON DATABASE bos FROM PUBLIC');
-  await admin.query('GRANT CONNECT ON DATABASE bos TO bos_app');
   await admin.end();
 
   // Default privileges belong to one database, so they are set from inside "bos".
-  const bosAdmin = new Pool({ connectionString: urlFor('test', 'test', 'bos'), max: 1 });
-  await bosAdmin.query(
-    'ALTER DEFAULT PRIVILEGES FOR ROLE bos_owner GRANT USAGE ON SCHEMAS TO bos_app',
-  );
-  await bosAdmin.query(
-    'ALTER DEFAULT PRIVILEGES FOR ROLE bos_owner GRANT SELECT, INSERT, UPDATE, DELETE ON TABLES TO bos_app',
-  );
+  const bosAdmin = new Pool({ connectionString: testDb.adminUrl, max: 1 });
   // P1's audit trigger (0001) refuses a write to an app table with no actor. These P0 tests write rows
   // directly as bos_app, so every bos_app session in THIS test database gets a test actor by default.
   // The API never relies on this: withTx sets the actor per transaction (see packages/db/src/audit.test.ts
@@ -113,20 +90,18 @@ beforeAll(async () => {
     ['bos.actor_id', 'system:db-test'],
     ['bos.correlation_id', 'db-test-0001'],
   ]) {
-    await bosAdmin.query(`ALTER ROLE bos_app IN DATABASE bos SET ${key} = '${value}'`);
+    await bosAdmin.query(`ALTER ROLE bos_app IN DATABASE ${testDb.name} SET ${key} = '${value}'`);
   }
   await bosAdmin.end();
 
-  await runMigrations(urlFor('bos_owner', OWNER_PW, 'bos'));
-
-  owner = new Pool({ connectionString: urlFor('bos_owner', OWNER_PW, 'bos'), max: 2 });
-  app = createDb(urlFor('bos_app', APP_PW, 'bos'), { max: 2 });
+  owner = new Pool({ connectionString: testDb.ownerUrl, max: 2 });
+  app = createDb(testDb.appUrl, { max: 2 });
 });
 
 afterAll(async () => {
   await app?.close();
   await owner?.end();
-  await container?.stop();
+  await testDb?.drop();
 });
 
 describe('migrations', () => {
@@ -143,7 +118,7 @@ describe('migrations', () => {
   });
 
   it('can run again without error and without changes (idempotent)', async () => {
-    await expect(runMigrations(urlFor('bos_owner', OWNER_PW, 'bos'))).resolves.toBeUndefined();
+    await expect(runMigrations(testDb.ownerUrl)).resolves.toBeUndefined();
     const { rows } = await owner.query<{ n: string }>(
       'SELECT count(*) AS n FROM drizzle.__drizzle_migrations',
     );

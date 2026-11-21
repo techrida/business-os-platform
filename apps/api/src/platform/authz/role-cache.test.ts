@@ -30,9 +30,7 @@ import {
   organizations,
   rolePermissionLevels,
   rolePermissions,
-  runMigrations,
 } from '@bos/db';
-import { PostgreSqlContainer, type StartedPostgreSqlContainer } from '@testcontainers/postgresql';
 import { eq, sql } from 'drizzle-orm';
 import { drizzle } from 'drizzle-orm/node-postgres';
 import { Pool } from 'pg';
@@ -42,23 +40,13 @@ import { type Db } from '../db/db.module';
 import { type TxScope, systemActor, withTx } from '../db/tx';
 import { AuthzService } from './authz.service';
 import { RoleCache, VERSION_CHECK_TTL_MS } from './role-cache';
+import { createTestDatabase, type TestDatabase } from '@bos/db/testing';
 
-const OWNER_PW = 'owner-test-pw';
-const APP_PW = 'app-test-pw';
-
-let container: StartedPostgreSqlContainer;
+let testDb: TestDatabase;
 let appPool: Pool;
 let db: Db;
 let now = 1_000_000;
 const clock = (): number => now;
-
-function urlFor(user: string, password: string, database: string): string {
-  const url = new URL(container.getConnectionUri());
-  url.username = user;
-  url.password = password;
-  url.pathname = `/${database}`;
-  return url.toString();
-}
 
 /** A fresh tenant and its default entity, so every test starts with no rows and no version. */
 async function newOrg(): Promise<TxScope> {
@@ -139,34 +127,21 @@ const grantsOf = (map: ReadonlyMap<Permission, AccessScope>): Record<string, Acc
 const otherInstance = (): AuthzService => new AuthzService(db, new RoleCache(db, clock));
 
 beforeAll(async () => {
-  container = await new PostgreSqlContainer('postgres:16-alpine').start();
+  testDb = await createTestDatabase();
 
-  const admin = new Pool({ connectionString: container.getConnectionUri(), max: 1 });
-  await admin.query(`CREATE ROLE bos_owner LOGIN PASSWORD '${OWNER_PW}'`);
-  await admin.query(`CREATE ROLE bos_app LOGIN PASSWORD '${APP_PW}'`);
-  await admin.query('CREATE DATABASE bos OWNER bos_owner');
-  await admin.query('REVOKE ALL ON DATABASE bos FROM PUBLIC');
-  await admin.query('GRANT CONNECT ON DATABASE bos TO bos_app');
+  const admin = new Pool({ connectionString: testDb.adminUrl, max: 1 });
   await admin.end();
 
-  const bosAdmin = new Pool({ connectionString: urlFor('test', 'test', 'bos'), max: 1 });
-  await bosAdmin.query(
-    'ALTER DEFAULT PRIVILEGES FOR ROLE bos_owner GRANT USAGE ON SCHEMAS TO bos_app',
-  );
-  await bosAdmin.query(
-    'ALTER DEFAULT PRIVILEGES FOR ROLE bos_owner GRANT SELECT, INSERT, UPDATE, DELETE ON TABLES TO bos_app',
-  );
+  const bosAdmin = new Pool({ connectionString: testDb.adminUrl, max: 1 });
   await bosAdmin.end();
 
-  await runMigrations(urlFor('bos_owner', OWNER_PW, 'bos'));
-
-  appPool = new Pool({ connectionString: urlFor('bos_app', APP_PW, 'bos'), max: 4 });
+  appPool = new Pool({ connectionString: testDb.appUrl, max: 4 });
   db = drizzle({ client: appPool });
 }, 120_000);
 
 afterAll(async () => {
   await appPool?.end();
-  await container?.stop();
+  await testDb?.drop();
 });
 
 beforeEach(() => {

@@ -1,14 +1,12 @@
-// Integration tests for the SQL fixture helpers in fixtures.ts, on a real postgres:16-alpine (Testcontainers,
-// needs Docker), migrated to the latest migration. ADR 0027: a tenant, its default legal entity and staff IdP
-// org; parties with their IdP orgs; staff users with a default membership; portal users.
+// Integration tests for the SQL fixture helpers in fixtures.ts, on a database of the shared test cluster
+// (vitest-global-setup.ts, needs Docker), migrated to the latest migration. ADR 0027: a tenant, its default legal
+// entity and staff IdP org; parties with their IdP orgs; staff users with a default membership; portal users.
 // Run with: pnpm --filter @bos/db exec vitest run src/testing/fixtures.test.ts
 //
-// The setup mirrors entities.test.ts (roles, database, the default privileges of init-dbs.sh).
-import { PostgreSqlContainer, type StartedPostgreSqlContainer } from '@testcontainers/postgresql';
+// createTestDatabase() gives the roles and the default privileges of init-dbs.sh.
 import { Pool } from 'pg';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 
-import { runMigrations } from '../migrate.js';
 import {
   createDepartment,
   createParty,
@@ -16,61 +14,22 @@ import {
   createStaffUser,
   createTenantWithEntity,
 } from './fixtures.js';
+import { createTestDatabase, type TestDatabase } from './test-database.js';
 
-const OWNER_PW = 'owner-test-pw';
-const APP_PW = 'app-test-pw';
-
-let container: StartedPostgreSqlContainer;
+let testDb: TestDatabase;
 let owner: Pool;
 let app: Pool;
 
-function urlFor(user: string, password: string, database: string): string {
-  const url = new URL(container.getConnectionUri());
-  url.username = user;
-  url.password = password;
-  url.pathname = `/${database}`;
-  return url.toString();
-}
-
-/** A database owned by bos_owner with init-dbs.sh's default privileges, not yet migrated. */
-async function createDatabase(name: string): Promise<void> {
-  const admin = new Pool({ connectionString: container.getConnectionUri(), max: 1 });
-  await admin.query(`CREATE DATABASE ${name} OWNER bos_owner`);
-  await admin.query(`REVOKE ALL ON DATABASE ${name} FROM PUBLIC`);
-  await admin.query(`GRANT CONNECT ON DATABASE ${name} TO bos_app`);
-  await admin.end();
-
-  const superuser = new Pool({ connectionString: urlFor('test', 'test', name), max: 1 });
-  await superuser.query(
-    'ALTER DEFAULT PRIVILEGES FOR ROLE bos_owner GRANT USAGE ON SCHEMAS TO bos_app',
-  );
-  await superuser.query(
-    'ALTER DEFAULT PRIVILEGES FOR ROLE bos_owner GRANT SELECT, INSERT, UPDATE, DELETE ON TABLES TO bos_app',
-  );
-  await superuser.query(
-    'ALTER DEFAULT PRIVILEGES FOR ROLE bos_owner GRANT USAGE, SELECT ON SEQUENCES TO bos_app',
-  );
-  await superuser.end();
-}
-
 beforeAll(async () => {
-  container = await new PostgreSqlContainer('postgres:16-alpine').start();
-  const admin = new Pool({ connectionString: container.getConnectionUri(), max: 1 });
-  await admin.query(`CREATE ROLE bos_owner LOGIN PASSWORD '${OWNER_PW}'`);
-  await admin.query(`CREATE ROLE bos_app LOGIN PASSWORD '${APP_PW}'`);
-  await admin.end();
-
-  await createDatabase('bos');
-  await runMigrations(urlFor('bos_owner', OWNER_PW, 'bos'));
-
-  owner = new Pool({ connectionString: urlFor('bos_owner', OWNER_PW, 'bos'), max: 2 });
-  app = new Pool({ connectionString: urlFor('bos_app', APP_PW, 'bos'), max: 5 });
+  testDb = await createTestDatabase();
+  owner = new Pool({ connectionString: testDb.ownerUrl, max: 2 });
+  app = new Pool({ connectionString: testDb.appUrl, max: 5 });
 });
 
 afterAll(async () => {
   await app?.end();
   await owner?.end();
-  await container?.stop();
+  await testDb?.drop();
 });
 
 async function rows<T>(sql: string, values: unknown[]): Promise<T[]> {

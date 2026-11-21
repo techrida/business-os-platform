@@ -35,11 +35,9 @@ import {
   quotationTaxSummary,
   quotationVersions,
   quotations,
-  runMigrations,
   users,
 } from '@bos/db';
 import { ForbiddenException, HttpException } from '@nestjs/common';
-import { PostgreSqlContainer, type StartedPostgreSqlContainer } from '@testcontainers/postgresql';
 import { and, asc, eq, inArray, sql } from 'drizzle-orm';
 import { drizzle } from 'drizzle-orm/node-postgres';
 import { Pool } from 'pg';
@@ -77,11 +75,10 @@ import {
   QUOTATION_VERSION_DOCUMENT_TYPE,
   QuotationVersionSubject,
 } from './quotation-version.subject';
+import { createTestDatabase, type TestDatabase } from '@bos/db/testing';
 
 vi.setConfig({ testTimeout: 60_000, hookTimeout: 180_000 });
 
-const OWNER_PW = 'owner-test-pw';
-const APP_PW = 'app-test-pw';
 const WORKSPACE_URL = 'http://workspace.test';
 const now = new Date('2026-11-09T04:00:00Z');
 
@@ -134,7 +131,7 @@ const QUOTATION_VERSION_WORKFLOW_SPEC: unknown = {
   sla: { remindAfterHours: 24, escalateAfterHours: 72, escalateTo: { role: 'founder' } },
 };
 
-let container: StartedPostgreSqlContainer;
+let testDb: TestDatabase;
 let ownerPool: Pool;
 let appPool: Pool;
 let db: QuotationFixtureDb;
@@ -228,34 +225,15 @@ const directory = {
   emailOf: vi.fn(() => Promise.resolve(null)),
 };
 
-const urlFor = (user: string, password: string, database: string) => {
-  const url = new URL(container.getConnectionUri());
-  url.username = user;
-  url.password = password;
-  url.pathname = `/${database}`;
-  return url.toString();
-};
-
 beforeAll(async () => {
-  container = await new PostgreSqlContainer('postgres:16-alpine').start();
-  const admin0 = new Pool({ connectionString: container.getConnectionUri(), max: 1 });
-  await admin0.query(`CREATE ROLE bos_owner LOGIN PASSWORD '${OWNER_PW}'`);
-  await admin0.query(`CREATE ROLE bos_app LOGIN PASSWORD '${APP_PW}'`);
-  await admin0.query('CREATE DATABASE bos OWNER bos_owner');
-  await admin0.query('GRANT CONNECT ON DATABASE bos TO bos_app');
+  testDb = await createTestDatabase();
+  const admin0 = new Pool({ connectionString: testDb.adminUrl, max: 1 });
   await admin0.end();
-  const bosAdmin = new Pool({ connectionString: urlFor('test', 'test', 'bos'), max: 1 });
-  await bosAdmin.query(
-    'ALTER DEFAULT PRIVILEGES FOR ROLE bos_owner GRANT USAGE ON SCHEMAS TO bos_app',
-  );
-  await bosAdmin.query(
-    'ALTER DEFAULT PRIVILEGES FOR ROLE bos_owner GRANT SELECT, INSERT, UPDATE, DELETE ON TABLES TO bos_app',
-  );
+  const bosAdmin = new Pool({ connectionString: testDb.adminUrl, max: 1 });
   await bosAdmin.end();
-  await runMigrations(urlFor('bos_owner', OWNER_PW, 'bos'));
 
-  ownerPool = new Pool({ connectionString: urlFor('bos_owner', OWNER_PW, 'bos'), max: 2 });
-  appPool = new Pool({ connectionString: urlFor('bos_app', APP_PW, 'bos'), max: 8 });
+  ownerPool = new Pool({ connectionString: testDb.ownerUrl, max: 2 });
+  appPool = new Pool({ connectionString: testDb.appUrl, max: 8 });
   db = drizzle({ client: appPool });
 
   f = await seedQuotationFixture(db);
@@ -331,7 +309,7 @@ beforeAll(async () => {
 afterAll(async () => {
   await appPool?.end();
   await ownerPool?.end();
-  await container?.stop();
+  await testDb?.drop();
 });
 
 beforeEach(() => {
@@ -950,7 +928,7 @@ describe('quotation approval: tamper after submit', () => {
     await act(U.acc, 'accountant', request!.id, 'approve');
 
     // A superuser session with triggers off (replica) stands in for a write that got past the freeze.
-    const superPool = new Pool({ connectionString: urlFor('test', 'test', 'bos'), max: 1 });
+    const superPool = new Pool({ connectionString: testDb.adminUrl, max: 1 });
     try {
       const client = await superPool.connect();
       try {

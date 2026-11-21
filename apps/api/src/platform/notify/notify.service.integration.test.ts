@@ -9,9 +9,8 @@
 import { randomUUID } from 'node:crypto';
 
 import type { RoleKey } from '@bos/contracts';
-import { createStaffUser, createTenantWithEntity, notifications, runMigrations } from '@bos/db';
+import { createStaffUser, createTenantWithEntity, notifications } from '@bos/db';
 import { Logger } from '@nestjs/common';
-import { PostgreSqlContainer, type StartedPostgreSqlContainer } from '@testcontainers/postgresql';
 import type { Queue } from 'bullmq';
 import { drizzle } from 'drizzle-orm/node-postgres';
 import { Pool } from 'pg';
@@ -27,9 +26,7 @@ import { UserMirror } from '../users/user-mirror';
 import { UsersService } from '../users/users.service';
 import { SqlUsersStore } from '../users/users.store';
 import { NotifyService } from './notify.service';
-
-const OWNER_PW = 'owner-test-pw';
-const APP_PW = 'app-test-pw';
+import { createTestDatabase, type TestDatabase } from '@bos/db/testing';
 
 /** A directory that knows the seeded users; `roleHolders` is what userIdsWithRole answers. */
 class FakeDirectory extends UserDirectory {
@@ -46,7 +43,7 @@ class FakeDirectory extends UserDirectory {
   }
 }
 
-let container: StartedPostgreSqlContainer;
+let testDb: TestDatabase;
 let appPool: Pool;
 let db: Db;
 let scope: TxScope;
@@ -55,14 +52,6 @@ let service: NotifyService;
 const directory = new FakeDirectory();
 // Filled in beforeAll: the fixtures generate the user ids.
 const ids = { a: '', b: '', c: '', noEmail: '' };
-
-function urlFor(user: string, password: string, database: string): string {
-  const url = new URL(container.getConnectionUri());
-  url.username = user;
-  url.password = password;
-  url.pathname = `/${database}`;
-  return url.toString();
-}
 
 const email = {
   template: 'approval.pending' as const,
@@ -124,28 +113,15 @@ function asUser<T>(userId: string, fn: () => Promise<T>): Promise<T> {
 }
 
 beforeAll(async () => {
-  container = await new PostgreSqlContainer('postgres:16-alpine').start();
+  testDb = await createTestDatabase();
 
-  const admin = new Pool({ connectionString: container.getConnectionUri(), max: 1 });
-  await admin.query(`CREATE ROLE bos_owner LOGIN PASSWORD '${OWNER_PW}'`);
-  await admin.query(`CREATE ROLE bos_app LOGIN PASSWORD '${APP_PW}'`);
-  await admin.query('CREATE DATABASE bos OWNER bos_owner');
-  await admin.query('REVOKE ALL ON DATABASE bos FROM PUBLIC');
-  await admin.query('GRANT CONNECT ON DATABASE bos TO bos_app');
+  const admin = new Pool({ connectionString: testDb.adminUrl, max: 1 });
   await admin.end();
 
-  const bosAdmin = new Pool({ connectionString: urlFor('test', 'test', 'bos'), max: 1 });
-  await bosAdmin.query(
-    'ALTER DEFAULT PRIVILEGES FOR ROLE bos_owner GRANT USAGE ON SCHEMAS TO bos_app',
-  );
-  await bosAdmin.query(
-    'ALTER DEFAULT PRIVILEGES FOR ROLE bos_owner GRANT SELECT, INSERT, UPDATE, DELETE ON TABLES TO bos_app',
-  );
+  const bosAdmin = new Pool({ connectionString: testDb.adminUrl, max: 1 });
   await bosAdmin.end();
 
-  await runMigrations(urlFor('bos_owner', OWNER_PW, 'bos'));
-
-  appPool = new Pool({ connectionString: urlFor('bos_app', APP_PW, 'bos'), max: 5 });
+  appPool = new Pool({ connectionString: testDb.appUrl, max: 5 });
   db = drizzle({ client: appPool });
 
   const tenant = await createTenantWithEntity(appPool);
@@ -168,7 +144,7 @@ beforeAll(async () => {
 
 afterAll(async () => {
   await appPool?.end();
-  await container?.stop();
+  await testDb?.drop();
 });
 
 describe('NotifyService.notifyUser (the write path)', () => {

@@ -19,13 +19,11 @@
 // raised without an RFQ (purchase_orders_source_check allows both NULL), which is enough for the payables links.
 import { randomUUID } from 'node:crypto';
 
-import { PostgreSqlContainer, type StartedPostgreSqlContainer } from '@testcontainers/postgresql';
 import { Pool, type PoolClient } from 'pg';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 
 import { checkAudit } from './check-audit.js';
 import { checkTenancy, describeViolations } from './check-tenancy.js';
-import { runMigrations } from './migrate.js';
 import {
   createCostCenter,
   createDepartment,
@@ -33,9 +31,7 @@ import {
   createStaffUser,
   createTenantWithEntity,
 } from './testing/fixtures.js';
-
-const OWNER_PW = 'owner-test-pw';
-const APP_PW = 'app-test-pw';
+import { createTestDatabase, type TestDatabase } from './testing/test-database.js';
 
 const PAYABLES_TABLES = [
   'vendor_bill_submissions',
@@ -71,17 +67,9 @@ const P4_RELATIONS = [
   'v_po_line_progress',
 ] as const;
 
-let container: StartedPostgreSqlContainer;
+let testDb: TestDatabase;
 let owner: Pool;
 let app: Pool;
-
-function urlFor(user: string, password: string, database: string): string {
-  const url = new URL(container.getConnectionUri());
-  url.username = user;
-  url.password = password;
-  url.pathname = `/${database}`;
-  return url.toString();
-}
 
 /** One tenant with its default entity, two staff users, a department and a tax code. */
 interface Scope {
@@ -376,42 +364,29 @@ function insertWithholdingCode(tenantId: string, organizationId: string): Promis
 }
 
 beforeAll(async () => {
-  container = await new PostgreSqlContainer('postgres:16-alpine').start();
+  testDb = await createTestDatabase();
 
-  const admin = new Pool({ connectionString: container.getConnectionUri(), max: 1 });
-  await admin.query(`CREATE ROLE bos_owner LOGIN PASSWORD '${OWNER_PW}'`);
-  await admin.query(`CREATE ROLE bos_app LOGIN PASSWORD '${APP_PW}'`);
-  await admin.query('CREATE DATABASE bos OWNER bos_owner');
-  await admin.query('REVOKE ALL ON DATABASE bos FROM PUBLIC');
-  await admin.query('GRANT CONNECT ON DATABASE bos TO bos_app');
+  const admin = new Pool({ connectionString: testDb.adminUrl, max: 1 });
   await admin.end();
 
-  const bosAdmin = new Pool({ connectionString: urlFor('test', 'test', 'bos'), max: 1 });
-  await bosAdmin.query(
-    'ALTER DEFAULT PRIVILEGES FOR ROLE bos_owner GRANT USAGE ON SCHEMAS TO bos_app',
-  );
-  await bosAdmin.query(
-    'ALTER DEFAULT PRIVILEGES FOR ROLE bos_owner GRANT SELECT, INSERT, UPDATE, DELETE ON TABLES TO bos_app',
-  );
+  const bosAdmin = new Pool({ connectionString: testDb.adminUrl, max: 1 });
   for (const [key, value] of [
     ['bos.actor_kind', 'system'],
     ['bos.actor_id', 'system:payables-test'],
     ['bos.correlation_id', 'payables-test-0001'],
   ]) {
-    await bosAdmin.query(`ALTER ROLE bos_app IN DATABASE bos SET ${key} = '${value}'`);
+    await bosAdmin.query(`ALTER ROLE bos_app IN DATABASE ${testDb.name} SET ${key} = '${value}'`);
   }
   await bosAdmin.end();
 
-  await runMigrations(urlFor('bos_owner', OWNER_PW, 'bos'));
-
-  owner = new Pool({ connectionString: urlFor('bos_owner', OWNER_PW, 'bos'), max: 2 });
-  app = new Pool({ connectionString: urlFor('bos_app', APP_PW, 'bos'), max: 2 });
+  owner = new Pool({ connectionString: testDb.ownerUrl, max: 2 });
+  app = new Pool({ connectionString: testDb.appUrl, max: 2 });
 });
 
 afterAll(async () => {
   await app?.end();
   await owner?.end();
-  await container?.stop();
+  await testDb?.drop();
 });
 
 describe('0035_payables on a fresh database', () => {

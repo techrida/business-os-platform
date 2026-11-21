@@ -6,9 +6,8 @@
 // the roles, migrate as bos_owner, then work as bos_app.
 import { randomUUID } from 'node:crypto';
 
-import { createTenantWithEntity, organizations, runMigrations } from '@bos/db';
+import { createTenantWithEntity, organizations } from '@bos/db';
 import { BadRequestException, ConflictException } from '@nestjs/common';
-import { PostgreSqlContainer, type StartedPostgreSqlContainer } from '@testcontainers/postgresql';
 import { drizzle } from 'drizzle-orm/node-postgres';
 import { Pool } from 'pg';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
@@ -18,11 +17,9 @@ import { type Actor, type TxScope, systemActor, withTx } from '../db/tx';
 import { MoneyService } from './money.service';
 import { NumberingService } from './numbering.service';
 import { SETTING_DEFAULTS, SettingsService } from './settings.service';
+import { createTestDatabase, type TestDatabase } from '@bos/db/testing';
 
-const OWNER_PW = 'owner-test-pw';
-const APP_PW = 'app-test-pw';
-
-let container: StartedPostgreSqlContainer;
+let testDb: TestDatabase;
 let appPool: Pool;
 let db: Db;
 let settingsService: SettingsService;
@@ -51,37 +48,16 @@ async function addEntity(scope: TxScope): Promise<TxScope> {
   return other;
 }
 
-function urlFor(user: string, password: string, database: string): string {
-  const url = new URL(container.getConnectionUri());
-  url.username = user;
-  url.password = password;
-  url.pathname = `/${database}`;
-  return url.toString();
-}
-
 beforeAll(async () => {
-  container = await new PostgreSqlContainer('postgres:16-alpine').start();
+  testDb = await createTestDatabase();
 
-  const admin = new Pool({ connectionString: container.getConnectionUri(), max: 1 });
-  await admin.query(`CREATE ROLE bos_owner LOGIN PASSWORD '${OWNER_PW}'`);
-  await admin.query(`CREATE ROLE bos_app LOGIN PASSWORD '${APP_PW}'`);
-  await admin.query('CREATE DATABASE bos OWNER bos_owner');
-  await admin.query('REVOKE ALL ON DATABASE bos FROM PUBLIC');
-  await admin.query('GRANT CONNECT ON DATABASE bos TO bos_app');
+  const admin = new Pool({ connectionString: testDb.adminUrl, max: 1 });
   await admin.end();
 
-  const bosAdmin = new Pool({ connectionString: urlFor('test', 'test', 'bos'), max: 1 });
-  await bosAdmin.query(
-    'ALTER DEFAULT PRIVILEGES FOR ROLE bos_owner GRANT USAGE ON SCHEMAS TO bos_app',
-  );
-  await bosAdmin.query(
-    'ALTER DEFAULT PRIVILEGES FOR ROLE bos_owner GRANT SELECT, INSERT, UPDATE, DELETE ON TABLES TO bos_app',
-  );
+  const bosAdmin = new Pool({ connectionString: testDb.adminUrl, max: 1 });
   await bosAdmin.end();
 
-  await runMigrations(urlFor('bos_owner', OWNER_PW, 'bos'));
-
-  appPool = new Pool({ connectionString: urlFor('bos_app', APP_PW, 'bos'), max: 10 });
+  appPool = new Pool({ connectionString: testDb.appUrl, max: 10 });
   // An idle client that Postgres drops during teardown (57P01) emits 'error' on the pool; unhandled,
   // vitest counts it as a failure (seen once in CI). The app's pool ignores it the same way.
   appPool.on('error', () => undefined);
@@ -92,7 +68,7 @@ beforeAll(async () => {
 
 afterAll(async () => {
   await appPool?.end();
-  await container?.stop();
+  await testDb?.drop();
 });
 
 describe('SettingsService', () => {

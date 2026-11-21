@@ -15,9 +15,8 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { Readable } from 'node:stream';
 
-import { createTenantWithEntity, documentVersions, runMigrations } from '@bos/db';
+import { createTenantWithEntity, documentVersions } from '@bos/db';
 import { Logger } from '@nestjs/common';
-import { PostgreSqlContainer, type StartedPostgreSqlContainer } from '@testcontainers/postgresql';
 import type { Job, Queue } from 'bullmq';
 import { eq, sql } from 'drizzle-orm';
 import { drizzle } from 'drizzle-orm/node-postgres';
@@ -37,14 +36,13 @@ import {
   scanBackoffTotalMs,
 } from './scan.processor';
 import { DiskStorageAdapter, type StorageAdapter } from './storage.adapter';
+import { createTestDatabase, type TestDatabase } from '@bos/db/testing';
 
 vi.setConfig({ testTimeout: 60_000, hookTimeout: 180_000 });
 
-const OWNER_PW = 'owner-test-pw';
-const APP_PW = 'app-test-pw';
 const MINUTE = 60_000;
 
-let container: StartedPostgreSqlContainer;
+let testDb: TestDatabase;
 let pool: Pool;
 let db: Db;
 let scope: TxScope;
@@ -56,14 +54,6 @@ let deadPort: number;
 
 const audit = { record: vi.fn().mockResolvedValue(undefined) };
 const notify = { notifyUser: vi.fn().mockResolvedValue(undefined) };
-
-const urlFor = (user: string, password: string, database: string) => {
-  const url = new URL(container.getConnectionUri());
-  url.username = user;
-  url.password = password;
-  url.pathname = `/${database}`;
-  return url.toString();
-};
 
 /** Just enough of a BullMQ queue for the sweeper: getJobs by state, and add() that ignores a used id. */
 class FakeQueue {
@@ -90,25 +80,13 @@ class FakeQueue {
 }
 
 beforeAll(async () => {
-  container = await new PostgreSqlContainer('postgres:16-alpine').start();
-  const admin = new Pool({ connectionString: container.getConnectionUri(), max: 1 });
-  await admin.query(`CREATE ROLE bos_owner LOGIN PASSWORD '${OWNER_PW}'`);
-  await admin.query(`CREATE ROLE bos_app LOGIN PASSWORD '${APP_PW}'`);
-  await admin.query('CREATE DATABASE bos OWNER bos_owner');
-  await admin.query('REVOKE ALL ON DATABASE bos FROM PUBLIC');
-  await admin.query('GRANT CONNECT ON DATABASE bos TO bos_app');
+  testDb = await createTestDatabase();
+  const admin = new Pool({ connectionString: testDb.adminUrl, max: 1 });
   await admin.end();
-  const bosAdmin = new Pool({ connectionString: urlFor('test', 'test', 'bos'), max: 1 });
-  await bosAdmin.query(
-    'ALTER DEFAULT PRIVILEGES FOR ROLE bos_owner GRANT USAGE ON SCHEMAS TO bos_app',
-  );
-  await bosAdmin.query(
-    'ALTER DEFAULT PRIVILEGES FOR ROLE bos_owner GRANT SELECT, INSERT, UPDATE, DELETE ON TABLES TO bos_app',
-  );
+  const bosAdmin = new Pool({ connectionString: testDb.adminUrl, max: 1 });
   await bosAdmin.end();
-  await runMigrations(urlFor('bos_owner', OWNER_PW, 'bos'));
 
-  pool = new Pool({ connectionString: urlFor('bos_app', APP_PW, 'bos'), max: 8 });
+  pool = new Pool({ connectionString: testDb.appUrl, max: 8 });
   db = drizzle({ client: pool });
 
   const { tenantId, organizationId } = await createTenantWithEntity(pool);
@@ -127,7 +105,7 @@ afterAll(async () => {
   await okClamd?.close();
   await errorClamd?.close();
   await pool?.end();
-  await container?.stop();
+  await testDb?.drop();
   if (storageRoot) await rm(storageRoot, { recursive: true, force: true });
 });
 

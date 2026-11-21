@@ -8,54 +8,31 @@
 //     raises when both are missing. attach() requires only tenant_id.
 //   * The organizations backfill, on a database migrated to 0012 that already holds rows.
 //
-// The setup mirrors audit.test.ts (roles, database, the default privileges of init-dbs.sh).
+// Each database is a copy from createTestDatabase() (roles and the default privileges of init-dbs.sh).
 import { cpSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { randomUUID } from 'node:crypto';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
-import { PostgreSqlContainer, type StartedPostgreSqlContainer } from '@testcontainers/postgresql';
 import { migrate } from 'drizzle-orm/node-postgres/migrator';
 import { Pool, type PoolClient } from 'pg';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 
 import { createDb } from './client.js';
 import { MIGRATIONS_FOLDER, runMigrations } from './migrate.js';
+import { createTestDatabase, type TestDatabase } from './testing/test-database.js';
 
-const OWNER_PW = 'owner-test-pw';
-const APP_PW = 'app-test-pw';
-
-let container: StartedPostgreSqlContainer;
+let testDb: TestDatabase;
 let owner: Pool;
 let app: Pool;
+/** The per-case databases, dropped in afterAll. */
+const caseDatabases: TestDatabase[] = [];
 
-function urlFor(user: string, password: string, database: string): string {
-  const url = new URL(container.getConnectionUri());
-  url.username = user;
-  url.password = password;
-  url.pathname = `/${database}`;
-  return url.toString();
-}
-
-/** A database owned by bos_owner with init-dbs.sh's default privileges, not yet migrated. */
-async function createDatabase(name: string): Promise<void> {
-  const admin = new Pool({ connectionString: container.getConnectionUri(), max: 1 });
-  await admin.query(`CREATE DATABASE ${name} OWNER bos_owner`);
-  await admin.query(`REVOKE ALL ON DATABASE ${name} FROM PUBLIC`);
-  await admin.query(`GRANT CONNECT ON DATABASE ${name} TO bos_app`);
-  await admin.end();
-
-  const superuser = new Pool({ connectionString: urlFor('test', 'test', name), max: 1 });
-  await superuser.query(
-    'ALTER DEFAULT PRIVILEGES FOR ROLE bos_owner GRANT USAGE ON SCHEMAS TO bos_app',
-  );
-  await superuser.query(
-    'ALTER DEFAULT PRIVILEGES FOR ROLE bos_owner GRANT SELECT, INSERT, UPDATE, DELETE ON TABLES TO bos_app',
-  );
-  await superuser.query(
-    'ALTER DEFAULT PRIVILEGES FOR ROLE bos_owner GRANT USAGE, SELECT ON SEQUENCES TO bos_app',
-  );
-  await superuser.end();
+/** A database owned by bos_owner with init-dbs.sh's default privileges, not yet migrated: its owner URL. */
+async function createDatabase(): Promise<string> {
+  const db = await createTestDatabase({ migrated: false });
+  caseDatabases.push(db);
+  return db.ownerUrl;
 }
 
 /** The bos.* settings withTx() sets, for one transaction. organizationId null leaves it out. */
@@ -136,23 +113,17 @@ async function columnsOf(
 }
 
 beforeAll(async () => {
-  container = await new PostgreSqlContainer('postgres:16-alpine').start();
-  const admin = new Pool({ connectionString: container.getConnectionUri(), max: 1 });
-  await admin.query(`CREATE ROLE bos_owner LOGIN PASSWORD '${OWNER_PW}'`);
-  await admin.query(`CREATE ROLE bos_app LOGIN PASSWORD '${APP_PW}'`);
-  await admin.end();
+  testDb = await createTestDatabase();
 
-  await createDatabase('bos');
-  await runMigrations(urlFor('bos_owner', OWNER_PW, 'bos'));
-
-  owner = new Pool({ connectionString: urlFor('bos_owner', OWNER_PW, 'bos'), max: 2 });
-  app = new Pool({ connectionString: urlFor('bos_app', APP_PW, 'bos'), max: 5 });
+  owner = new Pool({ connectionString: testDb.ownerUrl, max: 2 });
+  app = new Pool({ connectionString: testDb.appUrl, max: 5 });
 });
 
 afterAll(async () => {
   await app?.end();
   await owner?.end();
-  await container?.stop();
+  await testDb?.drop();
+  for (const db of caseDatabases) await db.drop();
 });
 
 describe('0013 tables and keys (pg_catalog)', () => {
@@ -470,8 +441,7 @@ describe('idp_orgs kind rules', () => {
 
 describe('organizations backfill on a database that already has rows', () => {
   it('fills code and legal_name, sets NOT NULL, and makes the one staff org per tenant the default', async () => {
-    await createDatabase('bos_backfill');
-    const ownerUrl = urlFor('bos_owner', OWNER_PW, 'bos_backfill');
+    const ownerUrl = await createDatabase();
 
     // Migrate to 0012 only: a copy of the folder with the journal cut there.
     const folder = mkdtempSync(join(tmpdir(), 'bos-0012-'));
@@ -603,8 +573,7 @@ describe('0013 data move on a database that already has rows (K1-U1b)', () => {
   let pool: Pool;
 
   beforeAll(async () => {
-    await createDatabase('bos_move');
-    const ownerUrl = urlFor('bos_owner', OWNER_PW, 'bos_move');
+    const ownerUrl = await createDatabase();
     await migrateTo0012(ownerUrl);
     pool = new Pool({ connectionString: ownerUrl, max: 1 });
 
@@ -825,8 +794,7 @@ describe('0013 data move on a database that already has rows (K1-U1b)', () => {
 
 describe('0013 refuses other rows owned by a customer or vendor org', () => {
   it('raises on a documents row owned by a customer org, naming the table', async () => {
-    await createDatabase('bos_reset');
-    const ownerUrl = urlFor('bos_owner', OWNER_PW, 'bos_reset');
+    const ownerUrl = await createDatabase();
     await migrateTo0012(ownerUrl);
     const pool = new Pool({ connectionString: ownerUrl, max: 1 });
     try {
@@ -871,8 +839,7 @@ describe('0013 refuses other rows owned by a customer or vendor org', () => {
   });
 
   it('raises on a tenant with two staff orgs (one staff IdP org per tenant)', async () => {
-    await createDatabase('bos_two_staff');
-    const ownerUrl = urlFor('bos_owner', OWNER_PW, 'bos_two_staff');
+    const ownerUrl = await createDatabase();
     await migrateTo0012(ownerUrl);
     const pool = new Pool({ connectionString: ownerUrl, max: 1 });
     try {

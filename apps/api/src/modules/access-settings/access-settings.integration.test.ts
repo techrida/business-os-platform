@@ -18,19 +18,12 @@ import {
   type Permission,
   type RoleKey,
 } from '@bos/contracts';
-import {
-  createDepartment,
-  createStaffUser,
-  createTenantWithEntity,
-  leads,
-  runMigrations,
-} from '@bos/db';
+import { createDepartment, createStaffUser, createTenantWithEntity, leads } from '@bos/db';
 import {
   ConflictException,
   ForbiddenException,
   UnprocessableEntityException,
 } from '@nestjs/common';
-import { PostgreSqlContainer, type StartedPostgreSqlContainer } from '@testcontainers/postgresql';
 import { sql } from 'drizzle-orm';
 import { drizzle } from 'drizzle-orm/node-postgres';
 import { Pool } from 'pg';
@@ -50,23 +43,13 @@ import {
 import { effectiveScopeForUser } from './access-evaluator';
 import { readAccessRevision } from './access-revision';
 import { AccessSettingsService } from './access-settings.service';
+import { createTestDatabase, type TestDatabase } from '@bos/db/testing';
 
-const OWNER_PW = 'owner-test-pw';
-const APP_PW = 'app-test-pw';
-
-let container: StartedPostgreSqlContainer;
+let testDb: TestDatabase;
 let appPool: Pool;
 let db: Db;
 const now = 1_000_000;
 const clock = (): number => now;
-
-function urlFor(user: string, password: string, database: string): string {
-  const url = new URL(container.getConnectionUri());
-  url.username = user;
-  url.password = password;
-  url.pathname = `/${database}`;
-  return url.toString();
-}
 
 function userActor(userId: string): Actor {
   return {
@@ -293,34 +276,21 @@ function getHttpErrorBody(err: unknown): Record<string, unknown> {
 }
 
 beforeAll(async () => {
-  container = await new PostgreSqlContainer('postgres:16-alpine').start();
+  testDb = await createTestDatabase();
 
-  const admin = new Pool({ connectionString: container.getConnectionUri(), max: 1 });
-  await admin.query(`CREATE ROLE bos_owner LOGIN PASSWORD '${OWNER_PW}'`);
-  await admin.query(`CREATE ROLE bos_app LOGIN PASSWORD '${APP_PW}'`);
-  await admin.query('CREATE DATABASE bos OWNER bos_owner');
-  await admin.query('REVOKE ALL ON DATABASE bos FROM PUBLIC');
-  await admin.query('GRANT CONNECT ON DATABASE bos TO bos_app');
+  const admin = new Pool({ connectionString: testDb.adminUrl, max: 1 });
   await admin.end();
 
-  const bosAdmin = new Pool({ connectionString: urlFor('test', 'test', 'bos'), max: 1 });
-  await bosAdmin.query(
-    'ALTER DEFAULT PRIVILEGES FOR ROLE bos_owner GRANT USAGE ON SCHEMAS TO bos_app',
-  );
-  await bosAdmin.query(
-    'ALTER DEFAULT PRIVILEGES FOR ROLE bos_owner GRANT SELECT, INSERT, UPDATE, DELETE ON TABLES TO bos_app',
-  );
+  const bosAdmin = new Pool({ connectionString: testDb.adminUrl, max: 1 });
   await bosAdmin.end();
 
-  await runMigrations(urlFor('bos_owner', OWNER_PW, 'bos'));
-
-  appPool = new Pool({ connectionString: urlFor('bos_app', APP_PW, 'bos'), max: 8 });
+  appPool = new Pool({ connectionString: testDb.appUrl, max: 8 });
   db = drizzle({ client: appPool });
 }, 120_000);
 
 afterAll(async () => {
   await appPool?.end();
-  await container?.stop();
+  await testDb?.drop();
 });
 
 describe('AccessSettingsService integration (real Postgres)', () => {

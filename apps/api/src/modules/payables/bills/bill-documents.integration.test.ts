@@ -13,7 +13,8 @@ import {
   type RoleKey,
   type Scope,
 } from '@bos/contracts';
-import { createParty, createStaffUser, createTenantWithEntity, runMigrations } from '@bos/db';
+import { createParty, createStaffUser, createTenantWithEntity } from '@bos/db';
+import { createTestDatabase, type TestDatabase } from '@bos/db/testing';
 import { ForbiddenException } from '@nestjs/common';
 import type { Queue } from 'bullmq';
 import { sql } from 'drizzle-orm';
@@ -35,7 +36,7 @@ import { billDocumentOwnerPolicy, BillDocumentsService } from './bill-documents.
 import { BillDocumentsController } from './bill-documents.controller';
 
 vi.setConfig({ testTimeout: 60_000, hookTimeout: 180_000 });
-let container: import('@testcontainers/postgresql').StartedPostgreSqlContainer;
+let testDb: TestDatabase;
 let appPool: Pool;
 let db: Db;
 let root = '';
@@ -85,30 +86,8 @@ const caller = {
 const file = { filename: 'invoice.pdf', declaredMime: 'application/pdf', sizeBytes: 20 };
 
 beforeAll(async () => {
-  const { PostgreSqlContainer } = await import('@testcontainers/postgresql');
-  container = await new PostgreSqlContainer('postgres:16-alpine').start();
-  const urlFor = (role: string, password: string, database: string) => {
-    const url = new URL(container.getConnectionUri());
-    url.username = role;
-    url.password = password;
-    url.pathname = `/${database}`;
-    return url.toString();
-  };
-  const admin = new Pool({ connectionString: container.getConnectionUri(), max: 1 });
-  await admin.query("CREATE ROLE bos_owner LOGIN PASSWORD 'owner-test-pw'");
-  await admin.query("CREATE ROLE bos_app LOGIN PASSWORD 'app-test-pw'");
-  await admin.query('CREATE DATABASE bos OWNER bos_owner');
-  await admin.end();
-  const grants = new Pool({ connectionString: urlFor('test', 'test', 'bos'), max: 1 });
-  await grants.query(
-    'ALTER DEFAULT PRIVILEGES FOR ROLE bos_owner GRANT USAGE ON SCHEMAS TO bos_app',
-  );
-  await grants.query(
-    'ALTER DEFAULT PRIVILEGES FOR ROLE bos_owner GRANT SELECT, INSERT, UPDATE, DELETE ON TABLES TO bos_app',
-  );
-  await grants.end();
-  await runMigrations(urlFor('bos_owner', 'owner-test-pw', 'bos'));
-  appPool = new Pool({ connectionString: urlFor('bos_app', 'app-test-pw', 'bos'), max: 4 });
+  testDb = await createTestDatabase();
+  appPool = new Pool({ connectionString: testDb.appUrl, max: 4 });
   appPool.on('error', () => {});
   db = drizzle({ client: appPool });
   const tenant = await createTenantWithEntity(appPool);
@@ -155,7 +134,7 @@ beforeAll(async () => {
 
 afterAll(async () => {
   await appPool?.end();
-  await container?.stop();
+  await testDb?.drop();
   if (root) await rm(root, { recursive: true, force: true });
 });
 beforeEach(() => {

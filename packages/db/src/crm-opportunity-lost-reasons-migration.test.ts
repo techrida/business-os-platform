@@ -7,7 +7,6 @@ import { randomUUID } from 'node:crypto';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
-import { PostgreSqlContainer, type StartedPostgreSqlContainer } from '@testcontainers/postgresql';
 import { migrate } from 'drizzle-orm/node-postgres/migrator';
 import { Pool, type PoolClient } from 'pg';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
@@ -15,32 +14,23 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { createDb } from './client.js';
 import { MIGRATIONS_FOLDER, runMigrations } from './migrate.js';
 import { createParty, createTenantWithEntity } from './testing/fixtures.js';
+import { createTestDatabase, type TestDatabase } from './testing/test-database.js';
 
-const OWNER_PW = 'owner-test-pw';
 const ACTOR = 'system:migration-0091';
 const ADDRESS = JSON.stringify({ line1: '1 Durbar Marg', city: 'Kathmandu', country: 'NP' });
 
-let container: StartedPostgreSqlContainer;
+let testDb: TestDatabase;
 
 beforeAll(async () => {
-  container = await new PostgreSqlContainer('postgres:16-alpine').start();
-  const admin = new Pool({ connectionString: container.getConnectionUri(), max: 1 });
-  await admin.query(`CREATE ROLE bos_owner LOGIN PASSWORD '${OWNER_PW}'`);
-  await admin.query('CREATE ROLE bos_app');
-  await admin.query('CREATE DATABASE bos_opp_lost_reasons OWNER bos_owner');
-  await admin.end();
+  testDb = await createTestDatabase({ migrated: false });
 });
 
 afterAll(async () => {
-  await container?.stop();
+  await testDb?.drop();
 });
 
 function ownerUrl(): string {
-  const url = new URL(container.getConnectionUri());
-  url.username = 'bos_owner';
-  url.password = OWNER_PW;
-  url.pathname = '/bos_opp_lost_reasons';
-  return url.toString();
+  return testDb.ownerUrl;
 }
 
 /** Migrates to the last migration before 0090: the journal is cut by file number, as the 0071-0072 test does. */

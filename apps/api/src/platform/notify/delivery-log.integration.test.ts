@@ -10,9 +10,8 @@
 import { randomUUID } from 'node:crypto';
 
 import type { RoleKey } from '@bos/contracts';
-import { createStaffUser, createTenantWithEntity, outbox, runMigrations } from '@bos/db';
+import { createStaffUser, createTenantWithEntity, outbox } from '@bos/db';
 import { ConflictException, Logger, NotFoundException } from '@nestjs/common';
-import { PostgreSqlContainer, type StartedPostgreSqlContainer } from '@testcontainers/postgresql';
 import type { Queue } from 'bullmq';
 import { eq } from 'drizzle-orm';
 import { drizzle } from 'drizzle-orm/node-postgres';
@@ -31,9 +30,8 @@ import { DeliveryLogService } from './delivery-log.service';
 import { type EmailProvider } from './email.provider';
 import { MAX_ATTEMPTS, OutboxDrainer } from './outbox.drainer';
 import { NotifyService } from './notify.service';
+import { createTestDatabase, type TestDatabase } from '@bos/db/testing';
 
-const OWNER_PW = 'owner-test-pw';
-const APP_PW = 'app-test-pw';
 const MINUTE = 60_000;
 const BAD = 'broken@example.test';
 
@@ -58,7 +56,7 @@ interface Org {
   founderId: string;
 }
 
-let container: StartedPostgreSqlContainer;
+let testDb: TestDatabase;
 let appPool: Pool;
 /** Superuser on the bos database: bos_app has no right to read audit.audit_events directly. */
 let superPool: Pool;
@@ -73,14 +71,6 @@ const queueAdd = vi.fn().mockResolvedValue(undefined);
 /** The drainer's clock. A resend sets next_attempt_at to the database's now(), so tests start at real time. */
 let nowMs = Date.now();
 const clock = () => new Date(nowMs);
-
-function urlFor(user: string, password: string, database: string): string {
-  const url = new URL(container.getConnectionUri());
-  url.username = user;
-  url.password = password;
-  url.pathname = `/${database}`;
-  return url.toString();
-}
 
 /** Runs `fn` as the org's Founder inside a request store, the way the tenancy interceptor binds it. */
 function asFounder<T>(org: Org, fn: () => Promise<T>): Promise<T> {
@@ -199,27 +189,14 @@ async function makeOrg(label: string): Promise<Org> {
 }
 
 beforeAll(async () => {
-  container = await new PostgreSqlContainer('postgres:16-alpine').start();
+  testDb = await createTestDatabase();
 
-  const admin = new Pool({ connectionString: container.getConnectionUri(), max: 1 });
-  await admin.query(`CREATE ROLE bos_owner LOGIN PASSWORD '${OWNER_PW}'`);
-  await admin.query(`CREATE ROLE bos_app LOGIN PASSWORD '${APP_PW}'`);
-  await admin.query('CREATE DATABASE bos OWNER bos_owner');
-  await admin.query('REVOKE ALL ON DATABASE bos FROM PUBLIC');
-  await admin.query('GRANT CONNECT ON DATABASE bos TO bos_app');
+  const admin = new Pool({ connectionString: testDb.adminUrl, max: 1 });
   await admin.end();
 
-  superPool = new Pool({ connectionString: urlFor('test', 'test', 'bos'), max: 2 });
-  await superPool.query(
-    'ALTER DEFAULT PRIVILEGES FOR ROLE bos_owner GRANT USAGE ON SCHEMAS TO bos_app',
-  );
-  await superPool.query(
-    'ALTER DEFAULT PRIVILEGES FOR ROLE bos_owner GRANT SELECT, INSERT, UPDATE, DELETE ON TABLES TO bos_app',
-  );
+  superPool = new Pool({ connectionString: testDb.adminUrl, max: 2 });
 
-  await runMigrations(urlFor('bos_owner', OWNER_PW, 'bos'));
-
-  appPool = new Pool({ connectionString: urlFor('bos_app', APP_PW, 'bos'), max: 10 });
+  appPool = new Pool({ connectionString: testDb.appUrl, max: 10 });
   db = drizzle({ client: appPool });
 
   home = await makeOrg('home');
@@ -237,7 +214,7 @@ beforeAll(async () => {
 afterAll(async () => {
   await appPool?.end();
   await superPool?.end();
-  await container?.stop();
+  await testDb?.drop();
 });
 
 beforeEach(async () => {

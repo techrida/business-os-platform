@@ -16,13 +16,12 @@ import { copyFile, mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promi
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
-import { PostgreSqlContainer, type StartedPostgreSqlContainer } from '@testcontainers/postgresql';
 import { Pool, type PoolClient } from 'pg';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 
 import { MIGRATIONS_FOLDER, runMigrations } from './migrate.js';
+import { createTestDatabase, type TestDatabase } from './testing/test-database.js';
 
-const OWNER_PW = 'owner-test-pw';
 const OLD_KEY = 'format.number_system';
 const NEW_KEY = 'format.number_systems';
 const MIGRATION_TAG = '0050_number_systems_per_currency';
@@ -42,8 +41,7 @@ interface SettingRow {
   value: unknown;
 }
 
-let container: StartedPostgreSqlContainer;
-let admin: Pool;
+let testDb: TestDatabase;
 let owner: Pool;
 let databaseUrl: string;
 let cutFolder: string;
@@ -143,16 +141,8 @@ async function statementsOf(tag: string): Promise<string[]> {
 }
 
 beforeAll(async () => {
-  container = await new PostgreSqlContainer('postgres:16-alpine').start();
-  admin = new Pool({ connectionString: container.getConnectionUri(), max: 1 });
-  await admin.query(`CREATE ROLE bos_owner LOGIN PASSWORD '${OWNER_PW}'`);
-  await admin.query('CREATE ROLE bos_app');
-  await admin.query('CREATE DATABASE number_systems OWNER bos_owner');
-  const url = new URL(container.getConnectionUri());
-  url.pathname = '/number_systems';
-  url.username = 'bos_owner';
-  url.password = OWNER_PW;
-  databaseUrl = url.toString();
+  testDb = await createTestDatabase({ migrated: false });
+  databaseUrl = testDb.ownerUrl;
   owner = new Pool({ connectionString: databaseUrl, max: 2 });
 
   journal = JSON.parse(await readFile(join(MIGRATIONS_FOLDER, 'meta/_journal.json'), 'utf8')) as {
@@ -220,8 +210,7 @@ beforeAll(async () => {
 
 afterAll(async () => {
   await owner?.end();
-  await admin?.end();
-  await container?.stop();
+  await testDb?.drop();
   if (cutFolder) await rm(cutFolder, { recursive: true, force: true });
 });
 

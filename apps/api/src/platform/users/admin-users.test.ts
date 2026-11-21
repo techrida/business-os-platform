@@ -1,6 +1,6 @@
 // Tests for the admin-user review fixes: an invite that grants roles needs `admin.roles.write`, a
 // half-finished invite can be repaired by inviting again, and emailOf answers only for active users.
-// The emailOf test runs the real SQL in a Postgres container (needs Docker), and the ADR 0027 test runs the
+// The emailOf test runs the real SQL in a Postgres test database (needs Docker), and the ADR 0027 test runs the
 // store's tenant-scoped SQL against the real migrations (0013), so a wrong ON CONFLICT target fails (42P10):
 //   pnpm --filter @bos/api exec vitest run src/platform/users/admin-users.test.ts
 import 'reflect-metadata';
@@ -9,15 +9,8 @@ import { randomUUID } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 
 import { AdminUserSchema, type Permission, type RoleKey } from '@bos/contracts';
-import {
-  departments,
-  idpOrgs,
-  organizations,
-  parties,
-  runMigrations,
-  tenants,
-  userEntities,
-} from '@bos/db';
+import { departments, idpOrgs, organizations, parties, tenants, userEntities } from '@bos/db';
+import { createTestDatabase, type TestDatabase } from '@bos/db/testing';
 import {
   BadRequestException,
   ConflictException,
@@ -25,7 +18,6 @@ import {
   NotFoundException,
   ServiceUnavailableException,
 } from '@nestjs/common';
-import { PostgreSqlContainer, type StartedPostgreSqlContainer } from '@testcontainers/postgresql';
 import type { Queue } from 'bullmq';
 import { sql } from 'drizzle-orm';
 import { drizzle } from 'drizzle-orm/node-postgres';
@@ -1419,15 +1411,15 @@ describe('POST /v1/admin/users/:id/deactivate, /reactivate, /lock and /unlock (F
 });
 
 describe('SqlUsersStore.emailOf', () => {
-  let container: StartedPostgreSqlContainer;
+  let testDb: TestDatabase;
   let pool: Pool;
   let sqlStore: SqlUsersStore;
   const id = (n: number) => `00000000-0000-4000-8000-${String(n).padStart(12, '0')}`;
 
   beforeAll(async () => {
-    container = await new PostgreSqlContainer('postgres:16-alpine').start();
-    pool = new Pool({ connectionString: container.getConnectionUri(), max: 2 });
-    // Only the columns emailOf reads: this test is about the query, not the migrations.
+    // Unmigrated: only the columns emailOf reads, this test is about the query, not the migrations.
+    testDb = await createTestDatabase({ migrated: false });
+    pool = new Pool({ connectionString: testDb.adminUrl, max: 2 });
     await pool.query(
       `CREATE SCHEMA app;
        CREATE TABLE app.users (id uuid PRIMARY KEY, email text, status text NOT NULL);
@@ -1441,7 +1433,7 @@ describe('SqlUsersStore.emailOf', () => {
 
   afterAll(async () => {
     await pool?.end();
-    await container?.stop();
+    await testDb?.drop();
   });
 
   it('returns the address of an active user', async () => {
@@ -1459,40 +1451,14 @@ describe('SqlUsersStore.emailOf', () => {
 });
 
 describe('SqlUsersStore against migration 0013 (ADR 0027: tenant-scoped users)', () => {
-  const OWNER_PW = 'owner-test-pw';
-  const APP_PW = 'app-test-pw';
-  let container: StartedPostgreSqlContainer;
+  let testDb: TestDatabase;
   let appPool: Pool;
   let db: Db;
   let sqlStore: SqlUsersStore;
 
-  const urlFor = (user: string, password: string, database: string) => {
-    const url = new URL(container.getConnectionUri());
-    url.username = user;
-    url.password = password;
-    url.pathname = `/${database}`;
-    return url.toString();
-  };
-
   beforeAll(async () => {
-    container = await new PostgreSqlContainer('postgres:16-alpine').start();
-    const admin = new Pool({ connectionString: container.getConnectionUri(), max: 1 });
-    await admin.query(`CREATE ROLE bos_owner LOGIN PASSWORD '${OWNER_PW}'`);
-    await admin.query(`CREATE ROLE bos_app LOGIN PASSWORD '${APP_PW}'`);
-    await admin.query('CREATE DATABASE bos OWNER bos_owner');
-    await admin.query('REVOKE ALL ON DATABASE bos FROM PUBLIC');
-    await admin.query('GRANT CONNECT ON DATABASE bos TO bos_app');
-    await admin.end();
-    const bosAdmin = new Pool({ connectionString: urlFor('test', 'test', 'bos'), max: 1 });
-    await bosAdmin.query(
-      'ALTER DEFAULT PRIVILEGES FOR ROLE bos_owner GRANT USAGE ON SCHEMAS TO bos_app',
-    );
-    await bosAdmin.query(
-      'ALTER DEFAULT PRIVILEGES FOR ROLE bos_owner GRANT SELECT, INSERT, UPDATE, DELETE ON TABLES TO bos_app',
-    );
-    await bosAdmin.end();
-    await runMigrations(urlFor('bos_owner', OWNER_PW, 'bos'));
-    appPool = new Pool({ connectionString: urlFor('bos_app', APP_PW, 'bos'), max: 4 });
+    testDb = await createTestDatabase();
+    appPool = new Pool({ connectionString: testDb.appUrl, max: 4 });
     appPool.on('error', () => undefined);
     db = drizzle({ client: appPool });
     sqlStore = new SqlUsersStore(db);
@@ -1500,7 +1466,7 @@ describe('SqlUsersStore against migration 0013 (ADR 0027: tenant-scoped users)',
 
   afterAll(async () => {
     await appPool?.end();
-    await container?.stop();
+    await testDb?.drop();
   });
 
   it('upserts roles, memberships and authz_versions on the new keys, and userIdsWithRole honours role_keys', async () => {
@@ -1962,7 +1928,7 @@ describe('SqlUsersStore against migration 0013 (ADR 0027: tenant-scoped users)',
       ),
       'utf8',
     );
-    const owner = new Pool({ connectionString: urlFor('bos_owner', OWNER_PW, 'bos'), max: 1 });
+    const owner = new Pool({ connectionString: testDb.ownerUrl, max: 1 });
     try {
       const client = await owner.connect();
       try {

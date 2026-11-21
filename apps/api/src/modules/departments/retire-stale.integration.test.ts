@@ -17,15 +17,10 @@ import {
   type Permission,
   type Scope,
 } from '@bos/contracts';
-import {
-  createStaffUser,
-  createTenantWithEntity,
-  runMigrations,
-  type TenantWithEntity,
-} from '@bos/db';
+import { createStaffUser, createTenantWithEntity, type TenantWithEntity } from '@bos/db';
+import { createTestDatabase, type TestDatabase } from '@bos/db/testing';
 import { ForbiddenException, type INestApplication } from '@nestjs/common';
 import { Test } from '@nestjs/testing';
-import { PostgreSqlContainer, type StartedPostgreSqlContainer } from '@testcontainers/postgresql';
 import { sql } from 'drizzle-orm';
 import { drizzle } from 'drizzle-orm/node-postgres';
 import { Pool } from 'pg';
@@ -47,10 +42,7 @@ import { DepartmentsAdminService } from './departments.service';
 
 vi.setConfig({ testTimeout: 60_000, hookTimeout: 180_000 });
 
-const OWNER_PW = 'owner-test-pw';
-const APP_PW = 'app-test-pw';
-
-let container: StartedPostgreSqlContainer;
+let testDb: TestDatabase;
 let ownerPool: Pool;
 let appPool: Pool;
 let db: Db;
@@ -132,36 +124,10 @@ async function openDialog(id: string) {
 }
 
 beforeAll(async () => {
-  container = await new PostgreSqlContainer('postgres:16-alpine').start();
-  const urlFor = (user: string, password: string, database: string): string => {
-    const url = new URL(container.getConnectionUri());
-    url.username = user;
-    url.password = password;
-    url.pathname = `/${database}`;
-    return url.toString();
-  };
+  testDb = await createTestDatabase();
 
-  const admin0 = new Pool({ connectionString: container.getConnectionUri(), max: 1 });
-  await admin0.query(`CREATE ROLE bos_owner LOGIN PASSWORD '${OWNER_PW}'`);
-  await admin0.query(`CREATE ROLE bos_app LOGIN PASSWORD '${APP_PW}'`);
-  await admin0.query('CREATE DATABASE bos OWNER bos_owner');
-  await admin0.query('GRANT CONNECT ON DATABASE bos TO bos_app');
-  await admin0.end();
-
-  const bosAdmin = new Pool({ connectionString: urlFor('test', 'test', 'bos'), max: 1 });
-  await bosAdmin.query('REVOKE ALL ON SCHEMA public FROM PUBLIC');
-  await bosAdmin.query(
-    'ALTER DEFAULT PRIVILEGES FOR ROLE bos_owner GRANT USAGE ON SCHEMAS TO bos_app',
-  );
-  await bosAdmin.query(
-    'ALTER DEFAULT PRIVILEGES FOR ROLE bos_owner GRANT SELECT, INSERT, UPDATE, DELETE ON TABLES TO bos_app',
-  );
-  await bosAdmin.end();
-
-  await runMigrations(urlFor('bos_owner', OWNER_PW, 'bos'));
-
-  ownerPool = new Pool({ connectionString: urlFor('bos_owner', OWNER_PW, 'bos'), max: 2 });
-  appPool = new Pool({ connectionString: urlFor('bos_app', APP_PW, 'bos'), max: 8 });
+  ownerPool = new Pool({ connectionString: testDb.ownerUrl, max: 2 });
+  appPool = new Pool({ connectionString: testDb.appUrl, max: 8 });
   db = drizzle({ client: appPool });
 
   tenant1 = await createTenantWithEntity(appPool);
@@ -215,7 +181,7 @@ afterAll(async () => {
   await app?.close();
   await appPool?.end();
   await ownerPool?.end();
-  await container?.stop();
+  await testDb?.drop();
 });
 
 describe('Retire checks the members the dialog showed', () => {

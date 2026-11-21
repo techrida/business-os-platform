@@ -1,11 +1,12 @@
 // Runs once, in the main Vitest process, before any e2e file. It starts the real dependencies,
-// prepares the database the way production does, and hands the addresses to the tests.
+// takes a migrated database from the shared Postgres (packages/db/src/testing, started by the first
+// globalSetup of vitest.e2e.config.ts) and hands the addresses to the tests.
 //
 // Roles follow infra/postgres/init-dbs.sh (and packages/db/src/db.test.ts): `bos_owner` owns the
 // schema and runs migrations, `bos_app` is the runtime role with data access only. The API under
 // test connects as `bos_app`, so a missing GRANT shows up here instead of in production.
-import { createParty, createTenantWithEntity, migrate } from '@bos/db';
-import { PostgreSqlContainer } from '@testcontainers/postgresql';
+import { createParty, createTenantWithEntity } from '@bos/db';
+import { createTestDatabase } from '@bos/db/testing';
 import { Pool } from 'pg';
 import { GenericContainer, Wait } from 'testcontainers';
 import type { TestProject } from 'vitest/node';
@@ -42,11 +43,7 @@ declare module 'vitest' {
   }
 }
 
-const OWNER_PW = 'owner-e2e-pw';
-const APP_PW = 'app-e2e-pw';
-
 export default async function setup(project: TestProject): Promise<() => Promise<void>> {
-  const postgres = await new PostgreSqlContainer('postgres:16-alpine').start();
   const valkey = await new GenericContainer('valkey/valkey:9.1-alpine')
     .withExposedPorts(6379)
     .withWaitStrategy(Wait.forLogMessage(/Ready to accept connections/))
@@ -57,38 +54,13 @@ export default async function setup(project: TestProject): Promise<() => Promise
     .withWaitStrategy(Wait.forHttp('/livez', 8025))
     .start();
 
-  const urlFor = (user: string, password: string, database: string): string => {
-    const url = new URL(postgres.getConnectionUri());
-    url.username = user;
-    url.password = password;
-    url.pathname = `/${database}`;
-    return url.toString();
-  };
-
-  // The container starts with only a superuser: create what init-dbs.sh creates in the real stack.
-  const admin = new Pool({ connectionString: postgres.getConnectionUri(), max: 1 });
-  await admin.query(`CREATE ROLE bos_owner LOGIN PASSWORD '${OWNER_PW}'`);
-  await admin.query(`CREATE ROLE bos_app LOGIN PASSWORD '${APP_PW}'`);
-  await admin.query('CREATE DATABASE bos OWNER bos_owner');
-  await admin.query('REVOKE ALL ON DATABASE bos FROM PUBLIC');
-  await admin.query('GRANT CONNECT ON DATABASE bos TO bos_app');
-  await admin.end();
-
-  // Default privileges belong to one database, so they are set from inside "bos".
-  const bosAdmin = new Pool({ connectionString: urlFor('test', 'test', 'bos'), max: 1 });
-  await bosAdmin.query(
-    'ALTER DEFAULT PRIVILEGES FOR ROLE bos_owner GRANT USAGE ON SCHEMAS TO bos_app',
-  );
-  await bosAdmin.query(
-    'ALTER DEFAULT PRIVILEGES FOR ROLE bos_owner GRANT SELECT, INSERT, UPDATE, DELETE ON TABLES TO bos_app',
-  );
-  await bosAdmin.end();
-
-  await migrate(urlFor('bos_owner', OWNER_PW, 'bos'));
+  // Roles, privileges and migrations come from the shared test database (see the header): the API
+  // under test connects as `bos_app`, exactly as in production.
+  const testDb = await createTestDatabase();
 
   // Seed as bos_app: the same role the API uses at runtime. The @bos/db fixtures open their own
   // transaction per call and set the audit context (actor, tenant, entity) in it, as withTx does.
-  const databaseUrl = urlFor('bos_app', APP_PW, 'bos');
+  const databaseUrl = testDb.appUrl;
   const appPool = new Pool({ connectionString: databaseUrl, max: 2 });
   // ADR 0027: one tenant, its default legal entity and the staff IdP org (the login container of
   // staff), plus a customer party behind its own customer IdP org. A customer or vendor user has no
@@ -135,6 +107,6 @@ export default async function setup(project: TestProject): Promise<() => Promise
   });
 
   return async () => {
-    await Promise.allSettled([postgres.stop(), valkey.stop(), mailpit.stop()]);
+    await Promise.allSettled([testDb.drop(), valkey.stop(), mailpit.stop()]);
   };
 }

@@ -4,7 +4,7 @@
 // registered in record-reach.ts like `leads`, does the same for the creator and assignee reach and
 // the `assigned` scope, with refs filled by the real `loadReaders()`. Needs Docker:
 //   pnpm --filter @bos/api exec vitest run src/platform/authz/authz.service.test.ts
-// The fixture table lives in `public` and is read as the container superuser: this test is about the
+// The fixture table lives in `public` of an unmigrated test database and is read as the superuser: this test is about the
 // SQL, not about migrations or grants (role-cache.test.ts covers those).
 //
 // ADR 0027: every principal's `organizationId` is the acting legal entity, for staff and portal
@@ -21,8 +21,8 @@ import {
   type Permission,
   type Scope,
 } from '@bos/contracts';
+import { createTestDatabase, type TestDatabase } from '@bos/db/testing';
 import { type ArgumentsHost, ForbiddenException } from '@nestjs/common';
-import { PostgreSqlContainer, type StartedPostgreSqlContainer } from '@testcontainers/postgresql';
 import { asc } from 'drizzle-orm';
 import { drizzle } from 'drizzle-orm/node-postgres';
 import { type AnyPgColumn, pgTable, text, timestamp, uuid } from 'drizzle-orm/pg-core';
@@ -124,13 +124,13 @@ function principalOf(over: Partial<Principal> & { orgKind: OrgKind }): Principal
   };
 }
 
-let container: StartedPostgreSqlContainer;
+let testDb: TestDatabase;
 let pool: Pool;
 let db: Db;
 
 beforeAll(async () => {
-  container = await new PostgreSqlContainer('postgres:16-alpine').start();
-  pool = new Pool({ connectionString: container.getConnectionUri(), max: 2 });
+  testDb = await createTestDatabase({ migrated: false });
+  pool = new Pool({ connectionString: testDb.adminUrl, max: 2 });
   db = drizzle({ client: pool });
   await pool.query(`CREATE TABLE public.authz_fixture (
     id text PRIMARY KEY,
@@ -146,7 +146,7 @@ beforeAll(async () => {
 
 afterAll(async () => {
   await pool?.end();
-  await container?.stop();
+  await testDb?.drop();
 });
 
 async function idsMatching(

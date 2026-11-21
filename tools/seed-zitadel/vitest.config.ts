@@ -9,6 +9,7 @@ const source = (path: string) => fileURLToPath(new URL(path, import.meta.url));
 export default defineConfig({
   resolve: {
     alias: {
+      '@bos/db/testing': source('../../packages/db/src/testing/test-database.ts'),
       '@bos/contracts': source('../../packages/contracts/src/index.ts'),
       '@bos/db': source('../../packages/db/src/index.ts'),
     },
@@ -16,5 +17,7 @@ export default defineConfig({
   test: {
     environment: 'node',
     include: ['src/**/*.test.ts'],
+    globalSetup: [source('../../packages/db/src/testing/vitest-global-setup.ts')],
+    maxWorkers: 2,
   },
 });
