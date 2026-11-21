@@ -6,7 +6,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { DbTransaction } from '../db/db.module';
 import type { AuditService } from '../audit/audit.service';
 import { UserLocks } from './user-locks';
-import { UserMirror } from './user-mirror';
+import { UserMirror, UserSyncContendedError } from './user-mirror';
 import { lockoutPinnedCursor, type UsersSyncData } from './users.constants';
 import {
   CUST_IDP,
@@ -677,5 +677,115 @@ describe('UserMirror mirrors ZITADEL locks as a timed lock (F1-Q4)', () => {
       lockReason: 'failed_sign_ins',
       lockedUntil: until,
     });
+  });
+});
+
+describe('UserMirror reads ZITADEL with no transaction open and writes only a row nobody changed meanwhile', () => {
+  const adminLock = () => ({ reason: 'admin' as const, lockedAt: new Date(), until: null });
+
+  beforeEach(async () => {
+    zitadel.users.set('z1', zUser('z1'));
+    await mirror.syncUser('z1');
+    store.users[0]!.status = 'invited';
+  });
+
+  it('re-reads a status change outside any transaction', async () => {
+    const openAt: number[] = [];
+    const real = zitadel.getUser.bind(zitadel);
+    vi.spyOn(zitadel, 'getUser').mockImplementation((id: string) => {
+      openAt.push(db.open);
+      return real(id);
+    });
+
+    expect(await mirror.syncUser('z1')).toBe(true);
+
+    expect(openAt).toEqual([0, 0]);
+    expect(store.users[0]?.status).toBe('active');
+  });
+
+  it('does not write an accepted invite over an admin lock that committed during the re-read (old code: active, lock gone)', async () => {
+    const real = zitadel.getUser.bind(zitadel);
+    let calls = 0;
+    vi.spyOn(zitadel, 'getUser').mockImplementation(async (id: string) => {
+      calls += 1;
+      if (calls !== 2) return real(id);
+      // ZITADEL answered "active", then the admin's lock landed: the row first, ZITADEL just before commit.
+      const answer = { ...(await real(id))! };
+      const row = store.users[0]!;
+      await store.updateUser(tx, row.id, {
+        email: row.email,
+        displayName: row.displayName,
+        status: 'inactive',
+        lock: adminLock(),
+      });
+      zitadel.users.set('z1', zUser('z1', { status: 'inactive', locked: true }));
+      return answer;
+    });
+
+    await mirror.syncUser('z1');
+
+    expect(store.users[0]).toMatchObject({ status: 'inactive', lockReason: 'admin' });
+    expect(calls).toBe(3);
+  });
+
+  it('gives up after three changed reads with UserSyncContendedError, so the sync job is retried (old code: false, as for no change)', async () => {
+    const real = zitadel.getUser.bind(zitadel);
+    let calls = 0;
+    vi.spyOn(zitadel, 'getUser').mockImplementation(async (id: string) => {
+      calls += 1;
+      const answer = await real(id);
+      if (calls > 1) {
+        const row = store.users[0]!;
+        await store.updateUser(tx, row.id, {
+          email: row.email,
+          displayName: `Renamed ${calls}`,
+          status: row.status,
+        });
+      }
+      return answer;
+    });
+
+    const error = await mirror.syncUser('z1').catch((e: unknown) => e);
+
+    expect(error).toBeInstanceOf(UserSyncContendedError);
+    expect(error).toMatchObject({ zitadelUserId: 'z1' });
+    expect(calls).toBe(4);
+    expect(store.users[0]).toMatchObject({ status: 'invited', displayName: 'Renamed 4' });
+  });
+
+  it('a reconcile pass logs a contended user and goes on: the others are synced and a missing one is still deactivated', async () => {
+    const warn = vi.spyOn(Logger.prototype, 'warn').mockImplementation(() => undefined);
+    zitadel.users.set('gone', zUser('gone'));
+    await mirror.syncUser('gone');
+    zitadel.users.set('gone', zUser('gone', { status: 'inactive' }));
+    zitadel.hiddenFromList.add('gone');
+    zitadel.users.set('z1', zUser('z1', { displayName: 'Renamed in ZITADEL' }));
+    zitadel.users.set('new', zUser('new'));
+    // Every locked read of z1 finds a version other than the one read before it: someone writes it each time.
+    const realFind = store.findByZitadelId.bind(store);
+    vi.spyOn(store, 'findByZitadelId').mockImplementation(
+      async (q: Parameters<typeof realFind>[0], z: string, lock?: boolean) => {
+        const row = store.users.find((u) => u.zitadelUserId === z);
+        if (lock === true && z === 'z1' && row) {
+          await store.updateUser(tx, row.id, {
+            email: row.email,
+            displayName: row.displayName,
+            status: row.status,
+          });
+        }
+        return realFind(q, z);
+      },
+    );
+
+    const result = await mirror.reconcile();
+
+    const byZ = (z: string) => store.users.find((u) => u.zitadelUserId === z);
+    expect(byZ('z1')?.displayName).not.toBe('Renamed in ZITADEL');
+    expect(byZ('z1')?.status).toBe('invited');
+    expect(byZ('new')?.status).toBe('active');
+    expect(byZ('gone')?.status).toBe('inactive');
+    expect(result).toEqual({ scanned: 2, changed: 2 }); // new inserted, gone deactivated
+    expect(store.cursors.get(`users.reconcile:${STAFF_ZORG}`)).toBe('0');
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining('z1 kept changing'));
   });
 });

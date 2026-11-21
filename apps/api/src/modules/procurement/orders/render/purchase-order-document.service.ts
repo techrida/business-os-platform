@@ -36,7 +36,7 @@ import { and, asc, desc, eq, isNull } from 'drizzle-orm';
 
 import { AuditService } from '../../../../platform/audit/audit.service';
 import { DB, type Db, type DbTransaction } from '../../../../platform/db/db.module';
-import { withTx, type TxScope } from '../../../../platform/db/tx';
+import { READ_ONLY, withTx, type TxScope } from '../../../../platform/db/tx';
 import { DocumentsService } from '../../../../platform/documents/documents.service';
 import {
   renderGivenUp,
@@ -115,42 +115,48 @@ export class PurchaseOrderDocumentService {
     const { scope, actor, principal } = this.staffCaller();
     assertHoldsPoRead(principal);
     if (!Number.isInteger(version) || version < 1 || version > MAX_VERSION) throw notFound();
-    const state = await withTx(this.db, scope, actor, async (tx): Promise<LinkState> => {
-      const [po] = await tx
-        .select({ request: requestFactsColumns })
-        .from(purchaseOrders)
-        .innerJoin(purchaseRequests, requestOf(purchaseOrders))
-        .where(scoped(scope).where(purchaseOrders, eq(purchaseOrders.id, purchaseOrderId)));
-      if (po === undefined || !mayReadPo(principal, po.request)) return { kind: 'hidden' };
-      const versionId = await this.versionId(tx, scope, purchaseOrderId, version);
-      if (versionId === undefined) return { kind: 'hidden' };
-      // Every upload of every live document of the version: oldest document first, newest upload first within it.
-      const uploads = await tx
-        .select({ documentId: documents.id, status: documentVersions.status })
-        .from(documents)
-        .innerJoin(
-          documentVersions,
-          and(
-            eq(documentVersions.tenantId, documents.tenantId),
-            eq(documentVersions.documentId, documents.id),
-          ),
-        )
-        .where(
-          scoped(scope).where(
-            documents,
+    const state = await withTx(
+      this.db,
+      scope,
+      actor,
+      async (tx): Promise<LinkState> => {
+        const [po] = await tx
+          .select({ request: requestFactsColumns })
+          .from(purchaseOrders)
+          .innerJoin(purchaseRequests, requestOf(purchaseOrders))
+          .where(scoped(scope).where(purchaseOrders, eq(purchaseOrders.id, purchaseOrderId)));
+        if (po === undefined || !mayReadPo(principal, po.request)) return { kind: 'hidden' };
+        const versionId = await this.versionId(tx, scope, purchaseOrderId, version);
+        if (versionId === undefined) return { kind: 'hidden' };
+        // Every upload of every live document of the version: oldest document first, newest upload first within it.
+        const uploads = await tx
+          .select({ documentId: documents.id, status: documentVersions.status })
+          .from(documents)
+          .innerJoin(
+            documentVersions,
             and(
-              eq(documents.ownerType, PO_VERSION_OWNER_TYPE),
-              eq(documents.ownerId, versionId),
-              isNull(documents.removedAt),
+              eq(documentVersions.tenantId, documents.tenantId),
+              eq(documentVersions.documentId, documents.id),
             ),
-          ),
-        )
-        .orderBy(asc(documents.createdAt), asc(documents.id), desc(documentVersions.version));
-      const pdf = generatedPdfState(uploads, await renderGivenUp(tx, ownerOf(scope, versionId)));
-      if (pdf.kind === 'clean') return { kind: 'clean', versionId, documentId: pdf.documentId };
-      // A file the scan refused will never be offered: there is nothing to serve.
-      return pdf.kind === 'scan_refused' ? { kind: 'unavailable' } : pdf;
-    });
+          )
+          .where(
+            scoped(scope).where(
+              documents,
+              and(
+                eq(documents.ownerType, PO_VERSION_OWNER_TYPE),
+                eq(documents.ownerId, versionId),
+                isNull(documents.removedAt),
+              ),
+            ),
+          )
+          .orderBy(asc(documents.createdAt), asc(documents.id), desc(documentVersions.version));
+        const pdf = generatedPdfState(uploads, await renderGivenUp(tx, ownerOf(scope, versionId)));
+        if (pdf.kind === 'clean') return { kind: 'clean', versionId, documentId: pdf.documentId };
+        // A file the scan refused will never be offered: there is nothing to serve.
+        return pdf.kind === 'scan_refused' ? { kind: 'unavailable' } : pdf;
+      },
+      READ_ONLY,
+    );
     if (state.kind === 'hidden') throw notFound();
     if (state.kind === 'preparing') throw notReady();
     if (state.kind === 'failed') throw renderFailed();

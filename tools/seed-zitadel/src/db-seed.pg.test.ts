@@ -285,6 +285,128 @@ describe('dev people step on Postgres', () => {
   );
 });
 
+describe('company bank and expense accounts on Postgres', () => {
+  it(
+    'seeds the accounts with the retired ones retired, keeps rows made by hand, and a re-run writes nothing',
+    async () => {
+      const scope = await devTenant();
+      // Made by hand before the seed: an "Operating account" at another bank, and 5200 under another name.
+      await asFounder(scope, async (client) => {
+        await client.query(
+          `INSERT INTO app.company_bank_accounts (tenant_id, organization_id, name, bank_name, last4, currency)
+           VALUES ($1, $2, 'Operating account', 'Hand Bank', '0001', 'INR')`,
+          [scope.tenantId, scope.organizationId],
+        );
+        await client.query(
+          `INSERT INTO app.expense_accounts (tenant_id, organization_id, code, name)
+           VALUES ($1, $2, '5200', 'Office rent')`,
+          [scope.tenantId, scope.organizationId],
+        );
+      });
+
+      expect(await seed(scope)).toBeGreaterThan(0);
+
+      const banks = await owner.query<{
+        name: string;
+        bank_name: string;
+        last4: string;
+        currency: string;
+        status: string;
+        retired: boolean;
+      }>(
+        `SELECT name, bank_name, last4, currency, status, retired_at IS NOT NULL AS retired
+         FROM app.company_bank_accounts WHERE tenant_id = $1 AND organization_id = $2 ORDER BY name`,
+        [scope.tenantId, scope.organizationId],
+      );
+      expect(banks.rows).toEqual([
+        {
+          name: 'Dollar account',
+          bank_name: 'Standard Chartered Bank Nepal',
+          last4: '7305',
+          currency: 'USD',
+          status: 'active',
+          retired: false,
+        },
+        {
+          name: 'Old payroll account',
+          bank_name: 'Global IME Bank',
+          last4: '1190',
+          currency: 'NPR',
+          status: 'retired',
+          retired: true,
+        },
+        // The hand-made row wins: no second "Operating account", and its bank is untouched.
+        {
+          name: 'Operating account',
+          bank_name: 'Hand Bank',
+          last4: '0001',
+          currency: 'INR',
+          status: 'active',
+          retired: false,
+        },
+      ]);
+
+      const expenses = await owner.query<{
+        code: string;
+        name: string;
+        status: string;
+        retired: boolean;
+      }>(
+        `SELECT code, name, status, retired_at IS NOT NULL AS retired
+         FROM app.expense_accounts WHERE tenant_id = $1 AND organization_id = $2 ORDER BY code`,
+        [scope.tenantId, scope.organizationId],
+      );
+      expect(expenses.rows).toEqual([
+        { code: '5100', name: 'Office supplies', status: 'active', retired: false },
+        { code: '5200', name: 'Office rent', status: 'active', retired: false },
+        { code: '5300', name: 'Utilities', status: 'active', retired: false },
+        { code: '5400', name: 'Travel', status: 'active', retired: false },
+        { code: '5500', name: 'Professional fees', status: 'active', retired: false },
+        { code: '5800', name: 'Closed project costs', status: 'retired', retired: true },
+        { code: '5900', name: 'Other expenses', status: 'active', retired: false },
+      ]);
+
+      // A re-run inserts nothing, and no audit row appears behind the count.
+      const audited = await auditCount(scope.tenantId);
+      expect(await seed(scope)).toBe(0);
+      expect(await auditCount(scope.tenantId)).toBe(audited);
+      const counts = await owner.query<{ banks: string; expenses: string }>(
+        `SELECT (SELECT count(*) FROM app.company_bank_accounts WHERE tenant_id = $1) AS banks,
+                (SELECT count(*) FROM app.expense_accounts WHERE tenant_id = $1) AS expenses`,
+        [scope.tenantId],
+      );
+      expect([Number(counts.rows[0]?.banks), Number(counts.rows[0]?.expenses)]).toEqual([3, 7]);
+    },
+    TEST_TIMEOUT,
+  );
+
+  it(
+    'seeds a fresh entity with two active and one retired bank account, six active and one retired expense account',
+    async () => {
+      const scope = await devTenant();
+      // Fresh tenant: the first run writes all ten accounts among the kernel rows.
+      expect(await seed(scope)).toBeGreaterThan(10);
+      const summary = await owner.query<{ kind: string; status: string; n: string }>(
+        `SELECT 'bank' AS kind, status, count(*) AS n FROM app.company_bank_accounts
+           WHERE tenant_id = $1 AND organization_id = $2 GROUP BY status
+         UNION ALL
+         SELECT 'expense', status, count(*) FROM app.expense_accounts
+           WHERE tenant_id = $1 AND organization_id = $2 GROUP BY status
+         ORDER BY 1, 2`,
+        [scope.tenantId, scope.organizationId],
+      );
+      expect(summary.rows.map((r) => [r.kind, r.status, Number(r.n)])).toEqual([
+        ['bank', 'active', 2],
+        ['bank', 'retired', 1],
+        ['expense', 'active', 6],
+        ['expense', 'retired', 1],
+      ]);
+      expect(await seed(scope)).toBe(0);
+    },
+    TEST_TIMEOUT,
+  );
+});
+
 describe('reseed keeps Founder grants', () => {
   it(
     'leaves seeded = false grants and level rows alone, deletes only a seeded stale grant, and writes no level rows',

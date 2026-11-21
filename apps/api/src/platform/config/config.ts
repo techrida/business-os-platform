@@ -35,6 +35,11 @@ const coreShape = (service: ServiceName) => ({
       urlWithProtocol(['postgres:', 'postgresql:']),
       'must be a postgres:// or postgresql:// URL',
     ),
+  // Per-transaction limits withTx sets with SET LOCAL: how long a statement may wait for a row or
+  // table lock (then 55P03, answered as 503 db_busy), and how long a transaction may sit idle before
+  // the server ends its session. No 0 (off): a blank value would coerce to it silently.
+  DB_LOCK_TIMEOUT_MS: z.coerce.number().int().min(100).max(600_000).default(5_000),
+  DB_IDLE_IN_TX_TIMEOUT_MS: z.coerce.number().int().min(1_000).max(3_600_000).default(30_000),
   VALKEY_URL: z
     .string()
     .refine(urlWithProtocol(['redis:', 'rediss:']), 'must be a redis:// or rediss:// URL'),
@@ -445,6 +450,8 @@ export abstract class CoreConfig {
   abstract readonly LOG_LEVEL: (typeof LOG_LEVELS)[number];
   abstract readonly METRICS_PORT: number;
   abstract readonly DATABASE_URL: string;
+  abstract readonly DB_LOCK_TIMEOUT_MS: number;
+  abstract readonly DB_IDLE_IN_TX_TIMEOUT_MS: number;
   abstract readonly VALKEY_URL: string;
   abstract readonly FILES_ROOT: string;
   abstract readonly CLAMD_HOST: string;

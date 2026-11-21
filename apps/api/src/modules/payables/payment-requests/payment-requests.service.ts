@@ -56,11 +56,12 @@ import { can } from '../../../platform/authz/can';
 import type { Principal } from '../../../platform/authz/principal';
 import { DB, type Db, type DbTransaction } from '../../../platform/db/db.module';
 import { withIdempotency } from '../../../platform/db/idempotency';
-import { withTx, type TxScope } from '../../../platform/db/tx';
+import { withTx, type TxScope, READ_ONLY } from '../../../platform/db/tx';
 import { CurrencyEnabledService } from '../../../platform/settings/currency-enabled';
 import { SettingsService } from '../../../platform/settings/settings.service';
 import { searchPage, sumByCurrency } from '../../../platform/list';
 import { ApprovalsService } from '../../approvals/requests.service';
+import { CompanyAccountsLookup } from '../../company-accounts/company-accounts.lookup';
 import { LedgerError, LedgerService } from '../../ledger/ledger.service';
 import { VENDOR_BILL_DOCUMENT_TYPE } from '../bills/vendor-bill.rules';
 import { VendorBankService } from '../../vendors/bank/bank.service';
@@ -219,6 +220,10 @@ export class PaymentRequestsService {
     private readonly currencies: CurrencyEnabledService = new CurrencyEnabledService(
       new SettingsService(db),
     ),
+    // The paying bank account check (round 5, P1); CompanyAccountsModule provides it. It holds no state, so the
+    // fallback is the same check for a test that builds the service by hand.
+    @Optional()
+    private readonly accounts: CompanyAccountsLookup = new CompanyAccountsLookup(),
   ) {}
 
   // ------------------------------------------------------------------------------------------------- reads
@@ -243,88 +248,94 @@ export class PaymentRequestsService {
 
   private async requestableItems(bank: 'verified' | 'missing'): Promise<PaymentRequestItemDto[]> {
     const { scope, actor, principal } = this.caller.current();
-    return withTx(this.db, scope, actor, async (tx) => {
-      // The same account activeVerifiedAccount() snapshots at create and submit: the vendor's `active` one.
-      const activeBank = and(
-        eq(vendorBankAccounts.tenantId, vendorBills.tenantId),
-        eq(vendorBankAccounts.vendorId, vendorBills.vendorId),
-        eq(vendorBankAccounts.status, 'active'),
-      );
-      const base = tx
-        .select({
-          openItemId: openItems.id,
-          vendorPartyId: vendorBills.vendorId,
-          vendorName: vendors.legalName,
-          vendorBillId: vendorBills.id,
-          billNumber: vendorBills.number,
-          vendorInvoiceNo: vendorBills.vendorInvoiceNo,
-          currency: openItems.currency,
-        })
-        .from(openItems)
-        .innerJoin(
-          vendorBills,
-          and(
-            eq(vendorBills.tenantId, openItems.tenantId),
-            eq(vendorBills.organizationId, openItems.organizationId),
-            eq(vendorBills.id, openItems.sourceId),
-            eq(vendorBills.vendorId, openItems.vendorPartyId),
-            eq(vendorBills.currency, openItems.currency),
-          ),
-        )
-        .innerJoin(
-          vendors,
-          and(eq(vendors.tenantId, vendorBills.tenantId), eq(vendors.id, vendorBills.vendorId)),
-        )
-        .innerJoin(
-          vendorAccounts,
-          and(
-            eq(vendorAccounts.tenantId, vendorBills.tenantId),
-            eq(vendorAccounts.organizationId, vendorBills.organizationId),
-            eq(vendorAccounts.vendorId, vendorBills.vendorId),
-            eq(vendorAccounts.active, true),
-          ),
+    return withTx(
+      this.db,
+      scope,
+      actor,
+      async (tx) => {
+        // The same account activeVerifiedAccount() snapshots at create and submit: the vendor's `active` one.
+        const activeBank = and(
+          eq(vendorBankAccounts.tenantId, vendorBills.tenantId),
+          eq(vendorBankAccounts.vendorId, vendorBills.vendorId),
+          eq(vendorBankAccounts.status, 'active'),
         );
-      // One active account per vendor at most (vendor_bank_accounts_tenant_vendor_active_unique), so the left join
-      // never repeats a row.
-      const joined =
-        bank === 'verified'
-          ? base.innerJoin(vendorBankAccounts, activeBank)
-          : base.leftJoin(vendorBankAccounts, activeBank);
-      const rows = await joined
-        .where(
-          scoped(scope).where(
-            openItems,
+        const base = tx
+          .select({
+            openItemId: openItems.id,
+            vendorPartyId: vendorBills.vendorId,
+            vendorName: vendors.legalName,
+            vendorBillId: vendorBills.id,
+            billNumber: vendorBills.number,
+            vendorInvoiceNo: vendorBills.vendorInvoiceNo,
+            currency: openItems.currency,
+          })
+          .from(openItems)
+          .innerJoin(
+            vendorBills,
             and(
-              eq(openItems.side, 'payable'),
-              eq(openItems.direction, 'credit'),
-              eq(openItems.sourceType, 'vendor_bill'),
-              eq(vendorBills.kind, 'bill'),
-              inArray(vendorBills.status, [...PAYABLE_BILL_STATUSES]),
-              scopeWhereFor(principal, vendorBills, 'payables.bill.read'),
-              bank === 'missing' ? isNull(vendorBankAccounts.id) : undefined,
+              eq(vendorBills.tenantId, openItems.tenantId),
+              eq(vendorBills.organizationId, openItems.organizationId),
+              eq(vendorBills.id, openItems.sourceId),
+              eq(vendorBills.vendorId, openItems.vendorPartyId),
+              eq(vendorBills.currency, openItems.currency),
             ),
-          ),
-        )
-        .orderBy(asc(vendors.legalName), asc(vendorBills.invoiceDate), asc(openItems.id));
-      if (rows.length === 0) return [];
-      const ids = rows.map((row) => row.openItemId);
-      const open = await this.ledger.openAmounts(tx, scope, ids);
-      const claimed = await this.claims(tx, scope, ids, null);
-      return rows.flatMap((row) => {
-        const openAmount = parseDecimal(open.get(row.openItemId) ?? '0');
-        const claimedAmount = parseDecimal(claimed.get(row.openItemId) ?? '0');
-        const availableAmount = openAmount.minus(claimedAmount);
-        if (availableAmount.lte(0)) return [];
-        return [
-          {
-            ...row,
-            openAmount: moneyToString(openAmount),
-            claimedAmount: moneyToString(claimedAmount),
-            availableAmount: moneyToString(availableAmount),
-          },
-        ];
-      });
-    });
+          )
+          .innerJoin(
+            vendors,
+            and(eq(vendors.tenantId, vendorBills.tenantId), eq(vendors.id, vendorBills.vendorId)),
+          )
+          .innerJoin(
+            vendorAccounts,
+            and(
+              eq(vendorAccounts.tenantId, vendorBills.tenantId),
+              eq(vendorAccounts.organizationId, vendorBills.organizationId),
+              eq(vendorAccounts.vendorId, vendorBills.vendorId),
+              eq(vendorAccounts.active, true),
+            ),
+          );
+        // One active account per vendor at most (vendor_bank_accounts_tenant_vendor_active_unique), so the left join
+        // never repeats a row.
+        const joined =
+          bank === 'verified'
+            ? base.innerJoin(vendorBankAccounts, activeBank)
+            : base.leftJoin(vendorBankAccounts, activeBank);
+        const rows = await joined
+          .where(
+            scoped(scope).where(
+              openItems,
+              and(
+                eq(openItems.side, 'payable'),
+                eq(openItems.direction, 'credit'),
+                eq(openItems.sourceType, 'vendor_bill'),
+                eq(vendorBills.kind, 'bill'),
+                inArray(vendorBills.status, [...PAYABLE_BILL_STATUSES]),
+                scopeWhereFor(principal, vendorBills, 'payables.bill.read'),
+                bank === 'missing' ? isNull(vendorBankAccounts.id) : undefined,
+              ),
+            ),
+          )
+          .orderBy(asc(vendors.legalName), asc(vendorBills.invoiceDate), asc(openItems.id));
+        if (rows.length === 0) return [];
+        const ids = rows.map((row) => row.openItemId);
+        const open = await this.ledger.openAmounts(tx, scope, ids);
+        const claimed = await this.claims(tx, scope, ids, null);
+        return rows.flatMap((row) => {
+          const openAmount = parseDecimal(open.get(row.openItemId) ?? '0');
+          const claimedAmount = parseDecimal(claimed.get(row.openItemId) ?? '0');
+          const availableAmount = openAmount.minus(claimedAmount);
+          if (availableAmount.lte(0)) return [];
+          return [
+            {
+              ...row,
+              openAmount: moneyToString(openAmount),
+              claimedAmount: moneyToString(claimedAmount),
+              availableAmount: moneyToString(availableAmount),
+            },
+          ];
+        });
+      },
+      READ_ONLY,
+    );
   }
 
   /**
@@ -336,93 +347,105 @@ export class PaymentRequestsService {
     query: ListPaymentRequestsQuery,
   ): Promise<{ rows: PaymentRequestListRowDto[]; total: number; totals: MoneyTotals }> {
     const { scope, actor, principal } = this.caller.current();
-    return withTx(this.db, scope, actor, async (tx) => {
-      let totals: MoneyTotals = [];
-      const vendorJoin = and(
-        eq(vendors.tenantId, paymentRequests.tenantId),
-        eq(vendors.id, paymentRequests.vendorId),
-      );
-      const page = await searchPage(tx, {
-        q: query.q,
-        columns: [paymentRequests.number, vendors.legalName],
-        where: scoped(scope).where(
-          paymentRequests,
-          and(
-            visibleTo(principal),
-            query.status === undefined || query.status.length === 0
-              ? undefined
-              : inArray(paymentRequests.status, query.status),
+    return withTx(
+      this.db,
+      scope,
+      actor,
+      async (tx) => {
+        let totals: MoneyTotals = [];
+        const vendorJoin = and(
+          eq(vendors.tenantId, paymentRequests.tenantId),
+          eq(vendors.id, paymentRequests.vendorId),
+        );
+        const page = await searchPage(tx, {
+          q: query.q,
+          columns: [paymentRequests.number, vendors.legalName],
+          where: scoped(scope).where(
+            paymentRequests,
+            and(
+              visibleTo(principal),
+              query.status === undefined || query.status.length === 0
+                ? undefined
+                : inArray(paymentRequests.status, query.status),
+            ),
           ),
-        ),
-        orderBy: [desc(paymentRequests.createdAt), desc(paymentRequests.id)],
-        limit: query.limit,
-        offset: query.offset,
-        rows: (reader, p) =>
-          reader
-            .select({ request: paymentRequests, vendor: vendors })
-            .from(paymentRequests)
-            .innerJoin(vendors, vendorJoin)
-            .where(p.where)
-            .orderBy(...p.orderBy)
-            .limit(p.limit)
-            .offset(p.offset),
-        // searchPage may count twice (exact, then close matches); the last call is the set the rows come from.
-        count: async (reader, where) => {
-          const groups = await reader
-            .select({
-              currency: paymentRequests.currency,
-              n: sql<number>`count(*)::int`,
-              // Money still asked for: rejected and cancelled requests add nothing.
-              amount: sql<string>`sum(CASE WHEN ${paymentRequests.status} IN ('rejected', 'cancelled') THEN 0 ELSE ${paymentRequests.totalAmount} END)::text`,
-            })
-            .from(paymentRequests)
-            .innerJoin(vendors, vendorJoin)
-            .where(where)
-            .groupBy(paymentRequests.currency);
-          const summed = sumByCurrency(groups);
-          totals = summed.totals;
-          return summed.total;
-        },
-      });
-      return {
-        rows: page.rows.map(({ request, vendor }) => {
-          const { lines: _lines, ...rest } = toDto(request, []);
-          return {
-            ...rest,
-            vendorName: vendor.legalName,
-            can: {
-              readVendor:
-                principal.orgKind === 'staff' &&
-                can(principal, 'vendor.read', vendorRef(vendor, principal)).allowed,
-            },
-          };
-        }),
-        total: page.total,
-        totals,
-      };
-    });
+          orderBy: [desc(paymentRequests.createdAt), desc(paymentRequests.id)],
+          limit: query.limit,
+          offset: query.offset,
+          rows: (reader, p) =>
+            reader
+              .select({ request: paymentRequests, vendor: vendors })
+              .from(paymentRequests)
+              .innerJoin(vendors, vendorJoin)
+              .where(p.where)
+              .orderBy(...p.orderBy)
+              .limit(p.limit)
+              .offset(p.offset),
+          // searchPage may count twice (exact, then close matches); the last call is the set the rows come from.
+          count: async (reader, where) => {
+            const groups = await reader
+              .select({
+                currency: paymentRequests.currency,
+                n: sql<number>`count(*)::int`,
+                // Money still asked for: rejected and cancelled requests add nothing.
+                amount: sql<string>`sum(CASE WHEN ${paymentRequests.status} IN ('rejected', 'cancelled') THEN 0 ELSE ${paymentRequests.totalAmount} END)::text`,
+              })
+              .from(paymentRequests)
+              .innerJoin(vendors, vendorJoin)
+              .where(where)
+              .groupBy(paymentRequests.currency);
+            const summed = sumByCurrency(groups);
+            totals = summed.totals;
+            return summed.total;
+          },
+        });
+        return {
+          rows: page.rows.map(({ request, vendor }) => {
+            const { lines: _lines, ...rest } = toDto(request, []);
+            return {
+              ...rest,
+              vendorName: vendor.legalName,
+              can: {
+                readVendor:
+                  principal.orgKind === 'staff' &&
+                  can(principal, 'vendor.read', vendorRef(vendor, principal)).allowed,
+              },
+            };
+          }),
+          total: page.total,
+          totals,
+        };
+      },
+      READ_ONLY,
+    );
   }
 
   /** 404 outside the acting entity or the caller's reach. */
   async get(id: string): Promise<PaymentRequestDetailDto> {
     const { scope, actor, principal } = this.caller.current();
-    return withTx(this.db, scope, actor, async (tx) => {
-      const dto = await this.dto(tx, scope, id, visibleTo(principal));
-      const [vendor] = await tx
-        .select()
-        .from(vendors)
-        .where(and(eq(vendors.tenantId, scope.tenantId), eq(vendors.id, dto.vendorPartyId)));
-      return {
-        ...dto,
-        vendorName: vendor?.legalName ?? null,
-        can: {
-          readVendor:
-            vendor !== undefined &&
-            principal.orgKind === 'staff' &&
-            can(principal, 'vendor.read', vendorRef(vendor, principal)).allowed,
-        },
-      };
-    });
+    return withTx(
+      this.db,
+      scope,
+      actor,
+      async (tx) => {
+        const dto = await this.dto(tx, scope, id, visibleTo(principal));
+        const [vendor] = await tx
+          .select()
+          .from(vendors)
+          .where(and(eq(vendors.tenantId, scope.tenantId), eq(vendors.id, dto.vendorPartyId)));
+        return {
+          ...dto,
+          vendorName: vendor?.legalName ?? null,
+          can: {
+            readVendor:
+              vendor !== undefined &&
+              principal.orgKind === 'staff' &&
+              can(principal, 'vendor.read', vendorRef(vendor, principal)).allowed,
+          },
+        };
+      },
+      READ_ONLY,
+    );
   }
 
   // ------------------------------------------------------------------------------------------------- create
@@ -432,7 +455,9 @@ export class PaymentRequestsService {
    * open item outside the acting entity; 409 `no_verified_bank_account` (check 14) or OVER_ALLOCATION (a line above
    * what is still open); 422 for an advance (no payout in Stage 1), an item named twice, an item that is not this
    * vendor's approved bill, another currency or a PO that is not the vendor's; 422 CURRENCY_NOT_ENABLED (D44) for a
-   * currency the company has not switched on in Settings, checked before the vendor or the lines are read.
+   * currency the company has not switched on in Settings, checked before the vendor or the lines are read; then 422
+   * BANK_ACCOUNT_INVALID unless fromBankAccountId is an active bank account of the acting entity, or
+   * BANK_ACCOUNT_CURRENCY_MISMATCH when it holds another currency (round 5, P1), so a refusal writes nothing.
    */
   async create(input: RequestPaymentBody, idempotencyKey: string): Promise<PaymentRequestDto> {
     // Ids are compared with the stored (lowercase) uuids as text below, so an uppercase id is folded first.
@@ -452,7 +477,12 @@ export class PaymentRequestsService {
     return withTx(this.db, scope, actor, async (tx) => {
       const done = await withIdempotency(
         tx,
-        { command: 'payables.payment_request.create', key: idempotencyKey, body },
+        {
+          command: 'payables.payment_request.create',
+          key: idempotencyKey,
+          // The entity is part of the request, so a retry made while acting in another entity is refused, not replayed.
+          body: { ...body, organizationId: scope.organizationId },
+        },
         async () => {
           if (body.paymentType !== 'settlement') {
             throw unprocessable(
@@ -465,6 +495,12 @@ export class PaymentRequestsService {
             throw unprocessable('DUPLICATE_OPEN_ITEM', `Open item ${repeated} is named twice`);
           }
           await this.currencies.assertEnabled(scope, body.currency);
+          await this.accounts.assertBankAccountUsable(
+            tx,
+            scope,
+            body.fromBankAccountId,
+            body.currency,
+          );
           const vendorId = body.vendorPartyId;
           const [account] = await tx
             .select({ vendorId: vendorAccounts.vendorId })
@@ -557,7 +593,8 @@ export class PaymentRequestsService {
    * Sends a draft to the `payment_request` route. 200 with the request in pending_approval. 404 outside the acting
    * entity; 409 invalid_transition unless it is a draft, `no_verified_bank_account`, OVER_ALLOCATION when another
    * request claimed the balance first; 422 NO_ELIGIBLE_APPROVER (nothing written) when nobody outside the SoD set
-   * can take a step.
+   * can take a step; 422 BANK_ACCOUNT_INVALID (nothing written) when the paying bank account was retired after the
+   * draft was made. A draft whose paying account id matches no row (made before the account list) still submits.
    */
   async submit(id: string, idempotencyKey: string): Promise<PaymentRequestDto> {
     const { scope, actor, principal } = this.caller.current();
@@ -575,6 +612,9 @@ export class PaymentRequestsService {
                 `A ${request.status} payment request cannot be submitted`,
               );
             }
+            // Before the vendor lock, the same order create uses: a paying account retired since the draft
+            // was made is refused here, before anything is written (round 5, P1).
+            await this.accounts.assertBankAccountNotRetired(tx, scope, request.fromBankAccountId);
             const vendorName = await this.lockVendor(tx, scope, request.vendorId);
             const snapshot = await this.bank.activeVerifiedAccount(scope, request.vendorId, tx);
             const lines = await this.linesOf(tx, scope, request.id);

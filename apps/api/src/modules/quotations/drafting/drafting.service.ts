@@ -65,7 +65,7 @@ import { can, type Principal, type ResourceRef } from '../../../platform/authz/c
 import { DB, type Db, type DbTransaction } from '../../../platform/db/db.module';
 import { updateVersioned, withIdempotency } from '../../../platform/db/idempotency';
 import { NO_LIMIT, type Reader, searchPage } from '../../../platform/list';
-import { withTx, type Actor, type TxScope } from '../../../platform/db/tx';
+import { withTx, type Actor, type TxScope, READ_ONLY } from '../../../platform/db/tx';
 import { CurrencyEnabledService } from '../../../platform/settings/currency-enabled';
 import { NumberingService } from '../../../platform/settings/numbering.service';
 import { quotationRef } from '../preview/quotation-preview.service';
@@ -461,45 +461,51 @@ export class DraftingService {
       status?.length ? inArray(quotationVersions.status, status) : undefined,
       this.sharedFilters(query),
     );
-    return withTx(this.db, scope, actor, async (tx) => {
-      const { rows, total } = await searchPage(tx, {
-        q: query.q,
-        columns: LIST_SEARCH_COLUMNS,
-        where,
-        orderBy: [desc(quotations.createdAt), desc(quotations.id)],
-        limit,
-        offset,
-        rows: (r, p) =>
-          r
-            .select({
-              quotation: quotations,
-              current: quotationVersions,
-              customerName: customers.legalName,
-              ownerName: users.displayName,
-              ownerAvatarDocumentId: users.avatarDocumentId,
-            })
-            .from(quotations)
-            .innerJoin(quotationVersions, onCurrentVersion)
-            .innerJoin(customers, onCustomer)
-            .leftJoin(users, onOwner)
-            .where(p.where)
-            .orderBy(...p.orderBy)
-            .limit(p.limit)
-            .offset(p.offset),
-        count: countMatching,
-      });
-      return {
-        total,
-        rows: rows.map((r) =>
-          toQuotationListItem(r.quotation, r.current, {
-            customerName: r.customerName,
-            ownerName: r.ownerName,
-            ownerAvatarDocumentId: r.ownerAvatarDocumentId,
-            canEdit: capabilitiesOf(principal, r.quotation, r.current.status).canEdit,
-          }),
-        ),
-      };
-    });
+    return withTx(
+      this.db,
+      scope,
+      actor,
+      async (tx) => {
+        const { rows, total } = await searchPage(tx, {
+          q: query.q,
+          columns: LIST_SEARCH_COLUMNS,
+          where,
+          orderBy: [desc(quotations.createdAt), desc(quotations.id)],
+          limit,
+          offset,
+          rows: (r, p) =>
+            r
+              .select({
+                quotation: quotations,
+                current: quotationVersions,
+                customerName: customers.legalName,
+                ownerName: users.displayName,
+                ownerAvatarDocumentId: users.avatarDocumentId,
+              })
+              .from(quotations)
+              .innerJoin(quotationVersions, onCurrentVersion)
+              .innerJoin(customers, onCustomer)
+              .leftJoin(users, onOwner)
+              .where(p.where)
+              .orderBy(...p.orderBy)
+              .limit(p.limit)
+              .offset(p.offset),
+          count: countMatching,
+        });
+        return {
+          total,
+          rows: rows.map((r) =>
+            toQuotationListItem(r.quotation, r.current, {
+              customerName: r.customerName,
+              ownerName: r.ownerName,
+              ownerAvatarDocumentId: r.ownerAvatarDocumentId,
+              canEdit: capabilitiesOf(principal, r.quotation, r.current.status).canEdit,
+            }),
+          ),
+        };
+      },
+      READ_ONLY,
+    );
   }
 
   /**
@@ -513,51 +519,57 @@ export class DraftingService {
       scopeWhereFor(principal, quotations, 'quotation.read'),
       this.sharedFilters(query),
     );
-    return withTx(this.db, scope, actor, async (tx) => {
-      // One page of one row: searchPage settles exact or close matches from the total and hands the final
-      // predicate to `rows`, which counts per status over exactly that predicate.
-      const { rows, total } = await searchPage(tx, {
-        q: query.q,
-        columns: LIST_SEARCH_COLUMNS,
-        where,
-        orderBy: [desc(quotations.id)],
-        limit: 1,
-        offset: 0,
-        rows: (r, p) =>
-          r
-            .select({
-              status: quotationVersions.status,
-              currency: quotationVersions.currency,
-              n: sql<number>`count(*)::int`,
-              // numeric(18,2) summed in the database and read as text: exact, never a float.
-              worth: sql<string>`sum(${quotationVersions.total})::text`,
-            })
-            .from(quotations)
-            .innerJoin(quotationVersions, onCurrentVersion)
-            .innerJoin(customers, onCustomer)
-            .leftJoin(users, onOwner)
-            .where(p.where)
-            .groupBy(quotationVersions.status, quotationVersions.currency),
-        count: countMatching,
-      });
-      const byStatus = Object.fromEntries(QUOTATION_STATUSES.map((st) => [st, 0])) as Record<
-        QuotationStatus,
-        number
-      >;
-      const amounts = Object.fromEntries(
-        QUOTATION_STATUSES.map((st) => [st, []]),
-      ) as unknown as Record<QuotationStatus, QuotationAmount[]>;
-      for (const r of rows) {
-        byStatus[r.status] += r.n;
-        amounts[r.status].push({
-          currency: r.currency as QuotationAmount['currency'],
-          total: r.worth,
+    return withTx(
+      this.db,
+      scope,
+      actor,
+      async (tx) => {
+        // One page of one row: searchPage settles exact or close matches from the total and hands the final
+        // predicate to `rows`, which counts per status over exactly that predicate.
+        const { rows, total } = await searchPage(tx, {
+          q: query.q,
+          columns: LIST_SEARCH_COLUMNS,
+          where,
+          orderBy: [desc(quotations.id)],
+          limit: 1,
+          offset: 0,
+          rows: (r, p) =>
+            r
+              .select({
+                status: quotationVersions.status,
+                currency: quotationVersions.currency,
+                n: sql<number>`count(*)::int`,
+                // numeric(18,2) summed in the database and read as text: exact, never a float.
+                worth: sql<string>`sum(${quotationVersions.total})::text`,
+              })
+              .from(quotations)
+              .innerJoin(quotationVersions, onCurrentVersion)
+              .innerJoin(customers, onCustomer)
+              .leftJoin(users, onOwner)
+              .where(p.where)
+              .groupBy(quotationVersions.status, quotationVersions.currency),
+          count: countMatching,
         });
-      }
-      for (const st of QUOTATION_STATUSES)
-        amounts[st].sort((a, b) => a.currency.localeCompare(b.currency));
-      return { total, byStatus, amounts };
-    });
+        const byStatus = Object.fromEntries(QUOTATION_STATUSES.map((st) => [st, 0])) as Record<
+          QuotationStatus,
+          number
+        >;
+        const amounts = Object.fromEntries(
+          QUOTATION_STATUSES.map((st) => [st, []]),
+        ) as unknown as Record<QuotationStatus, QuotationAmount[]>;
+        for (const r of rows) {
+          byStatus[r.status] += r.n;
+          amounts[r.status].push({
+            currency: r.currency as QuotationAmount['currency'],
+            total: r.worth,
+          });
+        }
+        for (const st of QUOTATION_STATUSES)
+          amounts[st].sort((a, b) => a.currency.localeCompare(b.currency));
+        return { total, byStatus, amounts };
+      },
+      READ_ONLY,
+    );
   }
 
   /** The customer and opportunity filters of `list` and `summary`; `status` is not one of them. */
@@ -577,87 +589,93 @@ export class DraftingService {
   async detail(id: string): Promise<QuotationDetail> {
     const { scope, actor, principal } = this.caller.current();
     this.assertStaff(principal);
-    return withTx(this.db, scope, actor, async (tx) => {
-      const quotation = await this.findVisible(tx, principal, id);
-      const versionRows = await tx
-        .select()
-        .from(quotationVersions)
-        .where(
-          and(
-            eq(quotationVersions.tenantId, quotation.tenantId),
-            eq(quotationVersions.organizationId, quotation.organizationId),
-            eq(quotationVersions.quotationId, quotation.id),
-          ),
-        );
-      const versions = await this.withParts(tx, quotation.tenantId, versionRows);
-      const statusHistory = await tx
-        .select()
-        .from(quotationStatusHistory)
-        .where(
-          and(
-            eq(quotationStatusHistory.tenantId, quotation.tenantId),
-            inArray(
-              quotationStatusHistory.versionId,
-              versionRows.map((v) => v.id),
+    return withTx(
+      this.db,
+      scope,
+      actor,
+      async (tx) => {
+        const quotation = await this.findVisible(tx, principal, id);
+        const versionRows = await tx
+          .select()
+          .from(quotationVersions)
+          .where(
+            and(
+              eq(quotationVersions.tenantId, quotation.tenantId),
+              eq(quotationVersions.organizationId, quotation.organizationId),
+              eq(quotationVersions.quotationId, quotation.id),
             ),
-          ),
-        )
-        .orderBy(asc(quotationStatusHistory.at), asc(quotationStatusHistory.id));
-      const customerPartyId = quotation.customerPartyId;
-      if (customerPartyId === null) {
-        throw new Error(`quotation ${quotation.number} has no customer`);
-      }
-      const [customer] = await tx
-        .select({ legalName: customers.legalName })
-        .from(customers)
-        .where(and(eq(customers.tenantId, quotation.tenantId), eq(customers.id, customerPartyId)))
-        .limit(1);
-      if (customer === undefined) {
-        throw new Error(`quotation ${quotation.number} has no customer record`);
-      }
-      const contacts = await tx
-        .select({
-          id: customerContacts.id,
-          fullName: customerContacts.fullName,
-          emailNorm: customerContacts.emailNorm,
-        })
-        .from(customerContacts)
-        .where(
-          and(
-            eq(customerContacts.tenantId, quotation.tenantId),
-            eq(customerContacts.customerId, customerPartyId),
-          ),
-        )
-        .orderBy(asc(customerContacts.fullName), asc(customerContacts.id));
-      const current = versionRows.find((v) => v.id === quotation.currentVersionId);
-      // The owner and every history actor by name, so the page needs no admin directory (403 for most staff).
-      const people = await personNames(tx, quotation.tenantId, [
-        quotation.ownerUserId,
-        ...statusHistory.map((h) => h.actorId),
-      ]);
-      const lead = await this.leadOf(tx, scope, principal, quotation.opportunityId);
-      const answer = toQuotationDetail({
-        quotation,
-        versions,
-        statusHistory,
-        customerName: customer.legalName,
-        contacts,
-        // No current version: toQuotationDetail refuses the answer anyway, so nothing is offered.
-        capabilities:
-          current === undefined
-            ? {
-                canEdit: false,
-                canRevise: false,
-                canSend: false,
-                canRecordOutcome: false,
-                canCancel: false,
-              }
-            : capabilitiesOf(principal, quotation, current.status),
-        people,
-        ...(lead === undefined ? {} : { lead }),
-      });
-      return detailVisibleTo(principal, answer);
-    });
+          );
+        const versions = await this.withParts(tx, quotation.tenantId, versionRows);
+        const statusHistory = await tx
+          .select()
+          .from(quotationStatusHistory)
+          .where(
+            and(
+              eq(quotationStatusHistory.tenantId, quotation.tenantId),
+              inArray(
+                quotationStatusHistory.versionId,
+                versionRows.map((v) => v.id),
+              ),
+            ),
+          )
+          .orderBy(asc(quotationStatusHistory.at), asc(quotationStatusHistory.id));
+        const customerPartyId = quotation.customerPartyId;
+        if (customerPartyId === null) {
+          throw new Error(`quotation ${quotation.number} has no customer`);
+        }
+        const [customer] = await tx
+          .select({ legalName: customers.legalName })
+          .from(customers)
+          .where(and(eq(customers.tenantId, quotation.tenantId), eq(customers.id, customerPartyId)))
+          .limit(1);
+        if (customer === undefined) {
+          throw new Error(`quotation ${quotation.number} has no customer record`);
+        }
+        const contacts = await tx
+          .select({
+            id: customerContacts.id,
+            fullName: customerContacts.fullName,
+            emailNorm: customerContacts.emailNorm,
+          })
+          .from(customerContacts)
+          .where(
+            and(
+              eq(customerContacts.tenantId, quotation.tenantId),
+              eq(customerContacts.customerId, customerPartyId),
+            ),
+          )
+          .orderBy(asc(customerContacts.fullName), asc(customerContacts.id));
+        const current = versionRows.find((v) => v.id === quotation.currentVersionId);
+        // The owner and every history actor by name, so the page needs no admin directory (403 for most staff).
+        const people = await personNames(tx, quotation.tenantId, [
+          quotation.ownerUserId,
+          ...statusHistory.map((h) => h.actorId),
+        ]);
+        const lead = await this.leadOf(tx, scope, principal, quotation.opportunityId);
+        const answer = toQuotationDetail({
+          quotation,
+          versions,
+          statusHistory,
+          customerName: customer.legalName,
+          contacts,
+          // No current version: toQuotationDetail refuses the answer anyway, so nothing is offered.
+          capabilities:
+            current === undefined
+              ? {
+                  canEdit: false,
+                  canRevise: false,
+                  canSend: false,
+                  canRecordOutcome: false,
+                  canCancel: false,
+                }
+              : capabilitiesOf(principal, quotation, current.status),
+          people,
+          ...(lead === undefined ? {} : { lead }),
+        });
+        return detailVisibleTo(principal, answer);
+      },
+      READ_ONLY,
+    );
   }
 
   /**
@@ -696,12 +714,18 @@ export class DraftingService {
   async getVersion(id: string, versionId: string): Promise<QuotationVersionDto> {
     const { scope, actor, principal } = this.caller.current();
     this.assertStaff(principal);
-    return withTx(this.db, scope, actor, async (tx) => {
-      const quotation = await this.findVisible(tx, principal, id);
-      const version = await this.findVersion(tx, quotation, versionId);
-      const [parts] = await this.withParts(tx, quotation.tenantId, [version]);
-      return versionVisibleTo(principal, toQuotationVersionDto({ ...parts!, quotation }));
-    });
+    return withTx(
+      this.db,
+      scope,
+      actor,
+      async (tx) => {
+        const quotation = await this.findVisible(tx, principal, id);
+        const version = await this.findVersion(tx, quotation, versionId);
+        const [parts] = await this.withParts(tx, quotation.tenantId, [version]);
+        return versionVisibleTo(principal, toQuotationVersionDto({ ...parts!, quotation }));
+      },
+      READ_ONLY,
+    );
   }
 
   // ------------------------------------------------------------------------------------------- update draft

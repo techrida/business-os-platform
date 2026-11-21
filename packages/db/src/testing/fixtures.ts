@@ -264,3 +264,104 @@ export async function createCostCenter(
   });
   return { costCenterId };
 }
+
+/** A retired row needs both columns (the retired_at check), so `status: 'retired'` stamps retired_at too. */
+function retiredAtFor(status: 'active' | 'retired', retiredAt: Date | undefined): Date | null {
+  if (status === 'active') return null;
+  return retiredAt ?? new Date();
+}
+
+export interface CompanyBankAccountRow {
+  id: string;
+  tenantId: string;
+  organizationId: string;
+  name: string;
+  bankName: string;
+  last4: string;
+  currency: string;
+  status: 'active' | 'retired';
+  retiredAt: Date | null;
+}
+
+/** A bank account of one legal entity (0143), audited under the fixture system actor. Returns the stored row. */
+export async function createCompanyBankAccount(
+  pool: FixturePool,
+  options: {
+    tenantId: string;
+    organizationId: string;
+    name?: string;
+    bankName?: string;
+    last4?: string;
+    currency?: string;
+    status?: 'active' | 'retired';
+    retiredAt?: Date;
+  },
+): Promise<CompanyBankAccountRow> {
+  const status = options.status ?? 'active';
+  return inFixtureTx(pool, options, async (client) => {
+    const { rows } = await client.query<CompanyBankAccountRow>(
+      `INSERT INTO app.company_bank_accounts
+         (tenant_id, organization_id, name, bank_name, last4, currency, status, retired_at)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+       RETURNING id, tenant_id AS "tenantId", organization_id AS "organizationId", name,
+         bank_name AS "bankName", last4, currency, status, retired_at AS "retiredAt"`,
+      [
+        options.tenantId,
+        options.organizationId,
+        options.name ?? 'Fixture operating account',
+        options.bankName ?? 'Fixture Bank',
+        options.last4 ?? '1234',
+        options.currency ?? 'NPR',
+        status,
+        retiredAtFor(status, options.retiredAt),
+      ],
+    );
+    const row = rows[0];
+    if (row === undefined) throw new Error('fixtures: company bank account insert returned no row');
+    return row;
+  });
+}
+
+export interface ExpenseAccountRow {
+  id: string;
+  tenantId: string;
+  organizationId: string;
+  code: string;
+  name: string;
+  status: 'active' | 'retired';
+  retiredAt: Date | null;
+}
+
+/** An expense account of one legal entity (0144), audited under the fixture system actor. Returns the stored row. */
+export async function createExpenseAccount(
+  pool: FixturePool,
+  options: {
+    tenantId: string;
+    organizationId: string;
+    code?: string;
+    name?: string;
+    status?: 'active' | 'retired';
+    retiredAt?: Date;
+  },
+): Promise<ExpenseAccountRow> {
+  const status = options.status ?? 'active';
+  return inFixtureTx(pool, options, async (client) => {
+    const { rows } = await client.query<ExpenseAccountRow>(
+      `INSERT INTO app.expense_accounts (tenant_id, organization_id, code, name, status, retired_at)
+       VALUES ($1, $2, $3, $4, $5, $6)
+       RETURNING id, tenant_id AS "tenantId", organization_id AS "organizationId", code, name, status,
+         retired_at AS "retiredAt"`,
+      [
+        options.tenantId,
+        options.organizationId,
+        options.code ?? `EX-${suffix()}`,
+        options.name ?? 'Fixture expense account',
+        status,
+        retiredAtFor(status, options.retiredAt),
+      ],
+    );
+    const row = rows[0];
+    if (row === undefined) throw new Error('fixtures: expense account insert returned no row');
+    return row;
+  });
+}

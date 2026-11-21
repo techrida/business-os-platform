@@ -3,6 +3,7 @@ import { randomUUID } from 'node:crypto';
 import type { Metadata } from 'next';
 import Link from 'next/link';
 import { notFound } from 'next/navigation';
+import type { ExpenseAccount } from '@bos/contracts';
 import type { NumberSystems } from '@bos/locale';
 
 import { isGuid } from '@/components/p2/customers/format';
@@ -12,10 +13,12 @@ import { Badge } from '@/components/ui/badge';
 import { Breadcrumb, Page, PageHeader } from '@/components/ui/page';
 import { FactList, Panel, type Fact } from '@/components/ui/panel';
 import { Table, Td, Th } from '@/components/ui/table';
+import { listExpenseAccounts } from '@/lib/api-company-accounts';
 import { getBill, type VendorBill } from '@/lib/api-payables';
 import { requireStaffSession } from '@/lib/bff';
 import { getNumberSystems } from '@/lib/display-settings';
 import { getGrants, hasGrant } from '@/lib/grants';
+import { accountLabel } from '@/lib/company-account-options';
 import { when } from '@/lib/kernel-format';
 
 import { poGrants, poMoney, qtyText } from '../../../procurement/orders/_lib/model';
@@ -42,17 +45,33 @@ import styles from '../../payables.module.css';
 export const metadata: Metadata = { title: 'Bill · Business OS' };
 export const dynamic = 'force-dynamic';
 
-function Lines({ bill, numberSystems }: { bill: VendorBill; numberSystems: NumberSystems }) {
+function Lines({
+  bill,
+  numberSystems,
+  accounts,
+}: {
+  bill: VendorBill;
+  numberSystems: NumberSystems;
+  /** Every expense account, retired ones included; null when they did not load. */
+  accounts: readonly ExpenseAccount[] | null;
+}) {
   return (
     <Panel
       title="Lines"
       description="As keyed in from the vendor's invoice. The net, VAT and withholding are the platform's, not typed."
     >
-      <Table caption="Bill lines" minWidth={900}>
+      {accounts === null ? (
+        <p className={styles.note}>
+          The expense accounts did not load, so the account names are not shown. Reload the page to
+          try again.
+        </p>
+      ) : null}
+      <Table caption="Bill lines" minWidth={1040}>
         <thead>
           <tr>
             <Th align="end">#</Th>
             <Th>Item</Th>
+            <Th>Expense account</Th>
             <Th align="end">Quantity</Th>
             <Th align="end">Unit price</Th>
             <Th align="end">Net</Th>
@@ -68,6 +87,15 @@ function Lines({ bill, numberSystems }: { bill: VendorBill; numberSystems: Numbe
               </Td>
               <Td>
                 <span className={styles.long}>{l.description}</span>
+              </Td>
+              <Td>
+                {accounts === null ? (
+                  <span className={styles.quiet}>Not loaded</span>
+                ) : (
+                  <span className={styles.long}>
+                    {accountLabel('expense', l.accountId, accounts)}
+                  </span>
+                )}
               </Td>
               <Td align="end" nowrap>
                 <span className={styles.numeric}>{qtyText(l.quantity)}</span>
@@ -225,6 +253,8 @@ export default async function BillPage({
   const orderNumber = bill.purchaseOrderNumber ?? undefined;
 
   const approval = await loadApproval(session, bill.approvalRequestId);
+  // Retired accounts too, so a line booked to one keeps its name. A failed read leaves the bill on screen.
+  const accounts = await listExpenseAccounts(session, { includeRetired: true }).catch(() => null);
   // Live grants (GET /v1/me), not the role defaults: the actions and the order link show for whoever an admin
   // granted them, and hide for a role whose grant was removed. The API still checks the bill itself.
   const live = await getGrants(session);
@@ -377,7 +407,7 @@ export default async function BillPage({
           </aside>
         </div>
         {/* The line tables run the full width: seven or eight columns do not fit beside the totals. */}
-        <Lines numberSystems={numberSystems} bill={bill} />
+        <Lines numberSystems={numberSystems} bill={bill} accounts={accounts} />
         <MatchPanel numberSystems={numberSystems} bill={bill} />
       </div>
     </Page>
