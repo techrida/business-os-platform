@@ -55,6 +55,7 @@ export function paymentCurrencyOptions(
 function AmountBox({
   currency,
   numberSystems,
+  showWords,
   ...rest
 }: Omit<ComponentProps<typeof MoneyInput>, 'currency'> & {
   currency: Currency | undefined;
@@ -62,7 +63,9 @@ function AmountBox({
   if (currency === undefined) {
     return <DecimalInput {...rest} intDigits={MONEY_LIMITS.intDigits} scale={MONEY_LIMITS.scale} />;
   }
-  return <MoneyInput {...rest} currency={currency} numberSystems={numberSystems} />;
+  return (
+    <MoneyInput {...rest} currency={currency} numberSystems={numberSystems} showWords={showWords} />
+  );
 }
 
 export function PaymentForm({
