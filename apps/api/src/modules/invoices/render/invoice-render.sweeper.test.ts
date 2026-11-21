@@ -95,6 +95,9 @@ function fixture(
     discardUnfilled: vi.fn().mockResolvedValue(undefined),
     recordFailure: vi.fn().mockResolvedValue({ attempts: 1, givenUp: false }),
     clearFailure: vi.fn().mockResolvedValue(undefined),
+    savePendingPrint: vi.fn().mockResolvedValue(undefined),
+    clearPendingPrint: vi.fn().mockResolvedValue(undefined),
+    owedPrints: vi.fn().mockResolvedValue([]),
   } satisfies RenderStore;
   const audit = { record: vi.fn().mockResolvedValue(undefined) };
   const documents = {
