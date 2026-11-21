@@ -117,9 +117,9 @@ describe('seedKernelRows', () => {
       index('INTO app.authz_versions'),
     );
     expect(index('INTO app.fx_rates')).toBeGreaterThan(index('INTO app.workflow_versions'));
-    // grants + authz bump + 12 x (definition + version + current_version_id) + fx peg
+    // grants + authz bump + 13 x (definition + version + current_version_id) + fx peg
     // + 3 tax codes + 2 payment terms + 2 withholding codes
-    expect(changed).toBe(grantCount + 1 + 12 * 3 + 1 + 3 + 2 + 2 + 3);
+    expect(changed).toBe(grantCount + 1 + 13 * 3 + 1 + 3 + 2 + 2 + 3);
   });
 
   it('rolls back and rethrows when a statement fails', async () => {
@@ -288,7 +288,7 @@ describe('seedKernelRows: P2 quotation reference data', () => {
       'quotation_version',
     ]);
     const versions = calls.filter((c) => c.text.includes('INTO app.workflow_versions'));
-    expect(versions).toHaveLength(12);
+    expect(versions).toHaveLength(13);
     const quotation = versions.find((c) => {
       const spec = JSON.parse(String(c.values[3])) as { documentType: string };
       return spec.documentType === 'quotation_version';
@@ -361,10 +361,10 @@ describe('seedKernelRows: P2 quotation reference data', () => {
     };
     const first = fakeClient(stateful);
     await seedKernelRows(first.client, scope);
-    // 3 tax codes + 2 payment terms + 11 definitions (version rows share def-1 here, so 1 key)
+    // 3 tax codes + 2 payment terms + 13 definitions (version rows share def-1 here, so 1 key)
     expect([...keys].filter((k) => k.startsWith('tax|'))).toHaveLength(3);
     expect([...keys].filter((k) => k.startsWith('term|'))).toHaveLength(2);
-    expect([...keys].filter((k) => k.startsWith('def|'))).toHaveLength(12);
+    expect([...keys].filter((k) => k.startsWith('def|'))).toHaveLength(13);
 
     const second = fakeClient(stateful);
     expect(await seedKernelRows(second.client, scope)).toBe(0);
@@ -479,6 +479,7 @@ describe('seedKernelRows: P4 purchasing', () => {
       'purchase_request',
       'pr_commitment',
       'po_amendment',
+      'emergency_review',
       'vendor_bill',
       'match_exception',
       'payment_request',
@@ -1224,6 +1225,13 @@ describe('PgTenancyStore (R5, ADR 0027 section 11)', () => {
       ],
       ['tenant-uuid', 'org-uuid', 'pr_commitment', 'Purchase commitment approval', 'pr_commitment'],
       ['tenant-uuid', 'org-uuid', 'po_amendment', 'Purchase order amendment', 'po_amendment'],
+      [
+        'tenant-uuid',
+        'org-uuid',
+        'emergency_review',
+        'Emergency purchase review',
+        'emergency_review',
+      ],
       ['tenant-uuid', 'org-uuid', 'vendor_bill', 'Vendor bill approval', 'vendor_bill'],
       ['tenant-uuid', 'org-uuid', 'match_exception', 'Match exception approval', 'match_exception'],
       ['tenant-uuid', 'org-uuid', 'payment_request', 'Payment request approval', 'payment_request'],
