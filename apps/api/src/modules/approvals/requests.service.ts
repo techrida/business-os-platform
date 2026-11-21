@@ -981,21 +981,44 @@ export class ApprovalsService {
     const filtered = query.q !== undefined || types.length > 0;
     const eligible = await this.eligibleInbox(scope, principal, genericApprover, query);
     // A filter that hides everything is an empty list, not a missing assignment: judge the 403 unfiltered.
-    const unfiltered =
+    const unfilteredCount =
       eligible.length === 0 && filtered
-        ? await this.eligibleInbox(scope, principal, genericApprover, {})
-        : eligible;
+        ? (await this.eligibleInboxRows(scope, principal, genericApprover, {})).length
+        : eligible.length;
+    await this.refuseWithoutAssignment(scope, principal, genericApprover, unfilteredCount);
+    const offset = query.offset ?? 0;
+    const end = query.limit === undefined ? undefined : offset + query.limit;
+    return { items: eligible.slice(offset, end), total: eligible.length };
+  }
+
+  /**
+   * How many requests the caller may decide now: always `inboxPage({}).total`, from the same eligibility checks,
+   * without building the items. The same 403 as the list for a caller with no approval assignment, never 0.
+   */
+  async inboxCount(): Promise<{ count: number }> {
+    const { scope, principal } = this.caller.current();
+    this.requireStaff(scope, principal);
+    const genericApprover = can(principal, 'approvals.requests.act').allowed;
+    const count = (await this.eligibleInboxRows(scope, principal, genericApprover, {})).length;
+    await this.refuseWithoutAssignment(scope, principal, genericApprover, count);
+    return { count };
+  }
+
+  /** The inbox 403: no generic grant, nothing eligible, and no duty that makes an empty inbox a list. */
+  private async refuseWithoutAssignment(
+    scope: TxScope,
+    principal: Principal,
+    genericApprover: boolean,
+    unfilteredCount: number,
+  ): Promise<void> {
     if (
       !genericApprover &&
-      unfiltered.length === 0 &&
+      unfilteredCount === 0 &&
       !mayBeNamedOutsideRole(principal) &&
       !(await this.hasPrHeadDuty(scope, principal))
     ) {
       throw forbidden('out_of_scope', 'You have no approval assignment');
     }
-    const offset = query.offset ?? 0;
-    const end = query.limit === undefined ? undefined : offset + query.limit;
-    return { items: eligible.slice(offset, end), total: eligible.length };
   }
 
   private async eligibleInbox(
@@ -1004,6 +1027,35 @@ export class ApprovalsService {
     genericApprover: boolean,
     query: InboxQuery,
   ): Promise<InboxItemDto[]> {
+    const rows = await this.eligibleInboxRows(scope, principal, genericApprover, query);
+    return rows.map(({ request, step }) => {
+      const amount = (request.facts as Record<string, unknown>)['amountNpr'];
+      return {
+        requestId: request.id,
+        documentType: request.documentType,
+        documentId: request.documentId,
+        documentNumber: request.documentNumber,
+        title: request.title,
+        amountNpr: DecimalString.safeParse(amount).success ? (amount as string) : null,
+        reason: step.reason,
+        activeStep: stepDto(step, request.facts),
+        submittedAt: request.submittedAt.toISOString(),
+        version: request.version,
+      };
+    });
+  }
+
+  /**
+   * The one eligibility predicate of the inbox list and its count: the (request, active step) pairs the caller may
+   * decide now, oldest first. SQL only narrows to this entity's pending requests (and the list's filters); every
+   * rule that decides eligibility runs here in TypeScript, so the list and the count cannot disagree.
+   */
+  private async eligibleInboxRows(
+    scope: TxScope,
+    principal: Principal,
+    genericApprover: boolean,
+    query: InboxQuery,
+  ): Promise<{ request: RequestRow; step: StepRow }[]> {
     const now = this.clock();
     const types = query.documentType ?? [];
     const rows = await this.db
@@ -1057,7 +1109,7 @@ export class ApprovalsService {
       step.kind === 'user' && step.userId !== null ? [step.userId] : [],
     );
     const specs = new Map<string, { spec: WorkflowSpec; data: DirectoryData }>();
-    const items: InboxItemDto[] = [];
+    const eligible: { request: RequestRow; step: StepRow }[] = [];
     for (const { request, step } of rows) {
       let entry = specs.get(request.workflowVersionId);
       if (entry === undefined) {
@@ -1097,21 +1149,9 @@ export class ApprovalsService {
       if (earlier.has(userId) || (who.onBehalfOf !== null && earlier.has(who.onBehalfOf))) {
         continue;
       }
-      const amount = (request.facts as Record<string, unknown>)['amountNpr'];
-      items.push({
-        requestId: request.id,
-        documentType: request.documentType,
-        documentId: request.documentId,
-        documentNumber: request.documentNumber,
-        title: request.title,
-        amountNpr: DecimalString.safeParse(amount).success ? (amount as string) : null,
-        reason: step.reason,
-        activeStep: stepDto(step, request.facts),
-        submittedAt: request.submittedAt.toISOString(),
-        version: request.version,
-      });
+      eligible.push({ request, step });
     }
-    return items;
+    return eligible;
   }
 
   /**
