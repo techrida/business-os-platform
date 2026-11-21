@@ -18,7 +18,8 @@
     "src",
     "e2e",
     "scripts/**/*.ts",
-    ".next/types/**/*.ts"
+    ".next/types/**/*.ts",
+    ".next-devtools/types/**/*.ts"
   ],
   "exclude": ["node_modules"]
 }
