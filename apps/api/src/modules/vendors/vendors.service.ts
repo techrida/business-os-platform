@@ -61,6 +61,7 @@ import {
   LIFECYCLE,
   lifecycleAllowed,
   sameNameVendors,
+  vendorNameKey,
   submitKycMove,
   vendorPartyCode,
   type LifecycleCommand,
@@ -349,59 +350,89 @@ export class VendorsService {
       const done = await withIdempotency(
         tx,
         { command: 'vendor.create', key: idempotencyKey, body },
-        async () => {
-          const pan = body.pan ?? null;
-          if (pan !== null) await this.assertPanFree(tx, scope.tenantId, pan);
-          const id = randomUUID();
-          try {
-            await tx.insert(parties).values({
-              id,
-              tenantId: scope.tenantId,
-              kind: 'vendor',
-              code: vendorPartyCode(id),
-              name: body.legalName,
-              createdAt: now,
-              updatedAt: now,
-            });
-            const [row] = await tx
-              .insert(vendors)
-              .values({
-                id,
-                tenantId: scope.tenantId,
-                legalName: body.legalName,
-                kind: kindToRow(body.kind),
-                pan,
-                vatRegistered: body.vatRegistered,
-                country: body.country,
-                status: 'draft',
-                ownerUserId: actor.id,
-                createdBy: actor.id,
-                version: 1,
-                createdAt: now,
-                updatedAt: now,
-              })
-              .returning();
-            await tx.insert(vendorAccounts).values({
-              tenantId: scope.tenantId,
-              organizationId: scope.organizationId,
-              vendorId: id,
-              defaultCurrency: 'NPR',
-              active: true,
-              version: 1,
-              createdAt: now,
-              updatedAt: now,
-            });
-            await this.recordSameName(tx, scope.tenantId, id, body.legalName);
-            return { status: 201, response: toVendorDto(row!, principal) };
-          } catch (error) {
-            // Two creates with the same PAN can both pass the pre-check; the unique index decides.
-            if (pan !== null && isUnique(error, PAN_INDEX)) throw duplicatePan(pan);
-            throw error;
-          }
-        },
+        async () => ({ status: 201, response: await this.createInTx(tx, body, now) }),
       );
       return done.response;
     });
+  }
+
+  /**
+   * The vendor insert of create(), inside a transaction that withTx opened for the caller's scope: the PAN pre-check,
+   * the party and vendors rows (status `draft`, so an unverified vendor like a hand-created one), the account with the
+   * acting entity, the same-name audit note and, when given, the first contact. It has no idempotency and no caller
+   * checks and does not look at the kind and country pairing (create() does); the caller of this method decides who
+   * may write. The CSV import (round 5, K1) calls it once per row inside its own batch transaction.
+   */
+  async createInTx(
+    tx: DbTransaction,
+    body: CreateVendorBody,
+    now: Date,
+    contact?: { name: string; email?: string; phone?: string },
+    nameIndex?: Map<string, string[]>,
+  ): Promise<VendorDto> {
+    const { scope, actor, principal } = this.caller.current();
+    const pan = body.pan ?? null;
+    if (pan !== null) await this.assertPanFree(tx, scope.tenantId, pan);
+    const id = randomUUID();
+    try {
+      await tx.insert(parties).values({
+        id,
+        tenantId: scope.tenantId,
+        kind: 'vendor',
+        code: vendorPartyCode(id),
+        name: body.legalName,
+        createdAt: now,
+        updatedAt: now,
+      });
+      const [row] = await tx
+        .insert(vendors)
+        .values({
+          id,
+          tenantId: scope.tenantId,
+          legalName: body.legalName,
+          kind: kindToRow(body.kind),
+          pan,
+          vatRegistered: body.vatRegistered,
+          country: body.country,
+          status: 'draft',
+          ownerUserId: actor.id,
+          createdBy: actor.id,
+          version: 1,
+          createdAt: now,
+          updatedAt: now,
+        })
+        .returning();
+      await tx.insert(vendorAccounts).values({
+        tenantId: scope.tenantId,
+        organizationId: scope.organizationId,
+        vendorId: id,
+        defaultCurrency: 'NPR',
+        active: true,
+        version: 1,
+        createdAt: now,
+        updatedAt: now,
+      });
+      await this.recordSameName(tx, scope.tenantId, id, body.legalName, nameIndex);
+      if (contact !== undefined) {
+        await tx.insert(vendorContacts).values({
+          tenantId: scope.tenantId,
+          vendorId: id,
+          fullName: contact.name,
+          emailNorm: contact.email === undefined ? null : normalizeEmail(contact.email),
+          phoneE164: contact.phone ?? null,
+          title: null,
+          isPrimary: true,
+          version: 1,
+          createdAt: now,
+          updatedAt: now,
+        });
+      }
+      return toVendorDto(row!, principal);
+    } catch (error) {
+      // Two creates with the same PAN can both pass the pre-check; the unique index decides.
+      if (pan !== null && isUnique(error, PAN_INDEX)) throw duplicatePan(pan);
+      throw error;
+    }
   }
 
   // ------------------------------------------------------------------------------------------------ update
@@ -886,6 +917,21 @@ export class VendorsService {
     }
   }
 
+  /** The tenant's vendors as name key to ids, for a batch that creates many vendors (see createInTx). */
+  async nameIndex(tx: DbTransaction, tenantId: string): Promise<Map<string, string[]>> {
+    const rows = await tx
+      .select({ id: vendors.id, legalName: vendors.legalName })
+      .from(vendors)
+      .where(eq(vendors.tenantId, tenantId))
+      .orderBy(asc(vendors.id));
+    const index = new Map<string, string[]>();
+    for (const r of rows) {
+      const key = vendorNameKey(r.legalName);
+      if (key !== '') index.set(key, [...(index.get(key) ?? []), r.id]);
+    }
+    return index;
+  }
+
   /**
    * TR-Q12d: a vendor added under a name another vendor of the tenant already has (vendorNameKey) is allowed, and
    * the audit trail names the namesakes, so a review can find a duplicate made on purpose. Tenant-wide, whatever
@@ -896,7 +942,24 @@ export class VendorsService {
     tenantId: string,
     id: string,
     legalName: string,
+    nameIndex?: Map<string, string[]>,
   ): Promise<void> {
+    if (nameIndex !== undefined) {
+      // A batch (the CSV import) keeps one index of name keys for all its rows, so it never rereads the table per row.
+      const key = vendorNameKey(legalName);
+      if (key === '') return;
+      const same = nameIndex.get(key) ?? [];
+      nameIndex.set(key, [...same, id]);
+      if (same.length === 0) return;
+      await this.audit.record(tx, {
+        action: 'vendor.created_with_same_name',
+        entityType: 'vendor',
+        entityId: id,
+        after: { legalName },
+        meta: { sameNameVendorIds: same },
+      });
+      return;
+    }
     const others = await tx
       .select({ id: vendors.id, legalName: vendors.legalName })
       .from(vendors)

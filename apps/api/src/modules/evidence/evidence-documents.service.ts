@@ -20,7 +20,7 @@ import { z } from 'zod';
 
 import { DB, type Db } from '../../platform/db/db.module';
 import { withTx } from '../../platform/db/tx';
-import { DocumentsService } from '../../platform/documents/documents.service';
+import { DocumentsService, type DocumentDto } from '../../platform/documents/documents.service';
 import { EVIDENCE_OWNER_TYPE } from '../../platform/documents/evidence-document';
 import { EvidenceCaller } from './evidence.caller';
 import { type EvidenceRecordKind, type EvidenceRecordLoader } from './evidence-owner.policy';
@@ -161,6 +161,28 @@ export class EvidenceDocumentsService {
       documentId,
       who: { scope, actor },
     });
+  }
+
+  /**
+   * One evidence file of this record with its versions: what the scan-status poll of a dialog reads, including a file
+   * still awaiting Save. Authorised by the record's own grant (the kind's permission on this record, the one that let
+   * the caller upload), not by `documents.read`, which the Accountant, Finance or a custom role with the record's
+   * grant may not hold. 404 when the record is not of this kind in the acting entity, or the file is not a live
+   * evidence file of this record there; 403 without the grant.
+   */
+  async read(kind: EvidenceRecordKind, recordId: string, documentId: string): Promise<DocumentDto> {
+    const { scope } = this.staffCaller();
+    if (![recordId, documentId].every((id) => Id.safeParse(id).success)) throw fileNotFound();
+    const record = await this.load(scope, recordId);
+    if (record?.kind !== kind) throw fileNotFound();
+    await this.documents.assertCanManage(scope, EVIDENCE_OWNER_TYPE, recordId);
+    const found = await this.documents.getOwnedBy(
+      scope,
+      { ownerType: EVIDENCE_OWNER_TYPE, ownerId: recordId },
+      documentId,
+    );
+    if (found === null) throw fileNotFound();
+    return found;
   }
 
   /**

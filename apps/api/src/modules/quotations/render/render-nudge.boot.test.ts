@@ -11,6 +11,9 @@ import { PurchaseOrdersModule } from '../../procurement/orders/purchase-orders.m
 import { PurchaseOrdersService } from '../../procurement/orders/purchase-orders.service';
 import { PurchaseOrderRenderNudge } from '../../procurement/orders/render/purchase-order-render.nudge';
 import { ApprovalsService } from '../../approvals/requests.service';
+import { InvoiceDocumentService } from '../../invoices/render/invoice-document.service';
+import { PurchaseOrderDocumentService } from '../../procurement/orders/render/purchase-order-document.service';
+import { QuotationDocumentService } from '../document/quotation-document.service';
 import { QuotationsModule } from '../quotations.module';
 import { QuotationRenderNudge } from './quotation-render.nudge';
 
@@ -60,6 +63,19 @@ describe('render nudges on the real AppModule (DI graph)', () => {
       'po_amendment',
     );
     expect((subject as { renderNudge?: unknown }).renderNudge).toBeInstanceOf(
+      PurchaseOrderRenderNudge,
+    );
+  });
+
+  it('gives each document service its render nudge, so a Retry renders at once', () => {
+    const nudgeOf = (service: unknown) => (service as { renderNudge?: unknown }).renderNudge;
+    expect(nudgeOf(moduleRef.get(QuotationDocumentService, { strict: false }))).toBeInstanceOf(
+      QuotationRenderNudge,
+    );
+    expect(nudgeOf(moduleRef.get(InvoiceDocumentService, { strict: false }))).toBeInstanceOf(
+      InvoiceRenderNudge,
+    );
+    expect(nudgeOf(moduleRef.get(PurchaseOrderDocumentService, { strict: false }))).toBeInstanceOf(
       PurchaseOrderRenderNudge,
     );
   });

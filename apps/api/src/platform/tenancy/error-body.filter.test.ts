@@ -328,6 +328,7 @@ describe('ErrorBodyFilter', () => {
       ['purchase_order_pdf_not_ready', 409],
       ['purchase_order_pdf_failed', 424],
       ['purchase_order_pdf_unavailable', 404],
+      ['purchase_order_pdf_scan_refused', 404],
       ['purchase_order_pdf_retry_not_needed', 409],
     ];
 

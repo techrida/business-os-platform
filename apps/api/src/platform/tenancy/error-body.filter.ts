@@ -53,6 +53,7 @@ export type ErrorCode =
   | 'purchase_order_pdf_not_ready'
   | 'purchase_order_pdf_failed'
   | 'purchase_order_pdf_unavailable'
+  | 'purchase_order_pdf_scan_refused'
   | 'purchase_order_pdf_retry_not_needed'
   | 'kyb_not_verified'
   | 'customer_merged'
@@ -210,6 +211,7 @@ const GENERIC_MESSAGE: Record<ErrorCode, string> = {
   purchase_order_pdf_not_ready: 'The PDF of this purchase order is still being prepared',
   purchase_order_pdf_failed: 'The PDF could not be prepared',
   purchase_order_pdf_unavailable: 'This PDF is not available',
+  purchase_order_pdf_scan_refused: 'The virus scan refused this PDF, so it cannot be served',
   purchase_order_pdf_retry_not_needed: 'The PDF has not failed, so there is nothing to retry',
   kyb_not_verified: 'Portal access needs an approved KYB verification case',
   customer_merged: 'This customer was merged into another',
@@ -546,6 +548,7 @@ const PDF_STATE_CODES: Readonly<Partial<Record<ErrorCode, number>>> = {
   purchase_order_pdf_not_ready: 409,
   purchase_order_pdf_failed: 424,
   purchase_order_pdf_unavailable: 404,
+  purchase_order_pdf_scan_refused: 404,
   purchase_order_pdf_retry_not_needed: 409,
 };
 

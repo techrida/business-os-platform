@@ -16,11 +16,13 @@ import {
   MAX_ROWS,
   multi,
   ReopenInvoiceBodySchema,
+  SalesVatRegisterQuerySchema,
   searchParam,
   SettlementStatusSchema,
   SubmitInvoiceBodySchema,
   type InvoiceDetail,
   type InvoiceListItem,
+  type SalesVatRegister,
   type IssueInvoiceResult,
 } from '@bos/contracts';
 import {
@@ -46,6 +48,7 @@ import { requireIdempotencyKey } from '../customers/customers.types';
 import { InvoiceApprovalService } from './invoice-approval.service';
 import { InvoiceDraftingService, type InvoicesSummary } from './invoice-drafting.service';
 import { InvoiceIssueService } from './invoice-issue.service';
+import { InvoiceVatRegisterService } from './invoice-vat-register.service';
 
 /** The contract body plus the order id the workspace also names (checked against the line's own order). */
 const FromScheduleBodySchema = DraftFromScheduleBodySchema.extend({
@@ -87,6 +90,7 @@ export class InvoicesController {
     private readonly drafting: InvoiceDraftingService,
     private readonly issuing: InvoiceIssueService,
     private readonly approval: InvoiceApprovalService,
+    private readonly vatRegister: InvoiceVatRegisterService,
   ) {}
 
   /**
@@ -112,6 +116,17 @@ export class InvoicesController {
   @Can('invoice.read')
   summary(@Query() query: unknown): Promise<InvoicesSummary> {
     return this.drafting.summary(parseOr400(InvoicesSummaryQuerySchema, query));
+  }
+
+  /**
+   * The sales VAT register: issued tax invoices, credit notes and debit notes of the acting entity by issue date.
+   * Query `from` and `to` (YYYY-MM-DD, inclusive). Needs `vat.sales.read`, not `invoice.read`. Before `:id`.
+   */
+  @Get('vat-register')
+  @Can('vat.sales.read')
+  salesVatRegister(@Query() query: unknown): Promise<SalesVatRegister> {
+    const { from, to } = parseOr400(SalesVatRegisterQuerySchema, query);
+    return this.vatRegister.register(from, to);
   }
 
   /** 201 with the InvoiceDetail of a manual draft. 400 without an Idempotency-Key or without `manualReason`. */

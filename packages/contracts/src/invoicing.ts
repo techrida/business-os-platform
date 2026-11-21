@@ -489,3 +489,60 @@ export const PortalInvoiceListItemSchema = z.strictObject({
   openAmount: DecimalString,
 });
 export type PortalInvoiceListItem = z.infer<typeof PortalInvoiceListItemSchema>;
+
+// ---------------------------------------------------------------------------------------------
+// Sales VAT register (round 5, K1)
+// ---------------------------------------------------------------------------------------------
+
+/** Query of `GET /v1/invoices/vat-register`: an inclusive period of issue dates (AD, YYYY-MM-DD). */
+export const SalesVatRegisterQuerySchema = z
+  .strictObject({ from: isoDate, to: isoDate })
+  .refine((v) => v.from <= v.to, {
+    message: 'The end date must be on or after the start date.',
+    path: ['to'],
+  });
+export type SalesVatRegisterQuery = z.infer<typeof SalesVatRegisterQuerySchema>;
+
+/** The kinds the sales book lists: proformas and drafts are not tax documents. */
+export const SALES_VAT_REGISTER_KINDS = ['tax_invoice', 'credit_note', 'debit_note'] as const;
+
+/**
+ * One issued sales document. Amounts are in the document's own currency, two decimals, and signed for the book: a credit
+ * note is negative, a debit note and a tax invoice positive. `taxableAmount` is the VAT-able base after discount.
+ */
+export const SalesVatRegisterRowSchema = z.strictObject({
+  invoiceId: z.guid(),
+  kind: z.enum(SALES_VAT_REGISTER_KINDS),
+  number: z.string().min(1),
+  issueDate: isoDate,
+  issueDateBs: z.string().min(1),
+  buyerName: z.string(),
+  buyerPan: z.string().nullable(),
+  currency: CurrencySchema,
+  taxableAmount: DecimalString,
+  vatAmount: DecimalString,
+  exemptAmount: DecimalString,
+  zeroRatedAmount: DecimalString,
+  totalAmount: DecimalString,
+});
+export type SalesVatRegisterRow = z.infer<typeof SalesVatRegisterRowSchema>;
+
+/** The totals of one currency. Never summed across currencies. */
+export const SalesVatRegisterTotalSchema = z.strictObject({
+  currency: CurrencySchema,
+  documents: z.number().int().min(0),
+  taxableAmount: DecimalString,
+  vatAmount: DecimalString,
+  exemptAmount: DecimalString,
+  zeroRatedAmount: DecimalString,
+  totalAmount: DecimalString,
+});
+export type SalesVatRegisterTotal = z.infer<typeof SalesVatRegisterTotalSchema>;
+
+export const SalesVatRegisterSchema = z.strictObject({
+  from: isoDate,
+  to: isoDate,
+  rows: z.array(SalesVatRegisterRowSchema),
+  totals: z.array(SalesVatRegisterTotalSchema),
+});
+export type SalesVatRegister = z.infer<typeof SalesVatRegisterSchema>;

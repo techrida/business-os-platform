@@ -128,6 +128,7 @@ let ownerPool: Pool;
 let pool: Pool;
 let db: Db;
 let scopeA: TxScope;
+const retryNudge = { nudge: vi.fn().mockResolvedValue(undefined) };
 let scopeB: TxScope;
 let deptA = '';
 let deptB = '';
@@ -282,7 +283,13 @@ beforeAll(async () => {
   sweeper = makeSweeper(
     new GotenbergClient(gotenbergUrl, { timeoutMs: 10_000, maxBytes: 1_000_000 }),
   );
-  service = new PurchaseOrderDocumentService(db, documents, caller, renderAudit);
+  service = new PurchaseOrderDocumentService(
+    db,
+    documents,
+    caller,
+    renderAudit,
+    retryNudge as never,
+  );
   // Issue and amend do not touch the approvals service while the band does not rise.
   orders = new PurchaseOrdersService(
     db,
@@ -793,6 +800,27 @@ describe('GET /v1/procurement/purchase-orders/:id/versions/:version/document', (
     await expect(service.link(po.id, 1)).rejects.toBeInstanceOf(NotFoundException);
   });
 
+  it.each(['infected', 'scan_failed'])(
+    'names a PDF the virus scan refused (%s) purchase_order_pdf_scan_refused, apart from a missing one',
+    async (refusal) => {
+      const po = await issuedPo();
+      const c = await candidateOf(po, 1);
+      current.scope = scopeA;
+      const documentId = await createOrphan(c, 0);
+      for (const status of ['quarantined', refusal]) {
+        await exec(
+          c,
+          sql`UPDATE app.document_versions SET status = ${status} WHERE document_id = ${documentId}::uuid`,
+        );
+      }
+      const refused = await service.link(po.id, 1).catch((e: unknown) => e);
+      expect(refused).toBeInstanceOf(NotFoundException);
+      expect((refused as NotFoundException).getResponse()).toMatchObject({
+        code: 'purchase_order_pdf_scan_refused',
+      });
+    },
+  );
+
   it('is a 403 for a portal caller', async () => {
     const po = await issuedPo();
     await renderClean(await candidateOf(po, 1));
@@ -888,9 +916,17 @@ describe('a render that keeps failing (R4c2: TR-Q4, F1-Q13)', () => {
     await expect(service.retry(po.id, 1)).rejects.toBeInstanceOf(ForbiddenException);
     current.orgKind = 'staff';
 
+    retryNudge.nudge.mockClear();
     await expect(service.retry(po.id, 1)).resolves.toEqual({ state: 'queued' });
+    // The Retry enqueues the render at once (after its commit), not on the next sweep; a refused Retry does not.
+    expect(retryNudge.nudge).toHaveBeenCalledExactlyOnceWith(
+      expect.objectContaining({ tenantId: scopeA.tenantId, organizationId: scopeA.organizationId }),
+      po.id,
+      1,
+    );
     expect(await failureRow(c.versionId)).toBeUndefined();
     await expect(service.retry(po.id, 1)).rejects.toBeInstanceOf(ConflictException);
+    expect(retryNudge.nudge).toHaveBeenCalledTimes(1);
     expect(await actions(scopeA, po.id)).toEqual([
       'purchase_order.pdf_render_failed',
       'purchase_order.pdf_retry_requested',

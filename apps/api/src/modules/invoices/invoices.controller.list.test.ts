@@ -17,7 +17,12 @@ function setup() {
     list: vi.fn().mockResolvedValue({ rows: [], total: 0, totals: [] }),
     summary: vi.fn().mockResolvedValue({ total: 0, byStatus: {}, customers: [] }),
   };
-  const controller = new InvoicesController(drafting as never, {} as never, {} as never);
+  const controller = new InvoicesController(
+    drafting as never,
+    {} as never,
+    {} as never,
+    {} as never,
+  );
   const res = { setHeader: vi.fn() };
   const list = (query: unknown) => controller.list(query, res as unknown as Response);
   return { drafting, controller, res, list };

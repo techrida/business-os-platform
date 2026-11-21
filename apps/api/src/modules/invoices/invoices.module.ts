@@ -22,6 +22,7 @@ import {
 } from './invoice-approval.service';
 import { InvoiceDraftingService } from './invoice-drafting.service';
 import { InvoiceIssueService } from './invoice-issue.service';
+import { InvoiceVatRegisterService } from './invoice-vat-register.service';
 import { drizzleInvoiceHeadLoader, InvoiceOwnerPolicy } from './invoice-owner.policy';
 import { InvoiceCaller } from './invoice-support';
 import { InvoicesController } from './invoices.controller';
@@ -45,6 +46,7 @@ import { InvoiceRenderNudgeModule } from './render/invoice-render.nudge';
     InvoiceDraftingService,
     InvoiceIssueService,
     InvoiceApprovalService,
+    InvoiceVatRegisterService,
     NoteDraftingService,
     CreditNoteIssueService,
   ],

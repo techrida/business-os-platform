@@ -10,6 +10,7 @@ import request from 'supertest';
 import { inject } from 'vitest';
 
 import { configureApp } from '../../../src/app.setup';
+import { logServerErrors } from './server-error-log';
 import { startTestIssuer, zitadelClaims, type MintOptions, type TestIssuer } from './test-issuer';
 
 /** The API's ZITADEL project id: OIDC_AUDIENCE, and the project the roles claim is named after. */
@@ -76,7 +77,8 @@ export async function startApp(options: StartAppOptions = {}): Promise<TestApp> 
     await issuer.close();
     throw error;
   }
-  app.useLogger(app.get(Logger));
+  // LOG_LEVEL is silent here, so the stack of any 5xx is written to stderr by this wrapper instead.
+  app.useLogger(logServerErrors(app.get(Logger)));
   configureApp(app);
   await app.init();
 

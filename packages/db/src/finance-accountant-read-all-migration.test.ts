@@ -306,7 +306,7 @@ describe('0123 Finance and Accountant base reads', () => {
       [`finance ${LEAD}`]: 'department true',
       [`finance ${OPP}`]: 'all false',
       [`accountant ${LEAD}`]: 'own false',
-      // 0104, 0127, 0128 and 0155 seed these rows to a tenant that stores grants.
+      // 0104, 0127, 0128, 0155 and 0175 seed these rows to a tenant that stores grants.
       'finance credit.override': 'all true',
       'founder credit.override': 'all true',
       'management credit.override': 'all true',
@@ -317,6 +317,9 @@ describe('0123 Finance and Accountant base reads', () => {
       'finance sales_order.delivery_release': 'all true',
       'founder sales_order.delivery_release': 'all true',
       'management sales_order.delivery_release': 'all true',
+      'accountant vat.sales.read': 'all true',
+      'finance vat.sales.read': 'all true',
+      'founder vat.sales.read': 'all true',
       'founder approvals.definitions.publish': 'all true',
       'founder email_delivery.read': 'all true',
       'founder email_delivery.resend': 'all true',
@@ -375,11 +378,11 @@ describe('0123 level rows', () => {
 });
 
 describe('0123 tenants and versions', () => {
-  it('bumps the authz version once for each tenant whose rows changed, and only those (0104, 0127, 0128, 0150 and 0155 add five more bumps where they seed rows)', async () => {
-    expect(await authzVersion(tenantSeeded.tenantId)).toBe(9);
-    expect(await authzVersion(tenantMaterialized.tenantId)).toBe(7);
-    expect(await authzVersion(tenantFounder.tenantId)).toBe(7);
-    expect(await authzVersion(tenantOtherRoles.tenantId)).toBe(10);
+  it('bumps the authz version once for each tenant whose rows changed, and only those (0104, 0127, 0128, 0150, 0155 and 0175 add six more bumps where they seed rows)', async () => {
+    expect(await authzVersion(tenantSeeded.tenantId)).toBe(10);
+    expect(await authzVersion(tenantMaterialized.tenantId)).toBe(8);
+    expect(await authzVersion(tenantFounder.tenantId)).toBe(8);
+    expect(await authzVersion(tenantOtherRoles.tenantId)).toBe(11);
   });
 
   it('leaves a tenant with no role rows on the code defaults: no grant, no level row, no version', async () => {
