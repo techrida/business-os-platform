@@ -482,10 +482,9 @@ describe('SalesOrdersService.releaseDelivery (F1-Q32)', () => {
     expect((await detailOf(orderId)).deliveryReleased).toBe(false);
 
     // The same order with its advance line turned into a milestone: nothing is left for the hold to wait on.
-    await ownerPool.query(
-      `UPDATE app.billing_schedule_lines SET trigger = 'milestone'
-        WHERE sales_order_id = $1 AND trigger = 'advance'`,
-      [orderId],
+    await withTx(db, scopeA, systemActor('test'), (tx) =>
+      tx.execute(sql`UPDATE app.billing_schedule_lines SET trigger = 'milestone'
+        WHERE sales_order_id = ${orderId} AND trigger = 'advance'`),
     );
 
     as('founder', founderUser);
@@ -504,6 +503,16 @@ describe('SalesOrdersService.releaseDelivery (F1-Q32)', () => {
       code: 'delivery_already_released',
     });
     expect(await releaseRows(orderId)).toHaveLength(0);
+
+    // A cancelled order has no delivery to release, so it does not read as released either.
+    await withTx(db, scopeA, systemActor('test'), (tx) =>
+      tx.execute(
+        sql`UPDATE app.sales_orders SET status = 'cancelled', cancelled_at = now(), cancel_reason = 'test' WHERE id = ${orderId}`,
+      ),
+    );
+    const cancelled = await detailOf(orderId);
+    expect(cancelled.deliveryReleased).toBe(false);
+    expect(cancelled.deliveryRelease).toBeNull();
   });
 
   it('refuses Management at the threshold and lets the Founder release it', async () => {

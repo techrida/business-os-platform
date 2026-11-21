@@ -860,7 +860,7 @@ export class SalesOrdersService {
       .where(
         scoped(scope).where(billingScheduleLines, eq(billingScheduleLines.salesOrderId, orderId)),
       );
-    const released = await this.deliveryState(tx, scope, orderId, schedule);
+    const released = await this.deliveryState(tx, scope, orderId, order.status, schedule);
     if (released !== null) {
       throw conflict(
         'delivery_already_released',
@@ -1071,7 +1071,7 @@ export class SalesOrdersService {
       ...order,
       quotationOwnerUserId: await this.quotationOwnerOf(tx, scope, order.quotationId),
     };
-    const deliveryRelease = await this.deliveryState(tx, scope, order.id, schedule);
+    const deliveryRelease = await this.deliveryState(tx, scope, order.id, order.status, schedule);
     // The same checks, in the same order, as `recordRelease`: the permission, then the money rule. The threshold
     // is read only for a caller with the permission on a held order, so most detail reads skip it.
     let releaseDeliveryBlockedBy: ReleaseBlocker | null = null;
@@ -1210,13 +1210,14 @@ export class SalesOrdersService {
 
   /**
    * How the order's delivery is released, or null while it is held: a release row (F1-Q32) first, since it is
-   * the record of who let it go before the advance was paid, else an order with no advance to wait for, else a paid
+   * the record of who let it go before the advance was paid, else a confirmed order with no advance to wait for, else a paid
    * advance (plan A14). An order with no advance line is never held: there is nothing for the hold to wait on.
    */
   private async deliveryState(
     tx: DbTransaction,
     scope: TxScope,
     orderId: string,
+    status: SalesOrderStatus,
     schedule: readonly LineRow[],
   ): Promise<SalesOrderDeliveryRelease | null> {
     const [release] = await tx
@@ -1248,7 +1249,9 @@ export class SalesOrdersService {
         reason: release.reason,
       };
     }
-    if (!schedule.some((l) => l.trigger === 'advance' && l.status !== 'cancelled')) {
+    // A draft or cancelled order has no delivery to release, so it is not "released" either.
+    const open = status === 'confirmed' || status === 'completed';
+    if (open && !schedule.some((l) => l.trigger === 'advance' && l.status !== 'cancelled')) {
       return { kind: 'no_advance', releasedAt: null, releasedByName: null, reason: null };
     }
     return (await this.advancePaid(tx, scope, schedule))
