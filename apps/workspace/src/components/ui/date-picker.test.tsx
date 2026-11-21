@@ -1,7 +1,8 @@
 // @vitest-environment jsdom
+import { act, useState } from 'react';
 import { afterEach, beforeEach, expect, it } from 'vitest';
 
-import { click, mountForm } from '@/test/form-interactions';
+import { click, mountForm, settle } from '@/test/form-interactions';
 import { DatePicker } from './date-picker';
 import { DateTimePicker } from './date-time-picker';
 import { Dialog } from './dialog';
@@ -89,6 +90,44 @@ it('DateTimePicker posts YYYY-MM-DDTHH:mm like a native datetime-local and shows
   expect(hidden.value).toBe('2026-11-21T14:30');
   expect(mounted.container.textContent).toContain('05 Mangsir 2083 BS');
   expect(mounted.container.querySelector('input[type="datetime-local"]')).toBeNull();
+});
+
+it('DateTimePicker names its time field by the field label plus Time and shares the hint', async () => {
+  mounted = await mountForm(
+    <Field label="New due time" hint="Kathmandu time.">
+      {(control) => <DateTimePicker {...control} name="dueAt" defaultValue="2026-11-21T14:30" />}
+    </Field>,
+  );
+  const time = Array.from(mounted.container.querySelectorAll('[role="group"]')).find((group) =>
+    group.querySelector('[data-type="hour"]'),
+  )!;
+  const labelledBy = time.getAttribute('aria-labelledby')!.split(' ');
+  expect(labelledBy.map((id) => document.getElementById(id)?.textContent)).toEqual([
+    'New due time',
+    'Time',
+  ]);
+  const described = time.getAttribute('aria-describedby')!.split(' ');
+  expect(described.map((id) => document.getElementById(id)?.textContent)).toContain(
+    'Kathmandu time.',
+  );
+});
+
+it('a form reset after an action does not wipe a controlled DatePicker', async () => {
+  function Harness() {
+    const [day, setDay] = useState('2026-11-21');
+    return <DatePicker aria-label="Valid until" name="validUntil" value={day} onChange={setDay} />;
+  }
+  mounted = await mountForm(
+    <form>
+      <Harness />
+    </form>,
+  );
+  await act(() => Promise.resolve(mounted.container.querySelector('form')!.reset()));
+  await settle();
+  expect(mounted.container.querySelector('input[name="validUntil"]')!.getAttribute('value')).toBe(
+    '2026-11-21',
+  );
+  expect(mounted.container.textContent).toContain('05 Mangsir 2083 BS');
 });
 
 it('DateTimePicker posts nothing until both the day and the time are set', async () => {

@@ -4,7 +4,7 @@
 
 import { getLocalTimeZone, isToday, parseDate, type CalendarDate } from '@internationalized/date';
 import { bsLongOfDay } from '@bos/locale';
-import { useId, useState } from 'react';
+import { useId, useRef, useState } from 'react';
 import {
   Button,
   Calendar,
@@ -23,6 +23,7 @@ import {
 } from 'react-aria-components';
 
 import { dropdownPopoverProps, usePopoverContainer } from './popover-container';
+import { useFormReset } from './use-form-reset';
 import styles from './date-picker.module.css';
 
 /** `YYYY-MM-DD` to a calendar date, or null for an empty or malformed value. */
@@ -110,7 +111,12 @@ export function DatePicker({
   ...aria
 }: DatePickerProps) {
   const bsId = useId();
+  const rootRef = useRef<HTMLDivElement>(null);
   const [typed, setTyped] = useState(defaultValue ?? '');
+  // React 19 resets a form after every function action, and React Aria then reports the reset as a
+  // change to a controlled picker, which would wipe what the user chose. A reset restores the
+  // default of an uncontrolled picker; a controlled parent keeps its own value.
+  const isResetting = useFormReset(rootRef, () => setTyped(defaultValue ?? ''));
   const chosen = value !== undefined ? value : typed;
   const bs = showBs ? bsLongOfDay(chosen) : null;
   const describedBy =
@@ -136,10 +142,14 @@ export function DatePicker({
   });
 
   return (
-    <div className={[styles.root, className].filter(Boolean).join(' ')}>
+    <div ref={rootRef} className={[styles.root, className].filter(Boolean).join(' ')}>
       <AriaDatePicker
         {...optional}
+        // The forms that hold a picker show server errors in place and the hidden input is not what
+        // the browser should block a submit on, so React Aria sets no native validity message.
+        validationBehavior="aria"
         onChange={(next) => {
+          if (isResetting()) return;
           const iso = next ? next.toString() : '';
           setTyped(iso);
           onChange?.(iso);

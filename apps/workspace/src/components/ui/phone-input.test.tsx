@@ -171,8 +171,44 @@ describe('PhoneInput, another country', () => {
     expect(phone.status()).toBe('A phone number has at most 15 digits, country code included.');
     // And back to Nepal.
     await phone.switchCountry();
+    // The Nepal number that was there before the switch comes back.
     expect(phone.prefix()).toBe('+977');
-    expect(phone.box().value).toBe('');
+    expect(phone.box().value).toBe('9812345678');
+  });
+
+  it('keeps focus on the switch button, so a keyboard user is not dropped on the page', async () => {
+    const phone = await mount(<PhoneInput aria-label="Phone" name="phone" />);
+    const button = phone.container.querySelector<HTMLButtonElement>('button[type="button"]')!;
+    await act(() => Promise.resolve(button.focus()));
+    await phone.switchCountry();
+    expect(document.activeElement).toBe(button);
+    expect(phone.prefix()).toBe('+');
+  });
+
+  it('gives a stored number back when the user switches by mistake and switches back', async () => {
+    const phone = await mount(
+      <PhoneInput aria-label="Phone" name="phone" defaultValue="+9779812345678" />,
+    );
+    await phone.switchCountry();
+    expect(phone.hidden()).toBe('');
+    await phone.switchCountry();
+    expect(phone.prefix()).toBe('+977');
+    expect(phone.box().value).toBe('9812345678');
+    expect(phone.hidden()).toBe('+9779812345678');
+  });
+
+  it('lets the first digit be deleted even when a 0 is left in front, and flags it on blur', async () => {
+    const phone = await mount(
+      <PhoneInput aria-label="Phone" name="phone" defaultValue="+977912345678" />,
+    );
+    await typeKeys(phone.box(), '{ArrowLeft}'.repeat(8) + '{Backspace}');
+    expect(phone.box().value).toBe('12345678');
+    await mounted.unmount();
+    const zero = await mount(<PhoneInput aria-label="Phone" name="phone" defaultValue="+977" />);
+    await typeKeys(zero.box(), '90{ArrowLeft}{ArrowLeft}{Delete}');
+    expect(zero.box().value).toBe('0');
+    await blur(zero.box());
+    expect(zero.status()).toBe('Leave out the leading 0. +977 is already there.');
   });
 
   it('flags too few digits on blur', async () => {
