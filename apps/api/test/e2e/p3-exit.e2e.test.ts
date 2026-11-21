@@ -520,7 +520,9 @@ describe('P3 exit: quote to cash over HTTP', () => {
 
   it('5. the render sweeper renders the advance PDF (fake Gotenberg) and the scan marks it clean (fake clamd)', async () => {
     const finance = await auth('finance');
-    // Before the scan the document route answers 404: no unscanned file is ever linked.
+    // Before the scan no unscanned file is ever linked: the route answers 409 `invoice_pdf_not_ready` while the PDF is
+    // being prepared or scanned (TR-Q4, R4c2; the screen shows "Preparing PDF"), or 404 before any render exists.
+    // A given-up render is 424 and a refused file 404 `invoice_pdf_unavailable`: those must fail the wait.
     const link = await pollUntil(
       'the advance invoice PDF to scan clean',
       async () => {
@@ -532,7 +534,11 @@ describe('P3 exit: quote to cash over HTTP', () => {
           .http()
           .get(`/v1/invoices/${s.advanceId}/document`)
           .set('authorization', finance);
-        if (res.status !== 200 && res.status !== 404) throw new Error(show(res));
+        const code = (res.body as { error?: { code?: string } }).error?.code;
+        const waiting =
+          (res.status === 409 && code === 'invoice_pdf_not_ready') ||
+          (res.status === 404 && code === 'not_found');
+        if (res.status !== 200 && !waiting) throw new Error(show(res));
         const body = res.body as unknown;
         return {
           done: res.status === 200 ? SignedLinkDtoSchema.parse(body) : undefined,
