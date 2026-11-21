@@ -199,6 +199,25 @@ describe('POST /api/evidence/:kind/:ownerId', () => {
       'This file could not be kept as evidence for this record. Upload it again.',
     );
   });
+
+  it('removes the reserved file through the record route when its bytes fail, and keeps the failure', async () => {
+    mocks.uploadEvidenceContent.mockRejectedValueOnce(new ApiError(415, 'x'));
+    expect((await upload(ORDER, { kind: 'vendor-bill' })).status).toBe(415);
+    expect(mocks.removeEvidenceDocument).toHaveBeenCalledWith(session, 'vendor-bill', ORDER, DOC);
+
+    // Best effort: a failed removal does not replace the upload's own failure.
+    mocks.removeEvidenceDocument.mockClear().mockRejectedValueOnce(new ApiError(503, 'x'));
+    mocks.uploadEvidenceContent.mockRejectedValueOnce(refusal(409, 'conflict'));
+    expect((await upload()).status).toBe(409);
+    expect(mocks.removeEvidenceDocument).toHaveBeenCalledTimes(1);
+
+    // Nothing was reserved when the create itself failed, and a finished upload is kept.
+    mocks.removeEvidenceDocument.mockClear();
+    mocks.createEvidenceDocument.mockRejectedValueOnce(new ApiError(403, 'x'));
+    expect((await upload()).status).toBe(403);
+    expect((await upload()).status).toBe(201);
+    expect(mocks.removeEvidenceDocument).not.toHaveBeenCalled();
+  });
 });
 
 function status(documentId: string, versionId: string, kind = 'sales-order'): Promise<Response> {
