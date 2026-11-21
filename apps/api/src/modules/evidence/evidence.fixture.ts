@@ -23,6 +23,7 @@ import { DiskStorageAdapter } from '../../platform/documents/storage.adapter';
 import { EvidenceDocumentsService } from './evidence-documents.service';
 import {
   drizzleEvidenceRecordLoader,
+  drizzleEvidenceReferenceLoader,
   EvidenceOwnerPolicy,
   type EvidenceRecordKind,
 } from './evidence-owner.policy';
@@ -66,7 +67,7 @@ export async function evidenceFixture(
     new AuditService(db),
   );
   const load = drizzleEvidenceRecordLoader(db);
-  documents.registerOwner(new EvidenceOwnerPolicy(load));
+  documents.registerOwner(new EvidenceOwnerPolicy(load, drizzleEvidenceReferenceLoader(db)));
   const service = new EvidenceDocumentsService(db, load, { current: who }, documents);
   return {
     documents,

@@ -11,6 +11,7 @@ import { EvidenceDocumentsController } from './evidence-documents.controller';
 import { EVIDENCE_RECORD_LOADER, EvidenceDocumentsService } from './evidence-documents.service';
 import {
   drizzleEvidenceRecordLoader,
+  drizzleEvidenceReferenceLoader,
   EvidenceOwnerPolicy,
   type EvidenceRecordLoader,
 } from './evidence-owner.policy';
@@ -18,12 +19,15 @@ import {
 @Injectable()
 export class EvidenceOwnerRegistrar implements OnModuleInit {
   constructor(
+    @Inject(DB) private readonly db: Db,
     @Inject(EVIDENCE_RECORD_LOADER) private readonly load: EvidenceRecordLoader,
     private readonly documents: DocumentsService,
   ) {}
 
   onModuleInit(): void {
-    this.documents.registerOwner(new EvidenceOwnerPolicy(this.load));
+    this.documents.registerOwner(
+      new EvidenceOwnerPolicy(this.load, drizzleEvidenceReferenceLoader(this.db)),
+    );
   }
 }
 

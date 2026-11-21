@@ -590,6 +590,38 @@ describe('RFQ', () => {
     },
   );
 
+  it('freezes a recorded quotation file: no removal or new version while the RFQ is open; an unused file goes', async () => {
+    const { rfqId } = await rfqWithQuotes(['1000.00']);
+    const [quote] = await read((tx) =>
+      tx.execute(sql`SELECT document_id FROM app.vendor_quotations WHERE rfq_id = ${rfqId}`),
+    ).then((r) => r.rows as { document_id: string }[]);
+    const { scope, actor } = caller.current();
+    // Procurement holds documents.upload (own) and procurement.sourcing: the generic routes' grants.
+    expect(principalNow().grants.has('documents.upload')).toBe(true);
+    const removed = await httpErrorOf(
+      evidence.documents.remove(quote!.document_id, { who: { scope, actor } }),
+    );
+    expect(removed.getStatus()).toBe(409);
+    const versioned = await httpErrorOf(
+      withTx(db, scope, actor, (tx) =>
+        evidence.documents.createVersion(tx, quote!.document_id, {
+          filename: 'swap.pdf',
+          declaredMime: 'application/pdf',
+          sizeBytes: 10,
+        }),
+      ),
+    );
+    expect(versioned.getStatus()).toBe(409);
+    const unused = await quoteFile(rfqId);
+    await evidence.documents.remove(unused, { who: { scope, actor } });
+    const { rows } = await exec(
+      scopeA,
+      sql`SELECT (removed_at IS NOT NULL) AS removed FROM app.documents WHERE id IN (${quote!.document_id}, ${unused})
+          ORDER BY removed`,
+    );
+    expect(rows).toEqual([{ removed: false }, { removed: true }]);
+  });
+
   it('lets only a sourcing holder upload a quotation file, to an open RFQ of the entity', async () => {
     const { rfqId } = await rfqWithQuotes(['1000.00']);
     const file = { filename: 'quote.pdf', declaredMime: 'application/pdf', sizeBytes: 10 };

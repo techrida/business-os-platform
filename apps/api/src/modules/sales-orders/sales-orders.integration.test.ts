@@ -1256,6 +1256,32 @@ describe('SalesOrdersService.markBillable', () => {
     },
   );
 
+  it('freezes the evidence a line took: no removal or new version while the order still takes evidence', async () => {
+    const detail = await confirm(await acceptedQuotation());
+    const doc = await evidence.upload('sales_order', detail.order.id);
+    await mark(detail, 1, { evidenceDocumentId: doc });
+    // A caller with both generic grants (documents.upload) and the order's own grant.
+    current.grants = grantsOf('founder');
+    const { scope, actor } = caller.current();
+    expect(await statusOf(evidence.documents.remove(doc, { who: { scope, actor } }))).toEqual({
+      status: 409,
+      code: 'conflict',
+    });
+    expect(
+      (
+        await statusOf(
+          withTx(db, scope, actor, (tx) =>
+            evidence.documents.createVersion(tx, doc, {
+              filename: 'swap.pdf',
+              declaredMime: 'application/pdf',
+              sizeBytes: 10,
+            }),
+          ),
+        )
+      ).status,
+    ).toBe(409);
+  });
+
   it('takes a file already filed as the order evidence (the dialog list), whatever its owner type', async () => {
     const filed = await seedDocument();
     const detail = await confirm(await acceptedQuotation(), [filed]);

@@ -10,10 +10,21 @@
 // A ResourceRef carries no record kind, so a plain `uploadPermission` list would let any one grant reach every kind
 // (a sales-order grant uploading to a bill). `uploadGrants` resolves the id first and names only that kind's
 // permission. Staff only: no portal hook (`allowsCounterparty`) and no background job (`allowsSystemActor`), so
-// both are refused. The type, size and scan rules are the generic ones: photos stay allowed, because a photographed
+// both are refused. A file a record already took (a billable line's evidence, a match exception's, a recorded
+// quotation's) is frozen: no new version and no removal through the generic routes while the record stays open.
+// The type, size and scan rules are the generic ones: photos stay allowed, because a photographed
 // delivery note is valid evidence. Every lookup is scoped to the caller's tenant and acting entity, so a record
 // of another entity is null (404).
-import { billingScheduleLines, quotations, rfqs, salesOrders, scoped, vendorBills } from '@bos/db';
+import {
+  billingScheduleLines,
+  matchExceptions,
+  quotations,
+  rfqs,
+  salesOrders,
+  scoped,
+  vendorBills,
+  vendorQuotations,
+} from '@bos/db';
 import { and, eq } from 'drizzle-orm';
 import { z } from 'zod';
 
@@ -46,6 +57,17 @@ export type EvidenceRecord =
     }
   | { kind: 'vendor_bill'; status: string; enteredBy: string | null }
   | { kind: 'rfq'; status: string; createdBy: string | null };
+
+/**
+ * Whether the record already references this evidence file (a billable schedule line, a match exception, a recorded
+ * vendor quotation). With `tx`, the referencing rows are locked FOR SHARE.
+ */
+export type EvidenceReferenceLoader = (
+  scope: TxScope,
+  record: { kind: EvidenceRecordKind; id: string },
+  documentId: string,
+  tx?: DbTransaction,
+) => Promise<boolean>;
 
 /** With `tx`, the record's head row is locked FOR SHARE, so an attach cannot interleave with its state change. */
 export type EvidenceRecordLoader = (
@@ -102,7 +124,10 @@ function primaryRef(scope: TxScope, record: EvidenceRecord): ResourceRef {
 export class EvidenceOwnerPolicy implements DocumentOwnerPolicy {
   readonly ownerType = EVIDENCE_OWNER_TYPE;
 
-  constructor(private readonly load: EvidenceRecordLoader) {}
+  constructor(
+    private readonly load: EvidenceRecordLoader,
+    private readonly isReferenced: EvidenceReferenceLoader,
+  ) {}
 
   /** The record this id names in the acting entity, else null (404). */
   async resource(scope: TxScope, ownerId: string): Promise<ResourceRef | null> {
@@ -115,9 +140,20 @@ export class EvidenceOwnerPolicy implements DocumentOwnerPolicy {
     return record === undefined ? null : evidenceUploadGrants(scope, record);
   }
 
-  async canAttach(scope: TxScope, ownerId: string, tx?: DbTransaction): Promise<boolean> {
+  /**
+   * A new file while the record takes evidence; a new version, its bytes or a removal (`documentId`) only while the
+   * record has not taken that file yet, so what a line, exception or quotation names cannot change under it.
+   */
+  async canAttach(
+    scope: TxScope,
+    ownerId: string,
+    tx?: DbTransaction,
+    documentId?: string,
+  ): Promise<boolean> {
     const record = await this.load(scope, ownerId, tx);
-    return record !== undefined && evidenceAttachable(record);
+    if (record === undefined || !evidenceAttachable(record)) return false;
+    if (documentId === undefined) return true;
+    return !(await this.isReferenced(scope, { kind: record.kind, id: ownerId }, documentId, tx));
   }
 
   /** No job adds evidence. */
@@ -187,5 +223,60 @@ export function drizzleEvidenceRecordLoader(db: Db): EvidenceRecordLoader {
     const [rfq] = tx === undefined ? await rfqQuery : await rfqQuery.for('share');
     if (rfq !== undefined) return { kind: 'rfq', ...rfq };
     return undefined;
+  };
+}
+
+/** The record's own references to an evidence file, in this tenant and acting entity. */
+export function drizzleEvidenceReferenceLoader(db: Db): EvidenceReferenceLoader {
+  return async (scope, record, documentId, tx) => {
+    if (!Id.safeParse(documentId).success) return false;
+    const reader = tx ?? db;
+    const s = scoped(scope);
+    if (record.kind === 'sales_order') {
+      const query = reader
+        .select({ id: billingScheduleLines.id })
+        .from(billingScheduleLines)
+        .where(
+          s.where(
+            billingScheduleLines,
+            and(
+              eq(billingScheduleLines.salesOrderId, record.id),
+              eq(billingScheduleLines.billableEvidenceDocumentId, documentId),
+            ),
+          ),
+        )
+        .limit(1);
+      const rows = tx === undefined ? await query : await query.for('share');
+      return rows.length > 0;
+    }
+    if (record.kind === 'vendor_bill') {
+      const query = reader
+        .select({ id: matchExceptions.id })
+        .from(matchExceptions)
+        .where(
+          s.where(
+            matchExceptions,
+            and(
+              eq(matchExceptions.vendorBillId, record.id),
+              eq(matchExceptions.evidenceDocumentId, documentId),
+            ),
+          ),
+        )
+        .limit(1);
+      const rows = tx === undefined ? await query : await query.for('share');
+      return rows.length > 0;
+    }
+    const query = reader
+      .select({ id: vendorQuotations.id })
+      .from(vendorQuotations)
+      .where(
+        s.where(
+          vendorQuotations,
+          and(eq(vendorQuotations.rfqId, record.id), eq(vendorQuotations.documentId, documentId)),
+        ),
+      )
+      .limit(1);
+    const rows = tx === undefined ? await query : await query.for('share');
+    return rows.length > 0;
   };
 }

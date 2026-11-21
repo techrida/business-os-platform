@@ -85,8 +85,11 @@ describe('evidenceAttachable', () => {
 
 describe('EvidenceOwnerPolicy', () => {
   const known = randomUUID();
-  const policy = new EvidenceOwnerPolicy((_scope, id) =>
-    Promise.resolve(id === known ? bill('variance') : undefined),
+  const taken = randomUUID();
+  const policy = new EvidenceOwnerPolicy(
+    (_scope, id) => Promise.resolve(id === known ? bill('variance') : undefined),
+    (_scope, record, documentId) =>
+      Promise.resolve(record.kind === 'vendor_bill' && record.id === known && documentId === taken),
   );
 
   it('answers null (404) for an id that is no record of the acting entity', async () => {
@@ -100,6 +103,12 @@ describe('EvidenceOwnerPolicy', () => {
     expect(await policy.uploadGrants(scope, known)).toEqual([
       { action: 'payables.bill.enter', ref: { ...scope, ownerUserId: ENTERER } },
     ]);
+    expect(await policy.canAttach(scope, known)).toBe(true);
+  });
+
+  it('freezes a file the record already took: no new version, bytes or removal of it', async () => {
+    expect(await policy.canAttach(scope, known, undefined, taken)).toBe(false);
+    expect(await policy.canAttach(scope, known, undefined, randomUUID())).toBe(true);
     expect(await policy.canAttach(scope, known)).toBe(true);
   });
 

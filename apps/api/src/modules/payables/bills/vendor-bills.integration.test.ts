@@ -1704,6 +1704,30 @@ describe('evidence uploads on a bill (round 5 P2)', () => {
     expect(await evidenceRows(bill.id)).toBe(0);
   });
 
+  it('freezes the evidence an exception took: no removal or new version while the bill is still open', async () => {
+    const bill = await varianceBill();
+    const uploaded = await evidence.upload('vendor_bill', bill.id);
+    await service.requestException(
+      bill.id,
+      { reason: 'Vendor raised the price', evidenceDocumentId: uploaded },
+      randomUUID(),
+    );
+    expect((await service.get(bill.id)).status).toBe('exception_pending');
+    current.grants = new Map<Permission, Scope>([
+      ['documents.upload', 'all'],
+      ['payables.bill.enter', 'all'],
+    ]);
+    const { scope, actor } = caller.current();
+    const removed = await httpErrorOf(
+      evidence.documents.remove(uploaded, { who: { scope, actor } }),
+    );
+    expect(removed.getStatus()).toBe(409);
+    const versioned = await httpErrorOf(
+      withTx(db, scope, actor, (tx) => evidence.documents.createVersion(tx, uploaded, file)),
+    );
+    expect(versioned.getStatus()).toBe(409);
+  });
+
   it('keeps photos as evidence (a photographed delivery note) and receives the bytes only on its own bill route', async () => {
     const bill = await varianceBill();
     const jpeg = Buffer.concat([
