@@ -503,13 +503,18 @@ export class DocumentsService {
     const created = await withTx(this.db, who.scope, who.actor, (tx) =>
       this.createGenerated(tx, owner, file),
     );
-    await this.receiveInternal(
-      created.versionId,
-      Readable.from(file.bytes),
-      file.bytes.length,
-      { documentId: created.documentId, who },
-      { skipScan: false },
-    );
+    try {
+      await this.receiveInternal(
+        created.versionId,
+        Readable.from(file.bytes),
+        file.bytes.length,
+        { documentId: created.documentId, who },
+        { skipScan: false },
+      );
+    } catch (error) {
+      // Received and kept: the sweeper queues its scan, so the document stands.
+      if (!(error instanceof ScanQueueDeferredError)) throw error;
+    }
     return created;
   }
 
@@ -559,6 +564,11 @@ export class DocumentsService {
           `upload of document ${created.documentId} failed and it could not be removed: ${describe(cleanup)}`,
         );
       }
+      // The picture is removed with its bytes and the sweeper skips removed documents, so no scan will follow.
+      if (error instanceof ScanQueueDeferredError)
+        throw new ServiceUnavailableException(
+          'The picture could not be queued for its virus scan and was not saved. Upload it again.',
+        );
       throw error;
     }
     return { documentId: created.documentId, versionId: created.versionId };
@@ -818,7 +828,8 @@ export class DocumentsService {
       }
       await tx
         .update(documentVersions)
-        .set({ status: 'quarantined', updatedAt: new Date() })
+        // A retry starts from nothing recorded: a validation marker is only ever written by this upload's own step 4.
+        .set({ status: 'quarantined', detectedMime: null, updatedAt: new Date() })
         .where(s.where(documentVersions, eq(documentVersions.id, versionId)));
       return found;
     });
@@ -869,7 +880,12 @@ export class DocumentsService {
           detectedMime: verdict.detectedMime,
           updatedAt: new Date(),
         })
-        .where(s.where(documentVersions, eq(documentVersions.id, versionId)))
+        .where(
+          s.where(
+            documentVersions,
+            and(eq(documentVersions.id, versionId), eq(documentVersions.status, 'quarantined')),
+          ),
+        )
         .returning();
       if (saved === undefined) throw new NotFoundException('Version not found');
       return saved;
@@ -899,9 +915,7 @@ export class DocumentsService {
       this.logger.error(
         `could not queue the scan for version ${versionId}, the sweeper will: ${describe(error)}`,
       );
-      throw new ServiceUnavailableException(
-        'The file was received but its virus scan could not be queued yet. It is scanned as soon as the queue is back.',
-      );
+      throw new ScanQueueDeferredError(toVersionDto(updated));
     }
     return toVersionDto(updated);
   }
@@ -1659,6 +1673,19 @@ export class DocumentsService {
         .set({ status: 'awaiting_content', updatedAt: new Date() })
         .where(s.where(documentVersions, eq(documentVersions.id, version.id)));
     });
+  }
+}
+
+/**
+ * The file was received and recorded (quarantined, with its sha256), but its docs.scan job could not be queued. The bytes
+ * are kept and the stuck-scan sweeper queues the scan. The upload route answers 202 with `version`; the one-step image
+ * upload deletes the picture and asks the user to upload again. It is a 503 for any caller that does not handle it.
+ */
+export class ScanQueueDeferredError extends ServiceUnavailableException {
+  constructor(readonly version: DocumentVersionDto) {
+    super(
+      'The file was received, but its virus scan could not be queued yet. It is scanned as soon as the queue is back.',
+    );
   }
 }
 

@@ -23,15 +23,16 @@ import {
   Post,
   Put,
   Req,
+  Res,
   UnsupportedMediaTypeException,
 } from '@nestjs/common';
-import type { Request } from 'express';
+import type { Request, Response } from 'express';
 import { z } from 'zod';
 
 import { AnyAuthenticated, Can } from '../authz/decorators';
 import { DB, type Db } from '../db/db.module';
 import { requestTx, withTx } from '../db/tx';
-import { DocumentsService, type DocumentDto } from './documents.service';
+import { DocumentsService, ScanQueueDeferredError, type DocumentDto } from './documents.service';
 
 const Id = z.guid();
 
@@ -124,6 +125,7 @@ export class DocumentsController {
     @Param('id') id: string,
     @Param('versionId') versionId: string,
     @Req() req: Request,
+    @Res({ passthrough: true }) res: Response,
   ): Promise<DocumentVersionDto> {
     idOrBadRequest(id, 'id');
     idOrBadRequest(versionId, 'versionId');
@@ -134,7 +136,14 @@ export class DocumentsController {
         'Send the file with its own Content-Type (for example application/pdf), not as JSON or a form',
       );
     }
-    return this.docs.receiveContent(versionId, req, length, { documentId: id });
+    try {
+      return await this.docs.receiveContent(versionId, req, length, { documentId: id });
+    } catch (error) {
+      // Received and kept; only the scan is waiting for the queue (the sweeper queues it): accepted, not done.
+      if (!(error instanceof ScanQueueDeferredError)) throw error;
+      res.status(202);
+      return error.version;
+    }
   }
 
   @Get(':id')

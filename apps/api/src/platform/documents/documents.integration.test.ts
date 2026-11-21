@@ -396,7 +396,9 @@ describe('PUT .../content (raw streamed upload)', () => {
     const c = await create({ sizeBytes: bytes.length });
     queue.add.mockRejectedValueOnce(new Error('valkey down'));
     const res = await put(c.uploadPath, bytes, 'application/pdf');
-    expect(res.status).toBe(503);
+    // Received and kept, only the scan waits: accepted (202) with the quarantined version, not a failure.
+    expect(res.status).toBe(202);
+    expect(res.body).toMatchObject({ id: c.versionId, status: 'quarantined' });
     // Old code deleted the file and reopened the version; the sha256 stays only with the bytes.
     const r = await row(c.versionId);
     expect(r.status).toBe('quarantined');
