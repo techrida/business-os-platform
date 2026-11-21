@@ -650,6 +650,13 @@
       "idx": 92,
       "version": "7",
       "when": 1783000000138,
+      "tag": "0157_invoice_pending_prints",
+      "breakpoints": true
+    },
+    {
+      "idx": 93,
+      "version": "7",
+      "when": 1783000000139,
       "tag": "0150_customer_terms_permissions",
       "breakpoints": true
     }

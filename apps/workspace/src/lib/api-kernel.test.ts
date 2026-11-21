@@ -4,6 +4,7 @@ import { ApiError } from './api';
 import {
   actOnApproval,
   createDocument,
+  createEvidenceDocument,
   createMemo,
   failureOf,
   getApprovalRequest,
@@ -19,9 +20,11 @@ import {
   openSignedFile,
   previewRoute,
   removeDocument,
+  removeEvidenceDocument,
   submitMemo,
   updateMemo,
   uploadDocumentContent,
+  uploadEvidenceContent,
 } from './api-kernel';
 import { __resetEnvForTests } from './env';
 import type { Session } from './session';
@@ -528,6 +531,84 @@ describe('documents', () => {
         { body, contentLength: 1, contentType: 'application/pdf' },
       ),
     ).rejects.toMatchObject({ status: 502 });
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ['sales-order', '/v1/sales-orders'],
+    ['vendor-bill', '/v1/payables/bills'],
+    ['rfq', '/v1/procurement/rfqs'],
+  ] as const)(
+    'reserves %s evidence through the record route, then streams it to that route',
+    async (kind, base) => {
+      const uploadPath = `${base}/${ID_A}/evidence-documents/${ID_B}/versions/${ID_A}/content`;
+      fetchMock.mockResolvedValueOnce(reply({ documentId: ID_B, versionId: ID_A, uploadPath }));
+      const created = await createEvidenceDocument(session, kind, ID_A, {
+        filename: 'acceptance.pdf',
+        declaredMime: 'application/pdf',
+        sizeBytes: 2048,
+      });
+      expect(lastCall().url).toBe(`http://api:3001${base}/${ID_A}/evidence-documents`);
+      expect(JSON.parse(lastCall().init.body as string)).toEqual({
+        filename: 'acceptance.pdf',
+        declaredMime: 'application/pdf',
+        sizeBytes: 2048,
+      });
+
+      fetchMock.mockResolvedValueOnce(reply({ ...version, status: 'quarantined' }));
+      const body = new ReadableStream<Uint8Array>();
+      await uploadEvidenceContent(session, kind, ID_A, created, {
+        body,
+        contentLength: 2048,
+        contentType: 'application/pdf',
+      });
+      expect(lastCall().url).toBe(`http://api:3001${uploadPath}`);
+      expect(lastCall().init.method).toBe('PUT');
+    },
+  );
+
+  it.each([
+    ['sales-order', '/v1/sales-orders'],
+    ['vendor-bill', '/v1/payables/bills'],
+    ['rfq', '/v1/procurement/rfqs'],
+  ] as const)(
+    'removes %s evidence through the record route, not DELETE /v1/documents/:id',
+    async (kind, base) => {
+      fetchMock.mockResolvedValueOnce(new Response(null, { status: 204 }));
+      await expect(removeEvidenceDocument(session, kind, ID_A, ID_B)).resolves.toBeUndefined();
+      expect(lastCall().url).toBe(`http://api:3001${base}/${ID_A}/evidence-documents/${ID_B}`);
+      expect(lastCall().init.method).toBe('DELETE');
+    },
+  );
+
+  it('encodes the ids of an evidence removal and surfaces its refusals', async () => {
+    fetchMock.mockResolvedValueOnce(
+      reply({ error: { code: 'conflict', message: 'taken', correlationId: 'req-12345678' } }, 409),
+    );
+    await expect(removeEvidenceDocument(session, 'rfq', '../a', '../b')).rejects.toMatchObject({
+      status: 409,
+    });
+    expect(lastCall().url).toBe(
+      'http://api:3001/v1/procurement/rfqs/..%2Fa/evidence-documents/..%2Fb',
+    );
+  });
+
+  it('refuses an evidence upload path of another record or the generic documents route', async () => {
+    const body = new ReadableStream<Uint8Array>();
+    for (const uploadPath of [
+      `/v1/sales-orders/${ID_B}/evidence-documents/${ID_B}/versions/${ID_A}/content`,
+      `/v1/documents/${ID_B}/versions/${ID_A}/content`,
+    ]) {
+      await expect(
+        uploadEvidenceContent(
+          session,
+          'sales-order',
+          ID_A,
+          { documentId: ID_B, versionId: ID_A, uploadPath },
+          { body, contentLength: 1, contentType: 'application/pdf' },
+        ),
+      ).rejects.toMatchObject({ status: 502 });
+    }
     expect(fetchMock).not.toHaveBeenCalled();
   });
 

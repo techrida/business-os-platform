@@ -3,7 +3,8 @@
 // DocumentsModule (the owner registry), SettingsModule (MoneyService, NumberingService, SettingsService), AuditModule
 // LedgerModule (lockForMoneyCommand) and ApprovalsModule (U6: submit, and the approval subjects registered here); the
 // database is global. U12 part B adds credit- and debit-note drafting (NotesController on `v1`); part C adds
-// CreditNoteIssueService, which InvoiceIssueService calls for a credit note.
+// CreditNoteIssueService, which InvoiceIssueService calls for a credit note. Round 5 (S3) adds InvoiceRenderNudgeModule:
+// the issue enqueues the PDF render once it commits.
 import { Inject, Module, type OnModuleInit } from '@nestjs/common';
 
 import { AuditModule } from '../../platform/audit/audit.module';
@@ -27,9 +28,17 @@ import { InvoicesController } from './invoices.controller';
 import { CreditNoteIssueService } from './notes/credit-note-issue.service';
 import { NoteDraftingService } from './notes/note-drafting.service';
 import { NotesController } from './notes/notes.controller';
+import { InvoiceRenderNudgeModule } from './render/invoice-render.nudge';
 
 @Module({
-  imports: [ApprovalsModule, AuditModule, DocumentsModule, LedgerModule, SettingsModule],
+  imports: [
+    ApprovalsModule,
+    AuditModule,
+    DocumentsModule,
+    InvoiceRenderNudgeModule,
+    LedgerModule,
+    SettingsModule,
+  ],
   controllers: [InvoicesController, NotesController],
   providers: [
     InvoiceCaller,

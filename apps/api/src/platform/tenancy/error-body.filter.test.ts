@@ -315,6 +315,50 @@ describe('ErrorBodyFilter', () => {
     ).toBe('bad_request');
   });
 
+  describe('the staff PDF download codes', () => {
+    const bound: [string, number][] = [
+      ['quotation_pdf_failed', 424],
+      ['quotation_pdf_unavailable', 404],
+      ['quotation_pdf_retry_not_needed', 409],
+      ['invoice_pdf_not_ready', 409],
+      ['invoice_pdf_failed', 424],
+      ['invoice_pdf_unavailable', 404],
+      ['invoice_pdf_scan_refused', 404],
+      ['invoice_pdf_retry_not_needed', 409],
+      ['purchase_order_pdf_not_ready', 409],
+      ['purchase_order_pdf_failed', 424],
+      ['purchase_order_pdf_unavailable', 404],
+      ['purchase_order_pdf_retry_not_needed', 409],
+    ];
+
+    it.each(bound)('keeps %s on its own status %i, with its message', (code, status) => {
+      const out = filter(new HttpException({ code, message: 'The PDF says so' }, status));
+      expect(out.status).toBe(status);
+      const parsed = ErrorBodySchema.parse(out.body);
+      expect(parsed.error.code).toBe(code);
+      expect(parsed.error.message).toBe('The PDF says so');
+    });
+
+    it.each(bound)(
+      'reads %s on any other status as the plain code of that status',
+      (code, status) => {
+        const other = status === 404 ? 409 : 404;
+        const parsed = ErrorBodySchema.parse(
+          filter(new HttpException({ code, message: 'm' }, other)).body,
+        );
+        expect(parsed.error.code).toBe(other === 404 ? 'not_found' : 'conflict');
+      },
+    );
+
+    it('turns a given-up render (424) into its code, not bad_request', () => {
+      const out = filter(new HttpException({ code: 'invoice_pdf_failed', message: 'm' }, 424));
+      expect(ErrorBodySchema.parse(out.body).error.code).toBe('invoice_pdf_failed');
+      expect(
+        ErrorBodySchema.parse(filter(new HttpException({ message: 'm' }, 424)).body).error.code,
+      ).toBe('bad_request');
+    });
+  });
+
   it('keeps document_infected and its message on a 409 (TR-Q12e)', () => {
     const message =
       'A virus was found in this file. Remove it or upload a clean copy, then try again.';
