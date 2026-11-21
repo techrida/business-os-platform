@@ -243,7 +243,7 @@ describe('invoice detail page', () => {
     mocks.getInvoice.mockResolvedValue(settled('unpaid', '2018180.00'));
     const html = await render();
     // Old code read the settlement from the ar.read-gated statement, so the button hid here.
-    expect(html).toContain(`href="/payments/new?customerId=${CUSTOMER}"`);
+    expect(html).toContain(`href="/payments/new?customerId=${CUSTOMER}&amp;invoiceId=${ID}"`);
     expect(html).toContain('Record payment');
     expect(textOf(html)).toMatch(/Open amount\s+[^0-9]*20,18,180\.00/);
   });
