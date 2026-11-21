@@ -70,6 +70,7 @@ import { DB, type Db, type DbTransaction } from '../../platform/db/db.module';
 import { updateVersioned, withIdempotency } from '../../platform/db/idempotency';
 import { withTx, type Actor, type TxScope } from '../../platform/db/tx';
 import { assertNotInfected } from '../../platform/documents/documents.service';
+import { assertEvidenceDocument } from '../../platform/documents/evidence-document';
 import { searchPage, type SearchColumn } from '../../platform/list';
 import { NumberingService } from '../../platform/settings/numbering.service';
 import { SettingsService } from '../../platform/settings/settings.service';
@@ -586,9 +587,11 @@ export class SalesOrdersService {
 
   /**
    * `POST /v1/sales-orders/:id/schedule-lines/:lineId/mark-billable`: a milestone or UAT fired. Only a planned
-   * line moves; a line other than an advance needs an evidence document. `expectedVersion` is the order's
-   * version (schedule lines have none in the DTO) and the command bumps it. 404 for an order or line outside the
-   * entity, 409 for a stale version, a closed order or a line that is not planned, 422 `evidence_required`.
+   * line moves; a line other than an advance needs an evidence document: one uploaded to this order (owner type
+   * `evidence`) or one already filed as the order's evidence. `expectedVersion` is the order's version (schedule
+   * lines have none in the DTO) and the command bumps it. 404 for an order or line outside the entity, 409 for a
+   * stale version, a closed order or a line that is not planned, 422 `evidence_required` or
+   * `invalid_evidence_document`, 409 `document_infected`.
    */
   async markBillable(
     orderId: string,
@@ -681,7 +684,21 @@ export class SalesOrdersService {
       );
     }
     if (body.evidenceDocumentId !== undefined) {
-      await this.assertDocumentsUsable(tx, scope, [body.evidenceDocumentId]);
+      // Round 5 P2: evidence uploaded to this order, or a file already filed as the order's evidence (the dialog's
+      // list). Never a picture, a payment proof or a file of another record (422 invalid_evidence_document).
+      const recorded = await tx
+        .select({ documentId: salesOrderEvidence.documentId })
+        .from(salesOrderEvidence)
+        .where(
+          scoped(scope).where(salesOrderEvidence, eq(salesOrderEvidence.salesOrderId, orderId)),
+        );
+      await assertEvidenceDocument(
+        tx,
+        scope,
+        body.evidenceDocumentId,
+        orderId,
+        recorded.map((r) => r.documentId),
+      );
     }
 
     const now = this.clock();
