@@ -79,6 +79,8 @@ let audit: { record: ReturnType<typeof vi.fn> };
 let actors: string[];
 /** Transactions open right now. */
 let openTx: number;
+/** When set, the next transaction commits (keeps its writes) and then rejects with this error. */
+let failCommit: Error | null;
 let locks: UserLocks;
 
 function recordingDb(): Db {
@@ -95,8 +97,28 @@ function recordingDb(): Db {
   return {
     async transaction<T>(fn: (t: DbTransaction) => Promise<T>) {
       openTx += 1;
+      const usersBefore = store.users.map((u) => ({ ...u }));
+      const bumpsBefore = store.authzBumps;
+      const updatesBefore = store.updates.length;
+      const cursorsBefore = new Map(store.cursors);
+      let committed = false;
       try {
-        return await fn(tx);
+        const result = await fn(tx);
+        committed = true;
+        if (failCommit) {
+          const error = failCommit;
+          failCommit = null;
+          throw error;
+        }
+        return result;
+      } catch (error) {
+        if (!committed) {
+          store.users = usersBefore;
+          store.authzBumps = bumpsBefore;
+          store.updates.length = updatesBefore;
+          store.cursors = cursorsBefore;
+        }
+        throw error;
       } finally {
         openTx -= 1;
       }
@@ -128,6 +150,7 @@ beforeEach(() => {
   audit = { record: vi.fn(() => Promise.resolve()) };
   actors = [];
   openTx = 0;
+  failCommit = null;
   locks = new UserLocks(
     recordingDb(),
     store,
@@ -336,14 +359,25 @@ describe('UserLocks.expire (F1-Q4)', () => {
       expect(zitadel.lockCalls).toEqual([`z-${USER}`]);
     });
 
-    it('does not lock ZITADEL again when the row read afterwards shows no lock', async () => {
+    it('rolls back and locks ZITADEL again when a later write in the same transaction fails (audit error)', async () => {
       lockedUser(USER);
-      audit.record.mockRejectedValueOnce(new ZitadelDown('after the write'));
+      audit.record.mockRejectedValueOnce(new ZitadelDown('audit failed'));
+
+      expect(await locks.expire(NOW)).toEqual({ unlocked: 0, cleared: 0, postponed: 0 });
+
+      expect(row(USER)).toMatchObject({ status: 'inactive', lockReason: 'failed_sign_ins' });
+      expect(store.authzBumps).toBe(0);
+      expect(zitadel.lockCalls).toEqual([`z-${USER}`]);
+      expect(zitadel.users.get(`z-${USER}`)).toMatchObject({ status: 'inactive', locked: true });
+    });
+
+    it('does not lock ZITADEL again when the commit went through and only the answer was lost', async () => {
+      lockedUser(USER);
+      failCommit = new ZitadelDown('connection dropped after commit');
 
       await locks.expire(NOW);
 
-      // The fake store has no rollback, so the row reads unlocked, as after a commit that answered with an error.
-      expect(row(USER)).toMatchObject({ lockReason: null });
+      expect(row(USER)).toMatchObject({ status: 'active', lockReason: null });
       expect(zitadel.lockAttempts).toBe(0);
     });
   });
