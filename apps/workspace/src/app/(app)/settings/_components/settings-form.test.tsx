@@ -4,7 +4,7 @@ import { createRoot } from 'react-dom/client';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import type { SettingsSectionId } from '@/lib/settings-nav';
-import { choose, click, fill, mountForm, submit } from '@/test/form-interactions';
+import { choose, click, fill, mountForm, submit, typeKeys } from '@/test/form-interactions';
 
 import type { SaveSettingsPageResult, SettingChangePayload } from './actions';
 import type { FieldSpec } from './setting-fields';
@@ -113,8 +113,31 @@ const slaSpec = (): FieldSpec => ({
   isDefault: true,
 });
 
+const vatSpec = (): FieldSpec => ({
+  key: 'tax.vat_rate',
+  label: 'Default VAT rate (%)',
+  kind: 'percent',
+  current: { kind: 'text', value: '13' },
+  defaultValue: { kind: 'text', value: '13' },
+  version: 2,
+  defaultText: '13',
+  isDefault: true,
+  numberBounds: { min: 0, max: 100, step: '0.01' },
+});
+
 const buttonByText = (root: ParentNode, text: string): HTMLButtonElement | null =>
   Array.from(root.querySelectorAll('button')).find((b) => b.textContent?.trim() === text) ?? null;
+
+/** The visible boxes the fields' `<label>`s name; a number box's hidden input beside it posts the value. */
+const boxesLabelled = (root: HTMLElement, label: string): HTMLInputElement[] =>
+  Array.from(root.querySelectorAll('label'))
+    .filter((tag) => tag.textContent === label)
+    .map((tag) => root.ownerDocument.getElementById(tag.htmlFor))
+    .filter(
+      (box): box is HTMLInputElement => box instanceof HTMLInputElement && box.type === 'text',
+    );
+const boxLabelled = (root: HTMLElement, label: string): HTMLInputElement | null =>
+  boxesLabelled(root, label)[0] ?? null;
 
 beforeEach(() => {
   vi.stubGlobal('IS_REACT_ACT_ENVIRONMENT', true);
@@ -163,7 +186,10 @@ describe('SettingsForm typed fields', () => {
       expect(h.getAttribute('value') ?? '').not.toContain('remindAfterHours');
     }
 
-    const numInputs = mounted.container.querySelectorAll<HTMLInputElement>('input[type="number"]');
+    const numInputs = [
+      ...boxesLabelled(mounted.container, 'Remind after (hours)'),
+      ...boxesLabelled(mounted.container, 'Escalate after (hours)'),
+    ];
     expect(numInputs).toHaveLength(2);
     await fill(numInputs[0] ?? null, '12');
     await fill(numInputs[1] ?? null, '48');
@@ -180,6 +206,46 @@ describe('SettingsForm typed fields', () => {
         },
         expectedVersion: 1,
       },
+    ]);
+    await mounted.unmount();
+  });
+
+  it('posts a percent setting as a plain value from the shared percent input, with no number input left', async () => {
+    saveSettingsPageAction.mockResolvedValue({
+      status: 'ok',
+      message: 'Changes saved.',
+      saved: [{ key: 'tax.vat_rate', value: { kind: 'text', value: '12.51' }, version: 3 }],
+      fieldErrors: {},
+      staleKeys: [],
+    });
+    const spec = vatSpec();
+    const mounted = await mountForm(
+      <SettingsForm section="sales" fields={[spec]}>
+        <SettingCard title="Tax" fields={[spec]} />
+      </SettingsForm>,
+    );
+    expect(mounted.container.querySelector('input[type="number"]')).toBeNull();
+    const box = boxLabelled(mounted.container, 'Default VAT rate (%)');
+    const hidden = mounted.container.querySelector<HTMLInputElement>(
+      'input[type="hidden"][name="v:tax.vat_rate"]',
+    );
+    expect(box?.hasAttribute('name')).toBe(false);
+    expect(hidden?.value).toBe('13');
+
+    // The contract's 0 to 100 and two-decimal step hold while typing: past max and a third decimal are refused.
+    await fill(box, '101');
+    expect(box?.value).toBe('13');
+    await fill(box, '12.5');
+    await typeKeys(box, '19');
+    expect(box?.value).toBe('12.51');
+    expect(hidden?.value).toBe('12.51');
+    expect(new FormData(mounted.container.querySelector('form')!).get('v:tax.vat_rate')).toBe(
+      '12.51',
+    );
+
+    await submit(mounted.container);
+    expect(saveSettingsPageAction).toHaveBeenCalledExactlyOnceWith('sales', [
+      { key: 'tax.vat_rate', value: { kind: 'text', value: '12.51' }, expectedVersion: 2 },
     ]);
     await mounted.unmount();
   });
@@ -215,8 +281,10 @@ describe('SettingsForm typed fields', () => {
 
     // Add a row with 25% -> total becomes 105% -> excess "Remove 5%".
     await click(buttonByText(mounted.container, 'Add row'));
-    const textInputs = mounted.container.querySelectorAll<HTMLInputElement>('input[type="text"]');
-    const numInputs = mounted.container.querySelectorAll<HTMLInputElement>('input[type="number"]');
+    const textInputs = boxesLabelled(mounted.container, 'Label');
+    const numInputs = boxesLabelled(mounted.container, 'Percent');
+    expect(textInputs).toHaveLength(3);
+    expect(numInputs).toHaveLength(3);
     await fill(textInputs[2] ?? null, 'Delivery 25%');
     await fill(numInputs[2] ?? null, '25');
     await choose(mounted.container, 'v:sales.default_schedule:trigger:2', 'On delivery');
@@ -285,7 +353,7 @@ describe('SettingsForm undo, multi-card save and partial failure', () => {
       ),
     ).not.toBeNull();
 
-    const input = mounted.container.querySelector<HTMLInputElement>('input[type="number"]');
+    const input = boxLabelled(mounted.container, 'Quotation validity (days)');
     await fill(input, '30');
 
     // Dirty: Undo button appears and Save is enabled.
@@ -325,9 +393,7 @@ describe('SettingsForm undo, multi-card save and partial failure', () => {
     expect(saveBtn?.disabled).toBe(true);
 
     // Change two cards (validity + evidence); leave schedule untouched.
-    const validityInput = mounted.container.querySelector<HTMLInputElement>(
-      'input[name="v:quotation.validity_days"]',
-    );
+    const validityInput = boxLabelled(mounted.container, 'Quotation validity (days)');
     await fill(validityInput, '30');
     await choose(mounted.container, 'v:sales.evidence_policy', 'Contract');
     expect(saveBtn?.disabled).toBe(false);
@@ -419,9 +485,7 @@ describe('SettingsForm discard dialog rule', () => {
       </SettingsForm>,
     );
 
-    const input = mounted.container.querySelector<HTMLInputElement>(
-      'input[name="v:quotation.validity_days"]',
-    );
+    const input = boxLabelled(mounted.container, 'Quotation validity (days)');
     await fill(input, '45');
     await click(buttonByText(mounted.container, 'Discard'));
 
@@ -443,9 +507,7 @@ describe('SettingsForm discard dialog rule', () => {
       </SettingsForm>,
     );
 
-    const input = mounted.container.querySelector<HTMLInputElement>(
-      'input[name="v:quotation.validity_days"]',
-    );
+    const input = boxLabelled(mounted.container, 'Quotation validity (days)');
     await fill(input, '45');
     await choose(mounted.container, 'v:sales.evidence_policy', 'Contract');
 
@@ -487,10 +549,10 @@ describe('SettingsForm stale protection', () => {
         ),
       );
     await render(validitySpec('15', 2));
-    await fill(container.querySelector<HTMLInputElement>('input'), '90');
+    await fill(boxLabelled(container, 'Quotation validity (days)'), '90');
     // Someone else saved 30 (version 5) and the page refreshed: the edit stays, the version does not move.
     await render(validitySpec('30', 5));
-    expect(container.querySelector<HTMLInputElement>('input')?.value).toBe('90');
+    expect(boxLabelled(container, 'Quotation validity (days)')?.value).toBe('90');
     saveSettingsPageAction.mockResolvedValueOnce({
       status: 'ok',
       message: 'Changes saved.',
@@ -511,7 +573,7 @@ describe('SettingsForm unsaved-leave guard', () => {
         <SettingCard title="Quotations" fields={[validity]} />
       </SettingsForm>,
     );
-    const input = mounted.container.querySelector<HTMLInputElement>('input');
+    const input = boxLabelled(mounted.container, 'Quotation validity (days)');
     await fill(input, '90');
     window.history.replaceState(null, '', '#timing');
     await act(() => {
@@ -541,9 +603,7 @@ describe('SettingsForm unsaved-leave guard', () => {
     expect(cleanUnload.defaultPrevented).toBe(false);
 
     // Make dirty.
-    const input = mounted.container.querySelector<HTMLInputElement>(
-      'input[name="v:quotation.validity_days"]',
-    );
+    const input = boxLabelled(mounted.container, 'Quotation validity (days)');
     await fill(input, '90');
 
     // Dirty: beforeunload IS prevented.

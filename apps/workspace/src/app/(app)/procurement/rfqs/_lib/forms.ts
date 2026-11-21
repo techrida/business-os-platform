@@ -27,6 +27,10 @@ const str = (form: FormData, name: string): string => {
 };
 const trim = (s: string): string => s.trim();
 
+/** A number typed with a space inside it (`10 50`): told so plainly, not with the field's rules. */
+const SPACED = /\S\s+\S/;
+const REMOVE_SPACE = 'Remove the space inside the number.';
+
 // ------------------------------------------------------------------------------- new RFQ
 
 export interface RfqValues {
@@ -251,7 +255,9 @@ export type ParsedQuote =
 export function parseQuoteValues(input: QuoteValues): ParsedQuote {
   const errors: FieldErrors = {};
   const days = trim(input.deliveryDays);
-  if (days !== '' && !/^\d{1,4}$/.test(days)) errors.deliveryDays = QUOTE_WORDS.deliveryDays!;
+  if (days !== '' && !/^\d{1,4}$/.test(days)) {
+    errors.deliveryDays = SPACED.test(days) ? REMOVE_SPACE : QUOTE_WORDS.deliveryDays!;
+  }
 
   // Only ticked lines are sent; `onScreen[k]` is where the k-th sent line sits on the form.
   const onScreen: number[] = [];
@@ -303,7 +309,13 @@ export function parseQuoteValues(input: QuoteValues): ParsedQuote {
         errors.lines ??= 'Choose at least one line to quote.';
       } else if (head === 'lines' && typeof index === 'number' && typeof field === 'string') {
         const row = onScreen[index] ?? index;
-        errors[`lines.${row}.${field}`] ??= QUOTE_WORDS[field] ?? issue.message;
+        const typed = lines[index]?.[field as keyof (typeof lines)[number]];
+        errors[`lines.${row}.${field}`] ??=
+          (field === 'quantity' || field === 'unitPrice') &&
+          typeof typed === 'string' &&
+          SPACED.test(typed)
+            ? REMOVE_SPACE
+            : (QUOTE_WORDS[field] ?? issue.message);
       } else if (typeof head === 'string') {
         errors[head] ??= QUOTE_WORDS[head] ?? issue.message;
       }
@@ -366,7 +378,9 @@ export function parseScoreValues(rows: readonly ScoreRowValues[]): ParsedScores 
     }
     seen.add(criterion.toLowerCase());
     if (!SCORE_TEXT.test(score) || Number(score) > 100) {
-      errors[`scores.${i}.score`] = 'Enter a score from 0 to 100, with up to 2 decimal places.';
+      errors[`scores.${i}.score`] = SPACED.test(score)
+        ? REMOVE_SPACE
+        : 'Enter a score from 0 to 100, with up to 2 decimal places.';
     }
     scores.push({ criterion, score: Number(score) });
   });
