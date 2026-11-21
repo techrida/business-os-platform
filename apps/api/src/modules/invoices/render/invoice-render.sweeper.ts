@@ -29,7 +29,9 @@
 // deletes the row). A success deletes the row. A rotating cursor keeps the oldest invoices from filling every batch; a
 // restart forgets only the cursor. A document created by a render that failed before its bytes were stored is removed
 // in the same failure path, so the next try is not blocked by it; one left by a crash between the two steps is
-// soft-removed after ORPHAN_AFTER_MS, which makes its invoice a candidate again. A PDF whose bytes were stored is never
+// soft-removed after ORPHAN_AFTER_MS, which makes its invoice a candidate again; that removal counts as one failed try
+// (kind `abandoned`, in the same transaction), so a worker that crashes on every try ends given up like any other
+// failure instead of being rendered again forever. A PDF whose bytes were stored is never
 // removed, even when its print row cannot be written (it may already have been downloaded): that write is tried twice
 // and then logged, with no failure counted (see recordPrintWithRetry).
 //
@@ -65,14 +67,15 @@ import type { Db, DbTransaction } from '../../../platform/db/db.module';
 import { systemActor, type TxScope } from '../../../platform/db/tx';
 import { GotenbergError } from '../../quotations/render/gotenberg.client';
 import { DocumentLogoUnavailableError } from '../../quotations/render/issuer';
-import type {
-  Clock,
-  PdfRenderer,
-  RenderDocuments,
-  RenderAudit,
-  RenderLogos,
-  RenderSettings,
-  RunInTx,
+import {
+  ABANDONED_KIND,
+  type Clock,
+  type PdfRenderer,
+  type RenderDocuments,
+  type RenderAudit,
+  type RenderLogos,
+  type RenderSettings,
+  type RunInTx,
 } from '../../quotations/render/quotation-render.sweeper';
 import {
   GENERATED_ORPHAN_AFTER_MS,
@@ -165,7 +168,15 @@ export interface RenderStore {
     format: DocumentFormatSnapshot | null,
   ): Promise<void>;
   orphans(cutoff: Date, limit: number): Promise<OrphanDocument[]>;
-  removeOrphan(tx: DbTransaction, o: OrphanDocument, now: Date): Promise<void>;
+  /**
+   * Soft-removes the orphan if it is still live and still has no bytes, and answers whose it was; undefined when
+   * there was nothing to remove (the bytes landed meanwhile, or another worker removed it first).
+   */
+  removeOrphan(
+    tx: DbTransaction,
+    o: OrphanDocument,
+    now: Date,
+  ): Promise<RenderCandidate | undefined>;
   /**
    * Soft-removes the invoice's document `documentId` when none of its versions got bytes (still awaiting_content):
    * the render that created it failed before storing them. A document that got its bytes is left alone.
@@ -389,25 +400,32 @@ export class InvoiceRenderSweeper {
       }
     }
     try {
-      await this.runTx(scope, actor, async (tx) => {
-        const now = this.clock();
-        const recorded = await this.store.recordFailure(tx, c, kind, now);
-        if (!recorded.givenUp) return;
-        await this.audit.record(tx, {
-          action: RENDER_GIVEN_UP_ACTION.invoice,
-          entityType: 'invoices',
-          entityId: c.invoiceId,
-          after: { attempts: recorded.attempts, failureKind: kind },
-        });
-        this.logger.error(
-          `invoice render given up: invoice=${c.invoiceId} attempts=${recorded.attempts} kind=${kind}`,
-        );
-      });
+      await this.runTx(scope, actor, (tx) => this.countFailure(tx, c, kind, this.clock()));
     } catch (error) {
       this.logger.error(
         `invoice render: could not record the failure: invoice=${c.invoiceId} kind=${failureKind(error)}`,
       );
     }
+  }
+
+  /** Counts one failed try in `tx` and, when that used up the last one, writes the admin entry there too. */
+  private async countFailure(
+    tx: DbTransaction,
+    c: RenderCandidate,
+    kind: string,
+    now: Date,
+  ): Promise<void> {
+    const recorded = await this.store.recordFailure(tx, c, kind, now);
+    if (!recorded.givenUp) return;
+    await this.audit.record(tx, {
+      action: RENDER_GIVEN_UP_ACTION.invoice,
+      entityType: 'invoices',
+      entityId: c.invoiceId,
+      after: { attempts: recorded.attempts, failureKind: kind },
+    });
+    this.logger.error(
+      `invoice render given up: invoice=${c.invoiceId} attempts=${recorded.attempts} kind=${kind}`,
+    );
   }
 
   /**
@@ -444,7 +462,11 @@ export class InvoiceRenderSweeper {
     };
   }
 
-  /** Generated documents that never got their bytes (the render crashed between the two steps) are soft-removed. */
+  /**
+   * Generated documents that never got their bytes (the render crashed between the two steps) are soft-removed. The
+   * crashed render never counted its try, so the removal counts it, in the same transaction: a worker that dies on
+   * every try is given up at the limit, like any failure, and the removal is undone if the count cannot be written.
+   */
   private async removeOrphans(): Promise<number> {
     const now = this.clock();
     const orphans = await this.store.orphans(
@@ -455,8 +477,19 @@ export class InvoiceRenderSweeper {
     for (const o of orphans) {
       try {
         const scope: TxScope = { tenantId: o.tenantId, organizationId: o.organizationId };
-        await this.runTx(scope, systemActor(INVOICE_RENDER_JOB_PREFIX), (tx) =>
-          this.store.removeOrphan(tx, o, now),
+        const owner = await this.runTx(
+          scope,
+          systemActor(INVOICE_RENDER_JOB_PREFIX),
+          async (tx) => {
+            const removedFrom = await this.store.removeOrphan(tx, o, now);
+            if (removedFrom !== undefined)
+              await this.countFailure(tx, removedFrom, ABANDONED_KIND, now);
+            return removedFrom;
+          },
+        );
+        if (owner === undefined) continue;
+        this.logger.warn(
+          `invoice render failed: invoice=${owner.invoiceId} kind=${ABANDONED_KIND}`,
         );
         removed += 1;
       } catch (error) {
@@ -682,7 +715,7 @@ export function drizzleInvoiceRenderStore(db: Db): RenderStore {
     async removeOrphan(tx, o, now) {
       // Soft remove, like DocumentsService.remove (which refuses here: nobody removes an invoice file by hand). Rows
       // are kept for the audit trail, and there are no bytes to delete: the version is awaiting_content or rejected.
-      await tx
+      const [removed] = await tx
         .update(documents)
         .set({ removedAt: now, updatedAt: now })
         .where(
@@ -690,11 +723,17 @@ export function drizzleInvoiceRenderStore(db: Db): RenderStore {
             eq(documents.tenantId, o.tenantId),
             eq(documents.organizationId, o.organizationId),
             eq(documents.id, o.documentId),
+            // The owner it answers with is an invoice: never touch another owner type's document.
+            eq(documents.ownerType, INVOICE_OWNER_TYPE),
             isNull(documents.removedAt),
             // Re-checked here: the bytes may have landed between the listing and this update.
             notExists(filledVersion(tx, documents.tenantId, documents.id)),
           ),
-        );
+        )
+        .returning({ invoiceId: documents.ownerId });
+      return removed === undefined
+        ? undefined
+        : { tenantId: o.tenantId, organizationId: o.organizationId, invoiceId: removed.invoiceId };
     },
   };
 }

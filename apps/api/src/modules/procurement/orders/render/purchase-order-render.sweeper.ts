@@ -20,7 +20,8 @@
 // a Retry (the Retry route deletes the row). A success deletes the row. A rotating cursor keeps the oldest versions
 // from filling every batch; a restart forgets only the cursor. A document created by a render that failed before its
 // bytes were stored is removed in the same failure path; one left by a crash between the two steps is soft-removed
-// after ORPHAN_AFTER_MS, which makes its version a candidate again.
+// after ORPHAN_AFTER_MS, which makes its version a candidate again. That removal counts as one failed try (kind
+// `abandoned`, in the same transaction), so a worker that crashes on every try ends given up instead of looping.
 //
 // Number and date format: a delivered PO PDF is never rendered again (its document cannot be removed), so the format
 // is the one in force at the first render. No snapshot column is needed. The same render freezes the company logo's
@@ -70,14 +71,15 @@ import {
 } from '../../../invoices/render/render-failures';
 import { GotenbergError } from '../../../quotations/render/gotenberg.client';
 import { DocumentLogoUnavailableError } from '../../../quotations/render/issuer';
-import type {
-  Clock,
-  PdfRenderer,
-  RenderAudit,
-  RenderDocuments,
-  RenderLogos,
-  RenderSettings,
-  RunInTx,
+import {
+  ABANDONED_KIND,
+  type Clock,
+  type PdfRenderer,
+  type RenderAudit,
+  type RenderDocuments,
+  type RenderLogos,
+  type RenderSettings,
+  type RunInTx,
 } from '../../../quotations/render/quotation-render.sweeper';
 import {
   GENERATED_ORPHAN_AFTER_MS,
@@ -145,7 +147,15 @@ export interface RenderStore {
    */
   lockAndHasDocument(tx: DbTransaction, c: RenderCandidate): Promise<boolean>;
   orphans(cutoff: Date, limit: number): Promise<OrphanDocument[]>;
-  removeOrphan(tx: DbTransaction, o: OrphanDocument, now: Date): Promise<void>;
+  /**
+   * Soft-removes the orphan if it is still live and still has no bytes, and answers whose it was; undefined when
+   * there was nothing to remove (the bytes landed meanwhile, or another worker removed it first).
+   */
+  removeOrphan(
+    tx: DbTransaction,
+    o: OrphanDocument,
+    now: Date,
+  ): Promise<RenderCandidate | undefined>;
   /** Soft-removes the version's document `documentId` when it never got its bytes (render-failures.ts). */
   discardUnfilled(
     tx: DbTransaction,
@@ -349,20 +359,7 @@ export class PurchaseOrderRenderSweeper {
       }
     }
     try {
-      await this.runTx(scope, actor, async (tx) => {
-        const now = this.clock();
-        const recorded = await this.store.recordFailure(tx, c, kind, now);
-        if (!recorded.givenUp) return;
-        await this.audit.record(tx, {
-          action: RENDER_GIVEN_UP_ACTION.purchase_order,
-          entityType: PO_AUDIT_ENTITY,
-          entityId: c.purchaseOrderId,
-          after: { versionId: c.versionId, attempts: recorded.attempts, failureKind: kind },
-        });
-        this.logger.error(
-          `purchase order render given up: version=${c.versionId} attempts=${recorded.attempts} kind=${kind}`,
-        );
-      });
+      await this.runTx(scope, actor, (tx) => this.countFailure(tx, c, kind, this.clock()));
     } catch (error) {
       this.logger.error(
         `purchase order render: could not record the failure: version=${c.versionId} kind=${failureKind(error)}`,
@@ -370,7 +367,31 @@ export class PurchaseOrderRenderSweeper {
     }
   }
 
-  /** Generated documents that never got their bytes (the render crashed between the two steps) are soft-removed. */
+  /** Counts one failed try in `tx` and, when that used up the last one, writes the admin entry on the PO there too. */
+  private async countFailure(
+    tx: DbTransaction,
+    c: RenderCandidate,
+    kind: string,
+    now: Date,
+  ): Promise<void> {
+    const recorded = await this.store.recordFailure(tx, c, kind, now);
+    if (!recorded.givenUp) return;
+    await this.audit.record(tx, {
+      action: RENDER_GIVEN_UP_ACTION.purchase_order,
+      entityType: PO_AUDIT_ENTITY,
+      entityId: c.purchaseOrderId,
+      after: { versionId: c.versionId, attempts: recorded.attempts, failureKind: kind },
+    });
+    this.logger.error(
+      `purchase order render given up: version=${c.versionId} attempts=${recorded.attempts} kind=${kind}`,
+    );
+  }
+
+  /**
+   * Generated documents that never got their bytes (the render crashed between the two steps) are soft-removed. The
+   * crashed render never counted its try, so the removal counts it, in the same transaction: a worker that dies on
+   * every try is given up at the limit, like any failure, and the removal is undone if the count cannot be written.
+   */
   private async removeOrphans(): Promise<number> {
     const now = this.clock();
     const orphans = await this.store.orphans(
@@ -381,8 +402,15 @@ export class PurchaseOrderRenderSweeper {
     for (const o of orphans) {
       try {
         const scope: TxScope = { tenantId: o.tenantId, organizationId: o.organizationId };
-        await this.runTx(scope, systemActor(PO_RENDER_JOB_PREFIX), (tx) =>
-          this.store.removeOrphan(tx, o, now),
+        const owner = await this.runTx(scope, systemActor(PO_RENDER_JOB_PREFIX), async (tx) => {
+          const removedFrom = await this.store.removeOrphan(tx, o, now);
+          if (removedFrom !== undefined)
+            await this.countFailure(tx, removedFrom, ABANDONED_KIND, now);
+          return removedFrom;
+        });
+        if (owner === undefined) continue;
+        this.logger.warn(
+          `purchase order render failed: version=${owner.versionId} kind=${ABANDONED_KIND}`,
         );
         removed += 1;
       } catch (error) {
@@ -586,7 +614,7 @@ export function drizzlePurchaseOrderRenderStore(db: Db): RenderStore {
     async removeOrphan(tx, o, now) {
       // Soft remove, like DocumentsService.remove (which refuses here: nobody removes a PO file by hand). Rows are
       // kept for the audit trail, and there are no bytes to delete: the version is awaiting_content or rejected.
-      await tx
+      const [removed] = await tx
         .update(documents)
         .set({ removedAt: now, updatedAt: now })
         .where(
@@ -594,11 +622,30 @@ export function drizzlePurchaseOrderRenderStore(db: Db): RenderStore {
             eq(documents.tenantId, o.tenantId),
             eq(documents.organizationId, o.organizationId),
             eq(documents.id, o.documentId),
+            // The owner it answers with is a PO version: never touch another owner type's document.
+            eq(documents.ownerType, PO_VERSION_OWNER_TYPE),
             isNull(documents.removedAt),
             // Re-checked here: the bytes may have landed between the listing and this update.
             notExists(filledVersion(tx, documents.tenantId, documents.id)),
           ),
-        );
+        )
+        .returning({ versionId: documents.ownerId });
+      if (removed === undefined) return undefined;
+      const scope = { tenantId: o.tenantId, organizationId: o.organizationId };
+      const [version] = await tx
+        .select({ purchaseOrderId: purchaseOrderVersions.purchaseOrderId })
+        .from(purchaseOrderVersions)
+        .where(
+          scoped(scope).where(
+            purchaseOrderVersions,
+            eq(purchaseOrderVersions.id, removed.versionId),
+          ),
+        )
+        .limit(1);
+      // The version row is immutable and its document points at it, so it is there; without it nothing is counted.
+      return version === undefined
+        ? undefined
+        : { ...scope, versionId: removed.versionId, purchaseOrderId: version.purchaseOrderId };
     },
   };
 }
