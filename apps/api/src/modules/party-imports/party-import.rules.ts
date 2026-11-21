@@ -113,6 +113,7 @@ export interface ReadCsv {
 /** Reads the upload as `kind`'s template: the header must name exactly the template's columns, in any order. */
 export function readPartyCsv(kind: PartyImportKind, input: string): ReadCsv {
   // A control character (NUL above all) cannot be stored and is never part of a name: refuse the file, not one cell.
+  // eslint-disable-next-line no-control-regex -- refusing control characters is the point
   if (/[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F]/.test(input))
     throw new PartyImportFileError(
       'The file contains control characters. Re-save it as plain CSV UTF-8.',

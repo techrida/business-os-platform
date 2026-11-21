@@ -18,6 +18,8 @@ const KIND_LABEL = {
  * The Nepal sales book as CSV: one row per issued document, amounts in the document's own currency, credit notes
  * negative. Totals are one row per currency, never added across currencies.
  */
+const BOM = String.fromCodePoint(0xfeff);
+
 export function salesVatCsv(register: SalesVatRegister): string {
   const header = [
     'Date (BS)',
@@ -64,5 +66,5 @@ export function salesVatCsv(register: SalesVatRegister): string {
       t.totalAmount,
     ]),
   ];
-  return `﻿${rows.map((row) => row.map(cell).join(',')).join('\r\n')}\r\n`;
+  return `${BOM}${rows.map((row) => row.map(cell).join(',')).join('\r\n')}\r\n`;
 }
