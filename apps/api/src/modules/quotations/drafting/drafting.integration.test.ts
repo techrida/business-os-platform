@@ -60,6 +60,7 @@ import type { MoneyService } from '../../../platform/settings/money.service';
 import { NumberingService } from '../../../platform/settings/numbering.service';
 import { SettingsService } from '../../../platform/settings/settings.service';
 import { PricingService } from '../pricing/pricing.service';
+import { toOpportunityDto } from '../../opportunities/opportunities.types';
 import { DraftingService, pricingInputOf } from './drafting.service';
 import {
   GOLDEN_DISCOUNT,
@@ -96,6 +97,8 @@ const current: {
   scope: TxScope | null;
   /** The caller's membership department; null (no department) unless a test sets one. */
   departmentId?: string | null;
+  /** The caller's role keys; none unless a test sets them. */
+  roles?: RoleKey[];
 } = {
   grants: grantsOf('sales'),
   userId: null,
@@ -111,7 +114,7 @@ const principalNow = (): Principal => ({
   orgKind: 'staff',
   partyId: null,
   idpOrgId: 'unused',
-  roles: [],
+  roles: current.roles ?? [],
   departmentId: current.departmentId ?? null,
   status: 'active',
   grants: current.grants,
@@ -172,6 +175,7 @@ beforeEach(() => {
   current.userId = null;
   current.scope = null;
   current.departmentId = null;
+  delete current.roles;
 });
 
 // ---------------------------------------------------------------------------------------- helpers
@@ -395,8 +399,7 @@ describe('DraftingService.create', () => {
         })
         .returning({ id: opportunities.id }),
     );
-    // PMO's default grants: crm.opportunity.read and quotation.draft at `own` (Finance and Accountant read every
-    // opportunity since U20a2-Q4, so they would reach the deal without the lead creator).
+    // PMO's default grants: crm.opportunity.read and quotation.draft at `own`.
     const created = await asCaller({ userId: creatorUserId, grants: grantsOf('pmo') }, () =>
       service.create(goldenCreateBody(f, { opportunityId: deal!.id }), 'create-lead-creator'),
     );
@@ -422,20 +425,67 @@ describe('DraftingService.create', () => {
     });
   });
 
-  it("lets a caller who reads every opportunity of the entity quote on another owner's opportunity", async () => {
+  it("refuses a caller who reads every opportunity but has no tie to another owner's deal (R4a Q4 a), 404 and nothing written", async () => {
     const otherUserId = await seedOtherStaffUser(db, f);
+    const missing = await asCaller({ userId: otherUserId }, () =>
+      service.create(goldenCreateBody(f, { opportunityId: randomUUID() }), 'create-missing-deal'),
+    ).catch((error: unknown) => error);
+    expect(missing).toBeInstanceOf(NotFoundException);
+    const before = await quotationCount(f.opportunityId);
     for (const [label, grants] of [
-      ['founder', grantsOf('founder')],
+      ['accountant', grantsOf('accountant')],
+      ['finance', grantsOf('finance')],
       ['read-all', readsEveryOpportunity()],
     ] as const) {
-      const created = await asCaller({ userId: otherUserId, grants }, () =>
-        service.create(goldenCreateBody(f), `create-reads-all-${label}`),
-      );
-      expect(created, label).toMatchObject({
-        opportunityId: f.opportunityId,
-        ownerUserId: otherUserId,
+      await asCaller({ userId: otherUserId, grants, roles: [label as RoleKey] }, async () => {
+        expect(await draftFlagOn(f.opportunityId), label).toBe(false);
+        const refused = await service
+          .create(goldenCreateBody(f), `create-reads-all-${label}`)
+          .catch((error: unknown) => error);
+        // The same answer as a deal that does not exist: no hint that this one does.
+        expect(refused, label).toBeInstanceOf(NotFoundException);
+        expect((refused as NotFoundException).getResponse(), label).toEqual(
+          (missing as NotFoundException).getResponse(),
+        );
       });
     }
+    expect(await quotationCount(f.opportunityId)).toBe(before);
+  });
+
+  it('refuses Management with no tie to the deal: it holds no quotation.draft, so 403 and nothing written', async () => {
+    const otherUserId = await seedOtherStaffUser(db, f);
+    const before = await quotationCount(f.opportunityId);
+    await asCaller(
+      { userId: otherUserId, grants: grantsOf('management'), roles: ['management'] },
+      async () => {
+        expect(await draftFlagOn(f.opportunityId)).toBe(false);
+        expect(
+          await statusOf(service.create(goldenCreateBody(f), 'create-management-no-tie')),
+        ).toBe(403);
+      },
+    );
+    expect(await quotationCount(f.opportunityId)).toBe(before);
+  });
+
+  it('lets the Founder draft on any deal with no owner, department or lead-creator tie (P5-Q2), flag true', async () => {
+    const otherUserId = await seedOtherStaffUser(db, f);
+    const before = await quotationCount(f.opportunityId);
+    await asCaller(
+      { userId: otherUserId, grants: grantsOf('founder'), roles: ['founder'] },
+      async () => {
+        expect(await draftFlagOn(f.opportunityId)).toBe(true);
+        const created = await service.create(goldenCreateBody(f), 'create-founder-no-tie');
+        expect(created.ownerUserId).toBe(otherUserId);
+      },
+    );
+    expect(await quotationCount(f.opportunityId)).toBe(before + 1);
+  });
+
+  it('does not exempt a Founder grant set without the founder role key', async () => {
+    const otherUserId = await seedOtherStaffUser(db, f);
+    await asCaller({ userId: otherUserId, grants: grantsOf('founder'), roles: [] }, async () => {
+      expect(await draftFlagOn(f.opportunityId)).toBe(false);
+    });
   });
 
   it("answers 400 for a contact of another customer than the opportunity's", async () => {
@@ -480,16 +530,26 @@ async function seedCustomerContact(name: string): Promise<string> {
 
 /** Runs `fn` as another caller, then switches back to the default one. */
 async function asCaller<T>(
-  who: { userId?: string; scope?: TxScope; grants?: Map<Permission, Scope> },
+  who: {
+    userId?: string;
+    scope?: TxScope;
+    grants?: Map<Permission, Scope>;
+    departmentId?: string | null;
+    roles?: RoleKey[];
+  },
   fn: () => Promise<T>,
 ): Promise<T> {
   const saved = { ...current };
   current.userId = who.userId ?? current.userId;
   current.scope = who.scope ?? current.scope;
   current.grants = who.grants ?? current.grants;
+  current.departmentId =
+    who.departmentId === undefined ? (current.departmentId ?? null) : who.departmentId;
+  if (who.roles !== undefined) current.roles = who.roles;
   try {
     return await fn();
   } finally {
+    delete current.roles;
     Object.assign(current, saved);
   }
 }
@@ -500,6 +560,24 @@ async function asCaller<T>(
  */
 const readsEveryOpportunity = (): Map<Permission, Scope> =>
   new Map([...grantsOf('sales'), ['crm.opportunity.read', 'all']]);
+
+/**
+ * Runs `fn` as `userId`, recorded as the creator of the lead `opportunityId` came from: a tie that lets a colleague
+ * with Sales grants quote on another owner's deal (R4a Q4 a), for tests about who then sees that quotation.
+ */
+async function asLeadCreator<T>(
+  userId: string,
+  opportunityId: string,
+  fn: () => Promise<T>,
+): Promise<T> {
+  await withTx(db, scopeA, systemActor('test'), (tx) =>
+    tx
+      .update(opportunities)
+      .set({ leadCreatorUserId: userId })
+      .where(eq(opportunities.id, opportunityId)),
+  );
+  return asCaller({ userId }, fn);
+}
 
 /** The rows of one page of `service.list`; the limit is raised so earlier tests' rows never push a row off it. */
 const listRows = async (q: Partial<ListQuotationsQuery> = {}) =>
@@ -543,6 +621,168 @@ async function reviseBySql(quotationId: string, oldVersionId: string): Promise<s
     return newVersionId;
   });
 }
+
+/** The deal's `canDraftQuotation` as the opportunities API maps it for the current caller. */
+async function draftFlagOn(opportunityId: string): Promise<boolean | undefined> {
+  const [row] = await db.select().from(opportunities).where(eq(opportunities.id, opportunityId));
+  return toOpportunityDto(row!, null, null, principalNow()).canDraftQuotation;
+}
+
+// ------------------------------------------------------------------------------- who may start one
+
+describe('who may start a quotation on a deal (R4a Q4 a)', () => {
+  /**
+   * A deal owned by a colleague filed in a new department, so the deal is stamped with it (0080), and created from a
+   * lead another user wrote. The fixture owner stays out of both.
+   */
+  async function departmentDeal(): Promise<{
+    id: string;
+    ownerId: string;
+    departmentId: string;
+    leadCreatorId: string;
+  }> {
+    const ownerId = await seedOtherStaffUser(db, f);
+    const leadCreatorId = await seedOtherStaffUser(db, f);
+    const { departmentId } = await createDepartment(appPool, scopeA);
+    await withTx(db, scopeA, systemActor('test'), (tx) =>
+      tx.execute(
+        sql`UPDATE app.user_entities SET department_id = ${departmentId}
+            WHERE tenant_id = ${scopeA.tenantId} AND organization_id = ${scopeA.organizationId}
+              AND user_id = ${ownerId}`,
+      ),
+    );
+    const [deal] = await withTx(db, scopeA, systemActor('test'), (tx) =>
+      tx
+        .insert(opportunities)
+        .values({
+          ...scopeA,
+          number: `DEAL-${randomUUID().slice(0, 8)}`,
+          name: 'Department deal',
+          customerId: f.customerPartyId,
+          ownerUserId: ownerId,
+          leadCreatorUserId: leadCreatorId,
+          stage: 'qualified',
+        })
+        .returning({ id: opportunities.id, departmentId: opportunities.departmentId }),
+    );
+    expect(deal!.departmentId).toBe(departmentId);
+    return { id: deal!.id, ownerId, departmentId, leadCreatorId };
+  }
+
+  /** Starts a quotation as the current caller, then finds it again as that same caller. */
+  async function startAndFollow(opportunityId: string, label: string): Promise<void> {
+    expect(await draftFlagOn(opportunityId), label).toBe(true);
+    const created = await service.create(
+      goldenCreateBody(f, { opportunityId }),
+      `start-${label}-${randomUUID()}`,
+    );
+    expect(created, label).toMatchObject({ opportunityId, ownerUserId: userNow() });
+    expect((await service.detail(created.id)).quotation.id, label).toBe(created.id);
+    expect(
+      (await listRows({ opportunityId })).map((q) => q.id),
+      label,
+    ).toContain(created.id);
+  }
+
+  it('lets the owner start one and find it again', async () => {
+    const deal = await departmentDeal();
+    await asCaller({ userId: deal.ownerId, departmentId: deal.departmentId }, () =>
+      startAndFollow(deal.id, 'owner'),
+    );
+  });
+
+  it("lets someone in the owner's department start one, even an Accountant, and find it again", async () => {
+    const deal = await departmentDeal();
+    const colleague = await seedOtherStaffUser(db, f);
+    const salesDepartmentRead: Map<Permission, Scope> = new Map([
+      ...grantsOf('sales'),
+      ['crm.opportunity.read', 'department'],
+    ]);
+    for (const [label, grants] of [
+      ['sales-department-read', salesDepartmentRead],
+      ['accountant', grantsOf('accountant')],
+    ] as const) {
+      await asCaller({ userId: colleague, grants, departmentId: deal.departmentId }, () =>
+        startAndFollow(deal.id, label),
+      );
+    }
+  });
+
+  it('refuses a same-department colleague who cannot read the deal at all (own reach), 404', async () => {
+    const deal = await departmentDeal();
+    const colleague = await seedOtherStaffUser(db, f);
+    const before = await quotationCount(deal.id);
+    await asCaller({ userId: colleague, departmentId: deal.departmentId }, async () => {
+      expect(await draftFlagOn(deal.id)).toBe(false);
+      expect(
+        await statusOf(
+          service.create(goldenCreateBody(f, { opportunityId: deal.id }), 'start-own-reach'),
+        ),
+      ).toBe(404);
+    });
+    expect(await quotationCount(deal.id)).toBe(before);
+  });
+
+  it('lets the lead creator start one with Accountant grants, and find it again', async () => {
+    const deal = await departmentDeal();
+    await asCaller({ userId: deal.leadCreatorId, grants: grantsOf('accountant') }, () =>
+      startAndFollow(deal.id, 'lead-creator'),
+    );
+  });
+
+  it('refuses an Accountant with no tie to the deal (no department, or another one): flag false, 404', async () => {
+    const deal = await departmentDeal();
+    const accountant = await seedOtherStaffUser(db, f);
+    const otherDepartment = (await createDepartment(appPool, scopeA)).departmentId;
+    const before = await quotationCount(deal.id);
+    for (const departmentId of [null, otherDepartment]) {
+      await asCaller(
+        { userId: accountant, grants: grantsOf('accountant'), departmentId },
+        async () => {
+          // The Accountant still reads the deal (U20a2-Q4); only starting a quotation is refused.
+          expect(await draftFlagOn(deal.id)).toBe(false);
+          expect(
+            await statusOf(
+              service.create(
+                goldenCreateBody(f, { opportunityId: deal.id }),
+                `start-accountant-${String(departmentId)}`,
+              ),
+            ),
+          ).toBe(404);
+        },
+      );
+    }
+    expect(await quotationCount(deal.id)).toBe(before);
+  });
+
+  it("answers 404 for another tenant's deal whatever the grants, and writes nothing there", async () => {
+    const other = await seedQuotationFixture(db);
+    const scopeOther: TxScope = { tenantId: other.tenantId, organizationId: other.entityId };
+    const countThere = () =>
+      withTx(db, scopeOther, systemActor('test'), async (tx) => {
+        const rows = await tx
+          .select({ id: quotations.id })
+          .from(quotations)
+          .where(eq(quotations.opportunityId, other.opportunityId));
+        return rows.length;
+      });
+    const before = await countThere();
+    for (const role of ['sales', 'founder', 'accountant'] as const) {
+      await asCaller({ grants: grantsOf(role) }, async () => {
+        expect(
+          await statusOf(
+            service.create(
+              goldenCreateBody(f, { opportunityId: other.opportunityId }),
+              `start-other-tenant-${role}`,
+            ),
+          ),
+          role,
+        ).toBe(404);
+      });
+    }
+    expect(await countThere()).toBe(before);
+  });
+});
 
 describe('DraftingService reads', () => {
   it('lists, details and returns one version in the contract shapes', async () => {
@@ -637,7 +877,7 @@ describe('DraftingService reads', () => {
 
   it("hides another owner's quotation under own scope, and shows it under all", async () => {
     const otherUserId = await seedOtherStaffUser(db, f);
-    const theirs = await asCaller({ userId: otherUserId, grants: readsEveryOpportunity() }, () =>
+    const theirs = await asLeadCreator(otherUserId, f.opportunityId, () =>
       service.create(goldenCreateBody(f), 'read-other-owner'),
     );
     expect(theirs.ownerUserId).toBe(otherUserId);
@@ -811,7 +1051,7 @@ describe('DraftingService.updateDraft', () => {
 
   it("answers 404 for another owner's quotation under own scope", async () => {
     const otherUserId = await seedOtherStaffUser(db, f);
-    const theirs = await asCaller({ userId: otherUserId, grants: readsEveryOpportunity() }, () =>
+    const theirs = await asLeadCreator(otherUserId, f.opportunityId, () =>
       service.create(smallBody(), 'put-other-owner'),
     );
     const v = await asCaller({ userId: otherUserId }, () =>
@@ -911,7 +1151,7 @@ describe('demo feedback guards', () => {
   it("never widens the read scope: another owner's quotation stays out of a filtered list", async () => {
     const second = await seedSecondOpportunity();
     const otherUserId = await seedOtherStaffUser(db, f);
-    const theirs = await asCaller({ userId: otherUserId, grants: readsEveryOpportunity() }, () =>
+    const theirs = await asLeadCreator(otherUserId, second, () =>
       service.create(goldenCreateBody(f, { opportunityId: second }), 'filter-other-owner'),
     );
     expect((await listRows({ opportunityId: second })).map((q) => q.id)).not.toContain(theirs.id);
@@ -1120,7 +1360,7 @@ describe('DraftingService.list filters and total', () => {
       goldenCreateBody(f, { opportunityId: c.opportunityId }),
       'list-scope-mine',
     );
-    const theirs = await asCaller({ userId: otherUserId, grants: readsEveryOpportunity() }, () =>
+    const theirs = await asLeadCreator(otherUserId, c.opportunityId, () =>
       service.create(goldenCreateBody(f, { opportunityId: c.opportunityId }), 'list-scope-theirs'),
     );
     const scopeB: TxScope = { tenantId: f.tenantId, organizationId: f.otherEntityId };
@@ -1208,7 +1448,7 @@ describe('DraftingService.summary', () => {
     const c = await seedCustomerWithOpportunity('Summary Himalyan Traders');
     const otherUserId = await seedOtherStaffUser(db, f);
     await service.create(goldenCreateBody(f, { opportunityId: c.opportunityId }), 'sum-q-mine');
-    await asCaller({ userId: otherUserId, grants: readsEveryOpportunity() }, () =>
+    await asLeadCreator(otherUserId, c.opportunityId, () =>
       service.create(goldenCreateBody(f, { opportunityId: c.opportunityId }), 'sum-q-theirs'),
     );
     const scopeB: TxScope = { tenantId: f.tenantId, organizationId: f.otherEntityId };
@@ -1620,8 +1860,8 @@ describe('DraftingService.detail lead (D35)', () => {
       otherUserId,
       'Their enquiry',
     );
-    // Quoting on another owner's opportunity needs read reach over it; the lead stays under `own`.
-    const created = await asCaller({ grants: readsEveryOpportunity() }, () =>
+    // Quoting on another owner's opportunity needs a tie to it (R4a Q4 a); the lead stays under `own`.
+    const created = await asLeadCreator(f.ownerUserId, opportunityId, () =>
       service.create(goldenCreateBody(f, { opportunityId }), 'lead-theirs'),
     );
 

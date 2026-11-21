@@ -63,6 +63,7 @@ import {
   type DeliveryHoldReleaserRole,
 } from '@bos/money-rules';
 import {
+  BadRequestException,
   ConflictException,
   ForbiddenException,
   Inject,
@@ -77,13 +78,16 @@ import { AuditService } from '../../platform/audit/audit.service';
 import { scopeWhereFor } from '../../platform/authz/authz.service';
 import { can } from '../../platform/authz/can';
 import { type Decision, type Principal } from '../../platform/authz/principal';
+import { liveGrantsOf } from '../../platform/authz/live-grants';
+import { RoleCache } from '../../platform/authz/role-cache';
+import { SqlUsersStore } from '../../platform/users/users.store';
+import { isSoleEligible, otherEligibleUsers } from '../../platform/authz/sole-eligible';
 import { DB, type Db, type DbTransaction } from '../../platform/db/db.module';
 import { updateVersioned, withIdempotency } from '../../platform/db/idempotency';
 import { withTx, type Actor, type TxScope, READ_ONLY } from '../../platform/db/tx';
 import { assertNotInfected } from '../../platform/documents/documents.service';
 import {
   assertEvidenceDocument,
-  assertNoForeignEvidence,
   EVIDENCE_OWNER_TYPE,
 } from '../../platform/documents/evidence-document';
 import { searchPage, type SearchColumn } from '../../platform/list';
@@ -91,7 +95,7 @@ import { deliveryHoldThresholdNpr } from '../../platform/settings/delivery-hold'
 import { NumberingService } from '../../platform/settings/numbering.service';
 import { SettingsService } from '../../platform/settings/settings.service';
 import { LedgerService } from '../ledger/ledger.service';
-import { creditPosition } from '../opportunities/credit-hold';
+import { creditPosition, overrideCovers } from '../opportunities/credit-hold';
 import { missingEvidence } from '../quotations/outcome/evidence-policy';
 import { readEvidenceState } from '../quotations/outcome/evidence-state';
 import { insertDraftOrder, liveOrderOf, planDraftOrder } from './draft-order';
@@ -187,6 +191,9 @@ export class SalesOrdersService {
     @Optional()
     @Inject(SALES_ORDERS_CLOCK)
     private readonly clock: () => Date = () => new Date(),
+    // The small-team rule reads who else may release (F1-Q11 a). AuthzModule is global, so Nest injects the one
+    // RoleCache; a test that builds the service by hand gets a fresh one on the same database.
+    @Optional() private readonly roleCache: RoleCache = new RoleCache(db),
   ) {}
 
   // ------------------------------------------------------------------------------------------- reads
@@ -361,7 +368,7 @@ export class SalesOrdersService {
   /**
    * `POST /v1/sales-orders`: confirms the accepted quotation version as a sales order. 404 for a version outside
    * the entity; 409 `quotation_not_accepted`; 422 `evidence_not_confirmed` while a portal acceptance's evidence
-   * waits for staff, `evidence_policy_unmet` when the accepted evidence does not meet the entity's policy now, `invalid_evidence_document` for a document of another entity or one removed, and
+   * waits for staff, `evidence_policy_unmet` when the accepted evidence does not meet the entity's policy now, `invalid_evidence_document` for a named file that is not evidence uploaded to this version, or whose upload has not finished, and
    * `invalid_payment_schedule` for a schedule that cannot be split. A second confirm of the same quotation
    * returns the existing order.
    */
@@ -424,21 +431,29 @@ export class SalesOrdersService {
     const customerPartyId = quotation.customerPartyId;
     if (customerPartyId === null) throw new Error(`quotation ${quotation.number} has no customer`);
 
-    // F1-Q20/F1-Q26 (Kuu R4a Q1b): a customer whose open receivables plus this order's gross NPR value are over its
-    // credit limit with this entity holds the deal here, the hand-over to a sales order, until a holder of
-    // credit.override overrides the hold on the deal with a reason. The refusal names the deal only: the limit and
-    // the balance are for holders of credit.override (GET /v1/opportunities/:id/credit-hold, the same rule).
+    // F1-Q20/F1-Q26 (Kuu R4a Q1b, R5 FU4): a customer whose open receivables, plus what its confirmed orders have not
+    // invoiced yet, plus this order's gross NPR value are over its credit limit with this entity holds the deal here,
+    // the hand-over to a sales order, until a holder of credit.override overrides the hold on the deal with a reason.
+    // An override covers orders up to the value it was given for: a bigger order needs a new one. The refusal names
+    // the deal only: the limit and the balance are for holders of credit.override
+    // (GET /v1/opportunities/:id/credit-hold, the same rule).
     const credit = await creditPosition(tx, scope, customerPartyId, { version });
     if (credit.held) {
       const [deal] = await tx
-        .select({ creditOverrideAt: opportunities.creditOverrideAt })
+        .select({
+          creditOverrideAt: opportunities.creditOverrideAt,
+          creditOverrideOrderValue: opportunities.creditOverrideOrderValue,
+        })
         .from(opportunities)
         .where(scoped(scope).where(opportunities, eq(opportunities.id, quotation.opportunityId)));
-      if (deal?.creditOverrideAt == null) {
+      if (
+        deal?.creditOverrideAt == null ||
+        !overrideCovers(deal.creditOverrideOrderValue, credit.orderValue)
+      ) {
         throw new ConflictException({
           code: 'credit_hold',
           message:
-            'The customer is over its credit limit; someone with credit override access must override the credit hold on the deal first',
+            'With the receivables, the orders not yet invoiced and this order, the customer is over its credit limit; someone with credit override access must override the credit hold on the deal first',
           details: { opportunityId: quotation.opportunityId },
         });
       }
@@ -462,6 +477,7 @@ export class SalesOrdersService {
       body.evidenceDocumentIds,
       acceptedDocuments,
       live?.id ?? null,
+      version.id,
     );
 
     const now = this.clock();
@@ -736,6 +752,8 @@ export class SalesOrdersService {
         body.evidenceDocumentId,
         orderId,
         recorded.map((r) => r.documentId),
+        // Evidence uploaded in the confirm dialog belongs to the order's quotation version.
+        [order.quotationVersionId],
       );
     }
 
@@ -789,7 +807,9 @@ export class SalesOrdersService {
    * `role_cannot_release_amount` (no role of the caller's may release this amount under the live threshold:
    * Finance above it, Management at or below it; the detail's `can.releaseDeliveryAllowedRoles` names who may); 409
    * `sales_order_not_open` for an order that is not confirmed, `delivery_already_released` when the advance is paid
-   * or a release exists. A retry with the same key replays.
+   * or a release exists. A retry with the same key replays. The small-team rule (F1-Q11 a) lifts
+   * `requester_cannot_release` for a Founder whom nobody else could stand in for: the release then needs a reason
+   * (400 `sole_eligible_reason_required`) and is audited as `sales_order.delivery_released_sole_eligible`.
    */
   async releaseDelivery(
     orderId: string,
@@ -860,19 +880,26 @@ export class SalesOrdersService {
       .where(
         scoped(scope).where(billingScheduleLines, eq(billingScheduleLines.salesOrderId, orderId)),
       );
-    const released = await this.deliveryState(tx, scope, orderId, schedule);
+    const released = await this.deliveryState(tx, scope, orderId, order.status, schedule);
     if (released !== null) {
       throw conflict(
         'delivery_already_released',
         released.kind === 'advance_paid'
           ? 'The advance is paid, so this delivery is already released'
-          : 'This delivery was already released',
+          : released.kind === 'no_advance'
+            ? 'This order has no advance, so its delivery is not held'
+            : 'This delivery was already released',
       );
     }
     // The threshold is read now, not from the page the caller loaded: a Founder's edit applies at once.
     const thresholdNpr = await deliveryHoldThresholdNpr(tx, scope);
     const refusal = this.releaseRefusal(principal, order, thresholdNpr);
-    if (refusal !== null) {
+    // The small-team rule (F1-Q11 a): a Founder who created the order may release it alone when nobody else may,
+    // read now on this transaction. Anyone else, or a Founder with a second releaser (even one away), keeps the 403.
+    const soleEligible =
+      refusal === 'requester_cannot_release' &&
+      (await this.soleEligibleToRelease(tx, scope, principal, order, thresholdNpr, true));
+    if (refusal !== null && !soleEligible) {
       const allowedRoles = deliveryHoldReleaser(new Dec(order.amountNpr), thresholdNpr);
       throw new ForbiddenException({
         code: 'forbidden',
@@ -883,6 +910,16 @@ export class SalesOrdersService {
         reason: refusal,
       });
     }
+    // The body schema already demands a reason; the sole-eligible release checks it again, since the reason is
+    // what stands in for the second person.
+    const reason = body.reason.trim();
+    if (soleEligible && reason.length === 0) {
+      throw new BadRequestException({
+        code: 'bad_request',
+        reason: 'sole_eligible_reason_required',
+        message: 'Nobody else may release this delivery; give a reason to release it yourself',
+      });
+    }
 
     const now = this.clock();
     await tx.insert(salesOrderDeliveryReleases).values({
@@ -890,23 +927,26 @@ export class SalesOrdersService {
       organizationId: scope.organizationId,
       salesOrderId: orderId,
       releasedByUserId: principal.userId,
-      reason: body.reason,
+      reason,
       orderAmountNpr: order.amountNpr,
       thresholdNpr,
       releasedAt: now,
     });
     await this.audit.record(tx, {
-      action: 'sales_order.delivery_released',
+      action: soleEligible
+        ? 'sales_order.delivery_released_sole_eligible'
+        : 'sales_order.delivery_released',
       entityType: AUDIT_ENTITY,
       entityId: orderId,
       before: { deliveryReleased: false },
       after: {
         deliveryReleased: true,
-        reason: body.reason,
+        reason,
         amountNpr: order.amountNpr,
         thresholdNpr,
         releaserRoles: [...principal.roles],
         allowedRoles: [...deliveryHoldReleaser(new Dec(order.amountNpr), thresholdNpr)],
+        ...(soleEligible ? { soleEligible: true } : {}),
       },
     });
     return this.loadDetail(tx, scope, orderId);
@@ -934,6 +974,47 @@ export class SalesOrdersService {
       : 'role_cannot_release_amount';
   }
 
+  /**
+   * The small-team rule (F1-Q11 a) for a caller `releaseRefusal` refuses as the order's creator: true when they are
+   * a Founder and no other active, unlocked member of the entity holds `sales_order.delivery_release` and a role
+   * `deliveryHoldReleaser` allows at this amount. The creator counts as nobody else. Run on the caller's
+   * transaction, one read after another (it shares the transaction's single connection).
+   */
+  private async soleEligibleToRelease(
+    tx: DbTransaction,
+    scope: TxScope,
+    principal: Principal,
+    order: Pick<OrderRow, 'amountNpr' | 'createdBy'>,
+    thresholdNpr: string,
+    /** True on the command: read the caller's roles live, not from the token. */
+    live = false,
+  ): Promise<boolean> {
+    if (!principal.roles.includes('founder')) return false;
+    if (live) {
+      const now = await liveGrantsOf(
+        tx,
+        { users: new SqlUsersStore(this.db), grants: this.roleCache },
+        scope,
+        principal.userId,
+      );
+      if (now.status !== 'active' || !now.roles.includes('founder')) return false;
+    }
+    const allowed: readonly string[] = deliveryHoldReleaser(new Dec(order.amountNpr), thresholdNpr);
+    const others = await otherEligibleUsers(
+      tx,
+      { grants: this.roleCache },
+      scope,
+      'sales_order.delivery_release',
+      {
+        excludeUserIds:
+          order.createdBy === null ? [principal.userId] : [principal.userId, order.createdBy],
+        entityScoped: true,
+        roleOk: (roles) => roles.some((r) => allowed.includes(r)),
+      },
+    );
+    return isSoleEligible(principal.roles, others);
+  }
+
   // ----------------------------------------------------------------------------------------- helpers
 
   /** Sales orders are a staff surface; a portal caller learns nothing, not even that the route exists. */
@@ -956,11 +1037,11 @@ export class SalesOrdersService {
   }
 
   /**
-   * The documents filed as the order's evidence: the files the caller names (each must be a live document of
-   * this entity, else 422) plus the ones recorded with the acceptance that are still live. Distinct, in order.
-   * Round 5 P2: Mark billable takes what the order filed, so a file uploaded as the evidence of another record (an
-   * order, a bill, an RFQ) is never filed here: named, it is 422 invalid_evidence_document; recorded with the
-   * acceptance, it is left out. `orderId` is the order being confirmed, when it already exists as a draft.
+   * The documents filed as the order's evidence: the files the caller names (each must be evidence uploaded to the
+   * quotation version being confirmed, else 422 `invalid_evidence_document`, and its bytes must be recorded) plus the
+   * ones recorded with the acceptance that are still live. Distinct, in order. Mark billable takes what the order
+   * filed, so a file uploaded as the evidence of another record is never filed here: named, it is 422; recorded with
+   * the acceptance, it is left out. `orderId` is the order being confirmed, when it already exists as a draft.
    */
   private async evidenceDocuments(
     tx: DbTransaction,
@@ -968,10 +1049,12 @@ export class SalesOrdersService {
     named: readonly string[],
     accepted: readonly string[],
     orderId: string | null,
+    versionId: string,
   ): Promise<string[]> {
     const namedIds = [...new Set(named)];
-    await this.assertDocumentsUsable(tx, scope, namedIds);
-    await assertNoForeignEvidence(tx, scope, namedIds, orderId);
+    // FU7: a file named at confirm is evidence uploaded to this quotation version through its evidence route (live,
+    // not infected, bytes recorded). Any other file, of another version, record, entity or kind, is refused alike.
+    for (const id of namedIds) await assertEvidenceDocument(tx, scope, id, versionId);
     const acceptedIds = [...new Set(accepted)].filter((id) => !namedIds.includes(id));
     const live = await this.liveDocuments(tx, scope, acceptedIds, orderId);
     // A file that passed the acceptance while still scanning may have been found infected since (TR-Q12e).
@@ -1006,27 +1089,6 @@ export class SalesOrdersService {
         )
         .map((r) => r.id),
     );
-  }
-
-  /**
-   * A foreign or removed document id would otherwise surface as a composite-FK 500. An infected file is refused
-   * (409 document_infected, TR-Q12e).
-   */
-  private async assertDocumentsUsable(
-    tx: DbTransaction,
-    scope: TxScope,
-    ids: readonly string[],
-  ): Promise<void> {
-    const live = await this.liveDocuments(tx, scope, ids);
-    const bad = ids.filter((id) => !live.has(id));
-    if (bad.length > 0) {
-      throw unprocessable(
-        'invalid_evidence_document',
-        'An evidence document does not exist in this entity or was removed',
-        { documentIds: bad },
-      );
-    }
-    await assertNotInfected(tx, scope, ids);
   }
 
   /** The order, its lines, schedule and evidence, as the workspace parses them. 404 outside the entity. */
@@ -1069,11 +1131,12 @@ export class SalesOrdersService {
       ...order,
       quotationOwnerUserId: await this.quotationOwnerOf(tx, scope, order.quotationId),
     };
-    const deliveryRelease = await this.deliveryState(tx, scope, order.id, schedule);
+    const deliveryRelease = await this.deliveryState(tx, scope, order.id, order.status, schedule);
     // The same checks, in the same order, as `recordRelease`: the permission, then the money rule. The threshold
     // is read only for a caller with the permission on a held order, so most detail reads skip it.
     let releaseDeliveryBlockedBy: ReleaseBlocker | null = null;
     let releaseDeliveryAllowedRoles: DeliveryHoldReleaserRole[] = [];
+    let releaseSoleEligible = false;
     if (staff && order.status === 'confirmed' && deliveryRelease === null) {
       if (!canOnOrder(principal, 'sales_order.delivery_release', owners).allowed) {
         releaseDeliveryBlockedBy = 'permission';
@@ -1083,8 +1146,16 @@ export class SalesOrdersService {
           ...deliveryHoldReleaser(new Dec(order.amountNpr), thresholdNpr),
         ];
         const refusal = this.releaseRefusal(principal, order, thresholdNpr);
+        // The same small-team rule the command applies: a sole-eligible Founder creator is not blocked.
+        releaseSoleEligible =
+          refusal === 'requester_cannot_release' &&
+          (await this.soleEligibleToRelease(tx, scope, principal, order, thresholdNpr));
         releaseDeliveryBlockedBy =
-          refusal === null ? null : refusal === 'requester_cannot_release' ? 'requester' : 'amount';
+          refusal === null || releaseSoleEligible
+            ? null
+            : refusal === 'requester_cannot_release'
+              ? 'requester'
+              : 'amount';
       }
     }
     const releaseDelivery =
@@ -1170,6 +1241,7 @@ export class SalesOrdersService {
         releaseDelivery,
         releaseDeliveryBlockedBy,
         releaseDeliveryAllowedRoles,
+        releaseSoleEligible,
       },
     };
   }
@@ -1208,12 +1280,14 @@ export class SalesOrdersService {
 
   /**
    * How the order's delivery is released, or null while it is held: a release row (F1-Q32) first, since it is
-   * the record of who let it go before the advance was paid, else a paid advance (plan A14).
+   * the record of who let it go before the advance was paid, else a confirmed order with no advance to wait for, else a paid
+   * advance (plan A14). An order with no advance line is never held: there is nothing for the hold to wait on.
    */
   private async deliveryState(
     tx: DbTransaction,
     scope: TxScope,
     orderId: string,
+    status: SalesOrderStatus,
     schedule: readonly LineRow[],
   ): Promise<SalesOrderDeliveryRelease | null> {
     const [release] = await tx
@@ -1244,6 +1318,11 @@ export class SalesOrdersService {
         releasedByName: release.releasedByName,
         reason: release.reason,
       };
+    }
+    // A draft or cancelled order has no delivery to release, so it is not "released" either.
+    const open = status === 'confirmed' || status === 'completed';
+    if (open && !schedule.some((l) => l.trigger === 'advance' && l.status !== 'cancelled')) {
+      return { kind: 'no_advance', releasedAt: null, releasedByName: null, reason: null };
     }
     return (await this.advancePaid(tx, scope, schedule))
       ? { kind: 'advance_paid', releasedAt: null, releasedByName: null, reason: null }

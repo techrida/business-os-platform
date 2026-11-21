@@ -3,6 +3,7 @@ import { CreditHoldDtoSchema, type OpportunityDto, type QuotationListItem } from
 import { renderToStaticMarkup } from 'react-dom/server';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
+import { START_QUOTATION_REFUSED } from '@/components/p2/quotations/opportunity-gate';
 import { ApiError } from '@/lib/api';
 
 import OpportunityPage from './page';
@@ -233,6 +234,19 @@ describe('opportunity quotation actions (demo feedback: New quotation made four 
     ]);
   });
 
+  it('says in plain words why New quotation is missing on an open deal the server refuses (R4a Q4 a)', async () => {
+    mocks.getOpportunity.mockResolvedValue(opportunity('qualified', { canDraftQuotation: false }));
+    const html = await render();
+    expect(headerLinks(html).map(([label]) => label)).toEqual(['View quotations']);
+    expect(parse(html).body.textContent).toContain(START_QUOTATION_REFUSED);
+
+    // Allowed, or a closed deal: nothing to explain.
+    mocks.getOpportunity.mockResolvedValue(opportunity('qualified', { canDraftQuotation: true }));
+    expect(parse(await render()).body.textContent).not.toContain(START_QUOTATION_REFUSED);
+    mocks.getOpportunity.mockResolvedValue(opportunity('won', { canDraftQuotation: false }));
+    expect(parse(await render()).body.textContent).not.toContain(START_QUOTATION_REFUSED);
+  });
+
   it('fails closed to View quotations when canDraftQuotation is omitted', async () => {
     const { canDraftQuotation: _omitted, ...rest } = opportunity('qualified');
     mocks.getOpportunity.mockResolvedValue(rest);
@@ -301,6 +315,7 @@ describe('opportunity follow-ups (migrated open tasks on the deal)', () => {
     createdByName: null,
     occurredAt: WHEN,
     version: 2,
+    can: { complete: true, reschedule: true, cancel: true },
   };
 
   beforeEach(() => {
@@ -380,7 +395,12 @@ describe('opportunity follow-ups (migrated open tasks on the deal)', () => {
   });
 
   it("shows a lead's follow-up carried at convert, and lets its assignee complete it without edit access", async () => {
-    const carried = { ...planned, subject: 'Send the revised scope', assigneeUserId: ASSIGNEE };
+    const carried = {
+      ...planned,
+      subject: 'Send the revised scope',
+      assigneeUserId: ASSIGNEE,
+      can: { complete: true, reschedule: false, cancel: false },
+    };
     mocks.listActivities.mockImplementation((_s: unknown, opts: { status?: string }) =>
       Promise.resolve(opts.status === 'planned' ? [carried] : []),
     );
@@ -496,7 +516,7 @@ describe('opportunity stage action buttons, timeline and read-only hygiene', () 
       'on_hold',
       ['negotiation'] as OpportunityDto['stage'][],
       ['Resume'],
-      'This opportunity is on hold. Use Resume in the header to return it to Negotiation.',
+      'This opportunity is on hold. Use Resume in the header to take it off hold.',
     ],
     [
       'lost',
@@ -612,9 +632,51 @@ describe('opportunity stage action buttons, timeline and read-only hygiene', () 
       'upcoming: WonNot yet',
       'warning: On HoldCurrent',
     ]);
-    // A hold from before heldFromStage was recorded was always at Negotiation.
-    mocks.getOpportunity.mockResolvedValue(opportunity('on_hold'));
-    expect((await timeline())[4]).toBe('done: NegotiationReached');
+  });
+
+  it('marks nothing past Qualified as reached for a hold with no recorded stage (before F1-Q53)', async () => {
+    for (const heldFromStage of [null, undefined]) {
+      mocks.getOpportunity.mockResolvedValue(opportunity('on_hold', { heldFromStage }));
+      expect(await timeline()).toEqual([
+        'done: QualifiedReached',
+        'muted: Requirement ReceivedNot recorded',
+        'muted: Proposal SentNot recorded',
+        'muted: Quotation SentNot recorded',
+        'muted: NegotiationNot recorded',
+        'upcoming: WonNot yet',
+        'warning: On HoldCurrent',
+      ]);
+    }
+    // A sent quotation still proves Quotation Sent; Negotiation stays unknown.
+    mocks.getOpportunity.mockResolvedValue(opportunity('on_hold', { heldFromStage: null }));
+    mocks.listQuotations.mockResolvedValue([quote(Q1, { status: 'sent', canEdit: false })]);
+    expect((await timeline()).slice(3, 5)).toEqual([
+      'done: Quotation SentReached',
+      'muted: NegotiationNot recorded',
+    ]);
+  });
+
+  it('says plain Resume with no stage for a hold with no recorded stage, and names a recorded one', async () => {
+    mocks.getOpportunity.mockResolvedValue(
+      opportunity('on_hold', { heldFromStage: null, allowedMoves: ['negotiation'] }),
+    );
+    let html = await render();
+    let doc = parse(html);
+    expect(headerStageButtons(doc)).toEqual(['Resume']);
+    expect(doc.querySelector('[aria-label="Stage"]')?.textContent).toContain(
+      'This opportunity is on hold. Use Resume in the header to take it off hold.',
+    );
+    expect(doc.body.textContent).not.toContain('Negotiation.');
+
+    mocks.getOpportunity.mockResolvedValue(
+      opportunity('on_hold', { heldFromStage: 'negotiation', allowedMoves: ['negotiation'] }),
+    );
+    html = await render();
+    doc = parse(html);
+    expect(headerStageButtons(doc)).toEqual(['Resume']);
+    expect(doc.querySelector('[aria-label="Stage"]')?.textContent).toContain(
+      'This opportunity is on hold. Use Resume in the header to return it to Negotiation.',
+    );
   });
 
   it('counts a sent quotation, not a draft, as reaching Quotation Sent on a lost deal', async () => {
@@ -738,6 +800,55 @@ describe('opportunity stage action buttons, timeline and read-only hygiene', () 
   });
 });
 
+describe('stage history (R4a Q13)', () => {
+  const historyRows = (doc: Document) =>
+    [...doc.querySelectorAll('[aria-label="Stage changes"] > li')].map((li) => li.textContent);
+
+  it('lists each recorded change oldest first: stages, who, and when, with System for a system move', async () => {
+    mocks.getOpportunity.mockResolvedValue(
+      opportunity('quotation_sent', {
+        stageHistory: [
+          {
+            from: 'qualified',
+            to: 'requirement_received',
+            at: '2026-11-08T05:45:00.000Z',
+            actorName: 'Asha Rai',
+          },
+          {
+            from: 'requirement_received',
+            to: 'quotation_sent',
+            at: '2026-11-09T06:00:00.000Z',
+            actorName: null,
+          },
+        ],
+      }),
+    );
+    const doc = parse(await render());
+    const rows = historyRows(doc);
+    expect(rows).toHaveLength(2);
+    expect(rows[0]).toContain('Qualified to Requirement Received');
+    expect(rows[0]).toContain('Asha Rai');
+    expect(rows[1]).toContain('Requirement Received to Quotation Sent');
+    expect(rows[1]).toContain('System');
+    const times = [...doc.querySelectorAll('[aria-label="Stage changes"] time')].map((t) =>
+      t.getAttribute('datetime'),
+    );
+    expect(times).toEqual(['2026-11-08T05:45:00.000Z', '2026-11-09T06:00:00.000Z']);
+    expect(doc.body.textContent).not.toContain('No stage changes recorded yet.');
+    // The stage timeline is still there.
+    expect(doc.querySelector('[aria-label="Opportunity stages"]')).not.toBeNull();
+  });
+
+  it('says no change is recorded yet when the history is empty or absent', async () => {
+    for (const stageHistory of [[], undefined]) {
+      mocks.getOpportunity.mockResolvedValue(opportunity('qualified', { stageHistory }));
+      const doc = parse(await render());
+      expect(historyRows(doc)).toEqual([]);
+      expect(doc.body.textContent).toContain('No stage changes recorded yet.');
+    }
+  });
+});
+
 describe("the deal's owner (F1-Q51)", () => {
   const SITA = '66666666-6666-4666-8666-666666666661';
   const RAM = '66666666-6666-4666-8666-666666666662';
@@ -808,10 +919,12 @@ describe('credit hold on the deal (F1-Q20)', () => {
     currency: 'NPR',
     creditLimit: '500000.00',
     exposure: '512345.50',
+    uninvoiced: '0.00',
     orderValue: '0.00',
     exposureWithOrder: '512345.50',
     held: true,
     override: null,
+    overrideCovers: false,
   });
   const grants = (...held: string[]) =>
     mocks.getPermissionCheck.mockResolvedValue((p: string) => held.includes(p));
@@ -843,7 +956,9 @@ describe('credit hold on the deal (F1-Q20)', () => {
     const doc = parse(await render());
     expect(mocks.getCreditHold).toHaveBeenCalledWith(expect.anything(), OPP);
     const text = banner(doc)?.textContent ?? '';
-    expect(text).toMatch(/owes .*5,12,345\.50.* against a limit of .*5,00,000\.00/);
+    expect(text).toMatch(
+      /open receivables are .*5,12,345\.50.* against a limit of .*5,00,000\.00/i,
+    );
     expect(
       [...(banner(doc)?.querySelectorAll('button') ?? [])].map((b) => b.textContent),
     ).toContain('Override credit hold');

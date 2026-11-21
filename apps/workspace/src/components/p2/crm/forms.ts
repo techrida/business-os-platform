@@ -24,6 +24,7 @@ import {
   type SchedulableActivityKind,
   type UpdateLeadBody,
 } from '@bos/contracts';
+import { plainAmount } from '@bos/locale';
 import type { ZodType } from 'zod';
 
 /**
@@ -60,7 +61,7 @@ function numberField(form: FormData, name: string): number | undefined {
 /** People type 12,50,000.00 in Nepal; the contract wants plain digits. */
 function moneyField(form: FormData, name: string): string | undefined {
   const v = field(form, name);
-  return v === undefined ? undefined : v.replace(/[\s,]/g, '');
+  return v === undefined ? undefined : plainAmount(v);
 }
 
 /** A `datetime-local` value is Kathmandu wall time. The contract wants an offset timestamp. */
@@ -104,9 +105,9 @@ const STAGE_MESSAGES: Record<string, string> = {
   lostReasonId: 'Choose a reason from the list, or add a new one.',
   newLostReason: 'Keep a new reason to 60 characters or fewer.',
   note: 'Add a note for the record, up to 2,000 characters.',
-  contactKind: 'Choose call or email.',
+  contactKind: 'Choose call, email or meeting.',
   contactSubject: 'Say what the contact was about, up to 200 characters.',
-  contactBody: 'Add a note about the call or email, up to 10,000 characters.',
+  contactBody: 'Add a note about the call, email or meeting, up to 10,000 characters.',
   contactActivity: 'A contact note is only logged when moving to Contacted.',
   expectedVersion: RELOAD,
 };

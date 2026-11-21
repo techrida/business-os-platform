@@ -11,6 +11,14 @@ and lives outside `apps/*`, so no production image or route manifest includes it
 | `procurement` | procurement-1 … 15 (PR → RFQ → vendor quote → PO → receipt → bill → payment req.) | implemented (not yet run end to end) |
 | `branches`    | branches-4, 5, 6, 7, 11, 12 (1–3 and 8–10 are exploratory)                        | partial (other steps SKIPPED)        |
 
+## Build profiles (read before choosing a stack)
+
+The Dev switcher exists in two profiles. Record on a **compiled devtools build** (`BOS_BUILD_PROFILE=dev next build`, output in
+`apps/workspace/.next-devtools`, run with `pnpm --filter @bos/workspace start:devtools`, which sets the profile again so `next start` finds `.next-devtools`; bind with `--hostname 127.0.0.1`), not on `next dev`. `next dev` (HMR) is for editing only; the production build has
+no `/dev` routes at all (`node apps/workspace/scripts/check-no-dev-routes.mjs` checks it, `--profile dev` checks the other way).
+`tools/gate.sh` runs both checks on scratch builds. Details and commands: life-kb `Techrida/Yes/business-os/docs/platform/runbook-build-profiles.md`.
+On the omarchy test-run stack, `~/bos-runtimes/testrun/workspace-mode devtools|build|hmr` switches the mode. Deploy order: migrate, API (and worker), wait for ready, then workspace and portal.
+
 ## Setup
 
 ```sh

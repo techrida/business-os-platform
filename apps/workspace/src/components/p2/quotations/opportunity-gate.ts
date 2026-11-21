@@ -11,7 +11,8 @@ import { findTransition, type OpportunityDto, type OpportunityStage } from '@bos
 
 import { stageLabel } from '@/components/p2/crm/stages';
 
-export type OpportunityFacts = Pick<OpportunityDto, 'stage' | 'wonQuotationVersionId'>;
+export type OpportunityFacts = Pick<OpportunityDto, 'stage' | 'wonQuotationVersionId'> &
+  Partial<Pick<OpportunityDto, 'heldFromStage'>>;
 
 function systemEdge(from: OpportunityStage, to: OpportunityStage): boolean {
   return findTransition('opportunity', from, to)?.by === 'system';
@@ -32,11 +33,16 @@ export function opportunityAllowsAccept(opportunity: OpportunityFacts, versionId
   return systemEdge(stage, 'won');
 }
 
-/** What to do about the opportunity, by stage: one plain sentence. */
-function nextStep(stage: OpportunityStage): string {
+/**
+ * What to do about the opportunity, by stage: one plain sentence. A hold names the stage it resumes to only when
+ * that stage was recorded (F1-Q53); an older hold just says Resume.
+ */
+function nextStep(stage: OpportunityStage, heldFromStage?: OpportunityStage | null): string {
   switch (stage) {
     case 'on_hold':
-      return 'Move the opportunity back to Negotiation first.';
+      return heldFromStage
+        ? `Resume the opportunity to ${stageLabel('opportunity', heldFromStage)} first.`
+        : 'Resume the opportunity first.';
     case 'lost':
       return 'A manager can reopen the opportunity first.';
     case 'won':
@@ -68,9 +74,25 @@ export function opportunityBlockers(
   return {
     send: opportunityAllowsSend(opportunity)
       ? null
-      : `This quotation cannot be sent while its opportunity is ${label}. ${nextStep(opportunity.stage)}`,
+      : `This quotation cannot be sent while its opportunity is ${label}. ${nextStep(opportunity.stage, opportunity.heldFromStage)}`,
     accept: opportunityAllowsAccept(opportunity, versionId)
       ? null
-      : `This quotation cannot be recorded as accepted while its opportunity is ${label}. ${nextStep(opportunity.stage)}`,
+      : `This quotation cannot be recorded as accepted while its opportunity is ${label}. ${nextStep(opportunity.stage, opportunity.heldFromStage)}`,
   };
+}
+
+/** Why New quotation is not offered on a deal the caller may not quote on (R4a Q4 a). */
+export const START_QUOTATION_REFUSED =
+  "Only the deal's owner, their department or the person who created its lead can start a quotation.";
+
+/**
+ * The reason to show in place of New quotation, or null when nothing needs saying: the server's
+ * `canDraftQuotation` allows it, or the deal is closed (no one starts a quotation on it). Omitted reads as no.
+ */
+export function startQuotationBlocker(
+  opportunity: Pick<OpportunityDto, 'stage' | 'canDraftQuotation'>,
+): string | null {
+  if (opportunity.canDraftQuotation === true) return null;
+  if (opportunity.stage === 'won' || opportunity.stage === 'lost') return null;
+  return START_QUOTATION_REFUSED;
 }

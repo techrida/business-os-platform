@@ -25,7 +25,10 @@ vi.mock('@/lib/api', async (importOriginal) => ({
   ...(await importOriginal<typeof import('@/lib/api')>()),
   apiFetch: mocks.apiFetch,
 }));
-vi.mock('@/components/p2/crm/crm-api', () => ({ getOpportunity: mocks.getOpportunity }));
+vi.mock('@/components/p2/crm/crm-api', () => ({
+  getOpportunity: mocks.getOpportunity,
+  getCreditHold: () => Promise.reject(new Error('403')),
+}));
 vi.mock('@/lib/live-permissions', () => ({ getPermissionCheck: mocks.getPermissionCheck }));
 vi.mock('@/app/(app)/opportunities/actions', () => ({
   overrideCreditHoldAction: mocks.overrideCreditHoldAction,
@@ -52,7 +55,7 @@ const creditHold = () =>
           error: {
             code: 'credit_hold',
             message:
-              'The customer is over its credit limit; someone with credit override access must override the credit hold on the deal first',
+              'With the receivables, the orders not yet invoiced and this order, the customer is over its credit limit; someone with credit override access must override the credit hold on the deal first',
             correlationId: 'corr-1',
             details: { opportunityId: DEAL },
           },

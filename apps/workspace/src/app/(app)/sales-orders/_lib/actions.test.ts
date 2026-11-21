@@ -1,4 +1,4 @@
-import { OpportunityDtoSchema } from '@bos/contracts';
+import { CreditHoldDtoSchema, OpportunityDtoSchema } from '@bos/contracts';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { confirmOrderAction, draftInvoiceAction, markBillableAction } from './actions';
@@ -16,6 +16,7 @@ const mocks = vi.hoisted(() => ({
     throw new Error(`NEXT_REDIRECT ${to}`);
   }),
   getOpportunity: vi.fn(),
+  getCreditHold: vi.fn(),
   getPermissionCheck: vi.fn(),
 }));
 
@@ -25,7 +26,11 @@ vi.mock('@/lib/api', async (importOriginal) => ({
   apiFetch: mocks.apiFetch,
 }));
 vi.mock('next/cache', () => ({ revalidatePath: mocks.revalidatePath }));
-vi.mock('@/components/p2/crm/crm-api', () => ({ getOpportunity: mocks.getOpportunity }));
+vi.mock('@/components/p2/crm/crm-api', () => ({
+  getOpportunity: mocks.getOpportunity,
+  getCreditHold: mocks.getCreditHold,
+}));
+vi.mock('@/lib/display-settings', () => ({ getNumberSystems: () => Promise.resolve(undefined) }));
 vi.mock('@/lib/live-permissions', () => ({ getPermissionCheck: mocks.getPermissionCheck }));
 vi.mock('next/navigation', () => ({ redirect: mocks.redirect }));
 
@@ -196,6 +201,8 @@ describe('confirmOrderAction', () => {
 
     beforeEach(() => {
       mocks.getOpportunity.mockReset();
+      mocks.getCreditHold.mockReset();
+      mocks.getCreditHold.mockRejectedValue(new Error('403'));
       mocks.getPermissionCheck.mockReset();
     });
 
@@ -215,6 +222,45 @@ describe('confirmOrderAction', () => {
       });
       expect(mocks.getOpportunity).toHaveBeenCalledWith(expect.anything(), deal);
       expect(mocks.redirect).not.toHaveBeenCalled();
+    });
+
+    it('gives a credit.override holder the position the hold is made of, so the dialog shows the amounts (R5 FU4)', async () => {
+      mocks.apiFetch.mockImplementation(() => held());
+      mocks.getOpportunity.mockResolvedValue(dealDto({ id: deal }));
+      mocks.getCreditHold.mockResolvedValue(
+        CreditHoldDtoSchema.parse({
+          opportunityId: deal,
+          customerId: '22222222-2222-4222-8222-222222222222',
+          currency: 'NPR',
+          creditLimit: '150000.00',
+          exposure: '0.00',
+          uninvoiced: '90400.00',
+          orderValue: '90400.00',
+          exposureWithOrder: '180800.00',
+          held: true,
+          override: {
+            reason: 'Paid',
+            byUserId: '33333333-3333-4333-8333-333333333333',
+            byName: 'Gita Karki',
+            at: '2026-11-20T05:45:00.000Z',
+            orderValue: '5000.00',
+          },
+          overrideCovers: false,
+        }),
+      );
+      grants('sales_order.confirm', 'credit.override');
+      const state = await confirmOrderAction(prev, confirmForm());
+      expect(mocks.getCreditHold).toHaveBeenCalledWith(expect.anything(), deal);
+      const position = state.creditHold?.position;
+      expect(position?.rows.map((row) => row.label)).toEqual([
+        'Credit limit',
+        'Open receivables',
+        'Confirmed orders not yet invoiced',
+        'This order',
+        'Total against the limit',
+      ]);
+      expect(position?.rows.at(-1)?.value).toContain('1,80,800.00');
+      expect(position?.note).toContain('5,000.00');
     });
 
     it('names the deal for someone who can open it, without an override they do not hold', async () => {

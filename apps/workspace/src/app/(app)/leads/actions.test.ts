@@ -503,7 +503,7 @@ describe('moveLeadStageAction with contactActivity', () => {
       {},
       stageForm({ stage: 'contacted', contactKind: 'call', contactBody: '   ' }),
     );
-    expect(invalid.fieldErrors?.['contactBody']).toMatch(/call or email/i);
+    expect(invalid.fieldErrors?.['contactBody']).toMatch(/call, email or meeting/i);
     expect(api.changeLeadStage).not.toHaveBeenCalled();
   });
 });

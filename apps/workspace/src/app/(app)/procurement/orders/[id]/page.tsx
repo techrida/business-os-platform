@@ -30,8 +30,15 @@ import { getGrants } from '@/lib/grants';
 import { when } from '@/lib/kernel-format';
 
 import layout from '../../procurement.module.css';
-import { AmendDialog, IssueDialog, ReasonDialog } from '../_components/order-actions';
-import { poFailure } from '../_lib/failure';
+import { loadVendors, vendorName } from '../../rfqs/_lib/vendors';
+import {
+  AmendDialog,
+  ChangeVendorDialog,
+  IssueDialog,
+  ReasonDialog,
+  RecreateDialog,
+} from '../_components/order-actions';
+import { poFailure, VENDOR_CHANGE_NOT_DRAFT } from '../_lib/failure';
 import {
   bandText,
   orderActions,
@@ -42,17 +49,25 @@ import {
   qtyText,
 } from '../_lib/model';
 import styles from '../orders.module.css';
+import { receiveAction } from './receive-action';
 
 export const metadata: Metadata = { title: 'Purchase order · Business OS' };
 export const dynamic = 'force-dynamic';
 
+/**
+ * A part of the order the API keeps from this reader: an approver who opens the order they approve sees its details
+ * and lines only, and gets a 403 (no order grant) or a 404 (a grant that does not reach the order) for the rest. The
+ * order itself loaded, so the part is left out quietly rather than shown as a failure.
+ */
+function closedToReader(result: PromiseSettledResult<unknown>): boolean {
+  if (result.status === 'fulfilled') return false;
+  const { status } = poFailure(result.reason, 'load');
+  return status === 403 || status === 404;
+}
+
 function PanelProblem({ what, err, retry }: { what: string; err: unknown; retry: string }) {
   const f = poFailure(err, 'load');
-  return f.status === 403 ? (
-    <Alert tone="info" role="status" title={`Your roles do not include ${what}`}>
-      Ask an administrator if you need to see the {what}.
-    </Alert>
-  ) : (
+  return (
     <Alert
       tone="error"
       role="alert"
@@ -184,7 +199,7 @@ function Lines({
           </tbody>
         </Table>
       )}
-      {progress.status === 'rejected' ? (
+      {progress.status === 'rejected' && !closedToReader(progress) ? (
         <PanelProblem
           what="receipt progress"
           err={progress.reason as unknown}
@@ -337,18 +352,29 @@ export default async function PurchaseOrderPage({ params }: { params: Promise<{ 
 
   const grants = poGrants(await getGrants(session));
   const can = orderActions(po.status, grants);
+  // Only a draft changes vendor (F1-Q40 a), so only a draft the person may issue asks for the approved vendors.
+  // The current vendor is left out: the API refuses a change to the same vendor.
+  const vendorLookup = can.issue ? await loadVendors(session, 'approved') : undefined;
+  const vendorChoices = (vendorLookup?.vendors ?? [])
+    .filter((v) => v.id !== po.vendorId)
+    .map((v) => ({ id: v.id, name: vendorName(v) }));
   const status = PO_STATUS_LABEL[po.status];
   const current =
     versions.status === 'fulfilled'
       ? versions.value.find((v) => v.version === po.currentVersion)
       : undefined;
   // The order decides both from the caller's live grants on it (F1-Q52): a read-only reader gets neither.
-  const mayReceive = po.can?.receive === true;
+  // With the progress known, offered only while some line has room for a kind the person may receive.
+  const receive = receiveAction(
+    po.can?.receive === true,
+    progress.status === 'fulfilled' ? progress.value : undefined,
+    grants,
+  );
   const mayEnterBill = po.can?.enterBill === true;
   const primary = primaryOrderAction({
     issue: can.issue,
     // Receive goods is promoted only for the warehouse grant: without it the receipt page may refuse the lines left.
-    receive: mayReceive && grants.confirm,
+    receive: receive !== null && grants.confirm,
     enterBill: mayEnterBill,
   });
   const received = (lineId: string): string | null =>
@@ -437,7 +463,7 @@ export default async function PurchaseOrderPage({ params }: { params: Promise<{ 
           status={<Badge tone={status.tone}>{status.text}</Badge>}
           actions={
             <div className={styles.headActions}>
-              {po.status !== 'draft' ? (
+              {po.status !== 'draft' && !closedToReader(versions) ? (
                 <LinkButton
                   href={`/procurement/receipts?po=${encodeURIComponent(po.id)}`}
                   variant="secondary"
@@ -469,6 +495,15 @@ export default async function PurchaseOrderPage({ params }: { params: Promise<{ 
               {can.cancel ? (
                 <ReasonDialog kind="cancel" {...common} idempotencyKey={randomUUID()} />
               ) : null}
+              {can.cancel ? <RecreateDialog {...common} idempotencyKey={randomUUID()} /> : null}
+              {can.issue ? (
+                <ChangeVendorDialog
+                  {...common}
+                  idempotencyKey={randomUUID()}
+                  vendors={vendorChoices}
+                  problem={vendorLookup?.problem}
+                />
+              ) : null}
               {mayEnterBill ? (
                 <LinkButton
                   href={`/payables/bills/new?po=${encodeURIComponent(po.id)}`}
@@ -477,15 +512,17 @@ export default async function PurchaseOrderPage({ params }: { params: Promise<{ 
                   Enter bill
                 </LinkButton>
               ) : null}
-              {mayReceive ? (
+              {receive !== null ? (
                 <LinkButton
                   href={`/procurement/receipts/new?po=${encodeURIComponent(po.id)}`}
                   variant={primary === 'receive' ? 'primary' : 'secondary'}
                 >
-                  Receive goods
+                  {receive}
                 </LinkButton>
               ) : null}
-              {can.issue ? <IssueDialog {...common} idempotencyKey={randomUUID()} /> : null}
+              {can.issue ? (
+                <IssueDialog {...common} version={po.version} idempotencyKey={randomUUID()} />
+              ) : null}
             </div>
           }
         />
@@ -504,17 +541,24 @@ export default async function PurchaseOrderPage({ params }: { params: Promise<{ 
         </Panel>
         <Panel as="aside" title="Linked records" className={layout.linkedRecords}>
           <FactList facts={facts.filter((fact) => fact.key === 'vendor')} />
+          {can.cancel ? (
+            <p className={styles.note}>
+              Need a different vendor? {VENDOR_CHANGE_NOT_DRAFT}: use Cancel and recreate.
+            </p>
+          ) : null}
         </Panel>
       </div>
 
       <Lines numberSystems={numberSystems} po={po} progress={progress} />
-      <Versions
-        numberSystems={numberSystems}
-        po={po}
-        result={versions}
-        here={here}
-        mayRetryPdf={grants.issue}
-      />
+      {closedToReader(versions) ? null : (
+        <Versions
+          numberSystems={numberSystems}
+          po={po}
+          result={versions}
+          here={here}
+          mayRetryPdf={grants.issue}
+        />
+      )}
     </Page>
   );
 }

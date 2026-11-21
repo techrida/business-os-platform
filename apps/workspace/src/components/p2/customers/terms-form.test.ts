@@ -22,14 +22,29 @@ describe('parseCreditLimit', () => {
     expect(parseCreditLimit('limit', '0')).toEqual({ ok: true, value: '0' });
   });
 
-  it('accepts lakh grouping and spaces, and sends plain digits', () => {
+  it('accepts lakh grouping and outer spaces, and sends plain digits', () => {
     expect(parseCreditLimit('limit', '1,00,000.00')).toEqual({ ok: true, value: '100000.00' });
-    expect(parseCreditLimit('limit', ' 2 50 000.5 ')).toEqual({ ok: true, value: '250000.5' });
+    expect(parseCreditLimit('limit', ' 250000.5 ')).toEqual({ ok: true, value: '250000.5' });
   });
+
+  it.each(['2 50 000.5', '10 50', '1 250'])(
+    'refuses %s: a space inside a number is not grouping, and joining it would be a silent error',
+    (typed) => {
+      expect(parseCreditLimit('limit', typed).ok).toBe(false);
+    },
+  );
+
+  it.each(['1,5', '10,50', '1,25'])(
+    'refuses %s, a decimal comma, rather than read it as grouping',
+    (typed) => {
+      const out = parseCreditLimit('limit', typed);
+      expect(out.ok).toBe(false);
+      expect(!out.ok && out.error).toMatch(/^Use a point for decimals\./);
+    },
+  );
 
   it('refuses an empty amount when a limit is chosen', () => {
     expect(parseCreditLimit('limit', '')).toEqual({ ok: false, error: LIMIT_REQUIRED });
-    expect(parseCreditLimit('limit', ' , ')).toEqual({ ok: false, error: LIMIT_REQUIRED });
   });
 
   it.each(['12.345', '-5', '-0.01', '1e5', 'abc', '10.', '.50', '12345678901234567'])(

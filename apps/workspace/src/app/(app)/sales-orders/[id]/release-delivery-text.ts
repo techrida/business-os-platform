@@ -24,14 +24,24 @@ function rolesInWords(roles: readonly ReleaserRole[]): string {
 const GENERIC_RULE =
   'Finance can release orders up to the amount set in Sales settings; above it, Management. The Founder can release any order.';
 
-/** Who may release this order, for the dialog: from the roles the API names, else the general rule. */
-export function whoCanRelease(roles: readonly ReleaserRole[] | undefined): string {
+/**
+ * Who may release this order, for the dialog: from the roles the API names, else the general rule. When the
+ * small-team rule lets the creator release (`soleEligible`), the dialog does not tell them the creator cannot.
+ */
+export function whoCanRelease(
+  roles: readonly ReleaserRole[] | undefined,
+  soleEligible = false,
+): string {
   const named =
     roles !== undefined && roles.length > 0
       ? `At this order's amount, ${rolesInWords(roles)} can release its delivery.`
       : GENERIC_RULE;
-  return `${named} The person who created the order cannot release it.`;
+  return soleEligible ? named : `${named} The person who created the order cannot release it.`;
 }
+
+/** Beside the reason when the caller is the only person who may release this order (F1-Q11 a). */
+export const SOLE_ELIGIBLE_HINT =
+  'You are the only person who can release this; a reason is required.';
 
 /** Why the Release delivery button is off, in one sentence. */
 export function releaseBlockedText(
@@ -56,6 +66,7 @@ export function releaseBlockedText(
 export function releasedText(release: SalesOrderDetail['deliveryRelease']): string | null {
   if (release === null || release === undefined) return null;
   if (release.kind === 'advance_paid') return 'Released: advance paid';
+  if (release.kind === 'no_advance') return 'Released: no advance on this order';
   const by = release.releasedByName !== null ? ` by ${release.releasedByName}` : '';
   const on = release.releasedAt !== null ? ` on ${when(release.releasedAt, 'date')}` : '';
   const why = release.reason !== null ? `: ${release.reason}` : '';

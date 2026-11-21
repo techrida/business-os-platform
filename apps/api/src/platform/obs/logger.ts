@@ -40,6 +40,32 @@ export function genReqId(req: CorrelatedRequest, _res?: ServerResponse): string 
   return id;
 }
 
+/**
+ * Routes whose query string carries personal data. The lead duplicates lookup sends the typed
+ * email, phone, name and company as query parameters.
+ */
+const QUERY_FREE_PATH_PREFIXES = ['/v1/leads/duplicates'];
+
+type LoggedRequest = { url?: unknown; query?: unknown };
+
+/**
+ * pino-http request serializer, run on pino's already-serialized request. For the routes above
+ * it cuts the url at `?` and drops the parsed `query` (Express sets it, and the std serializer
+ * copies it). The path compares lower-cased without trailing slashes, as Express routes it
+ * (case-insensitive, non-strict), so `/V1/Leads/Duplicates/?email=` is cut too. Every other
+ * request is returned as is.
+ */
+export function serializeLoggedRequest<T extends LoggedRequest>(req: T): T {
+  if (typeof req.url !== 'string') return req;
+  const queryAt = req.url.indexOf('?');
+  const path = queryAt === -1 ? req.url : req.url.slice(0, queryAt);
+  const routed = path.toLowerCase().replace(/\/+$/, '');
+  if (!QUERY_FREE_PATH_PREFIXES.some((prefix) => routed.startsWith(prefix))) return req;
+  req.url = path;
+  delete req.query;
+  return req;
+}
+
 /** nestjs-pino settings: JSON to stdout, redaction, correlation id as the request id. */
 export function buildLoggerParams(config: CoreConfig, service: ServiceName): Params {
   return {
@@ -50,6 +76,7 @@ export function buildLoggerParams(config: CoreConfig, service: ServiceName): Par
       formatters: { level: (label) => ({ level: label }) },
       redact: { paths: REDACT_PATHS, censor: '[Redacted]' },
       genReqId,
+      serializers: { req: serializeLoggedRequest },
       // Probes hit these every few seconds; logging each one buries real traffic.
       autoLogging: { ignore: (req) => req.url === '/health/live' },
     },

@@ -1,6 +1,8 @@
 import { renderToStaticMarkup } from 'react-dom/server';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
+import { DEFAULT_ROLE_PERMISSIONS } from '@bos/contracts';
+
 import { ApiError } from '@/lib/api';
 
 // `server-only` throws outside the react-server condition, which Vitest does not use.
@@ -117,6 +119,19 @@ function dropdown(out: string, name: string) {
 const page = (items: unknown[], total = items.length) => ({ items, total });
 const list = async (sp: Record<string, string | string[]> = {}) =>
   html(await ListPage({ searchParams: Promise.resolve(sp) }));
+
+/**
+ * GET /v1/me as the saved role rows answer it: here, each role's built-in grants (what Settings > Access starts
+ * from). A test that wants another answer sets `me.getMe` itself; one that wants the read to fail rejects it.
+ */
+const meOfRoles = (roles: readonly string[]) => ({
+  permissions: roles.flatMap((role) =>
+    Object.entries(
+      (DEFAULT_ROLE_PERMISSIONS as Record<string, Record<string, string> | undefined>)[role] ?? {},
+    ).map(([permission, scope]) => ({ permission, scope })),
+  ),
+});
+
 const detailHtml = async (sp: Record<string, string> = {}) =>
   html(
     await DetailPage({ params: Promise.resolve({ id: ID }), searchParams: Promise.resolve(sp) }),
@@ -126,7 +141,7 @@ const editHtml = async () => html(await EditPage({ params: Promise.resolve({ id:
 beforeEach(() => {
   vi.clearAllMocks();
   session.roles = ['procurement'];
-  me.getMe.mockRejectedValue(new Error('offline'));
+  me.getMe.mockImplementation(() => Promise.resolve(meOfRoles(session.roles)));
   currencies.loadEnabledCurrencies.mockResolvedValue(['NPR', 'INR', 'USD']);
   api.listDepartments.mockResolvedValue([{ id: DEPT, name: 'Operations' }]);
   api.listCostCenters.mockResolvedValue([
@@ -685,12 +700,25 @@ describe('currency picker (D44)', () => {
   });
 });
 
+const DENIED = 'do not include raising purchase requests';
+
 describe('live saved grants decide the new request page', () => {
+  it('hides New request on the list and shuts the form when GET /v1/me fails, whatever the role', async () => {
+    session.roles = ['procurement'];
+    me.getMe.mockRejectedValue(new Error('offline'));
+    api.listPurchaseRequestsPage.mockResolvedValue({ items: [], total: 0 });
+    expect(html(await ListPage({ searchParams: Promise.resolve({}) }))).not.toContain(
+      '/procurement/requests/new',
+    );
+    const out = html(await NewPage());
+    expect(out).toContain(DENIED);
+    expect(out).not.toContain('Save draft');
+  });
+
   const live = (...permissions: string[]) =>
     me.getMe.mockResolvedValue({
       permissions: permissions.map((permission) => ({ permission, scope: 'own' })),
     });
-  const DENIED = 'do not include raising purchase requests';
 
   it('opens the form to a role whose saved grants add procurement.pr.create (defaults do not)', async () => {
     session.roles = ['finance'];

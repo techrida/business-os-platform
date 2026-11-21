@@ -2,7 +2,8 @@
 // procurement.ts), every rule in PurchaseOrdersService. Every write needs an Idempotency-Key and procurement.po.issue
 // at route level. The reads (list, detail, versions) are also open read-only to whoever enters or reads vendor bills or
 // receives goods (F1-Q52): they carry @AnyAuthenticated and the service decides (po-read-access.ts), 403 without any
-// of those grants. Another entity's PO is a 404. Shares the `v1/procurement/purchase-orders` prefix with
+// of those grants, except the detail, which an approver of an approval about the order also opens (R4f Q1 b) and
+// which is a 404 for other active staff. Another entity's PO is a 404. Shares the `v1/procurement/purchase-orders` prefix with
 // the receipts unit's PurchaseOrderProgressController (GET :id/progress), which this class does not touch.
 import {
   Body,
@@ -24,7 +25,10 @@ import { parseOr400 } from '../../approvals/approvals.controller';
 import { requireIdempotencyKey } from '../../customers/customers.types';
 import {
   AmendPurchaseOrderBodySchema,
+  CancelAndRecreatePurchaseOrderBodySchema,
   CancelPurchaseOrderBodySchema,
+  ChangePurchaseOrderVendorBodySchema,
+  IssuePurchaseOrderBodySchema,
   ListPurchaseOrdersQuerySchema,
   ShortClosePurchaseOrderBodySchema,
 } from './purchase-order.rules';
@@ -56,7 +60,7 @@ export class PurchaseOrdersController {
     });
   }
 
-  /** 404 outside the acting entity. */
+  /** 404 outside the acting entity. Also open, read-only, to an approver of an approval about the order. */
   @Get(':id')
   @AnyAuthenticated()
   get(@Param('id', ParseUUIDPipe) id: string): Promise<PurchaseOrderDto> {
@@ -70,15 +74,45 @@ export class PurchaseOrdersController {
     return this.orders.versions(id);
   }
 
-  /** 200 with the issued PO (version 1). 409 unless a draft, or for a vendor that is not approved or not active here. */
+  /**
+   * 200 with the issued PO (version 1). 409 unless a draft, or for a vendor that is not approved or not active here.
+   * Optional body `{ expectedVersion }`: 409 PO_CHANGED when the order changed since the page read that version. No
+   * body issues as before.
+   */
   @Post(':id/issue')
   @HttpCode(200)
   @Can('procurement.po.issue')
   issue(
     @Param('id', ParseUUIDPipe) id: string,
     @Headers('idempotency-key') key: string | undefined,
+    @Body() body: unknown,
   ): Promise<PurchaseOrderDto> {
-    return this.orders.issue(id, requireIdempotencyKey(key));
+    const idempotencyKey = requireIdempotencyKey(key);
+    return this.orders.issue(
+      id,
+      idempotencyKey,
+      parseOr400(IssuePurchaseOrderBodySchema, body ?? {}),
+    );
+  }
+
+  /**
+   * 200 with the draft under its new vendor (F1-Q40 a). 409 PO_VENDOR_CHANGE_NOT_DRAFT unless a draft, and for a
+   * vendor that is the same, not approved, not active here or without a verified bank account.
+   */
+  @Post(':id/change-vendor')
+  @HttpCode(200)
+  @Can('procurement.po.issue')
+  changeVendor(
+    @Param('id', ParseUUIDPipe) id: string,
+    @Headers('idempotency-key') key: string | undefined,
+    @Body() body: unknown,
+  ): Promise<PurchaseOrderDto> {
+    const idempotencyKey = requireIdempotencyKey(key);
+    return this.orders.changeVendor(
+      id,
+      parseOr400(ChangePurchaseOrderVendorBodySchema, body),
+      idempotencyKey,
+    );
   }
 
   /** 200: `applied` (version N+1) or `pending_approval` (po_amendment route). 400 for a vendor field. */
@@ -122,5 +156,25 @@ export class PurchaseOrdersController {
   ): Promise<PurchaseOrderDto> {
     const idempotencyKey = requireIdempotencyKey(key);
     return this.orders.cancel(id, parseOr400(CancelPurchaseOrderBodySchema, body), idempotencyKey);
+  }
+
+  /**
+   * 200 with the NEW draft PO: the order is cancelled (cancel's rules and audit) and a draft cloned from it is raised
+   * in the same transaction. 409 unless issued, 409 PO_HAS_RECEIPTS once anything was received.
+   */
+  @Post(':id/cancel-and-recreate')
+  @HttpCode(200)
+  @Can('procurement.po.issue')
+  cancelAndRecreate(
+    @Param('id', ParseUUIDPipe) id: string,
+    @Headers('idempotency-key') key: string | undefined,
+    @Body() body: unknown,
+  ): Promise<PurchaseOrderDto> {
+    const idempotencyKey = requireIdempotencyKey(key);
+    return this.orders.cancelAndRecreate(
+      id,
+      parseOr400(CancelAndRecreatePurchaseOrderBodySchema, body),
+      idempotencyKey,
+    );
   }
 }

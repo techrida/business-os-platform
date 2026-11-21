@@ -205,17 +205,18 @@ export const SalesOrderDraftStateSchema = z.object({
 });
 export type SalesOrderDraftState = z.infer<typeof SalesOrderDraftStateSchema>;
 
-export const DELIVERY_RELEASE_KINDS = ['advance_paid', 'override'] as const;
+export const DELIVERY_RELEASE_KINDS = ['advance_paid', 'no_advance', 'override'] as const;
 
 /**
  * Why the order's delivery is released (F1-Q32). `advance_paid`: the advance invoice has an open amount of 0 (plan
- * A14); the other fields are null. `override`: someone released the hold before the advance was paid, with a reason
+ * A14); the other fields are null. `no_advance`: the order has no advance line to wait for, so nothing holds its
+ * delivery; the other fields are null. `override`: someone released the hold before the advance was paid, with a reason
  * (`POST /v1/sales-orders/:id/delivery-release`). A release recorded before the advance was paid stays `override`.
  */
 export const SalesOrderDeliveryReleaseSchema = z.object({
   kind: z.enum(DELIVERY_RELEASE_KINDS),
   releasedAt: isoDateTime.nullable(),
-  /** The releaser's display name; null for `advance_paid` or a user without one. */
+  /** The releaser's display name; null for `advance_paid`, `no_advance` or a user without one. */
   releasedByName: z.string().nullable(),
   reason: z.string().nullable(),
 });
@@ -251,7 +252,10 @@ export const SalesOrderDetailSchema = z.object({
    * threshold, and not the order's creator). `releaseDeliveryBlockedBy`: why not, on a confirmed, held order for
    * staff; null when they may, or when there is nothing to release. `releaseDeliveryAllowedRoles`: the roles that
    * may release this order at its amount under the live threshold, sent to a caller with the permission on a
-   * confirmed, held order; empty otherwise.
+   * confirmed, held order; empty otherwise. `releaseSoleEligible`: the small-team rule (F1-Q11 a) lets this caller
+   * release an order they created: they are a Founder and nobody else may release it now. `releaseDelivery` is then
+   * true, `releaseDeliveryBlockedBy` null, and the release needs a reason (`sole_eligible_reason_required`). The API
+   * always sends it; absent reads as false.
    */
   can: z
     .object({
@@ -261,6 +265,7 @@ export const SalesOrderDetailSchema = z.object({
       releaseDelivery: z.boolean().optional(),
       releaseDeliveryBlockedBy: z.enum(DELIVERY_RELEASE_BLOCKERS).nullable().optional(),
       releaseDeliveryAllowedRoles: z.array(z.enum(DELIVERY_RELEASER_ROLES)).optional(),
+      releaseSoleEligible: z.boolean().optional(),
     })
     .optional(),
 });
@@ -270,7 +275,10 @@ export type SalesOrderDetail = z.infer<typeof SalesOrderDetailSchema>;
 // Bodies (an `Idempotency-Key` header goes with every command; it is not a body field)
 // ---------------------------------------------------------------------------------------------
 
-/** Confirm an accepted quotation version as a sales order. The evidence policy decides what must be attached. */
+/**
+ * Confirm an accepted quotation version as a sales order. The evidence policy decides what must be attached by the
+ * acceptance; each named id must be evidence uploaded to this version (422 `invalid_evidence_document` otherwise).
+ */
 export const ConfirmSalesOrderBodySchema = z.strictObject({
   quotationVersionId: z.guid(),
   evidenceDocumentIds: z.array(z.guid()).max(10).default([]),

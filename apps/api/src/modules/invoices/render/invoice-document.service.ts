@@ -21,6 +21,7 @@ import {
   Inject,
   Injectable,
   NotFoundException,
+  Optional,
 } from '@nestjs/common';
 import { and, asc, desc, eq, inArray, isNull } from 'drizzle-orm';
 
@@ -31,6 +32,7 @@ import { READ_ONLY, withTx } from '../../../platform/db/tx';
 import { DocumentsService } from '../../../platform/documents/documents.service';
 import { INVOICE_OWNER_TYPE } from '../invoice-owner.policy';
 import { assertStaff, InvoiceCaller } from '../invoice-support';
+import { InvoiceRenderNudge } from './invoice-render.nudge';
 import { RENDERABLE_INVOICE_KINDS } from './invoice-view';
 import { renderGivenUp, retryGivenUpRender, type RenderFailureOwner } from './render-failures';
 import { generatedPdfState } from './render-state';
@@ -87,6 +89,8 @@ export class InvoiceDocumentService {
     private readonly documents: DocumentsService,
     private readonly caller: InvoiceCaller,
     private readonly audit: AuditService,
+    // Optional so a hand-built service (tests) keeps its argument list; without it a Retry waits for the sweep.
+    @Optional() private readonly renderNudge?: InvoiceRenderNudge,
   ) {}
 
   /**
@@ -197,6 +201,8 @@ export class InvoiceDocumentService {
         after: { state: 'queued' },
       });
     });
+    // After the commit: render now instead of on the next one-minute sweep. Never throws.
+    await this.renderNudge?.nudge(scope, invoiceId);
     return { state: 'queued' };
   }
 }

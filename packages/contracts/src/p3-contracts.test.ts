@@ -342,6 +342,32 @@ describe('sales order contracts', () => {
     ).toBe(false);
   });
 
+  it('carries can.releaseSoleEligible (F1-Q11 a) as an optional boolean', () => {
+    const detail = {
+      order,
+      lines: [],
+      schedule: [scheduleLine],
+      evidence: [],
+      deliveryReleased: false,
+    };
+    const base = { markBillable: false, draftInvoice: false };
+    const parse = (can: object) => sales.SalesOrderDetailSchema.safeParse({ ...detail, can });
+    const soleEligible = {
+      ...base,
+      releaseDelivery: true,
+      releaseDeliveryBlockedBy: null,
+      releaseDeliveryAllowedRoles: ['finance', 'founder'],
+      releaseSoleEligible: true,
+    };
+    const ok = parse(soleEligible);
+    expect(ok.success).toBe(true);
+    expect(ok.data?.can?.releaseSoleEligible).toBe(true);
+    expect(parse({ ...base, releaseSoleEligible: false }).success).toBe(true);
+    // Absent reads as false: an older answer without the field still parses.
+    expect(parse(base).data?.can?.releaseSoleEligible).toBeUndefined();
+    expect(parse({ ...base, releaseSoleEligible: 'yes' }).success).toBe(false);
+  });
+
   it('checks the commands strictly', () => {
     expect(
       sales.ConfirmSalesOrderBodySchema.parse({ quotationVersionId: id(4) }).evidenceDocumentIds,

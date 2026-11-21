@@ -115,7 +115,7 @@ describe('P2 permissions', () => {
     expect(sales['verification.review']).toBeUndefined();
   });
 
-  it('lets management and the finance roles read all but never send, accept or revise', () => {
+  it('lets management and the finance roles read all but never send or revise; only the Accountant records acceptance', () => {
     const { management, finance, accountant } = DEFAULT_ROLE_PERMISSIONS;
     for (const role of [management, finance, accountant]) {
       // Management, Finance and Accountant read all leads and opportunities (U20a2-Q4, Kuu 2026-11-20).
@@ -130,13 +130,16 @@ describe('P2 permissions', () => {
         'customer.write',
         'customer.merge',
         'quotation.send',
-        'quotation.record_acceptance',
         'quotation.revise',
         'verification.review',
       ] as const) {
         expect(role[p], p).toBeUndefined();
       }
     }
+    // S4-Q2 (Kuu, 2026-11-21): the Accountant confirms a portal acceptance's evidence, across the entity.
+    expect(accountant['quotation.record_acceptance']).toBe('all');
+    expect(management['quotation.record_acceptance']).toBeUndefined();
+    expect(finance['quotation.record_acceptance']).toBeUndefined();
     expect(management['crm.lead.write']).toBeUndefined();
     expect(management['quotation.draft']).toBeUndefined();
     expect(management['quotation.submit']).toBeUndefined();

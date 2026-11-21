@@ -487,7 +487,12 @@ describe('planned and logged activities', () => {
 
   it('records who changed a lead stage on its stage_change activity', async () => {
     const lead = await seedLead();
-    await leadsService.changeStage(lead.id, { stage: 'contacted', expectedVersion: lead.version });
+    // FR-6 (D48): a move to contacted logs a contact with it.
+    await leadsService.changeStage(lead.id, {
+      stage: 'contacted',
+      expectedVersion: lead.version,
+      contactActivity: { kind: 'call', body: 'Intro call' },
+    });
     const [change] = await listed(`?leadId=${lead.id}&kind=stage_change`);
     expect(change).toMatchObject({ kind: 'stage_change', createdByUserId: h.users.salesA });
   });

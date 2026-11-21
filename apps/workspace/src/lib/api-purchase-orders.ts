@@ -293,13 +293,22 @@ export function getPoProgress(session: Session, id: string): Promise<PoProgress>
   return call(session, `${PO}/${seg(id)}/progress`, PoProgressSchema);
 }
 
-/** 409 `VENDOR_NOT_APPROVED`, `VENDOR_NOT_IN_ENTITY`, `PO_HAS_NO_LINES`, or `invalid_transition` unless a draft. */
+/**
+ * 409 `VENDOR_NOT_APPROVED`, `VENDOR_NOT_IN_ENTITY`, `PO_HAS_NO_LINES`, or `invalid_transition` unless a draft. With
+ * `expectedVersion` (the `version` the person saw), 409 `PO_CHANGED` when the order was edited since; without it, no body.
+ */
 export function issuePurchaseOrder(
   session: Session,
   id: string,
   idempotencyKey: string,
+  expectedVersion?: number,
 ): Promise<PurchaseOrder> {
-  return call(session, `${PO}/${seg(id)}/issue`, PurchaseOrderSchema, post(idempotencyKey));
+  return call(
+    session,
+    `${PO}/${seg(id)}/issue`,
+    PurchaseOrderSchema,
+    post(idempotencyKey, expectedVersion === undefined ? undefined : { expectedVersion }),
+  );
 }
 
 /** `applied` writes version N+1; `pending_approval` leaves the PO in `amendment_pending` (a band rise). */
@@ -336,6 +345,40 @@ export function cancelPurchaseOrder(
   return call(
     session,
     `${PO}/${seg(id)}/cancel`,
+    PurchaseOrderSchema,
+    post(idempotencyKey, { reason }),
+  );
+}
+
+/**
+ * Moves a draft to another vendor (F1-Q40 a): lines, prices and total stay, the payment terms come from the new
+ * vendor. 409 `PO_VENDOR_CHANGE_NOT_DRAFT` unless a draft, `PO_VENDOR_UNCHANGED`, `VENDOR_NOT_APPROVED`,
+ * `VENDOR_NOT_IN_ENTITY` or `VENDOR_NO_VERIFIED_BANK_ACCOUNT`.
+ */
+export function changePurchaseOrderVendor(
+  session: Session,
+  id: string,
+  vendorId: string,
+  idempotencyKey: string,
+): Promise<PurchaseOrder> {
+  return call(
+    session,
+    `${PO}/${seg(id)}/change-vendor`,
+    PurchaseOrderSchema,
+    post(idempotencyKey, { vendorId }),
+  );
+}
+
+/** Cancels an issued order and answers the NEW draft raised from it. 409 unless issued, `PO_HAS_RECEIPTS`. */
+export function cancelAndRecreatePurchaseOrder(
+  session: Session,
+  id: string,
+  reason: string,
+  idempotencyKey: string,
+): Promise<PurchaseOrder> {
+  return call(
+    session,
+    `${PO}/${seg(id)}/cancel-and-recreate`,
     PurchaseOrderSchema,
     post(idempotencyKey, { reason }),
   );

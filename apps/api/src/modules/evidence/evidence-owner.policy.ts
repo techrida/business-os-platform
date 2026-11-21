@@ -1,8 +1,11 @@
 // The document owner policy of `evidence` (round 5 P2): a file uploaded in place as the evidence of one record.
-// The owner id is that record's id, which is one of three kinds:
+// The owner id is that record's id, which is one of four kinds:
 // - a sales order (Mark billable): upload with `sales_order.mark_billable` on the order, reached as the person who
 //   confirmed it or as the owner of its quotation (the same two refs SalesOrdersService's canOnOrder checks);
 //   attachable while the order is confirmed and still has a planned schedule line;
+// - a quotation version (confirming its sales order, FU7): `sales_order.confirm`, reached through the quotation's
+//   owner; attachable while the version is accepted and no confirmed order exists yet. The order does not exist when
+//   the dialog opens, so the file belongs to the version and the confirm files it as the order's evidence;
 // - a vendor bill (match exception): `payables.bill.enter` on the bill (its enterer owns it, as lockEnterable
 //   checks); attachable before the bill is submitted (draft, matching, variance, exception_pending);
 // - an RFQ (recording a vendor quotation): `procurement.sourcing` on the RFQ (its creator owns it); attachable
@@ -21,13 +24,15 @@ import {
   billingScheduleLines,
   matchExceptions,
   quotations,
+  quotationVersions,
   rfqs,
+  salesOrderEvidence,
   salesOrders,
   scoped,
   vendorBills,
   vendorQuotations,
 } from '@bos/db';
-import { and, eq } from 'drizzle-orm';
+import { and, eq, ne } from 'drizzle-orm';
 import { z } from 'zod';
 
 import type { ResourceRef } from '../../platform/authz/can';
@@ -38,7 +43,7 @@ import type { DocumentOwnerPolicy, UploadGrant } from '../../platform/documents/
 
 const Id = z.guid();
 
-export type EvidenceRecordKind = 'sales_order' | 'vendor_bill' | 'rfq';
+export type EvidenceRecordKind = 'sales_order' | 'quotation_version' | 'vendor_bill' | 'rfq';
 
 /** The bill states before submit: the ones a match exception and its evidence belong to. */
 export const BILL_EVIDENCE_STATES: readonly string[] = [
@@ -57,12 +62,20 @@ export type EvidenceRecord =
       quotationOwnerUserId: string | null;
       hasPlannedLine: boolean;
     }
+  | {
+      kind: 'quotation_version';
+      /** The version's own status: only an accepted one is confirmed into an order. */
+      status: string;
+      quotationOwnerUserId: string | null;
+      /** An order of the quotation that is no longer a draft (confirmed or beyond): confirming is over. */
+      hasConfirmedOrder: boolean;
+    }
   | { kind: 'vendor_bill'; status: string; enteredBy: string | null }
   | { kind: 'rfq'; status: string; createdBy: string | null };
 
 /**
  * Whether the record already references this evidence file (a billable schedule line, a match exception, a recorded
- * vendor quotation). With `tx`, the referencing rows are locked FOR SHARE.
+ * vendor quotation, a confirmed order's evidence). With `tx`, the referencing rows are locked FOR SHARE.
  */
 export type EvidenceReferenceLoader = (
   scope: TxScope,
@@ -92,6 +105,8 @@ export function evidenceUploadGrants(scope: TxScope, record: EvidenceRecord): Up
         { action: 'sales_order.mark_billable', ref: refOf(scope, record.createdBy) },
         { action: 'sales_order.mark_billable', ref: refOf(scope, record.quotationOwnerUserId) },
       ];
+    case 'quotation_version':
+      return [{ action: 'sales_order.confirm', ref: refOf(scope, record.quotationOwnerUserId) }];
     case 'vendor_bill':
       return [{ action: 'payables.bill.enter', ref: refOf(scope, record.enteredBy) }];
     case 'rfq':
@@ -104,6 +119,8 @@ export function evidenceAttachable(record: EvidenceRecord): boolean {
   switch (record.kind) {
     case 'sales_order':
       return record.status === 'confirmed' && record.hasPlannedLine;
+    case 'quotation_version':
+      return record.status === 'accepted' && !record.hasConfirmedOrder;
     case 'vendor_bill':
       return BILL_EVIDENCE_STATES.includes(record.status);
     case 'rfq':
@@ -116,6 +133,8 @@ function primaryRef(scope: TxScope, record: EvidenceRecord): ResourceRef {
   switch (record.kind) {
     case 'sales_order':
       return refOf(scope, record.createdBy);
+    case 'quotation_version':
+      return refOf(scope, record.quotationOwnerUserId);
     case 'vendor_bill':
       return refOf(scope, record.enteredBy);
     case 'rfq':
@@ -166,7 +185,26 @@ export class EvidenceOwnerPolicy implements DocumentOwnerPolicy {
   }
 }
 
-/** Resolves an id to the sales order, vendor bill or RFQ of this tenant and acting entity that owns it. */
+/**
+ * The `evidence` policy as an approval context reads it (approvals/context.ts readableDocuments): only files uploaded
+ * to `recordId` itself, so a row naming another record's evidence lists nothing. The read rule is the generic one.
+ */
+export function evidenceOwnerPolicyFor(
+  db: Db,
+  recordId: string,
+): Pick<DocumentOwnerPolicy, 'ownerType' | 'resource'> {
+  const policy = new EvidenceOwnerPolicy(
+    drizzleEvidenceRecordLoader(db),
+    drizzleEvidenceReferenceLoader(db),
+  );
+  return {
+    ownerType: policy.ownerType,
+    resource: (scope, ownerId) =>
+      ownerId === recordId ? policy.resource(scope, ownerId) : Promise.resolve(null),
+  };
+}
+
+/** Resolves an id to the sales order, quotation version, vendor bill or RFQ of this tenant and acting entity that owns it. */
 export function drizzleEvidenceRecordLoader(db: Db): EvidenceRecordLoader {
   return async (scope, recordId, tx) => {
     if (!Id.safeParse(recordId).success) return undefined;
@@ -211,6 +249,49 @@ export function drizzleEvidenceRecordLoader(db: Db): EvidenceRecordLoader {
       };
     }
 
+    // Lock order of the confirm: the quotation, then its version.
+    const versionPeek = await reader
+      .select({ quotationId: quotationVersions.quotationId })
+      .from(quotationVersions)
+      .where(s.where(quotationVersions, eq(quotationVersions.id, recordId)))
+      .limit(1);
+    if (versionPeek[0] !== undefined) {
+      const quotationQuery = reader
+        .select({ ownerUserId: quotations.ownerUserId })
+        .from(quotations)
+        .where(s.where(quotations, eq(quotations.id, versionPeek[0].quotationId)))
+        .limit(1);
+      const [quotation] =
+        tx === undefined ? await quotationQuery : await quotationQuery.for('share');
+      const versionQuery = reader
+        .select({ status: quotationVersions.status })
+        .from(quotationVersions)
+        .where(s.where(quotationVersions, eq(quotationVersions.id, recordId)))
+        .limit(1);
+      const [version] = tx === undefined ? await versionQuery : await versionQuery.for('share');
+      if (quotation === undefined || version === undefined) return undefined;
+      const [confirmed] = await reader
+        .select({ id: salesOrders.id })
+        .from(salesOrders)
+        .where(
+          s.where(
+            salesOrders,
+            and(
+              eq(salesOrders.quotationId, versionPeek[0].quotationId),
+              ne(salesOrders.status, 'draft'),
+              ne(salesOrders.status, 'cancelled'),
+            ),
+          ),
+        )
+        .limit(1);
+      return {
+        kind: 'quotation_version',
+        status: version.status,
+        quotationOwnerUserId: quotation.ownerUserId,
+        hasConfirmedOrder: confirmed !== undefined,
+      };
+    }
+
     const billQuery = reader
       .select({ status: vendorBills.status, enteredBy: vendorBills.enteredBy })
       .from(vendorBills)
@@ -246,6 +327,31 @@ export function drizzleEvidenceReferenceLoader(db: Db): EvidenceReferenceLoader 
             and(
               eq(billingScheduleLines.salesOrderId, record.id),
               eq(billingScheduleLines.billableEvidenceDocumentId, documentId),
+            ),
+          ),
+        )
+        .limit(1);
+      const rows = tx === undefined ? await query : await query.for('share');
+      return rows.length > 0;
+    }
+    if (record.kind === 'quotation_version') {
+      const query = reader
+        .select({ id: salesOrderEvidence.id })
+        .from(salesOrderEvidence)
+        .innerJoin(
+          salesOrders,
+          and(
+            eq(salesOrders.tenantId, salesOrderEvidence.tenantId),
+            eq(salesOrders.organizationId, salesOrderEvidence.organizationId),
+            eq(salesOrders.id, salesOrderEvidence.salesOrderId),
+          ),
+        )
+        .where(
+          s.where(
+            salesOrderEvidence,
+            and(
+              eq(salesOrders.quotationVersionId, record.id),
+              eq(salesOrderEvidence.documentId, documentId),
             ),
           ),
         )

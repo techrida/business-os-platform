@@ -3,3 +3,5 @@ export * from './money.js';
 export * from './number-words.js';
 export * from './dates.js';
 export * from './theme-mode.js';
+export * from './plain-amount.js';
+export * from './number-entry.js';

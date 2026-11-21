@@ -14,6 +14,7 @@ import {
   removeApprovalGroupMember,
   revokeDelegation,
 } from '@/lib/api-admin';
+import { apiReasonOf } from '@/lib/api-code';
 
 import { describeError } from '../admin-errors';
 import { fail, ok, type ActionState } from '../action-state';
@@ -95,10 +96,23 @@ export async function publishVersionAction(
   const key = KEY.safeParse(text(formData, 'key'));
   const version = z.coerce.number().int().positive().safeParse(text(formData, 'version'));
   if (!key.success || !version.success) return fail('Missing workflow version.');
+  // The small-team rule (F1-Q11 a): the only person who may publish gives a reason, which the API audits.
+  const reason = text(formData, 'reason').trim();
+  if (reason.length > 500) return fail('Keep the reason to 500 characters or fewer.');
 
   try {
-    await publishWorkflowVersion(session, key.data, version.data);
+    await publishWorkflowVersion(
+      session,
+      key.data,
+      version.data,
+      reason === '' ? undefined : reason,
+    );
   } catch (error) {
+    if (apiReasonOf(error) === 'sole_eligible_reason_required') {
+      return fail(
+        'You are the only person who can publish this, so give a reason for publishing your own draft.',
+      );
+    }
     return fail(describeError(error, 'publish workflows'));
   }
   revalidatePath(PATH);
