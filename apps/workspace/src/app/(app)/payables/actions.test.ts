@@ -111,7 +111,34 @@ describe('request a match exception', () => {
       form({ billId: BILL, idempotencyKey: KEY, reason: ' ', evidenceDocumentId: 'wrong' }),
     );
     expect(out.errors?.['reason']).toBeTruthy();
+    expect(out.errors?.['evidenceDocumentId']).toBe(
+      'That file could not be used. Upload it again, or remove it.',
+    );
     expect(api.requestBillException).not.toHaveBeenCalled();
+  });
+
+  it('sends no evidence when none was uploaded, and words a file that is not this bill’s evidence', async () => {
+    api.requestBillException.mockResolvedValue({ approvalRequestId: SUB });
+    await requestExceptionAction(
+      prev,
+      form({ billId: BILL, idempotencyKey: KEY, reason: 'Agreed', evidenceDocumentId: '' }),
+    );
+    expect(api.requestBillException).toHaveBeenCalledWith(
+      expect.anything(),
+      BILL,
+      { reason: 'Agreed' },
+      KEY,
+    );
+    api.requestBillException.mockRejectedValue(
+      new ApiError(422, 'x', {
+        error: { code: 'invalid_evidence_document', message: 'm', correlationId: 'c' },
+      }),
+    );
+    const out = await requestExceptionAction(
+      prev,
+      form({ billId: BILL, idempotencyKey: KEY, reason: 'Agreed', evidenceDocumentId: ACCOUNT }),
+    );
+    expect(out.error).toMatch(/not evidence uploaded to this record/);
   });
 
   it('checks the bill-enter permission and keeps the key after an uncertain result', async () => {

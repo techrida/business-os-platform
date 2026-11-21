@@ -9,7 +9,8 @@ import {
 } from '@/components/p2/quotations/action-dialog';
 import actions from '@/components/p2/quotations/actions.module.css';
 import { Alert } from '@/components/ui/alert';
-import { Field, Input, Textarea } from '@/components/ui/field';
+import { EvidenceUpload } from '@/components/ui/evidence-upload';
+import { Field, Textarea } from '@/components/ui/field';
 
 import type { ActionState } from '../../procurement/orders/_lib/state';
 import {
@@ -58,11 +59,13 @@ function Form({
   triggerVariant?: 'primary' | 'secondary';
   title: string;
   intro: string;
-  fields?: (errors: Record<string, string>) => ReactNode;
+  /** `setBlocked` holds the submit button while a field is not ready (an evidence upload). */
+  fields?: (errors: Record<string, string>, setBlocked: (blocked: boolean) => void) => ReactNode;
 }) {
   const [state, formAction, pending] = useActionState<ActionState, FormData>(action, {
     key: common.idempotencyKey,
   });
+  const [blocked, setBlocked] = useState(false);
   const wrapRef = useRef<HTMLDivElement>(null);
   const summaryRef = useRef<HTMLDivElement>(null);
   useFocusOnProblem(state, wrapRef, summaryRef);
@@ -77,6 +80,7 @@ function Form({
       formId={formId}
       pending={pending}
       done={state.done !== undefined}
+      blocked={blocked}
       submitLabel={submitLabel}
     >
       <div ref={wrapRef}>
@@ -99,7 +103,7 @@ function Form({
                 {state.error}
               </Alert>
             ) : null}
-            {fields?.(state.errors ?? {})}
+            {fields?.(state.errors ?? {}, setBlocked)}
             <PendingLine pending={pending} words={pendingWords} />
           </form>
         )}
@@ -211,9 +215,16 @@ export function RejectDialog(props: Common) {
   );
 }
 
-function ExceptionFields({ errors }: { errors: Record<string, string> }) {
+function ExceptionFields({
+  billId,
+  errors,
+  onBlockingChange,
+}: {
+  billId: string;
+  errors: Record<string, string>;
+  onBlockingChange: (blocked: boolean) => void;
+}) {
   const [reason, setReason] = useState('');
-  const [evidence, setEvidence] = useState('');
   return (
     <>
       <Field label="Reason for the exception" error={errors['reason']}>
@@ -229,20 +240,15 @@ function ExceptionFields({ errors }: { errors: Record<string, string> }) {
           />
         )}
       </Field>
-      <Field
-        label="Evidence document ID (optional)"
-        hint="An existing document supporting the exception."
+      <EvidenceUpload
+        kind="vendor-bill"
+        ownerId={billId}
+        name="evidenceDocumentId"
+        label="Evidence (optional)"
+        hint="A document supporting the exception, such as the vendor's agreement to the price."
         error={errors['evidenceDocumentId']}
-      >
-        {(control) => (
-          <Input
-            name="evidenceDocumentId"
-            value={evidence}
-            onChange={(e) => setEvidence(e.target.value)}
-            {...control}
-          />
-        )}
-      </Field>
+        onBlockingChange={onBlockingChange}
+      />
     </>
   );
 }
@@ -258,7 +264,9 @@ export function ExceptionDialog(props: Common) {
       common={props}
       submitLabel="Send to Finance"
       pendingWords="Requesting the exception"
-      fields={(errors) => <ExceptionFields errors={errors} />}
+      fields={(errors, setBlocked) => (
+        <ExceptionFields billId={props.targetId} errors={errors} onBlockingChange={setBlocked} />
+      )}
     />
   );
 }

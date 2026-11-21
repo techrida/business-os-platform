@@ -32,6 +32,9 @@ describe('billFailure', () => {
       [422, 'NO_ELIGIBLE_APPROVER', 'submit', /nobody can approve/i],
       [422, 'PO_VENDOR_MISMATCH', 'convert', /another vendor/i],
       [422, 'SUBMISSION_MISMATCH', 'convert', /does not match the submission/i],
+      [422, 'invalid_evidence_document', 'exception', /not evidence uploaded to this record/],
+      [422, 'DOCUMENT_NOT_FOUND', 'exception', /not evidence uploaded to this record/],
+      [422, 'DOCUMENT_NOT_FOUND', 'create', /invoice file could not be found/],
     ];
     for (const [status, code, op, re] of cases) {
       const f = billFailure(apiError(status, code), op);
