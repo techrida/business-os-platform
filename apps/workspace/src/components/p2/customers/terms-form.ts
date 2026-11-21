@@ -4,6 +4,8 @@
  * arithmetic on money (D22).
  */
 
+import { USE_A_POINT, hasStrayComma, plainAmount } from '@bos/locale';
+
 /** The three fields the card edits, one save each. Portal access is the existing invite, not an edit here. */
 export type TermsField = 'owner' | 'paymentTerms' | 'creditLimit';
 
@@ -86,9 +88,14 @@ export function parseCreditLimit(
 ): { ok: true; value: string | null } | { ok: false; error: string } {
   if (mode === 'none') return { ok: true, value: null };
   if (mode !== 'limit') return { ok: false, error: INCOMPLETE };
-  const typed = raw.replace(/[,\s]/g, '');
+  const typed = plainAmount(raw);
   if (typed === '') return { ok: false, error: LIMIT_REQUIRED };
-  if (!AMOUNT.test(typed)) return { ok: false, error: LIMIT_INVALID };
+  if (!AMOUNT.test(typed)) {
+    return {
+      ok: false,
+      error: hasStrayComma(raw) ? `${USE_A_POINT} ${LIMIT_INVALID}` : LIMIT_INVALID,
+    };
+  }
   return { ok: true, value: typed };
 }
 

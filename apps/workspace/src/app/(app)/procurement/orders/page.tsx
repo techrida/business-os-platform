@@ -144,7 +144,7 @@ export default async function PurchaseOrdersPage({
         description="Orders placed with approved vendors. An order is issued once, and every change after that is a new version."
       />
 
-      {cards !== null ? (
+      {problem === null && cards !== null ? (
         <section aria-label="Purchase order summary" className={listLayout.stats}>
           {cards.map((card) => (
             <StatCard

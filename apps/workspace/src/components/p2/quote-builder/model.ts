@@ -8,7 +8,7 @@ import {
   paymentPercentUnits,
   trimPercent,
 } from '@bos/contracts';
-import { allocatePaymentSchedule, Dec, roundPaymentShare } from '@bos/locale';
+import { allocatePaymentSchedule, Dec, plainAmount, roundPaymentShare } from '@bos/locale';
 import { z } from 'zod';
 
 export type Currency = 'NPR' | 'INR' | 'USD';
@@ -123,7 +123,7 @@ export const newMilestone = (key: string): MilestoneValues => ({
 
 /** People type 12,50,000.00 in Nepal; the contract wants plain digits, so drop grouping and spaces. */
 export function plainNumber(raw: string): string {
-  return raw.replace(/[\s,]/g, '');
+  return plainAmount(raw);
 }
 
 // ---------------------------------------------------------------------------------------------
