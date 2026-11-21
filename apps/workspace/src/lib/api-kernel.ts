@@ -30,6 +30,7 @@ import {
 import { z } from 'zod';
 
 import { ApiError, apiFetch } from './api';
+import type { EvidenceKind } from './evidence';
 import { describeFailure, type Failure, type FailureContext } from './kernel-ui';
 import type { Session } from './session';
 
@@ -327,7 +328,21 @@ function contentPath(created: Pick<CreatedDocument, 'documentId' | 'versionId' |
 export async function uploadDocumentContent(
   session: Session,
   created: Pick<CreatedDocument, 'documentId' | 'versionId' | 'uploadPath'>,
-  upload: { body: ReadableStream<Uint8Array>; contentLength: number; contentType: string },
+  upload: ContentUpload,
+): Promise<z.infer<typeof DocumentVersionDtoSchema>> {
+  return streamContent(session, contentPath(created), upload);
+}
+
+interface ContentUpload {
+  body: ReadableStream<Uint8Array>;
+  contentLength: number;
+  contentType: string;
+}
+
+async function streamContent(
+  session: Session,
+  path: string,
+  upload: ContentUpload,
 ): Promise<z.infer<typeof DocumentVersionDtoSchema>> {
   const init: RequestInit & { duplex: 'half' } = {
     method: 'PUT',
@@ -340,7 +355,47 @@ export async function uploadDocumentContent(
     body: upload.body,
     duplex: 'half',
   };
-  return await call(session, contentPath(created), DocumentVersionDtoSchema, init);
+  return await call(session, path, DocumentVersionDtoSchema, init);
+}
+
+/** The API path of a record's evidence uploads (round 5 P2), by the record kind the workspace names. */
+const EVIDENCE_BASE: Record<EvidenceKind, string> = {
+  'sales-order': '/v1/sales-orders',
+  'vendor-bill': '/v1/payables/bills',
+  rfq: '/v1/procurement/rfqs',
+};
+
+function evidencePath(kind: EvidenceKind, ownerId: string): string {
+  return `${EVIDENCE_BASE[kind]}/${seg(ownerId)}/evidence-documents`;
+}
+
+/**
+ * Step 1 of an evidence upload: reserve a document owned by `evidence` + the record, through the
+ * record's own route (it checks that record's permission, not `documents.upload`).
+ */
+export function createEvidenceDocument(
+  session: Session,
+  kind: EvidenceKind,
+  ownerId: string,
+  body: Pick<CreateDocumentBody, 'filename' | 'declaredMime' | 'sizeBytes'>,
+): Promise<CreatedDocument> {
+  return call(session, evidencePath(kind, ownerId), CreatedDocumentSchema, json('POST', body));
+}
+
+/** Step 2 of an evidence upload: stream the bytes to the content route of the reserved version. */
+export function uploadEvidenceContent(
+  session: Session,
+  kind: EvidenceKind,
+  ownerId: string,
+  created: Pick<CreatedDocument, 'documentId' | 'versionId' | 'uploadPath'>,
+  upload: ContentUpload,
+): Promise<z.infer<typeof DocumentVersionDtoSchema>> {
+  const expected = `${evidencePath(kind, ownerId)}/${created.documentId}/versions/${created.versionId}/content`;
+  // Trust the API's own path when it matches; otherwise refuse rather than send a file elsewhere.
+  if (created.uploadPath !== expected) {
+    throw new ApiError(502, 'The evidence upload returned an unexpected uploadPath');
+  }
+  return streamContent(session, expected, upload);
 }
 
 /** `POST /v1/documents/:id/versions/:versionId/link`: a 60-second, single-use signed link. */
