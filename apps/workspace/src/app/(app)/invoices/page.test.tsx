@@ -331,7 +331,8 @@ describe('outstanding balance card', () => {
 });
 
 describe('record payment row action', () => {
-  const RECORD = `href="/payments/new?customerId=${CUSTOMER}"`;
+  // Each row's link names its own invoice (U16-Q8 a); the payment form reads the open amount itself.
+  const RECORD = `href="/payments/new?customerId=${CUSTOMER}&amp;invoiceId=${ID}"`;
 
   it('offers Record payment on every row that still owes, with no Payment filter set', async () => {
     mocks.requireStaffSession.mockResolvedValue({ accessToken: 't', roles: ['accountant'] });
@@ -349,6 +350,7 @@ describe('record payment row action', () => {
     );
     const html = await render();
     expect(html).toContain(RECORD);
+    expect(html).toContain(`href="/payments/new?customerId=${CUSTOMER}&amp;invoiceId=${OTHER}"`);
     // Old code offered it only when the Payment filter selected owing states.
     expect(html).toContain('Record payment for INV-2083/84-00001');
     expect(html).toContain('Record payment for INV-2083/84-00002');

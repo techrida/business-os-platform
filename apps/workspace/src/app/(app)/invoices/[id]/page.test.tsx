@@ -239,7 +239,7 @@ describe('invoice detail page', () => {
   });
 
   it('offers Record payment for the customer while the invoice is still owed', async () => {
-    const RECORD = `href="/payments/new?customerId=${CUSTOMER}"`;
+    const RECORD = `href="/payments/new?customerId=${CUSTOMER}&amp;invoiceId=${ID}"`;
     mocks.requireStaffSession.mockResolvedValue({ accessToken: 't', roles: ['accountant'] });
     mocks.getCustomerStatement.mockResolvedValue([
       statementRow({ allocatedAmount: '0.00', openAmount: '2018180.00', settlement: 'overdue' }),
@@ -686,7 +686,7 @@ describe('invoice detail under the per-invoice can flags', () => {
     recordPayment: false,
   };
   const OWN = { submit: true, issue: true, discard: true, notes: true, recordPayment: true };
-  const RECORD = `href="/payments/new?customerId=${CUSTOMER}"`;
+  const RECORD = `href="/payments/new?customerId=${CUSTOMER}&amp;invoiceId=${ID}"`;
   const SUBMIT = />Submit for approval</;
   const ISSUE = />Issue tax invoice</;
   const NOTE = />Credit note</;
