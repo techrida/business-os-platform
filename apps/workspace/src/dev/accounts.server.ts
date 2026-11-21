@@ -2,6 +2,7 @@ import 'server-only';
 import { readFile } from 'node:fs/promises';
 import { z } from 'zod';
 
+import { devToolsEnabled } from '@/dev/enabled';
 import { beginLogin } from '@/lib/oidc';
 
 // BOS_DEV_ACCOUNT_SERVICE: privileged local test entry, never imported by production routes.
@@ -28,7 +29,7 @@ function trustedDevelopmentOrigin(value: string): URL {
 }
 
 export function localDevelopmentRequest(req: Request, mutation = false): boolean {
-  if (process.env.NODE_ENV !== 'development') return false;
+  if (!devToolsEnabled()) return false;
   try {
     const configured = trustedDevelopmentOrigin(process.env.WORKSPACE_PUBLIC_URL ?? '');
     trustedDevelopmentOrigin(process.env.OIDC_ISSUER ?? '');
@@ -43,7 +44,7 @@ export function localDevelopmentRequest(req: Request, mutation = false): boolean
 }
 
 async function api(path: string, body?: unknown): Promise<unknown> {
-  if (process.env.NODE_ENV !== 'development') throw new Error('Development only');
+  if (!devToolsEnabled()) throw new Error('Development only');
   // Privileged login-client calls stay on the private identity API even when browser OIDC
   // is exposed through a restricted HTTPS bridge. No credentials go to the public bridge.
   const base = trustedDevelopmentOrigin(
