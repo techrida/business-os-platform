@@ -421,7 +421,8 @@ export class VerificationService implements OnModuleInit {
       level: AccessLevel;
       role: string;
     }>(sql`
-      SELECT u.id, u.display_name AS name, e.level, r.role_key AS role
+      SELECT u.id, u.display_name AS name,
+             CASE WHEN e.department_id IS NULL THEN 'staff' ELSE e.level END AS level, r.role_key AS role
       FROM app.users u
       JOIN app.idp_orgs o ON o.tenant_id = u.tenant_id AND o.id = u.idp_org_id AND o.kind = 'staff'
       JOIN app.user_entities e ON e.tenant_id = u.tenant_id AND e.user_id = u.id

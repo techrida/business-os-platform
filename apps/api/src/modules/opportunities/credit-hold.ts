@@ -18,7 +18,7 @@ export interface CreditPosition {
   exposure: string;
   /**
    * The not yet invoiced part of the customer's confirmed or completed sales orders with this entity: NPR, two
-   * decimals, never negative. See uninvoicedOrderBalance.
+   * decimals, never negative. See uninvoicedOrderBalanceSql.
    */
   uninvoiced: string;
   /** The pending order's gross NPR value (with VAT), two decimals; '0.00' when the deal has none pending. */
