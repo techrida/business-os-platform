@@ -1,4 +1,5 @@
 import type { InvoiceLineInput } from '@bos/contracts';
+import { USE_A_POINT, hasStrayComma, plainAmount } from '@bos/locale';
 
 // The line model and the rules around it, shared by the manual invoice, the debit note and the
 // credit note. No React and no server imports, so the client form, the server actions and the tests
@@ -36,8 +37,15 @@ export const newLine = (key: string): LineValues => ({
 const GUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 export const isGuid = (value: string): boolean => GUID.test(value);
 
-/** People type 12,50,000.00 in Nepal; the contract wants plain digits, so drop grouping and spaces. */
-export const plainNumber = (raw: string): string => raw.replace(/[\s,]/g, '');
+/**
+ * People type 12,50,000.00 in Nepal; the contract wants plain digits, so drop grouping and spaces. A comma that is not
+ * grouping ("1,5", "10,50") stays, fails the check below and is named in the error: it is never read as 15 or 1050.
+ */
+export const plainNumber = plainAmount;
+
+/** The field's words, with the decimal-comma hint when that is what went wrong. */
+const withPointHint = (words: string, raw: string): string =>
+  hasStrayComma(raw) ? `${USE_A_POINT} ${words}` : words;
 
 const QUANTITY = /^\d{1,14}(\.\d{1,4})?$/;
 const PRICE = /^\d{1,16}(\.\d{1,2})?$/;
@@ -67,11 +75,16 @@ export function parseLines(lines: readonly LineValues[]): Parsed<InvoiceLineInpu
     }
     if (uom === '') at('uom', 'Enter the unit, such as pcs or hrs.');
     else if (uom.length > UOM_MAX) at('uom', `Keep the unit under ${UOM_MAX} characters.`);
-    if (!QUANTITY.test(quantity) || !aboveZero(quantity)) at('quantity', QUANTITY_WORDS);
+    if (!QUANTITY.test(quantity) || !aboveZero(quantity)) {
+      at('quantity', withPointHint(QUANTITY_WORDS, line.quantity));
+    }
     if (!PRICE.test(unitPrice)) {
       at(
         'unitPrice',
-        'Enter the price per unit, such as 1,500.00. Up to 2 decimals, not negative.',
+        withPointHint(
+          'Enter the price per unit, such as 1,500.00. Up to 2 decimals, not negative.',
+          line.unitPrice,
+        ),
       );
     }
     if (!isGuid(line.taxCodeId)) at('taxCodeId', 'Choose a tax code.');
@@ -128,7 +141,7 @@ export function parseCreditLines(values: readonly CreditLineValues[]): Parsed<Cr
     const quantity = plainNumber(v.quantity);
     if (quantity === '' || (/^0*(\.0*)?$/.test(quantity) && quantity !== '.')) return;
     if (!QUANTITY.test(quantity) || !aboveZero(quantity)) {
-      errors[`lines.${i}.quantity`] = QUANTITY_WORDS;
+      errors[`lines.${i}.quantity`] = withPointHint(QUANTITY_WORDS, v.quantity);
       return;
     }
     data.push({ originalLineNo: v.lineNo, quantity });

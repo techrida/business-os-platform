@@ -24,6 +24,7 @@ import {
   type SchedulableActivityKind,
   type UpdateLeadBody,
 } from '@bos/contracts';
+import { plainAmount } from '@bos/locale';
 import type { ZodType } from 'zod';
 
 /**
@@ -60,7 +61,7 @@ function numberField(form: FormData, name: string): number | undefined {
 /** People type 12,50,000.00 in Nepal; the contract wants plain digits. */
 function moneyField(form: FormData, name: string): string | undefined {
   const v = field(form, name);
-  return v === undefined ? undefined : v.replace(/[\s,]/g, '');
+  return v === undefined ? undefined : plainAmount(v);
 }
 
 /** A `datetime-local` value is Kathmandu wall time. The contract wants an offset timestamp. */
