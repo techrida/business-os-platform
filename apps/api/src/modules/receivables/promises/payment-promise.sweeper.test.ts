@@ -140,7 +140,12 @@ describe('PaymentPromiseSweeper', () => {
     expect(scopes[0]?.scope).toEqual({ tenantId: 'tenant-1', organizationId: 'org-1' });
     expect(scopes[0]?.actor.id).toBe(`system:${PAYMENT_PROMISE_JOB_PREFIX}`);
     expect(audit.record.mock.calls.map((c) => (c as unknown[])[1])).toEqual([
-      expect.objectContaining({ action: 'activity.scheduled', entityId: 'activity-1' }),
+      // Its own kind (0154), so the call follows the receivables permissions, not the customer's activity reach.
+      expect.objectContaining({
+        action: 'activity.scheduled',
+        entityId: 'activity-1',
+        after: expect.objectContaining({ kind: 'collection_call' }) as unknown,
+      }),
       expect.objectContaining({ action: 'payment_promise.missed', entityId: 'p-1' }),
     ]);
   });

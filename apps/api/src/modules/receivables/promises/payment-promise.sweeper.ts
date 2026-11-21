@@ -1,14 +1,15 @@
 // The payment-promise job (worker only, F1-Q33, decision D56): every hour it finds open promises to pay whose promised
 // day is before today in Asia/Kathmandu and settles each one:
 // - the invoice still has an open amount: the promise becomes `missed` and ONE collection call is planned for
-//   Finance. The call is an ordinary follow-up (an app.activities row of kind `call` with a due time, D39) on the
-//   invoice's customer, so it lists on the Follow-ups page and the assignee completes it like any other. The receivables
+//   Finance. The call is a follow-up of its own kind (an app.activities row of kind `collection_call` with a due time,
+//   D39, R4c1 Q1) on the invoice's customer: it lists on the Follow-ups page and the assignee completes it like any
+//   other, but it is read and changed by the receivables permissions, never the customer's activity reach. The receivables
 //   aging flags the customer and currency from then on (ReceivablesService.missedPromises);
 // - the invoice was settled meanwhile: the promise becomes `kept`, and nothing else happens.
 //
 // Who gets the call (collectionAssignee): the person who recorded the promise when they hold the Finance role, else
 // the first active Finance member of the entity by name, else the recorder (an Accountant) while still active, else
-// nobody (the call then lists for everyone who can read the customer). The open question in the unit report asks
+// nobody (the call then lists for everyone who may read receivables). The open question in the unit report asks
 // Kuu to confirm this.
 //
 // Safe to repeat and to run on two workers at once, and ONE call per promise: each promise is its own transaction;
@@ -131,8 +132,7 @@ export function collectionCallText(
 } {
   const subject = `Collect payment for ${p.invoiceNumber}`;
   const promised = `The customer promised to pay ${p.invoiceNumber} by ${p.promisedDate}, and it is still open.`;
-  // The recorder's free-text note stays on the promise: the call is readable by anyone who may read the customer's
-  // activities, which is wider than who may read receivables.
+  // The recorder's free-text note stays on the promise: the call text is kept to what the invoice itself says.
   return { subject, body: promised };
 }
 
@@ -201,7 +201,7 @@ export class PaymentPromiseSweeper {
         entityType: 'activities',
         entityId: activityId,
         after: {
-          kind: 'call',
+          kind: 'collection_call',
           customerId: due.customerPartyId,
           dueAt: now.toISOString(),
           assigneeUserId,
@@ -309,14 +309,14 @@ export function drizzlePromiseStore(db: Db): PromiseStore {
     },
 
     async planCall(tx, c, call) {
-      // A planned call on the customer (D39): kind call, a due time, not completed or cancelled. created_by_user_id
-      // stays NULL, as for every system-written row (0062).
+      // A planned collection call on the customer (D39, 0154): a due time, not completed or cancelled.
+      // created_by_user_id stays NULL, as for every system-written row (0062).
       const [row] = await tx
         .insert(activities)
         .values({
           tenantId: c.tenantId,
           organizationId: c.organizationId,
-          kind: 'call',
+          kind: 'collection_call',
           subject: call.subject,
           body: call.body,
           customerId: call.customerPartyId,
