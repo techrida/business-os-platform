@@ -1,6 +1,8 @@
 import {
   canTransitionInvoice,
   INVOICE_KINDS,
+  InvoiceCanSchema,
+  isInvoiceEditable,
   INVOICE_STATUSES,
   type InvoiceKind,
   type InvoiceStatus,
@@ -9,7 +11,13 @@ import { describe, expect, it } from 'vitest';
 
 import { permissionChecker } from '@/components/p2/customers/permissions';
 
-import { type Can, invoiceGates, NOTE_CREATOR_CANNOT_ISSUE, recordPaymentHref } from './gates';
+import {
+  type Can,
+  DUE_DATE_NOT_EDITABLE,
+  invoiceGates,
+  NOTE_CREATOR_CANNOT_ISSUE,
+  recordPaymentHref,
+} from './gates';
 
 const ACCOUNTANT = ['accountant'];
 const FINANCE = ['finance'];
@@ -20,6 +28,7 @@ const NONE = {
   discard: false,
   reopen: false,
   notes: false,
+  editDueDate: null,
   issueBlocker: null,
 };
 
@@ -53,6 +62,7 @@ describe('invoiceGates follow canTransitionInvoice and the role', () => {
       discard: true,
       reopen: false,
       notes: false,
+      editDueDate: null,
       issueBlocker: null,
     });
   });
@@ -66,6 +76,7 @@ describe('invoiceGates follow canTransitionInvoice and the role', () => {
         discard: true,
         reopen: false,
         notes: false,
+        editDueDate: null,
         issueBlocker: null,
       });
     },
@@ -130,6 +141,7 @@ describe('invoiceGates follow canTransitionInvoice and the role', () => {
       discard: true,
       reopen: false,
       notes: false,
+      editDueDate: null,
       issueBlocker: null,
     });
     // A Finance user whose invoice.issue and invoice.credit_note were revoked.
@@ -278,5 +290,88 @@ describe('the per-invoice can flags', () => {
       NONE,
     );
     expect(recordPaymentHref({ ...issued, can: OWN }, granted())).toBeNull();
+  });
+});
+
+describe("Edit due date (the detail's can.editDueDate)", () => {
+  // The API's words, as `dueDateEditRefusal` in invoice-mapping.ts sends them.
+  const ORDER =
+    "This invoice's due date is set when it is issued, from the sales order's credit days";
+  const DEBIT = "A debit note's due date is set when it is issued";
+  const CREDIT = 'A credit note has no due date of its own';
+  const finance = permissionChecker(FINANCE);
+  const detail = (editDueDate: unknown, discard = true) =>
+    InvoiceCanSchema.parse({
+      submit: true,
+      issue: true,
+      discard,
+      notes: true,
+      recordPayment: false,
+      editDueDate,
+    });
+
+  it('offers it on a draft or returned invoice the API allows', () => {
+    for (const status of ['draft', 'returned'] as const) {
+      const g = invoiceGates(
+        { kind: 'tax_invoice', status, can: detail({ allowed: true }) },
+        permissionChecker(ACCOUNTANT),
+      );
+      expect(g.editDueDate).toEqual({ reason: null });
+    }
+  });
+
+  it.each([
+    ['tax_invoice', ORDER],
+    ['debit_note', DEBIT],
+    ['credit_note', CREDIT],
+  ] as const)('shows a %s off with the API reason, never hidden', (kind, reason) => {
+    const g = invoiceGates(
+      { kind, status: 'draft', can: detail({ allowed: false, reason }) },
+      finance,
+    );
+    expect(g.editDueDate).toEqual({ reason });
+  });
+
+  it('falls back to plain words when the API refuses without a reason', () => {
+    const g = invoiceGates(
+      { kind: 'proforma', status: 'draft', can: detail({ allowed: false }) },
+      finance,
+    );
+    expect(g.editDueDate).toEqual({ reason: DUE_DATE_NOT_EDITABLE });
+  });
+
+  it('is not offered outside draft and returned, without invoice.draft, out of reach, or with no answer', () => {
+    for (const status of ['submitted', 'approved', 'issued', 'discarded'] as const) {
+      expect(
+        invoiceGates({ kind: 'tax_invoice', status, can: detail({ allowed: true }) }, finance)
+          .editDueDate,
+      ).toBeNull();
+    }
+    const draft = { kind: 'tax_invoice', status: 'draft' } as const;
+    expect(
+      invoiceGates({ ...draft, can: detail({ allowed: true }) }, granted('invoice.submit'))
+        .editDueDate,
+    ).toBeNull();
+    // Another person's draft under an `own` grant: the API refuses (403) and Discard is hidden too.
+    expect(
+      invoiceGates({ ...draft, can: detail({ allowed: false, reason: 'x' }, false) }, finance)
+        .editDueDate,
+    ).toBeNull();
+    // A list row, or an older API: no answer, no button.
+    expect(invoiceGates({ ...draft, can: detail(undefined) }, finance).editDueDate).toBeNull();
+    expect(invoiceGates(draft, finance).editDueDate).toBeNull();
+  });
+
+  // The detail page mounts the action slot only for Submit, Issue, Back to draft, Discard or a payment; an offered
+  // Edit due date must never be the only action, or it would not show.
+  it.each(
+    INVOICE_KINDS.flatMap((k) =>
+      INVOICE_STATUSES.filter(isInvoiceEditable).map((s) => [k, s] as const),
+    ),
+  )('an offered Edit due date on a %s %s always comes with Discard', (kind, status) => {
+    for (const editDueDate of [{ allowed: true }, { allowed: false, reason: ORDER }]) {
+      const g = invoiceGates({ kind, status, can: detail(editDueDate) }, finance);
+      if (g.editDueDate !== null) expect(g.discard).toBe(true);
+    }
   });
 });

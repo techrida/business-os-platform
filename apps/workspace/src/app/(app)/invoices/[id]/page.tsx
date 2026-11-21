@@ -28,9 +28,11 @@ import { InvoicePreview } from '../_components/invoice-preview';
 import { InvoiceProgress } from '../_components/invoice-progress';
 import styles from '../_components/invoice.module.css';
 import { InvoiceNoteActions } from '../_components/notes/note-actions';
+import { PromiseCard } from '../_components/promise-card';
 import { type Can, invoiceGates, recordPaymentHref } from '../_lib/gates';
 import { approvalWords, kindMeta } from '../_lib/meta';
 import { settlementMeta } from '../../receivables/_lib/settlement';
+import { invoicePromisesOf } from './promises-api';
 
 export const metadata: Metadata = { title: 'Invoice · Business OS' };
 export const dynamic = 'force-dynamic';
@@ -202,9 +204,10 @@ export default async function InvoiceDetailPage({ params }: { params: Promise<{ 
   const kind = kindMeta(invoice.kind).label;
   // Only a debit note needs the tax codes, and only the people who may write one are shown the button.
   // A list that fails to load degrades the dialog (it says so); it never fails the page.
-  const [taxCodes, settlement] = await Promise.all([
+  const [taxCodes, settlement, promises] = await Promise.all([
     gates.notes ? listTaxCodes(session).catch((): null => null) : Promise.resolve(null),
     settlementOf(session, invoice, can),
+    invoicePromisesOf(session, invoice, can),
   ]);
   const payment = settlement === null ? null : settlementMeta(settlement.settlement);
   // Only while something is still owed, as the server's settlement says; unknown settlement offers nothing.
@@ -237,7 +240,12 @@ export default async function InvoiceDetailPage({ params }: { params: Promise<{ 
           gates.discard ||
           recordPayment ? (
             <>
-              <InvoiceActions invoice={invoice} gates={gates} reloadHref={path} />
+              <InvoiceActions
+                invoice={invoice}
+                gates={gates}
+                reloadHref={path}
+                dateFormat={format.dateFormat}
+              />
               {pdfNumber ? (
                 <InvoicePreview
                   documentUrl={`${path}/document`}
@@ -283,6 +291,14 @@ export default async function InvoiceDetailPage({ params }: { params: Promise<{ 
             dateFormat={format.dateFormat}
           />
           <LineBreakdown detail={detail} numberSystems={numberSystems} />
+          {promises ? (
+            <PromiseCard
+              invoiceId={invoice.id}
+              promises={promises}
+              dateFormat={format.dateFormat}
+              reloadHref={path}
+            />
+          ) : null}
           {gates.notes ? (
             <Panel as="aside" title="Adjustments">
               <div className={styles.noteSlot} data-slot="invoice-note-actions">
