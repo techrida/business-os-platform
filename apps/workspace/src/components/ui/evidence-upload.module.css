@@ -196,8 +196,8 @@
   line-height: var(--line-height-caption);
 }
 
-/* 44px hit area for the chip's buttons. */
-.action {
+/* 44px hit area for the chip's buttons (scoped, so it wins over the button's own size). */
+.chip .action {
   gap: 6px;
   min-width: 44px;
   min-height: 44px;
