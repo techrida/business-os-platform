@@ -157,6 +157,11 @@ export async function run(qa, rec, shared) {
       );
       await c.as('Dev Marketing Manager');
       await c.open(shared.lostLead);
+      await c.see(
+        c.page().getByText('This page could not be found'),
+        "the other department's lost lead is not reachable (404), so no Reopen is offered",
+        30000,
+      );
       await c.absent(
         c.page().getByRole('button', { name: /^Reopen/ }),
         'button "Reopen" (Marketing manager, other department)',

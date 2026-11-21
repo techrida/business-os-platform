@@ -83,7 +83,11 @@ export function makeCtx(qa) {
     /** A page that has rendered: a heading in main and no "Loading ..." status. Absence is only proven then. */
     async rendered() {
       const p = page();
-      await p.locator('main h1, main h2').first().waitFor({ state: 'visible', timeout: 30000 });
+      await p
+        .locator('main h1, main h2')
+        .or(p.getByText('This page could not be found'))
+        .first()
+        .waitFor({ state: 'visible', timeout: 30000 });
       await p
         .locator('main [role=status]', { hasText: /^Loading/ })
         .first()
