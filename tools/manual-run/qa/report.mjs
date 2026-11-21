@@ -26,8 +26,8 @@ for (const g of guides) {
   html += `<h2>${g}</h2><table><tr><th>Step<th>Status<th>What was checked<th>Persona / URL<th>Controls asserted / reason<th>Screenshot</tr>`;
   for (const r of rows.filter((x) => x.guide === g)) {
     const shot = r.shot ? path.relative(EVIDENCE, r.shot) : '';
-    md += `- **${r.id}** ${r.status}: ${r.title}${r.error ? ` — ${r.error}` : ''}${r.reason ? ` — ${r.reason}` : ''}${r.status === 'FAIL' && r.classify ? ` [${r.classify}]` : ''}${shot ? ` (${shot})` : ''}\n`;
-    html += `<tr><td>${esc(r.id)}<td class="${esc(r.status)}">${esc(r.status)}<td>${esc(r.title)}${r.status === 'FAIL' && r.classify ? `<br><b>${esc(r.classify)}</b>` : ''}<td>${esc(r.persona ?? '')}<br><code>${esc(r.url ?? '')}</code><td>`;
+    md += `- **${r.id}** ${r.status}${r.flaky ? ' (passed on retry)' : ''}: ${r.title}${r.error ? ` — ${r.error}` : ''}${r.reason ? ` — ${r.reason}` : ''}${r.status === 'FAIL' && r.classify ? ` [${r.classify}]` : ''}${shot ? ` (${shot})` : ''}\n`;
+    html += `<tr><td>${esc(r.id)}<td class="${esc(r.status)}">${esc(r.status)}${r.flaky ? '<br>(passed on retry)' : ''}<td>${esc(r.title)}${r.status === 'FAIL' && r.classify ? `<br><b>${esc(r.classify)}</b>` : ''}<td>${esc(r.persona ?? '')}<br><code>${esc(r.url ?? '')}</code><td>`;
     if (r.error) html += `<b>${esc(r.error)}</b><br>`;
     if (r.reason) html += esc(r.reason);
     if (r.controls?.length)

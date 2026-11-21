@@ -202,7 +202,15 @@ export const PLANS = {
           }))
           .filter((x) => x.t),
       );
-    fs.writeFileSync(path.join(OUT, 'login-controls.json'), JSON.stringify(links, null, 1));
+    const { redactUrl } = await import('../lib/redact.mjs');
+    fs.writeFileSync(
+      path.join(OUT, 'login-controls.json'),
+      JSON.stringify(
+        links.map((l) => ({ ...l, h: l.h ? redactUrl(l.h) : l.h })),
+        null,
+        1,
+      ),
+    );
     for (const [slug, re] of [
       ['login--password-recovery', /forgot|reset|recover/i],
       ['login--registration', /register|sign.?up|create (an )?account/i],

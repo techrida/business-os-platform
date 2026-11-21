@@ -186,8 +186,10 @@ export async function run(qa, rec, shared) {
     '2.4',
     'Dev Management (read-only on leads): no stage buttons, a read-only notice',
     async (c) => {
+      if (!leadUrl) throw new Error('no lead from 2.1 (run 2.1 first)');
       await c.as('Dev Management');
       await c.open(leadUrl);
+      await c.see(c.page().getByRole('heading', { level: 1 }), 'the lead heading (page rendered)');
       for (const n of ['Mark contacted', 'Qualify', 'Put on hold', 'Mark lost', 'Resume'])
         await c.absent(
           c.page().getByRole('button', { name: new RegExp('^' + n) }),

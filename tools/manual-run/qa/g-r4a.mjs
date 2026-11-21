@@ -60,9 +60,10 @@ export async function run(qa, rec, shared) {
         /move it back to Qualified/i.test(notice),
         'the notice names Qualified as the stage it returns to',
       );
-      await c.absent(
+      await c.see(
         c.page().getByRole('button', { name: 'Resume to Qualified' }),
         'button literally named "Resume to Qualified" (the guide wording)',
+        3000,
       );
       c.controls.push(
         'not asserted: "the board offers only Qualified" (board drag target not exercised in this pass)',
@@ -128,8 +129,7 @@ export async function run(qa, rec, shared) {
         'focus is on the Reason control',
         JSON.stringify(active),
       );
-      const alerts = await c
-        .page()
+      const alerts = await d
         .locator('[role=alert], [aria-live=assertive], [aria-live=polite]')
         .allInnerTexts();
       c.ok(
@@ -145,12 +145,27 @@ export async function run(qa, rec, shared) {
     qa,
     rec,
     G,
+    '1.5a',
+    'Writer (Dev Sales) sees the Add lead link on /leads (anchor for 1.5)',
+    async (c) => {
+      await c.as('Dev Sales');
+      await c.open('/leads');
+      await c.see(c.page().getByRole('link', { name: /Add lead/ }), 'link "Add lead"');
+    },
+  );
+  await check(
+    qa,
+    rec,
+    G,
     '1.5',
     'Read-only role: no Add lead, no Mark lost; a lost lead says "Reopening needs reopen access"',
     async (c) => {
       await c.as('Dev Management');
       await c.open('/leads');
-      await c.absent(c.link('+ Add lead'), 'link "+ Add lead"');
+      await c.absent(
+        c.page().getByRole('link', { name: /Add lead/ }),
+        'link "Add lead" (read-only role)',
+      );
       await c.open(lostLead || shared.lostLead);
       await c.absent(c.btn('Mark lost'), 'button "Mark lost"');
       await c.see(
@@ -329,11 +344,31 @@ export async function run(qa, rec, shared) {
         30000,
       );
       await c.s.click(c.page().getByRole('button', { name: /Create anyway/ }), 'Create anyway');
-      await c.page().waitForTimeout(2500);
-      const refused = /\/customers\/new/.test(c.page().url());
+      const rd = c.page().getByRole('dialog');
+      await c.see(rd, 'the reason dialog opened by "Create anyway"');
+      c.controls.push(
+        'reason dialog buttons: ' +
+          (await rd.getByRole('button').allInnerTexts())
+            .map((s) => s.trim())
+            .filter(Boolean)
+            .join(' | '),
+      );
+      await rd
+        .getByRole('button')
+        .filter({ hasText: /\S/ })
+        .filter({ hasNotText: /^(Cancel|Close)$/ })
+        .last()
+        .click({ delay: 80 });
+      await c.page().waitForTimeout(1500);
+      const err = await rd.locator('[role=alert], [aria-invalid=true], [id*=error]').count();
       c.ok(
-        refused,
-        'Create anyway with an empty reason is refused (still on /customers/new)',
+        err > 0 || /reason/i.test(await rd.innerText()),
+        'confirming with an empty reason is refused (a reason error or invalid field shows in the dialog)',
+        `errors ${err}`,
+      );
+      c.ok(
+        /\/customers\/new/.test(c.page().url()),
+        'no customer was created (still on /customers/new)',
         c.page().url(),
       );
       c.controls.push(
@@ -352,6 +387,20 @@ export async function run(qa, rec, shared) {
       .locator('main table tbody tr')
       .evaluateAll((rows) => rows.map((r) => r.innerText.replace(/\s+/g, ' ')));
     c.ok(cells.length > 0, 'customer rows exist');
+    const idx = await c
+      .page()
+      .locator('main table thead th')
+      .evaluateAll((ths) => ths.findIndex((th) => /Owner/.test(th.innerText)));
+    const owners = await c
+      .page()
+      .locator('main table tbody tr')
+      .evaluateAll((rows, i) => rows.map((r) => (r.children[i]?.innerText ?? '').trim()), idx);
+    c.controls.push('Owner cells: ' + owners.join(' | '));
+    c.ok(
+      owners.every((o) => o && !/@|[0-9a-f]{8}-/.test(o)),
+      'every Owner cell is a name (no email or id)',
+      owners.join('|'),
+    );
   });
 
   skip(

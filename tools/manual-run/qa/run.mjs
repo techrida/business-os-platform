@@ -2,6 +2,7 @@
 // node tools/manual-run/qa/run.mjs --guides retest,r4a [--viewport 1440x900] [--label qa]
 import path from 'node:path';
 import { openQA, Recorder, EVIDENCE } from './harness.mjs';
+import { redactText } from '../lib/redact.mjs';
 
 const arg = (n, d) => {
   const i = process.argv.indexOf(`--${n}`);
@@ -22,9 +23,11 @@ try {
     await mod.run(qa, rec, shared);
   }
 } catch (e) {
-  console.error('qa run error:', String(e.message).split('\n')[0]);
+  console.error('qa run error:', redactText(String(e.message).split('\n')[0]));
   code = 1;
 } finally {
   await qa.browser.close().catch(() => {});
 }
-process.exit(code);
+const failed = rec.rows.filter((r) => r.status === 'FAIL').length;
+console.log(`done: ${failed} FAIL row(s) in results.json`);
+process.exit(code || (failed ? 1 : 0));

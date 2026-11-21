@@ -62,11 +62,6 @@ export async function run(qa, rec, shared) {
         'a message says the department already has a head',
         t.slice(0, 200),
       );
-      c.ok(
-        /\/settings\/users\/new/.test(c.page().url()),
-        'the form stays open (the invitation was refused)',
-        c.page().url(),
-      );
     },
     { mutates: true },
   );

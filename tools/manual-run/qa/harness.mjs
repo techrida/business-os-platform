@@ -6,7 +6,7 @@ import { mkdirSync, writeFileSync, existsSync, readFileSync } from 'node:fs';
 import path from 'node:path';
 import { loadConfig, scrubDebugEnv } from '../lib/config.mjs';
 import { launch } from '../lib/browser.mjs';
-import { redactText, redactUrl } from '../lib/redact.mjs';
+import { redactDeep, redactText, redactUrl } from '../lib/redact.mjs';
 import { origins } from '../lib/runner.mjs';
 import { Session } from '../lib/session.mjs';
 
@@ -43,8 +43,9 @@ export class Recorder {
   }
   put(row) {
     const i = this.rows.findIndex((r) => r.guide === row.guide && r.id === row.id);
-    if (i >= 0) this.rows[i] = row;
-    else this.rows.push(row);
+    const clean = redactDeep(row);
+    if (i >= 0) this.rows[i] = clean;
+    else this.rows.push(clean);
     writeFileSync(this.file, JSON.stringify(this.rows, null, 2));
   }
 }
@@ -79,7 +80,18 @@ export function makeCtx(qa) {
       await s.see(locator, desc, timeout);
       ctx.controls.push(`visible: ${desc}`);
     },
+    /** A page that has rendered: a heading in main and no "Loading ..." status. Absence is only proven then. */
+    async rendered() {
+      const p = page();
+      await p.locator('main h1, main h2').first().waitFor({ state: 'visible', timeout: 30000 });
+      await p
+        .locator('main [role=status]', { hasText: /^Loading/ })
+        .first()
+        .waitFor({ state: 'hidden', timeout: 30000 })
+        .catch(() => {});
+    },
     async absent(locator, desc) {
+      await ctx.rendered();
       await s.notVisible(locator, desc);
       ctx.controls.push(`absent: ${desc}`);
     },
@@ -144,6 +156,7 @@ export async function check(qa, rec, guide, id, title, fn, opts = {}) {
     error,
     attempts,
     classify: opts.classify ?? '',
+    flaky: status === 'PASS' && attempts.length > 1,
     when: new Date().toISOString(),
   };
   rec.put(row);

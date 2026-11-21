@@ -116,30 +116,28 @@ export async function run(qa, rec, shared) {
     rec,
     G,
     '3.1',
-    'Finance and Accountant see every lead, not only their own',
+    'Finance and Accountant see every lead (same total as the Founder); a department-scoped manager sees fewer',
     async (c) => {
-      await c.as('Dev Sales');
-      await c.open('/leads');
-      const salesTotal = await c.page().locator('main').innerText();
-      const count = (t) => {
-        const m = t.match(/of\s+(\d+)/i) || t.match(/(\d+)\s+(leads|results)/i);
-        return m ? Number(m[1]) : null;
-      };
-      shared.salesLeadCount = count(salesTotal);
-      for (const who of ['Dev Finance', 'Dev Accountant']) {
+      const total = async (who) => {
         await c.as(who);
         await c.open('/leads');
+        await c.rendered();
+        await c.page().waitForTimeout(2500);
         const t = await c.page().locator('main').innerText();
-        c.controls.push(
-          `${who}: pagination text count ${count(t)}, Sales sees ${shared.salesLeadCount}`,
-        );
-        const rows = await c.page().locator('main table tbody tr').count();
-        c.ok(rows > 0, `${who} sees lead rows`, String(rows));
+        return Number((t.match(/of\s+(\d+)\s+leads/i) || t.match(/of\s+(\d+)/i) || [])[1] ?? 0);
+      };
+      const all = await total('Dev Founder');
+      c.ok(all > 0, 'Founder total is read', String(all));
+      for (const who of ['Dev Finance', 'Dev Accountant']) {
+        const n = await total(who);
+        c.controls.push(`${who}: ${n} of ${all}`);
+        c.ok(n === all, `${who} sees all ${all} leads`, `${n}`);
       }
-      await c.as('Dev Marketing Manager');
-      await c.open('/leads');
-      const mk = await c.page().locator('main table tbody tr').count();
-      c.controls.push(`Dev Marketing Manager (department-scoped) sees ${mk} lead rows`);
+      for (const who of ['Dev Marketing Manager']) {
+        const n = await total(who);
+        c.controls.push(`${who} (scoped): ${n} of ${all}`);
+        c.ok(n < all, `${who} sees fewer than all ${all} leads`, `${n}`);
+      }
     },
   );
 

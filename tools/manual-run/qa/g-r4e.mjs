@@ -29,22 +29,6 @@ export async function run(qa, rec) {
       c.ok(lock > 0, 'a Lock / Unlock / Deactivate control is offered', String(lock));
     },
   );
-  skip(
-    rec,
-    G,
-    '1.2',
-    'Lock then unlock a test user, audited; refuse locking self and the last Founder; 5 wrong passwords lock for 15 min',
-    NA,
-    'Needs a throwaway user (Add user creates a ZITADEL account and mail) and wrong-password attempts; never spent on a seeded persona. Deferred to the mutating pass.',
-  );
-  skip(
-    rec,
-    G,
-    '2.1',
-    'Add New User with Department and Level; a second head for one department is refused',
-    NA,
-    'Creates real users; deferred to the mutating pass.',
-  );
   await check(
     qa,
     rec,
@@ -54,6 +38,7 @@ export async function run(qa, rec) {
     async (c) => {
       // Real sign-in, then sign out, then the sign-in page must not sign straight back in.
       const { realLogin } = await import('../lib/session.mjs');
+      qa.s.persona = null; // a failure part-way must not leave a stale persona behind
       await c.s.page.context().clearCookies();
       await realLogin(c.s, c.page(), 'accountant', qa.cfg.appUrl + '/');
       await c.s.click(c.page().getByRole('button', { name: 'Sign out' }));
@@ -168,7 +153,7 @@ export async function run(qa, rec) {
     rec,
     G,
     '6.1',
-    'Tax, Saved terms and Sales settings pages: VAT-rate card, no Delete on tax codes, Delivery holds editable by Founder only',
+    'Tax, Saved terms and Sales settings pages open; no Delete on tax codes; Management has fewer editable inputs on Sales settings than the Founder',
     async (c) => {
       await c.as('Dev Founder');
       await c.open('/settings/tax');
@@ -221,7 +206,10 @@ export async function run(qa, rec) {
     async (c) => {
       await c.as('Dev Sales');
       await c.open('/');
-      await c.see(c.page().getByText('Dev Sales').first(), 'display name "Dev Sales" in the shell');
+      await c.see(
+        c.page().getByText('Dev Sales', { exact: true }).first(),
+        'display name "Dev Sales" in the shell',
+      );
     },
   );
 }
