@@ -84,7 +84,7 @@ export const partyImportBatches = appSchema.table(
     ),
     check(
       'party_import_batches_rows_check',
-      sql`jsonb_typeof(${t.rows}) = 'array' AND (${t.status} = 'expired' OR jsonb_array_length(${t.rows}) = ${t.rowCount})`,
+      sql`jsonb_typeof(${t.rows}) = 'array' AND CASE WHEN ${t.status} = 'expired' THEN ${t.rows} = '[]'::jsonb ELSE jsonb_array_length(${t.rows}) = ${t.rowCount} END`,
     ),
     check(
       'party_import_batches_committed_check',

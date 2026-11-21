@@ -2,7 +2,8 @@
 -- Kuu decision K1 Q5 b). The preview holds the uploaded names, addresses, emails and phones, so it must not wait forever.
 --   * status gains `expired`: the worker job (every 6 hours) moves a `previewed` batch there once it is older than 7 days, and
 --     clears its `rows` to an empty array, so the uploaded personal data goes with it. The counts and the file name stay,
---     as the record of the attempt. A batch's `rows` is only checked against `row_count` while it is not expired.
+--     as the record of the attempt. An expired batch must hold `rows = []` (the check enforces it, so no expired row can keep the personal data, and the
+--     final guard never has to clear it later); any other batch's `rows` still matches `row_count`.
 --   * an expired batch is final, like a committed one: the guard trigger refuses any UPDATE of it, and DELETE of any batch
 --     stays refused. A committed batch is never touched by the job.
 -- DDL only: no rows are written, so no audit actor is needed. The table is small and the statements are short; a lock_timeout
@@ -16,7 +17,7 @@ ALTER TABLE "app"."party_import_batches" ADD CONSTRAINT "party_import_batches_st
 --> statement-breakpoint
 ALTER TABLE "app"."party_import_batches" DROP CONSTRAINT "party_import_batches_rows_check";
 --> statement-breakpoint
-ALTER TABLE "app"."party_import_batches" ADD CONSTRAINT "party_import_batches_rows_check" CHECK (jsonb_typeof("rows") = 'array' AND ("status" = 'expired' OR jsonb_array_length("rows") = "row_count"));
+ALTER TABLE "app"."party_import_batches" ADD CONSTRAINT "party_import_batches_rows_check" CHECK (jsonb_typeof("rows") = 'array' AND CASE WHEN "status" = 'expired' THEN "rows" = '[]'::jsonb ELSE jsonb_array_length("rows") = "row_count" END);
 --> statement-breakpoint
 CREATE OR REPLACE FUNCTION "app"."party_import_batches_guard"() RETURNS trigger
 LANGUAGE plpgsql

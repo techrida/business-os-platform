@@ -209,7 +209,13 @@ export class PartyImportsService {
           committedBy: actor.id,
           committedAt: now,
         })
-        .where(eq(partyImportBatches.id, batch.id))
+        // The same tenant and entity scope as the read above, and still a preview, as well as the id.
+        .where(
+          scoped(scope).where(
+            partyImportBatches,
+            and(eq(partyImportBatches.id, batch.id), eq(partyImportBatches.status, 'previewed')),
+          ),
+        )
         .returning();
       await this.audit.record(tx, {
         action: 'party_import.committed',
