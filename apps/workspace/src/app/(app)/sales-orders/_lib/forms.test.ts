@@ -11,7 +11,17 @@ function form(entries: Record<string, string | string[]>): FormData {
 }
 
 describe('parseConfirm', () => {
-  it('sends the version id and the evidence ids, one per line, without repeats', () => {
+  it('sends the version id and the uploaded evidence id', () => {
+    const parsed = parseConfirm(
+      form({ quotationVersionId: IDS.version, evidenceDocumentIds: IDS.po }),
+    );
+    expect(parsed).toEqual({
+      ok: true,
+      body: { quotationVersionId: IDS.version, evidenceDocumentIds: [IDS.po] },
+    });
+  });
+
+  it('still parses several ids without repeats', () => {
     const parsed = parseConfirm(
       form({
         quotationVersionId: IDS.version,
@@ -25,8 +35,14 @@ describe('parseConfirm', () => {
   });
 
   it('allows no evidence, because the policy may ask for none', () => {
-    const parsed = parseConfirm(form({ quotationVersionId: IDS.version }));
-    expect(parsed).toEqual({
+    const missing = parseConfirm(form({ quotationVersionId: IDS.version }));
+    expect(missing).toEqual({
+      ok: true,
+      body: { quotationVersionId: IDS.version, evidenceDocumentIds: [] },
+    });
+    // The upload control posts an empty hidden field when no file was uploaded.
+    const empty = parseConfirm(form({ quotationVersionId: IDS.version, evidenceDocumentIds: '' }));
+    expect(empty).toEqual({
       ok: true,
       body: { quotationVersionId: IDS.version, evidenceDocumentIds: [] },
     });
@@ -41,7 +57,12 @@ describe('parseConfirm', () => {
       form({ quotationVersionId: IDS.version, evidenceDocumentIds: 'not-an-id' }),
     );
     expect(bad.ok).toBe(false);
-    if (!bad.ok) expect(bad.errors.evidence).toMatch(/not a valid document id/);
+    if (!bad.ok) {
+      expect(bad.errors.evidence).toBe(
+        'The uploaded document is not valid. Remove it and upload it again.',
+      );
+      expect(bad.errors.evidence).not.toMatch(/line/);
+    }
 
     const many = parseConfirm(
       form({
