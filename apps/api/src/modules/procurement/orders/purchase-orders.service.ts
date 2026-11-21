@@ -94,7 +94,6 @@ import {
   lockPo,
   notFound,
   receivedOf,
-  vendorTermsDays,
   type AmendmentProposal,
   type PoLineRow,
   type PoRow,
