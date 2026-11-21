@@ -118,10 +118,7 @@ export class EvidenceDocumentsController {
   @Delete('sales-orders/quotation-versions/:id/evidence-documents/:docId')
   @Can('sales_order.confirm')
   @HttpCode(204)
-  removeForQuotationVersion(
-    @Param('id') id: string,
-    @Param('docId') docId: string,
-  ): Promise<void> {
+  removeForQuotationVersion(@Param('id') id: string, @Param('docId') docId: string): Promise<void> {
     return this.evidence.remove('quotation_version', id, docId);
   }
 

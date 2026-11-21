@@ -261,7 +261,8 @@ export function drizzleEvidenceRecordLoader(db: Db): EvidenceRecordLoader {
         .from(quotations)
         .where(s.where(quotations, eq(quotations.id, versionPeek[0].quotationId)))
         .limit(1);
-      const [quotation] = tx === undefined ? await quotationQuery : await quotationQuery.for('share');
+      const [quotation] =
+        tx === undefined ? await quotationQuery : await quotationQuery.for('share');
       const versionQuery = reader
         .select({ status: quotationVersions.status })
         .from(quotationVersions)

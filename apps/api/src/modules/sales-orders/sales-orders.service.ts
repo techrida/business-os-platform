@@ -360,7 +360,7 @@ export class SalesOrdersService {
   /**
    * `POST /v1/sales-orders`: confirms the accepted quotation version as a sales order. 404 for a version outside
    * the entity; 409 `quotation_not_accepted`; 422 `evidence_not_confirmed` while a portal acceptance's evidence
-   * waits for staff, `evidence_policy_unmet` when the accepted evidence does not meet the entity's policy now, `invalid_evidence_document` for a document of another entity or one removed, and
+   * waits for staff, `evidence_policy_unmet` when the accepted evidence does not meet the entity's policy now, `invalid_evidence_document` for a named file that is not evidence uploaded to this version, or whose upload has not finished, and
    * `invalid_payment_schedule` for a schedule that cannot be split. A second confirm of the same quotation
    * returns the existing order.
    */
