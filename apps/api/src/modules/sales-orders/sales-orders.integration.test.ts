@@ -2521,7 +2521,7 @@ describe('credit hold at the hand-over to a sales order (F1-Q20, F1-Q26)', () =>
           }),
         ),
       ).toEqual({ status: 409, code: 'conflict' });
-      expect((await flagAndPage(q.opportunityId)).flag.overridden).toBe(false);
+      expect((await flagAndPage(q.opportunityId)).flag?.overridden).toBe(false);
       const given = CreditHoldDtoSchema.parse(
         await credit.override(q.opportunityId, {
           reason: 'Reviewed the order of 22,600.00',
