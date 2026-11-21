@@ -111,22 +111,71 @@ describe('caseCapabilities', () => {
     ).toBe(true);
   });
 
-  it('decides a vendor case on vendor.write', () => {
-    const can = caseCapabilities(
-      principal('procurement', randomUUID()),
-      SCOPE,
-      loaded('vendor', null),
-    );
-    expect(can.review).toBe(false);
-    expect(can.edit).toBe(true);
-    expect(can.remove).toBe(true);
-    // Uploads are checked as documents.upload on the same case ref, which procurement holds at own scope: an
-    // unowned vendor's case refuses the upload, so the control is not offered; the vendor's owner may attach.
-    expect(can.attach).toBe(false);
+  it('decides a vendor case on vendor.write and lets procurement attach to any visible vendor case (U18 Q9 b)', () => {
     const buyer = randomUUID();
+    // Unowned vendor and colleague-owned vendor: procurement holds vendor.write + verification.read (all)
+    // plus documents.upload (own), so attach is offered alongside edit and remove.
+    for (const ownerUserId of [null, OWNER, buyer]) {
+      const can = caseCapabilities(
+        principal('procurement', buyer),
+        SCOPE,
+        loaded('vendor', ownerUserId),
+      );
+      expect(can).toEqual({ review: false, edit: true, attach: true, remove: true });
+    }
+
+    // Without read on the case (no verification.read, or own-only on another owner's vendor), attach is refused.
+    const { 'verification.read': _droppedRead, ...noRead } = DEFAULT_ROLE_PERMISSIONS.procurement;
     expect(
-      caseCapabilities(principal('procurement', buyer), SCOPE, loaded('vendor', buyer)).attach,
-    ).toBe(true);
+      caseCapabilities(principal('procurement', buyer, noRead), SCOPE, loaded('vendor', OWNER)),
+    ).toEqual(NONE);
+    expect(
+      caseCapabilities(
+        principal('procurement', buyer, {
+          ...DEFAULT_ROLE_PERMISSIONS.procurement,
+          'verification.read': 'own',
+        }),
+        SCOPE,
+        loaded('vendor', OWNER),
+      ),
+    ).toEqual(NONE);
+
+    // Without vendor.write (even with verification.read all and documents.upload own), attach is refused.
+    expect(
+      caseCapabilities(principal('pmo', buyer), SCOPE, loaded('vendor', OWNER)).attach,
+    ).toBe(false);
+    expect(
+      caseCapabilities(principal('operations_head', buyer), SCOPE, loaded('vendor', OWNER)).attach,
+    ).toBe(false);
+
+    // Another tenant or another legal entity is still refused.
+    expect(
+      caseCapabilities(
+        { ...principal('procurement', buyer), tenantId: randomUUID() },
+        SCOPE,
+        loaded('vendor', OWNER),
+      ),
+    ).toEqual(NONE);
+    expect(
+      caseCapabilities(
+        { ...principal('procurement', buyer), organizationId: randomUUID() },
+        SCOPE,
+        loaded('vendor', OWNER),
+      ),
+    ).toEqual(NONE);
+
+    // Customer cases are unaffected: a non-owner with customer.write + verification.read (all) and
+    // documents.upload (own) still cannot attach to another owner's customer case.
+    const salesReadAll = {
+      ...DEFAULT_ROLE_PERMISSIONS.sales,
+      'verification.read': 'all' as const,
+    };
+    const customerCan = caseCapabilities(
+      principal('sales', buyer, salesReadAll),
+      SCOPE,
+      loaded('customer', OWNER),
+    );
+    expect(customerCan).toEqual({ review: false, edit: true, attach: false, remove: true });
   });
 
   it('never offers review to the person who submitted the case, a Founder included (separation of duties)', () => {

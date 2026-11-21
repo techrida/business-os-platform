@@ -29,7 +29,7 @@ import {
   documentVersions,
   parties,
 } from '@bos/db';
-import { ForbiddenException, type INestApplication } from '@nestjs/common';
+import { ForbiddenException, NotFoundException, type INestApplication } from '@nestjs/common';
 import { Test } from '@nestjs/testing';
 import type { Queue } from 'bullmq';
 import { and, eq, inArray, sql } from 'drizzle-orm';
@@ -75,6 +75,8 @@ let storageRoot: string;
 let documents: DocumentsService;
 let service: VerificationService;
 let scope: { tenantId: string; organizationId: string };
+let scope2: { tenantId: string; organizationId: string };
+let otherTenantProcurement: string;
 let staffIdpOrgId: string;
 
 type UserKey = 'founder' | 'pmo' | 'procurement' | 'sales' | 'warehouse';
@@ -88,19 +90,41 @@ const U: Record<UserKey, string> = {
 
 const grantsOf = (role: RoleKey) =>
   new Map(Object.entries(DEFAULT_ROLE_PERMISSIONS[role])) as Map<Permission, Scope>;
-const current: { userId: string; grants: Map<Permission, Scope> } = {
+const current: {
+  userId: string;
+  grants: Map<Permission, Scope>;
+  principalScope?: { tenantId: string; organizationId: string };
+  callerScope?: { tenantId: string; organizationId: string };
+} = {
   userId: U.founder,
   grants: grantsOf('founder'),
 };
 const as = (userId: string, role: RoleKey) => {
   current.userId = userId;
   current.grants = grantsOf(role);
+  delete current.principalScope;
+  delete current.callerScope;
+};
+const asWith = (
+  userId: string,
+  grants: Map<Permission, Scope>,
+  opts: {
+    principalScope?: { tenantId: string; organizationId: string };
+    callerScope?: { tenantId: string; organizationId: string };
+  } = {},
+) => {
+  current.userId = userId;
+  current.grants = grants;
+  if (opts.principalScope !== undefined) current.principalScope = opts.principalScope;
+  else delete current.principalScope;
+  if (opts.callerScope !== undefined) current.callerScope = opts.callerScope;
+  else delete current.callerScope;
 };
 
 const principalNow = (): Principal => ({
   userId: current.userId,
   zitadelUserId: `z-${current.userId}`,
-  ...scope,
+  ...(current.principalScope ?? scope),
   orgKind: 'staff',
   partyId: null,
   idpOrgId: staffIdpOrgId,
@@ -111,7 +135,7 @@ const principalNow = (): Principal => ({
 });
 const caller = {
   current: () => ({
-    scope,
+    scope: current.callerScope ?? scope,
     actor: { kind: 'user' as const, id: current.userId, correlationId: 'test-corr' },
     principal: principalNow(),
   }),
@@ -204,6 +228,11 @@ beforeAll(async () => {
   for (const key of Object.keys(U) as UserKey[]) {
     U[key] = (await createStaffUser(appPool, { ...scope, idpOrgId: tenant.idpOrgId })).userId;
   }
+  const tenant2 = await createTenantWithEntity(appPool);
+  scope2 = { tenantId: tenant2.tenantId, organizationId: tenant2.organizationId };
+  otherTenantProcurement = (
+    await createStaffUser(appPool, { ...scope2, idpOrgId: tenant2.idpOrgId })
+  ).userId;
 
   storageRoot = await mkdtemp(join(tmpdir(), 'bos-kyb-vendor-it-'));
   documents = new DocumentsService(
@@ -275,10 +304,10 @@ async function openCase(partyId: string): Promise<VerificationCaseDto> {
 }
 
 /** A clean, scanned document of the case, made through the real DocumentsService. */
-async function cleanDocument(caseId: string) {
+async function cleanDocument(caseId: string, txScope = scope) {
   return withTx(
     db,
-    scope,
+    txScope,
     { kind: 'user', id: current.userId, correlationId: 'test-corr' },
     async (tx) => {
       const created = await documents.create(tx, {
@@ -675,6 +704,99 @@ describe('a vendor case, once the vendor adapter is registered', () => {
         }
       }
       expect(await rawCase(vendorCase.id)).toMatchObject({ status: 'draft' });
+    });
+  });
+
+  describe('vendor case file attachment (U18 Q9 b)', () => {
+    it('lets procurement attach and read files on a vendor case it does not own (other owner and unowned)', async () => {
+      const otherOwned = await openCase(await newVendor(U.founder));
+      const unowned = await openCase(await newVendor());
+
+      as(U.procurement, 'procurement');
+      for (const c of [otherOwned, unowned]) {
+        const loaded = VerificationCaseDtoSchema.parse(
+          (await api().get(`/v1/verification-cases/${c.id}`)).body,
+        );
+        expect(loaded.can?.attach).toBe(true);
+
+        const doc = await cleanDocument(c.id);
+        const read = await documents.get(scope, doc.documentId);
+        expect(read.ownerId).toBe(c.id);
+
+        const attached = await putDocument(c.id, 'pan_certificate', doc.documentId, loaded.version);
+        expect(attached.status, JSON.stringify(attached.body)).toBe(200);
+        expect(VerificationCaseDtoSchema.parse(attached.body).checklist).toContainEqual(
+          expect.objectContaining({ key: 'pan_certificate', documentId: doc.documentId }),
+        );
+      }
+    });
+
+    it('refuses vendor.write without read on the vendor case', async () => {
+      const c = await openCase(await newVendor(U.founder));
+      const doc = await cleanDocument(c.id);
+
+      const ownRead = grantsOf('procurement');
+      ownRead.set('verification.read', 'own');
+      asWith(U.procurement, ownRead);
+
+      await expect(cleanDocument(c.id)).rejects.toBeInstanceOf(ForbiddenException);
+      const patched = await putDocument(c.id, 'pan_certificate', doc.documentId, c.version);
+      expect(patched.status, JSON.stringify(patched.body)).toBe(404);
+    });
+
+    it('refuses users without vendor.write who are not the vendor owner', async () => {
+      const c = await openCase(await newVendor(U.founder));
+      const doc = await cleanDocument(c.id);
+
+      for (const [userId, role] of [
+        [U.pmo, 'pmo'],
+        [U.sales, 'sales'],
+        [U.warehouse, 'warehouse'],
+      ] as const) {
+        as(userId, role);
+        await expect(cleanDocument(c.id)).rejects.toBeInstanceOf(ForbiddenException);
+        const patched = await putDocument(c.id, 'pan_certificate', doc.documentId, c.version);
+        expect(patched.status, JSON.stringify(patched.body)).toBe(403);
+      }
+    });
+
+    it('still refuses another tenant and another legal entity', async () => {
+      const c = await openCase(await newVendor(U.founder));
+      const doc = await cleanDocument(c.id);
+
+      // Another tenant: case is invisible under its own scope (404) and forbidden against tenant 1's scope (403).
+      asWith(otherTenantProcurement, grantsOf('procurement'), {
+        principalScope: scope2,
+        callerScope: scope2,
+      });
+      await expect(cleanDocument(c.id, scope2)).rejects.toBeInstanceOf(NotFoundException);
+      await expect(cleanDocument(c.id, scope)).rejects.toBeInstanceOf(ForbiddenException);
+      expect((await putDocument(c.id, 'pan_certificate', doc.documentId, c.version)).status).toBe(
+        404,
+      );
+
+      // Another legal entity of the same tenant: principal's entity differs from target scope.
+      asWith(U.procurement, grantsOf('procurement'), {
+        principalScope: { tenantId: scope.tenantId, organizationId: randomUUID() },
+        callerScope: scope,
+      });
+      await expect(cleanDocument(c.id, scope)).rejects.toBeInstanceOf(ForbiddenException);
+      expect((await putDocument(c.id, 'pan_certificate', doc.documentId, c.version)).status).toBe(
+        404,
+      );
+    });
+
+    it('leaves customer cases unaffected', async () => {
+      const c = await openCase(await newCustomer(U.sales));
+
+      as(U.procurement, 'procurement');
+      await expect(cleanDocument(c.id)).rejects.toBeInstanceOf(ForbiddenException);
+
+      // Non-owner holding customer.write + verification.read (all) + documents.upload (own) is still refused.
+      const salesReadAll = grantsOf('sales');
+      salesReadAll.set('verification.read', 'all');
+      asWith(U.founder, salesReadAll);
+      await expect(cleanDocument(c.id)).rejects.toBeInstanceOf(ForbiddenException);
     });
   });
 });
