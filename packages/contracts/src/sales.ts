@@ -252,7 +252,10 @@ export const SalesOrderDetailSchema = z.object({
    * threshold, and not the order's creator). `releaseDeliveryBlockedBy`: why not, on a confirmed, held order for
    * staff; null when they may, or when there is nothing to release. `releaseDeliveryAllowedRoles`: the roles that
    * may release this order at its amount under the live threshold, sent to a caller with the permission on a
-   * confirmed, held order; empty otherwise.
+   * confirmed, held order; empty otherwise. `releaseSoleEligible`: the small-team rule (F1-Q11 a) lets this caller
+   * release an order they created: they are a Founder and nobody else may release it now. `releaseDelivery` is then
+   * true, `releaseDeliveryBlockedBy` null, and the release needs a reason (`sole_eligible_reason_required`). The API
+   * always sends it; absent reads as false.
    */
   can: z
     .object({
@@ -262,6 +265,7 @@ export const SalesOrderDetailSchema = z.object({
       releaseDelivery: z.boolean().optional(),
       releaseDeliveryBlockedBy: z.enum(DELIVERY_RELEASE_BLOCKERS).nullable().optional(),
       releaseDeliveryAllowedRoles: z.array(z.enum(DELIVERY_RELEASER_ROLES)).optional(),
+      releaseSoleEligible: z.boolean().optional(),
     })
     .optional(),
 });

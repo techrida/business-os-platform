@@ -501,8 +501,11 @@ export function lostReasonsToken(
   return (4294967296 * (2097151 & h2) + (h1 >>> 0)).toString(16).padStart(14, '0');
 }
 
-/** The kinds of contact activity logged when moving a new lead to contacted (D48). */
-export const CONTACT_ACTIVITY_KINDS = ['call', 'email'] as const;
+/**
+ * The kinds of contact activity logged when moving a lead to contacted (D48). A move to contacted needs one: logged
+ * in the same request, or already done on the lead (FR-6, `contact_activity_required`).
+ */
+export const CONTACT_ACTIVITY_KINDS = ['call', 'email', 'meeting'] as const;
 export const ContactActivityKindSchema = z.enum(CONTACT_ACTIVITY_KINDS);
 export type ContactActivityKind = z.infer<typeof ContactActivityKindSchema>;
 

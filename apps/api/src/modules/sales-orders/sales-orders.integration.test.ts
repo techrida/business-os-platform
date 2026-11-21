@@ -1844,6 +1844,7 @@ describe('SalesOrdersService.detail held invoices (audit #7)', () => {
       // Confirmed and held, but none of these roles holds sales_order.delivery_release.
       releaseDeliveryBlockedBy: 'permission',
       releaseDeliveryAllowedRoles: [],
+      releaseSoleEligible: false,
     });
   });
 
@@ -1862,6 +1863,7 @@ describe('SalesOrdersService.detail held invoices (audit #7)', () => {
       // Confirmed and held, but none of these roles holds sales_order.delivery_release.
       releaseDeliveryBlockedBy: 'permission',
       releaseDeliveryAllowedRoles: [],
+      releaseSoleEligible: false,
     });
 
     current.grants = new Map([...grantsOf('sales'), ['invoice.read', 'all']]);
@@ -1875,6 +1877,7 @@ describe('SalesOrdersService.detail held invoices (audit #7)', () => {
       // Confirmed and held, but none of these roles holds sales_order.delivery_release.
       releaseDeliveryBlockedBy: 'permission',
       releaseDeliveryAllowedRoles: [],
+      releaseSoleEligible: false,
     });
   });
 });

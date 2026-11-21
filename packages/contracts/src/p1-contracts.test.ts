@@ -17,6 +17,7 @@ import {
   MemoPersonSchema,
   NprSnapshotSchema,
   PERMISSIONS,
+  PublishWorkflowVersionBodySchema,
   ROLE_KEYS,
   SCOPES,
   SETTINGS,
@@ -175,6 +176,23 @@ describe('ApprovalActionBodySchema', () => {
       ApprovalActionBodySchema.safeParse({ action: 'approve', expectedVersion: 1.5 }).success,
     ).toBe(false);
     expect(ApprovalActionBodySchema.safeParse({ action: 'approve' }).success).toBe(false);
+  });
+});
+
+describe('PublishWorkflowVersionBodySchema (F1-Q11 a)', () => {
+  it('takes no body fields, or a trimmed reason for the small-team rule', () => {
+    expect(PublishWorkflowVersionBodySchema.parse({})).toEqual({});
+    expect(PublishWorkflowVersionBodySchema.parse({ reason: '  Only Founder here  ' })).toEqual({
+      reason: 'Only Founder here',
+    });
+  });
+
+  it('accepts a blank reason (the API answers sole_eligible_reason_required) and refuses extras', () => {
+    expect(PublishWorkflowVersionBodySchema.parse({ reason: '   ' })).toEqual({ reason: '' });
+    expect(PublishWorkflowVersionBodySchema.safeParse({ reason: 'x'.repeat(501) }).success).toBe(
+      false,
+    );
+    expect(PublishWorkflowVersionBodySchema.safeParse({ soleEligible: true }).success).toBe(false);
   });
 });
 

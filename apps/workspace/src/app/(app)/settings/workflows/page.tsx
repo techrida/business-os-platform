@@ -36,7 +36,13 @@ import {
   revokeDelegationAction,
   saveDraftAction,
 } from './actions';
-import { AddMemberForm, ActionButton, CreateGroupForm, DelegationForm } from './panels';
+import {
+  AddMemberForm,
+  ActionButton,
+  CreateGroupForm,
+  DelegationForm,
+  SoleEligiblePublishForm,
+} from './panels';
 import { SpecSummary } from './spec-summary';
 import type { UserOption } from './user-field';
 import { WorkflowEditor } from './workflow-editor';
@@ -333,7 +339,16 @@ export default async function WorkflowsPage() {
                                   )}
                                 </Td>
                                 <Td>
-                                  {v.status === 'draft' && draftPublishBlock(v, canPublish) ? (
+                                  {v.status === 'draft' &&
+                                  canPublish &&
+                                  v.savedByCaller &&
+                                  v.publishSoleEligible ? (
+                                    <SoleEligiblePublishForm
+                                      action={publishVersionAction}
+                                      fields={{ key: wf.key, version: String(v.version) }}
+                                      hiddenLabel={`version ${v.version} of ${wf.name}`}
+                                    />
+                                  ) : v.status === 'draft' && draftPublishBlock(v, canPublish) ? (
                                     <span className={styles.hint}>
                                       {draftPublishBlock(v, canPublish)}
                                     </span>

@@ -74,37 +74,6 @@ export function mayReopenOpportunity(
 }
 
 /**
- * May `principal` draft a quotation on `row` (FX-Q1, FX-Q2)? They need `quotation.draft`, and their
- * `crm.opportunity.read` must reach the deal as its owner, through its department, as the creator of the lead it
- * came from, or by a broader scope. A follow-up assigned to them on the deal is not enough: it lets them read and
- * complete that follow-up, not change the deal (D55-5). The SQL twin is DraftingService's `findOpportunity`
- * (`scopeWhereFor(..., { assignees: false })`).
- */
-export function mayDraftQuotationOn(
-  principal: Principal,
-  row: {
-    tenantId: string;
-    organizationId: string;
-    ownerUserId: string | null;
-    departmentId: string | null;
-    leadCreatorUserId: string | null;
-  },
-): boolean {
-  if (principal.orgKind !== 'staff') return false;
-  const draft = can(principal, 'quotation.draft', {
-    tenantId: row.tenantId,
-    organizationId: row.organizationId,
-    ownerUserId: principal.userId,
-  });
-  if (!draft.allowed) return false;
-  return can(
-    principal,
-    'crm.opportunity.read',
-    opportunityRef(row, { creatorUserId: row.leadCreatorUserId, assigneeUserIds: [] }),
-  ).allowed;
-}
-
-/**
  * The stage targets `principal` may move `row` to over HTTP. Pure, using live `crm.opportunity.write`, and for the
  * reopen edge also `mayReopenOpportunity`.
  */

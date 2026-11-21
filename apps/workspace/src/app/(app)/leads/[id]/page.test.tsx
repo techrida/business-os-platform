@@ -3,6 +3,8 @@ import type { ActivityDto, LeadDto, LeadOwnerOption } from '@bos/contracts';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
+import { MarkContactedDialog } from '@/components/p2/crm/mark-contacted-dialog';
+import { StageConfirmDialog } from '@/components/p2/crm/stage-confirm-dialog';
 import { ApiError } from '@/lib/api';
 
 import LeadPage from './page';
@@ -45,6 +47,15 @@ vi.mock('../actions', () => ({
 }));
 vi.mock('next/navigation', () => ({ notFound: vi.fn(), redirect: vi.fn() }));
 vi.mock('next/cache', () => ({ revalidatePath: vi.fn() }));
+// The real dialogs render; the spies record which one each header action uses and with what props.
+vi.mock('@/components/p2/crm/mark-contacted-dialog', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@/components/p2/crm/mark-contacted-dialog')>();
+  return { ...actual, MarkContactedDialog: vi.fn(actual.MarkContactedDialog) };
+});
+vi.mock('@/components/p2/crm/stage-confirm-dialog', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@/components/p2/crm/stage-confirm-dialog')>();
+  return { ...actual, StageConfirmDialog: vi.fn(actual.StageConfirmDialog) };
+});
 
 const LEAD = '11111111-1111-4111-8111-111111111111';
 const OWNER = '22222222-2222-4222-8222-222222222222';
@@ -172,6 +183,8 @@ beforeEach(() => {
   mocks.listLeadOwners.mockReset().mockResolvedValue(OWNERS);
   mocks.userNames.mockReset().mockResolvedValue(new Map());
   mocks.listLeadLostReasonChoices.mockReset().mockResolvedValue([]);
+  vi.mocked(MarkContactedDialog).mockClear();
+  vi.mocked(StageConfirmDialog).mockClear();
 });
 
 describe('lead detail page composition (U14 D39, D41, D48)', () => {
@@ -266,7 +279,7 @@ describe('lead detail page composition (U14 D39, D41, D48)', () => {
       'new',
       ['contacted', 'on_hold', 'lost'] as LeadDto['stage'][],
       ['Mark contacted', 'Put on hold', 'Mark lost'],
-      'Log a call or email with Mark contacted to move this lead to Contacted.',
+      'Log a call, email or meeting with Mark contacted to move this lead to Contacted.',
     ],
     [
       'contacted',
@@ -622,5 +635,112 @@ describe('lead detail names (D46: each record carries its own names)', () => {
     expect(text).not.toContain('Another teammate');
     expect(text).not.toContain('Name unavailable');
     expect(text).not.toContain(OWNER);
+  });
+});
+
+describe('every move to Contacted logs a contact first (FR-6, D48)', () => {
+  const NOTE = activity('33333333-3333-4333-8333-333333333338', {
+    kind: 'note',
+    subject: 'Budget note',
+  });
+  const MEETING = activity('33333333-3333-4333-8333-333333333339', {
+    kind: 'meeting',
+    subject: 'Site visit',
+  });
+
+  /** The logged list answers with `logged`; the other lists answer with nothing. */
+  const loggedIs = (logged: ActivityDto[] | 'fails') =>
+    mocks.listActivities.mockImplementation((_s: unknown, opts: { status?: string }) =>
+      opts.status === 'logged'
+        ? logged === 'fails'
+          ? Promise.reject(new ApiError(500, 'Server error'))
+          : Promise.resolve(logged)
+        : Promise.resolve([]),
+    );
+  const heldAt = (stage: LeadDto['stage']) =>
+    lead({ stage: 'on_hold', heldFromStage: stage, allowedMoves: [stage] });
+  const lostLead = () => lead({ stage: 'lost', allowedMoves: ['contacted'] });
+  const contactedProps = () => vi.mocked(MarkContactedDialog).mock.calls.map(([props]) => props);
+  const confirmProps = () => vi.mocked(StageConfirmDialog).mock.calls.map(([props]) => props);
+
+  it('Mark contacted on a New lead logs the contact, and the Stage panel names a meeting too', async () => {
+    loggedIs([]);
+    const doc = await render();
+    expect(contactedProps()).toEqual([
+      expect.objectContaining({ id: LEAD, number: 'LD-2026-0019', version: 3 }),
+    ]);
+    expect(contactedProps()[0]?.fromLabel).toBeUndefined();
+    expect(confirmProps()).toEqual([]);
+    expect(card(doc, 'Stage').textContent).toContain(
+      'Log a call, email or meeting with Mark contacted to move this lead to Contacted.',
+    );
+  });
+
+  it.each([
+    ['nothing logged', [] as ActivityDto[]],
+    ['only a note and a stage change logged', [NOTE, STAGE_CHANGE]],
+  ])('Resume to Contacted logs the contact when %s', async (_label, logged) => {
+    mocks.getLead.mockResolvedValue(heldAt('contacted'));
+    loggedIs(logged);
+    const doc = await render();
+    expect(headerButtons(doc)).toEqual(['Resume']);
+    expect(contactedProps()).toEqual([
+      expect.objectContaining({
+        id: LEAD,
+        number: 'LD-2026-0019',
+        version: 3,
+        triggerLabel: 'Resume',
+        fromLabel: 'On Hold',
+        title: 'Resume this lead?',
+        confirmLabel: 'Resume lead',
+      }),
+    ]);
+    expect(confirmProps()).toEqual([]);
+  });
+
+  it.each([
+    ['nothing logged', [] as ActivityDto[]],
+    ['the logged list failed to load', 'fails' as const],
+  ])('Reopen to Contacted logs the contact when %s', async (_label, logged) => {
+    mocks.getLead.mockResolvedValue(lostLead());
+    loggedIs(logged);
+    const doc = await render();
+    expect(headerButtons(doc)).toEqual(['Reopen']);
+    expect(contactedProps()).toEqual([
+      expect.objectContaining({
+        id: LEAD,
+        number: 'LD-2026-0019',
+        version: 3,
+        triggerLabel: 'Reopen',
+        fromLabel: 'Lost',
+        title: 'Reopen this lead?',
+        confirmLabel: 'Reopen lead',
+      }),
+    ]);
+    expect(confirmProps()).toEqual([]);
+  });
+
+  it.each([
+    ['Resume', heldAt('contacted')],
+    ['Reopen', lostLead()],
+  ])('%s keeps the plain confirm when a meeting is already logged', async (label, held) => {
+    mocks.getLead.mockResolvedValue(held);
+    loggedIs([NOTE, MEETING]);
+    const doc = await render();
+    expect(headerButtons(doc)).toEqual([label]);
+    expect(contactedProps()).toEqual([]);
+    expect(confirmProps()).toEqual([
+      expect.objectContaining({ stage: 'contacted', triggerLabel: label }),
+    ]);
+  });
+
+  it('Resume to Qualified keeps the plain confirm: only Contacted needs the contact', async () => {
+    mocks.getLead.mockResolvedValue(heldAt('qualified'));
+    loggedIs([]);
+    await render();
+    expect(contactedProps()).toEqual([]);
+    expect(confirmProps()).toEqual([
+      expect.objectContaining({ stage: 'qualified', triggerLabel: 'Resume' }),
+    ]);
   });
 });

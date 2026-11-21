@@ -60,6 +60,28 @@ describe('runStageMove, a 409 on a stage move', () => {
     expect(result.reload).toBe(true);
   });
 
+  it('asks for a logged call, email or meeting, without a reload, when the lead has none', async () => {
+    mocks.changeLeadStage.mockRejectedValueOnce(
+      new ApiError(409, 'conflict', {
+        error: {
+          code: 'contact_activity_required',
+          message: 'A lead moves to contacted only with a done call, email or meeting',
+          correlationId: 'c',
+        },
+      }),
+    );
+    const form = new FormData();
+    form.set('recordId', OPP);
+    form.set('expectedVersion', '3');
+    form.set('stage', 'contacted');
+    const result = await runStageMove('lead', form, '/leads');
+
+    expect(result).toEqual({
+      error: 'Log a call, email or meeting before moving this lead to Contacted.',
+      reload: false,
+    });
+  });
+
   it('does not take a 409 without the standard error body for a duplicate', async () => {
     mocks.changeOpportunityStage.mockRejectedValueOnce(
       new ApiError(

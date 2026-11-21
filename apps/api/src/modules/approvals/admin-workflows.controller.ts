@@ -2,6 +2,7 @@
 // and delegations. Thin: bodies are validated here (specs with WorkflowSpecSchema, inside the service),
 // the rules live in ApprovalsAdminService. Serves the NFR "authorization is deny-by-default": every
 // route names the permission it needs.
+import { PublishWorkflowVersionBodySchema } from '@bos/contracts';
 import {
   Body,
   Controller,
@@ -78,7 +79,14 @@ export class AdminWorkflowsController {
    */
   private readonly livePublisher: PublisherCheck = async (tx, scope, actor) => {
     await lockAccessRevision(tx, scope.tenantId);
-    await assertLiveGrant(tx, this.liveGrants, scope, actor, 'approvals.definitions.publish');
+    const live = await assertLiveGrant(
+      tx,
+      this.liveGrants,
+      scope,
+      actor,
+      'approvals.definitions.publish',
+    );
+    return { roles: live.roles };
   };
 
   @Get('people')
@@ -107,7 +115,9 @@ export class AdminWorkflowsController {
 
   /**
    * 200 with the published version. 403 to whoever saved that draft (a second person publishes, F1-Q11), and to
-   * anyone who no longer holds approvals.definitions.publish, whatever their sign-in token says.
+   * anyone who no longer holds approvals.definitions.publish, whatever their sign-in token says. A Founder who is the
+   * only person who may publish may publish their own draft with a body `reason` (F1-Q11 a); 400
+   * sole_eligible_reason_required without one.
    */
   @Post(':key/versions/:v/publish')
   @HttpCode(200)
@@ -115,8 +125,11 @@ export class AdminWorkflowsController {
   publish(
     @Param('key') key: string,
     @Param('v', ParseIntPipe) v: number,
+    @Body() body?: unknown,
   ): Promise<WorkflowVersionDto> {
-    return this.admin.publish(key, v, this.livePublisher);
+    // No body is the usual second-person publish; `reason` is for the small-team rule (F1-Q11 a).
+    const b = parseOr400(PublishWorkflowVersionBodySchema, body ?? {});
+    return this.admin.publish(key, v, this.livePublisher, b);
   }
 }
 
