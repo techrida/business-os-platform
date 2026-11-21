@@ -631,6 +631,13 @@
       "when": 1783000000135,
       "tag": "0104_credit_override_permission",
       "breakpoints": true
+    },
+    {
+      "idx": 90,
+      "version": "7",
+      "when": 1783000000136,
+      "tag": "0150_customer_terms_permissions",
+      "breakpoints": true
     }
   ]
 }

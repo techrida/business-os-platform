@@ -112,6 +112,22 @@ describe('P3 permissions', () => {
     }
   });
 
+  it('gives the credit-limit permission to Founder and Finance only, at all (not Management)', () => {
+    expect(PERMISSIONS.filter((p) => p === 'customers.credit_limit.write')).toHaveLength(1);
+    for (const role of ROLE_KEYS) {
+      const expected = role === 'founder' || role === 'finance' ? 'all' : undefined;
+      expect(DEFAULT_ROLE_PERMISSIONS[role]['customers.credit_limit.write'], role).toBe(expected);
+    }
+  });
+
+  it('gives the customer-owner permission to Founder and Management only, at all (not Finance)', () => {
+    expect(PERMISSIONS.filter((p) => p === 'customers.owner.write')).toHaveLength(1);
+    for (const role of ROLE_KEYS) {
+      const expected = role === 'founder' || role === 'management' ? 'all' : undefined;
+      expect(DEFAULT_ROLE_PERMISSIONS[role]['customers.owner.write'], role).toBe(expected);
+    }
+  });
+
   it('lets sales read only its own sales orders (D23)', () => {
     expect(DEFAULT_ROLE_PERMISSIONS.sales['sales_order.read']).toBe('own');
   });
