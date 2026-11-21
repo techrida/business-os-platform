@@ -765,6 +765,50 @@ describe('GET /v1/invoices/:id/document', () => {
     current.orgKind = 'customer';
     await expect(service.link(inv.invoiceId)).rejects.toBeInstanceOf(ForbiddenException);
   });
+  /** A document of the invoice whose only upload moved through `statuses` (from awaiting_content). */
+  async function documentWith(scope: TestScope, invoiceId: string, statuses: string[]) {
+    const documentId = await createOrphan(scope, invoiceId, 0);
+    for (const status of statuses) {
+      await withTx(db, scope, seedActor(), (tx) =>
+        tx.execute(
+          sql`UPDATE app.document_versions SET status = ${status} WHERE document_id = ${documentId}::uuid`,
+        ),
+      );
+    }
+  }
+
+  const codeOf = async (invoiceId: string) => {
+    const refused = await service.link(invoiceId).catch((e: unknown) => e);
+    expect(refused).toBeInstanceOf(HttpException);
+    const response = (refused as HttpException).getResponse() as { code?: string };
+    return { status: (refused as HttpException).getStatus(), code: response.code };
+  };
+
+  it('names a PDF the virus scan refused with its own code, apart from a missing one', async () => {
+    const scope = await newScope();
+    asStaff(scope);
+    const infected = await seedInvoice(scope);
+    await documentWith(scope, infected.invoiceId, ['quarantined', 'infected']);
+    const scanFailed = await seedInvoice(scope);
+    await documentWith(scope, scanFailed.invoiceId, ['quarantined', 'scan_failed']);
+
+    expect(await codeOf(infected.invoiceId)).toEqual({
+      status: 404,
+      code: 'invoice_pdf_scan_refused',
+    });
+    expect(await codeOf(scanFailed.invoiceId)).toEqual({
+      status: 404,
+      code: 'invoice_pdf_scan_refused',
+    });
+  });
+
+  it('reads a live document whose only upload was rejected as being prepared: the render tries again', async () => {
+    const scope = await newScope();
+    asStaff(scope);
+    const inv = await seedInvoice(scope);
+    await documentWith(scope, inv.invoiceId, ['quarantined', 'rejected']);
+    expect(await codeOf(inv.invoiceId)).toEqual({ status: 409, code: 'invoice_pdf_not_ready' });
+  });
 });
 
 describe('a render that keeps failing (R4c2: TR-Q4, F1-Q13)', () => {
