@@ -48,7 +48,7 @@ beforeEach(() => {
 });
 
 describe('DELETE /api/evidence/:kind/:ownerId/:documentId', () => {
-  it.each(['sales-order', 'vendor-bill', 'rfq'])(
+  it.each(['sales-order', 'vendor-bill', 'rfq', 'quotation-version'])(
     'removes the file through the %s record route and answers 204, uncached',
     async (kind) => {
       const res = await remove(kind);
