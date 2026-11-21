@@ -12,7 +12,7 @@
 // goes through it.
 //
 // Why the odd loading: the workspace modules import through the `@/` alias, which this package's tsconfig
-// and Vitest config do not have, and `tsc -p apps/api` type-checks test/. A literal `import()` would make
+// does not have (the e2e Vitest config maps it to apps/workspace/src), and `tsc -p apps/api` type-checks test/. A literal `import()` would make
 // tsc follow into workspace files and fail on `@/lib/api`. The paths therefore live in variables, and the
 // client shapes are declared here from `@bos/contracts` types (signatures only; the schemas stay in the
 // clients, which is the point). If a client signature changes, the call in the test stops type-checking.
@@ -90,7 +90,14 @@ export interface Listing<T> {
   items: T[];
   total: number | null;
 }
-export type CustomerDetail = CustomerDto & { accounts?: PartyAccountDto[] | undefined };
+// The workspace's CustomerDetailSchema keeps these beside the contract CustomerDto; the test only checks they arrive.
+export type CustomerDetail = CustomerDto & {
+  accounts?: PartyAccountDto[] | undefined;
+  people?: unknown;
+  can?: unknown;
+  verification?: unknown;
+  portalAccess?: unknown;
+};
 
 /** components/p2/crm/crm-api.ts */
 export interface CrmClient {
