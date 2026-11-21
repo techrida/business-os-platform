@@ -17,19 +17,21 @@ export type RenderOneJob = z.infer<typeof RenderOneJobSchema>;
 
 /**
  * Enqueues one render of `data.id` under `jobName`. Never throws: the request's business change already committed, and
- * the sweep renders the document anyway. The job id is the document's, so several commits for one document before the
- * worker runs share one job (bullmq ignores an add whose id is still waiting); it is removed when it ends, so a later
- * commit can enqueue again. Bullmq refuses a `:` in a custom id, hence the `-`.
+ * the sweep renders the document anyway. The job id is `key` (the document's id unless the caller narrows it), so
+ * several commits for one document before the worker runs share one job (bullmq ignores an add whose id it still
+ * holds); it is removed when it ends, so a later commit can enqueue again. Bullmq refuses a `:` in a custom id, hence
+ * the `-`.
  */
 export async function enqueueRenderOne(
   queue: Queue,
   log: Logger,
   jobName: string,
   data: RenderOneJob,
+  key: string = data.id,
 ): Promise<void> {
   try {
     await queue.add(jobName, data, {
-      jobId: `${jobName}-${data.id}`,
+      jobId: `${jobName}-${key}`,
       removeOnComplete: true,
       removeOnFail: true,
     });

@@ -86,7 +86,9 @@ import {
   RENDER_GIVEN_UP_ACTION,
 } from '../../../quotations/render/render-retry';
 import { PO_AUDIT_ENTITY } from '../purchase-order.rules';
+import { RenderOneJobSchema } from '../../../quotations/render/render-nudge';
 import { renderPurchaseOrderHtml } from './purchase-order-html';
+import { PO_RENDER_ONE_JOB, PO_RENDER_QUEUE } from './purchase-order-render.nudge';
 import { PO_RENDER_JOB_PREFIX, PO_VERSION_OWNER_TYPE } from './purchase-order-version-owner.policy';
 import {
   PurchaseOrderNotRenderableError,
@@ -96,7 +98,7 @@ import {
   type PurchaseOrderViewInput,
 } from './purchase-order-view';
 
-export const PO_RENDER_QUEUE = 'purchase-order.render';
+export { PO_RENDER_ONE_JOB, PO_RENDER_QUEUE } from './purchase-order-render.nudge';
 export const PO_RENDER_SWEEP_JOB = 'purchase-order.render.sweep';
 export const SWEEP_EVERY_MS = 60_000;
 /** A generated document still without its bytes after this long was left by a render that crashed midway. */
@@ -140,6 +142,8 @@ export interface RenderStore {
    * oldest first after `after`, wrapping when exhausted.
    */
   candidates(now: Date, limit: number, after?: string): Promise<RenderCandidate[]>;
+  /** This order's versions that are candidates at `now`, by the same rule as `candidates`, oldest first. */
+  candidatesOf(scope: TxScope, purchaseOrderId: string, now: Date): Promise<RenderCandidate[]>;
   load(tx: DbTransaction, c: RenderCandidate): Promise<RenderSource | undefined>;
   /**
    * Takes this version's render lock for the rest of `tx` and answers whether it already has a live document. The
@@ -249,6 +253,19 @@ export class PurchaseOrderRenderSweeper {
     }
     result.orphansRemoved = await this.removeOrphans();
     return result;
+  }
+
+  /**
+   * The render a commit asked for (`purchase-order.render.one`): the order's versions that are candidates now, one at
+   * a time (normally just the version the commit created). None is fine: the sweep got there first, the PDF is live,
+   * or a failure's pause is running; the sweep stays the safety net.
+   */
+  async renderNow(scope: TxScope, purchaseOrderId: string): Promise<RenderOutcome[]> {
+    const outcomes: RenderOutcome[] = [];
+    for (const c of await this.store.candidatesOf(scope, purchaseOrderId, this.clock())) {
+      outcomes.push((await this.attempt(c)).outcome);
+    }
+    return outcomes;
   }
 
   async renderOne(c: RenderCandidate): Promise<RenderOutcome> {
@@ -430,47 +447,59 @@ const ownerOf = (c: RenderCandidate): RenderFailureOwner => ({
   ownerId: c.versionId,
 });
 
+const CANDIDATE_COLUMNS = {
+  tenantId: purchaseOrderVersions.tenantId,
+  organizationId: purchaseOrderVersions.organizationId,
+  versionId: purchaseOrderVersions.id,
+  purchaseOrderId: purchaseOrderVersions.purchaseOrderId,
+};
+
+/**
+ * The candidate rule, on the outer `purchase_order_versions` row: no live document that holds or awaits a PDF, and not
+ * held back by a failure (pausing or given up).
+ */
+function renderDue(db: Db, now: Date) {
+  const hasLiveDocument = db
+    .select({ one: sql`1` })
+    .from(documents)
+    .where(
+      and(
+        eq(documents.tenantId, purchaseOrderVersions.tenantId),
+        eq(documents.organizationId, purchaseOrderVersions.organizationId),
+        eq(documents.ownerType, PO_VERSION_OWNER_TYPE),
+        eq(documents.ownerId, purchaseOrderVersions.id),
+        isNull(documents.removedAt),
+        exists(unrefusedUpload(db, documents.tenantId, documents.id)),
+      ),
+    );
+  return and(
+    notExists(hasLiveDocument),
+    not(
+      renderHeldBack(
+        db,
+        PO_VERSION_OWNER_TYPE,
+        {
+          tenantId: purchaseOrderVersions.tenantId,
+          organizationId: purchaseOrderVersions.organizationId,
+          id: purchaseOrderVersions.id,
+        },
+        now,
+      ),
+    ),
+  );
+}
+
 /** The store on the real tables. Every query names the tenant and the acting entity. */
 export function drizzlePurchaseOrderRenderStore(db: Db): RenderStore {
   return {
     async candidates(now, limit, after) {
-      const hasLiveDocument = db
-        .select({ one: sql`1` })
-        .from(documents)
-        .where(
-          and(
-            eq(documents.tenantId, purchaseOrderVersions.tenantId),
-            eq(documents.organizationId, purchaseOrderVersions.organizationId),
-            eq(documents.ownerType, PO_VERSION_OWNER_TYPE),
-            eq(documents.ownerId, purchaseOrderVersions.id),
-            isNull(documents.removedAt),
-            exists(unrefusedUpload(db, documents.tenantId, documents.id)),
-          ),
-        );
       const page = (cursor?: string) =>
         db
-          .select({
-            tenantId: purchaseOrderVersions.tenantId,
-            organizationId: purchaseOrderVersions.organizationId,
-            versionId: purchaseOrderVersions.id,
-            purchaseOrderId: purchaseOrderVersions.purchaseOrderId,
-          })
+          .select(CANDIDATE_COLUMNS)
           .from(purchaseOrderVersions)
           .where(
             and(
-              notExists(hasLiveDocument),
-              not(
-                renderHeldBack(
-                  db,
-                  PO_VERSION_OWNER_TYPE,
-                  {
-                    tenantId: purchaseOrderVersions.tenantId,
-                    organizationId: purchaseOrderVersions.organizationId,
-                    id: purchaseOrderVersions.id,
-                  },
-                  now,
-                ),
-              ),
+              renderDue(db, now),
               cursor === undefined
                 ? undefined
                 : sql`(${purchaseOrderVersions.createdAt}, ${purchaseOrderVersions.id}) >
@@ -483,6 +512,21 @@ export function drizzlePurchaseOrderRenderStore(db: Db): RenderStore {
       // a missing cursor yields an empty page and safely restarts from the beginning.
       const next = await page(after);
       return next.length > 0 || after === undefined ? next : page();
+    },
+
+    async candidatesOf(scope, purchaseOrderId, now) {
+      return db
+        .select(CANDIDATE_COLUMNS)
+        .from(purchaseOrderVersions)
+        .where(
+          and(
+            eq(purchaseOrderVersions.tenantId, scope.tenantId),
+            eq(purchaseOrderVersions.organizationId, scope.organizationId),
+            eq(purchaseOrderVersions.purchaseOrderId, purchaseOrderId),
+            renderDue(db, now),
+          ),
+        )
+        .orderBy(asc(purchaseOrderVersions.createdAt), asc(purchaseOrderVersions.id));
     },
 
     async load(tx, c) {
@@ -659,6 +703,11 @@ export class PurchaseOrderRenderProcessor extends WorkerHost {
   async process(job: Job): Promise<void> {
     if (job.name === PO_RENDER_SWEEP_JOB) {
       await this.sweeper.sweep();
+      return;
+    }
+    if (job.name === PO_RENDER_ONE_JOB) {
+      const { tenantId, organizationId, id } = RenderOneJobSchema.parse(job.data);
+      await this.sweeper.renderNow({ tenantId, organizationId }, id);
       return;
     }
     // A job name nobody handles is a bug; failing keeps it visible instead of silently dropping it.
