@@ -7,6 +7,8 @@ import { Alert } from '@/components/ui/alert';
 import { Button } from '@/components/ui/button';
 import { Dialog, DialogClose } from '@/components/ui/dialog';
 import { Field, Input, Select } from '@/components/ui/field';
+import { PanInput } from '@/components/ui/pan-input';
+import { PhoneInput } from '@/components/ui/phone-input';
 
 import { FactList, Panel } from '@/components/ui/panel';
 import { toast } from '@/components/ui/toast';
@@ -119,6 +121,9 @@ export function ConvertDialog({ lead, action }: { lead: ConvertLead; action: Con
 
   const set = (name: string) => (e: { target: { value: string } }) =>
     setValues((v) => ({ ...v, [name]: e.target.value }));
+  // The contract also takes the tax ids of customers abroad, so only a Nepal customer gets the
+  // digits-only PAN box.
+  const nepalCustomer = (values['country'] ?? '').trim().toUpperCase() === 'NP';
   const patch = (p: Record<string, string>) => setValues((v) => ({ ...v, ...p }));
 
   // Keep one key per decision, even when the dialog is closed and reopened. Only a definite
@@ -335,16 +340,29 @@ export function ConvertDialog({ lead, action }: { lead: ConvertLead; action: Con
                     />
                   )}
                 </Field>
-                <Field label="PAN or VAT number" hint="Optional." error={err['panVatNo']}>
-                  {(c) => (
-                    <Input
-                      name="panVatNo"
-                      value={values['panVatNo']}
-                      onChange={set('panVatNo')}
-                      autoComplete="off"
-                      {...c}
-                    />
-                  )}
+                <Field
+                  label="PAN or VAT number"
+                  hint={nepalCustomer ? 'Optional. Nine digits.' : 'Optional.'}
+                  error={err['panVatNo']}
+                >
+                  {(c) =>
+                    nepalCustomer ? (
+                      <PanInput
+                        name="panVatNo"
+                        value={values['panVatNo']}
+                        onValueChange={(pan) => set('panVatNo')({ target: { value: pan } })}
+                        {...c}
+                      />
+                    ) : (
+                      <Input
+                        name="panVatNo"
+                        value={values['panVatNo']}
+                        onChange={set('panVatNo')}
+                        autoComplete="off"
+                        {...c}
+                      />
+                    )
+                  }
                 </Field>
                 <Field label="Address" error={err['line1']}>
                   {(c) => (
@@ -448,16 +466,14 @@ export function ConvertDialog({ lead, action }: { lead: ConvertLead; action: Con
                 </Field>
                 <Field
                   label="Phone"
-                  hint="Optional. With country code."
+                  hint="Optional. Nepal numbers need only the digits."
                   error={err['contactPhone']}
                 >
                   {(c) => (
-                    <Input
+                    <PhoneInput
                       name="contactPhone"
-                      type="tel"
                       value={values['contactPhone']}
-                      onChange={set('contactPhone')}
-                      autoComplete="off"
+                      onValueChange={(phone) => set('contactPhone')({ target: { value: phone } })}
                       {...c}
                     />
                   )}
