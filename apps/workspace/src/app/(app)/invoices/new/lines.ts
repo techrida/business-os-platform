@@ -1,5 +1,10 @@
-import type { InvoiceLineInput } from '@bos/contracts';
-import { USE_A_POINT, hasStrayComma, plainAmount } from '@bos/locale';
+import {
+  MONEY_LIMITS,
+  QUANTITY_LIMITS,
+  decimalPattern,
+  type InvoiceLineInput,
+} from '@bos/contracts';
+import { NO_SPACES, USE_A_POINT, hasInnerSpace, hasStrayComma, plainAmount } from '@bos/locale';
 
 // The line model and the rules around it, shared by the manual invoice, the debit note and the
 // credit note. No React and no server imports, so the client form, the server actions and the tests
@@ -38,17 +43,22 @@ const GUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 export const isGuid = (value: string): boolean => GUID.test(value);
 
 /**
- * People type 12,50,000.00 in Nepal; the contract wants plain digits, so drop grouping and spaces. A comma that is not
+ * People type 12,50,000.00 in Nepal; the contract wants plain digits, so drop the grouping. A comma that is not
  * grouping ("1,5", "10,50") stays, fails the check below and is named in the error: it is never read as 15 or 1050.
  */
 export const plainNumber = plainAmount;
 
-/** The field's words, with the decimal-comma hint when that is what went wrong. */
-const withPointHint = (words: string, raw: string): string =>
-  hasStrayComma(raw) ? `${USE_A_POINT} ${words}` : words;
+/**
+ * The field's words, or what went wrong when it is a typing slip: a space inside the number
+ * ("10 50" is never read as 1050) or a decimal comma.
+ */
+const withPointHint = (words: string, raw: string): string => {
+  if (hasInnerSpace(raw)) return NO_SPACES;
+  return hasStrayComma(raw) ? `${USE_A_POINT} ${words}` : words;
+};
 
-const QUANTITY = /^\d{1,14}(\.\d{1,4})?$/;
-const PRICE = /^\d{1,16}(\.\d{1,2})?$/;
+const QUANTITY = decimalPattern(QUANTITY_LIMITS);
+const PRICE = decimalPattern(MONEY_LIMITS);
 const aboveZero = (s: string): boolean => /[1-9]/.test(s);
 
 const QUANTITY_WORDS = 'Enter a quantity above zero, such as 2 or 1.5. Up to 4 decimals.';
