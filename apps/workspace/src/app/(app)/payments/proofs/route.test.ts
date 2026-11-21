@@ -231,6 +231,26 @@ describe('proof upload route', () => {
     }
   });
 
+  it('passes a db_busy 503 through with its wait instead of a 502', async () => {
+    fetchMock.mockResolvedValueOnce(
+      json(
+        {
+          error: {
+            code: 'db_busy',
+            message: 'Busy, please try again',
+            correlationId: 'c-1',
+            details: { retryAfterSeconds: 2 },
+          },
+        },
+        503,
+      ),
+    );
+    const res = await upload();
+    expect(res.status).toBe(503);
+    expect(res.headers.get('retry-after')).toBe('2');
+    expect(await messageOf(res)).toBe('Busy, please try again.');
+  });
+
   it('words a refusal of the byte upload the same way', async () => {
     fetchMock.mockResolvedValueOnce(started()).mockResolvedValueOnce(json({}, 413));
     expect((await upload()).status).toBe(413);
