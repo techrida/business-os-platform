@@ -47,7 +47,7 @@ import {
   HttpException,
   NotFoundException,
 } from '@nestjs/common';
-import type { Queue } from 'bullmq';
+import type { Job, Queue } from 'bullmq';
 import { sql } from 'drizzle-orm';
 import { drizzle } from 'drizzle-orm/node-postgres';
 import { Pool } from 'pg';
@@ -80,9 +80,17 @@ import {
   INVOICE_RENDER_JOB_PREFIX,
   InvoiceOwnerPolicy,
 } from '../invoice-owner.policy';
+import { InvoiceIssueService } from '../invoice-issue.service';
+import { LedgerService } from '../../ledger/ledger.service';
+import type { MoneyService } from '../../../platform/settings/money.service';
+import { NumberingService } from '../../../platform/settings/numbering.service';
+import type { SettingsService } from '../../../platform/settings/settings.service';
+import type { AuthzService } from '../../../platform/authz/authz.service';
 import { InvoiceDocumentService } from './invoice-document.service';
+import { INVOICE_RENDER_ONE_JOB, InvoiceRenderNudge } from './invoice-render.nudge';
 import {
   drizzleInvoiceRenderStore,
+  InvoiceRenderProcessor,
   InvoiceRenderSweeper,
   ORPHAN_AFTER_MS,
   type RenderCandidate,
@@ -1154,4 +1162,86 @@ describe('a render that keeps failing (R4c2: TR-Q4, F1-Q13)', () => {
     await sweeper.sweep();
     expect((await printFormats(inv.invoiceId)).map((p) => p.print_no)).toEqual([1]);
   });
+});
+
+describe('render on commit (S3): the issue enqueues the render, the worker renders it at once', () => {
+  /** NPR at 1, as the issue tests price it. */
+  const money = {
+    toNprSnapshot: (_tx: unknown, _scope: unknown, m: { amount: string }) =>
+      Promise.resolve({
+        amountNpr: m.amount,
+        rate: '1',
+        rateSource: 'NPR',
+        rateDate: '2026-11-09',
+      }),
+  } as unknown as MoneyService;
+  /** The seller the issue snapshots: an address and a PAN, nothing else. */
+  const issueSettings = {
+    get: (_scope: unknown, key: string) =>
+      Promise.resolve(
+        key === 'entity.address'
+          ? { line1: '1 Durbar Marg', city: 'Kathmandu', country: 'NP' }
+          : key === 'entity.pan_vat_no'
+            ? PAN
+            : null,
+      ),
+  } as unknown as SettingsService;
+
+  it('has the PDF of an issued proforma ready within 10 s of the issue, with the sweep never run', async () => {
+    const scope = await newScope();
+    current.scope = scope;
+    current.orgKind = 'staff';
+    const draft = await seedInvoice(scope, { kind: 'proforma', status: 'draft' });
+    // The issue snapshots the buyer's address, which needs a city.
+    await withTx(db, scope, seedActor(), (tx) =>
+      tx.execute(sql`
+        UPDATE app.customers SET address = '{"line1":"Thamel 4","city":"Kathmandu","country":"NP"}'::jsonb
+         WHERE id = ${scope.customerId}::uuid`),
+    );
+    // The API side: the real nudge on a queue that hands over what was enqueued.
+    const renderQueue = { add: vi.fn().mockResolvedValue({}) };
+    const issuing = new InvoiceIssueService(
+      db,
+      authz as unknown as AuthzService,
+      renderAudit,
+      caller as never,
+      new LedgerService(),
+      new NumberingService(),
+      money,
+      issueSettings,
+      () => new Date(),
+      undefined,
+      new InvoiceRenderNudge(renderQueue as unknown as Queue),
+    );
+    const sweep = vi.spyOn(sweeper, 'sweep');
+    const started = Date.now();
+
+    const result = await issuing.issue(draft.invoiceId, { expectedVersion: 1 }, randomUUID());
+    expect(result).toMatchObject({ kind: 'issued', invoiceId: draft.invoiceId });
+
+    // One job, enqueued after the commit, named and keyed by the invoice.
+    expect(renderQueue.add).toHaveBeenCalledTimes(1);
+    const [name, data, opts] = renderQueue.add.mock.calls[0] as [string, unknown, object];
+    expect(name).toBe(INVOICE_RENDER_ONE_JOB);
+    expect(data).toEqual({ ...scope_(scope), id: draft.invoiceId });
+    expect(opts).toMatchObject({
+      jobId: `invoice.render.one-${draft.invoiceId}`,
+      removeOnComplete: true,
+    });
+
+    // The worker side: the real processor runs the job it was handed.
+    await new InvoiceRenderProcessor(sweeper).process({ name, data } as unknown as Job);
+
+    const link = await service.link(draft.invoiceId);
+    expect(link.url.length).toBeGreaterThan(0);
+    expect(Date.now() - started).toBeLessThan(10_000);
+    expect(sweep).not.toHaveBeenCalled();
+    expect(gotenberg.requests).toHaveLength(1);
+    sweep.mockRestore();
+  });
+});
+
+const scope_ = (s: TxScope): TxScope => ({
+  tenantId: s.tenantId,
+  organizationId: s.organizationId,
 });
