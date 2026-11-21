@@ -1,12 +1,14 @@
 // HTTP routes of evidence uploads (round 5 P2). Three routes per record kind, each with that kind's own permission:
 // create the document (JSON body: filename, declaredMime, sizeBytes), PUT its raw bytes to the `uploadPath` the
 // create returned (send the file with its own Content-Type and an exact Content-Length, as for every upload), and
-// DELETE a file its uploader abandoned before saving (204, also when it is already removed).
+// GET the file with its versions (the dialog's scan-status poll), and DELETE a file its uploader abandoned before
+// saving (204, also when it is already removed).
 import type { DocumentVersionDto } from '@bos/contracts';
 import {
   Body,
   Controller,
   Delete,
+  Get,
   HttpCode,
   Param,
   Post,
@@ -18,6 +20,7 @@ import type { Request } from 'express';
 
 import { Can } from '../../platform/authz/decorators';
 import { parseContentLength } from '../../platform/documents/documents.controller';
+import type { DocumentDto } from '../../platform/documents/documents.service';
 import type { EvidenceRecordKind } from './evidence-owner.policy';
 import {
   EvidenceDocumentsService,
@@ -70,6 +73,12 @@ export class EvidenceDocumentsController {
     return this.receive('sales_order', id, docId, verId, req);
   }
 
+  @Get('sales-orders/:id/evidence-documents/:docId')
+  @Can('sales_order.mark_billable')
+  readForSalesOrder(@Param('id') id: string, @Param('docId') docId: string): Promise<DocumentDto> {
+    return this.evidence.read('sales_order', id, docId);
+  }
+
   @Delete('sales-orders/:id/evidence-documents/:docId')
   @Can('sales_order.mark_billable')
   @HttpCode(204)
@@ -94,6 +103,12 @@ export class EvidenceDocumentsController {
     return this.receive('vendor_bill', id, docId, verId, req);
   }
 
+  @Get('payables/bills/:id/evidence-documents/:docId')
+  @Can('payables.bill.enter')
+  readForBill(@Param('id') id: string, @Param('docId') docId: string): Promise<DocumentDto> {
+    return this.evidence.read('vendor_bill', id, docId);
+  }
+
   @Delete('payables/bills/:id/evidence-documents/:docId')
   @Can('payables.bill.enter')
   @HttpCode(204)
@@ -116,6 +131,12 @@ export class EvidenceDocumentsController {
     @Req() req: Request,
   ): Promise<DocumentVersionDto> {
     return this.receive('rfq', id, docId, verId, req);
+  }
+
+  @Get('procurement/rfqs/:id/evidence-documents/:docId')
+  @Can('procurement.sourcing')
+  readForRfq(@Param('id') id: string, @Param('docId') docId: string): Promise<DocumentDto> {
+    return this.evidence.read('rfq', id, docId);
   }
 
   @Delete('procurement/rfqs/:id/evidence-documents/:docId')
