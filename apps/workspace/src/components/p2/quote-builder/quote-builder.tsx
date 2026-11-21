@@ -237,7 +237,10 @@ export function QuoteBuilder({
     values.issueDate,
     values.currency,
     values.discountMode,
-    values.discountValue,
+    // Blur pads `100` to `100.00`; the same amount must not look like a new price request.
+    values.discountValue.includes('.')
+      ? values.discountValue.replace(/0+$/, '').replace(/\.$/, '')
+      : values.discountValue,
     values.lines.map((l) => [
       l.description,
       l.uom,

@@ -134,6 +134,7 @@ function LineEditor({
                 {...control}
                 name="quantity"
                 required
+                min="0.0001"
                 currency={currency}
                 uom={draft.uom.trim() || undefined}
                 value={draft.quantity}

@@ -81,7 +81,7 @@ test('save, reopen, edit, price and submit a quotation', async ({ browser, baseU
     await expect(amount).toHaveValue(/^[1-9][\d,]*\.\d{2}$/);
     const fullAmount = (await amount.inputValue()).replaceAll(',', '');
     await percent.fill('60');
-    await expect(amount).not.toHaveValue(fullAmount);
+    expect((await amount.inputValue()).replaceAll(',', '')).not.toBe(fullAmount);
     await expect(page.getByText('60% / 100% allocated')).toBeVisible();
 
     await submit.click();
