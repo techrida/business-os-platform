@@ -1,7 +1,13 @@
 import { VendorBillLineBodySchema } from '@bos/contracts';
 import { describe, expect, it } from 'vitest';
 
-import { EMPTY_ROW, parseBillLines, type LineRow } from './forms';
+import {
+  EMPTY_ROW,
+  EXPENSE_ACCOUNT_REFUSED,
+  expenseAccountErrors,
+  parseBillLines,
+  type LineRow,
+} from './forms';
 
 const ACCOUNT = '11111111-1111-4111-8111-111111111111';
 const TAX = '22222222-2222-4222-8222-222222222222';
@@ -75,5 +81,21 @@ describe('parseBillLines', () => {
     const many = Array.from({ length: 201 }, () => row());
     const tooMany = parseBillLines(many);
     expect(!tooMany.ok && tooMany.errors['lines']).toMatch(/at most 200/);
+  });
+});
+
+describe('expenseAccountErrors', () => {
+  it('marks the account field of every row that was sent, and skips a blank row', () => {
+    expect(expenseAccountErrors([row(), { ...EMPTY_ROW, poLineId: POLINE }, row()])).toEqual({
+      '0.accountId': EXPENSE_ACCOUNT_REFUSED,
+      '2.accountId': EXPENSE_ACCOUNT_REFUSED,
+    });
+  });
+
+  it('asks to choose an account when a row has none', () => {
+    const out = parseBillLines([row({ accountId: '' })]);
+    expect(out.ok).toBe(false);
+    if (out.ok) return;
+    expect(out.errors['0.accountId']).toBe('Choose the expense account this line is booked to.');
   });
 });

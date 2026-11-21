@@ -2,7 +2,11 @@
 
 import { randomUUID } from 'node:crypto';
 
-import { CreateVendorBillBodySchema, RequestMatchExceptionBodySchema } from '@bos/contracts';
+import {
+  CreateVendorBillBodySchema,
+  ErrorBodySchema,
+  RequestMatchExceptionBodySchema,
+} from '@bos/contracts';
 import { revalidatePath } from 'next/cache';
 import { redirect } from 'next/navigation';
 
@@ -19,6 +23,7 @@ import {
   voidBill,
   type VendorBill,
 } from '@/lib/api-payables';
+import { ApiError } from '@/lib/api';
 import { requireStaffSession } from '@/lib/bff';
 import { getGrants, hasGrant } from '@/lib/grants';
 import type { Session } from '@/lib/session';
@@ -26,7 +31,14 @@ import type { Session } from '@/lib/session';
 import { parseReason } from '../procurement/orders/_lib/forms';
 import type { ActionState } from '../procurement/orders/_lib/state';
 import { billFailure, type BillOp } from './_lib/failure';
-import { EMPTY_ROW, MAX_LINES, parseBillLines, type LineRow } from './_lib/forms';
+import {
+  EMPTY_ROW,
+  EXPENSE_ACCOUNT_INVALID,
+  MAX_LINES,
+  expenseAccountErrors,
+  parseBillLines,
+  type LineRow,
+} from './_lib/forms';
 import { MATCH_STATUS_LABEL } from './_lib/model';
 
 /**
@@ -58,6 +70,18 @@ function refused(key: string, err: unknown, op: BillOp): ActionState {
     error: f.message,
     ...(f.reload ? { reload: true } : {}),
   };
+}
+
+/**
+ * A refusal of the lines' expense accounts (422 `EXPENSE_ACCOUNT_INVALID`) as field errors on the account
+ * pickers, with a fresh key (the answer is definite); undefined for any other failure.
+ */
+function accountRefusal(err: unknown, rows: readonly LineRow[]): ActionState | undefined {
+  if (!(err instanceof ApiError) || err.status !== 422) return undefined;
+  const parsed = ErrorBodySchema.safeParse(err.body);
+  if (!parsed.success || parsed.data.error.code !== EXPENSE_ACCOUNT_INVALID) return undefined;
+  const errors = expenseAccountErrors(rows);
+  return Object.keys(errors).length > 0 ? { key: randomUUID(), errors } : undefined;
 }
 
 interface Opened {
@@ -228,7 +252,7 @@ export async function convertSubmissionAction(
   try {
     bill = await convertBillSubmission(r.o.session, r.o.id, parsed.lines, r.o.key);
   } catch (err) {
-    return refused(r.o.key, err, 'convert');
+    return accountRefusal(err, rows) ?? refused(r.o.key, err, 'convert');
   }
   revalidatePath('/payables/inbox');
   revalidatePath('/payables/bills');
@@ -275,7 +299,7 @@ export async function createBillAction(_prev: ActionState, form: FormData): Prom
   try {
     bill = await createBill(session, parsed.data, key);
   } catch (err) {
-    return refused(key, err, 'create');
+    return accountRefusal(err, rows) ?? refused(key, err, 'create');
   }
   revalidatePath('/payables/bills');
   redirect(`${billPath(encodeURIComponent(bill.id))}?created=1`);
