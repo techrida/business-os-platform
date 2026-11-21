@@ -2302,24 +2302,33 @@ describe('credit hold at the hand-over to a sales order (F1-Q20, F1-Q26)', () =>
       return { first, second };
     }
 
+    let nextInvoiceSeq = 1;
+
     /** An issued tax invoice of the order (80,000.00 + 10,400.00 VAT), with the receivable an issue leaves. */
-    async function issueInvoiceOf(orderId: string): Promise<string> {
+    async function issueInvoiceOf(
+      orderId: string,
+      foreign?: { fxRate: string; amountNpr: string },
+    ): Promise<string> {
       const invoiceId = randomUUID();
+      const currency = foreign === undefined ? 'NPR' : 'USD';
+      const [subtotal, tax, total] =
+        foreign === undefined ? [80000, 10400, 90400] : [884.96, 115.04, 1000];
       // Drafted, approved and issued the way the guard (invoices_guard) lets a row reach issued.
       await withTx(db, scopeA, systemActor('test'), async (tx) => {
         await tx.execute(sql`
           INSERT INTO app.invoices (id, tenant_id, organization_id, kind, status, customer_party_id, sales_order_id,
                                     currency, subtotal, taxable_vat_amount, tax_amount, total)
           VALUES (${invoiceId}, ${f.tenantId}, ${scopeA.organizationId}, 'tax_invoice', 'draft', ${party},
-                  ${orderId}, 'NPR', 80000.00, 80000.00, 10400.00, 90400.00)`);
+                  ${orderId}, ${currency}, ${subtotal}, ${subtotal}, ${tax}, ${total})`);
         await tx.execute(
           sql`UPDATE app.invoices SET status = 'approved', version = version + 1 WHERE id = ${invoiceId}`,
         );
         await tx.execute(sql`
           UPDATE app.invoices
-             SET status = 'issued', number = ${`INV-${invoiceId.slice(0, 8)}`}, seq = 1, fiscal_year = '2083/84',
-                 issue_date = '2026-11-20', issue_date_bs = '2083-08-05', due_date = '2026-12-20', fx_rate = 1,
-                 amount_npr = 90400.00, seller_snapshot = '{}'::jsonb, buyer_snapshot = '{}'::jsonb,
+             SET status = 'issued', number = ${`INV-${invoiceId.slice(0, 8)}`}, seq = ${nextInvoiceSeq++}, fiscal_year = '2083/84',
+                 issue_date = '2026-11-20', issue_date_bs = '2083-08-05', due_date = '2026-12-20',
+                 fx_rate = ${foreign?.fxRate ?? '1'},
+                 fx_source = ${foreign === undefined ? null : 'nrb'}, fx_date = ${foreign === undefined ? null : '2026-11-20'}, amount_npr = ${foreign?.amountNpr ?? '90400.00'}, seller_snapshot = '{}'::jsonb, buyer_snapshot = '{}'::jsonb,
                  content_hash = sha256('invoice'::bytea), issued_at = now(), version = version + 1
            WHERE id = ${invoiceId}`);
       });
@@ -2330,10 +2339,11 @@ describe('credit hold at the hand-over to a sales order (F1-Q20, F1-Q26)', () =>
           partyId: party,
           sourceType: 'tax_invoice',
           sourceId: invoiceId,
-          currency: 'NPR',
-          amount: '90400.00',
-          amountNpr: '90400.00',
-          fxRate: '1',
+          currency,
+          amount: total.toFixed(2),
+          amountNpr: foreign?.amountNpr ?? '90400.00',
+          fxRate: foreign?.fxRate ?? '1',
+          ...(foreign === undefined ? {} : { fxSource: 'nrb', fxDate: DECIDED_ON }),
           documentDate: DECIDED_ON,
         }),
       );
@@ -2392,6 +2402,34 @@ describe('credit hold at the hand-over to a sales order (F1-Q20, F1-Q26)', () =>
         exposure: '0.00',
         uninvoiced: '90400.00',
         exposureWithOrder: '180800.00',
+      });
+    });
+
+    it("works out what is left in the order's own currency: the invoice froze another rate", async () => {
+      const { first, second } = await twoOrders();
+      const [order] = await liveOrders(first.id);
+      // The order was priced at 130 NPR per USD (USD 1,000.00 = 130,000.00) and invoiced in full when the rate was 128.
+      await withTx(db, scopeA, systemActor('test'), async (tx) => {
+        await tx.execute(sql`
+          UPDATE app.sales_orders
+             SET currency = 'USD', subtotal = 884.96, taxable_amount = 884.96, tax_amount = 115.04, total = 1000.00,
+                 fx_rate = 130, fx_source = 'nrb', fx_date = '2026-11-19', amount_npr = 130000.00
+           WHERE id = ${order!.id}`);
+        // The schedule lines follow the order total by their shares.
+        await tx.execute(sql`
+          UPDATE app.billing_schedule_lines
+             SET amount = round(1000.00 * percent / 100, 2), amount_npr = round(130000.00 * percent / 100, 2)
+           WHERE sales_order_id = ${order!.id}`);
+      });
+      expect((await flagAndPage(second.opportunityId)).page).toMatchObject({
+        exposure: '0.00',
+        uninvoiced: '130000.00',
+      });
+      await issueInvoiceOf(order!.id, { fxRate: '128', amountNpr: '128000.00' });
+      // Nothing is left to invoice. Subtracting the NPR snapshots would leave a phantom 2,000.00.
+      expect((await flagAndPage(second.opportunityId)).page).toMatchObject({
+        exposure: '128000.00',
+        uninvoiced: '0.00',
       });
     });
   });
