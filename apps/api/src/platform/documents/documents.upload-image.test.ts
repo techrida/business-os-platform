@@ -215,6 +215,9 @@ describe('DocumentsService.createAndReceiveUpload', () => {
 
     await expect(
       p.svc.createAndReceiveUpload(owner, file, { scope, actor: user }),
+    ).rejects.toThrow(/not saved. Upload it again/);
+    await expect(
+      p.svc.createAndReceiveUpload(owner, file, { scope, actor: user }),
     ).rejects.toBeInstanceOf(ServiceUnavailableException);
 
     expect(p.updates.some((u) => 'removedAt' in u)).toBe(true);
