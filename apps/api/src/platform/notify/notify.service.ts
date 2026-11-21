@@ -27,6 +27,7 @@ import { principal } from '../authz/principal';
 import { CoreConfig } from '../config/config';
 import { DB, type Db, type DbTransaction } from '../db/db.module';
 import { type TxScope, requestTx, withTx } from '../db/tx';
+import { nudgeWithin } from '../queue/nudge-timeout';
 import { ctx } from '../tenancy/request-context';
 import { OUTBOX_DRAIN_JOB, OUTBOX_QUEUE } from './notify.constants';
 import { type EmailTemplate, renderEmail } from './templates';
@@ -172,25 +173,29 @@ export class NotifyService {
   /**
    * Asks the drainer to run now. Call it after the commit (see the file header). Never throws: the
    * 5 s repeatable drain is the backstop, so a Valkey outage here must not fail a request whose
-   * business change already committed.
+   * business change already committed. It also stops waiting after NUDGE_TIMEOUT_MS: with Valkey down `queue.add`
+   * would otherwise hang on its offline queue, and the request with it.
    */
   async nudge(): Promise<void> {
-    try {
-      await this.queue.add(
-        OUTBOX_DRAIN_JOB,
-        {},
-        {
-          // One job per second: several commits in the same second share it instead of piling up jobs.
-          jobId: `${OUTBOX_DRAIN_JOB}-${Math.floor(Date.now() / 1000)}`,
-          removeOnComplete: true,
-          removeOnFail: true,
-        },
-      );
-    } catch (error) {
-      this.log.warn(
-        `outbox nudge failed, the 5 s drain will pick it up: ${error instanceof Error ? error.message : String(error)}`,
-      );
-    }
+    await nudgeWithin(
+      this.log,
+      'outbox nudge',
+      () =>
+        this.queue.add(
+          OUTBOX_DRAIN_JOB,
+          {},
+          {
+            // One job per second: several commits in the same second share it instead of piling up jobs.
+            jobId: `${OUTBOX_DRAIN_JOB}-${Math.floor(Date.now() / 1000)}`,
+            removeOnComplete: true,
+            removeOnFail: true,
+          },
+        ),
+      (error) =>
+        this.log.warn(
+          `outbox nudge failed, the 5 s drain will pick it up: ${error instanceof Error ? error.message : String(error)}`,
+        ),
+    );
   }
 
   /** The caller's notifications, newest first. `beforeId` is the id of the last item of the previous page. */
