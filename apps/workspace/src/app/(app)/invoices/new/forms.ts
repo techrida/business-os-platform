@@ -83,7 +83,9 @@ export function parseDiscount(
     };
   }
   if (checked.success) return { ok: true, data: checked.data };
-  const hint = (mode === 'pct' ? value.includes(',') : hasStrayComma(raw ?? '')) ? `${USE_A_POINT} ` : '';
+  const hint = (mode === 'pct' ? value.includes(',') : hasStrayComma(raw ?? ''))
+    ? `${USE_A_POINT} `
+    : '';
   return {
     ok: false,
     error:

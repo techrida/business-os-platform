@@ -27,11 +27,14 @@ describe('parseCreditLimit', () => {
     expect(parseCreditLimit('limit', ' 2 50 000.5 ')).toEqual({ ok: true, value: '250000.5' });
   });
 
-  it.each(['1,5', '10,50', '1,25'])('refuses %s, a decimal comma, rather than read it as grouping', (typed) => {
-    const out = parseCreditLimit('limit', typed);
-    expect(out.ok).toBe(false);
-    expect(!out.ok && out.error).toMatch(/^Use a point for decimals\./);
-  });
+  it.each(['1,5', '10,50', '1,25'])(
+    'refuses %s, a decimal comma, rather than read it as grouping',
+    (typed) => {
+      const out = parseCreditLimit('limit', typed);
+      expect(out.ok).toBe(false);
+      expect(!out.ok && out.error).toMatch(/^Use a point for decimals\./);
+    },
+  );
 
   it('refuses an empty amount when a limit is chosen', () => {
     expect(parseCreditLimit('limit', '')).toEqual({ ok: false, error: LIMIT_REQUIRED });

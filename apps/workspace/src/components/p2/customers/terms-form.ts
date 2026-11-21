@@ -91,7 +91,10 @@ export function parseCreditLimit(
   const typed = plainAmount(raw);
   if (typed === '') return { ok: false, error: LIMIT_REQUIRED };
   if (!AMOUNT.test(typed)) {
-    return { ok: false, error: hasStrayComma(raw) ? `${USE_A_POINT} ${LIMIT_INVALID}` : LIMIT_INVALID };
+    return {
+      ok: false,
+      error: hasStrayComma(raw) ? `${USE_A_POINT} ${LIMIT_INVALID}` : LIMIT_INVALID,
+    };
   }
   return { ok: true, value: typed };
 }

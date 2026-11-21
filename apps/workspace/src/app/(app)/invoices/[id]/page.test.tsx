@@ -1,8 +1,4 @@
-import {
-  InvoiceDetailSchema,
-  PaymentPromiseListSchema,
-  type InvoiceDetail,
-} from '@bos/contracts';
+import { InvoiceDetailSchema, PaymentPromiseListSchema, type InvoiceDetail } from '@bos/contracts';
 import { DEFAULT_NUMBER_SYSTEMS } from '@bos/locale';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
