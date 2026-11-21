@@ -13,6 +13,7 @@ const mocks = vi.hoisted(() => ({
   isSameOrigin: vi.fn(),
   createEvidenceDocument: vi.fn(),
   uploadEvidenceContent: vi.fn(),
+  removeEvidenceDocument: vi.fn(),
   getDocument: vi.fn(),
 }));
 
@@ -31,6 +32,7 @@ vi.mock('@/lib/bff', () => ({
 vi.mock('@/lib/api-kernel', () => ({
   createEvidenceDocument: mocks.createEvidenceDocument,
   uploadEvidenceContent: mocks.uploadEvidenceContent,
+  removeEvidenceDocument: mocks.removeEvidenceDocument,
 }));
 vi.mock('@/components/p2/crm/verification-api', () => ({ getDocument: mocks.getDocument }));
 
@@ -100,6 +102,7 @@ beforeEach(() => {
     .mockReset()
     .mockResolvedValue({ documentId: DOC, versionId: VERSION, uploadPath: '/x' });
   mocks.uploadEvidenceContent.mockReset().mockResolvedValue(uploadedVersion);
+  mocks.removeEvidenceDocument.mockReset().mockResolvedValue(undefined);
   mocks.getDocument.mockReset().mockResolvedValue(document);
 });
 
@@ -164,6 +167,37 @@ describe('POST /api/evidence/:kind/:ownerId', () => {
     expect((await upload()).status).toBe(403);
     mocks.uploadEvidenceContent.mockRejectedValueOnce(new ApiError(503, 'x'));
     expect((await upload()).status).toBe(502);
+  });
+
+  const refusal = (status: number, code: string) =>
+    new ApiError(status, 'x', { error: { code, message: 'm', correlationId: 'c' } });
+
+  it.each([
+    ['the create', 'createEvidenceDocument'],
+    ['the bytes', 'uploadEvidenceContent'],
+  ] as const)(
+    'words a 409 on %s for any record, never as a memo, and asks for a reload',
+    async (_label, step) => {
+      mocks[step].mockRejectedValueOnce(refusal(409, 'conflict'));
+      const res = await upload();
+      expect(res.status).toBe(409);
+      const body = (await res.json()) as { error: { message: string; reload: boolean } };
+      expect(body.error.message).toBe(
+        'This record no longer takes evidence files. Reload it to see where it stands.',
+      );
+      expect(body.error.message).not.toMatch(/memo|attachment/i);
+      expect(body.error.reload).toBe(true);
+    },
+  );
+
+  it('words a 422 invalid_evidence_document for any record', async () => {
+    mocks.uploadEvidenceContent.mockRejectedValueOnce(refusal(422, 'invalid_evidence_document'));
+    const res = await upload();
+    expect(res.status).toBe(422);
+    const body = (await res.json()) as { error: { message: string } };
+    expect(body.error.message).toBe(
+      'This file could not be kept as evidence for this record. Upload it again.',
+    );
   });
 });
 
