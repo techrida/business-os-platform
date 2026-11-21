@@ -51,8 +51,8 @@ describe('vendor form', () => {
     expect(submit).toBeGreaterThan(cancel);
     // Before the first field.
     expect(submit).toBeLessThan(out.indexOf('name="legalName"'));
-    // One live region however many copies of the buttons there are.
-    expect(out.match(/role="status"/g)).toHaveLength(1);
+    // One live region however many copies of the buttons there are, plus the PAN box's own status line.
+    expect(out.match(/role="status"/g)).toHaveLength(2);
   });
 
   it('create submits the same fields as before, under numbered section eyebrows', () => {
