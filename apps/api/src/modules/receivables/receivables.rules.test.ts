@@ -3,7 +3,6 @@ import { describe, expect, it } from 'vitest';
 
 import {
   agingReport,
-  agingRowKey,
   contractAgingBucket,
   daysOverdue,
   kathmanduDay,
@@ -152,6 +151,9 @@ describe('agingReport', () => {
           totalOpen: '300.00',
           promiseMissed: false,
           promiseMissedOn: null,
+          promiseMissedInvoice: null,
+          openPromiseDate: null,
+          openPromiseInvoice: null,
         },
         {
           customerId: a,
@@ -167,6 +169,9 @@ describe('agingReport', () => {
           totalOpen: '10.00',
           promiseMissed: false,
           promiseMissedOn: null,
+          promiseMissedInvoice: null,
+          openPromiseDate: null,
+          openPromiseInvoice: null,
         },
         {
           customerId: b,
@@ -182,6 +187,9 @@ describe('agingReport', () => {
           totalOpen: '100.00',
           promiseMissed: false,
           promiseMissedOn: null,
+          promiseMissedInvoice: null,
+          openPromiseDate: null,
+          openPromiseInvoice: null,
         },
       ],
       totals: [
@@ -211,7 +219,7 @@ describe('agingReport', () => {
     });
   });
 
-  it('flags a row with a missed promise to pay and leaves the others alone (F1-Q33)', () => {
+  it('flags the latest missed promise and the earliest open one per row, each with its invoice (F1-Q33)', () => {
     const item = (customerId: string, currency: 'NPR' | 'USD') => ({
       customerId,
       customerName: customerId === a ? 'Acme' : 'Beta',
@@ -219,26 +227,50 @@ describe('agingReport', () => {
       openAmount: '10.00',
       dueDate: '2026-11-01',
     });
-    const report = agingReport(
-      [item(a, 'NPR'), item(a, 'USD'), item(b, 'NPR')],
-      '2026-11-09',
+    const inv = (n: number) => `00000000-0000-4000-8000-0000000000${String(n).padStart(2, '0')}`;
+    const promise = (
+      customerId: string,
+      currency: 'NPR' | 'USD',
+      status: 'open' | 'missed',
+      promisedDate: string,
+      n: number,
+    ) => ({
+      customerId,
+      currency,
+      status,
+      promisedDate,
+      invoiceId: inv(n),
+      invoiceNumber: `INV-2083/84-000${String(n).padStart(2, '0')}`,
+    });
+    const ref = (n: number) => ({
+      id: inv(n),
+      number: `INV-2083/84-000${String(n).padStart(2, '0')}`,
+    });
+    const report = agingReport([item(a, 'NPR'), item(a, 'USD'), item(b, 'NPR')], '2026-11-09', [
+      promise(a, 'USD', 'missed', '2026-11-03', 1),
+      promise(a, 'USD', 'missed', '2026-11-05', 2),
+      promise(a, 'USD', 'open', '2026-11-25', 3),
+      promise(a, 'USD', 'open', '2026-11-12', 5),
+      // Same day as invoice 5: the lower invoice number wins, whatever the order.
+      promise(a, 'USD', 'open', '2026-11-12', 4),
+      promise(b, 'NPR', 'open', '2026-11-30', 6),
       // Beta's USD key has no open item, so it adds no row of its own.
-      new Map([
-        [agingRowKey(a, 'USD'), '2026-11-05'],
-        [agingRowKey(b, 'USD'), '2026-11-06'],
-      ]),
-    );
+      promise(b, 'USD', 'missed', '2026-11-06', 7),
+    ]);
     expect(
       ArAgingReportSchema.parse(report).rows.map((r) => [
         r.customerName,
         r.currency,
         r.promiseMissed,
         r.promiseMissedOn,
+        r.promiseMissedInvoice,
+        r.openPromiseDate,
+        r.openPromiseInvoice,
       ]),
     ).toEqual([
-      ['Acme', 'NPR', false, null],
-      ['Acme', 'USD', true, '2026-11-05'],
-      ['Beta', 'NPR', false, null],
+      ['Acme', 'NPR', false, null, null, null, null],
+      ['Acme', 'USD', true, '2026-11-05', ref(2), '2026-11-12', ref(4)],
+      ['Beta', 'NPR', false, null, null, '2026-11-30', ref(6)],
     ]);
   });
 
