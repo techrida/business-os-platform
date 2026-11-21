@@ -12,7 +12,9 @@
 import {
   type Address,
   type ContactDto,
+  type CustomerActingEntity,
   type CustomerCan,
+  type CustomerOwnerOption,
   type CustomerPortalAccess,
   type CreateContactBody,
   type CreateCustomerBody,
@@ -21,13 +23,16 @@ import {
   type PartyAccountDto,
   type Permission,
   type UpdateCustomerBody,
+  type UpdateCustomerTermsBody,
 } from '@bos/contracts';
 import {
   customerContacts,
   customers,
+  idpOrgs,
   organizations,
   partyAccounts,
   parties,
+  paymentTerms,
   userEntities,
   users,
   verificationCases,
@@ -42,6 +47,7 @@ import {
   Optional,
   UnprocessableEntityException,
 } from '@nestjs/common';
+import Decimal from 'decimal.js';
 import { and, asc, eq, inArray, isNotNull, isNull, ne, sql, type SQL } from 'drizzle-orm';
 
 import { AuditService } from '../../platform/audit/audit.service';
@@ -52,7 +58,7 @@ import { updateVersioned, withIdempotency } from '../../platform/db/idempotency'
 import { withTx, type TxScope } from '../../platform/db/tx';
 import { searchPage } from '../../platform/list';
 import { NumberingService } from '../../platform/settings/numbering.service';
-import { nameIn, personNameMap, personNames } from '../../platform/users/person-names';
+import { nameIn, personLabel, personNameMap, personNames } from '../../platform/users/person-names';
 import { customerHasPortalUser, firstAdminRule } from '../portal-access/first-admin';
 import { CustomersCaller } from './customers.caller';
 import {
@@ -70,6 +76,7 @@ import {
 
 type CustomerRow = typeof customers.$inferSelect;
 type ContactRow = typeof customerContacts.$inferSelect;
+type PartyAccountRow = typeof partyAccounts.$inferSelect;
 type Q = Db | DbTransaction;
 
 /** Injection token for a test clock; production falls back to the system time. */
@@ -80,11 +87,30 @@ export const CUSTOMER_SERIES = 'CUS';
 
 const PAN_INDEX = 'customers_tenant_pan_vat_no_unique';
 const PRIMARY_CONTACT_INDEX = 'customer_contacts_tenant_customer_primary_unique';
+const PARTY_ACCOUNT_INDEX = 'party_accounts_tenant_org_party_unique';
 
 const iso = (d: Date): string => d.toISOString();
 
 const customerNotFound = () =>
   new NotFoundException({ code: 'not_found', message: 'Customer not found' });
+
+const staleTerms = () =>
+  new ConflictException({
+    code: 'conflict',
+    message: "This customer's terms were changed by someone else; reload them and try again",
+  });
+
+/** 422 `unprocessable` naming `paymentTermId`: the term is not one of the tenant's, or it is switched off. */
+const badPaymentTerm = (message: string) =>
+  new UnprocessableEntityException({
+    code: 'unprocessable',
+    message,
+    fieldErrors: { paymentTermId: message },
+  });
+
+/** An NPR amount as stored: two decimals, half-up (D22). The contract already allows at most two. */
+const npr = (amount: string): string =>
+  new Decimal(amount).toDecimalPlaces(2, Decimal.ROUND_HALF_UP).toFixed(2);
 
 /**
  * 422 `contact_email_required`: a quotation is sent by email, so a customer must keep at least one contact
@@ -149,19 +175,24 @@ export function customerRef(
 /**
  * What `p` may do with this customer, by the same decisions the routes make on it: customer.write as PATCH does
  * (staff only), and for a case both grants VerificationService.create checks on the party (customer.write and
- * verification.read), on a customer that was not merged away (create refuses that one as not found).
+ * verification.read), on a customer that was not merged away (create refuses that one as not found). The terms
+ * flags are the per-field checks of the terms route and of an owner change (staff only, same ref).
  */
 export function customerCapabilities(
   row: Pick<CustomerRow, 'tenantId' | 'id' | 'ownerUserId' | 'mergedIntoId'>,
   p: Principal,
 ): CustomerCan {
   const ref = customerRef(row, p);
-  const write = p.orgKind === 'staff' && decide(p, 'customer.write', ref).allowed;
+  const staff = p.orgKind === 'staff';
+  const write = staff && decide(p, 'customer.write', ref).allowed;
   const readVerification = decide(p, 'verification.read', ref).allowed;
   return {
     write,
     readVerification,
     openVerification: write && readVerification && row.mergedIntoId === null,
+    creditLimit: staff && decide(p, 'customers.credit_limit.write', ref).allowed,
+    owner: staff && decide(p, 'customers.owner.write', ref).allowed,
+    paymentTerms: write,
   };
 }
 
@@ -309,6 +340,44 @@ export class CustomersService {
     return rows.flatMap((r) => (r.industry === null || r.industry === '' ? [] : [r.industry]));
   }
 
+  /**
+   * GET /v1/customers/owners: the people the customer card's owner picker offers, for whoever may change owners
+   * (`customers.owner.write`; Management holds it without any people directory). Active staff users of the caller's
+   * tenant, by name then id: never a portal user, a disabled or invited one, or another tenant's. A subset of what an
+   * owner change accepts (assertUser also takes an invited user), so a pick from this list is never refused for who
+   * it names. Names only (D54-2): no address.
+   */
+  async owners(): Promise<CustomerOwnerOption[]> {
+    const { scope, actor, principal } = this.caller.current();
+    this.assertStaff(principal);
+    // The route's @Can, made again on the tenant: customers are tenant-level, so the grant is all-or-nothing.
+    this.authz.assert('customers.owner.write', {
+      tenantId: scope.tenantId,
+      organizationId: scope.organizationId,
+    });
+    const rows = await withTx(this.db, scope, actor, (tx) =>
+      tx
+        .select({ userId: users.id, displayName: users.displayName })
+        .from(users)
+        .innerJoin(
+          idpOrgs,
+          and(eq(idpOrgs.tenantId, users.tenantId), eq(idpOrgs.id, users.idpOrgId)),
+        )
+        .where(
+          and(
+            eq(users.tenantId, scope.tenantId),
+            eq(idpOrgs.kind, 'staff'),
+            eq(users.status, 'active'),
+          ),
+        ),
+    );
+    return rows
+      .map((r) => ({ userId: r.userId, displayName: personLabel(r.displayName) }))
+      .sort(
+        (a, b) => a.displayName.localeCompare(b.displayName) || a.userId.localeCompare(b.userId),
+      );
+  }
+
   // --------------------------------------------------------------------------------------------------- read
 
   async get(id: string): Promise<CustomerDetailDto> {
@@ -321,16 +390,18 @@ export class CustomersService {
     // no entities, so the field is left out (not an empty list, which would claim "no terms set").
     if (principal.orgKind !== 'staff') return dto;
     // The owner by name, read in the customer's tenant only, so the page needs no admin directory (403 for Sales).
-    const [accounts, people, caseStatus, hasPortalUser] = await Promise.all([
+    const [accounts, people, caseStatus, hasPortalUser, actingEntity] = await Promise.all([
       this.accountsFor(scope.tenantId, principal.userId, id),
       personNames(this.db, row.tenantId, [row.ownerUserId]),
       this.verificationStatus(scope.tenantId, id),
       customerHasPortalUser(this.db, row.tenantId, id),
+      this.actingEntity(scope),
     ]);
     const can = customerCapabilities(row, principal);
     return {
       ...dto,
       accounts,
+      actingEntity,
       people,
       can,
       verification: { exists: caseStatus !== null },
@@ -361,6 +432,13 @@ export class CustomersService {
   async create(body: CreateCustomerBody, idempotencyKey: string): Promise<CustomerDto> {
     const { scope, actor, principal } = this.caller.current();
     this.assertStaff(principal);
+    // The owner defaults to the creator; naming someone else is an owner change (R4c2 Q5a/Q6b).
+    if (body.ownerUserId !== undefined && body.ownerUserId !== principal.userId) {
+      this.authz.assert('customers.owner.write', {
+        tenantId: scope.tenantId,
+        organizationId: scope.organizationId,
+      });
+    }
     const now = this.clock();
     const { contact, duplicateOverrideReason, ...fields } = body;
     return withTx(this.db, scope, actor, async (tx) => {
@@ -523,6 +601,16 @@ export class CustomersService {
   /**
    * `fields` holds only what the client sent (see sentFields), so an omitted `relationship` keeps its value.
    * A customer of another tenant is 404; a stale `expectedVersion` is 409 (updateVersioned).
+   *
+   * Who may send what (R4c2 Q5a/Q6b). The route is @AnyAuthenticated, because Management changes owners without
+   * customer.write; so the service first requires one of the two grants at all, then:
+   * - any field other than the owner: customer.write on the record (404 out of scope), as before;
+   * - a new owner (sent and different from the stored one): customer read on the record (404 out of scope) and
+   *   `customers.owner.write` (403); the new owner must be a staff user of the tenant who is not disabled (400,
+   *   see assertUser). It is
+   *   audited as `customer.owner_changed`;
+   * - the stored owner sent again is not a change: no owner check, and with nothing else sent the caller still
+   *   needs customer.write on the record or `customers.owner.write`.
    */
   async update(
     id: string,
@@ -531,6 +619,7 @@ export class CustomersService {
   ): Promise<CustomerDto> {
     const { scope, actor, principal } = this.caller.current();
     this.assertStaff(principal);
+    this.assertHoldsAny(principal, ['customer.write', 'customers.owner.write']);
     if (Object.values(fields).every((v) => v === undefined)) {
       throw new BadRequestException('at least one field to change is required');
     }
@@ -539,13 +628,29 @@ export class CustomersService {
       // updateVersioned answers 409 for a missing row too, so existence (and tenant) is decided here: 404.
       const row = await this.find(tx, scope.tenantId, id);
       if (row === undefined) throw customerNotFound();
-      this.assertVisible('customer.write', row, principal);
+      const editsOthers = Object.entries(fields).some(
+        ([key, value]) => key !== 'ownerUserId' && value !== undefined,
+      );
+      const ownerChange =
+        fields.ownerUserId !== undefined && fields.ownerUserId !== row.ownerUserId;
+      if (editsOthers) {
+        this.assertVisible('customer.write', row, principal);
+      } else {
+        this.assertVisible('customer.read', row, principal);
+      }
+      if (ownerChange) {
+        this.authz.assert('customers.owner.write', customerRef(row, principal));
+      } else if (
+        !editsOthers &&
+        !decide(principal, 'customers.owner.write', customerRef(row, principal)).allowed
+      ) {
+        // Only the stored owner was sent: no change, but still a write of the record.
+        this.assertVisible('customer.write', row, principal);
+      }
 
       const pan = fields.panVatNo === undefined ? undefined : normalizePan(fields.panVatNo);
       if (pan !== undefined) await this.assertPanFree(tx, scope.tenantId, pan, id);
-      if (fields.ownerUserId !== undefined) {
-        await this.assertUser(tx, scope.tenantId, fields.ownerUserId);
-      }
+      if (ownerChange) await this.assertUser(tx, scope.tenantId, fields.ownerUserId!);
       try {
         const updated = await updateVersioned(tx, customers, id, expectedVersion, {
           ...(fields.legalName !== undefined && {
@@ -555,7 +660,7 @@ export class CustomersService {
           ...(pan !== undefined && { panVatNo: pan }),
           ...(fields.industry !== undefined && { industry: fields.industry }),
           ...(fields.relationship !== undefined && { relationship: fields.relationship }),
-          ...(fields.ownerUserId !== undefined && { ownerUserId: fields.ownerUserId }),
+          ...(ownerChange && { ownerUserId: fields.ownerUserId }),
           ...(fields.defaultCurrency !== undefined && { defaultCurrency: fields.defaultCurrency }),
           ...(fields.address !== undefined && { address: fields.address }),
           updatedAt: now,
@@ -567,12 +672,145 @@ export class CustomersService {
             .set({ name: fields.legalName, updatedAt: now })
             .where(and(eq(parties.tenantId, scope.tenantId), eq(parties.id, id)));
         }
+        if (ownerChange) {
+          await this.audit.record(tx, {
+            action: 'customer.owner_changed',
+            entityType: 'customers',
+            entityId: id,
+            before: { ownerUserId: row.ownerUserId },
+            after: { ownerUserId: updated.ownerUserId },
+          });
+        }
         return toCustomerDto(updated);
       } catch (error) {
         if (pan !== undefined && isUnique(error, PAN_INDEX)) throw duplicatePan(pan);
         throw error;
       }
     });
+  }
+
+  // ------------------------------------------------------------------------------------------------- terms
+
+  /**
+   * PATCH /v1/customers/:id/terms: the customer's terms with the ACTING entity (its `party_accounts` row, created
+   * on the first save; UNIQUE tenant, entity, party). Row security is not on for party_accounts, so every read and
+   * write here names the tenant AND the acting entity. Checks, all before any write:
+   * - staff only, holding customer.write or `customers.credit_limit.write` at all (the route is
+   *   @AnyAuthenticated because no one permission fits Finance, who sets limits without customer.write);
+   * - the customer is of this tenant and readable by the caller (404 otherwise);
+   * - `creditLimit` sent: `customers.credit_limit.write` (403, never silently dropped);
+   * - `paymentTermId` sent: customer.write on the record, as PATCH /v1/customers/:id; a changed term must be an
+   *   active term of the tenant (422);
+   * - the version: the existing row's must equal `expectedVersion`; no row and a version sent, or a row and no
+   *   version, is 409 (the client's view is stale).
+   * The row change is audited by the trigger; `customer.terms_changed` adds the before and after of both fields.
+   */
+  async updateTerms(id: string, body: UpdateCustomerTermsBody): Promise<PartyAccountDto> {
+    const { scope, actor, principal } = this.caller.current();
+    this.assertStaff(principal);
+    this.assertHoldsAny(principal, ['customer.write', 'customers.credit_limit.write']);
+    const now = this.clock();
+    return withTx(this.db, scope, actor, async (tx) => {
+      const row = await this.find(tx, scope.tenantId, id);
+      if (row === undefined) throw customerNotFound();
+      this.assertVisible('customer.read', row, principal);
+      if (body.creditLimit !== undefined) {
+        this.authz.assert('customers.credit_limit.write', customerRef(row, principal));
+      }
+      if (body.paymentTermId !== undefined) this.assertVisible('customer.write', row, principal);
+
+      const [existing] = await tx
+        .select()
+        .from(partyAccounts)
+        .where(
+          and(
+            eq(partyAccounts.tenantId, scope.tenantId),
+            eq(partyAccounts.organizationId, scope.organizationId),
+            eq(partyAccounts.partyId, id),
+          ),
+        )
+        .limit(1);
+      const termId = body.paymentTermId;
+      if (termId !== undefined && termId !== null && termId !== existing?.paymentTermId) {
+        await this.assertPaymentTerm(tx, scope.tenantId, termId);
+      }
+      const set = {
+        ...(termId !== undefined && { paymentTermId: termId }),
+        ...(body.creditLimit !== undefined && {
+          creditLimit: body.creditLimit === null ? null : npr(body.creditLimit),
+        }),
+        updatedAt: now,
+      };
+
+      let saved: PartyAccountRow;
+      if (existing === undefined) {
+        if (body.expectedVersion !== undefined) throw staleTerms();
+        try {
+          const [inserted] = await tx
+            .insert(partyAccounts)
+            .values({
+              tenantId: scope.tenantId,
+              organizationId: scope.organizationId,
+              partyId: id,
+              ...set,
+              version: 1,
+              createdAt: now,
+            })
+            .returning();
+          saved = inserted!;
+        } catch (error) {
+          // Two first saves at once: the unique index decides, and the loser's view is stale.
+          if (isUnique(error, PARTY_ACCOUNT_INDEX)) throw staleTerms();
+          throw error;
+        }
+      } else {
+        if (body.expectedVersion !== existing.version) throw staleTerms();
+        // updateVersioned matches the id (looked up above by tenant, entity and party) and the tenant.
+        saved = await updateVersioned(tx, partyAccounts, existing.id, existing.version, set);
+      }
+
+      const termsOf = (r: Pick<PartyAccountRow, 'paymentTermId' | 'creditLimit'> | undefined) => ({
+        paymentTermId: r?.paymentTermId ?? null,
+        creditLimit: r?.creditLimit ?? null,
+      });
+      await this.audit.record(tx, {
+        action: 'customer.terms_changed',
+        entityType: 'customers',
+        entityId: id,
+        before: termsOf(existing),
+        after: termsOf(saved),
+        meta: {
+          organizationId: scope.organizationId,
+          partyAccountId: saved.id,
+          fields: [
+            ...(termId !== undefined ? ['paymentTermId'] : []),
+            ...(body.creditLimit !== undefined ? ['creditLimit'] : []),
+          ],
+          currency: 'NPR',
+        },
+      });
+      const entity = await this.actingEntity(scope, tx);
+      return {
+        partyId: saved.partyId,
+        organizationId: saved.organizationId,
+        organizationName: entity.name,
+        paymentTermId: saved.paymentTermId,
+        creditLimit: saved.creditLimit,
+        version: saved.version,
+      };
+    });
+  }
+
+  /** 422 unless `termId` is an active payment term of the tenant (payment terms are tenant-level). */
+  private async assertPaymentTerm(tx: DbTransaction, tenantId: string, termId: string) {
+    const [term] = await tx
+      .select({ isActive: paymentTerms.isActive })
+      .from(paymentTerms)
+      .where(and(eq(paymentTerms.tenantId, tenantId), eq(paymentTerms.id, termId)))
+      .limit(1);
+    if (term === undefined) throw badPaymentTerm('This payment term does not exist');
+    if (!term.isActive)
+      throw badPaymentTerm('This payment term is switched off; choose an active one');
   }
 
   // ----------------------------------------------------------------------------------------------- contacts
@@ -728,6 +966,15 @@ export class CustomersService {
     }
   }
 
+  /**
+   * The route-level check of a route that more than one permission opens (@AnyAuthenticated): 403 unless the caller
+   * holds at least one of `actions` at all, before any record is looked up, as @Can would.
+   */
+  private assertHoldsAny(p: Principal, actions: readonly Permission[]): void {
+    if (actions.some((action) => decide(p, action).allowed)) return;
+    this.authz.assert(actions[0]!);
+  }
+
   /** Customers are written by staff only: a portal user holding customer.write by mistake is still refused. */
   private assertStaff(p: Principal): void {
     if (p.orgKind !== 'staff') {
@@ -768,17 +1015,24 @@ export class CustomersService {
     if (existing !== undefined) throw duplicatePan(pan, existing);
   }
 
-  /** The owner must be a user of this tenant: say so as a 400 instead of a foreign-key 500. */
+  /**
+   * The owner must be a staff user of this tenant who is not disabled: 400 (not a foreign-key 500) for an unknown
+   * user, one of another tenant, a portal user and an inactive (disabled or locked) one. `details.assignmentReason`
+   * is `not_active_staff`, the code the Lead owner card uses for the same refusal. An invited user (sign-up not
+   * finished) is accepted, as before.
+   */
   private async assertUser(tx: DbTransaction, tenantId: string, userId: string): Promise<void> {
     const [user] = await tx
-      .select({ id: users.id })
+      .select({ status: users.status, kind: idpOrgs.kind })
       .from(users)
+      .innerJoin(idpOrgs, and(eq(idpOrgs.tenantId, users.tenantId), eq(idpOrgs.id, users.idpOrgId)))
       .where(and(eq(users.tenantId, tenantId), eq(users.id, userId)))
       .limit(1);
-    if (user === undefined) {
+    if (user === undefined || user.kind !== 'staff' || user.status === 'inactive') {
       throw new BadRequestException({
         code: 'bad_request',
-        message: 'ownerUserId is not a user of this tenant',
+        message: 'ownerUserId must be a staff user of this tenant who is not disabled',
+        details: { assignmentReason: 'not_active_staff' },
       });
     }
   }
@@ -806,6 +1060,18 @@ export class CustomersService {
 
   private async setActingEntity(tx: DbTransaction, organizationId: string): Promise<void> {
     await tx.execute(sql`SELECT set_config('bos.organization_id', ${organizationId}, true)`);
+  }
+
+  /** The entity the caller acts for, by name: the one whose terms the terms route writes. */
+  private async actingEntity(scope: TxScope, q: Q = this.db): Promise<CustomerActingEntity> {
+    const [entity] = await q
+      .select({ name: organizations.name })
+      .from(organizations)
+      .where(
+        and(eq(organizations.tenantId, scope.tenantId), eq(organizations.id, scope.organizationId)),
+      )
+      .limit(1);
+    return { organizationId: scope.organizationId, name: entity?.name ?? '' };
   }
 
   /** The terms of customer `id` with the entities `userId` may act for (user_entities). */
