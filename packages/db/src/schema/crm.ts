@@ -534,6 +534,12 @@ export const opportunities = appSchema.table(
     creditOverrideReason: text('credit_override_reason'),
     creditOverrideByUserId: uuid('credit_override_by_user_id'),
     creditOverrideAt: timestamp('credit_override_at', { withTimezone: true }),
+    /**
+     * 0170 (R5 FU4): the gross NPR value of the order the override was given against. A later, bigger order needs a
+     * new override. NULL on an override given before it was kept (0171 fills it from the audit trail where it can):
+     * such an override covers nothing.
+     */
+    creditOverrideOrderValue: numeric('credit_override_order_value', { precision: 18, scale: 2 }),
     /** The expected deal value. */
     value: numeric('value', { precision: 18, scale: 2 }),
     currency: char('currency', { length: 3 }).notNull().default('NPR'),
@@ -596,6 +602,10 @@ export const opportunities = appSchema.table(
     check(
       'opportunities_credit_override_check',
       sql`(${t.creditOverrideReason} IS NULL AND ${t.creditOverrideByUserId} IS NULL AND ${t.creditOverrideAt} IS NULL) OR (${t.creditOverrideReason} IS NOT NULL AND length(btrim(${t.creditOverrideReason})) > 0 AND ${t.creditOverrideByUserId} IS NOT NULL AND ${t.creditOverrideAt} IS NOT NULL)`,
+    ),
+    check(
+      'opportunities_credit_override_value_check',
+      sql`${t.creditOverrideOrderValue} IS NULL OR (${t.creditOverrideAt} IS NOT NULL AND ${t.creditOverrideOrderValue} >= 0)`,
     ),
     index('opportunities_tenant_lead_creator_idx').on(
       t.tenantId,
