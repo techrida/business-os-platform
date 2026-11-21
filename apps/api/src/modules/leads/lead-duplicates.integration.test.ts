@@ -54,6 +54,24 @@ const seeded = {
   otherTenantCustomer: '',
 };
 
+/** A customer party plus its customers row (they belong to no entity; organizationId only scopes the write). */
+async function customer(
+  tenantId: string,
+  organizationId: string,
+  legalName: string,
+  owner: string | null,
+) {
+  const { partyId } = await createParty(h.appPool as never, { tenantId, kind: 'customer' });
+  await withTx(h.db, { tenantId, organizationId }, systemActor('test'), (tx) =>
+    tx.execute(
+      sql`INSERT INTO app.customers (id, tenant_id, number, legal_name, name_norm, address, owner_user_id)
+          VALUES (${partyId}, ${tenantId}, ${`CUS-${partyId.slice(0, 13)}`}, ${legalName},
+                  ${legalName.toLowerCase()}, ${ADDRESS}::jsonb, ${owner})`,
+    ),
+  );
+  return partyId;
+}
+
 beforeAll(async () => {
   h = await startHarness({ Pool, drizzle });
   leadsService = new LeadsService(
@@ -110,22 +128,6 @@ beforeAll(async () => {
   });
 
   // Two customers of tenant A, one owned by each salesperson; the second has a contact with the same phone.
-  const customer = async (
-    tenantId: string,
-    organizationId: string,
-    legalName: string,
-    owner: string | null,
-  ) => {
-    const { partyId } = await createParty(h.appPool as never, { tenantId, kind: 'customer' });
-    await withTx(h.db, { tenantId, organizationId }, systemActor('test'), (tx) =>
-      tx.execute(
-        sql`INSERT INTO app.customers (id, tenant_id, number, legal_name, name_norm, address, owner_user_id)
-            VALUES (${partyId}, ${tenantId}, ${`CUS-${partyId.slice(0, 8)}`}, ${legalName},
-                    ${legalName.toLowerCase()}, ${ADDRESS}::jsonb, ${owner})`,
-      ),
-    );
-    return partyId;
-  };
   seeded.customerOfSalesA = await customer(
     h.tenantId,
     h.scopeA.organizationId,
@@ -287,5 +289,38 @@ describe('GET /v1/leads/duplicates', () => {
   it('refuses an unknown query parameter with 400', async () => {
     const res = await request(baseUrl).get('/v1/leads/duplicates').query({ owner: 'x' });
     expect(res.status).toBe(400);
+  });
+
+  // Last on purpose: its 25 extra 'Himalayan A..' customers would crowd the earlier company lookups of the
+  // all-scope Sales role out of the 5-match answer.
+  it('does not let unreadable customers take the candidate slots of an own-scope reader (Marketing)', async () => {
+    const hidden: string[] = [];
+    for (let i = 1; i <= 25; i += 1) {
+      hidden.push(
+        await customer(
+          h.tenantId,
+          h.scopeA.organizationId,
+          `Himalayan A${String(i).padStart(2, '0')}`,
+          h.users.salesB,
+        ),
+      );
+    }
+    const zeta = await customer(
+      h.tenantId,
+      h.scopeA.organizationId,
+      'Himalayan Zeta',
+      h.users.salesA,
+    );
+    h.as('salesA', 'marketing');
+    const { matches, text } = await lookup({ company: 'Himalayan' });
+    const ids = matches.map((m) => m.id);
+    expect(ids).toContain(zeta);
+    expect(ids).toContain(seeded.customerOfSalesA);
+    expectNoLeak(text, ['Himalayan A', ...hidden]);
+
+    // An exact (case-insensitive) company name ranks first among the customers.
+    const exact = await lookup({ company: 'himalayan zeta' });
+    expect(exact.matches.filter((m) => m.kind === 'customer')[0]?.id).toBe(zeta);
+    expectNoLeak(exact.text, ['Himalayan A', ...hidden]);
   });
 });

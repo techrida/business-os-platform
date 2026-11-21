@@ -8,7 +8,7 @@
 //   and goes through updateVersioned();
 // - "authorization is deny-by-default": a customer has no organization_id, so scoped() and scopeWhere() (which
 //   filter on it) do not apply. Every query filters the tenant by hand, and the caller's grant scope is applied
-//   in visibleWhere(), which mirrors can() for a record that names no entity.
+//   in customerVisibleWhere() (customer-read-scope.ts), which mirrors can() for a record that names no entity.
 import {
   type Address,
   type ContactDto,
@@ -60,6 +60,7 @@ import { searchPage } from '../../platform/list';
 import { NumberingService } from '../../platform/settings/numbering.service';
 import { nameIn, personLabel, personNameMap, personNames } from '../../platform/users/person-names';
 import { customerHasPortalUser, firstAdminRule } from '../portal-access/first-admin';
+import { customerVisibleWhere } from './customer-read-scope';
 import { CustomersCaller } from './customers.caller';
 import {
   escapeLike,
@@ -281,7 +282,7 @@ export class CustomersService {
     // The scope predicate and every filter are one `where`; searchPage ANDs the search onto it, so a fuzzy
     // match can never reach a customer the caller may not read.
     const where = and(
-      this.visibleWhere(scope.tenantId, principal, 'customer.read'),
+      customerVisibleWhere(principal, customers, 'customer.read', scope.tenantId),
       query.relationship === undefined
         ? undefined
         : inArray(customers.relationship, query.relationship),
@@ -339,7 +340,7 @@ export class CustomersService {
       .from(customers)
       .where(
         and(
-          this.visibleWhere(scope.tenantId, principal, 'customer.read'),
+          customerVisibleWhere(principal, customers, 'customer.read', scope.tenantId),
           isNotNull(customers.industry),
         ),
       )
@@ -534,7 +535,7 @@ export class CustomersService {
       .from(customers)
       .where(
         and(
-          this.visibleWhere(tenantId, principal, 'customer.read'),
+          customerVisibleWhere(principal, customers, 'customer.read', tenantId),
           isNull(customers.mergedIntoId),
           pan === null
             ? eq(customers.nameNorm, name)
@@ -954,35 +955,6 @@ export class CustomersService {
   }
 
   // ------------------------------------------------------------------------------------------------ helpers
-
-  /**
-   * The customers `p` may `action`, as SQL: the twin of can() for a record that names no entity. `all` is the
-   * whole tenant for staff and the caller's own company for a portal user; `own` is the owner column. A customer
-   * has no department column, so `department` (cumulative: own records count wherever they sit) reaches the
-   * caller's own customers and nothing more, as can() does with a ref that names no department (review R2).
-   * `assigned` reaches nothing: no assignment hands a customer over. Anything else (no grant, an unknown scope,
-   * an inactive user) matches nothing.
-   */
-  private visibleWhere(tenantId: string, p: Principal, action: Permission): SQL {
-    const none = sql`false`;
-    if (p.status !== 'active') return none;
-    const inTenant = eq(customers.tenantId, tenantId);
-    const ownCompany = (): SQL =>
-      p.orgKind === 'customer' && p.partyId !== null && p.partyId !== ''
-        ? (and(inTenant, eq(customers.id, p.partyId)) as SQL)
-        : none;
-    switch (p.grants.get(action)) {
-      case 'all':
-        return p.orgKind === 'staff' ? inTenant : ownCompany();
-      case 'own':
-      case 'department':
-        return and(inTenant, eq(customers.ownerUserId, p.userId)) as SQL;
-      case 'customer_org':
-        return ownCompany();
-      default:
-        return none;
-    }
-  }
 
   /** Record-level authz that answers 404, not 403, for a customer outside the caller's scope. */
   private assertVisible(action: Permission, row: CustomerRow, p: Principal): void {
