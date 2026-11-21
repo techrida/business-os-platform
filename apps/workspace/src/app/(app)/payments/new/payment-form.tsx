@@ -236,8 +236,12 @@ export function PaymentForm({
         ? `This customer usually pays in ${CURRENCY_NAME[usualCurrency]}, which is switched off in Settings. Payments in it are still recorded.`
         : undefined;
 
+  // The open amount is in the invoice's currency: in any other currency the same figure is not what the invoice owes.
   const amountHint =
-    prefill !== null && customerId === prefill.customerId && amount === prefill.amount
+    prefill !== null &&
+    customerId === prefill.customerId &&
+    currency === prefill.currency &&
+    amount === prefill.amount
       ? `The open amount of ${prefill.invoiceNumber ?? 'the invoice'}. Change it for a part payment.`
       : 'The cash that arrived, for example 20,18,180.00.';
 
