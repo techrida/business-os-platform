@@ -24,6 +24,7 @@ import { getNumberSystems } from '@/lib/display-settings';
 import { money, when } from '@/lib/kernel-format';
 import { getPermissionCheck } from '@/lib/live-permissions';
 
+import { ApprovalActions } from '../../approval-actions';
 import { ApprovalTimeline } from '../../approval-timeline';
 import { PO_STATUS_LABEL, qtyText } from '../../orders/_lib/model';
 import layout from '../../procurement.module.css';
@@ -92,6 +93,7 @@ function ApprovalPanel({ load, retry }: { load: ApprovalLoad; retry: string }) {
           ) : (
             <ApprovalTimeline steps={approval.steps} />
           )}
+          <ApprovalActions actions={approval.actions} people={approval.people} />
         </>
       )}
     </Panel>

@@ -17,6 +17,14 @@ const TITLES: Record<InvoiceKind, string> = {
   debit_note: 'Debit Note',
 };
 
+/** The label of the document number and of the party block, as the PDF and the portal print them. */
+const WORDING: Record<InvoiceKind, { number: string; to: string }> = {
+  tax_invoice: { number: 'Invoice no.', to: 'Invoice to' },
+  proforma: { number: 'Invoice no.', to: 'Invoice to' },
+  credit_note: { number: 'Credit note no.', to: 'Issued to' },
+  debit_note: { number: 'Debit note no.', to: 'Issued to' },
+};
+
 const DUE_LABELS: Record<InvoiceKind, string> = {
   tax_invoice: 'Invoice total',
   proforma: 'Total',
@@ -136,7 +144,7 @@ export function InvoiceDocument({
         <div className={styles.billing}>
           <section aria-labelledby={`${titleId}-to`}>
             <h3 id={`${titleId}-to`} className={styles.label}>
-              Invoice to
+              {WORDING[invoice.kind].to}
             </h3>
             <p className={styles.buyer}>{customerName ?? 'Customer details unavailable'}</p>
             {buyer?.panVatNo ? <p className={styles.partyLine}>PAN/VAT {buyer.panVatNo}</p> : null}
@@ -148,7 +156,7 @@ export function InvoiceDocument({
 
           <dl className={styles.meta}>
             <div className={styles.metaRow}>
-              <dt>Invoice no.</dt>
+              <dt>{WORDING[invoice.kind].number}</dt>
               <dd>{invoice.number ?? <span className={styles.quiet}>Not numbered yet</span>}</dd>
             </div>
             <div className={styles.metaRow}>
