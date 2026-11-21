@@ -23,7 +23,7 @@ import { approvesRequestOf, mayReadPo, requestFactsColumns, requestOf } from './
 import { applyVendorChange, vendorChangeRequestOf } from './po-vendor-change.writes';
 import { PO_VENDOR_CHANGE_DOCUMENT_TYPE } from './po-vendor-change.rules';
 import { PO_AUDIT_ENTITY } from './purchase-order.rules';
-import { conflict, lockPo } from './purchase-order.writes';
+import { assertPoNotReferenced, conflict, lockPo } from './purchase-order.writes';
 
 type Outcome = 'approved' | 'returned' | 'rejected';
 
@@ -130,6 +130,8 @@ export class PoVendorChangeSubject implements ApprovalSubject {
       });
       return;
     }
+    // A payment request, bill or portal submission raised on the draft while this waited holds a key on its vendor.
+    await assertPoNotReferenced(tx, scope, po.id);
     const [quote] = await tx
       .select()
       .from(vendorQuotations)
