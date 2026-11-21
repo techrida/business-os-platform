@@ -36,16 +36,18 @@ export type PortalVersionHead = Pick<
 > & { versionId: string; quotationId: string; number: string };
 
 /**
- * Everything the customer view is built from, except the issuer block (read from settings), the scan flag and the
+ * Everything the customer view is built from, except the issuer block (read from settings), the PDF state flags and the
  * display (built by the service from `documentStyle`, else from settings).
  */
 export type PortalViewSource = Omit<
   CustomerViewInput,
-  'issuer' | 'renderedScanClean' | 'display'
+  'issuer' | 'renderedScanClean' | 'renderFailed' | 'display'
 > & {
   issuerLegalName: string;
   /** The version's stored `document_style` as read (unchecked); null until its first render froze it. */
   documentStyle: unknown;
+  /** Failed render tries since the last success or Retry: with render_state, tells a given-up render apart. */
+  renderAttempts: number;
 };
 
 /**
@@ -53,7 +55,10 @@ export type PortalViewSource = Omit<
  * tenant and entity the QUOTATION lives in. The link is scoped by these two ids, read from the row, never taken from
  * the caller.
  */
-export type PortalDocumentHead = Pick<VersionRow, 'status' | 'rejectionSource' | 'renderState'> & {
+export type PortalDocumentHead = Pick<
+  VersionRow,
+  'status' | 'rejectionSource' | 'renderState' | 'renderAttempts'
+> & {
   tenantId: string;
   organizationId: string;
   renderedDocumentId: string | null;
@@ -169,6 +174,7 @@ export class DrizzlePortalQuotationStore implements PortalQuotationStore {
         status: quotationVersions.status,
         rejectionSource: quotationVersions.rejectionSource,
         renderState: quotationVersions.renderState,
+        renderAttempts: quotationVersions.renderAttempts,
         renderedDocumentId: quotationVersions.renderedDocumentId,
       })
       .from(quotationVersions)
@@ -257,6 +263,7 @@ export class DrizzlePortalQuotationStore implements PortalQuotationStore {
           renderedSha256: quotationVersions.renderedSha256,
         },
         documentStyle: quotationVersions.documentStyle,
+        renderAttempts: quotationVersions.renderAttempts,
         contactId: quotationVersions.contactId,
         paymentTermId: quotationVersions.paymentTermId,
         tenantId: quotationVersions.tenantId,
@@ -352,6 +359,7 @@ export class DrizzlePortalQuotationStore implements PortalQuotationStore {
       taxSummary,
       issuerLegalName: issuer.legalName,
       documentStyle: head.documentStyle,
+      renderAttempts: head.renderAttempts,
     };
   }
 }
