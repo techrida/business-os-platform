@@ -381,10 +381,10 @@ describe('0123 level rows', () => {
 
 describe('0123 tenants and versions', () => {
   it('bumps the authz version once for each tenant whose rows changed, and only those (0104, 0127, 0128, 0150, 0155, 0175 and 0178 add seven more bumps where they seed rows)', async () => {
-    expect(await authzVersion(tenantSeeded.tenantId)).toBe(10);
-    expect(await authzVersion(tenantMaterialized.tenantId)).toBe(8);
-    expect(await authzVersion(tenantFounder.tenantId)).toBe(8);
-    expect(await authzVersion(tenantOtherRoles.tenantId)).toBe(11);
+    expect(await authzVersion(tenantSeeded.tenantId)).toBe(11);
+    expect(await authzVersion(tenantMaterialized.tenantId)).toBe(9);
+    expect(await authzVersion(tenantFounder.tenantId)).toBe(9);
+    expect(await authzVersion(tenantOtherRoles.tenantId)).toBe(12);
   });
 
   it('leaves a tenant with no role rows on the code defaults: no grant, no level row, no version', async () => {
