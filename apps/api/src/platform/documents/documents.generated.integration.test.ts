@@ -414,12 +414,11 @@ describe('generated documents', () => {
     expect(existsSync(cleanPath(r.storage_key))).toBe(false);
     expect(queue.add).not.toHaveBeenCalled();
     expect(scannedEvents()).toHaveLength(0);
-    expect(rejectedEvents()).toEqual([
-      expect.objectContaining({
-        entityId: created.versionId,
-        meta: expect.objectContaining({ reason: 'generated_unfinished' }),
-      }),
-    ]);
+    expect(rejectedEvents()).toHaveLength(1);
+    expect(rejectedEvents()[0]).toMatchObject({
+      entityId: created.versionId,
+      meta: { reason: 'generated_unfinished' },
+    });
   });
 
   it('promote succeeds but the clean mark fails: the version is refused and its clean copy deleted, no scan queued', async () => {
