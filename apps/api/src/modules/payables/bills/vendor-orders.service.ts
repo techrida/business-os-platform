@@ -12,7 +12,7 @@ import { and, desc, eq, inArray, type SQL } from 'drizzle-orm';
 import { z } from 'zod';
 
 import { DB, type Db } from '../../../platform/db/db.module';
-import { withTx } from '../../../platform/db/tx';
+import { withTx, READ_ONLY } from '../../../platform/db/tx';
 import { purchaseRequestScopeWhere } from '../../procurement/requests/purchase-requests.service';
 import { BILLABLE_PO_STATUSES } from './vendor-bill.rules';
 import { VendorBillsCaller } from './vendor-bills.caller';
@@ -81,37 +81,42 @@ export class VendorOrdersService {
     requestWhere?: SQL,
   ): Promise<VendorOrderOptionDto[]> {
     const { scope, actor } = this.caller.current();
-    return withTx(this.db, scope, actor, (tx) =>
-      tx
-        .select({
-          id: purchaseOrders.id,
-          number: purchaseOrders.number,
-          status: purchaseOrders.status,
-          vendorId: purchaseOrders.vendorId,
-        })
-        .from(purchaseOrders)
-        .innerJoin(
-          purchaseRequests,
-          and(
-            eq(purchaseRequests.tenantId, purchaseOrders.tenantId),
-            eq(purchaseRequests.organizationId, purchaseOrders.organizationId),
-            eq(purchaseRequests.id, purchaseOrders.purchaseRequestId),
-          ),
-        )
-        .where(
-          scoped(scope).where(
-            purchaseOrders,
+    return withTx(
+      this.db,
+      scope,
+      actor,
+      (tx) =>
+        tx
+          .select({
+            id: purchaseOrders.id,
+            number: purchaseOrders.number,
+            status: purchaseOrders.status,
+            vendorId: purchaseOrders.vendorId,
+          })
+          .from(purchaseOrders)
+          .innerJoin(
+            purchaseRequests,
             and(
-              inArray(purchaseOrders.status, [...statuses]),
-              query.vendorId === undefined
-                ? undefined
-                : eq(purchaseOrders.vendorId, query.vendorId),
-              requestWhere,
+              eq(purchaseRequests.tenantId, purchaseOrders.tenantId),
+              eq(purchaseRequests.organizationId, purchaseOrders.organizationId),
+              eq(purchaseRequests.id, purchaseOrders.purchaseRequestId),
             ),
-          ),
-        )
-        .orderBy(desc(purchaseOrders.issuedAt), desc(purchaseOrders.number))
-        .limit(query.limit),
+          )
+          .where(
+            scoped(scope).where(
+              purchaseOrders,
+              and(
+                inArray(purchaseOrders.status, [...statuses]),
+                query.vendorId === undefined
+                  ? undefined
+                  : eq(purchaseOrders.vendorId, query.vendorId),
+                requestWhere,
+              ),
+            ),
+          )
+          .orderBy(desc(purchaseOrders.issuedAt), desc(purchaseOrders.number))
+          .limit(query.limit),
+      READ_ONLY,
     );
   }
 }

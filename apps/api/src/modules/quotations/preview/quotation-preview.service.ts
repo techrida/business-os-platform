@@ -27,7 +27,7 @@ import { and, eq, inArray } from 'drizzle-orm';
 import { AuthzService } from '../../../platform/authz/authz.service';
 import { type ResourceRef } from '../../../platform/authz/can';
 import { DB, type Db, type DbTransaction } from '../../../platform/db/db.module';
-import { withTx, type TxScope } from '../../../platform/db/tx';
+import { withTx, type TxScope, READ_ONLY } from '../../../platform/db/tx';
 import { ApprovalsService } from '../../approvals/requests.service';
 import { QUOTATION_OWNER_TYPE } from '../quotation-owner.policy';
 import { PricingService } from '../pricing/pricing.service';
@@ -84,26 +84,32 @@ export class QuotationPreviewService {
   ): Promise<PreviewResult> {
     const { scope, actor, principal } = this.caller.current();
 
-    const { priced, sodUserIds } = await withTx(this.db, scope, actor, async (tx) => {
-      const head = await this.load(tx, scope, quotationId, versionId);
-      this.assertVisible(head.ref);
-      if (!isQuotationEditable(head.status)) {
-        throw new ConflictException({
-          code: 'conflict',
-          message: `A ${head.status} version cannot be previewed; only a draft or returned version can`,
-        });
-      }
-      const priced = await this.pricing.priceVersion(
-        tx,
-        scope,
-        toPricingInput(body, head.issueDate),
-      );
-      const people = [head.ref.ownerUserId, principal.userId];
-      return {
-        priced,
-        sodUserIds: [...new Set(people.filter((id): id is string => typeof id === 'string'))],
-      };
-    });
+    const { priced, sodUserIds } = await withTx(
+      this.db,
+      scope,
+      actor,
+      async (tx) => {
+        const head = await this.load(tx, scope, quotationId, versionId);
+        this.assertVisible(head.ref);
+        if (!isQuotationEditable(head.status)) {
+          throw new ConflictException({
+            code: 'conflict',
+            message: `A ${head.status} version cannot be previewed; only a draft or returned version can`,
+          });
+        }
+        const priced = await this.pricing.priceVersion(
+          tx,
+          scope,
+          toPricingInput(body, head.issueDate),
+        );
+        const people = [head.ref.ownerUserId, principal.userId];
+        return {
+          priced,
+          sodUserIds: [...new Set(people.filter((id): id is string => typeof id === 'string'))],
+        };
+      },
+      READ_ONLY,
+    );
 
     // Read after the pricing transaction, on the committed workflow; it writes nothing either.
     const facts = approvalFactsOf(priced.facts);

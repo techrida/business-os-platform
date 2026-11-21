@@ -30,7 +30,8 @@ const SETTINGS = [
  * test sees the text and the bound parameters the driver would send.
  */
 function fakeDb() {
-  const executed: { text: string; params: unknown[] }[] = [];
+  /** `lockTimeout`: the lock_timeout in force when the statement started, as a lock wait would see it. */
+  const executed: { text: string; params: unknown[]; lockTimeout: string | null }[] = [];
   const session = new Map<string, string>();
   let local = new Map<string, string>();
   const dialect = new PgDialect();
@@ -38,7 +39,7 @@ function fakeDb() {
   const tx = {
     execute: (query: SQL) => {
       const { sql: text, params } = dialect.sqlToQuery(query);
-      executed.push({ text, params });
+      executed.push({ text, params, lockTimeout: local.get('lock_timeout') ?? null });
       for (const m of text.matchAll(/set_config\('([a-z_.]+)',\s*\$(\d+),\s*(true|false)\)/g)) {
         const [, name, index, isLocal] = m as unknown as [string, string, string, string];
         (isLocal === 'true' ? local : session).set(name, String(params[Number(index) - 1]));
@@ -78,7 +79,8 @@ describe('withTx', () => {
     let seenInside: Record<string, string | null> = {};
 
     const result = await withTx(db, scope, actor, () => {
-      expect(executed).toHaveLength(1);
+      expect(executed).toHaveLength(2); // the settings, then the tenant audit lock
+      expect(executed[0]?.text).toContain("set_config('bos.tenant_id'");
       seenInside = Object.fromEntries(SETTINGS.map((n) => [n, setting(n)]));
       return Promise.resolve('done');
     });
@@ -100,7 +102,7 @@ describe('withTx', () => {
     const { db, executed } = fakeDb();
     await withTx(db, scope, actor, () => Promise.resolve());
 
-    expect(executed).toHaveLength(1);
+    expect(executed).toHaveLength(2);
     const [stmt] = executed;
     expect(stmt?.text.trimStart().startsWith('SELECT')).toBe(true);
     expect(stmt?.text.match(/set_config\(/g)).toHaveLength(9);
@@ -164,6 +166,64 @@ describe('withTx', () => {
     );
     expect(transaction).not.toHaveBeenCalled();
     expect(fn).not.toHaveBeenCalled();
+  });
+});
+
+describe('withTx tenant audit lock', () => {
+  // The exact lock audit.append takes (packages/db/migrations/0008_audit_hardening.sql), keyed on the uuid as text.
+  const LOCK =
+    "SELECT pg_advisory_xact_lock(hashtextextended('audit.chain:' || $1::uuid::text, 0))";
+  const TENANT = '7c9e6679-7425-40de-944b-e07fc1f90ae7';
+
+  it.each([
+    ['by default', undefined],
+    ["with audit: 'first'", { audit: 'first' as const }],
+  ])('%s takes the lock after the settings and before fn runs', async (_, options) => {
+    const { db, executed } = fakeDb();
+    let seenInside: typeof executed = [];
+
+    await withTx(
+      db,
+      { ...scope, tenantId: TENANT },
+      actor,
+      () => {
+        seenInside = [...executed];
+        return Promise.resolve();
+      },
+      options,
+    );
+
+    expect(seenInside).toHaveLength(2);
+    expect(seenInside[0]?.text).toContain('set_config(');
+    // The wait is already bounded by lock_timeout, so a long holder ends in 55P03, not a stuck connection.
+    expect(seenInside[1]).toEqual({ text: LOCK, params: [TENANT], lockTimeout: '5000ms' });
+  });
+
+  it("with audit: 'lazy' takes no lock: only the settings statement runs before fn", async () => {
+    const { db, executed } = fakeDb();
+    let seenInside = -1;
+    await withTx(
+      db,
+      scope,
+      actor,
+      () => {
+        seenInside = executed.length;
+        return Promise.resolve();
+      },
+      { audit: 'lazy' },
+    );
+    expect(seenInside).toBe(1);
+    expect(executed.some((e) => e.text.includes('pg_advisory'))).toBe(false);
+  });
+
+  it('keys the lock on the tenant of the scope, bound as a parameter', async () => {
+    const { db, executed } = fakeDb();
+    const other = 'f47ac10b-58cc-4372-a567-0e02b2c3d479';
+    await withTx(db, { ...scope, tenantId: TENANT }, actor, () => Promise.resolve());
+    await withTx(db, { ...scope, tenantId: other }, actor, () => Promise.resolve());
+    const locks = executed.filter((e) => e.text === LOCK);
+    expect(locks.map((e) => e.params)).toEqual([[TENANT], [other]]);
+    expect(locks[0]?.text).not.toContain(TENANT);
   });
 });
 

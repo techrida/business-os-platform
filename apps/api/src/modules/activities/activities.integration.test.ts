@@ -869,7 +869,8 @@ describe('D45: a follow-up planned while its lead changes owner', () => {
           if (blocked === undefined) await new Promise((resolve) => setImmediate(resolve));
         }
         expect(settled, 'the follow-up did not wait for the owner change').toBe(false);
-        expect(blocked).toMatch(/for share/i);
+        // It waits for the tenant audit lock withTx takes first (the owner change holds it), before it reads the lead.
+        expect(blocked).toMatch(/pg_advisory_xact_lock\(hashtextextended\('audit\.chain:'/);
       } finally {
         release();
       }

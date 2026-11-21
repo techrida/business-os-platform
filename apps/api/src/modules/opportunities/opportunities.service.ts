@@ -29,7 +29,7 @@ import { AuthzService, scopeWhereFor } from '../../platform/authz/authz.service'
 import { loadRecordReaders, type RecordReaders } from '../../platform/authz/record-reach';
 import { DB, type Db } from '../../platform/db/db.module';
 import { updateVersioned } from '../../platform/db/idempotency';
-import { withTx, type DbTransaction, type TxScope } from '../../platform/db/tx';
+import { withTx, type DbTransaction, type TxScope, READ_ONLY } from '../../platform/db/tx';
 import { readTxContext } from '../../platform/documents/tx-context';
 import { nameIn, personNameMap } from '../../platform/users/person-names';
 import { searchPage } from '../../platform/list';
@@ -176,10 +176,16 @@ export class OpportunitiesService {
     // F1-Q20/F1-Q26: the flag only (the amounts are for credit.override holders), and whether a sales order already
     // went ahead (a draft one is what the hold keeps waiting). In a transaction, so the ledger and the orders are
     // read under the entity's row security rather than seen as empty.
-    const { credit, ordered } = await withTx(this.db, scope, actor, async (tx) => ({
-      credit: await creditPosition(tx, scope, row.customerId),
-      ordered: await this.hasSalesOrder(tx, scope, row.id),
-    }));
+    const { credit, ordered } = await withTx(
+      this.db,
+      scope,
+      actor,
+      async (tx) => ({
+        credit: await creditPosition(tx, scope, row.customerId),
+        ordered: await this.hasSalesOrder(tx, scope, row.id),
+      }),
+      READ_ONLY,
+    );
     return {
       ...toOpportunityDto(
         row,

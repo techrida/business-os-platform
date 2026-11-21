@@ -56,7 +56,7 @@ import { can } from '../../../platform/authz/can';
 import type { Principal } from '../../../platform/authz/principal';
 import { DB, type Db, type DbTransaction } from '../../../platform/db/db.module';
 import { withIdempotency } from '../../../platform/db/idempotency';
-import { withTx, type TxScope } from '../../../platform/db/tx';
+import { withTx, type TxScope, READ_ONLY } from '../../../platform/db/tx';
 import { CurrencyEnabledService } from '../../../platform/settings/currency-enabled';
 import { SettingsService } from '../../../platform/settings/settings.service';
 import { searchPage, sumByCurrency } from '../../../platform/list';
@@ -336,93 +336,105 @@ export class PaymentRequestsService {
     query: ListPaymentRequestsQuery,
   ): Promise<{ rows: PaymentRequestListRowDto[]; total: number; totals: MoneyTotals }> {
     const { scope, actor, principal } = this.caller.current();
-    return withTx(this.db, scope, actor, async (tx) => {
-      let totals: MoneyTotals = [];
-      const vendorJoin = and(
-        eq(vendors.tenantId, paymentRequests.tenantId),
-        eq(vendors.id, paymentRequests.vendorId),
-      );
-      const page = await searchPage(tx, {
-        q: query.q,
-        columns: [paymentRequests.number, vendors.legalName],
-        where: scoped(scope).where(
-          paymentRequests,
-          and(
-            visibleTo(principal),
-            query.status === undefined || query.status.length === 0
-              ? undefined
-              : inArray(paymentRequests.status, query.status),
+    return withTx(
+      this.db,
+      scope,
+      actor,
+      async (tx) => {
+        let totals: MoneyTotals = [];
+        const vendorJoin = and(
+          eq(vendors.tenantId, paymentRequests.tenantId),
+          eq(vendors.id, paymentRequests.vendorId),
+        );
+        const page = await searchPage(tx, {
+          q: query.q,
+          columns: [paymentRequests.number, vendors.legalName],
+          where: scoped(scope).where(
+            paymentRequests,
+            and(
+              visibleTo(principal),
+              query.status === undefined || query.status.length === 0
+                ? undefined
+                : inArray(paymentRequests.status, query.status),
+            ),
           ),
-        ),
-        orderBy: [desc(paymentRequests.createdAt), desc(paymentRequests.id)],
-        limit: query.limit,
-        offset: query.offset,
-        rows: (reader, p) =>
-          reader
-            .select({ request: paymentRequests, vendor: vendors })
-            .from(paymentRequests)
-            .innerJoin(vendors, vendorJoin)
-            .where(p.where)
-            .orderBy(...p.orderBy)
-            .limit(p.limit)
-            .offset(p.offset),
-        // searchPage may count twice (exact, then close matches); the last call is the set the rows come from.
-        count: async (reader, where) => {
-          const groups = await reader
-            .select({
-              currency: paymentRequests.currency,
-              n: sql<number>`count(*)::int`,
-              // Money still asked for: rejected and cancelled requests add nothing.
-              amount: sql<string>`sum(CASE WHEN ${paymentRequests.status} IN ('rejected', 'cancelled') THEN 0 ELSE ${paymentRequests.totalAmount} END)::text`,
-            })
-            .from(paymentRequests)
-            .innerJoin(vendors, vendorJoin)
-            .where(where)
-            .groupBy(paymentRequests.currency);
-          const summed = sumByCurrency(groups);
-          totals = summed.totals;
-          return summed.total;
-        },
-      });
-      return {
-        rows: page.rows.map(({ request, vendor }) => {
-          const { lines: _lines, ...rest } = toDto(request, []);
-          return {
-            ...rest,
-            vendorName: vendor.legalName,
-            can: {
-              readVendor:
-                principal.orgKind === 'staff' &&
-                can(principal, 'vendor.read', vendorRef(vendor, principal)).allowed,
-            },
-          };
-        }),
-        total: page.total,
-        totals,
-      };
-    });
+          orderBy: [desc(paymentRequests.createdAt), desc(paymentRequests.id)],
+          limit: query.limit,
+          offset: query.offset,
+          rows: (reader, p) =>
+            reader
+              .select({ request: paymentRequests, vendor: vendors })
+              .from(paymentRequests)
+              .innerJoin(vendors, vendorJoin)
+              .where(p.where)
+              .orderBy(...p.orderBy)
+              .limit(p.limit)
+              .offset(p.offset),
+          // searchPage may count twice (exact, then close matches); the last call is the set the rows come from.
+          count: async (reader, where) => {
+            const groups = await reader
+              .select({
+                currency: paymentRequests.currency,
+                n: sql<number>`count(*)::int`,
+                // Money still asked for: rejected and cancelled requests add nothing.
+                amount: sql<string>`sum(CASE WHEN ${paymentRequests.status} IN ('rejected', 'cancelled') THEN 0 ELSE ${paymentRequests.totalAmount} END)::text`,
+              })
+              .from(paymentRequests)
+              .innerJoin(vendors, vendorJoin)
+              .where(where)
+              .groupBy(paymentRequests.currency);
+            const summed = sumByCurrency(groups);
+            totals = summed.totals;
+            return summed.total;
+          },
+        });
+        return {
+          rows: page.rows.map(({ request, vendor }) => {
+            const { lines: _lines, ...rest } = toDto(request, []);
+            return {
+              ...rest,
+              vendorName: vendor.legalName,
+              can: {
+                readVendor:
+                  principal.orgKind === 'staff' &&
+                  can(principal, 'vendor.read', vendorRef(vendor, principal)).allowed,
+              },
+            };
+          }),
+          total: page.total,
+          totals,
+        };
+      },
+      READ_ONLY,
+    );
   }
 
   /** 404 outside the acting entity or the caller's reach. */
   async get(id: string): Promise<PaymentRequestDetailDto> {
     const { scope, actor, principal } = this.caller.current();
-    return withTx(this.db, scope, actor, async (tx) => {
-      const dto = await this.dto(tx, scope, id, visibleTo(principal));
-      const [vendor] = await tx
-        .select()
-        .from(vendors)
-        .where(and(eq(vendors.tenantId, scope.tenantId), eq(vendors.id, dto.vendorPartyId)));
-      return {
-        ...dto,
-        vendorName: vendor?.legalName ?? null,
-        can: {
-          readVendor:
-            vendor !== undefined &&
-            principal.orgKind === 'staff' &&
-            can(principal, 'vendor.read', vendorRef(vendor, principal)).allowed,
-        },
-      };
-    });
+    return withTx(
+      this.db,
+      scope,
+      actor,
+      async (tx) => {
+        const dto = await this.dto(tx, scope, id, visibleTo(principal));
+        const [vendor] = await tx
+          .select()
+          .from(vendors)
+          .where(and(eq(vendors.tenantId, scope.tenantId), eq(vendors.id, dto.vendorPartyId)));
+        return {
+          ...dto,
+          vendorName: vendor?.legalName ?? null,
+          can: {
+            readVendor:
+              vendor !== undefined &&
+              principal.orgKind === 'staff' &&
+              can(principal, 'vendor.read', vendorRef(vendor, principal)).allowed,
+          },
+        };
+      },
+      READ_ONLY,
+    );
   }
 
   // ------------------------------------------------------------------------------------------------- create

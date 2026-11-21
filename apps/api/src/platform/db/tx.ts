@@ -27,6 +27,19 @@ export interface TxScope {
   organizationId: string;
 }
 
+export interface TxOptions {
+  /**
+   * When the transaction takes its tenant's audit-chain lock. 'first' (the default): right after the settings
+   * statement, before `fn` runs. 'lazy': only when the first audited write takes it (audit.append), as before.
+   * Use 'lazy' only for a transaction that never writes an audited row, or one that must not hold the tenant
+   * lock across a call to another service (ZITADEL); see withTx.
+   */
+  audit?: 'first' | 'lazy';
+}
+
+/** For a transaction that only reads: it never appends to the audit chain, so it need not wait for its tenant's lock. */
+export const READ_ONLY: TxOptions = { audit: 'lazy' };
+
 function requireNonEmpty(value: string, what: string): void {
   if (value.trim() === '') {
     throw new Error(`${what} must be a non-empty string`);
@@ -42,6 +55,13 @@ function requireNonEmpty(value: string, what: string): void {
  * transaction only (configureTx in tx-settings.ts), so a write stuck behind a lock fails with 55P03 instead of
  * holding its pool connection, and a transaction left open is ended by the server.
  *
+ * Then, unless `options.audit` is 'lazy', it takes the tenant's audit-chain lock: the same
+ * transaction-scoped advisory lock audit.append takes at every audited write (0008_audit_hardening.sql),
+ * so the later appends get it again for free. Every write transaction thus takes its tenant lock before
+ * any row lock, and two transactions cannot hold a row and the tenant lock in opposite orders (40P01:
+ * approve locked the approval request then appended; cancel appended, then locked the request). It waits
+ * under the lock_timeout set just before, so a long holder still ends in 55P03.
+ *
  * Rejects before opening a transaction when the actor id or the correlation id is empty: an audit
  * row without a who or a trace id is worse than a failed write.
  */
@@ -50,6 +70,7 @@ export async function withTx<T>(
   scope: TxScope,
   actor: Actor,
   fn: (tx: DbTransaction) => Promise<T>,
+  options?: TxOptions,
 ): Promise<T> {
   requireNonEmpty(actor.id, 'actor.id');
   requireNonEmpty(actor.correlationId, 'actor.correlationId');
@@ -69,7 +90,13 @@ export async function withTx<T>(
         set_config('bos.user_agent', ${actor.userAgent ?? ''}, true),
         set_config('lock_timeout', ${`${lockTimeoutMs}ms`}, true),
         set_config('idle_in_transaction_session_timeout', ${`${idleInTxTimeoutMs}ms`}, true)`);
+      // Stamped before the tenant lock: setup stays pool checkout + BEGIN + settings (TX_SETUP_BUCKETS).
       setupSeconds = (performance.now() - started) / 1000;
+      if (options?.audit !== 'lazy') {
+        await tx.execute(
+          sql`SELECT pg_advisory_xact_lock(hashtextextended('audit.chain:' || ${scope.tenantId}::uuid::text, 0))`,
+        );
+      }
       return fn(tx);
     });
     observer?.observeTx('commit', setupSeconds, (performance.now() - started) / 1000);

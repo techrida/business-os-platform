@@ -17,7 +17,7 @@ import { and, asc, eq, gt, inArray, sql } from 'drizzle-orm';
 
 import { AuthzService } from '../../platform/authz/authz.service';
 import { DB, type Db, type DbTransaction } from '../../platform/db/db.module';
-import { withTx, type Actor, type TxScope } from '../../platform/db/tx';
+import { withTx, type Actor, type TxScope, READ_ONLY } from '../../platform/db/tx';
 import { agingReport, agingRowKey, kathmanduDay, settlementRow } from './receivables.rules';
 
 /** Injection token for a test clock; production falls back to the system time. */
@@ -119,86 +119,98 @@ export class ReceivablesService {
       tenantId: scope.tenantId,
       organizationId: scope.organizationId,
     });
-    return withTx(this.db, scope, this.readActor(), async (tx) => {
-      const rows = await tx
-        .select({
-          customerId: openItemBalances.customerPartyId,
-          customerName: parties.name,
-          currency: openItemBalances.currency,
-          openAmount: openItemBalances.openAmount,
-          dueDate: openItemBalances.dueDate,
-          documentDate: openItemBalances.documentDate,
-        })
-        .from(openItemBalances)
-        .innerJoin(
-          parties,
-          and(
-            eq(parties.tenantId, openItemBalances.tenantId),
-            eq(parties.id, openItemBalances.customerPartyId),
-          ),
-        )
-        .where(
-          and(
-            eq(openItemBalances.tenantId, scope.tenantId),
-            eq(openItemBalances.organizationId, scope.organizationId),
-            eq(openItemBalances.side, 'receivable'),
-            eq(openItemBalances.direction, 'debit'),
-            gt(openItemBalances.openAmount, '0'),
-          ),
+    return withTx(
+      this.db,
+      scope,
+      this.readActor(),
+      async (tx) => {
+        const rows = await tx
+          .select({
+            customerId: openItemBalances.customerPartyId,
+            customerName: parties.name,
+            currency: openItemBalances.currency,
+            openAmount: openItemBalances.openAmount,
+            dueDate: openItemBalances.dueDate,
+            documentDate: openItemBalances.documentDate,
+          })
+          .from(openItemBalances)
+          .innerJoin(
+            parties,
+            and(
+              eq(parties.tenantId, openItemBalances.tenantId),
+              eq(parties.id, openItemBalances.customerPartyId),
+            ),
+          )
+          .where(
+            and(
+              eq(openItemBalances.tenantId, scope.tenantId),
+              eq(openItemBalances.organizationId, scope.organizationId),
+              eq(openItemBalances.side, 'receivable'),
+              eq(openItemBalances.direction, 'debit'),
+              gt(openItemBalances.openAmount, '0'),
+            ),
+          );
+        return agingReport(
+          rows.map((r) => ({
+            customerId: r.customerId ?? '',
+            customerName: r.customerName,
+            currency: r.currency,
+            openAmount: r.openAmount ?? '0',
+            dueDate: r.dueDate ?? r.documentDate ?? this.today(),
+          })),
+          this.today(),
+          await this.missedPromises(tx, scope),
         );
-      return agingReport(
-        rows.map((r) => ({
-          customerId: r.customerId ?? '',
-          customerName: r.customerName,
-          currency: r.currency,
-          openAmount: r.openAmount ?? '0',
-          dueDate: r.dueDate ?? r.documentDate ?? this.today(),
-        })),
-        this.today(),
-        await this.missedPromises(tx, scope),
-      );
-    });
+      },
+      READ_ONLY,
+    );
   }
 
   /** The customer's unallocated credit on verified payments, per currency; currencies with none are left out. */
   async advance(scope: TxScope, customerId: string): Promise<CustomerAdvance[]> {
-    return withTx(this.db, scope, this.readActor(), async (tx) => {
-      await this.assertCustomer(tx, scope, customerId);
-      const total = sql<string>`sum(${openItemBalances.openAmount})`;
-      const rows = await tx
-        .select({
-          currency: openItemBalances.currency,
-          amount: sql<string>`${total}::numeric(18, 2)::text`,
-        })
-        .from(openItemBalances)
-        .innerJoin(
-          payments,
-          and(
-            eq(payments.tenantId, openItemBalances.tenantId),
-            eq(payments.organizationId, openItemBalances.organizationId),
-            eq(payments.id, openItemBalances.sourceId),
-          ),
-        )
-        .where(
-          and(
-            eq(openItemBalances.tenantId, scope.tenantId),
-            eq(openItemBalances.organizationId, scope.organizationId),
-            eq(openItemBalances.side, 'receivable'),
-            eq(openItemBalances.direction, 'credit'),
-            eq(openItemBalances.sourceType, 'payment'),
-            eq(openItemBalances.customerPartyId, customerId),
-            eq(payments.status, 'verified'),
-          ),
-        )
-        .groupBy(openItemBalances.currency)
-        .having(sql`${total} > 0`)
-        .orderBy(asc(openItemBalances.currency));
-      return rows.map((r) => ({
-        customerId,
-        currency: r.currency,
-        amount: r.amount,
-      }));
-    });
+    return withTx(
+      this.db,
+      scope,
+      this.readActor(),
+      async (tx) => {
+        await this.assertCustomer(tx, scope, customerId);
+        const total = sql<string>`sum(${openItemBalances.openAmount})`;
+        const rows = await tx
+          .select({
+            currency: openItemBalances.currency,
+            amount: sql<string>`${total}::numeric(18, 2)::text`,
+          })
+          .from(openItemBalances)
+          .innerJoin(
+            payments,
+            and(
+              eq(payments.tenantId, openItemBalances.tenantId),
+              eq(payments.organizationId, openItemBalances.organizationId),
+              eq(payments.id, openItemBalances.sourceId),
+            ),
+          )
+          .where(
+            and(
+              eq(openItemBalances.tenantId, scope.tenantId),
+              eq(openItemBalances.organizationId, scope.organizationId),
+              eq(openItemBalances.side, 'receivable'),
+              eq(openItemBalances.direction, 'credit'),
+              eq(openItemBalances.sourceType, 'payment'),
+              eq(openItemBalances.customerPartyId, customerId),
+              eq(payments.status, 'verified'),
+            ),
+          )
+          .groupBy(openItemBalances.currency)
+          .having(sql`${total} > 0`)
+          .orderBy(asc(openItemBalances.currency));
+        return rows.map((r) => ({
+          customerId,
+          currency: r.currency,
+          amount: r.amount,
+        }));
+      },
+      READ_ONLY,
+    );
   }
 
   // -------------------------------------------------------------------------------------- internals
