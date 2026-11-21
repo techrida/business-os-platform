@@ -47,6 +47,14 @@ beforeEach(() => {
     'fetch',
     vi.fn(() => Promise.resolve(new Response(null, { status: 204 }))),
   );
+  vi.stubGlobal(
+    'ResizeObserver',
+    class {
+      observe = vi.fn();
+      unobserve = vi.fn();
+      disconnect = vi.fn();
+    },
+  );
 });
 afterEach(async () => {
   await mounted?.unmount();
