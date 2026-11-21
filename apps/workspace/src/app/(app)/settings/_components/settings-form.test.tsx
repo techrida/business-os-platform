@@ -250,6 +250,19 @@ describe('SettingsForm typed fields', () => {
     await mounted.unmount();
   });
 
+  it('keeps four decimals in a schedule percent, as the contract allows', async () => {
+    const spec = scheduleSpec();
+    const mounted = await mountForm(
+      <SettingsForm section="sales" fields={[spec]}>
+        <SettingCard title="Billing schedule" fields={[spec]} />
+      </SettingsForm>,
+    );
+    const first = boxesLabelled(mounted.container, 'Percent')[0] ?? null;
+    await fill(first, '33.3333');
+    expect(first?.value).toBe('33.3333');
+    await mounted.unmount();
+  });
+
   it('edits schedule rows (add, remove, label, percent, trigger) and blocks save unless total = 100%', async () => {
     const spec = scheduleSpec();
     const mounted = await mountForm(

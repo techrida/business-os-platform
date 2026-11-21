@@ -673,7 +673,7 @@ function ScheduleControl({
               {(c) => (
                 <PercentInput
                   {...inGroup(c, errorId, error)}
-                  scale={2}
+                  scale={4}
                   min="0"
                   max="100"
                   value={row.percent}
