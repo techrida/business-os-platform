@@ -477,6 +477,35 @@ describe('SalesOrdersService.releaseDelivery (F1-Q32)', () => {
     });
   });
 
+  it('counts an order with no advance line as released: no Release delivery, nothing to record, and a release is refused', async () => {
+    const orderId = await confirmedOrder();
+    expect((await detailOf(orderId)).deliveryReleased).toBe(false);
+
+    // The same order with its advance line turned into a milestone: nothing is left for the hold to wait on.
+    await ownerPool.query(
+      `UPDATE app.billing_schedule_lines SET trigger = 'milestone'
+        WHERE sales_order_id = $1 AND trigger = 'advance'`,
+      [orderId],
+    );
+
+    as('founder', founderUser);
+    const detail = await detailOf(orderId);
+    expect(detail.deliveryReleased).toBe(true);
+    expect(detail.deliveryRelease).toEqual({
+      kind: 'no_advance',
+      releasedAt: null,
+      releasedByName: null,
+      reason: null,
+    });
+    expect(detail.can?.releaseDelivery).toBe(false);
+    expect(detail.can?.releaseDeliveryBlockedBy).toBeNull();
+    expect(await refusal(release(orderId))).toMatchObject({
+      status: 409,
+      code: 'delivery_already_released',
+    });
+    expect(await releaseRows(orderId)).toHaveLength(0);
+  });
+
   it('refuses Management at the threshold and lets the Founder release it', async () => {
     await setThreshold(AMOUNT_NPR);
     const orderId = await confirmedOrder();
