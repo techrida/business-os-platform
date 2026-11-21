@@ -1,6 +1,7 @@
 import { Module } from '@nestjs/common';
 
 import { ApprovalsWorkerModule } from './modules/approvals/approvals.worker.module';
+import { EvidenceWorkerModule } from './modules/evidence/evidence.worker.module';
 import { InvoiceRenderWorkerModule } from './modules/invoices/render/invoice-render.worker.module';
 import { PortalLoginPolicyWorkerModule } from './modules/portal-access/portal-login-policy.worker.module';
 import { PurchaseOrderRenderWorkerModule } from './modules/procurement/orders/render/purchase-order-render.worker.module';
@@ -35,6 +36,7 @@ import { WorkerHealth } from './platform/queue/worker-health';
     QueueModule,
     AuditWorkerModule,
     DocumentsWorkerModule,
+    EvidenceWorkerModule,
     NotifyWorkerModule,
     UsersWorkerModule,
     ApprovalsWorkerModule,
