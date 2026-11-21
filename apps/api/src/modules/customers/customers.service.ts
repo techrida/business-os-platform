@@ -53,12 +53,15 @@ import { and, asc, eq, inArray, isNotNull, isNull, ne, sql, type SQL } from 'dri
 import { AuditService } from '../../platform/audit/audit.service';
 import { can as decide, type Principal, type ResourceRef } from '../../platform/authz/can';
 import { AuthzService } from '../../platform/authz/authz.service';
+import { type LiveGrantDeps, liveGrantsOf } from '../../platform/authz/live-grants';
+import { RoleCache } from '../../platform/authz/role-cache';
 import { DB, type Db, type DbTransaction } from '../../platform/db/db.module';
 import { updateVersioned, withIdempotency } from '../../platform/db/idempotency';
-import { READ_ONLY, withTx, type TxScope } from '../../platform/db/tx';
+import { READ_ONLY, withTx, type Actor, type TxScope } from '../../platform/db/tx';
 import { searchPage } from '../../platform/list';
 import { NumberingService } from '../../platform/settings/numbering.service';
 import { nameIn, personLabel, personNameMap, personNames } from '../../platform/users/person-names';
+import { SqlUsersStore } from '../../platform/users/users.store';
 import { customerHasPortalUser, firstAdminRule } from '../portal-access/first-admin';
 import { CustomersCaller } from './customers.caller';
 import {
@@ -272,7 +275,15 @@ export class CustomersService {
     private readonly caller: CustomersCaller,
     private readonly audit: AuditService,
     @Optional() @Inject(CUSTOMERS_CLOCK) private readonly clock: () => Date = () => new Date(),
-  ) {}
+  ) {
+    // The terms of an entity other than the acting one are read by the caller's live grants in THAT entity.
+    this.liveGrants = {
+      users: new SqlUsersStore(db),
+      grants: { grantsFor: (...args) => new RoleCache(db).grantsFor(...args) },
+    };
+  }
+
+  private readonly liveGrants: LiveGrantDeps;
 
   // -------------------------------------------------------------------------------------------------- list
 
@@ -394,7 +405,7 @@ export class CustomersService {
   // --------------------------------------------------------------------------------------------------- read
 
   async get(id: string): Promise<CustomerDetailDto> {
-    const { scope, principal } = this.caller.current();
+    const { scope, actor, principal } = this.caller.current();
     const row = await this.find(this.db, scope.tenantId, id);
     if (row === undefined) throw customerNotFound();
     this.assertVisible('customer.read', row, principal);
@@ -404,7 +415,7 @@ export class CustomersService {
     if (principal.orgKind !== 'staff') return dto;
     // The owner by name, read in the customer's tenant only, so the page needs no admin directory (403 for Sales).
     const [accounts, people, caseStatus, hasPortalUser, actingEntity] = await Promise.all([
-      this.accountsFor(scope.tenantId, principal.userId, id),
+      this.accountsFor(scope, actor, principal, row),
       personNames(this.db, row.tenantId, [row.ownerUserId]),
       this.verificationStatus(scope.tenantId, id),
       customerHasPortalUser(this.db, row.tenantId, id),
@@ -1106,12 +1117,21 @@ export class CustomersService {
     return { organizationId: scope.organizationId, name: entity?.name ?? '' };
   }
 
-  /** The terms of customer `id` with the entities `userId` may act for (user_entities). */
+  /**
+   * The terms of the customer with the entities the caller may act for (user_entities) AND may read the customer
+   * in: a membership alone is not enough (R5 FU4). The credit limit and payment term of an entity go to someone who
+   * holds `customer.read` there, by the roles their membership of THAT entity allows, so Finance in one entity
+   * and Warehouse only in another sees the first entity's terms and not the second's.
+   */
   private async accountsFor(
-    tenantId: string,
-    userId: string,
-    id: string,
+    scope: TxScope,
+    actor: Actor,
+    principal: Principal,
+    customer: CustomerRow,
   ): Promise<PartyAccountDto[]> {
+    const tenantId = scope.tenantId;
+    const userId = principal.userId;
+    const id = customer.id;
     const rows = await this.db
       .select({
         partyId: partyAccounts.partyId,
@@ -1143,13 +1163,60 @@ export class CustomersService {
         ),
       )
       .orderBy(asc(partyAccounts.organizationId));
-    return rows.map((r) => ({
-      partyId: r.partyId,
-      organizationId: r.organizationId,
-      organizationName: r.organizationName,
-      paymentTermId: r.paymentTermId,
-      creditLimit: r.creditLimit,
-      version: r.version,
-    }));
+    const readable = await withTx(
+      this.db,
+      scope,
+      actor,
+      async (tx) => {
+        const allowed = new Set<string>();
+        for (const org of new Set(rows.map((r) => r.organizationId))) {
+          if (await this.mayReadIn(tx, principal, customer, org)) allowed.add(org);
+        }
+        return allowed;
+      },
+      READ_ONLY,
+    );
+    return rows
+      .filter((r) => readable.has(r.organizationId))
+      .map((r) => ({
+        partyId: r.partyId,
+        organizationId: r.organizationId,
+        organizationName: r.organizationName,
+        paymentTermId: r.paymentTermId,
+        creditLimit: r.creditLimit,
+        version: r.version,
+      }));
+  }
+
+  /**
+   * Whether the caller reads this customer in legal entity `organizationId`: `customer.read` at a scope that
+   * reaches the record, by the roles of their membership there. The acting entity is the request's principal; any
+   * other entity is read from the database now (liveGrantsOf), so a role taken away shows at once.
+   */
+  private async mayReadIn(
+    tx: DbTransaction,
+    principal: Principal,
+    customer: CustomerRow,
+    organizationId: string,
+  ): Promise<boolean> {
+    if (organizationId.toLowerCase() === principal.organizationId.toLowerCase()) {
+      return decide(principal, 'customer.read', customerRef(customer, principal)).allowed;
+    }
+    const live = await liveGrantsOf(
+      tx,
+      this.liveGrants,
+      { tenantId: principal.tenantId, organizationId },
+      principal.userId,
+    );
+    if (live.status !== 'active') return false;
+    const there: Principal = {
+      ...principal,
+      organizationId,
+      roles: live.roles,
+      departmentId: live.departmentId,
+      level: live.level,
+      grants: live.grants,
+    };
+    return decide(there, 'customer.read', customerRef(customer, there)).allowed;
   }
 }
