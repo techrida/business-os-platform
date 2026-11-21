@@ -756,7 +756,8 @@ describe('detail settlement (no ar.read needed)', () => {
                SET status = 'issued', number = ${`INV-2083/84-${String(seq).padStart(5, '0')}`}, seq = ${seq},
                    fiscal_year = '2083/84', issue_date = '2026-11-01', issue_date_bs = '2083-07-15',
                    due_date = '2026-12-01', fx_rate = 1, amount_npr = total,
-                   seller_snapshot = '{"name": "Techrida Pvt. Ltd."}', buyer_snapshot = '{"name": "Acme"}',
+                   seller_snapshot = '{"legalName": "Techrida Pvt. Ltd.", "panVatNo": null, "address": null}',
+                   buyer_snapshot = '{"legalName": "Acme", "panVatNo": null, "address": null}',
                    content_hash = decode(repeat('ab', 32), 'hex'), issued_at = now()
              WHERE id = ${id}`,
       );
