@@ -176,7 +176,13 @@ export const ACCESS_AREA_CATALOGUE: readonly AccessAreaInfo[] = [
     key: 'invoices',
     label: 'Invoices',
     seePermission: 'invoice.read',
-    actionPermissions: ['invoice.draft', 'invoice.submit', 'invoice.issue', 'invoice.credit_note'],
+    actionPermissions: [
+      'invoice.draft',
+      'invoice.submit',
+      'invoice.issue',
+      'invoice.credit_note',
+      'vat.sales.read',
+    ],
     hasAssignment: false,
     supportsDepartment: false,
   },
@@ -445,6 +451,7 @@ export const ACCESS_PERMISSION_GROUPS: readonly AccessPermissionGroup[] = [
       'invoice.submit',
       'invoice.issue',
       'invoice.credit_note',
+      'vat.sales.read',
     ],
   },
   {
@@ -651,6 +658,14 @@ export const ACCESS_PERMISSION_CATALOGUE: readonly AccessPermissionInfo[] = [
     ON_OFF_STAFF,
     [],
     'Adjusts billed amounts on issued invoices.',
+  ),
+  perm(
+    'vat.sales.read',
+    'See the sales VAT register',
+    'onOff',
+    ON_OFF_STAFF,
+    [],
+    'Lists issued tax invoices, credit notes and debit notes with their VAT, and exports them to CSV.',
   ),
   // Procurement
   perm('procurement.pr.read', 'See purchase requests', 'record', RECORD_DEPT, []),
