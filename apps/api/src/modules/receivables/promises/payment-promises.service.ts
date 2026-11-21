@@ -7,7 +7,9 @@
 //   one (409 invoice_not_open otherwise), and the day is today or later in Asia/Kathmandu (400);
 // - "one promise at a time": a new promise replaces the open one (decision R4c1 Q6): the old one becomes `replaced`,
 //   audited, in the same transaction. The partial unique index payment_promises_one_open_idx still holds under
-//   concurrency: of two promises recorded at once, the second is 409 promise_open;
+//   concurrency: of two promises recorded at once, the second is 409 promise_open. An open promise whose day has
+//   passed is not replaced but refused with 409 promise_open until the hourly job has marked it missed, so a miss is
+//   never hidden;
 // - "the screen shows what the caller may do": the list carries `can.record` with the reason it is false;
 // - "who did it": the recorder is the calling user; a system actor gets 403. Commands carry an Idempotency-Key.
 import {
@@ -95,7 +97,8 @@ export class PaymentPromisesService {
   /**
    * Records the promise and returns it (201); an open promise on the invoice becomes `replaced`. 404 for an invoice
    * outside the acting entity; 409 invoice_not_open for a draft, a proforma, a credit note or a settled invoice; 409
-   * promise_open when another promise was recorded concurrently; 400 for a day before today (Kathmandu). A retry with
+   * promise_open when another promise was recorded concurrently, or when the open promise's day has passed and the
+   * hourly job has not marked it missed yet; 400 for a day before today (Kathmandu). A retry with
    * the same key replays the stored promise, even after midnight, and replaces nothing more.
    */
   async record(
@@ -305,13 +308,9 @@ export class PaymentPromisesService {
     // The open promise this one replaces (decision R4c1 Q6). Closed before the insert: the partial unique index allows
     // one open promise per invoice. The row lock makes a concurrent recorder wait; it then finds no open row, and its
     // insert hits the index (409 promise_open) instead of replacing this one unseen.
-    const [replaced] = await tx
-      .update(paymentPromises)
-      .set({
-        status: 'replaced',
-        version: sql`${paymentPromises.version} + 1`,
-        updatedAt: sql`now()`,
-      })
+    const [open] = await tx
+      .select({ id: paymentPromises.id, promisedDate: paymentPromises.promisedDate })
+      .from(paymentPromises)
       .where(
         and(
           eq(paymentPromises.tenantId, scope.tenantId),
@@ -320,7 +319,34 @@ export class PaymentPromisesService {
           eq(paymentPromises.status, 'open'),
         ),
       )
-      .returning({ id: paymentPromises.id, promisedDate: paymentPromises.promisedDate });
+      .limit(1)
+      .for('update');
+    // A promise whose day has passed is the hourly job's to mark missed (and to plan the collection call). Replacing
+    // it first would hide the miss, so it is refused until the job has run.
+    if (open !== undefined && open.promisedDate < kathmanduDay(this.clock())) {
+      throw new ConflictException({
+        code: 'promise_open',
+        message: 'This promise date has passed and is being checked. Try again in a few minutes.',
+      });
+    }
+    let replaced: { id: string; promisedDate: string } | undefined;
+    if (open !== undefined) {
+      [replaced] = await tx
+        .update(paymentPromises)
+        .set({
+          status: 'replaced',
+          version: sql`${paymentPromises.version} + 1`,
+          updatedAt: sql`now()`,
+        })
+        .where(
+          and(
+            eq(paymentPromises.tenantId, scope.tenantId),
+            eq(paymentPromises.id, open.id),
+            eq(paymentPromises.status, 'open'),
+          ),
+        )
+        .returning({ id: paymentPromises.id, promisedDate: paymentPromises.promisedDate });
+    }
 
     const [row] = await tx
       .insert(paymentPromises)

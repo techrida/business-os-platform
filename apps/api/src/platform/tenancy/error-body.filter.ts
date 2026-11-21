@@ -88,6 +88,9 @@ export type ErrorCode =
   | 'payment_not_submitted'
   | 'payment_not_verified'
   | 'proof_not_clean'
+  // F1-Q33 promises to pay.
+  | 'invoice_not_open'
+  | 'promise_open'
   | 'invalid_proof'
   | 'unknown_customer'
   | 'unknown_withholding_code'
@@ -240,6 +243,9 @@ const GENERIC_MESSAGE: Record<ErrorCode, string> = {
   payment_not_submitted: 'This payment is not waiting for verification',
   payment_not_verified: 'Only a verified payment can be reversed',
   proof_not_clean: 'Every proof must pass the virus scan first',
+  invoice_not_open:
+    'Only an issued invoice or debit note with an amount still owed can take a promise to pay',
+  promise_open: 'This invoice already has an open promise to pay',
   invalid_proof: 'A proof file is not valid for this payment',
   unknown_customer: 'No such customer',
   unknown_withholding_code: 'No such withholding code',
@@ -389,6 +395,10 @@ const CONFLICT_CODES: readonly ErrorCode[] = [
   'payment_not_submitted',
   'payment_not_verified',
   'proof_not_clean',
+  // F1-Q33 promises to pay: the invoice owes nothing (or is not issued), or an open promise cannot be replaced
+  // (recorded concurrently, or its day has passed and the hourly job has not checked it yet).
+  'invoice_not_open',
+  'promise_open',
   // P4 vendors (V1) and vendor bank accounts (V2): lifecycle and maker-checker refusals a client can switch on.
   'invalid_transition',
   'kyb_not_submitted',
