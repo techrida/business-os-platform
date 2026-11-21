@@ -23,6 +23,8 @@ import {
   type PartyAccountDto,
   type PaymentTerm,
   type Permission,
+  ROLE_KEYS,
+  type RoleKey,
   type UpdateCustomerBody,
   type UpdateCustomerTermsBody,
 } from '@bos/contracts';
@@ -366,36 +368,57 @@ export class CustomersService {
       organizationId: scope.organizationId,
     });
     // Only people who hold customer.write in this entity: the first portal invite must come from the customer's
-    // owner (firstAdminRule), and an owner without customer.write could never send it. The grant is read from the
-    // live role rows through the user's roles in this entity, as the other role-holder lookups do.
+    // owner (firstAdminRule), and an owner without customer.write could never send it. The candidates are active
+    // staff with their roles in this entity (the membership's role_keys narrowing them, as the tenancy interceptor
+    // does); the grant is then read through the RoleCache, so a tenant still on the built-in defaults and a
+    // level-based grant count as they do on a request.
     const rows = await withTx(
       this.db,
       scope,
       actor,
       async (tx) =>
         (
-          await tx.execute<{ userId: string; displayName: string | null }>(sql`
-            SELECT u.id AS "userId", u.display_name AS "displayName"
+          await tx.execute<{
+            userId: string;
+            displayName: string | null;
+            roleKey: string;
+            allowed: string[] | null;
+          }>(sql`
+            SELECT u.id AS "userId", u.display_name AS "displayName", r.role_key AS "roleKey",
+                   e.role_keys AS "allowed"
             FROM app.users u
             JOIN app.idp_orgs o ON o.tenant_id = u.tenant_id AND o.id = u.idp_org_id
-            WHERE u.tenant_id = ${scope.tenantId} AND o.kind = 'staff' AND u.status = 'active'
-              AND EXISTS (
-                SELECT 1
-                FROM app.user_roles r
-                JOIN app.user_entities e ON e.tenant_id = r.tenant_id AND e.user_id = r.user_id
-                  AND e.organization_id = ${scope.organizationId}
-                JOIN app.role_permissions p ON p.tenant_id = r.tenant_id AND p.role_key = r.role_key
-                  AND p.permission = 'customer.write'
-                WHERE r.tenant_id = u.tenant_id AND r.user_id = u.id
-                  AND (e.role_keys IS NULL OR r.role_key = ANY (e.role_keys)))`)
+            JOIN app.user_roles r ON r.tenant_id = u.tenant_id AND r.user_id = u.id
+            JOIN app.user_entities e ON e.tenant_id = u.tenant_id AND e.user_id = u.id
+              AND e.organization_id = ${scope.organizationId}
+            WHERE u.tenant_id = ${scope.tenantId} AND o.kind = 'staff' AND u.status = 'active'`)
         ).rows,
       READ_ONLY,
     );
-    return rows
-      .map((r) => ({ userId: r.userId, displayName: personLabel(r.displayName) }))
-      .sort(
-        (a, b) => a.displayName.localeCompare(b.displayName) || a.userId.localeCompare(b.userId),
-      );
+    const people = new Map<string, { displayName: string | null; roles: RoleKey[] }>();
+    for (const r of rows) {
+      if (r.allowed !== null && !r.allowed.includes(r.roleKey)) continue;
+      if (!(ROLE_KEYS as readonly string[]).includes(r.roleKey)) continue;
+      const person = people.get(r.userId) ?? { displayName: r.displayName, roles: [] };
+      person.roles.push(r.roleKey as RoleKey);
+      people.set(r.userId, person);
+    }
+    const out: CustomerOwnerOption[] = [];
+    for (const [userId, person] of people) {
+      if (
+        await this.authz.rolesHold(
+          scope.tenantId,
+          scope.organizationId,
+          person.roles,
+          'customer.write',
+        )
+      ) {
+        out.push({ userId, displayName: personLabel(person.displayName) });
+      }
+    }
+    return out.sort(
+      (a, b) => a.displayName.localeCompare(b.displayName) || a.userId.localeCompare(b.userId),
+    );
   }
 
   /**
