@@ -9,6 +9,7 @@ import type { DocumentLogoResolver } from '../../quotations/render/issuer';
 import type { RenderSettings, RunInTx } from '../../quotations/render/quotation-render.sweeper';
 import {
   failureKind,
+  InvoiceRenderProcessor,
   InvoiceRenderSweeper,
   RenderSourceMissingError,
   type RenderCandidate,
@@ -682,3 +683,52 @@ describe('InvoiceRenderSweeper: amount in words, signatory and seller contact (U
   });
 });
 
+describe('InvoiceRenderSweeper.renderNow and the invoice.render.one job (render on commit)', () => {
+  it('renders an invoice that is still a candidate, checking it by the candidate rule first', async () => {
+    const f = fixture();
+    const c = candidate(1);
+    await expect(f.sweeper.renderNow(c)).resolves.toBe('rendered');
+    expect(f.store.isCandidate).toHaveBeenCalledWith(c, NOW);
+    expect(f.pdf.htmlToPdf).toHaveBeenCalledTimes(1);
+    expect(f.store.recordPrint).toHaveBeenCalledTimes(1);
+  });
+
+  it('skips, without rendering or counting a failure, an invoice that is no longer a candidate', async () => {
+    const f = fixture({ isCandidate: false });
+    await expect(f.sweeper.renderNow(candidate(1))).resolves.toBe('skipped');
+    expect(f.store.load).not.toHaveBeenCalled();
+    expect(f.pdf.htmlToPdf).not.toHaveBeenCalled();
+    expect(f.store.recordFailure).not.toHaveBeenCalled();
+  });
+
+  it('routes invoice.render.one to renderNow with the job data, and still runs the sweep', async () => {
+    const renderNow = vi.fn(() => Promise.resolve('rendered' as const));
+    const sweep = vi.fn(() => Promise.resolve({} as never));
+    const processor = new InvoiceRenderProcessor({ renderNow, sweep } as never);
+    const data = {
+      tenantId: '00000000-0000-4000-8000-0000000000a1',
+      organizationId: '00000000-0000-4000-8000-0000000000b1',
+      id: '00000000-0000-4000-8000-0000000000c1',
+    };
+    await processor.process({ name: 'invoice.render.one', data } as never);
+    expect(renderNow).toHaveBeenCalledWith({
+      tenantId: data.tenantId,
+      organizationId: data.organizationId,
+      invoiceId: data.id,
+    });
+    await processor.process({ name: 'invoice.render.sweep' } as never);
+    expect(sweep).toHaveBeenCalledTimes(1);
+  });
+
+  it('fails a one-render job whose data is not ids, and a job nobody handles', async () => {
+    const renderNow = vi.fn();
+    const processor = new InvoiceRenderProcessor({ renderNow } as never);
+    await expect(
+      processor.process({ name: 'invoice.render.one', data: { id: 'x' } } as never),
+    ).rejects.toThrow();
+    expect(renderNow).not.toHaveBeenCalled();
+    await expect(processor.process({ name: 'other' } as never)).rejects.toThrow(
+      'Unknown invoice render job',
+    );
+  });
+});
