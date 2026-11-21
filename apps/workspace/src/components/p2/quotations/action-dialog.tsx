@@ -18,6 +18,7 @@ export function ActionDialog({
   submitLabel,
   pending,
   done,
+  blocked = false,
   children,
 }: {
   triggerLabel: string;
@@ -29,6 +30,8 @@ export function ActionDialog({
   submitLabel: string;
   pending: boolean;
   done?: boolean | undefined;
+  /** Keeps the submit button off while a field is not ready (a file still uploading, an infected file). */
+  blocked?: boolean | undefined;
   children: ReactNode;
 }) {
   return (
@@ -52,7 +55,12 @@ export function ActionDialog({
                 Cancel
               </Button>
             </DialogClose>
-            <Button type="submit" form={formId} disabled={pending} aria-busy={pending || undefined}>
+            <Button
+              type="submit"
+              form={formId}
+              disabled={pending || blocked}
+              aria-busy={pending || undefined}
+            >
               {submitLabel}
             </Button>
           </>

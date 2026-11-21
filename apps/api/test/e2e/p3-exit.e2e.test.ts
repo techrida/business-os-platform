@@ -11,7 +11,6 @@
 // server answering a fixed PDF) and clamd (the fake the documents tests use).
 // Shortcuts, each declared where it is taken:
 // - the customer's portal login is seeded by SQL (seedPortalLogin), as in p2-exit;
-// - the milestone's evidence document is seeded by SQL (seedEvidenceDocument): no route attaches a file to an order;
 // - both render sweepers are run through the worker's own instance instead of waiting for their schedule.
 //
 // Separation of duties shapes the cast (support/p3-fixtures.ts): `preparer` (accountant role) prepares, `accountant`
@@ -30,6 +29,7 @@ import {
   ChainVerifyDtoSchema,
   CustomerAdvanceSchema,
   CustomerInvoiceViewSchema,
+  ErrorBodySchema,
   InvoiceDetailSchema,
   InvoiceSettlementSchema,
   IssueInvoiceResultSchema,
@@ -53,12 +53,7 @@ import { InvoiceRenderSweeper } from '../../src/modules/invoices/render/invoice-
 import { QuotationRenderSweeper } from '../../src/modules/quotations/render/quotation-render.sweeper';
 import { CLIENT_ID, startApp, type TestApp } from './support/app';
 import { minimalPdf, pollUntil, seedPortalLogin, type PortalLogin } from './support/fixtures';
-import {
-  seedEvidenceDocument,
-  seedP3World,
-  type P3PersonaKey,
-  type P3World,
-} from './support/p3-fixtures';
+import { seedP3World, type P3PersonaKey, type P3World } from './support/p3-fixtures';
 import { startWorker, type TestWorker } from './support/worker';
 
 const e2e = inject('e2e');
@@ -298,6 +293,8 @@ const s = {
   milestoneId: '',
   creditNoteId: '',
   paymentId: '',
+  /** The customer's bank slip (a `payment_intake` file): never evidence of the order. */
+  proofDocumentId: '',
   login: undefined as PortalLogin | undefined,
 };
 
@@ -588,6 +585,7 @@ describe('P3 exit: quote to cash over HTTP', () => {
       .send({ filename: 'bank-slip.pdf', declaredMime: 'application/pdf', sizeBytes: pdf.length });
     expect(declared.status, show(declared)).toBe(201);
     const proof = declared.body as { documentId: string; versionId: string; uploadPath: string };
+    s.proofDocumentId = proof.documentId;
 
     const put = await t
       .http()
@@ -682,8 +680,42 @@ describe('P3 exit: quote to cash over HTTP', () => {
 
   it('10. the milestone line is marked billable with evidence, and its invoice is issued after finance approves it', async () => {
     const preparer = await auth('preparer');
-    // SHORTCUT: the evidence file is seeded by SQL (no route attaches a file to an order).
-    const evidenceDocumentId = await seedEvidenceDocument(world);
+    // Round 5 P2: the evidence is uploaded in place on the order (owner type `evidence`) by the preparer, who holds
+    // sales_order.mark_billable and no documents.upload; Mark billable takes only a file of this order.
+    const declared = await t
+      .http()
+      .post(`/v1/sales-orders/${s.orderId}/evidence-documents`)
+      .set('authorization', preparer)
+      .send({
+        filename: 'uat-signoff.pdf',
+        declaredMime: 'application/pdf',
+        sizeBytes: pdf.length,
+      });
+    expect(declared.status, show(declared)).toBe(201);
+    const evidence = declared.body as { documentId: string; versionId: string; uploadPath: string };
+    expect(evidence.uploadPath).toBe(
+      `/v1/sales-orders/${s.orderId}/evidence-documents/${evidence.documentId}/versions/${evidence.versionId}/content`,
+    );
+    const put = await t
+      .http()
+      .put(evidence.uploadPath)
+      .set('authorization', preparer)
+      .set('content-type', 'application/pdf')
+      .send(pdf);
+    expect(put.status, show(put)).toBe(200);
+    const evidenceDocumentId = evidence.documentId;
+    // Any other live file of the entity (here the customer's bank slip) is refused with a code the workspace shows.
+    const foreign = await t
+      .http()
+      .post(`/v1/sales-orders/${s.orderId}/schedule-lines/${s.scheduleLineIds[1]}/mark-billable`)
+      .set('authorization', preparer)
+      .set('idempotency-key', randomUUID())
+      .send({
+        evidenceDocumentId: s.proofDocumentId,
+        expectedVersion: (await getOrder()).order.version,
+      });
+    expect(foreign.status, show(foreign)).toBe(422);
+    expect(ErrorBodySchema.parse(foreign.body).error.code).toBe('invalid_evidence_document');
     const order = await getOrder();
     const marked = await t
       .http()

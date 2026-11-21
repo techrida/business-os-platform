@@ -107,6 +107,15 @@ describe('DiskStorageAdapter', () => {
     await expect(stat(storage.quarantinePath(key))).rejects.toMatchObject({ code: 'ENOENT' });
   });
 
+  it('removeClean deletes a promoted file, and is fine on a missing file', async () => {
+    const key = newKey();
+    await storage.writeQuarantine(key, Readable.from([Buffer.from('x')]), MAX);
+    await storage.promote(key);
+    await storage.removeClean(key);
+    await storage.removeClean(key);
+    await expect(storage.openClean(key)).rejects.toBeInstanceOf(StoredFileNotFoundError);
+  });
+
   it('refuses keys that are not <uuid>/<uuid> (path traversal guard)', () => {
     for (const key of [
       '../../etc/passwd',

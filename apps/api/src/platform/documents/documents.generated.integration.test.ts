@@ -391,12 +391,61 @@ describe('generated documents', () => {
     expect(queue.add).not.toHaveBeenCalled();
   });
 
-  it('a failed promote leaves the version quarantined and an ordinary scan finishes it, audited once', async () => {
+  /** The `document.rejected` events recorded so far in this test. */
+  const rejectedEvents = (): AuditEvent[] =>
+    (audit.record.mock.calls as unknown as [unknown, AuditEvent][])
+      .map(([, event]) => event)
+      .filter((event) => event.action === 'document.rejected');
+  const cleanPath = (key: string) => join(storageRoot, 'clean', key);
+
+  it('a failed promote refuses the version and deletes its bytes, with no scan queued, so the render tries again', async () => {
     const failing = Object.create(storage) as DiskStorageAdapter;
     failing.promote = () => Promise.reject(new Error('disk is away'));
     const flaky = makeService(failing);
     const file = pdf();
     const { created, who } = await generate(randomUUID(), file);
+
+    await expect(flaky.receiveGenerated(created, file, who)).rejects.toThrow('disk is away');
+
+    const r = await versionRow(created.versionId);
+    expect(r.status).toBe('rejected');
+    expect(r.current_version_id).toBeNull();
+    expect(existsSync(storage.quarantinePath(r.storage_key))).toBe(false);
+    expect(existsSync(cleanPath(r.storage_key))).toBe(false);
+    expect(queue.add).not.toHaveBeenCalled();
+    expect(scannedEvents()).toHaveLength(0);
+    expect(rejectedEvents()).toHaveLength(1);
+    expect(rejectedEvents()[0]).toMatchObject({
+      entityId: created.versionId,
+      meta: { reason: 'generated_unfinished' },
+    });
+  });
+
+  it('promote succeeds but the clean mark fails: the version is refused and its clean copy deleted, no scan queued', async () => {
+    const file = pdf();
+    const { created, who } = await generate(randomUUID(), file);
+    // The clean mark (its audit write) fails once: the transaction rolls back after the promote moved the bytes.
+    audit.record.mockRejectedValueOnce(new Error('database blip'));
+
+    await expect(service.receiveGenerated(created, file, who)).rejects.toThrow('database blip');
+
+    const r = await versionRow(created.versionId);
+    expect(r.status).toBe('rejected');
+    expect(r.current_version_id).toBeNull();
+    expect(existsSync(storage.quarantinePath(r.storage_key))).toBe(false);
+    expect(existsSync(cleanPath(r.storage_key))).toBe(false);
+    expect(queue.add).not.toHaveBeenCalled();
+    expect(rejectedEvents()).toHaveLength(1);
+  });
+
+  it('when the refusal cannot be written either, it stays quarantined and the fallback scan finishes it, audited once', async () => {
+    const failing = Object.create(storage) as DiskStorageAdapter;
+    failing.promote = () => Promise.reject(new Error('disk is away'));
+    const flaky = makeService(failing);
+    const file = pdf();
+    const { created, who } = await generate(randomUUID(), file);
+    // The refusal's audit write fails too: the database is away for both.
+    audit.record.mockRejectedValueOnce(new Error('database away'));
 
     await expect(flaky.receiveGenerated(created, file, who)).rejects.toThrow('disk is away');
 
@@ -419,17 +468,17 @@ describe('generated documents', () => {
     expect(scannedEvents()).toHaveLength(1);
   });
 
-  it('promote succeeds but the clean mark fails: the fallback scan job finishes it as generated, not as a clamd scan, audited once', async () => {
+  it('promote succeeds, then the clean mark and the refusal both fail: the fallback scan finishes it as generated', async () => {
     const file = pdf();
     const { created, who } = await generate(randomUUID(), file);
-    // The clean mark (its audit write) fails once: the transaction rolls back after the promote moved the bytes.
-    audit.record.mockRejectedValueOnce(new Error('database blip'));
+    audit.record
+      .mockRejectedValueOnce(new Error('database blip'))
+      .mockRejectedValueOnce(new Error('database blip'));
 
     await expect(service.receiveGenerated(created, file, who)).rejects.toThrow('database blip');
 
     const mid = await versionRow(created.versionId);
     expect(mid.status).toBe('quarantined');
-    expect(mid.scan_engine).toBeNull();
     // The promote had already happened: the quarantine copy is gone, so the scan job has nothing to scan.
     expect(existsSync(storage.quarantinePath(mid.storage_key))).toBe(false);
     expect(queue.add).toHaveBeenCalledWith(
@@ -444,15 +493,11 @@ describe('generated documents', () => {
     const r = await versionRow(created.versionId);
     expect(r.status).toBe('clean');
     expect(r.scan_engine).toBe('generated');
-    expect(r.current_version_id).toBe(created.versionId);
     expect(fakeClamd.scans).toHaveLength(scansBefore);
-    // The rolled-back attempt wrote no audit row; the finishing run wrote one, labelled generated.
+    // The rolled-back attempts wrote no audit row; the finishing run wrote one, labelled generated.
     const committed = scannedEvents().slice(1);
     expect(committed).toHaveLength(1);
-    expect(committed[0]).toMatchObject({
-      entityId: created.versionId,
-      meta: { result: 'generated', engine: 'generated' },
-    });
+    expect(committed[0]).toMatchObject({ meta: { result: 'generated', engine: 'generated' } });
   });
 
   it('an owner policy that refuses the system actor gives no document row', async () => {

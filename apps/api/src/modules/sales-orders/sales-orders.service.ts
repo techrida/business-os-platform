@@ -70,6 +70,11 @@ import { DB, type Db, type DbTransaction } from '../../platform/db/db.module';
 import { updateVersioned, withIdempotency } from '../../platform/db/idempotency';
 import { withTx, type Actor, type TxScope, READ_ONLY } from '../../platform/db/tx';
 import { assertNotInfected } from '../../platform/documents/documents.service';
+import {
+  assertEvidenceDocument,
+  assertNoForeignEvidence,
+  EVIDENCE_OWNER_TYPE,
+} from '../../platform/documents/evidence-document';
 import { searchPage, type SearchColumn } from '../../platform/list';
 import { NumberingService } from '../../platform/settings/numbering.service';
 import { SettingsService } from '../../platform/settings/settings.service';
@@ -439,6 +444,7 @@ export class SalesOrdersService {
       scope,
       body.evidenceDocumentIds,
       acceptedDocuments,
+      live?.id ?? null,
     );
 
     const now = this.clock();
@@ -602,9 +608,11 @@ export class SalesOrdersService {
 
   /**
    * `POST /v1/sales-orders/:id/schedule-lines/:lineId/mark-billable`: a milestone or UAT fired. Only a planned
-   * line moves; a line other than an advance needs an evidence document. `expectedVersion` is the order's
-   * version (schedule lines have none in the DTO) and the command bumps it. 404 for an order or line outside the
-   * entity, 409 for a stale version, a closed order or a line that is not planned, 422 `evidence_required`.
+   * line moves; a line other than an advance needs an evidence document: one uploaded to this order (owner type
+   * `evidence`) or one already filed as the order's evidence. `expectedVersion` is the order's version (schedule
+   * lines have none in the DTO) and the command bumps it. 404 for an order or line outside the entity, 409 for a
+   * stale version, a closed order or a line that is not planned, 422 `evidence_required` or
+   * `invalid_evidence_document`, 409 `document_infected`.
    */
   async markBillable(
     orderId: string,
@@ -697,7 +705,21 @@ export class SalesOrdersService {
       );
     }
     if (body.evidenceDocumentId !== undefined) {
-      await this.assertDocumentsUsable(tx, scope, [body.evidenceDocumentId]);
+      // Round 5 P2: evidence uploaded to this order, or a file already filed as the order's evidence (the dialog's
+      // list). Never a picture, a payment proof or a file of another record (422 invalid_evidence_document).
+      const recorded = await tx
+        .select({ documentId: salesOrderEvidence.documentId })
+        .from(salesOrderEvidence)
+        .where(
+          scoped(scope).where(salesOrderEvidence, eq(salesOrderEvidence.salesOrderId, orderId)),
+        );
+      await assertEvidenceDocument(
+        tx,
+        scope,
+        body.evidenceDocumentId,
+        orderId,
+        recorded.map((r) => r.documentId),
+      );
     }
 
     const now = this.clock();
@@ -765,30 +787,37 @@ export class SalesOrdersService {
   /**
    * The documents filed as the order's evidence: the files the caller names (each must be a live document of
    * this entity, else 422) plus the ones recorded with the acceptance that are still live. Distinct, in order.
+   * Round 5 P2: Mark billable takes what the order filed, so a file uploaded as the evidence of another record (an
+   * order, a bill, an RFQ) is never filed here: named, it is 422 invalid_evidence_document; recorded with the
+   * acceptance, it is left out. `orderId` is the order being confirmed, when it already exists as a draft.
    */
   private async evidenceDocuments(
     tx: DbTransaction,
     scope: TxScope,
     named: readonly string[],
     accepted: readonly string[],
+    orderId: string | null,
   ): Promise<string[]> {
     const namedIds = [...new Set(named)];
     await this.assertDocumentsUsable(tx, scope, namedIds);
+    await assertNoForeignEvidence(tx, scope, namedIds, orderId);
     const acceptedIds = [...new Set(accepted)].filter((id) => !namedIds.includes(id));
-    const live = await this.liveDocuments(tx, scope, acceptedIds);
+    const live = await this.liveDocuments(tx, scope, acceptedIds, orderId);
     // A file that passed the acceptance while still scanning may have been found infected since (TR-Q12e).
     await assertNotInfected(tx, scope, [...live]);
     return [...namedIds, ...acceptedIds.filter((id) => live.has(id))];
   }
 
+  /** The ids still live in this entity; with `exceptForeignEvidenceOf`, minus evidence of any other record. */
   private async liveDocuments(
     tx: DbTransaction,
     scope: TxScope,
     ids: readonly string[],
+    exceptForeignEvidenceOf?: string | null,
   ): Promise<Set<string>> {
     if (ids.length === 0) return new Set();
     const rows = await tx
-      .select({ id: documents.id })
+      .select({ id: documents.id, ownerType: documents.ownerType, ownerId: documents.ownerId })
       .from(documents)
       .where(
         scoped(scope).where(
@@ -796,7 +825,16 @@ export class SalesOrdersService {
           and(inArray(documents.id, [...ids]), isNull(documents.removedAt)),
         ),
       );
-    return new Set(rows.map((r) => r.id));
+    return new Set(
+      rows
+        .filter(
+          (r) =>
+            exceptForeignEvidenceOf === undefined ||
+            r.ownerType !== EVIDENCE_OWNER_TYPE ||
+            r.ownerId === exceptForeignEvidenceOf,
+        )
+        .map((r) => r.id),
+    );
   }
 
   /**
