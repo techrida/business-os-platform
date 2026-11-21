@@ -24,6 +24,26 @@ const routes: [keyof EvidenceDocumentsController, string, string][] = [
     'sales_order.mark_billable',
   ],
   ['readForSalesOrder', 'sales-orders/:id/evidence-documents/:docId', 'sales_order.mark_billable'],
+  [
+    'createForQuotationVersion',
+    'sales-orders/quotation-versions/:id/evidence-documents',
+    'sales_order.confirm',
+  ],
+  [
+    'uploadForQuotationVersion',
+    'sales-orders/quotation-versions/:id/evidence-documents/:docId/versions/:verId/content',
+    'sales_order.confirm',
+  ],
+  [
+    'readForQuotationVersion',
+    'sales-orders/quotation-versions/:id/evidence-documents/:docId',
+    'sales_order.confirm',
+  ],
+  [
+    'removeForQuotationVersion',
+    'sales-orders/quotation-versions/:id/evidence-documents/:docId',
+    'sales_order.confirm',
+  ],
   ['readForBill', 'payables/bills/:id/evidence-documents/:docId', 'payables.bill.enter'],
   ['readForRfq', 'procurement/rfqs/:id/evidence-documents/:docId', 'procurement.sourcing'],
   ['createForBill', 'payables/bills/:id/evidence-documents', 'payables.bill.enter'],
@@ -50,17 +70,22 @@ describe('EvidenceDocumentsController', () => {
     expect(Reflect.getMetadata(CAN_KEY, handler)).toBe(permission);
   });
 
-  it.each(['readForSalesOrder', 'readForBill', 'readForRfq'] as const)('%s is a GET', (method) => {
-    const handler = EvidenceDocumentsController.prototype[method];
-    expect(Reflect.getMetadata(METHOD_METADATA, handler)).toBe(RequestMethod.GET);
-  });
-
-  it.each(['removeForSalesOrder', 'removeForBill', 'removeForRfq'] as const)(
-    '%s is a DELETE answering 204',
+  it.each(['readForSalesOrder', 'readForQuotationVersion', 'readForBill', 'readForRfq'] as const)(
+    '%s is a GET',
     (method) => {
       const handler = EvidenceDocumentsController.prototype[method];
-      expect(Reflect.getMetadata(METHOD_METADATA, handler)).toBe(RequestMethod.DELETE);
-      expect(Reflect.getMetadata(HTTP_CODE_METADATA, handler)).toBe(204);
+      expect(Reflect.getMetadata(METHOD_METADATA, handler)).toBe(RequestMethod.GET);
     },
   );
+
+  it.each([
+    'removeForSalesOrder',
+    'removeForQuotationVersion',
+    'removeForBill',
+    'removeForRfq',
+  ] as const)('%s is a DELETE answering 204', (method) => {
+    const handler = EvidenceDocumentsController.prototype[method];
+    expect(Reflect.getMetadata(METHOD_METADATA, handler)).toBe(RequestMethod.DELETE);
+    expect(Reflect.getMetadata(HTTP_CODE_METADATA, handler)).toBe(204);
+  });
 });

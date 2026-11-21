@@ -28,7 +28,11 @@ function text(form: FormData, name: string): string {
   return typeof v === 'string' ? v.trim() : '';
 }
 
-/** Document ids typed one per line (commas and spaces work too), without repeats. */
+/**
+ * The evidence ids the confirm form posts: the upload control's one hidden id, or '' when no file
+ * was uploaded (which yields []). Split on spaces and commas, without repeats, so a form that ever
+ * posts several ids still parses.
+ */
 function idsOf(raw: string): string[] {
   return [...new Set(raw.split(/[\s,;]+/).filter((token) => token !== ''))];
 }
@@ -44,7 +48,7 @@ export function parseConfirm(
   if (ids.length > MAX_EVIDENCE) {
     errors.evidence = `Attach at most ${MAX_EVIDENCE} documents.`;
   } else if (!ids.every(isGuid)) {
-    errors.evidence = 'One of the ids is not a valid document id. Enter one id per line.';
+    errors.evidence = 'The uploaded document is not valid. Remove it and upload it again.';
   }
   if (Object.keys(errors).length > 0) return { ok: false, errors };
 
