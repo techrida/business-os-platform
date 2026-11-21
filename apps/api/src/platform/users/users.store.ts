@@ -238,7 +238,19 @@ export abstract class UsersStore {
   abstract recordEvent(e: ZitadelEventKey): Promise<boolean>;
   abstract getCursor(name: string): Promise<string | null>;
   abstract setCursor(name: string, cursor: string): Promise<void>;
+
+  /**
+   * Takes the tenant's Founder-removal lease: true when this `leaseId` now holds it, false when another live lease does.
+   * One statement, so two requests cannot both win. A lease older than `ttlSeconds` is dead (its holder crashed) and is
+   * taken over. It spans the ZITADEL call of a Founder-removing action, which no transaction or row lock may.
+   */
+  abstract claimFounderLease(tenantId: string, leaseId: string, ttlSeconds: number): Promise<boolean>;
+  /** Frees the lease when `leaseId` still holds it; a lease taken over after its TTL is left alone. */
+  abstract releaseFounderLease(tenantId: string, leaseId: string): Promise<void>;
 }
+
+const founderLeaseName = (tenantId: string) => `users.founder-lease:${tenantId}`;
+const FOUNDER_LEASE_FREE = 'free';
 
 async function rows<T extends Record<string, unknown>>(q: Queryable, query: SQL): Promise<T[]> {
   // Db and DbTransaction share execute(); the cast only picks one of the two identical signatures.
@@ -696,6 +708,25 @@ export class SqlUsersStore extends UsersStore {
     return row?.cursor ?? null;
   }
 
+  async claimFounderLease(tenantId: string, leaseId: string, ttlSeconds: number): Promise<boolean> {
+    const claimed = await rows<{ name: string }>(
+      this.db,
+      sql`INSERT INTO ops.sync_cursors (name, cursor, updated_at)
+          VALUES (${founderLeaseName(tenantId)}, ${leaseId}, now())
+          ON CONFLICT (name) DO UPDATE SET cursor = EXCLUDED.cursor, updated_at = EXCLUDED.updated_at
+          WHERE ops.sync_cursors.cursor = ${FOUNDER_LEASE_FREE}
+             OR ops.sync_cursors.cursor = EXCLUDED.cursor
+             OR ops.sync_cursors.updated_at < now() - make_interval(secs => ${ttlSeconds})
+          RETURNING name`,
+    );
+    return claimed.length > 0;
+  }
+  async releaseFounderLease(tenantId: string, leaseId: string): Promise<void> {
+    await this.db.execute(
+      sql`UPDATE ops.sync_cursors SET cursor = ${FOUNDER_LEASE_FREE}, updated_at = now()
+          WHERE name = ${founderLeaseName(tenantId)} AND cursor = ${leaseId}`,
+    );
+  }
   async setCursor(name: string, cursor: string): Promise<void> {
     await this.db.execute(
       sql`INSERT INTO ops.sync_cursors (name, cursor, updated_at) VALUES (${name}, ${cursor}, now())

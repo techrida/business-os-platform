@@ -28,9 +28,6 @@ export const ZITADEL_ENDPOINTS = {
   deactivateUser: '/zitadel.user.v2.UserService/DeactivateUser',
   reactivateUser: '/zitadel.user.v2.UserService/ReactivateUser',
   lockUser: '/zitadel.user.v2.UserService/LockUser',
-  // VERIFIED at v4.20.1 (2026-11-20): exists and takes { userId } (an unknown id answers 404 "User could not be
-  // found"). Used only to take back an identity an invite created a moment ago (UserMirror.takeBackInvite).
-  deleteUser: '/zitadel.user.v2.UserService/DeleteUser',
   unlockUser: '/zitadel.user.v2.UserService/UnlockUser',
   // VERIFIED path and organizationIdQuery (seed findUser). UNVERIFIED: the `query` paging object, the
   // `sortingColumn` value and the `details.totalResult` answer. reconcile does not trust any of them:
@@ -553,11 +550,6 @@ export class ZitadelAdminClient {
   /** Lets a deactivated user sign in again (state ACTIVE). */
   async reactivateUser(zitadelUserId: string): Promise<void> {
     await this.post(ZITADEL_ENDPOINTS.reactivateUser, { userId: zitadelUserId });
-  }
-
-  /** Removes the user from ZITADEL for good: their invite link and sign-in stop working. */
-  async deleteUser(zitadelUserId: string): Promise<void> {
-    await this.post(ZITADEL_ENDPOINTS.deleteUser, { userId: zitadelUserId });
   }
 
   /** Shuts the user out of every sign-in (state LOCKED) until unlocked. */
