@@ -9,6 +9,8 @@ import {
   type MarkBillableBody,
 } from '@bos/contracts';
 
+import { EVIDENCE_REQUIRED } from '@/lib/evidence';
+
 import { isGuid } from './status';
 
 export type FieldName = 'quotation' | 'evidence' | 'document';
@@ -72,16 +74,21 @@ export function parseMarkBillable(form: FormData): Parsed<MarkBillableInput> {
     return { ok: false, errors: { form: BROKEN } };
   }
 
-  // A typed id wins: it is for the document that is not in the order's evidence list.
+  // An uploaded file wins: it is for the document that is not in the order's evidence list.
   const documentId = text(form, 'otherDocumentId') || text(form, 'evidenceDocumentId');
   if (documentId === '') {
+    const listed = text(form, 'evidenceListed') === '1';
     return {
       ok: false,
-      errors: { document: 'Choose the document that shows this step was done.' },
+      errors: {
+        document: listed
+          ? 'Choose a document from the list, or upload the one that shows this step was done.'
+          : EVIDENCE_REQUIRED,
+      },
     };
   }
   if (!isGuid(documentId)) {
-    return { ok: false, errors: { document: 'That is not a valid document id.' } };
+    return { ok: false, errors: { document: 'That file could not be used. Upload it again.' } };
   }
   const body = MarkBillableBodySchema.safeParse({
     evidenceDocumentId: documentId,
