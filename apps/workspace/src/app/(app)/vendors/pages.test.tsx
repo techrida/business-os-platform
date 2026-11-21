@@ -33,6 +33,7 @@ vi.mock('./actions', () => ({
   grantPortalAction: vi.fn(),
   lifecycleAction: vi.fn(),
   proposeBankAction: vi.fn(),
+  updateVendorAction: vi.fn(),
 }));
 const api = vi.hoisted(() => ({
   listVendors: vi.fn(),
@@ -49,6 +50,7 @@ vi.mock('@/components/p2/customers/api', () => kyb);
 const { default: VendorsPage } = await import('./page');
 const { default: VendorPage } = await import('./[id]/page');
 const { default: NewVendorPage } = await import('./new/page');
+const { default: EditVendorPage } = await import('./[id]/edit/page');
 
 const ID = '11111111-1111-4111-8111-111111111111';
 const ACCOUNT = '22222222-2222-4222-8222-222222222222';
@@ -183,6 +185,26 @@ describe('vendor list', () => {
     expect(filtered).toContain('Clear filters');
     expect(filtered).toContain('href="/vendors?rows=50"');
     expect(await list({ page: '4' })).toContain('There are no more vendors.');
+  });
+
+  it('shows the last page for a stale page number past the end, not "Showing 0 of 12" over an empty state', async () => {
+    // The KPI counts carry no offset; the page read past the end is empty, the last page (offset 10) has rows.
+    api.listVendors.mockImplementation((_s: unknown, query: { offset?: number }) =>
+      Promise.resolve(
+        query.offset === undefined
+          ? { items: [], total: 0 }
+          : query.offset >= 20
+            ? { items: [], total: 12 }
+            : { items: [vendor(), vendor({ id: ACCOUNT, legalName: 'Second Ltd' })], total: 12 },
+      ),
+    );
+    const out = await list({ page: '5', rows: '10' });
+    expect(api.listVendors).toHaveBeenLastCalledWith(expect.anything(), { limit: 10, offset: 10 });
+    expect(out).toContain('Himal Traders Pvt. Ltd.');
+    expect(out).toContain('Showing 2 of 12 vendors');
+    expect(out).toContain('Showing 11–12 of 12');
+    expect(out).not.toContain('Showing 0 of 12');
+    expect(out).not.toContain('There are no more vendors.');
   });
 
   it('a 403 is a no-access note without a retry link', async () => {
@@ -635,5 +657,38 @@ describe('live saved grants decide Add vendor', () => {
     expect(html(await NewVendorPage())).not.toContain(DENIED);
     session.roles = ['finance'];
     expect(html(await NewVendorPage())).toContain(DENIED);
+  });
+});
+
+describe('vendor edit', () => {
+  const can = (write: boolean) => ({
+    write,
+    activate: false,
+    suspend: false,
+    block: false,
+    archive: false,
+  });
+  const edit = async () => html(await EditVendorPage({ params: Promise.resolve({ id: ID }) }));
+
+  it('shows the form when the vendor says the caller may write it', async () => {
+    api.getVendor.mockResolvedValue(vendor({ can: can(true) }));
+    const out = await edit();
+    expect(out).toContain('<form');
+    expect(out).not.toContain('You cannot edit this vendor');
+  });
+
+  it('shows the no-edit note and no form when the vendor says the caller may not write it', async () => {
+    api.getVendor.mockResolvedValue(vendor({ can: can(false) }));
+    const out = await edit();
+    expect(out).toContain('You cannot edit this vendor');
+    expect(out).toContain(`href="/vendors/${ID}"`);
+    expect(out).not.toContain('<form');
+  });
+
+  it('keeps the read-only note for a blocked vendor, whatever its flag says', async () => {
+    api.getVendor.mockResolvedValue(vendor({ status: 'blocked', can: can(false) }));
+    const out = await edit();
+    expect(out).toContain('This vendor can no longer be edited.');
+    expect(out).not.toContain('<form');
   });
 });
