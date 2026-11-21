@@ -7,6 +7,7 @@ import {
   limitOffset,
   multi,
   searchParam,
+  type CustomerActingEntity,
   type CustomerCan,
   type CustomerPortalAccess,
   type CustomerDto,
@@ -40,10 +41,12 @@ export interface CustomerList {
  * GET /v1/customers/:id: the customer plus, for staff only, its terms with the legal entities the caller can act
  * for and the name of its account owner (`people`), so the page needs no admin directory to label the owner;
  * what the caller may do with this record (`can`), whether it has a verification case (`verification`), and its
- * portal access (`portalAccess`).
+ * portal access (`portalAccess`), and the entity the caller acts for (`actingEntity`, whose terms the terms route
+ * writes).
  */
 export type CustomerDetailDto = CustomerDto & {
   accounts?: PartyAccountDto[];
+  actingEntity?: CustomerActingEntity;
   people?: PersonName[];
   can?: CustomerCan;
   verification?: CustomerVerificationPresence;
