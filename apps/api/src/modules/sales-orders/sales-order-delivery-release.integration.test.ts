@@ -195,10 +195,11 @@ afterAll(async () => {
   await testDb?.drop();
 });
 
-beforeEach(() => {
+beforeEach(async () => {
   current.scope = scopeA;
   current.role = 'sales';
   current.userId = undefined;
+  await resetTeam();
 });
 
 // ---------------------------------------------------------------------------------------- helpers
@@ -362,6 +363,51 @@ const releaseAudits = async (orderId: string) =>
       [orderId],
     )
   ).rows;
+/** The audit rows of a release under either action: the usual one and the small-team one. */
+const anyReleaseAudits = async (orderId: string) =>
+  (
+    await ownerPool.query<{ action: string; after: Record<string, unknown> }>(
+      `SELECT action, after FROM audit.audit_events WHERE entity_id = $1
+          AND action IN ('sales_order.delivery_released', 'sales_order.delivery_released_sole_eligible')`,
+      [orderId],
+    )
+  ).rows;
+
+/**
+ * Who else may release is read from the database (`app.user_roles`, the user's status and lock), not from the fake
+ * principal. The seeded users start with no mirror roles, so nobody else is eligible until a test gives roles.
+ */
+async function giveRoles(userId: string, roles: readonly RoleKey[]): Promise<void> {
+  await withTx(db, scopeA, systemActor('test'), async (tx) => {
+    for (const role of roles) {
+      await tx.execute(
+        sql`INSERT INTO app.user_roles (tenant_id, user_id, role_key) VALUES (${f.tenantId}, ${userId}, ${role})`,
+      );
+    }
+  });
+}
+
+/** An admin lock (0125): status 'inactive' with lock_reason 'admin'. */
+async function lockUser(userId: string): Promise<void> {
+  await withTx(db, scopeA, systemActor('test'), (tx) =>
+    tx.execute(
+      sql`UPDATE app.users SET status = 'inactive', lock_reason = 'admin', locked_at = now()
+           WHERE tenant_id = ${f.tenantId} AND id = ${userId}`,
+    ),
+  );
+}
+
+/** Every test starts with no mirror roles and nobody locked in the tenant, so nobody else may release. */
+async function resetTeam(): Promise<void> {
+  await withTx(db, scopeA, systemActor('test'), async (tx) => {
+    await tx.execute(sql`DELETE FROM app.user_roles WHERE tenant_id = ${f.tenantId}`);
+    await tx.execute(
+      sql`UPDATE app.users SET status = 'active', lock_reason = NULL, locked_at = NULL, locked_until = NULL
+           WHERE tenant_id = ${f.tenantId} AND lock_reason IS NOT NULL`,
+    );
+  });
+}
+
 /** The seeded user's display name; never null, so a broken join to users cannot pass as null === null. */
 const displayNameOf = async (userId: string) => {
   const name = (
@@ -495,9 +541,11 @@ describe('SalesOrdersService.releaseDelivery (F1-Q32)', () => {
     expect(parsed(await release(orderId)).deliveryReleased).toBe(true);
   });
 
-  it('never lets the order creator release it, even as Founder, and lets another Founder release above the threshold', async () => {
+  it('never lets the order creator release it while someone else may, even as Founder, and lets another Founder release above the threshold', async () => {
     await setThreshold(ONE_PAISA_BELOW);
     const orderId = await confirmedOrder();
+    // Another Founder exists, so the small-team rule (F1-Q11 a) does not apply to the creator.
+    await giveRoles(founderUser, ['founder']);
 
     as('founder');
     expect((await detailOf(orderId)).can).toMatchObject({
@@ -616,5 +664,164 @@ describe('SalesOrdersService.releaseDelivery (F1-Q32)', () => {
         [orderId],
       ),
     ).rejects.toThrow(/final/);
+  });
+});
+
+// ------------------------------------------------------------------------------- small-team rule
+
+describe('releaseDelivery: the small-team rule (F1-Q11 a)', () => {
+  const SOLE_REASON = 'Nobody else here can release; the customer collects today';
+
+  it('lets a Founder creator release alone with a reason, and audits it as a sole-eligible release', async () => {
+    await setThreshold(AMOUNT_NPR);
+    const orderId = await confirmedOrder();
+
+    as('founder');
+    expect((await detailOf(orderId)).can).toMatchObject({
+      releaseDelivery: true,
+      releaseDeliveryBlockedBy: null,
+      releaseDeliveryAllowedRoles: ['finance', 'founder'],
+      releaseSoleEligible: true,
+    });
+    const after = parsed(await release(orderId, `  ${SOLE_REASON}  `));
+    expect(after.deliveryRelease).toMatchObject({ kind: 'override', reason: SOLE_REASON });
+    expect(after.can?.releaseSoleEligible).toBe(false);
+
+    expect(await releaseRows(orderId)).toEqual([
+      {
+        released_by_user_id: f.ownerUserId,
+        order_amount_npr: AMOUNT_NPR,
+        threshold_npr: AMOUNT_NPR,
+      },
+    ]);
+    const audits = await anyReleaseAudits(orderId);
+    expect(audits).toHaveLength(1);
+    expect(audits[0]!.action).toBe('sales_order.delivery_released_sole_eligible');
+    expect(audits[0]!.after).toMatchObject({
+      deliveryReleased: true,
+      soleEligible: true,
+      reason: SOLE_REASON,
+      releaserRoles: ['founder'],
+      allowedRoles: ['finance', 'founder'],
+    });
+  });
+
+  it('refuses a sole-eligible release without a reason and writes nothing', async () => {
+    await setThreshold(AMOUNT_NPR);
+    const orderId = await confirmedOrder();
+
+    as('founder');
+    for (const blank of ['', '   ']) {
+      expect(await refusal(release(orderId, blank))).toEqual({
+        status: 400,
+        code: 'bad_request',
+        reason: 'sole_eligible_reason_required',
+      });
+    }
+    expect(await releaseRows(orderId)).toHaveLength(0);
+    expect(await anyReleaseAudits(orderId)).toHaveLength(0);
+    expect((await detailOf(orderId)).deliveryReleased).toBe(false);
+  });
+
+  it('keeps the 403 when a second eligible person exists: Finance at the threshold, Management above it', async () => {
+    const finance = await seedOtherStaffUser(db, f);
+    const management = await seedOtherStaffUser(db, f);
+    await giveRoles(finance, ['finance']);
+    await giveRoles(management, ['management']);
+
+    for (const threshold of [AMOUNT_NPR, ONE_PAISA_BELOW]) {
+      await setThreshold(threshold);
+      const orderId = await confirmedOrder();
+      as('founder');
+      expect((await detailOf(orderId)).can).toMatchObject({
+        releaseDelivery: false,
+        releaseDeliveryBlockedBy: 'requester',
+        releaseSoleEligible: false,
+      });
+      expect(await refusal(release(orderId, SOLE_REASON))).toEqual({
+        status: 403,
+        code: 'forbidden',
+        reason: 'requester_cannot_release',
+      });
+      expect(await releaseRows(orderId)).toHaveLength(0);
+      expect(await anyReleaseAudits(orderId)).toHaveLength(0);
+    }
+  });
+
+  it('counts a locked second person as absent', async () => {
+    await setThreshold(AMOUNT_NPR);
+    const finance = await seedOtherStaffUser(db, f);
+    await giveRoles(finance, ['finance']);
+    await lockUser(finance);
+    const orderId = await confirmedOrder();
+
+    as('founder');
+    expect((await detailOf(orderId)).can?.releaseSoleEligible).toBe(true);
+    expect(parsed(await release(orderId, SOLE_REASON)).deliveryReleased).toBe(true);
+    expect((await anyReleaseAudits(orderId))[0]!.action).toBe(
+      'sales_order.delivery_released_sole_eligible',
+    );
+  });
+
+  it('never applies to a creator who is not a Founder', async () => {
+    await setThreshold(AMOUNT_NPR);
+    const orderId = await confirmedOrder();
+
+    as('finance');
+    expect((await detailOf(orderId)).can).toMatchObject({
+      releaseDelivery: false,
+      releaseDeliveryBlockedBy: 'requester',
+      releaseSoleEligible: false,
+    });
+    expect(await refusal(release(orderId, SOLE_REASON))).toEqual({
+      status: 403,
+      code: 'forbidden',
+      reason: 'requester_cannot_release',
+    });
+    expect(await releaseRows(orderId)).toHaveLength(0);
+  });
+
+  it('does not count a second person whose role may not release this amount', async () => {
+    const finance = await seedOtherStaffUser(db, f);
+    const management = await seedOtherStaffUser(db, f);
+    // At the threshold only Management is there; above it only Finance.
+    for (const [threshold, other, role] of [
+      [AMOUNT_NPR, management, 'management'],
+      [ONE_PAISA_BELOW, finance, 'finance'],
+    ] as const) {
+      await resetTeam();
+      await giveRoles(other, [role]);
+      await setThreshold(threshold);
+      const orderId = await confirmedOrder();
+      as('founder');
+      expect((await detailOf(orderId)).can?.releaseSoleEligible).toBe(true);
+      expect(parsed(await release(orderId, SOLE_REASON)).deliveryReleased).toBe(true);
+      expect((await anyReleaseAudits(orderId))[0]!.after).toMatchObject({ soleEligible: true });
+    }
+  });
+
+  it('sends releaseSoleEligible false to everyone the rule does not lift', async () => {
+    await setThreshold(AMOUNT_NPR);
+    const orderId = await confirmedOrder();
+
+    // Finance who did not create it releases the usual way.
+    as('finance', financeUser);
+    expect((await detailOf(orderId)).can).toMatchObject({
+      releaseDelivery: true,
+      releaseDeliveryBlockedBy: null,
+      releaseSoleEligible: false,
+    });
+    // No permission.
+    as('accountant', financeUser);
+    expect((await detailOf(orderId)).can?.releaseSoleEligible).toBe(false);
+    // The Founder creator, until a second Founder joins the entity.
+    as('founder');
+    expect((await detailOf(orderId)).can?.releaseSoleEligible).toBe(true);
+    await giveRoles(founderUser, ['founder']);
+    expect((await detailOf(orderId)).can).toMatchObject({
+      releaseDelivery: false,
+      releaseDeliveryBlockedBy: 'requester',
+      releaseSoleEligible: false,
+    });
   });
 });
