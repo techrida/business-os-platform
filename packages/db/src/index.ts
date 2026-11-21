@@ -53,6 +53,7 @@ export * from './schema/approvals.js';
 export * from './schema/memo.js';
 export * from './schema/idempotency.js';
 export * from './schema/crm.js';
+export * from './schema/opportunity-stage-history.js';
 export * from './schema/quotations.js';
 export * from './schema/ledger.js';
 export * from './schema/sales.js';
