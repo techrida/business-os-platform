@@ -359,8 +359,9 @@ describe('D45: a follow-up planned on a deal while it changes owner', () => {
           if (blocked === undefined) await new Promise((resolve) => setImmediate(resolve));
         }
         expect(settled, 'the follow-up did not wait for the hand-over').toBe(false);
-        // It waits at the deal it reads, before choosing the assignee, not later at the insert.
-        expect(blocked).toMatch(/for share/i);
+        // It waits for the tenant audit lock withTx takes first (the hand-over holds it), before it reads the deal
+        // and chooses the assignee, not later at the insert.
+        expect(blocked).toMatch(/pg_advisory_xact_lock\(hashtextextended\('audit\.chain:'/);
       } finally {
         release();
       }

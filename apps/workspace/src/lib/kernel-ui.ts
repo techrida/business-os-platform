@@ -95,6 +95,8 @@ export function describeFailure(input: FailureInput, context: FailureContext = '
   } else if (status === 415) {
     message =
       'That file type is not accepted. Use PDF, PNG, JPEG, WebP, Word, Excel, PowerPoint or CSV.';
+  } else if (status === 503 && input.code === 'db_busy') {
+    message = 'Busy, please try again.';
   } else {
     message = 'The platform did not respond. Nothing was lost; try again in a moment.';
   }

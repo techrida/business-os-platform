@@ -834,9 +834,9 @@ describe("a lead's open follow-ups carry to the opportunity (U16-Q6)", () => {
     );
     expect(res.status, JSON.stringify(res.body)).toBe(201);
     expect(pendingAtCommit, 'the convert did not wait for the colleague').toBe(true);
-    // It waits at its first audited write, before it reads the lead's follow-ups.
+    // It waits for the tenant audit lock withTx takes first, before it reads the lead's follow-ups.
     expect(blocked).toMatchObject({ wait_event: 'advisory' });
-    expect(blocked?.query).toMatch(/insert into "app"\."idempotency_keys"/i);
+    expect(blocked?.query).toMatch(/pg_advisory_xact_lock\(hashtextextended\('audit\.chain:'/);
     const after = await activityRow(call.id);
     expect(after).toMatchObject({ leadId: lead.id, opportunityId: null });
     expect(after.completedAt).not.toBeNull();

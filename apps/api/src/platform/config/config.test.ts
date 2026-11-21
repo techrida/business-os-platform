@@ -405,6 +405,35 @@ describe('the PDF renderer (Gotenberg)', () => {
   });
 });
 
+describe('the per-transaction database timeouts', () => {
+  const worker = { DATABASE_URL: base.DATABASE_URL, VALKEY_URL: base.VALKEY_URL };
+
+  it('defaults to a 5 s lock wait and a 30 s idle transaction in both processes', () => {
+    const defaults = { DB_LOCK_TIMEOUT_MS: 5_000, DB_IDLE_IN_TX_TIMEOUT_MS: 30_000 };
+    expect(loadCoreConfig(worker, 'worker')).toMatchObject(defaults);
+    expect(loadAppConfig(base)).toMatchObject(defaults);
+  });
+
+  it('coerces the values and refuses blanks, zero, fractions and words', () => {
+    expect(
+      loadCoreConfig(
+        { ...worker, DB_LOCK_TIMEOUT_MS: '2000', DB_IDLE_IN_TX_TIMEOUT_MS: '60000' },
+        'worker',
+      ),
+    ).toMatchObject({ DB_LOCK_TIMEOUT_MS: 2_000, DB_IDLE_IN_TX_TIMEOUT_MS: 60_000 });
+    for (const bad of ['', '0', '1.5', '5s']) {
+      expect(
+        problems(() =>
+          loadCoreConfig(
+            { ...worker, DB_LOCK_TIMEOUT_MS: bad, DB_IDLE_IN_TX_TIMEOUT_MS: bad },
+            'worker',
+          ),
+        ).map((p) => p.split(':')[0]),
+      ).toEqual(['DB_LOCK_TIMEOUT_MS', 'DB_IDLE_IN_TX_TIMEOUT_MS']);
+    }
+  });
+});
+
 describe('FIELD_ENC_KEYS (the field-encryption keyring)', () => {
   const key1 = randomBytes(32).toString('base64');
   const key2 = randomBytes(32).toString('base64');

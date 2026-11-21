@@ -1,11 +1,13 @@
+import { DrizzleQueryError } from 'drizzle-orm/errors';
 import { PgDialect } from 'drizzle-orm/pg-core';
 import type { SQL } from 'drizzle-orm';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { principal } from '../authz/principal';
 import { ctx } from '../tenancy/request-context';
 import type { Db } from './db.module';
 import { type Actor, type TxScope, requestTx, systemActor, withTx } from './tx';
+import { type TxObserver, configureTx, setTxObserver } from './tx-settings';
 
 vi.mock('../tenancy/request-context', () => ({ ctx: vi.fn() }));
 vi.mock('../authz/principal', () => ({ principal: vi.fn() }));
@@ -28,7 +30,8 @@ const SETTINGS = [
  * test sees the text and the bound parameters the driver would send.
  */
 function fakeDb() {
-  const executed: { text: string; params: unknown[] }[] = [];
+  /** `lockTimeout`: the lock_timeout in force when the statement started, as a lock wait would see it. */
+  const executed: { text: string; params: unknown[]; lockTimeout: string | null }[] = [];
   const session = new Map<string, string>();
   let local = new Map<string, string>();
   const dialect = new PgDialect();
@@ -36,7 +39,7 @@ function fakeDb() {
   const tx = {
     execute: (query: SQL) => {
       const { sql: text, params } = dialect.sqlToQuery(query);
-      executed.push({ text, params });
+      executed.push({ text, params, lockTimeout: local.get('lock_timeout') ?? null });
       for (const m of text.matchAll(/set_config\('([a-z_.]+)',\s*\$(\d+),\s*(true|false)\)/g)) {
         const [, name, index, isLocal] = m as unknown as [string, string, string, string];
         (isLocal === 'true' ? local : session).set(name, String(params[Number(index) - 1]));
@@ -71,12 +74,13 @@ const actor: Actor = {
 };
 
 describe('withTx', () => {
-  it('sets all seven settings in one first statement, visible inside fn and gone after commit', async () => {
+  it('sets all seven bos.* settings in one first statement, visible inside fn and gone after commit', async () => {
     const { db, executed, setting } = fakeDb();
     let seenInside: Record<string, string | null> = {};
 
     const result = await withTx(db, scope, actor, () => {
-      expect(executed).toHaveLength(1);
+      expect(executed).toHaveLength(2); // the settings, then the tenant audit lock
+      expect(executed[0]?.text).toContain("set_config('bos.tenant_id'");
       seenInside = Object.fromEntries(SETTINGS.map((n) => [n, setting(n)]));
       return Promise.resolve('done');
     });
@@ -98,11 +102,11 @@ describe('withTx', () => {
     const { db, executed } = fakeDb();
     await withTx(db, scope, actor, () => Promise.resolve());
 
-    expect(executed).toHaveLength(1);
+    expect(executed).toHaveLength(2);
     const [stmt] = executed;
     expect(stmt?.text.trimStart().startsWith('SELECT')).toBe(true);
-    expect(stmt?.text.match(/set_config\(/g)).toHaveLength(7);
-    expect(stmt?.text.match(/, true\)/g)).toHaveLength(7);
+    expect(stmt?.text.match(/set_config\(/g)).toHaveLength(9);
+    expect(stmt?.text.match(/, true\)/g)).toHaveLength(9);
     expect(stmt?.text).not.toContain('tenant-1');
     expect(stmt?.params).toEqual([
       'tenant-1',
@@ -112,6 +116,8 @@ describe('withTx', () => {
       'corr-12345678',
       '203.0.113.7',
       'vitest/1',
+      '5000ms',
+      '30000ms',
     ]);
   });
 
@@ -160,6 +166,155 @@ describe('withTx', () => {
     );
     expect(transaction).not.toHaveBeenCalled();
     expect(fn).not.toHaveBeenCalled();
+  });
+});
+
+describe('withTx tenant audit lock', () => {
+  // The exact lock audit.append takes (packages/db/migrations/0008_audit_hardening.sql), keyed on the uuid as text.
+  const LOCK =
+    "SELECT pg_advisory_xact_lock(hashtextextended('audit.chain:' || $1::uuid::text, 0))";
+  const TENANT = '7c9e6679-7425-40de-944b-e07fc1f90ae7';
+
+  it.each([
+    ['by default', undefined],
+    ["with audit: 'first'", { audit: 'first' as const }],
+  ])('%s takes the lock after the settings and before fn runs', async (_, options) => {
+    const { db, executed } = fakeDb();
+    let seenInside: typeof executed = [];
+
+    await withTx(
+      db,
+      { ...scope, tenantId: TENANT },
+      actor,
+      () => {
+        seenInside = [...executed];
+        return Promise.resolve();
+      },
+      options,
+    );
+
+    expect(seenInside).toHaveLength(2);
+    expect(seenInside[0]?.text).toContain('set_config(');
+    // The wait is already bounded by lock_timeout, so a long holder ends in 55P03, not a stuck connection.
+    expect(seenInside[1]).toEqual({ text: LOCK, params: [TENANT], lockTimeout: '5000ms' });
+  });
+
+  it("with audit: 'lazy' takes no lock: only the settings statement runs before fn", async () => {
+    const { db, executed } = fakeDb();
+    let seenInside = -1;
+    await withTx(
+      db,
+      scope,
+      actor,
+      () => {
+        seenInside = executed.length;
+        return Promise.resolve();
+      },
+      { audit: 'lazy' },
+    );
+    expect(seenInside).toBe(1);
+    expect(executed.some((e) => e.text.includes('pg_advisory'))).toBe(false);
+  });
+
+  it('keys the lock on the tenant of the scope, bound as a parameter', async () => {
+    const { db, executed } = fakeDb();
+    const other = 'f47ac10b-58cc-4372-a567-0e02b2c3d479';
+    await withTx(db, { ...scope, tenantId: TENANT }, actor, () => Promise.resolve());
+    await withTx(db, { ...scope, tenantId: other }, actor, () => Promise.resolve());
+    const locks = executed.filter((e) => e.text === LOCK);
+    expect(locks.map((e) => e.params)).toEqual([[TENANT], [other]]);
+    expect(locks[0]?.text).not.toContain(TENANT);
+  });
+});
+
+describe('withTx timeouts', () => {
+  afterEach(() => {
+    configureTx({});
+  });
+
+  it('sets lock_timeout and idle_in_transaction_session_timeout for this transaction only', async () => {
+    const { db, setting } = fakeDb();
+    const seen: (string | null)[] = [];
+    await withTx(db, scope, actor, () => {
+      seen.push(setting('lock_timeout'), setting('idle_in_transaction_session_timeout'));
+      return Promise.resolve();
+    });
+    expect(seen).toEqual(['5000ms', '30000ms']);
+    expect(setting('lock_timeout')).toBeNull();
+  });
+
+  it('uses what configureTx set, and the defaults again for values left out', async () => {
+    const { db, setting } = fakeDb();
+    const seen: (string | null)[] = [];
+    const read = () => {
+      seen.push(setting('lock_timeout'), setting('idle_in_transaction_session_timeout'));
+      return Promise.resolve();
+    };
+    configureTx({ lockTimeoutMs: 1234, idleInTxTimeoutMs: 60_000 });
+    await withTx(db, scope, actor, read);
+    configureTx({ lockTimeoutMs: 250 });
+    await withTx(db, scope, actor, read);
+    expect(seen).toEqual(['1234ms', '60000ms', '250ms', '30000ms']);
+  });
+
+  it.each([-1, 1.5, Number.NaN, Number.POSITIVE_INFINITY])(
+    'refuses %s, so nothing but an integer reaches the setting',
+    (value) => {
+      expect(() => configureTx({ lockTimeoutMs: value })).toThrow(
+        'lockTimeoutMs must be a non-negative integer',
+      );
+      expect(() => configureTx({ idleInTxTimeoutMs: value })).toThrow(
+        'idleInTxTimeoutMs must be a non-negative integer',
+      );
+    },
+  );
+});
+
+describe('withTx observer', () => {
+  const observer = { observeTx: vi.fn(), countDbBusy: vi.fn() } satisfies TxObserver;
+
+  beforeEach(() => {
+    observer.observeTx.mockReset();
+    observer.countDbBusy.mockReset();
+    setTxObserver(observer);
+  });
+  afterEach(() => {
+    setTxObserver(undefined);
+  });
+
+  it('reports a commit with its setup and total time', async () => {
+    const { db } = fakeDb();
+    await withTx(db, scope, actor, () => Promise.resolve());
+    expect(observer.observeTx).toHaveBeenCalledTimes(1);
+    const [outcome, setup, total] = observer.observeTx.mock.calls[0] as [string, number, number];
+    expect(outcome).toBe('commit');
+    expect(setup).toBeGreaterThanOrEqual(0);
+    expect(total).toBeGreaterThanOrEqual(setup);
+    expect(observer.countDbBusy).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ['40P01', 'deadlock'],
+    ['55P03', 'lock_timeout'],
+  ])('counts a %s rollback as %s, also through the drizzle wrapper', async (code, kind) => {
+    const { db } = fakeDb();
+    const pg = Object.assign(new Error('busy'), { code });
+    const wrapped = new DrizzleQueryError('update app.x set y = 1', [], pg);
+    await expect(withTx(db, scope, actor, () => Promise.reject(wrapped))).rejects.toBe(wrapped);
+    expect(observer.observeTx).toHaveBeenCalledWith(
+      'rollback',
+      expect.any(Number),
+      expect.any(Number),
+    );
+    expect(observer.countDbBusy).toHaveBeenCalledExactlyOnceWith(kind);
+  });
+
+  it('reports other rollbacks without counting them as busy', async () => {
+    const { db } = fakeDb();
+    const boom = Object.assign(new Error('dup'), { code: '23505' });
+    await expect(withTx(db, scope, actor, () => Promise.reject(boom))).rejects.toBe(boom);
+    expect(observer.observeTx).toHaveBeenCalledTimes(1);
+    expect(observer.countDbBusy).not.toHaveBeenCalled();
   });
 });
 

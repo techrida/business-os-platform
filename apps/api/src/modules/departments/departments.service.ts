@@ -51,7 +51,7 @@ import { AuditService } from '../../platform/audit/audit.service';
 import { AuthzService } from '../../platform/authz/authz.service';
 import { can } from '../../platform/authz/can';
 import { DB, type Db, type DbTransaction } from '../../platform/db/db.module';
-import { type TxScope, withTx } from '../../platform/db/tx';
+import { type TxOptions, type TxScope, withTx } from '../../platform/db/tx';
 import { searchPage } from '../../platform/list';
 import { personLabel, UNNAMED_USER } from '../../platform/users/person-names';
 import { lockAccessRevision } from '../access-settings/access-revision';
@@ -105,6 +105,10 @@ function staleDepartmentException(): ConflictException {
     message: 'This department was changed by someone else. Reload and try again.',
   });
 }
+
+// A department write takes the access-revision lock first, as the ZITADEL admin paths do (they cannot take the
+// tenant audit lock first). Taking the audit lock before it would invert the order against them.
+const AFTER_ACCESS_LOCK: TxOptions = { audit: 'lazy' };
 
 function departmentLockKey(scope: TxScope): string {
   return `departments:${scope.tenantId}:${scope.organizationId}`;
@@ -514,139 +518,145 @@ export class DepartmentsAdminService {
 
     let detail: AdminDepartmentDetail;
     try {
-      detail = await withTx(this.db, scope, actor, async (tx) => {
-        await this.lockForDepartmentWrite(tx, scope);
-        await this.assertUniqueActiveName(tx, scope, body.name);
+      detail = await withTx(
+        this.db,
+        scope,
+        actor,
+        async (tx) => {
+          await this.lockForDepartmentWrite(tx, scope);
+          await this.assertUniqueActiveName(tx, scope, body.name);
 
-        let headBefore: {
-          departmentId: string | null;
-          level: AccessLevel;
-        } | null = null;
+          let headBefore: {
+            departmentId: string | null;
+            level: AccessLevel;
+          } | null = null;
 
-        if (headUserId !== null) {
-          const [headRow] = await tx
-            .select({
-              userId: userEntities.userId,
-              departmentId: userEntities.departmentId,
-              level: userEntities.level,
-              status: users.status,
-            })
-            .from(userEntities)
-            .innerJoin(
-              users,
-              and(eq(users.tenantId, userEntities.tenantId), eq(users.id, userEntities.userId)),
-            )
-            .innerJoin(
-              idpOrgs,
-              and(eq(idpOrgs.tenantId, users.tenantId), eq(idpOrgs.id, users.idpOrgId)),
-            )
-            .where(
-              and(
-                eq(userEntities.tenantId, scope.tenantId),
-                eq(userEntities.organizationId, scope.organizationId),
-                eq(userEntities.userId, headUserId),
-                eq(idpOrgs.kind, 'staff'),
-              ),
-            )
-            .limit(1);
+          if (headUserId !== null) {
+            const [headRow] = await tx
+              .select({
+                userId: userEntities.userId,
+                departmentId: userEntities.departmentId,
+                level: userEntities.level,
+                status: users.status,
+              })
+              .from(userEntities)
+              .innerJoin(
+                users,
+                and(eq(users.tenantId, userEntities.tenantId), eq(users.id, userEntities.userId)),
+              )
+              .innerJoin(
+                idpOrgs,
+                and(eq(idpOrgs.tenantId, users.tenantId), eq(idpOrgs.id, users.idpOrgId)),
+              )
+              .where(
+                and(
+                  eq(userEntities.tenantId, scope.tenantId),
+                  eq(userEntities.organizationId, scope.organizationId),
+                  eq(userEntities.userId, headUserId),
+                  eq(idpOrgs.kind, 'staff'),
+                ),
+              )
+              .limit(1);
 
-          if (headRow === undefined || headRow.status !== 'active') {
-            const msg = 'Department head must be an active staff member of this legal entity.';
-            throw new UnprocessableEntityException({
-              code: 'unprocessable',
-              message: msg,
-              details: { headUserId: msg },
-            });
-          }
-          headBefore = {
-            departmentId: headRow.departmentId,
-            level: headRow.level,
-          };
-        }
-
-        const [created] = await tx
-          .insert(departments)
-          .values({
-            tenantId: scope.tenantId,
-            organizationId: scope.organizationId,
-            name: body.name,
-            headUserId,
-            status: 'active',
-            version: 1,
-          })
-          .returning({ id: departments.id });
-
-        if (created === undefined) {
-          throw new Error('departments insert returned no row');
-        }
-
-        await this.audit.record(tx, {
-          action: 'department.created',
-          entityType: 'departments',
-          entityId: created.id,
-          after: { name: body.name, headUserId, status: 'active', version: 1 },
-        });
-
-        if (headUserId !== null && headBefore !== null) {
-          // Migration 0079's trigger clears any previous department head_user_id and keeps the new
-          // department's head_user_id in sync; migration 0086 sets department_since = now().
-          await tx
-            .update(userEntities)
-            .set({ departmentId: created.id, level: 'head' })
-            .where(
-              and(
-                eq(userEntities.tenantId, scope.tenantId),
-                eq(userEntities.organizationId, scope.organizationId),
-                eq(userEntities.userId, headUserId),
-              ),
-            );
-
-          if (headBefore.departmentId !== null) {
-            await this.audit.record(tx, {
-              action: 'department.member.moved',
-              entityType: 'departments',
-              entityId: created.id,
-              before: { departmentId: headBefore.departmentId, level: headBefore.level },
-              after: { departmentId: created.id, level: 'head' },
-              meta: { userId: headUserId },
-            });
-            if (headBefore.level === 'head') {
-              await this.audit.record(tx, {
-                action: 'department.head.changed',
-                entityType: 'departments',
-                entityId: headBefore.departmentId,
-                before: { headUserId },
-                after: { headUserId: null },
-                meta: { userId: null },
+            if (headRow === undefined || headRow.status !== 'active') {
+              const msg = 'Department head must be an active staff member of this legal entity.';
+              throw new UnprocessableEntityException({
+                code: 'unprocessable',
+                message: msg,
+                details: { headUserId: msg },
               });
             }
-          } else {
-            await this.audit.record(tx, {
-              action: 'department.member.added',
-              entityType: 'departments',
-              entityId: created.id,
-              before: { departmentId: null, level: headBefore.level },
-              after: { departmentId: created.id, level: 'head' },
-              meta: { userId: headUserId },
-            });
+            headBefore = {
+              departmentId: headRow.departmentId,
+              level: headRow.level,
+            };
+          }
+
+          const [created] = await tx
+            .insert(departments)
+            .values({
+              tenantId: scope.tenantId,
+              organizationId: scope.organizationId,
+              name: body.name,
+              headUserId,
+              status: 'active',
+              version: 1,
+            })
+            .returning({ id: departments.id });
+
+          if (created === undefined) {
+            throw new Error('departments insert returned no row');
           }
 
           await this.audit.record(tx, {
-            action: 'department.head.changed',
+            action: 'department.created',
             entityType: 'departments',
             entityId: created.id,
-            before: { headUserId: null },
-            after: { headUserId },
-            meta: { userId: headUserId },
+            after: { name: body.name, headUserId, status: 'active', version: 1 },
           });
 
-          await this.revisions.bump(tx, scope, {
-            actorUserId: actor.kind === 'user' ? actor.id : null,
-          });
-        }
+          if (headUserId !== null && headBefore !== null) {
+            // Migration 0079's trigger clears any previous department head_user_id and keeps the new
+            // department's head_user_id in sync; migration 0086 sets department_since = now().
+            await tx
+              .update(userEntities)
+              .set({ departmentId: created.id, level: 'head' })
+              .where(
+                and(
+                  eq(userEntities.tenantId, scope.tenantId),
+                  eq(userEntities.organizationId, scope.organizationId),
+                  eq(userEntities.userId, headUserId),
+                ),
+              );
 
-        return this.loadDetail(tx, scope, created.id);
-      });
+            if (headBefore.departmentId !== null) {
+              await this.audit.record(tx, {
+                action: 'department.member.moved',
+                entityType: 'departments',
+                entityId: created.id,
+                before: { departmentId: headBefore.departmentId, level: headBefore.level },
+                after: { departmentId: created.id, level: 'head' },
+                meta: { userId: headUserId },
+              });
+              if (headBefore.level === 'head') {
+                await this.audit.record(tx, {
+                  action: 'department.head.changed',
+                  entityType: 'departments',
+                  entityId: headBefore.departmentId,
+                  before: { headUserId },
+                  after: { headUserId: null },
+                  meta: { userId: null },
+                });
+              }
+            } else {
+              await this.audit.record(tx, {
+                action: 'department.member.added',
+                entityType: 'departments',
+                entityId: created.id,
+                before: { departmentId: null, level: headBefore.level },
+                after: { departmentId: created.id, level: 'head' },
+                meta: { userId: headUserId },
+              });
+            }
+
+            await this.audit.record(tx, {
+              action: 'department.head.changed',
+              entityType: 'departments',
+              entityId: created.id,
+              before: { headUserId: null },
+              after: { headUserId },
+              meta: { userId: headUserId },
+            });
+
+            await this.revisions.bump(tx, scope, {
+              actorUserId: actor.kind === 'user' ? actor.id : null,
+            });
+          }
+
+          return this.loadDetail(tx, scope, created.id);
+        },
+        AFTER_ACCESS_LOCK,
+      );
     } catch (error) {
       if (isUniqueConstraint(error, ACTIVE_NAME_INDEX)) {
         throw duplicateNameException(body.name);
@@ -666,60 +676,66 @@ export class DepartmentsAdminService {
     const { scope, actor } = this.caller.tx();
 
     try {
-      return await withTx(this.db, scope, actor, async (tx) => {
-        await this.lockForDepartmentWrite(tx, scope);
+      return await withTx(
+        this.db,
+        scope,
+        actor,
+        async (tx) => {
+          await this.lockForDepartmentWrite(tx, scope);
 
-        const [dept] = await tx
-          .select({
-            id: departments.id,
-            name: departments.name,
-            status: departments.status,
-            version: departments.version,
-          })
-          .from(departments)
-          .where(scoped(scope).where(departments, eq(departments.id, id)))
-          .limit(1);
+          const [dept] = await tx
+            .select({
+              id: departments.id,
+              name: departments.name,
+              status: departments.status,
+              version: departments.version,
+            })
+            .from(departments)
+            .where(scoped(scope).where(departments, eq(departments.id, id)))
+            .limit(1);
 
-        if (dept === undefined) {
-          throw new NotFoundException('Department not found');
-        }
-        if (dept.version !== body.expectedVersion) {
-          throw staleDepartmentException();
-        }
-        if (dept.status === 'active') {
-          await this.assertUniqueActiveName(tx, scope, body.name, dept.id);
-        }
+          if (dept === undefined) {
+            throw new NotFoundException('Department not found');
+          }
+          if (dept.version !== body.expectedVersion) {
+            throw staleDepartmentException();
+          }
+          if (dept.status === 'active') {
+            await this.assertUniqueActiveName(tx, scope, body.name, dept.id);
+          }
 
-        const nextVersion = dept.version + 1;
-        const updated = await tx
-          .update(departments)
-          .set({
-            name: body.name,
-            version: nextVersion,
-            updatedAt: sql`now()`,
-          })
-          .where(
-            scoped(scope).where(
-              departments,
-              and(eq(departments.id, dept.id), eq(departments.version, body.expectedVersion)),
-            ),
-          )
-          .returning({ id: departments.id });
+          const nextVersion = dept.version + 1;
+          const updated = await tx
+            .update(departments)
+            .set({
+              name: body.name,
+              version: nextVersion,
+              updatedAt: sql`now()`,
+            })
+            .where(
+              scoped(scope).where(
+                departments,
+                and(eq(departments.id, dept.id), eq(departments.version, body.expectedVersion)),
+              ),
+            )
+            .returning({ id: departments.id });
 
-        if (updated.length === 0) {
-          throw staleDepartmentException();
-        }
+          if (updated.length === 0) {
+            throw staleDepartmentException();
+          }
 
-        await this.audit.record(tx, {
-          action: 'department.renamed',
-          entityType: 'departments',
-          entityId: dept.id,
-          before: { name: dept.name, version: dept.version },
-          after: { name: body.name, version: nextVersion },
-        });
+          await this.audit.record(tx, {
+            action: 'department.renamed',
+            entityType: 'departments',
+            entityId: dept.id,
+            before: { name: dept.name, version: dept.version },
+            after: { name: body.name, version: nextVersion },
+          });
 
-        return this.loadDetail(tx, scope, dept.id);
-      });
+          return this.loadDetail(tx, scope, dept.id);
+        },
+        AFTER_ACCESS_LOCK,
+      );
     } catch (error) {
       if (isUniqueConstraint(error, ACTIVE_NAME_INDEX)) {
         throw duplicateNameException(body.name);
@@ -733,307 +749,11 @@ export class DepartmentsAdminService {
     this.assertCanWrite();
     const { scope, actor } = this.caller.tx();
 
-    const { detail, shouldInvalidate } = await withTx(this.db, scope, actor, async (tx) => {
-      await this.lockForDepartmentWrite(tx, scope);
-
-      const [dept] = await tx
-        .select({
-          id: departments.id,
-          name: departments.name,
-          status: departments.status,
-          headUserId: departments.headUserId,
-          version: departments.version,
-        })
-        .from(departments)
-        .where(scoped(scope).where(departments, eq(departments.id, id)))
-        .limit(1);
-
-      if (dept === undefined) {
-        throw new NotFoundException('Department not found');
-      }
-      if (dept.version !== body.expectedVersion) {
-        throw staleDepartmentException();
-      }
-      if (dept.status === 'retired') {
-        throw new UnprocessableEntityException({
-          code: 'unprocessable',
-          message: 'This department is already retired.',
-        });
-      }
-
-      // Lock this department's membership rows before reading them. A concurrent member move or level change
-      // (an UPDATE, which takes the same row lock) either commits first and is re-checked here, or waits for this
-      // retire, so a member who just left is not moved again. Single-table lock: see no-locking-of.test.ts.
-      await tx
-        .select({ userId: userEntities.userId })
-        .from(userEntities)
-        .where(
-          and(
-            eq(userEntities.tenantId, scope.tenantId),
-            eq(userEntities.organizationId, scope.organizationId),
-            eq(userEntities.departmentId, dept.id),
-          ),
-        )
-        .for('update');
-
-      // Invited and inactive members count too: on first login or reactivation they would otherwise keep this
-      // department's reach.
-      const members = await tx
-        .select({
-          userId: userEntities.userId,
-          level: userEntities.level,
-          status: users.status,
-        })
-        .from(userEntities)
-        .innerJoin(
-          users,
-          and(eq(users.tenantId, userEntities.tenantId), eq(users.id, userEntities.userId)),
-        )
-        .innerJoin(
-          idpOrgs,
-          and(eq(idpOrgs.tenantId, users.tenantId), eq(idpOrgs.id, users.idpOrgId)),
-        )
-        .where(
-          and(
-            eq(userEntities.tenantId, scope.tenantId),
-            eq(userEntities.organizationId, scope.organizationId),
-            eq(userEntities.departmentId, dept.id),
-            eq(idpOrgs.kind, 'staff'),
-          ),
-        );
-
-      // The dialog shows the active members (the detail's list); anyone who joined or left since
-      // it opened would otherwise be moved without the caller seeing them.
-      if (body.expectedMemberIds !== undefined) {
-        const expected = new Set(body.expectedMemberIds);
-        const current = new Set(members.filter((m) => m.status === 'active').map((m) => m.userId));
-        if (
-          expected.size !== current.size ||
-          [...current].some((userId) => !expected.has(userId))
-        ) {
-          throw new ConflictException({
-            code: 'members_changed',
-            message: `People in ${dept.name} changed. Check the list and try again.`,
-          });
-        }
-      }
-
-      let touchedAccess = dept.headUserId !== null;
-
-      if (members.length > 0) {
-        const activeCount = members.filter((m) => m.status === 'active').length;
-        // Only active members need an explicit choice; people who were only invited are unassigned
-        // when none is given, so a department with just invited members can still be retired.
-        if (body.moveMembersTo === undefined && activeCount > 0) {
-          const message = `Cannot retire ${dept.name} while ${activeCount} active member(s) remain. Choose a destination department or explicitly unassign them.`;
-          throw new UnprocessableEntityException({
-            code: 'unprocessable',
-            message,
-            details: {
-              moveMembersTo: 'Required while active members remain in this department.',
-              activeMembers: activeCount,
-            },
-          });
-        }
-        const destinationId = body.moveMembersTo ?? null;
-
-        const memberIds = members.map((m) => m.userId);
-        // Inactive members are unassigned whatever the destination, so reactivating one later grants no
-        // department reach that nobody chose.
-        const inactiveMembers = members.filter((m) => m.status === 'inactive');
-        const movingMembers = members.filter((m) => m.status !== 'inactive');
-        if (destinationId !== null) {
-          if (destinationId === dept.id) {
-            const message =
-              'Destination department must be different from the department being retired.';
-            throw new UnprocessableEntityException({
-              code: 'unprocessable',
-              message,
-              details: { moveMembersTo: message },
-            });
-          }
-          const [target] = await tx
-            .select({ id: departments.id, status: departments.status })
-            .from(departments)
-            .where(scoped(scope).where(departments, eq(departments.id, destinationId)))
-            .limit(1);
-          if (target === undefined || target.status !== 'active') {
-            const message =
-              'Destination department must be an active department in this legal entity.';
-            throw new UnprocessableEntityException({
-              code: 'unprocessable',
-              message,
-              details: { moveMembersTo: message },
-            });
-          }
-
-          // Demote any moved head to manager so migration 0079's trigger does not replace the
-          // destination department's head.
-          const movedHeadIds = movingMembers.filter((m) => m.level === 'head').map((m) => m.userId);
-          const movedOtherIds = movingMembers
-            .filter((m) => m.level !== 'head')
-            .map((m) => m.userId);
-          if (movedHeadIds.length > 0) {
-            await tx
-              .update(userEntities)
-              .set({ departmentId: target.id, level: 'manager' })
-              .where(
-                and(
-                  eq(userEntities.tenantId, scope.tenantId),
-                  eq(userEntities.organizationId, scope.organizationId),
-                  inArray(userEntities.userId, movedHeadIds),
-                ),
-              );
-          }
-          if (movedOtherIds.length > 0) {
-            await tx
-              .update(userEntities)
-              .set({ departmentId: target.id })
-              .where(
-                and(
-                  eq(userEntities.tenantId, scope.tenantId),
-                  eq(userEntities.organizationId, scope.organizationId),
-                  inArray(userEntities.userId, movedOtherIds),
-                ),
-              );
-          }
-
-          for (const member of movingMembers) {
-            const nextLevel: AccessLevel = member.level === 'head' ? 'manager' : member.level;
-            await this.audit.record(tx, {
-              action: 'department.member.moved',
-              entityType: 'departments',
-              entityId: target.id,
-              before: { departmentId: dept.id, level: member.level },
-              after: { departmentId: target.id, level: nextLevel },
-              meta: { userId: member.userId, reason: 'department_retired' },
-            });
-          }
-
-          if (inactiveMembers.length > 0) {
-            await tx
-              .update(userEntities)
-              .set({ departmentId: null, level: 'staff' })
-              .where(
-                and(
-                  eq(userEntities.tenantId, scope.tenantId),
-                  eq(userEntities.organizationId, scope.organizationId),
-                  inArray(
-                    userEntities.userId,
-                    inactiveMembers.map((m) => m.userId),
-                  ),
-                ),
-              );
-            for (const member of inactiveMembers) {
-              await this.audit.record(tx, {
-                action: 'department.member.removed',
-                entityType: 'departments',
-                entityId: dept.id,
-                before: { departmentId: dept.id, level: member.level },
-                after: { departmentId: null, level: 'staff' },
-                meta: { userId: member.userId, reason: 'department_retired' },
-              });
-            }
-          }
-        } else {
-          // Explicit null: unassign all active, invited and inactive members and reset level to staff (0079 check).
-          await tx
-            .update(userEntities)
-            .set({ departmentId: null, level: 'staff' })
-            .where(
-              and(
-                eq(userEntities.tenantId, scope.tenantId),
-                eq(userEntities.organizationId, scope.organizationId),
-                inArray(userEntities.userId, memberIds),
-              ),
-            );
-
-          for (const member of members) {
-            await this.audit.record(tx, {
-              action: 'department.member.removed',
-              entityType: 'departments',
-              entityId: dept.id,
-              before: { departmentId: dept.id, level: member.level },
-              after: { departmentId: null, level: 'staff' },
-              meta: { userId: member.userId, reason: 'department_retired' },
-            });
-          }
-        }
-
-        if (dept.headUserId !== null) {
-          await this.audit.record(tx, {
-            action: 'department.head.changed',
-            entityType: 'departments',
-            entityId: dept.id,
-            before: { headUserId: dept.headUserId },
-            after: { headUserId: null },
-            meta: { userId: null, reason: 'department_retired' },
-          });
-        }
-        touchedAccess = true;
-      }
-
-      const nextVersion = dept.version + 1;
-      const updated = await tx
-        .update(departments)
-        .set({
-          status: 'retired',
-          retiredAt: sql`now()`,
-          headUserId: null,
-          version: nextVersion,
-          updatedAt: sql`now()`,
-        })
-        .where(
-          scoped(scope).where(
-            departments,
-            and(eq(departments.id, dept.id), eq(departments.version, body.expectedVersion)),
-          ),
-        )
-        .returning({ id: departments.id });
-
-      if (updated.length === 0) {
-        throw staleDepartmentException();
-      }
-
-      await this.audit.record(tx, {
-        action: 'department.retired',
-        entityType: 'departments',
-        entityId: dept.id,
-        before: { status: 'active', headUserId: dept.headUserId, version: dept.version },
-        after: {
-          status: 'retired',
-          headUserId: null,
-          version: nextVersion,
-          moveMembersTo: body.moveMembersTo ?? null,
-          movedCount: members.length,
-        },
-      });
-
-      if (touchedAccess) {
-        await this.revisions.bump(tx, scope, {
-          actorUserId: actor.kind === 'user' ? actor.id : null,
-        });
-      }
-
-      return {
-        detail: await this.loadDetail(tx, scope, dept.id),
-        shouldInvalidate: touchedAccess,
-      };
-    });
-
-    if (shouldInvalidate) {
-      await this.authz.invalidate(scope.tenantId, scope.organizationId);
-    }
-    return detail;
-  }
-
-  /** POST /v1/admin/departments/:id/restore */
-  async restore(id: string, body: RestoreDepartmentBody): Promise<AdminDepartmentDetail> {
-    this.assertCanWrite();
-    const { scope, actor } = this.caller.tx();
-
-    try {
-      return await withTx(this.db, scope, actor, async (tx) => {
+    const { detail, shouldInvalidate } = await withTx(
+      this.db,
+      scope,
+      actor,
+      async (tx) => {
         await this.lockForDepartmentWrite(tx, scope);
 
         const [dept] = await tx
@@ -1041,6 +761,7 @@ export class DepartmentsAdminService {
             id: departments.id,
             name: departments.name,
             status: departments.status,
+            headUserId: departments.headUserId,
             version: departments.version,
           })
           .from(departments)
@@ -1053,21 +774,236 @@ export class DepartmentsAdminService {
         if (dept.version !== body.expectedVersion) {
           throw staleDepartmentException();
         }
-        if (dept.status === 'active') {
+        if (dept.status === 'retired') {
           throw new UnprocessableEntityException({
             code: 'unprocessable',
-            message: 'This department is already active.',
+            message: 'This department is already retired.',
           });
         }
 
-        await this.assertUniqueActiveName(tx, scope, dept.name, dept.id);
+        // Lock this department's membership rows before reading them. A concurrent member move or level change
+        // (an UPDATE, which takes the same row lock) either commits first and is re-checked here, or waits for this
+        // retire, so a member who just left is not moved again. Single-table lock: see no-locking-of.test.ts.
+        await tx
+          .select({ userId: userEntities.userId })
+          .from(userEntities)
+          .where(
+            and(
+              eq(userEntities.tenantId, scope.tenantId),
+              eq(userEntities.organizationId, scope.organizationId),
+              eq(userEntities.departmentId, dept.id),
+            ),
+          )
+          .for('update');
+
+        // Invited and inactive members count too: on first login or reactivation they would otherwise keep this
+        // department's reach.
+        const members = await tx
+          .select({
+            userId: userEntities.userId,
+            level: userEntities.level,
+            status: users.status,
+          })
+          .from(userEntities)
+          .innerJoin(
+            users,
+            and(eq(users.tenantId, userEntities.tenantId), eq(users.id, userEntities.userId)),
+          )
+          .innerJoin(
+            idpOrgs,
+            and(eq(idpOrgs.tenantId, users.tenantId), eq(idpOrgs.id, users.idpOrgId)),
+          )
+          .where(
+            and(
+              eq(userEntities.tenantId, scope.tenantId),
+              eq(userEntities.organizationId, scope.organizationId),
+              eq(userEntities.departmentId, dept.id),
+              eq(idpOrgs.kind, 'staff'),
+            ),
+          );
+
+        // The dialog shows the active members (the detail's list); anyone who joined or left since
+        // it opened would otherwise be moved without the caller seeing them.
+        if (body.expectedMemberIds !== undefined) {
+          const expected = new Set(body.expectedMemberIds);
+          const current = new Set(
+            members.filter((m) => m.status === 'active').map((m) => m.userId),
+          );
+          if (
+            expected.size !== current.size ||
+            [...current].some((userId) => !expected.has(userId))
+          ) {
+            throw new ConflictException({
+              code: 'members_changed',
+              message: `People in ${dept.name} changed. Check the list and try again.`,
+            });
+          }
+        }
+
+        let touchedAccess = dept.headUserId !== null;
+
+        if (members.length > 0) {
+          const activeCount = members.filter((m) => m.status === 'active').length;
+          // Only active members need an explicit choice; people who were only invited are unassigned
+          // when none is given, so a department with just invited members can still be retired.
+          if (body.moveMembersTo === undefined && activeCount > 0) {
+            const message = `Cannot retire ${dept.name} while ${activeCount} active member(s) remain. Choose a destination department or explicitly unassign them.`;
+            throw new UnprocessableEntityException({
+              code: 'unprocessable',
+              message,
+              details: {
+                moveMembersTo: 'Required while active members remain in this department.',
+                activeMembers: activeCount,
+              },
+            });
+          }
+          const destinationId = body.moveMembersTo ?? null;
+
+          const memberIds = members.map((m) => m.userId);
+          // Inactive members are unassigned whatever the destination, so reactivating one later grants no
+          // department reach that nobody chose.
+          const inactiveMembers = members.filter((m) => m.status === 'inactive');
+          const movingMembers = members.filter((m) => m.status !== 'inactive');
+          if (destinationId !== null) {
+            if (destinationId === dept.id) {
+              const message =
+                'Destination department must be different from the department being retired.';
+              throw new UnprocessableEntityException({
+                code: 'unprocessable',
+                message,
+                details: { moveMembersTo: message },
+              });
+            }
+            const [target] = await tx
+              .select({ id: departments.id, status: departments.status })
+              .from(departments)
+              .where(scoped(scope).where(departments, eq(departments.id, destinationId)))
+              .limit(1);
+            if (target === undefined || target.status !== 'active') {
+              const message =
+                'Destination department must be an active department in this legal entity.';
+              throw new UnprocessableEntityException({
+                code: 'unprocessable',
+                message,
+                details: { moveMembersTo: message },
+              });
+            }
+
+            // Demote any moved head to manager so migration 0079's trigger does not replace the
+            // destination department's head.
+            const movedHeadIds = movingMembers
+              .filter((m) => m.level === 'head')
+              .map((m) => m.userId);
+            const movedOtherIds = movingMembers
+              .filter((m) => m.level !== 'head')
+              .map((m) => m.userId);
+            if (movedHeadIds.length > 0) {
+              await tx
+                .update(userEntities)
+                .set({ departmentId: target.id, level: 'manager' })
+                .where(
+                  and(
+                    eq(userEntities.tenantId, scope.tenantId),
+                    eq(userEntities.organizationId, scope.organizationId),
+                    inArray(userEntities.userId, movedHeadIds),
+                  ),
+                );
+            }
+            if (movedOtherIds.length > 0) {
+              await tx
+                .update(userEntities)
+                .set({ departmentId: target.id })
+                .where(
+                  and(
+                    eq(userEntities.tenantId, scope.tenantId),
+                    eq(userEntities.organizationId, scope.organizationId),
+                    inArray(userEntities.userId, movedOtherIds),
+                  ),
+                );
+            }
+
+            for (const member of movingMembers) {
+              const nextLevel: AccessLevel = member.level === 'head' ? 'manager' : member.level;
+              await this.audit.record(tx, {
+                action: 'department.member.moved',
+                entityType: 'departments',
+                entityId: target.id,
+                before: { departmentId: dept.id, level: member.level },
+                after: { departmentId: target.id, level: nextLevel },
+                meta: { userId: member.userId, reason: 'department_retired' },
+              });
+            }
+
+            if (inactiveMembers.length > 0) {
+              await tx
+                .update(userEntities)
+                .set({ departmentId: null, level: 'staff' })
+                .where(
+                  and(
+                    eq(userEntities.tenantId, scope.tenantId),
+                    eq(userEntities.organizationId, scope.organizationId),
+                    inArray(
+                      userEntities.userId,
+                      inactiveMembers.map((m) => m.userId),
+                    ),
+                  ),
+                );
+              for (const member of inactiveMembers) {
+                await this.audit.record(tx, {
+                  action: 'department.member.removed',
+                  entityType: 'departments',
+                  entityId: dept.id,
+                  before: { departmentId: dept.id, level: member.level },
+                  after: { departmentId: null, level: 'staff' },
+                  meta: { userId: member.userId, reason: 'department_retired' },
+                });
+              }
+            }
+          } else {
+            // Explicit null: unassign all active, invited and inactive members and reset level to staff (0079 check).
+            await tx
+              .update(userEntities)
+              .set({ departmentId: null, level: 'staff' })
+              .where(
+                and(
+                  eq(userEntities.tenantId, scope.tenantId),
+                  eq(userEntities.organizationId, scope.organizationId),
+                  inArray(userEntities.userId, memberIds),
+                ),
+              );
+
+            for (const member of members) {
+              await this.audit.record(tx, {
+                action: 'department.member.removed',
+                entityType: 'departments',
+                entityId: dept.id,
+                before: { departmentId: dept.id, level: member.level },
+                after: { departmentId: null, level: 'staff' },
+                meta: { userId: member.userId, reason: 'department_retired' },
+              });
+            }
+          }
+
+          if (dept.headUserId !== null) {
+            await this.audit.record(tx, {
+              action: 'department.head.changed',
+              entityType: 'departments',
+              entityId: dept.id,
+              before: { headUserId: dept.headUserId },
+              after: { headUserId: null },
+              meta: { userId: null, reason: 'department_retired' },
+            });
+          }
+          touchedAccess = true;
+        }
 
         const nextVersion = dept.version + 1;
         const updated = await tx
           .update(departments)
           .set({
-            status: 'active',
-            retiredAt: null,
+            status: 'retired',
+            retiredAt: sql`now()`,
+            headUserId: null,
             version: nextVersion,
             updatedAt: sql`now()`,
           })
@@ -1084,15 +1020,111 @@ export class DepartmentsAdminService {
         }
 
         await this.audit.record(tx, {
-          action: 'department.restored',
+          action: 'department.retired',
           entityType: 'departments',
           entityId: dept.id,
-          before: { status: 'retired', version: dept.version },
-          after: { status: 'active', version: nextVersion },
+          before: { status: 'active', headUserId: dept.headUserId, version: dept.version },
+          after: {
+            status: 'retired',
+            headUserId: null,
+            version: nextVersion,
+            moveMembersTo: body.moveMembersTo ?? null,
+            movedCount: members.length,
+          },
         });
 
-        return this.loadDetail(tx, scope, dept.id);
-      });
+        if (touchedAccess) {
+          await this.revisions.bump(tx, scope, {
+            actorUserId: actor.kind === 'user' ? actor.id : null,
+          });
+        }
+
+        return {
+          detail: await this.loadDetail(tx, scope, dept.id),
+          shouldInvalidate: touchedAccess,
+        };
+      },
+      AFTER_ACCESS_LOCK,
+    );
+
+    if (shouldInvalidate) {
+      await this.authz.invalidate(scope.tenantId, scope.organizationId);
+    }
+    return detail;
+  }
+
+  /** POST /v1/admin/departments/:id/restore */
+  async restore(id: string, body: RestoreDepartmentBody): Promise<AdminDepartmentDetail> {
+    this.assertCanWrite();
+    const { scope, actor } = this.caller.tx();
+
+    try {
+      return await withTx(
+        this.db,
+        scope,
+        actor,
+        async (tx) => {
+          await this.lockForDepartmentWrite(tx, scope);
+
+          const [dept] = await tx
+            .select({
+              id: departments.id,
+              name: departments.name,
+              status: departments.status,
+              version: departments.version,
+            })
+            .from(departments)
+            .where(scoped(scope).where(departments, eq(departments.id, id)))
+            .limit(1);
+
+          if (dept === undefined) {
+            throw new NotFoundException('Department not found');
+          }
+          if (dept.version !== body.expectedVersion) {
+            throw staleDepartmentException();
+          }
+          if (dept.status === 'active') {
+            throw new UnprocessableEntityException({
+              code: 'unprocessable',
+              message: 'This department is already active.',
+            });
+          }
+
+          await this.assertUniqueActiveName(tx, scope, dept.name, dept.id);
+
+          const nextVersion = dept.version + 1;
+          const updated = await tx
+            .update(departments)
+            .set({
+              status: 'active',
+              retiredAt: null,
+              version: nextVersion,
+              updatedAt: sql`now()`,
+            })
+            .where(
+              scoped(scope).where(
+                departments,
+                and(eq(departments.id, dept.id), eq(departments.version, body.expectedVersion)),
+              ),
+            )
+            .returning({ id: departments.id });
+
+          if (updated.length === 0) {
+            throw staleDepartmentException();
+          }
+
+          await this.audit.record(tx, {
+            action: 'department.restored',
+            entityType: 'departments',
+            entityId: dept.id,
+            before: { status: 'retired', version: dept.version },
+            after: { status: 'active', version: nextVersion },
+          });
+
+          return this.loadDetail(tx, scope, dept.id);
+        },
+        AFTER_ACCESS_LOCK,
+      );
     } catch (error) {
       if (isUniqueConstraint(error, ACTIVE_NAME_INDEX)) {
         // Re-read name is unnecessary; a generic name clash message still gives 422 on `name`.
