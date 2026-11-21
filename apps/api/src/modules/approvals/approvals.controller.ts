@@ -8,6 +8,7 @@ import {
   type ApprovalActionBody,
   ApprovalActionBodySchema,
   type ApprovalRequestDto,
+  type InboxCountDto,
   type InboxItemDto,
   multi,
   type RoutePlan,
@@ -126,6 +127,13 @@ export class ApprovalsController {
     const { items, total } = await this.approvals.inboxPage(parseOr400(InboxQuerySchema, query));
     setTotalCount(res, total);
     return items;
+  }
+
+  /** The inbox badge: the list's total without the items, and the same 403 for a caller with no assignment. */
+  @Get('inbox/count')
+  @AnyAuthenticated()
+  inboxCount(): Promise<InboxCountDto> {
+    return this.approvals.inboxCount();
   }
 
   @Get('requests/:id')

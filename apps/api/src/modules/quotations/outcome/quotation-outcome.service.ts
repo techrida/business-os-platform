@@ -126,8 +126,9 @@ export class QuotationOutcomeService {
 
   /**
    * Accepts a Sent version inside the caller's `tx`: the acceptance row, the version to Accepted, history, audit,
-   * the opportunity to Won (with this version), the draft sales order (F1-Q25) and a notice to the quotation's
-   * owner. The caller must call `NotifyService.nudge()` after its transaction commits.
+   * the opportunity to Won (with this version), the draft sales order (F1-Q25), a notice to the quotation's
+   * owner and notices to the Accountants (a new draft order; a portal acceptance's pending evidence). The caller
+   * must call `NotifyService.nudge()` after its transaction commits.
    */
   async accept(tx: DbTransaction, input: AcceptQuotationInput): Promise<AcceptanceDto> {
     const { scope } = await readTxContext(tx);
@@ -170,6 +171,25 @@ export class QuotationOutcomeService {
       version,
       null,
     );
+    // The Accountant confirms the draft, so every Accountant hears of it (in-app only). An order that already
+    // existed or could not be drafted is not a new draft: no notice.
+    if (draft.drafted) {
+      await this.notify.notifyRole(tx, 'accountant', {
+        title: `Draft sales order for ${quotation.number} waits for you`,
+        body: `${quotation.number} was accepted and its sales order was drafted; confirm it to start billing.`,
+        link: `/sales-orders/${draft.orderId}`,
+        dedupeKey: `sales_order.drafted:${draft.orderId}`,
+      });
+    }
+    // A portal acceptance stands with its evidence pending (F1-Q28); a staff entry is confirmed as it is recorded.
+    if (input.actorKind !== 'staff') {
+      await this.notify.notifyRole(tx, 'accountant', {
+        title: `Evidence for ${quotation.number} waits for confirmation`,
+        body: `The customer accepted ${quotation.number} in the portal; its evidence waits for staff to confirm.`,
+        link: `/quotations/${quotation.id}`,
+        dedupeKey: `quotation.evidence_pending:${version.id}`,
+      });
+    }
     if (!draft.drafted && draft.reason === 'refused' && quotation.ownerUserId !== null) {
       await this.notify.notifyUser(tx, {
         userId: quotation.ownerUserId,
