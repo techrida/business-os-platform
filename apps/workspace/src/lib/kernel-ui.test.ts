@@ -58,6 +58,14 @@ describe('describeFailure', () => {
     expect(describeFailure({ status: 0 }).definite).toBe(false);
   });
 
+  it('asks for a retry when the database was busy, keeping the idempotency key', () => {
+    const f = describeFailure({ status: 503, code: 'db_busy' }, 'submit');
+    expect(f).toEqual({ message: 'Busy, please try again.', reload: false, definite: false });
+    expect(describeFailure({ status: 503, code: 'unavailable' }).message).toBe(
+      'The platform did not respond. Nothing was lost; try again in a moment.',
+    );
+  });
+
   it('shows the API detail only on 400', () => {
     expect(describeFailure({ status: 400, detail: 'amount: bad' }).message).toContain(
       'amount: bad',

@@ -55,6 +55,8 @@ const {
   createBillAction,
 } = await import('./actions');
 
+import { EXPENSE_ACCOUNT_REFUSED } from './_lib/forms';
+
 const BILL = '11111111-1111-4111-8111-111111111111';
 const SUB = '22222222-2222-4222-8222-222222222222';
 const ACCOUNT = '33333333-3333-4333-8333-333333333333';
@@ -215,6 +217,39 @@ describe('create a standalone bill', () => {
     expect(out.reload).toBeUndefined();
     expect(out.key).not.toBe(KEY);
   });
+
+  it('puts an EXPENSE_ACCOUNT_INVALID refusal on the line account field and closes the attempt', async () => {
+    api.createBill.mockRejectedValue(apiError(422, 'EXPENSE_ACCOUNT_INVALID'));
+    const out = await createBillAction(prev, form(fields));
+    expect(out.errors).toEqual({ '0.accountId': EXPENSE_ACCOUNT_REFUSED });
+    expect(out.error).toBeUndefined();
+    expect(out.key).not.toBe(KEY);
+  });
+
+  it('marks only the line whose account is not among the active ones the page loaded', async () => {
+    api.createBill.mockRejectedValue(apiError(422, 'EXPENSE_ACCOUNT_INVALID'));
+    const out = await createBillAction(
+      prev,
+      form({
+        ...fields,
+        lineCount: '2',
+        'line:1:accountId': BILL,
+        'line:1:taxCodeId': TAX,
+        'line:1:quantity': '1',
+        'line:1:unitPrice': '10.00',
+        activeAccountIds: ACCOUNT,
+      }),
+    );
+    // Fails on the old code: it marked the active line 0 too.
+    expect(out.errors).toEqual({ '1.accountId': EXPENSE_ACCOUNT_REFUSED });
+  });
+
+  it('keeps the general wording for another 422', async () => {
+    api.createBill.mockRejectedValue(apiError(422, 'TAX_CODE_NOT_FOUND'));
+    const out = await createBillAction(prev, form(fields));
+    expect(out.errors).toBeUndefined();
+    expect(out.error).toContain('VAT code');
+  });
 });
 
 const apiError = (status: number, code: string) =>
@@ -326,6 +361,22 @@ describe('convert a submission', () => {
     // a second row nobody filled in
     'line:1:poLineId': '',
     ...over,
+  });
+
+  it('marks only the sent line when the API refuses its expense account', async () => {
+    api.convertBillSubmission.mockRejectedValue(apiError(422, 'EXPENSE_ACCOUNT_INVALID'));
+    const out = await convertSubmissionAction(prev, form(lineFields()));
+    expect(out.errors).toEqual({ '0.accountId': EXPENSE_ACCOUNT_REFUSED });
+    expect(out.key).not.toBe(KEY);
+  });
+
+  it('still marks the sent line when its account looked active on the page (retired since)', async () => {
+    api.convertBillSubmission.mockRejectedValue(apiError(422, 'EXPENSE_ACCOUNT_INVALID'));
+    const out = await convertSubmissionAction(
+      prev,
+      form(lineFields({ activeAccountIds: ACCOUNT })),
+    );
+    expect(out.errors).toEqual({ '0.accountId': EXPENSE_ACCOUNT_REFUSED });
   });
 
   it('sends only the lines, as typed, and goes to the new bill', async () => {

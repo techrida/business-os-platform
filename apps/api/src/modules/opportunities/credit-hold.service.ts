@@ -11,7 +11,7 @@ import { eq, sql } from 'drizzle-orm';
 import { AuditService } from '../../platform/audit/audit.service';
 import { AuthzService } from '../../platform/authz/authz.service';
 import { DB, type Db } from '../../platform/db/db.module';
-import { withTx, type DbTransaction, type TxScope } from '../../platform/db/tx';
+import { withTx, type DbTransaction, type TxScope, READ_ONLY } from '../../platform/db/tx';
 import { nameIn, personNameMap } from '../../platform/users/person-names';
 import { creditPosition } from './credit-hold';
 import { OpportunitiesCaller } from './opportunities.caller';
@@ -33,14 +33,20 @@ export class CreditHoldService {
   async get(id: string): Promise<CreditHoldDto> {
     const { scope, actor } = this.caller.current();
     this.assertMay(scope);
-    return withTx(this.db, scope, actor, async (tx) => {
-      const [row] = await tx
-        .select()
-        .from(opportunities)
-        .where(scoped(scope).where(opportunities, eq(opportunities.id, id)));
-      if (row === undefined) throw notFound();
-      return this.toDto(tx, scope, row);
-    });
+    return withTx(
+      this.db,
+      scope,
+      actor,
+      async (tx) => {
+        const [row] = await tx
+          .select()
+          .from(opportunities)
+          .where(scoped(scope).where(opportunities, eq(opportunities.id, id)));
+        if (row === undefined) throw notFound();
+        return this.toDto(tx, scope, row);
+      },
+      READ_ONLY,
+    );
   }
 
   /**

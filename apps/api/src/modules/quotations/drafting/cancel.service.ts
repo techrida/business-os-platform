@@ -10,9 +10,10 @@
 // version's open approval request is cancelled first, with the same reason, so it leaves every inbox. An Approved
 // or Sent version is not cancelled here: it has been, or may be, shown to the customer.
 //
-// Lock order: the quotation row, then the approval request (ApprovalsService.cancel), then the version (the final
-// UPDATE). ApprovalsService.act takes the request before the version too, so an approver deciding while the owner
-// cancels waits instead of deadlocking; whichever commits second gets 409.
+// Lock order: the tenant audit lock (withTx takes it first), then the quotation row, the approval request
+// (ApprovalsService.cancel) and the version (the final UPDATE). ApprovalsService.act also starts with the tenant audit
+// lock, so an approver deciding while the owner cancels waits for it instead of deadlocking on the request; whichever
+// commits second gets 409.
 import {
   canCancelQuotation,
   type CancelQuotationBody,

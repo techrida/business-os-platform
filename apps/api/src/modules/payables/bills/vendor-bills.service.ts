@@ -74,7 +74,7 @@ import { can } from '../../../platform/authz/can';
 import type { DenyReason, Principal, ResourceRef } from '../../../platform/authz/principal';
 import { DB, type Db, type DbTransaction } from '../../../platform/db/db.module';
 import { withIdempotency } from '../../../platform/db/idempotency';
-import { withTx, type TxScope } from '../../../platform/db/tx';
+import { withTx, type TxScope, READ_ONLY } from '../../../platform/db/tx';
 import { searchPage } from '../../../platform/list';
 import {
   assertNotInfected,
@@ -83,6 +83,7 @@ import {
 import { NumberingService } from '../../../platform/settings/numbering.service';
 import { SettingsService } from '../../../platform/settings/settings.service';
 import { ApprovalsService } from '../../approvals/requests.service';
+import { CompanyAccountsLookup } from '../../company-accounts/company-accounts.lookup';
 import { LedgerService } from '../../ledger/ledger.service';
 import { CLAIMING_REQUEST_STATUSES } from '../payment-requests/payment-request.rules';
 import {
@@ -305,6 +306,9 @@ export class VendorBillsService {
     private readonly ledger: LedgerService = new LedgerService(),
     @Optional()
     private readonly numbering: NumberingService = new NumberingService(),
+    // Same reason: the lookup holds no state, so a hand-built service checks accounts the way the module's does.
+    @Optional()
+    private readonly accounts: CompanyAccountsLookup = new CompanyAccountsLookup(),
   ) {}
 
   // ------------------------------------------------------------------------------------------------- reads
@@ -318,81 +322,96 @@ export class VendorBillsService {
     query: ListBillsQuery,
   ): Promise<{ rows: Omit<VendorBillDto, 'lines'>[]; total: number }> {
     const { scope, actor, principal } = this.caller.current();
-    return withTx(this.db, scope, actor, async (tx) => {
-      const vendorJoin = and(
-        eq(vendors.tenantId, vendorBills.tenantId),
-        eq(vendors.id, vendorBills.vendorId),
-      );
-      const page = await searchPage(tx, {
-        q: query.q,
-        columns: [vendorBills.number, vendorBills.vendorInvoiceNo, vendors.legalName],
-        // The read scope rides in `where`, so the rows and the total both stop at it.
-        where: and(
-          scopeWhereFor(principal, vendorBills, 'payables.bill.read'),
-          query.status === undefined || query.status.length === 0
-            ? undefined
-            : inArray(vendorBills.status, query.status),
-        ),
-        orderBy: [desc(vendorBills.createdAt), desc(vendorBills.id)],
-        limit: query.limit,
-        offset: query.offset,
-        rows: (reader, p) =>
-          reader
-            .select({
-              bill: vendorBills,
-              vendorName: vendors.legalName,
-              purchaseOrderNumber: purchaseOrders.number,
-            })
-            .from(vendorBills)
-            .innerJoin(vendors, vendorJoin)
-            .leftJoin(purchaseOrders, poOfBill())
-            .where(p.where)
-            .orderBy(...p.orderBy)
-            .limit(p.limit)
-            .offset(p.offset),
-        count: async (reader, where) => {
-          const [row] = await reader
-            .select({ n: sql<number>`count(*)::int` })
-            .from(vendorBills)
-            .innerJoin(vendors, vendorJoin)
-            .where(where);
-          return row?.n ?? 0;
-        },
-      });
-      return {
-        rows: page.rows.map((row) => {
-          const { lines: _lines, ...rest } = toDto(
-            row.bill,
-            row.vendorName,
-            row.purchaseOrderNumber,
-            [],
-            [],
-          );
-          return { ...rest, can: billCan(principal, row.bill) };
-        }),
-        total: page.total,
-      };
-    });
+    return withTx(
+      this.db,
+      scope,
+      actor,
+      async (tx) => {
+        const vendorJoin = and(
+          eq(vendors.tenantId, vendorBills.tenantId),
+          eq(vendors.id, vendorBills.vendorId),
+        );
+        const page = await searchPage(tx, {
+          q: query.q,
+          columns: [vendorBills.number, vendorBills.vendorInvoiceNo, vendors.legalName],
+          // The read scope rides in `where`, so the rows and the total both stop at it.
+          where: and(
+            scopeWhereFor(principal, vendorBills, 'payables.bill.read'),
+            query.status === undefined || query.status.length === 0
+              ? undefined
+              : inArray(vendorBills.status, query.status),
+          ),
+          orderBy: [desc(vendorBills.createdAt), desc(vendorBills.id)],
+          limit: query.limit,
+          offset: query.offset,
+          rows: (reader, p) =>
+            reader
+              .select({
+                bill: vendorBills,
+                vendorName: vendors.legalName,
+                purchaseOrderNumber: purchaseOrders.number,
+              })
+              .from(vendorBills)
+              .innerJoin(vendors, vendorJoin)
+              .leftJoin(purchaseOrders, poOfBill())
+              .where(p.where)
+              .orderBy(...p.orderBy)
+              .limit(p.limit)
+              .offset(p.offset),
+          count: async (reader, where) => {
+            const [row] = await reader
+              .select({ n: sql<number>`count(*)::int` })
+              .from(vendorBills)
+              .innerJoin(vendors, vendorJoin)
+              .where(where);
+            return row?.n ?? 0;
+          },
+        });
+        return {
+          rows: page.rows.map((row) => {
+            const { lines: _lines, ...rest } = toDto(
+              row.bill,
+              row.vendorName,
+              row.purchaseOrderNumber,
+              [],
+              [],
+            );
+            return { ...rest, can: billCan(principal, row.bill) };
+          }),
+          total: page.total,
+        };
+      },
+      READ_ONLY,
+    );
   }
 
   /** 404 outside the acting entity and outside the caller's `payables.bill.read` scope (the list's rule). */
   async get(id: string): Promise<VendorBillDto> {
     const { scope, actor, principal } = this.caller.current();
-    return withTx(this.db, scope, actor, async (tx) => {
-      const [visible] = await tx
-        .select({
-          tenantId: vendorBills.tenantId,
-          organizationId: vendorBills.organizationId,
-          enteredBy: vendorBills.enteredBy,
-        })
-        .from(vendorBills)
-        .where(
-          and(scopeWhereFor(principal, vendorBills, 'payables.bill.read'), eq(vendorBills.id, id)),
-        )
-        .limit(1);
-      if (visible === undefined) throw notFound('Bill');
-      return { ...(await this.dto(tx, scope, id)), can: billCan(principal, visible) };
-    });
+    return withTx(
+      this.db,
+      scope,
+      actor,
+      async (tx) => {
+        const [visible] = await tx
+          .select({
+            tenantId: vendorBills.tenantId,
+            organizationId: vendorBills.organizationId,
+            enteredBy: vendorBills.enteredBy,
+          })
+          .from(vendorBills)
+          .where(
+            and(
+              scopeWhereFor(principal, vendorBills, 'payables.bill.read'),
+              eq(vendorBills.id, id),
+            ),
+          )
+          .limit(1);
+        if (visible === undefined) throw notFound('Bill');
+        return { ...(await this.dto(tx, scope, id)), can: billCan(principal, visible) };
+      },
+      READ_ONLY,
+    );
   }
 
   // ------------------------------------------------------------------------------------------------- create
@@ -411,7 +430,12 @@ export class VendorBillsService {
       return await withTx(this.db, scope, actor, async (tx) => {
         const done = await withIdempotency(
           tx,
-          { command: 'payables.bill.create', key: idempotencyKey, body },
+          {
+            command: 'payables.bill.create',
+            key: idempotencyKey,
+            // The entity is part of the request, so a retry made while acting in another entity is refused, not replayed.
+            body: { ...body, organizationId: scope.organizationId },
+          },
           async () => {
             const bill =
               body.sourceSubmissionId === undefined
@@ -463,7 +487,7 @@ export class VendorBillsService {
           {
             command: 'payables.bill.convert_submission',
             key: idempotencyKey,
-            body: { submissionId, body },
+            body: { submissionId, body, organizationId: scope.organizationId },
           },
           async () => {
             const sub = await this.lockSubmission(tx, scope, submissionId);
@@ -717,6 +741,11 @@ export class VendorBillsService {
       lineAmounts(l.quantity, l.unitPrice, rates.get(l.taxCodeId) ?? 0),
     );
     const totals = billTotals(amounts);
+    // Last check before the first write: 422 EXPENSE_ACCOUNT_INVALID unless every line books to an active expense
+    // account of this entity. A refused bill writes no row, line or audit (bill numbers are issued at submit).
+    await this.accounts.assertExpenseAccountsUsable(tx, scope, [
+      ...new Set(body.lines.map((l) => l.accountId)),
+    ]);
     const [bill] = await tx
       .insert(vendorBills)
       .values({
@@ -1366,100 +1395,106 @@ export class VendorBillsService {
    */
   async vatRegister(from: string, to: string): Promise<VatRegisterDto> {
     const { scope, actor } = this.caller.current();
-    return withTx(this.db, scope, actor, async (tx) => {
-      const bills = await tx
-        .select({
-          id: vendorBills.id,
-          kind: vendorBills.kind,
-          number: vendorBills.number,
-          vendorId: vendorBills.vendorId,
-          vendorInvoiceNo: vendorBills.vendorInvoiceNo,
-          invoiceDate: vendorBills.invoiceDate,
-          vendorName: vendors.legalName,
-          vendorPan: vendors.pan,
-        })
-        .from(vendorBills)
-        .innerJoin(
-          vendors,
-          and(eq(vendors.tenantId, vendorBills.tenantId), eq(vendors.id, vendorBills.vendorId)),
-        )
-        .where(
-          scoped(scope).where(
-            vendorBills,
-            and(
-              inArray(vendorBills.status, [...VAT_REGISTER_STATUSES]),
-              between(vendorBills.invoiceDate, from, to),
+    return withTx(
+      this.db,
+      scope,
+      actor,
+      async (tx) => {
+        const bills = await tx
+          .select({
+            id: vendorBills.id,
+            kind: vendorBills.kind,
+            number: vendorBills.number,
+            vendorId: vendorBills.vendorId,
+            vendorInvoiceNo: vendorBills.vendorInvoiceNo,
+            invoiceDate: vendorBills.invoiceDate,
+            vendorName: vendors.legalName,
+            vendorPan: vendors.pan,
+          })
+          .from(vendorBills)
+          .innerJoin(
+            vendors,
+            and(eq(vendors.tenantId, vendorBills.tenantId), eq(vendors.id, vendorBills.vendorId)),
+          )
+          .where(
+            scoped(scope).where(
+              vendorBills,
+              and(
+                inArray(vendorBills.status, [...VAT_REGISTER_STATUSES]),
+                between(vendorBills.invoiceDate, from, to),
+              ),
             ),
-          ),
-        )
-        .orderBy(
-          asc(vendorBills.invoiceDate),
-          asc(vendorBills.vendorInvoiceNo),
-          asc(vendorBills.id),
-        );
-      const lines =
-        bills.length === 0
-          ? []
-          : await tx
-              .select({
-                billId: vendorBillLines.vendorBillId,
-                net: vendorBillLines.netAmount,
-                vat: vendorBillLines.vatAmount,
-              })
-              .from(vendorBillLines)
-              .innerJoin(
-                taxCodes,
-                and(
-                  eq(taxCodes.tenantId, vendorBillLines.tenantId),
-                  eq(taxCodes.id, vendorBillLines.taxCodeId),
-                ),
-              )
-              .where(
-                scoped(scope).where(
-                  vendorBillLines,
+          )
+          .orderBy(
+            asc(vendorBills.invoiceDate),
+            asc(vendorBills.vendorInvoiceNo),
+            asc(vendorBills.id),
+          );
+        const lines =
+          bills.length === 0
+            ? []
+            : await tx
+                .select({
+                  billId: vendorBillLines.vendorBillId,
+                  net: vendorBillLines.netAmount,
+                  vat: vendorBillLines.vatAmount,
+                })
+                .from(vendorBillLines)
+                .innerJoin(
+                  taxCodes,
                   and(
-                    inArray(
-                      vendorBillLines.vendorBillId,
-                      bills.map((b) => b.id),
-                    ),
-                    eq(taxCodes.creditable, true),
+                    eq(taxCodes.tenantId, vendorBillLines.tenantId),
+                    eq(taxCodes.id, vendorBillLines.taxCodeId),
                   ),
-                ),
-              );
-      const byBill = new Map<string, { net: Decimal; vat: Decimal }>();
-      for (const l of lines) {
-        const acc = byBill.get(l.billId) ?? { net: new Decimal(0), vat: new Decimal(0) };
-        byBill.set(l.billId, { net: acc.net.plus(l.net), vat: acc.vat.plus(l.vat) });
-      }
-      let totalNet = new Decimal(0);
-      let totalVat = new Decimal(0);
-      const rows = bills.map((b): VatRegisterRowDto => {
-        const sign = b.kind === 'vendor_credit_note' ? -1 : 1;
-        const sums = byBill.get(b.id) ?? { net: new Decimal(0), vat: new Decimal(0) };
-        const net = sums.net.times(sign);
-        const vat = sums.vat.times(sign);
-        totalNet = totalNet.plus(net);
-        totalVat = totalVat.plus(vat);
+                )
+                .where(
+                  scoped(scope).where(
+                    vendorBillLines,
+                    and(
+                      inArray(
+                        vendorBillLines.vendorBillId,
+                        bills.map((b) => b.id),
+                      ),
+                      eq(taxCodes.creditable, true),
+                    ),
+                  ),
+                );
+        const byBill = new Map<string, { net: Decimal; vat: Decimal }>();
+        for (const l of lines) {
+          const acc = byBill.get(l.billId) ?? { net: new Decimal(0), vat: new Decimal(0) };
+          byBill.set(l.billId, { net: acc.net.plus(l.net), vat: acc.vat.plus(l.vat) });
+        }
+        let totalNet = new Decimal(0);
+        let totalVat = new Decimal(0);
+        const rows = bills.map((b): VatRegisterRowDto => {
+          const sign = b.kind === 'vendor_credit_note' ? -1 : 1;
+          const sums = byBill.get(b.id) ?? { net: new Decimal(0), vat: new Decimal(0) };
+          const net = sums.net.times(sign);
+          const vat = sums.vat.times(sign);
+          totalNet = totalNet.plus(net);
+          totalVat = totalVat.plus(vat);
+          return {
+            vendorBillId: b.id,
+            billNumber: b.number,
+            vendorPartyId: b.vendorId,
+            vendorName: b.vendorName,
+            vendorPan: b.vendorPan,
+            vendorInvoiceNo: b.vendorInvoiceNo,
+            invoiceDate: b.invoiceDate,
+            invoiceDateBs: formatBs(invoiceInstant(b.invoiceDate), 'YYYY-MM-DD'),
+            taxableAmount: net.toFixed(2),
+            vatAmount: vat.toFixed(2),
+          };
+        });
         return {
-          vendorBillId: b.id,
-          billNumber: b.number,
-          vendorPartyId: b.vendorId,
-          vendorName: b.vendorName,
-          vendorPan: b.vendorPan,
-          vendorInvoiceNo: b.vendorInvoiceNo,
-          invoiceDate: b.invoiceDate,
-          invoiceDateBs: formatBs(invoiceInstant(b.invoiceDate), 'YYYY-MM-DD'),
-          taxableAmount: net.toFixed(2),
-          vatAmount: vat.toFixed(2),
+          from,
+          to,
+          rows,
+          total: { taxableAmount: totalNet.toFixed(2), vatAmount: totalVat.toFixed(2) },
         };
-      });
-      return {
-        from,
-        to,
-        rows,
-        total: { taxableAmount: totalNet.toFixed(2), vatAmount: totalVat.toFixed(2) },
-      };
-    });
+      },
+      READ_ONLY,
+    );
   }
 
   // ------------------------------------------------------------------------------------------------- helpers

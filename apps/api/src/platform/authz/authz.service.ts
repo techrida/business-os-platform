@@ -9,7 +9,7 @@ import { eq, or, type SQL, sql } from 'drizzle-orm';
 import type { AnyPgColumn } from 'drizzle-orm/pg-core';
 
 import { DB, type Db } from '../db/db.module';
-import { systemActor, withTx } from '../db/tx';
+import { systemActor, UNAUDITED_WRITE, withTx } from '../db/tx';
 import { can } from './can';
 import { type Principal, type ResourceRef, type ScopableTable, principal } from './principal';
 import { type RecordReach, assignedToSql, ownedViaSql, recordReachOf } from './record-reach';
@@ -209,6 +209,7 @@ export class AuthzService {
             set: { version: sql`${authzVersions.version} + 1`, updatedAt: sql`now()` },
           });
       },
+      UNAUDITED_WRITE,
     );
     this.roleCache.forget(tenantId, organizationId);
   }
