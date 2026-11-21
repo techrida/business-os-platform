@@ -7,7 +7,7 @@
 // the credit-hold page, the override and the sales order gate: they must agree, or a deal the gate holds could not
 // be overridden.
 import Decimal from 'decimal.js';
-import { sql } from 'drizzle-orm';
+import { type SQL, sql } from 'drizzle-orm';
 
 import type { DbTransaction, TxScope } from '../../platform/db/tx';
 
@@ -80,15 +80,13 @@ export function overrideCovers(overrideOrderValue: string | null, orderValue: st
  * it is issued and an order counts here only for what no issued invoice covers, so nothing is counted twice; a
  * draft, submitted or proforma invoice is no receivable and does not reduce it. A draft order (made on acceptance,
  * F1-Q25) is not confirmed and counts through the quotation's pending value instead (pendingOrderValue).
+ *
+ * A scalar subquery of the statement that also reads the receivables (see creditPosition): the two parts must see one
+ * snapshot, or an invoice issued between two statements would leave both.
  */
-export async function uninvoicedOrderBalance(
-  tx: DbTransaction,
-  scope: TxScope,
-  customerPartyId: string,
-): Promise<string> {
-  const rows = await tx.execute<{ uninvoiced: string }>(sql`
+function uninvoicedOrderBalanceSql(scope: TxScope, customerPartyId: string): SQL {
+  return sql`(
     SELECT coalesce(sum(round(greatest(so.total - coalesce(billed.amount, 0), 0) * so.fx_rate, 2)), 0)::numeric(18, 2)::text
-             AS uninvoiced
       FROM app.sales_orders so
       LEFT JOIN LATERAL (
              SELECT sum(i.total) AS amount
@@ -103,8 +101,7 @@ export async function uninvoicedOrderBalance(
      WHERE so.tenant_id = ${scope.tenantId}::uuid
        AND so.organization_id = ${scope.organizationId}::uuid
        AND so.customer_party_id = ${customerPartyId}::uuid
-       AND so.status IN ('confirmed', 'completed')`);
-  return new Decimal(rows.rows[0]?.uninvoiced ?? '0').toFixed(2);
+       AND so.status IN ('confirmed', 'completed'))`;
 }
 
 /**
@@ -165,27 +162,36 @@ export async function creditPosition(
   customerPartyId: string,
   pending: PendingOrder,
 ): Promise<CreditPosition> {
-  const exposureRows = await tx.execute<{ exposure: string }>(sql`
-    SELECT coalesce(sum(round(
-             CASE WHEN b.direction = 'debit' THEN b.open_amount ELSE -b.open_amount END * oi.fx_rate
-           , 2)), 0)::numeric(18, 2)::text AS exposure
-      FROM app.open_item_balances b
-      JOIN app.open_items oi
-        ON oi.tenant_id = b.tenant_id AND oi.organization_id = b.organization_id AND oi.id = b.open_item_id
-     WHERE b.tenant_id = ${scope.tenantId}::uuid
-       AND b.organization_id = ${scope.organizationId}::uuid
-       AND b.side = 'receivable'
-       AND b.customer_party_id = ${customerPartyId}::uuid`);
-  const limitRows = await tx.execute<{ credit_limit: string | null }>(sql`
-    SELECT credit_limit::text AS credit_limit
-      FROM app.party_accounts
-     WHERE tenant_id = ${scope.tenantId}::uuid
-       AND organization_id = ${scope.organizationId}::uuid
-       AND party_id = ${customerPartyId}::uuid`);
-  const exposure = new Decimal(exposureRows.rows[0]?.exposure ?? '0').toFixed(2);
-  const creditLimit = limitRows.rows[0]?.credit_limit ?? null;
+  // One statement for everything that moves with an invoice being issued: the receivables, what the orders have not
+  // invoiced, and the limit. Read as separate statements (read committed gives each its own snapshot), an invoice
+  // issued between the two reads could drop out of both: absent from the receivables read before it, and already
+  // subtracted from the orders' balance read after it (R5 FU6).
+  const position = await tx.execute<{
+    exposure: string;
+    uninvoiced: string;
+    credit_limit: string | null;
+  }>(sql`
+    SELECT (SELECT coalesce(sum(round(
+                     CASE WHEN b.direction = 'debit' THEN b.open_amount ELSE -b.open_amount END * oi.fx_rate
+                   , 2)), 0)::numeric(18, 2)::text
+              FROM app.open_item_balances b
+              JOIN app.open_items oi
+                ON oi.tenant_id = b.tenant_id AND oi.organization_id = b.organization_id AND oi.id = b.open_item_id
+             WHERE b.tenant_id = ${scope.tenantId}::uuid
+               AND b.organization_id = ${scope.organizationId}::uuid
+               AND b.side = 'receivable'
+               AND b.customer_party_id = ${customerPartyId}::uuid) AS exposure,
+           ${uninvoicedOrderBalanceSql(scope, customerPartyId)} AS uninvoiced,
+           (SELECT credit_limit::text
+              FROM app.party_accounts
+             WHERE tenant_id = ${scope.tenantId}::uuid
+               AND organization_id = ${scope.organizationId}::uuid
+               AND party_id = ${customerPartyId}::uuid) AS credit_limit`);
+  const row = position.rows[0];
+  const exposure = new Decimal(row?.exposure ?? '0').toFixed(2);
+  const creditLimit = row?.credit_limit ?? null;
   const limit = creditLimit === null ? null : new Decimal(creditLimit).toFixed(2);
-  const uninvoiced = await uninvoicedOrderBalance(tx, scope, customerPartyId);
+  const uninvoiced = new Decimal(row?.uninvoiced ?? '0').toFixed(2);
   const orderValue = await pendingOrderValue(tx, scope, pending);
   const exposureWithOrder = new Decimal(exposure).plus(uninvoiced).plus(orderValue).toFixed(2);
   return {
