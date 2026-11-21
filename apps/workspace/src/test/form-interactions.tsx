@@ -66,7 +66,11 @@ export async function settle() {
  * deletion to the browser. `{Backspace}`, `{Delete}` and the arrow keys are named in braces:
  * `typeKeys(box, '12{Backspace}5')`.
  */
-export async function typeKeys(element: Element | null, text: string) {
+export async function typeKeys(
+  element: Element | null,
+  text: string,
+  options: { settleEach?: boolean } = {},
+) {
   if (!(element instanceof HTMLInputElement)) throw new Error('Missing text input');
   if (document.activeElement !== element) await act(() => Promise.resolve(element.focus()));
   let index = 0;
@@ -111,6 +115,8 @@ export async function typeKeys(element: Element | null, text: string) {
     Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')!.set!.call(element, next);
     element.setSelectionRange(caret, caret);
     await act(() => Promise.resolve(element.dispatchEvent(inputEvent('input', inputType, data))));
+    // Lets the library's 0 ms caret timer run between keys, as it does between real keystrokes.
+    if (options.settleEach) await settle();
   }
   await settle();
 }
@@ -156,4 +162,66 @@ export async function choose(container: HTMLElement, name: string, label: string
   );
   if (!option) throw new Error(`No option "${label}" in ${name}`);
   await click(option);
+}
+
+/**
+ * Drops `text` onto the input. A drop handler reads it from `dataTransfer`; if none prevents the
+ * event, the browser's insertion at the selection happens and an input event follows with no data,
+ * the way a drag-and-drop reaches a field without keydown or a cancellable beforeinput.
+ */
+export async function drop(element: Element | null, text: string) {
+  if (!(element instanceof HTMLInputElement)) throw new Error('Missing text input');
+  const event = new Event('drop', { bubbles: true, cancelable: true });
+  Object.defineProperty(event, 'dataTransfer', {
+    value: { getData: (type: string) => (type === 'text/plain' || type === 'text' ? text : '') },
+  });
+  await act(() => Promise.resolve(element.dispatchEvent(event)));
+  if (!event.defaultPrevented) {
+    const value = element.value;
+    const start = element.selectionStart ?? value.length;
+    const end = element.selectionEnd ?? start;
+    Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')!.set!.call(
+      element,
+      value.slice(0, start) + text + value.slice(end),
+    );
+    await act(() =>
+      Promise.resolve(element.dispatchEvent(inputEvent('input', 'insertFromDrop', null))),
+    );
+  }
+  await settle();
+}
+
+/**
+ * An Android soft-keyboard edit: keydown reports "Unidentified", so only beforeinput says what
+ * happens. Unless a handler prevents it, the browser deletes or inserts at the selection as it
+ * stood when beforeinput was dispatched, then sends input.
+ */
+export async function softKey(
+  element: Element | null,
+  inputType: 'deleteContentBackward' | 'deleteContentForward',
+) {
+  if (!(element instanceof HTMLInputElement)) throw new Error('Missing text input');
+  const value = element.value;
+  const start = element.selectionStart ?? value.length;
+  const end = element.selectionEnd ?? start;
+  const down = new KeyboardEvent('keydown', {
+    key: 'Unidentified',
+    bubbles: true,
+    cancelable: true,
+  });
+  await act(() => Promise.resolve(element.dispatchEvent(down)));
+  const before = inputEvent('beforeinput', inputType, null);
+  await act(() => Promise.resolve(element.dispatchEvent(before)));
+  if (!before.defaultPrevented) {
+    const back = inputType === 'deleteContentBackward';
+    const from = start !== end ? start : back ? Math.max(start - 1, 0) : start;
+    const to = start !== end ? end : back ? start : Math.min(start + 1, value.length);
+    Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')!.set!.call(
+      element,
+      value.slice(0, from) + value.slice(to),
+    );
+    element.setSelectionRange(from, from);
+    await act(() => Promise.resolve(element.dispatchEvent(inputEvent('input', inputType, null))));
+  }
+  await settle();
 }
