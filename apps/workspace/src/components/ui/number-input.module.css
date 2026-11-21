@@ -125,3 +125,10 @@
   color: var(--status-error);
   font-weight: var(--font-weight-medium);
 }
+
+/* Forced-colours mode drops box-shadow and recolours borders, so the box needs a real outline. */
+@media (forced-colors: active) {
+  .box:focus-within {
+    outline: 2px solid Highlight;
+  }
+}

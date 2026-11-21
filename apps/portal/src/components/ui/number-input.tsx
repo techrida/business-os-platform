@@ -30,9 +30,16 @@ import {
   useRef,
   useState,
   type ClipboardEvent,
+  type DragEvent,
   type KeyboardEvent,
+  type MouseEvent,
 } from 'react';
-import { NumericFormat, type NumberFormatValues, type SourceInfo } from 'react-number-format';
+import {
+  NumericFormat,
+  numericFormatter,
+  type NumberFormatValues,
+  type SourceInfo,
+} from 'react-number-format';
 
 import { useFormReset } from './use-form-reset';
 import styles from './number-input.module.css';
@@ -83,11 +90,32 @@ interface EngineProps extends NumberInputCommonProps {
   words?: ((plain: string) => string) | undefined;
 }
 
-/** What the library's raw string means as a finished value: `007` is `7`, `.5` is `0.5`, `12.` is `12`, `.` is empty. */
+/**
+ * What a numeric string means as a finished value: `007` is `7`, `.5` is `0.5`, `12.` is `12`, `.` is
+ * empty. Zero-only decimals past the field's scale are dropped (`12.5000` is `12.50` in a 2-decimal
+ * field), because the server sends numeric columns at full scale. Anything else outside the limits
+ * is empty.
+ */
 function normalise(raw: string, limits: NumberLimits): string {
   if (raw === '') return '';
-  const check = withinLimits(raw, limits);
+  const [whole = '', fraction] = raw.split('.');
+  let text = raw;
+  if (fraction !== undefined && fraction.length > limits.scale) {
+    if (/^0*$/.test(fraction.slice(limits.scale))) {
+      const kept = fraction.slice(0, limits.scale);
+      text = kept === '' ? whole : `${whole}.${kept}`;
+    }
+  }
+  const check = withinLimits(text, limits);
   return check.ok ? check.value : '';
+}
+
+const isDecimal = (text: string) => /^(\d+\.?\d*|\.\d+)$/.test(text);
+
+/** Equal as numbers (`1.0` and `1`), so a parent that canonicalises its copy does not erase typing. */
+function sameNumber(a: string, b: string): boolean {
+  if (a === b) return true;
+  return isDecimal(a) && isDecimal(b) && new Dec(a).eq(new Dec(b));
 }
 
 /** Why typed or inserted text is refused before it reaches the formatter, or null when it may go in. */
@@ -113,6 +141,29 @@ function pointOutsideSelection(input: HTMLInputElement): boolean {
   const start = input.selectionStart ?? input.value.length;
   const end = input.selectionEnd ?? start;
   return (input.value.slice(0, start) + input.value.slice(end)).includes('.');
+}
+
+/** Digits that a JavaScript number holds exactly; past this aria-valuenow would be rounded. */
+const EXACT_DIGITS = 15;
+
+const setInputValue = (input: HTMLInputElement, text: string) =>
+  Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')!.set!.call(input, text);
+
+// Desktop Backspace moves the caret off a separator in keydown (the library does it) and the
+// browser then deletes the digit. Android sends keydown "Unidentified", so the browser would delete
+// the separator itself and the formatter would put it straight back. Delete the digit instead.
+function deleteAcrossSeparator(event: Event, input: HTMLInputElement, backward: boolean) {
+  const start = input.selectionStart;
+  if (start === null || start !== input.selectionEnd) return;
+  const text = input.value;
+  if (text[backward ? start - 1 : start] !== ',') return;
+  const digit = backward ? start - 2 : start + 1;
+  if (digit < 0 || digit >= text.length) return;
+  event.preventDefault();
+  setInputValue(input, text.slice(0, digit) + text.slice(digit + 1));
+  const caret = backward ? digit : start;
+  input.setSelectionRange(caret, caret);
+  input.dispatchEvent(new Event('input', { bubbles: true }));
 }
 
 function NumberBox({
@@ -143,6 +194,7 @@ function NumberBox({
 }: EngineProps) {
   const base = useId();
   const prefixId = `${base}-prefix`;
+  const suffixId = `${base}-suffix`;
   const wordsId = `${base}-words`;
   const statusId = `${base}-status`;
   const rootRef = useRef<HTMLDivElement>(null);
@@ -153,13 +205,14 @@ function NumberBox({
   // normalised value instead would erase a point the user has just typed.
   const [raw, setRaw] = useState(() => (controlled ? value : (defaultValue ?? '')));
   const [padded, setPadded] = useState(padTo !== undefined);
-  const [notice, setNotice] = useState('');
+  // `seq` changes on every refusal so a repeated message is a new DOM node and is announced again.
+  const [notice, setNotice] = useState({ text: '', seq: 0 });
   const [error, setError] = useState('');
 
   // A controlled parent that set a different number wins over what was being typed.
-  const current = controlled && normalise(raw, limits) !== value ? value : raw;
+  const current = controlled && !sameNumber(normalise(raw, limits), value) ? value : raw;
   const plain = normalise(current, limits);
-  // A server value outside this field's limits (`13.0000` in a 2-decimal field) is posted as given
+  // A server value outside this field's limits (`12.5555` in a 2-decimal field) is posted as given
   // until the user edits it, so an untouched field never sends an empty string in its place.
   const posted = plain === '' && current !== '.' ? current : plain;
 
@@ -167,6 +220,7 @@ function NumberBox({
   // they read and write these refs rather than state from the last render.
   const rawRef = useRef(current);
   const emitted = useRef(plain);
+  const edited = useRef(false);
   useLayoutEffect(() => {
     rawRef.current = current;
     emitted.current = plain;
@@ -175,6 +229,16 @@ function NumberBox({
   const bounds = {
     min: min === undefined || min === '' ? undefined : describe(min),
     max: max === undefined || max === '' ? undefined : describe(max),
+  };
+  const rawBounds = { min: bounds.min && min, max: bounds.max && max };
+
+  const shownValue =
+    padded && padTo !== undefined && plain !== '' ? new Dec(plain).toFixed(padTo) : current;
+  const formatOptions = {
+    thousandSeparator: grouping ? ',' : false,
+    thousandsGroupStyle: grouping === 'international' ? ('thousand' as const) : ('lakh' as const),
+    decimalSeparator: '.',
+    allowNegative: false,
   };
 
   function commit(nextRaw: string) {
@@ -188,32 +252,36 @@ function NumberBox({
   }
 
   function refuse(reason: NumberRefusal) {
-    setNotice(refusalMessage(reason, limits, bounds));
+    const text = refusalMessage(reason, limits, bounds);
+    setNotice((last) => ({ text, seq: last.seq + 1 }));
   }
 
-  function validate(next: string): string {
-    if (next === '') return required ? refusalMessage('empty', limits) : '';
-    const number = new Dec(next);
-    if (bounds.min !== undefined && number.lt(new Dec(min!))) {
-      return refusalMessage('below_min', limits, bounds);
-    }
-    if (bounds.max !== undefined && number.gt(new Dec(max!))) {
-      return refusalMessage('above_max', limits, bounds);
-    }
-    return '';
+  function clearNotice() {
+    setNotice((last) => (last.text === '' ? last : { text: '', seq: last.seq }));
+  }
+
+  /** The blur-time message for the text as posted, or '' when it is acceptable. */
+  function validate(text: string): string {
+    if (text === '') return required ? refusalMessage('empty', limits) : '';
+    const check = withinLimits(normalise(text, limits) || text, limits, rawBounds);
+    return check.ok ? '' : refusalMessage(check.reason, limits, bounds);
   }
 
   function accept(nextRaw: string) {
+    edited.current = true;
     setPadded(false);
-    setNotice('');
+    clearNotice();
     commit(nextRaw);
-    if (error) setError(validate(normalise(nextRaw, limits)));
+    // Mid-typing a value passes through states below min (5 on the way to 50), so an error shown at
+    // blur is only cleared here, never replaced; the next blur checks again.
+    if (error && validate(normalise(nextRaw, limits)) === '') setError('');
   }
 
   const isResetting = useFormReset(rootRef, () => {
-    setNotice('');
+    clearNotice();
     setError('');
     setPadded(padTo !== undefined);
+    edited.current = false;
     // A controlled parent owns the value; reporting the reset to it would undo its state.
     if (controlled) return;
     commit(defaultValue ?? '');
@@ -223,9 +291,13 @@ function NumberBox({
   // here. React's onBeforeInput is a polyfill over other events, hence the native listener.
   const onNativeBeforeInput = useEffectEvent((event: Event) => {
     const { inputType, data } = event as InputEvent;
-    if (!inputType?.startsWith('insert') || inputType === 'insertFromPaste' || !data) return;
     const input = inputRef.current;
-    if (!input) return;
+    if (!input || !inputType) return;
+    if (inputType === 'deleteContentBackward' || inputType === 'deleteContentForward') {
+      deleteAcrossSeparator(event, input, inputType === 'deleteContentBackward');
+      return;
+    }
+    if (!inputType.startsWith('insert') || inputType === 'insertFromPaste' || !data) return;
     const reason = refusedText(data, limits.scale, pointOutsideSelection(input));
     if (reason) {
       event.preventDefault();
@@ -240,20 +312,68 @@ function NumberBox({
     return () => input.removeEventListener('beforeinput', listener);
   }, []);
 
+  /** The number to step from: the value as posted, so a server value outside the limits still counts. */
+  function stepBase(): Dec {
+    if (plain !== '') return new Dec(plain);
+    return isDecimal(posted) ? new Dec(posted) : new Dec(0);
+  }
+  const atMin = min !== undefined && min !== '' && stepBase().lte(new Dec(min));
+  const atMax = max !== undefined && max !== '' && stepBase().gte(new Dec(max));
+
   function stepBy(direction: 1 | -1) {
     if (!spin || disabled || readOnly) return;
-    let next = (plain === '' ? new Dec(0) : new Dec(plain)).plus(
-      new Dec(spin.step).times(direction),
-    );
+    let next = stepBase().plus(new Dec(spin.step).times(direction));
     if (min !== undefined && min !== '' && next.lt(new Dec(min))) next = new Dec(min);
     if (max !== undefined && max !== '' && next.gt(new Dec(max))) next = new Dec(max);
-    accept(next.toDecimalPlaces(limits.scale).toFixed());
+    const check = withinLimits(next.toDecimalPlaces(limits.scale).toFixed(), limits);
+    if (!check.ok) {
+      refuse(check.reason);
+      return;
+    }
+    accept(check.value);
+  }
+
+  // Text that reached the box without a cancellable keystroke (autofill, a drop, an IME commit) is
+  // judged here, before the formatter drops characters it does not know and turns `1,5` into 15.
+  // The box's raw text is compared with what it showed; separators already there are not "inserted".
+  function insertedRefusal(): NumberRefusal | null {
+    const input = inputRef.current;
+    if (!input) return null;
+    const text = input.value;
+    const before = numericFormatter(shownValue, formatOptions);
+    if (text === before) return null;
+    let head = 0;
+    while (head < text.length && head < before.length && text[head] === before[head]) head += 1;
+    let tail = 0;
+    while (
+      tail < text.length - head &&
+      tail < before.length - head &&
+      text[text.length - 1 - tail] === before[before.length - 1 - tail]
+    ) {
+      tail += 1;
+    }
+    const inserted = text.slice(head, text.length - tail);
+    if (inserted === '') return null;
+    if (before === '' || head + tail === 0) {
+      // A whole new text: digits and one point may be unfinished (`.`); anything else must be a
+      // validly grouped number, as for a paste.
+      if (refusedText(text, limits.scale, false) === null) return null;
+      const check = normalisePastedNumber(text, limits);
+      return check.ok ? null : check.reason;
+    }
+    const kept = text.slice(0, head) + text.slice(text.length - tail);
+    return refusedText(inserted, limits.scale, kept.includes('.'));
   }
 
   // The library refuses a change when this returns false and restores the old text and caret.
   // No decimalScale is passed while typing: the library would trim a third decimal silently before
   // this check ran, and the refusal would have no status line.
   function isAllowed({ value: next }: NumberFormatValues): boolean {
+    const inserted = insertedRefusal();
+    if (inserted) {
+      refuse(inserted);
+      return false;
+    }
     if (!fitsWhileTyping(next, limits)) {
       const fraction = next.split('.')[1] ?? '';
       refuse(fraction.length > limits.scale ? 'too_many_decimals' : 'too_many_digits');
@@ -267,12 +387,20 @@ function NumberBox({
     return true;
   }
 
+  // Editing a padded display (`100.00`) leaves the padding in the edited text; the padding is display
+  // only, so it comes off again and `9100.00` posts as 9100.
+  function withoutPadding(next: string): string {
+    if (!padded || padTo === undefined || plain === '') return next;
+    const padding = new Dec(plain).toFixed(padTo).slice(current.length);
+    return padding !== '' && next.endsWith(padding) ? next.slice(0, -padding.length) : next;
+  }
+
   function onLibraryChange(values: NumberFormatValues, info: SourceInfo) {
     // Only the user's edits count. The library also reports values it derived from props (padding,
     // a reset), which must never reach the hidden input or the parent. Those come without an event;
     // its SourceType enum is not exported, so the event is the check.
     if (info.event === undefined || isResetting()) return;
-    accept(values.value);
+    accept(withoutPadding(values.value));
   }
 
   function onKeyDown(event: KeyboardEvent<HTMLInputElement>) {
@@ -289,28 +417,21 @@ function NumberBox({
     }
   }
 
-  // Raw clipboard text never reaches the formatter: it drops characters it does not know, which
-  // would turn `1,5` into 15.
-  function onPaste(event: ClipboardEvent<HTMLInputElement>) {
-    event.preventDefault();
+  // Raw clipboard or dropped text never reaches the formatter: it drops characters it does not know,
+  // which would turn `1,5` into 15. An empty box or a full selection is replaced; otherwise the text
+  // goes in at the caret or over the selection, as a browser would, and the whole result is judged.
+  function insertText(text: string, input: HTMLInputElement, start: number, end: number) {
     if (disabled || readOnly) return;
-    const text = event.clipboardData.getData('text/plain') || event.clipboardData.getData('text');
-    const input = event.currentTarget;
     const shown = input.value;
-    const start = input.selectionStart ?? shown.length;
-    const end = input.selectionEnd ?? start;
-    const partial = start !== end && !(start === 0 && end === shown.length);
-    const pasteBounds = { max: max === '' ? undefined : max };
+    const replaceAll = shown === '' || (start === 0 && end === shown.length);
     let check: NumberCheck;
-    if (partial) {
-      // Replace only the selected span, then judge the whole result.
+    if (replaceAll) {
+      check = normalisePastedNumber(text, limits, rawBounds);
+    } else {
       const piece = text.trim();
       let pieceValue = piece;
       if (!/^\d*\.?\d*$/.test(piece)) {
-        const pieceCheck = normalisePastedNumber(piece, {
-          intDigits: limits.intDigits,
-          scale: limits.scale,
-        });
+        const pieceCheck = normalisePastedNumber(piece, limits);
         if (!pieceCheck.ok) {
           refuse(pieceCheck.reason);
           return;
@@ -319,47 +440,78 @@ function NumberBox({
       }
       const ungroup = (part: string) => part.replaceAll(',', '');
       const combined = ungroup(shown.slice(0, start)) + pieceValue + ungroup(shown.slice(end));
-      check = withinLimits(combined, limits, pasteBounds);
-    } else {
-      check = normalisePastedNumber(text, limits, pasteBounds);
+      check = withinLimits(combined, limits, rawBounds);
     }
     if (!check.ok) {
       refuse(check.reason);
       return;
     }
-    accept(check.value);
+    accept(replaceAll ? check.value : withoutPadding(check.value));
+  }
+
+  function onPaste(event: ClipboardEvent<HTMLInputElement>) {
+    event.preventDefault();
+    const input = event.currentTarget;
+    const text = event.clipboardData.getData('text/plain') || event.clipboardData.getData('text');
+    const start = input.selectionStart ?? input.value.length;
+    insertText(text, input, start, input.selectionEnd ?? start);
+  }
+
+  // The drop point is not known here, so a drop replaces the whole value.
+  function onDrop(event: DragEvent<HTMLInputElement>) {
+    event.preventDefault();
+    const input = event.currentTarget;
+    input.focus();
+    const text = event.dataTransfer.getData('text/plain') || event.dataTransfer.getData('text');
+    insertText(text, input, 0, input.value.length);
   }
 
   function onBlur() {
-    const normal = normalise(rawRef.current, limits);
-    if (normal !== rawRef.current) commit(normal);
-    setNotice('');
-    setError(validate(normal));
+    const typed = rawRef.current;
+    const normal = normalise(typed, limits);
+    // Only the user's own text is tidied (`007`, `12.`); a server value is left as sent, and a value
+    // that cannot be tidied is kept and reported rather than replaced with nothing.
+    if (edited.current && normal !== typed && (normal !== '' || typed === '.')) commit(normal);
+    edited.current = false;
+    clearNotice();
+    setError(validate(normal !== '' || typed === '.' ? normal : typed));
     if (padTo !== undefined) setPadded(true);
   }
 
-  const shownValue =
-    padded && padTo !== undefined && plain !== '' ? new Dec(plain).toFixed(padTo) : current;
+  // Pressing the prefix, unit or padding puts the caret in the box, as on a single native input.
+  function onBoxMouseDown(event: MouseEvent<HTMLDivElement>) {
+    const input = inputRef.current;
+    const target = event.target as Element;
+    if (!input || disabled || target === input || target.closest('button')) return;
+    event.preventDefault();
+    input.focus();
+    input.setSelectionRange(input.value.length, input.value.length);
+  }
+
   const wordsText = words && plain !== '' ? words(plain) : '';
-  const status = error || notice;
+  const status = notice.text || error;
   const invalid = callerInvalid === true || callerInvalid === 'true' || error !== '';
+  // Order: the caller's hint, the prefix and unit, the words, then errors (the caller's, then ours).
+  // `Field` names its error element `<id>-error`, which is how its error is kept after the words.
+  const callerIds = callerDescribedBy?.split(/\s+/).filter(Boolean) ?? [];
   const describedBy =
     [
+      ...callerIds.filter((ref) => !ref.endsWith('-error')),
       prefix ? prefixId : undefined,
-      callerDescribedBy,
+      suffix ? suffixId : undefined,
       wordsText ? wordsId : undefined,
+      ...callerIds.filter((ref) => ref.endsWith('-error')),
       status ? statusId : undefined,
     ]
       .filter(Boolean)
       .join(' ') || undefined;
-  const groupedText =
-    plain === ''
-      ? undefined
-      : `${shownValue}${suffix ? (suffix === '%' ? '%' : ` ${suffix}`) : ''}`;
+  const unit = suffix ? (suffix === '%' ? '%' : ` ${suffix}`) : '';
+  const valueText = plain === '' ? undefined : `${groupPlain(plain, grouping)}${unit}`;
+  const significant = plain.replace('.', '').replace(/^0+/, '').length;
 
   return (
     <div ref={rootRef} className={[styles.root, className].filter(Boolean).join(' ')}>
-      <div className={styles.box} data-invalid={invalid || undefined}>
+      <div className={styles.box} data-invalid={invalid || undefined} onMouseDown={onBoxMouseDown}>
         {prefix ? (
           <span id={prefixId} className={styles.affix}>
             {prefix}
@@ -373,15 +525,13 @@ function NumberBox({
           autoComplete="off"
           valueIsNumericString
           value={shownValue}
-          thousandSeparator={grouping ? ',' : false}
-          thousandsGroupStyle={grouping === 'international' ? 'thousand' : 'lakh'}
-          decimalSeparator="."
+          {...formatOptions}
           allowedDecimalSeparators={['.']}
-          allowNegative={false}
           isAllowed={isAllowed}
           onValueChange={onLibraryChange}
           onKeyDown={onKeyDown}
           onPaste={onPaste}
+          onDrop={onDrop}
           onBlur={onBlur}
           {...(id === undefined ? {} : { id })}
           {...(placeholder === undefined ? {} : { placeholder })}
@@ -392,10 +542,12 @@ function NumberBox({
           {...(spin
             ? {
                 role: 'spinbutton',
-                ...(plain === '' ? {} : { 'aria-valuenow': Number(plain) }),
+                ...(plain === '' || significant > EXACT_DIGITS
+                  ? {}
+                  : { 'aria-valuenow': Number(plain) }),
                 ...(min === undefined || min === '' ? {} : { 'aria-valuemin': Number(min) }),
                 ...(max === undefined || max === '' ? {} : { 'aria-valuemax': Number(max) }),
-                ...(groupedText === undefined ? {} : { 'aria-valuetext': groupedText }),
+                ...(valueText === undefined ? {} : { 'aria-valuetext': valueText }),
               }
             : {})}
           required={required === true}
@@ -403,7 +555,7 @@ function NumberBox({
           readOnly={readOnly === true}
         />
         {suffix ? (
-          <span className={styles.affix} aria-hidden="true">
+          <span id={suffixId} className={styles.affix}>
             {suffix}
           </span>
         ) : null}
@@ -414,7 +566,7 @@ function NumberBox({
               tabIndex={-1}
               className={styles.stepper}
               aria-label={`Decrease ${spin.buttonNoun}`}
-              disabled={disabled === true || readOnly === true}
+              disabled={disabled === true || readOnly === true || atMin}
               // Keep focus in the box so a click does not run blur validation mid-adjustment.
               onMouseDown={(event) => event.preventDefault()}
               onClick={() => stepBy(-1)}
@@ -438,7 +590,7 @@ function NumberBox({
               tabIndex={-1}
               className={styles.stepper}
               aria-label={`Increase ${spin.buttonNoun}`}
-              disabled={disabled === true || readOnly === true}
+              disabled={disabled === true || readOnly === true || atMax}
               onMouseDown={(event) => event.preventDefault()}
               onClick={() => stepBy(1)}
             >
@@ -473,9 +625,9 @@ function NumberBox({
         id={statusId}
         role="status"
         className={styles.status}
-        data-tone={error ? 'error' : undefined}
+        data-tone={!notice.text && error ? 'error' : undefined}
       >
-        {status}
+        {status ? <span key={notice.text ? notice.seq : 'error'}>{status}</span> : null}
       </span>
     </div>
   );
