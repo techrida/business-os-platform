@@ -330,7 +330,7 @@ export async function uploadDocumentContent(
   created: Pick<CreatedDocument, 'documentId' | 'versionId' | 'uploadPath'>,
   upload: ContentUpload,
 ): Promise<z.infer<typeof DocumentVersionDtoSchema>> {
-  return streamContent(session, contentPath(created), upload);
+  return await streamContent(session, contentPath(created), upload);
 }
 
 interface ContentUpload {
@@ -383,7 +383,7 @@ export function createEvidenceDocument(
 }
 
 /** Step 2 of an evidence upload: stream the bytes to the content route of the reserved version. */
-export function uploadEvidenceContent(
+export async function uploadEvidenceContent(
   session: Session,
   kind: EvidenceKind,
   ownerId: string,
@@ -395,7 +395,7 @@ export function uploadEvidenceContent(
   if (created.uploadPath !== expected) {
     throw new ApiError(502, 'The evidence upload returned an unexpected uploadPath');
   }
-  return streamContent(session, expected, upload);
+  return await streamContent(session, expected, upload);
 }
 
 /** `POST /v1/documents/:id/versions/:versionId/link`: a 60-second, single-use signed link. */
