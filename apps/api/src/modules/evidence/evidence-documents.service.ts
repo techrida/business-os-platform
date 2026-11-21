@@ -54,6 +54,13 @@ const fileNotFound = () =>
 const forbidden = () =>
   new ForbiddenException({ code: 'forbidden', message: 'Forbidden', reason: 'no_permission' });
 
+const notUploader = () =>
+  new ForbiddenException({
+    code: 'forbidden',
+    message: 'Only the person who uploaded this file can remove it here.',
+    reason: 'no_permission',
+  });
+
 export function evidenceUploadPath(
   kind: EvidenceRecordKind,
   recordId: string,
@@ -154,6 +161,45 @@ export class EvidenceDocumentsService {
       documentId,
       who: { scope, actor },
     });
+  }
+
+  /**
+   * Removes (soft, as the generic removal does) an evidence file of this record that its uploader abandoned before
+   * the form was saved. The narrowest rule that serves remove-before-save and discard-on-close: the caller holds
+   * the kind's grant on this record (the one that let them upload) AND uploaded the file themselves; anyone else
+   * gets 403. 404 when the record is not of this kind in the acting entity, or the file is not evidence of this
+   * record there. Removing a file already removed answers the same success and writes nothing. Otherwise the
+   * documents kernel removes it under its own checks: 409 when the record took the file (a billable line, a match
+   * exception, a recorded quotation) or no longer takes evidence. The record row is locked FOR SHARE before the
+   * file, the order the kernel and the record's actions use, so two removals of one file serialise.
+   */
+  async remove(kind: EvidenceRecordKind, recordId: string, documentId: string): Promise<void> {
+    const { scope, actor } = this.staffCaller();
+    if (![recordId, documentId].every((id) => Id.safeParse(id).success)) throw fileNotFound();
+    const unclean = await withTx(this.db, scope, actor, async (tx) => {
+      const record = await this.load(scope, recordId, tx);
+      if (record?.kind !== kind) throw fileNotFound();
+      await this.documents.assertCanManage(scope, EVIDENCE_OWNER_TYPE, recordId);
+      const [doc] = await tx
+        .select({ createdBy: documents.createdBy, removedAt: documents.removedAt })
+        .from(documents)
+        .where(
+          and(
+            eq(documents.tenantId, scope.tenantId),
+            eq(documents.organizationId, scope.organizationId),
+            eq(documents.id, documentId),
+            eq(documents.ownerType, EVIDENCE_OWNER_TYPE),
+            eq(documents.ownerId, recordId),
+          ),
+        )
+        .limit(1)
+        .for('update');
+      if (doc === undefined) throw fileNotFound();
+      if (actor.kind !== 'user' || doc.createdBy !== actor.id) throw notUploader();
+      if (doc.removedAt !== null) return [];
+      return this.documents.removeInTransaction(tx, scope, documentId);
+    });
+    await this.documents.cleanupRemoved(unclean);
   }
 
   /** Evidence is a staff surface; a portal caller learns nothing about the record. */
