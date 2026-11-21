@@ -8,6 +8,7 @@ import { revalidatePath } from 'next/cache';
 import { redirect } from 'next/navigation';
 
 import { todayInKathmandu } from '@/app/(app)/settings/format';
+import { getInvoice } from '@/lib/api-billing';
 import { findPaymentReferenceMatches } from '@/lib/api-payments';
 import { submitPayment } from '@/lib/api-receivables';
 import { requireStaffSession } from '@/lib/bff';
@@ -44,6 +45,8 @@ const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const KEY = /^[A-Za-z0-9-]{8,64}$/;
 
 const BROKEN = 'This form is incomplete. Reload the page and try again.';
+const INVOICE_UNREADABLE =
+  'The invoice this payment is for could not be read. Reload the page and try again.';
 
 const FIELD_MESSAGE: Record<RecordPaymentField, string> = {
   customerId: 'Choose the customer who paid.',
@@ -104,6 +107,19 @@ export async function recordPaymentAction(
     return { key, error: NO_RECORD_WORDS };
   }
 
+  // A form opened from an invoice pays that invoice's customer (item 3b): read the invoice again as this person and
+  // take its customer, whatever the posted customer field says. Needs invoice.read, never customer.read. Nothing has
+  // reached the API if the read fails, so the key is kept.
+  const invoiceId = text(form, 'invoiceId');
+  let customerId = text(form, 'customerId');
+  if (UUID.test(invoiceId)) {
+    try {
+      customerId = (await getInvoice(session, invoiceId)).invoice.customerId;
+    } catch {
+      return { key, error: INVOICE_UNREADABLE, reload: true };
+    }
+  }
+
   const proofDocumentIds = [
     ...new Set(
       form
@@ -115,7 +131,7 @@ export async function recordPaymentAction(
   const withholdingCode = text(form, 'withholdingCode').trim();
   const tds = normalizeAmount(text(form, 'tdsWithheld'));
   const candidate = {
-    customerId: text(form, 'customerId'),
+    customerId,
     currency: text(form, 'currency'),
     amount: normalizeAmount(text(form, 'amount')),
     method: text(form, 'method'),

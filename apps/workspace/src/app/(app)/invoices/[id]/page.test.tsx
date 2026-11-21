@@ -219,7 +219,7 @@ describe('invoice detail page', () => {
   });
 
   it('offers Record payment for the customer while the invoice is still owed', async () => {
-    const RECORD = `href="/payments/new?customerId=${CUSTOMER}"`;
+    const RECORD = `href="/payments/new?customerId=${CUSTOMER}&amp;invoiceId=${ID}"`;
     mocks.requireStaffSession.mockResolvedValue({ accessToken: 't', roles: ['accountant'] });
     mocks.getInvoice.mockResolvedValue(settled('overdue', '2018180.00'));
     expect(await render()).toContain(RECORD);
@@ -243,7 +243,7 @@ describe('invoice detail page', () => {
     mocks.getInvoice.mockResolvedValue(settled('unpaid', '2018180.00'));
     const html = await render();
     // Old code read the settlement from the ar.read-gated statement, so the button hid here.
-    expect(html).toContain(`href="/payments/new?customerId=${CUSTOMER}"`);
+    expect(html).toContain(`href="/payments/new?customerId=${CUSTOMER}&amp;invoiceId=${ID}"`);
     expect(html).toContain('Record payment');
     expect(textOf(html)).toMatch(/Open amount\s+[^0-9]*20,18,180\.00/);
   });
@@ -673,7 +673,7 @@ describe('invoice detail under the per-invoice can flags', () => {
     recordPayment: false,
   };
   const OWN = { submit: true, issue: true, discard: true, notes: true, recordPayment: true };
-  const RECORD = `href="/payments/new?customerId=${CUSTOMER}"`;
+  const RECORD = `href="/payments/new?customerId=${CUSTOMER}&amp;invoiceId=${ID}"`;
   const SUBMIT = />Submit for approval</;
   const ISSUE = />Issue tax invoice</;
   const NOTE = />Credit note</;
@@ -702,6 +702,34 @@ describe('invoice detail under the per-invoice can flags', () => {
     const out = await render();
     expect(out).toMatch(NOTE);
     expect(out).toContain(RECORD);
+  });
+
+  it("offers Record payment from the invoice's own settlement to a role with payment.record but no ar.read", async () => {
+    // Live grants as GET /v1/me reports them: an edited role that records payments but may not read receivables.
+    mocks.requireStaffSession.mockResolvedValue({
+      accessToken: 't',
+      roles: new Map([
+        ['invoice.read', 'all'],
+        ['payment.record', 'all'],
+      ]),
+    });
+    const withSettlement = (settlement: string, openAmount: string) =>
+      InvoiceDetailSchema.parse({ ...issued(), settlement, openAmount });
+    mocks.getInvoice.mockResolvedValue(withSettlement('unpaid', '2018180.00'));
+    expect(await render()).toContain(RECORD);
+    expect(mocks.getCustomerStatement).not.toHaveBeenCalled();
+
+    // Paid, as the server says: nothing left to record.
+    mocks.getInvoice.mockResolvedValue(withSettlement('paid', '0.00'));
+    expect(await render()).not.toContain('Record payment');
+  });
+
+  it("follows the invoice's own settlement over the statement row when the API sends it", async () => {
+    owed();
+    mocks.getInvoice.mockResolvedValue(
+      InvoiceDetailSchema.parse({ ...issued(), settlement: null, openAmount: null }),
+    );
+    expect(await render()).not.toContain('Record payment');
   });
 
   it('keeps the grant-only behaviour when the detail comes without can', async () => {

@@ -25,7 +25,10 @@ import { parseOr400 } from '../../approvals/approvals.controller';
 import { requireIdempotencyKey } from '../../customers/customers.types';
 import {
   AmendPurchaseOrderBodySchema,
+  CancelAndRecreatePurchaseOrderBodySchema,
   CancelPurchaseOrderBodySchema,
+  ChangePurchaseOrderVendorBodySchema,
+  IssuePurchaseOrderBodySchema,
   ListPurchaseOrdersQuerySchema,
   ShortClosePurchaseOrderBodySchema,
 } from './purchase-order.rules';
@@ -71,15 +74,45 @@ export class PurchaseOrdersController {
     return this.orders.versions(id);
   }
 
-  /** 200 with the issued PO (version 1). 409 unless a draft, or for a vendor that is not approved or not active here. */
+  /**
+   * 200 with the issued PO (version 1). 409 unless a draft, or for a vendor that is not approved or not active here.
+   * Optional body `{ expectedVersion }`: 409 PO_CHANGED when the order changed since the page read that version. No
+   * body issues as before.
+   */
   @Post(':id/issue')
   @HttpCode(200)
   @Can('procurement.po.issue')
   issue(
     @Param('id', ParseUUIDPipe) id: string,
     @Headers('idempotency-key') key: string | undefined,
+    @Body() body: unknown,
   ): Promise<PurchaseOrderDto> {
-    return this.orders.issue(id, requireIdempotencyKey(key));
+    const idempotencyKey = requireIdempotencyKey(key);
+    return this.orders.issue(
+      id,
+      idempotencyKey,
+      parseOr400(IssuePurchaseOrderBodySchema, body ?? {}),
+    );
+  }
+
+  /**
+   * 200 with the draft under its new vendor (F1-Q40 a). 409 PO_VENDOR_CHANGE_NOT_DRAFT unless a draft, and for a
+   * vendor that is the same, not approved, not active here or without a verified bank account.
+   */
+  @Post(':id/change-vendor')
+  @HttpCode(200)
+  @Can('procurement.po.issue')
+  changeVendor(
+    @Param('id', ParseUUIDPipe) id: string,
+    @Headers('idempotency-key') key: string | undefined,
+    @Body() body: unknown,
+  ): Promise<PurchaseOrderDto> {
+    const idempotencyKey = requireIdempotencyKey(key);
+    return this.orders.changeVendor(
+      id,
+      parseOr400(ChangePurchaseOrderVendorBodySchema, body),
+      idempotencyKey,
+    );
   }
 
   /** 200: `applied` (version N+1) or `pending_approval` (po_amendment route). 400 for a vendor field. */
@@ -123,5 +156,25 @@ export class PurchaseOrdersController {
   ): Promise<PurchaseOrderDto> {
     const idempotencyKey = requireIdempotencyKey(key);
     return this.orders.cancel(id, parseOr400(CancelPurchaseOrderBodySchema, body), idempotencyKey);
+  }
+
+  /**
+   * 200 with the NEW draft PO: the order is cancelled (cancel's rules and audit) and a draft cloned from it is raised
+   * in the same transaction. 409 unless issued, 409 PO_HAS_RECEIPTS once anything was received.
+   */
+  @Post(':id/cancel-and-recreate')
+  @HttpCode(200)
+  @Can('procurement.po.issue')
+  cancelAndRecreate(
+    @Param('id', ParseUUIDPipe) id: string,
+    @Headers('idempotency-key') key: string | undefined,
+    @Body() body: unknown,
+  ): Promise<PurchaseOrderDto> {
+    const idempotencyKey = requireIdempotencyKey(key);
+    return this.orders.cancelAndRecreate(
+      id,
+      parseOr400(CancelAndRecreatePurchaseOrderBodySchema, body),
+      idempotencyKey,
+    );
   }
 }
