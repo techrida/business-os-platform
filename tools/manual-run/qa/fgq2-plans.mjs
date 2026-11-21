@@ -226,6 +226,63 @@ export const PLANS = {
       await page().goto(qa.cfg.appUrl + '/', { waitUntil: 'domcontentloaded' });
     }
   },
+  // Password step of the sign-in (only the login name is typed, never a password): where "Forgot password?" lives.
+  async loginpassword(k) {
+    const { page, save, qa, OUT } = k;
+    const path = await import('node:path');
+    const { readPersona } = await import('../lib/session.mjs');
+    const p = readPersona(qa.cfg.personasFile, 'founder');
+    await page().goto(qa.cfg.appUrl + '/', { waitUntil: 'domcontentloaded' });
+    const name = page().locator('input[name=loginName]');
+    await name.waitFor({ state: 'visible', timeout: 60000 });
+    await page().waitForTimeout(2500);
+    await name.pressSequentially(p.preferredLoginName || p.username, { delay: 20 });
+    await page().locator('button[type=submit]', { hasText: 'Continue' }).click();
+    await page().locator('input[type=password]').waitFor({ state: 'visible', timeout: 60000 });
+    const shotTo = async (slug, note) => {
+      for (const [w, h, tag] of [
+        [1440, 900, 'desktop'],
+        [390, 844, 'mobile'],
+      ]) {
+        await page().setViewportSize({ width: w, height: h });
+        await page().waitForTimeout(800);
+        await page().screenshot({
+          path: path.join(OUT, `${slug}__anonymous__${tag}.png`),
+          fullPage: true,
+        });
+      }
+      await page().setViewportSize({ width: 1440, height: 900 });
+      save({
+        slug,
+        role: 'anonymous',
+        route: page().url().split('?')[0],
+        status: 'captured',
+        desktop: `${slug}__anonymous__desktop.png`,
+        mobile: `${slug}__anonymous__mobile.png`,
+        note,
+      });
+    };
+    await shotTo('login--password-step', 'password step reached by typing only the login name');
+    const forgot = page()
+      .getByRole('link', { name: /forgot|reset/i })
+      .or(page().getByRole('button', { name: /forgot|reset/i }))
+      .first();
+    if (await forgot.isVisible().catch(() => false)) {
+      await forgot.click();
+      await page().waitForLoadState('domcontentloaded');
+      await page().waitForTimeout(2000);
+      await shotTo(
+        'login--password-recovery',
+        'reached through "Forgot password?" on the password step',
+      );
+    } else
+      save({
+        slug: 'login--password-recovery',
+        role: 'anonymous',
+        status: 'unreachable',
+        note: 'no forgot/reset control on the password step',
+      });
+  },
   // Dialogs that exist in the app, opened on QA-created records and never confirmed.
   async salesdialogs(k) {
     const { dialog } = k;

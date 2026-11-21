@@ -113,7 +113,7 @@ async function dialog(slug, route, buttonName, { prep } = {}) {
 
 const { PLANS } = await import('./fgq2-plans.mjs');
 try {
-  if (plan !== 'login') {
+  if (plan !== 'login' && plan !== 'loginpassword') {
     console.log('signing in for real as role', role);
     await realLogin(s, page(), role, qa.cfg.appUrl + '/');
     await page().waitForLoadState('domcontentloaded');
