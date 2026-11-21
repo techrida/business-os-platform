@@ -28,6 +28,7 @@ import {
   CancelAndRecreatePurchaseOrderBodySchema,
   CancelPurchaseOrderBodySchema,
   ChangePurchaseOrderVendorBodySchema,
+  IssuePurchaseOrderBodySchema,
   ListPurchaseOrdersQuerySchema,
   ShortClosePurchaseOrderBodySchema,
 } from './purchase-order.rules';
@@ -73,15 +74,25 @@ export class PurchaseOrdersController {
     return this.orders.versions(id);
   }
 
-  /** 200 with the issued PO (version 1). 409 unless a draft, or for a vendor that is not approved or not active here. */
+  /**
+   * 200 with the issued PO (version 1). 409 unless a draft, or for a vendor that is not approved or not active here.
+   * Optional body `{ expectedVersion }`: 409 PO_CHANGED when the order changed since the page read that version. No
+   * body issues as before.
+   */
   @Post(':id/issue')
   @HttpCode(200)
   @Can('procurement.po.issue')
   issue(
     @Param('id', ParseUUIDPipe) id: string,
     @Headers('idempotency-key') key: string | undefined,
+    @Body() body: unknown,
   ): Promise<PurchaseOrderDto> {
-    return this.orders.issue(id, requireIdempotencyKey(key));
+    const idempotencyKey = requireIdempotencyKey(key);
+    return this.orders.issue(
+      id,
+      idempotencyKey,
+      parseOr400(IssuePurchaseOrderBodySchema, body ?? {}),
+    );
   }
 
   /**

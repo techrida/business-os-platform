@@ -20,7 +20,7 @@ import {
   type LeadDuplicatesQuery,
 } from '@bos/contracts';
 import { customerContacts, customers, leads, scoped } from '@bos/db';
-import { Inject, Injectable } from '@nestjs/common';
+import { HttpException, Inject, Injectable } from '@nestjs/common';
 import { and, desc, eq, isNull, or, sql, type SQL } from 'drizzle-orm';
 import type { AnyPgColumn } from 'drizzle-orm/pg-core';
 
@@ -94,9 +94,23 @@ export class LeadDuplicatesService {
     private readonly caller: LeadsCaller,
   ) {}
 
+  /**
+   * A database error is rethrown as a generic Error with no message detail and no `cause`: Drizzle's query error
+   * carries the bound params (the typed email, phone, name and company) in its message, and an unhandled error is
+   * logged with its message, stack and cause. An HttpException (the caller lookup) passes through unchanged.
+   */
   async find(q: LeadDuplicatesQuery): Promise<LeadDuplicateMatch[]> {
     const probe = duplicateProbe(q);
     if (probe === null) return [];
+    try {
+      return await this.lookup(probe);
+    } catch (error) {
+      if (error instanceof HttpException) throw error;
+      throw new Error('The lead duplicate lookup failed');
+    }
+  }
+
+  private lookup(probe: DuplicateProbe): Promise<LeadDuplicateMatch[]> {
     return inTransaction(this.db, async (tx) => {
       // searchPage's typo tolerance, transaction-local.
       await tx.execute(

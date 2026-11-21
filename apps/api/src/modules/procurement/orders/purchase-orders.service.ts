@@ -70,6 +70,7 @@ import {
   type CancelAndRecreatePurchaseOrderBody,
   type CancelPurchaseOrderBody,
   type ChangePurchaseOrderVendorBody,
+  type IssuePurchaseOrderBody,
   type ListPurchaseOrdersQuery,
   type ShortClosePurchaseOrderBody,
 } from './purchase-order.rules';
@@ -501,17 +502,34 @@ export class PurchaseOrdersService {
    * Issues a draft PO: 409 VENDOR_NOT_APPROVED unless the vendor is `approved`, 409 VENDOR_NOT_IN_ENTITY unless
    * its account in the entity is active, 409 unless a draft. The draft keeps the number P2 gave it (number is NOT
    * NULL, so a draft always has one). A draft from the commitment route has no lines yet: they are copied from the
-   * recommended quotation. Writes version 1, moves the request approved → po_issued.
+   * recommended quotation. Writes version 1, moves the request approved → po_issued. With `expectedVersion`, 409
+   * PO_CHANGED when the order's version moved since the caller read it (a vendor change by another buyer), checked
+   * under the lock before anything else.
    */
-  async issue(id: string, idempotencyKey: string): Promise<PurchaseOrderDto> {
+  async issue(
+    id: string,
+    idempotencyKey: string,
+    body: IssuePurchaseOrderBody = {},
+  ): Promise<PurchaseOrderDto> {
     const { scope, actor, principal } = this.caller.current();
     const now = this.clock();
+    const { expectedVersion } = body;
     const issued = await withTx(this.db, scope, actor, async (tx) => {
       const done = await withIdempotency(
         tx,
-        { command: 'procurement.po.issue', key: idempotencyKey, body: { id } },
+        {
+          command: 'procurement.po.issue',
+          key: idempotencyKey,
+          // Exactly `{ id }` without a version, so a replay of a call made before the field existed still matches.
+          body: expectedVersion === undefined ? { id } : { id, expectedVersion },
+        },
         async () => {
           const po = await lockPo(tx, scope, id);
+          if (expectedVersion !== undefined && expectedVersion !== po.version)
+            throw conflict(
+              'This purchase order changed since you opened it. Reload and try again.',
+              'PO_CHANGED',
+            );
           if (po.status !== 'draft')
             throw conflict(`A ${po.status} purchase order cannot be issued`);
           await this.assertVendorIssuable(tx, scope, po.vendorId);
