@@ -195,6 +195,21 @@ describe('recordPaymentAction', () => {
     }
   });
 
+  it('names the space in "10 50" instead of the generic amount message, and sends nothing', async () => {
+    const out = await run(
+      form({ amount: '10 50', tdsWithheld: '1 250.00', withholdingCode: 'TDS-1' }),
+    );
+    // Old code gave the generic "Enter the amount received..." words, which the digits seem to satisfy.
+    expect(out.state?.fieldErrors?.amount).toBe('Remove the space inside the number.');
+    expect(out.state?.fieldErrors?.tdsWithheld).toBe('Remove the space inside the number.');
+    expect(mocks.apiFetch).not.toHaveBeenCalled();
+  });
+
+  it('keeps the decimal-comma hint for "10,50"', async () => {
+    const out = await run(form({ amount: '10,50' }));
+    expect(out.state?.fieldErrors?.amount).toMatch(/^Use a point for decimals\. Enter the amount/);
+  });
+
   it('refuses a role without payment.record before calling the API', async () => {
     for (const roles of [[], ['management'], ['sales']]) {
       mocks.requireStaffSession.mockResolvedValue({ accessToken: 't', roles });
