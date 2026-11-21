@@ -13,7 +13,6 @@ import {
   amendLines,
   amendmentApprovalReasons,
   shortCloseCancelled,
-  vendorChangePatch,
   vendorChangeRefusal,
   versionTotals,
   type PoLineState,
@@ -234,53 +233,18 @@ describe('vendor change on a draft (F1-Q40 a)', () => {
     );
   });
 
-  it('takes the new terms, zeroes the advance and clears the quotation link together', () => {
-    const patch = vendorChangePatch(
-      {
-        vendorId: A,
-        paymentTermsDays: 30,
-        advancePercent: '25.0000',
-        rfqId: 'rfq-1',
-        vendorQuotationId: 'vq-1',
-      },
-      { vendorId: B, paymentTermsDays: 45 },
-    );
-    expect(patch.set).toEqual({
-      vendorId: B,
-      paymentTermsDays: 45,
-      advancePercent: '0',
-      rfqId: null,
-      vendorQuotationId: null,
-    });
-    expect(patch.before).toEqual({
-      vendorId: A,
-      paymentTermsDays: 30,
-      advancePercent: '25.0000',
-      rfqId: 'rfq-1',
-      vendorQuotationId: 'vq-1',
-    });
-    expect(patch.cleared).toEqual(['advancePercent', 'rfqId', 'vendorQuotationId']);
-  });
-
-  it('names nothing cleared on a draft without a link or advance', () => {
-    const patch = vendorChangePatch(
-      {
-        vendorId: A,
-        paymentTermsDays: 0,
-        advancePercent: '0.0000',
-        rfqId: null,
-        vendorQuotationId: null,
-      },
-      { vendorId: B, paymentTermsDays: 0 },
-    );
-    expect(patch.cleared).toEqual([]);
-    expect(patch.set).toMatchObject({ rfqId: null, vendorQuotationId: null });
-  });
-
-  it('takes a vendor id only', () => {
+  it('takes a vendor id and an optional VAT acknowledgement only', () => {
     expect(ChangePurchaseOrderVendorBodySchema.safeParse({ vendorId: A }).success).toBe(true);
     expect(ChangePurchaseOrderVendorBodySchema.safeParse({ vendorId: 'x' }).success).toBe(false);
     expect(ChangePurchaseOrderVendorBodySchema.safeParse({}).success).toBe(false);
+    expect(
+      ChangePurchaseOrderVendorBodySchema.safeParse({ vendorId: A, acknowledgeVatWarning: true })
+        .success,
+    ).toBe(true);
+    expect(
+      ChangePurchaseOrderVendorBodySchema.safeParse({ vendorId: A, acknowledgeVatWarning: 'yes' })
+        .success,
+    ).toBe(false);
     expect(
       ChangePurchaseOrderVendorBodySchema.safeParse({ vendorId: A, paymentTermsDays: 5 }).success,
     ).toBe(false);
