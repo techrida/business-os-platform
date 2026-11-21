@@ -3,7 +3,11 @@ import { CreateDocumentBodySchema, ErrorBodySchema, MAX_UPLOAD_BYTES } from '@bo
 import { getDocument } from '@/components/p2/crm/verification-api';
 import { projectVersion } from '@/components/p2/crm/verification-file';
 import { ApiError } from '@/lib/api';
-import { createEvidenceDocument, uploadEvidenceContent } from '@/lib/api-kernel';
+import {
+  createEvidenceDocument,
+  removeEvidenceDocument,
+  uploadEvidenceContent,
+} from '@/lib/api-kernel';
 import {
   errorResponse,
   forbiddenOrigin,
@@ -107,7 +111,8 @@ export async function GET(req: Request, { params }: Params): Promise<Response> {
  * Upload one evidence file. Same wire format as the verification case upload: the raw file is the
  * request body, with its own Content-Type and its name in `x-file-name` (no multipart, so a 25 MB
  * file is never buffered here). Reserves the document, streams the bytes, and answers 201 with the
- * new version's `FileView` (status `quarantined` until the scan finishes). The owner fields are
+ * new version's `FileView` (status `quarantined` until the scan finishes). When the bytes fail, the
+ * reserved file is removed again through the record's route. The owner fields are
  * checked with the generic document schema; the API route takes only the file fields.
  */
 export async function POST(req: Request, { params }: Params): Promise<Response> {
@@ -138,6 +143,7 @@ export async function POST(req: Request, { params }: Params): Promise<Response> 
   });
   if (!parsed.success) return bad('That file name or type is not allowed.');
 
+  let reserved: string | undefined;
   try {
     const { filename: name, declaredMime, sizeBytes } = parsed.data;
     const created = await createEvidenceDocument(session, kind, ownerId, {
@@ -145,6 +151,7 @@ export async function POST(req: Request, { params }: Params): Promise<Response> 
       declaredMime,
       sizeBytes,
     });
+    reserved = created.documentId;
     const version = await uploadEvidenceContent(session, kind, ownerId, created, {
       body: req.body,
       contentLength: length,
@@ -152,6 +159,11 @@ export async function POST(req: Request, { params }: Params): Promise<Response> 
     });
     return jsonResponse(projectVersion(version), 201);
   } catch (err) {
+    // The browser never learns the reserved id, so a file whose bytes failed would stay unusable on
+    // the record: remove it on the record's own route, best effort, and keep the upload's failure.
+    if (reserved !== undefined) {
+      await removeEvidenceDocument(session, kind, ownerId, reserved).catch(() => undefined);
+    }
     return evidenceRefusal(err) ?? errorResponse(err, 'upload');
   }
 }
