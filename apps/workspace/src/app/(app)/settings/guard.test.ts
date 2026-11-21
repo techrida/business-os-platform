@@ -40,6 +40,7 @@ describe('requireSection', () => {
       'currencies',
       'tax',
       'numbering',
+      'company-accounts',
       'sales',
       'purchasing',
     ] as const) {
@@ -69,6 +70,7 @@ describe('requireSection', () => {
       'currencies',
       'tax',
       'numbering',
+      'company-accounts',
       'sales',
       'purchasing',
     ] as const) {
@@ -89,6 +91,20 @@ describe('requireSection', () => {
     await expect(requireSection('users')).resolves.toMatchObject({ roles: ['sales'] });
     getMe.mockResolvedValue(live('admin.settings.write'));
     await expect(requireSection('tax')).resolves.toMatchObject({ roles: ['sales'] });
+  });
+
+  it('opens Bank and expense accounts on the finance-settings grant, and refuses the exchange-rate grant alone', async () => {
+    getSession.mockResolvedValue(session(['sales']));
+    getMe.mockResolvedValue(live('settings.finance.write'));
+    await expect(requireSection('company-accounts')).resolves.toMatchObject({ roles: ['sales'] });
+    getMe.mockResolvedValue(live('settings.fx_rate.write'));
+    await expect(requireSection('company-accounts')).rejects.toThrow(
+      'REDIRECT:/settings/currencies',
+    );
+    getSession.mockResolvedValue(null);
+    await expect(requireSection('company-accounts')).rejects.toThrow(
+      'REDIRECT:/auth/login?returnTo=%2Fsettings%2Fcompany-accounts',
+    );
   });
 
   it('refuses that role without the grant, sending it to a section it may open', async () => {
