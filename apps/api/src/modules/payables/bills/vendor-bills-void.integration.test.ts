@@ -717,7 +717,7 @@ async function waitForWaiters(n: number, stop: () => boolean): Promise<boolean> 
   const deadline = Date.now() + 20_000;
   for (;;) {
     const { rows } = await superPool.query<{ n: number }>(
-      'SELECT count(DISTINCT pid)::int AS n FROM pg_locks WHERE NOT granted',
+      'SELECT count(DISTINCT l.pid)::int AS n FROM pg_locks l JOIN pg_stat_activity a ON a.pid = l.pid WHERE NOT l.granted AND a.datname = current_database()',
     );
     if ((rows[0]?.n ?? 0) >= n) return true;
     if (stop() || Date.now() > deadline) return false;
