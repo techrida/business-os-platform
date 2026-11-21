@@ -13,7 +13,10 @@ import { PoAmendmentSubject } from './po-amendment.subject';
 import { PurchaseOrdersCaller } from './purchase-orders.caller';
 import { PurchaseOrdersController } from './purchase-orders.controller';
 import { PurchaseOrdersService } from './purchase-orders.service';
-import { PurchaseOrderRenderNudgeModule } from './render/purchase-order-render.nudge';
+import {
+  PurchaseOrderRenderNudge,
+  PurchaseOrderRenderNudgeModule,
+} from './render/purchase-order-render.nudge';
 
 @Module({
   imports: [ApprovalsModule, AuditModule, PurchaseOrderRenderNudgeModule],
@@ -25,10 +28,13 @@ export class PurchaseOrdersModule implements OnModuleInit {
   constructor(
     private readonly approvals: ApprovalsService,
     private readonly audit: AuditService,
+    private readonly renderNudge: PurchaseOrderRenderNudge,
   ) {}
 
   /** The registry throws on a duplicate, so this runs once, when the module starts. */
   onModuleInit(): void {
-    this.approvals.registerSubject(new PoAmendmentSubject(this.audit, this.approvals));
+    this.approvals.registerSubject(
+      new PoAmendmentSubject(this.audit, this.approvals, undefined, this.renderNudge),
+    );
   }
 }
