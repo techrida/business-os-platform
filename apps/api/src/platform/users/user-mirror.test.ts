@@ -5,7 +5,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import type { AuditService } from '../audit/audit.service';
 import type { DbTransaction } from '../db/db.module';
-import { systemActor } from '../db/tx';
+import { systemActor, withTx } from '../db/tx';
 import { UserLocks } from './user-locks';
 import { UserMirror, UserSyncContendedError } from './user-mirror';
 import { lockoutPinnedCursor, type UsersSyncData } from './users.constants';
@@ -408,12 +408,12 @@ describe('UserMirror as the UserDirectory backend', () => {
     expect((conflict as ConflictException).getResponse()).toMatchObject({ code: 'conflict' });
     expect(zitadel.setGrantsCalls).toEqual([
       { userId: 'z1', orgId: STAFF_ZORG, roles: ['finance'] },
-      { userId: 'z1', orgId: STAFF_ZORG, roles: ['accountant'] },
+      { userId: 'z1', orgId: STAFF_ZORG, roles: [] },
     ]);
-    expect(await store.rolesOf(db, TENANT, id)).toEqual(['accountant']);
+    expect(await store.rolesOf(db, TENANT, id)).toEqual([]);
   });
 
-  it('setRoles restores ZITADEL to the committed DB roles after a concurrent role conflict so both agree (FU1 item 2)', async () => {
+  it('setRoles leaves ZITADEL and the row agreeing on the roles both still hold after a concurrent role conflict, never re-adding (FU8)', async () => {
     zitadel.users.set('z1', zUser('z1'));
     zitadel.grants.set('z1', ['accountant']);
     await mirror.syncUser('z1');
@@ -431,10 +431,10 @@ describe('UserMirror as the UserDirectory backend', () => {
     expect(conflict).toBeInstanceOf(ConflictException);
     expect(zitadel.setGrantsCalls).toEqual([
       { userId: 'z1', orgId: STAFF_ZORG, roles: ['finance'] },
-      { userId: 'z1', orgId: STAFF_ZORG, roles: ['sales'] },
+      { userId: 'z1', orgId: STAFF_ZORG, roles: [] },
     ]);
-    expect(zitadel.grants.get('z1')).toEqual(['sales']);
-    expect(await store.rolesOf(db, TENANT, id)).toEqual(['sales']);
+    expect(zitadel.grants.get('z1')).toEqual([]);
+    expect(await store.rolesOf(db, TENANT, id)).toEqual([]);
   });
 
   it.each([
@@ -488,63 +488,6 @@ describe('UserMirror as the UserDirectory backend', () => {
       expect(zitadel.grants.get('z1')).toEqual(expectedZitadel);
     },
   );
-
-  it('invite calls ZITADEL outside any tx, creates the user, grants, and an invited mirror row', async () => {
-    const openDuringZitadel: number[] = [];
-    const realCreate = zitadel.createHuman.bind(zitadel);
-    const realGrants = zitadel.setGrants.bind(zitadel);
-    const realInvite = zitadel.sendInviteCode.bind(zitadel);
-    vi.spyOn(zitadel, 'createHuman').mockImplementation((...args) => {
-      openDuringZitadel.push(db.open);
-      return realCreate(...args);
-    });
-    vi.spyOn(zitadel, 'setGrants').mockImplementation((...args) => {
-      openDuringZitadel.push(db.open);
-      return realGrants(...args);
-    });
-    vi.spyOn(zitadel, 'sendInviteCode').mockImplementation((...args) => {
-      openDuringZitadel.push(db.open);
-      return realInvite(...args);
-    });
-
-    const { userId } = await mirror.invite(scope, systemActor('test'), {
-      email: 'new@techrida.test',
-      givenName: 'New',
-      familyName: 'Person',
-      roles: ['accountant'],
-    });
-    expect(openDuringZitadel).toEqual([0, 0, 0]);
-    expect(store.users.find((u) => u.id === userId)).toMatchObject({
-      zitadelUserId: 'z-new',
-      status: 'invited',
-      displayName: 'New Person',
-    });
-    expect(await store.rolesOf(db, TENANT, userId)).toEqual(['accountant']);
-    expect(zitadel.setGrantsCalls[0]).toMatchObject({ userId: 'z-new', roles: ['accountant'] });
-    // An invited staff user gets the default membership too.
-    expect(await store.membershipsOf(db, TENANT, userId)).toEqual([
-      { organizationId: STAFF_ORG, isDefault: true, roleKeys: null, departmentId: null },
-    ]);
-  });
-
-  it('invite takes back the ZITADEL user and grants if the mirror write fails', async () => {
-    vi.spyOn(store, 'insertUser').mockRejectedValueOnce(new Error('db write failed'));
-
-    await expect(
-      mirror.invite(scope, systemActor('test'), {
-        email: 'fail@techrida.test',
-        givenName: 'Fail',
-        familyName: 'Write',
-        roles: ['accountant'],
-      }),
-    ).rejects.toThrow('db write failed');
-
-    expect(zitadel.setGrantsCalls).toEqual([
-      { userId: 'z-new', orgId: STAFF_ZORG, roles: ['accountant'] },
-      { userId: 'z-new', orgId: STAFF_ZORG, roles: [] },
-    ]);
-    expect(zitadel.deletedUsers).toEqual(['z-new']);
-  });
 });
 
 describe('Bootstrap rule (ADR 0027 section 3)', () => {
@@ -588,11 +531,16 @@ describe('Bootstrap rule (ADR 0027 section 3)', () => {
 
 describe('UserMirror.resolve on an accepted invite', () => {
   it('turns an invited row active on the first verified request and asks for a sync', async () => {
-    const { userId } = await mirror.invite(scope, systemActor('test'), {
-      email: 'inv@techrida.test',
-      givenName: 'In',
-      familyName: 'Vited',
-      roles: [],
+    const userId = await withTx(db, scope, systemActor('test'), async (tx) => {
+      const id = await store.insertUser(tx, scope, {
+        zitadelUserId: 'z-new',
+        idpOrgId: STAFF_IDP,
+        email: 'inv@techrida.test',
+        displayName: 'In Vited',
+        status: 'invited',
+      });
+      await mirror.bootstrap(tx, store.orgs[0]!, scope, id);
+      return id;
     });
     const resolved = await mirror.resolve({
       zitadelUserId: 'z-new',

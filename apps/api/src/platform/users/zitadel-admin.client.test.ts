@@ -341,7 +341,6 @@ describe('lockUser and unlockUser (F1-Q5)', () => {
   it.each([
     ['lockUser', '/zitadel.user.v2.UserService/LockUser'],
     ['unlockUser', '/zitadel.user.v2.UserService/UnlockUser'],
-    ['deleteUser', '/zitadel.user.v2.UserService/DeleteUser'],
   ] as const)('%s posts { userId } to %s', async (method, path) => {
     await client()[method]('u-1');
 

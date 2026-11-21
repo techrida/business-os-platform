@@ -97,14 +97,6 @@ class RepairableZitadel {
     this.grantOrgs.set(userId, orgId);
     return Promise.resolve();
   }
-  deletedUsers: string[] = [];
-  deleteUser(userId: string) {
-    this.deletedUsers.push(userId);
-    this.users.delete(userId);
-    this.grants.delete(userId);
-    this.grantOrgs.delete(userId);
-    return Promise.resolve();
-  }
   sendInviteCode(userId: string) {
     this.inviteCodes.push(userId);
     return Promise.resolve();
@@ -602,7 +594,7 @@ describe('POST /v1/admin/users/invite with a department and level (F1-Q50)', () 
     expectZitadelUntouched();
   });
 
-  it('removes the roles and deletes the identity it created when the placement fails after ZITADEL was written', async () => {
+  it('removes the roles but never deletes the identity it created when the placement fails after ZITADEL was written', async () => {
     department();
     retiredOnRecheck();
 
@@ -612,9 +604,8 @@ describe('POST /v1/admin/users/invite with a department and level (F1-Q50)', () 
 
     expect((error as { getStatus?: () => number }).getStatus?.()).toBe(422);
     expect(zitadel.createCalls).toBe(1);
-    expect(zitadel.deletedUsers).toEqual(['z-created-1']);
-    expect(zitadel.users.size).toBe(0);
-    expect(zitadel.grants.size).toBe(0);
+    expect(zitadel.users.has('z-created-1')).toBe(true);
+    expect(zitadel.grants.get('z-created-1')).toEqual([]);
   });
 
   it('removes the roles but keeps an identity it did not create (an earlier open invite) when the placement fails late', async () => {
@@ -634,7 +625,6 @@ describe('POST /v1/admin/users/invite with a department and level (F1-Q50)', () 
     ).catch((e: unknown) => e);
 
     expect((error as { getStatus?: () => number }).getStatus?.()).toBe(422);
-    expect(zitadel.deletedUsers).toEqual([]);
     expect(zitadel.users.has('z-open')).toBe(true);
     expect(zitadel.grants.get('z-open')).toEqual([]);
   });
@@ -728,7 +718,7 @@ describe('inviting again after a half-finished invite', () => {
     expect(store.users).toHaveLength(0);
   });
 
-  it('restores prior grants when reusing an open invite and phase C fails while still invited (FU1 item 5)', async () => {
+  it('strips the added grants when reusing an open invite and phase C fails while still invited; never adds a role back (FU8)', async () => {
     zitadel.users.set('z-open', {
       id: 'z-open',
       orgId: STAFF_ZORG,
@@ -744,11 +734,10 @@ describe('inviting again after a half-finished invite', () => {
       asAdmin(both, () => controller.invite({ ...NEW_USER, roles: ['finance'] })),
     ).rejects.toThrow('db write failed');
 
-    expect(zitadel.grants.get('z-open')).toEqual(['accountant']);
-    expect(zitadel.deletedUsers).toEqual([]);
+    expect(zitadel.grants.get('z-open')).toEqual([]);
   });
 
-  it('does not wipe grants when reusing an open invite and the person finishes sign-up before phase C fails (FU1 item 5)', async () => {
+  it('leaves no grant the invite added when reusing an open invite and the person finishes sign-up before phase C fails (FU8)', async () => {
     zitadel.users.set('z-open', {
       id: 'z-open',
       orgId: STAFF_ZORG,
@@ -778,9 +767,8 @@ describe('inviting again after a half-finished invite', () => {
       asAdmin(both, () => controller.invite({ ...NEW_USER, roles: ['finance'] })),
     ).rejects.toBeInstanceOf(ConflictException);
 
-    // Must NOT wipe grants to [] now that the person finished sign-up.
-    expect(zitadel.grants.get('z-open')).toEqual(['finance']);
-    expect(zitadel.deletedUsers).toEqual([]);
+    // The row the person's sign-up wrote has no roles, so the finance grant this invite added is gone.
+    expect(zitadel.grants.get('z-open')).toEqual([]);
   });
 });
 
@@ -1305,7 +1293,7 @@ describe('POST /v1/admin/users/:id/deactivate, /reactivate, /lock and /unlock (F
     expect(zitadel.statusCalls).toEqual([`unlock:z-${STAFF}`, `deactivate:z-${STAFF}`]);
     expect(lockSpy).not.toHaveBeenCalled();
     expect(zitadel.users.get(`z-${STAFF}`)).toMatchObject({ status: 'inactive', locked: false });
-    expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining(STAFF));
+    expect(warnSpy).not.toHaveBeenCalledWith(expect.stringContaining('reactivate'));
   });
 
   it('retries lockUser when deactivate fails after unlock in phase B so ZITADEL never ends active (FU1 round-2 B)', async () => {

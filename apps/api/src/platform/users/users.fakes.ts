@@ -312,6 +312,17 @@ export class FakeUsersStore extends UsersStore {
     this.cursors.set(name, cursor);
     return Promise.resolve();
   }
+  founderLeases = new Map<string, string>();
+  claimFounderLease(tenantId: string, leaseId: string) {
+    const held = this.founderLeases.get(tenantId);
+    if (held !== undefined && held !== leaseId) return Promise.resolve(false);
+    this.founderLeases.set(tenantId, leaseId);
+    return Promise.resolve(true);
+  }
+  releaseFounderLease(tenantId: string, leaseId: string) {
+    if (this.founderLeases.get(tenantId) === leaseId) this.founderLeases.delete(tenantId);
+    return Promise.resolve();
+  }
 }
 
 /**
@@ -375,15 +386,7 @@ export class FakeZitadel {
   sendInviteCode() {
     return Promise.resolve();
   }
-  deletedUsers: string[] = [];
   statusCalls: string[] = [];
-  deleteUser(userId: string) {
-    this.deletedUsers.push(userId);
-    this.users.delete(userId);
-    this.grants.delete(userId);
-    this.grantOrgs.delete(userId);
-    return Promise.resolve();
-  }
   lockUser(userId: string) {
     applyZitadelStatusTransition(this.users.get(userId), 'lock');
     this.statusCalls.push(`lock:${userId}`);
