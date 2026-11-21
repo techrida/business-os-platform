@@ -14,7 +14,7 @@ import { stat } from 'node:fs/promises';
 import { documents, documentVersions, scoped } from '@bos/db';
 import { InjectQueue, Processor, WorkerHost } from '@nestjs/bullmq';
 import { Inject, Injectable, Logger, type OnModuleInit } from '@nestjs/common';
-import { and, asc, eq, isNull, lt } from 'drizzle-orm';
+import { and, asc, eq, isNotNull, isNull, lt } from 'drizzle-orm';
 import type { Job, Queue } from 'bullmq';
 
 import { DB, type Db } from '../db/db.module';
@@ -98,6 +98,12 @@ export class ScanProcessor extends WorkerHost {
     // A retried or duplicated job must not scan or promote a version twice.
     if (v === undefined || v.status !== 'quarantined') {
       this.logger.warn(`scan skipped for version ${data.versionId}: ${v?.status ?? 'not found'}`);
+      return 'skipped';
+    }
+    // The bytes are only a file to scan once the upload recorded that they passed its length and type checks. Before
+    // that (a stopped process, a client still sending) they are unvalidated and must never be scanned clean.
+    if (v.sha256 === null || v.detectedMime === null) {
+      this.logger.warn(`scan skipped for version ${v.id}: its upload never finished validating`);
       return 'skipped';
     }
     // A removed document's quarantine bytes are deleted with it. A job that still arrives for it has nothing
@@ -342,6 +348,12 @@ export const SWEEP_EVERY_MS = 10 * 60_000;
 export const SWEEP_STALE_MS = 15 * 60_000;
 /** One sweep re-queues at most this many versions per list, so a long outage cannot flood the queue at once. */
 const SWEEP_BATCH = 200;
+/**
+ * A version claimed by an upload (quarantined) that never recorded its validation (sha256 and detected type, written in
+ * one statement after the length and type checks) is an unfinished upload, not a file waiting for a scan. It is only
+ * reopened after this long, so a slow upload still streaming is never cut off.
+ */
+export const UNFINISHED_UPLOAD_MS = 2 * 60 * 60_000;
 /** Job states that mean "a worker will still look at this version". */
 const LIVE_STATES = [
   'active',
@@ -391,8 +403,15 @@ export class ScanSweepProcessor extends WorkerHost {
   async sweep(now: Date = new Date()): Promise<SweepResult> {
     const cutoff = new Date(now.getTime() - SWEEP_STALE_MS);
     const stale = await this.list(
-      and(eq(documentVersions.status, 'quarantined'), lt(documentVersions.updatedAt, cutoff)),
+      and(
+        eq(documentVersions.status, 'quarantined'),
+        lt(documentVersions.updatedAt, cutoff),
+        // Validated uploads only: see UNFINISHED_UPLOAD_MS for the rest.
+        isNotNull(documentVersions.sha256),
+        isNotNull(documentVersions.detectedMime),
+      ),
     );
+    await this.reopenUnfinished(now);
     const failed = await this.list(
       and(
         eq(documentVersions.status, 'scan_failed'),
@@ -442,6 +461,44 @@ export class ScanSweepProcessor extends WorkerHost {
     // it as stale, so failing the job here is for visibility, not for recovery.
     if (failures.length > 0) throw new Error(`scan sweep: ${failures.join('; ')}`);
     return result;
+  }
+
+  /**
+   * Puts uploads that never recorded their validation back to `awaiting_content` (the trigger allows it while sha256 is
+   * empty), so the client sends the content again. Their stray file is overwritten by that next upload.
+   */
+  private async reopenUnfinished(now: Date): Promise<void> {
+    const cutoff = new Date(now.getTime() - UNFINISHED_UPLOAD_MS);
+    const unfinished = await this.list(
+      and(
+        eq(documentVersions.status, 'quarantined'),
+        lt(documentVersions.updatedAt, cutoff),
+        isNull(documentVersions.sha256),
+      ),
+    );
+    for (const v of unfinished) {
+      try {
+        const scope = { tenantId: v.tenantId, organizationId: v.organizationId };
+        const s = scoped(scope);
+        await withTx(this.db, scope, systemActor('docs.scan.sweep'), (tx) =>
+          tx
+            .update(documentVersions)
+            .set({ status: 'awaiting_content', detectedMime: null, updatedAt: new Date() })
+            .where(
+              s.where(
+                documentVersions,
+                and(
+                  eq(documentVersions.id, v.id),
+                  eq(documentVersions.status, 'quarantined'),
+                  isNull(documentVersions.sha256),
+                ),
+              ),
+            ),
+        );
+      } catch (error) {
+        this.logger.error(`could not reopen unfinished upload ${v.id}: ${error instanceof Error ? error.message : String(error)}`);
+      }
+    }
   }
 
   /** Oldest first, only versions whose document is not removed. */
