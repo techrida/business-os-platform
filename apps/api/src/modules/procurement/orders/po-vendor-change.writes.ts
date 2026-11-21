@@ -173,9 +173,18 @@ export async function vatWarningFor(
   return vendor?.vatRegistered !== true;
 }
 
-/** True when the quotation's total equals the total the order was approved at (same currency, so no rounding). */
-export const sameApprovedTotal = (po: Pick<PoRow, 'approvedTotal'>, quote: QuotationRow) =>
-  new Decimal(po.approvedTotal).equals(new Decimal(quote.total));
+/**
+ * True when the quotation may replace the order without a new approval: its total equals the total the order was
+ * approved at AND its NPR value is no higher. Each quotation carries the rate of the day it was recorded, so two
+ * quotations of one total can differ in NPR, and the NPR value picks the approval band (AD4): a higher one needs the
+ * route again.
+ */
+export const sameApprovedTotal = (
+  po: Pick<PoRow, 'approvedTotal' | 'approvedTotalNpr'>,
+  quote: Pick<QuotationRow, 'total' | 'totalNpr'>,
+) =>
+  new Decimal(po.approvedTotal).equals(new Decimal(quote.total)) &&
+  new Decimal(quote.totalNpr).lte(new Decimal(po.approvedTotalNpr));
 
 export function proposalOf(
   po: PoRow,

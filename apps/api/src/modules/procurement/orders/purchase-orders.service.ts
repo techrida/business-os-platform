@@ -674,7 +674,12 @@ export class PurchaseOrdersService {
               },
               facts: {
                 amountNpr: quote.totalNpr,
-                requesterIsFounder: await this.holdsRole(tx, scope, principal.userId, 'founder'),
+                requesterIsFounder: await this.holdsRole(
+                  tx,
+                  scope,
+                  pr?.requesterUserId ?? principal.userId,
+                  'founder',
+                ),
               },
               requesterUserId: principal.userId,
               submittedByUserId: principal.userId,
