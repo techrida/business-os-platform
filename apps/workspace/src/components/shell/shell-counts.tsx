@@ -17,6 +17,7 @@ import {
 export const SHELL_COUNTS_URL = '/api/shell/counts';
 
 const POLL_MS = 15_000;
+const READ_TIMEOUT_MS = 10_000;
 
 /**
  * The live shell counts. `undefined` means not known yet (or never readable, such as a non-approver's inbox):
@@ -99,6 +100,9 @@ export function ShellCountsProvider({
   // Generation of the newest read; refs are touched only in callbacks and effects, never during render.
   const latest = useRef(0);
   const signedOut = useRef(false);
+  // A read is waiting for its answer: a tick does not start another, or a slow answer would be superseded
+  // by every following tick and never land.
+  const inFlight = useRef(false);
   const seenPath = useRef(pathname);
 
   // A fresh layout number outranks any read already in flight: that read started before it.
@@ -107,10 +111,16 @@ export function ShellCountsProvider({
   }, [initialInbox, initialNotifications]);
 
   const refresh = useCallback(async () => {
-    if (document.hidden || signedOut.current) return;
+    if (document.hidden || signedOut.current || inFlight.current) return;
+    inFlight.current = true;
     const generation = ++latest.current;
     try {
-      const res = await fetch(SHELL_COUNTS_URL, { cache: 'no-store' });
+      const res = await fetch(SHELL_COUNTS_URL, {
+        cache: 'no-store',
+        signal: AbortSignal.timeout(READ_TIMEOUT_MS),
+      });
+      // An answer that a newer read or a fresher layout number outranks is dropped, a 401 included.
+      if (generation !== latest.current) return;
       if (res.status === 401) {
         signedOut.current = true;
         setState((s) => ({ ...s, signedOut: true }));
@@ -128,6 +138,8 @@ export function ShellCountsProvider({
       }));
     } catch {
       // Offline or API restarting: keep the last counts and try again at the next tick.
+    } finally {
+      inFlight.current = false;
     }
   }, []);
 

@@ -161,6 +161,52 @@ describe('ShellCountsProvider', () => {
     expect(reads()).toBe(after);
   });
 
+  it('ignores a 401 that lands after a newer layout number outranked its read', async () => {
+    fetchMock.mockImplementation(answer(1, 1));
+    await render({ inbox: 1, notifications: 1 });
+
+    let land: (res: Response) => void = () => undefined;
+    fetchMock.mockImplementation(
+      () =>
+        new Promise<Response>((resolve) => {
+          land = resolve;
+        }),
+    );
+    await tick(15_000);
+    expect(reads()).toBe(1);
+
+    // The layout re-renders with fresher numbers while that read is still on the wire.
+    await render({ inbox: 2, notifications: 1 });
+    await act(async () => {
+      land(new Response('{"error":{"message":"Sign in"}}', { status: 401 }));
+      await vi.advanceTimersByTimeAsync(0);
+    });
+    expect(shown()).toBe('inbox=2 unread=1 signedOut=false');
+  });
+
+  it('does not start a second read while one is still on the wire, so a slow answer can land', async () => {
+    fetchMock.mockImplementation(answer(1, 1));
+    await render({ inbox: 1, notifications: 1 });
+
+    let land: (res: Response) => void = () => undefined;
+    fetchMock.mockImplementation(
+      () =>
+        new Promise<Response>((resolve) => {
+          land = resolve;
+        }),
+    );
+    await tick(15_000);
+    await tick(15_000);
+    await tick(15_000);
+    expect(reads()).toBe(1);
+
+    await act(async () => {
+      land(new Response(JSON.stringify({ inbox: 4, notifications: 2 }), { status: 200 }));
+      await vi.advanceTimersByTimeAsync(0);
+    });
+    expect(shown()).toBe('inbox=4 unread=2 signedOut=false');
+  });
+
   it('lowers the unread count when items are marked read, and drops a read that started before', async () => {
     // Stands in for the bell's "mark read" controls.
     function Lowerer() {

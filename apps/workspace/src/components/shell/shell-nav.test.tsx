@@ -167,23 +167,20 @@ describe('ShellNav inbox badge', () => {
     expect(inboxBadge()).toBe('2');
   });
 
-  it('shows the newest read when two reads answer out of order', async () => {
+  it('never has two reads on the wire, so an older answer cannot overwrite a newer one', async () => {
     fetchMock.mockImplementation(answer(1));
     await render(1);
 
-    const older = deferred();
-    const newer = deferred();
-    fetchMock.mockImplementationOnce(() => older.promise);
-    fetchMock.mockImplementationOnce(() => newer.promise);
+    const first = deferred();
+    fetchMock.mockImplementationOnce(() => first.promise);
     await focusWindow();
     await focusWindow();
+    expect(
+      fetchMock.mock.calls.filter(([url]) => url === '/api/shell/counts').length,
+    ).toBeLessThanOrEqual(2);
 
     await act(async () => {
-      newer.resolve(body(4));
-      await vi.advanceTimersByTimeAsync(0);
-    });
-    await act(async () => {
-      older.resolve(body(9));
+      first.resolve(body(4));
       await vi.advanceTimersByTimeAsync(0);
     });
     expect(inboxBadge()).toBe('4');
