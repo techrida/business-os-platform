@@ -30,6 +30,7 @@
     "pdfkit": "catalog:",
     "react": "catalog:",
     "react-aria-components": "catalog:",
+    "react-number-format": "catalog:",
     "react-dom": "catalog:",
     "server-only": "catalog:",
     "sonner": "catalog:",

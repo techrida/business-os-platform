@@ -21,6 +21,7 @@
     "openid-client": "catalog:",
     "react": "catalog:",
     "react-aria-components": "catalog:",
+    "react-number-format": "catalog:",
     "react-dom": "catalog:",
     "server-only": "catalog:",
     "zod": "catalog:"
