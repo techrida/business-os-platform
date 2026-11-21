@@ -117,17 +117,27 @@ export default async function VendorsPage({ searchParams }: { searchParams: Prom
   let total: number | null = null;
   let counts: VendorCounts | null = null;
   let problem: { message: string; status: number } | null = null;
+  let window = pageWindow(page, pageSize);
   try {
-    const window = pageWindow(page, pageSize);
     // The counts start first; the cards are a convenience and drop out on their own failure.
     const countsLoad = countVendorsByBucket(session);
-    const result = await listVendors(session, {
-      ...(q !== undefined ? { q } : {}),
-      ...(status.length > 0 ? { status } : {}),
-      ...(kind.length > 0 ? { kind } : {}),
-      limit: window.limit,
-      offset: window.offset,
-    });
+    const fetchPage = () =>
+      listVendors(session, {
+        ...(q !== undefined ? { q } : {}),
+        ...(status.length > 0 ? { status } : {}),
+        ...(kind.length > 0 ? { kind } : {}),
+        limit: window.limit,
+        offset: window.offset,
+      });
+    let result = await fetchPage();
+    // A page number past the end (a stale link) shows the last page instead of an empty table.
+    const clamped = pageWindow(page, pageSize, result.total);
+    if (result.items.length === 0 && result.total > 0 && clamped.page !== window.page) {
+      window = clamped;
+      result = await fetchPage();
+    } else {
+      window = clamped;
+    }
     vendors = result.items;
     total = result.total;
     counts = await countsLoad;
@@ -234,7 +244,7 @@ export default async function VendorsPage({ searchParams }: { searchParams: Prom
           <ListPager
             pathname="/vendors"
             current={params}
-            window={pageWindow(page, pageSize, total)}
+            window={window}
             total={total}
             label="Vendor pages"
           />

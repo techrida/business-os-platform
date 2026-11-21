@@ -3,6 +3,7 @@
 import { randomUUID } from 'node:crypto';
 
 import { PortalSubmitPaymentBodySchema } from '@bos/contracts';
+import { plainAmount } from '@bos/locale';
 import { revalidatePath } from 'next/cache';
 import { notFound, redirect } from 'next/navigation';
 
@@ -60,7 +61,7 @@ function text(form: FormData, name: string): string {
 
 /** Customers type lakh grouping ("20,18,180.00"); the contract wants plain digits. A string clean-up, not arithmetic. */
 function normalizeAmount(raw: string): string {
-  return raw.replace(/[,\s]/g, '');
+  return plainAmount(raw);
 }
 
 function codeOf(err: unknown): string {

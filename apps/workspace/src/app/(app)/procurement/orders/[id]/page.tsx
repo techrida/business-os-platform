@@ -42,6 +42,7 @@ import {
   qtyText,
 } from '../_lib/model';
 import styles from '../orders.module.css';
+import { receiveAction } from './receive-action';
 
 export const metadata: Metadata = { title: 'Purchase order · Business OS' };
 export const dynamic = 'force-dynamic';
@@ -350,12 +351,17 @@ export default async function PurchaseOrderPage({ params }: { params: Promise<{ 
       ? versions.value.find((v) => v.version === po.currentVersion)
       : undefined;
   // The order decides both from the caller's live grants on it (F1-Q52): a read-only reader gets neither.
-  const mayReceive = po.can?.receive === true;
+  // With the progress known, offered only while some line has room for a kind the person may receive.
+  const receive = receiveAction(
+    po.can?.receive === true,
+    progress.status === 'fulfilled' ? progress.value : undefined,
+    grants,
+  );
   const mayEnterBill = po.can?.enterBill === true;
   const primary = primaryOrderAction({
     issue: can.issue,
     // Receive goods is promoted only for the warehouse grant: without it the receipt page may refuse the lines left.
-    receive: mayReceive && grants.confirm,
+    receive: receive !== null && grants.confirm,
     enterBill: mayEnterBill,
   });
   const received = (lineId: string): string | null =>
@@ -484,12 +490,12 @@ export default async function PurchaseOrderPage({ params }: { params: Promise<{ 
                   Enter bill
                 </LinkButton>
               ) : null}
-              {mayReceive ? (
+              {receive !== null ? (
                 <LinkButton
                   href={`/procurement/receipts/new?po=${encodeURIComponent(po.id)}`}
                   variant={primary === 'receive' ? 'primary' : 'secondary'}
                 >
-                  Receive goods
+                  {receive}
                 </LinkButton>
               ) : null}
               {can.issue ? <IssueDialog {...common} idempotencyKey={randomUUID()} /> : null}
