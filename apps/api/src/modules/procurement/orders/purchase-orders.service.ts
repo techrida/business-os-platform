@@ -33,7 +33,7 @@ import { can } from '../../../platform/authz/can';
 import type { Principal } from '../../../platform/authz/principal';
 import { DB, type Db, type DbTransaction } from '../../../platform/db/db.module';
 import { withIdempotency } from '../../../platform/db/idempotency';
-import { withTx, type TxScope } from '../../../platform/db/tx';
+import { withTx, type TxScope, READ_ONLY } from '../../../platform/db/tx';
 import { searchPage } from '../../../platform/list';
 import { ApprovalsNotify } from '../../approvals/ports';
 import { ApprovalsService } from '../../approvals/requests.service';
@@ -300,54 +300,60 @@ export class PurchaseOrdersService {
     assertHoldsPoRead(principal);
     // A read-only reader (F1-Q52) sees the orders their grant reaches through the purchase request.
     const reach = poReadWhere(principal);
-    return withTx(this.db, scope, actor, async (tx) => {
-      const page = await searchPage(tx, {
-        q: query.q,
-        columns: [purchaseOrders.number, vendors.legalName],
-        where: scoped(scope).where(
-          purchaseOrders,
-          and(
-            query.status === undefined || query.status.length === 0
-              ? undefined
-              : inArray(purchaseOrders.status, query.status),
-            reach,
+    return withTx(
+      this.db,
+      scope,
+      actor,
+      async (tx) => {
+        const page = await searchPage(tx, {
+          q: query.q,
+          columns: [purchaseOrders.number, vendors.legalName],
+          where: scoped(scope).where(
+            purchaseOrders,
+            and(
+              query.status === undefined || query.status.length === 0
+                ? undefined
+                : inArray(purchaseOrders.status, query.status),
+              reach,
+            ),
           ),
-        ),
-        orderBy: [
-          desc(purchaseOrders.createdAt),
-          desc(purchaseOrders.number),
-          desc(purchaseOrders.id),
-        ],
-        limit: query.limit,
-        offset: query.offset,
-        rows: (reader, p) =>
-          reader
-            .select({ po: purchaseOrders, vendorName: vendors.legalName })
-            .from(purchaseOrders)
-            .innerJoin(vendors, vendorOf(purchaseOrders))
-            .innerJoin(purchaseRequests, requestOf(purchaseOrders))
-            .where(p.where)
-            .orderBy(...p.orderBy)
-            .limit(p.limit)
-            .offset(p.offset),
-        count: async (reader, where) => {
-          const [row] = await reader
-            .select({ n: sql<number>`count(*)::int` })
-            .from(purchaseOrders)
-            .innerJoin(vendors, vendorOf(purchaseOrders))
-            .innerJoin(purchaseRequests, requestOf(purchaseOrders))
-            .where(where);
-          return row?.n ?? 0;
-        },
-      });
-      return {
-        rows: page.rows.map((r) => {
-          const { lines: _lines, ...dto } = toDto(r.po, []);
-          return { ...dto, vendorName: r.vendorName };
-        }),
-        total: page.total,
-      };
-    });
+          orderBy: [
+            desc(purchaseOrders.createdAt),
+            desc(purchaseOrders.number),
+            desc(purchaseOrders.id),
+          ],
+          limit: query.limit,
+          offset: query.offset,
+          rows: (reader, p) =>
+            reader
+              .select({ po: purchaseOrders, vendorName: vendors.legalName })
+              .from(purchaseOrders)
+              .innerJoin(vendors, vendorOf(purchaseOrders))
+              .innerJoin(purchaseRequests, requestOf(purchaseOrders))
+              .where(p.where)
+              .orderBy(...p.orderBy)
+              .limit(p.limit)
+              .offset(p.offset),
+          count: async (reader, where) => {
+            const [row] = await reader
+              .select({ n: sql<number>`count(*)::int` })
+              .from(purchaseOrders)
+              .innerJoin(vendors, vendorOf(purchaseOrders))
+              .innerJoin(purchaseRequests, requestOf(purchaseOrders))
+              .where(where);
+            return row?.n ?? 0;
+          },
+        });
+        return {
+          rows: page.rows.map((r) => {
+            const { lines: _lines, ...dto } = toDto(r.po, []);
+            return { ...dto, vendorName: r.vendorName };
+          }),
+          total: page.total,
+        };
+      },
+      READ_ONLY,
+    );
   }
 
   /** 404 outside the acting entity, and for a read-only reader whose grant does not reach the order (F1-Q52). */
@@ -401,33 +407,42 @@ export class PurchaseOrdersService {
   async versions(id: string): Promise<PurchaseOrderVersionDto[]> {
     const { scope, actor, principal } = this.caller.current();
     assertHoldsPoRead(principal);
-    return withTx(this.db, scope, actor, async (tx) => {
-      const [po] = await tx
-        .select({ id: purchaseOrders.id, request: requestFactsColumns })
-        .from(purchaseOrders)
-        .innerJoin(purchaseRequests, requestOf(purchaseOrders))
-        .where(scoped(scope).where(purchaseOrders, eq(purchaseOrders.id, id)));
-      if (po === undefined || !mayReadPo(principal, po.request)) throw notFound();
-      const rows = await tx
-        .select()
-        .from(purchaseOrderVersions)
-        .where(
-          scoped(scope).where(purchaseOrderVersions, eq(purchaseOrderVersions.purchaseOrderId, id)),
-        )
-        .orderBy(asc(purchaseOrderVersions.version));
-      return rows.map((v) => ({
-        id: v.id,
-        version: v.version,
-        reason: v.reason,
-        total: v.total,
-        totalNpr: v.totalNpr,
-        band: v.band,
-        approvalRequestId: v.approvalRequestId,
-        createdBy: v.createdBy,
-        createdAt: v.createdAt.toISOString(),
-        snapshot: v.snapshot,
-      }));
-    });
+    return withTx(
+      this.db,
+      scope,
+      actor,
+      async (tx) => {
+        const [po] = await tx
+          .select({ id: purchaseOrders.id, request: requestFactsColumns })
+          .from(purchaseOrders)
+          .innerJoin(purchaseRequests, requestOf(purchaseOrders))
+          .where(scoped(scope).where(purchaseOrders, eq(purchaseOrders.id, id)));
+        if (po === undefined || !mayReadPo(principal, po.request)) throw notFound();
+        const rows = await tx
+          .select()
+          .from(purchaseOrderVersions)
+          .where(
+            scoped(scope).where(
+              purchaseOrderVersions,
+              eq(purchaseOrderVersions.purchaseOrderId, id),
+            ),
+          )
+          .orderBy(asc(purchaseOrderVersions.version));
+        return rows.map((v) => ({
+          id: v.id,
+          version: v.version,
+          reason: v.reason,
+          total: v.total,
+          totalNpr: v.totalNpr,
+          band: v.band,
+          approvalRequestId: v.approvalRequestId,
+          createdBy: v.createdBy,
+          createdAt: v.createdAt.toISOString(),
+          snapshot: v.snapshot,
+        }));
+      },
+      READ_ONLY,
+    );
   }
 
   // ------------------------------------------------------------------------------------------------- issue

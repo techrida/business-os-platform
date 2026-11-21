@@ -40,7 +40,7 @@ import { loadRecordReaders, type RecordReaders } from '../../platform/authz/reco
 import { RoleCache } from '../../platform/authz/role-cache';
 import { DB, type Db } from '../../platform/db/db.module';
 import { updateVersioned, withIdempotency } from '../../platform/db/idempotency';
-import { withTx, type DbTransaction, type TxScope } from '../../platform/db/tx';
+import { withTx, type DbTransaction, type TxScope, READ_ONLY } from '../../platform/db/tx';
 import { NotifyService } from '../../platform/notify/notify.service';
 import { CurrencyEnabledService } from '../../platform/settings/currency-enabled';
 import { searchPage } from '../../platform/list';
@@ -611,23 +611,29 @@ export class LeadsService {
    */
   async owners(context: AssignmentContext = 'reassign'): Promise<LeadOwnerOption[]> {
     const { scope, actor, principal } = this.caller.current();
-    return withTx(this.db, scope, actor, async (tx) => {
-      const people = await assignableParties(
-        tx,
-        principal,
-        scope,
-        this.assignmentCheck(tx, scope, context),
-      );
-      return people
-        .map((c) => ({
-          userId: c.userId,
-          displayName: shownName(c.displayName),
-          // Never sent: a picker has no use for an address, and the list reaches client-component props.
-          email: '',
-          avatarDocumentId: c.avatarDocumentId,
-        }))
-        .sort(byName);
-    });
+    return withTx(
+      this.db,
+      scope,
+      actor,
+      async (tx) => {
+        const people = await assignableParties(
+          tx,
+          principal,
+          scope,
+          this.assignmentCheck(tx, scope, context),
+        );
+        return people
+          .map((c) => ({
+            userId: c.userId,
+            displayName: shownName(c.displayName),
+            // Never sent: a picker has no use for an address, and the list reaches client-component props.
+            email: '',
+            avatarDocumentId: c.avatarDocumentId,
+          }))
+          .sort(byName);
+      },
+      READ_ONLY,
+    );
   }
 
   /**

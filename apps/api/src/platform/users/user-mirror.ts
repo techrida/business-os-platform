@@ -19,7 +19,7 @@ import { sql } from 'drizzle-orm';
 
 import type { EntityMembership, ResolvedUser } from '../authz/user-directory';
 import { DB, type Db, type DbTransaction } from '../db/db.module';
-import { type TxScope, systemActor, withTx } from '../db/tx';
+import { type TxOptions, type TxScope, systemActor, withTx } from '../db/tx';
 import {
   lockoutPinnedCursor,
   USERS_QUEUE,
@@ -43,6 +43,9 @@ import {
 
 /** The audit actor for everything that arrives from ZITADEL (hook, sync, reconcile, JIT). */
 const zitadelActor = () => systemActor('zitadel');
+// For a write that locks a user row before its first audited write. The admin status paths (UserStatusService) lock
+// the row and cannot take the tenant audit lock first, so these keep the same order: row, then audit lock.
+const LOCKS_USER_ROW: TxOptions = { audit: 'lazy' };
 
 const cursorName = (zitadelOrgId: string) => `users.reconcile:${zitadelOrgId}`;
 
@@ -257,12 +260,17 @@ export class UserMirror {
       if (!row) throw new Error('JIT user insert left no row');
     } else if (row.status === 'invited') {
       const invited = row;
-      await withTx(this.db, await this.entityScope(invited.tenantId), zitadelActor(), (tx) =>
-        this.store.updateUser(tx, invited.id, {
-          email: invited.email,
-          displayName: invited.displayName,
-          status: 'active',
-        }),
+      await withTx(
+        this.db,
+        await this.entityScope(invited.tenantId),
+        zitadelActor(),
+        (tx) =>
+          this.store.updateUser(tx, invited.id, {
+            email: invited.email,
+            displayName: invited.displayName,
+            status: 'active',
+          }),
+        LOCKS_USER_ROW,
       );
       await this.enqueueSync(i.zitadelUserId);
       row = { ...invited, status: 'active' };
@@ -387,11 +395,17 @@ export class UserMirror {
       const next = await this.nextState(org, seen, read, read.status);
       // ZITADEL was read with no transaction open. The write goes ahead only while the row is still the version read
       // before that, so an admin action or another sync that committed in between is never overwritten.
-      const changed = await withTx(this.db, scope, zitadelActor(), async (tx) => {
-        const existing = await this.store.findByZitadelId(tx, read.id, true);
-        if ((existing?.version ?? null) !== (seen?.version ?? null)) return null;
-        return this.write(tx, org, scope, existing, next, roles);
-      });
+      const changed = await withTx(
+        this.db,
+        scope,
+        zitadelActor(),
+        async (tx) => {
+          const existing = await this.store.findByZitadelId(tx, read.id, true);
+          if ((existing?.version ?? null) !== (seen?.version ?? null)) return null;
+          return this.write(tx, org, scope, existing, next, roles);
+        },
+        LOCKS_USER_ROW,
+      );
       if (changed !== null) return changed;
       if (attempt >= APPLY_ATTEMPTS) {
         this.logger.warn(
@@ -604,15 +618,21 @@ export class UserMirror {
 
   private async deactivate(user: UserRow): Promise<void> {
     const scope = await this.entityScope(user.tenantId);
-    await withTx(this.db, scope, zitadelActor(), async (tx) => {
-      await this.store.updateUser(tx, user.id, {
-        email: user.email,
-        displayName: user.displayName,
-        status: 'inactive',
-      });
-      // Bump the authz version so the per-request user cache drops the user at once (see apply).
-      await this.store.bumpAuthzVersion(tx, scope);
-    });
+    await withTx(
+      this.db,
+      scope,
+      zitadelActor(),
+      async (tx) => {
+        await this.store.updateUser(tx, user.id, {
+          email: user.email,
+          displayName: user.displayName,
+          status: 'inactive',
+        });
+        // Bump the authz version so the per-request user cache drops the user at once (see apply).
+        await this.store.bumpAuthzVersion(tx, scope);
+      },
+      LOCKS_USER_ROW,
+    );
   }
 
   /** The tenant's staff IdP org: invites are created and grants are set there. */

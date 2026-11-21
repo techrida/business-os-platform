@@ -47,7 +47,7 @@ import type { Principal } from '../../platform/authz/principal';
 import { DB, type Db, type DbTransaction } from '../../platform/db/db.module';
 import { updateVersioned, withIdempotency } from '../../platform/db/idempotency';
 import { NO_LIMIT, searchPage, sumByCurrency } from '../../platform/list';
-import { withTx, type Actor, type TxScope } from '../../platform/db/tx';
+import { withTx, type Actor, type TxScope, READ_ONLY } from '../../platform/db/tx';
 import { CurrencyEnabledService } from '../../platform/settings/currency-enabled';
 import { LedgerService } from '../ledger/ledger.service';
 import { invoiceSettlements } from '../receivables/invoice-settlements';
@@ -171,68 +171,74 @@ export class InvoiceDraftingService {
     assertStaff(principal);
     const visible = scopeWhereFor(principal, invoices, 'invoice.read');
     const today = kathmanduDay(this.clock());
-    return withTx(this.db, scope, actor, async (tx) => {
-      let totals: MoneyTotals = [];
-      const { rows, total } = await searchPage(tx, {
-        q: filter.q,
-        columns: SEARCH_COLUMNS,
-        where: and(visible, this.filterWhere(filter, today, true)),
-        orderBy: [desc(invoices.createdAt), desc(invoices.id)],
-        limit: filter.limit ?? NO_LIMIT,
-        offset: filter.offset ?? 0,
-        rows: (r, p) =>
-          r
-            .select({ invoice: invoices, customerName: customers.legalName })
-            .from(invoices)
-            .innerJoin(customers, customerJoin())
-            .where(p.where)
-            .orderBy(...p.orderBy)
-            .limit(p.limit)
-            .offset(p.offset),
-        // The Total column summed per currency over all matches (U15b-Q4). searchPage may count twice (exact,
-        // then close matches); the last call is the set the rows come from.
-        count: async (r, where) => {
-          const groups = await r
-            .select({
-              currency: invoices.currency,
-              n: count(),
-              // Live money only: issued tax invoices and debit notes, less issued credit notes. Drafts, proformas and
-              // discarded rows are in the row count but add nothing.
-              amount: sql<string>`sum(CASE
+    return withTx(
+      this.db,
+      scope,
+      actor,
+      async (tx) => {
+        let totals: MoneyTotals = [];
+        const { rows, total } = await searchPage(tx, {
+          q: filter.q,
+          columns: SEARCH_COLUMNS,
+          where: and(visible, this.filterWhere(filter, today, true)),
+          orderBy: [desc(invoices.createdAt), desc(invoices.id)],
+          limit: filter.limit ?? NO_LIMIT,
+          offset: filter.offset ?? 0,
+          rows: (r, p) =>
+            r
+              .select({ invoice: invoices, customerName: customers.legalName })
+              .from(invoices)
+              .innerJoin(customers, customerJoin())
+              .where(p.where)
+              .orderBy(...p.orderBy)
+              .limit(p.limit)
+              .offset(p.offset),
+          // The Total column summed per currency over all matches (U15b-Q4). searchPage may count twice (exact,
+          // then close matches); the last call is the set the rows come from.
+          count: async (r, where) => {
+            const groups = await r
+              .select({
+                currency: invoices.currency,
+                n: count(),
+                // Live money only: issued tax invoices and debit notes, less issued credit notes. Drafts, proformas and
+                // discarded rows are in the row count but add nothing.
+                amount: sql<string>`sum(CASE
                 WHEN ${invoices.status} = 'issued' AND ${invoices.kind} IN ('tax_invoice', 'debit_note') THEN ${invoices.total}
                 WHEN ${invoices.status} = 'issued' AND ${invoices.kind} = 'credit_note' THEN -${invoices.total}
                 ELSE 0 END)::text`,
-            })
-            .from(invoices)
-            .innerJoin(customers, customerJoin())
-            .where(where)
-            .groupBy(invoices.currency);
-          const summed = sumByCurrency(groups);
-          totals = summed.totals;
-          return summed.total;
-        },
-      });
-      // Paid / overdue and the open amount of this page's issued tax invoices and debit notes (U15b-Q2).
-      const states = await invoiceSettlements(
-        tx,
-        scope,
-        rows.map((r) => r.invoice),
-        today,
-      );
-      return {
-        rows: rows.map((r) => {
-          const state = states.get(r.invoice.id);
-          return {
-            ...toInvoiceListItem(r.invoice, r.customerName),
-            settlement: state?.settlement ?? null,
-            openAmount: state?.openAmount ?? null,
-            can: invoiceCan(principal, scope, r.invoice),
-          };
-        }),
-        total,
-        totals,
-      };
-    });
+              })
+              .from(invoices)
+              .innerJoin(customers, customerJoin())
+              .where(where)
+              .groupBy(invoices.currency);
+            const summed = sumByCurrency(groups);
+            totals = summed.totals;
+            return summed.total;
+          },
+        });
+        // Paid / overdue and the open amount of this page's issued tax invoices and debit notes (U15b-Q2).
+        const states = await invoiceSettlements(
+          tx,
+          scope,
+          rows.map((r) => r.invoice),
+          today,
+        );
+        return {
+          rows: rows.map((r) => {
+            const state = states.get(r.invoice.id);
+            return {
+              ...toInvoiceListItem(r.invoice, r.customerName),
+              settlement: state?.settlement ?? null,
+              openAmount: state?.openAmount ?? null,
+              can: invoiceCan(principal, scope, r.invoice),
+            };
+          }),
+          total,
+          totals,
+        };
+      },
+      READ_ONLY,
+    );
   }
 
   /**
@@ -247,42 +253,48 @@ export class InvoiceDraftingService {
     assertStaff(principal);
     const visible = scopeWhereFor(principal, invoices, 'invoice.read');
     const today = kathmanduDay(this.clock());
-    return withTx(this.db, scope, actor, async (tx) => {
-      // searchPage settles exact vs close matches from the total; the per-status counts ride on its count
-      // callback so they describe the same match set. Its last call is the one it settled on.
-      let groups: { status: InvoiceStatus; n: number }[] = [];
-      const { total } = await searchPage(tx, {
-        q: filter.q,
-        columns: SEARCH_COLUMNS,
-        where: and(visible, this.filterWhere(filter, today, false)),
-        orderBy: [desc(invoices.id)],
-        limit: 1,
-        offset: 0,
-        rows: () => Promise.resolve([]),
-        count: async (r, where) => {
-          groups = await r
-            .select({ status: invoices.status, n: count() })
-            .from(invoices)
-            .innerJoin(customers, customerJoin())
-            .where(where)
-            .groupBy(invoices.status);
-          return groups.reduce((sum, g) => sum + g.n, 0);
-        },
-      });
-      const byStatus = Object.fromEntries(INVOICE_STATUSES.map((s) => [s, 0])) as Record<
-        InvoiceStatus,
-        number
-      >;
-      for (const g of groups) byStatus[g.status] = g.n;
-      const options = await tx
-        .selectDistinct({ id: customers.id, name: customers.legalName })
-        .from(invoices)
-        .innerJoin(customers, customerJoin())
-        .where(visible)
-        .orderBy(asc(customers.legalName), asc(customers.id))
-        .limit(CUSTOMER_OPTIONS_MAX);
-      return { total, byStatus, customers: options };
-    });
+    return withTx(
+      this.db,
+      scope,
+      actor,
+      async (tx) => {
+        // searchPage settles exact vs close matches from the total; the per-status counts ride on its count
+        // callback so they describe the same match set. Its last call is the one it settled on.
+        let groups: { status: InvoiceStatus; n: number }[] = [];
+        const { total } = await searchPage(tx, {
+          q: filter.q,
+          columns: SEARCH_COLUMNS,
+          where: and(visible, this.filterWhere(filter, today, false)),
+          orderBy: [desc(invoices.id)],
+          limit: 1,
+          offset: 0,
+          rows: () => Promise.resolve([]),
+          count: async (r, where) => {
+            groups = await r
+              .select({ status: invoices.status, n: count() })
+              .from(invoices)
+              .innerJoin(customers, customerJoin())
+              .where(where)
+              .groupBy(invoices.status);
+            return groups.reduce((sum, g) => sum + g.n, 0);
+          },
+        });
+        const byStatus = Object.fromEntries(INVOICE_STATUSES.map((s) => [s, 0])) as Record<
+          InvoiceStatus,
+          number
+        >;
+        for (const g of groups) byStatus[g.status] = g.n;
+        const options = await tx
+          .selectDistinct({ id: customers.id, name: customers.legalName })
+          .from(invoices)
+          .innerJoin(customers, customerJoin())
+          .where(visible)
+          .orderBy(asc(customers.legalName), asc(customers.id))
+          .limit(CUSTOMER_OPTIONS_MAX);
+        return { total, byStatus, customers: options };
+      },
+      READ_ONLY,
+    );
   }
 
   /** The filters as SQL. `withStatus` false leaves out the two status-like filters (the summary). */

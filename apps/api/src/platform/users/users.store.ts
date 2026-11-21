@@ -654,14 +654,21 @@ export class SqlUsersStore extends UsersStore {
   }
 
   recordActivity(scope: TxScope, actor: Actor): Promise<void> {
-    return withTx(this.db, scope, actor, async (tx) => {
-      await tx.execute(sql`SET LOCAL statement_timeout = '500ms'`);
-      // The WHERE clause is rechecked by Postgres after a concurrent update, so this is also
-      // the throttle across API instances. The timestamp is independent of profile updated_at.
-      await tx.execute(sql`UPDATE app.users SET last_active_at = now()
+    return withTx(
+      this.db,
+      scope,
+      actor,
+      async (tx) => {
+        await tx.execute(sql`SET LOCAL statement_timeout = '500ms'`);
+        // The WHERE clause is rechecked by Postgres after a concurrent update, so this is also
+        // the throttle across API instances. The timestamp is independent of profile updated_at.
+        await tx.execute(sql`UPDATE app.users SET last_active_at = now()
         WHERE tenant_id = ${scope.tenantId} AND id = ${actor.id} AND status = 'active'
           AND (last_active_at IS NULL OR last_active_at < now() - interval '5 minutes')`);
-    });
+        // 'lazy': last_active_at is ignored by the audit trigger (0041), so this never takes the tenant audit lock.
+      },
+      { audit: 'lazy' },
+    );
   }
 
   async recordEvent(e: ZitadelEventKey): Promise<boolean> {

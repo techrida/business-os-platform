@@ -74,7 +74,7 @@ import { can } from '../../../platform/authz/can';
 import type { DenyReason, Principal, ResourceRef } from '../../../platform/authz/principal';
 import { DB, type Db, type DbTransaction } from '../../../platform/db/db.module';
 import { withIdempotency } from '../../../platform/db/idempotency';
-import { withTx, type TxScope } from '../../../platform/db/tx';
+import { withTx, type TxScope, READ_ONLY } from '../../../platform/db/tx';
 import { searchPage } from '../../../platform/list';
 import {
   assertNotInfected,
@@ -318,81 +318,96 @@ export class VendorBillsService {
     query: ListBillsQuery,
   ): Promise<{ rows: Omit<VendorBillDto, 'lines'>[]; total: number }> {
     const { scope, actor, principal } = this.caller.current();
-    return withTx(this.db, scope, actor, async (tx) => {
-      const vendorJoin = and(
-        eq(vendors.tenantId, vendorBills.tenantId),
-        eq(vendors.id, vendorBills.vendorId),
-      );
-      const page = await searchPage(tx, {
-        q: query.q,
-        columns: [vendorBills.number, vendorBills.vendorInvoiceNo, vendors.legalName],
-        // The read scope rides in `where`, so the rows and the total both stop at it.
-        where: and(
-          scopeWhereFor(principal, vendorBills, 'payables.bill.read'),
-          query.status === undefined || query.status.length === 0
-            ? undefined
-            : inArray(vendorBills.status, query.status),
-        ),
-        orderBy: [desc(vendorBills.createdAt), desc(vendorBills.id)],
-        limit: query.limit,
-        offset: query.offset,
-        rows: (reader, p) =>
-          reader
-            .select({
-              bill: vendorBills,
-              vendorName: vendors.legalName,
-              purchaseOrderNumber: purchaseOrders.number,
-            })
-            .from(vendorBills)
-            .innerJoin(vendors, vendorJoin)
-            .leftJoin(purchaseOrders, poOfBill())
-            .where(p.where)
-            .orderBy(...p.orderBy)
-            .limit(p.limit)
-            .offset(p.offset),
-        count: async (reader, where) => {
-          const [row] = await reader
-            .select({ n: sql<number>`count(*)::int` })
-            .from(vendorBills)
-            .innerJoin(vendors, vendorJoin)
-            .where(where);
-          return row?.n ?? 0;
-        },
-      });
-      return {
-        rows: page.rows.map((row) => {
-          const { lines: _lines, ...rest } = toDto(
-            row.bill,
-            row.vendorName,
-            row.purchaseOrderNumber,
-            [],
-            [],
-          );
-          return { ...rest, can: billCan(principal, row.bill) };
-        }),
-        total: page.total,
-      };
-    });
+    return withTx(
+      this.db,
+      scope,
+      actor,
+      async (tx) => {
+        const vendorJoin = and(
+          eq(vendors.tenantId, vendorBills.tenantId),
+          eq(vendors.id, vendorBills.vendorId),
+        );
+        const page = await searchPage(tx, {
+          q: query.q,
+          columns: [vendorBills.number, vendorBills.vendorInvoiceNo, vendors.legalName],
+          // The read scope rides in `where`, so the rows and the total both stop at it.
+          where: and(
+            scopeWhereFor(principal, vendorBills, 'payables.bill.read'),
+            query.status === undefined || query.status.length === 0
+              ? undefined
+              : inArray(vendorBills.status, query.status),
+          ),
+          orderBy: [desc(vendorBills.createdAt), desc(vendorBills.id)],
+          limit: query.limit,
+          offset: query.offset,
+          rows: (reader, p) =>
+            reader
+              .select({
+                bill: vendorBills,
+                vendorName: vendors.legalName,
+                purchaseOrderNumber: purchaseOrders.number,
+              })
+              .from(vendorBills)
+              .innerJoin(vendors, vendorJoin)
+              .leftJoin(purchaseOrders, poOfBill())
+              .where(p.where)
+              .orderBy(...p.orderBy)
+              .limit(p.limit)
+              .offset(p.offset),
+          count: async (reader, where) => {
+            const [row] = await reader
+              .select({ n: sql<number>`count(*)::int` })
+              .from(vendorBills)
+              .innerJoin(vendors, vendorJoin)
+              .where(where);
+            return row?.n ?? 0;
+          },
+        });
+        return {
+          rows: page.rows.map((row) => {
+            const { lines: _lines, ...rest } = toDto(
+              row.bill,
+              row.vendorName,
+              row.purchaseOrderNumber,
+              [],
+              [],
+            );
+            return { ...rest, can: billCan(principal, row.bill) };
+          }),
+          total: page.total,
+        };
+      },
+      READ_ONLY,
+    );
   }
 
   /** 404 outside the acting entity and outside the caller's `payables.bill.read` scope (the list's rule). */
   async get(id: string): Promise<VendorBillDto> {
     const { scope, actor, principal } = this.caller.current();
-    return withTx(this.db, scope, actor, async (tx) => {
-      const [visible] = await tx
-        .select({
-          tenantId: vendorBills.tenantId,
-          organizationId: vendorBills.organizationId,
-          enteredBy: vendorBills.enteredBy,
-        })
-        .from(vendorBills)
-        .where(
-          and(scopeWhereFor(principal, vendorBills, 'payables.bill.read'), eq(vendorBills.id, id)),
-        )
-        .limit(1);
-      if (visible === undefined) throw notFound('Bill');
-      return { ...(await this.dto(tx, scope, id)), can: billCan(principal, visible) };
-    });
+    return withTx(
+      this.db,
+      scope,
+      actor,
+      async (tx) => {
+        const [visible] = await tx
+          .select({
+            tenantId: vendorBills.tenantId,
+            organizationId: vendorBills.organizationId,
+            enteredBy: vendorBills.enteredBy,
+          })
+          .from(vendorBills)
+          .where(
+            and(
+              scopeWhereFor(principal, vendorBills, 'payables.bill.read'),
+              eq(vendorBills.id, id),
+            ),
+          )
+          .limit(1);
+        if (visible === undefined) throw notFound('Bill');
+        return { ...(await this.dto(tx, scope, id)), can: billCan(principal, visible) };
+      },
+      READ_ONLY,
+    );
   }
 
   // ------------------------------------------------------------------------------------------------- create

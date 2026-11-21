@@ -202,19 +202,27 @@ export class UserLocks {
     seen: UserRow,
     write: (tx: DbTransaction, current: UserRow) => Promise<void>,
   ): Promise<{ done: true } | { done: false; current: UserRow | null }> {
-    return withTx(this.db, scope, systemActor(LOCK_EXPIRY_ACTOR), async (tx) => {
-      const current = await this.store.findById(tx, scope, seen.id, true);
-      if (
-        !current ||
-        current.status !== seen.status ||
-        (current.lockReason ?? null) !== (seen.lockReason ?? null) ||
-        (current.lockedUntil ?? null) !== (seen.lockedUntil ?? null)
-      ) {
-        return { done: false, current };
-      }
-      await write(tx, current);
-      return { done: true };
-    });
+    return withTx(
+      this.db,
+      scope,
+      systemActor(LOCK_EXPIRY_ACTOR),
+      async (tx) => {
+        const current = await this.store.findById(tx, scope, seen.id, true);
+        if (
+          !current ||
+          current.status !== seen.status ||
+          (current.lockReason ?? null) !== (seen.lockReason ?? null) ||
+          (current.lockedUntil ?? null) !== (seen.lockedUntil ?? null)
+        ) {
+          return { done: false, current };
+        }
+        await write(tx, current);
+        return { done: true };
+        // 'lazy': the user row lock comes before the first audited write, as on the admin status paths (UserStatusService)
+        // that cannot take the tenant audit lock first; taking that lock before the row would invert the order against them.
+      },
+      { audit: 'lazy' },
+    );
   }
 
   /**

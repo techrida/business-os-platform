@@ -68,7 +68,7 @@ import { can } from '../../platform/authz/can';
 import { type Decision, type Principal } from '../../platform/authz/principal';
 import { DB, type Db, type DbTransaction } from '../../platform/db/db.module';
 import { updateVersioned, withIdempotency } from '../../platform/db/idempotency';
-import { withTx, type Actor, type TxScope } from '../../platform/db/tx';
+import { withTx, type Actor, type TxScope, READ_ONLY } from '../../platform/db/tx';
 import { assertNotInfected } from '../../platform/documents/documents.service';
 import { searchPage, type SearchColumn } from '../../platform/list';
 import { NumberingService } from '../../platform/settings/numbering.service';
@@ -177,53 +177,59 @@ export class SalesOrdersService {
   async list(filter: SalesOrderListFilter): Promise<{ rows: SalesOrderListItem[]; total: number }> {
     const { scope, actor, principal } = this.caller.current();
     this.assertStaff(principal);
-    return withTx(this.db, scope, actor, async (tx) => {
-      const { rows, total } = await searchPage(tx, {
-        q: filter.q,
-        columns: SEARCH_COLUMNS,
-        where: this.listWhere(tx, scope, principal, filter),
-        orderBy: [desc(salesOrders.createdAt), desc(salesOrders.id)],
-        limit: filter.limit ?? NO_LIMIT,
-        offset: filter.offset ?? 0,
-        rows: (r, p) =>
-          r
-            .select({
-              order: salesOrders,
-              customerName: customers.legalName,
-              quotationNumber: quotations.number,
-            })
-            .from(salesOrders)
-            .innerJoin(customers, customerOn)
-            .innerJoin(quotations, quotationOn)
-            .where(p.where)
-            .orderBy(...p.orderBy)
-            .limit(p.limit)
-            .offset(p.offset),
-        count: async (r, where) => {
-          const [row] = await r
-            .select({ n: count() })
-            .from(salesOrders)
-            .innerJoin(customers, customerOn)
-            .innerJoin(quotations, quotationOn)
-            .where(where);
-          return row?.n ?? 0;
-        },
-      });
-      return {
-        total,
-        rows: rows.map(({ order, customerName, quotationNumber }) => ({
-          id: order.id,
-          number: order.number,
-          customerId: order.customerPartyId ?? '',
-          customerName,
-          quotationNumber,
-          status: order.status,
-          currency: order.currency,
-          total: order.total,
-          confirmedAt: order.confirmedAt === null ? null : iso(order.confirmedAt),
-        })),
-      };
-    });
+    return withTx(
+      this.db,
+      scope,
+      actor,
+      async (tx) => {
+        const { rows, total } = await searchPage(tx, {
+          q: filter.q,
+          columns: SEARCH_COLUMNS,
+          where: this.listWhere(tx, scope, principal, filter),
+          orderBy: [desc(salesOrders.createdAt), desc(salesOrders.id)],
+          limit: filter.limit ?? NO_LIMIT,
+          offset: filter.offset ?? 0,
+          rows: (r, p) =>
+            r
+              .select({
+                order: salesOrders,
+                customerName: customers.legalName,
+                quotationNumber: quotations.number,
+              })
+              .from(salesOrders)
+              .innerJoin(customers, customerOn)
+              .innerJoin(quotations, quotationOn)
+              .where(p.where)
+              .orderBy(...p.orderBy)
+              .limit(p.limit)
+              .offset(p.offset),
+          count: async (r, where) => {
+            const [row] = await r
+              .select({ n: count() })
+              .from(salesOrders)
+              .innerJoin(customers, customerOn)
+              .innerJoin(quotations, quotationOn)
+              .where(where);
+            return row?.n ?? 0;
+          },
+        });
+        return {
+          total,
+          rows: rows.map(({ order, customerName, quotationNumber }) => ({
+            id: order.id,
+            number: order.number,
+            customerId: order.customerPartyId ?? '',
+            customerName,
+            quotationNumber,
+            status: order.status,
+            currency: order.currency,
+            total: order.total,
+            confirmedAt: order.confirmedAt === null ? null : iso(order.confirmedAt),
+          })),
+        };
+      },
+      READ_ONLY,
+    );
   }
 
   /**
@@ -235,36 +241,42 @@ export class SalesOrdersService {
   ): Promise<SalesOrdersSummary> {
     const { scope, actor, principal } = this.caller.current();
     this.assertStaff(principal);
-    return withTx(this.db, scope, actor, async (tx) => {
-      // searchPage decides exact vs close matches from the total; the per-status counts ride on its count
-      // callback so they always describe the same match set. Its last call is the one it settled on.
-      let groups: { status: SalesOrderStatus; n: number }[] = [];
-      const { total } = await searchPage(tx, {
-        q: filter.q,
-        columns: SEARCH_COLUMNS,
-        where: this.listWhere(tx, scope, principal, filter),
-        orderBy: [desc(salesOrders.id)],
-        limit: 1,
-        offset: 0,
-        rows: () => Promise.resolve([]),
-        count: async (r, where) => {
-          groups = await r
-            .select({ status: salesOrders.status, n: count() })
-            .from(salesOrders)
-            .innerJoin(customers, customerOn)
-            .innerJoin(quotations, quotationOn)
-            .where(where)
-            .groupBy(salesOrders.status);
-          return groups.reduce((sum, g) => sum + g.n, 0);
-        },
-      });
-      const byStatus = Object.fromEntries(SALES_ORDER_STATUSES.map((s) => [s, 0])) as Record<
-        SalesOrderStatus,
-        number
-      >;
-      for (const g of groups) byStatus[g.status] = g.n;
-      return { total, byStatus };
-    });
+    return withTx(
+      this.db,
+      scope,
+      actor,
+      async (tx) => {
+        // searchPage decides exact vs close matches from the total; the per-status counts ride on its count
+        // callback so they always describe the same match set. Its last call is the one it settled on.
+        let groups: { status: SalesOrderStatus; n: number }[] = [];
+        const { total } = await searchPage(tx, {
+          q: filter.q,
+          columns: SEARCH_COLUMNS,
+          where: this.listWhere(tx, scope, principal, filter),
+          orderBy: [desc(salesOrders.id)],
+          limit: 1,
+          offset: 0,
+          rows: () => Promise.resolve([]),
+          count: async (r, where) => {
+            groups = await r
+              .select({ status: salesOrders.status, n: count() })
+              .from(salesOrders)
+              .innerJoin(customers, customerOn)
+              .innerJoin(quotations, quotationOn)
+              .where(where)
+              .groupBy(salesOrders.status);
+            return groups.reduce((sum, g) => sum + g.n, 0);
+          },
+        });
+        const byStatus = Object.fromEntries(SALES_ORDER_STATUSES.map((s) => [s, 0])) as Record<
+          SalesOrderStatus,
+          number
+        >;
+        for (const g of groups) byStatus[g.status] = g.n;
+        return { total, byStatus };
+      },
+      READ_ONLY,
+    );
   }
 
   /** Scope, then filters. A filter only ever narrows what `readWhere` lets through. */
@@ -291,8 +303,12 @@ export class SalesOrdersService {
   async detail(id: string): Promise<SalesOrderDetail> {
     const { scope, actor, principal } = this.caller.current();
     this.assertStaff(principal);
-    return withTx(this.db, scope, actor, (tx) =>
-      this.loadDetail(tx, scope, id, this.readWhere(principal)),
+    return withTx(
+      this.db,
+      scope,
+      actor,
+      (tx) => this.loadDetail(tx, scope, id, this.readWhere(principal)),
+      READ_ONLY,
     );
   }
 

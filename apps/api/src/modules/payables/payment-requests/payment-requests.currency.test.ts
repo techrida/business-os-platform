@@ -37,7 +37,9 @@ function fakeDb(saved: unknown[] | null) {
       settingsReads.push(params);
       return { rows: saved ? [{ version: 2, value: saved }] : [] };
     }
-    if (text.includes('set_config(')) return { rows: [] };
+    // withTx's own statements: the settings, then the tenant audit lock.
+    if (text.includes('set_config(') || text.includes('pg_advisory_xact_lock('))
+      return { rows: [] };
     if (text.includes("current_setting('bos.tenant_id'")) {
       return {
         rows: [

@@ -13,7 +13,7 @@ import { scopeWhereFor } from '../../platform/authz/authz.service';
 import { can } from '../../platform/authz/can';
 import { RoleCache } from '../../platform/authz/role-cache';
 import { DB, type Db } from '../../platform/db/db.module';
-import { withTx } from '../../platform/db/tx';
+import { withTx, READ_ONLY } from '../../platform/db/tx';
 import { personNames } from '../../platform/users/person-names';
 import { assignableParties, storedAssignmentRule } from '../leads/lead-assignee';
 import { OpportunitiesCaller } from './opportunities.caller';
@@ -51,23 +51,29 @@ export class OpportunityOwnersService {
 
   private parties(ownerWrite: Permission | undefined): Promise<LeadOwnerOption[]> {
     const { scope, actor, principal } = this.caller.current();
-    return withTx(this.db, scope, actor, async (tx) => {
-      const people = await assignableParties(tx, principal, scope, {
-        roleCache: this.roleCache,
-        context: 'reassign',
-        rule: storedAssignmentRule(tx, scope, 'opportunities'),
-        subjectRead: 'crm.opportunity.read',
-        ...(ownerWrite === undefined ? {} : { ownerWrite }),
-      });
-      return people
-        .map((c) => ({
-          userId: c.userId,
-          displayName: c.displayName?.trim() || 'Unnamed user',
-          email: '',
-          avatarDocumentId: c.avatarDocumentId,
-        }))
-        .sort(byName);
-    });
+    return withTx(
+      this.db,
+      scope,
+      actor,
+      async (tx) => {
+        const people = await assignableParties(tx, principal, scope, {
+          roleCache: this.roleCache,
+          context: 'reassign',
+          rule: storedAssignmentRule(tx, scope, 'opportunities'),
+          subjectRead: 'crm.opportunity.read',
+          ...(ownerWrite === undefined ? {} : { ownerWrite }),
+        });
+        return people
+          .map((c) => ({
+            userId: c.userId,
+            displayName: c.displayName?.trim() || 'Unnamed user',
+            email: '',
+            avatarDocumentId: c.avatarDocumentId,
+          }))
+          .sort(byName);
+      },
+      READ_ONLY,
+    );
   }
 
   /**

@@ -23,7 +23,7 @@ import { and, desc, eq, inArray, sql } from 'drizzle-orm';
 import { z } from 'zod';
 
 import { DB, type Db } from '../../../platform/db/db.module';
-import { withTx } from '../../../platform/db/tx';
+import { withTx, READ_ONLY } from '../../../platform/db/tx';
 import { RECEIVING_PO_STATUSES } from './receipt.rules';
 import { ReceiptsCaller } from './receipts.caller';
 
@@ -85,93 +85,99 @@ export class ReceivableOrdersService {
    */
   async list(query: ListReceivableOrdersQuery): Promise<ReceivableOrderDto[]> {
     const { scope, actor } = this.caller.current();
-    return withTx(this.db, scope, actor, async (tx) => {
-      const orders = await tx
-        .select({
-          id: purchaseOrders.id,
-          number: purchaseOrders.number,
-          vendorId: purchaseOrders.vendorId,
-          vendorName: vendors.legalName,
-          status: purchaseOrders.status,
-          issuedAt: purchaseOrders.issuedAt,
-          planned: sql<string>`sum(${purchaseOrderLines.orderedQuantity} - ${purchaseOrderLines.cancelledQuantity})`,
-          goodsLines: sql<number>`count(*) filter (where ${purchaseOrderLines.kind} = 'goods')::int`,
-          serviceLines: sql<number>`count(*) filter (where ${purchaseOrderLines.kind} = 'service')::int`,
-        })
-        .from(purchaseOrders)
-        .innerJoin(
-          purchaseOrderLines,
-          and(
-            eq(purchaseOrderLines.tenantId, purchaseOrders.tenantId),
-            eq(purchaseOrderLines.organizationId, purchaseOrders.organizationId),
-            eq(purchaseOrderLines.purchaseOrderId, purchaseOrders.id),
-          ),
-        )
-        .innerJoin(
-          vendors,
-          and(
-            eq(vendors.tenantId, purchaseOrders.tenantId),
-            eq(vendors.id, purchaseOrders.vendorId),
-          ),
-        )
-        .where(
-          scoped(scope).where(
-            purchaseOrders,
-            inArray(purchaseOrders.status, [...RECEIVING_PO_STATUSES]),
-          ),
-        )
-        .groupBy(
-          purchaseOrders.id,
-          purchaseOrders.number,
-          purchaseOrders.vendorId,
-          vendors.legalName,
-          purchaseOrders.status,
-          purchaseOrders.issuedAt,
-        )
-        .orderBy(desc(purchaseOrders.issuedAt), desc(purchaseOrders.id))
-        .limit(query.limit);
-      if (orders.length === 0) return [];
-
-      const received = await tx
-        .select({
-          purchaseOrderId: receiptLines.purchaseOrderId,
-          quantity: sql<string>`sum(${receiptLines.quantity})`,
-        })
-        .from(receiptLines)
-        .innerJoin(
-          receipts,
-          and(
-            eq(receipts.tenantId, receiptLines.tenantId),
-            eq(receipts.id, receiptLines.receiptId),
-          ),
-        )
-        .where(
-          scoped(scope).where(
-            receiptLines,
+    return withTx(
+      this.db,
+      scope,
+      actor,
+      async (tx) => {
+        const orders = await tx
+          .select({
+            id: purchaseOrders.id,
+            number: purchaseOrders.number,
+            vendorId: purchaseOrders.vendorId,
+            vendorName: vendors.legalName,
+            status: purchaseOrders.status,
+            issuedAt: purchaseOrders.issuedAt,
+            planned: sql<string>`sum(${purchaseOrderLines.orderedQuantity} - ${purchaseOrderLines.cancelledQuantity})`,
+            goodsLines: sql<number>`count(*) filter (where ${purchaseOrderLines.kind} = 'goods')::int`,
+            serviceLines: sql<number>`count(*) filter (where ${purchaseOrderLines.kind} = 'service')::int`,
+          })
+          .from(purchaseOrders)
+          .innerJoin(
+            purchaseOrderLines,
             and(
-              inArray(
-                receiptLines.purchaseOrderId,
-                orders.map((o) => o.id),
-              ),
-              inArray(receipts.status, ['confirmed', 'reversed']),
+              eq(purchaseOrderLines.tenantId, purchaseOrders.tenantId),
+              eq(purchaseOrderLines.organizationId, purchaseOrders.organizationId),
+              eq(purchaseOrderLines.purchaseOrderId, purchaseOrders.id),
             ),
-          ),
-        )
-        .groupBy(receiptLines.purchaseOrderId);
-      const receivedBy = new Map(received.map((r) => [r.purchaseOrderId, r.quantity]));
+          )
+          .innerJoin(
+            vendors,
+            and(
+              eq(vendors.tenantId, purchaseOrders.tenantId),
+              eq(vendors.id, purchaseOrders.vendorId),
+            ),
+          )
+          .where(
+            scoped(scope).where(
+              purchaseOrders,
+              inArray(purchaseOrders.status, [...RECEIVING_PO_STATUSES]),
+            ),
+          )
+          .groupBy(
+            purchaseOrders.id,
+            purchaseOrders.number,
+            purchaseOrders.vendorId,
+            vendors.legalName,
+            purchaseOrders.status,
+            purchaseOrders.issuedAt,
+          )
+          .orderBy(desc(purchaseOrders.issuedAt), desc(purchaseOrders.id))
+          .limit(query.limit);
+        if (orders.length === 0) return [];
 
-      return orders.map((o) => ({
-        id: o.id,
-        number: o.number,
-        vendorId: o.vendorId,
-        vendorName: o.vendorName,
-        kind: kindOf(o.goodsLines, o.serviceLines),
-        // The where clause keeps only the two receiving statuses.
-        status: o.status as ReceivableOrderDto['status'],
-        ...(o.issuedAt === null ? {} : { issuedAt: o.issuedAt.toISOString() }),
-        openQuantity: new Decimal(o.planned).minus(receivedBy.get(o.id) ?? 0).toFixed(4),
-      }));
-    });
+        const received = await tx
+          .select({
+            purchaseOrderId: receiptLines.purchaseOrderId,
+            quantity: sql<string>`sum(${receiptLines.quantity})`,
+          })
+          .from(receiptLines)
+          .innerJoin(
+            receipts,
+            and(
+              eq(receipts.tenantId, receiptLines.tenantId),
+              eq(receipts.id, receiptLines.receiptId),
+            ),
+          )
+          .where(
+            scoped(scope).where(
+              receiptLines,
+              and(
+                inArray(
+                  receiptLines.purchaseOrderId,
+                  orders.map((o) => o.id),
+                ),
+                inArray(receipts.status, ['confirmed', 'reversed']),
+              ),
+            ),
+          )
+          .groupBy(receiptLines.purchaseOrderId);
+        const receivedBy = new Map(received.map((r) => [r.purchaseOrderId, r.quantity]));
+
+        return orders.map((o) => ({
+          id: o.id,
+          number: o.number,
+          vendorId: o.vendorId,
+          vendorName: o.vendorName,
+          kind: kindOf(o.goodsLines, o.serviceLines),
+          // The where clause keeps only the two receiving statuses.
+          status: o.status as ReceivableOrderDto['status'],
+          ...(o.issuedAt === null ? {} : { issuedAt: o.issuedAt.toISOString() }),
+          openQuantity: new Decimal(o.planned).minus(receivedBy.get(o.id) ?? 0).toFixed(4),
+        }));
+      },
+      READ_ONLY,
+    );
   }
 
   /**
@@ -187,61 +193,67 @@ export class ReceivableOrdersService {
         and ${receipts.purchaseOrderId} = ${purchaseOrders.id}
         and ${receipts.status} in ('confirmed', 'reversed')
     )`;
-    return withTx(this.db, scope, actor, async (tx) => {
-      const orders = await tx
-        .select({
-          id: purchaseOrders.id,
-          number: purchaseOrders.number,
-          vendorId: purchaseOrders.vendorId,
-          vendorName: vendors.legalName,
-          status: purchaseOrders.status,
-          lastReceivedAt,
-          goodsLines: sql<number>`count(*) filter (where ${purchaseOrderLines.kind} = 'goods')::int`,
-          serviceLines: sql<number>`count(*) filter (where ${purchaseOrderLines.kind} = 'service')::int`,
-        })
-        .from(purchaseOrders)
-        .innerJoin(
-          purchaseOrderLines,
-          and(
-            eq(purchaseOrderLines.tenantId, purchaseOrders.tenantId),
-            eq(purchaseOrderLines.organizationId, purchaseOrders.organizationId),
-            eq(purchaseOrderLines.purchaseOrderId, purchaseOrders.id),
-          ),
-        )
-        .innerJoin(
-          vendors,
-          and(
-            eq(vendors.tenantId, purchaseOrders.tenantId),
-            eq(vendors.id, purchaseOrders.vendorId),
-          ),
-        )
-        .where(
-          scoped(scope).where(
-            purchaseOrders,
-            inArray(purchaseOrders.status, [...RECEIVED_PO_STATUSES]),
-          ),
-        )
-        .groupBy(
-          purchaseOrders.id,
-          purchaseOrders.number,
-          purchaseOrders.vendorId,
-          vendors.legalName,
-          purchaseOrders.status,
-        )
-        .orderBy(sql`${lastReceivedAt} desc nulls last`, desc(purchaseOrders.id))
-        .limit(query.limit);
-      return orders.map((o) => ({
-        id: o.id,
-        number: o.number,
-        vendorId: o.vendorId,
-        vendorName: o.vendorName,
-        kind: kindOf(o.goodsLines, o.serviceLines),
-        // The where clause keeps only the finished statuses.
-        status: o.status as ReceivedOrderDto['status'],
-        ...(o.lastReceivedAt === null
-          ? {}
-          : { lastReceivedAt: new Date(o.lastReceivedAt).toISOString() }),
-      }));
-    });
+    return withTx(
+      this.db,
+      scope,
+      actor,
+      async (tx) => {
+        const orders = await tx
+          .select({
+            id: purchaseOrders.id,
+            number: purchaseOrders.number,
+            vendorId: purchaseOrders.vendorId,
+            vendorName: vendors.legalName,
+            status: purchaseOrders.status,
+            lastReceivedAt,
+            goodsLines: sql<number>`count(*) filter (where ${purchaseOrderLines.kind} = 'goods')::int`,
+            serviceLines: sql<number>`count(*) filter (where ${purchaseOrderLines.kind} = 'service')::int`,
+          })
+          .from(purchaseOrders)
+          .innerJoin(
+            purchaseOrderLines,
+            and(
+              eq(purchaseOrderLines.tenantId, purchaseOrders.tenantId),
+              eq(purchaseOrderLines.organizationId, purchaseOrders.organizationId),
+              eq(purchaseOrderLines.purchaseOrderId, purchaseOrders.id),
+            ),
+          )
+          .innerJoin(
+            vendors,
+            and(
+              eq(vendors.tenantId, purchaseOrders.tenantId),
+              eq(vendors.id, purchaseOrders.vendorId),
+            ),
+          )
+          .where(
+            scoped(scope).where(
+              purchaseOrders,
+              inArray(purchaseOrders.status, [...RECEIVED_PO_STATUSES]),
+            ),
+          )
+          .groupBy(
+            purchaseOrders.id,
+            purchaseOrders.number,
+            purchaseOrders.vendorId,
+            vendors.legalName,
+            purchaseOrders.status,
+          )
+          .orderBy(sql`${lastReceivedAt} desc nulls last`, desc(purchaseOrders.id))
+          .limit(query.limit);
+        return orders.map((o) => ({
+          id: o.id,
+          number: o.number,
+          vendorId: o.vendorId,
+          vendorName: o.vendorName,
+          kind: kindOf(o.goodsLines, o.serviceLines),
+          // The where clause keeps only the finished statuses.
+          status: o.status as ReceivedOrderDto['status'],
+          ...(o.lastReceivedAt === null
+            ? {}
+            : { lastReceivedAt: new Date(o.lastReceivedAt).toISOString() }),
+        }));
+      },
+      READ_ONLY,
+    );
   }
 }
