@@ -45,7 +45,7 @@ import { and, asc, desc, eq, gte, inArray, isNull, lt, ne, not, or, type SQL } f
 
 import { AuditService } from '../../platform/audit/audit.service';
 import { AuthzService, scopeWhereFor } from '../../platform/authz/authz.service';
-import { can, type Principal, type ResourceRef } from '../../platform/authz/can';
+import { type Principal, type ResourceRef } from '../../platform/authz/can';
 import { loadRecordReaders } from '../../platform/authz/record-reach';
 import { RoleCache } from '../../platform/authz/role-cache';
 import { DB, type Db } from '../../platform/db/db.module';
@@ -70,7 +70,6 @@ import {
   COLLECTION_CALL_READ,
   dueRangeBounds,
   activityNames,
-  isPlannedRow,
   isPlannedSql,
   SUBJECT_PERMISSION,
   toActivityDto,
@@ -78,12 +77,20 @@ import {
   type ListActivitiesQuery,
   type SubjectKey,
 } from './activities.types';
+import {
+  activityCan,
+  loadSubjectRefs,
+  mayHaveActions,
+  mayReadCollectionCalls,
+  needsSubjectRef,
+  plannedChangeDecision,
+  refKey,
+  subjectKeyOf,
+  type PlannedChange,
+} from './activity-can';
 import { notifyFollowUpAssigned } from './follow-ups';
 
 type Q = Db | DbTransaction;
-
-/** The changes to a planned activity. Only `complete` is open to an assignee who can merely read the subject. */
-type PlannedChange = 'complete' | 'reschedule' | 'cancel';
 
 /**
  * Whose assignment rule a subject follows (D50: activities follow their parent, quotations their opportunity).
@@ -116,20 +123,8 @@ const AUDIT_ENTITY = 'activities';
 
 const subjectNotFound = () =>
   new NotFoundException({ code: 'not_found', message: 'Subject not found' });
-/** The subjects without assigned reach: customers are tenant master data, read `all` or `own` (D55-6). */
-const CUSTOMER_KEYS: ReadonlySet<SubjectKey> = new Set<SubjectKey>(['customerId', 'contactId']);
-
-/** The acting entity as a ResourceRef: a collection call belongs to the entity's receivables, not to a record. */
-const entityRef = (scope: TxScope): ResourceRef => ({
-  tenantId: scope.tenantId,
-  organizationId: scope.organizationId,
-});
-
 const activityNotFound = () =>
   new NotFoundException({ code: 'not_found', message: 'Activity not found' });
-
-/** Kinds only the server writes: they record what happened and are never planned, done or called off by hand. */
-const SYSTEM_KINDS: ReadonlySet<ActivityRow['kind']> = new Set(['system', 'stage_change']);
 
 @Injectable()
 export class ActivitiesService {
@@ -154,7 +149,7 @@ export class ActivitiesService {
       await this.assertSubject(this.db, subject, id, 'read');
       filters.push(eq(activities[subject], id));
       // Reading the customer is not reading its receivables: its collection calls list by `ar.read` alone.
-      if (!this.mayReadCollectionCalls(principal, scope)) {
+      if (!mayReadCollectionCalls(principal, scope)) {
         filters.push(ne(activities.kind, COLLECTION_CALL_KIND));
       }
     } else {
@@ -191,7 +186,16 @@ export class ActivitiesService {
       count: (tx, where) => tx.$count(activities, where),
     });
     const names = await activityNames(this.db, scope.tenantId, rows);
-    return { items: rows.map((r) => toActivityDto(r, names)), total };
+    // Each row's actions for the caller, by the rule the write routes enforce (activity-can.ts).
+    const subjects = rows.filter(mayHaveActions).flatMap((r) => {
+      const key = subjectKeyOf(r);
+      return key === undefined ? [] : [{ key, id: r[key]! }];
+    });
+    const refs = await loadSubjectRefs(this.db, scope, principal, subjects, true);
+    return {
+      items: rows.map((r) => toActivityDto(r, names, activityCan(principal, r, refs))),
+      total,
+    };
   }
 
   // ------------------------------------------------------------------------------------------------- create
@@ -384,14 +388,17 @@ export class ActivitiesService {
 
   /**
    * The shared frame of the three planned-activity changes: staff only; the row is locked in this entity (404
-   * otherwise); the caller must hold the write permission of its subject (404 out of scope, before anything
-   * that would reveal the row's state); then 409 for a server-written kind or a row that is no longer planned.
+   * otherwise); then `plannedChangeDecision` (activity-can.ts): the caller must hold the write permission of its
+   * subject (404 out of scope, before anything that would reveal the row's state); then 409 for a server-written
+   * kind or a row that is no longer planned.
    * `change` writes through updateVersioned, so a stale `expectedVersion` is a 409 too.
    *
    * The assignee is the exception (K5): their follow-up is theirs to do, so they may complete it on a subject they
    * can only read (assigned reach). Rescheduling or calling it off still needs the subject's write permission, and
    * they get a 403 for it rather than a 404: the follow-up is on their own list, so it is no secret. On a customer or
    * contact, which has no assigned reach, the assignee completes it without reaching the customer (U20a2-Q7).
+   * A collection call follows the receivables permissions instead (404 without `ar.read`, 403 without
+   * `payment.record`), with no assignee shortcut.
    */
   private async changePlanned(
     id: string,
@@ -412,40 +419,44 @@ export class ActivitiesService {
         .where(scoped(scope).where(activities, eq(activities.id, id)))
         .for('update');
       if (row === undefined) throw activityNotFound();
-      const key = ACTIVITY_SUBJECT_KEYS.find((k) => row[k] !== null);
+      const key = subjectKeyOf(row);
       if (key === undefined) throw activityNotFound();
-      // Out of scope answers exactly like an unknown id, so a guessed activity id learns nothing.
-      if (row.kind === COLLECTION_CALL_KIND) {
-        // Receivables, not the customer: no `ar.read` is a 404 like any unreadable row; reading without recording
-        // payments (Management) is a 403. The assignee gets no shortcut: the job only hands it to payment recorders.
-        if (!this.mayReadCollectionCalls(principal, scope)) throw activityNotFound();
-        this.authz.assert(COLLECTION_CALL_CHANGE, entityRef(scope));
-      } else if (
-        row.assigneeUserId === principal.userId &&
-        what === 'complete' &&
-        CUSTOMER_KEYS.has(key)
-      ) {
-        // U20a2-Q7: customers have no assigned reach, so an `own` reader who is handed a follow-up on someone
-        // else's customer could list it (readableSubjects) but never finish it. Completing their own follow-up
-        // needs only the customer read grant at some scope; the customer record itself stays out of reach.
-        this.authz.assert(SUBJECT_PERMISSION[key].read);
-      } else if (row.assigneeUserId === principal.userId) {
-        const ref = await this.assertSubject(tx, key, row[key]!, 'read', activityNotFound);
-        if (what !== 'complete') this.authz.assert(SUBJECT_PERMISSION[key].write, ref);
-      } else {
-        await this.assertSubject(tx, key, row[key]!, 'write', activityNotFound);
-      }
-      if (SYSTEM_KINDS.has(row.kind)) {
-        throw new ConflictException({
-          code: 'conflict',
-          message: 'This activity was written by the system and cannot be changed',
-        });
-      }
-      if (!isPlannedRow(row)) {
-        throw new ConflictException({
-          code: 'conflict',
-          message: 'Only a planned activity can be changed; this one is already done or cancelled',
-        });
+      // The same rule the list reports as the row's `can` flags. Out of scope answers exactly like an unknown id,
+      // so a guessed activity id learns nothing.
+      const ref = needsSubjectRef(principal, row, key, what)
+        ? (
+            await loadSubjectRefs(
+              tx,
+              scope,
+              principal,
+              [{ key, id: row[key]! }],
+              row.assigneeUserId === principal.userId,
+            )
+          ).get(refKey(key, row[key]!))
+        : undefined;
+      const decision = plannedChangeDecision(principal, row, key, ref, what);
+      if (!decision.ok) {
+        switch (decision.refusal) {
+          case 'not_found':
+            throw activityNotFound();
+          case 'forbidden':
+            throw new ForbiddenException({
+              code: 'forbidden',
+              message: 'Forbidden',
+              reason: decision.reason,
+            });
+          case 'system':
+            throw new ConflictException({
+              code: 'conflict',
+              message: 'This activity was written by the system and cannot be changed',
+            });
+          case 'not_planned':
+            throw new ConflictException({
+              code: 'conflict',
+              message:
+                'Only a planned activity can be changed; this one is already done or cancelled',
+            });
+        }
       }
       const changed = await change(tx, row, scope, key);
       return toActivityDto(changed, await activityNames(tx, scope.tenantId, [changed]));
@@ -572,18 +583,13 @@ export class ActivitiesService {
     }
   }
 
-  /** Whether the caller may read this entity's collection calls (`ar.read`, as the receivables aging). */
-  private mayReadCollectionCalls(p: Principal, scope: TxScope): boolean {
-    return can(p, COLLECTION_CALL_READ, entityRef(scope)).allowed;
-  }
-
   /**
    * The unfiltered list: every activity but a collection call by its subject (readableSubjects), and the collection
    * calls only for an `ar.read` holder, whatever their reach on the customer, assignee included.
    */
   private readableActivities(p: Principal, scope: TxScope): SQL {
     const notCollection = and(ne(activities.kind, COLLECTION_CALL_KIND), this.readableSubjects(p))!;
-    return this.mayReadCollectionCalls(p, scope)
+    return mayReadCollectionCalls(p, scope)
       ? or(eq(activities.kind, COLLECTION_CALL_KIND), notCollection)!
       : notCollection;
   }

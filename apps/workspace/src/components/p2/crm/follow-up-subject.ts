@@ -1,4 +1,4 @@
-import { ACTIVITY_SUBJECT_KEYS, type ActivityDto } from '@bos/contracts';
+import { ACTIVITY_SUBJECT_KEYS, type ActivityCan, type ActivityDto } from '@bos/contracts';
 
 /** The record a follow-up hangs off: a lead, an opportunity, a customer, a contact or a quotation. */
 export type FollowUpSubjectKind = (typeof ACTIVITY_SUBJECT_KEYS)[number];
@@ -43,36 +43,22 @@ export function followUpPaths(subject: FollowUpSubject | null): string[] {
   return [...own, '/activities'];
 }
 
-/**
- * The permission that moves or calls off a follow-up on each kind of subject: the subject's write, as the API's
- * `SUBJECT_PERMISSION` asks (activities.types.ts). Completing your own follow-up needs only the read.
- */
-export const FOLLOW_UP_WRITE: Readonly<Record<FollowUpSubjectKind, string>> = {
-  leadId: 'crm.lead.write',
-  opportunityId: 'crm.opportunity.write',
-  customerId: 'customer.write',
-  contactId: 'customer.write',
-  quotationId: 'quotation.draft',
-};
+const NO_ACTIONS: ActivityCan = Object.freeze({
+  complete: false,
+  reschedule: false,
+  cancel: false,
+});
 
 /**
- * Which actions a planned follow-up offers outside its record's page (the /activities list), the record page's
- * rule (FollowUpList): `all` with the subject's write, `complete` for the caller's own follow-up without it
- * (U20a2-Q7: an assignee finishes their work), `none` for anyone else, so no button is shown that the API
- * would only refuse. Only permission names are known here, not their scope.
+ * Which of Complete, Reschedule and Cancel a follow-up offers: the row's `can` flags, which the API works out
+ * with the same rule its write routes enforce. A row without them (a write route's answer) offers nothing.
  */
-export function followUpActionsFor(
-  item: Pick<ActivityDto, FollowUpSubjectKind | 'assigneeUserId'> & { kind?: string },
-  can: (permission: string) => boolean,
-  currentUserId: string | null | undefined,
-): 'all' | 'complete' | 'none' {
-  // A collection call follows receivables permissions, not the customer's reach: whoever may read receivables and
-  // record payments may finish, move or cancel it, the assignee or not (the API refuses everyone else).
-  if (item.kind === 'collection_call') {
-    return can('ar.read') && can('payment.record') ? 'all' : 'none';
-  }
-  const subject = subjectOf(item);
-  if (subject !== null && can(FOLLOW_UP_WRITE[subject.kind])) return 'all';
-  if (currentUserId != null && item.assigneeUserId === currentUserId) return 'complete';
-  return 'none';
+export function followUpActionsFor(item: Pick<ActivityDto, 'can'>): ActivityCan {
+  const can = item.can;
+  if (can === undefined) return NO_ACTIONS;
+  return { complete: can.complete, reschedule: can.reschedule, cancel: can.cancel };
 }
+
+/** Whether a follow-up offers any action at all. */
+export const hasFollowUpActions = (can: ActivityCan): boolean =>
+  can.complete || can.reschedule || can.cancel;

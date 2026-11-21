@@ -137,6 +137,34 @@ describe('QuotationView markup', () => {
     expect(none).not.toContain('/document"');
     expect(none).not.toContain('View PDF');
   });
+
+  it('says the PDF is being prepared, is delayed after a failed render, or offers it when ready', () => {
+    const pending = renderToStaticMarkup(
+      <QuotationView view={sampleView({ file: null, renderFailed: false })} today={TODAY} />,
+    );
+    expect(pending).toContain('The PDF copy is being prepared.');
+    expect(pending).not.toContain('delayed');
+    // An older payload without the flag reads as pending.
+    const { renderFailed: _r, ...older } = sampleView({ file: null });
+    expect(renderToStaticMarkup(<QuotationView view={older} today={TODAY} />)).toContain(
+      'The PDF copy is being prepared.',
+    );
+
+    const failed = renderToStaticMarkup(
+      <QuotationView view={sampleView({ file: null, renderFailed: true })} today={TODAY} />,
+    );
+    expect(failed).toContain('This PDF is delayed. Our team has been told.');
+    expect(failed).not.toContain('being prepared');
+    expect(failed).not.toMatch(/retry|try again/i);
+    expect(failed).not.toContain('View PDF');
+
+    const ready = renderToStaticMarkup(
+      <QuotationView view={sampleView({ renderFailed: true })} today={TODAY} />,
+    );
+    expect(ready).toContain('View PDF');
+    expect(ready).not.toContain('delayed');
+    expect(ready).not.toContain('being prepared');
+  });
 });
 
 describe('QuotationView display setting', () => {

@@ -16,7 +16,9 @@ import { describe, expect, it } from 'vitest';
 
 import { ANY_AUTHENTICATED_KEY, CAN_KEY } from '../../../platform/authz/decorators';
 import type { Principal } from '../../../platform/authz/principal';
+import type { Db } from '../../../platform/db/db.module';
 import {
+  approvesPo,
   assertHoldsPoRead,
   holdsPoRead,
   mayReadPo,
@@ -96,6 +98,25 @@ describe('holdsPoRead and mayReadPo', () => {
     // The list filters in SQL for a read-only reader; an issuer reads the whole entity unfiltered.
     expect(poReadWhere(p)).toBeDefined();
     expect(poReadWhere(principalOf(['procurement']))).toBeUndefined();
+  });
+});
+
+describe('approvesPo', () => {
+  it('opens nothing to an inactive user, a portal caller or another entity, before reading anything', async () => {
+    const q = new Proxy({} as Db, {
+      get: () => {
+        throw new Error('read');
+      },
+    });
+    const inbox = () => Promise.reject(new Error('inbox'));
+    const scope = { tenantId: ORG, organizationId: ORG };
+    for (const p of [
+      principalOf(['management'], { status: 'inactive' }),
+      principalOf(['management'], { orgKind: 'vendor' }),
+      principalOf(['management'], { organizationId: SOMEONE_ELSE }),
+    ]) {
+      await expect(approvesPo(q, scope, p, SOMEONE_ELSE, inbox)).resolves.toBe(false);
+    }
   });
 });
 
