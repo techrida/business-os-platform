@@ -151,6 +151,7 @@ const money = {
 } as unknown as MoneyService;
 const notify = {
   notifyUser: vi.fn(() => Promise.resolve()),
+  notifyRole: vi.fn(() => Promise.resolve()),
   nudge: vi.fn(() => Promise.resolve()),
 };
 

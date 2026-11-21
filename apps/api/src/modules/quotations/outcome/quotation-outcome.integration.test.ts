@@ -2,7 +2,8 @@
 // (Testcontainers, needs Docker in WSL). Real: migrations as bos_owner, queries as bos_app (so every CHECK and
 // trigger of 0016 runs, quotation_versions_one_accepted and quotation_versions_rejected_check included),
 // SettingsService (sales.evidence_policy at its default, signed_quote), AuditService, OpportunitiesService.markWon
-// and markQuotationSent, the idempotency table. Faked: the request context, notify (its calls are asserted), and
+// and markQuotationSent, the idempotency table. Faked: the request context, notify (its calls are asserted; the
+// Accountant notices block uses the real NotifyService and directory chain, faking only the outbox queue), and
 // authz.assert, which still runs the real pure can() on a fake principal. Quotations are created through
 // DraftingService.create on a fresh opportunity each (Won is terminal), then moved to Approved or Sent by raw SQL
 // that follows 0016's transition guard, as revise.integration.test.ts does; Sent also moves the opportunity to
@@ -23,13 +24,17 @@ import {
   type Scope,
 } from '@bos/contracts';
 import {
+  createStaffUser,
   opportunities,
   quotationAcceptances,
   quotationStatusHistory,
   quotationVersions,
+  salesOrders,
+  users,
 } from '@bos/db';
 import { ForbiddenException, HttpException } from '@nestjs/common';
-import { eq, sql } from 'drizzle-orm';
+import type { Queue } from 'bullmq';
+import { and, eq, sql } from 'drizzle-orm';
 import { drizzle } from 'drizzle-orm/node-postgres';
 import { Pool } from 'pg';
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -38,12 +43,16 @@ import { AuditService } from '../../../platform/audit/audit.service';
 import type { AuthzService } from '../../../platform/authz/authz.service';
 import { can } from '../../../platform/authz/can';
 import type { Principal } from '../../../platform/authz/principal';
+import type { CoreConfig } from '../../../platform/config/config';
 import { systemActor, withTx, type TxScope } from '../../../platform/db/tx';
-import type { NotifyService } from '../../../platform/notify/notify.service';
+import { NotifyService } from '../../../platform/notify/notify.service';
 import { CurrencyEnabledService } from '../../../platform/settings/currency-enabled';
 import type { MoneyService } from '../../../platform/settings/money.service';
 import { NumberingService } from '../../../platform/settings/numbering.service';
 import { SettingsService } from '../../../platform/settings/settings.service';
+import { UserMirror } from '../../../platform/users/user-mirror';
+import { UsersService } from '../../../platform/users/users.service';
+import { SqlUsersStore } from '../../../platform/users/users.store';
 import { LeadLostReasonsService } from '../../leads/lost-reasons.service';
 import { OpportunitiesService } from '../../opportunities/opportunities.service';
 import { DraftingService } from '../drafting/drafting.service';
@@ -115,6 +124,7 @@ const money = {
 } as unknown as MoneyService;
 const notify = {
   notifyUser: vi.fn(() => Promise.resolve()),
+  notifyRole: vi.fn(() => Promise.resolve()),
   nudge: vi.fn(() => Promise.resolve()),
 };
 
@@ -176,6 +186,7 @@ beforeEach(() => {
   current.scope = scopeA;
   current.grants = grantsOf('sales');
   notify.notifyUser.mockClear();
+  notify.notifyRole.mockClear();
   notify.nudge.mockClear();
 });
 
@@ -583,5 +594,113 @@ describe('RecordOutcomeService.record', () => {
       ),
     ).toEqual({ status: 404, code: 'not_found' });
     expect(await versionRow(other.currentVersionId)).toMatchObject({ status: 'sent' });
+  });
+});
+
+// ------------------------------------------------------------------------------- Accountant notices
+
+describe('Accountant notices on acceptance (S4: a drafted order, pending portal evidence)', () => {
+  let accountantUserId: string;
+  let noticed: RecordOutcomeService;
+  let noticedOutcomes: QuotationOutcomeService;
+
+  beforeAll(async () => {
+    const [owner] = await db
+      .select({ idpOrgId: users.idpOrgId })
+      .from(users)
+      .where(and(eq(users.tenantId, f.tenantId), eq(users.id, f.ownerUserId)));
+    const staff = (roleKeys: readonly string[]) =>
+      createStaffUser(appPool, { ...scopeA, idpOrgId: owner!.idpOrgId, roleKeys });
+    accountantUserId = (await staff(['accountant'])).userId;
+    // Another role holder of the same entity, next to the role-less owner: neither may get these notices.
+    await staff(['sales']);
+    // The real directory chain, so the role lookup reads app.user_roles; ZITADEL and audit are never reached.
+    const store = new SqlUsersStore(db);
+    const directory = new UsersService(
+      new UserMirror(db, store, {} as never, {} as never),
+      store,
+      {} as never,
+      db,
+      {} as never,
+    );
+    const realNotify = new NotifyService(
+      db,
+      {
+        WORKSPACE_PUBLIC_URL: 'https://app.example.test',
+        PORTAL_PUBLIC_URL: 'https://portal.example.test',
+      } as CoreConfig,
+      directory,
+      { add: vi.fn(() => Promise.resolve()) } as unknown as Queue,
+    );
+    noticedOutcomes = new QuotationOutcomeService(
+      new SettingsService(db),
+      opportunitiesService,
+      realNotify,
+      new AuditService(db),
+      () => now,
+    );
+    noticed = new RecordOutcomeService(
+      db,
+      noticedOutcomes,
+      authz as unknown as AuthzService,
+      realNotify,
+      caller,
+    );
+  });
+
+  const bellRows = async (dedupeKey: string) =>
+    (
+      await appPool.query<{ user_id: string; link: string }>(
+        'SELECT user_id, link FROM app.notifications WHERE tenant_id = $1 AND dedupe_key = $2',
+        [f.tenantId, dedupeKey],
+      )
+    ).rows;
+
+  const draftOrderId = async (quotationId: string) => {
+    const rows = await db
+      .select({ id: salesOrders.id })
+      .from(salesOrders)
+      .where(eq(salesOrders.quotationId, quotationId));
+    expect(rows).toHaveLength(1);
+    return rows[0]!.id;
+  };
+
+  it('a portal acceptance tells only the Accountant of the drafted order and of the evidence to confirm', async () => {
+    const q = await createQuotation();
+    await advance(q, 'sent');
+
+    await withTx(db, scopeA, systemActor('test'), (tx) =>
+      noticedOutcomes.accept(tx, {
+        versionId: q.currentVersionId,
+        actorKind: 'customer_user',
+        actorUserId: f.ownerUserId,
+        decidedOn: DECIDED_ON,
+        acceptedByName: 'Sita Sharma',
+        evidenceKinds: ['signed_quote'],
+      }),
+    );
+
+    const orderId = await draftOrderId(q.id);
+    expect(await bellRows(`sales_order.drafted:${orderId}`)).toEqual([
+      { user_id: accountantUserId, link: `/sales-orders/${orderId}` },
+    ]);
+    expect(await bellRows(`quotation.evidence_pending:${q.currentVersionId}`)).toEqual([
+      { user_id: accountantUserId, link: `/quotations/${q.id}` },
+    ]);
+  });
+
+  it('a staff acceptance tells the Accountant of the drafted order only (its evidence is confirmed on entry), once on a replay', async () => {
+    const q = await createQuotation();
+    const expectedVersion = await advance(q, 'sent');
+    const key = `outcome-${randomUUID()}`;
+
+    await noticed.record(q.id, q.currentVersionId, acceptBody(expectedVersion), key);
+    await noticed.record(q.id, q.currentVersionId, acceptBody(expectedVersion), key);
+
+    const orderId = await draftOrderId(q.id);
+    expect(await bellRows(`sales_order.drafted:${orderId}`)).toEqual([
+      { user_id: accountantUserId, link: `/sales-orders/${orderId}` },
+    ]);
+    expect(await bellRows(`quotation.evidence_pending:${q.currentVersionId}`)).toEqual([]);
   });
 });
