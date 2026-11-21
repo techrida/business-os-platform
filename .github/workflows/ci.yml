@@ -160,6 +160,8 @@ jobs:
 
       # `@bos/workspace...` = the app plus the workspace packages it depends on.
       - name: Build the workspace app (production)
+        env:
+          BOS_BUILD_PROFILE: production
         run: pnpm --filter '@bos/workspace...' build
 
       # No existence guard on purpose: a missing checker is an error (node exits 1), never a silent skip.
