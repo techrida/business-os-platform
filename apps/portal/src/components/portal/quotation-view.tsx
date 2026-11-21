@@ -6,6 +6,7 @@ import { Card } from '@/components/ui/card';
 import { ViewDocument } from '@/components/ui/document-viewer';
 import { displayFormat, taxLineLabel } from '@/lib/display';
 
+import { PdfNotReady } from './pdf-not-ready';
 import styles from './quotation.module.css';
 import { RichText } from './rich-text';
 import { displayStatus, STATUS_LOOK } from './quotation-status';
@@ -87,7 +88,7 @@ export function QuotationView({
               </p>
             </div>
           ) : (
-            <p className={styles.muted}>The PDF copy is being prepared.</p>
+            <PdfNotReady failed={view.renderFailed === true} className={styles.muted} />
           )}
         </header>
 

@@ -841,8 +841,9 @@ export const OpportunityDtoSchema = z.object({
   allowedMoves: z.array(OpportunityStageSchema).optional(),
   canEdit: z.boolean().optional(),
   /**
-   * The caller may create a quotation on this deal (FX-Q1, FX-Q2): `quotation.draft`, and opportunity read that
-   * reaches it as owner, department, lead creator or a broader scope. An assigned follow-up alone does not count.
+   * The caller may create a quotation on this deal (FX-Q1, FX-Q2, R4a Q4 a): `quotation.draft`, and opportunity
+   * read that reaches it as owner, through its department or as lead creator. Reading every deal does not count, and
+   * neither does an assigned follow-up.
    */
   canDraftQuotation: z.boolean().optional(),
   /**
@@ -854,6 +855,20 @@ export const OpportunityDtoSchema = z.object({
    */
   creditHold: z
     .object({ held: z.boolean(), overridden: z.boolean(), ordered: z.boolean().optional() })
+    .optional(),
+  /**
+   * R4a Q13, on the detail only: every stage change recorded since 0162, oldest first. `actorName` is the person who
+   * made the move or set it off; null for a move with no user behind it (the system). Nothing before 0162 is kept.
+   */
+  stageHistory: z
+    .array(
+      z.object({
+        from: OpportunityStageSchema,
+        to: OpportunityStageSchema,
+        at: isoDateTime,
+        actorName: z.string().nullable(),
+      }),
+    )
     .optional(),
   version: z.number().int().min(1),
   createdAt: isoDateTime,
@@ -933,6 +948,17 @@ export const CreateActivityBodySchema = z
   });
 export type CreateActivityBody = z.infer<typeof CreateActivityBodySchema>;
 
+/**
+ * What the caller may do with one activity, decided by the same rule the complete, reschedule and cancel routes
+ * enforce. All false for an activity that is not planned or that the system wrote.
+ */
+export const ActivityCanSchema = z.object({
+  complete: z.boolean(),
+  reschedule: z.boolean(),
+  cancel: z.boolean(),
+});
+export type ActivityCan = z.infer<typeof ActivityCanSchema>;
+
 export const ActivityDtoSchema = z
   .object({
     id: z.guid(),
@@ -959,6 +985,8 @@ export const ActivityDtoSchema = z
     createdByName: z.string().nullable(),
     occurredAt: isoDateTime,
     version: z.number().int().min(1),
+    /** Sent on list rows, for the caller. The write routes leave it out; treat its absence as no actions. */
+    can: ActivityCanSchema.optional(),
   })
   .refine(exactlyOneSubject, ONE_SUBJECT);
 export type ActivityDto = z.infer<typeof ActivityDtoSchema>;

@@ -8,11 +8,13 @@ import {
   OpportunityStageSchema,
   searchParam,
 } from '@bos/contracts';
-import { type opportunities } from '@bos/db';
+import { type opportunities, type opportunityStageHistory } from '@bos/db';
 import { z } from 'zod';
 
 import { can, type Principal } from '../../platform/authz/can';
-import { allowedOpportunityMoves, mayDraftQuotationOn, opportunityRef } from './opportunity-stage';
+import { nameIn } from '../../platform/users/person-names';
+import { allowedOpportunityMoves, opportunityRef } from './opportunity-stage';
+import { mayStartQuotationOn } from './quotation-draft-reach';
 
 /**
  * `GET /v1/opportunities?q&stage&owner&limit&offset`. `stage` and `owner` may repeat (any of the selected values
@@ -62,10 +64,26 @@ export function toOpportunityDto(
       : {
           allowedMoves: allowedOpportunityMoves(principal, row),
           canEdit: can(principal, 'crm.opportunity.write', opportunityRef(row)).allowed,
-          canDraftQuotation: mayDraftQuotationOn(principal, row),
+          canDraftQuotation: mayStartQuotationOn(principal, row),
         }),
     version: row.version,
     createdAt: row.createdAt.toISOString(),
     updatedAt: row.updatedAt.toISOString(),
   };
+}
+
+/**
+ * The detail's `stageHistory` (R4a Q13), in the order given (stageHistoryOf: oldest first). `names` holds the
+ * actors' display names (personNameMap); a move with no user is null, which the screen shows as the system.
+ */
+export function toStageHistoryDto(
+  rows: readonly (typeof opportunityStageHistory.$inferSelect)[],
+  names: ReadonlyMap<string, string>,
+): NonNullable<OpportunityDto['stageHistory']> {
+  return rows.map((r) => ({
+    from: r.fromStage,
+    to: r.toStage,
+    at: r.createdAt.toISOString(),
+    actorName: r.actorUserId === null ? null : nameIn(names, r.actorUserId),
+  }));
 }

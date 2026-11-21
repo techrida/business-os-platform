@@ -8,6 +8,7 @@ import {
   multi,
   SCHEDULABLE_ACTIVITY_KINDS,
   searchParam,
+  type ActivityCan,
   type ActivityDto,
   type ActivityKind,
   type Permission,
@@ -143,9 +144,14 @@ export const isPlannedRow = (
 
 /**
  * `names` holds the display names (D46) of the row's assignee and author, looked up by the caller in the row's
- * tenant (`activityNames`); a person it does not hold reads "Unnamed user", a row without one reads null.
+ * tenant (`activityNames`); a person it does not hold reads "Unnamed user", a row without one reads null. `can` is the
+ * caller's actions on the row (activity-can.ts), sent on list rows only.
  */
-export function toActivityDto(row: ActivityRow, names: ReadonlyMap<string, string>): ActivityDto {
+export function toActivityDto(
+  row: ActivityRow,
+  names: ReadonlyMap<string, string>,
+  can?: ActivityCan,
+): ActivityDto {
   return {
     id: row.id,
     kind: row.kind,
@@ -166,6 +172,7 @@ export function toActivityDto(row: ActivityRow, names: ReadonlyMap<string, strin
     createdByName: nameIn(names, row.createdByUserId),
     occurredAt: row.occurredAt.toISOString(),
     version: row.version,
+    ...(can === undefined ? {} : { can }),
   };
 }
 
