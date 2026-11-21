@@ -290,6 +290,15 @@ describe('the list', () => {
     expect(out).toContain('RFQ-2082/83-00001');
   });
 
+  it('leaves the cards out when the list itself fails, even though the counts loaded', async () => {
+    rfqApi.listRfqsPage.mockImplementation((_s: unknown, query: { limit: number }) =>
+      query.limit === 1 ? Promise.resolve(page([], 3)) : Promise.reject(apiError(500)),
+    );
+    const out = await list();
+    expect(out).toContain('did not load');
+    expect(out).not.toContain('RFQ summary');
+  });
+
   it('a person without the sourcing grant gets no New RFQ button', async () => {
     session.roles = ['sales'];
     rfqApi.listRfqsPage.mockResolvedValue(page([]));

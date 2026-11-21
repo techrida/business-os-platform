@@ -74,6 +74,30 @@ it('stops at the first unpinned column from the end', async () => {
   await view.unmount();
 });
 
+it('writes the sticky band width and the last pinned column width to the wrapper', async () => {
+  const view = await mountForm(<List />);
+  const wrap = view.container.querySelector<HTMLElement>('[role="region"]');
+  // Action 88 + Valid until 110 + Status 120.
+  expect(wrap?.style.getPropertyValue('--table-pin-total')).toBe('318px');
+  expect(wrap?.style.getPropertyValue('--table-pin-last')).toBe('88px');
+  await view.unmount();
+  const short = await mountForm(<List pinnedValidUntil={false} />);
+  const shortWrap = short.container.querySelector<HTMLElement>('[role="region"]');
+  expect(shortWrap?.style.getPropertyValue('--table-pin-total')).toBe('88px');
+  expect(shortWrap?.style.getPropertyValue('--table-pin-last')).toBe('88px');
+  await short.unmount();
+});
+
+it('pads the wrapper scroll by the sticky band so focus never hides under it, the last column on a phone', () => {
+  const css = readFileSync(join(process.cwd(), 'src/components/ui/table.module.css'), 'utf8');
+  expect(css).toMatch(
+    /\n\.wrap\[data-pinned-ready\] \{\s*scroll-padding-inline-end: var\(--table-pin-total, 0\);\s*\}/,
+  );
+  expect(css).toMatch(
+    /@media \(max-width: 767\.98px\) \{[^@]*\.wrap\[data-pinned-ready\] \{\s*scroll-padding-inline-end: var\(--table-pin-last, 0\);/,
+  );
+});
+
 it('leaves a table without pinned columns alone', async () => {
   const view = await mountForm(
     <Table caption="Plain">
