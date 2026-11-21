@@ -1,10 +1,13 @@
-// HTTP routes of evidence uploads (round 5 P2). Two routes per record kind, each with that kind's own permission:
-// create the document (JSON body: filename, declaredMime, sizeBytes) and PUT its raw bytes to the `uploadPath` the
-// create returned (send the file with its own Content-Type and an exact Content-Length, as for every upload).
+// HTTP routes of evidence uploads (round 5 P2). Three routes per record kind, each with that kind's own permission:
+// create the document (JSON body: filename, declaredMime, sizeBytes), PUT its raw bytes to the `uploadPath` the
+// create returned (send the file with its own Content-Type and an exact Content-Length, as for every upload), and
+// DELETE a file its uploader abandoned before saving (204, also when it is already removed).
 import type { DocumentVersionDto } from '@bos/contracts';
 import {
   Body,
   Controller,
+  Delete,
+  HttpCode,
   Param,
   Post,
   Put,
@@ -67,6 +70,13 @@ export class EvidenceDocumentsController {
     return this.receive('sales_order', id, docId, verId, req);
   }
 
+  @Delete('sales-orders/:id/evidence-documents/:docId')
+  @Can('sales_order.mark_billable')
+  @HttpCode(204)
+  removeForSalesOrder(@Param('id') id: string, @Param('docId') docId: string): Promise<void> {
+    return this.evidence.remove('sales_order', id, docId);
+  }
+
   @Post('payables/bills/:id/evidence-documents')
   @Can('payables.bill.enter')
   createForBill(@Param('id') id: string, @Body() body: unknown): Promise<CreatedEvidenceDocument> {
@@ -84,6 +94,13 @@ export class EvidenceDocumentsController {
     return this.receive('vendor_bill', id, docId, verId, req);
   }
 
+  @Delete('payables/bills/:id/evidence-documents/:docId')
+  @Can('payables.bill.enter')
+  @HttpCode(204)
+  removeForBill(@Param('id') id: string, @Param('docId') docId: string): Promise<void> {
+    return this.evidence.remove('vendor_bill', id, docId);
+  }
+
   @Post('procurement/rfqs/:id/evidence-documents')
   @Can('procurement.sourcing')
   createForRfq(@Param('id') id: string, @Body() body: unknown): Promise<CreatedEvidenceDocument> {
@@ -99,5 +116,12 @@ export class EvidenceDocumentsController {
     @Req() req: Request,
   ): Promise<DocumentVersionDto> {
     return this.receive('rfq', id, docId, verId, req);
+  }
+
+  @Delete('procurement/rfqs/:id/evidence-documents/:docId')
+  @Can('procurement.sourcing')
+  @HttpCode(204)
+  removeForRfq(@Param('id') id: string, @Param('docId') docId: string): Promise<void> {
+    return this.evidence.remove('rfq', id, docId);
   }
 }
