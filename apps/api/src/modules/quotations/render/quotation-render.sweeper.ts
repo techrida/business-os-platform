@@ -50,7 +50,13 @@ import { and, asc, eq, isNull, lt, or, sql } from 'drizzle-orm';
 
 import type { AuditRecordInput } from '../../../platform/audit/audit.service';
 import type { Db, DbTransaction } from '../../../platform/db/db.module';
-import { type Actor, systemActor, type TxScope } from '../../../platform/db/tx';
+import {
+  type Actor,
+  READ_ONLY,
+  systemActor,
+  type TxOptions,
+  type TxScope,
+} from '../../../platform/db/tx';
 import type { DocumentsService } from '../../../platform/documents/documents.service';
 import type { SettingsService } from '../../../platform/settings/settings.service';
 import { QUOTATION_OWNER_TYPE, QUOTATION_RENDER_JOB_PREFIX } from '../quotation-owner.policy';
@@ -167,6 +173,8 @@ export type RunInTx = <T>(
   scope: TxScope,
   actor: Actor,
   fn: (tx: DbTransaction) => Promise<T>,
+  /** READ_ONLY for a transaction that only reads, as withTx takes it. */
+  options?: TxOptions,
 ) => Promise<T>;
 export type RenderDocuments = Pick<DocumentsService, 'createGenerated' | 'receiveGenerated'>;
 export type RenderSettings = Pick<SettingsService, 'get'>;
@@ -279,7 +287,7 @@ export class QuotationRenderSweeper {
     if (!claimed) return { outcome: 'skipped' };
 
     try {
-      const source = await this.runTx(scope, actor, (tx) => this.store.load(tx, c));
+      const source = await this.runTx(scope, actor, (tx) => this.store.load(tx, c), READ_ONLY);
       if (source === undefined) throw new RenderSourceMissingError();
       const { issuerLegalName, documentStyle: storedStyle, ...rows } = source;
       const issuer = await buildIssuer(this.settings, scope, issuerLegalName);

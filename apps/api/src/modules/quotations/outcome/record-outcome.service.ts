@@ -20,7 +20,7 @@ import { can } from '../../../platform/authz/can';
 import { type Principal } from '../../../platform/authz/principal';
 import { DB, type Db } from '../../../platform/db/db.module';
 import { withIdempotency } from '../../../platform/db/idempotency';
-import { withTx } from '../../../platform/db/tx';
+import { READ_ONLY, withTx } from '../../../platform/db/tx';
 import { NotifyService } from '../../../platform/notify/notify.service';
 import { DraftingCaller } from '../drafting/drafting.caller';
 import { quotationRef } from '../preview/quotation-preview.service';
@@ -152,37 +152,43 @@ export class RecordOutcomeService {
   async evidence(quotationId: string, versionId: string): Promise<QuotationEvidenceDto> {
     const { scope, actor, principal } = this.caller.current();
     this.staffUserId(principal, actor);
-    return withTx(this.db, scope, actor, async (tx) => {
-      const [quotation] = await tx
-        .select()
-        .from(quotations)
-        .where(
-          and(
-            scopeWhereFor(principal, quotations, 'quotation.read'),
-            eq(quotations.id, quotationId),
-          ),
-        );
-      if (quotation === undefined) throw notFound();
-      const [version] = await tx
-        .select({ status: quotationVersions.status })
-        .from(quotationVersions)
-        .where(
-          scoped(scope).where(
-            quotationVersions,
+    return withTx(
+      this.db,
+      scope,
+      actor,
+      async (tx) => {
+        const [quotation] = await tx
+          .select()
+          .from(quotations)
+          .where(
             and(
-              eq(quotationVersions.id, versionId),
-              eq(quotationVersions.quotationId, quotationId),
+              scopeWhereFor(principal, quotations, 'quotation.read'),
+              eq(quotations.id, quotationId),
             ),
-          ),
-        );
-      const state =
-        version === undefined ? undefined : await readEvidenceState(tx, scope, versionId);
-      if (version === undefined || state === undefined) throw notFound();
-      const mayConfirm =
-        version.status === 'accepted' &&
-        can(principal, RECORD_ACTION, quotationRef(quotation)).allowed;
-      return this.outcomes.evidenceView(tx, quotationId, state, mayConfirm);
-    });
+          );
+        if (quotation === undefined) throw notFound();
+        const [version] = await tx
+          .select({ status: quotationVersions.status })
+          .from(quotationVersions)
+          .where(
+            scoped(scope).where(
+              quotationVersions,
+              and(
+                eq(quotationVersions.id, versionId),
+                eq(quotationVersions.quotationId, quotationId),
+              ),
+            ),
+          );
+        const state =
+          version === undefined ? undefined : await readEvidenceState(tx, scope, versionId);
+        if (version === undefined || state === undefined) throw notFound();
+        const mayConfirm =
+          version.status === 'accepted' &&
+          can(principal, RECORD_ACTION, quotationRef(quotation)).allowed;
+        return this.outcomes.evidenceView(tx, quotationId, state, mayConfirm);
+      },
+      READ_ONLY,
+    );
   }
 
   /** The staff user behind the call, or 403 before any read: a portal caller holding the key learns nothing. */

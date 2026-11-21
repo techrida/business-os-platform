@@ -16,6 +16,7 @@ import {
   UnsupportedMediaTypeException,
   type ArgumentsHost,
 } from '@nestjs/common';
+import { DrizzleQueryError } from 'drizzle-orm/errors';
 import { afterEach, beforeEach, describe, expect, it, vi, type MockInstance } from 'vitest';
 
 import { LedgerError } from '../../modules/ledger/ledger.service';
@@ -445,6 +446,9 @@ describe('ErrorBodyFilter', () => {
     'BILL_NOT_PAYABLE',
     'CURRENCY_MISMATCH',
     'PURCHASE_ORDER_NOT_FOUND',
+    'BANK_ACCOUNT_INVALID',
+    'BANK_ACCOUNT_CURRENCY_MISMATCH',
+    'EXPENSE_ACCOUNT_INVALID',
   ])('keeps the payables refusal code %s on a 422, and only on a 422', (code) => {
     const out = filter(new UnprocessableEntityException({ code, message: 'Not accepted' }));
     expect(out.status).toBe(422);
@@ -806,5 +810,64 @@ describe('access settings errors on the HTTP boundary', () => {
         changeIndex: 0,
       },
     ]);
+  });
+});
+
+describe('database busy errors on the HTTP boundary', () => {
+  const pgError = (code: string, message: string) => Object.assign(new Error(message), { code });
+
+  beforeEach(() => {
+    vi.spyOn(Logger.prototype, 'warn').mockImplementation(() => undefined);
+    vi.spyOn(Logger.prototype, 'error').mockImplementation(() => undefined);
+  });
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it.each([
+    ['40P01', 'deadlock detected', '1'],
+    ['55P03', 'canceling statement due to lock timeout', '2'],
+  ])(
+    'answers %s as a retryable 503 db_busy with Retry-After %s, also when drizzle wraps it',
+    (code, message, retryAfter) => {
+      const raw = pgError(code, message);
+      for (const exception of [raw, new DrizzleQueryError('update app.x set y = $1', [1], raw)]) {
+        const out = filter(exception);
+        expect(out.status).toBe(503);
+        expect(out.headers['Retry-After']).toBe(retryAfter);
+        const parsed = ErrorBodySchema.parse(out.body);
+        expect(parsed.error.code).toBe('db_busy');
+        expect(parsed.error.message).toBe('Busy, please try again');
+        expect(JSON.stringify(out.body)).not.toContain('app.x');
+      }
+    },
+  );
+
+  it('logs a warning without the stack, not an error', () => {
+    const warn = vi.mocked(Logger.prototype.warn);
+    const error = vi.mocked(Logger.prototype.error);
+    filter(pgError('40P01', 'deadlock detected'));
+    expect(warn).toHaveBeenCalledTimes(1);
+    expect(String(warn.mock.calls[0]?.[0])).toContain('deadlock');
+    expect(error).not.toHaveBeenCalled();
+  });
+
+  it('leaves other database errors a plain 500 without Retry-After', () => {
+    for (const exception of [
+      pgError('23505', 'duplicate key'),
+      pgError('25P03', 'terminating connection due to idle-in-transaction timeout'),
+      new DrizzleQueryError('select 1', [], pgError('57014', 'canceling statement')),
+    ]) {
+      const out = filter(exception);
+      expect(out.status).toBe(500);
+      expect(out.headers['Retry-After']).toBeUndefined();
+      expect(ErrorBodySchema.parse(out.body).error.code).toBe('internal');
+    }
+  });
+
+  it('does not let an HttpException carrying a busy code through as db_busy', () => {
+    const out = filter(new ConflictException({ code: '40P01', message: 'x' }));
+    expect(out.status).toBe(409);
+    expect(ErrorBodySchema.parse(out.body).error.code).toBe('conflict');
   });
 });

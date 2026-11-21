@@ -19,7 +19,7 @@ import { sql } from 'drizzle-orm';
 
 import type { EntityMembership, ResolvedUser } from '../authz/user-directory';
 import { DB, type Db, type DbTransaction } from '../db/db.module';
-import { type TxScope, systemActor, withTx } from '../db/tx';
+import { type TxOptions, type TxScope, systemActor, withTx } from '../db/tx';
 import {
   lockoutPinnedCursor,
   USERS_QUEUE,
@@ -43,6 +43,9 @@ import {
 
 /** The audit actor for everything that arrives from ZITADEL (hook, sync, reconcile, JIT). */
 const zitadelActor = () => systemActor('zitadel');
+// For a write that locks a user row before its first audited write. The admin status paths (UserStatusService) lock
+// the row and cannot take the tenant audit lock first, so these keep the same order: row, then audit lock.
+const LOCKS_USER_ROW: TxOptions = { audit: 'lazy' };
 
 const cursorName = (zitadelOrgId: string) => `users.reconcile:${zitadelOrgId}`;
 
@@ -54,6 +57,29 @@ const cursorName = (zitadelOrgId: string) => `users.reconcile:${zitadelOrgId}`;
  */
 const MAX_PAGES = 200;
 const MAX_DEACTIVATIONS_PER_PASS = 20;
+
+/** Tries of one apply when the row keeps changing between the read and the write. */
+const APPLY_ATTEMPTS = 3;
+
+/**
+ * apply gave up: the user's row changed between the read and the write on every one of its APPLY_ATTEMPTS tries.
+ * Not the same as "nothing to change": a sync job fails on it, so the queue tries the job again, and a reconcile
+ * pass logs it and goes on with the next user (who stays seen, so never a deactivation candidate).
+ */
+export class UserSyncContendedError extends Error {
+  override readonly name = 'UserSyncContendedError';
+
+  constructor(readonly zitadelUserId: string) {
+    super(`users.apply: ${zitadelUserId} kept changing while it was synced`);
+  }
+}
+
+/** What apply writes for one ZITADEL user: the user as read, the status to store and the lock (undefined keeps it). */
+interface NextState {
+  user: ZitadelUser;
+  status: MirroredStatus;
+  lock: UserLock | null | undefined;
+}
 
 export interface ReconcileLimits {
   maxPages?: number;
@@ -115,6 +141,8 @@ export class UserMirror {
    * the orgs it is a member of, so a customer or vendor user looks "not found" to it. Deactivating
    * on that locked every portal persona out on the real stack (2026-11-08). Only a complete
    * reconcile pass of the user's org may deactivate a user who is missing from ZITADEL.
+   *
+   * Throws UserSyncContendedError when the row kept changing under every try, so the job is retried.
    */
   async syncUser(zitadelUserId: string): Promise<boolean> {
     const user = await this.zitadel.getUser(zitadelUserId);
@@ -180,7 +208,13 @@ export class UserMirror {
             scanned += 1;
             seen.add(user.id);
             const roles = await this.zitadel.listGrants(user.id, org.zitadelOrgId);
-            if (await this.apply(org, user, roles)) changed += 1;
+            try {
+              if (await this.apply(org, user, roles)) changed += 1;
+            } catch (error) {
+              if (!(error instanceof UserSyncContendedError)) throw error;
+              // This user only: the pass goes on, and they are seen, so never deactivated as missing.
+              this.logger.warn(`${error.message}; left for the next pass`);
+            }
           }
           if (page.nextCursor === null) break;
           cursor = page.nextCursor;
@@ -232,27 +266,38 @@ export class UserMirror {
       const org = await this.store.idpOrgById(i.idpOrgId);
       if (!org || org.tenantId !== i.tenantId) throw new Error('JIT user insert: unknown IdP org');
       const scope = await this.entityScope(org.tenantId);
-      await withTx(this.db, scope, zitadelActor(), async (tx) => {
-        const userId = await this.store.insertUser(tx, scope, {
-          zitadelUserId: i.zitadelUserId,
-          idpOrgId: org.idpOrgId,
-          email: null,
-          displayName: null,
-          status: 'active',
-        });
-        await this.bootstrap(tx, org, scope, userId);
-      });
+      await withTx(
+        this.db,
+        scope,
+        zitadelActor(),
+        async (tx) => {
+          const userId = await this.store.insertUser(tx, scope, {
+            zitadelUserId: i.zitadelUserId,
+            idpOrgId: org.idpOrgId,
+            email: null,
+            displayName: null,
+            status: 'active',
+          });
+          await this.bootstrap(tx, org, scope, userId);
+        },
+        LOCKS_USER_ROW,
+      );
       await this.enqueueSync(i.zitadelUserId);
       row = await this.store.findByZitadelId(this.db, i.zitadelUserId);
       if (!row) throw new Error('JIT user insert left no row');
     } else if (row.status === 'invited') {
       const invited = row;
-      await withTx(this.db, await this.entityScope(invited.tenantId), zitadelActor(), (tx) =>
-        this.store.updateUser(tx, invited.id, {
-          email: invited.email,
-          displayName: invited.displayName,
-          status: 'active',
-        }),
+      await withTx(
+        this.db,
+        await this.entityScope(invited.tenantId),
+        zitadelActor(),
+        (tx) =>
+          this.store.updateUser(tx, invited.id, {
+            email: invited.email,
+            displayName: invited.displayName,
+            status: 'active',
+          }),
+        LOCKS_USER_ROW,
       );
       await this.enqueueSync(i.zitadelUserId);
       row = { ...invited, status: 'active' };
@@ -266,10 +311,22 @@ export class UserMirror {
     };
   }
 
-  /** A Valkey hiccup must not fail the user's request: the reconcile fills the row in anyway. */
+  /**
+   * A Valkey hiccup must not fail the user's request: the reconcile fills the row in anyway. Retried like the hook's
+   * job (hooks.controller.ts), so a sync that lost to concurrent writes (UserSyncContendedError) runs again.
+   */
   private async enqueueSync(zitadelUserId: string): Promise<void> {
     await this.queue
-      .add(USERS_SYNC_JOB, { zitadelUserId }, { removeOnComplete: 100, removeOnFail: 500 })
+      .add(
+        USERS_SYNC_JOB,
+        { zitadelUserId },
+        {
+          attempts: 5,
+          backoff: { type: 'exponential', delay: 2_000 },
+          removeOnComplete: 100,
+          removeOnFail: 500,
+        },
+      )
       .catch((error: Error) => this.logger.warn(`users.sync enqueue failed: ${error.message}`));
   }
 
@@ -371,82 +428,119 @@ export class UserMirror {
       );
       return false;
     }
-    let user = read;
-    let status: MirroredStatus = read.status;
     const scope = await this.entityScope(org.tenantId);
-    return withTx(this.db, scope, zitadelActor(), async (tx) => {
-      let changed = false;
-      let lockConfirmed = true;
-      const existing = await this.store.findByZitadelId(tx, user.id, true);
-      if (
-        existing &&
-        (existing.status !== status || Boolean(existing.lockReason) !== Boolean(user.locked))
-      ) {
-        // `user` was read before this row lock. An admin status action (which holds the same lock while it changes
-        // ZITADEL) may have finished in between, and writing the older state back would undo it: a deactivated
-        // leaver active again until the next pass. So a status or lock change is re-read now, behind that lock.
-        const fresh = await this.zitadel.getUser(user.id).catch(() => null);
-        if (fresh?.status) {
-          user = fresh;
-          status = fresh.status;
-        } else {
-          // Unconfirmed: the stored lock stays as it is.
-          lockConfirmed = false;
-          if (status === 'active' || status === 'invited') {
-            // Unconfirmed, and it would let someone in: leave the row for the next pass.
-            this.logger.warn(`users.apply: could not confirm ${user.id}; status left unchanged`);
-            status = existing.status;
-          }
+    for (let attempt = 1; ; attempt += 1) {
+      const seen = await this.store.findByZitadelId(this.db, read.id);
+      const next = await this.nextState(org, seen, read, read.status);
+      // ZITADEL was read with no transaction open. The write goes ahead only while the row is still the version read
+      // before that, so an admin action or another sync that committed in between is never overwritten.
+      const changed = await withTx(
+        this.db,
+        scope,
+        zitadelActor(),
+        async (tx) => {
+          const existing = await this.store.findByZitadelId(tx, read.id, true);
+          if ((existing?.version ?? null) !== (seen?.version ?? null)) return null;
+          return this.write(tx, org, scope, existing, next, roles);
+        },
+        LOCKS_USER_ROW,
+      );
+      if (changed !== null) return changed;
+      if (attempt >= APPLY_ATTEMPTS) throw new UserSyncContendedError(read.id);
+    }
+  }
+
+  /** What to write for `read`, worked out with no transaction open. */
+  private async nextState(
+    org: IdpOrgRow,
+    existing: UserRow | null,
+    read: ZitadelUser,
+    readStatus: MirroredStatus,
+  ): Promise<NextState> {
+    let user = read;
+    let status = readStatus;
+    let lockConfirmed = true;
+    if (
+      existing &&
+      (existing.status !== status || Boolean(existing.lockReason) !== Boolean(user.locked))
+    ) {
+      // `user` may have been read before `existing`. An admin status action may have finished in between, and
+      // writing the older state back would undo it: a deactivated leaver active again until the next pass. So a
+      // status or lock change is re-read now, after `existing`; apply writes only if the row is still that version.
+      const fresh = await this.zitadel.getUser(user.id).catch(() => null);
+      if (fresh?.status) {
+        user = fresh;
+        status = fresh.status;
+      } else {
+        // Unconfirmed: the stored lock stays as it is.
+        lockConfirmed = false;
+        if (status === 'active' || status === 'invited') {
+          // Unconfirmed, and it would let someone in: leave the row for the next pass.
+          this.logger.warn(`users.apply: could not confirm ${user.id}; status left unchanged`);
+          status = existing.status;
         }
       }
-      const lock = lockConfirmed ? await this.lockChange(org, existing, user) : undefined;
-      let userId: string;
-      if (!existing) {
-        userId = await this.store.insertUser(tx, scope, {
-          zitadelUserId: user.id,
-          idpOrgId: org.idpOrgId,
+    }
+    const lock = lockConfirmed ? await this.lockChange(org, existing, user) : undefined;
+    return { user, status, lock };
+  }
+
+  private async write(
+    tx: DbTransaction,
+    org: IdpOrgRow,
+    scope: TxScope,
+    existing: UserRow | null,
+    next: NextState,
+    roles: readonly RoleKey[],
+  ): Promise<boolean> {
+    const { user, status, lock } = next;
+    let changed = false;
+    let userId: string;
+    if (!existing) {
+      userId = await this.store.insertUser(tx, scope, {
+        zitadelUserId: user.id,
+        idpOrgId: org.idpOrgId,
+        email: user.email,
+        displayName: user.displayName,
+        status,
+      });
+      if (lock) {
+        await this.store.updateUser(tx, userId, {
           email: user.email,
           displayName: user.displayName,
           status,
+          lock,
         });
-        if (lock) {
-          await this.store.updateUser(tx, userId, {
-            email: user.email,
-            displayName: user.displayName,
-            status,
-            lock,
-          });
-        }
-        await this.bootstrap(tx, org, scope, userId);
-        changed = true;
-      } else {
-        userId = existing.id;
-        const statusChanged = existing.status !== status;
-        if (
-          existing.email !== user.email ||
-          existing.displayName !== user.displayName ||
-          existing.status !== status ||
-          lock !== undefined
-        ) {
-          await this.store.updateUser(tx, userId, {
-            email: user.email,
-            displayName: user.displayName,
-            status,
-            ...(lock === undefined ? {} : { lock }),
-          });
-          // A status change (disabled, re-enabled) reaches every request at once: the per-request user cache
-          // is keyed on the authz version, so without a bump a disabled user stays active for up to 60 s.
-          if (statusChanged) await this.store.bumpAuthzVersion(tx, scope);
-          changed = true;
-        }
       }
-      if (!sameRoles(await this.store.rolesOf(tx, scope.tenantId, userId), roles)) {
-        await this.store.replaceRoles(tx, scope, userId, roles);
-        await this.store.bumpAuthzVersion(tx, scope);
+      await this.bootstrap(tx, org, scope, userId);
+      changed = true;
+    } else {
+      userId = existing.id;
+      const statusChanged = existing.status !== status;
+      if (
+        existing.email !== user.email ||
+        existing.displayName !== user.displayName ||
+        existing.status !== status ||
+        lock !== undefined
+      ) {
+        await this.store.updateUser(tx, userId, {
+          email: user.email,
+          displayName: user.displayName,
+          status,
+          ...(lock === undefined ? {} : { lock }),
+        });
+        // A status change (disabled, re-enabled) reaches every request at once: the per-request user cache
+        // is keyed on the authz version, so without a bump a disabled user stays active for up to 60 s.
+        if (statusChanged) await this.store.bumpAuthzVersion(tx, scope);
         changed = true;
       }
-      return changed;
-    });
+    }
+    if (!sameRoles(await this.store.rolesOf(tx, scope.tenantId, userId), roles)) {
+      await this.store.replaceRoles(tx, scope, userId, roles);
+      await this.store.bumpAuthzVersion(tx, scope);
+      changed = true;
+    }
+    return changed;
   }
 
   /**
@@ -558,15 +652,21 @@ export class UserMirror {
 
   private async deactivate(user: UserRow): Promise<void> {
     const scope = await this.entityScope(user.tenantId);
-    await withTx(this.db, scope, zitadelActor(), async (tx) => {
-      await this.store.updateUser(tx, user.id, {
-        email: user.email,
-        displayName: user.displayName,
-        status: 'inactive',
-      });
-      // Bump the authz version so the per-request user cache drops the user at once (see apply).
-      await this.store.bumpAuthzVersion(tx, scope);
-    });
+    await withTx(
+      this.db,
+      scope,
+      zitadelActor(),
+      async (tx) => {
+        await this.store.updateUser(tx, user.id, {
+          email: user.email,
+          displayName: user.displayName,
+          status: 'inactive',
+        });
+        // Bump the authz version so the per-request user cache drops the user at once (see apply).
+        await this.store.bumpAuthzVersion(tx, scope);
+      },
+      LOCKS_USER_ROW,
+    );
   }
 
   /** The tenant's staff IdP org: invites are created and grants are set there. */

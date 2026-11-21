@@ -49,6 +49,11 @@ export interface UserRow {
   lockReason?: UserLockReason | null;
   /** When a `failed_sign_ins` lock ends, as an ISO timestamp; null otherwise. */
   lockedUntil?: string | null;
+  /**
+   * `updated_at` as text, from findById and findByZitadelId only: the row version a sync compares under the row lock
+   * before it writes what it read from ZITADEL outside the transaction.
+   */
+  version?: string;
 }
 
 /** A lock to write (F1-Q4): `until` is null for an admin lock, which never ends by itself. */
@@ -132,15 +137,20 @@ export abstract class UsersStore {
   /** The scope withTx put on this transaction (bos.tenant_id / bos.organization_id). */
   abstract txScope(tx: DbTransaction): Promise<TxScope>;
 
-  /** `lock` takes FOR UPDATE, so a hook sync and a reconcile of the same user run one after the other. */
+  /**
+   * `lock` takes FOR NO KEY UPDATE, so a hook sync and a reconcile of the same user run one after the other. Not FOR
+   * UPDATE: a row inserted with a foreign key to app.users takes FOR KEY SHARE on the user, which FOR UPDATE would
+   * block, and that insert may hold its tenant's audit lock while it waits.
+   */
   abstract findByZitadelId(
     q: Queryable,
     zitadelUserId: string,
     lock?: boolean,
   ): Promise<UserRow | null>;
   /**
-   * Tenant-scoped: `scope.organizationId` is not a filter, users have no entity. `lock` takes FOR UPDATE, the same row
-   * lock a sync takes in findByZitadelId, so a status action and a sync of the same user run one after the other.
+   * Tenant-scoped: `scope.organizationId` is not a filter, users have no entity. `lock` takes FOR NO KEY UPDATE, the
+   * same row lock a sync takes in findByZitadelId, so a status action and a sync of the same user run one after the
+   * other while foreign-key checks against the user still go through.
    */
   abstract findById(
     q: Queryable,
@@ -241,6 +251,8 @@ const USER_COLUMNS = sql`u.id, u.tenant_id AS "tenantId", u.idp_org_id AS "idpOr
   u.lock_reason AS "lockReason",
   to_char(u.locked_until AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"') AS "lockedUntil"`;
 
+const FOUND_USER_COLUMNS = sql`${USER_COLUMNS}, u.updated_at::text AS "version"`;
+
 const STAFF_USERS = sql`FROM app.users u
   JOIN app.idp_orgs io ON io.id = u.idp_org_id AND io.tenant_id = u.tenant_id AND io.kind = 'staff'`;
 
@@ -324,8 +336,8 @@ export class SqlUsersStore extends UsersStore {
   ): Promise<UserRow | null> {
     const [row] = await rows<UserRecord>(
       q,
-      sql`SELECT ${USER_COLUMNS} FROM app.users u WHERE u.zitadel_user_id = ${zitadelUserId}
-          ${lock ? sql`FOR UPDATE` : sql``}`,
+      sql`SELECT ${FOUND_USER_COLUMNS} FROM app.users u WHERE u.zitadel_user_id = ${zitadelUserId}
+          ${lock ? sql`FOR NO KEY UPDATE` : sql``}`,
     );
     return row ?? null;
   }
@@ -338,9 +350,9 @@ export class SqlUsersStore extends UsersStore {
   ): Promise<UserRow | null> {
     const [row] = await rows<UserRecord>(
       q,
-      sql`SELECT ${USER_COLUMNS} FROM app.users u
+      sql`SELECT ${FOUND_USER_COLUMNS} FROM app.users u
           WHERE u.tenant_id = ${scope.tenantId} AND u.id = ${userId}
-          ${lock ? sql`FOR UPDATE` : sql``}`,
+          ${lock ? sql`FOR NO KEY UPDATE` : sql``}`,
     );
     return row ?? null;
   }
@@ -647,14 +659,21 @@ export class SqlUsersStore extends UsersStore {
   }
 
   recordActivity(scope: TxScope, actor: Actor): Promise<void> {
-    return withTx(this.db, scope, actor, async (tx) => {
-      await tx.execute(sql`SET LOCAL statement_timeout = '500ms'`);
-      // The WHERE clause is rechecked by Postgres after a concurrent update, so this is also
-      // the throttle across API instances. The timestamp is independent of profile updated_at.
-      await tx.execute(sql`UPDATE app.users SET last_active_at = now()
+    return withTx(
+      this.db,
+      scope,
+      actor,
+      async (tx) => {
+        await tx.execute(sql`SET LOCAL statement_timeout = '500ms'`);
+        // The WHERE clause is rechecked by Postgres after a concurrent update, so this is also
+        // the throttle across API instances. The timestamp is independent of profile updated_at.
+        await tx.execute(sql`UPDATE app.users SET last_active_at = now()
         WHERE tenant_id = ${scope.tenantId} AND id = ${actor.id} AND status = 'active'
           AND (last_active_at IS NULL OR last_active_at < now() - interval '5 minutes')`);
-    });
+        // 'lazy': last_active_at is ignored by the audit trigger (0041), so this never takes the tenant audit lock.
+      },
+      { audit: 'lazy' },
+    );
   }
 
   async recordEvent(e: ZitadelEventKey): Promise<boolean> {

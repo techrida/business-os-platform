@@ -56,6 +56,7 @@ const api = vi.hoisted(() => ({
   getPoProgress: vi.fn(),
   getVendor: vi.fn(),
   listTaxCodes: vi.fn(),
+  listExpenseAccounts: vi.fn(),
   listWithholdingCodes: vi.fn(),
   listVendors: vi.fn(),
   listBillableOrders: vi.fn(),
@@ -84,6 +85,7 @@ vi.mock('@/lib/api-kernel', async (original) => ({
 }));
 vi.mock('@/lib/api-vendors', () => ({ getVendor: api.getVendor, listVendors: api.listVendors }));
 vi.mock('@/lib/api-tax-codes', () => ({ listTaxCodes: api.listTaxCodes }));
+vi.mock('@/lib/api-company-accounts', () => ({ listExpenseAccounts: api.listExpenseAccounts }));
 vi.mock('@/lib/api-withholding-codes', () => ({ listWithholdingCodes: api.listWithholdingCodes }));
 
 const { default: BillsPage } = await import('./bills/page');
@@ -97,6 +99,14 @@ const PO = '33333333-3333-4333-8333-333333333333';
 const POLINE = '44444444-4444-4444-8444-444444444444';
 const SUB = '55555555-5555-4555-8555-555555555555';
 const DOC = '66666666-6666-4666-8666-666666666666';
+// The bill line fixture books to VENDOR's id, so this account is the one it names.
+const OFFICE = {
+  id: VENDOR,
+  code: '5100',
+  name: 'Office supplies',
+  status: 'active',
+  retiredAt: null,
+};
 
 const apiError = (status: number, code = 'x') =>
   new ApiError(status, 'x', {
@@ -199,6 +209,7 @@ beforeEach(() => {
   api.getVendor.mockResolvedValue({ legalName: 'Himal Traders' });
   api.getPoProgress.mockResolvedValue(progress);
   api.listTaxCodes.mockResolvedValue([{ id: VENDOR, label: 'VAT 13%' }]);
+  api.listExpenseAccounts.mockResolvedValue([OFFICE]);
   api.listWithholdingCodes.mockResolvedValue([
     {
       id: VENDOR,
@@ -845,5 +856,107 @@ describe('bill detail under the per-bill can flags', () => {
     expect(out).toContain('Submit for approval');
     api.getBill.mockResolvedValue(approved);
     expect(await open()).toContain('Void bill');
+  });
+});
+
+describe('expense accounts on bills', () => {
+  const openBill = () => html(BillPage({ params: Promise.resolve({ id: BILL }) }));
+  const draft = { ...header, status: 'draft', matchStatus: 'not_required', lines: [line] };
+  const newBill = () => html(NewBillPage({ searchParams: Promise.resolve({}) }));
+
+  it('names each line account by code and name, reading retired accounts too', async () => {
+    api.getBill.mockResolvedValue(draft);
+    const out = await openBill();
+    expect(out).toContain('Expense account');
+    expect(out).toContain('5100 · Office supplies');
+    expect(api.listExpenseAccounts).toHaveBeenCalledWith(expect.anything(), {
+      includeRetired: true,
+    });
+  });
+
+  it('says Unknown account for a saved id with no match, never the id', async () => {
+    api.getBill.mockResolvedValue(draft);
+    api.listExpenseAccounts.mockResolvedValue([]);
+    const out = await openBill();
+    expect(out).toContain('Unknown account');
+    expect(out).not.toContain(`>${VENDOR}<`);
+  });
+
+  it('keeps the bill on screen when the accounts do not load, saying so instead of guessing', async () => {
+    api.getBill.mockResolvedValue(draft);
+    api.listExpenseAccounts.mockRejectedValue(apiError(500));
+    const out = await openBill();
+    expect(out).toContain('BILL-2083-0001');
+    expect(out).toContain('Not loaded');
+    expect(out).toContain('The expense accounts did not load');
+    expect(out).not.toContain('Unknown account');
+  });
+
+  it('loads every account for the pickers and labels the line field Expense account', async () => {
+    const out = await newBill();
+    expect(api.listExpenseAccounts).toHaveBeenCalledWith(expect.anything(), {
+      includeRetired: true,
+    });
+    expect(out).toContain('Expense account');
+    expect(out).toContain('The account this line is booked to.');
+    expect(out).toMatch(/<input type="hidden" name="line:0:accountId" value=""/);
+    expect(out).not.toContain('Account ID');
+    expect(out).not.toContain('No expense accounts yet');
+  });
+
+  it('posts the ids of the active accounts only, so a refusal marks just the lines outside them', async () => {
+    const RETIRED = '99999999-9999-4999-8999-999999999999';
+    api.listExpenseAccounts.mockResolvedValue([
+      OFFICE,
+      {
+        ...OFFICE,
+        id: RETIRED,
+        code: '5200',
+        status: 'retired',
+        retiredAt: '2026-11-01T00:00:00Z',
+      },
+    ]);
+    const out = await newBill();
+    expect(out).toContain(`<input type="hidden" name="activeAccountIds" value="${VENDOR}"/>`);
+    expect(out).not.toContain(`value="${VENDOR},${RETIRED}"`);
+  });
+
+  it('shows a retry when the accounts fail to load, and a no-access note for a 403', async () => {
+    api.listExpenseAccounts.mockRejectedValue(apiError(500));
+    let out = await newBill();
+    expect(out).toContain('The expense accounts did not load');
+    expect(out).toContain('Try again');
+    expect(out).not.toContain('name="line:0:accountId"');
+
+    api.listExpenseAccounts.mockRejectedValue(apiError(403));
+    out = await newBill();
+    expect(out).toContain('cannot read this company&#x27;s expense accounts');
+    expect(out).not.toContain('Try again');
+  });
+
+  it('blocks a submission bill while its accounts cannot be read', async () => {
+    api.listBillSubmissions.mockResolvedValue([submission]);
+    api.listExpenseAccounts.mockRejectedValue(apiError(500));
+    const out = await html(NewBillPage({ searchParams: Promise.resolve({ submission: SUB }) }));
+    expect(out).toContain('This bill cannot be keyed in yet');
+    expect(out).not.toContain('name="line:0:accountId"');
+  });
+
+  it('names what to add when no account is active, linking to settings for finance', async () => {
+    api.listExpenseAccounts.mockResolvedValue([
+      { ...OFFICE, status: 'retired', retiredAt: '2026-11-01T00:00:00Z' },
+    ]);
+    const out = await newBill();
+    expect(out).toContain('No expense accounts yet');
+    expect(out).toContain('href="/settings/company-accounts"');
+  });
+
+  it('leaves the settings link out for someone who cannot open it', async () => {
+    grants.live = new Map([['payables.bill.enter', 'all']]);
+    api.listExpenseAccounts.mockResolvedValue([]);
+    const out = await newBill();
+    expect(out).toContain('No expense accounts yet');
+    expect(out).toContain('Ask someone in Finance');
+    expect(out).not.toContain('href="/settings/company-accounts"');
   });
 });

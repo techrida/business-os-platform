@@ -29,7 +29,7 @@ import {
 import { and, asc, desc, eq, gt, inArray, isNull } from 'drizzle-orm';
 
 import { DB, type Db, type DbTransaction } from '../../platform/db/db.module';
-import { withTx, type Actor, type TxScope } from '../../platform/db/tx';
+import { withTx, type Actor, type TxOptions, type TxScope } from '../../platform/db/tx';
 import { SettingsService } from '../../platform/settings/settings.service';
 import { APPROVALS_CLOCK, ApprovalsAudit, ApprovalsCaller, type Clock } from './ports';
 import { activeEntityStaff, pgCode } from './requests.service';
@@ -124,10 +124,17 @@ export class ApprovalsAdminService {
   /** Runs `fn` in a transaction as the calling user, and turns constraint errors into 409. */
   private async write<T>(
     fn: (tx: DbTransaction, scope: TxScope, userId: string, actor: Actor) => Promise<T>,
+    options?: TxOptions,
   ): Promise<T> {
     const { scope, actor, principal } = this.caller.current();
     try {
-      return await withTx(this.db, scope, actor, (tx) => fn(tx, scope, principal.userId, actor));
+      return await withTx(
+        this.db,
+        scope,
+        actor,
+        (tx) => fn(tx, scope, principal.userId, actor),
+        options,
+      );
     } catch (error) {
       const code = pgCode(error);
       if (code === '23505') throw new ConflictException('That key already exists');
@@ -300,54 +307,59 @@ export class ApprovalsAdminService {
     assertPublisher: PublisherCheck,
   ): Promise<WorkflowVersionDto> {
     try {
-      return await this.write(async (tx, scope, userId, actor) => {
-        // First, before any row lock: the grant answer then holds for the rest of the transaction.
-        await assertPublisher(tx, scope, actor);
-        const def = await this.definition(tx, scope, key);
-        const [v] = await tx
-          .select()
-          .from(workflowVersions)
-          .where(
-            and(eq(workflowVersions.definitionId, def.id), eq(workflowVersions.version, version)),
-          )
-          .for('update');
-        if (v === undefined)
-          throw new NotFoundException(`Workflow "${key}" has no version ${version}`);
-        if (v.status !== 'draft')
-          throw new ConflictException(`Version ${version} is already ${v.status}`);
-        if (v.createdBy === null) throw new PublishRefused('editor_unknown', v.id, null);
-        if (v.createdBy === userId) throw new PublishRefused('own_draft', v.id, v.createdBy);
-        const spec = parseSpec(v.spec);
-        await this.assertGroupsExist(tx, scope, spec);
-        const now = this.clock();
-        await tx
-          .update(workflowVersions)
-          .set({ status: 'retired' })
-          .where(
-            and(
-              eq(workflowVersions.definitionId, def.id),
-              eq(workflowVersions.status, 'published'),
-            ),
-          );
-        const [published] = await tx
-          .update(workflowVersions)
-          .set({ status: 'published', publishedAt: now, publishedBy: userId })
-          .where(eq(workflowVersions.id, v.id))
-          .returning();
-        await tx
-          .update(workflowDefinitions)
-          .set({ currentVersionId: v.id })
-          .where(eq(workflowDefinitions.id, def.id));
-        await this.audit.record(tx, {
-          action: 'approvals.workflow.publish',
-          entityType: 'workflow_version',
-          entityId: v.id,
-          before: { currentVersionId: def.currentVersionId },
-          // The editor and the second person both stand in the trail (D7).
-          after: { key, version, editedBy: v.createdBy, publishedBy: userId },
-        });
-        return versionDto(published!, userId);
-      });
+      return await this.write(
+        async (tx, scope, userId, actor) => {
+          // First, before any row lock: the grant answer then holds for the rest of the transaction.
+          await assertPublisher(tx, scope, actor);
+          const def = await this.definition(tx, scope, key);
+          const [v] = await tx
+            .select()
+            .from(workflowVersions)
+            .where(
+              and(eq(workflowVersions.definitionId, def.id), eq(workflowVersions.version, version)),
+            )
+            .for('update');
+          if (v === undefined)
+            throw new NotFoundException(`Workflow "${key}" has no version ${version}`);
+          if (v.status !== 'draft')
+            throw new ConflictException(`Version ${version} is already ${v.status}`);
+          if (v.createdBy === null) throw new PublishRefused('editor_unknown', v.id, null);
+          if (v.createdBy === userId) throw new PublishRefused('own_draft', v.id, v.createdBy);
+          const spec = parseSpec(v.spec);
+          await this.assertGroupsExist(tx, scope, spec);
+          const now = this.clock();
+          await tx
+            .update(workflowVersions)
+            .set({ status: 'retired' })
+            .where(
+              and(
+                eq(workflowVersions.definitionId, def.id),
+                eq(workflowVersions.status, 'published'),
+              ),
+            );
+          const [published] = await tx
+            .update(workflowVersions)
+            .set({ status: 'published', publishedAt: now, publishedBy: userId })
+            .where(eq(workflowVersions.id, v.id))
+            .returning();
+          await tx
+            .update(workflowDefinitions)
+            .set({ currentVersionId: v.id })
+            .where(eq(workflowDefinitions.id, def.id));
+          await this.audit.record(tx, {
+            action: 'approvals.workflow.publish',
+            entityType: 'workflow_version',
+            entityId: v.id,
+            before: { currentVersionId: def.currentVersionId },
+            // The editor and the second person both stand in the trail (D7).
+            after: { key, version, editedBy: v.createdBy, publishedBy: userId },
+          });
+          return versionDto(published!, userId);
+          // 'lazy': the access-revision lock comes first here, as on the ZITADEL admin paths that cannot take the
+          // tenant audit lock first; taking that lock before it would invert the order against them.
+        },
+        { audit: 'lazy' },
+      );
     } catch (error) {
       if (!(error instanceof PublishRefused)) throw error;
       await this.write(async (tx) => {

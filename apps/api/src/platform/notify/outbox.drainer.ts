@@ -15,7 +15,7 @@ import { outbox } from '@bos/db';
 import { type SQL, and, eq, sql } from 'drizzle-orm';
 
 import { type Db, type DbTransaction, inTransaction } from '../db/db.module';
-import { systemActor, withTx } from '../db/tx';
+import { UNAUDITED_WRITE, systemActor, type TxOptions, withTx } from '../db/tx';
 import { type EmailProvider, redactError } from './email.provider';
 import { type DeadLetterMetric } from './notify-metrics';
 
@@ -224,20 +224,24 @@ export class OutboxDrainer {
       if ('providerMessageId' in outcome) {
         const messageId = outcome.providerMessageId;
         const ok = await this.settle(ref, () =>
-          this.inRowTx(ref, async (tx) => {
-            const updated = await tx
-              .update(outbox)
-              .set({
-                status: 'sent',
-                providerMessageId: messageId,
-                sentAt: this.clock(),
-                claimedAt: null,
-                lastError: null,
-              })
-              .where(claimGuard(ref))
-              .returning({ id: outbox.id });
-            return updated.length > 0;
-          }),
+          this.inRowTx(
+            ref,
+            async (tx) => {
+              const updated = await tx
+                .update(outbox)
+                .set({
+                  status: 'sent',
+                  providerMessageId: messageId,
+                  sentAt: this.clock(),
+                  claimedAt: null,
+                  lastError: null,
+                })
+                .where(claimGuard(ref))
+                .returning({ id: outbox.id });
+              return updated.length > 0;
+            },
+            UNAUDITED_WRITE,
+          ),
         );
         if (ok) result.sent += 1;
         continue;
@@ -254,14 +258,18 @@ export class OutboxDrainer {
           this.clock().getTime() + backoffMinutes(row.attempts) * 60_000,
         );
         await this.settle(ref, () =>
-          this.inRowTx(ref, async (tx) => {
-            const updated = await tx
-              .update(outbox)
-              .set({ status: 'pending', nextAttemptAt, claimedAt: null, lastError: error })
-              .where(claimGuard(ref))
-              .returning({ id: outbox.id });
-            return updated.length > 0;
-          }),
+          this.inRowTx(
+            ref,
+            async (tx) => {
+              const updated = await tx
+                .update(outbox)
+                .set({ status: 'pending', nextAttemptAt, claimedAt: null, lastError: error })
+                .where(claimGuard(ref))
+                .returning({ id: outbox.id });
+              return updated.length > 0;
+            },
+            UNAUDITED_WRITE,
+          ),
         );
       }
     }
@@ -270,12 +278,17 @@ export class OutboxDrainer {
   }
 
   /** The write for one row runs as the system actor, scoped to that row's tenant and organization. */
-  private inRowTx<T>(ref: DeadRef, fn: (tx: DbTransaction) => Promise<T>): Promise<T> {
+  private inRowTx<T>(
+    ref: DeadRef,
+    fn: (tx: DbTransaction) => Promise<T>,
+    options?: TxOptions,
+  ): Promise<T> {
     return withTx(
       this.db,
       { tenantId: ref.tenantId, organizationId: ref.organizationId },
       systemActor(SYSTEM_JOB),
       fn,
+      options,
     );
   }
 
