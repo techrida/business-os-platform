@@ -15,11 +15,25 @@ describe('plainAmount', () => {
     expect(hasStrayComma(typed)).toBe(false);
   });
 
-  it.each(['1,5', '10,50', '1,25', '1,2345', '12,5000', '1,50,00', ',5', '5,', '1,000,00', '1.000,50', '1,5.00'])(
-    'keeps the comma in %s so it fails the digit check',
-    (typed) => {
-      expect(plainAmount(typed)).toContain(',');
-      expect(hasStrayComma(typed)).toBe(true);
-    },
-  );
+  it.each([
+    '1,5',
+    '10,50',
+    '1,25',
+    '1,2345',
+    '12,5000',
+    '1,50,00',
+    ',5',
+    '5,',
+    '1,000,00',
+    '1.000,50',
+    '1,5.00',
+    '0,250',
+    '00,250',
+    '0,500',
+    '0,50,000',
+    '0,000',
+  ])('keeps the comma in %s so it fails the digit check', (typed) => {
+    expect(plainAmount(typed)).toContain(',');
+    expect(hasStrayComma(typed)).toBe(true);
+  });
 });

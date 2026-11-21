@@ -3,8 +3,8 @@
 /** The sentence to show when a comma sits where grouping cannot. */
 export const USE_A_POINT = 'Use a point for decimals.';
 
-const WESTERN = /^\d{1,3}(,\d{3})+$/;
-const SOUTH_ASIAN = /^\d{1,2}(,\d{2})*,\d{3}$/;
+const WESTERN = /^[1-9]\d{0,2}(,\d{3})+$/;
+const SOUTH_ASIAN = /^[1-9]\d?(,\d{2})*,\d{3}$/;
 
 /**
  * Drops spaces, and drops commas only when they group the whole-number part the Western way (1,250,000) or the
