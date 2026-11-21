@@ -36,7 +36,10 @@ const me = {
 
 let token = 0;
 /** A new token per pass: the cache keys on it. */
-const session = (roles: string[] = ['sales']) => ({ accessToken: `eyJ.live-${++token}.sig`, roles });
+const session = (roles: string[] = ['sales']) => ({
+  accessToken: `eyJ.live-${++token}.sig`,
+  roles,
+});
 
 beforeEach(() => {
   vi.mocked(getMe).mockReset();
