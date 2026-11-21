@@ -866,6 +866,49 @@ describe('credit hold on the deal (F1-Q20)', () => {
     expect(text).not.toContain('owes');
   });
 
+  describe("names this deal's order only when it counts towards the hold", () => {
+    const HELD_ALONE = 'This customer is over its credit limit';
+    const WITH_ORDER = "With this deal's order, this customer is over its credit limit";
+
+    it('says the customer alone is over the limit when the hold counts no order (orderValue 0.00)', async () => {
+      mocks.getOpportunity.mockResolvedValue(held());
+      mocks.getCreditHold.mockResolvedValue(position);
+      grants('crm.opportunity.read', 'credit.override');
+      const text = banner(parse(await render()))?.textContent ?? '';
+      expect(text).toContain(HELD_ALONE);
+      expect(text).not.toContain("With this deal's order");
+    });
+
+    it("names this deal's order when the hold counts it (orderValue above 0)", async () => {
+      mocks.getOpportunity.mockResolvedValue(held());
+      mocks.getCreditHold.mockResolvedValue({
+        ...position,
+        orderValue: '22600.00',
+        exposureWithOrder: '534945.50',
+      });
+      grants('crm.opportunity.read', 'credit.override');
+      const text = banner(parse(await render()))?.textContent ?? '';
+      expect(text).toContain(WITH_ORDER);
+      expect(text).not.toContain(HELD_ALONE);
+    });
+
+    it("names this deal's order when the amounts are unavailable (no credit.override, or the read failed)", async () => {
+      mocks.getOpportunity.mockResolvedValue(held());
+      grants('crm.opportunity.read');
+      let text = banner(parse(await render()))?.textContent ?? '';
+      expect(mocks.getCreditHold).not.toHaveBeenCalled();
+      expect(text).toContain(WITH_ORDER);
+      expect(text).not.toContain(HELD_ALONE);
+
+      mocks.getCreditHold.mockRejectedValue(new ApiError(503, 'down'));
+      grants('crm.opportunity.read', 'credit.override');
+      text = banner(parse(await render()))?.textContent ?? '';
+      expect(mocks.getCreditHold).toHaveBeenCalled();
+      expect(text).toContain(WITH_ORDER);
+      expect(text).not.toContain(HELD_ALONE);
+    });
+  });
+
   it('keeps the Override action when the amounts do not load', async () => {
     mocks.getOpportunity.mockResolvedValue(held());
     mocks.getCreditHold.mockRejectedValue(new ApiError(503, 'down'));

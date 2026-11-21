@@ -29,7 +29,7 @@ import { z } from 'zod';
 import { AnyAuthenticated, Can } from '../authz/decorators';
 import { RoleCache } from '../authz/role-cache';
 import { DB, type Db } from '../db/db.module';
-import { type DbTransaction, requestTx, type TxScope, withTx } from '../db/tx';
+import { type DbTransaction, READ_ONLY, requestTx, type TxScope, withTx } from '../db/tx';
 import { assertDefaultLeadOwner, defaultLeadOwnerCandidates } from './default-lead-owner';
 import { MoneyService } from './money.service';
 import {
@@ -136,8 +136,12 @@ export class SettingsController {
   async defaultLeadOwnerPeople(): Promise<SettingsPerson[]> {
     editableKey('crm.default_lead_owner');
     const { scope, actor } = requestTx();
-    return withTx(this.db, scope, actor, (tx) =>
-      defaultLeadOwnerCandidates(tx, scope, this.roleCache),
+    return withTx(
+      this.db,
+      scope,
+      actor,
+      (tx) => defaultLeadOwnerCandidates(tx, scope, this.roleCache),
+      READ_ONLY,
     );
   }
 
