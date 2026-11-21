@@ -351,6 +351,8 @@ describe('record payment page', () => {
     ])('stays blank, with no error, for %s', async (_, detail) => {
       mocks.getInvoice.mockResolvedValue(detail);
       const html = await render({ customerId: CUSTOMER_ID, invoiceId: INVOICE_ID });
+      // The invoice was read and judged: a page that ignored invoiceId would also be blank.
+      expect(mocks.getInvoice).toHaveBeenCalledWith(expect.anything(), INVOICE_ID);
       expect(amountInput(html)).toContain('value=""');
       expect(currencySelect(html)).toContain('<input type="hidden" name="currency" value="NPR"/>');
       expect(html).not.toContain('The open amount of');
@@ -359,8 +361,10 @@ describe('record payment page', () => {
 
     it('stays blank, with no error, when the invoice is not found or not readable', async () => {
       for (const status of [404, 403, 500]) {
+        mocks.getInvoice.mockClear();
         mocks.getInvoice.mockRejectedValue(new ApiError(status, 'Invoice INV-SECRET not found'));
         const html = await render({ customerId: CUSTOMER_ID, invoiceId: INVOICE_ID });
+        expect(mocks.getInvoice).toHaveBeenCalledWith(expect.anything(), INVOICE_ID);
         expect(amountInput(html)).toContain('value=""');
         expect(html).not.toContain('INV-SECRET');
         expect(html).not.toContain('role="alert"');

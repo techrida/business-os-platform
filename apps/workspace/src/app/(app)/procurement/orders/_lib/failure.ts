@@ -75,7 +75,7 @@ export function poFailure(err: unknown, op: PoOp): ProcFailure {
           return moving
             ? {
                 message:
-                  'Payment requests or bills already refer to this order. Cancel it and create a new one.',
+                  'Payment requests or bills already refer to this order, so its vendor cannot be changed.',
                 reload: false,
               }
             : undefined;
@@ -93,6 +93,10 @@ export function poFailure(err: unknown, op: PoOp): ProcFailure {
                 : 'A draft receipt may still be open, or goods or services have already been received on this order. Discard draft receipts from their detail pages and try cancelling again. If a receipt was confirmed and the rest will not arrive, short-close the order instead.',
             reload: false,
           };
+        // The issue guard: the order was edited after this page showed it, so what would be issued is not what the
+        // person reviewed.
+        case 'PO_CHANGED':
+          return op === 'issue' ? { message: CONFLICT_FALLBACK.issue, reload: true } : undefined;
         case 'invalid_transition':
           return { message: MOVED, reload: true };
         default:

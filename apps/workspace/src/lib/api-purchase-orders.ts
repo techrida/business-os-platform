@@ -293,13 +293,22 @@ export function getPoProgress(session: Session, id: string): Promise<PoProgress>
   return call(session, `${PO}/${seg(id)}/progress`, PoProgressSchema);
 }
 
-/** 409 `VENDOR_NOT_APPROVED`, `VENDOR_NOT_IN_ENTITY`, `PO_HAS_NO_LINES`, or `invalid_transition` unless a draft. */
+/**
+ * 409 `VENDOR_NOT_APPROVED`, `VENDOR_NOT_IN_ENTITY`, `PO_HAS_NO_LINES`, or `invalid_transition` unless a draft. With
+ * `expectedVersion` (the `version` the person saw), 409 `PO_CHANGED` when the order was edited since; without it, no body.
+ */
 export function issuePurchaseOrder(
   session: Session,
   id: string,
   idempotencyKey: string,
+  expectedVersion?: number,
 ): Promise<PurchaseOrder> {
-  return call(session, `${PO}/${seg(id)}/issue`, PurchaseOrderSchema, post(idempotencyKey));
+  return call(
+    session,
+    `${PO}/${seg(id)}/issue`,
+    PurchaseOrderSchema,
+    post(idempotencyKey, expectedVersion === undefined ? undefined : { expectedVersion }),
+  );
 }
 
 /** `applied` writes version N+1; `pending_approval` leaves the PO in `amendment_pending` (a band rise). */

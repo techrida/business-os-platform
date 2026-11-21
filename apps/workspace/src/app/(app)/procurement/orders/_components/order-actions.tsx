@@ -26,7 +26,8 @@ interface Common {
   reloadHref: string;
 }
 
-export function IssueDialog(props: Common) {
+/** `version` is the order's row version as the page showed it: issue is refused if the order changed since. */
+export function IssueDialog(props: Common & { version: number }) {
   return (
     <ProcurementActionDialog
       triggerLabel="Issue purchase order"
@@ -41,6 +42,7 @@ export function IssueDialog(props: Common) {
       reloadLabel="Reload this purchase order"
       submitLabel="Issue purchase order"
       pendingWords="Issuing the purchase order"
+      fields={() => <input type="hidden" name="expectedVersion" value={props.version} />}
     />
   );
 }
