@@ -365,6 +365,13 @@ export class FakeZitadel {
   sendInviteCode() {
     return Promise.resolve();
   }
+  deletedUsers: string[] = [];
+  deleteUser(userId: string) {
+    this.deletedUsers.push(userId);
+    this.users.delete(userId);
+    this.grants.delete(userId);
+    return Promise.resolve();
+  }
 
   asClient(): ZitadelAdminClient {
     return this as unknown as ZitadelAdminClient;
