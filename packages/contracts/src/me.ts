@@ -74,9 +74,15 @@ export function dropUnknownGrants(body: unknown): { body: unknown; dropped: stri
   const dropped: string[] = [];
   const kept = permissions.filter((row: unknown) => {
     if (EffectivePermissionSchema.safeParse(row).success) return true;
+    // Only strings go into the label: String() of a hostile value (an object with a null toString) throws.
+    const field = (key: 'permission' | 'scope'): string => {
+      const value =
+        typeof row === 'object' && row !== null ? (row as Record<string, unknown>)[key] : undefined;
+      return typeof value === 'string' ? value : '?';
+    };
     const label =
-      typeof row === 'object' && row !== null && 'permission' in row
-        ? `${String(row.permission)}@${'scope' in row ? String(row.scope) : '?'}`
+      typeof row === 'object' && row !== null
+        ? `${field('permission')}@${field('scope')}`
         : 'malformed';
     dropped.push(label);
     return false;

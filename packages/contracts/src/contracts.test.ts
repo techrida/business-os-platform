@@ -59,9 +59,15 @@ describe('dropUnknownGrants', () => {
       { permission: 'vat.future.read', scope: 'all' },
       { permission: 'customer.read', scope: 'galaxy' },
       'junk',
+      { permission: 'customer.read', scope: { toString: null } },
     ];
     const { body, dropped } = dropUnknownGrants({ ...validMe, permissions });
-    expect(dropped).toEqual(['vat.future.read@all', 'customer.read@galaxy', 'malformed']);
+    expect(dropped).toEqual([
+      'vat.future.read@all',
+      'customer.read@galaxy',
+      'malformed',
+      'customer.read@?',
+    ]);
     expect(MeResponseSchema.parse(body).permissions).toEqual([known]);
   });
 
