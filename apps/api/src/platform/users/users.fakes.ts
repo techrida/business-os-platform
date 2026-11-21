@@ -30,17 +30,26 @@ export const STAFF_ZORG = 'z-staff';
 export const CUST_IDP = '00000000-0000-4000-8000-0000000001cc';
 export const CUST_ZORG = 'z-customer';
 
-/** Counts the transactions withTx opened, so a test can see that writes went through it. */
-export function fakeDb(): Db & { txCount: number } {
+/**
+ * Counts the transactions withTx opened, so a test can see that writes went through it, and how many are open now, so
+ * a fake ZITADEL can refuse to be called inside one.
+ */
+export function fakeDb(): Db & { txCount: number; open: number } {
   const tx = { execute: () => Promise.resolve({ rows: [] }) } as unknown as DbTransaction;
   const db = {
     txCount: 0,
-    transaction<T>(fn: (t: DbTransaction) => Promise<T>): Promise<T> {
+    open: 0,
+    async transaction<T>(fn: (t: DbTransaction) => Promise<T>): Promise<T> {
       db.txCount += 1;
-      return fn(tx);
+      db.open += 1;
+      try {
+        return await fn(tx);
+      } finally {
+        db.open -= 1;
+      }
     },
   };
-  return db as unknown as Db & { txCount: number };
+  return db as unknown as Db & { txCount: number; open: number };
 }
 
 export class FakeUsersStore extends UsersStore {
@@ -80,20 +89,32 @@ export class FakeUsersStore extends UsersStore {
   txScope() {
     return Promise.resolve(this.scope);
   }
+  /** Copies, as the SQL store returns: a change made after the read does not show in the row read. */
   findByZitadelId(_q: Queryable, z: string) {
-    return Promise.resolve(this.users.find((u) => u.zitadelUserId === z) ?? null);
+    return Promise.resolve(this.found(this.users.find((u) => u.zitadelUserId === z)));
   }
   findById(_q: Queryable, s: TxScope, id: string, _lock?: boolean) {
     return Promise.resolve(
-      this.users.find((u) => u.id === id && u.tenantId === s.tenantId) ?? null,
+      this.found(this.users.find((u) => u.id === id && u.tenantId === s.tenantId)),
     );
+  }
+  private found(row: UserRow | undefined): UserRow | null {
+    return row ? { ...row, version: row.version ?? '0' } : null;
+  }
+  private versions = 0;
+  /** As `updated_at = now()` does: every write gives the row a new version. */
+  private touch(row: UserRow) {
+    this.versions += 1;
+    row.version = `v${this.versions}`;
   }
   insertUser(_tx: DbTransaction, s: TxScope, u: UserFields) {
     const existing = this.users.find((x) => x.zitadelUserId === u.zitadelUserId);
     if (existing) return Promise.resolve(existing.id);
     this.seq += 1;
     const id = `00000000-0000-4000-9000-${String(this.seq).padStart(12, '0')}`;
-    this.users.push({ id, tenantId: s.tenantId, ...u });
+    const row: UserRow = { id, tenantId: s.tenantId, ...u };
+    this.touch(row);
+    this.users.push(row);
     return Promise.resolve(id);
   }
   /** Every updateUser call, in order (the lock tests read what was written). */
@@ -113,12 +134,16 @@ export class FakeUsersStore extends UsersStore {
         row.lockReason = next.reason;
         row.lockedUntil = next.until?.toISOString() ?? null;
       }
+      this.touch(row);
     }
     return Promise.resolve();
   }
   postponeLock(_tx: DbTransaction, id: string, until: Date) {
     const row = this.users.find((x) => x.id === id && x.lockReason === 'failed_sign_ins');
-    if (row) row.lockedUntil = until.toISOString();
+    if (row) {
+      row.lockedUntil = until.toISOString();
+      this.touch(row);
+    }
     return Promise.resolve();
   }
   expiredLocks(_q: Queryable, now: Date, limit: number): Promise<ExpiredLock[]> {

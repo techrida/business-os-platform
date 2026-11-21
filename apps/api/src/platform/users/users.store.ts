@@ -49,6 +49,11 @@ export interface UserRow {
   lockReason?: UserLockReason | null;
   /** When a `failed_sign_ins` lock ends, as an ISO timestamp; null otherwise. */
   lockedUntil?: string | null;
+  /**
+   * `updated_at` as text, from findById and findByZitadelId only: the row version a sync compares under the row lock
+   * before it writes what it read from ZITADEL outside the transaction.
+   */
+  version?: string;
 }
 
 /** A lock to write (F1-Q4): `until` is null for an admin lock, which never ends by itself. */
@@ -241,6 +246,8 @@ const USER_COLUMNS = sql`u.id, u.tenant_id AS "tenantId", u.idp_org_id AS "idpOr
   u.lock_reason AS "lockReason",
   to_char(u.locked_until AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"') AS "lockedUntil"`;
 
+const FOUND_USER_COLUMNS = sql`${USER_COLUMNS}, u.updated_at::text AS "version"`;
+
 const STAFF_USERS = sql`FROM app.users u
   JOIN app.idp_orgs io ON io.id = u.idp_org_id AND io.tenant_id = u.tenant_id AND io.kind = 'staff'`;
 
@@ -324,7 +331,7 @@ export class SqlUsersStore extends UsersStore {
   ): Promise<UserRow | null> {
     const [row] = await rows<UserRecord>(
       q,
-      sql`SELECT ${USER_COLUMNS} FROM app.users u WHERE u.zitadel_user_id = ${zitadelUserId}
+      sql`SELECT ${FOUND_USER_COLUMNS} FROM app.users u WHERE u.zitadel_user_id = ${zitadelUserId}
           ${lock ? sql`FOR UPDATE` : sql``}`,
     );
     return row ?? null;
@@ -338,7 +345,7 @@ export class SqlUsersStore extends UsersStore {
   ): Promise<UserRow | null> {
     const [row] = await rows<UserRecord>(
       q,
-      sql`SELECT ${USER_COLUMNS} FROM app.users u
+      sql`SELECT ${FOUND_USER_COLUMNS} FROM app.users u
           WHERE u.tenant_id = ${scope.tenantId} AND u.id = ${userId}
           ${lock ? sql`FOR UPDATE` : sql``}`,
     );
