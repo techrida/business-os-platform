@@ -4,6 +4,23 @@ import type { NextConfig } from 'next';
 
 const isDev = process.env.NODE_ENV === 'development';
 
+// Build profile. `production` (default) is what ships. `dev` is a compiled build, run like production,
+// that still carries the dev layer (DEV MENU, /dev/personas): for testing the real app on a dev host.
+// It is chosen when the build is made, never at run time. See docs/platform/runbook-build-profiles.md.
+const buildProfile = process.env.BOS_BUILD_PROFILE ?? 'production';
+if (buildProfile !== 'dev' && buildProfile !== 'production') {
+  throw new Error(`BOS_BUILD_PROFILE must be "dev" or "production", got "${buildProfile}"`);
+}
+const devBuild = buildProfile === 'dev';
+const devTools = isDev || devBuild;
+
+// Where this build writes. The gate sets BOS_NEXT_DIST_DIR so its builds land in scratch folders
+// (`.next-gate`, `.next-gate-devtools`) and never overwrite the `.next` a dev server is using.
+const scratchDistDir = process.env.BOS_NEXT_DIST_DIR;
+if (scratchDistDir !== undefined && !/^\.next-[a-z0-9-]{1,40}$/.test(scratchDistDir)) {
+  throw new Error(`BOS_NEXT_DIST_DIR must look like ".next-<name>", got "${scratchDistDir}"`);
+}
+
 // The monorepo root. Standalone output only copies files under this root, and pnpm keeps
 // workspace packages (@bos/contracts) outside apps/workspace, so tracing must start higher up.
 const monorepoRoot = path.join(__dirname, '../..');
@@ -28,6 +45,15 @@ const contentSecurityPolicy = [...contentSecurityDirectives, "frame-ancestors 'n
 const filePreviewPolicy = [...contentSecurityDirectives, "frame-ancestors 'self'"].join('; ');
 
 const nextConfig: NextConfig = {
+  // The HTTPS proxy's configured host must also be allowed for the dev websocket.
+  // Otherwise Next retries the blocked connection and eventually reloads the page.
+  ...(isDev && process.env.WORKSPACE_PUBLIC_URL
+    ? { allowedDevOrigins: [new URL(process.env.WORKSPACE_PUBLIC_URL).hostname] }
+    : {}),
+  // Inlined into server and client bundles at build time. A production-profile build gets '0'.
+  env: { BOS_DEV_TOOLS: devBuild ? '1' : '0' },
+  // The dev build has its own output folder, so it never overwrites (or is checked as) the production build.
+  distDir: scratchDistDir ?? (devBuild ? '.next-devtools' : '.next'),
   output: 'standalone',
   outputFileTracingRoot: monorepoRoot,
   // Turbopack (the default bundler) has its own root setting. Keep it equal to the tracing
@@ -52,11 +78,11 @@ const nextConfig: NextConfig = {
     '/api/memos/[id]/pdf': ['./assets/fonts/**/*'],
   },
 
-  // Dev-only page extensions let `*.dev.tsx` files (the persona switcher) exist in development.
+  // Dev-only page extensions let `*.dev.tsx` files (the persona switcher) exist in development and in the dev build.
   // The docs only describe pageExtensions for the Pages Router, so this switch may have no
   // effect on the App Router in Next 16. Do not rely on it: the real protection is the
   // `notFound()` guard in the dev page (wall 2) and the post-build checker (wall 3).
-  pageExtensions: isDev ? ['dev.tsx', 'dev.ts', 'tsx', 'ts'] : ['tsx', 'ts'],
+  pageExtensions: devTools ? ['dev.tsx', 'dev.ts', 'tsx', 'ts'] : ['tsx', 'ts'],
 
   // Roles and permissions became Settings > Access (By role tab), and Organisation/Department
   // routes moved under Settings. Temporary (307), so browsers do not cache them for good.
