@@ -496,7 +496,7 @@ export default async function PurchaseOrderPage({ params }: { params: Promise<{ 
                 <ReasonDialog kind="cancel" {...common} idempotencyKey={randomUUID()} />
               ) : null}
               {can.cancel ? <RecreateDialog {...common} idempotencyKey={randomUUID()} /> : null}
-              {can.issue ? (
+              {can.issue && !po.pendingVendorChange ? (
                 <ChangeVendorDialog
                   {...common}
                   idempotencyKey={randomUUID()}
@@ -520,13 +520,19 @@ export default async function PurchaseOrderPage({ params }: { params: Promise<{ 
                   {receive}
                 </LinkButton>
               ) : null}
-              {can.issue ? (
+              {can.issue && !po.pendingVendorChange ? (
                 <IssueDialog {...common} version={po.version} idempotencyKey={randomUUID()} />
               ) : null}
             </div>
           }
         />
       </div>
+
+      {po.pendingVendorChange ? (
+        <Alert tone="warning" role="status" title="A change of vendor is waiting for approval">
+          This order stays with its current vendor, and cannot be issued, until the approvers decide.
+        </Alert>
+      ) : null}
 
       {po.status === 'amendment_pending' ? (
         <Alert tone="warning" role="status" title="An amendment is waiting for approval">
