@@ -9,10 +9,10 @@
 --     error_count (valid_count is 0 after the commit).
 --   * A committed batch is final: the guard trigger refuses UPDATE on it, and refuses DELETE on any batch, so the
 --     record stays as the proof of who imported what and when.
--- Entity-owned (tenant_id + organization_id), composite FKs. Not attached to the row audit trigger: `rows` holds the
--- uploaded names, addresses, emails and phones, which the audit log (readable with audit.read) must not copy before the
--- commit; the service records `party_import.previewed` and `party_import.committed` events (counts, actor) instead, and
--- the created customers and vendors are audited by their own triggers. No GRANT: 0008's default privileges cover new
+-- Entity-owned (tenant_id + organization_id), composite FKs, audited with `rows` redacted: it holds the uploaded names,
+-- addresses, emails and phones, which the audit log (readable with audit.read) must not copy before the commit. The
+-- trail keeps the actor, kind, status and counts; the service also records `party_import.previewed` and
+-- `party_import.committed` events, and the created customers and vendors are audited by their own triggers. No GRANT: 0008's default privileges cover new
 -- tables. The table starts empty, so no audit actor is needed.
 
 CREATE TABLE "app"."party_import_batches" (
@@ -47,6 +47,8 @@ CREATE TABLE "app"."party_import_batches" (
 );
 --> statement-breakpoint
 CREATE INDEX "party_import_batches_tenant_org_created_idx" ON "app"."party_import_batches" USING btree ("tenant_id","organization_id","created_at");
+--> statement-breakpoint
+SELECT audit.attach('app.party_import_batches', ARRAY['rows']);
 --> statement-breakpoint
 CREATE FUNCTION "app"."party_import_batches_guard"() RETURNS trigger
 LANGUAGE plpgsql
