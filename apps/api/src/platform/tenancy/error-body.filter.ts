@@ -19,6 +19,7 @@ import { PinoLogger } from 'nestjs-pino';
 import { z } from 'zod';
 
 import { STEP_UP_REQUIRED } from '../auth/step-up';
+import { DB_BUSY_RETRY_AFTER_SECONDS, type DbBusyKind, dbBusyKindOf } from '../db/busy';
 import { newCorrelationId } from '../obs/correlation';
 import { REQUEST_ID_HEADER, type CorrelatedRequest } from './correlation.middleware';
 import { currentCorrelationId } from './request-context';
@@ -134,6 +135,8 @@ export type ErrorCode =
   | 'unsupported_media_type'
   | 'bad_request'
   | 'unavailable'
+  // A deadlock victim or a lock wait over lock_timeout: rolled back, safe to retry (503 + Retry-After).
+  | 'db_busy'
   | 'internal';
 
 export function codeForStatus(status: number): ErrorCode {
@@ -267,6 +270,7 @@ const GENERIC_MESSAGE: Record<ErrorCode, string> = {
   unsupported_media_type: 'Unsupported media type',
   bad_request: 'Bad request',
   unavailable: 'Service unavailable',
+  db_busy: 'Busy, please try again',
   internal: 'Internal server error',
 };
 
@@ -616,6 +620,7 @@ export class ErrorBodyFilter implements ExceptionFilter {
     let duplicates: DuplicateCandidate[] | undefined;
     let warnings: AccessWarning[] | undefined;
     let fieldErrors: Record<string, string> | undefined;
+    let busy: DbBusyKind | undefined;
     if (exception instanceof HttpException) {
       status = exception.getStatus();
       exposedMessage = messageOf(exception);
@@ -641,10 +646,19 @@ export class ErrorBodyFilter implements ExceptionFilter {
         fieldErrors = fieldErrorsOf(exception);
       }
     } else {
-      status = statusOfPlainError(exception) ?? HttpStatus.INTERNAL_SERVER_ERROR;
+      busy = dbBusyKindOf(exception);
+      status =
+        busy === undefined
+          ? (statusOfPlainError(exception) ?? HttpStatus.INTERNAL_SERVER_ERROR)
+          : HttpStatus.SERVICE_UNAVAILABLE;
     }
 
-    const code: ErrorCode = stepUp ? 'step_up_required' : (conflictCode ?? codeForStatus(status));
+    const code: ErrorCode =
+      busy !== undefined
+        ? 'db_busy'
+        : stepUp
+          ? 'step_up_required'
+          : (conflictCode ?? codeForStatus(status));
     // 5xx other than 503 may carry internal detail in the message, so those are never shown.
     const message =
       status >= 500 && status !== 503
@@ -652,7 +666,11 @@ export class ErrorBodyFilter implements ExceptionFilter {
         : (exposedMessage ?? GENERIC_MESSAGE[code]);
     const correlationId = this.correlationIdFor(req);
 
-    if (status >= 500) {
+    if (busy !== undefined) {
+      this.logger.warn(
+        `${req.method} ${req.path} rolled back: database ${busy} (correlationId=${correlationId})`,
+      );
+    } else if (status >= 500) {
       // req.path excludes the query string, which could carry secrets.
       const stack = exception instanceof Error ? exception.stack : String(exception);
       this.logger.error(
@@ -698,6 +716,7 @@ export class ErrorBodyFilter implements ExceptionFilter {
       },
     };
     res.setHeader(REQUEST_ID_HEADER, correlationId);
+    if (busy !== undefined) res.setHeader('Retry-After', String(DB_BUSY_RETRY_AFTER_SECONDS[busy]));
     res.status(status).json(body);
   }
 
