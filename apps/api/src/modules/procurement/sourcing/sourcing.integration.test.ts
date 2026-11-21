@@ -644,6 +644,44 @@ describe('RFQ', () => {
     await exec(scopeA, sql`UPDATE app.rfqs SET status = 'closed' WHERE id = ${rfqId}`);
     expect((await httpErrorOf(evidence.service.create('rfq', rfqId, file))).getStatus()).toBe(409);
   });
+
+  it('lets the uploader remove an unused quotation file on the RFQ route; refuses a colleague, a recorded file and a closed RFQ', async () => {
+    const { rfqId } = await rfqWithQuotes(['1000.00']);
+    const [recorded] = await read((tx) =>
+      tx.execute(sql`SELECT document_id FROM app.vendor_quotations WHERE rfq_id = ${rfqId}`),
+    ).then((r) => r.rows as { document_id: string }[]);
+    const removedOf = (id: string) =>
+      read((tx) =>
+        tx.execute(
+          sql`SELECT (removed_at IS NOT NULL) AS removed FROM app.documents WHERE id = ${id}`,
+        ),
+      ).then((r) => (r.rows[0] as { removed: boolean }).removed);
+    const unused = await quoteFile(rfqId);
+
+    // A colleague holds procurement.sourcing on every RFQ but did not upload the file.
+    as(U.proc2, 'procurement');
+    expect((await httpErrorOf(evidence.service.remove('rfq', rfqId, unused))).getStatus()).toBe(
+      403,
+    );
+    as(U.proc, 'procurement');
+    expect(
+      (await httpErrorOf(evidence.service.remove('rfq', rfqId, recorded!.document_id))).getStatus(),
+    ).toBe(409);
+    expect(
+      (await httpErrorOf(evidence.service.remove('vendor_bill', rfqId, unused))).getStatus(),
+    ).toBe(404);
+    await evidence.service.remove('rfq', rfqId, unused);
+    await evidence.service.remove('rfq', rfqId, unused);
+    expect([await removedOf(recorded!.document_id), await removedOf(unused)]).toEqual([
+      false,
+      true,
+    ]);
+
+    const left = await quoteFile(rfqId);
+    await exec(scopeA, sql`UPDATE app.rfqs SET status = 'closed' WHERE id = ${rfqId}`);
+    expect((await httpErrorOf(evidence.service.remove('rfq', rfqId, left))).getStatus()).toBe(409);
+    expect(await removedOf(left)).toBe(false);
+  });
 });
 
 // ---------------------------------------------------------------------------------------- recommendation (AD13)
