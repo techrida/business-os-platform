@@ -45,6 +45,8 @@ export interface EvidenceUploadProps {
    */
   onBlockingChange?: ((blocking: boolean) => void) | undefined;
   disabled?: boolean | undefined;
+  /** For placing the control in a form grid, such as a full-width cell. */
+  className?: string | undefined;
 }
 
 /** Deletes an upload that no saved record uses. The route also checks the owner may be edited. */
@@ -88,6 +90,7 @@ export function EvidenceUpload({
   error,
   onBlockingChange,
   disabled = false,
+  className,
 }: EvidenceUploadProps) {
   const ids = useId();
   const titleId = `${ids}-title`;
@@ -223,7 +226,7 @@ export function EvidenceUpload({
   return (
     <div
       ref={rootRef}
-      className={styles.root}
+      className={[styles.root, className].filter(Boolean).join(' ')}
       role="group"
       aria-labelledby={titleId}
       aria-busy={uploading || undefined}
