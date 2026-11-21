@@ -123,7 +123,9 @@ it('offers a reload when the deal is no longer on hold (409)', async () => {
   await click(footerButton('Override hold'));
   await settle();
   const [message, options] = mocks.error.mock.calls[0] as [string, { action?: { label: string } }];
-  expect(message).toBe('This opportunity is no longer on credit hold. Reload to see it.');
+  expect(message).toBe(
+    'The credit position of this opportunity changed, or the hold is gone. Reload to see it.',
+  );
   expect(options.action?.label).toBe('Reload');
   expect(dialog()).not.toBeNull();
   await mounted.unmount();
@@ -135,6 +137,7 @@ it('shows what the hold is made of, and why an earlier override no longer applie
       opportunityId={OPP}
       number="DEAL-0042"
       position={{
+        orderValue: '90400.00',
         rows: [
           { label: 'Credit limit', value: 'NPR 1,00,000.00' },
           { label: 'Open receivables', value: 'NPR 0.00' },
@@ -153,5 +156,15 @@ it('shows what the hold is made of, and why an earlier override no longer applie
   expect(text).toContain('Total against the limit');
   expect(text).toContain('this order is worth more');
   expect(text).toContain('its orders not yet invoiced and this order');
+
+  // The override is given for the order value on screen, so a changed order is refused by the API (409).
+  mocks.overrideCreditHold.mockResolvedValue(overridden);
+  await typeReason('Advance received.');
+  await click(footerButton('Override hold'));
+  await settle();
+  expect(mocks.overrideCreditHold).toHaveBeenCalledExactlyOnceWith(expect.anything(), OPP, {
+    reason: 'Advance received.',
+    orderValue: '90400.00',
+  });
   await mounted.unmount();
 });
