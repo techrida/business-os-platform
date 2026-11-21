@@ -1,7 +1,8 @@
 'use client';
 
 import { useState } from 'react';
-import { Field, Select, Input } from '@/components/ui/field';
+import { EvidenceUpload } from '@/components/ui/evidence-upload';
+import { Field, Select } from '@/components/ui/field';
 import { TransactionFormDialog } from '@/components/p3/transaction-form-dialog';
 import { markBillableAction } from '../_lib/actions';
 import type { ActionState } from '../_lib/state';
@@ -36,7 +37,7 @@ export function MarkBillableDialog({
   reloadHref,
 }: MarkBillableDialogProps) {
   const [chosen, setChosen] = useState('');
-  const [other, setOther] = useState('');
+  const [blocked, setBlocked] = useState(false);
   const listed = evidence.length > 0;
   return (
     <TransactionFormDialog<ActionState>
@@ -48,12 +49,14 @@ export function MarkBillableDialog({
       initial={{ key: idempotencyKey }}
       action={markBillableAction}
       reloadHref={reloadHref}
+      blocked={blocked}
     >
       {(state) => (
         <>
           <input type="hidden" name="salesOrderId" value={salesOrderId} />
           <input type="hidden" name="scheduleLineId" value={scheduleLineId} />
           <input type="hidden" name="expectedVersion" value={version} />
+          {listed ? <input type="hidden" name="evidenceListed" value="1" /> : null}
           {listed ? (
             <Field
               label="Evidence document"
@@ -78,26 +81,19 @@ export function MarkBillableDialog({
             </Field>
           ) : null}
 
-          <Field
-            label={listed ? 'Or another document id' : 'Document id'}
+          <EvidenceUpload
+            kind="sales-order"
+            ownerId={salesOrderId}
+            name="otherDocumentId"
+            label={listed ? 'Or upload another document' : 'Evidence document'}
             hint={
               listed
-                ? 'Only if the document you need is not in the list.'
-                : 'There is no evidence attached to this order yet. Enter the id of the document that shows this step was done.'
+                ? 'Only if the document you need is not in the list. An upload is used instead of the list.'
+                : 'Upload the document that shows this step was done, such as the signed acceptance.'
             }
             error={listed ? undefined : state.errors?.document}
-          >
-            {(control) => (
-              <Input
-                name="otherDocumentId"
-                value={other}
-                onChange={(e) => setOther(e.target.value)}
-                spellCheck={false}
-                autoComplete="off"
-                {...control}
-              />
-            )}
-          </Field>
+            onBlockingChange={setBlocked}
+          />
         </>
       )}
     </TransactionFormDialog>

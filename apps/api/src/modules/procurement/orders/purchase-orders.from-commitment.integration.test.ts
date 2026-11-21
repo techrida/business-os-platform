@@ -47,6 +47,7 @@ import {
   PR_COMMITMENT_WORKFLOW_SPEC,
 } from '../sourcing/sourcing.rules';
 import { SourcingService } from '../sourcing/sourcing.service';
+import { evidenceFixture, type EvidenceFixture } from '../../evidence/evidence.fixture';
 import { PoAmendmentSubject } from './po-amendment.subject';
 import { PO_AMENDMENT_DOCUMENT_TYPE, PO_AMENDMENT_WORKFLOW_SPEC } from './purchase-order.rules';
 import { PurchaseOrdersService } from './purchase-orders.service';
@@ -67,6 +68,8 @@ let service: PurchaseOrdersService;
 let sourcing: SourcingService;
 let deptA = '';
 let vatCode = '';
+/** Quotation files uploaded through the RFQ's evidence route (round 5 P2). */
+let evidence: EvidenceFixture;
 
 const U = { req: '', proc: '', acct: '', fin: '', mgmt: '', founder: '', wh: '' };
 const roles: Partial<Record<RoleKey, string[]>> = {};
@@ -196,9 +199,11 @@ beforeAll(async () => {
     caller,
     () => now,
   );
+  evidence = await evidenceFixture(db, caller.current);
 });
 
 afterAll(async () => {
+  await evidence?.close();
   await appPool?.end();
   await ownerPool?.end();
   await testDb?.drop();
@@ -269,17 +274,11 @@ it('issues the lineless draft of an approved commitment with lines copied from t
     sql`UPDATE app.purchase_requests SET status = 'dept_approved', fx_rate = 1, estimated_total = 80000,
           estimated_total_npr = 80000, number = ${`PR-T-${prId.slice(0, 8)}`} WHERE id = ${prId}`,
   );
-  const { rows } = await exec(
-    scopeA,
-    sql`INSERT INTO app.documents (tenant_id, organization_id, owner_type, owner_id)
-        VALUES (${scopeA.tenantId}, ${scopeA.organizationId}, 'rfq', ${randomUUID()}) RETURNING id`,
-  );
-  const documentId = (rows[0] as { id: string }).id;
-
   const rfq = await sourcing.createRfq(
     { purchaseRequestId: prId, deadline: '2026-11-20T10:00:00+05:45', vendorIds: [vendorId] },
     randomUUID(),
   );
+  const documentId = await evidence.upload('rfq', rfq.id);
   const quote = await sourcing.recordQuotation(
     rfq.id,
     {

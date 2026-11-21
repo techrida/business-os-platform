@@ -483,11 +483,34 @@ describe('P4 exit Journey 11: department request to approved payment request ove
       [world.tenantId, submission.id],
     );
     expect(rows).toEqual([{ status: 'converted' }]);
-    // The other quotations are recorded by staff from scanned files, not portal bidding.
+    // The other quotations are recorded by staff from scanned files, not portal bidding. Round 5 P2: staff upload
+    // the scanned quote in place on the RFQ (owner type `evidence`); a vendor's inbox file is refused here.
+    const vendorAuth = async (vendor: (typeof world.vendors)[number]) =>
+      `Bearer ${await t.token(vendor.login, { userId: vendor.login.sub, roles: ['vendor_user'] })}`;
+    const inboxFile = await upload(
+      `${VP}/quotation-submissions/files`,
+      await vendorAuth(world.vendors[1]!),
+      'other-quote.pdf',
+    );
+    const refused = await t
+      .http()
+      .post(`${RFQ}/${s.rfq.id}/quotations`)
+      .set('authorization', procurement)
+      .set('idempotency-key', randomUUID())
+      .send({
+        vendorId: world.vendors[1]!.id,
+        documentId: inboxFile,
+        currency: 'NPR',
+        lines: quoteLines(['110000.00', '7000.00']),
+      });
+    expect(refused.status, show(refused)).toBe(422);
+    expect(ErrorBodySchema.parse(refused.body).error.code).toBe('invalid_evidence_document');
     for (const vendor of world.vendors.slice(1)) {
-      const login = vendor.login;
-      const vendorAuth = `Bearer ${await t.token(login, { userId: login.sub, roles: ['vendor_user'] })}`;
-      const file = await upload(`${VP}/quotation-submissions/files`, vendorAuth, 'other-quote.pdf');
+      const file = await upload(
+        `${RFQ}/${s.rfq.id}/evidence-documents`,
+        procurement,
+        'scanned-quote.pdf',
+      );
       await post<QuotationDto>(
         `${RFQ}/${s.rfq.id}/quotations`,
         procurement,
