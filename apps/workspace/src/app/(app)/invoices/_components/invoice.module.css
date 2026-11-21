@@ -228,3 +228,9 @@
   line-height: 26px;
   overflow-wrap: normal;
 }
+
+/* Tighter cell padding so that the three pinned columns (Total, Status, Action) leave room for the rest at 1280 px. */
+.tableCard .listTable th,
+.tableCard .listTable td {
+  padding-inline: 14px;
+}
