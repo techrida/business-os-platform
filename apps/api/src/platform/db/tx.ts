@@ -40,6 +40,9 @@ export interface TxOptions {
 /** For a transaction that only reads: it never appends to the audit chain, so it need not wait for its tenant's lock. */
 export const READ_ONLY: TxOptions = { audit: 'lazy' };
 
+/** For a transaction whose writes all go to tables without an audit trigger (outbox, authz_versions): no chain lock needed. */
+export const UNAUDITED_WRITE: TxOptions = { audit: 'lazy' };
+
 function requireNonEmpty(value: string, what: string): void {
   if (value.trim() === '') {
     throw new Error(`${what} must be a non-empty string`);
