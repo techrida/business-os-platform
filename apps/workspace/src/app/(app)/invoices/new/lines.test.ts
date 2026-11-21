@@ -1,4 +1,6 @@
-import { describe, expect, it } from 'vitest';
+import { MONEY_LIMITS, QUANTITY_LIMITS } from '@bos/contracts';
+import { NO_SPACES } from '@bos/locale';
+import { describe, expect, it, vi } from 'vitest';
 
 import { TAX } from '../_lib/test-fixtures';
 
@@ -41,6 +43,16 @@ describe('parseLines: commas in amounts', () => {
     expect(out.ok).toBe(false);
     expect(!out.ok && out.errors['lines.0.quantity']).toMatch(/^Use a point for decimals\./);
   });
+
+  it.each(['10 50', '1 250.5', '12,50 000'])(
+    'refuses %s in a price or quantity and says to remove the space',
+    (typed) => {
+      const out = parseLines([line({ unitPrice: typed, quantity: typed })]);
+      expect(out.ok).toBe(false);
+      expect(!out.ok && out.errors['lines.0.unitPrice']).toBe(NO_SPACES);
+      expect(!out.ok && out.errors['lines.0.quantity']).toBe(NO_SPACES);
+    },
+  );
 
   it('keeps the plain message when the field is wrong without a stray comma', () => {
     const out = parseLines([line({ unitPrice: 'abc' })]);
@@ -122,6 +134,40 @@ describe('parseLines', () => {
   });
 });
 
+describe('parseLines: digit limits', () => {
+  it('takes the quantity and price limits from the contracts', () => {
+    const q = '9'.repeat(QUANTITY_LIMITS.intDigits);
+    const p = '9'.repeat(MONEY_LIMITS.intDigits);
+    expect(parseLines([line({ quantity: `${q}.9999`, unitPrice: `${p}.99` })]).ok).toBe(true);
+    const out = parseLines([line({ quantity: `9${q}`, unitPrice: `9${p}` })]);
+    expect(!out.ok && Object.keys(out.errors).sort()).toEqual([
+      'lines.0.quantity',
+      'lines.0.unitPrice',
+    ]);
+  });
+
+  it('follows the contract limits when they change, with no copy of its own', async () => {
+    vi.resetModules();
+    vi.doMock('@bos/contracts', async (original) => ({
+      ...(await original<typeof import('@bos/contracts')>()),
+      QUANTITY_LIMITS: { intDigits: 2, scale: 0 },
+      MONEY_LIMITS: { intDigits: 3, scale: 0 },
+    }));
+    try {
+      const fresh = await import('./lines');
+      const out = fresh.parseLines([line({ quantity: '100', unitPrice: '1.50' })]);
+      expect(!out.ok && Object.keys(out.errors).sort()).toEqual([
+        'lines.0.quantity',
+        'lines.0.unitPrice',
+      ]);
+      expect(fresh.parseLines([line({ quantity: '99', unitPrice: '999' })]).ok).toBe(true);
+    } finally {
+      vi.doUnmock('@bos/contracts');
+      vi.resetModules();
+    }
+  });
+});
+
 describe('parseLinesJson', () => {
   it('reads what the form posts and nothing else', () => {
     const posted = JSON.stringify([{ ...line(), extra: 'ignored' }]);
@@ -158,6 +204,11 @@ describe('parseCreditLines', () => {
       ok: false,
       errors: { lines: 'Enter a quantity to credit on at least one line.' },
     });
+  });
+
+  it('says to remove the space in a credited quantity', () => {
+    const out = parseCreditLines([{ lineNo: 1, quantity: '1 5' }]);
+    expect(out).toEqual({ ok: false, errors: { 'lines.0.quantity': NO_SPACES } });
   });
 
   it('names the line whose quantity is not a number', () => {
