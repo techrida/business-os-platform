@@ -60,6 +60,7 @@ import { SettingsService } from '../../platform/settings/settings.service';
 import { InvoiceDraftingService } from '../invoices/invoice-drafting.service';
 import { LedgerService } from '../ledger/ledger.service';
 import { LeadLostReasonsService } from '../leads/lost-reasons.service';
+import { creditPosition } from '../opportunities/credit-hold';
 import { CreditHoldService } from '../opportunities/credit-hold.service';
 import { OpportunitiesService } from '../opportunities/opportunities.service';
 import { DraftingService } from '../quotations/drafting/drafting.service';
@@ -358,12 +359,13 @@ async function acceptedQuotation(
   options: {
     paymentSchedule?: { label: string; percent: string }[];
     evidenceKinds?: EvidenceKindName[];
+    unitPrice?: string;
   } = {},
 ): Promise<QuotationDto> {
   // Recording the outcome is Sales' work, whoever the test then acts as.
   const held = current.grants;
   current.grants = grantsOf('sales');
-  const q = await draftQuotation(options.paymentSchedule);
+  const q = await draftQuotation(options.paymentSchedule, options.unitPrice);
   const expectedVersion = await sendQuotation(q);
   await recorder.record(
     q.id,
@@ -1492,6 +1494,20 @@ describe('credit hold at the hand-over to a sales order (F1-Q20, F1-Q26)', () =>
     );
   }
 
+  /**
+   * Brings the fixture's customer (shared by every test in the file) back to owing nothing, with one offsetting open
+   * item, so a test's amounts are its own.
+   */
+  async function settleReceivables(): Promise<void> {
+    const { exposure } = await withTx(db, scopeA, systemActor('test'), (tx) =>
+      creditPosition(tx, scopeA, f.customerPartyId, {
+        version: { currency: 'NPR', total: '0.00', amountNpr: null },
+      }),
+    );
+    if (exposure.startsWith('-')) await openItem('debit', 'NPR', exposure.slice(1));
+    else if (exposure !== '0.00') await openItem('credit', 'NPR', exposure);
+  }
+
   async function holdOf(promise: Promise<unknown>) {
     try {
       await promise;
@@ -1510,18 +1526,20 @@ describe('credit hold at the hand-over to a sales order (F1-Q20, F1-Q26)', () =>
   };
 
   it('holds over the limit only, lets Finance override with a reason, then confirms with the same key', async () => {
-    // NPR 80,000.00 invoiced + USD 200.00 at 133.50 (26,700.00) less a NPR 6,700.00 payment = exactly the limit.
-    await setLimit('100000.00');
+    // NPR 80,000.00 invoiced + USD 200.00 at 133.50 (26,700.00) less a NPR 6,700.00 payment = 100,000.00 owed,
+    // and an order of 10,000.00 + 13% VAT = 11,300.00: exactly the limit.
+    await setLimit('111300.00');
     try {
       await openItem('debit', 'NPR', '80000.00');
       await openItem('debit', 'USD', '200.00', '133.50');
       await openItem('credit', 'NPR', '6700.00');
 
-      const atLimit = await acceptedQuotation();
+      const atLimit = await acceptedQuotation({ unitPrice: '10000.00' });
+      expect((await versionRow(atLimit.currentVersionId)).amountNpr).toBe('11300.00');
       expect(parsed(await confirm(atLimit)).order.status).toBe('confirmed');
 
       await openItem('debit', 'NPR', '0.01');
-      const q = await acceptedQuotation();
+      const q = await acceptedQuotation({ unitPrice: '10000.00' });
       const key = `so-${randomUUID()}`;
       const refused = await holdOf(confirm(q, [], key));
       expect(refused.status).toBe(409);
@@ -1530,7 +1548,7 @@ describe('credit hold at the hand-over to a sales order (F1-Q20, F1-Q26)', () =>
         code: 'credit_hold',
         details: { opportunityId: q.opportunityId },
       });
-      expect(JSON.stringify(refused.body)).not.toContain('100000');
+      expect(JSON.stringify(refused.body)).not.toMatch(/100000|111300|11300/);
       // The acceptance drafted the order (F1-Q25); the hold leaves it a draft, with no number.
       const [heldDraft] = await liveOrders(q.id);
       expect(await orderStatuses(q.id)).toEqual(['draft']);
@@ -1548,8 +1566,10 @@ describe('credit hold at the hand-over to a sales order (F1-Q20, F1-Q26)', () =>
       asFinance();
       const before = CreditHoldDtoSchema.parse(await credit.get(q.opportunityId));
       expect(before).toMatchObject({
-        creditLimit: '100000.00',
+        creditLimit: '111300.00',
         exposure: '100000.01',
+        orderValue: '11300.00',
+        exposureWithOrder: '111300.01',
         held: true,
         override: null,
       });
@@ -1572,8 +1592,9 @@ describe('credit hold at the hand-over to a sales order (F1-Q20, F1-Q26)', () =>
         {
           meta: {
             reason: 'Advance cheque received',
-            creditLimit: '100000.00',
+            creditLimit: '111300.00',
             exposure: '100000.01',
+            orderValue: '11300.00',
             currency: 'NPR',
           },
         },
@@ -1584,9 +1605,129 @@ describe('credit hold at the hand-over to a sales order (F1-Q20, F1-Q26)', () =>
       const released = parsed(await confirm(q, [], key)).order;
       expect(released.status).toBe('confirmed');
       expect(released.id).toBe(heldDraft?.id);
+      // Ordered: the quotation no longer counts (its invoices will), and the receivables alone are under the limit.
       expect(
         OpportunityDtoSchema.parse(await opportunitiesService.get(q.opportunityId)).creditHold,
-      ).toEqual({ held: true, overridden: true, ordered: true });
+      ).toEqual({ held: false, overridden: true, ordered: true });
+    } finally {
+      await setLimit(null);
+    }
+  });
+
+  /** The deal's flag (as Sales) and the credit-hold page (as Finance), read the way each actor reads them. */
+  async function flagAndPage(opportunityId: string) {
+    const grants = current.grants;
+    const userId = current.userId;
+    current.grants = grantsOf('sales');
+    current.userId = undefined;
+    const flag = OpportunityDtoSchema.parse(
+      await opportunitiesService.get(opportunityId),
+    ).creditHold;
+    asFinance();
+    const page = CreditHoldDtoSchema.parse(await credit.get(opportunityId));
+    current.grants = grants;
+    current.userId = userId;
+    return { flag, page };
+  }
+
+  // Kuu R4a Q1b. On the receivables-only rule this deal was not held at all (90,000.00 < 100,000.00): the confirm
+  // went through, and an override, had the gate held, answered 409 "not on credit hold" (the deadlock).
+  it('holds a customer at 90,000 of a 100,000 limit for this order, lets the override through, and stops counting the order once confirmed', async () => {
+    // 95,000.00 invoiced less 5,000.00 paid = 90,000.00 owed; the order is 20,000.00 + 13% VAT = 22,600.00.
+    await settleReceivables();
+    await setLimit('100000.00');
+    try {
+      await openItem('debit', 'NPR', '95000.00');
+      await openItem('credit', 'NPR', '5000.00');
+      const q = await acceptedQuotation({ unitPrice: '20000.00' });
+      expect((await versionRow(q.currentVersionId)).amountNpr).toBe('22600.00');
+
+      // The deal's flag (what Sales sees; receivables alone were under the limit) and the credit-hold page agree
+      // with the gate, before it runs.
+      expect(
+        OpportunityDtoSchema.parse(await opportunitiesService.get(q.opportunityId)).creditHold
+          ?.held,
+      ).toBe(true);
+      const before = await flagAndPage(q.opportunityId);
+      expect(before.flag).toEqual({ held: true, overridden: false, ordered: false });
+      expect(before.page).toMatchObject({
+        creditLimit: '100000.00',
+        exposure: '90000.00',
+        orderValue: '22600.00',
+        exposureWithOrder: '112600.00',
+        held: true,
+        override: null,
+      });
+
+      current.grants = grantsOf('sales');
+      current.userId = undefined;
+      const key = `so-${randomUUID()}`;
+      const refused = await holdOf(confirm(q, [], key));
+      expect(refused).toMatchObject({ status: 409, body: { code: 'credit_hold' } });
+
+      asFinance();
+      const overridden = CreditHoldDtoSchema.parse(
+        await credit.override(q.opportunityId, { reason: 'Director approved the order' }),
+      );
+      expect(overridden.override?.reason).toBe('Director approved the order');
+      const { rows } = await ownerPool.query(
+        `SELECT meta FROM audit.audit_events
+          WHERE tenant_id = $1 AND action = 'opportunity.credit_overridden' AND entity_id = $2`,
+        [f.tenantId, q.opportunityId],
+      );
+      expect(rows).toEqual([
+        {
+          meta: {
+            reason: 'Director approved the order',
+            creditLimit: '100000.00',
+            exposure: '90000.00',
+            orderValue: '22600.00',
+            currency: 'NPR',
+          },
+        },
+      ]);
+
+      current.grants = grantsOf('sales');
+      current.userId = undefined;
+      expect(parsed(await confirm(q, [], key)).order.status).toBe('confirmed');
+
+      // Confirmed: the order is no longer pending, so it is not counted twice once it is invoiced.
+      const after = await flagAndPage(q.opportunityId);
+      expect(after.flag).toEqual({ held: false, overridden: true, ordered: true });
+      expect(after.page).toMatchObject({
+        exposure: '90000.00',
+        orderValue: '0.00',
+        exposureWithOrder: '90000.00',
+        held: false,
+      });
+    } finally {
+      await setLimit(null);
+    }
+  });
+
+  it('confirms an order that keeps the customer under the limit, and holds everything at a 0.00 limit', async () => {
+    await settleReceivables();
+    await setLimit('100000.00');
+    try {
+      await openItem('debit', 'NPR', '50000.00');
+      const under = await acceptedQuotation({ unitPrice: '20000.00' });
+      expect((await flagAndPage(under.opportunityId)).page).toMatchObject({
+        exposureWithOrder: '72600.00',
+        held: false,
+      });
+      expect(parsed(await confirm(under)).order.status).toBe('confirmed');
+
+      await setLimit('0.00');
+      const any = await acceptedQuotation({ unitPrice: '1.00' });
+      const { flag, page } = await flagAndPage(any.opportunityId);
+      expect(flag?.held).toBe(true);
+      expect(page).toMatchObject({ creditLimit: '0.00', orderValue: '1.13', held: true });
+      current.grants = grantsOf('sales');
+      current.userId = undefined;
+      expect(await holdOf(confirm(any))).toMatchObject({
+        status: 409,
+        body: { code: 'credit_hold' },
+      });
     } finally {
       await setLimit(null);
     }

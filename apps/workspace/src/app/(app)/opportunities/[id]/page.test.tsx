@@ -808,6 +808,8 @@ describe('credit hold on the deal (F1-Q20)', () => {
     currency: 'NPR',
     creditLimit: '500000.00',
     exposure: '512345.50',
+    orderValue: '0.00',
+    exposureWithOrder: '512345.50',
     held: true,
     override: null,
   });
@@ -845,6 +847,23 @@ describe('credit hold on the deal (F1-Q20)', () => {
     expect(
       [...(banner(doc)?.querySelectorAll('button') ?? [])].map((b) => b.textContent),
     ).toContain('Override credit hold');
+  });
+
+  it("names open receivables and this deal's order when the order takes the customer over the limit", async () => {
+    mocks.getOpportunity.mockResolvedValue(held());
+    mocks.getCreditHold.mockResolvedValue({
+      ...position,
+      creditLimit: '100000.00',
+      exposure: '90000.00',
+      orderValue: '22600.00',
+      exposureWithOrder: '112600.00',
+    });
+    grants('crm.opportunity.read', 'credit.override');
+    const text = banner(parse(await render()))?.textContent ?? '';
+    expect(text).toMatch(
+      /Open receivables are .*90,000\.00 and this deal's order is .*22,600\.00: .*1,12,600\.00 against a limit of .*1,00,000\.00\./,
+    );
+    expect(text).not.toContain('owes');
   });
 
   it('keeps the Override action when the amounts do not load', async () => {

@@ -386,11 +386,11 @@ export class SalesOrdersService {
     const customerPartyId = quotation.customerPartyId;
     if (customerPartyId === null) throw new Error(`quotation ${quotation.number} has no customer`);
 
-    // F1-Q20/F1-Q26: a customer over its credit limit with this entity holds the deal here, the hand-over to a
-    // sales order, until a holder of credit.override overrides the hold on the deal with a reason. The refusal names
-    // the deal only: the limit and the balance are for holders of credit.override
-    // (GET /v1/opportunities/:id/credit-hold).
-    const credit = await creditPosition(tx, scope, customerPartyId);
+    // F1-Q20/F1-Q26 (Kuu R4a Q1b): a customer whose open receivables plus this order's gross NPR value are over its
+    // credit limit with this entity holds the deal here, the hand-over to a sales order, until a holder of
+    // credit.override overrides the hold on the deal with a reason. The refusal names the deal only: the limit and
+    // the balance are for holders of credit.override (GET /v1/opportunities/:id/credit-hold, the same rule).
+    const credit = await creditPosition(tx, scope, customerPartyId, { version });
     if (credit.held) {
       const [deal] = await tx
         .select({ creditOverrideAt: opportunities.creditOverrideAt })
