@@ -55,7 +55,7 @@ import {
   HttpException,
   NotFoundException,
 } from '@nestjs/common';
-import type { Queue } from 'bullmq';
+import type { Job, Queue } from 'bullmq';
 import { sql } from 'drizzle-orm';
 import { drizzle } from 'drizzle-orm/node-postgres';
 import { Pool } from 'pg';
@@ -89,6 +89,8 @@ import { PurchaseOrderDocumentService } from './purchase-order-document.service'
 import {
   drizzlePurchaseOrderRenderStore,
   ORPHAN_AFTER_MS,
+  PO_RENDER_ONE_JOB,
+  PurchaseOrderRenderProcessor,
   PurchaseOrderRenderSweeper,
   type RenderCandidate,
 } from './purchase-order-render.sweeper';
@@ -993,5 +995,31 @@ describe('a render that keeps failing (R4c2: TR-Q4, F1-Q13)', () => {
     expect(ids(await store.candidates(new Date(), 1_000))).toContain(c.versionId);
     expect(await sweeper.renderOne(c)).toBe('rendered');
     await expect(service.link(po.id, 1)).resolves.toBeDefined();
+  });
+});
+
+describe('render on commit (S3): the purchase-order.render.one job on the real tables', () => {
+  const jobFor = (po: IssuedPo) =>
+    ({ name: PO_RENDER_ONE_JOB, data: { ...po.scope, id: po.id } }) as unknown as Job;
+
+  it("renders the order's due versions, then nothing on a second run, and leaves other orders alone", async () => {
+    const po = await issuedPo();
+    await amend(po, '1500000.00');
+    const other = await issuedPo();
+    const v1 = await candidateOf(po, 1);
+    const v2 = await candidateOf(po, 2);
+    const otherV1 = await candidateOf(other, 1);
+    const processor = new PurchaseOrderRenderProcessor(sweeper);
+    gotenberg.requests.length = 0;
+
+    await processor.process(jobFor(po));
+    expect(gotenberg.requests).toHaveLength(2);
+    expect(await documentRows(v1.versionId)).toHaveLength(1);
+    expect(await documentRows(v2.versionId)).toHaveLength(1);
+    expect(await documentRows(otherV1.versionId)).toEqual([]);
+
+    await processor.process(jobFor(po));
+    expect(gotenberg.requests).toHaveLength(2);
+    expect(await documentRows(v2.versionId)).toHaveLength(1);
   });
 });
