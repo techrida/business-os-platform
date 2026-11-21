@@ -38,7 +38,7 @@ export const idempotencyKeys = appSchema.table(
     createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
   },
   (t) => [
-    unique('idempotency_keys_unique').on(t.tenantId, t.actorId, t.command, t.key),
+    unique('idempotency_keys_unique').on(t.tenantId, t.organizationId, t.actorId, t.command, t.key),
     // ADR 0027 section 8 (migration 0014_composite_keys): the entity must belong to the row's tenant.
     foreignKey({
       name: 'idempotency_keys_tenant_org_fk',

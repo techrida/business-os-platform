@@ -22,15 +22,11 @@ const SELF = resolve(fileURLToPath(import.meta.url));
 const SRC_DIR = resolve(fileURLToPath(new URL('../..', import.meta.url)));
 
 /**
- * Transactions that call ZITADEL inside withTx (through UserStatusService / UsersService) and therefore take the
- * tenant audit lock lazily (CALLS_ZITADEL in admin-users.controller.ts). Do not add to this list: move the call out
- * of the transaction instead.
+ * Transactions that call ZITADEL inside withTx through a service and so take the tenant audit lock lazily. It is
+ * empty since FU1: the admin status actions, invite and set-roles call ZITADEL before and after their short
+ * transactions. Do not add to this list: move the call out of the transaction instead.
  */
-const ALLOWED: readonly { file: string; fn: string }[] = [
-  { file: 'platform/users/admin-users.controller.ts', fn: 'runStatusAction' },
-  { file: 'platform/users/admin-users.controller.ts', fn: 'invite' },
-  { file: 'platform/users/admin-users.controller.ts', fn: 'setRoles' },
-];
+const ALLOWED: readonly { file: string; fn: string }[] = [];
 
 const NETWORK =
   /\bfetch\s*\(|\baxios\b|\bhttps?\s*\.\s*(?:request|get)\s*\(|\b(?:zitadel|Zitadel)(?:Client|Admin|AdminClient|Api)?\s*\.\s*\w+\s*\(|\.\s*(?:getUser|listUsers|listGrants|createHuman|setGrants|sendInviteCode|sendPasswordReset|deactivateUser|reactivateUser|deleteUser|lockUser|unlockUser|ensureOrgLockoutPolicy|ensureOrgLoginPolicy)\s*\(|\bwithTx\s*\(/g;
@@ -336,7 +332,7 @@ class Planted {
     ]);
   });
 
-  it('flags an allowed zitadelCall() transaction that is not lazy', () => {
+  it('flags a zitadelCall() transaction: not allowed any more, and not lazy', () => {
     const src = `
 class AdminUsersController {
   async setRoles(id: string) {
@@ -349,6 +345,7 @@ class AdminUsersController {
 }
 `;
     expect(offenders('platform/users/admin-users.controller.ts', src)).toEqual([
+      'platform/users/admin-users.controller.ts:5 (setRoles): a zitadelCall() transaction not in ALLOWED',
       "platform/users/admin-users.controller.ts:5 (setRoles): a zitadelCall() transaction without audit: 'lazy'",
     ]);
   });

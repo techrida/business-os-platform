@@ -809,6 +809,9 @@ export class ErrorBodyFilter implements ExceptionFilter {
     if (res.headersSent) {
       return;
     }
+    // The same seconds as the Retry-After header, in the body too: a caller that turns the response into its own
+    // (the workspace BFF) reads the body, and does not see this response's headers.
+    if (busy !== undefined) details = { retryAfterSeconds: DB_BUSY_RETRY_AFTER_SECONDS[busy] };
     const body: ErrorBody & {
       error: {
         duplicates?: DuplicateCandidate[];
