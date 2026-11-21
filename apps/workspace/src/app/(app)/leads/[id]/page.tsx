@@ -456,7 +456,12 @@ export default async function LeadPage({ params }: { params: Promise<{ id: strin
             ) : (
               <ActivityList
                 items={logged ?? []}
-                empty="Calls, meetings and stage changes appear here."
+                record="lead"
+                empty={
+                  canEdit
+                    ? 'Use Log activity to record a call, meeting, email or note.'
+                    : 'Calls, meetings, emails and notes logged on this lead show here.'
+                }
               />
             )}
           </Panel>

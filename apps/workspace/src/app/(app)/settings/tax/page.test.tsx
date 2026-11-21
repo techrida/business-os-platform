@@ -111,24 +111,18 @@ describe('the Tax page by live grant', () => {
   });
 });
 
-// F1-Q48: CARD_KEYS.tax names tax.vat_rate, but the page never rendered it, so nobody could change it.
-describe('the default VAT rate card', () => {
-  it('shows the saved rate as a typed percent field to a finance-settings grant', async () => {
+// Round 5, UX1: nothing reads tax.vat_rate, so Kuu decided to hide its card. The key, its default and the
+// save/reset actions stay (the save tests below still pass); only the page stops showing and reading it.
+describe('the hidden default VAT rate', () => {
+  it('shows no VAT rate card and never reads the setting, while the codes stay', async () => {
     persona('accountant-live', ['sales'], 'settings.finance.write');
-    admin.getSetting.mockResolvedValue({ key: 'tax.vat_rate', value: '12.5', version: 4 });
     const html = await render();
-    expect(admin.getSetting).toHaveBeenCalledWith(expect.anything(), 'tax.vat_rate');
-    expect(html).toContain('Default VAT rate (%)');
-    const input = html.match(/<input[^>]*name="v:tax\.vat_rate"[^>]*>/)?.[0] ?? '';
-    expect(input).toContain('type="number"');
-    expect(input).toContain('value="12.5"');
-  });
-
-  it('keeps the codes when the rate cannot be read', async () => {
-    persona('accountant-live', ['sales'], 'settings.finance.write');
-    admin.getSetting.mockRejectedValue(new Error('down'));
-    const html = await render();
+    expect(admin.getSetting).not.toHaveBeenCalled();
     expect(html).not.toContain('Default VAT rate (%)');
+    expect(html).not.toContain('name="v:tax.vat_rate"');
+    expect(html).not.toContain('The default VAT rate');
+    expect(html).toContain('VAT codes');
+    expect(html).toContain('Withholding codes');
     expect(html).toContain('VAT 13%');
   });
 });
