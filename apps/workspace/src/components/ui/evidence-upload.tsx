@@ -110,6 +110,10 @@ export function EvidenceUpload({
   const stagedIdRef = useRef<string | null>(null);
   const submittedRef = useRef(false);
   const sendingRef = useRef<SendingFile | null>(null);
+  const onBlockingRef = useRef(onBlockingChange);
+  useEffect(() => {
+    onBlockingRef.current = onBlockingChange;
+  });
   useEffect(() => {
     stagedIdRef.current = staged?.documentId ?? null;
   }, [staged]);
@@ -132,6 +136,8 @@ export function EvidenceUpload({
       sendingRef.current?.abort();
       const id = stagedIdRef.current;
       if (id !== null && !submittedRef.current) discard(id);
+      // The form outlives this control (a dialog keeps its trigger): it must not stay blocked.
+      onBlockingRef.current?.(false);
     },
     [],
   );
@@ -140,10 +146,6 @@ export function EvidenceUpload({
   const status = file?.status;
   const badFile = status === 'infected' || status === 'rejected';
   const blocking = uploading || badFile;
-  const onBlockingRef = useRef(onBlockingChange);
-  useEffect(() => {
-    onBlockingRef.current = onBlockingChange;
-  });
   useEffect(() => {
     onBlockingRef.current?.(blocking);
   }, [blocking]);
