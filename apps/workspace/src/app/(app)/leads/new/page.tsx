@@ -12,6 +12,7 @@ import { requireStaffSession } from '@/lib/bff';
 import { loadEnabledCurrencies } from '@/lib/enabled-currencies.server';
 
 import { createLeadAction } from '../actions';
+import { LeadDuplicateHint } from './duplicate-hint';
 
 export const metadata: Metadata = { title: 'Create Lead · Business OS' };
 
@@ -37,15 +38,18 @@ export default async function NewLeadPage() {
   return (
     <Page>
       <Breadcrumb items={[{ label: 'Leads', href: '/leads' }, { label: 'Create Lead' }]} />
-      <LeadForm
-        action={createLeadAction}
-        sources={sources}
-        owners={owners}
-        enabledCurrencies={enabledCurrencies}
-        defaultOwnerId={defaultOwnerId}
-        callerUnplaced={callerUnplaced}
-        idempotencyKey={randomUUID()}
-      />
+      {/* F1-Q54 a: a non-blocking hint when a readable lead or customer looks the same. */}
+      <LeadDuplicateHint>
+        <LeadForm
+          action={createLeadAction}
+          sources={sources}
+          owners={owners}
+          enabledCurrencies={enabledCurrencies}
+          defaultOwnerId={defaultOwnerId}
+          callerUnplaced={callerUnplaced}
+          idempotencyKey={randomUUID()}
+        />
+      </LeadDuplicateHint>
     </Page>
   );
 }

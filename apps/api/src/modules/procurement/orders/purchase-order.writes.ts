@@ -4,12 +4,18 @@
 // transaction and scoped() to the acting entity, so another entity's PO is simply not found.
 import {
   approvalRequests,
+  paymentRequests,
+  paymentTerms,
   purchaseOrderLines,
   purchaseOrderVersions,
   purchaseOrders,
   receiptLines,
   receipts,
   scoped,
+  vendorAccounts,
+  vendorBankAccounts,
+  vendorBillSubmissions,
+  vendorBills,
 } from '@bos/db';
 import { ConflictException, NotFoundException } from '@nestjs/common';
 import Decimal from 'decimal.js';
@@ -18,12 +24,15 @@ import { and, asc, eq, ne, sql } from 'drizzle-orm';
 import type { AuditService } from '../../../platform/audit/audit.service';
 import type { DbTransaction } from '../../../platform/db/db.module';
 import type { TxScope } from '../../../platform/db/tx';
+import type { NumberingService } from '../../../platform/settings/numbering.service';
 import type { ApprovalsService } from '../../approvals/requests.service';
 import { emergencyReviewDue, requestEmergencyReview } from '../receipts/emergency-review';
 import { derivePoStatus } from '../receipts/receipt.rules';
+import { PO_SERIES } from '../sourcing/sourcing.rules';
 import {
   PO_AMENDMENT_DOCUMENT_TYPE,
   PO_AUDIT_ENTITY,
+  PO_REFERENCED,
   type AmendedLine,
 } from './purchase-order.rules';
 
@@ -58,6 +67,87 @@ export async function lockPo(tx: DbTransaction, scope: TxScope, id: string): Pro
     .for('update');
   if (po === undefined) throw notFound();
   return po;
+}
+
+/**
+ * The payment terms (net days) of the vendor's account in the acting entity, 0 when it names none: the same lookup
+ * insertDraftPurchaseOrder (sourcing/pr-commitment.subject.ts) makes for a commitment draft.
+ */
+export async function vendorTermsDays(
+  tx: DbTransaction,
+  scope: TxScope,
+  vendorId: string,
+): Promise<number> {
+  const [terms] = await tx
+    .select({ netDays: paymentTerms.netDays })
+    .from(vendorAccounts)
+    .leftJoin(
+      paymentTerms,
+      and(
+        eq(paymentTerms.tenantId, vendorAccounts.tenantId),
+        eq(paymentTerms.id, vendorAccounts.paymentTermId),
+      ),
+    )
+    .where(scoped(scope).where(vendorAccounts, eq(vendorAccounts.vendorId, vendorId)));
+  return terms?.netDays ?? 0;
+}
+
+/**
+ * 409 VENDOR_NO_VERIFIED_BANK_ACCOUNT unless the vendor has an `active` bank account, the row
+ * VendorBankService.activeVerifiedAccount reads for a payment request (an active account is verified by another
+ * person with call-back evidence: vendor_bank_accounts_active_check). Bank accounts are tenant level.
+ */
+export async function assertVerifiedBankAccount(
+  tx: DbTransaction,
+  scope: TxScope,
+  vendorId: string,
+): Promise<void> {
+  const [row] = await tx
+    .select({ id: vendorBankAccounts.id })
+    .from(vendorBankAccounts)
+    .where(
+      and(
+        eq(vendorBankAccounts.tenantId, scope.tenantId),
+        eq(vendorBankAccounts.vendorId, vendorId),
+        eq(vendorBankAccounts.status, 'active'),
+      ),
+    );
+  if (row === undefined) {
+    throw conflict('The vendor has no verified bank account', 'VENDOR_NO_VERIFIED_BANK_ACCOUNT');
+  }
+}
+
+/**
+ * 409 PO_REFERENCED when a payment request, vendor bill or portal bill submission names the PO, in any status (a
+ * cancelled or voided row still holds its foreign key). Each refers to the PO together with its vendor
+ * (payment_requests_purchase_order_fk, vendor_bills_purchase_order_fk, vendor_bill_submissions_purchase_order_fk), so
+ * changing the vendor would fail on the key. Call it after lockPo: the PO's row lock blocks a concurrent insert that
+ * names it until this transaction ends.
+ */
+export async function assertPoNotReferenced(
+  tx: DbTransaction,
+  scope: TxScope,
+  poId: string,
+): Promise<void> {
+  const s = scoped(scope);
+  const [request] = await tx
+    .select({ id: paymentRequests.id })
+    .from(paymentRequests)
+    .where(s.where(paymentRequests, eq(paymentRequests.purchaseOrderId, poId)))
+    .limit(1);
+  const [bill] = await tx
+    .select({ id: vendorBills.id })
+    .from(vendorBills)
+    .where(s.where(vendorBills, eq(vendorBills.purchaseOrderId, poId)))
+    .limit(1);
+  const [submission] = await tx
+    .select({ id: vendorBillSubmissions.id })
+    .from(vendorBillSubmissions)
+    .where(s.where(vendorBillSubmissions, eq(vendorBillSubmissions.purchaseOrderId, poId)))
+    .limit(1);
+  if (request !== undefined || bill !== undefined || submission !== undefined) {
+    throw conflict(PO_REFERENCED.message, PO_REFERENCED.code);
+  }
 }
 
 export async function linesOf(
@@ -300,6 +390,78 @@ export async function applyAmendment(
     await requestEmergencyReview(tx, scope, deps, row, by.amendedBy);
   }
   return row;
+}
+
+/**
+ * Writes a new draft PO cloned from `from` (cancel and recreate): the same request, RFQ, quotation, vendor, money
+ * terms, approved total, rate and band, with a new number from the PO series and `createdBy` as its author; version 0,
+ * not issued. Its lines copy `lines` in their order with the ordered quantities and nothing cancelled. The caller
+ * cancels `from` first in the same transaction: the one-live-PO-per-quotation index
+ * (purchase_orders_tenant_quotation_live_unique) only lets the clone in once `from` is cancelled. The number is taken
+ * last before the insert (the numbering row lock), as insertDraftPurchaseOrder does.
+ */
+export async function insertRecreatedDraft(
+  tx: DbTransaction,
+  scope: TxScope,
+  numbering: NumberingService,
+  from: PoRow,
+  lines: readonly PoLineRow[],
+  createdBy: string,
+  now: Date,
+): Promise<{ po: PoRow; lines: PoLineRow[] }> {
+  const issued = await numbering.issue(tx, PO_SERIES, now);
+  const [po] = await tx
+    .insert(purchaseOrders)
+    .values({
+      ...scope,
+      number: issued.number,
+      numberSeq: issued.seq,
+      fiscalYear: issued.fiscalYear,
+      purchaseRequestId: from.purchaseRequestId,
+      rfqId: from.rfqId,
+      vendorQuotationId: from.vendorQuotationId,
+      vendorId: from.vendorId,
+      currency: from.currency,
+      paymentTermsDays: from.paymentTermsDays,
+      advancePercent: from.advancePercent,
+      approvedTotal: from.approvedTotal,
+      fxRate: from.fxRate,
+      fxSource: from.fxSource,
+      fxDate: from.fxDate,
+      approvedTotalNpr: from.approvedTotalNpr,
+      approvedBand: from.approvedBand,
+      createdBy,
+      createdAt: now,
+      updatedAt: now,
+    })
+    .returning();
+  if (lines.length === 0) return { po: po!, lines: [] };
+  const cloned = await tx
+    .insert(purchaseOrderLines)
+    .values(
+      lines.map((l) => ({
+        ...scope,
+        purchaseOrderId: po!.id,
+        purchaseRequestId: from.purchaseRequestId,
+        lineNo: l.lineNo,
+        prLineId: l.prLineId,
+        kind: l.kind,
+        description: l.description,
+        uom: l.uom,
+        orderedQuantity: l.orderedQuantity,
+        cancelledQuantity: '0',
+        unitPrice: l.unitPrice,
+        taxCodeId: l.taxCodeId,
+        gross: l.gross,
+        taxAmount: l.taxAmount,
+        lineTotal: l.lineTotal,
+        requiresSerials: l.requiresSerials,
+        createdAt: now,
+        updatedAt: now,
+      })),
+    )
+    .returning();
+  return { po: po!, lines: [...cloned].sort((a, b) => a.lineNo - b.lineNo) };
 }
 
 /** The approval request of a re-approved amendment and the proposal it carries; 409 when it is missing. */

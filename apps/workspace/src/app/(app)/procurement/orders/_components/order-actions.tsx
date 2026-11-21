@@ -2,9 +2,18 @@
 
 import { useState } from 'react';
 
+import { Alert } from '@/components/ui/alert';
+import { Combobox } from '@/components/ui/combobox';
 import { Field, Input, Textarea } from '@/components/ui/field';
 
-import { amendAction, cancelAction, issueAction, shortCloseAction } from '../actions';
+import {
+  amendAction,
+  cancelAction,
+  cancelAndRecreateAction,
+  changeVendorAction,
+  issueAction,
+  shortCloseAction,
+} from '../actions';
 import { qtyText } from '../_lib/model';
 import styles from '../orders.module.css';
 
@@ -17,7 +26,8 @@ interface Common {
   reloadHref: string;
 }
 
-export function IssueDialog(props: Common) {
+/** `version` is the order's row version as the page showed it: issue is refused if the order changed since. */
+export function IssueDialog(props: Common & { version: number }) {
   return (
     <ProcurementActionDialog
       triggerLabel="Issue purchase order"
@@ -32,6 +42,7 @@ export function IssueDialog(props: Common) {
       reloadLabel="Reload this purchase order"
       submitLabel="Issue purchase order"
       pendingWords="Issuing the purchase order"
+      fields={() => <input type="hidden" name="expectedVersion" value={props.version} />}
     />
   );
 }
@@ -76,6 +87,107 @@ export function ReasonDialog({ kind, ...common }: Common & { kind: 'shortClose' 
       pendingWords={cancel ? 'Cancelling the order' : 'Short-closing the order'}
       submitVariant="secondary"
       fields={(errors) => <ReasonField errors={errors} />}
+    />
+  );
+}
+
+/**
+ * Cancels an issued order and opens the new draft raised from it (the action redirects there), where the vendor
+ * can be changed before it is issued again.
+ */
+export function RecreateDialog(common: Common) {
+  return (
+    <ProcurementActionDialog
+      triggerLabel="Cancel and recreate"
+      title={`Cancel and recreate ${common.number}`}
+      intro="This order is cancelled and a new draft with the same lines and prices opens. Change its vendor there, then issue it. It works only before anything is received on this order."
+      action={cancelAndRecreateAction}
+      idempotencyKey={common.idempotencyKey}
+      recordField="purchaseOrderId"
+      recordId={common.purchaseOrderId}
+      reloadHref={common.reloadHref}
+      reloadLabel="Reload this purchase order"
+      submitLabel="Cancel and recreate"
+      pendingWords="Cancelling the order and creating the new draft"
+      submitVariant="secondary"
+      fields={(errors) => <ReasonField errors={errors} />}
+    />
+  );
+}
+
+export interface VendorChoice {
+  id: string;
+  name: string;
+}
+
+function VendorField({
+  vendors,
+  problem,
+  errors,
+}: {
+  vendors: readonly VendorChoice[];
+  problem: string | undefined;
+  errors: Record<string, string>;
+}) {
+  // Controlled, so a refusal does not wipe the vendor the person chose.
+  const [vendorId, setVendorId] = useState('');
+  const [open, setOpen] = useState(false);
+  return (
+    <>
+      {problem !== undefined ? (
+        <Alert tone="error" role="alert" title="Vendors did not load">
+          {problem}
+        </Alert>
+      ) : null}
+      <Field
+        label="New vendor"
+        hint="Only approved vendors are listed. The vendor also needs an active account with your legal entity and a verified bank account."
+        error={errors['vendorId']}
+      >
+        {(control) => (
+          <>
+            <input type="hidden" name="vendorId" value={vendorId} />
+            <Combobox
+              labelledBy={control['aria-labelledby']}
+              describedBy={control['aria-describedby']}
+              invalid={control['aria-invalid'] === true}
+              options={vendors.map((v) => ({ id: v.id, label: v.name }))}
+              value={vendorId}
+              onChange={setVendorId}
+              open={open}
+              onOpenChange={setOpen}
+              placeholder="Search by vendor name"
+              emptyText="No other approved vendor to choose from."
+              noMatchText="No vendor matches. Search by name."
+              required
+            />
+          </>
+        )}
+      </Field>
+    </>
+  );
+}
+
+/** Moves a draft to another approved vendor (F1-Q40 a). */
+export function ChangeVendorDialog({
+  vendors,
+  problem,
+  ...common
+}: Common & { vendors: readonly VendorChoice[]; problem?: string | undefined }) {
+  return (
+    <ProcurementActionDialog
+      triggerLabel="Change vendor"
+      title={`Change the vendor of ${common.number}`}
+      intro="The lines, prices and total stay as approved. Payment terms come from the new vendor."
+      action={changeVendorAction}
+      idempotencyKey={common.idempotencyKey}
+      recordField="purchaseOrderId"
+      recordId={common.purchaseOrderId}
+      reloadHref={common.reloadHref}
+      reloadLabel="Reload this purchase order"
+      submitLabel="Change vendor"
+      pendingWords="Changing the vendor"
+      fields={(errors) => <VendorField vendors={vendors} problem={problem} errors={errors} />}
     />
   );
 }

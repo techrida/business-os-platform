@@ -161,14 +161,19 @@ describe('invoiceGates follow canTransitionInvoice and the role', () => {
 
 describe('recordPaymentHref', () => {
   const CUSTOMER = '33333333-3333-4333-8333-333333333333';
-  const HREF = `/payments/new?customerId=${CUSTOMER}`;
+  const INVOICE = '11111111-1111-4111-8111-111111111111';
+  const HREF = `/payments/new?customerId=${CUSTOMER}&invoiceId=${INVOICE}`;
   const href = (
     kind: InvoiceKind,
     status: InvoiceStatus,
     roles: string[],
     settlement?: Parameters<typeof recordPaymentHref>[2],
   ) =>
-    recordPaymentHref({ kind, status, customerId: CUSTOMER }, permissionChecker(roles), settlement);
+    recordPaymentHref(
+      { id: INVOICE, kind, status, customerId: CUSTOMER },
+      permissionChecker(roles),
+      settlement,
+    );
 
   it.each(INVOICE_KINDS.flatMap((k) => INVOICE_STATUSES.map((s) => [k, s] as const)))(
     'offers it on %s %s only when it opens a receivable',
@@ -186,7 +191,12 @@ describe('recordPaymentHref', () => {
   });
 
   it('follows a live payment.record grant, not the role defaults', () => {
-    const invoice = { kind: 'tax_invoice', status: 'issued', customerId: CUSTOMER } as const;
+    const invoice = {
+      id: INVOICE,
+      kind: 'tax_invoice',
+      status: 'issued',
+      customerId: CUSTOMER,
+    } as const;
     expect(recordPaymentHref(invoice, granted('payment.record'))).toBe(HREF);
     expect(recordPaymentHref(invoice, granted('invoice.draft'))).toBeNull();
   });
@@ -198,6 +208,16 @@ describe('recordPaymentHref', () => {
     expect(href('tax_invoice', 'issued', ACCOUNTANT, 'paid')).toBeNull();
     expect(href('tax_invoice', 'issued', ACCOUNTANT, 'credited')).toBeNull();
     expect(href('tax_invoice', 'issued', ACCOUNTANT, null)).toBeNull();
+  });
+
+  it('names the invoice in the link, so the payment form can start on its open amount (U16-Q8 a)', () => {
+    const url = new URL(href('debit_note', 'issued', ACCOUNTANT, 'unpaid')!, 'https://app.test');
+    expect(url.pathname).toBe('/payments/new');
+    expect(url.searchParams.get('customerId')).toBe(CUSTOMER);
+    // Old code sent the customer only.
+    expect(url.searchParams.get('invoiceId')).toBe(INVOICE);
+    // The amount is never carried in the link: the form reads it from the API.
+    expect([...url.searchParams.keys()].sort()).toEqual(['customerId', 'invoiceId']);
   });
 });
 
@@ -229,7 +249,8 @@ describe('a note its viewer created (TR-Q12f)', () => {
 
 describe('the per-invoice can flags', () => {
   const CUSTOMER = '33333333-3333-4333-8333-333333333333';
-  const HREF = `/payments/new?customerId=${CUSTOMER}`;
+  const INVOICE = '11111111-1111-4111-8111-111111111111';
+  const HREF = `/payments/new?customerId=${CUSTOMER}&invoiceId=${INVOICE}`;
   // Finance holds every invoice permission at some scope; only the API's per-invoice answer tells another
   // person's invoice from their own under an `own` grant.
   const finance = permissionChecker(FINANCE);
@@ -243,7 +264,12 @@ describe('the per-invoice can flags', () => {
   const OWN = { submit: true, issue: true, discard: true, notes: true, recordPayment: true };
   const draft = { kind: 'tax_invoice', status: 'draft' } as const;
   const approved = { kind: 'tax_invoice', status: 'approved' } as const;
-  const issued = { kind: 'tax_invoice', status: 'issued', customerId: CUSTOMER } as const;
+  const issued = {
+    id: INVOICE,
+    kind: 'tax_invoice',
+    status: 'issued',
+    customerId: CUSTOMER,
+  } as const;
 
   it("hides Submit, Issue, Discard, the notes and Record payment on another person's invoice", () => {
     expect(invoiceGates({ ...draft, can: OTHERS }, finance)).toEqual(NONE);
