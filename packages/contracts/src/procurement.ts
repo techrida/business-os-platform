@@ -29,6 +29,7 @@ export const P4_DOCUMENT_TYPES = [
   'purchase_request',
   'pr_commitment',
   'po_amendment',
+  'po_vendor_change',
   'match_exception',
   'vendor_bill',
   'payment_request',
@@ -394,6 +395,8 @@ export type ShortClosePurchaseOrderBody = z.infer<typeof ShortClosePurchaseOrder
  */
 export const ChangePurchaseOrderVendorBodySchema = z.strictObject({
   vendorId: z.guid().toLowerCase(),
+  /** Set after the VAT warning (409 VENDOR_NOT_VAT_REGISTERED) was shown and the person ticked to go on (K3 Q2). */
+  acknowledgeVatWarning: z.boolean().optional(),
 });
 export type ChangePurchaseOrderVendorBody = z.infer<typeof ChangePurchaseOrderVendorBodySchema>;
 
