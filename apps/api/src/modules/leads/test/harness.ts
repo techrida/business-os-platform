@@ -22,13 +22,12 @@ import {
   createParty,
   createStaffUser,
   createTenantWithEntity,
-  runMigrations,
   userEntities,
   userRoles,
   users as usersTable,
 } from '@bos/db';
+import { createTestDatabase } from '@bos/db/testing';
 import { ForbiddenException } from '@nestjs/common';
-import { PostgreSqlContainer, type StartedPostgreSqlContainer } from '@testcontainers/postgresql';
 import type { Queue } from 'bullmq';
 import { and, eq, sql } from 'drizzle-orm';
 
@@ -55,8 +54,6 @@ export interface Driver {
 }
 type AppPool = Parameters<typeof createParty>[0];
 
-const OWNER_PW = 'owner-test-pw';
-const APP_PW = 'app-test-pw';
 const ADDRESS = JSON.stringify({ line1: '1 Durbar Marg', city: 'Kathmandu', country: 'NP' });
 
 /** The workspace URL the harness's NotifyService renders email links with. */
@@ -149,36 +146,12 @@ const defaultsOf = (role: RoleKey): ReadonlyMap<Permission, AccessScope> =>
   new Map(Object.entries(DEFAULT_ROLE_PERMISSIONS[role]) as [Permission, AccessScope][]);
 
 export async function startHarness({ Pool, drizzle }: Driver): Promise<Harness> {
-  const container: StartedPostgreSqlContainer = await new PostgreSqlContainer(
-    'postgres:16-alpine',
-  ).start();
-  const urlFor = (user: string, password: string, database: string) => {
-    const url = new URL(container.getConnectionUri());
-    url.username = user;
-    url.password = password;
-    url.pathname = `/${database}`;
-    return url.toString();
-  };
-  const admin0 = new Pool({ connectionString: container.getConnectionUri(), max: 1 });
-  await admin0.query(`CREATE ROLE bos_owner LOGIN PASSWORD '${OWNER_PW}'`);
-  await admin0.query(`CREATE ROLE bos_app LOGIN PASSWORD '${APP_PW}'`);
-  await admin0.query('CREATE DATABASE bos OWNER bos_owner');
-  await admin0.query('GRANT CONNECT ON DATABASE bos TO bos_app');
-  await admin0.end();
-  const bosAdmin = new Pool({ connectionString: urlFor('test', 'test', 'bos'), max: 1 });
-  // As infra/postgres/init-dbs.sh does: pg_trgm lives in public, so a missing grant shows up in the tests.
-  await bosAdmin.query('REVOKE ALL ON SCHEMA public FROM PUBLIC');
-  await bosAdmin.query(
-    'ALTER DEFAULT PRIVILEGES FOR ROLE bos_owner GRANT USAGE ON SCHEMAS TO bos_app',
-  );
-  await bosAdmin.query(
-    'ALTER DEFAULT PRIVILEGES FOR ROLE bos_owner GRANT SELECT, INSERT, UPDATE, DELETE ON TABLES TO bos_app',
-  );
-  await bosAdmin.end();
-  await runMigrations(urlFor('bos_owner', OWNER_PW, 'bos'));
+  // A copy of the migrated template: roles, public-schema grants and default privileges as
+  // infra/postgres/init-dbs.sh sets them (pg_trgm lives in public, so a missing grant shows up in the tests).
+  const testDb = await createTestDatabase();
 
-  const ownerPool = new Pool({ connectionString: urlFor('bos_owner', OWNER_PW, 'bos'), max: 2 });
-  const appPool = new Pool({ connectionString: urlFor('bos_app', APP_PW, 'bos'), max: 8 });
+  const ownerPool = new Pool({ connectionString: testDb.ownerUrl, max: 2 });
+  const appPool = new Pool({ connectionString: testDb.appUrl, max: 8 });
   const db: Db = drizzle({ client: appPool as never });
   const pool = appPool as unknown as AppPool;
 
@@ -369,7 +342,7 @@ export async function startHarness({ Pool, drizzle }: Driver): Promise<Harness> 
     stop: async () => {
       await appPool.end();
       await ownerPool.end();
-      await container.stop();
+      await testDb.drop();
     },
   };
 }

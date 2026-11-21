@@ -35,7 +35,6 @@ import {
   quotationTaxSummary,
   quotationVersions,
   rolePermissions,
-  runMigrations,
   verificationCases,
 } from '@bos/db';
 import {
@@ -45,7 +44,6 @@ import {
   HttpException,
   NotFoundException,
 } from '@nestjs/common';
-import { PostgreSqlContainer, type StartedPostgreSqlContainer } from '@testcontainers/postgresql';
 import { and, asc, eq, sql } from 'drizzle-orm';
 import { drizzle } from 'drizzle-orm/node-postgres';
 import { Pool } from 'pg';
@@ -76,13 +74,11 @@ import {
   type QuotationFixture,
   type QuotationFixtureDb,
 } from './quotation.fixture';
+import { createTestDatabase, type TestDatabase } from '@bos/db/testing';
 
 vi.setConfig({ testTimeout: 60_000, hookTimeout: 180_000 });
 
-const OWNER_PW = 'owner-test-pw';
-const APP_PW = 'app-test-pw';
-
-let container: StartedPostgreSqlContainer;
+let testDb: TestDatabase;
 let ownerPool: Pool;
 let appPool: Pool;
 let db: QuotationFixtureDb;
@@ -140,34 +136,15 @@ const money = {
   toNprSnapshot: () => Promise.reject(new Error('MoneyService is not used for NPR quotations')),
 } as unknown as MoneyService;
 
-const urlFor = (user: string, password: string, database: string) => {
-  const url = new URL(container.getConnectionUri());
-  url.username = user;
-  url.password = password;
-  url.pathname = `/${database}`;
-  return url.toString();
-};
-
 beforeAll(async () => {
-  container = await new PostgreSqlContainer('postgres:16-alpine').start();
-  const admin0 = new Pool({ connectionString: container.getConnectionUri(), max: 1 });
-  await admin0.query(`CREATE ROLE bos_owner LOGIN PASSWORD '${OWNER_PW}'`);
-  await admin0.query(`CREATE ROLE bos_app LOGIN PASSWORD '${APP_PW}'`);
-  await admin0.query('CREATE DATABASE bos OWNER bos_owner');
-  await admin0.query('GRANT CONNECT ON DATABASE bos TO bos_app');
+  testDb = await createTestDatabase();
+  const admin0 = new Pool({ connectionString: testDb.adminUrl, max: 1 });
   await admin0.end();
-  const bosAdmin = new Pool({ connectionString: urlFor('test', 'test', 'bos'), max: 1 });
-  await bosAdmin.query(
-    'ALTER DEFAULT PRIVILEGES FOR ROLE bos_owner GRANT USAGE ON SCHEMAS TO bos_app',
-  );
-  await bosAdmin.query(
-    'ALTER DEFAULT PRIVILEGES FOR ROLE bos_owner GRANT SELECT, INSERT, UPDATE, DELETE ON TABLES TO bos_app',
-  );
+  const bosAdmin = new Pool({ connectionString: testDb.adminUrl, max: 1 });
   await bosAdmin.end();
-  await runMigrations(urlFor('bos_owner', OWNER_PW, 'bos'));
 
-  ownerPool = new Pool({ connectionString: urlFor('bos_owner', OWNER_PW, 'bos'), max: 2 });
-  appPool = new Pool({ connectionString: urlFor('bos_app', APP_PW, 'bos'), max: 8 });
+  ownerPool = new Pool({ connectionString: testDb.ownerUrl, max: 2 });
+  appPool = new Pool({ connectionString: testDb.appUrl, max: 8 });
   db = drizzle({ client: appPool });
 
   f = await seedQuotationFixture(db);
@@ -187,7 +164,7 @@ beforeAll(async () => {
 afterAll(async () => {
   await appPool?.end();
   await ownerPool?.end();
-  await container?.stop();
+  await testDb?.drop();
 });
 
 beforeEach(() => {

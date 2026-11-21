@@ -11,7 +11,6 @@ import { copyFile, mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promi
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
-import { PostgreSqlContainer, type StartedPostgreSqlContainer } from '@testcontainers/postgresql';
 import { Pool, type PoolClient } from 'pg';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 
@@ -22,8 +21,8 @@ import {
   createTenantWithEntity,
   type TenantWithEntity,
 } from './testing/fixtures.js';
+import { createTestDatabase, type TestDatabase } from './testing/test-database.js';
 
-const OWNER_PW = 'owner-test-pw';
 const FIRST_TAG = '0101_opportunity_lead_creator';
 const BACKFILL_TAG = '0102_opportunity_lead_creator_backfill';
 const ACTOR = 'system:migration-0102';
@@ -35,8 +34,7 @@ interface JournalEntry {
   tag: string;
 }
 
-let container: StartedPostgreSqlContainer;
-let admin: Pool;
+let testDb: TestDatabase;
 let owner: Pool;
 let beforeFolder: string;
 let sql0102: string[];
@@ -130,16 +128,8 @@ async function migrationEvents(): Promise<number> {
 }
 
 beforeAll(async () => {
-  container = await new PostgreSqlContainer('postgres:16-alpine').start();
-  admin = new Pool({ connectionString: container.getConnectionUri(), max: 1 });
-  await admin.query(`CREATE ROLE bos_owner LOGIN PASSWORD '${OWNER_PW}'`);
-  await admin.query('CREATE ROLE bos_app');
-  await admin.query('CREATE DATABASE bos OWNER bos_owner');
-  const url = new URL(container.getConnectionUri());
-  url.username = 'bos_owner';
-  url.password = OWNER_PW;
-  url.pathname = '/bos';
-  const ownerUrl = url.toString();
+  testDb = await createTestDatabase({ migrated: false });
+  const ownerUrl = testDb.ownerUrl;
   owner = new Pool({ connectionString: ownerUrl, max: 2 });
 
   const journal = JSON.parse(
@@ -187,8 +177,7 @@ beforeAll(async () => {
 
 afterAll(async () => {
   await owner?.end();
-  await admin?.end();
-  await container?.stop();
+  await testDb?.drop();
   if (beforeFolder) await rm(beforeFolder, { recursive: true, force: true });
 });
 

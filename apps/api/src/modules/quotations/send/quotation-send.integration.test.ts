@@ -25,7 +25,6 @@ import {
   outbox,
   quotationStatusHistory,
   quotationVersions,
-  runMigrations,
 } from '@bos/db';
 import {
   BadRequestException,
@@ -34,7 +33,6 @@ import {
   HttpException,
   NotFoundException,
 } from '@nestjs/common';
-import { PostgreSqlContainer, type StartedPostgreSqlContainer } from '@testcontainers/postgresql';
 import type { Queue } from 'bullmq';
 import { eq, sql } from 'drizzle-orm';
 import { drizzle } from 'drizzle-orm/node-postgres';
@@ -68,11 +66,10 @@ import {
 import { PricingService } from '../pricing/pricing.service';
 import { QUOTATION_OWNER_TYPE } from '../quotation-owner.policy';
 import { QuotationSendService, QuotationSendStore } from './quotation-send.service';
+import { createTestDatabase, type TestDatabase } from '@bos/db/testing';
 
 vi.setConfig({ testTimeout: 60_000, hookTimeout: 180_000 });
 
-const OWNER_PW = 'owner-test-pw';
-const APP_PW = 'app-test-pw';
 /** 11:45 in Kathmandu on 9 Nov 2026; the golden body is valid until 2026-12-09. */
 const NOW = new Date('2026-11-09T06:00:00Z');
 /** 00:15 on 10 Dec 2026 in Kathmandu: the day after the golden valid_until. */
@@ -80,7 +77,7 @@ const AFTER_EXPIRY = new Date('2026-12-09T18:30:00Z');
 const PORTAL = 'https://portal.example.test';
 const BUYER_EMAIL = 'buyer@acme.example';
 
-let container: StartedPostgreSqlContainer;
+let testDb: TestDatabase;
 let ownerPool: Pool;
 let appPool: Pool;
 let db: QuotationFixtureDb;
@@ -133,14 +130,6 @@ const money = {
   toNprSnapshot: () => Promise.reject(new Error('MoneyService is not used for NPR quotations')),
 } as unknown as MoneyService;
 
-const urlFor = (user: string, password: string, database: string) => {
-  const url = new URL(container.getConnectionUri());
-  url.username = user;
-  url.password = password;
-  url.pathname = `/${database}`;
-  return url.toString();
-};
-
 /** A customer contact; `email` must already be lower-cased and trimmed (customer_contacts_email_norm_check). */
 async function seedContact(customerId: string, email: string | null): Promise<string> {
   const { rows } = await withTx(db, scopeA, systemActor('test'), (tx) =>
@@ -154,25 +143,14 @@ async function seedContact(customerId: string, email: string | null): Promise<st
 }
 
 beforeAll(async () => {
-  container = await new PostgreSqlContainer('postgres:16-alpine').start();
-  const admin0 = new Pool({ connectionString: container.getConnectionUri(), max: 1 });
-  await admin0.query(`CREATE ROLE bos_owner LOGIN PASSWORD '${OWNER_PW}'`);
-  await admin0.query(`CREATE ROLE bos_app LOGIN PASSWORD '${APP_PW}'`);
-  await admin0.query('CREATE DATABASE bos OWNER bos_owner');
-  await admin0.query('GRANT CONNECT ON DATABASE bos TO bos_app');
+  testDb = await createTestDatabase();
+  const admin0 = new Pool({ connectionString: testDb.adminUrl, max: 1 });
   await admin0.end();
-  const bosAdmin = new Pool({ connectionString: urlFor('test', 'test', 'bos'), max: 1 });
-  await bosAdmin.query(
-    'ALTER DEFAULT PRIVILEGES FOR ROLE bos_owner GRANT USAGE ON SCHEMAS TO bos_app',
-  );
-  await bosAdmin.query(
-    'ALTER DEFAULT PRIVILEGES FOR ROLE bos_owner GRANT SELECT, INSERT, UPDATE, DELETE ON TABLES TO bos_app',
-  );
+  const bosAdmin = new Pool({ connectionString: testDb.adminUrl, max: 1 });
   await bosAdmin.end();
-  await runMigrations(urlFor('bos_owner', OWNER_PW, 'bos'));
 
-  ownerPool = new Pool({ connectionString: urlFor('bos_owner', OWNER_PW, 'bos'), max: 2 });
-  appPool = new Pool({ connectionString: urlFor('bos_app', APP_PW, 'bos'), max: 8 });
+  ownerPool = new Pool({ connectionString: testDb.ownerUrl, max: 2 });
+  appPool = new Pool({ connectionString: testDb.appUrl, max: 8 });
   db = drizzle({ client: appPool });
 
   f = await seedQuotationFixture(db);
@@ -235,7 +213,7 @@ beforeAll(async () => {
 afterAll(async () => {
   await appPool?.end();
   await ownerPool?.end();
-  await container?.stop();
+  await testDb?.drop();
 });
 
 beforeEach(() => {

@@ -1,7 +1,7 @@
 // Integration test for migration 0093 (FX-Q3): invited and inactive members a retired department left behind are
 // unassigned (department NULL, level staff), each with a `department.member.removed` event, and nothing else changes.
-// Needs Docker: a real postgres:16-alpine from Testcontainers (its own database, so no compose stack is
-// involved). Run with:
+// Needs Docker: a database of its own, copied from the unmigrated template of the shared test cluster
+// (testing/vitest-global-setup.ts), so no compose stack is involved. Run with:
 //   pnpm --filter @bos/db exec vitest run src/retired-department-members-migration.test.ts
 //
 // The database is migrated with the real SQL up to 0092, given departments retired the way the old retire route
@@ -12,7 +12,6 @@ import { copyFile, mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promi
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
-import { PostgreSqlContainer, type StartedPostgreSqlContainer } from '@testcontainers/postgresql';
 import { Pool, type PoolClient } from 'pg';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 
@@ -23,8 +22,8 @@ import {
   createTenantWithEntity,
   type TenantWithEntity,
 } from './testing/fixtures.js';
+import { createTestDatabase, type TestDatabase } from './testing/test-database.js';
 
-const OWNER_PW = 'owner-test-pw';
 const TAG = '0093_retired_department_members_repair';
 const ACTOR = 'system:migration-0093';
 
@@ -39,8 +38,7 @@ interface Membership {
   level: string;
 }
 
-let container: StartedPostgreSqlContainer;
-let admin: Pool;
+let testDb: TestDatabase;
 let owner: Pool;
 let beforeFolder: string;
 let sql0093: string[];
@@ -129,16 +127,8 @@ async function migrationEvents(): Promise<number> {
 }
 
 beforeAll(async () => {
-  container = await new PostgreSqlContainer('postgres:16-alpine').start();
-  admin = new Pool({ connectionString: container.getConnectionUri(), max: 1 });
-  await admin.query(`CREATE ROLE bos_owner LOGIN PASSWORD '${OWNER_PW}'`);
-  await admin.query('CREATE ROLE bos_app');
-  await admin.query('CREATE DATABASE bos OWNER bos_owner');
-  const url = new URL(container.getConnectionUri());
-  url.username = 'bos_owner';
-  url.password = OWNER_PW;
-  url.pathname = '/bos';
-  const ownerUrl = url.toString();
+  testDb = await createTestDatabase({ migrated: false });
+  const ownerUrl = testDb.ownerUrl;
   owner = new Pool({ connectionString: ownerUrl, max: 2 });
 
   const journal = JSON.parse(
@@ -185,8 +175,7 @@ beforeAll(async () => {
 
 afterAll(async () => {
   await owner?.end();
-  await admin?.end();
-  await container?.stop();
+  await testDb?.drop();
   if (beforeFolder) await rm(beforeFolder, { recursive: true, force: true });
 });
 

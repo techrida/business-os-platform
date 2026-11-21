@@ -7,27 +7,14 @@
 // so every test uses a fresh random tenant and cannot see another test's rows.
 import { randomUUID } from 'node:crypto';
 
-import { PostgreSqlContainer, type StartedPostgreSqlContainer } from '@testcontainers/postgresql';
 import { Pool, type PoolClient } from 'pg';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { createTestDatabase, type TestDatabase } from './testing/test-database.js';
 
-import { runMigrations } from './migrate.js';
-
-const OWNER_PW = 'owner-test-pw';
-const APP_PW = 'app-test-pw';
-
-let container: StartedPostgreSqlContainer;
+let testDb: TestDatabase;
 let superuser: Pool;
 let owner: Pool;
 let app: Pool;
-
-function urlFor(user: string, password: string, database: string): string {
-  const url = new URL(container.getConnectionUri());
-  url.username = user;
-  url.password = password;
-  url.pathname = `/${database}`;
-  return url.toString();
-}
 
 interface Scope {
   tenantId: string;
@@ -130,39 +117,22 @@ async function verify(tenantId: string, month?: string): Promise<Verify> {
 }
 
 beforeAll(async () => {
-  container = await new PostgreSqlContainer('postgres:16-alpine').start();
+  testDb = await createTestDatabase();
 
-  const admin = new Pool({ connectionString: container.getConnectionUri(), max: 1 });
-  await admin.query(`CREATE ROLE bos_owner LOGIN PASSWORD '${OWNER_PW}'`);
-  await admin.query(`CREATE ROLE bos_app LOGIN PASSWORD '${APP_PW}'`);
-  await admin.query('CREATE DATABASE bos OWNER bos_owner');
-  await admin.query('REVOKE ALL ON DATABASE bos FROM PUBLIC');
-  await admin.query('GRANT CONNECT ON DATABASE bos TO bos_app');
+  const admin = new Pool({ connectionString: testDb.adminUrl, max: 1 });
   await admin.end();
 
-  superuser = new Pool({ connectionString: urlFor('test', 'test', 'bos'), max: 2 });
-  // All three lines of init-dbs.sh, including sequences: 0001 must take back what they grant (finding 6).
-  await superuser.query(
-    'ALTER DEFAULT PRIVILEGES FOR ROLE bos_owner GRANT USAGE ON SCHEMAS TO bos_app',
-  );
-  await superuser.query(
-    'ALTER DEFAULT PRIVILEGES FOR ROLE bos_owner GRANT SELECT, INSERT, UPDATE, DELETE ON TABLES TO bos_app',
-  );
-  await superuser.query(
-    'ALTER DEFAULT PRIVILEGES FOR ROLE bos_owner GRANT USAGE, SELECT ON SEQUENCES TO bos_app',
-  );
+  superuser = new Pool({ connectionString: testDb.adminUrl, max: 2 });
 
-  await runMigrations(urlFor('bos_owner', OWNER_PW, 'bos'));
-
-  owner = new Pool({ connectionString: urlFor('bos_owner', OWNER_PW, 'bos'), max: 2 });
-  app = new Pool({ connectionString: urlFor('bos_app', APP_PW, 'bos'), max: 20 });
+  owner = new Pool({ connectionString: testDb.ownerUrl, max: 2 });
+  app = new Pool({ connectionString: testDb.appUrl, max: 20 });
 });
 
 afterAll(async () => {
   await app?.end();
   await owner?.end();
   await superuser?.end();
-  await container?.stop();
+  await testDb?.drop();
 });
 
 describe('privileges', () => {

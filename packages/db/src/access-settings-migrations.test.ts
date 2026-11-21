@@ -2,28 +2,24 @@
 // verifies tenancy rules, audit triggers, check constraints, unique constraints, and composite
 // cross-tenant/cross-entity foreign keys on app.access_revisions, app.access_assignment_rules,
 // and app.access_assignment_handovers.
-// Needs Docker (postgres:16-alpine via Testcontainers). Run with:
+// Needs Docker (a migrated database of its own on the run's shared postgres:16-alpine). Run with:
 //   pnpm --filter @bos/db exec vitest run src/access-settings-migrations.test.ts
 import { randomUUID } from 'node:crypto';
 
-import { PostgreSqlContainer, type StartedPostgreSqlContainer } from '@testcontainers/postgresql';
 import { Pool, type PoolClient } from 'pg';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 
 import { assertAudit } from './check-audit.js';
 import { assertTenancy } from './check-tenancy.js';
-import { runMigrations } from './migrate.js';
 import {
   createDepartment,
   createStaffUser,
   createTenantWithEntity,
   type TenantWithEntity,
 } from './testing/fixtures.js';
+import { createTestDatabase, type TestDatabase } from './testing/test-database.js';
 
-const OWNER_PW = 'owner-test-pw';
-
-let container: StartedPostgreSqlContainer;
-let admin: Pool;
+let testDb: TestDatabase;
 let owner: Pool;
 let tenantA: TenantWithEntity;
 let tenantB: TenantWithEntity;
@@ -59,19 +55,8 @@ async function writeAs<T>(
 }
 
 beforeAll(async () => {
-  container = await new PostgreSqlContainer('postgres:16-alpine').start();
-  admin = new Pool({ connectionString: container.getConnectionUri(), max: 1 });
-  await admin.query(`CREATE ROLE bos_owner LOGIN PASSWORD '${OWNER_PW}'`);
-  await admin.query('CREATE ROLE bos_app');
-  await admin.query('CREATE DATABASE bos OWNER bos_owner');
-  const url = new URL(container.getConnectionUri());
-  url.username = 'bos_owner';
-  url.password = OWNER_PW;
-  url.pathname = '/bos';
-  const ownerUrl = url.toString();
-  owner = new Pool({ connectionString: ownerUrl, max: 2 });
-
-  await runMigrations(ownerUrl);
+  testDb = await createTestDatabase();
+  owner = new Pool({ connectionString: testDb.ownerUrl, max: 2 });
 
   tenantA = await createTenantWithEntity(owner);
   tenantB = await createTenantWithEntity(owner);
@@ -84,8 +69,7 @@ beforeAll(async () => {
 
 afterAll(async () => {
   await owner?.end();
-  await admin?.end();
-  await container?.stop();
+  await testDb?.drop();
 });
 
 describe('0084 and 0085 tenancy and audit compliance', () => {

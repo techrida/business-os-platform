@@ -26,9 +26,7 @@ import {
   createTenantWithEntity,
   documents,
   documentVersions,
-  runMigrations,
 } from '@bos/db';
-import { PostgreSqlContainer, type StartedPostgreSqlContainer } from '@testcontainers/postgresql';
 import { sql } from 'drizzle-orm';
 import { drizzle } from 'drizzle-orm/node-postgres';
 import { Pool } from 'pg';
@@ -50,15 +48,14 @@ import { PAYMENT_INTAKE_OWNER_TYPE } from '../payments/payment-owner.policy';
 import { PaymentsService } from '../payments/payments.service';
 import { AllocationsService } from './allocations.service';
 import { ReceivablesService } from './receivables.service';
+import { createTestDatabase, type TestDatabase } from '@bos/db/testing';
 
 vi.setConfig({ testTimeout: 90_000, hookTimeout: 180_000 });
 
-const OWNER_PW = 'owner-test-pw';
-const APP_PW = 'app-test-pw';
 /** 11:45 in Kathmandu on 2026-11-09; seeded invoices are issued 2026-11-01 and due 2026-12-01. */
 const NOW = new Date('2026-11-09T06:00:00Z');
 
-let container: StartedPostgreSqlContainer;
+let testDb: TestDatabase;
 let appPool: Pool;
 let db: Db;
 let payments: PaymentsService;
@@ -67,14 +64,6 @@ let receivables: ReceivablesService;
 const ledger = new LedgerService();
 const system = systemActor('receivables-test');
 let nextSeq = 1;
-
-function urlFor(user: string, password: string, database: string): string {
-  const url = new URL(container.getConnectionUri());
-  url.username = user;
-  url.password = password;
-  url.pathname = `/${database}`;
-  return url.toString();
-}
 
 function userActor(id: string): Actor {
   return { kind: 'user', id, correlationId: `test-${randomUUID()}` };
@@ -255,25 +244,13 @@ async function statementOf(w: World, invoiceId: string) {
 }
 
 beforeAll(async () => {
-  container = await new PostgreSqlContainer('postgres:16-alpine').start();
-  const admin = new Pool({ connectionString: container.getConnectionUri(), max: 1 });
-  await admin.query(`CREATE ROLE bos_owner LOGIN PASSWORD '${OWNER_PW}'`);
-  await admin.query(`CREATE ROLE bos_app LOGIN PASSWORD '${APP_PW}'`);
-  await admin.query('CREATE DATABASE bos OWNER bos_owner');
-  await admin.query('REVOKE ALL ON DATABASE bos FROM PUBLIC');
-  await admin.query('GRANT CONNECT ON DATABASE bos TO bos_app');
+  testDb = await createTestDatabase();
+  const admin = new Pool({ connectionString: testDb.adminUrl, max: 1 });
   await admin.end();
-  const bosAdmin = new Pool({ connectionString: urlFor('test', 'test', 'bos'), max: 1 });
-  await bosAdmin.query(
-    'ALTER DEFAULT PRIVILEGES FOR ROLE bos_owner GRANT USAGE ON SCHEMAS TO bos_app',
-  );
-  await bosAdmin.query(
-    'ALTER DEFAULT PRIVILEGES FOR ROLE bos_owner GRANT SELECT, INSERT, UPDATE, DELETE ON TABLES TO bos_app',
-  );
+  const bosAdmin = new Pool({ connectionString: testDb.adminUrl, max: 1 });
   await bosAdmin.end();
-  await runMigrations(urlFor('bos_owner', OWNER_PW, 'bos'));
 
-  appPool = new Pool({ connectionString: urlFor('bos_app', APP_PW, 'bos'), max: 14 });
+  appPool = new Pool({ connectionString: testDb.appUrl, max: 14 });
   appPool.on('error', () => undefined);
   db = drizzle({ client: appPool });
   const settings = { get: () => Promise.resolve(7) } as unknown as SettingsService;
@@ -294,7 +271,7 @@ beforeAll(async () => {
 
 afterAll(async () => {
   await appPool?.end();
-  await container?.stop();
+  await testDb?.drop();
 });
 
 describe('paid is derived (check 8)', () => {

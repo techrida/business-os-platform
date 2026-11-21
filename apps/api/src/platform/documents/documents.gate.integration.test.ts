@@ -15,10 +15,9 @@ import type { AddressInfo } from 'node:net';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
-import { createTenantWithEntity, runMigrations } from '@bos/db';
+import { createTenantWithEntity } from '@bos/db';
 import { type INestApplication } from '@nestjs/common';
 import { Test } from '@nestjs/testing';
-import { PostgreSqlContainer, type StartedPostgreSqlContainer } from '@testcontainers/postgresql';
 import type { Queue } from 'bullmq';
 import { sql } from 'drizzle-orm';
 import { drizzle } from 'drizzle-orm/node-postgres';
@@ -36,6 +35,7 @@ import { DocumentsService } from './documents.service';
 import { FilesController } from './files.controller';
 import { SignedLinks, type LinkStore } from './signed-link';
 import { DiskStorageAdapter } from './storage.adapter';
+import { createTestDatabase, type TestDatabase } from '@bos/db/testing';
 
 // requestTx() reads the HTTP request context, which does not exist in this in-process setup. Everything
 // else in tx.ts (withTx) is the real code.
@@ -50,8 +50,6 @@ vi.mock('../db/tx', async (importOriginal) => {
 
 vi.setConfig({ testTimeout: 60_000, hookTimeout: 180_000 });
 
-const OWNER_PW = 'owner-test-pw';
-const APP_PW = 'app-test-pw';
 const SECRET = 'an-integration-test-secret-of-32-plus-chars';
 const USER = randomUUID();
 
@@ -66,7 +64,7 @@ class MemoryStore implements LinkStore {
   }
 }
 
-let container: StartedPostgreSqlContainer;
+let testDb: TestDatabase;
 let pool: Pool;
 let db: Db;
 let app: INestApplication;
@@ -85,33 +83,13 @@ const canAttach = vi.fn((_scope: TxScope, _ownerId: string, _tx?: unknown) =>
   Promise.resolve(attachAllowed),
 );
 
-const urlFor = (user: string, password: string, database: string) => {
-  const url = new URL(container.getConnectionUri());
-  url.username = user;
-  url.password = password;
-  url.pathname = `/${database}`;
-  return url.toString();
-};
-
 beforeAll(async () => {
-  container = await new PostgreSqlContainer('postgres:16-alpine').start();
-  const admin = new Pool({ connectionString: container.getConnectionUri(), max: 1 });
-  await admin.query(`CREATE ROLE bos_owner LOGIN PASSWORD '${OWNER_PW}'`);
-  await admin.query(`CREATE ROLE bos_app LOGIN PASSWORD '${APP_PW}'`);
-  await admin.query('CREATE DATABASE bos OWNER bos_owner');
-  await admin.query('REVOKE ALL ON DATABASE bos FROM PUBLIC');
-  await admin.query('GRANT CONNECT ON DATABASE bos TO bos_app');
+  testDb = await createTestDatabase();
+  const admin = new Pool({ connectionString: testDb.adminUrl, max: 1 });
   await admin.end();
-  const bosAdmin = new Pool({ connectionString: urlFor('test', 'test', 'bos'), max: 1 });
-  await bosAdmin.query(
-    'ALTER DEFAULT PRIVILEGES FOR ROLE bos_owner GRANT USAGE ON SCHEMAS TO bos_app',
-  );
-  await bosAdmin.query(
-    'ALTER DEFAULT PRIVILEGES FOR ROLE bos_owner GRANT SELECT, INSERT, UPDATE, DELETE ON TABLES TO bos_app',
-  );
+  const bosAdmin = new Pool({ connectionString: testDb.adminUrl, max: 1 });
   await bosAdmin.end();
-  await runMigrations(urlFor('bos_owner', OWNER_PW, 'bos'));
-  pool = new Pool({ connectionString: urlFor('bos_app', APP_PW, 'bos'), max: 8 });
+  pool = new Pool({ connectionString: testDb.appUrl, max: 8 });
   db = drizzle({ client: pool });
 
   const { tenantId, organizationId } = await createTenantWithEntity(pool);
@@ -155,7 +133,7 @@ beforeAll(async () => {
 afterAll(async () => {
   await app?.close();
   await pool?.end();
-  await container?.stop();
+  await testDb?.drop();
   if (storageRoot) await rm(storageRoot, { recursive: true, force: true });
 });
 

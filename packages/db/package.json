@@ -11,6 +11,9 @@
       "bos-source": "./src/index.ts",
       "types": "./dist/index.d.ts",
       "default": "./dist/index.js"
+    },
+    "./testing": {
+      "bos-source": "./src/testing/test-database.ts"
     }
   },
   "files": [

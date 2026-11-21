@@ -15,10 +15,9 @@ import type { Server } from 'node:http';
 import type { AddressInfo } from 'node:net';
 
 import { PortalSalesOrderSchema } from '@bos/contracts';
-import { createParty, runMigrations } from '@bos/db';
+import { createParty } from '@bos/db';
 import type { INestApplication } from '@nestjs/common';
 import { Test } from '@nestjs/testing';
-import { PostgreSqlContainer, type StartedPostgreSqlContainer } from '@testcontainers/postgresql';
 import { sql } from 'drizzle-orm';
 import { drizzle } from 'drizzle-orm/node-postgres';
 import { Pool } from 'pg';
@@ -37,15 +36,14 @@ import {
 } from '../quotations/drafting/quotation.fixture';
 import { PortalMilestonesController } from './portal-milestones.controller';
 import { PortalMilestonesService } from './portal-milestones.service';
+import { createTestDatabase, type TestDatabase } from '@bos/db/testing';
 
 vi.setConfig({ testTimeout: 90_000, hookTimeout: 180_000 });
 
-const OWNER_PW = 'owner-test-pw';
-const APP_PW = 'app-test-pw';
 const REQUEST_ID = 'portal-milestones-probe-0001';
 const seedActor = systemActor('portal-milestones-test-seed');
 
-let container: StartedPostgreSqlContainer;
+let testDb: TestDatabase;
 let pool: Pool;
 let db: QuotationFixtureDb;
 let app: INestApplication;
@@ -59,14 +57,6 @@ let invSeq = 0;
 
 let current: Principal;
 const caller = { current: () => current };
-
-const urlFor = (user: string, password: string, database: string) => {
-  const url = new URL(container.getConnectionUri());
-  url.username = user;
-  url.password = password;
-  url.pathname = `/${database}`;
-  return url.toString();
-};
 
 /** The orders the tests read. */
 const orders = {} as {
@@ -202,25 +192,13 @@ const PLANNED_ONLY: LineSeed[] = [
 ];
 
 beforeAll(async () => {
-  container = await new PostgreSqlContainer('postgres:16-alpine').start();
-  const admin = new Pool({ connectionString: container.getConnectionUri(), max: 1 });
-  await admin.query(`CREATE ROLE bos_owner LOGIN PASSWORD '${OWNER_PW}'`);
-  await admin.query(`CREATE ROLE bos_app LOGIN PASSWORD '${APP_PW}'`);
-  await admin.query('CREATE DATABASE bos OWNER bos_owner');
-  await admin.query('REVOKE ALL ON DATABASE bos FROM PUBLIC');
-  await admin.query('GRANT CONNECT ON DATABASE bos TO bos_app');
+  testDb = await createTestDatabase();
+  const admin = new Pool({ connectionString: testDb.adminUrl, max: 1 });
   await admin.end();
-  const bosAdmin = new Pool({ connectionString: urlFor('test', 'test', 'bos'), max: 1 });
-  await bosAdmin.query(
-    'ALTER DEFAULT PRIVILEGES FOR ROLE bos_owner GRANT USAGE ON SCHEMAS TO bos_app',
-  );
-  await bosAdmin.query(
-    'ALTER DEFAULT PRIVILEGES FOR ROLE bos_owner GRANT SELECT, INSERT, UPDATE, DELETE ON TABLES TO bos_app',
-  );
+  const bosAdmin = new Pool({ connectionString: testDb.adminUrl, max: 1 });
   await bosAdmin.end();
-  await runMigrations(urlFor('bos_owner', OWNER_PW, 'bos'));
 
-  pool = new Pool({ connectionString: urlFor('bos_app', APP_PW, 'bos'), max: 6 });
+  pool = new Pool({ connectionString: testDb.appUrl, max: 6 });
   db = drizzle({ client: pool });
 
   f = await seedQuotationFixture(db);
@@ -266,7 +244,7 @@ beforeAll(async () => {
 afterAll(async () => {
   await app?.close();
   await pool?.end();
-  await container?.stop();
+  await testDb?.drop();
 });
 
 function customer(

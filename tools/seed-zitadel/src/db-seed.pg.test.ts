@@ -1,13 +1,12 @@
-// The kernel seed against a real postgres:16-alpine (Testcontainers, needs Docker), migrated to the latest
-// migration. The fake-client tests in db-seed.test.ts pin the SQL; these prove what the fakes cannot: the 0079
+// The kernel seed against a database of the shared test cluster (vitest-global-setup.ts, needs Docker), migrated
+// to the latest migration. The fake-client tests in db-seed.test.ts pin the SQL; these prove what the fakes cannot: the 0079
 // department-head triggers agree with what the seed files, a re-run writes nothing (not even an audit row), and a
 // reseed leaves the Founder's own grants and level rows alone.
 // Run with: pnpm --filter ./tools/seed-zitadel exec vitest run src/db-seed.pg.test.ts
 import { randomUUID } from 'node:crypto';
 
 import { DEFAULT_ROLE_PERMISSIONS } from '@bos/contracts';
-import { runMigrations } from '@bos/db';
-import { PostgreSqlContainer, type StartedPostgreSqlContainer } from '@testcontainers/postgresql';
+import { createTestDatabase, type TestDatabase } from '@bos/db/testing';
 import { Pool, type PoolClient } from 'pg';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 
@@ -21,33 +20,22 @@ import {
   seedKernelRows,
 } from './db-seed.js';
 
-const OWNER_PW = 'owner-test-pw';
-/** Container start plus every migration. */
+/** A copy of the migrated template database. */
 const SETUP_TIMEOUT = 180_000;
 const TEST_TIMEOUT = 60_000;
 
-let container: StartedPostgreSqlContainer;
+let testDb: TestDatabase;
 let owner: Pool;
 
 beforeAll(async () => {
-  container = await new PostgreSqlContainer('postgres:16-alpine').start();
-  const admin = new Pool({ connectionString: container.getConnectionUri(), max: 1 });
-  await admin.query(`CREATE ROLE bos_owner LOGIN PASSWORD '${OWNER_PW}'`);
-  // The migrations grant to bos_app; the seed itself runs as the table owner, like the real tool.
-  await admin.query('CREATE ROLE bos_app');
-  await admin.query('CREATE DATABASE bos OWNER bos_owner');
-  await admin.end();
-  const url = new URL(container.getConnectionUri());
-  url.username = 'bos_owner';
-  url.password = OWNER_PW;
-  url.pathname = '/bos';
-  await runMigrations(url.toString());
-  owner = new Pool({ connectionString: url.toString(), max: 3 });
+  testDb = await createTestDatabase();
+  // The seed runs as the table owner, like the real tool.
+  owner = new Pool({ connectionString: testDb.ownerUrl, max: 3 });
 }, SETUP_TIMEOUT);
 
 afterAll(async () => {
   await owner?.end();
-  await container?.stop();
+  await testDb?.drop();
 }, 60_000);
 
 /** A tenant with its TR-like entity, staff IdP org and the VEND-DEV and CUST-DEV parties the tenancy step creates. */

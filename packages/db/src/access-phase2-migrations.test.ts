@@ -1,7 +1,7 @@
 // Integration test for migration 0088 (the default access model, phase 2): Marketing's missing defaults, the D50
 // lead access changes on seeded rows, the default level rows, quotations.department_id with its triggers and
 // backfill, and the update guard on the 0080 department stamp (D55-4).
-// Needs Docker: a real postgres:16-alpine from Testcontainers (its own database, so no compose stack is
+// Needs Docker: an unmigrated database of its own on the run's shared postgres:16-alpine (no compose stack is
 // involved). Run with:
 //   pnpm --filter @bos/db exec vitest run src/access-phase2-migrations.test.ts
 //
@@ -15,7 +15,6 @@ import { copyFile, mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promi
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
-import { PostgreSqlContainer, type StartedPostgreSqlContainer } from '@testcontainers/postgresql';
 import { Pool, type PoolClient } from 'pg';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 
@@ -27,8 +26,8 @@ import {
   createTenantWithEntity,
   type TenantWithEntity,
 } from './testing/fixtures.js';
+import { createTestDatabase, type TestDatabase } from './testing/test-database.js';
 
-const OWNER_PW = 'owner-test-pw';
 const TAG = '0088_access_phase2_grants';
 
 interface JournalEntry {
@@ -44,8 +43,7 @@ interface LevelRow {
   scope: string;
 }
 
-let container: StartedPostgreSqlContainer;
-let admin: Pool;
+let testDb: TestDatabase;
 let owner: Pool;
 /** A copy of the migrations folder that stops after `tag`, so this test is not shifted by later migrations. */
 async function folderThrough(tag: string): Promise<string> {
@@ -248,16 +246,8 @@ async function newDepartment(): Promise<{ departmentId: string; userId: string }
 }
 
 beforeAll(async () => {
-  container = await new PostgreSqlContainer('postgres:16-alpine').start();
-  admin = new Pool({ connectionString: container.getConnectionUri(), max: 1 });
-  await admin.query(`CREATE ROLE bos_owner LOGIN PASSWORD '${OWNER_PW}'`);
-  await admin.query('CREATE ROLE bos_app');
-  await admin.query('CREATE DATABASE bos OWNER bos_owner');
-  const url = new URL(container.getConnectionUri());
-  url.username = 'bos_owner';
-  url.password = OWNER_PW;
-  url.pathname = '/bos';
-  const ownerUrl = url.toString();
+  testDb = await createTestDatabase({ migrated: false });
+  const ownerUrl = testDb.ownerUrl;
   owner = new Pool({ connectionString: ownerUrl, max: 2 });
 
   const journal = JSON.parse(
@@ -381,8 +371,7 @@ beforeAll(async () => {
 
 afterAll(async () => {
   await owner?.end();
-  await admin?.end();
-  await container?.stop();
+  await testDb?.drop();
   if (beforeFolder) await rm(beforeFolder, { recursive: true, force: true });
   if (throughFolder) await rm(throughFolder, { recursive: true, force: true });
 });

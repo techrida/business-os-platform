@@ -6,9 +6,8 @@
 // migrate as bos_owner, then work as bos_app.
 import { randomUUID } from 'node:crypto';
 
-import { appSchema, createTenantWithEntity, idempotencyKeys, runMigrations } from '@bos/db';
+import { appSchema, createTenantWithEntity, idempotencyKeys } from '@bos/db';
 import { ConflictException, UnprocessableEntityException } from '@nestjs/common';
-import { PostgreSqlContainer, type StartedPostgreSqlContainer } from '@testcontainers/postgresql';
 import { eq } from 'drizzle-orm';
 import { integer, text, uuid } from 'drizzle-orm/pg-core';
 import { drizzle } from 'drizzle-orm/node-postgres';
@@ -18,11 +17,9 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { type Db } from './db.module';
 import { updateVersioned, withIdempotency } from './idempotency';
 import { type Actor, type TxScope, systemActor, withTx } from './tx';
+import { createTestDatabase, type TestDatabase } from '@bos/db/testing';
 
-const OWNER_PW = 'owner-test-pw';
-const APP_PW = 'app-test-pw';
-
-let container: StartedPostgreSqlContainer;
+let testDb: TestDatabase;
 let ownerPool: Pool;
 let appPool: Pool;
 let db: Db;
@@ -35,14 +32,6 @@ const probes = appSchema.table('idem_probes', {
   name: text('name').notNull(),
   version: integer('version').notNull().default(1),
 });
-
-function urlFor(user: string, password: string, database: string): string {
-  const url = new URL(container.getConnectionUri());
-  url.username = user;
-  url.password = password;
-  url.pathname = `/${database}`;
-  return url.toString();
-}
 
 /** Each test uses its own tenant, so no test sees another's rows. */
 async function newScope(): Promise<TxScope> {
@@ -57,28 +46,15 @@ function userActor(id = randomUUID()): Actor {
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
 beforeAll(async () => {
-  container = await new PostgreSqlContainer('postgres:16-alpine').start();
+  testDb = await createTestDatabase();
 
-  const admin = new Pool({ connectionString: container.getConnectionUri(), max: 1 });
-  await admin.query(`CREATE ROLE bos_owner LOGIN PASSWORD '${OWNER_PW}'`);
-  await admin.query(`CREATE ROLE bos_app LOGIN PASSWORD '${APP_PW}'`);
-  await admin.query('CREATE DATABASE bos OWNER bos_owner');
-  await admin.query('REVOKE ALL ON DATABASE bos FROM PUBLIC');
-  await admin.query('GRANT CONNECT ON DATABASE bos TO bos_app');
+  const admin = new Pool({ connectionString: testDb.adminUrl, max: 1 });
   await admin.end();
 
-  const bosAdmin = new Pool({ connectionString: urlFor('test', 'test', 'bos'), max: 1 });
-  await bosAdmin.query(
-    'ALTER DEFAULT PRIVILEGES FOR ROLE bos_owner GRANT USAGE ON SCHEMAS TO bos_app',
-  );
-  await bosAdmin.query(
-    'ALTER DEFAULT PRIVILEGES FOR ROLE bos_owner GRANT SELECT, INSERT, UPDATE, DELETE ON TABLES TO bos_app',
-  );
+  const bosAdmin = new Pool({ connectionString: testDb.adminUrl, max: 1 });
   await bosAdmin.end();
 
-  await runMigrations(urlFor('bos_owner', OWNER_PW, 'bos'));
-
-  ownerPool = new Pool({ connectionString: urlFor('bos_owner', OWNER_PW, 'bos'), max: 1 });
+  ownerPool = new Pool({ connectionString: testDb.ownerUrl, max: 1 });
   await ownerPool.query(
     `CREATE TABLE app.idem_probes (
        id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -88,7 +64,7 @@ beforeAll(async () => {
        version integer NOT NULL DEFAULT 1)`,
   );
 
-  appPool = new Pool({ connectionString: urlFor('bos_app', APP_PW, 'bos'), max: 10 });
+  appPool = new Pool({ connectionString: testDb.appUrl, max: 10 });
   // An idle client that Postgres drops during teardown (57P01) emits 'error' on the pool; unhandled,
   // vitest counts it as a failure. The app's pool ignores it the same way.
   appPool.on('error', () => undefined);
@@ -98,7 +74,7 @@ beforeAll(async () => {
 afterAll(async () => {
   await ownerPool?.end();
   await appPool?.end();
-  await container?.stop();
+  await testDb?.drop();
 });
 
 describe('withIdempotency', () => {

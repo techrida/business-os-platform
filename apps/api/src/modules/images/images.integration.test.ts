@@ -24,15 +24,8 @@ import {
   type RoleKey,
   type Scope,
 } from '@bos/contracts';
-import {
-  createParty,
-  createStaffUser,
-  createTenantWithEntity,
-  organizations,
-  runMigrations,
-} from '@bos/db';
+import { createParty, createStaffUser, createTenantWithEntity, organizations } from '@bos/db';
 import { HttpException } from '@nestjs/common';
-import { PostgreSqlContainer, type StartedPostgreSqlContainer } from '@testcontainers/postgresql';
 import type { Queue } from 'bullmq';
 import { sql } from 'drizzle-orm';
 import { drizzle } from 'drizzle-orm/node-postgres';
@@ -62,11 +55,10 @@ import {
 import { drizzleImageOwnerLoaders, imageOwnerPolicies } from './image-owner.policies';
 import { ImagesController } from './images.controller';
 import { drizzleImagePointers, ImagesService } from './images.service';
+import { createTestDatabase, type TestDatabase } from '@bos/db/testing';
 
 vi.setConfig({ testTimeout: 60_000, hookTimeout: 180_000 });
 
-const OWNER_PW = 'owner-test-pw';
-const APP_PW = 'app-test-pw';
 const SECRET = 'an-integration-test-secret-of-32-plus-chars';
 
 /** A 1x1 PNG: real bytes, so the real type check (file-type) recognises it. */
@@ -81,7 +73,7 @@ class MemoryStore implements LinkStore {
   }
 }
 
-let container: StartedPostgreSqlContainer;
+let testDb: TestDatabase;
 let pool: Pool;
 let db: Db;
 let storageRoot: string;
@@ -99,14 +91,6 @@ type Tenant = { tenantId: string; organizationId: string; idpOrgId: string; user
 let a: Tenant;
 let b: Tenant;
 let entityA2: string;
-
-const urlFor = (user: string, password: string, database: string) => {
-  const url = new URL(container.getConnectionUri());
-  url.username = user;
-  url.password = password;
-  url.pathname = `/${database}`;
-  return url.toString();
-};
 
 /** A staff principal of `t` acting for `organizationId`, with the default grants of `role`. */
 function staff(t: Tenant, role: RoleKey = 'founder', organizationId = t.organizationId): Principal {
@@ -304,25 +288,13 @@ async function partyOfA(ownerType: 'customer_logo' | 'vendor_logo'): Promise<str
 }
 
 beforeAll(async () => {
-  container = await new PostgreSqlContainer('postgres:16-alpine').start();
-  const admin = new Pool({ connectionString: container.getConnectionUri(), max: 1 });
-  await admin.query(`CREATE ROLE bos_owner LOGIN PASSWORD '${OWNER_PW}'`);
-  await admin.query(`CREATE ROLE bos_app LOGIN PASSWORD '${APP_PW}'`);
-  await admin.query('CREATE DATABASE bos OWNER bos_owner');
-  await admin.query('REVOKE ALL ON DATABASE bos FROM PUBLIC');
-  await admin.query('GRANT CONNECT ON DATABASE bos TO bos_app');
+  testDb = await createTestDatabase();
+  const admin = new Pool({ connectionString: testDb.adminUrl, max: 1 });
   await admin.end();
-  const bosAdmin = new Pool({ connectionString: urlFor('test', 'test', 'bos'), max: 1 });
-  await bosAdmin.query(
-    'ALTER DEFAULT PRIVILEGES FOR ROLE bos_owner GRANT USAGE ON SCHEMAS TO bos_app',
-  );
-  await bosAdmin.query(
-    'ALTER DEFAULT PRIVILEGES FOR ROLE bos_owner GRANT SELECT, INSERT, UPDATE, DELETE ON TABLES TO bos_app',
-  );
+  const bosAdmin = new Pool({ connectionString: testDb.adminUrl, max: 1 });
   await bosAdmin.end();
-  await runMigrations(urlFor('bos_owner', OWNER_PW, 'bos'));
 
-  pool = new Pool({ connectionString: urlFor('bos_app', APP_PW, 'bos'), max: 12 });
+  pool = new Pool({ connectionString: testDb.appUrl, max: 12 });
   pool.on('error', () => undefined);
   db = drizzle({ client: pool });
   const audit = new AuditService(db);
@@ -377,7 +349,7 @@ beforeAll(async () => {
 afterAll(async () => {
   await fakeClamd?.close();
   await pool?.end();
-  await container?.stop();
+  await testDb?.drop();
   if (storageRoot) await rm(storageRoot, { recursive: true, force: true });
 });
 

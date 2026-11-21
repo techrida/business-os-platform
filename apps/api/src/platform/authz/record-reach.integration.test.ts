@@ -11,8 +11,7 @@
 import { randomUUID } from 'node:crypto';
 
 import type { AccessScope, Permission } from '@bos/contracts';
-import { createTenantWithEntity, invoices, leads, runMigrations, vendorBills } from '@bos/db';
-import { PostgreSqlContainer, type StartedPostgreSqlContainer } from '@testcontainers/postgresql';
+import { createTenantWithEntity, invoices, leads, vendorBills } from '@bos/db';
 import { asc, inArray } from 'drizzle-orm';
 import { drizzle } from 'drizzle-orm/node-postgres';
 import type { AnyPgColumn } from 'drizzle-orm/pg-core';
@@ -25,27 +24,17 @@ import { scopeWhereFor } from './authz.service';
 import { can } from './can';
 import type { Principal, ResourceRef, ScopableTable } from './principal';
 import { loadReaders } from './record-reach';
-
-const OWNER_PW = 'owner-test-pw';
-const APP_PW = 'app-test-pw';
+import { createTestDatabase, type TestDatabase } from '@bos/db/testing';
 
 const ME = randomUUID();
 const SOMEONE_ELSE = randomUUID();
 const MY_DEPT = randomUUID();
 const OTHER_DEPT = randomUUID();
 
-let container: StartedPostgreSqlContainer;
+let testDb: TestDatabase;
 let appPool: Pool;
 let db: Db;
 let scope: TxScope;
-
-function urlFor(user: string, password: string, database: string): string {
-  const url = new URL(container.getConnectionUri());
-  url.username = user;
-  url.password = password;
-  url.pathname = `/${database}`;
-  return url.toString();
-}
 
 /** The leads, by what makes each one reachable (or not) for ME. */
 const LEAD = {
@@ -63,33 +52,20 @@ const INVOICE = { mine: randomUUID(), theirs: randomUUID(), nobodys: randomUUID(
 const BILL = { mine: randomUUID(), theirs: randomUUID() } as const;
 
 beforeAll(async () => {
-  container = await new PostgreSqlContainer('postgres:16-alpine').start();
+  testDb = await createTestDatabase();
 
-  const admin = new Pool({ connectionString: container.getConnectionUri(), max: 1 });
-  await admin.query(`CREATE ROLE bos_owner LOGIN PASSWORD '${OWNER_PW}'`);
-  await admin.query(`CREATE ROLE bos_app LOGIN PASSWORD '${APP_PW}'`);
-  await admin.query('CREATE DATABASE bos OWNER bos_owner');
-  await admin.query('REVOKE ALL ON DATABASE bos FROM PUBLIC');
-  await admin.query('GRANT CONNECT ON DATABASE bos TO bos_app');
+  const admin = new Pool({ connectionString: testDb.adminUrl, max: 1 });
   await admin.end();
 
-  const bosAdmin = new Pool({ connectionString: urlFor('test', 'test', 'bos'), max: 1 });
-  await bosAdmin.query(
-    'ALTER DEFAULT PRIVILEGES FOR ROLE bos_owner GRANT USAGE ON SCHEMAS TO bos_app',
-  );
-  await bosAdmin.query(
-    'ALTER DEFAULT PRIVILEGES FOR ROLE bos_owner GRANT SELECT, INSERT, UPDATE, DELETE ON TABLES TO bos_app',
-  );
+  const bosAdmin = new Pool({ connectionString: testDb.adminUrl, max: 1 });
   await bosAdmin.end();
 
-  await runMigrations(urlFor('bos_owner', OWNER_PW, 'bos'));
-
-  appPool = new Pool({ connectionString: urlFor('bos_app', APP_PW, 'bos'), max: 4 });
+  appPool = new Pool({ connectionString: testDb.appUrl, max: 4 });
   db = drizzle({ client: appPool });
   const created = await createTenantWithEntity(appPool);
   scope = { tenantId: created.tenantId, organizationId: created.organizationId };
 
-  const seed = new Pool({ connectionString: urlFor('test', 'test', 'bos'), max: 1 });
+  const seed = new Pool({ connectionString: testDb.adminUrl, max: 1 });
   const client = await seed.connect();
   try {
     await client.query('BEGIN');
@@ -175,7 +151,7 @@ beforeAll(async () => {
 
 afterAll(async () => {
   await appPool?.end();
-  await container?.stop();
+  await testDb?.drop();
 });
 
 function staff(grants: [Permission, AccessScope][], departmentId: string | null): Principal {

@@ -33,11 +33,9 @@ import {
   openItemBalances,
   openItems,
   postingEvents,
-  runMigrations,
   users,
 } from '@bos/db';
 import { type ArgumentsHost, ForbiddenException, HttpException } from '@nestjs/common';
-import { PostgreSqlContainer, type StartedPostgreSqlContainer } from '@testcontainers/postgresql';
 import { and, asc, eq, inArray, lt, sql } from 'drizzle-orm';
 import { drizzle } from 'drizzle-orm/node-postgres';
 import { Pool } from 'pg';
@@ -66,16 +64,15 @@ import { ReceivablesService } from '../../receivables/receivables.service';
 import { InvoiceDraftingService } from '../invoice-drafting.service';
 import { InvoiceIssueService } from '../invoice-issue.service';
 import { NoteDraftingService } from './note-drafting.service';
+import { createTestDatabase, type TestDatabase } from '@bos/db/testing';
 
 vi.setConfig({ testTimeout: 90_000, hookTimeout: 180_000 });
 
-const OWNER_PW = 'owner-test-pw';
-const APP_PW = 'app-test-pw';
 /** 2026-11-09 11:45 in Kathmandu: BS 2083-07-23, fiscal year 2083/84. */
 const NOW = new Date('2026-11-09T06:00:00Z');
 const CN_NUMBER = /^CN-2083\/84-\d{5}$/;
 
-let container: StartedPostgreSqlContainer;
+let testDb: TestDatabase;
 let ownerPool: Pool;
 let appPool: Pool;
 let db: QuotationFixtureDb;
@@ -150,13 +147,6 @@ const settings = {
 // Every currency passes here; the refusal of a disabled one is unit-tested in invoice-drafting.currency.test.ts.
 const currencies = { assertEnabled: () => Promise.resolve() } as unknown as CurrencyEnabledService;
 
-const urlFor = (user: string, password: string, database: string) => {
-  const url = new URL(container.getConnectionUri());
-  url.username = user;
-  url.password = password;
-  url.pathname = `/${database}`;
-  return url.toString();
-};
 const key = () => `key-${randomUUID()}`;
 const userActor = (id: string): Actor => ({ kind: 'user', id, correlationId: `t-${randomUUID()}` });
 const statusOf = (e: unknown): number => (e as HttpException).getStatus();
@@ -409,25 +399,14 @@ function httpOf(exception: unknown): { status?: number; body?: unknown } {
 }
 
 beforeAll(async () => {
-  container = await new PostgreSqlContainer('postgres:16-alpine').start();
-  const admin0 = new Pool({ connectionString: container.getConnectionUri(), max: 1 });
-  await admin0.query(`CREATE ROLE bos_owner LOGIN PASSWORD '${OWNER_PW}'`);
-  await admin0.query(`CREATE ROLE bos_app LOGIN PASSWORD '${APP_PW}'`);
-  await admin0.query('CREATE DATABASE bos OWNER bos_owner');
-  await admin0.query('GRANT CONNECT ON DATABASE bos TO bos_app');
+  testDb = await createTestDatabase();
+  const admin0 = new Pool({ connectionString: testDb.adminUrl, max: 1 });
   await admin0.end();
-  const bosAdmin = new Pool({ connectionString: urlFor('test', 'test', 'bos'), max: 1 });
-  await bosAdmin.query(
-    'ALTER DEFAULT PRIVILEGES FOR ROLE bos_owner GRANT USAGE ON SCHEMAS TO bos_app',
-  );
-  await bosAdmin.query(
-    'ALTER DEFAULT PRIVILEGES FOR ROLE bos_owner GRANT SELECT, INSERT, UPDATE, DELETE ON TABLES TO bos_app',
-  );
+  const bosAdmin = new Pool({ connectionString: testDb.adminUrl, max: 1 });
   await bosAdmin.end();
-  await runMigrations(urlFor('bos_owner', OWNER_PW, 'bos'));
 
-  ownerPool = new Pool({ connectionString: urlFor('bos_owner', OWNER_PW, 'bos'), max: 2 });
-  appPool = new Pool({ connectionString: urlFor('bos_app', APP_PW, 'bos'), max: 12 });
+  ownerPool = new Pool({ connectionString: testDb.ownerUrl, max: 2 });
+  appPool = new Pool({ connectionString: testDb.appUrl, max: 12 });
   appPool.on('error', () => undefined);
   db = drizzle({ client: appPool });
 
@@ -479,7 +458,7 @@ beforeAll(async () => {
 afterAll(async () => {
   await appPool?.end();
   await ownerPool?.end();
-  await container?.stop();
+  await testDb?.drop();
 });
 
 describe('credit-note issue: settlement and release (done checks 7 and 8)', () => {

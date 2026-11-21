@@ -18,7 +18,6 @@ import {
   runMigrations,
 } from '@bos/db';
 import { ForbiddenException } from '@nestjs/common';
-import { PostgreSqlContainer, type StartedPostgreSqlContainer } from '@testcontainers/postgresql';
 import { sql } from 'drizzle-orm';
 import { drizzle } from 'drizzle-orm/node-postgres';
 import { migrate } from 'drizzle-orm/node-postgres/migrator';
@@ -31,13 +30,11 @@ import { systemActor, withTx, type TxScope } from '../../../platform/db/tx';
 import { CostCentersService } from './cost-centers.service';
 import { CostCentersController } from './cost-centers.controller';
 import { AuditService } from '../../../platform/audit/audit.service';
+import { createTestDatabase, type TestDatabase } from '@bos/db/testing';
 
 vi.setConfig({ testTimeout: 60_000, hookTimeout: 180_000 });
 
-const OWNER_PW = 'owner-test-pw';
-const APP_PW = 'app-test-pw';
-
-let container: StartedPostgreSqlContainer;
+let testDb: TestDatabase;
 let appPool: Pool;
 let ownerPool: Pool;
 const migratedPrIds: string[] = [];
@@ -74,30 +71,9 @@ const caller = {
 };
 let service: CostCentersService;
 
-const urlFor = (user: string, password: string, database: string) => {
-  const url = new URL(container.getConnectionUri());
-  url.username = user;
-  url.password = password;
-  url.pathname = `/${database}`;
-  return url.toString();
-};
-
 beforeAll(async () => {
-  container = await new PostgreSqlContainer('postgres:16-alpine').start();
-  const admin0 = new Pool({ connectionString: container.getConnectionUri(), max: 1 });
-  await admin0.query(`CREATE ROLE bos_owner LOGIN PASSWORD '${OWNER_PW}'`);
-  await admin0.query(`CREATE ROLE bos_app LOGIN PASSWORD '${APP_PW}'`);
-  await admin0.query('CREATE DATABASE bos OWNER bos_owner');
-  await admin0.query('GRANT CONNECT ON DATABASE bos TO bos_app');
-  await admin0.end();
-  const bosAdmin = new Pool({ connectionString: urlFor('test', 'test', 'bos'), max: 1 });
-  await bosAdmin.query(
-    'ALTER DEFAULT PRIVILEGES FOR ROLE bos_owner GRANT USAGE ON SCHEMAS TO bos_app',
-  );
-  await bosAdmin.query(
-    'ALTER DEFAULT PRIVILEGES FOR ROLE bos_owner GRANT SELECT, INSERT, UPDATE, DELETE ON TABLES TO bos_app',
-  );
-  await bosAdmin.end();
+  // Unmigrated: this test applies the pre-0037 migrations itself, then upgrades a populated schema.
+  testDb = await createTestDatabase({ migrated: false });
   // Apply the real pre-0037 schema first, then populate it before upgrading.
   const priorFolder = mkdtempSync(join(tmpdir(), 'bos-cost-centers-'));
   const journal = JSON.parse(
@@ -113,14 +89,14 @@ beforeAll(async () => {
       join(MIGRATIONS_FOLDER, `${entry.tag}.sql`),
       join(priorFolder, `${entry.tag}.sql`),
     );
-  ownerPool = new Pool({ connectionString: urlFor('bos_owner', OWNER_PW, 'bos'), max: 1 });
+  ownerPool = new Pool({ connectionString: testDb.ownerUrl, max: 1 });
   try {
     await migrate(drizzle({ client: ownerPool }), { migrationsFolder: priorFolder });
   } finally {
     rmSync(priorFolder, { recursive: true, force: true });
   }
 
-  appPool = new Pool({ connectionString: urlFor('bos_app', APP_PW, 'bos'), max: 4 });
+  appPool = new Pool({ connectionString: testDb.appUrl, max: 4 });
   db = drizzle({ client: appPool });
 
   // One tenant, entity A (the acting one) and entity B.
@@ -154,7 +130,7 @@ beforeAll(async () => {
       ),
     );
   }
-  await runMigrations(urlFor('bos_owner', OWNER_PW, 'bos'));
+  await runMigrations(testDb.ownerUrl);
   const general = await appPool.query<{ id: string; organization_id: string }>(
     "SELECT id, organization_id FROM app.cost_centers WHERE code = 'GENERAL' ORDER BY organization_id",
   );
@@ -179,7 +155,7 @@ beforeAll(async () => {
 afterAll(async () => {
   await appPool?.end();
   await ownerPool?.end();
-  await container?.stop();
+  await testDb?.drop();
 });
 
 describe('CostCentersService.list', () => {

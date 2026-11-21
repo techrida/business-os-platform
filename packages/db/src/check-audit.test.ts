@@ -1,20 +1,21 @@
-// Integration test for check-audit: a real postgres:16-alpine started by Testcontainers (needs Docker).
+// Integration test for check-audit: a database of its own on the run's shared postgres:16-alpine (needs Docker).
 // Run with: pnpm --filter @bos/db exec vitest run src/check-audit.test.ts
 //
 // It builds its own schemas and a stand-in audit.capture_row() instead of running the migrations, so it does
 // not depend on the real audit migration (0001). What it proves is the checker's logic: which tables it flags.
-import { PostgreSqlContainer, type StartedPostgreSqlContainer } from '@testcontainers/postgresql';
 import { Pool } from 'pg';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 
 import { assertAudit, checkAudit } from './check-audit.js';
+import { createTestDatabase, type TestDatabase } from './testing/test-database.js';
 
-let container: StartedPostgreSqlContainer;
+let testDb: TestDatabase;
 let pool: Pool;
 
 beforeAll(async () => {
-  container = await new PostgreSqlContainer('postgres:16-alpine').start();
-  pool = new Pool({ connectionString: container.getConnectionUri(), max: 2 });
+  // No migration: the file builds its own schemas.
+  testDb = await createTestDatabase({ migrated: false });
+  pool = new Pool({ connectionString: testDb.adminUrl, max: 2 });
   await pool.query('CREATE SCHEMA audit');
   await pool.query('CREATE SCHEMA app');
   // Fixture: same name and schema as the real function, but it does nothing.
@@ -29,7 +30,7 @@ beforeAll(async () => {
 
 afterAll(async () => {
   await pool?.end();
-  await container?.stop();
+  await testDb?.drop();
 });
 
 /** Runs the fixture SQL in a transaction, checks, and rolls back so tests never leak into each other. */

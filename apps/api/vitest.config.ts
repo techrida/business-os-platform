@@ -13,6 +13,8 @@ export default defineConfig({
   plugins: [swc.vite({ module: { type: 'es6' } })],
   resolve: {
     alias: {
+      // Before '@bos/db': an alias matches by prefix, so the longer name must come first.
+      '@bos/db/testing': source('../../packages/db/src/testing/test-database.ts'),
       '@bos/contracts': source('../../packages/contracts/src/index.ts'),
       '@bos/db': source('../../packages/db/src/index.ts'),
       '@bos/locale': source('../../packages/locale/src/index.ts'),
@@ -22,6 +24,11 @@ export default defineConfig({
   test: {
     environment: 'node',
     include: ['src/**/*.test.ts'],
+    // One Postgres for the whole run, migrated once; every integration test copies it
+    // (packages/db/src/testing/test-database.ts).
+    globalSetup: [source('../../packages/db/src/testing/vitest-global-setup.ts')],
+    // The gate machine has 31 GB and is shared with other sessions: a fixed cap beats one worker per core.
+    maxWorkers: 4,
     // Testcontainers teardown (pool.end + container.stop) can take > 10 s on a loaded gate machine.
     hookTimeout: 60_000,
   },

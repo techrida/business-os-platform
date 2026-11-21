@@ -14,13 +14,12 @@ import { copyFile, mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promi
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
-import { PostgreSqlContainer, type StartedPostgreSqlContainer } from '@testcontainers/postgresql';
 import { Pool, type PoolClient } from 'pg';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 
 import { MIGRATIONS_FOLDER, runMigrations } from './migrate.js';
+import { createTestDatabase, type TestDatabase } from './testing/test-database.js';
 
-const OWNER_PW = 'owner-test-pw';
 const KEY = 'quotation.term_presets';
 const MIGRATION_TAG = '0069_default_term_sets_for_existing_tenants';
 
@@ -44,8 +43,7 @@ interface Preset {
   body: string;
 }
 
-let container: StartedPostgreSqlContainer;
-let admin: Pool;
+let testDb: TestDatabase;
 let owner: Pool;
 let databaseUrl: string;
 let cutFolder: string;
@@ -158,16 +156,8 @@ const F_V2 = [custom('Newest v2 set')];
 const E_FILLER = Array.from({ length: 199 }, (_, i) => custom(`Filler ${i}`, 'scope'));
 
 beforeAll(async () => {
-  container = await new PostgreSqlContainer('postgres:16-alpine').start();
-  admin = new Pool({ connectionString: container.getConnectionUri(), max: 1 });
-  await admin.query(`CREATE ROLE bos_owner LOGIN PASSWORD '${OWNER_PW}'`);
-  await admin.query('CREATE ROLE bos_app');
-  await admin.query('CREATE DATABASE term_sets OWNER bos_owner');
-  const url = new URL(container.getConnectionUri());
-  url.pathname = '/term_sets';
-  url.username = 'bos_owner';
-  url.password = OWNER_PW;
-  databaseUrl = url.toString();
+  testDb = await createTestDatabase({ migrated: false });
+  databaseUrl = testDb.ownerUrl;
   owner = new Pool({ connectionString: databaseUrl, max: 2 });
 
   const sqlText = await readFile(join(MIGRATIONS_FOLDER, `${MIGRATION_TAG}.sql`), 'utf8');
@@ -216,8 +206,7 @@ beforeAll(async () => {
 
 afterAll(async () => {
   await owner?.end();
-  await admin?.end();
-  await container?.stop();
+  await testDb?.drop();
   if (cutFolder) await rm(cutFolder, { recursive: true, force: true });
 });
 

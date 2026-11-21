@@ -47,7 +47,6 @@ import {
   createParty,
   createStaffUser,
   createTenantWithEntity,
-  runMigrations,
 } from '@bos/db';
 import { formatBs, formatBsLong } from '@bos/locale';
 import {
@@ -56,7 +55,6 @@ import {
   HttpException,
   NotFoundException,
 } from '@nestjs/common';
-import { PostgreSqlContainer, type StartedPostgreSqlContainer } from '@testcontainers/postgresql';
 import type { Queue } from 'bullmq';
 import { sql } from 'drizzle-orm';
 import { drizzle } from 'drizzle-orm/node-postgres';
@@ -100,11 +98,10 @@ import {
   PO_VERSION_OWNER_TYPE,
   PurchaseOrderVersionOwnerPolicy,
 } from './purchase-order-version-owner.policy';
+import { createTestDatabase, type TestDatabase } from '@bos/db/testing';
 
 vi.setConfig({ testTimeout: 60_000, hookTimeout: 180_000 });
 
-const OWNER_PW = 'owner-test-pw';
-const APP_PW = 'app-test-pw';
 const SECRET = 'an-integration-test-secret-of-32-plus-chars';
 const ENTITY_PAN = '301234567';
 const now = new Date('2026-11-09T04:00:00Z');
@@ -124,7 +121,7 @@ class MemoryStore implements LinkStore {
   }
 }
 
-let container: StartedPostgreSqlContainer;
+let testDb: TestDatabase;
 let ownerPool: Pool;
 let pool: Pool;
 let db: Db;
@@ -195,38 +192,18 @@ const caller = {
   },
 };
 
-const urlFor = (user: string, password: string, database: string) => {
-  const url = new URL(container.getConnectionUri());
-  url.username = user;
-  url.password = password;
-  url.pathname = `/${database}`;
-  return url.toString();
-};
-
 const exec = (scope: TxScope, q: ReturnType<typeof sql>) =>
   withTx(db, scope, seedActor(), (tx) => tx.execute(q));
 
 beforeAll(async () => {
-  container = await new PostgreSqlContainer('postgres:16-alpine').start();
-  const admin = new Pool({ connectionString: container.getConnectionUri(), max: 1 });
-  await admin.query(`CREATE ROLE bos_owner LOGIN PASSWORD '${OWNER_PW}'`);
-  await admin.query(`CREATE ROLE bos_app LOGIN PASSWORD '${APP_PW}'`);
-  await admin.query('CREATE DATABASE bos OWNER bos_owner');
-  await admin.query('REVOKE ALL ON DATABASE bos FROM PUBLIC');
-  await admin.query('GRANT CONNECT ON DATABASE bos TO bos_app');
+  testDb = await createTestDatabase();
+  const admin = new Pool({ connectionString: testDb.adminUrl, max: 1 });
   await admin.end();
-  const bosAdmin = new Pool({ connectionString: urlFor('test', 'test', 'bos'), max: 1 });
-  await bosAdmin.query(
-    'ALTER DEFAULT PRIVILEGES FOR ROLE bos_owner GRANT USAGE ON SCHEMAS TO bos_app',
-  );
-  await bosAdmin.query(
-    'ALTER DEFAULT PRIVILEGES FOR ROLE bos_owner GRANT SELECT, INSERT, UPDATE, DELETE ON TABLES TO bos_app',
-  );
+  const bosAdmin = new Pool({ connectionString: testDb.adminUrl, max: 1 });
   await bosAdmin.end();
-  await runMigrations(urlFor('bos_owner', OWNER_PW, 'bos'));
 
-  ownerPool = new Pool({ connectionString: urlFor('bos_owner', OWNER_PW, 'bos'), max: 2 });
-  pool = new Pool({ connectionString: urlFor('bos_app', APP_PW, 'bos'), max: 8 });
+  ownerPool = new Pool({ connectionString: testDb.ownerUrl, max: 2 });
+  pool = new Pool({ connectionString: testDb.appUrl, max: 8 });
   db = drizzle({ client: pool });
 
   const tenant = await createTenantWithEntity(pool);
@@ -322,7 +299,7 @@ afterAll(async () => {
   );
   await pool?.end();
   await ownerPool?.end();
-  await container?.stop();
+  await testDb?.drop();
   if (storageRoot) await rm(storageRoot, { recursive: true, force: true });
 });
 

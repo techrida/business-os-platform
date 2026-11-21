@@ -25,16 +25,9 @@ import {
   PortalInvoiceListItemSchema,
   SignedLinkDtoSchema,
 } from '@bos/contracts';
-import {
-  createParty,
-  createPortalUser,
-  createTenantWithEntity,
-  invoicePrintLog,
-  runMigrations,
-} from '@bos/db';
+import { createParty, createPortalUser, createTenantWithEntity, invoicePrintLog } from '@bos/db';
 import type { INestApplication } from '@nestjs/common';
 import { Test } from '@nestjs/testing';
-import { PostgreSqlContainer, type StartedPostgreSqlContainer } from '@testcontainers/postgresql';
 import type { Queue } from 'bullmq';
 import { sql } from 'drizzle-orm';
 import { drizzle } from 'drizzle-orm/node-postgres';
@@ -60,11 +53,10 @@ import {
 import { LedgerService } from '../ledger/ledger.service';
 import { PortalBillingController } from './portal-billing.controller';
 import { PortalBillingService } from './portal-billing.service';
+import { createTestDatabase, type TestDatabase } from '@bos/db/testing';
 
 vi.setConfig({ testTimeout: 90_000, hookTimeout: 180_000 });
 
-const OWNER_PW = 'owner-test-pw';
-const APP_PW = 'app-test-pw';
 const SIGNING_SECRET = 'an-integration-test-secret-of-32-plus-chars';
 /** 11:45 in Kathmandu on 2026-11-09; seeded invoices are issued 2026-11-01 and due 2026-11-05. */
 const NOW = new Date('2026-11-09T06:00:00Z');
@@ -82,7 +74,7 @@ class MemoryLinkStore implements LinkStore {
   }
 }
 
-let container: StartedPostgreSqlContainer;
+let testDb: TestDatabase;
 let pool: Pool;
 let db: Db;
 let storageRoot: string;
@@ -98,14 +90,6 @@ let nextSeq = 1;
 let current: Principal;
 const caller = { current: () => current };
 
-const urlFor = (user: string, password: string, database: string) => {
-  const url = new URL(container.getConnectionUri());
-  url.username = user;
-  url.password = password;
-  url.pathname = `/${database}`;
-  return url.toString();
-};
-
 function first<T>(rows: T[]): T {
   const row = rows[0];
   if (row === undefined) throw new Error('expected a row');
@@ -113,25 +97,13 @@ function first<T>(rows: T[]): T {
 }
 
 beforeAll(async () => {
-  container = await new PostgreSqlContainer('postgres:16-alpine').start();
-  const admin = new Pool({ connectionString: container.getConnectionUri(), max: 1 });
-  await admin.query(`CREATE ROLE bos_owner LOGIN PASSWORD '${OWNER_PW}'`);
-  await admin.query(`CREATE ROLE bos_app LOGIN PASSWORD '${APP_PW}'`);
-  await admin.query('CREATE DATABASE bos OWNER bos_owner');
-  await admin.query('REVOKE ALL ON DATABASE bos FROM PUBLIC');
-  await admin.query('GRANT CONNECT ON DATABASE bos TO bos_app');
+  testDb = await createTestDatabase();
+  const admin = new Pool({ connectionString: testDb.adminUrl, max: 1 });
   await admin.end();
-  const bosAdmin = new Pool({ connectionString: urlFor('test', 'test', 'bos'), max: 1 });
-  await bosAdmin.query(
-    'ALTER DEFAULT PRIVILEGES FOR ROLE bos_owner GRANT USAGE ON SCHEMAS TO bos_app',
-  );
-  await bosAdmin.query(
-    'ALTER DEFAULT PRIVILEGES FOR ROLE bos_owner GRANT SELECT, INSERT, UPDATE, DELETE ON TABLES TO bos_app',
-  );
+  const bosAdmin = new Pool({ connectionString: testDb.adminUrl, max: 1 });
   await bosAdmin.end();
-  await runMigrations(urlFor('bos_owner', OWNER_PW, 'bos'));
 
-  pool = new Pool({ connectionString: urlFor('bos_app', APP_PW, 'bos'), max: 6 });
+  pool = new Pool({ connectionString: testDb.appUrl, max: 6 });
   db = drizzle({ client: pool });
 
   storageRoot = await mkdtemp(join(tmpdir(), 'bos-portal-billing-'));
@@ -163,7 +135,7 @@ beforeAll(async () => {
 afterAll(async () => {
   await app?.close();
   await pool?.end();
-  await container?.stop();
+  await testDb?.drop();
   if (storageRoot) await rm(storageRoot, { recursive: true, force: true });
 });
 
