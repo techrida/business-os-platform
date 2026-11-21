@@ -321,14 +321,20 @@ describe('BFF contract: workspace clients against the real API', () => {
     );
     expect(listing.items.map((c) => c.id)).toContain(s.customerId);
 
-    // `getCustomer` is the contract's CustomerDto, which has no `accounts`: dropping it is by design,
-    // `getCustomerDetail` is the reader that keeps it.
+    // `getCustomer` is the contract's CustomerDto, which has none of the detail-only fields: dropping them is by
+    // design, `getCustomerDetail` (CustomerDetailSchema) is the reader that keeps them. Beside `accounts`, later rounds
+    // added `people` (account owner names), `can` (record capabilities, D50), `verification` (case presence) and
+    // `portalAccess` (F1-Q31), all read through the detail reader below. Stale before: only `accounts` was allowed.
+    const detailOnly = ['accounts', 'people', 'can', 'verification', 'portalAccess'];
     const customer = await seen(() => bff.customers.getCustomer(sales(), s.customerId), {
-      allowDropped: ['accounts'],
+      allowDropped: detailOnly,
     });
     expect(customer.id).toBe(s.customerId);
+    // The reader that keeps them must drop none of them.
     const detail = await seen(() => bff.customers.getCustomerDetail(sales(), s.customerId));
     expect(detail.accounts, 'staff get the per-entity terms with the customer').toBeDefined();
+    expect(detail.can, 'the record capabilities reach the page').toBeDefined();
+    expect(detail.portalAccess, 'portal access reaches the page').toBeDefined();
 
     const contacts = await seen(() => bff.customers.listContacts(sales(), s.customerId), {
       list: true,
@@ -342,7 +348,7 @@ describe('BFF contract: workspace clients against the real API', () => {
     );
     expect(builderOpportunity.id).toBe(s.opportunityId);
     const builderCustomer = await seen(() => bff.builder.getCustomer(sales(), s.customerId), {
-      allowDropped: ['accounts'],
+      allowDropped: detailOnly,
     });
     expect(builderCustomer.id).toBe(s.customerId);
     const builderContacts = await seen(() => bff.builder.listContacts(sales(), s.customerId), {
