@@ -142,11 +142,21 @@
   inset-inline-end: var(--table-pin-end-4, 0);
 }
 
+/* Focus not obscured (WCAG 2.4.11): scrolling a focused cell into view stops short of the sticky band, so a link
+   in a scrolled column never lands underneath the pinned ones. PinnedColumnOffsets writes both widths. */
+.wrap[data-pinned-ready] {
+  scroll-padding-inline-end: var(--table-pin-total, 0);
+}
+
 /* On a phone, two or three sticky columns would cover most of the screen, so only the last one (Action) stays put;
    the others keep their band and scroll with the row. */
 @media (max-width: 767.98px) {
   .wrap[data-pinned-ready] .table [data-pinned]:not(:last-child) {
     position: static;
+  }
+
+  .wrap[data-pinned-ready] {
+    scroll-padding-inline-end: var(--table-pin-last, 0);
   }
 }
 
