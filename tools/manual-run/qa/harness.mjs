@@ -26,7 +26,12 @@ export async function openQA({ label = 'qa', viewport = '1440x900' } = {}) {
     acceptDownloads: true,
   });
   context.setDefaultTimeout(cfg.actionTimeout);
-  const s = await Session.open({ context, cfg, state: {}, log: (l) => console.error(redactText(l)) });
+  const s = await Session.open({
+    context,
+    cfg,
+    state: {},
+    log: (l) => console.error(redactText(l)),
+  });
   return { cfg, browser, context, s };
 }
 
@@ -44,10 +49,14 @@ export class Recorder {
   }
 }
 
-const slug = (t) => t.replace(/[^a-z0-9]+/gi, '-').toLowerCase().replace(/^-|-$/g, '');
+const slug = (t) =>
+  t
+    .replace(/[^a-z0-9]+/gi, '-')
+    .toLowerCase()
+    .replace(/^-|-$/g, '');
 
 /** Per-run helper object handed to every check body. */
-export function makeCtx(qa, rec) {
+export function makeCtx(qa) {
   const { s } = qa;
   const page = () => s.page;
   const ctx = {
@@ -62,7 +71,9 @@ export function makeCtx(qa, rec) {
     /** Open a route and wait for main content. */
     async open(url) {
       await s.goto(url, (p) => p.locator('main, body').first());
-      await page().waitForLoadState('networkidle', { timeout: 15000 }).catch(() => {});
+      await page()
+        .waitForLoadState('networkidle', { timeout: 15000 })
+        .catch(() => {});
     },
     async see(locator, desc, timeout) {
       await s.see(locator, desc, timeout);
@@ -118,7 +129,9 @@ export async function check(qa, rec, guide, id, title, fn, opts = {}) {
   try {
     url = redactUrl(qa.s.page.url());
     await qa.s.page.screenshot({ path: shot, fullPage: false });
-  } catch {}
+  } catch {
+    /* the screenshot is best effort */
+  }
   const row = {
     guide,
     id,
@@ -139,6 +152,16 @@ export async function check(qa, rec, guide, id, title, fn, opts = {}) {
 }
 
 export function skip(rec, guide, id, title, status, reason, extra = {}) {
-  rec.put({ guide, id, title, status, reason, controls: [], shot: '', when: new Date().toISOString(), ...extra });
+  rec.put({
+    guide,
+    id,
+    title,
+    status,
+    reason,
+    controls: [],
+    shot: '',
+    when: new Date().toISOString(),
+    ...extra,
+  });
   console.log(`[${guide} ${id}] ${status} ${title} :: ${reason}`);
 }

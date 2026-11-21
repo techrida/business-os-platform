@@ -7,10 +7,16 @@ export async function createLead(c, title) {
   await s.page.waitForLoadState('networkidle', { timeout: 15000 }).catch(() => {});
   await s.fill(s.page.getByRole('textbox', { name: 'Lead title', exact: true }), title);
   await s.choose(s.select(/(^| )Lead source$/), 'Referral');
-  await s.fill(s.page.getByRole('textbox', { name: 'Company or organization', exact: true }), `${title} Co`);
+  await s.fill(
+    s.page.getByRole('textbox', { name: 'Company or organization', exact: true }),
+    `${title} Co`,
+  );
   await s.fill('Contact person', 'QA Contact');
   await s.click(s.button('Create lead'), 'Create lead');
-  const landed = await s.page.waitForURL(/\/leads\/[0-9a-f-]{36}/, { timeout: 90000 }).then(() => true).catch(() => false);
+  const landed = await s.page
+    .waitForURL(/\/leads\/[0-9a-f-]{36}/, { timeout: 90000 })
+    .then(() => true)
+    .catch(() => false);
   if (!landed) {
     // A slow server action: find the lead by its exact title (never create it twice).
     await s.goto(`/leads?q=${encodeURIComponent(title)}`, (p) => p.locator('main'));
@@ -36,7 +42,13 @@ export async function submitDialog(c, name) {
     if (!(await f.isEditable().catch(() => false))) continue;
     if ((await f.inputValue()) === '') await f.fill('QA text from the round-5 browser run.');
   }
-  const submit = name ? d.getByRole('button', { name, exact: true }) : d.getByRole('button').filter({ hasNotText: /^(Cancel|Close)$/ }).filter({ hasNot: s.page.locator('[aria-label=Close]') }).last();
+  const submit = name
+    ? d.getByRole('button', { name, exact: true })
+    : d
+        .getByRole('button')
+        .filter({ hasText: /\S/ })
+        .filter({ hasNotText: /^(Cancel|Close)$/ })
+        .last();
   await submit.click({ delay: 80 });
 }
 
@@ -52,5 +64,8 @@ export async function markLost(c, reason = 'QA lost reason') {
   await p.getByRole('option').first().click({ delay: 80 });
   await d.getByRole('textbox', { name: 'Note' }).fill('QA note');
   await d.getByRole('button', { name: 'Mark lost', exact: true }).click({ delay: 80 });
-  await p.getByText(/Step 5:\s*Lost/).first().waitFor({ state: 'visible', timeout: 30000 });
+  await p
+    .getByText(/Step 5:\s*Lost/)
+    .first()
+    .waitFor({ state: 'visible', timeout: 30000 });
 }
