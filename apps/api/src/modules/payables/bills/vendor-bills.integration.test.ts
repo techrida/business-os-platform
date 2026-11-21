@@ -1822,9 +1822,15 @@ describe('removing evidence from a bill before save (round 5 P2)', () => {
     const bill = await varianceBill();
     expect(principalNow().grants.has('documents.upload')).toBe(false);
     const uploaded = await evidence.upload('vendor_bill', bill.id);
+    const cleanup = vi.spyOn(evidence.documents, 'cleanupRemoved');
     await evidence.service.remove('vendor_bill', bill.id, uploaded);
     const first = await removedAt(uploaded);
     expect(first).not.toBeNull();
+    // The quarantined bytes of the abandoned upload are deleted after the commit.
+    expect(cleanup).toHaveBeenCalledWith([
+      expect.objectContaining({ documentId: uploaded, status: 'quarantined' }),
+    ]);
+    cleanup.mockRestore();
 
     const refused = await httpErrorOf(
       service.requestException(
