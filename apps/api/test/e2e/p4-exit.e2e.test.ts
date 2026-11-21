@@ -19,6 +19,7 @@ import {
   VendorPortalPurchaseOrderViewSchema,
   type ApprovalRequestDto,
 } from '@bos/contracts';
+import { createCompanyBankAccount, createExpenseAccount } from '@bos/db';
 import {
   afterAll,
   beforeAll,
@@ -69,6 +70,9 @@ const s = {
   bill: undefined as VendorBillDto | undefined,
   payment: undefined as PaymentRequestDto | undefined,
   vat13: '',
+  // Round 5 P1: bill lines and payment requests must name real company accounts of the entity.
+  expenseAccountId: '',
+  bankAccountId: '',
   quotationId: '',
   openItemId: '',
   invoiceSubmissionId: '',
@@ -99,6 +103,10 @@ beforeAll(async () => {
   await new Promise<void>((resolve) => gotenberg.listen(0, '127.0.0.1', resolve));
   filesRoot = await mkdtemp(join(tmpdir(), 'bos-e2e-p4-exit-'));
   world = await seedP4World(e2e);
+  s.expenseAccountId = (await createExpenseAccount(world.pool, world.scope)).id;
+  s.bankAccountId = (
+    await createCompanyBankAccount(world.pool, { ...world.scope, currency: 'NPR' })
+  ).id;
   Object.assign(process.env, {
     CLAMD_HOST: clamd.host,
     CLAMD_PORT: String(clamd.port),
@@ -595,7 +603,7 @@ describe('P4 exit Journey 11: department request to approved payment request ove
           poLineId: line.id,
           receiptLineId: s.receipt!.lines.find((receiptLine) => receiptLine.poLineId === line.id)!
             .id,
-          accountId: randomUUID(),
+          accountId: s.expenseAccountId,
           quantity: '1',
           unitPrice: line.unitPrice,
           taxCodeId: s.vat13,
@@ -696,7 +704,7 @@ describe('P4 exit Journey 11: department request to approved payment request ove
         paymentType: 'settlement',
         purchaseOrderId: s.po!.id,
         currency: 'NPR',
-        fromBankAccountId: randomUUID(),
+        fromBankAccountId: s.bankAccountId,
         allocations: [{ openItemId: s.openItemId, amount: s.bill!.payableTotal }],
       },
       201,
