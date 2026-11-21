@@ -5,6 +5,7 @@ import { getApprovalRequest } from '@/lib/api-kernel';
 import { when } from '@/lib/kernel-format';
 import type { Session } from '@/lib/session';
 
+import { ApprovalActions } from '../../procurement/approval-actions';
 import { ApprovalTimeline } from '../../procurement/approval-timeline';
 import { approvalSummary } from '../../procurement/requests/_lib/model';
 
@@ -31,6 +32,7 @@ export function ApprovalHistory({ approval }: { approval: ApprovalRequestDto }) 
       )}
     >
       <ApprovalTimeline steps={approval.steps} />
+      <ApprovalActions actions={approval.actions} people={approval.people} />
     </Panel>
   );
 }
