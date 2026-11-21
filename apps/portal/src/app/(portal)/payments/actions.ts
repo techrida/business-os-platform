@@ -10,6 +10,7 @@ import { notFound, redirect } from 'next/navigation';
 import { todayInKathmandu } from '@/components/portal/quotation-status';
 import { ApiError } from '@/lib/api';
 import { submitPortalPayment } from '@/lib/api.billing';
+import { spaceAware } from '@/lib/amount-hint';
 import { getSession } from '@/lib/session';
 
 /**
@@ -143,6 +144,13 @@ export async function submitPaymentAction(
       const field: PaymentField | undefined =
         head === 'proofDocumentIds' ? 'proof' : (head as PaymentField | undefined);
       if (field !== undefined && field in FIELD_MESSAGE) fieldErrors[field] = FIELD_MESSAGE[field];
+    }
+    // A space inside a typed amount is named, not hidden behind the generic message.
+    if (fieldErrors.amount !== undefined) {
+      fieldErrors.amount = spaceAware(text(form, 'amount'), fieldErrors.amount);
+    }
+    if (fieldErrors.tdsWithheld !== undefined) {
+      fieldErrors.tdsWithheld = spaceAware(text(form, 'tdsWithheld'), fieldErrors.tdsWithheld);
     }
   }
   // The money date is the customer's own calendar day in Kathmandu; a future date is a typo.

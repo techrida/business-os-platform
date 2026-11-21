@@ -186,3 +186,13 @@ describe('submitBillAction', () => {
     expect(state.fieldErrors).toBeUndefined();
   });
 });
+
+describe('submitBillAction total with a space', () => {
+  it('says to remove the space for `10 50`, and keeps the generic message for other refusals', async () => {
+    expect((await send({ claimedTotal: '10 50' })).fieldErrors?.claimedTotal).toBe(
+      'Remove the space inside the number.',
+    );
+    expect((await send({ claimedTotal: '-5' })).fieldErrors?.claimedTotal).toMatch(/zero or more/);
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+});
