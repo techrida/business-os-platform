@@ -69,7 +69,7 @@ describe('retire', () => {
     const dialog = document.querySelector('[role="dialog"], [role="alertdialog"]');
     expect(dialog?.textContent).toContain('Retire Operating account?');
     expect(dialog?.textContent).toContain('new payment requests');
-    expect(dialog?.textContent).toContain('Documents already using it keep working');
+    expect(dialog?.textContent).toContain('Documents already using it keep showing its name');
 
     await click(dialogButton('Cancel'));
     await settle();

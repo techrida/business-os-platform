@@ -83,7 +83,6 @@ export function AddBankAccountForm({ currencies }: { currencies: readonly Curren
               autoComplete="off"
               required
               minLength={4}
-              maxLength={4}
               pattern="[A-Za-z0-9]{4}"
               title="Four letters or digits, for example 4821"
               className={local.short}
