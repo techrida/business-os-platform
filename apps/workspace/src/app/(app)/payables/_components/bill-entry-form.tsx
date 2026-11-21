@@ -1,13 +1,18 @@
 'use client';
 
 import { type ReactNode, useActionState, useId, useRef, useState } from 'react';
+import Link from 'next/link';
+
+import type { ExpenseAccount } from '@bos/contracts';
 
 import { PendingLine, useFocusOnProblem } from '@/components/p2/quotations/action-dialog';
 import { Alert } from '@/components/ui/alert';
 import { Button, LinkButton } from '@/components/ui/button';
+import { Combobox, useExclusiveOpen } from '@/components/ui/combobox';
 import { PageHeader } from '@/components/ui/page';
 import { Panel } from '@/components/ui/panel';
 import { Field, Input, Select } from '@/components/ui/field';
+import { expenseAccountOptions } from '@/lib/company-account-options';
 
 import type { ActionState } from '../../procurement/orders/_lib/state';
 import { convertSubmissionAction, createBillAction } from '../actions';
@@ -42,6 +47,8 @@ export interface TaxOption {
 
 const fieldName = (i: number, field: keyof LineRow): string => `line:${i}:${field}`;
 
+export const COMPANY_ACCOUNTS_HREF = '/settings/company-accounts';
+
 export function BillEntryForm({
   invoiceTitle = 'Vendor invoice',
   submissionId,
@@ -52,6 +59,9 @@ export function BillEntryForm({
   cancelHref,
   reloadHref,
   entry,
+  expenseAccounts = [],
+  canManageAccounts = false,
+  initialRows,
   children,
 }: {
   invoiceTitle?: string;
@@ -66,15 +76,26 @@ export function BillEntryForm({
   withholdingCodes?: readonly TaxOption[];
   cancelHref: string;
   reloadHref: string;
+  /**
+   * The entity's expense accounts, retired ones included, so a value already on a row keeps its label. The
+   * picker offers active accounts only.
+   */
+  expenseAccounts?: readonly ExpenseAccount[];
+  /** Whether the viewer may open Settings > Bank and expense accounts (decides the link in the empty message). */
+  canManageAccounts?: boolean;
+  /** Rows to start from instead of empty ones, e.g. lines kept from an earlier attempt. */
+  initialRows?: readonly LineRow[];
 }) {
   const [state, formAction, pending] = useActionState<ActionState, FormData>(
     entry === undefined ? convertSubmissionAction : createBillAction,
     { key: idempotencyKey },
   );
   const [rows, setRows] = useState<LineRow[]>(() =>
-    orderLines.length > 0
-      ? orderLines.map((l) => ({ ...EMPTY_ROW, poLineId: l.poLineId }))
-      : [{ ...EMPTY_ROW }],
+    initialRows !== undefined && initialRows.length > 0
+      ? initialRows.map((r) => ({ ...r }))
+      : orderLines.length > 0
+        ? orderLines.map((l) => ({ ...EMPTY_ROW, poLineId: l.poLineId }))
+        : [{ ...EMPTY_ROW }],
   );
   const [invoiceReady, setInvoiceReady] = useState(entry === undefined);
   const wrapRef = useRef<HTMLDivElement>(null);
@@ -87,6 +108,8 @@ export function BillEntryForm({
     setRows((all) => all.map((r, at) => (at === i ? { ...r, [field]: value } : r)));
 
   const formId = useId();
+  const picker = useExclusiveOpen();
+  const noAccounts = expenseAccountOptions(expenseAccounts).length === 0;
 
   return (
     <>
@@ -153,6 +176,19 @@ export function BillEntryForm({
                 ? 'Enter what the invoice charges for each order line. A line you leave empty is not billed now. The platform works out the totals.'
                 : 'Enter each line as the invoice shows it. The platform works out the VAT, the withholding and the totals.'}
             </p>
+            {noAccounts ? (
+              <Alert tone="warning" role="status" title="No expense accounts yet">
+                Each line is booked to an expense account, and none is set up for this company.{' '}
+                {canManageAccounts ? (
+                  <>
+                    Add one in <Link href={COMPANY_ACCOUNTS_HREF}>Bank and expense accounts</Link>,
+                    then come back to this bill.
+                  </>
+                ) : (
+                  'Ask someone in Finance to add one in Settings, under Bank and expense accounts.'
+                )}
+              </Alert>
+            ) : null}
 
             {rows.map((row, i) => {
               const order = orderLines[i];
@@ -214,19 +250,33 @@ export function BillEntryForm({
                       )}
                     </Field>
                     <Field
-                      label="Account ID"
-                      hint="The ledger account this line is booked to."
+                      label="Expense account"
+                      hint="The account this line is booked to."
                       error={errors[`${i}.accountId`]}
                     >
                       {(control) => (
-                        <Input
-                          name={fieldName(i, 'accountId')}
-                          value={row.accountId}
-                          onChange={(e) => set(i, 'accountId', e.target.value)}
-                          autoComplete="off"
-                          spellCheck={false}
-                          {...control}
-                        />
+                        <>
+                          <input
+                            type="hidden"
+                            name={fieldName(i, 'accountId')}
+                            value={row.accountId}
+                          />
+                          <Combobox
+                            labelledBy={control['aria-labelledby']}
+                            describedBy={control['aria-describedby']}
+                            invalid={control['aria-invalid'] === true}
+                            options={expenseAccountOptions(expenseAccounts, {
+                              currentId: row.accountId,
+                            })}
+                            value={row.accountId}
+                            onChange={(id) => set(i, 'accountId', id)}
+                            open={picker.isOpen(`account-${i}`)}
+                            onOpenChange={(open) => picker.setOpen(`account-${i}`, open)}
+                            placeholder="Search by code or name"
+                            emptyText="No expense accounts to choose from."
+                            noMatchText="No account matches. Search by code or name."
+                          />
+                        </>
                       )}
                     </Field>
                     <Field

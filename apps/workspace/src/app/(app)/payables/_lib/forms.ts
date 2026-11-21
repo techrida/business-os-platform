@@ -76,7 +76,7 @@ export function parseBillLines(
     if (toScaled(unitPrice, 2) === null) {
       fail('unitPrice', 'Use an amount such as 1250.50, with up to 2 decimal places.');
     }
-    if (!isGuid(accountId)) fail('accountId', 'Paste the account ID this line is booked to.');
+    if (!isGuid(accountId)) fail('accountId', 'Choose the expense account this line is booked to.');
     if (!isGuid(taxCodeId)) fail('taxCodeId', 'Choose the VAT treatment of this line.');
     if (tdsCodeId !== '' && !isGuid(tdsCodeId)) {
       fail('tdsCodeId', 'Paste a withholding code ID, or leave it empty.');
@@ -99,4 +99,22 @@ export function parseBillLines(
     else if (lines.length > MAX_LINES) errors['lines'] = `A bill takes at most ${MAX_LINES} lines.`;
   }
   return Object.keys(errors).length > 0 ? { ok: false, errors } : { ok: true, lines };
+}
+
+/** The API's 422 code for a line whose account is not an active expense account of this company. */
+export const EXPENSE_ACCOUNT_INVALID = 'EXPENSE_ACCOUNT_INVALID';
+
+export const EXPENSE_ACCOUNT_REFUSED =
+  "This account was retired or is not one of this company's expense accounts. Choose an active account.";
+
+/**
+ * Field errors for an `EXPENSE_ACCOUNT_INVALID` refusal. The refusal does not say which line it means, so the
+ * account field of every row that was sent is marked (a blank row was not sent), keyed like `parseBillLines`.
+ */
+export function expenseAccountErrors(rows: readonly LineRow[]): Errors {
+  const errors: Errors = {};
+  rows.forEach((row, i) => {
+    if (!isBlank(row)) errors[`${i}.accountId`] = EXPENSE_ACCOUNT_REFUSED;
+  });
+  return errors;
 }
