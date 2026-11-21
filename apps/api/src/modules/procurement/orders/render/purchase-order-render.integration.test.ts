@@ -939,4 +939,33 @@ describe('a render that keeps failing (R4c2: TR-Q4, F1-Q13)', () => {
     expect(await sweeper.renderOne(c)).toBe('rendered');
     await expect(service.link(po.id, 1)).resolves.toBeDefined();
   });
+
+  it('does not let a live document whose only upload was rejected block the next try or a Retry', async () => {
+    const po = await issuedPo();
+    const c = await candidateOf(po, 1);
+    current.scope = scopeA;
+    // The type check refused the bytes and the failure path could not remove the document (or the worker died
+    // between the two), on the last try: the render is given up and the rejected document is still live.
+    const orphan = await createOrphan(c, 0);
+    // The way the receive moves it: claimed (quarantined), then refused by the type check.
+    for (const status of ['quarantined', 'rejected']) {
+      await exec(
+        c,
+        sql`UPDATE app.document_versions SET status = ${status} WHERE document_id = ${orphan}::uuid`,
+      );
+    }
+    let clock = new Date();
+    const worker = failingWorker(() => clock);
+    for (let n = 1; n <= MAX_RENDER_ATTEMPTS; n += 1) {
+      expect(await worker.renderOne(c)).toBe('failed');
+      clock = new Date((await failureRow(c.versionId))?.next_attempt_at ?? clock);
+    }
+    expect((await failureRow(c.versionId))?.exhausted_at).not.toBeNull();
+
+    await expect(service.retry(po.id, 1)).resolves.toEqual({ state: 'queued' });
+    // Retried, well inside the orphan cutoff: due at once, and the healthy render stores the PDF.
+    expect(ids(await store.candidates(new Date(), 1_000))).toContain(c.versionId);
+    expect(await sweeper.renderOne(c)).toBe('rendered');
+    await expect(service.link(po.id, 1)).resolves.toBeDefined();
+  });
 });
