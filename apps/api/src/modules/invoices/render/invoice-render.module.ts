@@ -9,9 +9,10 @@ import { DocumentsModule } from '../../../platform/documents/documents.module';
 import { InvoiceCaller } from '../invoice-support';
 import { InvoiceDocumentController } from './invoice-document.controller';
 import { InvoiceDocumentService } from './invoice-document.service';
+import { InvoiceRenderNudgeModule } from './invoice-render.nudge';
 
 @Module({
-  imports: [AuditModule, DocumentsModule],
+  imports: [AuditModule, DocumentsModule, InvoiceRenderNudgeModule],
   controllers: [InvoiceDocumentController],
   providers: [InvoiceCaller, InvoiceDocumentService],
 })
