@@ -1,5 +1,5 @@
 import { ACCOUNT_LOCKOUT } from '@bos/contracts';
-import { ConflictException, Logger, NotFoundException } from '@nestjs/common';
+import { ConflictException, ForbiddenException, Logger, NotFoundException } from '@nestjs/common';
 import type { Queue } from 'bullmq';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
@@ -436,6 +436,58 @@ describe('UserMirror as the UserDirectory backend', () => {
     expect(zitadel.grants.get('z1')).toEqual(['sales']);
     expect(await store.rolesOf(db, TENANT, id)).toEqual(['sales']);
   });
+
+  it.each([
+    {
+      label: 'added role -> strips added role back to previous',
+      initial: ['accountant'] as const,
+      requested: ['accountant', 'founder'] as const,
+      expectedZitadel: ['accountant'],
+      expectedCalls: 2,
+    },
+    {
+      label: 'replace (add + remove) -> strips added role and never re-adds removed role',
+      initial: ['accountant'] as const,
+      requested: ['founder'] as const,
+      expectedZitadel: [],
+      expectedCalls: 2,
+    },
+    {
+      label: 'pure removal -> leaves smaller set, never re-adds removed role',
+      initial: ['accountant', 'sales'] as const,
+      requested: ['sales'] as const,
+      expectedZitadel: ['sales'],
+      expectedCalls: 1,
+    },
+  ])(
+    'setRoles when sync copies phase-B grants before phase C fails via revoked grant: $label (FU1 round-2 A)',
+    async ({ initial, requested, expectedZitadel, expectedCalls }) => {
+      zitadel.users.set('z1', zUser('z1'));
+      zitadel.grants.set('z1', [...initial]);
+      await mirror.syncUser('z1');
+      const id = store.users[0]!.id;
+
+      let revoked = false;
+      const realSetGrants = zitadel.setGrants.bind(zitadel);
+      vi.spyOn(zitadel, 'setGrants').mockImplementationOnce(async (...args) => {
+        await realSetGrants(...args);
+        // Webhook sync mirrors our phase-B grants into DB, and the caller's grant is revoked before phase C.
+        await mirror.syncUser('z1');
+        revoked = true;
+      });
+
+      const error = await mirror
+        .setRoles(scope, systemActor('test'), id, [...requested], () => {
+          if (revoked) return Promise.reject(new ForbiddenException('revoked'));
+          return Promise.resolve();
+        })
+        .catch((e: unknown) => e);
+
+      expect(error).toBeInstanceOf(ForbiddenException);
+      expect(zitadel.setGrantsCalls).toHaveLength(expectedCalls);
+      expect(zitadel.grants.get('z1')).toEqual(expectedZitadel);
+    },
+  );
 
   it('invite calls ZITADEL outside any tx, creates the user, grants, and an invited mirror row', async () => {
     const openDuringZitadel: number[] = [];
