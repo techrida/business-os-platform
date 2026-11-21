@@ -8,6 +8,7 @@ import { Alert } from '@/components/ui/alert';
 import { Button } from '@/components/ui/button';
 import { ConfirmDialog, Dialog, DialogClose } from '@/components/ui/dialog';
 import { Field, Input, Select, Textarea } from '@/components/ui/field';
+import { MoneyInput, QuantityInput } from '@/components/ui/number-input';
 import { useNumberSystems } from '@/components/ui/number-system-context';
 import { Table, Td, Th } from '@/components/ui/table';
 
@@ -71,7 +72,13 @@ function LineEditor({
       }
       setFieldErrors(nextErrors);
       const first = Object.keys(nextErrors)[0];
-      if (first) form.current?.querySelector<HTMLElement>(`[name="${first}"]`)?.focus();
+      // A number field posts through a hidden input; focus its visible box instead.
+      const named = form.current?.querySelector<HTMLElement>(`[name="${first}"]`);
+      const target =
+        named instanceof HTMLInputElement && named.type === 'hidden'
+          ? named.parentElement?.querySelector<HTMLElement>('input:not([type="hidden"])')
+          : named;
+      target?.focus();
       return;
     }
     // Copy the whole line, including its identity and any saved catalog and cost metadata.
@@ -123,17 +130,14 @@ function LineEditor({
         <div className={styles.grid2}>
           <Field label="Quantity" error={fieldErrors.quantity}>
             {(control) => (
-              <Input
+              <QuantityInput
                 {...control}
                 name="quantity"
-                type="number"
-                inputMode="decimal"
                 required
-                min="0.0001"
-                max="99999999999999.9999"
-                step="0.0001"
+                currency={currency}
+                uom={draft.uom.trim() || undefined}
                 value={draft.quantity}
-                onChange={(e) => change('quantity', e.target.value)}
+                onValueChange={(value) => change('quantity', value)}
               />
             )}
           </Field>
@@ -151,16 +155,13 @@ function LineEditor({
           </Field>
           <Field label={`Rate (${currency})`} error={fieldErrors.unitPrice}>
             {(control) => (
-              <Input
+              <MoneyInput
                 {...control}
                 name="unitPrice"
-                type="number"
-                inputMode="decimal"
                 required
-                min="0"
-                step="0.01"
+                currency={currency}
                 value={draft.unitPrice}
-                onChange={(e) => change('unitPrice', e.target.value)}
+                onValueChange={(value) => change('unitPrice', value)}
               />
             )}
           </Field>
