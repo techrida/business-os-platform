@@ -69,6 +69,8 @@ function fixture(
     src?: RenderSource | undefined;
     hasDocument?: boolean;
     candidates?: RenderCandidate[];
+    /** The order's due versions, as the store answers renderNow; omitted, none. */
+    candidatesOf?: RenderCandidate[];
     pan?: unknown;
     /** The raw `format.number_systems` value; an omitted key reads as the stored default. */
     numberSystems?: unknown;
@@ -84,6 +86,7 @@ function fixture(
   const live: { profile: unknown } = { profile: over.profile };
   const store = {
     candidates: vi.fn().mockResolvedValue(over.candidates ?? []),
+    candidatesOf: vi.fn().mockResolvedValue(over.candidatesOf ?? []),
     load: vi.fn().mockResolvedValue('src' in over ? over.src : source()),
     lockAndHasDocument: vi.fn().mockResolvedValue(over.hasDocument ?? false),
     orphans: vi.fn().mockResolvedValue([]),
