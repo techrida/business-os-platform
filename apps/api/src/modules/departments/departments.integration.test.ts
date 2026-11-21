@@ -907,7 +907,7 @@ describe('Retire under concurrent access writes', () => {
   async function untilSomeoneWaitsForALock(): Promise<void> {
     for (let attempt = 0; attempt < 400; attempt += 1) {
       const res = await ownerPool.query<{ n: number }>(
-        'SELECT count(*)::int AS n FROM pg_locks WHERE NOT granted',
+        'SELECT count(*)::int AS n FROM pg_locks l JOIN pg_stat_activity a ON a.pid = l.pid WHERE NOT l.granted AND a.datname = current_database()',
       );
       if ((res.rows[0]?.n ?? 0) > 0) return;
       await new Promise((resolve) => setTimeout(resolve, 25));

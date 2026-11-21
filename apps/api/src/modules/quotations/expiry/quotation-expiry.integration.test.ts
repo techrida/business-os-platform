@@ -262,7 +262,7 @@ async function waitForBlockedLock(): Promise<void> {
   const deadline = Date.now() + 10_000;
   for (;;) {
     const { rows } = await pool.query<{ n: number }>(
-      'SELECT count(*)::int AS n FROM pg_locks WHERE NOT granted',
+      'SELECT count(*)::int AS n FROM pg_locks l JOIN pg_stat_activity a ON a.pid = l.pid WHERE NOT l.granted AND a.datname = current_database()',
     );
     if (first(rows).n > 0) return;
     if (Date.now() > deadline) throw new Error('the sweep never blocked on the accepted version');
