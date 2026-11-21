@@ -377,9 +377,27 @@ describe('PurchaseOrderRenderSweeper.sweep', () => {
     f.store.orphans.mockResolvedValue([
       { tenantId: 'tenant-1', organizationId: 'org-1', documentId: 'doc-9' },
     ]);
+    f.store.removeOrphan.mockResolvedValue({
+      tenantId: 'tenant-1',
+      organizationId: 'org-1',
+      versionId: 'ver-9',
+      purchaseOrderId: 'po-9',
+    });
     const result = await f.sweeper.sweep();
     expect(result.orphansRemoved).toBe(1);
     expect(f.store.removeOrphan).toHaveBeenCalledOnce();
+    // The crashed render's try is counted once, as `abandoned`.
+    expect(f.store.recordFailure).toHaveBeenCalledWith(
+      expect.anything(),
+      {
+        tenantId: 'tenant-1',
+        organizationId: 'org-1',
+        versionId: 'ver-9',
+        purchaseOrderId: 'po-9',
+      },
+      'abandoned',
+      NOW,
+    );
     const cutoff = f.store.orphans.mock.calls[0]?.[0] as Date;
     expect(NOW.getTime() - cutoff.getTime()).toBe(10 * 60_000);
   });
