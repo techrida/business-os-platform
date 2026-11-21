@@ -4,7 +4,7 @@ import { act } from 'react';
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 
 import { ApiError } from '@/lib/api';
-import { choose, click, fill, mountForm } from '@/test/form-interactions';
+import { choose, click, fill, mountForm, pickDate } from '@/test/form-interactions';
 
 vi.mock('server-only', () => ({}));
 vi.mock('next/cache', () => ({ revalidatePath: vi.fn() }));
@@ -77,7 +77,7 @@ it('posts a planned email on the lead, defaulting the subject and the assignee t
   mocks.createActivity.mockResolvedValue({ id: ACTIVITY });
   const mounted = await openSchedule();
   await click(inDialog('[role="radio"][data-kind="email"]'));
-  await fill(inDialog('input[name="dueAt"]'), '2026-11-20T10:30');
+  await pickDate(dialog()!, 'dueAt', '2026-11-20T10:30');
   await click(footerButton('Schedule'));
   await settle();
 
@@ -101,7 +101,7 @@ it('sends the chosen assignee, subject and note', async () => {
   mocks.createActivity.mockResolvedValue({ id: ACTIVITY });
   const mounted = await openSchedule();
   await fill(inDialog('input[name="subject"]'), 'Site visit plan');
-  await fill(inDialog('input[name="dueAt"]'), '2026-11-21T14:00');
+  await pickDate(dialog()!, 'dueAt', '2026-11-21T14:00');
   await choose(document.body, 'assigneeUserId', 'Ram Thapa');
   const note = inDialog('textarea[name="body"]') as HTMLTextAreaElement;
   note.value = 'Bring the drawings.';
@@ -122,7 +122,7 @@ it('sends the chosen assignee, subject and note', async () => {
 it('leaves the assignee to the API when the owner is not someone the caller can pick', async () => {
   mocks.createActivity.mockResolvedValue({ id: ACTIVITY });
   const mounted = await openSchedule(STRANGER);
-  await fill(inDialog('input[name="dueAt"]'), '2026-11-20T10:30');
+  await pickDate(dialog()!, 'dueAt', '2026-11-20T10:30');
   await click(footerButton('Schedule'));
   await settle();
   expect(mocks.createActivity.mock.calls[0]?.[1]).not.toHaveProperty('assigneeUserId');
@@ -143,7 +143,7 @@ it('plans a follow-up on an opportunity, leaving it to the deal owner when they 
   await click(mounted.container.querySelector('button'));
   expect(dialog()?.textContent).toContain('Opportunity owner');
   expect(dialog()?.textContent).not.toContain('Lead owner');
-  await fill(inDialog('input[name="dueAt"]'), '2026-11-22T09:00');
+  await pickDate(dialog()!, 'dueAt', '2026-11-22T09:00');
   await click(footerButton('Schedule'));
   await settle();
   expect(mocks.createActivity).toHaveBeenCalledExactlyOnceWith(
@@ -177,8 +177,9 @@ it('shows a refusal next to the field, stays open, and starts clean when opened 
 
   expect(mocks.createActivity).not.toHaveBeenCalled();
   expect(dialog()?.textContent).toContain('Choose when the follow-up is due.');
-  const due = inDialog('input[name="dueAt"]');
-  expect(due?.getAttribute('aria-invalid')).toBe('true');
+  // The date and time fields are React Aria's, which mark the invalid state with data-invalid.
+  const due = inDialog('input[name="dueAt"]')?.parentElement;
+  expect(due?.querySelector('[data-invalid]')).not.toBeNull();
 
   await click(footerButton('Cancel'));
   expect(dialog()).toBeNull();
@@ -191,7 +192,7 @@ it('keeps the same key for a retry after an unknown outcome, and shows the failu
   mocks.createActivity.mockRejectedValueOnce(new ApiError(503, 'down'));
   mocks.createActivity.mockResolvedValueOnce({ id: ACTIVITY });
   const mounted = await openSchedule();
-  await fill(inDialog('input[name="dueAt"]'), '2026-11-20T10:30');
+  await pickDate(dialog()!, 'dueAt', '2026-11-20T10:30');
   await click(footerButton('Schedule'));
   await settle();
   expect(inDialog('[role="alert"]')).not.toBeNull();
@@ -223,7 +224,7 @@ it('reschedules from the current Kathmandu time and keeps an unlisted assignee u
   const due = inDialog('input[name="dueAt"]') as HTMLInputElement;
   expect(due.value).toBe('2026-11-20T10:30');
 
-  await fill(due, '2026-11-22T09:00');
+  await pickDate(dialog()!, 'dueAt', '2026-11-22T09:00');
   await click(footerButton('Reschedule'));
   await settle();
 
