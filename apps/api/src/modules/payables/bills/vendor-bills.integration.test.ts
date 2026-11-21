@@ -57,6 +57,9 @@ import { NumberingService } from '../../../platform/settings/numbering.service';
 import { SettingsService } from '../../../platform/settings/settings.service';
 import { ApprovalsAdminService } from '../../approvals/admin.service';
 import { asSecondPerson, SKIP_LIVE_PUBLISHER_CHECK } from '../../../../test/support/second-person';
+import { EvidenceDocumentsService } from '../../evidence/evidence-documents.service';
+import { evidenceFixture, type EvidenceFixture } from '../../evidence/evidence.fixture';
+import { drizzleEvidenceRecordLoader } from '../../evidence/evidence-owner.policy';
 import { ApprovalsService } from '../../approvals/requests.service';
 import { PurchaseOrdersService } from '../../procurement/orders/purchase-orders.service';
 import { ReceiptsService } from '../../procurement/receipts/receipts.service';
@@ -90,6 +93,8 @@ let receiptsService: ReceiptsService;
 let pickers: VendorOrdersService;
 let deptA = '';
 let vatCode = '';
+/** Evidence uploads through the real routes' service, DocumentsService and the `evidence` owner policy. */
+let evidence: EvidenceFixture;
 
 const U = { req: '', proc: '', acct: '', acct2: '', fin: '', mgmt: '', founder: '', wh: '' };
 const roles: Partial<Record<RoleKey, string[]>> = {};
@@ -237,9 +242,11 @@ beforeAll(async () => {
     caller,
     () => now,
   );
+  evidence = await evidenceFixture(db, caller.current);
 });
 
 afterAll(async () => {
+  await evidence?.close();
   await appPool?.end();
   await ownerPool?.end();
   await testDb?.drop();
@@ -377,6 +384,34 @@ async function doc(
             declared_mime, size_bytes, storage_key, status)
           VALUES (${scopeA.tenantId}, ${scopeA.organizationId}, ${documentId}, ${i + 1}, 'invoice.pdf',
                   'application/pdf', 1024, ${`${scopeA.tenantId}/${randomUUID()}`}, ${status})`,
+    );
+  }
+  return documentId;
+}
+
+/**
+ * A document row of `ownerType` on `ownerId` with these versions, as an upload and its scan leave it: for evidence
+ * in a state an upload alone cannot reach here (infected, removed, another entity) and for files of other owners.
+ */
+async function ownedDoc(
+  ownerType: string,
+  ownerId: string,
+  versions: readonly DocumentVersionStatus[] = ['clean'],
+  scope: TxScope = scopeA,
+): Promise<string> {
+  const { rows } = await exec(
+    scope,
+    sql`INSERT INTO app.documents (tenant_id, organization_id, owner_type, owner_id)
+        VALUES (${scope.tenantId}, ${scope.organizationId}, ${ownerType}, ${ownerId}) RETURNING id`,
+  );
+  const documentId = (rows[0] as { id: string }).id;
+  for (const [i, status] of versions.entries()) {
+    await exec(
+      scope,
+      sql`INSERT INTO app.document_versions (tenant_id, organization_id, document_id, version, filename,
+            declared_mime, size_bytes, storage_key, status)
+          VALUES (${scope.tenantId}, ${scope.organizationId}, ${documentId}, ${i + 1}, 'evidence.pdf',
+                  'application/pdf', 1024, ${`${scope.tenantId}/${randomUUID()}`}, ${status})`,
     );
   }
   return documentId;
@@ -664,11 +699,11 @@ describe('match (check 6, AD6 defaults from settings)', () => {
     const po = await receivedPo('1', '10000.00', '1');
     const bill = await billFor(po, '1', '11000.00');
     expect(bill.status).toBe('variance');
-    const evidence = await doc(['infected']);
+    const infected = await ownedDoc('evidence', bill.id, ['infected']);
     const refused = await httpErrorOf(
       service.requestException(
         bill.id,
-        { reason: 'Vendor raised the price', evidenceDocumentId: evidence },
+        { reason: 'Vendor raised the price', evidenceDocumentId: infected },
         randomUUID(),
       ),
     );
@@ -682,11 +717,37 @@ describe('match (check 6, AD6 defaults from settings)', () => {
     ).toHaveLength(0);
   });
 
-  it.each([
+  it('takes evidence uploaded to the bill in place, still scanning, and records it on the exception', async () => {
+    const po = await receivedPo('1', '10000.00', '1');
+    const bill = await billFor(po, '1', '11000.00');
+    expect(bill.status).toBe('variance');
+    // The accountant holds no documents.upload: the bill's own route and its payables.bill.enter grant suffice.
+    expect(principalNow().grants.has('documents.upload')).toBe(false);
+    const uploaded = await evidence.upload('vendor_bill', bill.id);
+    const stored = await read((tx) =>
+      tx.execute(sql`SELECT d.owner_type, d.owner_id, v.status FROM app.documents d
+        JOIN app.document_versions v ON v.document_id = d.id WHERE d.id = ${uploaded}`),
+    );
+    expect(stored.rows).toEqual([
+      { owner_type: 'evidence', owner_id: bill.id, status: 'quarantined' },
+    ]);
+    const exception = await service.requestException(
+      bill.id,
+      { reason: 'Vendor raised the price', evidenceDocumentId: uploaded },
+      randomUUID(),
+    );
+    const [row] = await read((tx) =>
+      tx.select().from(matchExceptions).where(eq(matchExceptions.id, exception.id)),
+    );
+    expect(row!.evidenceDocumentId).toBe(uploaded);
+    expect((await service.get(bill.id)).status).toBe('exception_pending');
+  });
+
+  it.each<[string, (billId: string, vendorId: string) => Promise<string>]>([
     [
-      'a removed file',
-      async (vendorId: string) => {
-        const documentId = await doc(['clean'], vendorId);
+      'a removed evidence file',
+      async (billId: string) => {
+        const documentId = await ownedDoc('evidence', billId);
         await exec(
           scopeA,
           sql`UPDATE app.documents SET removed_at = now() WHERE id = ${documentId}`,
@@ -695,41 +756,39 @@ describe('match (check 6, AD6 defaults from settings)', () => {
       },
     ],
     [
-      "another entity's file",
-      async (vendorId: string) => {
-        const { rows } = await exec(
-          scopeB,
-          sql`INSERT INTO app.documents (tenant_id, organization_id, owner_type, owner_id)
-              VALUES (${scopeB.tenantId}, ${scopeB.organizationId}, 'vendor_bill_intake', ${vendorId})
-              RETURNING id`,
-        );
-        const documentId = (rows[0] as { id: string }).id;
-        await exec(
-          scopeB,
-          sql`INSERT INTO app.document_versions (tenant_id, organization_id, document_id, version, filename,
-                declared_mime, size_bytes, storage_key, status)
-              VALUES (${scopeB.tenantId}, ${scopeB.organizationId}, ${documentId}, 1, 'evidence.pdf',
-                      'application/pdf', 1024, ${`${scopeB.tenantId}/${randomUUID()}`}, 'clean')`,
-        );
-        return documentId;
-      },
+      "another entity's file on the same id",
+      (billId: string) => ownedDoc('evidence', billId, ['clean'], scopeB),
     ],
+    [
+      "the bill's own invoice file",
+      (_billId: string, vendorId: string) => doc(['clean'], vendorId),
+    ],
+    ['evidence of another record', () => ownedDoc('evidence', randomUUID())],
+    [
+      'a picture (a vendor logo)',
+      (_billId: string, vendorId: string) => ownedDoc('vendor_logo', vendorId),
+    ],
+    [
+      'a vendor-inbox upload',
+      (_billId: string, vendorId: string) => ownedDoc('vendor_portal_intake', vendorId),
+    ],
+    ['an id that is no document', () => Promise.resolve(randomUUID())],
   ])(
-    'refuses a match exception whose evidence is %s with 422 DOCUMENT_NOT_FOUND and writes no exception',
+    'refuses a match exception whose evidence is %s with 422 invalid_evidence_document and writes no exception',
     async (_label, evidenceOf) => {
       const po = await receivedPo('1', '10000.00', '1');
       const bill = await billFor(po, '1', '11000.00');
       expect(bill.status).toBe('variance');
-      const evidence = await evidenceOf(po.vendorId);
+      const evidenceId = await evidenceOf(bill.id, po.vendorId);
       const refused = await httpErrorOf(
         service.requestException(
           bill.id,
-          { reason: 'Vendor raised the price', evidenceDocumentId: evidence },
+          { reason: 'Vendor raised the price', evidenceDocumentId: evidenceId },
           randomUUID(),
         ),
       );
       expect(refused.getStatus()).toBe(422);
-      expect(codeOf(refused)).toBe('DOCUMENT_NOT_FOUND');
+      expect(codeOf(refused)).toBe('invalid_evidence_document');
       expect((await service.get(bill.id)).status).toBe('variance');
       expect(
         await read((tx) =>
@@ -1521,5 +1580,170 @@ describe('saved reach on bills (U20a phase 2)', () => {
     expect((await httpErrorOf(service.submit(theirs.id, randomUUID()))).getStatus()).toBe(404);
     as(U.acct2, 'accountant');
     expect((await service.get(theirs.id)).status).toBe('draft');
+  });
+});
+
+// Round 5 P2: one `evidence` owner type spans sales orders, bills and RFQs, so the upload grant is the record kind's
+// own (payables.bill.enter on a bill). Each refusal writes no document row and has a positive control beside it.
+describe('evidence uploads on a bill (round 5 P2)', () => {
+  const file = { filename: 'evidence.pdf', declaredMime: 'application/pdf', sizeBytes: 20 };
+  const evidenceRows = (billId: string) =>
+    read((tx) =>
+      tx.execute(
+        sql`SELECT id FROM app.documents WHERE owner_type = 'evidence' AND owner_id = ${billId}`,
+      ),
+    ).then((r) => r.rows.length);
+  /** The generic POST /v1/documents, as its controller calls it. */
+  const genericCreate = (billId: string) =>
+    withTx(db, scopeNow(), caller.current().actor, (tx) =>
+      evidence.documents.createFromRequest(tx, {
+        ownerType: 'evidence',
+        ownerId: billId,
+        ...file,
+      }),
+    );
+  async function varianceBill() {
+    const po = await receivedPo('1', '10000.00', '1');
+    const bill = await billFor(po, '1', '11000.00');
+    expect(bill.status).toBe('variance');
+    return bill;
+  }
+
+  it('(a) a sales-order grant (with documents.upload) never uploads evidence to a bill; the bill grant does', async () => {
+    const bill = await varianceBill();
+    current.grants = new Map<Permission, Scope>([
+      ['documents.upload', 'all'],
+      ['sales_order.mark_billable', 'all'],
+      ['sales_order.read', 'all'],
+    ]);
+    expect((await httpErrorOf(genericCreate(bill.id))).getStatus()).toBe(403);
+    // The sales-order route resolves the id to a bill, not an order: 404.
+    expect(
+      (await httpErrorOf(evidence.service.create('sales_order', bill.id, file))).getStatus(),
+    ).toBe(404);
+    expect(
+      (await httpErrorOf(evidence.service.create('vendor_bill', bill.id, file))).getStatus(),
+    ).toBe(403);
+    expect(await evidenceRows(bill.id)).toBe(0);
+
+    as(U.acct, 'accountant');
+    await evidence.service.create('vendor_bill', bill.id, file);
+    expect(await evidenceRows(bill.id)).toBe(1);
+  });
+
+  it('(b) generic documents.upload alone cannot post evidence to POST v1/documents; with the bill grant it can', async () => {
+    const bill = await varianceBill();
+    current.grants = new Map<Permission, Scope>([['documents.upload', 'all']]);
+    const refused = await httpErrorOf(genericCreate(bill.id));
+    expect(refused.getStatus()).toBe(403);
+    expect(await evidenceRows(bill.id)).toBe(0);
+
+    current.grants = new Map<Permission, Scope>([
+      ['documents.upload', 'all'],
+      ['payables.bill.enter', 'all'],
+    ]);
+    await genericCreate(bill.id);
+    expect(await evidenceRows(bill.id)).toBe(1);
+  });
+
+  it('an own bill enterer uploads evidence to the bills they entered only', async () => {
+    const bill = await varianceBill();
+    as(U.acct2, 'accountant');
+    current.grants = new Map<Permission, Scope>([
+      ['payables.bill.read', 'all'],
+      ['payables.bill.enter', 'own'],
+    ]);
+    expect(
+      (await httpErrorOf(evidence.service.create('vendor_bill', bill.id, file))).getStatus(),
+    ).toBe(403);
+    as(U.acct, 'accountant');
+    current.grants = new Map<Permission, Scope>([
+      ['payables.bill.read', 'all'],
+      ['payables.bill.enter', 'own'],
+    ]);
+    await evidence.service.create('vendor_bill', bill.id, file);
+    expect(await evidenceRows(bill.id)).toBe(1);
+  });
+
+  it('(c) a bill of another entity is a 404 on both paths, and a portal caller is refused', async () => {
+    const bill = await varianceBill();
+    current.scope = scopeB;
+    expect(
+      (await httpErrorOf(evidence.service.create('vendor_bill', bill.id, file))).getStatus(),
+    ).toBe(404);
+    current.grants = new Map<Permission, Scope>([
+      ['documents.upload', 'all'],
+      ['payables.bill.enter', 'all'],
+    ]);
+    expect((await httpErrorOf(genericCreate(bill.id))).getStatus()).toBe(404);
+    current.scope = null;
+    expect(await evidenceRows(bill.id)).toBe(0);
+
+    const portal = {
+      current: () => ({
+        ...caller.current(),
+        principal: { ...principalNow(), orgKind: 'vendor' as const },
+      }),
+    };
+    const asPortal = new EvidenceDocumentsService(
+      db,
+      drizzleEvidenceRecordLoader(db),
+      portal,
+      evidence.documents,
+    );
+    expect((await httpErrorOf(asPortal.create('vendor_bill', bill.id, file))).getStatus()).toBe(
+      403,
+    );
+  });
+
+  it('refuses evidence once the bill is past entry (409) and on a discarded bill', async () => {
+    const bill = await billWithoutPo(await doc());
+    await service.discard(bill.id, randomUUID());
+    const refused = await httpErrorOf(evidence.service.create('vendor_bill', bill.id, file));
+    expect(refused.getStatus()).toBe(409);
+    expect(await evidenceRows(bill.id)).toBe(0);
+  });
+
+  it('keeps photos as evidence (a photographed delivery note) and receives the bytes only on its own bill route', async () => {
+    const bill = await varianceBill();
+    const jpeg = Buffer.concat([
+      Buffer.from([0xff, 0xd8, 0xff, 0xe0, 0x00, 0x10, 0x4a, 0x46, 0x49, 0x46, 0x00, 0x01]),
+      Buffer.alloc(64),
+    ]);
+    const created = await evidence.service.create('vendor_bill', bill.id, {
+      filename: 'delivery-note.jpg',
+      declaredMime: 'image/jpeg',
+      sizeBytes: jpeg.length,
+    });
+    // Another bill's route, or the RFQ route, does not take this file's bytes.
+    const other = await varianceBill();
+    for (const [kind, id] of [
+      ['vendor_bill', other.id],
+      ['rfq', bill.id],
+    ] as const) {
+      const refused = await httpErrorOf(
+        evidence.service.receive(
+          kind,
+          id,
+          created.documentId,
+          created.versionId,
+          Readable.from(jpeg),
+          jpeg.length,
+        ),
+      );
+      expect(refused.getStatus()).toBe(404);
+    }
+    const received = await evidence.service.receive(
+      'vendor_bill',
+      bill.id,
+      created.documentId,
+      created.versionId,
+      Readable.from(jpeg),
+      jpeg.length,
+    );
+    expect(received.status).toBe('quarantined');
+    expect(created.uploadPath).toBe(
+      `/v1/payables/bills/${bill.id}/evidence-documents/${created.documentId}/versions/${created.versionId}/content`,
+    );
   });
 });
