@@ -52,7 +52,8 @@ async function sessionScope(tx: DbTransaction): Promise<SessionScope> {
 }
 
 /**
- * Runs `fn` once per (tenant, actor, command, key).
+ * Runs `fn` once per (tenant, legal entity, actor, command, key). The entity is part of the key: a retry from
+ * another entity of the same tenant is a different command and never replays the first entity's answer.
  *
  * - First call: claims the key with an INSERT, runs `fn`, stores its `{ status, response }`.
  * - Replay with the same body: returns the stored answer without calling `fn` (`replayed: true`).
@@ -73,6 +74,7 @@ export async function withIdempotency<T>(
   const scope = await sessionScope(tx);
   const identity = and(
     eq(idempotencyKeys.tenantId, scope.tenantId),
+    eq(idempotencyKeys.organizationId, scope.organizationId),
     eq(idempotencyKeys.actorId, scope.actorId),
     eq(idempotencyKeys.command, input.command),
     eq(idempotencyKeys.key, input.key),
@@ -91,6 +93,7 @@ export async function withIdempotency<T>(
     .onConflictDoNothing({
       target: [
         idempotencyKeys.tenantId,
+        idempotencyKeys.organizationId,
         idempotencyKeys.actorId,
         idempotencyKeys.command,
         idempotencyKeys.key,
