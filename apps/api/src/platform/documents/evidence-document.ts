@@ -44,8 +44,9 @@ export function evidenceNotUploaded(): UnprocessableEntityException {
 /**
  * Passes when `documentId` is a live document of this scope that is evidence of `ownerId` (owner type `evidence`),
  * or is one of `alsoAccept` (ids the record already recorded as its evidence, of an older owner type) and still
- * live. A list entry of owner type `evidence` counts only when it is evidence of `ownerId`: a file uploaded as the
- * evidence of another record stays that record's own, whatever a list names.
+ * live. A list entry of owner type `evidence` counts only when it is evidence of `ownerId` or of one of
+ * `alsoAcceptEvidenceOf` (the record's own upstream record): a file uploaded as the evidence of another record stays
+ * that record's own, whatever a list names.
  * Otherwise 422 `invalid_evidence_document`; then 409 `document_infected` when its newest version is infected
  * (TR-Q12e). The record's own evidence must also hold its bytes: its newest version that was not rejected is
  * `quarantined` with its bytes recorded (still scanning, each later step keeps its own clean-file rule) or `clean`;
@@ -60,15 +61,34 @@ export async function assertEvidenceDocument(
   documentId: string,
   ownerId: string,
   alsoAccept: readonly string[] = [],
+  alsoAcceptEvidenceOf: readonly string[] = [],
 ): Promise<void> {
   if (!Id.safeParse(documentId).success || !Id.safeParse(ownerId).success) {
     throw invalidEvidenceDocument();
   }
   const accepted = alsoAccept.filter((id) => Id.safeParse(id).success);
+  const extraOwners = alsoAcceptEvidenceOf.filter((id) => Id.safeParse(id).success);
   const ownEvidence = and(
     eq(documents.ownerType, EVIDENCE_OWNER_TYPE),
     eq(documents.ownerId, ownerId),
   );
+  const listed =
+    accepted.length === 0
+      ? []
+      : [
+          and(inArray(documents.id, accepted), ne(documents.ownerType, EVIDENCE_OWNER_TYPE)),
+          // A file the record filed that was uploaded to a record leading into it (a confirmed order's evidence
+          // belongs to its quotation version): only that owner's evidence, and only if the list names it.
+          ...(extraOwners.length === 0
+            ? []
+            : [
+                and(
+                  inArray(documents.id, accepted),
+                  eq(documents.ownerType, EVIDENCE_OWNER_TYPE),
+                  inArray(documents.ownerId, extraOwners),
+                ),
+              ]),
+        ];
   const [found] = await reader
     .select({ ownerType: documents.ownerType, ownerId: documents.ownerId })
     .from(documents)
@@ -78,47 +98,20 @@ export async function assertEvidenceDocument(
         and(
           eq(documents.id, documentId),
           isNull(documents.removedAt),
-          accepted.length === 0
-            ? ownEvidence
-            : or(
-                ownEvidence,
-                and(inArray(documents.id, accepted), ne(documents.ownerType, EVIDENCE_OWNER_TYPE)),
-              ),
+          listed.length === 0 ? ownEvidence : or(ownEvidence, ...listed),
         ),
       ),
     )
     .limit(1);
   if (found === undefined) throw invalidEvidenceDocument();
   await assertNotInfected(reader, scope, [documentId]);
-  if (found.ownerType !== EVIDENCE_OWNER_TYPE || found.ownerId !== ownerId) return;
+  // A file uploaded as evidence (of this record or of an upstream one it filed) must still hold its bytes: a scan
+  // that failed after it was filed leaves a file nobody can open.
+  const isEvidence =
+    found.ownerType === EVIDENCE_OWNER_TYPE &&
+    (found.ownerId === ownerId || extraOwners.includes(found.ownerId));
+  if (!isEvidence) return;
   await assertHoldsBytes(reader, scope, documentId);
-}
-
-/**
- * For a record that files documents of any older owner type as its evidence (a sales order's confirm): every id of
- * owner type `evidence` must be evidence of `ownerId` (none when the record does not exist yet) and hold its bytes,
- * as `assertEvidenceDocument` asks. Otherwise 422 `invalid_evidence_document`. Other owner types pass untouched;
- * the caller checks them as before.
- */
-export async function assertNoForeignEvidence(
-  reader: Pick<Db, 'select'>,
-  scope: TxScope,
-  documentIds: readonly string[],
-  ownerId: string | null,
-): Promise<void> {
-  const ids = documentIds.filter((id) => Id.safeParse(id).success);
-  if (ids.length === 0) return;
-  const rows = await reader
-    .select({ id: documents.id, ownerId: documents.ownerId })
-    .from(documents)
-    .where(
-      scoped(scope).where(
-        documents,
-        and(inArray(documents.id, ids), eq(documents.ownerType, EVIDENCE_OWNER_TYPE)),
-      ),
-    );
-  if (rows.some((r) => r.ownerId !== ownerId)) throw invalidEvidenceDocument();
-  for (const row of rows) await assertHoldsBytes(reader, scope, row.id);
 }
 
 /**

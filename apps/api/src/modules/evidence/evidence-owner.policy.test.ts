@@ -32,6 +32,14 @@ const bill = (status: string): EvidenceRecord => ({
   status,
   enteredBy: ENTERER,
 });
+const version = (over: Partial<Extract<EvidenceRecord, { kind: 'quotation_version' }>> = {}) =>
+  ({
+    kind: 'quotation_version',
+    status: 'accepted',
+    quotationOwnerUserId: QUOTE_OWNER,
+    hasConfirmedOrder: false,
+    ...over,
+  }) as const;
 const rfq = (status: string): EvidenceRecord => ({ kind: 'rfq', status, createdBy: ENTERER });
 
 describe('evidenceUploadGrants', () => {
@@ -39,6 +47,9 @@ describe('evidenceUploadGrants', () => {
     expect(evidenceUploadGrants(scope, order())).toEqual([
       { action: 'sales_order.mark_billable', ref: { ...scope, ownerUserId: CONFIRMER } },
       { action: 'sales_order.mark_billable', ref: { ...scope, ownerUserId: QUOTE_OWNER } },
+    ]);
+    expect(evidenceUploadGrants(scope, version())).toEqual([
+      { action: 'sales_order.confirm', ref: { ...scope, ownerUserId: QUOTE_OWNER } },
     ]);
     expect(evidenceUploadGrants(scope, bill('variance'))).toEqual([
       { action: 'payables.bill.enter', ref: { ...scope, ownerUserId: ENTERER } },
@@ -55,6 +66,14 @@ describe('evidenceAttachable', () => {
     expect(evidenceAttachable(order({ hasPlannedLine: false }))).toBe(false);
     for (const status of ['draft', 'completed', 'cancelled']) {
       expect(evidenceAttachable(order({ status }))).toBe(false);
+    }
+  });
+
+  it('takes evidence on an accepted quotation version until its order is confirmed', () => {
+    expect(evidenceAttachable(version())).toBe(true);
+    expect(evidenceAttachable(version({ hasConfirmedOrder: true }))).toBe(false);
+    for (const status of ['draft', 'sent', 'rejected', 'superseded', 'expired']) {
+      expect(evidenceAttachable(version({ status }))).toBe(false);
     }
   });
 
