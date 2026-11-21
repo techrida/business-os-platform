@@ -49,6 +49,7 @@ import { ApprovalsService } from '../../approvals/requests.service';
 import { PrCommitmentSubject } from './pr-commitment.subject';
 import { PR_COMMITMENT_DOCUMENT_TYPE, PR_COMMITMENT_WORKFLOW_SPEC } from './sourcing.rules';
 import { SourcingService } from './sourcing.service';
+import { evidenceFixture, type EvidenceFixture } from '../../evidence/evidence.fixture';
 import { createTestDatabase, type TestDatabase } from '@bos/db/testing';
 
 vi.setConfig({ testTimeout: 60_000, hookTimeout: 180_000 });
@@ -67,6 +68,8 @@ let approvals: ApprovalsService;
 let service: SourcingService;
 let deptA = '';
 let vatCode = '';
+/** Quotation files uploaded through the RFQ's evidence route (round 5 P2). */
+let evidence: EvidenceFixture;
 
 const U = {
   req: '',
@@ -201,9 +204,11 @@ beforeAll(async () => {
     caller,
     () => now,
   );
+  evidence = await evidenceFixture(db, caller.current);
 });
 
 afterAll(async () => {
+  await evidence?.close();
   await appPool?.end();
   await ownerPool?.end();
   await testDb?.drop();
@@ -321,7 +326,7 @@ async function rfqWithQuotes(nets: string[]) {
       rfq.id,
       {
         vendorId: vendorIds[i]!,
-        documentId: await doc(),
+        documentId: await evidence.upload('rfq', rfq.id),
         currency: 'NPR',
         lines: [{ prLineId: pr.lineId, quantity: '1', unitPrice: net, taxCodeId: vatCode }],
       },
@@ -598,7 +603,7 @@ describe('inbox conversion', () => {
 
 describe('the quotation deadline (F1-Q47)', () => {
   const recordOne = (rfqId: string, vendorId: string, lineId: string) =>
-    doc().then((documentId) =>
+    evidence.upload('rfq', rfqId).then((documentId) =>
       service.recordQuotation(
         rfqId,
         {

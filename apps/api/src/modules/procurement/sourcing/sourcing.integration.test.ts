@@ -42,6 +42,7 @@ import { asSecondPerson, SKIP_LIVE_PUBLISHER_CHECK } from '../../../../test/supp
 import { ApprovalsService } from '../../approvals/requests.service';
 import { PrCommitmentSubject } from './pr-commitment.subject';
 import { PR_COMMITMENT_DOCUMENT_TYPE, PR_COMMITMENT_WORKFLOW_SPEC } from './sourcing.rules';
+import { evidenceFixture, type EvidenceFixture } from '../../evidence/evidence.fixture';
 import { SourcingService } from './sourcing.service';
 import { createTestDatabase, type TestDatabase } from '@bos/db/testing';
 
@@ -60,6 +61,8 @@ let service: SourcingService;
 let deptA = '';
 let deptB = '';
 let vatCode = '';
+/** Quotation files uploaded through the RFQ's evidence route, DocumentsService and the `evidence` owner policy. */
+let evidence: EvidenceFixture;
 
 const U = { req: '', proc: '', proc2: '', acct: '', fin: '', mgmt: '', mgmt2: '', founder: '' };
 const roles: Partial<Record<RoleKey, string[]>> = {};
@@ -184,9 +187,11 @@ beforeAll(async () => {
     caller,
     () => now,
   );
+  evidence = await evidenceFixture(db, caller.current);
 });
 
 afterAll(async () => {
+  await evidence?.close();
   await appPool?.end();
   await ownerPool?.end();
   await testDb?.drop();
@@ -271,11 +276,18 @@ async function deptApprovedPr(
   return { id, lineId };
 }
 
-async function doc(): Promise<string> {
+/** The vendor's quotation file, uploaded in place on the RFQ by the caller (as the RFQ quote form does). */
+const quoteFile = (rfqId: string) => evidence.upload('rfq', rfqId);
+
+/**
+ * A document row of `ownerType` on `ownerId`, as an upload leaves it: for states an upload alone cannot reach here
+ * (infected, removed) and for files of other owners.
+ */
+async function doc(ownerType: string, ownerId: string, scope: TxScope = scopeA): Promise<string> {
   const { rows } = await exec(
-    scopeA,
+    scope,
     sql`INSERT INTO app.documents (tenant_id, organization_id, owner_type, owner_id)
-        VALUES (${scopeA.tenantId}, ${scopeA.organizationId}, 'rfq', ${randomUUID()}) RETURNING id`,
+        VALUES (${scope.tenantId}, ${scope.organizationId}, ${ownerType}, ${ownerId}) RETURNING id`,
   );
   return (rows[0] as { id: string }).id;
 }
@@ -298,7 +310,7 @@ async function rfqWithQuotes(
       rfq.id,
       {
         vendorId: vendorIds[i]!,
-        documentId: await doc(),
+        documentId: await quoteFile(rfq.id),
         currency: 'NPR',
         lines: [{ prLineId: p.lineId, quantity: '1', unitPrice: net, taxCodeId: vatCode }],
       },
@@ -473,7 +485,7 @@ describe('RFQ', () => {
       { purchaseRequestId: p.id, deadline: '2026-11-20T10:00:00+05:45', vendorIds: [v] },
       randomUUID(),
     );
-    const documentId = await doc();
+    const documentId = await doc('evidence', rfq.id);
     await exec(
       scopeA,
       sql`INSERT INTO app.document_versions (tenant_id, organization_id, document_id, version, filename,
@@ -502,14 +514,14 @@ describe('RFQ', () => {
     expect(rows[0]).toEqual({ n: 0 });
   });
 
-  it("refuses to record a quotation on a removed file with 400 'Unknown document', and writes no quotation", async () => {
+  it('refuses to record a quotation on a removed file with 422 invalid_evidence_document, and writes no quotation', async () => {
     const p = await deptApprovedPr();
     const v = await vendor('approved');
     const rfq = await service.createRfq(
       { purchaseRequestId: p.id, deadline: '2026-11-20T10:00:00+05:45', vendorIds: [v] },
       randomUUID(),
     );
-    const documentId = await doc();
+    const documentId = await quoteFile(rfq.id);
     await exec(scopeA, sql`UPDATE app.documents SET removed_at = now() WHERE id = ${documentId}`);
     const e = await httpErrorOf(
       service.recordQuotation(
@@ -523,13 +535,82 @@ describe('RFQ', () => {
         randomUUID(),
       ),
     );
-    expect(e.getStatus()).toBe(400);
-    expect(e.getResponse()).toMatchObject({ code: 'bad_request', message: 'Unknown document' });
+    expect(e.getStatus()).toBe(422);
+    expect(e.getResponse()).toMatchObject({ code: 'invalid_evidence_document' });
     const { rows } = await exec(
       scopeA,
       sql`SELECT count(*)::int AS n FROM app.vendor_quotations WHERE rfq_id = ${rfq.id}`,
     );
     expect(rows[0]).toEqual({ n: 0 });
+  });
+
+  // Round 5 P2: the staff path takes only a file uploaded to this RFQ; the inbox conversion keeps the vendor's file.
+  it.each<[string, (rfqId: string, vendorId: string) => Promise<string>]>([
+    ['any live document of the entity (another record)', () => doc('rfq', randomUUID())],
+    ['a vendor-inbox upload', (_rfqId, vendorId) => doc('vendor_portal_intake', vendorId)],
+    ['a picture (the vendor logo)', (_rfqId, vendorId) => doc('vendor_logo', vendorId)],
+    [
+      'evidence of another RFQ',
+      async () => {
+        const other = await rfqWithQuotes(['1000.00']);
+        return doc('evidence', other.rfqId);
+      },
+    ],
+    ["another entity's evidence on the same id", (rfqId) => doc('evidence', rfqId, scopeB)],
+  ])(
+    'refuses to record a quotation on %s with 422 invalid_evidence_document',
+    async (_label, fileOf) => {
+      const p = await deptApprovedPr();
+      const v = await vendor('approved');
+      const rfq = await service.createRfq(
+        { purchaseRequestId: p.id, deadline: '2026-11-20T10:00:00+05:45', vendorIds: [v] },
+        randomUUID(),
+      );
+      const e = await httpErrorOf(
+        service.recordQuotation(
+          rfq.id,
+          {
+            vendorId: v,
+            documentId: await fileOf(rfq.id, v),
+            currency: 'NPR',
+            lines: [
+              { prLineId: p.lineId, quantity: '1', unitPrice: '1000.00', taxCodeId: vatCode },
+            ],
+          },
+          randomUUID(),
+        ),
+      );
+      expect(e.getStatus()).toBe(422);
+      expect(e.getResponse()).toMatchObject({ code: 'invalid_evidence_document' });
+      const { rows } = await exec(
+        scopeA,
+        sql`SELECT count(*)::int AS n FROM app.vendor_quotations WHERE rfq_id = ${rfq.id}`,
+      );
+      expect(rows[0]).toEqual({ n: 0 });
+    },
+  );
+
+  it('lets only a sourcing holder upload a quotation file, to an open RFQ of the entity', async () => {
+    const { rfqId } = await rfqWithQuotes(['1000.00']);
+    const file = { filename: 'quote.pdf', declaredMime: 'application/pdf', sizeBytes: 10 };
+    const created = await evidence.service.create('rfq', rfqId, file);
+    expect(created.uploadPath).toBe(
+      `/v1/procurement/rfqs/${rfqId}/evidence-documents/${created.documentId}/versions/${created.versionId}/content`,
+    );
+    // An accountant marks lines and enters bills; no sourcing grant, so no RFQ evidence.
+    as(U.acct, 'accountant');
+    expect((await httpErrorOf(evidence.service.create('rfq', rfqId, file))).getStatus()).toBe(403);
+    // Neither the bill nor the order route resolves an RFQ id.
+    as(U.founder, 'founder');
+    for (const kind of ['vendor_bill', 'sales_order'] as const) {
+      expect((await httpErrorOf(evidence.service.create(kind, rfqId, file))).getStatus()).toBe(404);
+    }
+    current.scope = scopeB;
+    expect((await httpErrorOf(evidence.service.create('rfq', rfqId, file))).getStatus()).toBe(404);
+    current.scope = null;
+    as(U.proc, 'procurement');
+    await exec(scopeA, sql`UPDATE app.rfqs SET status = 'closed' WHERE id = ${rfqId}`);
+    expect((await httpErrorOf(evidence.service.create('rfq', rfqId, file))).getStatus()).toBe(409);
   });
 });
 
@@ -612,7 +693,7 @@ describe('commitment bands (done check 2)', () => {
         rfq.id,
         {
           vendorId: v,
-          documentId: await doc(),
+          documentId: await quoteFile(rfq.id),
           currency: 'NPR',
           lines: [{ prLineId: pr.lineId, quantity: '1', unitPrice: net, taxCodeId: zero }],
         },
