@@ -188,7 +188,7 @@ it('downloads UTF-8 CSV with the exact server values, per-currency totals and a 
   );
   // One NPR filing total across the currencies, in the NPR columns only (the API's figures, not re-added here).
   expect(lines[5]).toBe(
-    '"Total NPR (all currencies)","","","","","","","","","","","","","1234.56","160.55","5.00","0.00","1390.55"',
+    '"NPR filing total (all currencies)","","","","","","","","","","","","","1234.56","160.55","5.00","0.00","1390.55"',
   );
 });
 

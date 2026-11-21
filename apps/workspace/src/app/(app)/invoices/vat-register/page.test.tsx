@@ -163,7 +163,7 @@ it('renders rows with BS dates, document kinds, links, negative credit notes and
   expect(html).toContain('Rate to NPR');
   expect(html).toContain('1,335.00');
   expect(html).toContain('173.55');
-  expect(footer).toContain('Total NPR');
+  expect(footer).toContain('NPR filing total');
   expect(footer).toContain('7,777.77');
   expect(footer).toContain('555.55');
   expect(footer).toContain('8,333.32');

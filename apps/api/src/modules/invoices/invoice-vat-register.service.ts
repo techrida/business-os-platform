@@ -127,11 +127,12 @@ export class InvoiceVatRegisterService {
           });
           // Issued implies a frozen rate and NPR total (invoices_issued_snapshot_check).
           const rate = new Decimal(d.fxRate!);
-          const nprTaxable = taxable.times(rate).toDecimalPlaces(2, Decimal.ROUND_HALF_UP);
           const nprVat = vat.times(rate).toDecimalPlaces(2, Decimal.ROUND_HALF_UP);
           const nprExempt = exempt.times(rate).toDecimalPlaces(2, Decimal.ROUND_HALF_UP);
           const nprZeroRated = zeroRated.times(rate).toDecimalPlaces(2, Decimal.ROUND_HALF_UP);
           const nprTotal = new Decimal(d.amountNpr!).times(sign);
+          // The taxable base takes the rounding remainder (money rule C-2), so the NPR columns add up to the frozen NPR total.
+          const nprTaxable = nprTotal.minus(nprVat).minus(nprExempt).minus(nprZeroRated);
           npr.n += 1;
           npr.taxable = npr.taxable.plus(nprTaxable);
           npr.vat = npr.vat.plus(nprVat);

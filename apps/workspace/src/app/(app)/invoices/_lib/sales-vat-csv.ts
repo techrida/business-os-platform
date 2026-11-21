@@ -85,7 +85,7 @@ export function salesVatCsv(register: SalesVatRegister): string {
       '',
     ]),
     [
-      'Total NPR (all currencies)',
+      'NPR filing total (all currencies)',
       '',
       '',
       '',
