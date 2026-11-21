@@ -147,8 +147,8 @@ export class UsersService extends UserDirectory {
    *   (A) short READ_ONLY tx (when granting access): lock access-revision, check live grant, validate placement.
    *   (B) ZITADEL createHuman + setGrants + sendInviteCode (or finish an earlier open invite on 409).
    *   (C) short tx: re-lock access-revision, re-check live grant and placement, write mirror + membership + roles.
-   * If (C) fails, takes back the grants and deletes the identity when this invite created it (never throwing), then
-   * rethrows the original error.
+   * If (C) fails, shrinks the grants to what the database still allows and never deletes the identity (FU8; never
+   * throwing), then rethrows the original error.
    */
   async invite(
     scope: TxScope,
@@ -206,7 +206,7 @@ export class UsersService extends UserDirectory {
       );
       return { userId, zitadelUserId: prepared.zitadelUserId, created: prepared.created };
     } catch (error) {
-      await this.mirror.takeBackInvite(org, prepared);
+      await this.mirror.reconcileFailedInvite(scope, actor, org, prepared, b.roles);
       throw error;
     }
   }
@@ -303,8 +303,8 @@ export class UsersService extends UserDirectory {
     const row = await this.store.findByZitadelId(this.db, open.id);
     if (row && row.status !== 'invited') throw conflict;
 
-    // Read the existing grants before replacing them so takeBackInvite can restore them instead of wiping grants if
-    // phase (C) fails while the user is still invited.
+    // Read the existing grants before replacing them: if phase (C) fails the reconcile keeps only the roles the person
+    // held before this invite and the database still has (it never adds one back).
     const previousGrants = await this.zitadel.listGrants(open.id, org.zitadelOrgId);
     // The same steps as a first invite, in the same order. Each one is safe to repeat: setGrants replaces the whole
     // set, and sendInviteCode resends the invite link.
