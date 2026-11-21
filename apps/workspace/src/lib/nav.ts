@@ -114,6 +114,14 @@ export const NAV_GROUPS: readonly NavGroup[] = [
         phase: 'P2',
         permission: 'crm.opportunity.read',
       },
+      // The lost-deal report reads only deals, so it follows the deal read grant, as its API does.
+      {
+        label: 'Lost deals',
+        href: '/reports/lost-deals',
+        icon: 'trending-up',
+        phase: 'P2',
+        permission: 'crm.opportunity.read',
+      },
       {
         label: 'Quotations',
         href: '/quotations',
