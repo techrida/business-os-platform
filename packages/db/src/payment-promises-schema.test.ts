@@ -141,8 +141,18 @@ describe('0113_payment_promises and src/schema/payment-promises.ts', () => {
   });
 
   it('keeps the status allow-list equal to the exported catalogue', () => {
-    const line = /CONSTRAINT "payment_promises_status_check" CHECK \((.*)\),?$/m.exec(SQL_TEXT);
-    const list = [...(line?.[1] ?? '').matchAll(/'(\w+)'/g)].map((m) => m[1]);
+    // 0153 redefines the check (adds `replaced`): the last definition across the migrations is the live one.
+    const replaced = readFileSync(
+      new URL('../migrations/0153_payment_promise_replaced.sql', import.meta.url),
+      'utf8',
+    );
+    const lines = [
+      ...`${SQL_TEXT}\n${replaced}`.matchAll(
+        /CONSTRAINT "payment_promises_status_check" CHECK \((.*)\)[,;]?$/gm,
+      ),
+    ];
+    expect(lines).toHaveLength(2);
+    const list = [...(lines.at(-1)?.[1] ?? '').matchAll(/'(\w+)'/g)].map((m) => m[1]);
     expect(list).toEqual([...PAYMENT_PROMISE_STATUSES]);
   });
 

@@ -76,6 +76,8 @@ export const ACTIVITY_KINDS = [
   'task',
   'stage_change',
   'system',
+  // 0154: the call the payment-promise job plans for Finance; read and changed by the receivables permissions.
+  'collection_call',
 ] as const;
 
 const timestamps = {
@@ -798,7 +800,7 @@ export const activities = appSchema.table(
     ),
     check(
       'activities_kind_check',
-      sql`${t.kind} in ('call', 'meeting', 'email', 'note', 'task', 'stage_change', 'system')`,
+      sql`${t.kind} in ('call', 'meeting', 'email', 'note', 'task', 'stage_change', 'system', 'collection_call')`,
     ),
     check(
       'activities_one_subject_check',
