@@ -413,6 +413,30 @@ describe('UserMirror as the UserDirectory backend', () => {
     expect(await store.rolesOf(db, TENANT, id)).toEqual(['accountant']);
   });
 
+  it('setRoles restores ZITADEL to the committed DB roles after a concurrent role conflict so both agree (FU1 item 2)', async () => {
+    zitadel.users.set('z1', zUser('z1'));
+    zitadel.grants.set('z1', ['accountant']);
+    await mirror.syncUser('z1');
+    const id = store.users[0]!.id;
+
+    const realSetGrants = zitadel.setGrants.bind(zitadel);
+    vi.spyOn(zitadel, 'setGrants').mockImplementationOnce(async (...args) => {
+      await realSetGrants(...args);
+      await store.replaceRoles(tx, scope, id, ['sales']);
+    });
+
+    const conflict = await mirror
+      .setRoles(scope, systemActor('test'), id, ['finance'])
+      .catch((e: unknown) => e);
+    expect(conflict).toBeInstanceOf(ConflictException);
+    expect(zitadel.setGrantsCalls).toEqual([
+      { userId: 'z1', orgId: STAFF_ZORG, roles: ['finance'] },
+      { userId: 'z1', orgId: STAFF_ZORG, roles: ['sales'] },
+    ]);
+    expect(zitadel.grants.get('z1')).toEqual(['sales']);
+    expect(await store.rolesOf(db, TENANT, id)).toEqual(['sales']);
+  });
+
   it('invite calls ZITADEL outside any tx, creates the user, grants, and an invited mirror row', async () => {
     const openDuringZitadel: number[] = [];
     const realCreate = zitadel.createHuman.bind(zitadel);
