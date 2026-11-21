@@ -90,7 +90,14 @@ export interface Listing<T> {
   items: T[];
   total: number | null;
 }
-export type CustomerDetail = CustomerDto & { accounts?: PartyAccountDto[] | undefined };
+// The workspace's CustomerDetailSchema keeps these beside the contract CustomerDto; the test only checks they arrive.
+export type CustomerDetail = CustomerDto & {
+  accounts?: PartyAccountDto[] | undefined;
+  people?: unknown;
+  can?: unknown;
+  verification?: unknown;
+  portalAccess?: unknown;
+};
 
 /** components/p2/crm/crm-api.ts */
 export interface CrmClient {
