@@ -96,9 +96,15 @@ function TermsDialog({
           <Alert
             ref={summaryRef}
             tabIndex={-1}
-            tone={state.stale ? 'warning' : 'error'}
+            tone={state.stale || state.entityChanged ? 'warning' : 'error'}
             role="alert"
-            title={state.stale ? 'Changed by someone else' : 'Not saved'}
+            title={
+              state.entityChanged
+                ? 'Legal entity changed'
+                : state.stale
+                  ? 'Changed by someone else'
+                  : 'Not saved'
+            }
           >
             {state.error}
           </Alert>
@@ -237,6 +243,7 @@ function TermSelect({
 export function PaymentTermForm({
   action,
   customerId,
+  organizationId,
   version,
   current,
   terms,
@@ -244,6 +251,8 @@ export function PaymentTermForm({
 }: {
   action: TermsAction;
   customerId: string;
+  /** The acting entity the page was rendered for: the API refuses the save once the person acts for another. */
+  organizationId: string;
   /** The terms row's version, or null before the first save. */
   version: number | null;
   current: string | null;
@@ -257,6 +266,7 @@ export function PaymentTermForm({
       action={action}
       hidden={{
         customerId,
+        organizationId,
         expectedVersion: version === null ? '' : String(version),
         currentPaymentTermId: current ?? '',
       }}
@@ -308,7 +318,7 @@ function LimitFields({
       {noLimit ? null : (
         <Field
           label="Credit limit (NPR)"
-          hint="Up to two decimals, for example 1,00,000.00. 0.00 is a real limit: it holds every order."
+          hint="Up to two decimals, for example 1,00,000.00. 0.00 is a real limit: it holds any order unless the customer has enough credit on account to cover it."
           error={error}
         >
           {(c) => (
@@ -339,12 +349,15 @@ function LimitFields({
 export function CreditLimitForm({
   action,
   customerId,
+  organizationId,
   version,
   current,
   entityName,
 }: {
   action: TermsAction;
   customerId: string;
+  /** The acting entity the page was rendered for: the API refuses the save once the person acts for another. */
+  organizationId: string;
   /** The terms row's version, or null before the first save. */
   version: number | null;
   /** NPR with two decimals, or null for no limit. */
@@ -358,6 +371,7 @@ export function CreditLimitForm({
       action={action}
       hidden={{
         customerId,
+        organizationId,
         expectedVersion: version === null ? '' : String(version),
         currentCreditLimit: current ?? '',
       }}

@@ -1,7 +1,8 @@
 // The Commercial terms card's server actions: each one checks its own grant (Finance sets limits and Management
 // changes owners without customer.write), validates before anything is sent, sends one field with the version the
-// page rendered (none before the first terms save), and words every refusal: 403, a stale 409 (the page data is
-// reloaded), a refused payment term (422), a refused owner (400), a missing customer and a lost connection.
+// page rendered (none before the first terms save) and, for the terms, the legal entity the page was rendered for,
+// and words every refusal: 403, a stale 409 (the page data is reloaded), a 409 for an entity switched in another tab
+// (not reloaded), a refused payment term (422), a refused owner (400), a missing customer and a lost connection.
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { ApiError } from '@/lib/api';
@@ -23,6 +24,7 @@ vi.mock('./api', () => api);
 const { changeOwnerAction, setCreditLimitAction, setPaymentTermAction } =
   await import('./terms-actions');
 const {
+  ENTITY_CHANGED,
   LIMIT_INVALID,
   LIMIT_REQUIRED,
   NO_PERMISSION,
@@ -35,6 +37,8 @@ const ID = '11111111-1111-4111-8111-111111111111';
 const PERSON = '22222222-2222-4222-8222-222222222222';
 const OTHER = '33333333-3333-4333-8333-333333333333';
 const TERM = '44444444-4444-4444-8444-444444444444';
+/** The acting entity the page was rendered for. */
+const ORG = '55555555-5555-4555-8555-555555555555';
 
 function form(fields: Record<string, string>): FormData {
   const f = new FormData();
@@ -50,7 +54,13 @@ const apiError = (status: number, error: Record<string, unknown> = {}) =>
 const limit = (fields: Record<string, string>) =>
   setCreditLimitAction(
     TERMS_START,
-    form({ customerId: ID, expectedVersion: '3', currentCreditLimit: '', ...fields }),
+    form({
+      customerId: ID,
+      organizationId: ORG,
+      expectedVersion: '3',
+      currentCreditLimit: '',
+      ...fields,
+    }),
   );
 
 beforeEach(() => {
@@ -64,6 +74,7 @@ describe('setCreditLimitAction', () => {
   it('lets Finance (no customer.write) set a limit, sending NPR digits and the rendered version', async () => {
     const out = await limit({ limitMode: 'limit', creditLimit: '1,00,000.00' });
     expect(api.updateCustomerTerms).toHaveBeenCalledWith(expect.anything(), ID, {
+      organizationId: ORG,
       creditLimit: '100000.00',
       expectedVersion: 3,
     });
@@ -74,11 +85,13 @@ describe('setCreditLimitAction', () => {
   it('sends null for No limit, and 0.00 as a real limit', async () => {
     await limit({ limitMode: 'none', currentCreditLimit: '5000.00' });
     expect(api.updateCustomerTerms).toHaveBeenLastCalledWith(expect.anything(), ID, {
+      organizationId: ORG,
       creditLimit: null,
       expectedVersion: 3,
     });
     await limit({ limitMode: 'limit', creditLimit: '0.00' });
     expect(api.updateCustomerTerms).toHaveBeenLastCalledWith(expect.anything(), ID, {
+      organizationId: ORG,
       creditLimit: '0.00',
       expectedVersion: 3,
     });
@@ -87,6 +100,7 @@ describe('setCreditLimitAction', () => {
   it('leaves the version out on the first save (no terms row yet)', async () => {
     await limit({ limitMode: 'limit', creditLimit: '500', expectedVersion: '' });
     expect(api.updateCustomerTerms).toHaveBeenCalledWith(expect.anything(), ID, {
+      organizationId: ORG,
       creditLimit: '500',
     });
   });
@@ -135,6 +149,27 @@ describe('setCreditLimitAction', () => {
     expect(revalidatePath).toHaveBeenCalledWith(`/customers/${ID}`);
   });
 
+  it('refuses a missing or tampered entity id as an incomplete form', async () => {
+    expect((await limit({ limitMode: 'none', organizationId: '' })).error).toMatch(/incomplete/i);
+    expect((await limit({ limitMode: 'none', organizationId: 'TA' })).error).toMatch(/incomplete/i);
+    expect(api.updateCustomerTerms).not.toHaveBeenCalled();
+  });
+
+  it('on an entity switched in another tab (409 entity_changed) says so, without reloading the page data', async () => {
+    api.updateCustomerTerms.mockRejectedValue(
+      apiError(409, { code: 'conflict', reason: 'entity_changed' }),
+    );
+    const out = await limit({ limitMode: 'limit', creditLimit: '500' });
+    expect(out).toEqual({
+      errors: {},
+      error: ENTITY_CHANGED,
+      entityChanged: true,
+      savedCount: 0,
+    });
+    expect(out.error).toMatch(/reload the page/i);
+    expect(revalidatePath).not.toHaveBeenCalled();
+  });
+
   it('words a 403 from the API (grant removed after the page loaded), keeping the dialog to show it', async () => {
     api.updateCustomerTerms.mockRejectedValue(
       apiError(403, { code: 'forbidden', reason: 'no_permission' }),
@@ -160,7 +195,13 @@ describe('setPaymentTermAction', () => {
   const term = (fields: Record<string, string>) =>
     setPaymentTermAction(
       TERMS_START,
-      form({ customerId: ID, expectedVersion: '2', currentPaymentTermId: '', ...fields }),
+      form({
+        customerId: ID,
+        organizationId: ORG,
+        expectedVersion: '2',
+        currentPaymentTermId: '',
+        ...fields,
+      }),
     );
 
   beforeEach(() => {
@@ -170,11 +211,13 @@ describe('setPaymentTermAction', () => {
   it('sends the chosen term, and null to clear it', async () => {
     expect(await term({ paymentTermId: TERM })).toMatchObject({ saved: 'Payment terms saved.' });
     expect(api.updateCustomerTerms).toHaveBeenLastCalledWith(expect.anything(), ID, {
+      organizationId: ORG,
       paymentTermId: TERM,
       expectedVersion: 2,
     });
     await term({ paymentTermId: '', currentPaymentTermId: TERM });
     expect(api.updateCustomerTerms).toHaveBeenLastCalledWith(expect.anything(), ID, {
+      organizationId: ORG,
       paymentTermId: null,
       expectedVersion: 2,
     });
@@ -202,6 +245,18 @@ describe('setPaymentTermAction', () => {
   it('never words a 422 without a field as "did not respond"', async () => {
     api.updateCustomerTerms.mockRejectedValue(apiError(422, { code: 'unprocessable' }));
     expect((await term({ paymentTermId: TERM })).error).toMatch(/did not accept this change/i);
+  });
+
+  it('refuses a missing entity id, and maps a 409 entity_changed without reloading', async () => {
+    expect((await term({ paymentTermId: TERM, organizationId: '' })).error).toMatch(/incomplete/i);
+    expect(api.updateCustomerTerms).not.toHaveBeenCalled();
+    api.updateCustomerTerms.mockRejectedValue(
+      apiError(409, { code: 'conflict', reason: 'entity_changed' }),
+    );
+    const out = await term({ paymentTermId: TERM });
+    expect(out).toMatchObject({ error: ENTITY_CHANGED, entityChanged: true, savedCount: 0 });
+    expect(out.stale).toBeUndefined();
+    expect(revalidatePath).not.toHaveBeenCalled();
   });
 
   it('refuses choosing the term already set', async () => {

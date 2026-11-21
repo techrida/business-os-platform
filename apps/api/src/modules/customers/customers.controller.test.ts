@@ -165,17 +165,22 @@ describe('route permissions', () => {
 describe('PATCH /v1/customers/:id/terms', () => {
   it('passes the parsed body through, keeping null apart from absent', async () => {
     const { service, controller } = setup();
-    await controller.updateTerms(ID, { creditLimit: null, expectedVersion: 2 });
-    expect(service.updateTerms).toHaveBeenCalledWith(ID, { creditLimit: null, expectedVersion: 2 });
+    const body = { organizationId: ID, creditLimit: null, expectedVersion: 2 };
+    await controller.updateTerms(ID, body);
+    expect(service.updateTerms).toHaveBeenCalledWith(ID, body);
   });
 
-  it('is a 400 for an empty body, three decimals or an unknown key, before the service is called', () => {
+  it('is a 400 for an empty body, no entity, three decimals or an unknown key, before the service is called', () => {
     const { service, controller } = setup();
-    expect(() => controller.updateTerms(ID, {})).toThrow(BadRequestException);
-    expect(() => controller.updateTerms(ID, { creditLimit: '1.005' })).toThrow(BadRequestException);
-    expect(() => controller.updateTerms(ID, { creditLimit: '1.00', owner: 'x' })).toThrow(
+    const organizationId = ID;
+    expect(() => controller.updateTerms(ID, { organizationId })).toThrow(BadRequestException);
+    expect(() => controller.updateTerms(ID, { creditLimit: '1.00' })).toThrow(BadRequestException);
+    expect(() => controller.updateTerms(ID, { organizationId, creditLimit: '1.005' })).toThrow(
       BadRequestException,
     );
+    expect(() =>
+      controller.updateTerms(ID, { organizationId, creditLimit: '1.00', owner: 'x' }),
+    ).toThrow(BadRequestException);
     expect(service.updateTerms).not.toHaveBeenCalled();
   });
 });

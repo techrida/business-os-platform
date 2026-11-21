@@ -191,12 +191,20 @@ describe('customers', () => {
     };
     fetchMock.mockResolvedValue(reply(saved));
     expect(
-      await updateCustomerTerms(session, ID_A, { creditLimit: null, expectedVersion: 2 }),
+      await updateCustomerTerms(session, ID_A, {
+        organizationId: ID_B,
+        creditLimit: null,
+        expectedVersion: 2,
+      }),
     ).toEqual(saved);
     const { url, init } = lastCall();
     expect(url).toBe(`http://api:3001/v1/customers/${ID_A}/terms`);
     expect(init.method).toBe('PATCH');
-    expect(JSON.parse(init.body as string)).toEqual({ creditLimit: null, expectedVersion: 2 });
+    expect(JSON.parse(init.body as string)).toEqual({
+      organizationId: ID_B,
+      creditLimit: null,
+      expectedVersion: 2,
+    });
   });
 
   it('answers 502 when the industries are not a list of text', async () => {

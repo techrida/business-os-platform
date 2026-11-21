@@ -160,9 +160,13 @@ export const CreditLimitSchema = z
  *   dropped.
  * - `expectedVersion`: the row's version the client saw. Required once the row exists (409 when stale or missing);
  *   leave it out on the first save (409 when the row was created in between). Answered with the PartyAccountDto.
+ * - `organizationId`: the acting entity the form was rendered for (the detail's `actingEntity.organizationId`).
+ *   When the caller now acts for another entity (switched in another tab), the save is 409 `conflict` with reason
+ *   `entity_changed` and nothing is written, so a stale form never lands on another entity's terms.
  */
 export const UpdateCustomerTermsBodySchema = z
   .strictObject({
+    organizationId: z.guid(),
     paymentTermId: z.guid().nullable().optional(),
     creditLimit: CreditLimitSchema.nullable().optional(),
     expectedVersion: z.number().int().min(1).optional(),

@@ -4,7 +4,7 @@ import type { Permission } from '@bos/contracts';
 import { revalidatePath } from 'next/cache';
 
 import { ApiError } from '@/lib/api';
-import { apiDetailOf } from '@/lib/api-code';
+import { apiDetailOf, apiReasonOf } from '@/lib/api-code';
 import { failureOf } from '@/lib/api-kernel';
 import { requireStaffSession } from '@/lib/bff';
 import { getGrants, hasGrant } from '@/lib/grants';
@@ -13,6 +13,7 @@ import { updateCustomer, updateCustomerTerms } from './api';
 import { isGuid } from './format';
 import {
   CUSTOMER_GONE,
+  ENTITY_CHANGED,
   INCOMPLETE,
   NO_PERMISSION,
   NOTHING_CHANGED,
@@ -33,6 +34,10 @@ import {
  *
  * The version sent is the one the page rendered. A 409 reloads the page data (revalidatePath), so the dialog then
  * carries the latest value and version and says why: saving again is the person's informed choice.
+ *
+ * The terms saves also send the legal entity the page was rendered for (`organizationId`): the API acts for the
+ * session's entity at submit time, so a person who switched entity in another tab is refused (409 `entity_changed`)
+ * instead of overwriting the other entity's terms with this form.
  */
 
 type Session = Awaited<ReturnType<typeof requireStaffSession>>;
@@ -68,6 +73,10 @@ function refused(
 ): TermsEditState {
   const failure = failureOf(err);
   const reload = () => revalidatePath(`/customers/${customerId}`);
+  // No reload: it would re-point the open dialog at the entity the person switched to.
+  if (failure.status === 409 && apiReasonOf(err) === 'entity_changed') {
+    return { errors: {}, error: ENTITY_CHANGED, entityChanged: true, ...same };
+  }
   if (failure.status === 409) {
     reload();
     return { errors: {}, error: staleMessage(field), stale: true, ...same };
@@ -158,6 +167,8 @@ export async function setPaymentTermAction(
 
   const expectedVersion = versionOf(form, 'expectedVersion');
   if (expectedVersion === 'bad') return { errors: {}, error: INCOMPLETE, ...same };
+  const organizationId = text(form, 'organizationId');
+  if (!isGuid(organizationId)) return { errors: {}, error: INCOMPLETE, ...same };
   const chosen = text(form, 'paymentTermId');
   if (chosen !== '' && !isGuid(chosen)) return { errors: {}, error: INCOMPLETE, ...same };
   if (chosen === text(form, 'currentPaymentTermId')) {
@@ -166,6 +177,7 @@ export async function setPaymentTermAction(
 
   try {
     await updateCustomerTerms(session, customerId, {
+      organizationId,
       paymentTermId: chosen === '' ? null : chosen,
       ...(expectedVersion !== undefined ? { expectedVersion } : {}),
     });
@@ -187,6 +199,8 @@ export async function setCreditLimitAction(
 
   const expectedVersion = versionOf(form, 'expectedVersion');
   if (expectedVersion === 'bad') return { errors: {}, error: INCOMPLETE, ...same };
+  const organizationId = text(form, 'organizationId');
+  if (!isGuid(organizationId)) return { errors: {}, error: INCOMPLETE, ...same };
   const parsed = parseCreditLimit(text(form, 'limitMode'), text(form, 'creditLimit'));
   if (!parsed.ok) return { errors: { value: parsed.error }, ...same };
   const current = text(form, 'currentCreditLimit');
@@ -196,6 +210,7 @@ export async function setCreditLimitAction(
 
   try {
     await updateCustomerTerms(session, customerId, {
+      organizationId,
       creditLimit: parsed.value,
       ...(expectedVersion !== undefined ? { expectedVersion } : {}),
     });

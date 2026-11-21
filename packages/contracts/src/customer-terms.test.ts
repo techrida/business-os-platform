@@ -5,7 +5,12 @@ import { UpdateCustomerTermsBodySchema } from './crm.js';
 import { CustomerActingEntitySchema, CustomerCanSchema } from './customer-detail.js';
 
 const TERM = '3f1c2a52-9a7e-4c41-8f6e-2b1a1d0c9e11';
-const ok = (body: unknown) => UpdateCustomerTermsBodySchema.safeParse(body).success;
+const ORG = '0b9d5c1e-4a3f-4e2d-9c8b-7a6f5e4d3c2b';
+/** Parses `body` with the acting entity the form was rendered for. */
+const ok = (body: object) =>
+  UpdateCustomerTermsBodySchema.safeParse({ organizationId: ORG, ...body }).success;
+const parse = (body: object) =>
+  UpdateCustomerTermsBodySchema.parse({ organizationId: ORG, ...body });
 
 describe('UpdateCustomerTermsBodySchema', () => {
   it('takes a limit, a term, or both, with or without the version', () => {
@@ -15,16 +20,18 @@ describe('UpdateCustomerTermsBodySchema', () => {
     expect(ok({ paymentTermId: TERM, creditLimit: '0.5', expectedVersion: 1 })).toBe(true);
   });
 
-  it('keeps null (no limit, no term) apart from "0.00" (a limit that holds everything)', () => {
-    expect(UpdateCustomerTermsBodySchema.parse({ creditLimit: null })).toEqual({
-      creditLimit: null,
-    });
-    expect(UpdateCustomerTermsBodySchema.parse({ creditLimit: '0.00' })).toEqual({
-      creditLimit: '0.00',
-    });
-    expect(UpdateCustomerTermsBodySchema.parse({ paymentTermId: null })).toEqual({
-      paymentTermId: null,
-    });
+  it('keeps null (no limit, no term) apart from "0.00" (a real zero limit)', () => {
+    expect(parse({ creditLimit: null })).toEqual({ organizationId: ORG, creditLimit: null });
+    expect(parse({ creditLimit: '0.00' })).toEqual({ organizationId: ORG, creditLimit: '0.00' });
+    expect(parse({ paymentTermId: null })).toEqual({ organizationId: ORG, paymentTermId: null });
+  });
+
+  it('needs the acting entity the form was rendered for, as a uuid', () => {
+    const safe = (body: unknown) => UpdateCustomerTermsBodySchema.safeParse(body).success;
+    expect(safe({ creditLimit: '1.00' })).toBe(false);
+    expect(safe({ organizationId: 'TA', creditLimit: '1.00' })).toBe(false);
+    expect(safe({ organizationId: null, creditLimit: '1.00' })).toBe(false);
+    expect(safe({ organizationId: ORG, creditLimit: '1.00' })).toBe(true);
   });
 
   it('refuses three decimals, a negative or signed amount, a number and a non-amount', () => {

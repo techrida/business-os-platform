@@ -1,12 +1,13 @@
 // @vitest-environment jsdom
 // The Commercial terms dialogs: each sends one field with the version the page rendered (none before the first terms
 // save), a refusal stays in the dialog under the field or at the top, a stale save says someone else changed it and
-// keeps the dialog open, and a save closes it with a toast.
+// keeps the dialog open, a save for a legal entity switched in another tab says so and keeps the dialog usable, and a
+// save closes it with a toast. The terms dialogs send the legal entity the page was rendered for.
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { choose, click, fill, mountForm } from '@/test/form-interactions';
 
-import { LIMIT_INVALID, staleMessage, type TermsEditState } from './terms-form';
+import { ENTITY_CHANGED, LIMIT_INVALID, staleMessage, type TermsEditState } from './terms-form';
 import { CreditLimitForm, OwnerForm, PaymentTermForm } from './terms-forms';
 
 const toast = vi.hoisted(() => ({ success: vi.fn(), error: vi.fn() }));
@@ -16,6 +17,7 @@ const CUSTOMER = '11111111-1111-4111-8111-111111111111';
 const SITA = '22222222-2222-4222-8222-222222222222';
 const RAM = '33333333-3333-4333-8333-333333333333';
 const NET30 = '44444444-4444-4444-8444-444444444444';
+const ENTITY = '55555555-5555-4555-8555-555555555555';
 let mounted: Awaited<ReturnType<typeof mountForm>> | undefined;
 
 beforeEach(() => {
@@ -57,6 +59,7 @@ describe('CreditLimitForm', () => {
       <CreditLimitForm
         action={action}
         customerId={CUSTOMER}
+        organizationId={ENTITY}
         version={null}
         current={null}
         entityName="Techrida Nepal"
@@ -70,6 +73,7 @@ describe('CreditLimitForm', () => {
 
     const sent = action.mock.calls[0]![1];
     expect(sent.get('customerId')).toBe(CUSTOMER);
+    expect(sent.get('organizationId')).toBe(ENTITY);
     expect(sent.get('expectedVersion')).toBe('');
     expect(sent.get('limitMode')).toBe('limit');
     expect(sent.get('creditLimit')).toBe('1,00,000.00');
@@ -84,6 +88,7 @@ describe('CreditLimitForm', () => {
       <CreditLimitForm
         action={action}
         customerId={CUSTOMER}
+        organizationId={ENTITY}
         version={3}
         current="0.00"
         entityName="Techrida Nepal"
@@ -109,6 +114,7 @@ describe('CreditLimitForm', () => {
       <CreditLimitForm
         action={refuses({ errors: { value: LIMIT_INVALID } })}
         customerId={CUSTOMER}
+        organizationId={ENTITY}
         version={3}
         current={null}
         entityName="Techrida Nepal"
@@ -129,6 +135,7 @@ describe('CreditLimitForm', () => {
       <CreditLimitForm
         action={refuses({ errors: {}, error: staleMessage('creditLimit'), stale: true })}
         customerId={CUSTOMER}
+        organizationId={ENTITY}
         version={3}
         current="500.00"
         entityName="Techrida Nepal"
@@ -138,6 +145,55 @@ describe('CreditLimitForm', () => {
     await save();
     expect(dialog()?.textContent).toContain('Changed by someone else');
     expect(dialog()?.textContent).toContain(staleMessage('creditLimit'));
+  });
+
+  it('says the legal entity changed, keeps the draft and stays usable to cancel and reload', async () => {
+    const action = refuses({ errors: {}, error: ENTITY_CHANGED, entityChanged: true });
+    mounted = await mountForm(
+      <CreditLimitForm
+        action={action}
+        customerId={CUSTOMER}
+        organizationId={ENTITY}
+        version={3}
+        current="500.00"
+        entityName="Techrida Nepal"
+      />,
+    );
+    await open('credit limit');
+    await fill(dialog()!.querySelector('input[name="creditLimit"]'), '900');
+    await save();
+    expect(action.mock.calls[0]![1].get('organizationId')).toBe(ENTITY);
+    expect(dialog()?.textContent).toContain('Legal entity changed');
+    expect(dialog()?.textContent).toContain(ENTITY_CHANGED);
+    expect(dialog()?.textContent).not.toContain('Changed by someone else');
+    expect(dialog()!.querySelector<HTMLInputElement>('input[name="creditLimit"]')?.value).toBe(
+      '900',
+    );
+    const buttons = Array.from(dialog()!.querySelectorAll<HTMLButtonElement>('footer button'));
+    expect(buttons.map((b) => [b.textContent, b.disabled])).toEqual([
+      ['Cancel', false],
+      ['Save', false],
+    ]);
+    expect(toast.success).not.toHaveBeenCalled();
+  });
+
+  it('shows the dialog hint for a zero limit: it holds an order unless credit on account covers it', async () => {
+    mounted = await mountForm(
+      <CreditLimitForm
+        action={saves('x')}
+        customerId={CUSTOMER}
+        organizationId={ENTITY}
+        version={3}
+        current="0.00"
+        entityName="Techrida Nepal"
+      />,
+    );
+    await open('credit limit');
+    const text = dialog()?.textContent ?? '';
+    expect(text).toContain(
+      '0.00 is a real limit: it holds any order unless the customer has enough credit on account to cover it.',
+    );
+    expect(text).not.toContain('holds every order');
   });
 });
 
@@ -173,6 +229,7 @@ describe('PaymentTermForm', () => {
       <PaymentTermForm
         action={action}
         customerId={CUSTOMER}
+        organizationId={ENTITY}
         version={2}
         current={NET30}
         terms={[{ id: NET30, label: 'Net 30 days' }]}
@@ -186,5 +243,6 @@ describe('PaymentTermForm', () => {
     expect(sent.get('paymentTermId')).toBe('');
     expect(sent.get('currentPaymentTermId')).toBe(NET30);
     expect(sent.get('expectedVersion')).toBe('2');
+    expect(sent.get('organizationId')).toBe(ENTITY);
   });
 });
