@@ -69,6 +69,22 @@ describe('NotifyService.nudge', () => {
     await expect(serviceWith(queue).nudge()).resolves.toBeUndefined();
     expect(queue.add).toHaveBeenCalledOnce();
   });
+
+  it('stops waiting after about a second when the queue never answers (Valkey down)', async () => {
+    const queue = { add: vi.fn().mockReturnValue(new Promise(() => undefined)) };
+    let settled = false;
+
+    const done = serviceWith(queue)
+      .nudge()
+      .then(() => {
+        settled = true;
+      });
+    await vi.advanceTimersByTimeAsync(900);
+    expect(settled).toBe(false);
+    await vi.advanceTimersByTimeAsync(200);
+    await done;
+    expect(settled).toBe(true);
+  });
 });
 
 describe('NotifyService.notifyUser email links', () => {
