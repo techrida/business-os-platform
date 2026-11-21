@@ -317,6 +317,8 @@ describe('0123 Finance and Accountant base reads', () => {
       'finance sales_order.delivery_release': 'all true',
       'founder sales_order.delivery_release': 'all true',
       'management sales_order.delivery_release': 'all true',
+      // 0178 seeds the Accountant's quotation acceptance grant to a tenant that stores grants.
+      'accountant quotation.record_acceptance': 'all true',
       'founder approvals.definitions.publish': 'all true',
       'founder email_delivery.read': 'all true',
       'founder email_delivery.resend': 'all true',
