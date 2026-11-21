@@ -61,6 +61,7 @@ import { getCustomer } from '@/components/p2/customers/api';
 
 import { moveOpportunityStageAction } from '../actions';
 import { OpportunityActivities } from './activity-panel';
+import { creditPositionView } from '@/components/p2/crm/credit-position';
 import { CreditOverrideDialog } from './credit-override-dialog';
 import { OpportunityOwnerField } from './opportunity-owner-field';
 import styles from './detail.module.css';
@@ -236,6 +237,13 @@ function opportunityStageMessage(
   return 'Sending and accepting quotations update the stage automatically.';
 }
 
+/** `a, b and c`, with a capital first letter: the parts of the credit position as one sentence. */
+function sentenceOf(parts: string[]): string {
+  const text =
+    parts.length > 1 ? `${parts.slice(0, -1).join(', ')} and ${parts.at(-1)}` : (parts[0] ?? '');
+  return text.replace(/^./, (c) => c.toUpperCase());
+}
+
 /**
  * Why a deal is on credit hold (F1-Q20), for everyone who can read it. Holders of `credit.override`
  * also get the amounts (when they load) and the Override action; anyone else is told who can
@@ -252,14 +260,25 @@ function CreditHoldBanner({
   hold: CreditHoldDto | null;
   numberSystems: NumberSystems;
 }) {
-  // The hold counts the deal's accepted quotation on top of what the customer owes (Kuu R4a Q1b),
-  // so the amounts name both: open receivables alone may be under the limit.
+  // The hold counts the customer's confirmed orders that no invoice covers yet and the deal's accepted quotation
+  // on top of what it owes (Kuu R4a Q1b, R5 FU4), so the amounts name every part: open receivables alone may be
+  // under the limit.
   const amount = (value: string) => money(value, hold?.currency ?? 'NPR', numberSystems);
+  const parts =
+    hold && hold.creditLimit !== null
+      ? [
+          `open receivables are ${amount(hold.exposure)}`,
+          ...(Number(hold.uninvoiced) > 0
+            ? [`confirmed orders not yet invoiced are ${amount(hold.uninvoiced)}`]
+            : []),
+          ...(Number(hold.orderValue) > 0
+            ? [`this deal's order is ${amount(hold.orderValue)}`]
+            : []),
+        ]
+      : [];
   const amounts =
     hold && hold.creditLimit !== null
-      ? Number(hold.orderValue) > 0
-        ? ` Open receivables are ${amount(hold.exposure)} and this deal's order is ${amount(hold.orderValue)}: ${amount(hold.exposureWithOrder)} against a limit of ${amount(hold.creditLimit)}.`
-        : ` It owes ${amount(hold.exposure)} against a limit of ${amount(hold.creditLimit)}.`
+      ? ` ${sentenceOf(parts)}: ${amount(hold.exposureWithOrder)} against a limit of ${amount(hold.creditLimit)}.`
       : '';
   return (
     <Alert
@@ -268,7 +287,11 @@ function CreditHoldBanner({
       title="Credit hold"
       actions={
         canOverride ? (
-          <CreditOverrideDialog opportunityId={opp.id} number={opp.number} />
+          <CreditOverrideDialog
+            opportunityId={opp.id}
+            number={opp.number}
+            position={hold ? creditPositionView(hold, numberSystems) : undefined}
+          />
         ) : undefined
       }
     >

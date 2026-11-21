@@ -919,10 +919,12 @@ describe('credit hold on the deal (F1-Q20)', () => {
     currency: 'NPR',
     creditLimit: '500000.00',
     exposure: '512345.50',
+    uninvoiced: '0.00',
     orderValue: '0.00',
     exposureWithOrder: '512345.50',
     held: true,
     override: null,
+    overrideCovers: false,
   });
   const grants = (...held: string[]) =>
     mocks.getPermissionCheck.mockResolvedValue((p: string) => held.includes(p));
@@ -954,7 +956,9 @@ describe('credit hold on the deal (F1-Q20)', () => {
     const doc = parse(await render());
     expect(mocks.getCreditHold).toHaveBeenCalledWith(expect.anything(), OPP);
     const text = banner(doc)?.textContent ?? '';
-    expect(text).toMatch(/owes .*5,12,345\.50.* against a limit of .*5,00,000\.00/);
+    expect(text).toMatch(
+      /open receivables are .*5,12,345\.50.* against a limit of .*5,00,000\.00/i,
+    );
     expect(
       [...(banner(doc)?.querySelectorAll('button') ?? [])].map((b) => b.textContent),
     ).toContain('Override credit hold');

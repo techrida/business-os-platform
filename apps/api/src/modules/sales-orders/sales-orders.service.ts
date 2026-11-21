@@ -96,7 +96,7 @@ import { deliveryHoldThresholdNpr } from '../../platform/settings/delivery-hold'
 import { NumberingService } from '../../platform/settings/numbering.service';
 import { SettingsService } from '../../platform/settings/settings.service';
 import { LedgerService } from '../ledger/ledger.service';
-import { creditPosition } from '../opportunities/credit-hold';
+import { creditPosition, overrideCovers } from '../opportunities/credit-hold';
 import { missingEvidence } from '../quotations/outcome/evidence-policy';
 import { readEvidenceState } from '../quotations/outcome/evidence-state';
 import { insertDraftOrder, liveOrderOf, planDraftOrder } from './draft-order';
@@ -432,21 +432,29 @@ export class SalesOrdersService {
     const customerPartyId = quotation.customerPartyId;
     if (customerPartyId === null) throw new Error(`quotation ${quotation.number} has no customer`);
 
-    // F1-Q20/F1-Q26 (Kuu R4a Q1b): a customer whose open receivables plus this order's gross NPR value are over its
-    // credit limit with this entity holds the deal here, the hand-over to a sales order, until a holder of
-    // credit.override overrides the hold on the deal with a reason. The refusal names the deal only: the limit and
-    // the balance are for holders of credit.override (GET /v1/opportunities/:id/credit-hold, the same rule).
+    // F1-Q20/F1-Q26 (Kuu R4a Q1b, R5 FU4): a customer whose open receivables, plus what its confirmed orders have not
+    // invoiced yet, plus this order's gross NPR value are over its credit limit with this entity holds the deal here,
+    // the hand-over to a sales order, until a holder of credit.override overrides the hold on the deal with a reason.
+    // An override covers orders up to the value it was given for: a bigger order needs a new one. The refusal names
+    // the deal only: the limit and the balance are for holders of credit.override
+    // (GET /v1/opportunities/:id/credit-hold, the same rule).
     const credit = await creditPosition(tx, scope, customerPartyId, { version });
     if (credit.held) {
       const [deal] = await tx
-        .select({ creditOverrideAt: opportunities.creditOverrideAt })
+        .select({
+          creditOverrideAt: opportunities.creditOverrideAt,
+          creditOverrideOrderValue: opportunities.creditOverrideOrderValue,
+        })
         .from(opportunities)
         .where(scoped(scope).where(opportunities, eq(opportunities.id, quotation.opportunityId)));
-      if (deal?.creditOverrideAt == null) {
+      if (
+        deal?.creditOverrideAt == null ||
+        !overrideCovers(deal.creditOverrideOrderValue, credit.orderValue)
+      ) {
         throw new ConflictException({
           code: 'credit_hold',
           message:
-            'The customer is over its credit limit; someone with credit override access must override the credit hold on the deal first',
+            'With the receivables, the orders not yet invoiced and this order, the customer is over its credit limit; someone with credit override access must override the credit hold on the deal first',
           details: { opportunityId: quotation.opportunityId },
         });
       }
