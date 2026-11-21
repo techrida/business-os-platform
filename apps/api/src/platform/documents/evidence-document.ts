@@ -48,8 +48,9 @@ export function evidenceNotUploaded(): UnprocessableEntityException {
  * evidence of another record stays that record's own, whatever a list names.
  * Otherwise 422 `invalid_evidence_document`; then 409 `document_infected` when its newest version is infected
  * (TR-Q12e). The record's own evidence must also hold its bytes: its newest version that was not rejected is
- * `quarantined` (still scanning, each later step keeps its own clean-file rule) or `clean`; anything else (no such
- * version, awaiting_content, scan_failed) is 422, because the record freezes the file it takes. An `alsoAccept` file
+ * `quarantined` with its bytes recorded (still scanning, each later step keeps its own clean-file rule) or `clean`;
+ * anything else (no such version, awaiting_content, scan_failed, a `quarantined` version still receiving its bytes) is
+ * 422, because the record freezes the file it takes. An `alsoAccept` file
  * was filed by the record earlier under its own checks and is not asked again. Run it in the transaction that writes
  * the reference.
  */
@@ -120,16 +121,28 @@ export async function assertNoForeignEvidence(
   for (const row of rows) await assertHoldsBytes(reader, scope, row.id);
 }
 
-/** The newest version that was not rejected is `quarantined` or `clean`, else 422 (see `evidenceNotUploaded`). */
+/**
+ * The newest version that was not rejected is `clean`, or `quarantined` with its bytes recorded, else 422 (see
+ * `evidenceNotUploaded`). The receive claims the version (`quarantined`) in its first transaction, before the bytes are
+ * stored, and records their sha256 only once they are durable and type-checked (step 4 of `receiveInternal`); sha256 is
+ * the receipt-complete marker (a stored hash never changes, document_versions_guard_update). A save in between would
+ * freeze the file with no bytes behind it.
+ */
 async function assertHoldsBytes(
   reader: Pick<Db, 'select'>,
   scope: TxScope,
   documentId: string,
 ): Promise<void> {
   const versions = await reader
-    .select({ version: documentVersions.version, status: documentVersions.status })
+    .select({
+      version: documentVersions.version,
+      status: documentVersions.status,
+      sha256: documentVersions.sha256,
+    })
     .from(documentVersions)
     .where(scoped(scope).where(documentVersions, eq(documentVersions.documentId, documentId)));
   const newest = newestNonRejected(versions);
-  if (newest?.status !== 'quarantined' && newest?.status !== 'clean') throw evidenceNotUploaded();
+  const received =
+    newest?.status === 'clean' || (newest?.status === 'quarantined' && newest.sha256 !== null);
+  if (!received) throw evidenceNotUploaded();
 }
