@@ -74,6 +74,8 @@ function fixture(
     src?: RenderSource | undefined;
     hasDocument?: boolean;
     candidates?: RenderCandidate[];
+    /** What the store answers for one invoice's eligibility (renderNow); omitted, a candidate. */
+    isCandidate?: boolean;
     /** The raw `format.number_systems` value; an omitted key reads as lakh grouping for every currency. */
     numberSystems?: unknown;
     /** The raw `format.date` value; an omitted key reads as the stored default. */
@@ -87,6 +89,7 @@ function fixture(
   let now = NOW;
   const store = {
     candidates: vi.fn().mockResolvedValue(over.candidates ?? []),
+    isCandidate: vi.fn().mockResolvedValue(over.isCandidate ?? true),
     load: vi.fn().mockResolvedValue('src' in over ? over.src : source()),
     lockAndHasDocument: vi.fn().mockResolvedValue(over.hasDocument ?? false),
     recordPrint: vi.fn().mockResolvedValue(undefined),
@@ -678,3 +681,4 @@ describe('InvoiceRenderSweeper: amount in words, signatory and seller contact (U
     expect(stored.sellerContact).toBeNull();
   });
 });
+

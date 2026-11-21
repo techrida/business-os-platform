@@ -86,7 +86,9 @@ import {
   RENDER_GIVEN_UP_ACTION,
 } from '../../quotations/render/render-retry';
 import { INVOICE_OWNER_TYPE, INVOICE_RENDER_JOB_PREFIX } from '../invoice-owner.policy';
+import { RenderOneJobSchema } from '../../quotations/render/render-nudge';
 import { freezeEntityLogo } from './frozen-logo';
+import { INVOICE_RENDER_ONE_JOB, INVOICE_RENDER_QUEUE } from './invoice-render.nudge';
 import { renderInvoiceHtml } from './invoice-html';
 import {
   clearRenderFailure,
@@ -106,7 +108,7 @@ import {
   type InvoiceViewInput,
 } from './invoice-view';
 
-export const INVOICE_RENDER_QUEUE = 'invoice.render';
+export { INVOICE_RENDER_ONE_JOB, INVOICE_RENDER_QUEUE } from './invoice-render.nudge';
 export const INVOICE_RENDER_SWEEP_JOB = 'invoice.render.sweep';
 export const SWEEP_EVERY_MS = 60_000;
 /** A generated document still without its bytes after this long was left by a render that crashed midway. */
@@ -162,6 +164,8 @@ export interface RenderStore {
    * up), oldest first after `after`, wrapping when exhausted.
    */
   candidates(now: Date, limit: number, after?: string): Promise<RenderCandidate[]>;
+  /** Whether this one invoice is a candidate at `now`, by the same rule as `candidates`. */
+  isCandidate(c: RenderCandidate, now: Date): Promise<boolean>;
   load(tx: DbTransaction, c: RenderCandidate): Promise<RenderSource | undefined>;
   /**
    * Takes this invoice's render lock for the rest of `tx` and answers whether it already has a live document. The lock
@@ -304,6 +308,16 @@ export class InvoiceRenderSweeper {
   }
 
   async renderOne(c: RenderCandidate): Promise<RenderOutcome> {
+    return (await this.attempt(c)).outcome;
+  }
+
+  /**
+   * The render a commit asked for (`invoice.render.one`): this invoice now, if it is a candidate. The check spares a
+   * Chromium render when the sweep got there first, the PDF is already live, or a failure's pause is still running,
+   * since attempt() would only find out after rendering. A skip is fine: the sweep stays the safety net.
+   */
+  async renderNow(c: RenderCandidate): Promise<RenderOutcome> {
+    if (!(await this.store.isCandidate(c, this.clock()))) return 'skipped';
     return (await this.attempt(c)).outcome;
   }
 
@@ -580,23 +594,43 @@ const ownerOf = (c: RenderCandidate): RenderFailureOwner => ({
   ownerId: c.invoiceId,
 });
 
+/**
+ * The candidate rule, on the outer `invoices` row: issued, of a kind this unit prints, with no live document that
+ * holds or awaits a PDF, and not held back by a failure (pausing or given up).
+ */
+function renderDue(db: Db, now: Date) {
+  const hasLiveDocument = db
+    .select({ one: sql`1` })
+    .from(documents)
+    .where(
+      and(
+        eq(documents.tenantId, invoices.tenantId),
+        eq(documents.organizationId, invoices.organizationId),
+        eq(documents.ownerType, INVOICE_OWNER_TYPE),
+        eq(documents.ownerId, invoices.id),
+        isNull(documents.removedAt),
+        exists(unrefusedUpload(db, documents.tenantId, documents.id)),
+      ),
+    );
+  return and(
+    eq(invoices.status, 'issued'),
+    inArray(invoices.kind, [...RENDERABLE_INVOICE_KINDS]),
+    notExists(hasLiveDocument),
+    not(
+      renderHeldBack(
+        db,
+        INVOICE_OWNER_TYPE,
+        { tenantId: invoices.tenantId, organizationId: invoices.organizationId, id: invoices.id },
+        now,
+      ),
+    ),
+  );
+}
+
 /** The store on the real tables. Every query names the tenant and the acting entity. */
 export function drizzleInvoiceRenderStore(db: Db): RenderStore {
   return {
     async candidates(now, limit, after) {
-      const hasLiveDocument = db
-        .select({ one: sql`1` })
-        .from(documents)
-        .where(
-          and(
-            eq(documents.tenantId, invoices.tenantId),
-            eq(documents.organizationId, invoices.organizationId),
-            eq(documents.ownerType, INVOICE_OWNER_TYPE),
-            eq(documents.ownerId, invoices.id),
-            isNull(documents.removedAt),
-            exists(unrefusedUpload(db, documents.tenantId, documents.id)),
-          ),
-        );
       const page = (cursor?: string) =>
         db
           .select({
@@ -607,21 +641,7 @@ export function drizzleInvoiceRenderStore(db: Db): RenderStore {
           .from(invoices)
           .where(
             and(
-              eq(invoices.status, 'issued'),
-              inArray(invoices.kind, [...RENDERABLE_INVOICE_KINDS]),
-              notExists(hasLiveDocument),
-              not(
-                renderHeldBack(
-                  db,
-                  INVOICE_OWNER_TYPE,
-                  {
-                    tenantId: invoices.tenantId,
-                    organizationId: invoices.organizationId,
-                    id: invoices.id,
-                  },
-                  now,
-                ),
-              ),
+              renderDue(db, now),
               cursor === undefined
                 ? undefined
                 : sql`(${invoices.issuedAt}, ${invoices.id}) >
@@ -634,6 +654,22 @@ export function drizzleInvoiceRenderStore(db: Db): RenderStore {
       // a missing cursor yields an empty page and safely restarts from the beginning.
       const next = await page(after);
       return next.length > 0 || after === undefined ? next : page();
+    },
+
+    async isCandidate(c, now) {
+      const [row] = await db
+        .select({ one: sql`1` })
+        .from(invoices)
+        .where(
+          and(
+            eq(invoices.tenantId, c.tenantId),
+            eq(invoices.organizationId, c.organizationId),
+            eq(invoices.id, c.invoiceId),
+            renderDue(db, now),
+          ),
+        )
+        .limit(1);
+      return row !== undefined;
     },
 
     async load(tx, c) {
@@ -877,6 +913,11 @@ export class InvoiceRenderProcessor extends WorkerHost {
   async process(job: Job): Promise<void> {
     if (job.name === INVOICE_RENDER_SWEEP_JOB) {
       await this.sweeper.sweep();
+      return;
+    }
+    if (job.name === INVOICE_RENDER_ONE_JOB) {
+      const { tenantId, organizationId, id } = RenderOneJobSchema.parse(job.data);
+      await this.sweeper.renderNow({ tenantId, organizationId, invoiceId: id });
       return;
     }
     // A job name nobody handles is a bug; failing keeps it visible instead of silently dropping it.
