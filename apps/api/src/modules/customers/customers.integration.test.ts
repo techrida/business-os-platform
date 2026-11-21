@@ -933,7 +933,8 @@ describe('a customer always has a contact with an email (quotations are emailed)
 describe('detail accounts', () => {
   it('lists the terms of the entities the caller can act for and no others', async () => {
     const customer = await createCustomer();
-    // The caller (tenant A's staff user) acts for the default entity and entityA2; a third entity is not theirs.
+    // The caller is a Sales user of tenant A who acts for the default entity and entityA2; a third entity is not theirs.
+    const { userId: salesUserId } = await createStaffUser(appPool, { ...a, roleKeys: ['sales'] });
     const entityA3 = randomUUID();
     await withTx(db, a, systemActor('test'), async (tx) => {
       await tx.insert(organizations).values({
@@ -947,7 +948,7 @@ describe('detail accounts', () => {
       await tx.insert(userEntities).values({
         tenantId: a.tenantId,
         organizationId: entityA2,
-        userId: a.userId,
+        userId: salesUserId,
         isDefault: false,
       });
       for (const organizationId of [a.organizationId, entityA2, entityA3]) {
@@ -959,7 +960,7 @@ describe('detail accounts', () => {
         });
       }
     });
-    asStaff(a, a.organizationId);
+    asStaff(a, a.organizationId, salesUserId);
     const res = await request(baseUrl).get(`/v1/customers/${customer.id}`);
     expect(res.status).toBe(200);
     const accounts = (res.body as { accounts: unknown[] }).accounts.map((x) =>
@@ -977,13 +978,14 @@ describe('detail accounts', () => {
 
   it('names the legal entity on each terms row, as Sales, and adds nothing else (audit #16)', async () => {
     const customer = await createCustomer();
+    const { userId: salesUserId } = await createStaffUser(appPool, { ...a, roleKeys: ['sales'] });
     await withTx(db, a, systemActor('test'), async (tx) => {
       await tx
         .insert(userEntities)
         .values({
           tenantId: a.tenantId,
           organizationId: entityA2,
-          userId: a.userId,
+          userId: salesUserId,
           isDefault: false,
         })
         .onConflictDoNothing();
@@ -994,7 +996,7 @@ describe('detail accounts', () => {
         creditLimit: '75000.00',
       });
     });
-    asStaff(a, a.organizationId); // Sales grants
+    asStaff(a, a.organizationId, salesUserId); // Sales grants, held in both entities
     const res = await request(baseUrl).get(`/v1/customers/${customer.id}`);
     expect(res.status).toBe(200);
     const rows = (res.body as { accounts: Record<string, unknown>[] }).accounts;
