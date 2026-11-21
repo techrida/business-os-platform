@@ -1,4 +1,4 @@
-import { PaymentPromiseDtoSchema } from '@bos/contracts';
+import { ErrorBodySchema, PaymentPromiseDtoSchema } from '@bos/contracts';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { ID, KEY } from '../_lib/test-fixtures';
@@ -36,6 +36,10 @@ const base = (over: Record<string, string> = {}) => ({
 function answer(status: number, body: unknown = {}) {
   return Promise.resolve(new Response(JSON.stringify(body), { status }));
 }
+
+/** An error body exactly as the API's error filter emits it for an allow-listed code. */
+const filtered = (code: string, message: string) =>
+  ErrorBodySchema.parse({ error: { code, message, correlationId: 'corr-1' } });
 
 /** The 201 body the API answers, checked against the contract. */
 const recorded = PaymentPromiseDtoSchema.parse({
@@ -126,6 +130,26 @@ describe('recordPromiseAction', () => {
     const state = await recordPromiseAction(prev, form(base()));
     expect(state.error).toMatch(/at the same time/i);
     expect(state.reload).toBe(true);
+  });
+
+  it('shows the words of a promise_open refused because the open promise day passed, rotating the key', async () => {
+    const words = 'This promise date has passed and is being checked. Try again in a few minutes.';
+    mocks.apiFetch.mockImplementation(() => answer(409, filtered('promise_open', words)));
+    const state = await recordPromiseAction(prev, form(base()));
+    expect(state.error).toBe(words);
+    expect(state.reload).toBe(true);
+    expect(state.key).not.toBe(KEY);
+    expect(state.key).toMatch(UUID);
+  });
+
+  it('shows the words of a concurrent promise_open as the error filter sends them', async () => {
+    const words =
+      'Another promise to pay was recorded on this invoice at the same time. Reload to see it.';
+    mocks.apiFetch.mockImplementation(() => answer(409, filtered('promise_open', words)));
+    expect(await recordPromiseAction(prev, form(base()))).toMatchObject({
+      error: words,
+      reload: true,
+    });
   });
 
   it('puts a 400 (the day passed since the dialog opened) on the date field', async () => {

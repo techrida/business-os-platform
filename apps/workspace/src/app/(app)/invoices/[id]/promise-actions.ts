@@ -51,7 +51,8 @@ function isDay(value: string): boolean {
 /** The refusals the generic wording would get wrong, in the promise's own terms. */
 function refusal(err: unknown): Pick<PromiseActionState, 'error' | 'reload' | 'errors'> | null {
   if (!(err instanceof ApiError)) return null;
-  const code = (err.body as { error?: { code?: unknown } } | undefined)?.error?.code;
+  const { code, message } =
+    (err.body as { error?: { code?: unknown; message?: unknown } } | undefined)?.error ?? {};
   // The body was checked here, so a 400 is the day having passed (midnight in Kathmandu since the dialog opened).
   if (err.status === 400) return { errors: { promisedDate: PAST_DAY } };
   if (err.status === 403) {
@@ -63,9 +64,14 @@ function refusal(err: unknown): Pick<PromiseActionState, 'error' | 'reload' | 'e
       reload: true,
     };
   }
+  // promise_open has two causes the API words itself: a promise recorded at the same time, or an open promise whose
+  // day has passed and is waiting for the hourly missed check. The fallback covers a body without words.
   if (err.status === 409 && code === 'promise_open') {
     return {
-      error: 'Someone recorded a promise on this invoice at the same time. Reload to see it.',
+      error:
+        typeof message === 'string' && message !== ''
+          ? message
+          : 'Someone recorded a promise on this invoice at the same time. Reload to see it.',
       reload: true,
     };
   }

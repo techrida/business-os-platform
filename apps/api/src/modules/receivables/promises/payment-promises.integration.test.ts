@@ -19,7 +19,12 @@ import {
   type RecordPaymentPromiseBody,
 } from '@bos/contracts';
 import { activities, paymentPromises } from '@bos/db';
-import { BadRequestException, ForbiddenException, NotFoundException } from '@nestjs/common';
+import {
+  BadRequestException,
+  ConflictException,
+  ForbiddenException,
+  NotFoundException,
+} from '@nestjs/common';
 import { and, eq, sql } from 'drizzle-orm';
 import { drizzle } from 'drizzle-orm/node-postgres';
 import { Pool } from 'pg';
@@ -379,5 +384,96 @@ describe('replacing and listing promises to pay (R4c1 Q6)', () => {
     await expect(list(randomUUID())).rejects.toBeInstanceOf(NotFoundException);
     const other = await issuedInvoice(h.scopeB, customer, '1000.00');
     await expect(list(other)).rejects.toBeInstanceOf(NotFoundException);
+  });
+});
+
+describe('recording over an open promise whose day has passed', () => {
+  /** A service and a sweeper reading one clock the test moves. */
+  function clocked(start: string) {
+    let now = new Date(start);
+    const audit = new AuditService(h.db);
+    return {
+      at: (iso: string) => {
+        now = new Date(iso);
+      },
+      service: new PaymentPromisesService(
+        h.db,
+        h.authz as unknown as AuthzService,
+        audit,
+        () => now,
+      ),
+      sweeper: new PaymentPromiseSweeper(
+        drizzlePromiseStore(h.db),
+        (scope, actor, fn) => withTx(h.db, scope, actor, fn),
+        audit,
+        () => now,
+      ),
+    };
+  }
+
+  const stored = (id: string) =>
+    withTx(h.db, h.scopeA, system, (tx) =>
+      tx.select().from(paymentPromises).where(eq(paymentPromises.id, id)),
+    ).then((rows) => rows[0]);
+
+  it('refuses until the hourly job has checked it, which then marks it missed and plans the call', async () => {
+    const invoice = await issuedInvoice(h.scopeA, customer, '4000.00');
+    // 11:45 in Kathmandu on 2026-11-09: the promise is for that day.
+    const t = clocked('2026-11-09T06:00:00Z');
+    await h.actAs(accountant);
+    const { scope, actor } = h.caller.current();
+    const first = PaymentPromiseDtoSchema.parse(
+      await t.service.record(scope, actor, invoice, { promisedDate: '2026-11-09' }, randomUUID()),
+    );
+
+    // 00:10 on 2026-11-10 in Kathmandu (still 2026-11-09 in UTC): the day has passed, the job has not run yet.
+    t.at('2026-11-09T18:25:00Z');
+    const refused = await t.service
+      .record(scope, actor, invoice, { promisedDate: '2026-11-20' }, randomUUID())
+      .catch((e: unknown) => e);
+    expect(refused).toBeInstanceOf(ConflictException);
+    expect((refused as ConflictException).getResponse()).toEqual({
+      code: 'promise_open',
+      message: 'This promise date has passed and is being checked. Try again in a few minutes.',
+    });
+    // Nothing changed: the promise is still open, untouched, and no second one was stored.
+    expect(await stored(first.id)).toMatchObject({ status: 'open', version: 1 });
+    expect((await list(invoice)).items.map((p) => p.id)).toEqual([first.id]);
+
+    // The job marks it missed and plans the collection call.
+    await t.sweeper.sweep();
+    const missed = await stored(first.id);
+    expect(missed).toMatchObject({ status: 'missed' });
+    expect(missed?.collectionActivityId).toEqual(expect.any(String));
+
+    // Now a new promise may be recorded, and the missed one stays missed.
+    await h.actAs(accountant);
+    const next = PaymentPromiseDtoSchema.parse(
+      await t.service.record(scope, actor, invoice, { promisedDate: '2026-11-20' }, randomUUID()),
+    );
+    expect((await list(invoice)).items.map((p) => [p.id, p.status])).toEqual([
+      [next.id, 'open'],
+      [first.id, 'missed'],
+    ]);
+  });
+
+  it('still replaces an open promise for today before Kathmandu midnight', async () => {
+    const invoice = await issuedInvoice(h.scopeA, customer, '4500.00');
+    const t = clocked('2026-11-09T06:00:00Z');
+    await h.actAs(accountant);
+    const { scope, actor } = h.caller.current();
+    const first = PaymentPromiseDtoSchema.parse(
+      await t.service.record(scope, actor, invoice, { promisedDate: '2026-11-09' }, randomUUID()),
+    );
+
+    // 23:50 on 2026-11-09 in Kathmandu: the promised day is today, so it is replaced.
+    t.at('2026-11-09T18:05:00Z');
+    const second = PaymentPromiseDtoSchema.parse(
+      await t.service.record(scope, actor, invoice, { promisedDate: '2026-11-12' }, randomUUID()),
+    );
+    expect((await list(invoice)).items.map((p) => [p.id, p.status])).toEqual([
+      [second.id, 'open'],
+      [first.id, 'replaced'],
+    ]);
   });
 });
