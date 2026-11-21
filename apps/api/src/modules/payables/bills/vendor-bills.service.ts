@@ -83,6 +83,7 @@ import {
 import { NumberingService } from '../../../platform/settings/numbering.service';
 import { SettingsService } from '../../../platform/settings/settings.service';
 import { ApprovalsService } from '../../approvals/requests.service';
+import { CompanyAccountsLookup } from '../../company-accounts/company-accounts.lookup';
 import { LedgerService } from '../../ledger/ledger.service';
 import { CLAIMING_REQUEST_STATUSES } from '../payment-requests/payment-request.rules';
 import {
@@ -305,6 +306,9 @@ export class VendorBillsService {
     private readonly ledger: LedgerService = new LedgerService(),
     @Optional()
     private readonly numbering: NumberingService = new NumberingService(),
+    // Same reason: the lookup holds no state, so a hand-built service checks accounts the way the module's does.
+    @Optional()
+    private readonly accounts: CompanyAccountsLookup = new CompanyAccountsLookup(),
   ) {}
 
   // ------------------------------------------------------------------------------------------------- reads
@@ -717,6 +721,11 @@ export class VendorBillsService {
       lineAmounts(l.quantity, l.unitPrice, rates.get(l.taxCodeId) ?? 0),
     );
     const totals = billTotals(amounts);
+    // Last check before the first write: 422 EXPENSE_ACCOUNT_INVALID unless every line books to an active expense
+    // account of this entity. A refused bill writes no row, line or audit (bill numbers are issued at submit).
+    await this.accounts.assertExpenseAccountsUsable(tx, scope, [
+      ...new Set(body.lines.map((l) => l.accountId)),
+    ]);
     const [bill] = await tx
       .insert(vendorBills)
       .values({
