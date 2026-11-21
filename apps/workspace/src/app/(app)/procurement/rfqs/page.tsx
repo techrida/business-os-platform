@@ -148,7 +148,7 @@ export default async function RfqsPage({
         }
       />
 
-      {cards !== null ? (
+      {problem === null && cards !== null ? (
         <section aria-label="RFQ summary" className={listLayout.stats}>
           {cards.map((card) => (
             <StatCard
