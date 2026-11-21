@@ -185,12 +185,17 @@ export default async function CustomersPage({
   // Page level: may this person add a customer at all (the live grant, not the role defaults).
   const mayWrite = hasGrant(await getGrants(session), 'customer.write');
   const addButton = mayWrite ? (
-    <LinkButton href="/customers/new" size="large">
-      <span aria-hidden="true" className={styles.plus}>
-        +
-      </span>
-      Add Organization
-    </LinkButton>
+    <>
+      <LinkButton href="/imports/customers" variant="secondary" size="large">
+        Import from CSV
+      </LinkButton>
+      <LinkButton href="/customers/new" size="large">
+        <span aria-hidden="true" className={styles.plus}>
+          +
+        </span>
+        Add Organization
+      </LinkButton>
+    </>
   ) : null;
   const pages = [...(page > 1 ? [page - 1] : []), page, ...(hasNext ? [page + 1] : [])].map(
     (number) => ({ page: number, href: at({ page: number > 1 ? number : null }) }),
