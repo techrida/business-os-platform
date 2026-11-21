@@ -43,7 +43,7 @@ import {
   salesOrderTaxSummary,
 } from '@bos/db';
 import { ForbiddenException, HttpException } from '@nestjs/common';
-import { eq, sql } from 'drizzle-orm';
+import { and, eq, sql } from 'drizzle-orm';
 import { drizzle } from 'drizzle-orm/node-postgres';
 import { Pool } from 'pg';
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -313,6 +313,48 @@ async function infectedDocument(owner?: { ownerType: string; ownerId: string }):
     }),
   );
   return id;
+}
+
+/** A further version row of a document, as a later new version or upload would leave it; returns its id. */
+async function addVersionRow(
+  documentId: string,
+  version: number,
+  status: 'awaiting_content' | 'quarantined' | 'clean' | 'infected' | 'rejected' | 'scan_failed',
+  uploadedBy: string | null = null,
+): Promise<string> {
+  const [row] = await withTx(db, scopeA, systemActor('test'), (tx) =>
+    tx
+      .insert(documentVersions)
+      .values({
+        ...scopeA,
+        documentId,
+        version,
+        filename: 'later.pdf',
+        declaredMime: 'application/pdf',
+        sizeBytes: EVIDENCE_PDF.length,
+        storageKey: `${scopeA.tenantId}/${randomUUID()}`,
+        status,
+        uploadedBy,
+      })
+      .returning({ id: documentVersions.id }),
+  );
+  return row!.id;
+}
+
+/** Sets the status of one version of a document, as the scan or the type check would. */
+async function setVersionStatus(
+  documentId: string,
+  version: number,
+  status: 'infected' | 'rejected',
+): Promise<void> {
+  await withTx(db, scopeA, systemActor('test'), (tx) =>
+    tx
+      .update(documentVersions)
+      .set({ status })
+      .where(
+        and(eq(documentVersions.documentId, documentId), eq(documentVersions.version, version)),
+      ),
+  );
 }
 
 async function draftQuotation(
@@ -1257,29 +1299,75 @@ describe('SalesOrdersService.markBillable', () => {
     },
   );
 
+  // Round 5 P2: a line freezes the evidence it takes, so the file must hold its bytes first. 422, the line stays
+  // planned, and nothing is frozen empty.
+  it.each<[string, (orderId: string) => Promise<string>]>([
+    [
+      'reserved on the order route with its bytes never sent',
+      async (id) =>
+        (
+          await evidence.service.create('sales_order', id, {
+            filename: 'evidence.pdf',
+            declaredMime: 'application/pdf',
+            sizeBytes: EVIDENCE_PDF.length,
+          })
+        ).documentId,
+    ],
+    [
+      'found infected, then given a version 2 that was never sent',
+      async (id) => {
+        const doc = await evidence.upload('sales_order', id);
+        await setVersionStatus(doc, 1, 'infected');
+        await addVersionRow(doc, 2, 'awaiting_content');
+        return doc;
+      },
+    ],
+    [
+      'whose every version was rejected',
+      async (id) => {
+        const doc = await evidence.upload('sales_order', id);
+        await setVersionStatus(doc, 1, 'rejected');
+        return doc;
+      },
+    ],
+  ])('refuses evidence %s with 422 and leaves the line planned', async (_label, docOf) => {
+    const detail = await confirm(await acceptedQuotation());
+    const doc = await docOf(detail.order.id);
+    const refused = await mark(detail, 1, { evidenceDocumentId: doc }).then(
+      () => undefined,
+      (error: unknown) => error,
+    );
+    expect(refused).toBeInstanceOf(HttpException);
+    expect((refused as HttpException).getStatus()).toBe(422);
+    expect((refused as HttpException).getResponse()).toMatchObject({
+      code: 'invalid_evidence_document',
+      message: expect.stringMatching(/has not finished uploading/),
+    });
+    const after = await service.detail(detail.order.id);
+    expect(after.schedule[1]!.status).toBe('planned');
+    expect(after.order.version).toBe(1);
+  });
+
   it('freezes the evidence a line took: no removal, new version or bytes while the order still takes evidence', async () => {
     const detail = await confirm(await acceptedQuotation());
     const doc = await evidence.upload('sales_order', detail.order.id);
+    // Marked on version 1, whose bytes were received.
+    await mark(detail, 1, { evidenceDocumentId: doc });
     // A caller with both generic grants (documents.upload) and the order's own grant.
     current.grants = grantsOf('founder');
     const { scope, actor } = caller.current();
-    // A second version opened before the mark, still waiting for its bytes.
-    const pending = await withTx(db, scope, actor, (tx) =>
-      evidence.documents.createVersion(tx, doc, {
-        filename: 'later.pdf',
-        declaredMime: 'application/pdf',
-        sizeBytes: EVIDENCE_PDF.length,
-      }),
-    );
-    await mark(detail, 1, { evidenceDocumentId: doc });
+    // A later version cannot be opened, and one left waiting for its bytes takes none on the order route.
+    const pending = await addVersionRow(doc, 2, 'awaiting_content', actor.id);
     expect(
       (
         await statusOf(
-          evidence.documents.receiveContent(
-            pending.versionId,
+          evidence.service.receive(
+            'sales_order',
+            detail.order.id,
+            doc,
+            pending,
             Readable.from(EVIDENCE_PDF),
             EVIDENCE_PDF.length,
-            { documentId: doc, who: { scope, actor } },
           ),
         )
       ).status,

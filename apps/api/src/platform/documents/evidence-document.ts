@@ -4,14 +4,14 @@
 // takes evidence checks before it stores the reference, so the modules do not import each other.
 // Serves the NFR "deny by default": a record accepts only evidence uploaded to itself in its own entity, never a
 // picture (logo, avatar), a payment proof, a vendor-inbox file or a file of another record, even of the same entity.
-import { documents, scoped } from '@bos/db';
+import { documents, documentVersions, scoped } from '@bos/db';
 import { UnprocessableEntityException } from '@nestjs/common';
 import { and, eq, inArray, isNull, or } from 'drizzle-orm';
 import { z } from 'zod';
 
 import type { Db } from '../db/db.module';
 import type { TxScope } from '../db/tx';
-import { assertNotInfected } from './documents.service';
+import { assertNotInfected, newestNonRejected } from './documents.service';
 
 export const EVIDENCE_OWNER_TYPE = 'evidence';
 
@@ -31,11 +31,25 @@ export function invalidEvidenceDocument(): UnprocessableEntityException {
 }
 
 /**
+ * 422 `invalid_evidence_document`: the record's own evidence file holds no bytes yet (reserved but never sent, an
+ * empty later version, or every version rejected). A record that takes it freezes it, so it would stay empty.
+ */
+export function evidenceNotUploaded(): UnprocessableEntityException {
+  return new UnprocessableEntityException({
+    code: 'invalid_evidence_document',
+    message: 'This evidence file has not finished uploading. Upload it again, then try again.',
+  });
+}
+
+/**
  * Passes when `documentId` is a live document of this scope that is evidence of `ownerId` (owner type `evidence`),
  * or is one of `alsoAccept` (ids the record already recorded as its evidence, any owner type) and still live.
  * Otherwise 422 `invalid_evidence_document`; then 409 `document_infected` when its newest version is infected
- * (TR-Q12e). A file still scanning passes, as before: each later step keeps its own clean-file rule. Run it in the
- * transaction that writes the reference.
+ * (TR-Q12e). The record's own evidence must also hold its bytes: its newest version that was not rejected is
+ * `quarantined` (still scanning, each later step keeps its own clean-file rule) or `clean`; anything else (no such
+ * version, awaiting_content, scan_failed) is 422, because the record freezes the file it takes. An `alsoAccept` file
+ * was filed by the record earlier under its own checks and is not asked again. Run it in the transaction that writes
+ * the reference.
  */
 export async function assertEvidenceDocument(
   reader: Pick<Db, 'select'>,
@@ -53,7 +67,7 @@ export async function assertEvidenceDocument(
     eq(documents.ownerId, ownerId),
   );
   const [found] = await reader
-    .select({ id: documents.id })
+    .select({ ownerType: documents.ownerType, ownerId: documents.ownerId })
     .from(documents)
     .where(
       scoped(scope).where(
@@ -68,4 +82,11 @@ export async function assertEvidenceDocument(
     .limit(1);
   if (found === undefined) throw invalidEvidenceDocument();
   await assertNotInfected(reader, scope, [documentId]);
+  if (found.ownerType !== EVIDENCE_OWNER_TYPE || found.ownerId !== ownerId) return;
+  const versions = await reader
+    .select({ version: documentVersions.version, status: documentVersions.status })
+    .from(documentVersions)
+    .where(scoped(scope).where(documentVersions, eq(documentVersions.documentId, documentId)));
+  const newest = newestNonRejected(versions);
+  if (newest?.status !== 'quarantined' && newest?.status !== 'clean') throw evidenceNotUploaded();
 }

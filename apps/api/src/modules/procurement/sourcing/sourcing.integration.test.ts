@@ -590,6 +590,42 @@ describe('RFQ', () => {
     },
   );
 
+  it('refuses to record a quotation on a file reserved on the RFQ route whose bytes were never sent (422)', async () => {
+    const p = await deptApprovedPr();
+    const v = await vendor('approved');
+    const rfq = await service.createRfq(
+      { purchaseRequestId: p.id, deadline: '2026-11-20T10:00:00+05:45', vendorIds: [v] },
+      randomUUID(),
+    );
+    const reserved = await evidence.service.create('rfq', rfq.id, {
+      filename: 'quote.pdf',
+      declaredMime: 'application/pdf',
+      sizeBytes: 1024,
+    });
+    const e = await httpErrorOf(
+      service.recordQuotation(
+        rfq.id,
+        {
+          vendorId: v,
+          documentId: reserved.documentId,
+          currency: 'NPR',
+          lines: [{ prLineId: p.lineId, quantity: '1', unitPrice: '1000.00', taxCodeId: vatCode }],
+        },
+        randomUUID(),
+      ),
+    );
+    expect(e.getStatus()).toBe(422);
+    expect(e.getResponse()).toMatchObject({
+      code: 'invalid_evidence_document',
+      message: expect.stringMatching(/has not finished uploading/),
+    });
+    const { rows } = await exec(
+      scopeA,
+      sql`SELECT count(*)::int AS n FROM app.vendor_quotations WHERE rfq_id = ${rfq.id}`,
+    );
+    expect(rows[0]).toEqual({ n: 0 });
+  });
+
   it('freezes a recorded quotation file: no removal or new version while the RFQ is open; an unused file goes', async () => {
     const { rfqId } = await rfqWithQuotes(['1000.00']);
     const [quote] = await read((tx) =>
