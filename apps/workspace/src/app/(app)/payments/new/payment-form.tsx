@@ -32,6 +32,20 @@ export interface CustomerOption {
 }
 
 /**
+ * Where a form opened from an invoice starts (U16-Q8 a): the page read the invoice from the API, so the amount is the
+ * open amount the server reports, never a figure from the link. It is only a starting value: the amount stays
+ * editable for a part payment, and choosing another customer drops it while untouched.
+ */
+export interface PaymentPrefill {
+  /** The invoice's customer, the one the picker starts on. */
+  customerId: string;
+  currency: Currency;
+  /** The invoice's open amount as the API sent it (a decimal string). */
+  amount: string;
+  invoiceNumber: string | null;
+}
+
+/**
  * The currency the form starts on for a customer: their usual one while it is enabled in Settings,
  * else blank when that usual one is switched off (the person chooses; no silent move to NPR), else
  * NPR for a customer with no usual currency.
@@ -93,6 +107,7 @@ export function PaymentForm({
   customers,
   enabledCurrencies,
   initialCustomerId,
+  prefill = null,
   reloadHref,
   children,
 }: {
@@ -104,6 +119,8 @@ export function PaymentForm({
   /** The currencies enabled in Settings (`currency.enabled`), NPR first. */
   enabledCurrencies: readonly Currency[];
   initialCustomerId: string;
+  /** Set when the form was opened from an invoice that still owes; null or left out starts blank. */
+  prefill?: PaymentPrefill | null;
   reloadHref: string;
   children?: ReactNode;
 }) {
@@ -116,14 +133,17 @@ export function PaymentForm({
 
   // Controlled: React 19 resets uncontrolled fields after every action.
   const [customerId, setCustomerId] = useState(initialCustomerId);
+  // An invoice's own currency is used as it is, even when switched off in Settings: a payment is still accepted in it.
   const [currency, setCurrency] = useState<string>(() =>
-    startCurrency(
-      customers.find((c) => c.id === initialCustomerId)?.defaultCurrency,
-      enabledCurrencies,
-    ),
+    prefill !== null
+      ? prefill.currency
+      : startCurrency(
+          customers.find((c) => c.id === initialCustomerId)?.defaultCurrency,
+          enabledCurrencies,
+        ),
   );
   const [currencyChosen, setCurrencyChosen] = useState(false);
-  const [amount, setAmount] = useState('');
+  const [amount, setAmount] = useState(prefill?.amount ?? '');
   const [method, setMethod] = useState<PaymentMethod>('bank_transfer');
   const [receivedOn, setReceivedOn] = useState(today);
   const [bankReference, setBankReference] = useState('');
@@ -153,6 +173,8 @@ export function PaymentForm({
     setCustomerId(id);
     const fallback = customers.find((c) => c.id === id)?.defaultCurrency;
     if (!currencyChosen) setCurrency(startCurrency(fallback, enabledCurrencies));
+    // The invoice's open amount belongs to its customer: drop it unless the person has typed their own.
+    if (prefill !== null && id !== prefill.customerId && amount === prefill.amount) setAmount('');
   }
 
   async function addFiles(files: FileList | null) {
@@ -213,6 +235,11 @@ export function PaymentForm({
       : usualCurrency !== null && !normalizeEnabled(enabledCurrencies).includes(usualCurrency)
         ? `This customer usually pays in ${CURRENCY_NAME[usualCurrency]}, which is switched off in Settings. Payments in it are still recorded.`
         : undefined;
+
+  const amountHint =
+    prefill !== null && customerId === prefill.customerId && amount === prefill.amount
+      ? `The open amount of ${prefill.invoiceNumber ?? 'the invoice'}. Change it for a part payment.`
+      : 'The cash that arrived, for example 20,18,180.00.';
 
   const busy = pending || uploading > 0;
   const customerLocked = proofs.length > 0 || uploading > 0;
@@ -348,11 +375,7 @@ export function PaymentForm({
                   </Select>
                 )}
               </Field>
-              <Field
-                label="Amount received"
-                hint="The cash that arrived, for example 20,18,180.00."
-                error={fe.amount}
-              >
+              <Field label="Amount received" hint={amountHint} error={fe.amount}>
                 {(control) => (
                   <Input
                     name="amount"

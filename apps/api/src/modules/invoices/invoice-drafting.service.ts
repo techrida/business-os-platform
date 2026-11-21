@@ -353,9 +353,16 @@ export class InvoiceDraftingService {
           .limit(1);
         if (row === undefined) throw invoiceNotFound();
         const detail = await this.loadDetail(tx, scope, id);
+        // Paid / overdue and the open amount, derived as for a list row (U15b-Q2), so the page needs no ar.read to
+        // know whether a payment can still be recorded.
+        const state = (await invoiceSettlements(tx, scope, [row], kathmanduDay(this.clock()))).get(
+          row.id,
+        );
         // The issue route refuses the note's creator (TR-Q12f); the page says so before the click.
         return {
           ...detail,
+          settlement: state?.settlement ?? null,
+          openAmount: state?.openAmount ?? null,
           can: {
             ...invoiceCan(principal, scope, row),
             editDueDate: editDueDateCan(principal, scope, row),

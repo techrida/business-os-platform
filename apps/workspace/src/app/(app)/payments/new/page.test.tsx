@@ -7,6 +7,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { ApiError } from '@/lib/api';
 import { choose, click, mountForm } from '@/test/form-interactions';
 
+import { ID as INVOICE_ID, invoiceDetail } from '../../invoices/_lib/test-fixtures';
 import { CUSTOMER_ID } from '../_lib/fixtures';
 
 import NewPaymentPage from './page';
@@ -19,6 +20,7 @@ const mocks = vi.hoisted(() => ({
   requireStaffSession: vi.fn(),
   listCustomers: vi.fn(),
   getCustomer: vi.fn(),
+  getInvoice: vi.fn(),
   apiFetch: vi.fn(),
   getMe: vi.fn(),
 }));
@@ -27,6 +29,7 @@ vi.mock('@/components/p2/customers/api', () => ({
   listCustomers: mocks.listCustomers,
   getCustomer: mocks.getCustomer,
 }));
+vi.mock('@/lib/api-billing', () => ({ getInvoice: mocks.getInvoice }));
 // The enabled-currency list comes through the real `loadEnabledCurrencies` from the display read.
 vi.mock('@/lib/api', async (original) => ({
   ...(await original<typeof import('@/lib/api')>()),
@@ -79,7 +82,9 @@ function currencySelect(html: string): string {
   return />Currency<\/label>.*?<\/select>/s.exec(html)?.[0] ?? '';
 }
 
-async function render(query: { customerId?: string; q?: string } = {}): Promise<string> {
+async function render(
+  query: { customerId?: string; invoiceId?: string; amount?: string; q?: string } = {},
+): Promise<string> {
   return renderToStaticMarkup(await NewPaymentPage({ searchParams: Promise.resolve(query) }));
 }
 
@@ -89,6 +94,7 @@ beforeEach(() => {
   mocks.listCustomers.mockResolvedValue({ items: [customer()], total: 1 });
   mocks.getCustomer.mockRejectedValue(new ApiError(404, 'no'));
   enabledAre(['NPR', 'INR', 'USD']);
+  mocks.getInvoice.mockRejectedValue(new ApiError(404, 'no'));
   // Without a live answer the gate falls back to the role defaults.
   mocks.getMe.mockRejectedValue(new Error('GET /v1/me failed'));
 });
@@ -285,6 +291,103 @@ describe('record payment page', () => {
     expect(startCurrency('USD', ['NPR', 'INR'])).toBe('');
     expect(startCurrency(null, ['NPR', 'INR'])).toBe('NPR');
     expect(startCurrency(undefined, ['NPR'])).toBe('NPR');
+  });
+
+  describe('opened from an invoice (U16-Q8 a)', () => {
+    /** GET /v1/invoices/:id for an issued USD invoice of 2,018,180.00 with 750.00 still open. */
+    const owed = (invoice: Record<string, unknown> = {}, rest: Record<string, unknown> = {}) => ({
+      ...invoiceDetail({ status: 'issued', currency: 'USD', ...invoice }),
+      settlement: 'partly_paid',
+      openAmount: '750.00',
+      ...rest,
+    });
+    const amountInput = (html: string) => /<input[^>]*name="amount"[^>]*>/.exec(html)?.[0] ?? '';
+
+    it('starts on the invoice currency and the open amount the API reports, not an amount in the link', async () => {
+      mocks.getInvoice.mockResolvedValue(owed());
+      const html = await render({ customerId: CUSTOMER_ID, invoiceId: INVOICE_ID, amount: '1' });
+      expect(mocks.getInvoice).toHaveBeenCalledWith(expect.anything(), INVOICE_ID);
+      // Old code started blank: no invoice read, no amount.
+      expect(amountInput(html)).toContain('value="750.00"');
+      expect(html).not.toContain('value="1"');
+      expect(html).not.toContain('2018180.00');
+      // The customer's usual currency is NPR; the invoice's own currency wins.
+      expect(currencySelect(html)).toContain('<input type="hidden" name="currency" value="USD"/>');
+      expect(html).toContain('The open amount of INV-2083/84-00001. Change it for a part payment.');
+      expect(mocks.requireStaffSession).toHaveBeenCalledWith(
+        `/payments/new?customerId=${CUSTOMER_ID}&invoiceId=${INVOICE_ID}`,
+      );
+    });
+
+    it.each([
+      ['another customer’s invoice', owed({ customerId: OTHER_ID })],
+      ['a settled invoice', owed({}, { settlement: 'paid', openAmount: '0.00' })],
+      ['a credited invoice', owed({}, { settlement: 'credited', openAmount: '0.00' })],
+      ['an invoice with no derived settlement', owed({}, { settlement: null, openAmount: null })],
+      [
+        'an older API without the open amount',
+        owed({}, { settlement: undefined, openAmount: undefined }),
+      ],
+      ['a discarded draft', owed({ status: 'discarded' })],
+      [
+        'a credit note',
+        owed({ kind: 'credit_note', originalInvoiceId: OTHER_ID, noteReason: 'Returned goods' }),
+      ],
+      [
+        'an invoice whose grant does not reach the customer',
+        owed(
+          {},
+          {
+            can: {
+              submit: false,
+              issue: false,
+              discard: false,
+              notes: false,
+              recordPayment: false,
+            },
+          },
+        ),
+      ],
+    ])('stays blank, with no error, for %s', async (_, detail) => {
+      mocks.getInvoice.mockResolvedValue(detail);
+      const html = await render({ customerId: CUSTOMER_ID, invoiceId: INVOICE_ID });
+      expect(amountInput(html)).toContain('value=""');
+      expect(currencySelect(html)).toContain('<input type="hidden" name="currency" value="NPR"/>');
+      expect(html).not.toContain('The open amount of');
+      expect(html).not.toContain('role="alert"');
+    });
+
+    it('stays blank, with no error, when the invoice is not found or not readable', async () => {
+      for (const status of [404, 403, 500]) {
+        mocks.getInvoice.mockRejectedValue(new ApiError(status, 'Invoice INV-SECRET not found'));
+        const html = await render({ customerId: CUSTOMER_ID, invoiceId: INVOICE_ID });
+        expect(amountInput(html)).toContain('value=""');
+        expect(html).not.toContain('INV-SECRET');
+        expect(html).not.toContain('role="alert"');
+      }
+    });
+
+    it('stays blank when the linked customer is not in the picker', async () => {
+      mocks.getInvoice.mockResolvedValue(owed({ customerId: OTHER_ID }));
+      const html = await render({ customerId: OTHER_ID, invoiceId: INVOICE_ID });
+      expect(amountInput(html)).toContain('value=""');
+    });
+
+    it('reads no invoice for the standalone form, a customer-only link or an invoice without a customer', async () => {
+      mocks.getInvoice.mockResolvedValue(owed());
+      for (const query of [
+        {},
+        { customerId: CUSTOMER_ID },
+        { invoiceId: INVOICE_ID },
+        { customerId: CUSTOMER_ID, invoiceId: 'not-a-uuid' },
+        { customerId: CUSTOMER_ID, amount: '750.00' },
+      ]) {
+        const html = await render(query);
+        expect(amountInput(html)).toContain('value=""');
+        expect(html).toContain('The cash that arrived, for example 20,18,180.00.');
+      }
+      expect(mocks.getInvoice).not.toHaveBeenCalled();
+    });
   });
 
   describe('choosing a customer in the form', () => {
