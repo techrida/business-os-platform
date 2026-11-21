@@ -1,6 +1,7 @@
 'use client';
 
-import type { Currency } from '@bos/contracts';
+import { CURRENCIES, type Currency } from '@bos/contracts';
+import { DEFAULT_NUMBER_SYSTEMS, type NumberSystems } from '@bos/locale';
 import Link from 'next/link';
 import { useActionState, useEffect, useRef, useState } from 'react';
 
@@ -8,6 +9,7 @@ import { Alert } from '@/components/portal/alert';
 import { Field, Input } from '@/components/portal/field';
 import quotation from '@/components/portal/quotation.module.css';
 import { Button } from '@/components/ui/button';
+import { MoneyInput } from '@/components/ui/number-input';
 import { Select } from '@/components/ui/select';
 import { currencyOptions } from '@/lib/enabled-currencies';
 
@@ -34,6 +36,7 @@ export function BillForm({
   initialOrderId,
   currencies,
   initialState,
+  numberSystems = DEFAULT_NUMBER_SYSTEMS,
 }: {
   /** A UUID the server generated for this render. */
   idempotencyKey: string;
@@ -45,6 +48,8 @@ export function BillForm({
   currencies: readonly Currency[];
   /** Overridable for tests: the state `useActionState` starts from. */
   initialState?: BillFormState | undefined;
+  /** How the selling company groups digits, per currency (`PortalDisplay.numberSystems`). */
+  numberSystems?: NumberSystems | undefined;
 }) {
   const [state, formAction, pending] = useActionState<BillFormState, FormData>(
     submitBillAction,
@@ -71,6 +76,7 @@ export function BillForm({
 
   const busy = pending || uploading;
   const currencyChoices = currencyOptions(currencies, currency);
+  const currencyCode = CURRENCIES.find((c) => c === currency) ?? 'NPR';
 
   return (
     <form action={formAction} className={`${quotation.form} ${styles.formFrame}`}>
@@ -149,14 +155,15 @@ export function BillForm({
           error={fe.claimedTotal}
         >
           {(control) => (
-            <Input
-              name="claimedTotal"
-              inputMode="decimal"
-              autoComplete="off"
-              required
-              value={total}
-              onChange={(e) => setTotal(e.target.value)}
+            <MoneyInput
               {...control}
+              name="claimedTotal"
+              currency={currencyCode}
+              numberSystems={numberSystems}
+              required
+              showWords
+              value={total}
+              onValueChange={setTotal}
             />
           )}
         </Field>

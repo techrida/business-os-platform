@@ -1,6 +1,7 @@
 'use client';
 
-import type { Currency } from '@bos/contracts';
+import { CURRENCIES, type Currency } from '@bos/contracts';
+import { DEFAULT_NUMBER_SYSTEMS, type NumberSystems } from '@bos/locale';
 import Link from 'next/link';
 import { useActionState, useEffect, useRef, useState } from 'react';
 
@@ -8,6 +9,7 @@ import { Alert } from '@/components/portal/alert';
 import { Field, Input } from '@/components/portal/field';
 import quotation from '@/components/portal/quotation.module.css';
 import { Button } from '@/components/ui/button';
+import { DecimalInput, MoneyInput } from '@/components/ui/number-input';
 import { Select } from '@/components/ui/select';
 import { currencyOptions } from '@/lib/enabled-currencies';
 
@@ -27,6 +29,7 @@ export function QuoteForm({
   today,
   currencies,
   initialState,
+  numberSystems = DEFAULT_NUMBER_SYSTEMS,
 }: {
   /** A UUID the server generated for this render. */
   idempotencyKey: string;
@@ -38,6 +41,8 @@ export function QuoteForm({
   currencies: readonly Currency[];
   /** Overridable for tests: the state `useActionState` starts from. */
   initialState?: QuoteFormState | undefined;
+  /** How the selling company groups digits, per currency (`PortalDisplay.numberSystems`). */
+  numberSystems?: NumberSystems | undefined;
 }) {
   const [state, formAction, pending] = useActionState<QuoteFormState, FormData>(
     submitQuoteAction,
@@ -63,6 +68,7 @@ export function QuoteForm({
   }, [state]);
 
   const busy = pending || uploading;
+  const currencyCode = CURRENCIES.find((c) => c === currency) ?? 'NPR';
 
   return (
     <form action={formAction} className={`${quotation.form} ${styles.formFrame}`}>
@@ -109,14 +115,15 @@ export function QuoteForm({
           error={fe.total}
         >
           {(control) => (
-            <Input
-              name="total"
-              inputMode="decimal"
-              autoComplete="off"
-              required
-              value={total}
-              onChange={(e) => setTotal(e.target.value)}
+            <MoneyInput
               {...control}
+              name="total"
+              currency={currencyCode}
+              numberSystems={numberSystems}
+              required
+              showWords
+              value={total}
+              onValueChange={setTotal}
             />
           )}
         </Field>
@@ -163,14 +170,14 @@ export function QuoteForm({
         error={fe.deliveryDays}
       >
         {(control) => (
-          <Input
-            name="deliveryDays"
-            inputMode="numeric"
-            autoComplete="off"
-            maxLength={4}
-            value={deliveryDays}
-            onChange={(e) => setDeliveryDays(e.target.value)}
+          <DecimalInput
             {...control}
+            name="deliveryDays"
+            intDigits={4}
+            scale={0}
+            max="1000"
+            value={deliveryDays}
+            onValueChange={setDeliveryDays}
           />
         )}
       </Field>

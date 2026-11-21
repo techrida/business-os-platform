@@ -218,3 +218,14 @@ describe('submitQuoteAction', () => {
     expect(state.error).toMatch(/Check the details/);
   });
 });
+
+describe('submitQuoteAction numbers with a space', () => {
+  it('says to remove the space in the total and the delivery days, but not for `2 weeks`', async () => {
+    const state = await send({ total: '10 50', deliveryDays: '1 4' });
+    expect(state.fieldErrors?.total).toBe('Remove the space inside the number.');
+    expect(state.fieldErrors?.deliveryDays).toBe('Remove the space inside the number.');
+    const words = await send({ deliveryDays: '2 weeks' });
+    expect(words.fieldErrors?.deliveryDays).toMatch(/whole number of days/);
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+});
