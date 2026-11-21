@@ -305,7 +305,7 @@ export class UsersService extends UserDirectory {
 
     // Read the existing grants before replacing them so takeBackInvite can restore them instead of wiping grants if
     // phase (C) fails while the user is still invited.
-    const previousGrants = await this.zitadel.listGrants(open.id);
+    const previousGrants = await this.zitadel.listGrants(open.id, org.zitadelOrgId);
     // The same steps as a first invite, in the same order. Each one is safe to repeat: setGrants replaces the whole
     // set, and sendInviteCode resends the invite link.
     await this.zitadel.setGrants(open.id, org.zitadelOrgId, b.roles);
