@@ -115,6 +115,7 @@ export type ErrorCode =
   | 'PO_VENDOR_CHANGE_NOT_DRAFT'
   | 'PO_VENDOR_UNCHANGED'
   | 'PO_REFERENCED'
+  | 'PO_CHANGED'
   | 'VENDOR_NO_VERIFIED_BANK_ACCOUNT'
   | 'PO_AMENDMENT_INVALID'
   | 'DUPLICATE_BILL'
@@ -275,6 +276,7 @@ const GENERIC_MESSAGE: Record<ErrorCode, string> = {
   PO_VENDOR_UNCHANGED: 'The purchase order already has this vendor',
   PO_REFERENCED:
     'Payment requests or bills already refer to this order; cancel it and create a new one',
+  PO_CHANGED: 'This purchase order changed since you opened it. Reload and try again.',
   VENDOR_NO_VERIFIED_BANK_ACCOUNT: 'The vendor has no verified bank account',
   PO_AMENDMENT_INVALID: 'This amendment cannot be applied to the purchase order',
   DUPLICATE_BILL: 'This vendor already has a bill with this invoice number in the fiscal year',
@@ -436,6 +438,8 @@ const CONFLICT_CODES: readonly ErrorCode[] = [
   'PO_VENDOR_UNCHANGED',
   'PO_REFERENCED',
   'VENDOR_NO_VERIFIED_BANK_ACCOUNT',
+  // Issuing a draft from a page that read an older version (a vendor change by another buyer since).
+  'PO_CHANGED',
   // P4 vendor bills (payables): a duplicate invoice number, a PO that cannot be billed, a bill not matched or
   // not required to match, and a void of a bill with no payable item or with payments already allocated.
   'DUPLICATE_BILL',

@@ -51,13 +51,16 @@ type LoggedRequest = { url?: unknown; query?: unknown };
 /**
  * pino-http request serializer, run on pino's already-serialized request. For the routes above
  * it cuts the url at `?` and drops the parsed `query` (Express sets it, and the std serializer
- * copies it). Every other request is returned as is.
+ * copies it). The path compares lower-cased without trailing slashes, as Express routes it
+ * (case-insensitive, non-strict), so `/V1/Leads/Duplicates/?email=` is cut too. Every other
+ * request is returned as is.
  */
 export function serializeLoggedRequest<T extends LoggedRequest>(req: T): T {
   if (typeof req.url !== 'string') return req;
   const queryAt = req.url.indexOf('?');
   const path = queryAt === -1 ? req.url : req.url.slice(0, queryAt);
-  if (!QUERY_FREE_PATH_PREFIXES.some((prefix) => path.startsWith(prefix))) return req;
+  const routed = path.toLowerCase().replace(/\/+$/, '');
+  if (!QUERY_FREE_PATH_PREFIXES.some((prefix) => routed.startsWith(prefix))) return req;
   req.url = path;
   delete req.query;
   return req;

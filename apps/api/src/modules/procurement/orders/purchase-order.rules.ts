@@ -262,7 +262,8 @@ export const PO_REFERENCED = {
 /**
  * Why the vendor of an order cannot change to `nextVendorId`, or null when it can as far as the order goes (the new
  * vendor's own checks are the service's). Only a draft changes vendor: an issued order went to its vendor, so it is
- * cancelled and raised again. Changing to the same vendor changes nothing and is refused.
+ * cancelled and raised again. Changing to the same vendor changes nothing and is refused; ids compare lower-cased,
+ * so an upper-case spelling of the current vendor is the same vendor.
  */
 export function vendorChangeRefusal(i: {
   status: PoStatus;
@@ -270,7 +271,7 @@ export function vendorChangeRefusal(i: {
   nextVendorId: string;
 }): { code: string; message: string } | null {
   if (i.status !== 'draft') return PO_VENDOR_CHANGE_NOT_DRAFT;
-  if (i.vendorId === i.nextVendorId) {
+  if (i.vendorId.toLowerCase() === i.nextVendorId.toLowerCase()) {
     return {
       code: 'PO_VENDOR_UNCHANGED',
       message: 'The purchase order already has this vendor',
@@ -343,9 +344,11 @@ export {
   AmendPurchaseOrderBodySchema,
   CancelAndRecreatePurchaseOrderBodySchema,
   ChangePurchaseOrderVendorBodySchema,
+  IssuePurchaseOrderBodySchema,
   ShortClosePurchaseOrderBodySchema,
   type AmendPurchaseOrderBody,
   type CancelAndRecreatePurchaseOrderBody,
   type ChangePurchaseOrderVendorBody,
+  type IssuePurchaseOrderBody,
   type ShortClosePurchaseOrderBody,
 } from '@bos/contracts';

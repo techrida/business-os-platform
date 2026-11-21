@@ -389,6 +389,8 @@ describe('ErrorBodyFilter', () => {
     'PO_VENDOR_UNCHANGED',
     'PO_REFERENCED',
     'VENDOR_NO_VERIFIED_BANK_ACCOUNT',
+    // Issuing a draft that changed since the page read it.
+    'PO_CHANGED',
   ])('keeps the vendor conflict code %s on a 409, and only on a 409', (code) => {
     const out = filter(new ConflictException({ code, message: 'm' }));
     expect(out.status).toBe(409);

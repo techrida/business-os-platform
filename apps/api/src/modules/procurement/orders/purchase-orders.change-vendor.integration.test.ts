@@ -53,7 +53,12 @@ import {
 } from '../sourcing/sourcing.rules';
 import { SourcingService } from '../sourcing/sourcing.service';
 import { PoAmendmentSubject } from './po-amendment.subject';
-import { PO_AMENDMENT_DOCUMENT_TYPE, PO_AMENDMENT_WORKFLOW_SPEC } from './purchase-order.rules';
+import {
+  ChangePurchaseOrderVendorBodySchema,
+  IssuePurchaseOrderBodySchema,
+  PO_AMENDMENT_DOCUMENT_TYPE,
+  PO_AMENDMENT_WORKFLOW_SPEC,
+} from './purchase-order.rules';
 import { PurchaseOrdersService } from './purchase-orders.service';
 import { createTestDatabase, type TestDatabase } from '@bos/db/testing';
 
@@ -538,6 +543,51 @@ describe('changeVendor on a commitment draft', () => {
     });
   });
 
+  it('refuses to issue from a page opened before another buyer changed the vendor', async () => {
+    const oldVendor = await vendor();
+    const { draft } = await commitmentDraft(oldVendor);
+    const opened = await service.get(draft.id);
+    const newVendor = await vendor();
+    const changed = await service.changeVendor(draft.id, { vendorId: newVendor }, randomUUID());
+    expect(changed.version).toBe(opened.version + 1);
+
+    // The stale page still shows the old vendor: its issue carries the version it read.
+    const stale = await httpErrorOf(
+      service.issue(draft.id, randomUUID(), { expectedVersion: opened.version }),
+    );
+    expect(stale.getStatus()).toBe(409);
+    expect(codeOf(stale)).toBe('PO_CHANGED');
+    expect(wireBody(stale)).toMatchObject({
+      status: 409,
+      code: 'PO_CHANGED',
+      message: 'This purchase order changed since you opened it. Reload and try again.',
+    });
+    expect(await poRow(draft.id)).toMatchObject({
+      status: 'draft',
+      vendorId: newVendor,
+      version: changed.version,
+    });
+    expect(await service.versions(draft.id)).toEqual([]);
+
+    // After a reload, the current version issues.
+    const issued = await service.issue(draft.id, randomUUID(), {
+      expectedVersion: changed.version,
+    });
+    expect(issued).toMatchObject({ status: 'issued', vendorId: newVendor, currentVersion: 1 });
+  });
+
+  it('takes no issue body or an empty one, as before', async () => {
+    expect(IssuePurchaseOrderBodySchema.safeParse({}).success).toBe(true);
+    expect(IssuePurchaseOrderBodySchema.safeParse({ expectedVersion: 0 }).success).toBe(false);
+    expect(IssuePurchaseOrderBodySchema.safeParse({ expectedVersion: 1.5 }).success).toBe(false);
+    expect(IssuePurchaseOrderBodySchema.safeParse({ expectedVersion: 2, x: 1 }).success).toBe(
+      false,
+    );
+    const id = await plainDraft(await vendor());
+    const issued = await service.issue(id, randomUUID(), {});
+    expect(issued.status).toBe('issued');
+  });
+
   it('refuses a vendor without a verified bank account and writes nothing, not even the lines', async () => {
     const { draft } = await commitmentDraft(await vendor());
     for (const bank of ['proposed', 'none'] as const) {
@@ -656,6 +706,27 @@ describe('changeVendor refusals', () => {
     expect(codeOf(refused)).toBe('PO_VENDOR_UNCHANGED');
     expect(wireBody(refused)).toMatchObject({ status: 409, code: 'PO_VENDOR_UNCHANGED' });
     expect(await auditRows(id)).toEqual([]);
+  });
+
+  it('refuses the vendor the draft already has spelled in upper case, and changes nothing', async () => {
+    const current = await vendor();
+    const { draft } = await commitmentDraft(current);
+    expect(draft.rfqId).not.toBeNull();
+
+    // The rule compares lower-cased, also for a caller that skips the body schema.
+    const refused = await httpErrorOf(
+      service.changeVendor(draft.id, { vendorId: current.toUpperCase() }, randomUUID()),
+    );
+
+    expect(refused.getStatus()).toBe(409);
+    expect(codeOf(refused)).toBe('PO_VENDOR_UNCHANGED');
+    expect(await poRow(draft.id)).toEqual(draft);
+    expect(await lineCount(draft.id)).toBe(0);
+    expect(await auditRows(draft.id)).toEqual([]);
+    // The body schema lower-cases the id, so the route never hands the service an upper-case spelling.
+    expect(ChangePurchaseOrderVendorBodySchema.parse({ vendorId: current.toUpperCase() })).toEqual({
+      vendorId: current,
+    });
   });
 
   it('refuses a draft a payment request already refers to, instead of failing on its foreign key', async () => {
