@@ -1,5 +1,5 @@
 import { ApiError } from '@/lib/api';
-import { forbiddenOrigin, isSameOrigin, jsonResponse, routeSession } from '@/lib/bff';
+import { dbBusyOf, forbiddenOrigin, isSameOrigin, jsonResponse, routeSession } from '@/lib/bff';
 import { getPermissionCheck } from '@/lib/live-permissions';
 
 import { proofProblem } from '../new/proof-rules';
@@ -61,6 +61,12 @@ export async function POST(req: Request): Promise<Response> {
     });
     return jsonResponse({ documentId, filename }, 200);
   } catch (err) {
+    const busy = dbBusyOf(err);
+    if (busy !== null) {
+      const res = reply('Busy, please try again.', 503);
+      res.headers.set('retry-after', String(busy.retryAfterSeconds));
+      return res;
+    }
     const status = err instanceof ApiError ? err.status : 0;
     if (status === 401) return reply('Sign in again to upload proof of payment.', 401);
     if (status === 403) return reply('Your roles do not include recording payments.', 403);

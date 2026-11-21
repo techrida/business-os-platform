@@ -480,6 +480,21 @@ const confirm = (q: QuotationDto, evidenceDocumentIds: string[] = [], key = `so-
     key,
   );
 
+/** Runs `fn` as the Accountant, who holds `sales_order.confirm` (the Sales role does not). */
+async function asAccountant<T>(fn: () => Promise<T>): Promise<T> {
+  const held = current.grants;
+  current.grants = grantsOf('accountant');
+  try {
+    return await fn();
+  } finally {
+    current.grants = held;
+  }
+}
+
+/** A file uploaded in place on a quotation version, as the confirm dialog does. */
+const uploadToVersion = (versionId: string) =>
+  asAccountant(() => evidence.upload('quotation_version', versionId));
+
 /** The answer as the workspace parses it. */
 const parsed = (detail: SalesOrderDetail) => SalesOrderDetailSchema.parse(detail);
 
@@ -645,7 +660,8 @@ describe('SalesOrdersService.confirmFromQuotation', () => {
     });
     expect(await orderStatuses(q.id)).toEqual(['draft']);
 
-    const doc = await seedDocument();
+    // FU7: uploaded in the dialog, on the quotation version being confirmed.
+    const doc = await uploadToVersion(q.currentVersionId);
     const detail = parsed(await confirm(q, [doc]));
     expect(detail.evidence).toEqual([{ documentId: doc, kind: 'signed_quote' }]);
     const rows = await db
@@ -657,17 +673,30 @@ describe('SalesOrdersService.confirmFromQuotation', () => {
 
   it('refuses an evidence file the scan found infected with 409 document_infected and leaves the order a draft (TR-Q12e)', async () => {
     const q = await acceptedQuotation();
-    expect(await statusOf(confirm(q, [await infectedDocument()]))).toEqual({
+    expect(
+      await statusOf(
+        confirm(q, [
+          await infectedDocument({ ownerType: 'evidence', ownerId: q.currentVersionId }),
+        ]),
+      ),
+    ).toEqual({
       status: 409,
       code: 'document_infected',
     });
     expect(await orderStatuses(q.id)).toEqual(['draft']);
   });
 
-  // Round 5 P2: a file uploaded as the evidence of another record (an order, a vendor bill, an RFQ) is that
-  // record's own. Filed here, Mark billable would take it as this order's evidence. A file of an older owner type
-  // (filed before evidence had its own owner type) still confirms.
+  // FU7: the confirm files only evidence uploaded to the quotation version it confirms. A file of another version,
+  // another record, another entity or an older owner type is that owner's own: filed here, Mark billable would take
+  // it as this order's evidence. Each refusal has a twin below that confirms with the right file.
   it.each<[string, () => Promise<string>]>([
+    [
+      "evidence uploaded to another quotation's version",
+      async () => {
+        const other = await acceptedQuotation();
+        return uploadToVersion(other.currentVersionId);
+      },
+    ],
     [
       'evidence uploaded to another order',
       async () => {
@@ -681,20 +710,17 @@ describe('SalesOrdersService.confirmFromQuotation', () => {
       },
     ],
     [
-      "a vendor bill's evidence",
+      "a vendor bill's or an RFQ's evidence",
       () => seedDocument(scopeA, { ownerType: 'evidence', ownerId: randomUUID() }),
     ],
-    [
-      "an RFQ's evidence",
-      () => seedDocument(scopeA, { ownerType: 'evidence', ownerId: randomUUID() }),
-    ],
+    ['a file of an older owner type', () => seedDocument()],
+    ['a picture', () => seedDocument(scopeA, { ownerType: 'user_avatar', ownerId: randomUUID() })],
   ])(
     'refuses %s with 422 invalid_evidence_document and leaves the order a draft',
     async (_label, docOf) => {
       const q = await acceptedQuotation();
       const foreign = await docOf();
-      const legacy = await seedDocument();
-      const refused = await confirm(q, [legacy, foreign]).then(
+      const refused = await confirm(q, [foreign]).then(
         () => undefined,
         (error: unknown) => error,
       );
@@ -706,10 +732,110 @@ describe('SalesOrdersService.confirmFromQuotation', () => {
       });
       expect(await orderStatuses(q.id)).toEqual(['draft']);
 
-      const detail = parsed(await confirm(q, [legacy]));
-      expect(detail.evidence).toEqual([{ documentId: legacy, kind: 'signed_quote' }]);
+      // The twin: the same confirm with a file uploaded to this version goes through and files it.
+      const own = await uploadToVersion(q.currentVersionId);
+      const detail = parsed(await confirm(q, [own]));
+      expect(detail.evidence).toEqual([{ documentId: own, kind: 'signed_quote' }]);
     },
   );
+
+  it('refuses an evidence file whose upload never finished, and confirms once the bytes are in', async () => {
+    const q = await acceptedQuotation();
+    const reserved = await asAccountant(() =>
+      evidence.service.create('quotation_version', q.currentVersionId, {
+        filename: 'po.pdf',
+        declaredMime: 'application/pdf',
+        sizeBytes: EVIDENCE_PDF.length,
+      }),
+    );
+    const refused = await confirm(q, [reserved.documentId]).then(
+      () => undefined,
+      (error: unknown) => error,
+    );
+    expect(refused).toBeInstanceOf(HttpException);
+    expect((refused as HttpException).getStatus()).toBe(422);
+    expect((refused as HttpException).getResponse()).toMatchObject({
+      code: 'invalid_evidence_document',
+      message: expect.stringContaining('not finished uploading') as string,
+    });
+    expect(await orderStatuses(q.id)).toEqual(['draft']);
+
+    await asAccountant(() =>
+      evidence.service.receive(
+        'quotation_version',
+        q.currentVersionId,
+        reserved.documentId,
+        reserved.versionId,
+        Readable.from(EVIDENCE_PDF),
+        EVIDENCE_PDF.length,
+      ),
+    );
+    const detail = parsed(await confirm(q, [reserved.documentId]));
+    expect(detail.evidence).toEqual([{ documentId: reserved.documentId, kind: 'signed_quote' }]);
+  });
+
+  it("refuses evidence of another entity's version: the other entity's upload route finds no such version", async () => {
+    const q = await acceptedQuotation();
+    current.scope = scopeB;
+    try {
+      const refused = await uploadToVersion(q.currentVersionId).then(
+        () => undefined,
+        (error: unknown) => error,
+      );
+      expect(refused).toMatchObject({ status: 404 });
+    } finally {
+      current.scope = scopeA;
+    }
+  });
+
+  it('takes no evidence upload for a quotation version once its order is confirmed or when it is not accepted', async () => {
+    const draft = await draftQuotation();
+    await sendQuotation(draft);
+    const notAccepted = await uploadToVersion(draft.currentVersionId).then(
+      () => undefined,
+      (error: unknown) => error,
+    );
+    expect(notAccepted).toMatchObject({ status: 409 });
+
+    const q = await acceptedQuotation();
+    const own = await uploadToVersion(q.currentVersionId);
+    await confirm(q, [own]);
+    const late = await uploadToVersion(q.currentVersionId).then(
+      () => undefined,
+      (error: unknown) => error,
+    );
+    expect(late).toMatchObject({ status: 409 });
+  });
+
+  it('lets a custom role holding only the confirm grant poll the scan status of the file it uploaded', async () => {
+    const q = await acceptedQuotation();
+    current.grants = new Map<Permission, Scope>([['sales_order.confirm', 'all']]);
+    expect(principalNow().grants.has('documents.read')).toBe(false);
+    const doc = await evidence.upload('quotation_version', q.currentVersionId);
+    const polled = await evidence.service.read('quotation_version', q.currentVersionId, doc);
+    expect(polled).toMatchObject({ id: doc, ownerType: 'evidence', ownerId: q.currentVersionId });
+    expect(polled.versions[0]).toMatchObject({ status: 'quarantined' });
+    // Without the grant the same poll is refused.
+    current.grants = new Map<Permission, Scope>();
+    await expect(
+      evidence.service.read('quotation_version', q.currentVersionId, doc),
+    ).rejects.toMatchObject({ status: 403 });
+  });
+
+  it('does not let the upload route of a quotation version reach an order, a bill or an RFQ', async () => {
+    const detail = await confirm(await acceptedQuotation());
+    const refused = await asAccountant(() =>
+      evidence.service.create('quotation_version', detail.order.id, {
+        filename: 'po.pdf',
+        declaredMime: 'application/pdf',
+        sizeBytes: 10,
+      }),
+    ).then(
+      () => undefined,
+      (error: unknown) => error,
+    );
+    expect(refused).toMatchObject({ status: 404 });
+  });
 
   it("leaves another record's evidence out of the files an acceptance recorded, and files the rest", async () => {
     const q = await portalAcceptedQuotation();
@@ -1258,6 +1384,44 @@ describe('SalesOrdersService.markBillable', () => {
     expect(after.order.version).toBe(2);
   });
 
+  // FU7: the confirm dialog's upload belongs to the quotation version; the order it filed it under still takes it as
+  // a line's evidence (the Mark billable dialog lists the order's filed evidence).
+  it('marks a line billable with the evidence uploaded in the confirm dialog, picked from the order list', async () => {
+    const q = await acceptedQuotation();
+    const filed = await uploadToVersion(q.currentVersionId);
+    const detail = await confirm(q, [filed]);
+    current.grants = grantsOf('accountant');
+    const after = parsed(await mark(detail, 1, { evidenceDocumentId: filed }));
+    expect(after.schedule[1]).toMatchObject({
+      status: 'billable',
+      billableEvidenceDocumentId: filed,
+    });
+  });
+
+  it("refuses a confirm file as a line's evidence once its scan failed after it was filed", async () => {
+    const q = await acceptedQuotation();
+    const filed = await uploadToVersion(q.currentVersionId);
+    const detail = await confirm(q, [filed]);
+    await addVersionRow(filed, 2, 'scan_failed');
+    current.grants = grantsOf('accountant');
+    expect(await statusOf(mark(detail, 1, { evidenceDocumentId: filed }))).toEqual({
+      status: 422,
+      code: 'invalid_evidence_document',
+    });
+  });
+
+  it("still refuses another quotation version's evidence as a line's evidence", async () => {
+    const other = await acceptedQuotation();
+    const foreign = await uploadToVersion(other.currentVersionId);
+    const q = await acceptedQuotation();
+    const detail = await confirm(q);
+    current.grants = grantsOf('accountant');
+    expect(await statusOf(mark(detail, 1, { evidenceDocumentId: foreign }))).toEqual({
+      status: 422,
+      code: 'invalid_evidence_document',
+    });
+  });
+
   it('refuses a stale order version with 409, a foreign document with 422 and a line already billable with 409', async () => {
     const detail = await confirm(await acceptedQuotation());
     const doc = await evidence.upload('sales_order', detail.order.id);
@@ -1497,6 +1661,38 @@ describe('SalesOrdersService.markBillable', () => {
     expect(await sweeper.sweep()).toEqual({ removed: 0 });
   });
 
+  // FU7: a file uploaded in the confirm dialog is used once the confirm filed it, and unused before.
+  it('sweeps an old file uploaded to a quotation version that no order filed, and keeps the one a confirm filed', async () => {
+    const q = await acceptedQuotation();
+    const filed = await uploadToVersion(q.currentVersionId);
+    const unused = await uploadToVersion(q.currentVersionId);
+    await confirm(q, [filed]);
+    const aged = new Date(Date.now() - 25 * 60 * 60_000);
+    await withTx(db, scopeA, systemActor('test'), async (tx) => {
+      await tx
+        .update(documents)
+        .set({ createdAt: aged })
+        .where(inArray(documents.id, [filed, unused]));
+      await tx
+        .update(documentVersions)
+        .set({ updatedAt: aged })
+        .where(inArray(documentVersions.documentId, [filed, unused]));
+    });
+    const removeQuarantine = vi.fn().mockResolvedValue(undefined);
+    const sweeper = new EvidenceSweeper(db, new AuditService(db), { removeQuarantine });
+
+    expect(await sweeper.sweep()).toEqual({ removed: 1 });
+
+    const removedAt = async (id: string) =>
+      (
+        await withTx(db, scopeA, systemActor('test'), (tx) =>
+          tx.select({ removedAt: documents.removedAt }).from(documents).where(eq(documents.id, id)),
+        )
+      )[0]!.removedAt;
+    expect(await removedAt(unused)).not.toBeNull();
+    expect(await removedAt(filed)).toBeNull();
+  });
+
   it('keeps an old evidence file a confirmed order filed in its evidence list', async () => {
     const detail = await confirm(await acceptedQuotation());
     const filed = await evidence.upload('sales_order', detail.order.id);
@@ -1718,9 +1914,17 @@ describe('SalesOrdersService.markBillable', () => {
   });
 
   it('takes a file already filed as the order evidence (the dialog list), whatever its owner type', async () => {
+    const detail = await confirm(await acceptedQuotation());
+    // An older order: its evidence list names a file of an older owner type.
     const filed = await seedDocument();
-    const detail = await confirm(await acceptedQuotation(), [filed]);
-    expect(parsed(detail).evidence.map((e) => e.documentId)).toContain(filed);
+    await withTx(db, scopeA, systemActor('test'), (tx) =>
+      tx.insert(salesOrderEvidence).values({
+        ...scopeA,
+        salesOrderId: detail.order.id,
+        evidenceKind: 'signed_quote',
+        documentId: filed,
+      }),
+    );
     const after = parsed(await mark(detail, 1, { evidenceDocumentId: filed }));
     expect(after.schedule[1]).toMatchObject({
       status: 'billable',
