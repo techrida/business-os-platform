@@ -82,6 +82,45 @@ describe('readPartyCsv', () => {
   });
 });
 
+describe('review fixes', () => {
+  it('refuses a file with a control character (NUL) as a file error, so it never reaches the database', () => {
+    expect(() => readPartyCsv('vendor', 'legal_name\nAcme\u0000Co\n')).toThrow(
+      /control characters/,
+    );
+    expect(() => readPartyCsv('vendor', 'legal_name\nAcme\tCo\n')).not.toThrow();
+  });
+
+  it('refuses a PAN with no letter or digit, and keeps a vendor contact name within 120 characters', () => {
+    expect(
+      checkLine('customer', customerLine({ pan_vat_no: '-----' })).issues.map((i) => i.column),
+    ).toEqual(['pan_vat_no']);
+    const long = 'V'.repeat(150);
+    const vendor = checkLine('vendor', {
+      legal_name: long,
+      kind: '',
+      pan: '987654321',
+      vat_registered: '',
+      country: '',
+      contact_name: '',
+      contact_email: 'a@b.co',
+      contact_phone: '',
+    });
+    expect(vendor.values?.contact_name).toHaveLength(120);
+    expect(
+      checkLine('vendor', {
+        legal_name: 'X',
+        kind: '',
+        pan: '987654321',
+        vat_registered: '',
+        country: '',
+        contact_name: 'C'.repeat(121),
+        contact_email: '',
+        contact_phone: '',
+      }).issues.map((i) => i.column),
+    ).toEqual(['contact_name']);
+  });
+});
+
 describe('checkLine, customers', () => {
   it('normalises a good line: PAN upper-case, e-mail lower-case, country NP, contact name from the company', () => {
     const checked = checkLine('customer', customerLine({ pan_vat_no: 'ab-12345' }));

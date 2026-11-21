@@ -112,6 +112,11 @@ export interface ReadCsv {
 
 /** Reads the upload as `kind`'s template: the header must name exactly the template's columns, in any order. */
 export function readPartyCsv(kind: PartyImportKind, input: string): ReadCsv {
+  // A control character (NUL above all) cannot be stored and is never part of a name: refuse the file, not one cell.
+  if (/[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F]/.test(input))
+    throw new PartyImportFileError(
+      'The file contains control characters. Re-save it as plain CSV UTF-8.',
+    );
   const table = parseCsv(input);
   const header = table[0];
   if (header === undefined) throw new PartyImportFileError('The file is empty');
@@ -219,7 +224,7 @@ export function checkLine(kind: PartyImportKind, cells: Record<string, string>):
   if (kind === 'customer') {
     const rawPan = get('pan_vat_no');
     if (rawPan !== '') {
-      if (!PanVatNoSchema.safeParse(rawPan).success)
+      if (!PanVatNoSchema.safeParse(rawPan).success || !/[A-Za-z0-9]/.test(rawPan))
         issues.push(
           issue('pan_vat_no', 'PAN or VAT number must be 5 to 20 letters, digits or hyphens'),
         );
@@ -274,8 +279,8 @@ export function checkLine(kind: PartyImportKind, cells: Record<string, string>):
     out.contact_email = email(false);
     out.contact_phone = phone();
     const hasContact = out.contact_email !== '' || out.contact_phone !== '';
-    const contactName = text('contact_name', 200, false);
-    out.contact_name = contactName !== '' ? contactName : hasContact ? legalName : '';
+    const contactName = text('contact_name', 120, false);
+    out.contact_name = contactName !== '' ? contactName : hasContact ? legalName.slice(0, 120) : '';
   }
   return issues.length === 0
     ? {

@@ -435,6 +435,8 @@ describe('customer import', () => {
       .set('Content-Type', 'application/json')
       .send({ csv: 'x' });
     expect(wrongType.status).toBe(415);
+    const nul = await upload('customers', `${CUSTOMER_HEADER}\n"Acme\u0000",,,R,C,NP,,a@b.co,\n`);
+    expect(nul.status).toBe(400);
     const latin1 = await upload(
       'customers',
       Buffer.from(`${CUSTOMER_HEADER}\nCaf\xE9,,,R,C,NP,,a@b.co,\n`, 'latin1'),
@@ -519,6 +521,28 @@ describe('vendor import', () => {
     expect(again).toMatchObject({ validCount: 0, duplicateCount: 4, errorCount: 1 });
     await request(baseUrl).post(`/v1/imports/${again.id}/commit`).expect(200);
     expect(await vendorsOf(a)).toBe(before + 3);
+  });
+
+  it('still notes a vendor created under an existing name, once per batch index, without rereading the table per row', async () => {
+    const tag = uniq();
+    const pan1 = tag.replace(/\D/g, '2').padEnd(9, '2').slice(0, 9);
+    const pan2 = tag.replace(/\D/g, '1').padEnd(9, '1').slice(0, 9);
+    const first = `${VENDOR_HEADER}\nSame Name ${tag} Pvt. Ltd.,company,${pan1},no,NP,,,\n`;
+    await request(baseUrl)
+      .post(`/v1/imports/${detailOf((await upload('vendors', first)).body).id}/commit`)
+      .expect(200);
+    // A different PAN, the same company name: created (keyed on PAN) and noted in the audit trail.
+    const second = `${VENDOR_HEADER}\nSAME NAME ${tag} Private Limited,company,${pan2},no,NP,,,\n`;
+    const batch = detailOf((await upload('vendors', second)).body);
+    expect(batch.validCount).toBe(1);
+    const done = detailOf((await request(baseUrl).post(`/v1/imports/${batch.id}/commit`)).body);
+    const created = done.rows[0]!.recordId!;
+    expect(
+      await count(
+        `SELECT count(*) AS n FROM audit.audit_events WHERE tenant_id = $1 AND entity_id = $2 AND action = 'vendor.created_with_same_name'`,
+        [a.tenantId, created],
+      ),
+    ).toBe(1);
   });
 
   it("does not match another tenant's vendor PAN", async () => {

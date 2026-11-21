@@ -38,7 +38,6 @@ import { DB, type Db, type DbTransaction } from '../../platform/db/db.module';
 import { READ_ONLY, withTx, type TxScope } from '../../platform/db/tx';
 import { CustomersService } from '../customers/customers.service';
 import { VendorsService } from '../vendors/vendors.service';
-import { sameNameVendors } from '../vendors/vendors.rules';
 import { PartyImportsCaller } from './party-imports.caller';
 import {
   buildRows,
@@ -215,6 +214,10 @@ export class PartyImportsService {
   ): Promise<PartyImportRow[]> {
     const { scope } = this.caller.current();
     const out: PartyImportRow[] = [];
+    const nameIndex =
+      kind === 'vendor' && rows.some((r) => r.status === 'valid')
+        ? await this.vendorsService.nameIndex(tx, scope.tenantId)
+        : undefined;
     for (const row of rows) {
       if (row.status !== 'valid' || row.values === undefined) {
         out.push(row);
@@ -271,6 +274,7 @@ export class PartyImportsService {
                 ...(v.contact_phone ? { phone: v.contact_phone } : {}),
               }
             : undefined,
+          nameIndex,
         );
         recordId = vendor.id;
       }
@@ -389,13 +393,8 @@ export class PartyImportsService {
         for (const f of found) if (f.pan !== null) existing.add(`pan:${f.pan}`);
       }
       if (nameKeys.length > 0) {
-        const all = await tx
-          .select({ legalName: vendors.legalName })
-          .from(vendors)
-          .where(eq(vendors.tenantId, scope.tenantId));
-        for (const key of nameKeys) {
-          if (sameNameVendors(key, all).length > 0) existing.add(`name:${key}`);
-        }
+        const index = await this.vendorsService.nameIndex(tx, scope.tenantId);
+        for (const key of nameKeys) if (index.has(key)) existing.add(`name:${key}`);
       }
     }
     return rows.map((r, i): PartyImportRow => {

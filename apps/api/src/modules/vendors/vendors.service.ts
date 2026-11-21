@@ -61,6 +61,7 @@ import {
   LIFECYCLE,
   lifecycleAllowed,
   sameNameVendors,
+  vendorNameKey,
   submitKycMove,
   vendorPartyCode,
   type LifecycleCommand,
@@ -367,6 +368,7 @@ export class VendorsService {
     body: CreateVendorBody,
     now: Date,
     contact?: { name: string; email?: string; phone?: string },
+    nameIndex?: Map<string, string[]>,
   ): Promise<VendorDto> {
     const { scope, actor, principal } = this.caller.current();
     const pan = body.pan ?? null;
@@ -410,7 +412,7 @@ export class VendorsService {
         createdAt: now,
         updatedAt: now,
       });
-      await this.recordSameName(tx, scope.tenantId, id, body.legalName);
+      await this.recordSameName(tx, scope.tenantId, id, body.legalName, nameIndex);
       if (contact !== undefined) {
         await tx.insert(vendorContacts).values({
           tenantId: scope.tenantId,
@@ -915,6 +917,21 @@ export class VendorsService {
     }
   }
 
+  /** The tenant's vendors as name key to ids, for a batch that creates many vendors (see createInTx). */
+  async nameIndex(tx: DbTransaction, tenantId: string): Promise<Map<string, string[]>> {
+    const rows = await tx
+      .select({ id: vendors.id, legalName: vendors.legalName })
+      .from(vendors)
+      .where(eq(vendors.tenantId, tenantId))
+      .orderBy(asc(vendors.id));
+    const index = new Map<string, string[]>();
+    for (const r of rows) {
+      const key = vendorNameKey(r.legalName);
+      if (key !== '') index.set(key, [...(index.get(key) ?? []), r.id]);
+    }
+    return index;
+  }
+
   /**
    * TR-Q12d: a vendor added under a name another vendor of the tenant already has (vendorNameKey) is allowed, and
    * the audit trail names the namesakes, so a review can find a duplicate made on purpose. Tenant-wide, whatever
@@ -925,7 +942,24 @@ export class VendorsService {
     tenantId: string,
     id: string,
     legalName: string,
+    nameIndex?: Map<string, string[]>,
   ): Promise<void> {
+    if (nameIndex !== undefined) {
+      // A batch (the CSV import) keeps one index of name keys for all its rows, so it never rereads the table per row.
+      const key = vendorNameKey(legalName);
+      if (key === '') return;
+      const same = nameIndex.get(key) ?? [];
+      nameIndex.set(key, [...same, id]);
+      if (same.length === 0) return;
+      await this.audit.record(tx, {
+        action: 'vendor.created_with_same_name',
+        entityType: 'vendor',
+        entityId: id,
+        after: { legalName },
+        meta: { sameNameVendorIds: same },
+      });
+      return;
+    }
     const others = await tx
       .select({ id: vendors.id, legalName: vendors.legalName })
       .from(vendors)
