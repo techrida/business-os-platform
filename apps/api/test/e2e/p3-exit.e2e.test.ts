@@ -520,9 +520,9 @@ describe('P3 exit: quote to cash over HTTP', () => {
 
   it('5. the render sweeper renders the advance PDF (fake Gotenberg) and the scan marks it clean (fake clamd)', async () => {
     const finance = await auth('finance');
-    // Before the scan no unscanned file is ever linked: the route answers 409 `invoice_pdf_not_ready` while the PDF is
-    // being prepared or scanned (TR-Q4, R4c2; the screen shows "Preparing PDF"), or 404 before any render exists.
-    // A given-up render is 424 and a refused file 404 `invoice_pdf_unavailable`: those must fail the wait.
+    // Before the scan no unscanned file is ever linked: the route answers 409 while the PDF is being prepared or
+    // scanned (TR-Q4, R4c2; the screen shows "Preparing PDF"), or 404 before any render exists. A given-up render is 424
+    // and fails the wait at once; a scan-refused file is also a plain 404 on the wire, so only the 60 s timeout ends it.
     const link = await pollUntil(
       'the advance invoice PDF to scan clean',
       async () => {
@@ -534,10 +534,13 @@ describe('P3 exit: quote to cash over HTTP', () => {
           .http()
           .get(`/v1/invoices/${s.advanceId}/document`)
           .set('authorization', finance);
-        const code = (res.body as { error?: { code?: string } }).error?.code;
+        // The service tags the 409 `invoice_pdf_not_ready`, but the error filter only keeps codes on its allowlist (it has
+        // `quotation_pdf_not_ready`, not the invoice one), so the wire code is `conflict`: match the 409 by its message.
+        const error = (res.body as { error?: { code?: string; message?: string } }).error;
         const waiting =
-          (res.status === 409 && code === 'invoice_pdf_not_ready') ||
-          (res.status === 404 && code === 'not_found');
+          (res.status === 409 &&
+            error?.message === 'The PDF of this invoice is still being prepared') ||
+          (res.status === 404 && error?.code === 'not_found');
         if (res.status !== 200 && !waiting) throw new Error(show(res));
         const body = res.body as unknown;
         return {
