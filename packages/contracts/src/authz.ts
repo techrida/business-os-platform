@@ -46,6 +46,10 @@ export const PERMISSIONS = [
   'customer.read',
   'customer.write',
   'customer.merge',
+  // A customer's terms with the acting entity (app.party_accounts): set its credit limit, and change its owner.
+  // On/off (`all`). Migration 0150 writes the rows for tenants that already hold role_permissions rows.
+  'customers.credit_limit.write',
+  'customers.owner.write',
   'quotation.read',
   'quotation.draft',
   'quotation.submit',
@@ -237,6 +241,14 @@ const billingFinanceGrants: RoleGrants = {
 const creditOverrideGrants: RoleGrants = { 'credit.override': 'all' };
 
 /**
+ * Finance sets a customer's credit limit with the acting entity (not Management); Management changes a customer's
+ * owner (not Finance). Founder holds both through PERMISSIONS. On/off, so `all`. Migration 0150 writes the rows for
+ * tenants that already hold role_permissions rows.
+ */
+const customerCreditLimitGrants: RoleGrants = { 'customers.credit_limit.write': 'all' };
+const customerOwnerGrants: RoleGrants = { 'customers.owner.write': 'all' };
+
+/**
  * Every staff role sets its own profile picture (U12). Founder holds it at `all` through PERMISSIONS, and so may
  * set anyone's; no other default role holds `admin.users.invite`. Migration 0053 gives existing staff roles `own`,
  * and `all` to founder and to any role that holds `admin.users.invite`. Portal roles get none.
@@ -314,6 +326,7 @@ export const DEFAULT_ROLE_PERMISSIONS: Record<RoleKey, RoleGrants> = {
     ...salesCostReadGrants,
     ...billingReadAllGrants,
     ...creditOverrideGrants,
+    ...customerOwnerGrants,
   },
   finance: {
     ...ownProfileGrants,
@@ -327,6 +340,7 @@ export const DEFAULT_ROLE_PERMISSIONS: Record<RoleKey, RoleGrants> = {
     ...billingPreparerGrants,
     ...billingFinanceGrants,
     ...creditOverrideGrants,
+    ...customerCreditLimitGrants,
     ...p4FinanceGrants,
     ...leadReopenGrants,
     ...settingsFinanceGrants,
