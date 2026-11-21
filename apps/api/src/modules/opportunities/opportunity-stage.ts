@@ -1,7 +1,9 @@
-// The opportunity stage planner: decides whether a move is allowed and what the row becomes. Pure, so every edge
-// of the transition table is unit-testable without a database. Serves the NFR "the pipeline is auditable":
-// a stage moves only along OPPORTUNITY_TRANSITIONS, Won and Quotation Sent are set by the system alone, and a
-// move to Lost or On Hold always carries its reason and note.
+// The opportunity stage planner: decides whether a move is allowed and what the row becomes. The planner is pure,
+// so every edge of the transition table is unit-testable without a database. Serves the NFR "the pipeline is
+// auditable": a stage moves only along OPPORTUNITY_TRANSITIONS, Won and Quotation Sent are set by the system alone,
+// and a move to Lost or On Hold always carries its reason and note.
+// applyStageChange at the end is the one writer of opportunities.stage: it updates the row and records the change in
+// opportunity_stage_history (0162) in the same transaction.
 import {
   findTransition,
   OPPORTUNITY_TRANSITIONS,
@@ -10,9 +12,14 @@ import {
   type StageTransition,
   type TransitionActor,
 } from '@bos/contracts';
+import { opportunities, opportunityStageHistory, scoped } from '@bos/db';
+import { asc, eq } from 'drizzle-orm';
 
 import { can, type Principal, type ResourceRef } from '../../platform/authz/can';
 import type { RecordReaders } from '../../platform/authz/record-reach';
+import { updateVersioned } from '../../platform/db/idempotency';
+import type { Db, DbTransaction, TxScope } from '../../platform/db/tx';
+import { actorUuid, readTxContext } from '../../platform/documents/tx-context';
 import { isStageManager } from '../leads/lead-stage';
 
 export { isStageManager } from '../leads/lead-stage';
@@ -234,4 +241,76 @@ export function planStageChange(input: StageChangeInput): StagePlan {
       heldFromStage: input.to === 'on_hold' ? input.current : null,
     },
   };
+}
+
+// ------------------------------------------------------------------------------------------- writing a change
+
+type OpportunityRecord = typeof opportunities.$inferSelect;
+type StageHistoryActorKind = (typeof opportunityStageHistory.$inferInsert)['actorKind'];
+
+const NON_USER_ACTOR_KINDS: ReadonlySet<string> = new Set(['system', 'seed', 'zitadel']);
+
+/**
+ * Records one stage change of `opportunity` in opportunity_stage_history, in the caller's transaction. The actor is
+ * the transaction's (withTx): the user who moved the deal or set off a system move, or a job with no user (actor
+ * kind 'system', no user id). Only applyStageChange calls it.
+ */
+export async function recordStageChange(
+  tx: DbTransaction,
+  opportunity: Pick<OpportunityRecord, 'id' | 'tenantId' | 'organizationId'>,
+  from: OpportunityStage,
+  to: OpportunityStage,
+): Promise<void> {
+  const context = await readTxContext(tx);
+  const userId = actorUuid(context);
+  let actorKind: StageHistoryActorKind;
+  if (userId !== null) {
+    actorKind = 'user';
+  } else if (NON_USER_ACTOR_KINDS.has(context.actorKind)) {
+    actorKind = context.actorKind as StageHistoryActorKind;
+  } else {
+    // A user actor whose id is not a user uuid: refuse rather than record an unknown author.
+    throw new Error(`opportunity stage history: unknown actor ${context.actorKind}`);
+  }
+  await tx.insert(opportunityStageHistory).values({
+    tenantId: opportunity.tenantId,
+    organizationId: opportunity.organizationId,
+    opportunityId: opportunity.id,
+    fromStage: from,
+    toStage: to,
+    actorKind,
+    actorUserId: userId,
+  });
+}
+
+/**
+ * The one writer of opportunities.stage: applies a planned stage change (planStageChange's `set`) to the locked row
+ * with the version check, and records the change in the same transaction. A throw anywhere rolls back both.
+ */
+export async function applyStageChange(
+  tx: DbTransaction,
+  row: Pick<OpportunityRecord, 'id' | 'tenantId' | 'organizationId' | 'stage'>,
+  expectedVersion: number,
+  set: StageFields & { lostReasonId: string | null; wonQuotationVersionId?: string },
+): Promise<OpportunityRecord> {
+  const updated = await updateVersioned(tx, opportunities, row.id, expectedVersion, {
+    ...set,
+    updatedAt: new Date(),
+  });
+  await recordStageChange(tx, row, row.stage, updated.stage);
+  return updated;
+}
+
+/** The stage changes of one opportunity in `scope`, oldest first. Another entity or tenant gets none. */
+export function stageHistoryOf(q: Db | DbTransaction, scope: TxScope, opportunityId: string) {
+  return q
+    .select()
+    .from(opportunityStageHistory)
+    .where(
+      scoped(scope).where(
+        opportunityStageHistory,
+        eq(opportunityStageHistory.opportunityId, opportunityId),
+      ),
+    )
+    .orderBy(asc(opportunityStageHistory.createdAt), asc(opportunityStageHistory.seq));
 }

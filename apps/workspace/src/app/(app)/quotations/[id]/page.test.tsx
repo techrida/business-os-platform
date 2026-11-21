@@ -503,7 +503,7 @@ describe('quotation detail page', () => {
     expect(html).not.toContain('>Send to customer</button>');
     expect(html).toContain('>Revise</button>');
     expect(html).toContain(
-      'This quotation cannot be sent while its opportunity is On Hold. Move the opportunity back to Negotiation first.',
+      'This quotation cannot be sent while its opportunity is On Hold. Resume the opportunity first.',
     );
 
     // Back in Negotiation the API would send it, so the button returns and the notice goes.

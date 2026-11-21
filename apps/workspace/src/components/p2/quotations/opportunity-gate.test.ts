@@ -5,6 +5,8 @@ import {
   opportunityAllowsAccept,
   opportunityAllowsSend,
   opportunityBlockers,
+  START_QUOTATION_REFUSED,
+  startQuotationBlocker,
 } from './opportunity-gate';
 
 const V = '22222222-2222-4222-8222-222222222222';
@@ -55,14 +57,30 @@ describe('opportunity gate mirrors the API', () => {
     }
   });
 
-  it('holds back Send and Accepted on hold, with the next step in words', () => {
-    const b = opportunityBlockers({ stage: 'on_hold', wonQuotationVersionId: null }, V);
-    expect(b.send).toBe(
-      'This quotation cannot be sent while its opportunity is On Hold. Move the opportunity back to Negotiation first.',
+  it('holds back Send and Accepted on hold, naming the resume stage only when it was recorded', () => {
+    const known = opportunityBlockers(
+      { stage: 'on_hold', wonQuotationVersionId: null, heldFromStage: 'negotiation' },
+      V,
     );
-    expect(b.accept).toBe(
-      'This quotation cannot be recorded as accepted while its opportunity is On Hold. Move the opportunity back to Negotiation first.',
+    expect(known.send).toBe(
+      'This quotation cannot be sent while its opportunity is On Hold. Resume the opportunity to Negotiation first.',
     );
+    expect(known.accept).toBe(
+      'This quotation cannot be recorded as accepted while its opportunity is On Hold. Resume the opportunity to Negotiation first.',
+    );
+    // A hold from before F1-Q53 has no recorded stage: no stage is named.
+    for (const heldFromStage of [null, undefined]) {
+      const b = opportunityBlockers(
+        { stage: 'on_hold', wonQuotationVersionId: null, heldFromStage },
+        V,
+      );
+      expect(b.send).toBe(
+        'This quotation cannot be sent while its opportunity is On Hold. Resume the opportunity first.',
+      );
+      expect(b.accept).toBe(
+        'This quotation cannot be recorded as accepted while its opportunity is On Hold. Resume the opportunity first.',
+      );
+    }
   });
 
   it('holds back nothing in Negotiation, or when the opportunity could not be read', () => {
@@ -71,5 +89,31 @@ describe('opportunity gate mirrors the API', () => {
       accept: null,
     });
     expect(opportunityBlockers(null, V)).toEqual({ send: null, accept: null });
+  });
+});
+
+describe('startQuotationBlocker (R4a Q4 a)', () => {
+  const open = OPPORTUNITY_STAGES.filter((stage) => stage !== 'won' && stage !== 'lost');
+
+  it('says nothing when the server lets the caller start a quotation', () => {
+    for (const stage of open) {
+      expect(startQuotationBlocker({ stage, canDraftQuotation: true }), stage).toBeNull();
+    }
+  });
+
+  it('gives the plain reason on an open deal the server refuses, or when the flag is missing', () => {
+    for (const stage of open) {
+      expect(startQuotationBlocker({ stage, canDraftQuotation: false }), stage).toBe(
+        START_QUOTATION_REFUSED,
+      );
+      expect(startQuotationBlocker({ stage }), stage).toBe(START_QUOTATION_REFUSED);
+    }
+    expect(START_QUOTATION_REFUSED).not.toMatch(/accountant|finance|founder|sales|role/i);
+  });
+
+  it('says nothing on a closed deal: no one starts a quotation there', () => {
+    for (const stage of ['won', 'lost'] as const) {
+      expect(startQuotationBlocker({ stage, canDraftQuotation: false }), stage).toBeNull();
+    }
   });
 });
