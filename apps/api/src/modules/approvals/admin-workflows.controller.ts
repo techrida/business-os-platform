@@ -79,7 +79,14 @@ export class AdminWorkflowsController {
    */
   private readonly livePublisher: PublisherCheck = async (tx, scope, actor) => {
     await lockAccessRevision(tx, scope.tenantId);
-    await assertLiveGrant(tx, this.liveGrants, scope, actor, 'approvals.definitions.publish');
+    const live = await assertLiveGrant(
+      tx,
+      this.liveGrants,
+      scope,
+      actor,
+      'approvals.definitions.publish',
+    );
+    return { roles: live.roles };
   };
 
   @Get('people')

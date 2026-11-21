@@ -997,6 +997,15 @@ describe('admin: the small-team rule for publishing a workflow (F1-Q11 a)', () =
     });
   });
 
+  it('reads the Founder role live: a token that still says founder after a demotion to Management is refused', async () => {
+    const { routes, draft } = await smallTeam(['management']);
+    tokenRoles = ['founder'];
+    await expect(
+      routes.publish('small_team', 1, { reason: 'Nobody else works here' }),
+    ).rejects.toMatchObject({ status: 403, response: { reason: 'separation_of_duties' } });
+    expect((await draft())?.versions[0]).toMatchObject({ status: 'draft' });
+  });
+
   it('asks the sole Founder for a reason when it is missing or blank, and leaves the draft', async () => {
     const { routes, draft } = await smallTeam(['founder']);
     for (const body of [undefined, {}, { reason: '   ' }]) {

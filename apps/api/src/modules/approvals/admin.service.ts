@@ -72,7 +72,11 @@ export interface WorkflowVersionDto {
  * route passes the live-grant check (access-revision lock, then the mirror's current roles); every caller must name
  * one, so none skips it by accident.
  */
-export type PublisherCheck = (tx: DbTransaction, scope: TxScope, actor: Actor) => Promise<void>;
+export type PublisherCheck = (
+  tx: DbTransaction,
+  scope: TxScope,
+  actor: Actor,
+) => Promise<{ roles: readonly string[] } | void>;
 
 type PublishRefusal = 'own_draft' | 'editor_unknown';
 
@@ -378,7 +382,10 @@ export class ApprovalsAdminService {
       return await this.write(
         async (tx, scope, userId, actor) => {
           // First, before any row lock: the grant answer then holds for the rest of the transaction.
-          await assertPublisher(tx, scope, actor);
+          const live = await assertPublisher(tx, scope, actor);
+          // The Founder test for the small-team rule uses the roles the check just read live. A check that returns
+          // none (the test seam) leaves the sign-in roles.
+          const publisherRoles: readonly string[] = live ? live.roles : principal.roles;
           const def = await this.definition(tx, scope, key);
           const [v] = await tx
             .select()
@@ -396,10 +403,10 @@ export class ApprovalsAdminService {
           // with a reason. A second eligible person, even one who is away, keeps the refusal.
           let soleEligible = false;
           if (v.createdBy === userId) {
-            const others = principal.roles.includes('founder')
+            const others = publisherRoles.includes('founder')
               ? await this.otherPublishers(tx, scope, [userId, v.createdBy])
               : null;
-            if (others === null || !isSoleEligible(principal.roles, others)) {
+            if (others === null || !isSoleEligible(publisherRoles, others)) {
               throw new PublishRefused('own_draft', v.id, v.createdBy);
             }
             if (reason === '') {

@@ -672,6 +672,26 @@ describe('SalesOrdersService.releaseDelivery (F1-Q32)', () => {
 describe('releaseDelivery: the small-team rule (F1-Q11 a)', () => {
   const SOLE_REASON = 'Nobody else here can release; the customer collects today';
 
+  // The creator is a Founder in the database too: the command reads the caller's roles live, not from the token.
+  beforeEach(async () => {
+    await giveRoles(f.ownerUserId, ['founder']);
+  });
+
+  it('reads the Founder role live: a token that still says founder after a demotion to Management gets the 403', async () => {
+    await setThreshold(AMOUNT_NPR);
+    const orderId = await confirmedOrder();
+    await resetTeam();
+    await giveRoles(f.ownerUserId, ['management']);
+
+    as('founder');
+    expect(await refusal(release(orderId, SOLE_REASON))).toEqual({
+      status: 403,
+      code: 'forbidden',
+      reason: 'requester_cannot_release',
+    });
+    expect(await releaseRows(orderId)).toHaveLength(0);
+  });
+
   it('lets a Founder creator release alone with a reason, and audits it as a sole-eligible release', async () => {
     await setThreshold(AMOUNT_NPR);
     const orderId = await confirmedOrder();
