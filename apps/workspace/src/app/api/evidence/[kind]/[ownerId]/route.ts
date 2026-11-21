@@ -2,7 +2,7 @@ import { CreateDocumentBodySchema, MAX_UPLOAD_BYTES } from '@bos/contracts';
 
 import { getDocument } from '@/components/p2/crm/verification-api';
 import { projectVersion } from '@/components/p2/crm/verification-file';
-import { createDocument, uploadDocumentContent } from '@/lib/api-kernel';
+import { createEvidenceDocument, uploadEvidenceContent } from '@/lib/api-kernel';
 import {
   errorResponse,
   forbiddenOrigin,
@@ -18,10 +18,10 @@ export const dynamic = 'force-dynamic';
 
 /**
  * Evidence for one record (a sales order's billable step, a vendor bill's match exception, an RFQ
- * quotation): the file is uploaded in the dialog that needs it, owned by `evidence` + the record's
- * id, and the form then posts the new document id. The API checks the caller may upload for that
- * record, and on save that the document is evidence of that record in the caller's entity.
- * `kind` only names the record in the path; every kind uses the same owner type.
+ * quotation): the file is uploaded in the dialog that needs it, through the record's own
+ * `/evidence-documents` API route (owned by `evidence` + the record's id, with that record's
+ * permission), and the form then posts the new document id. On save the API checks the document is
+ * evidence of that record in the caller's entity (422 `invalid_evidence_document` otherwise).
  */
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
@@ -70,7 +70,8 @@ export async function GET(req: Request, { params }: Params): Promise<Response> {
  * Upload one evidence file. Same wire format as the verification case upload: the raw file is the
  * request body, with its own Content-Type and its name in `x-file-name` (no multipart, so a 25 MB
  * file is never buffered here). Reserves the document, streams the bytes, and answers 201 with the
- * new version's `FileView` (status `quarantined` until the scan finishes).
+ * new version's `FileView` (status `quarantined` until the scan finishes). The owner fields are
+ * checked with the generic document schema; the API route takes only the file fields.
  */
 export async function POST(req: Request, { params }: Params): Promise<Response> {
   if (!isSameOrigin(req)) return forbiddenOrigin();
@@ -101,8 +102,13 @@ export async function POST(req: Request, { params }: Params): Promise<Response> 
   if (!parsed.success) return bad('That file name or type is not allowed.');
 
   try {
-    const created = await createDocument(session, parsed.data);
-    const version = await uploadDocumentContent(session, created, {
+    const { filename: name, declaredMime, sizeBytes } = parsed.data;
+    const created = await createEvidenceDocument(session, kind, ownerId, {
+      filename: name,
+      declaredMime,
+      sizeBytes,
+    });
+    const version = await uploadEvidenceContent(session, kind, ownerId, created, {
       body: req.body,
       contentLength: length,
       contentType,

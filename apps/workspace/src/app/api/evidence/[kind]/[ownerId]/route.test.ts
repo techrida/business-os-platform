@@ -11,8 +11,8 @@ vi.mock('server-only', () => ({}));
 const mocks = vi.hoisted(() => ({
   routeSession: vi.fn(),
   isSameOrigin: vi.fn(),
-  createDocument: vi.fn(),
-  uploadDocumentContent: vi.fn(),
+  createEvidenceDocument: vi.fn(),
+  uploadEvidenceContent: vi.fn(),
   getDocument: vi.fn(),
 }));
 
@@ -29,8 +29,8 @@ vi.mock('@/lib/bff', () => ({
     ),
 }));
 vi.mock('@/lib/api-kernel', () => ({
-  createDocument: mocks.createDocument,
-  uploadDocumentContent: mocks.uploadDocumentContent,
+  createEvidenceDocument: mocks.createEvidenceDocument,
+  uploadEvidenceContent: mocks.uploadEvidenceContent,
 }));
 vi.mock('@/components/p2/crm/verification-api', () => ({ getDocument: mocks.getDocument }));
 
@@ -96,29 +96,29 @@ function upload(ownerId: string = ORDER, init: Init = {}): Promise<Response> {
 beforeEach(() => {
   mocks.routeSession.mockReset().mockResolvedValue(session);
   mocks.isSameOrigin.mockReset().mockReturnValue(true);
-  mocks.createDocument
+  mocks.createEvidenceDocument
     .mockReset()
     .mockResolvedValue({ documentId: DOC, versionId: VERSION, uploadPath: '/x' });
-  mocks.uploadDocumentContent.mockReset().mockResolvedValue(uploadedVersion);
+  mocks.uploadEvidenceContent.mockReset().mockResolvedValue(uploadedVersion);
   mocks.getDocument.mockReset().mockResolvedValue(document);
 });
 
 describe('POST /api/evidence/:kind/:ownerId', () => {
   it.each(['sales-order', 'vendor-bill', 'rfq'])(
-    'reserves an evidence document owned by the %s, streams the bytes, and answers 201',
+    'reserves evidence through the %s route, streams the bytes, and answers 201',
     async (kind) => {
       const res = await upload(ORDER, { kind });
       expect(res.status).toBe(201);
       expect(await res.json()).toEqual(projection);
-      expect(mocks.createDocument).toHaveBeenCalledWith(session, {
-        ownerType: 'evidence',
-        ownerId: ORDER,
+      expect(mocks.createEvidenceDocument).toHaveBeenCalledWith(session, kind, ORDER, {
         filename: 'Signed acceptance.pdf',
         declaredMime: 'application/pdf',
         sizeBytes: 7,
       });
-      expect(mocks.uploadDocumentContent).toHaveBeenCalledWith(
+      expect(mocks.uploadEvidenceContent).toHaveBeenCalledWith(
         session,
+        kind,
+        ORDER,
         expect.objectContaining({ documentId: DOC, versionId: VERSION }),
         expect.objectContaining({ contentLength: 7, contentType: 'application/pdf' }),
       );
@@ -129,7 +129,7 @@ describe('POST /api/evidence/:kind/:ownerId', () => {
     mocks.isSameOrigin.mockReturnValue(false);
     expect((await upload()).status).toBe(403);
     expect(mocks.routeSession).not.toHaveBeenCalled();
-    expect(mocks.createDocument).not.toHaveBeenCalled();
+    expect(mocks.createEvidenceDocument).not.toHaveBeenCalled();
   });
 
   it('returns the session response as is when nobody is signed in', async () => {
@@ -137,13 +137,13 @@ describe('POST /api/evidence/:kind/:ownerId', () => {
       Response.json({ error: { message: 'in' } }, { status: 401 }),
     );
     expect((await upload()).status).toBe(401);
-    expect(mocks.createDocument).not.toHaveBeenCalled();
+    expect(mocks.createEvidenceDocument).not.toHaveBeenCalled();
   });
 
   it('refuses an owner id that is not a GUID, or a record kind it does not know, without calling the API', async () => {
     expect((await upload('not-an-order')).status).toBe(400);
     expect((await upload(ORDER, { kind: 'company_logo' })).status).toBe(400);
-    expect(mocks.createDocument).not.toHaveBeenCalled();
+    expect(mocks.createEvidenceDocument).not.toHaveBeenCalled();
   });
 
   it.each([
@@ -155,14 +155,14 @@ describe('POST /api/evidence/:kind/:ownerId', () => {
     ['a type the API does not allow', { type: '' }, 400],
   ] as [string, Init, number][])('stops %s before any API call', async (_label, init, status) => {
     expect((await upload(ORDER, init)).status).toBe(status);
-    expect(mocks.createDocument).not.toHaveBeenCalled();
-    expect(mocks.uploadDocumentContent).not.toHaveBeenCalled();
+    expect(mocks.createEvidenceDocument).not.toHaveBeenCalled();
+    expect(mocks.uploadEvidenceContent).not.toHaveBeenCalled();
   });
 
   it('passes a client error from the API through and turns a 5xx into 502', async () => {
-    mocks.createDocument.mockRejectedValueOnce(new ApiError(403, 'x'));
+    mocks.createEvidenceDocument.mockRejectedValueOnce(new ApiError(403, 'x'));
     expect((await upload()).status).toBe(403);
-    mocks.uploadDocumentContent.mockRejectedValueOnce(new ApiError(503, 'x'));
+    mocks.uploadEvidenceContent.mockRejectedValueOnce(new ApiError(503, 'x'));
     expect((await upload()).status).toBe(502);
   });
 });
