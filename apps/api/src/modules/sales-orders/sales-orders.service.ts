@@ -866,7 +866,9 @@ export class SalesOrdersService {
         'delivery_already_released',
         released.kind === 'advance_paid'
           ? 'The advance is paid, so this delivery is already released'
-          : 'This delivery was already released',
+          : released.kind === 'no_advance'
+            ? 'This order has no advance, so its delivery is not held'
+            : 'This delivery was already released',
       );
     }
     // The threshold is read now, not from the page the caller loaded: a Founder's edit applies at once.
@@ -1208,7 +1210,8 @@ export class SalesOrdersService {
 
   /**
    * How the order's delivery is released, or null while it is held: a release row (F1-Q32) first, since it is
-   * the record of who let it go before the advance was paid, else a paid advance (plan A14).
+   * the record of who let it go before the advance was paid, else an order with no advance to wait for, else a paid
+   * advance (plan A14). An order with no advance line is never held: there is nothing for the hold to wait on.
    */
   private async deliveryState(
     tx: DbTransaction,
@@ -1244,6 +1247,9 @@ export class SalesOrdersService {
         releasedByName: release.releasedByName,
         reason: release.reason,
       };
+    }
+    if (!schedule.some((l) => l.trigger === 'advance' && l.status !== 'cancelled')) {
+      return { kind: 'no_advance', releasedAt: null, releasedByName: null, reason: null };
     }
     return (await this.advancePaid(tx, scope, schedule))
       ? { kind: 'advance_paid', releasedAt: null, releasedByName: null, reason: null }
