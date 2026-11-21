@@ -1,7 +1,5 @@
 'use server';
 
-import { randomUUID } from 'node:crypto';
-
 import {
   CreateCompanyBankAccountBodySchema,
   CreateExpenseAccountBodySchema,
@@ -27,6 +25,7 @@ import { describeError } from '../admin-errors';
 import { fail, ok, type ActionState } from '../action-state';
 import { requireSection } from '../guard';
 import { DUPLICATE_CODE_MESSAGE } from './copy';
+import { keyOf } from './idempotency';
 
 // Server Actions for Settings > Finance > Bank and expense accounts. The section permission
 // (settings.finance.write, or admin.settings.write) is re-checked on every action because each one is
@@ -130,7 +129,7 @@ export async function createBankAccountAction(
   if (!parsed.success) return invalid(parsed.error.issues, fields);
 
   try {
-    await createCompanyBankAccount(session, parsed.data, randomUUID());
+    await createCompanyBankAccount(session, parsed.data, keyOf(formData.get('idempotencyKey')));
   } catch (error) {
     return refused(error, 'add bank accounts', fields);
   }
@@ -150,7 +149,12 @@ export async function renameBankAccountAction(
   if (!parsed.success) return invalid(parsed.error.issues, fields);
 
   try {
-    await renameCompanyBankAccount(session, id.data, parsed.data, randomUUID());
+    await renameCompanyBankAccount(
+      session,
+      id.data,
+      parsed.data,
+      keyOf(formData.get('idempotencyKey')),
+    );
   } catch (error) {
     return refused(error, 'rename bank accounts', fields);
   }
@@ -163,6 +167,7 @@ export type StatusChange = 'retire' | 'reactivate';
 export async function changeBankAccountStatusAction(
   id: string,
   change: StatusChange,
+  idempotencyKey?: string,
 ): Promise<ActionState> {
   const session = await requireSection('company-accounts');
   const parsed = Id.safeParse(id);
@@ -170,8 +175,8 @@ export async function changeBankAccountStatusAction(
   try {
     const row =
       change === 'retire'
-        ? await retireCompanyBankAccount(session, parsed.data, randomUUID())
-        : await reactivateCompanyBankAccount(session, parsed.data, randomUUID());
+        ? await retireCompanyBankAccount(session, parsed.data, keyOf(idempotencyKey))
+        : await reactivateCompanyBankAccount(session, parsed.data, keyOf(idempotencyKey));
     revalidatePath(PATH);
     return ok(change === 'retire' ? `Retired ${row.name}.` : `Reactivated ${row.name}.`);
   } catch (error) {
@@ -193,7 +198,7 @@ export async function createExpenseAccountAction(
   if (!parsed.success) return invalid(parsed.error.issues, fields);
 
   try {
-    await createExpenseAccount(session, parsed.data, randomUUID());
+    await createExpenseAccount(session, parsed.data, keyOf(formData.get('idempotencyKey')));
   } catch (error) {
     return refused(error, 'add expense accounts', fields, {
       name: 'code',
@@ -216,7 +221,12 @@ export async function renameExpenseAccountAction(
   if (!parsed.success) return invalid(parsed.error.issues, fields);
 
   try {
-    await renameExpenseAccount(session, id.data, parsed.data, randomUUID());
+    await renameExpenseAccount(
+      session,
+      id.data,
+      parsed.data,
+      keyOf(formData.get('idempotencyKey')),
+    );
   } catch (error) {
     return refused(error, 'rename expense accounts', fields);
   }
@@ -227,6 +237,7 @@ export async function renameExpenseAccountAction(
 export async function changeExpenseAccountStatusAction(
   id: string,
   change: StatusChange,
+  idempotencyKey?: string,
 ): Promise<ActionState> {
   const session = await requireSection('company-accounts');
   const parsed = Id.safeParse(id);
@@ -234,8 +245,8 @@ export async function changeExpenseAccountStatusAction(
   try {
     const row =
       change === 'retire'
-        ? await retireExpenseAccount(session, parsed.data, randomUUID())
-        : await reactivateExpenseAccount(session, parsed.data, randomUUID());
+        ? await retireExpenseAccount(session, parsed.data, keyOf(idempotencyKey))
+        : await reactivateExpenseAccount(session, parsed.data, keyOf(idempotencyKey));
     revalidatePath(PATH);
     return ok(
       change === 'retire'

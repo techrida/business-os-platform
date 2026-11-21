@@ -2,11 +2,10 @@ import { randomUUID } from 'node:crypto';
 
 import type { Metadata } from 'next';
 
-import { grantsFrom } from '@/components/p2/customers/permissions';
 import { Alert } from '@/components/ui/alert';
 import { Breadcrumb, Page, PageHeader } from '@/components/ui/page';
 import { requireStaffSession } from '@/lib/bff';
-import { getMeOrNull } from '@/lib/live-permissions';
+import { getGrants } from '@/lib/grants';
 
 import { VendorForm } from '../_components/vendor-form';
 import { EMPTY_VENDOR_VALUES } from '../_lib/forms';
@@ -21,9 +20,7 @@ const DESCRIPTION =
 
 export default async function NewVendorPage() {
   const session = await requireStaffSession('/vendors/new');
-  const mayWrite = vendorGrants(
-    grantsFrom(await getMeOrNull(session.accessToken), session.roles),
-  ).write;
+  const mayWrite = vendorGrants(await getGrants(session)).write;
 
   return (
     <Page>

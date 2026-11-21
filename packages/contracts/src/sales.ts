@@ -205,17 +205,18 @@ export const SalesOrderDraftStateSchema = z.object({
 });
 export type SalesOrderDraftState = z.infer<typeof SalesOrderDraftStateSchema>;
 
-export const DELIVERY_RELEASE_KINDS = ['advance_paid', 'override'] as const;
+export const DELIVERY_RELEASE_KINDS = ['advance_paid', 'no_advance', 'override'] as const;
 
 /**
  * Why the order's delivery is released (F1-Q32). `advance_paid`: the advance invoice has an open amount of 0 (plan
- * A14); the other fields are null. `override`: someone released the hold before the advance was paid, with a reason
+ * A14); the other fields are null. `no_advance`: the order has no advance line to wait for, so nothing holds its
+ * delivery; the other fields are null. `override`: someone released the hold before the advance was paid, with a reason
  * (`POST /v1/sales-orders/:id/delivery-release`). A release recorded before the advance was paid stays `override`.
  */
 export const SalesOrderDeliveryReleaseSchema = z.object({
   kind: z.enum(DELIVERY_RELEASE_KINDS),
   releasedAt: isoDateTime.nullable(),
-  /** The releaser's display name; null for `advance_paid` or a user without one. */
+  /** The releaser's display name; null for `advance_paid`, `no_advance` or a user without one. */
   releasedByName: z.string().nullable(),
   reason: z.string().nullable(),
 });

@@ -31,8 +31,12 @@ export interface ShellCounts {
   /**
    * The bell marked `by` items read: lower the unread count now (never below zero; nothing while it is
    * unknown). A read already in flight started before the marks, so its answer is dropped.
+   *
+   * `settled` is the marks' own requests finishing (it must not reject). While they are out, no new read starts:
+   * the server has not recorded every mark yet, so a read now would still count items the person just read and
+   * ring the bell for a rise that never happened. When they finish, one read corrects the number.
    */
-  lowerNotifications: (by: number) => void;
+  lowerNotifications: (by: number, settled?: Promise<unknown>) => void;
 }
 
 const ShellCountsContext = createContext<ShellCounts | null>(null);
@@ -103,6 +107,8 @@ export function ShellCountsProvider({
   // A read is waiting for its answer: a tick does not start another, or a slow answer would be superseded
   // by every following tick and never land.
   const inFlight = useRef(false);
+  // Marks-as-read still on the wire (`lowerNotifications`): no read starts while any are.
+  const marksOut = useRef(0);
   const seenPath = useRef(pathname);
 
   // A fresh layout number outranks any read already in flight: that read started before it.
@@ -111,7 +117,7 @@ export function ShellCountsProvider({
   }, [initialInbox, initialNotifications]);
 
   const refresh = useCallback(async () => {
-    if (document.hidden || signedOut.current || inFlight.current) return;
+    if (document.hidden || signedOut.current || inFlight.current || marksOut.current > 0) return;
     inFlight.current = true;
     const generation = ++latest.current;
     try {
@@ -143,14 +149,30 @@ export function ShellCountsProvider({
     }
   }, []);
 
-  const lowerNotifications = useCallback((by: number) => {
-    latest.current += 1;
-    setState((s) =>
-      s.notifications === undefined
-        ? s
-        : { ...s, notifications: Math.max(0, s.notifications - by) },
-    );
-  }, []);
+  const lowerNotifications = useCallback(
+    (by: number, settled?: Promise<unknown>) => {
+      latest.current += 1;
+      setState((s) =>
+        s.notifications === undefined
+          ? s
+          : { ...s, notifications: Math.max(0, s.notifications - by) },
+      );
+      if (settled === undefined) return;
+      marksOut.current += 1;
+      void settled
+        .then(
+          () => undefined,
+          () => undefined,
+        )
+        .then(() => {
+          marksOut.current -= 1;
+          // A read that started while the marks were out is outranked, then one read gives the server's number.
+          latest.current += 1;
+          void refresh();
+        });
+    },
+    [refresh],
+  );
 
   // The bell has no number from the layout, so read once on arrival.
   const readOnArrival = initialNotifications === undefined;

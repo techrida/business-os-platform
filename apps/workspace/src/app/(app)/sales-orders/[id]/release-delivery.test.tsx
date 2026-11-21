@@ -383,6 +383,9 @@ describe('releasedText', () => {
       releasedText({ kind: 'advance_paid', releasedAt: null, releasedByName: null, reason: null }),
     ).toBe('Released: advance paid');
     expect(
+      releasedText({ kind: 'no_advance', releasedAt: null, releasedByName: null, reason: null }),
+    ).toBe('Released: no advance on this order');
+    expect(
       releasedText({
         kind: 'override',
         releasedAt: '2026-11-20T06:15:00.000Z',
