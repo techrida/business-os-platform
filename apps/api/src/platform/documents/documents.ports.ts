@@ -79,6 +79,13 @@ export interface DocumentOwnerPolicy {
    */
   uploadGrants?(scope: TxScope, ownerId: string): Promise<readonly UploadGrant[] | null>;
   /**
+   * True when this owner's files change only on the owning module's own routes, by their uploader (round 5 P2:
+   * `evidence`). The generic new-version and remove routes then answer 409, after the permission check, and a
+   * version's bytes are taken only from the user who reserved it (403 otherwise), on any route. The owning module
+   * removes through `removeInTransaction` after its own uploader check. Absent means the generic routes as before.
+   */
+  ownRoutesOnly?: boolean;
+  /**
    * A permission that also authorises a staff read of this owner's files (get, download link), checked on the
    * owner ref. It is in addition to `documents.read`, never instead: a caller passes with either. Lets the owning
    * module's own read grant open its records' files without widening `documents.read` (P4: `vendor.read` for a

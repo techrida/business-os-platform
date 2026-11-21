@@ -111,6 +111,23 @@ function picturesUploadedElsewhere(): ConflictException {
   });
 }
 
+/** The refusal of a generic new version or removal of a file its owning module manages (`ownRoutesOnly`). */
+function managedByRecord(): ConflictException {
+  return new ConflictException({
+    code: 'conflict',
+    message: 'This file is managed from its record: remove it there and upload a new one.',
+  });
+}
+
+/** The refusal of a version's bytes from anyone but its uploader, for an `ownRoutesOnly` owner. */
+function notVersionUploader(): ForbiddenException {
+  return new ForbiddenException({
+    code: 'forbidden',
+    message: 'Only the person who started this upload can send its file.',
+    reason: 'no_permission',
+  });
+}
+
 /** Anything that can run a SELECT: the pool-backed Db or an open transaction. */
 type Reader = Pick<Db, 'select'>;
 
@@ -574,6 +591,7 @@ export class DocumentsService {
     if (!byAction) {
       await this.assertOwner(who.scope, doc.ownerType, doc.ownerId, 'documents.upload');
     }
+    if (this.owners.get(doc.ownerType)?.ownRoutesOnly === true) throw managedByRecord();
     await this.assertCanAttach(who.scope, doc.ownerType, doc.ownerId, tx, documentId);
     if (isImageOwnerType(doc.ownerType)) throw picturesUploadedElsewhere();
     await this.loadDocument(tx, who.scope, documentId, true);
@@ -636,10 +654,10 @@ export class DocumentsService {
   private async removeAndCleanUp(
     documentId: string,
     who: { scope: TxScope; actor: Actor },
-    refuseImages: boolean,
+    genericRoute: boolean,
   ): Promise<void> {
     const unclean = await withTx(this.db, who.scope, who.actor, (tx) =>
-      this.removeDocument(tx, who.scope, documentId, refuseImages),
+      this.removeDocument(tx, who.scope, documentId, genericRoute),
     );
     await this.cleanupRemoved(unclean);
   }
@@ -663,17 +681,21 @@ export class DocumentsService {
     return this.removeDocument(tx, scope, documentId, false);
   }
 
+  /** `genericRoute`: the generic DELETE route, which refuses pictures and `ownRoutesOnly` owners' files. */
   private async removeDocument(
     tx: DbTransaction,
     scope: TxScope,
     documentId: string,
-    refuseImages: boolean,
+    genericRoute: boolean,
   ) {
     const doc = await this.loadDocument(tx, scope, documentId, false, true);
     await this.assertOwner(scope, doc.ownerType, doc.ownerId, 'documents.upload');
-    await this.assertCanAttach(scope, doc.ownerType, doc.ownerId, tx, documentId);
     // After the permission check (someone who may not remove learns nothing), before the lock and any write.
-    if (refuseImages && isImageOwnerType(doc.ownerType)) {
+    if (genericRoute && this.owners.get(doc.ownerType)?.ownRoutesOnly === true) {
+      throw managedByRecord();
+    }
+    await this.assertCanAttach(scope, doc.ownerType, doc.ownerId, tx, documentId);
+    if (genericRoute && isImageOwnerType(doc.ownerType)) {
       throw new ConflictException({
         code: 'conflict',
         message: 'This picture is managed from its own settings: replace or remove it there.',
@@ -772,6 +794,12 @@ export class DocumentsService {
           action: opts.action,
           uploaderUserId: found.version.uploadedBy,
         });
+        if (
+          this.owners.get(found.ownerType)?.ownRoutesOnly === true &&
+          (who.actor.kind !== 'user' || found.version.uploadedBy !== who.actor.id)
+        ) {
+          throw notVersionUploader();
+        }
         // The memo may have been submitted since the document was created: no bytes are written then.
         await this.assertCanAttach(
           who.scope,

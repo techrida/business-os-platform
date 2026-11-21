@@ -11,7 +11,9 @@
 // (a sales-order grant uploading to a bill). `uploadGrants` resolves the id first and names only that kind's
 // permission. Staff only: no portal hook (`allowsCounterparty`) and no background job (`allowsSystemActor`), so
 // both are refused. A file a record already took (a billable line's evidence, a match exception's, a recorded
-// quotation's) is frozen: no new version and no removal through the generic routes while the record stays open.
+// quotation's) is frozen: no new bytes and no removal on the record's routes while the record stays open. The generic
+// new-version and remove routes refuse every evidence file (`ownRoutesOnly`), and only a file's uploader sends its
+// bytes or removes it.
 // The type, size and scan rules are the generic ones: photos stay allowed, because a photographed
 // delivery note is valid evidence. Every lookup is scoped to the caller's tenant and acting entity, so a record
 // of another entity is null (404).
@@ -123,6 +125,8 @@ function primaryRef(scope: TxScope, record: EvidenceRecord): ResourceRef {
 
 export class EvidenceOwnerPolicy implements DocumentOwnerPolicy {
   readonly ownerType = EVIDENCE_OWNER_TYPE;
+  /** Changed only on the record's evidence routes, by the file's uploader (EvidenceDocumentsService). */
+  readonly ownRoutesOnly = true;
 
   constructor(
     private readonly load: EvidenceRecordLoader,

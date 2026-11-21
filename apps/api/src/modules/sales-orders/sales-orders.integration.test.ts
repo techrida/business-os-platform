@@ -1372,7 +1372,8 @@ describe('SalesOrdersService.markBillable', () => {
         )
       ).status,
     ).toBe(409);
-    expect(await statusOf(evidence.documents.remove(doc, { who: { scope, actor } }))).toEqual({
+    // Its uploader cannot remove it on the order's own route either.
+    expect(await statusOf(evidence.service.remove('sales_order', detail.order.id, doc))).toEqual({
       status: 409,
       code: 'conflict',
     });
@@ -1446,6 +1447,94 @@ describe('SalesOrdersService.markBillable', () => {
       expect(await removedOf(kept)).toBe(false);
     },
   );
+
+  // Round 5 P2: an evidence file is its uploader's own and changes only on the record's routes. The generic
+  // new-version and remove routes refuse it, even to its uploader holding documents.upload, and its bytes are taken
+  // only from the person who reserved it, on either route.
+  it('refuses the generic new version and removal of evidence, and takes its bytes only from its uploader', async () => {
+    const detail = await confirm(await acceptedQuotation());
+    const refusalOf = async (promise: Promise<unknown>) => {
+      const error = await promise.then(
+        () => undefined,
+        (e: unknown) => e,
+      );
+      expect(error).toBeInstanceOf(HttpException);
+      return {
+        status: (error as HttpException).getStatus(),
+        body: (error as HttpException).getResponse(),
+      };
+    };
+    const managed = {
+      status: 409,
+      body: expect.objectContaining({ message: expect.stringMatching(/managed from its record/) }),
+    };
+    // Generic grants (documents.upload) and the order's own grant.
+    current.grants = grantsOf('founder');
+    current.userId = await seedOtherStaffUser(db, f);
+    const uploader = caller.current();
+    const unused = await evidence.upload('sales_order', detail.order.id);
+    expect(await refusalOf(evidence.documents.remove(unused, { who: uploader }))).toEqual(managed);
+    expect(
+      await refusalOf(
+        withTx(db, uploader.scope, uploader.actor, (tx) =>
+          evidence.documents.createVersion(tx, unused, {
+            filename: 'swap.pdf',
+            declaredMime: 'application/pdf',
+            sizeBytes: EVIDENCE_PDF.length,
+          }),
+        ),
+      ),
+    ).toEqual(managed);
+    const [row] = await db
+      .select({ removedAt: documents.removedAt })
+      .from(documents)
+      .where(eq(documents.id, unused));
+    expect(row!.removedAt).toBeNull();
+    expect(
+      await db.select().from(documentVersions).where(eq(documentVersions.documentId, unused)),
+    ).toHaveLength(1);
+
+    // Reserved by the uploader; another holder of the same grants cannot send its bytes on either route.
+    const reserved = await evidence.service.create('sales_order', detail.order.id, {
+      filename: 'evidence.pdf',
+      declaredMime: 'application/pdf',
+      sizeBytes: EVIDENCE_PDF.length,
+    });
+    current.userId = undefined;
+    const other = caller.current();
+    expect(
+      await statusOf(
+        evidence.service.receive(
+          'sales_order',
+          detail.order.id,
+          reserved.documentId,
+          reserved.versionId,
+          Readable.from(EVIDENCE_PDF),
+          EVIDENCE_PDF.length,
+        ),
+      ),
+    ).toEqual({ status: 403, code: 'forbidden' });
+    expect(
+      await statusOf(
+        evidence.documents.receiveContent(
+          reserved.versionId,
+          Readable.from(EVIDENCE_PDF),
+          EVIDENCE_PDF.length,
+          { documentId: reserved.documentId, who: other },
+        ),
+      ),
+    ).toEqual({ status: 403, code: 'forbidden' });
+    current.userId = uploader.actor.id;
+    const received = await evidence.service.receive(
+      'sales_order',
+      detail.order.id,
+      reserved.documentId,
+      reserved.versionId,
+      Readable.from(EVIDENCE_PDF),
+      EVIDENCE_PDF.length,
+    );
+    expect(received.status).toBe('quarantined');
+  });
 
   it('takes a file already filed as the order evidence (the dialog list), whatever its owner type', async () => {
     const filed = await seedDocument();
