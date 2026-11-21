@@ -89,6 +89,8 @@ const post = (body: Record<string, unknown> = BODY, key?: string) => {
 const patchStage = (id: string, body: Record<string, unknown>) =>
   request(baseUrl).patch(`/v1/leads/${id}/stage`).send(body);
 const dto = (body: unknown) => LeadDtoSchema.parse(body);
+/** FR-6 (D48): every move to contacted needs a contact, so a test move logs a call in the same request. */
+const CONTACT = { kind: 'call', body: 'Intro call' } as const;
 const errorOf = (body: unknown) => ErrorBodySchema.parse(body).error;
 
 async function seed(extra: Record<string, unknown> = {}) {
@@ -295,7 +297,11 @@ describe('POST /v1/leads with a follow-up (D39)', () => {
       .array(LeadDtoSchema)
       .parse((await request(baseUrl).get(`/v1/leads?q=${encodeURIComponent(title)}`)).body);
     expect(listed.map((l) => [l.id, l.nextFollowUpAt])).toEqual([[lead.id, expected]]);
-    const moved = await patchStage(lead.id, { stage: 'contacted', expectedVersion: 1 });
+    const moved = await patchStage(lead.id, {
+      stage: 'contacted',
+      expectedVersion: 1,
+      contactActivity: CONTACT,
+    });
     expect(dto(moved.body).nextFollowUpAt).toBe(expected);
 
     const bareTitle = `Bare ${randomUUID()}`;
@@ -426,9 +432,15 @@ describe('GET /v1/leads', () => {
   it('filters by repeated stage, source and owner, and never widens the caller scope', async () => {
     const own = await seed({ title: 'Filter own', source: 'event' });
     const moved = await seed({ title: 'Filter moved', source: 'partner' });
-    expect((await patchStage(moved.id, { stage: 'contacted', expectedVersion: 1 })).status).toBe(
-      200,
-    );
+    expect(
+      (
+        await patchStage(moved.id, {
+          stage: 'contacted',
+          expectedVersion: 1,
+          contactActivity: CONTACT,
+        })
+      ).status,
+    ).toBe(200);
     h.as('salesB', 'sales');
     const colleague = await seed({ title: 'Filter colleague', source: 'event' });
 
@@ -475,7 +487,7 @@ describe('GET /v1/leads/summary', () => {
   it('counts per stage with every stage present, and agrees with the list for each stage filter', async () => {
     await seed({ title: 'Cards one' });
     const two = await seed({ title: 'Cards two' });
-    await patchStage(two.id, { stage: 'contacted', expectedVersion: 1 });
+    await patchStage(two.id, { stage: 'contacted', expectedVersion: 1, contactActivity: CONTACT });
 
     const summary = await summaryOf();
     expect(Object.keys(summary.byStage).sort()).toEqual([...LEAD_STAGES].sort());
@@ -557,13 +569,17 @@ describe('GET /v1/leads/:id', () => {
 describe('PATCH /v1/leads/:id/stage', () => {
   it('follows the table: a valid move bumps the version, writes an audit event and a stage_change activity', async () => {
     const lead = await seed();
-    const res = await patchStage(lead.id, { stage: 'contacted', expectedVersion: 1 });
+    const res = await patchStage(lead.id, {
+      stage: 'contacted',
+      expectedVersion: 1,
+      contactActivity: CONTACT,
+    });
     expect(res.status, JSON.stringify(res.body)).toBe(200);
     expect(dto(res.body)).toMatchObject({ stage: 'contacted', version: 2 });
     expect((await h.auditOf(lead.id)).map((e) => e.action)).toContain('lead.stage_changed');
+    // The logged contact plus the stage_change row.
     const rows = await h.db.select().from(activities).where(eq(activities.leadId, lead.id));
-    expect(rows).toHaveLength(1);
-    expect(rows[0]).toMatchObject({ kind: 'stage_change' });
+    expect(rows.map((r) => r.kind).sort()).toEqual(['call', 'stage_change']);
   });
 
   it('refuses a move the table has no edge for with 409, and a stale version with 409', async () => {
@@ -571,14 +587,20 @@ describe('PATCH /v1/leads/:id/stage', () => {
     const skip = await patchStage(lead.id, { stage: 'qualified', expectedVersion: 1 });
     expect(skip.status).toBe(409);
     expect(errorOf(skip.body).code).toBe('conflict');
-    expect((await patchStage(lead.id, { stage: 'contacted', expectedVersion: 7 })).status).toBe(
-      409,
-    );
+    expect(
+      (
+        await patchStage(lead.id, {
+          stage: 'contacted',
+          expectedVersion: 7,
+          contactActivity: CONTACT,
+        })
+      ).status,
+    ).toBe(409);
   });
 
   it('never sets converted: 400 at the edge, and nothing changes', async () => {
     const lead = await seed();
-    await patchStage(lead.id, { stage: 'contacted', expectedVersion: 1 });
+    await patchStage(lead.id, { stage: 'contacted', expectedVersion: 1, contactActivity: CONTACT });
     await patchStage(lead.id, { stage: 'qualified', expectedVersion: 2 });
     const res = await patchStage(lead.id, { stage: 'converted', expectedVersion: 3 });
     expect(res.status).toBe(400);
@@ -608,12 +630,20 @@ describe('PATCH /v1/leads/:id/stage', () => {
       canEdit: true,
     });
     // Staff-level sales still gets 403 on reopen.
-    const reopen = await patchStage(lead.id, { stage: 'contacted', expectedVersion: 2 });
+    const reopen = await patchStage(lead.id, {
+      stage: 'contacted',
+      expectedVersion: 2,
+      contactActivity: CONTACT,
+    });
     expect(reopen.status).toBe(403);
 
     // Founder (with write scope) can reopen a lost lead.
     h.as('boss', 'founder');
-    const reopened = await patchStage(lead.id, { stage: 'contacted', expectedVersion: 2 });
+    const reopened = await patchStage(lead.id, {
+      stage: 'contacted',
+      expectedVersion: 2,
+      contactActivity: CONTACT,
+    });
     expect(reopened.status, JSON.stringify(reopened.body)).toBe(200);
     expect(dto(reopened.body)).toMatchObject({
       stage: 'contacted',
@@ -623,7 +653,7 @@ describe('PATCH /v1/leads/:id/stage', () => {
     });
   });
 
-  it('logs a contact activity atomically when moving a new lead to contacted, and refuses it on stale or non-new leads without writing', async () => {
+  it('logs a contact activity atomically on any move to contacted, and refuses it on a stale version or another target stage without writing', async () => {
     const lead = await seed();
 
     // A stale expectedVersion rolls back without writing the contact activity.
@@ -654,21 +684,37 @@ describe('PATCH /v1/leads/:id/stage', () => {
     ).toBe(true);
     expect(logged.some((a) => a.kind === 'stage_change')).toBe(true);
 
-    // From on_hold -> contacted, contactActivity is refused with 409 and writes no email activity.
-    await patchStage(lead.id, {
+    // FR-6 (D48): the resume from on_hold -> contacted may log a contact too, in the same request.
+    const held = await patchStage(lead.id, {
       stage: 'on_hold',
       reason: 'budget',
       note: 'waiting',
       expectedVersion: 2,
     });
-    const bad = await patchStage(lead.id, {
+    expect(held.status, JSON.stringify(held.body)).toBe(200);
+    const resumed = await patchStage(lead.id, {
       stage: 'contacted',
       expectedVersion: 3,
-      contactActivity: { kind: 'email', body: 'Should fail on non-new lead' },
+      contactActivity: { kind: 'email', body: 'Followed up after the hold' },
     });
-    expect(bad.status).toBe(409);
+    expect(resumed.status, JSON.stringify(resumed.body)).toBe(200);
+    expect(dto(resumed.body)).toMatchObject({ stage: 'contacted', version: 4 });
+    const afterResume = await h.db.select().from(activities).where(eq(activities.leadId, lead.id));
+    expect(
+      afterResume.filter((a) => a.kind === 'email' && a.body === 'Followed up after the hold'),
+    ).toHaveLength(1);
+
+    // A contact on a move to any other stage is refused at the edge (400) and writes nothing.
+    const bad = await patchStage(lead.id, {
+      stage: 'qualified',
+      expectedVersion: 4,
+      contactActivity: { kind: 'meeting', body: 'Should not persist on a move to qualified' },
+    });
+    expect(bad.status).toBe(400);
     const afterBad = await h.db.select().from(activities).where(eq(activities.leadId, lead.id));
-    expect(afterBad.some((a) => a.kind === 'email')).toBe(false);
+    expect(afterBad.some((a) => a.kind === 'meeting')).toBe(false);
+    const [row] = await h.db.select().from(leads).where(eq(leads.id, lead.id));
+    expect(row).toMatchObject({ stage: 'contacted', version: 4 });
   });
 
   it('clears the reason and note when a lead leaves on_hold', async () => {
@@ -692,7 +738,7 @@ describe('PATCH /v1/leads/:id/stage', () => {
 
   it('resumes a held lead to the stage it was held at, and to nothing else (F1-Q53)', async () => {
     const lead = await seed();
-    await patchStage(lead.id, { stage: 'contacted', expectedVersion: 1 });
+    await patchStage(lead.id, { stage: 'contacted', expectedVersion: 1, contactActivity: CONTACT });
     await patchStage(lead.id, { stage: 'qualified', expectedVersion: 2 });
     const held = await patchStage(lead.id, {
       stage: 'on_hold',
@@ -737,7 +783,7 @@ describe('PATCH /v1/leads/:id/stage', () => {
 
   it('resumes a lead held before F1-Q53 (no held stage recorded) to contacted, as before', async () => {
     const lead = await seed();
-    await patchStage(lead.id, { stage: 'contacted', expectedVersion: 1 });
+    await patchStage(lead.id, { stage: 'contacted', expectedVersion: 1, contactActivity: CONTACT });
     await patchStage(lead.id, { stage: 'qualified', expectedVersion: 2 });
     await patchStage(lead.id, {
       stage: 'on_hold',
@@ -754,6 +800,7 @@ describe('PATCH /v1/leads/:id/stage', () => {
     expect((await patchStage(lead.id, { stage: 'qualified', expectedVersion: 4 })).status).toBe(
       409,
     );
+    // The call logged with the first move to contacted is a done contact, so the resume needs no new one.
     const back = await patchStage(lead.id, { stage: 'contacted', expectedVersion: 4 });
     expect(back.status, JSON.stringify(back.body)).toBe(200);
     expect(dto(back.body).stage).toBe('contacted');
@@ -768,10 +815,14 @@ describe('PATCH /v1/leads/:id/stage', () => {
     for (const stage of ['contacted', 'qualified']) {
       expect((await patchStage(lead.id, { stage, expectedVersion: 2 })).status, stage).toBe(409);
     }
-    // FR-6: moving new to contacted needs no logged call or email (order only).
+    // FR-6 (D48): back at new, the lead moves on to contacted once a contact is logged with the move.
     const resumed = await patchStage(lead.id, { stage: 'new', expectedVersion: 2 });
     expect(resumed.status).toBe(200);
-    const contacted = await patchStage(lead.id, { stage: 'contacted', expectedVersion: 3 });
+    const contacted = await patchStage(lead.id, {
+      stage: 'contacted',
+      expectedVersion: 3,
+      contactActivity: CONTACT,
+    });
     expect(contacted.status, JSON.stringify(contacted.body)).toBe(200);
   });
 

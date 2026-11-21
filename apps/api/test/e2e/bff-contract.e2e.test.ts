@@ -245,7 +245,14 @@ describe('BFF contract: workspace clients against the real API', () => {
     let lead = got;
     for (const stage of ['contacted', 'qualified'] as const) {
       lead = await seen(() =>
-        bff.crm.changeLeadStage(sales(), s.leadId, { stage, expectedVersion: lead.version }),
+        bff.crm.changeLeadStage(sales(), s.leadId, {
+          stage,
+          expectedVersion: lead.version,
+          // Moving to Contacted needs the call, email or meeting that made the contact (D48).
+          ...(stage === 'contacted'
+            ? { contactActivity: { kind: 'call', body: 'Intro call' } }
+            : {}),
+        }),
       );
       expect(lead.stage).toBe(stage);
     }
@@ -776,7 +783,13 @@ describe('BFF contract P3: billing, receivables and portal clients against the r
         .http()
         .patch(`/v1/leads/${lead.id}/stage`)
         .set('authorization', salesAuth)
-        .send({ stage, expectedVersion: version });
+        .send({
+          stage,
+          expectedVersion: version,
+          ...(stage === 'contacted'
+            ? { contactActivity: { kind: 'call', body: 'Intro call' } }
+            : {}),
+        });
       expect(moved.status, show(moved)).toBe(200);
       version = (moved.body as { version: number }).version;
     }

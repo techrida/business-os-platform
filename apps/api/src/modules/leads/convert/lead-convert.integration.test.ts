@@ -115,6 +115,10 @@ const customerBody = (extra: Record<string, unknown> = {}) => ({
 });
 const errorOf = (body: unknown) => ErrorBodySchema.parse(body).error;
 
+/** FR-6 (D48): the move to contacted logs a contact in the same request; other moves carry none. */
+const contactWith = (stage: string) =>
+  stage === 'contacted' ? { contactActivity: { kind: 'call', body: 'Intro call' } } : {};
+
 /** A lead that reached qualified through the real stage route, so its version is 3. */
 async function qualifiedLead(extra: Record<string, unknown> = {}) {
   const created = await request(baseUrl)
@@ -138,7 +142,7 @@ async function qualifiedLead(extra: Record<string, unknown> = {}) {
   ] as const) {
     const res = await request(baseUrl)
       .patch(`/v1/leads/${lead.id}/stage`)
-      .send({ stage, expectedVersion });
+      .send({ stage, expectedVersion, ...contactWith(stage) });
     expect(res.status, JSON.stringify(res.body)).toBe(200);
   }
   return lead;
@@ -652,7 +656,7 @@ describe('the lead creator on the opportunity (FX-Q1)', () => {
     ] as const) {
       const moved = await request(baseUrl)
         .patch(`/v1/leads/${lead.id}/stage`)
-        .send({ stage, expectedVersion });
+        .send({ stage, expectedVersion, ...contactWith(stage) });
       expect(moved.status, JSON.stringify(moved.body)).toBe(200);
     }
     const res = await convert(lead.id, createCustomerBody());
