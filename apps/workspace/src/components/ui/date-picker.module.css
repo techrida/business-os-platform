@@ -2,6 +2,19 @@
    in field.module.css: same height, radius, border and focus treatment (the field's own border
    turns the focus colour, with an inset 1px line, nothing outside the box). */
 
+.root {
+  min-width: 0;
+}
+
+/* The Bikram Sambat date of the chosen day, under the field. */
+.bs {
+  display: block;
+  margin-top: 6px;
+  color: var(--text-secondary);
+  font-size: var(--font-size-caption);
+  line-height: var(--line-height-caption);
+}
+
 .picker {
   position: relative;
   display: block;
