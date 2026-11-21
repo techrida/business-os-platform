@@ -772,6 +772,26 @@ describe('QuotationRenderProcessor and scheduler', () => {
     );
   });
 
+  it('routes quotation.render.one to renderOne with the job data, and refuses data that is not ids', async () => {
+    const renderOne = vi.fn(() => Promise.resolve('rendered' as const));
+    const processor = new QuotationRenderProcessor({ renderOne } as never);
+    const data = {
+      tenantId: '00000000-0000-4000-8000-0000000000a1',
+      organizationId: '00000000-0000-4000-8000-0000000000b1',
+      id: '00000000-0000-4000-8000-0000000000c1',
+    };
+    await processor.process({ name: 'quotation.render.one', data } as never);
+    expect(renderOne).toHaveBeenCalledWith({
+      tenantId: data.tenantId,
+      organizationId: data.organizationId,
+      versionId: data.id,
+    });
+    await expect(
+      processor.process({ name: 'quotation.render.one', data: { id: 'x' } } as never),
+    ).rejects.toThrow();
+    expect(renderOne).toHaveBeenCalledTimes(1);
+  });
+
   it('registers one repeatable job, idempotently, through upsertJobScheduler', async () => {
     const upsertJobScheduler = vi.fn(() => Promise.resolve());
     await new QuotationRenderScheduler({ upsertJobScheduler } as never).onApplicationBootstrap();
