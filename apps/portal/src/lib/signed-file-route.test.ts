@@ -113,4 +113,49 @@ describe('handleSignedFile', () => {
       }
     }
   });
+
+  it('answers a customer 424 (failed or refused PDF) as 424 with the delayed sentence, in both modes', async () => {
+    for (const mode of ['download', 'preview'] as const) {
+      getLink.mockRejectedValueOnce(new ApiError(424, 'x', { code: 'document_render_failed' }));
+      const fromLink = await run(mode);
+      expect(fromLink.status).toBe(424);
+      expect(fromLink.headers.get('content-type')).toBe('text/plain; charset=utf-8');
+      expect(await fromLink.text()).toBe('This PDF is delayed. Our team has been told.');
+
+      openFile.mockRejectedValueOnce(new ApiError(424, 'x'));
+      const fromFile = await run(mode);
+      expect(fromFile.status).toBe(424);
+      expect(await fromFile.text()).toBe('This PDF is delayed. Our team has been told.');
+    }
+  });
+
+  it('keeps 409 as "not ready yet" and 404 as not found, with no code in the text', async () => {
+    getLink.mockRejectedValueOnce(new ApiError(409, 'x', { code: 'document_pending' }));
+    const pending = await run('download');
+    expect(pending.status).toBe(409);
+    expect(await pending.text()).toBe(
+      'This PDF is not available to download yet. Please try again in a few minutes.',
+    );
+    getLink.mockRejectedValueOnce(new ApiError(404, 'x'));
+    const missing = await run('preview');
+    expect(missing.status).toBe(404);
+    expect(await missing.text()).toBe('Nope.');
+  });
+
+  it('leaves the vendor purchase-order routes as they were: a 424 is still a 502, 409 still 409', async () => {
+    const vendor = { orgKind: 'vendor', accessToken: 't' } as unknown as Session;
+    for (const mode of ['download', 'preview'] as const) {
+      for (const [status, expected] of [
+        [424, 502],
+        [409, 409],
+        [404, 404],
+      ] as const) {
+        getSession.mockResolvedValueOnce(vendor);
+        getLink.mockRejectedValueOnce(new ApiError(status, 'x'));
+        const res = await run(mode, 'vendor');
+        expect(res.status).toBe(expected);
+        expect(await res.text()).not.toContain('delayed');
+      }
+    }
+  });
 });

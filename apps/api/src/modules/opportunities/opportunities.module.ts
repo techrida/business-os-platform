@@ -10,6 +10,8 @@ import { NotifyModule } from '../../platform/notify/notify.module';
 import { LeadsModule } from '../leads/leads.module';
 import { CreditHoldController } from './credit-hold.controller';
 import { CreditHoldService } from './credit-hold.service';
+import { LostReasonReportController } from './lost-reason-report.controller';
+import { LostReasonReportService } from './lost-reason-report.service';
 import { OpportunitiesCaller } from './opportunities.caller';
 import { OpportunitiesController } from './opportunities.controller';
 import { OpportunitiesService } from './opportunities.service';
@@ -19,13 +21,20 @@ import { OpportunityOwnersService } from './opportunity-owners.service';
 
 @Module({
   imports: [AuditModule, LeadsModule, NotifyModule],
-  controllers: [OpportunitiesController, OpportunityOwnerChangeController, CreditHoldController],
+  // The report controller goes first so `reports/...` is never read as an opportunity id.
+  controllers: [
+    LostReasonReportController,
+    OpportunitiesController,
+    OpportunityOwnerChangeController,
+    CreditHoldController,
+  ],
   providers: [
     OpportunitiesService,
     OpportunitiesCaller,
     OpportunityOwnersService,
     OpportunityOwnerChangeService,
     CreditHoldService,
+    LostReasonReportService,
   ],
   exports: [OpportunitiesService],
 })

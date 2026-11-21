@@ -148,6 +148,11 @@ export const CustomerQuotationViewSchema = z.strictObject({
     .strictObject({ documentId: z.guid(), filename: z.string(), sha256: sha256Hex })
     .nullable(),
   /**
+   * On a portal read only (never in the PDF): true when the PDF will not come without the team (its render was given
+   * up, or the virus scan refused the file). With `file` null and this false, the PDF is still being prepared.
+   */
+  renderFailed: z.boolean().optional(),
+  /**
    * What happens after the customer accepted (F1-Q28), on a portal read of an accepted version only (never in the
    * PDF): `pending` until staff confirm the acceptance, and the documents they still need from the customer.
    */

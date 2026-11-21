@@ -35,8 +35,9 @@ import type { Principal } from '../../../platform/authz/principal';
 import type { Db, DbTransaction } from '../../../platform/db/db.module';
 import type { Actor, TxScope } from '../../../platform/db/tx';
 import { actorUuid, readTxContext, type TxContext } from '../../../platform/documents/tx-context';
-import { fact } from '../../approvals/context';
+import { fact, readableDocuments } from '../../approvals/context';
 import type { ApprovalSubject } from '../../approvals/requests.service';
+import { evidenceOwnerPolicyFor } from '../../evidence/evidence-owner.policy';
 import { LedgerService } from '../../ledger/ledger.service';
 import { idAt, procurementReferenceNames } from '../../procurement/reference-names';
 import { billContext } from './bill-approval-context';
@@ -277,7 +278,10 @@ export class MatchExceptionSubject implements ApprovalSubject {
     return procurementReferenceNames(q, scope, { vendorBillIds: [idAt(snapshot, 'vendorBillId')] });
   }
 
-  /** The bill the exception is about as it stands now, with the exception's reason and status. */
+  /**
+   * The bill the exception is about as it stands now, with the exception's reason and status, and after the bill's own
+   * file the exception's evidence, when it is evidence uploaded to that bill and the reader could open it.
+   */
   async context(
     q: Db,
     scope: TxScope,
@@ -289,12 +293,20 @@ export class MatchExceptionSubject implements ApprovalSubject {
         vendorBillId: matchExceptions.vendorBillId,
         reason: matchExceptions.reason,
         status: matchExceptions.status,
+        evidenceDocumentId: matchExceptions.evidenceDocumentId,
       })
       .from(matchExceptions)
       .where(scoped(scope).where(matchExceptions, eq(matchExceptions.id, request.documentId)));
     if (exception === undefined) return null;
     const bill = await billContext(q, scope, exception.vendorBillId, viewer);
     if (bill === null) return null;
+    const evidence = await readableDocuments(
+      q,
+      scope,
+      viewer,
+      [exception.evidenceDocumentId],
+      [evidenceOwnerPolicyFor(q, exception.vendorBillId)],
+    );
     return {
       ...bill,
       title: `Match exception on ${bill.title.charAt(0).toLowerCase()}${bill.title.slice(1)}`,
@@ -303,6 +315,7 @@ export class MatchExceptionSubject implements ApprovalSubject {
         ...fact.status(exception.status, 'exceptionStatus', 'Exception status'),
         ...bill.fields,
       ],
+      documents: [...bill.documents, ...evidence],
     };
   }
 

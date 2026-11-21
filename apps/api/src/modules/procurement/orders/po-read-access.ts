@@ -3,17 +3,22 @@
 // vendor bills (the accountant, finance) and to whoever receives goods (the warehouse), on the orders their grant
 // reaches through the order's purchase request (requester as owner, its department as department; record-reach.ts).
 // No new permission: the live grants of those roles decide, so an admin who removes a bill or receipt grant also
-// closes the orders. The list filter and the record check share these grants, so they cannot drift.
+// closes the orders. The list filter and the record check share these grants, so they cannot drift. An approver of an
+// approval about the order also opens its detail, read-only and nothing else (approvesPo, R4f Q1 b).
 import type { Permission, PoStatus } from '@bos/contracts';
-import { purchaseOrders, purchaseRequests } from '@bos/db';
+import { approvalActions, approvalRequests, purchaseOrders, purchaseRequests } from '@bos/db';
 import { ForbiddenException } from '@nestjs/common';
-import { and, eq, or, type SQL } from 'drizzle-orm';
+import { and, eq, inArray, or, sql, type SQL } from 'drizzle-orm';
 
 import { can, type Principal } from '../../../platform/authz/can';
+import type { Db } from '../../../platform/db/db.module';
+import type { TxScope } from '../../../platform/db/tx';
+import { EMERGENCY_REVIEW_DOCUMENT_TYPE } from '../receipts/emergency-review';
 import {
   purchaseRequestRef,
   purchaseRequestScopeWhere,
 } from '../requests/purchase-requests.service';
+import { PO_AMENDMENT_DOCUMENT_TYPE } from './purchase-order.rules';
 
 /** Issue, amend, short-close and cancel; also reads every order of the entity. */
 export const PO_ISSUE_ACTION: Permission = 'procurement.po.issue';
@@ -49,7 +54,10 @@ const RECEIVABLE: readonly PoStatus[] = ['issued', 'partially_received'];
 
 const activeStaff = (p: Principal): boolean => p.status === 'active' && p.orgKind === 'staff';
 
-/** Holds some grant that opens purchase orders: the list and the detail are a 403 before any read otherwise. */
+/**
+ * Holds some grant that opens purchase orders: the list and the versions are a 403 before any read otherwise; the
+ * detail then asks approvesPo, and is a 404 for active staff it does not open.
+ */
 export function holdsPoRead(p: Principal): boolean {
   return (
     activeStaff(p) &&
@@ -82,6 +90,131 @@ export function mayReadPo(p: Principal, request: PoRequestFacts): boolean {
 export function poReadWhere(p: Principal): SQL | undefined {
   if (activeStaff(p) && p.grants.has(PO_ISSUE_ACTION)) return undefined;
   return or(...PO_READ_ONLY_ACTIONS.map((a) => purchaseRequestScopeWhere(p, a)));
+}
+
+/** The step decisions an approver writes (approvals act()); submit, cancel, block and reroute are not. */
+const STEP_DECISIONS = ['approve', 'return', 'reject'] as const;
+
+/**
+ * May `p` open order `poId` as an approver of an approval about it (R4f Q1 b)? Read-only, the detail only. Two kinds
+ * point at an order: an emergency review (document id = the order) and an amendment (the order is in its snapshot).
+ * True when `p` decided a step of one, themselves or as the person a delegate acted for, whatever the request's status
+ * since (an approver may look back at what they decided), or when one waits in `p`'s inbox now. A step not yet
+ * active grants nothing. `pendingInbox` is ApprovalsService.inbox(), whose rules pick who may decide now; it is only
+ * asked when a pending request is linked. No transaction: call it outside withTx.
+ */
+export async function approvesPo(
+  q: Db,
+  scope: TxScope,
+  p: Principal,
+  poId: string,
+  pendingInbox: () => Promise<readonly { requestId: string }[]>,
+): Promise<boolean> {
+  if (
+    !activeStaff(p) ||
+    p.tenantId !== scope.tenantId ||
+    p.organizationId !== scope.organizationId
+  ) {
+    return false;
+  }
+  const linked = await q
+    .select({ id: approvalRequests.id, status: approvalRequests.status })
+    .from(approvalRequests)
+    .where(
+      and(
+        eq(approvalRequests.tenantId, scope.tenantId),
+        eq(approvalRequests.organizationId, scope.organizationId),
+        or(
+          and(
+            eq(approvalRequests.documentType, EMERGENCY_REVIEW_DOCUMENT_TYPE),
+            eq(approvalRequests.documentId, poId),
+          ),
+          and(
+            eq(approvalRequests.documentType, PO_AMENDMENT_DOCUMENT_TYPE),
+            sql`lower(${approvalRequests.snapshot} -> 'amendment' ->> 'purchaseOrderId') = ${poId.toLowerCase()}`,
+          ),
+        ),
+      ),
+    );
+  return approvesAnyOf(q, scope, p, linked, pendingInbox);
+}
+
+/**
+ * May `p` open the order of the approval request(s) about it found by `documentType` and `documentId`, as their
+ * approver? approvesPo narrowed to those requests, so an approval context links the order only where the detail
+ * route opens it. No transaction: call it outside withTx.
+ */
+export async function approvesRequestOf(
+  q: Db,
+  scope: TxScope,
+  p: Principal,
+  request: { documentType: string; documentId: string },
+  pendingInbox: () => Promise<readonly { requestId: string }[]>,
+): Promise<boolean> {
+  if (
+    !activeStaff(p) ||
+    p.tenantId !== scope.tenantId ||
+    p.organizationId !== scope.organizationId
+  ) {
+    return false;
+  }
+  const own = await q
+    .select({ id: approvalRequests.id, status: approvalRequests.status })
+    .from(approvalRequests)
+    .where(
+      and(
+        eq(approvalRequests.tenantId, scope.tenantId),
+        eq(approvalRequests.organizationId, scope.organizationId),
+        eq(approvalRequests.documentType, request.documentType),
+        eq(approvalRequests.documentId, request.documentId),
+      ),
+    );
+  return approvesAnyOf(q, scope, p, own, pendingInbox);
+}
+
+/**
+ * True when `p` decided a step of one of `requests` (themselves or as the person a delegate acted for), or a pending
+ * one waits in their inbox now.
+ */
+async function approvesAnyOf(
+  q: Db,
+  scope: TxScope,
+  p: Principal,
+  requests: readonly { id: string; status: string }[],
+  pendingInbox: () => Promise<readonly { requestId: string }[]>,
+): Promise<boolean> {
+  if (requests.length === 0) return false;
+  const [decided] = await q
+    .select({ id: approvalActions.id })
+    .from(approvalActions)
+    .where(
+      and(
+        eq(approvalActions.tenantId, scope.tenantId),
+        eq(approvalActions.organizationId, scope.organizationId),
+        inArray(
+          approvalActions.requestId,
+          requests.map((r) => r.id),
+        ),
+        inArray(approvalActions.action, [...STEP_DECISIONS]),
+        or(
+          eq(approvalActions.actorUserId, p.userId),
+          eq(approvalActions.onBehalfOfUserId, p.userId),
+        ),
+      ),
+    )
+    .limit(1);
+  if (decided !== undefined) return true;
+  const pending = new Set(requests.filter((r) => r.status === 'pending').map((r) => r.id));
+  if (pending.size === 0) return false;
+  let inbox: readonly { requestId: string }[];
+  try {
+    inbox = await pendingInbox();
+  } catch (error) {
+    // The inbox is a 403 for a caller with no approval assignment at all: nothing waits for them.
+    if (error instanceof ForbiddenException) return false;
+    throw error;
+  }
+  return inbox.some((item) => pending.has(item.requestId));
 }
 
 /**

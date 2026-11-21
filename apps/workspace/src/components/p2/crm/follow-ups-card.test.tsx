@@ -31,6 +31,8 @@ const LEAD = '11111111-1111-4111-8111-111111111111';
 const OWNER = '33333333-3333-4333-8333-333333333333';
 const STRANGER = '55555555-5555-4555-8555-555555555555';
 const NOW = new Date('2026-11-19T12:00:00.000Z');
+const ALL = { complete: true, reschedule: true, cancel: true };
+const NONE = { complete: false, reschedule: false, cancel: false };
 
 const owners: LeadOwnerOption[] = [
   { userId: OWNER, displayName: 'Sita Rai', email: 'sita@example.com' },
@@ -57,6 +59,7 @@ function activity(n: number, over: Partial<ActivityDto>): ActivityDto {
     createdByName: 'Sita Rai',
     occurredAt: '2026-11-19T04:15:00.000Z',
     version: 2,
+    can: ALL,
     ...over,
   };
 }
@@ -250,11 +253,69 @@ it('cancels only after the confirm dialog, whose buttons do not both say Cancel'
   await mounted.unmount();
 });
 
-it('without write access, offers only Complete on a follow-up assigned to the caller', async () => {
+const labels = (root: ParentNode, subject: string) =>
+  ['Complete', 'Reschedule', 'Cancel'].filter((a) => button(root, `${a} ${subject}`) !== null);
+
+it("shows each of Complete, Reschedule and Cancel only when the row's own flag allows it", async () => {
+  const items = [
+    activity(11, { subject: 'Only complete', can: { ...NONE, complete: true } }),
+    activity(12, { subject: 'Only reschedule', can: { ...NONE, reschedule: true } }),
+    activity(13, { subject: 'Only cancel', can: { ...NONE, cancel: true } }),
+    activity(14, { subject: 'Not complete', can: { ...ALL, complete: false } }),
+  ];
+  // canEdit is the default true, the old rule's grant of every action: the flags win.
+  const mounted = await mount(items);
+  expect(labels(mounted.container, 'Only complete')).toEqual(['Complete']);
+  expect(labels(mounted.container, 'Only reschedule')).toEqual(['Reschedule']);
+  expect(labels(mounted.container, 'Only cancel')).toEqual(['Cancel']);
+  expect(labels(mounted.container, 'Not complete')).toEqual(['Reschedule', 'Cancel']);
+  await mounted.unmount();
+});
+
+it('shows no action on a row without flags, even to an editor who is its assignee', async () => {
+  const { can: _omitted, ...unflagged } = activity(15, { subject: 'No flags' });
+  expect('can' in unflagged).toBe(false);
   const mounted = await mountForm(
     <FollowUpsCard
       leadId={LEAD}
-      items={[overdue, soon]}
+      items={[unflagged]}
+      ownerUserId={OWNER}
+      owners={owners}
+      canEdit
+      currentUserId={OWNER}
+      now={NOW}
+    />,
+  );
+  expect(rows(mounted.container)[0]?.textContent).toContain('No flags');
+  expect(labels(mounted.container, 'No flags')).toEqual([]);
+  expect(rows(mounted.container)[0]?.querySelector('button')).toBeNull();
+  await mounted.unmount();
+});
+
+it("shows no action on someone else's follow-up whose flags are all false (a Finance viewer)", async () => {
+  const mounted = await mountForm(
+    <FollowUpsCard
+      leadId={LEAD}
+      items={[activity(16, { subject: 'Their call', assigneeUserId: STRANGER, can: NONE })]}
+      ownerUserId={OWNER}
+      owners={owners}
+      currentUserId={OWNER}
+      now={NOW}
+    />,
+  );
+  expect(labels(mounted.container, 'Their call')).toEqual([]);
+  expect(rows(mounted.container)[0]?.querySelector('button')).toBeNull();
+  await mounted.unmount();
+});
+
+it("without write access, still follows the flags: Complete alone on the caller's own follow-up", async () => {
+  const mounted = await mountForm(
+    <FollowUpsCard
+      leadId={LEAD}
+      items={[
+        { ...overdue, can: { ...NONE, complete: true } },
+        { ...soon, can: NONE },
+      ]}
       ownerUserId={OWNER}
       owners={owners}
       canEdit={false}
@@ -262,10 +323,10 @@ it('without write access, offers only Complete on a follow-up assigned to the ca
       now={NOW}
     />,
   );
-  expect(button(mounted.container, 'Complete Call about the site')).not.toBeNull();
-  expect(button(mounted.container, 'Reschedule Call about the site')).toBeNull();
-  expect(button(mounted.container, 'Cancel Call about the site')).toBeNull();
+  expect(labels(mounted.container, 'Call about the site')).toEqual(['Complete']);
   // Assigned to someone else: nothing at all.
-  expect(button(mounted.container, 'Complete Plan the meeting')).toBeNull();
+  expect(labels(mounted.container, 'Plan the meeting')).toEqual([]);
+  // Scheduling a new one still follows canEdit.
+  expect(mounted.container.textContent).not.toContain('Schedule follow-up');
   await mounted.unmount();
 });

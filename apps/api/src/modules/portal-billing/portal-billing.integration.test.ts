@@ -6,7 +6,10 @@
 // It pins: the customer's own draft, submitted, returned, approved and discarded invoices, an issued proforma, another
 // party's issued invoice, the own party's issued invoice in a non-default entity and a random uuid all answer a
 // byte-identical 404 on every `:id` route and never appear in the list; acting at the non-default entity shows
-// nothing; the document route refuses a PDF that is not clean (still awaiting its scan).
+// nothing. The PDF state (round 5, P5): the view's `file` and `renderFailed` and the document route follow
+// generatedPdfState, as the staff download does: no PDF yet or one awaiting its scan is pending (409), a given-up
+// render or a scan-refused file is failed (424), and the clean original wins over a newer file that is not clean.
+// Another customer's failed invoice still answers the one plain 404.
 // Seeds copy receivables.integration.test.ts: a draft row (with its lines and tax row) moved to its status in one
 // UPDATE, plus the debit open item through LedgerService, as U6's issue writes it.
 import 'reflect-metadata';
@@ -50,6 +53,7 @@ import {
   INVOICE_OWNER_TYPE,
   InvoiceOwnerPolicy,
 } from '../invoices/invoice-owner.policy';
+import { recordRenderFailure, type RenderFailureOwner } from '../invoices/render/render-failures';
 import { LedgerService } from '../ledger/ledger.service';
 import { PortalBillingController } from './portal-billing.controller';
 import { PortalBillingService } from './portal-billing.service';
@@ -312,6 +316,27 @@ async function renderPdf(
   return { documentId: created.documentId };
 }
 
+/** Fails the invoice's render until it is given up, as the render sweeper does after its last try. */
+async function giveUpRender(scope: TxScope, invoiceId: string): Promise<void> {
+  const owner: RenderFailureOwner = { ...scope, ownerType: INVOICE_OWNER_TYPE, ownerId: invoiceId };
+  for (let i = 0; i < 20; i++) {
+    const { givenUp } = await withTx(db, scope, systemActor('invoice-render'), (tx) =>
+      recordRenderFailure(tx, owner, 'render_error', NOW),
+    );
+    if (givenUp) return;
+  }
+  throw new Error('the render was never given up');
+}
+
+/** The virus scan's verdict on every upload of one document. */
+async function setScanStatus(scope: TxScope, documentId: string, status: string): Promise<void> {
+  await withTx(db, scope, seedActor, (tx) =>
+    tx.execute(
+      sql`UPDATE app.document_versions SET status = ${status} WHERE document_id = ${documentId}::uuid`,
+    ),
+  );
+}
+
 function customerOf(w: World, party: string, entity: string = w.entityA): Principal {
   return {
     userId: randomUUID(),
@@ -405,12 +430,11 @@ describe('portal invoice reads over HTTP on a real database', () => {
       error: { code: 'not_found', message: 'Invoice not found', correlationId: REQUEST_ID },
     });
 
-    // The own visible invoice is a 200 on the same routes (its document is absent, so that one is the same 404).
+    // The own visible invoice is a 200 on the same routes; its PDF is not rendered yet, so the document is a 409.
     expect((await get(`/v1/portal/invoices/${ownIssued}`)).status).toBe(200);
     expect((await get(`/v1/portal/invoices/${ownIssued}/settlement`)).status).toBe(200);
     const noPdf = await get(`/v1/portal/invoices/${ownIssued}/document`);
-    expect(noPdf.status).toBe(404);
-    expect(noPdf.text).toBe(body);
+    expect(noPdf.status, noPdf.text).toBe(409);
   });
 
   it('shows only the default entity: acting at another entity lists nothing and answers the same 404', async () => {
@@ -523,6 +547,7 @@ describe('portal invoice reads over HTTP on a real database', () => {
       'signatoryTitle',
     ]);
     expect(view.file?.documentId).toBe(documentId);
+    expect(view.renderFailed).toBeUndefined();
     // The credit note was never printed: no stored format.
     const noteView = CustomerInvoiceViewSchema.parse(
       (await get(`/v1/portal/invoices/${creditNote}`)).body,
@@ -549,21 +574,106 @@ describe('portal invoice reads over HTTP on a real database', () => {
     expect(SignedLinkDtoSchema.parse(link.body).url).toMatch(SIGNED_PATH);
   });
 
-  it('refuses the document link while the PDF is not clean (quarantined, awaiting its scan)', async () => {
+  it('shows a pending PDF and answers 409 while there is no PDF yet or it awaits its scan', async () => {
+    const w = await seedWorld();
+    const scopeA: TxScope = { tenantId: w.tenantId, organizationId: w.entityA };
+    const notRendered = await seedInvoice(w, w.entityA, w.partyP, 'issued');
+    const quarantined = await seedInvoice(w, w.entityA, w.partyP, 'issued');
+    await renderPdf(scopeA, quarantined, { scan: false });
+    current = customerOf(w, w.partyP);
+
+    for (const id of [notRendered, quarantined]) {
+      const view = CustomerInvoiceViewSchema.parse((await get(`/v1/portal/invoices/${id}`)).body);
+      // No file data for a quarantined PDF, and not failed: the portal shows it as being prepared.
+      expect(view.file).toBeNull();
+      expect(view.renderFailed).toBeUndefined();
+      const link = await get(`/v1/portal/invoices/${id}/document`);
+      expect(link.status, link.text).toBe(409);
+      expect(JSON.parse(link.text)).toEqual({
+        error: {
+          code: 'conflict',
+          message: 'The PDF of this invoice is still being prepared',
+          correlationId: REQUEST_ID,
+        },
+      });
+    }
+  });
+
+  it('shows a failed PDF and answers 424 once the render was given up or the scan refused the file', async () => {
+    const w = await seedWorld();
+    const scopeA: TxScope = { tenantId: w.tenantId, organizationId: w.entityA };
+    const givenUp = await seedInvoice(w, w.entityA, w.partyP, 'issued');
+    await giveUpRender(scopeA, givenUp);
+    const infected = await seedInvoice(w, w.entityA, w.partyP, 'issued');
+    await setScanStatus(
+      scopeA,
+      (await renderPdf(scopeA, infected, { scan: false })).documentId,
+      'infected',
+    );
+    const scanFailed = await seedInvoice(w, w.entityA, w.partyP, 'issued');
+    await setScanStatus(
+      scopeA,
+      (await renderPdf(scopeA, scanFailed, { scan: false })).documentId,
+      'scan_failed',
+    );
+    current = customerOf(w, w.partyP);
+
+    const bodies = new Set<string>();
+    for (const [name, id] of Object.entries({ givenUp, infected, scanFailed })) {
+      const viewRes = await get(`/v1/portal/invoices/${id}`);
+      expect(viewRes.status, `${name}: ${viewRes.text}`).toBe(200);
+      const view = CustomerInvoiceViewSchema.parse(viewRes.body);
+      expect(view.file, name).toBeNull();
+      expect(view.renderFailed, name).toBe(true);
+      const link = await get(`/v1/portal/invoices/${id}/document`);
+      expect(link.status, `${name}: ${link.text}`).toBe(424);
+      bodies.add(link.text);
+    }
+    // One body for every failed PDF: no internal code tells a given-up render from a refused file.
+    expect(bodies.size, [...bodies].join('\n')).toBe(1);
+    expect(JSON.parse([...bodies][0]!)).toEqual({
+      error: {
+        code: 'bad_request',
+        message: 'The PDF could not be prepared',
+        correlationId: REQUEST_ID,
+      },
+    });
+  });
+
+  it("answers another customer's failed invoice with the same plain 404 as an unknown id", async () => {
+    const w = await seedWorld();
+    const scopeA: TxScope = { tenantId: w.tenantId, organizationId: w.entityA };
+    const failed = await seedInvoice(w, w.entityA, w.partyP, 'issued');
+    await giveUpRender(scopeA, failed);
+    current = customerOf(w, w.partyQ);
+
+    const unknown = randomUUID();
+    for (const suffix of ['', '/document']) {
+      const res = await get(`/v1/portal/invoices/${failed}${suffix}`);
+      expect(res.status, `${suffix}: ${res.text}`).toBe(404);
+      expect(res.text).toBe((await get(`/v1/portal/invoices/${unknown}${suffix}`)).text);
+    }
+    // Its owner does see it failed.
+    current = customerOf(w, w.partyP);
+    expect((await get(`/v1/portal/invoices/${failed}/document`)).status).toBe(424);
+  });
+
+  it('serves the clean original, not a newer PDF that is still awaiting its scan', async () => {
     const w = await seedWorld();
     const scopeA: TxScope = { tenantId: w.tenantId, organizationId: w.entityA };
     const invoiceId = await seedInvoice(w, w.entityA, w.partyP, 'issued');
+    const original = await renderPdf(scopeA, invoiceId);
     await renderPdf(scopeA, invoiceId, { scan: false });
     current = customerOf(w, w.partyP);
 
-    const link = await get(`/v1/portal/invoices/${invoiceId}/document`);
-    expect(link.status).toBe(404);
-    expect(link.text).toBe((await get(`/v1/portal/invoices/${randomUUID()}/document`)).text);
-    // The view shows no file data for a quarantined PDF.
     const view = CustomerInvoiceViewSchema.parse(
       (await get(`/v1/portal/invoices/${invoiceId}`)).body,
     );
-    expect(view.file).toBeNull();
+    expect(view.file?.documentId).toBe(original.documentId);
+    expect(view.renderFailed).toBeUndefined();
+    const link = await get(`/v1/portal/invoices/${invoiceId}/document`);
+    expect(link.status, link.text).toBe(200);
+    expect(SignedLinkDtoSchema.parse(link.body).url).toMatch(SIGNED_PATH);
   });
 
   it('refuses a staff principal with 403 before any read', async () => {
