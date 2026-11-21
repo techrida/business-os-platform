@@ -10,7 +10,12 @@ import { randomUUID } from 'node:crypto';
 import type { RoleKey } from '@bos/contracts';
 import { departments, idpOrgs, organizations, tenants } from '@bos/db';
 import { createTestDatabase, type TestDatabase } from '@bos/db/testing';
-import { ConflictException, Logger } from '@nestjs/common';
+import {
+  ConflictException,
+  ForbiddenException,
+  Logger,
+  ServiceUnavailableException,
+} from '@nestjs/common';
 import type { Queue } from 'bullmq';
 import { drizzle } from 'drizzle-orm/node-postgres';
 import { Pool } from 'pg';
@@ -153,6 +158,7 @@ const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 class RecordingZitadel {
   users = new Map<string, ZitadelUser>();
   grants = new Map<string, RoleKey[]>();
+  grantOrgs = new Map<string, string>();
   calls: string[] = [];
   seq = 0;
   onCall: ((op: string, userId?: string) => Promise<void>) | null = null;
@@ -184,9 +190,10 @@ class RecordingZitadel {
     return id;
   }
 
-  async setGrants(userId: string, _orgId: string, roles: readonly RoleKey[]): Promise<void> {
+  async setGrants(userId: string, orgId: string, roles: readonly RoleKey[]): Promise<void> {
     await this.observe(`setGrants:${[...roles].sort().join(',')}`, userId);
     this.grants.set(userId, [...roles]);
+    this.grantOrgs.set(userId, orgId);
   }
 
   async sendInviteCode(userId: string): Promise<void> {
@@ -197,6 +204,7 @@ class RecordingZitadel {
     await this.observe('deleteUser', userId);
     this.users.delete(userId);
     this.grants.delete(userId);
+    this.grantOrgs.delete(userId);
   }
 
   async getUser(userId: string): Promise<ZitadelUser | null> {
@@ -211,8 +219,11 @@ class RecordingZitadel {
     return { users: all.slice(offset), nextCursor: null, totalResult: all.length };
   }
 
-  async listGrants(userId: string): Promise<RoleKey[]> {
+  async listGrants(userId: string, orgId: string): Promise<RoleKey[]> {
     await this.observe('listGrants', userId);
+    if (!orgId) return [];
+    const ownerOrg = this.grantOrgs.get(userId) ?? this.users.get(userId)?.orgId;
+    if (ownerOrg !== undefined && ownerOrg !== orgId) return [];
     return [...(this.grants.get(userId) ?? [])];
   }
 
@@ -547,8 +558,8 @@ describe('Admin status actions outside any tx against Postgres (FU1)', () => {
       initial: 'inactive',
       lock: adminLock(),
       action: 'deactivate',
-      expectedCalls: ['unlock', 'deactivate', 'getUser', 'reactivate', 'lock'],
-      expectedZitadel: { status: 'inactive', locked: true },
+      expectedCalls: ['unlock', 'deactivate'],
+      expectedZitadel: { status: 'inactive', locked: false },
     },
     {
       label: 'reactivate',
@@ -793,19 +804,22 @@ describe('Admin status actions outside any tx against Postgres (FU1)', () => {
     expect(rows).toEqual([{ actor_id: f.adminId }]);
   }, 60_000);
 
-  it('compensating deactivate of a locked user retries lockUser and falls back to deactivateUser (fail closed) with error name only logged', async () => {
+  it('deactivate of a locked user never reactivates on phase C failure even when lock and re-deactivate both fail (FU1 round-2 B)', async () => {
     const f = await fixture('inactive', { lock: adminLock() });
     const zitadel = new RecordingZitadel();
     zitadel.users.set(
       f.zitadelUserId,
       zUser(f.zitadelUserId, { orgId: f.zitadelOrgId, status: 'inactive', locked: true }),
     );
-    const errorLog = vi.spyOn(Logger.prototype, 'error').mockImplementation(() => undefined);
-    let lockAttempts = 0;
-    vi.spyOn(zitadel, 'lockUser').mockImplementation(() => {
-      lockAttempts += 1;
-      return Promise.reject(new Error('secret-token-never-log'));
+    const warnLog = vi.spyOn(Logger.prototype, 'warn').mockImplementation(() => undefined);
+    const realDeactivate = zitadel.deactivateUser.bind(zitadel);
+    let deactivateCalls = 0;
+    vi.spyOn(zitadel, 'deactivateUser').mockImplementation((id: string) => {
+      deactivateCalls += 1;
+      if (deactivateCalls === 1) return realDeactivate(id);
+      return Promise.reject(new Error('re-deactivate boom'));
     });
+    const lockSpy = vi.spyOn(zitadel, 'lockUser').mockRejectedValue(new Error('relock boom'));
     const failingAudit = {
       record: vi.fn(() => Promise.reject(new Error('audit write boom'))),
     } as unknown as AuditService;
@@ -815,22 +829,145 @@ describe('Admin status actions outside any tx against Postgres (FU1)', () => {
       statusService.apply(f.scope, adminActor(f.adminId), f.userId, 'deactivate'),
     ).rejects.toThrow('audit write boom');
 
-    expect(lockAttempts).toBe(3);
-    expect(zitadel.calls).toEqual([
-      `unlock:${f.zitadelUserId}`,
-      `deactivate:${f.zitadelUserId}`,
-      `getUser:${f.zitadelUserId}`,
-      `reactivate:${f.zitadelUserId}`,
-      `deactivate:${f.zitadelUserId}`,
-    ]);
+    expect(lockSpy).not.toHaveBeenCalled();
+    expect(zitadel.calls).toEqual([`unlock:${f.zitadelUserId}`, `deactivate:${f.zitadelUserId}`]);
     expect(zitadel.users.get(f.zitadelUserId)).toMatchObject({ status: 'inactive', locked: false });
     expect(await store.findById(db, f.scope, f.userId)).toMatchObject({
       status: 'inactive',
       lockReason: 'admin',
     });
-    const logged = errorLog.mock.calls.map((c) => String(c[0])).join('\n');
-    expect(logged).toContain('kind=Error');
-    expect(logged).not.toContain('secret-token-never-log');
+    expect(warnLog).toHaveBeenCalledWith(expect.stringContaining(f.userId));
+  }, 60_000);
+
+  it('deactivate of a locked user retries lockUser when deactivate fails after unlock in phase B so ZITADEL never ends active (FU1 round-2 B)', async () => {
+    const f = await fixture('inactive', { lock: adminLock() });
+    const zitadel = new RecordingZitadel();
+    zitadel.users.set(
+      f.zitadelUserId,
+      zUser(f.zitadelUserId, { orgId: f.zitadelOrgId, status: 'inactive', locked: true }),
+    );
+    vi.spyOn(zitadel, 'deactivateUser').mockRejectedValueOnce(new Error('ZITADEL 503'));
+    const realLock = zitadel.lockUser.bind(zitadel);
+    let lockAttempts = 0;
+    vi.spyOn(zitadel, 'lockUser').mockImplementation((id: string) => {
+      lockAttempts += 1;
+      if (lockAttempts < 3) return Promise.reject(new Error('transient relock 503'));
+      return realLock(id);
+    });
+    const statusService = new UserStatusService(db, store, zitadel.asClient(), audit);
+
+    const error = await statusService
+      .apply(f.scope, adminActor(f.adminId), f.userId, 'deactivate')
+      .catch((e: unknown) => e);
+
+    expect(error).toBeInstanceOf(ServiceUnavailableException);
+    expect(lockAttempts).toBe(3);
+    expect(zitadel.calls).toEqual([`unlock:${f.zitadelUserId}`, `lock:${f.zitadelUserId}`]);
+    expect(zitadel.users.get(f.zitadelUserId)).toMatchObject({ status: 'inactive', locked: true });
+    expect(await store.findById(db, f.scope, f.userId)).toMatchObject({
+      status: 'inactive',
+      lockReason: 'admin',
+    });
+  }, 60_000);
+
+  it('closes ZITADEL again when sync copies unlock/reactivate before phase C fails via a revoked grant (FU1 round-2 A)', async () => {
+    // 1. unlock: sync mirrors active/no lock -> revoked grant throws 403 in phase C -> lockUser closes ZITADEL.
+    const f1 = await fixture('inactive', { lock: adminLock() });
+    const z1 = new RecordingZitadel();
+    z1.users.set(
+      f1.zitadelUserId,
+      zUser(f1.zitadelUserId, { orgId: f1.zitadelOrgId, status: 'inactive', locked: true }),
+    );
+    let revoked1 = false;
+    z1.onCall = async (op) => {
+      if (op !== 'unlock' || revoked1) return;
+      await write(f1, {
+        email: 'mina@techrida.test',
+        displayName: 'Mina Gurung',
+        status: 'active',
+        lock: null,
+      });
+      revoked1 = true;
+    };
+    const s1 = new UserStatusService(db, store, z1.asClient(), audit);
+    const e1 = await s1
+      .apply(f1.scope, adminActor(f1.adminId), f1.userId, 'unlock', () =>
+        revoked1 ? Promise.reject(new ForbiddenException('revoked')) : Promise.resolve(),
+      )
+      .catch((e: unknown) => e);
+    expect(e1).toBeInstanceOf(ForbiddenException);
+    expect(z1.calls).toEqual([
+      `unlock:${f1.zitadelUserId}`,
+      `getUser:${f1.zitadelUserId}`,
+      `lock:${f1.zitadelUserId}`,
+    ]);
+    expect(z1.users.get(f1.zitadelUserId)).toMatchObject({ status: 'inactive', locked: true });
+
+    // 2. unlock with refused lockUser -> falls back to deactivateUser to fail closed.
+    const f2 = await fixture('inactive', { lock: adminLock() });
+    const z2 = new RecordingZitadel();
+    z2.users.set(
+      f2.zitadelUserId,
+      zUser(f2.zitadelUserId, { orgId: f2.zitadelOrgId, status: 'inactive', locked: true }),
+    );
+    let revoked2 = false;
+    z2.onCall = async (op) => {
+      if (op !== 'unlock' || revoked2) return;
+      await write(f2, {
+        email: 'mina@techrida.test',
+        displayName: 'Mina Gurung',
+        status: 'active',
+        lock: null,
+      });
+      revoked2 = true;
+    };
+    vi.spyOn(z2, 'lockUser').mockRejectedValueOnce(
+      new ZitadelHttpError('/LockUser', 400, 'failed_precondition'),
+    );
+    const s2 = new UserStatusService(db, store, z2.asClient(), audit);
+    const e2 = await s2
+      .apply(f2.scope, adminActor(f2.adminId), f2.userId, 'unlock', () =>
+        revoked2 ? Promise.reject(new ForbiddenException('revoked')) : Promise.resolve(),
+      )
+      .catch((e: unknown) => e);
+    expect(e2).toBeInstanceOf(ForbiddenException);
+    expect(z2.calls).toEqual([
+      `unlock:${f2.zitadelUserId}`,
+      `getUser:${f2.zitadelUserId}`,
+      `deactivate:${f2.zitadelUserId}`,
+    ]);
+    expect(z2.users.get(f2.zitadelUserId)).toMatchObject({ status: 'inactive', locked: false });
+
+    // 3. reactivate: sync mirrors active -> revoked grant throws 403 in phase C -> deactivateUser closes ZITADEL.
+    const f3 = await fixture('inactive');
+    const z3 = new RecordingZitadel();
+    z3.users.set(
+      f3.zitadelUserId,
+      zUser(f3.zitadelUserId, { orgId: f3.zitadelOrgId, status: 'inactive', locked: false }),
+    );
+    let revoked3 = false;
+    z3.onCall = async (op) => {
+      if (op !== 'reactivate' || revoked3) return;
+      await write(f3, {
+        email: 'mina@techrida.test',
+        displayName: 'Mina Gurung',
+        status: 'active',
+      });
+      revoked3 = true;
+    };
+    const s3 = new UserStatusService(db, store, z3.asClient(), audit);
+    const e3 = await s3
+      .apply(f3.scope, adminActor(f3.adminId), f3.userId, 'reactivate', () =>
+        revoked3 ? Promise.reject(new ForbiddenException('revoked')) : Promise.resolve(),
+      )
+      .catch((e: unknown) => e);
+    expect(e3).toBeInstanceOf(ForbiddenException);
+    expect(z3.calls).toEqual([
+      `reactivate:${f3.zitadelUserId}`,
+      `getUser:${f3.zitadelUserId}`,
+      `deactivate:${f3.zitadelUserId}`,
+    ]);
+    expect(z3.users.get(f3.zitadelUserId)).toMatchObject({ status: 'inactive', locked: false });
   }, 60_000);
 });
 
@@ -1107,6 +1244,60 @@ describe('Admin invite and setRoles outside any tx against Postgres (FU1)', () =
     ]);
     expect(zitadel.grants.get(f.zitadelUserId)).toEqual(['sales']);
     expect(await store.rolesOf(db, f.scope.tenantId, f.userId)).toEqual(['sales']);
+  }, 60_000);
+
+  it('setRoles strips only added roles (never re-adding removed roles) when sync copies phase-B grants before phase C fails via a revoked grant (FU1 round-2 A)', async () => {
+    // 1. Added role: ['accountant'] -> ['accountant', 'founder'], sync mirrors it, revoked grant fails phase C -> ZITADEL restored to ['accountant'].
+    const f1 = await fixture('active', { roles: ['accountant'] });
+    const z1 = new RecordingZitadel();
+    z1.users.set(f1.zitadelUserId, zUser(f1.zitadelUserId, { orgId: f1.zitadelOrgId }));
+    z1.grants.set(f1.zitadelUserId, ['accountant']);
+    const { users: u1 } = services(z1);
+    let revoked1 = false;
+    z1.onCall = async (op) => {
+      if (!op.startsWith('setGrants:') || revoked1) return;
+      await withTx(db, f1.scope, systemActor('sync'), (tx) =>
+        store.replaceRoles(tx, f1.scope, f1.userId, ['accountant', 'founder']),
+      );
+      revoked1 = true;
+    };
+    const e1 = await u1
+      .setRoles(f1.scope, adminActor(f1.adminId), f1.userId, ['accountant', 'founder'], () =>
+        revoked1 ? Promise.reject(new ForbiddenException('revoked')) : Promise.resolve(),
+      )
+      .catch((e: unknown) => e);
+    expect(e1).toBeInstanceOf(ForbiddenException);
+    expect(z1.calls).toEqual([
+      `setGrants:accountant,founder:${f1.zitadelUserId}`,
+      `setGrants:accountant:${f1.zitadelUserId}`,
+    ]);
+    expect(z1.grants.get(f1.zitadelUserId)).toEqual(['accountant']);
+
+    // 2. Replace (add + remove): ['accountant'] -> ['founder'], sync mirrors it, revoked grant fails phase C -> ZITADEL gets [] (fail closed, never re-adds 'accountant').
+    const f2 = await fixture('active', { roles: ['accountant'] });
+    const z2 = new RecordingZitadel();
+    z2.users.set(f2.zitadelUserId, zUser(f2.zitadelUserId, { orgId: f2.zitadelOrgId }));
+    z2.grants.set(f2.zitadelUserId, ['accountant']);
+    const { users: u2 } = services(z2);
+    let revoked2 = false;
+    z2.onCall = async (op) => {
+      if (!op.startsWith('setGrants:') || revoked2) return;
+      await withTx(db, f2.scope, systemActor('sync'), (tx) =>
+        store.replaceRoles(tx, f2.scope, f2.userId, ['founder']),
+      );
+      revoked2 = true;
+    };
+    const e2 = await u2
+      .setRoles(f2.scope, adminActor(f2.adminId), f2.userId, ['founder'], () =>
+        revoked2 ? Promise.reject(new ForbiddenException('revoked')) : Promise.resolve(),
+      )
+      .catch((e: unknown) => e);
+    expect(e2).toBeInstanceOf(ForbiddenException);
+    expect(z2.calls).toEqual([
+      `setGrants:founder:${f2.zitadelUserId}`,
+      `setGrants::${f2.zitadelUserId}`,
+    ]);
+    expect(z2.grants.get(f2.zitadelUserId)).toEqual([]);
   }, 60_000);
 });
 

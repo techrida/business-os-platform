@@ -323,6 +323,7 @@ export class FakeUsersStore extends UsersStore {
 export class FakeZitadel {
   users = new Map<string, ZitadelUser>();
   grants = new Map<string, RoleKey[]>();
+  grantOrgs = new Map<string, string>();
   pageSize = 2;
   failListFor = new Set<string>();
   setGrantsCalls: { userId: string; orgId: string; roles: RoleKey[] }[] = [];
@@ -356,7 +357,10 @@ export class FakeZitadel {
       totalResult: this.omitTotal ? null : (this.totalOverride ?? all.length),
     });
   }
-  listGrants(id: string) {
+  listGrants(id: string, orgId: string) {
+    if (!orgId) return Promise.resolve([]);
+    const ownerOrg = this.grantOrgs.get(id) ?? this.users.get(id)?.orgId;
+    if (ownerOrg !== undefined && ownerOrg !== orgId) return Promise.resolve([]);
     return Promise.resolve([...(this.grants.get(id) ?? [])]);
   }
   createHuman() {
@@ -365,6 +369,7 @@ export class FakeZitadel {
   setGrants(userId: string, orgId: string, roles: RoleKey[]) {
     this.setGrantsCalls.push({ userId, orgId, roles });
     this.grants.set(userId, roles);
+    this.grantOrgs.set(userId, orgId);
     return Promise.resolve();
   }
   sendInviteCode() {
@@ -376,6 +381,7 @@ export class FakeZitadel {
     this.deletedUsers.push(userId);
     this.users.delete(userId);
     this.grants.delete(userId);
+    this.grantOrgs.delete(userId);
     return Promise.resolve();
   }
   lockUser(userId: string) {
