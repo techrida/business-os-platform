@@ -26,7 +26,11 @@ vi.mock('@/lib/api', async (importOriginal) => ({
   ...(await importOriginal<typeof import('@/lib/api')>()),
   getMe: (session: { accessToken: string }) => getMe(session.accessToken),
 }));
-const admin = vi.hoisted(() => ({ getSetting: vi.fn(), putSetting: vi.fn() }));
+const admin = vi.hoisted(() => ({
+  getSetting: vi.fn(),
+  putSetting: vi.fn(),
+  listDefaultLeadOwnerPeople: vi.fn(),
+}));
 vi.mock('@/lib/api-admin', () => admin);
 vi.mock('@/lib/api-lead-lost-reasons', () => ({ listLeadLostReasons: vi.fn(() => []) }));
 const crm = vi.hoisted(() => ({ listLeadOwners: vi.fn() }));
@@ -39,10 +43,10 @@ const KEY = 'sales.delivery_hold.management_npr' as const;
 const OWNER_KEY = 'crm.default_lead_owner' as const;
 const RAM = '3f0c5a52-7c2e-4d0b-9a55-0e8d1d6a3b11';
 const GITA = '7a1e2b3c-4d5e-4f60-8a7b-8c9d0e1f2a3b';
-/** GET /v1/leads/owners?context=create as the API answers it (LeadOwnerOption[]). */
+/** GET /v1/admin/settings/crm.default_lead_owner/people as the API answers it (SettingsPerson[]). */
 const OWNERS = [
-  { userId: RAM, displayName: 'Ram Thapa', email: 'ram@example.test', avatarDocumentId: null },
-  { userId: GITA, displayName: '', email: 'gita@example.test' },
+  { userId: RAM, displayName: 'Ram Thapa' },
+  { userId: GITA, displayName: '' },
 ];
 
 function persona(token: string, roles: string[], ...permissions: string[]): void {
@@ -81,7 +85,7 @@ beforeEach(() => {
   admin.getSetting.mockImplementation((_session: unknown, key: string) =>
     Promise.resolve(settingDto(key)),
   );
-  crm.listLeadOwners.mockResolvedValue(OWNERS);
+  admin.listDefaultLeadOwnerPeople.mockResolvedValue(OWNERS);
 });
 
 describe('the delivery hold card', () => {
@@ -166,10 +170,12 @@ describe('the lead owner card (F1-Q21)', () => {
   /** What the closed picker shows. */
   const shown = (field: string) => field.match(/<span class="_label_[^"]*">([^<]*)<\/span>/)?.[1];
 
-  it('offers the people a new lead may be handed to, with the Sales head first, to the Founder', async () => {
+  it('offers the people a new lead may fall back to, with the Sales head first, to the Founder', async () => {
     persona('founder-live', ['sales'], 'admin.settings.write');
     const html = await render();
-    expect(crm.listLeadOwners).toHaveBeenCalledWith(expect.anything(), 'create');
+    // The settings-scoped list (R4a Q10), never the lead owner route, which needs lead write.
+    expect(admin.listDefaultLeadOwnerPeople).toHaveBeenCalledTimes(1);
+    expect(crm.listLeadOwners).not.toHaveBeenCalled();
     expect(admin.getSetting).toHaveBeenCalledWith(expect.anything(), OWNER_KEY);
     expect(html).toContain('Lead owner');
     expect(html).toContain('Default owner');
@@ -181,7 +187,8 @@ describe('the lead owner card (F1-Q21)', () => {
     const labels = [...field.matchAll(/<option[^>]*>([^<]*)<\/option>/g)]
       .map((m) => m[1]!)
       .filter((label) => label.trim() !== '');
-    expect(labels).toEqual(['Sales head (default)', 'Ram Thapa', 'gita@example.test']);
+    expect(labels).toEqual(['Sales head (default)', 'Ram Thapa', 'Unnamed user']);
+    expect(field).not.toContain('example.test');
     expect(shown(field)).toBe('Sales head (default)');
     expect(submitted(field)).toBe('');
   });
@@ -209,7 +216,7 @@ describe('the lead owner card (F1-Q21)', () => {
 
   it('costs only its own card when the people cannot be read', async () => {
     persona('founder-live', ['sales'], 'admin.settings.write');
-    crm.listLeadOwners.mockRejectedValue(new Error('down'));
+    admin.listDefaultLeadOwnerPeople.mockRejectedValue(new Error('down'));
     const html = await render();
     expect(html).not.toContain('Default owner');
     expect(html).toContain('Quotation validity (days)');
@@ -219,7 +226,19 @@ describe('the lead owner card (F1-Q21)', () => {
   it('is not shown to a finance-settings grant: the API keeps this key with admin.settings.write', async () => {
     persona('accountant-live', ['accountant'], 'settings.finance.write');
     await expect(render()).rejects.toThrow('REDIRECT:/settings/terms');
+    expect(admin.listDefaultLeadOwnerPeople).not.toHaveBeenCalled();
+  });
+
+  it('works for a role holding admin.settings.write and no lead access', async () => {
+    // A built-in role the tenant edited to settings only; the API side of this case is
+    // apps/api/src/platform/settings/lead-owner-people.integration.test.ts.
+    persona('settings-only-live', ['warehouse'], 'admin.settings.write');
+    const field = ownerField(await render());
     expect(crm.listLeadOwners).not.toHaveBeenCalled();
+    const labels = [...field.matchAll(/<option[^>]*>([^<]*)<\/option>/g)]
+      .map((m) => m[1]!)
+      .filter((label) => label.trim() !== '');
+    expect(labels).toEqual(['Sales head (default)', 'Ram Thapa', 'Unnamed user']);
   });
 });
 

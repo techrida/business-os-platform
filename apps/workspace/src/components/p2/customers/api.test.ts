@@ -10,9 +10,11 @@ import {
   getCustomer,
   getVerificationCase,
   listCustomerIndustries,
+  listCustomerOwners,
   listCustomers,
   listVerificationCasePage,
   listVerificationCases,
+  updateCustomerTerms,
 } from './api';
 
 // `server-only` throws outside the react-server condition, which Vitest does not use.
@@ -165,6 +167,44 @@ describe('customers', () => {
     expect(await listCustomerIndustries(session)).toEqual(['Construction', 'Retail']);
     expect(lastCall().url).toBe('http://api:3001/v1/customers/industries');
     expect(lastCall().headers.get('authorization')).toBe(`Bearer ${TOKEN}`);
+  });
+
+  it('reads the owner picker list, and refuses a body that carries more than a name (502)', async () => {
+    fetchMock.mockResolvedValue(reply([{ userId: ID_B, displayName: 'Sita Rai' }]));
+    expect(await listCustomerOwners(session)).toEqual([{ userId: ID_B, displayName: 'Sita Rai' }]);
+    expect(lastCall().url).toBe('http://api:3001/v1/customers/owners');
+    fetchMock.mockResolvedValue(
+      reply([{ userId: ID_B, displayName: 'Sita Rai', email: 'sita@techrida.test' }]),
+    );
+    const err = await listCustomerOwners(session).catch((e: unknown) => e);
+    expect((err as ApiError).status).toBe(502);
+  });
+
+  it('patches the terms with one field and the version, and keeps null apart from absent', async () => {
+    const saved = {
+      partyId: ID_A,
+      organizationId: ID_B,
+      organizationName: 'Techrida Nepal',
+      paymentTermId: null,
+      creditLimit: null,
+      version: 3,
+    };
+    fetchMock.mockResolvedValue(reply(saved));
+    expect(
+      await updateCustomerTerms(session, ID_A, {
+        organizationId: ID_B,
+        creditLimit: null,
+        expectedVersion: 2,
+      }),
+    ).toEqual(saved);
+    const { url, init } = lastCall();
+    expect(url).toBe(`http://api:3001/v1/customers/${ID_A}/terms`);
+    expect(init.method).toBe('PATCH');
+    expect(JSON.parse(init.body as string)).toEqual({
+      organizationId: ID_B,
+      creditLimit: null,
+      expectedVersion: 2,
+    });
   });
 
   it('answers 502 when the industries are not a list of text', async () => {

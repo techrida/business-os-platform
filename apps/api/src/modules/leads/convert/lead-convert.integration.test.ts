@@ -543,6 +543,69 @@ describe('POST /v1/leads/:id/convert', () => {
   });
 });
 
+describe("the new customer's owner (customers.owner.write, as on POST /v1/customers)", () => {
+  const customersNamed = (legalName: string) =>
+    h.db.select().from(customers).where(eq(customers.legalName, legalName));
+
+  it('refuses Sales (customer.write only) naming another owner with 403 and writes nothing; the same body naming the caller goes through', async () => {
+    const lead = await qualifiedLead();
+    const fields = customerBody();
+    const named = (ownerUserId: string) => createCustomerBody({ ...fields, ownerUserId });
+
+    const denied = await convert(lead.id, named(h.users.salesB));
+    expect(denied.status, JSON.stringify(denied.body)).toBe(403);
+    expect(errorOf(denied.body)).toMatchObject({ code: 'forbidden', reason: 'no_permission' });
+    expect(await customersNamed(fields.legalName)).toHaveLength(0);
+    expect(await leadRow(lead.id)).toMatchObject({
+      stage: 'qualified',
+      version: 3,
+      customerId: null,
+      contactId: null,
+      convertedOpportunityId: null,
+    });
+    expect(
+      await h.db.select().from(opportunities).where(eq(opportunities.leadId, lead.id)),
+    ).toHaveLength(0);
+
+    // Only the owner differs: naming the caller is no owner change.
+    const self = await convert(lead.id, named(h.users.salesA));
+    expect(self.status, JSON.stringify(self.body)).toBe(201);
+    const { customerId } = self.body as { customerId: string };
+    expect(await customerRow(customerId)).toMatchObject({
+      legalName: fields.legalName,
+      ownerUserId: h.users.salesA,
+    });
+  });
+
+  it('lets Sales name no owner: the caller becomes the owner', async () => {
+    const lead = await qualifiedLead();
+    const res = await convert(lead.id, createCustomerBody());
+    expect(res.status, JSON.stringify(res.body)).toBe(201);
+    const { customerId } = res.body as { customerId: string };
+    expect(await customerRow(customerId)).toMatchObject({ ownerUserId: h.users.salesA });
+  });
+
+  it('lets a salesperson who also holds customers.owner.write (Sales and Management roles) name another owner', async () => {
+    // Management alone holds no lead write, so the holder is a member with both shipped roles, granted through the
+    // real RoleCache: Sales gives the lead and customer writes, Management the owner change.
+    const both = await h.member({ roles: ['sales', 'management'], displayName: 'Sana Both' });
+    await h.actAs(both);
+    const lead = await qualifiedLead();
+    const fields = customerBody();
+    const res = await convert(
+      lead.id,
+      createCustomerBody({ ...fields, ownerUserId: h.users.salesB }),
+    );
+    expect(res.status, JSON.stringify(res.body)).toBe(201);
+    const { customerId } = res.body as { customerId: string };
+    expect(await customerRow(customerId)).toMatchObject({
+      legalName: fields.legalName,
+      ownerUserId: h.users.salesB,
+    });
+    expect(await leadRow(lead.id)).toMatchObject({ stage: 'converted', customerId });
+  });
+});
+
 describe('the lead creator on the opportunity (FX-Q1)', () => {
   let salesStaff: string;
   let pmo: string;

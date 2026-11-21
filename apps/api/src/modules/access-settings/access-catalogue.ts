@@ -477,7 +477,13 @@ export const ACCESS_PERMISSION_GROUPS: readonly AccessPermissionGroup[] = [
   {
     key: 'customers',
     label: 'Customers',
-    permissions: ['customer.read', 'customer.write', 'customer.merge'],
+    permissions: [
+      'customer.read',
+      'customer.write',
+      'customer.merge',
+      'customers.credit_limit.write',
+      'customers.owner.write',
+    ],
   },
   {
     key: 'verification',
@@ -699,6 +705,15 @@ export const ACCESS_PERMISSION_CATALOGUE: readonly AccessPermissionInfo[] = [
     [],
     'Combines two customer records into one.',
   ),
+  perm(
+    'customers.credit_limit.write',
+    'Set customer credit limits',
+    'onOff',
+    ON_OFF_STAFF,
+    [],
+    'Sets how much a customer may owe before new deals go on credit hold.',
+  ),
+  perm('customers.owner.write', "Change a customer's owner", 'onOff', ON_OFF_STAFF, []),
   // Verification
   perm('verification.read', 'See verification checks', 'record', RECORD_NO_DEPT, []),
   perm(

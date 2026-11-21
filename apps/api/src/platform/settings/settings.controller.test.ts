@@ -29,6 +29,7 @@ import type { ZodType } from 'zod';
 import { can } from '../authz/can';
 import { ANY_AUTHENTICATED_KEY, CAN_KEY } from '../authz/decorators';
 import type { Principal } from '../authz/principal';
+import { RoleCache } from '../authz/role-cache';
 import { findUnmarkedRoutes } from '../authz/route-policy.check';
 import { DB, type Db } from '../db/db.module';
 import { MoneyService } from './money.service';
@@ -85,6 +86,7 @@ beforeEach(() => {
     {} as Db,
     fakeSettings as unknown as SettingsService,
     fakeMoney as unknown as MoneyService,
+    {} as RoleCache,
   );
 });
 
@@ -493,6 +495,7 @@ describe('who may read and change which setting (F1-Q48)', () => {
     for (const handler of [
       proto.getSetting,
       proto.putSetting,
+      proto.defaultLeadOwnerPeople,
       proto.numberSeries,
       proto.listFxRates,
       proto.addFxRate,
@@ -506,6 +509,7 @@ describe('who may read and change which setting (F1-Q48)', () => {
         { provide: DB, useValue: {} },
         { provide: SettingsService, useValue: {} },
         { provide: MoneyService, useValue: {} },
+        { provide: RoleCache, useValue: {} },
       ],
     }).compile();
     expect(findUnmarkedRoutes(moduleRef)).toEqual([]);

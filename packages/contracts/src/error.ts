@@ -20,6 +20,8 @@ export const ERROR_REASONS = [
   // F1-Q55 (400): a customer of the same name, or the same PAN/VAT number once spaces and hyphens are dropped,
   // already exists and the create named no `duplicateOverrideReason`.
   'duplicate_reason_required',
+  // 409 (customer terms): the form was rendered for another acting entity than the one the caller acts for now.
+  'entity_changed',
 ] as const;
 export const ErrorReasonSchema = z.enum(ERROR_REASONS);
 export type ErrorReason = z.infer<typeof ErrorReasonSchema>;

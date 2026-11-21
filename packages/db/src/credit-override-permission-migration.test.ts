@@ -139,7 +139,8 @@ describe('0104 credit.override', () => {
       [running.tenantId, PERMISSION],
     );
     expect(rows).toEqual([{ actor_id: 'system:migration-0104' }]);
-    expect(await version(running)).toBe(versionsBefore.get(running.tenantId)! + 1);
+    // 0104 bumps once; 0150 (customer terms permissions) bumps once more for a tenant that holds rows.
+    expect(await version(running)).toBe(versionsBefore.get(running.tenantId)! + 2);
   });
 
   it("keeps a role's own row and adds only the missing role", async () => {
@@ -148,7 +149,7 @@ describe('0104 credit.override', () => {
       { role_key: 'founder', scope: 'all', seeded: true },
       { role_key: 'management', scope: 'all', seeded: true },
     ]);
-    expect(await version(customised)).toBe(versionsBefore.get(customised.tenantId)! + 1);
+    expect(await version(customised)).toBe(versionsBefore.get(customised.tenantId)! + 2);
   });
 
   it('writes nothing for a tenant still on the code defaults', async () => {

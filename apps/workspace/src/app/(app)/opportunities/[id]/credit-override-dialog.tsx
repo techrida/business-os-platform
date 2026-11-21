@@ -107,7 +107,7 @@ export function CreditOverrideDialog({
       open={open}
       onOpenChange={setOpen}
       title="Override the credit hold?"
-      description={`${subject} can then be confirmed as a sales order although the customer is over its credit limit. The override stays on this deal.`}
+      description={`${subject} can then be confirmed as a sales order although, with this order, the customer is over its credit limit. The override stays on this deal.`}
       locked={pending}
       closeOnOutsideClick={false}
       footer={

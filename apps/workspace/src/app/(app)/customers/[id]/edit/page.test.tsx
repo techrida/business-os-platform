@@ -47,7 +47,14 @@ const customer = (defaultCurrency: CustomerDto['defaultCurrency']): CustomerDeta
   version: 2,
   createdAt: '2026-11-08T05:45:00.000Z',
   updatedAt: '2026-11-08T05:45:00.000Z',
-  can: { write: true, readVerification: false, openVerification: false },
+  can: {
+    write: true,
+    readVerification: false,
+    openVerification: false,
+    creditLimit: false,
+    owner: false,
+    paymentTerms: true,
+  },
 });
 
 const render = async () =>
