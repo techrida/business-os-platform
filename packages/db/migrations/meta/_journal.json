@@ -694,6 +694,13 @@
       "when": 1783000000144,
       "tag": "0162_opportunity_stage_history",
       "breakpoints": true
+    },
+    {
+      "idx": 99,
+      "version": "7",
+      "when": 1783000000145,
+      "tag": "0178_accountant_record_acceptance",
+      "breakpoints": true
     }
   ]
 }
