@@ -1,4 +1,4 @@
-import { useEffect, useRef, type RefObject } from 'react';
+import { useEffect, useInsertionEffect, useRef, type RefObject } from 'react';
 
 /**
  * React Aria resets its hidden field when the form resets, and a controlled field then reports
@@ -9,7 +9,10 @@ import { useEffect, useRef, type RefObject } from 'react';
 export function useFormReset(root: RefObject<Element | null>, onReset: () => void) {
   const resetting = useRef(false);
   const latest = useRef(onReset);
-  useEffect(() => {
+  // React 19 resets the form at the end of the commit that follows a function action, after the
+  // insertion effects and before the others. Updated here, the callback a reset runs is the one from
+  // that commit's render, so it restores the default the action has just saved, not the old one.
+  useInsertionEffect(() => {
     latest.current = onReset;
   });
   useEffect(() => {

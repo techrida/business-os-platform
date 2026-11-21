@@ -71,9 +71,9 @@ export function parseDiscount(
 ): { ok: true; data: Discount | undefined } | { ok: false; error: string } {
   if (mode === undefined || mode === '' || mode === 'none') return { ok: true, data: undefined };
   if (mode !== 'pct' && mode !== 'amount') return { ok: false, error: INCOMPLETE };
-  // A percentage has no grouping, so a comma stays and fails the check ("1,5" is not 15). Amounts may group only
+  // A percentage has no grouping, so a comma and an inner space stay and fails the check ("1,5" is not 15). Amounts may group only
   // as 1,250,000 or 12,50,000; any other comma stays and is refused.
-  const value = mode === 'pct' ? (raw ?? '').replace(/\s/g, '') : plainAmount(raw ?? '');
+  const value = mode === 'pct' ? (raw ?? '').trim() : plainAmount(raw ?? '');
   if (value === '') return { ok: false, error: 'Enter the discount, or choose No discount.' };
   const checked = DiscountSchema.safeParse({ mode, value });
   if (checked.success && mode === 'pct' && Number(value) >= 100) {

@@ -29,7 +29,7 @@ export const ZITADEL_ENDPOINTS = {
   reactivateUser: '/zitadel.user.v2.UserService/ReactivateUser',
   lockUser: '/zitadel.user.v2.UserService/LockUser',
   // VERIFIED at v4.20.1 (2026-11-20): exists and takes { userId } (an unknown id answers 404 "User could not be
-  // found"). Used only to take back an identity an invite created a moment ago (UsersService.placeInvitee).
+  // found"). Used only to take back an identity an invite created a moment ago (UserMirror.takeBackInvite).
   deleteUser: '/zitadel.user.v2.UserService/DeleteUser',
   unlockUser: '/zitadel.user.v2.UserService/UnlockUser',
   // VERIFIED path and organizationIdQuery (seed findUser). UNVERIFIED: the `query` paging object, the

@@ -88,7 +88,6 @@ import { withTx, type Actor, type TxScope, READ_ONLY } from '../../platform/db/t
 import { assertNotInfected } from '../../platform/documents/documents.service';
 import {
   assertEvidenceDocument,
-  assertNoForeignEvidence,
   EVIDENCE_OWNER_TYPE,
 } from '../../platform/documents/evidence-document';
 import { searchPage, type SearchColumn } from '../../platform/list';
@@ -369,7 +368,7 @@ export class SalesOrdersService {
   /**
    * `POST /v1/sales-orders`: confirms the accepted quotation version as a sales order. 404 for a version outside
    * the entity; 409 `quotation_not_accepted`; 422 `evidence_not_confirmed` while a portal acceptance's evidence
-   * waits for staff, `evidence_policy_unmet` when the accepted evidence does not meet the entity's policy now, `invalid_evidence_document` for a document of another entity or one removed, and
+   * waits for staff, `evidence_policy_unmet` when the accepted evidence does not meet the entity's policy now, `invalid_evidence_document` for a named file that is not evidence uploaded to this version, or whose upload has not finished, and
    * `invalid_payment_schedule` for a schedule that cannot be split. A second confirm of the same quotation
    * returns the existing order.
    */
@@ -480,6 +479,7 @@ export class SalesOrdersService {
       body.evidenceDocumentIds,
       acceptedDocuments,
       live?.id ?? null,
+      version.id,
     );
 
     const now = this.clock();
@@ -754,6 +754,8 @@ export class SalesOrdersService {
         body.evidenceDocumentId,
         orderId,
         recorded.map((r) => r.documentId),
+        // Evidence uploaded in the confirm dialog belongs to the order's quotation version.
+        [order.quotationVersionId],
       );
     }
 
@@ -1037,11 +1039,11 @@ export class SalesOrdersService {
   }
 
   /**
-   * The documents filed as the order's evidence: the files the caller names (each must be a live document of
-   * this entity, else 422) plus the ones recorded with the acceptance that are still live. Distinct, in order.
-   * Round 5 P2: Mark billable takes what the order filed, so a file uploaded as the evidence of another record (an
-   * order, a bill, an RFQ) is never filed here: named, it is 422 invalid_evidence_document; recorded with the
-   * acceptance, it is left out. `orderId` is the order being confirmed, when it already exists as a draft.
+   * The documents filed as the order's evidence: the files the caller names (each must be evidence uploaded to the
+   * quotation version being confirmed, else 422 `invalid_evidence_document`, and its bytes must be recorded) plus the
+   * ones recorded with the acceptance that are still live. Distinct, in order. Mark billable takes what the order
+   * filed, so a file uploaded as the evidence of another record is never filed here: named, it is 422; recorded with
+   * the acceptance, it is left out. `orderId` is the order being confirmed, when it already exists as a draft.
    */
   private async evidenceDocuments(
     tx: DbTransaction,
@@ -1049,10 +1051,12 @@ export class SalesOrdersService {
     named: readonly string[],
     accepted: readonly string[],
     orderId: string | null,
+    versionId: string,
   ): Promise<string[]> {
     const namedIds = [...new Set(named)];
-    await this.assertDocumentsUsable(tx, scope, namedIds);
-    await assertNoForeignEvidence(tx, scope, namedIds, orderId);
+    // FU7: a file named at confirm is evidence uploaded to this quotation version through its evidence route (live,
+    // not infected, bytes recorded). Any other file, of another version, record, entity or kind, is refused alike.
+    for (const id of namedIds) await assertEvidenceDocument(tx, scope, id, versionId);
     const acceptedIds = [...new Set(accepted)].filter((id) => !namedIds.includes(id));
     const live = await this.liveDocuments(tx, scope, acceptedIds, orderId);
     // A file that passed the acceptance while still scanning may have been found infected since (TR-Q12e).
@@ -1087,27 +1091,6 @@ export class SalesOrdersService {
         )
         .map((r) => r.id),
     );
-  }
-
-  /**
-   * A foreign or removed document id would otherwise surface as a composite-FK 500. An infected file is refused
-   * (409 document_infected, TR-Q12e).
-   */
-  private async assertDocumentsUsable(
-    tx: DbTransaction,
-    scope: TxScope,
-    ids: readonly string[],
-  ): Promise<void> {
-    const live = await this.liveDocuments(tx, scope, ids);
-    const bad = ids.filter((id) => !live.has(id));
-    if (bad.length > 0) {
-      throw unprocessable(
-        'invalid_evidence_document',
-        'An evidence document does not exist in this entity or was removed',
-        { documentIds: bad },
-      );
-    }
-    await assertNotInfected(tx, scope, ids);
   }
 
   /** The order, its lines, schedule and evidence, as the workspace parses them. 404 outside the entity. */

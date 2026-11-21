@@ -539,6 +539,7 @@ describe('documents', () => {
     ['sales-order', '/v1/sales-orders'],
     ['vendor-bill', '/v1/payables/bills'],
     ['rfq', '/v1/procurement/rfqs'],
+    ['quotation-version', '/v1/sales-orders/quotation-versions'],
   ] as const)(
     'reserves %s evidence through the record route, then streams it to that route',
     async (kind, base) => {
@@ -572,6 +573,7 @@ describe('documents', () => {
     ['sales-order', '/v1/sales-orders'],
     ['vendor-bill', '/v1/payables/bills'],
     ['rfq', '/v1/procurement/rfqs'],
+    ['quotation-version', '/v1/sales-orders/quotation-versions'],
   ] as const)(
     'reads %s evidence through the record route, not GET /v1/documents/:id',
     async (kind, base) => {
@@ -603,6 +605,7 @@ describe('documents', () => {
     ['sales-order', '/v1/sales-orders'],
     ['vendor-bill', '/v1/payables/bills'],
     ['rfq', '/v1/procurement/rfqs'],
+    ['quotation-version', '/v1/sales-orders/quotation-versions'],
   ] as const)(
     'removes %s evidence through the record route, not DELETE /v1/documents/:id',
     async (kind, base) => {
