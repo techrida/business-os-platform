@@ -29,7 +29,7 @@ const bill = (n: number, vendorPartyId: string, currency: Currency): PaymentRequ
   claimedAmount: '0.00',
   availableAmount: '100.00',
 });
-// The first bill is in INR, which the company has switched off.
+// The first bill is in INR, which the company has switched off; a payment request may still be in it.
 const items = [
   bill(1, VENDOR, 'INR'),
   bill(2, VENDOR, 'NPR'),
@@ -61,32 +61,28 @@ async function currencyOptions() {
   );
 }
 
-it('offers the enabled vendor bill currencies, starting on one, and names the switched-off one', async () => {
-  mounted = await mountForm(
-    <PaymentRequestEntry idempotencyKey="key" items={items} enabledCurrencies={['NPR', 'USD']} />,
-  );
+it('offers every vendor bill currency, NPR first, including one switched off in Settings (D56 U16-Q1)', async () => {
+  mounted = await mountForm(<PaymentRequestEntry idempotencyKey="key" items={items} />);
   await choose(mounted.container, 'vendorPartyId', 'Himal Supplies');
   expect(currencyField().value).toBe('NPR');
-  // Old code left INR out without a word (U16-Q9).
-  expect(mounted.container.textContent).toContain(
-    'This vendor also has approved bills in INR, switched off in Settings.',
-  );
-  expect(await currencyOptions()).toEqual(['NPR', 'USD', 'INR, switched off']);
+  expect(mounted.container.textContent).not.toContain('switched off');
+  // Old code offered "INR, switched off" as a disabled option.
+  expect(await currencyOptions()).toEqual(['NPR', 'INR', 'USD']);
   const inr = Array.from(document.querySelectorAll('[role="option"]')).find(
-    (el) => el.textContent?.trim() === 'INR, switched off',
+    (el) => el.textContent?.trim() === 'INR',
   );
-  expect(inr?.getAttribute('aria-disabled')).toBe('true');
+  expect(inr?.getAttribute('aria-disabled')).not.toBe('true');
+  await click(inr!);
+  expect(currencyField().value).toBe('INR');
+  expect(new FormData(mounted.container.querySelector('form')!).get('currency')).toBe('INR');
 });
 
-it('says why nothing is offered when the vendor bills are all in a switched-off currency', async () => {
-  mounted = await mountForm(
-    <PaymentRequestEntry idempotencyKey="key" items={items} enabledCurrencies={['NPR', 'USD']} />,
-  );
+it('starts on the switched-off currency when it is the only one the vendor bills are in', async () => {
+  mounted = await mountForm(<PaymentRequestEntry idempotencyKey="key" items={items} />);
   await choose(mounted.container, 'vendorPartyId', 'Terai Traders');
-  expect(currencyField().value).toBe('');
-  expect(mounted.container.textContent).toContain(
-    "This vendor's approved bills are only in INR, switched off in Settings.",
-  );
+  // Old code left the currency empty, so nothing could be requested.
+  expect(currencyField().value).toBe('INR');
+  expect(mounted.container.textContent).not.toContain('switched off');
 });
 
 const account = (
@@ -127,13 +123,7 @@ async function key(target: Element, name: string) {
   });
 }
 const entry = (extra: { bankAccountsHref?: string } = {}) => (
-  <PaymentRequestEntry
-    idempotencyKey="key"
-    items={items}
-    enabledCurrencies={['NPR', 'USD']}
-    bankAccounts={accounts}
-    {...extra}
-  />
+  <PaymentRequestEntry idempotencyKey="key" items={items} bankAccounts={accounts} {...extra} />
 );
 
 describe('the pay-from bank account picker', () => {
@@ -197,7 +187,6 @@ describe('the pay-from bank account picker', () => {
       <PaymentRequestEntry
         idempotencyKey="key"
         items={items}
-        enabledCurrencies={['NPR', 'USD']}
         bankAccounts={[NABIL_USD, RETIRED_NPR]}
         bankAccountsHref="/settings/company-accounts"
       />,
@@ -212,12 +201,7 @@ describe('the pay-from bank account picker', () => {
     await mounted.unmount();
 
     mounted = await mountForm(
-      <PaymentRequestEntry
-        idempotencyKey="key"
-        items={items}
-        enabledCurrencies={['NPR', 'USD']}
-        bankAccounts={[NABIL_USD]}
-      />,
+      <PaymentRequestEntry idempotencyKey="key" items={items} bankAccounts={[NABIL_USD]} />,
     );
     await choose(mounted.container, 'vendorPartyId', 'Himal Supplies');
     expect(mounted.container.textContent).toContain(
