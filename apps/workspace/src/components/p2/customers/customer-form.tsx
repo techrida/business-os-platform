@@ -7,6 +7,8 @@ import { Alert } from '@/components/ui/alert';
 import { Button, LinkButton } from '@/components/ui/button';
 import { Dialog, DialogClose } from '@/components/ui/dialog';
 import { Field, Input, Select, Textarea } from '@/components/ui/field';
+import { PanInput } from '@/components/ui/pan-input';
+import { PhoneInput } from '@/components/ui/phone-input';
 import { PageHeader } from '@/components/ui/page';
 import { Panel } from '@/components/ui/panel';
 import { currencyChoices } from '@/lib/enabled-currencies';
@@ -98,6 +100,9 @@ export function CustomerForm({
   const formRef = useRef<HTMLFormElement>(null);
   const summaryRef = useRef<HTMLDivElement>(null);
 
+  // A Nepal customer's PAN or VAT number is nine digits. The contract also takes the tax ids of
+  // customers abroad (letters, digits, hyphens), so only a Nepal customer gets the digits-only box.
+  const nepalCustomer = values.country.trim().toUpperCase() === 'NP';
   const set =
     (field: CustomerField) =>
     (e: { target: { value: string } }): void =>
@@ -350,18 +355,14 @@ export function CustomerForm({
             </Field>
             <Field
               label="Phone"
-              hint="Optional. Start with + and the country code, for example +9779812345678."
+              hint="Optional. Nepal numbers need only the digits."
               error={err.contactPhone}
             >
               {(control) => (
-                <Input
-                  type="tel"
+                <PhoneInput
                   name="contactPhone"
                   value={values.contactPhone}
-                  onChange={set('contactPhone')}
-                  maxLength={30}
-                  autoComplete="off"
-                  className={styles.numeric}
+                  onValueChange={(phone) => set('contactPhone')({ target: { value: phone } })}
                   {...control}
                 />
               )}
@@ -523,20 +524,33 @@ export function CustomerForm({
           </Field>
           <Field
             label="PAN or VAT number"
-            hint="Optional. Letters, digits and hyphens."
+            hint={
+              nepalCustomer
+                ? 'Optional. Nine digits.'
+                : 'Optional. Letters, digits and hyphens, for a customer outside Nepal.'
+            }
             error={err.panVatNo}
           >
-            {(control) => (
-              <Input
-                name="panVatNo"
-                value={values.panVatNo}
-                onChange={set('panVatNo')}
-                maxLength={20}
-                autoComplete="off"
-                className={styles.numeric}
-                {...control}
-              />
-            )}
+            {(control) =>
+              nepalCustomer ? (
+                <PanInput
+                  name="panVatNo"
+                  value={values.panVatNo}
+                  onValueChange={(pan) => set('panVatNo')({ target: { value: pan } })}
+                  {...control}
+                />
+              ) : (
+                <Input
+                  name="panVatNo"
+                  value={values.panVatNo}
+                  onChange={set('panVatNo')}
+                  maxLength={20}
+                  autoComplete="off"
+                  className={styles.numeric}
+                  {...control}
+                />
+              )
+            }
           </Field>
         </div>
       </Panel>
