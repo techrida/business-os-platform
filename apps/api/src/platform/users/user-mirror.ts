@@ -475,8 +475,10 @@ export class UserMirror {
 
   /**
    * Sets a staff user's roles with ZITADEL called outside any transaction: (A) guard + version/roles snapshot tx,
-   * (B) ZITADEL setGrants, (C) re-checked versioned write tx, restoring ZITADEL to the committed DB roles on failure
-   * or conflict. The caller invalidates authz after this resolves.
+   * (B) ZITADEL setGrants, (C) re-checked versioned write tx. On failure or conflict, restores ZITADEL to the
+   * committed DB roles — or, when a sync already copied this request's own phase-B grants into the DB (or DB cannot
+   * be read), strips only roles this request added (never re-adding roles that may have been removed: fail closed).
+   * The caller invalidates authz after this resolves.
    */
   async setRoles(
     scope: TxScope,
@@ -532,17 +534,26 @@ export class UserMirror {
         LOCKS_USER_ROW,
       );
     } catch (error) {
-      let rolesToRestore: RoleKey[] | null = plan.previousRoles;
+      // Smaller set: strips only roles this request added, never re-adding roles that may have been removed.
+      const withoutAdded = roles.filter((r) => plan.previousRoles.includes(r));
+      let rolesToRestore: RoleKey[] | null = withoutAdded;
       try {
         const current = await this.store.findById(this.db, scope, userId);
         if (!current || current.idpOrgId !== plan.org.idpOrgId) {
           rolesToRestore = null;
         } else {
-          rolesToRestore = await this.store.rolesOf(this.db, scope.tenantId, userId);
+          const committed = await this.store.rolesOf(this.db, scope.tenantId, userId);
+          // When a sync copied this request's own phase-B roles into DB before phase C failed (e.g. revoked actor or
+          // lock timeout), strip only the roles this request added rather than leaving them in effect or re-adding
+          // roles removed by someone else.
+          rolesToRestore =
+            sameRoles(committed, roles) && !sameRoles(plan.previousRoles, roles)
+              ? withoutAdded
+              : committed;
         }
       } catch {
-        // DB unreadable: fall back to the phase-A snapshot.
-        rolesToRestore = plan.previousRoles;
+        // DB unreadable: fail closed on the smaller set (strip added roles only).
+        rolesToRestore = withoutAdded;
       }
       if (rolesToRestore !== null && !sameRoles(rolesToRestore, roles)) {
         try {
