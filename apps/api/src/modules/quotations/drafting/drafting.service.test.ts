@@ -159,6 +159,24 @@ describe('capabilitiesOf (the detail and list answer the same rules as the comma
     expect(capabilitiesOf(pmo, quotationOf(ME), 'sent').canRecordOutcome).toBe(false);
   });
 
+  it("offers the Accountant record outcome on a colleague's Sent quotation, and still no edit, send or revise (S4-Q2)", () => {
+    const accountant = principalOf('accountant');
+    expect(capabilitiesOf(accountant, quotationOf(COLLEAGUE), 'sent')).toEqual({
+      canEdit: false,
+      canRevise: false,
+      canSend: false,
+      canRecordOutcome: true,
+      canCancel: false,
+    });
+    expect(capabilitiesOf(accountant, quotationOf(COLLEAGUE), 'approved').canSend).toBe(false);
+    expect(capabilitiesOf(accountant, quotationOf(COLLEAGUE), 'draft').canEdit).toBe(false);
+    // Another entity's quotation stays out of reach.
+    expect(
+      capabilitiesOf(accountant, { ...quotationOf(COLLEAGUE), organizationId: CUSTOMER }, 'sent')
+        .canRecordOutcome,
+    ).toBe(false);
+  });
+
   it('offers cancel to whoever may edit the quotation, while it is a draft, returned or submitted (F1-Q27)', () => {
     const sales = principalOf('sales');
     for (const status of ['draft', 'returned', 'submitted'] as const) {
