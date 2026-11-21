@@ -15,11 +15,11 @@ import { ACCOUNT_LOCKOUT, type AdminUsersQuery, type RoleKey } from '@bos/contra
 import { InjectQueue } from '@nestjs/bullmq';
 import { ConflictException, Inject, Injectable, Logger, NotFoundException } from '@nestjs/common';
 import { Queue } from 'bullmq';
-import { sql } from 'drizzle-orm';
 
+import { lockAccessRevision } from '../../modules/access-settings/access-revision';
 import type { EntityMembership, ResolvedUser } from '../authz/user-directory';
 import { DB, type Db, type DbTransaction } from '../db/db.module';
-import { type TxOptions, type TxScope, systemActor, withTx } from '../db/tx';
+import { type Actor, READ_ONLY, type TxOptions, type TxScope, systemActor, withTx } from '../db/tx';
 import {
   lockoutPinnedCursor,
   USERS_QUEUE,
@@ -43,9 +43,17 @@ import {
 
 /** The audit actor for everything that arrives from ZITADEL (hook, sync, reconcile, JIT). */
 const zitadelActor = () => systemActor('zitadel');
-// For a write that locks a user row before its first audited write. The admin status paths (UserStatusService) lock
-// the row and cannot take the tenant audit lock first, so these keep the same order: row, then audit lock.
+// For a write that takes the access-revision lock and/or a user row lock before its first audited write:
+// keeps lock order consistent (access_revisions -> user row -> audit.chain) with DepartmentsAdminService,
+// AccessSettingsService, UserStatusService and UserLocks so concurrent writes cannot invert into 40P01.
 const LOCKS_USER_ROW: TxOptions = { audit: 'lazy' };
+
+function userChangedConflict(): ConflictException {
+  return new ConflictException({
+    code: 'conflict',
+    message: 'This user was changed by someone else. Reload the page and try again.',
+  });
+}
 
 const cursorName = (zitadelOrgId: string) => `users.reconcile:${zitadelOrgId}`;
 
@@ -93,6 +101,13 @@ function sameRoles(a: readonly string[], b: readonly string[]): boolean {
 }
 
 export type { EntityMembership, ResolvedUser };
+
+export interface InviteInput {
+  email: string;
+  givenName: string;
+  familyName: string;
+  roles: RoleKey[];
+}
 
 /** A person an invite reached: the app row, their ZITADEL identity, and whether this invite created it. */
 export interface InvitedUser {
@@ -343,15 +358,11 @@ export class UserMirror {
   }
 
   /**
-   * Creates the human in ZITADEL, grants the roles there, sends the invite mail, then writes the
-   * mirror in `tx` (the admin's transaction, so the audit row names the admin). If the DB part
-   * fails after ZITADEL succeeded, the webhook or reconcile creates the row later.
+   * Creates the human in ZITADEL, grants the roles there, and sends the invite mail with no transaction open,
+   * then writes the mirror in a short transaction under `actor`. If the DB write fails after ZITADEL succeeded,
+   * takes back the grants and deletes the identity it created (never throwing) before rethrowing.
    */
-  async invite(
-    tx: DbTransaction,
-    b: { email: string; givenName: string; familyName: string; roles: RoleKey[] },
-  ): Promise<InvitedUser> {
-    const scope = await this.store.txScope(tx);
+  async invite(scope: TxScope, actor: Actor, b: InviteInput): Promise<InvitedUser> {
     const org = await this.staffOrgOf(scope);
     let zitadelUserId: string;
     try {
@@ -365,6 +376,25 @@ export class UserMirror {
     await this.zitadel.setGrants(zitadelUserId, org.zitadelOrgId, b.roles);
     await this.zitadel.sendInviteCode(zitadelUserId);
 
+    try {
+      const userId = await withTx(this.db, scope, actor, (tx) =>
+        this.writeInvitedUser(tx, org, scope, zitadelUserId, b),
+      );
+      return { userId, zitadelUserId, created: true };
+    } catch (error) {
+      await this.takeBackInvite(org, { zitadelUserId, created: true });
+      throw error;
+    }
+  }
+
+  /** Writes the mirror row, default membership and roles for an invitee inside the caller's tx. */
+  async writeInvitedUser(
+    tx: DbTransaction,
+    org: IdpOrgRow,
+    scope: TxScope,
+    zitadelUserId: string,
+    b: InviteInput,
+  ): Promise<string> {
     const userId = await this.store.insertUser(tx, scope, {
       zitadelUserId,
       idpOrgId: org.idpOrgId,
@@ -377,42 +407,129 @@ export class UserMirror {
       await this.store.replaceRoles(tx, scope, userId, b.roles);
       await this.store.bumpAuthzVersion(tx, scope);
     }
-    return { userId, zitadelUserId, created: true };
+    return userId;
   }
 
-  /** ZITADEL first (it is the truth), then the mirror. The caller invalidates authz after commit. */
-  async setRoles(tx: DbTransaction, userId: string, roles: RoleKey[]): Promise<void> {
-    const scope = await this.store.txScope(tx);
-    const user = await this.store.findById(tx, scope, userId);
-    if (!user) throw new NotFoundException('User not found');
-    const org = await this.staffOrgOf(scope);
-    // Staff roles are granted in the staff org: a portal user is not an admin target (as before 0027).
-    if (user.idpOrgId !== org.idpOrgId) throw new NotFoundException('User not found');
-    const currentRoles = await this.store.rolesOf(tx, scope.tenantId, userId);
-    if (
-      user.status === 'active' &&
-      currentRoles.includes('founder') &&
-      !roles.includes('founder')
-    ) {
-      // Same lock key as the access settings saves: two removals cannot both see the other Founder.
-      await tx.execute(
-        sql`SELECT pg_advisory_xact_lock(hashtext('access_revisions:' || ${scope.tenantId}))`,
+  /** Undoes what an invite wrote to ZITADEL after a failed DB write. Never throws; logs only the error name. */
+  async takeBackInvite(
+    org: IdpOrgRow,
+    invited: { zitadelUserId: string; created: boolean },
+  ): Promise<void> {
+    const kind = (error: unknown) => (error instanceof Error ? error.name : 'error');
+    try {
+      await this.zitadel.setGrants(invited.zitadelUserId, org.zitadelOrgId, []);
+    } catch (error) {
+      this.logger.error(
+        `users.invite: could not take back the roles of ${invited.zitadelUserId} in ZITADEL (kind=${kind(error)})`,
       );
-      const entities = await soleFounderEntities(tx, this.store, scope.tenantId, userId);
-      if (entities !== null) {
-        // Never the email: the address is not a name (U20a2-Q10).
-        const name = user.displayName?.trim() || 'This person';
-        throw new ConflictException({
-          code: 'last_founder',
-          message: `${name} is the only Founder of ${entities}. Make someone else a Founder there first.`,
-        });
+    }
+    if (!invited.created) return;
+    try {
+      await this.zitadel.deleteUser(invited.zitadelUserId);
+    } catch (error) {
+      this.logger.error(
+        `users.invite: could not delete the identity ${invited.zitadelUserId} the failed invite created (kind=${kind(error)})`,
+      );
+    }
+  }
+
+  /**
+   * Sets a staff user's roles with ZITADEL called outside any transaction: (A) guard + version/roles snapshot tx,
+   * (B) ZITADEL setGrants, (C) re-checked versioned write tx, restoring previous roles in ZITADEL on failure.
+   * The caller invalidates authz after this resolves.
+   */
+  async setRoles(
+    scope: TxScope,
+    actor: Actor,
+    userId: string,
+    roles: RoleKey[],
+    assertAccess?: (tx: DbTransaction) => Promise<void>,
+  ): Promise<void> {
+    const plan = await withTx(
+      this.db,
+      scope,
+      actor,
+      async (tx) => {
+        await lockAccessRevision(tx, scope.tenantId);
+        if (assertAccess) await assertAccess(tx);
+        const org = await this.staffOrgOf(scope, tx);
+        const user = await this.store.findById(tx, scope, userId);
+        // Staff roles are granted in the staff org: a portal user is not an admin target (as before 0027).
+        if (!user || user.idpOrgId !== org.idpOrgId) throw new NotFoundException('User not found');
+        const previousRoles = await this.store.rolesOf(tx, scope.tenantId, userId);
+        await this.assertCanSetRoles(tx, scope.tenantId, user, previousRoles, roles);
+        return { user, org, previousRoles };
+      },
+      READ_ONLY,
+    );
+
+    await this.zitadel.setGrants(plan.user.zitadelUserId, plan.org.zitadelOrgId, roles);
+
+    try {
+      await withTx(
+        this.db,
+        scope,
+        actor,
+        async (tx) => {
+          await lockAccessRevision(tx, scope.tenantId);
+          if (assertAccess) await assertAccess(tx);
+          const current = await this.store.findById(tx, scope, userId, true);
+          if (!current || current.idpOrgId !== plan.org.idpOrgId) throw userChangedConflict();
+          const currentRoles = await this.store.rolesOf(tx, scope.tenantId, userId);
+          const rowChanged = (current.version ?? null) !== (plan.user.version ?? null);
+          const rolesChanged = !sameRoles(currentRoles, plan.previousRoles);
+          if (rowChanged || rolesChanged) {
+            // Another writer already landed the exact roles requested while ZITADEL was called.
+            if (!rowChanged && sameRoles(currentRoles, roles)) return;
+            throw userChangedConflict();
+          }
+          await this.assertCanSetRoles(tx, scope.tenantId, current, currentRoles, roles);
+          if (!sameRoles(currentRoles, roles)) {
+            await this.store.replaceRoles(tx, scope, userId, roles);
+            await this.store.bumpAuthzVersion(tx, scope);
+          }
+        },
+        LOCKS_USER_ROW,
+      );
+    } catch (error) {
+      try {
+        await this.zitadel.setGrants(
+          plan.user.zitadelUserId,
+          plan.org.zitadelOrgId,
+          plan.previousRoles,
+        );
+      } catch (undoError) {
+        const kind = undoError instanceof Error ? undoError.name : 'error';
+        this.logger.error(
+          `users.setRoles: could not restore roles of ${userId} in ZITADEL after a failed write (kind=${kind}); the next sync mirrors what ZITADEL holds`,
+        );
       }
+      throw error;
     }
-    await this.zitadel.setGrants(user.zitadelUserId, org.zitadelOrgId, roles);
-    if (!sameRoles(currentRoles, roles)) {
-      await this.store.replaceRoles(tx, scope, userId, roles);
-      await this.store.bumpAuthzVersion(tx, scope);
+  }
+
+  private async assertCanSetRoles(
+    tx: DbTransaction,
+    tenantId: string,
+    user: UserRow,
+    currentRoles: readonly RoleKey[],
+    nextRoles: readonly RoleKey[],
+  ): Promise<void> {
+    if (
+      user.status !== 'active' ||
+      !currentRoles.includes('founder') ||
+      nextRoles.includes('founder')
+    ) {
+      return;
     }
+    const entities = await soleFounderEntities(tx, this.store, tenantId, user.id);
+    if (entities === null) return;
+    // Never the email: the address is not a name (U20a2-Q10).
+    const name = user.displayName?.trim() || 'This person';
+    throw new ConflictException({
+      code: 'last_founder',
+      message: `${name} is the only Founder of ${entities}. Make someone else a Founder there first.`,
+    });
   }
 
   /** The one write path for ZITADEL data: upsert the user, mirror the roles, bump authz on change. */
@@ -670,8 +787,8 @@ export class UserMirror {
   }
 
   /** The tenant's staff IdP org: invites are created and grants are set there. */
-  private async staffOrgOf(scope: TxScope): Promise<IdpOrgRow> {
-    const org = await this.store.staffIdpOrgOf(scope.tenantId);
+  private async staffOrgOf(scope: TxScope, q?: Db | DbTransaction): Promise<IdpOrgRow> {
+    const org = await this.store.staffIdpOrgOf(scope.tenantId, q);
     if (!org) throw new NotFoundException('Organization not found');
     return org;
   }
@@ -689,7 +806,6 @@ export class UserMirror {
   /**
    * The bootstrap rule (ADR 0027 section 3): a staff user just created with no membership gets one
    * in the tenant's default entity (role_keys NULL). Portal users get none. Runs in the caller's tx.
-   * Public for UsersService.finishInvite, which repeats the invite's steps.
    */
   async bootstrap(
     tx: DbTransaction,
@@ -698,7 +814,7 @@ export class UserMirror {
     userId: string,
   ): Promise<void> {
     if (org.kind !== 'staff') return;
-    const entityId = await this.store.defaultEntityOf(scope.tenantId);
+    const entityId = await this.store.defaultEntityOf(scope.tenantId, tx);
     if (!entityId) throw new Error(`tenant ${scope.tenantId} has no default entity`);
     await this.store.ensureDefaultMembership(tx, scope.tenantId, entityId, userId);
   }
