@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { ErrorBodySchema, MeResponseSchema, VitalsSchema } from './index.js';
+import { dropUnknownGrants, ErrorBodySchema, MeResponseSchema, VitalsSchema } from './index.js';
 
 const validMe = {
   userId: '312345678901234567',
@@ -47,6 +47,34 @@ describe('MeResponseSchema', () => {
     expect(MeResponseSchema.safeParse({ ...validMe, tenantId: 'not-a-uuid' }).success).toBe(false);
     expect(MeResponseSchema.safeParse({ ...validMe, correlationId: 'short' }).success).toBe(false);
     expect(MeResponseSchema.safeParse({ ...validMe, roles: 'founder' }).success).toBe(false);
+  });
+});
+
+describe('dropUnknownGrants', () => {
+  const known = { permission: 'customer.read', scope: 'own' };
+
+  it('removes a permission or scope this build does not know and names it', () => {
+    const permissions = [
+      known,
+      { permission: 'vat.future.read', scope: 'all' },
+      { permission: 'customer.read', scope: 'galaxy' },
+      'junk',
+    ];
+    const { body, dropped } = dropUnknownGrants({ ...validMe, permissions });
+    expect(dropped).toEqual(['vat.future.read@all', 'customer.read@galaxy', 'malformed']);
+    expect(MeResponseSchema.parse(body).permissions).toEqual([known]);
+  });
+
+  it('leaves a body with only known grants, and any other shape, untouched', () => {
+    const clean = { ...validMe, permissions: [known] };
+    expect(dropUnknownGrants(clean)).toEqual({ body: clean, dropped: [] });
+    expect(dropUnknownGrants(validMe)).toEqual({ body: validMe, dropped: [] });
+    expect(dropUnknownGrants('text')).toEqual({ body: 'text', dropped: [] });
+  });
+
+  it('does not rescue a body that is wrong elsewhere', () => {
+    const { body } = dropUnknownGrants({ ...validMe, orgKind: 'admin', permissions: [known] });
+    expect(MeResponseSchema.safeParse(body).success).toBe(false);
   });
 });
 
