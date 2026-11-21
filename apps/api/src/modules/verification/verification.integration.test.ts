@@ -43,7 +43,8 @@ import { NumberingService } from '../../platform/settings/numbering.service';
 import { configureApp } from '../../app.setup';
 import { AuditService } from '../../platform/audit/audit.service';
 import { can } from '../../platform/authz/can';
-import type { AuthzService } from '../../platform/authz/authz.service';
+import { AuthzService } from '../../platform/authz/authz.service';
+import { RoleCache } from '../../platform/authz/role-cache';
 import type { Principal } from '../../platform/authz/principal';
 import type { Db } from '../../platform/db/db.module';
 import { systemActor, withTx } from '../../platform/db/tx';
@@ -124,7 +125,10 @@ const caller = {
     principal: principalNow(),
   }),
 };
+// The reviewer picker reads grants through the real role cache, as a request does.
+let liveAuthz: AuthzService;
 const authz = {
+  rolesHold: (...args: Parameters<AuthzService['rolesHold']>) => liveAuthz.rolesHold(...args),
   assert: (action: Permission, ref?: Parameters<typeof can>[2]) => {
     const d = can(principalNow(), action, ref);
     if (!d.allowed) {
@@ -144,6 +148,7 @@ beforeAll(async () => {
   ownerPool = new Pool({ connectionString: testDb.ownerUrl, max: 2 });
   appPool = new Pool({ connectionString: testDb.appUrl, max: 6 });
   db = drizzle({ client: appPool });
+  liveAuthz = new AuthzService(db, new RoleCache(db));
 
   const tenant = await createTenantWithEntity(appPool);
   staffIdpOrgId = tenant.idpOrgId;
@@ -1555,6 +1560,29 @@ it('removes only loose files belonging to an editable case the caller owns', asy
 });
 
 describe('Can review names the pmo reviewer (audit #19)', () => {
+  it('names a pmo user on a tenant with no stored grant rows, through the built-in defaults (R5 FU6)', async () => {
+    const stored = await appPool.query<{ n: string }>(
+      'SELECT count(*)::text AS n FROM app.role_permissions WHERE tenant_id = $1',
+      [scope.tenantId],
+    );
+    expect(stored.rows[0]?.n, 'this test needs a tenant that has no role rows yet').toBe('0');
+    const pmo = await createStaffUser(appPool, {
+      ...scope,
+      idpOrgId: staffIdpOrgId,
+      roleKeys: ['pmo'],
+    });
+    const c = await submittedCase();
+    const res = await api().get(`/v1/verification-cases/${c.id}`);
+    expect(res.status, JSON.stringify(res.body)).toBe(200);
+    const { rows } = await appPool.query<{ display_name: string }>(
+      'SELECT display_name FROM app.users WHERE id = $1',
+      [pmo.userId],
+    );
+    expect((res.body as { reviewerNames: string[] }).reviewerNames).toContain(
+      rows[0]!.display_name,
+    );
+  });
+
   it('names a pmo user, who reads case files through verification.review, and not a read-only role', async () => {
     const pmo = await createStaffUser(appPool, {
       ...scope,
