@@ -2490,14 +2490,17 @@ describe('credit hold at the hand-over to a sales order (F1-Q20, F1-Q26)', () =>
         overrideCovers: true,
         override: { reason: 'Approved again for the bigger order', orderValue: '22600.00' },
       });
-      const { rows } = await ownerPool.query(
+      const { rows } = await ownerPool.query<{
+        before: { creditOverrideOrderValue: string | null };
+        after: { creditOverrideOrderValue: string | null };
+      }>(
         `SELECT before, after FROM audit.audit_events
           WHERE tenant_id = $1 AND action = 'opportunity.credit_overridden' AND entity_id = $2
           ORDER BY id`,
         [f.tenantId, q.opportunityId],
       );
       expect(rows.map((r) => r.after.creditOverrideOrderValue)).toEqual(['22600.00', '22600.00']);
-      expect(rows[1].before.creditOverrideOrderValue).toBe('5000.00');
+      expect(rows[1]!.before.creditOverrideOrderValue).toBe('5000.00');
 
       current.grants = grantsOf('sales');
       current.userId = undefined;
