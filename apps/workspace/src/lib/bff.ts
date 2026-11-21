@@ -67,8 +67,26 @@ export function forbiddenOrigin(): Response {
   return jsonResponse({ error: { message: 'This request did not come from the workspace.' } }, 403);
 }
 
+/** The API's 503 `db_busy` refusal and how many seconds it asks the caller to wait, or null for any other failure. */
+export function dbBusyOf(err: unknown): { retryAfterSeconds: number } | null {
+  if (!(err instanceof ApiError) || err.status !== 503) return null;
+  const parsed = ErrorBodySchema.safeParse(err.body);
+  if (!parsed.success || parsed.data.error.code !== 'db_busy') return null;
+  const wait = parsed.data.error.details?.retryAfterSeconds;
+  return { retryAfterSeconds: typeof wait === 'number' && wait > 0 ? Math.ceil(wait) : 1 };
+}
+
 /** Maps a thrown API failure to a JSON response the browser code can show as is. */
 export function errorResponse(err: unknown, context: FailureContext = 'generic'): Response {
+  const busy = dbBusyOf(err);
+  if (busy !== null) {
+    // The API rolled back and says it is safe to retry (503 db_busy + Retry-After). That is not a gateway fault:
+    // keep the 503 and the wait, so the browser code can retry after it instead of reading a 502 as a crash.
+    return Response.json(
+      { error: { message: 'Busy, please try again.', reload: false } },
+      { status: 503, headers: { ...NO_STORE, 'retry-after': String(busy.retryAfterSeconds) } },
+    );
+  }
   const failure = failureOf(err, context);
   // Pass client errors through; anything else (API down, 5xx) is a gateway problem from the
   // browser's point of view.

@@ -6,7 +6,7 @@
 // migrate as bos_owner, then work as bos_app.
 import { randomUUID } from 'node:crypto';
 
-import { appSchema, createTenantWithEntity, idempotencyKeys } from '@bos/db';
+import { appSchema, createTenantWithEntity, idempotencyKeys, organizations } from '@bos/db';
 import { ConflictException, UnprocessableEntityException } from '@nestjs/common';
 import { eq } from 'drizzle-orm';
 import { integer, text, uuid } from 'drizzle-orm/pg-core';
@@ -139,6 +139,51 @@ describe('withIdempotency', () => {
     await run(other, alice, 'a'); // another tenant
 
     expect(calls).toBe(4);
+  });
+
+  it('scopes a key to the acting legal entity: a retry from another entity of the tenant does not replay', async () => {
+    const first = await newScope();
+    const secondEntityId = randomUUID();
+    const second: TxScope = { tenantId: first.tenantId, organizationId: secondEntityId };
+    await withTx(db, second, systemActor('test'), (tx) =>
+      tx.insert(organizations).values({
+        id: secondEntityId,
+        tenantId: first.tenantId,
+        organizationId: secondEntityId,
+        code: 'E2',
+        name: 'Second entity',
+        legalName: 'Second entity Pvt. Ltd.',
+        isDefault: false,
+      }),
+    );
+    const actor = userActor();
+    const calls: string[] = [];
+    const run = (s: TxScope, body: unknown) =>
+      withTx(db, s, actor, (tx) =>
+        withIdempotency(tx, { command: 'memo.create', key: 'entity-key', body }, () => {
+          calls.push(s.organizationId);
+          return Promise.resolve({ status: 201, response: { entity: s.organizationId } });
+        }),
+      );
+
+    const a = await run(first, { x: 1 });
+    // Same actor, command and key, and even the same body: another entity runs its own command.
+    const b = await run(second, { x: 1 });
+    // A retry inside the second entity still replays its own answer.
+    const c = await run(second, { x: 1 });
+
+    expect(a).toMatchObject({ replayed: false, response: { entity: first.organizationId } });
+    expect(b).toMatchObject({ replayed: false, response: { entity: secondEntityId } });
+    expect(c).toMatchObject({ replayed: true, response: { entity: secondEntityId } });
+    expect(calls).toEqual([first.organizationId, secondEntityId]);
+    await expect(run(first, { x: 2 })).rejects.toBeInstanceOf(UnprocessableEntityException);
+    const rows = await db
+      .select({ organizationId: idempotencyKeys.organizationId })
+      .from(idempotencyKeys)
+      .where(eq(idempotencyKeys.tenantId, first.tenantId));
+    expect(rows.map((r) => r.organizationId).sort()).toEqual(
+      [first.organizationId, secondEntityId].sort(),
+    );
   });
 
   it('runs fn once when two first calls arrive at the same time', async () => {
