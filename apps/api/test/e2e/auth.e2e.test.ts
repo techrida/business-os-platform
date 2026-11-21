@@ -130,6 +130,15 @@ describe('GET /v1/me with a valid token', () => {
       roles: ['founder'],
       correlationId: 'e2e-correlation-0001',
       permissions: expect.any(Array) as unknown,
+      // Added by later rounds (stale expectation, not a regression): the caller's own users row id and picture
+      // (U12 avatar), the name for the shell's user card (U15a-Q2 `displayName`), and the membership level and
+      // department (D50 level grants, apps/api me.ts / packages/contracts me.ts). This seeded user has no name,
+      // picture or department.
+      id: expect.stringMatching(/^[0-9a-f-]{36}$/) as unknown,
+      avatarDocumentId: null,
+      displayName: null,
+      level: 'staff',
+      departmentId: null,
     });
     // Founder holds every permission at scope all, read from the seeded role rows.
     expect(me.permissions).toContainEqual({ permission: 'customer.write', scope: 'all' });

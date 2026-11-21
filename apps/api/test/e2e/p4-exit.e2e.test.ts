@@ -215,6 +215,44 @@ async function refuseOfficerAccess(id: string, key: P4PersonaKey, expectedVersio
   expect(action.status, show(action)).toBe(404);
 }
 
+/**
+ * Someone who decided a step keeps reading the request after their step has moved on (commit 885f85a8, the
+ * `tookPart` rule in requests.service.ts `eligibleRequest`, with U18-Q8 "past approvers keep seeing live context"),
+ * so their reload of the request they just decided is a 200, not the 404 an officer outside the route still gets.
+ * Reading grants nothing: deciding again is refused, and the request stays decided.
+ */
+async function expectPastApproverReadsButCannotAct(
+  id: string,
+  key: P4PersonaKey,
+  expectedVersion: number,
+) {
+  const authorization = await auth(key);
+  const detail = await t
+    .http()
+    .get(`/v1/approvals/requests/${id}`)
+    .set('authorization', authorization);
+  expect(detail.status, show(detail)).toBe(200);
+  const read = ApprovalRequestDtoSchema.parse(detail.body);
+  expect(read.status).toBe('approved');
+  expect(read.steps[0]!.decidedBy).toBe(world.personas[key].userId);
+  const action = await t
+    .http()
+    .post(`/v1/approvals/requests/${id}/actions`)
+    .set('authorization', authorization)
+    .set('idempotency-key', randomUUID())
+    .send({ action: 'approve', expectedVersion });
+  // Reading is all the rule grants: a second decision from a past approver is still refused as not found.
+  expect(action.status, show(action)).toBe(404);
+  const after = await t
+    .http()
+    .get(`/v1/approvals/requests/${id}`)
+    .set('authorization', authorization);
+  expect(after.status, show(after)).toBe(200);
+  const unchanged = ApprovalRequestDtoSchema.parse(after.body);
+  expect(unchanged.status).toBe('approved');
+  expect(unchanged.version).toBe(read.version);
+}
+
 async function cleanDocument(documentId: string) {
   return pollUntil(
     `document ${documentId} to scan clean`,
@@ -383,7 +421,7 @@ describe('P4 exit Journey 11: department request to approved payment request ove
       decided = result;
     }
     expect(await get('/v1/approvals/inbox', head)).toEqual([]);
-    await refuseOfficerAccess(route.requestId, 'departmentHead', decided!.version);
+    await expectPastApproverReadsButCannotAct(route.requestId, 'departmentHead', decided!.version);
     s.pr = await get<PurchaseRequestDto>(`${PR}/${s.pr.id}`, requester);
     expect(s.pr.status).toBe('dept_approved');
   });
