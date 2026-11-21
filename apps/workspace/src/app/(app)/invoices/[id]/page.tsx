@@ -1,4 +1,4 @@
-import type { InvoiceDetail, InvoiceSettlement } from '@bos/contracts';
+import type { InvoiceDetail, SettlementStatus } from '@bos/contracts';
 import type { NumberSystems } from '@bos/locale';
 import type { Metadata } from 'next';
 import Link from 'next/link';
@@ -11,13 +11,11 @@ import { Breadcrumb, Page, PageHeader } from '@/components/ui/page';
 import { FactList, Panel, type Fact } from '@/components/ui/panel';
 import { getInvoice } from '@/lib/api-billing';
 import { failureOf } from '@/lib/api-kernel';
-import { getCustomerStatement } from '@/lib/api-receivables';
 import { listTaxCodes } from '@/lib/api-tax-codes';
 import { requireStaffSession } from '@/lib/bff';
 import { getDisplaySettings } from '@/lib/display-settings';
 import { money, when } from '@/lib/kernel-format';
 import { getPermissionCheck } from '@/lib/live-permissions';
-import type { Session } from '@/lib/session';
 
 import { InvoiceKindBadge, InvoiceStatusBadge } from '../_components/badges';
 import { LineBreakdown, NprSnapshot } from '../_components/detail-parts';
@@ -30,7 +28,7 @@ import styles from '../_components/invoice.module.css';
 import { InvoiceNoteActions } from '../_components/notes/note-actions';
 import { ApprovalHistory, loadApproval } from '../../payables/_components/approval-history';
 import { PromiseCard } from '../_components/promise-card';
-import { type Can, invoiceGates, recordPaymentHref } from '../_lib/gates';
+import { invoiceGates, recordPaymentHref } from '../_lib/gates';
 import { approvalWords, kindMeta } from '../_lib/meta';
 import { settlementMeta } from '../../receivables/_lib/settlement';
 import { invoicePromisesOf } from './promises-api';
@@ -47,28 +45,25 @@ function pdfAvailability(invoice: InvoiceDetail['invoice']) {
 }
 
 /**
- * The issued invoice's payment position, derived by the server from its allocations and credit notes (plan A8), read
- * from the customer statement this invoice appears on. Null for a draft, a proforma or a credit note (they have no
- * open item), for a role without `ar.read`, or when the statement does not load: the rest of the page stands.
+ * The issued invoice's payment position, derived by the server from its allocations and credit notes (plan A8) and
+ * sent on the detail itself, so whoever reads the invoice sees it without `ar.read`. Null for a draft, a proforma or a
+ * credit note (they have no open item), or when an older API sent none: the rest of the page stands.
  */
-async function settlementOf(
-  session: Session,
-  invoice: InvoiceDetail['invoice'],
-  can: Can,
-): Promise<InvoiceSettlement | null> {
-  if (invoice.status !== 'issued') return null;
-  if (invoice.kind !== 'tax_invoice' && invoice.kind !== 'debit_note') return null;
-  if (!can('ar.read')) return null;
-  const rows = await getCustomerStatement(session, invoice.customerId, {
-    currency: invoice.currency,
-  }).catch((): null => null);
-  return rows?.find((r) => r.invoiceId === invoice.id) ?? null;
+function settlementOf(detail: InvoiceDetail): Settlement | null {
+  const { settlement, openAmount } = detail;
+  if (settlement == null || openAmount == null) return null;
+  return { settlement, openAmount };
+}
+
+interface Settlement {
+  settlement: SettlementStatus;
+  openAmount: string;
 }
 
 function facts(
   invoice: InvoiceDetail['invoice'],
   customerName: string | undefined,
-  settlement: InvoiceSettlement | null,
+  settlement: Settlement | null,
   numberSystems: NumberSystems,
 ): Fact[] {
   const out: Fact[] = [
@@ -77,7 +72,7 @@ function facts(
           {
             key: 'open',
             label: 'Open amount',
-            value: money(settlement.openAmount, settlement.currency, numberSystems),
+            value: money(settlement.openAmount, invoice.currency, numberSystems),
           },
         ]
       : []),
@@ -205,15 +200,16 @@ export default async function InvoiceDetailPage({ params }: { params: Promise<{ 
   const kind = kindMeta(invoice.kind).label;
   // Only a debit note needs the tax codes, and only the people who may write one are shown the button.
   // A list that fails to load degrades the dialog (it says so); it never fails the page.
-  const [taxCodes, settlement, approval, promises] = await Promise.all([
+  const [taxCodes, approval, promises] = await Promise.all([
     gates.notes ? listTaxCodes(session).catch((): null => null) : Promise.resolve(null),
-    settlementOf(session, invoice, can),
     // The approval's own read, as this person; a refused or failed read leaves the panel out.
     loadApproval(session, invoice.approvalRequestId),
     invoicePromisesOf(session, invoice, can),
   ]);
+  const settlement = settlementOf(detail);
   const payment = settlement === null ? null : settlementMeta(settlement.settlement);
-  // Only while something is still owed, as the server's settlement says; unknown settlement offers nothing.
+  // Only while something is still owed, as the server's settlement says; unknown settlement (null, never left out)
+  // offers nothing.
   const recordPayment = recordPaymentHref(
     { ...invoice, can: detail.can },
     can,
