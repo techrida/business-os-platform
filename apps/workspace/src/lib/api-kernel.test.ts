@@ -8,6 +8,7 @@ import {
   createMemo,
   failureOf,
   getApprovalRequest,
+  getEvidenceDocument,
   getInbox,
   getMemo,
   getMemoRoute,
@@ -566,6 +567,37 @@ describe('documents', () => {
       expect(lastCall().init.method).toBe('PUT');
     },
   );
+
+  it.each([
+    ['sales-order', '/v1/sales-orders'],
+    ['vendor-bill', '/v1/payables/bills'],
+    ['rfq', '/v1/procurement/rfqs'],
+  ] as const)(
+    'reads %s evidence through the record route, not GET /v1/documents/:id',
+    async (kind, base) => {
+      const doc = {
+        id: ID_B,
+        ownerType: 'evidence',
+        ownerId: ID_A,
+        currentVersionId: null,
+        versions: [{ ...version, status: 'quarantined' }],
+      };
+      fetchMock.mockResolvedValueOnce(reply(doc));
+      await expect(getEvidenceDocument(session, kind, ID_A, ID_B)).resolves.toEqual(doc);
+      expect(lastCall().url).toBe(`http://api:3001${base}/${ID_A}/evidence-documents/${ID_B}`);
+      expect(lastCall().init.method).toBeUndefined();
+    },
+  );
+
+  it('encodes the ids of an evidence read and refuses an invalid body', async () => {
+    fetchMock.mockResolvedValueOnce(reply({ bad: true }));
+    await expect(getEvidenceDocument(session, 'rfq', '../a', '../b')).rejects.toMatchObject({
+      status: 502,
+    });
+    expect(lastCall().url).toBe(
+      'http://api:3001/v1/procurement/rfqs/..%2Fa/evidence-documents/..%2Fb',
+    );
+  });
 
   it.each([
     ['sales-order', '/v1/sales-orders'],

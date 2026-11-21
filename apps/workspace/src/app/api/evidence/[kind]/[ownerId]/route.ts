@@ -1,10 +1,10 @@
 import { CreateDocumentBodySchema, ErrorBodySchema, MAX_UPLOAD_BYTES } from '@bos/contracts';
 
-import { getDocument } from '@/components/p2/crm/verification-api';
 import { projectVersion } from '@/components/p2/crm/verification-file';
 import { ApiError } from '@/lib/api';
 import {
   createEvidenceDocument,
+  getEvidenceDocument,
   removeEvidenceDocument,
   uploadEvidenceContent,
 } from '@/lib/api-kernel';
@@ -88,7 +88,7 @@ export async function GET(req: Request, { params }: Params): Promise<Response> {
   }
 
   try {
-    const document = await getDocument(session, documentId);
+    const document = await getEvidenceDocument(session, kind, ownerId, documentId);
     if (
       document.ownerType !== EVIDENCE_OWNER_TYPE ||
       document.ownerId !== ownerId ||

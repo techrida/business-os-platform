@@ -12,6 +12,7 @@ const mocks = vi.hoisted(() => ({
   routeSession: vi.fn(),
   isSameOrigin: vi.fn(),
   createEvidenceDocument: vi.fn(),
+  getEvidenceDocument: vi.fn(),
   uploadEvidenceContent: vi.fn(),
   removeEvidenceDocument: vi.fn(),
   getDocument: vi.fn(),
@@ -31,6 +32,7 @@ vi.mock('@/lib/bff', () => ({
 }));
 vi.mock('@/lib/api-kernel', () => ({
   createEvidenceDocument: mocks.createEvidenceDocument,
+  getEvidenceDocument: mocks.getEvidenceDocument,
   uploadEvidenceContent: mocks.uploadEvidenceContent,
   removeEvidenceDocument: mocks.removeEvidenceDocument,
 }));
@@ -103,6 +105,7 @@ beforeEach(() => {
     .mockResolvedValue({ documentId: DOC, versionId: VERSION, uploadPath: '/x' });
   mocks.uploadEvidenceContent.mockReset().mockResolvedValue(uploadedVersion);
   mocks.removeEvidenceDocument.mockReset().mockResolvedValue(undefined);
+  mocks.getEvidenceDocument.mockReset().mockResolvedValue(document);
   mocks.getDocument.mockReset().mockResolvedValue(document);
 });
 
@@ -230,34 +233,40 @@ function status(documentId: string, versionId: string, kind = 'sales-order'): Pr
 }
 
 describe('GET /api/evidence/:kind/:ownerId', () => {
-  it('projects the fresh status of the exact version returned by the upload', async () => {
-    const response = await upload();
-    const { documentId, versionId } = (await response.json()) as typeof projection;
-    expect(await (await status(documentId, versionId)).json()).toEqual(projection);
-    mocks.getDocument.mockResolvedValueOnce({
-      ...document,
-      versions: [{ ...uploadedVersion, status: 'infected' }],
-    });
-    expect(await (await status(documentId, versionId)).json()).toEqual({
-      ...projection,
-      status: 'infected',
-    });
-    expect(mocks.getDocument).toHaveBeenCalledWith(session, DOC);
-  });
+  it.each(['sales-order', 'vendor-bill', 'rfq'])(
+    'reads %s scan status through the record route, not GET /v1/documents/:id',
+    async (kind) => {
+      const response = await upload(ORDER, { kind });
+      const { documentId, versionId } = (await response.json()) as typeof projection;
+      expect(await (await status(documentId, versionId, kind)).json()).toEqual(projection);
+      mocks.getEvidenceDocument.mockResolvedValueOnce({
+        ...document,
+        versions: [{ ...uploadedVersion, status: 'infected' }],
+      });
+      expect(await (await status(documentId, versionId, kind)).json()).toEqual({
+        ...projection,
+        status: 'infected',
+      });
+      expect(mocks.getEvidenceDocument).toHaveBeenCalledWith(session, kind, ORDER, DOC);
+      expect(mocks.getDocument).not.toHaveBeenCalled();
+    },
+  );
 
   it('refuses a file of another record, of another owner type, or another version', async () => {
-    mocks.getDocument.mockResolvedValueOnce({ ...document, ownerId: VERSION });
+    mocks.getEvidenceDocument.mockResolvedValueOnce({ ...document, ownerId: VERSION });
     expect((await status(DOC, VERSION)).status).toBe(404);
-    mocks.getDocument.mockResolvedValueOnce({ ...document, ownerType: 'company_logo' });
+    mocks.getEvidenceDocument.mockResolvedValueOnce({ ...document, ownerType: 'company_logo' });
     expect((await status(DOC, VERSION)).status).toBe(404);
     expect((await status(DOC, ORDER)).status).toBe(404);
+    expect(mocks.getDocument).not.toHaveBeenCalled();
   });
 
   it('refuses malformed ids and an unknown kind before the API, and passes a refusal through', async () => {
     expect((await status('x', VERSION)).status).toBe(400);
     expect((await status(DOC, VERSION, 'verification_case')).status).toBe(400);
-    expect(mocks.getDocument).not.toHaveBeenCalled();
-    mocks.getDocument.mockRejectedValueOnce(new ApiError(403, 'forbidden'));
+    expect(mocks.getEvidenceDocument).not.toHaveBeenCalled();
+    mocks.getEvidenceDocument.mockRejectedValueOnce(new ApiError(403, 'forbidden'));
     expect((await status(DOC, VERSION)).status).toBe(403);
+    expect(mocks.getDocument).not.toHaveBeenCalled();
   });
 });
