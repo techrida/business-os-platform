@@ -24,6 +24,7 @@ import { createStaffUser, createTenantWithEntity, organizations } from '@bos/db'
 import { createTestDatabase, type TestDatabase } from '@bos/db/testing';
 import { ForbiddenException, type INestApplication } from '@nestjs/common';
 import { Test } from '@nestjs/testing';
+import { sql } from 'drizzle-orm';
 import { drizzle } from 'drizzle-orm/node-postgres';
 import { Pool } from 'pg';
 import request from 'supertest';
@@ -40,6 +41,7 @@ import { NumberingService } from '../../platform/settings/numbering.service';
 import { ErrorBodyFilter } from '../../platform/tenancy/error-body.filter';
 import { CustomersService } from '../customers/customers.service';
 import { VendorsService } from '../vendors/vendors.service';
+import { PartyImportExpirySweeper } from './party-import-expiry.sweeper';
 import { PartyImportsController } from './party-imports.controller';
 import { PartyImportsService } from './party-imports.service';
 
@@ -676,5 +678,85 @@ describe('who may import, and the record', () => {
     await expect(
       ownerPool.query('DELETE FROM app.party_import_batches WHERE id = $1', [preview.id]),
     ).rejects.toThrow(/never deleted/);
+  });
+});
+
+// Last on purpose: the sweep expires every previewed batch older than 7 days in the whole database, the other tests' too.
+describe('an unused preview expires after 7 days (FU11)', () => {
+  const DAY = 24 * 60 * 60_000;
+  const sweeper = () => new PartyImportExpirySweeper(db, new AuditService(db));
+  const batch = async (id: string) =>
+    (
+      await ownerPool.query<{ status: string; rows: unknown[]; row_count: number }>(
+        'SELECT status, rows, row_count FROM app.party_import_batches WHERE id = $1',
+        [id],
+      )
+    ).rows[0]!;
+  const preview = async (name: string) =>
+    detailOf(
+      (
+        await upload(
+          'customers',
+          `${CUSTOMER_HEADER}
+${name} ${uniq()},,,R,C,NP,,e@example.com,
+`,
+        )
+      ).body,
+    );
+
+  it('expires a stale previewed batch, clears its rows, keeps a young one and a committed one, and is repeatable', async () => {
+    const stale = await preview('Stale');
+    const young = await preview('Young');
+    const committed = await preview('Committed');
+    // Old code had no expiry at all: every preview stayed with its rows for ever.
+    await withTx(db, a, systemActor('test'), (tx) =>
+      tx.execute(
+        sql`UPDATE app.party_import_batches SET created_at = ${new Date(now.getTime() + 5 * DAY).toISOString()}::timestamptz WHERE id = ${young.id}::uuid`,
+      ),
+    );
+    await request(baseUrl).post(`/v1/imports/${committed.id}/commit`).expect(200);
+    expect((await batch(stale.id)).rows).toHaveLength(1);
+
+    // 6 days 23 hours old: still kept.
+    const early = await sweeper().sweep(new Date(now.getTime() + 7 * DAY - 60 * 60_000));
+    expect(early.expired).toBe(0);
+    expect((await batch(stale.id)).status).toBe('previewed');
+
+    const later = new Date(now.getTime() + 8 * DAY);
+    const first = await sweeper().sweep(later);
+    expect(first.failed).toBe(0);
+    expect(first.expired).toBeGreaterThanOrEqual(1);
+    expect(await batch(stale.id)).toMatchObject({ status: 'expired', rows: [], row_count: 1 });
+    expect((await batch(young.id)).status).toBe('previewed');
+    expect((await batch(young.id)).rows).toHaveLength(1);
+    expect((await batch(committed.id)).status).toBe('committed');
+    expect((await batch(committed.id)).rows).toHaveLength(1);
+    expect(
+      await count(
+        `SELECT count(*) AS n FROM audit.audit_events WHERE tenant_id = $1 AND entity_id = $2 AND action = 'party_import.expired'`,
+        [a.tenantId, stale.id],
+      ),
+    ).toBe(1);
+
+    const second = await sweeper().sweep(later);
+    expect(second.expired).toBe(0);
+    expect(
+      await count(
+        `SELECT count(*) AS n FROM audit.audit_events WHERE tenant_id = $1 AND entity_id = $2 AND action = 'party_import.expired'`,
+        [a.tenantId, stale.id],
+      ),
+    ).toBe(1);
+
+    // The record reads as expired and cannot be committed; the database keeps it final.
+    const read = detailOf((await request(baseUrl).get(`/v1/imports/${stale.id}`).expect(200)).body);
+    expect(read).toMatchObject({ status: 'expired', rows: [], rowCount: 1 });
+    const refused = await request(baseUrl).post(`/v1/imports/${stale.id}/commit`);
+    expect(refused.status).toBe(409);
+    expect(errorOf(refused.body).message).toMatch(/expired/);
+    await expect(
+      ownerPool.query(`UPDATE app.party_import_batches SET file_name = 'x' WHERE id = $1`, [
+        stale.id,
+      ]),
+    ).rejects.toThrow(/final/);
   });
 });

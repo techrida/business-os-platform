@@ -736,6 +736,13 @@
       "when": 1783000000150,
       "tag": "0171_credit_override_order_value_backfill",
       "breakpoints": true
+    },
+    {
+      "idx": 105,
+      "version": "7",
+      "when": 1783000000151,
+      "tag": "0185_party_import_batches_expiry",
+      "breakpoints": true
     }
   ]
 }

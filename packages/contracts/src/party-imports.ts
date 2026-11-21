@@ -74,7 +74,7 @@ export const PARTY_IMPORT_ROW_STATUSES = ['valid', 'duplicate', 'error', 'create
 export const PartyImportRowStatusSchema = z.enum(PARTY_IMPORT_ROW_STATUSES);
 export type PartyImportRowStatus = z.infer<typeof PartyImportRowStatusSchema>;
 
-export const PARTY_IMPORT_BATCH_STATUSES = ['previewed', 'committed'] as const;
+export const PARTY_IMPORT_BATCH_STATUSES = ['previewed', 'committed', 'expired'] as const;
 export const PartyImportBatchStatusSchema = z.enum(PARTY_IMPORT_BATCH_STATUSES);
 export type PartyImportBatchStatus = z.infer<typeof PartyImportBatchStatusSchema>;
 
