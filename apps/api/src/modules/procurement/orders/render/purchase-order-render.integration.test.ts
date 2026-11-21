@@ -940,6 +940,32 @@ describe('a render that keeps failing (R4c2: TR-Q4, F1-Q13)', () => {
     await expect(service.link(po.id, 1)).resolves.toBeDefined();
   });
 
+  it('counts a document left by a worker that crashed as a failed try, and gives up at the limit', async () => {
+    const po = await issuedPo();
+    const c = await candidateOf(po, 1);
+    let clock = new Date();
+    const worker = failingWorker(() => clock);
+    for (let n = 1; n < MAX_RENDER_ATTEMPTS; n += 1) {
+      expect(await worker.renderOne(c)).toBe('failed');
+      clock = new Date((await failureRow(c.versionId))?.next_attempt_at ?? clock);
+    }
+    expect(await failureRow(c.versionId)).toMatchObject({ attempts: MAX_RENDER_ATTEMPTS - 1 });
+    // The last try's worker died after createGenerated: no failure was recorded, only the unfilled document.
+    const orphan = await createOrphan(c, ORPHAN_AFTER_MS + 60_000);
+
+    await sweeper.sweep();
+
+    const [doc] = (await documentRows(c.versionId)).filter((d) => d.document_id === orphan);
+    expect(doc?.removed_at).not.toBeNull();
+    const given = await failureRow(c.versionId);
+    expect(given).toMatchObject({ attempts: MAX_RENDER_ATTEMPTS, last_failure_kind: 'abandoned' });
+    expect(given?.exhausted_at).not.toBeNull();
+    expect(await actions(scopeA, po.id)).toEqual(['purchase_order.pdf_render_failed']);
+    // Given up, so the crash loop ends: no later sweep takes it again.
+    const farFuture = new Date(Date.now() + 365 * 24 * 60 * 60_000);
+    expect(ids(await store.candidates(farFuture, 1_000))).not.toContain(c.versionId);
+  });
+
   it('does not let a live document whose only upload was rejected block the next try or a Retry', async () => {
     const po = await issuedPo();
     const c = await candidateOf(po, 1);
