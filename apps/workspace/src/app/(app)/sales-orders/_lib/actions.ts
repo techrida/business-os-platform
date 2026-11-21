@@ -3,9 +3,11 @@
 import { revalidatePath } from 'next/cache';
 import { redirect } from 'next/navigation';
 
-import { getOpportunity } from '@/components/p2/crm/crm-api';
+import { getCreditHold, getOpportunity } from '@/components/p2/crm/crm-api';
+import { creditPositionView } from '@/components/p2/crm/credit-position';
 import { keyOf } from '@/components/p2/crm/idempotency';
 import { apiDetailOf } from '@/lib/api-code';
+import { getNumberSystems } from '@/lib/display-settings';
 import {
   confirmSalesOrder,
   describeBillingFailure,
@@ -55,7 +57,8 @@ function failed(err: unknown, key: string): ActionState {
 /**
  * The deal a `credit_hold` refusal names (F1-Q20), with what the caller may do about it: open the
  * deal (read as them; Finance often cannot, since it reads deals only at `own`) and override the
- * hold (`credit.override`). The refusal carries the deal's id only, never amounts.
+ * hold (`credit.override`). The refusal carries the deal's id only, never amounts: a `credit.override` holder
+ * gets the position read from the credit-hold route, so the Override dialog shows what the hold is made of.
  */
 async function creditHoldOf(
   session: Session,
@@ -72,12 +75,18 @@ async function creditHoldOf(
       () => false,
     ),
   ]);
+  const position = canOverride
+    ? await getCreditHold(session, id)
+        .then(async (hold) => creditPositionView(hold, await getNumberSystems()))
+        .catch(() => null)
+    : null;
   return {
     opportunityId: id,
     number: deal?.number ?? null,
     canOpen: deal !== null,
     canOverride,
     quotationVersionId,
+    ...(position ? { position } : {}),
   };
 }
 

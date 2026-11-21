@@ -21,6 +21,27 @@
   gap: 16px;
 }
 
+.overridePosition {
+  display: grid;
+  gap: 4px;
+  margin: 0;
+}
+
+.overridePosition div {
+  display: flex;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.overridePosition dt {
+  color: var(--color-text-muted);
+}
+
+.overridePosition dd {
+  margin: 0;
+  font-variant-numeric: tabular-nums;
+}
+
 .stageCard,
 .summary,
 .records {

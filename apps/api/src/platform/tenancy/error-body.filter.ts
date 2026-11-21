@@ -238,7 +238,8 @@ const GENERIC_MESSAGE: Record<ErrorCode, string> = {
   evidence_policy_unmet: 'The evidence given does not meet the policy',
   decided_on_in_future: 'The decision date is in the future',
   quotation_not_accepted: 'Only an accepted quotation can be confirmed',
-  credit_hold: 'The customer is over its credit limit; the deal needs a credit override first',
+  credit_hold:
+    'With its receivables, its orders not yet invoiced and this order, the customer is over its credit limit; the deal needs a credit override first',
   sales_order_not_open: 'This sales order is not open for this change',
   delivery_already_released: 'The delivery of this sales order is already released',
   contact_activity_required: 'Log a call, email or meeting before moving this lead to Contacted.',
@@ -393,8 +394,9 @@ const CONFLICT_CODES: readonly ErrorCode[] = [
   // U8 sales orders: only an accepted quotation confirms, only a confirmed order marks a line, only a planned
   // line becomes billable.
   'quotation_not_accepted',
-  // F1-Q20/F1-Q26: the customer owes more than its credit limit and the deal has no override (`details`: the
-  // opportunity id only; the limit and exposure are for credit.override holders).
+  // F1-Q20/F1-Q26: receivables, uninvoiced orders and this order are over the credit limit and the deal has no
+  // override that covers the order (`details`: the opportunity id only; the limit and amounts are for
+  // credit.override holders).
   'credit_hold',
   'sales_order_not_open',
   'delivery_already_released',

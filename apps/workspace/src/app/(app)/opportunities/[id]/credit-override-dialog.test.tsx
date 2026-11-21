@@ -32,6 +32,7 @@ const overridden = CreditHoldDtoSchema.parse({
   currency: 'NPR',
   creditLimit: '500000.00',
   exposure: '512345.50',
+  uninvoiced: '0.00',
   orderValue: '0.00',
   exposureWithOrder: '512345.50',
   held: true,
@@ -40,7 +41,9 @@ const overridden = CreditHoldDtoSchema.parse({
     byUserId: '33333333-3333-4333-8333-333333333333',
     byName: 'Gita Karki',
     at: '2026-11-20T05:45:00.000Z',
+    orderValue: '0.00',
   },
+  overrideCovers: true,
 });
 
 beforeEach(() => {
@@ -120,8 +123,50 @@ it('offers a reload when the deal is no longer on hold (409)', async () => {
   await click(footerButton('Override hold'));
   await settle();
   const [message, options] = mocks.error.mock.calls[0] as [string, { action?: { label: string } }];
-  expect(message).toBe('This opportunity is no longer on credit hold. Reload to see it.');
+  expect(message).toBe(
+    'The credit position of this opportunity changed, or the hold is gone. Reload to see it.',
+  );
   expect(options.action?.label).toBe('Reload');
   expect(dialog()).not.toBeNull();
+  await mounted.unmount();
+});
+
+it('shows what the hold is made of, and why an earlier override no longer applies (R5 FU4)', async () => {
+  const mounted = await mountForm(
+    <CreditOverrideDialog
+      opportunityId={OPP}
+      number="DEAL-0042"
+      position={{
+        orderValue: '90400.00',
+        rows: [
+          { label: 'Credit limit', value: 'NPR 1,00,000.00' },
+          { label: 'Open receivables', value: 'NPR 0.00' },
+          { label: 'Confirmed orders not yet invoiced', value: 'NPR 90,400.00' },
+          { label: 'This order', value: 'NPR 90,400.00' },
+          { label: 'Total against the limit', value: 'NPR 1,80,800.00' },
+        ],
+        note: 'An earlier override on this deal was for an order of NPR 5,000.00; this order is worth more.',
+      }}
+    />,
+  );
+  await click(mounted.container.querySelector('button'));
+  const text = dialog()?.textContent ?? '';
+  expect(text).toContain('Confirmed orders not yet invoiced');
+  expect(text).toContain('NPR 90,400.00');
+  expect(text).toContain('Total against the limit');
+  expect(text).toContain('this order is worth more');
+  expect(text).toContain('its orders not yet invoiced and this order');
+
+  // The override is given for the order value on screen, so a changed order is refused by the API (409).
+  mocks.overrideCreditHold.mockResolvedValue(overridden);
+  await click(footerButton('Override hold'));
+  await settle();
+  await typeReason('Advance received.');
+  await click(footerButton('Override hold'));
+  await settle();
+  expect(mocks.overrideCreditHold).toHaveBeenCalledExactlyOnceWith(expect.anything(), OPP, {
+    reason: 'Advance received.',
+    orderValue: '90400.00',
+  });
   await mounted.unmount();
 });
