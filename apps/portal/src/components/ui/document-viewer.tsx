@@ -34,7 +34,8 @@ export interface ViewDocumentProps {
  * backdrop come from the browser) that draws the PDF with `PdfPages`, never in an iframe. The PDF is fetched from
  * `previewUrl` once each time the dialog opens, so rendering this component costs no request. While the file is
  * still being prepared (HTTP 409 or 425) or fails, the dialog shows a message and a Retry button that makes
- * one new request per click. A 404 (not available, or access taken away) shows a plain "not available" message with
+ * one new request per click. A 424 (the PDF failed or was refused) says it is delayed and the team has been told,
+ * with no Retry. A 404 (not available, or access taken away) shows a plain "not available" message with
  * no Retry and no reason; nothing polls, because every call to such a route issues a single-use signed link.
  * Download fetches the file and saves it, so a refusal (not ready yet, signed out) is a sentence beside the button and
  * the page stays as it was (round 4, R4c2: TR-Q4). Light mode only. Full screen at 480px and below.
@@ -209,18 +210,23 @@ type PdfState =
   | { status: 'loading' }
   | { status: 'ready'; data: Uint8Array }
   | { status: 'preparing' }
+  | { status: 'delayed' }
   | { status: 'unavailable' }
   | { status: 'denied' }
   | { status: 'error' };
 
 /**
- * 409 and 425 mean "still being prepared"; 404 means the document is not available (never ready, or revoked), so
- * retrying cannot help; 401 and 403 mean access was lost; other non-2xx is a failure.
+ * 409 and 425 mean "still being prepared"; 424 means the PDF failed or was refused and the team has been told, so
+ * retrying now cannot help; 404 means the document is not available (never ready, or revoked), so retrying cannot
+ * help; 401 and 403 mean access was lost; other non-2xx is a failure.
  */
-function fetchOutcome(status: number): 'ready' | 'preparing' | 'unavailable' | 'denied' | 'error' {
+function fetchOutcome(
+  status: number,
+): 'ready' | 'preparing' | 'delayed' | 'unavailable' | 'denied' | 'error' {
   if (status >= 200 && status < 300) return 'ready';
   if (status === 404) return 'unavailable';
   if (status === 409 || status === 425) return 'preparing';
+  if (status === 424) return 'delayed';
   if (status === 401 || status === 403) return 'denied';
   return 'error';
 }
@@ -306,6 +312,9 @@ function PdfStage({ name, previewUrl }: { name: string; previewUrl: string }) {
         onRetry={retry}
       />
     );
+  }
+  if (state.status === 'delayed') {
+    return <Message title="Delayed" text="This PDF is delayed. Our team has been told." />;
   }
   if (state.status === 'unavailable') {
     return <Message title="Not available" text="This document is not available." />;

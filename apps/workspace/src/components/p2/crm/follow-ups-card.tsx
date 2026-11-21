@@ -17,7 +17,7 @@ import { Panel } from '@/components/ui/panel';
 import { toast } from '@/components/ui/toast';
 import { when } from '@/lib/kernel-format';
 
-import { subjectOf } from './follow-up-subject';
+import { followUpActionsFor, hasFollowUpActions, subjectOf } from './follow-up-subject';
 import { sentence } from './format';
 import { ACTIVITY_KIND_LABELS, isOverdue } from './forms';
 import styles from './follow-ups-card.module.css';
@@ -33,9 +33,9 @@ export interface FollowUpsCardProps {
   owners: readonly LeadOwnerOption[];
   /** Offer Schedule follow-up in the header. Default: yes, when there is a lead. */
   schedule?: boolean | undefined;
-  /** Whether the caller can complete, reschedule, cancel, or schedule follow-ups. Default: true. */
+  /** Whether the caller can schedule follow-ups. Default: true. Each row's own `can` flags decide its actions. */
   canEdit?: boolean | undefined;
-  /** The caller's `app.users.id`: without write access they can still complete follow-ups assigned to them. */
+  /** Ignored: each row's `can` flags decide its actions. Kept until the callers stop passing it. */
   currentUserId?: string | null | undefined;
   /** The time overdue is measured against. Default: now. */
   now?: Date | undefined;
@@ -107,22 +107,21 @@ export function assigneeAvatar(
 }
 
 /**
- * Complete, Reschedule and Cancel for one planned follow-up, on any subject. Shared by the
- * Follow-ups card and the Planned table on /activities.
+ * Complete, Reschedule and Cancel for one planned follow-up, on any subject, each shown only when the row's own
+ * `can` flag allows it (nothing on a row without flags). Shared by the Follow-ups card and the Planned table on
+ * /activities.
  */
 export function FollowUpActions({
   item,
   owners,
   className,
-  completeOnly = false,
 }: {
   item: ActivityDto;
   owners: readonly LeadOwnerOption[];
   className?: string | undefined;
-  /** Only Complete: an assignee with read access may finish their own follow-up but not move or cancel it. */
-  completeOnly?: boolean | undefined;
 }) {
   const [pending, startTransition] = useTransition();
+  const can = followUpActionsFor(item);
 
   function complete() {
     startTransition(async () => {
@@ -136,55 +135,59 @@ export function FollowUpActions({
     return report(result, 'Follow-up cancelled.', 'The follow-up could not be cancelled.');
   }
 
+  if (!hasFollowUpActions(can)) return null;
+
   return (
     <div className={className ?? styles.actions} aria-busy={pending || undefined}>
-      <Button
-        size="small"
-        className={styles.action}
-        disabled={pending}
-        aria-label={`Complete ${item.subject}`}
-        onClick={complete}
-      >
-        Complete
-      </Button>
-      {completeOnly ? null : (
-        <>
-          <RescheduleFollowUpDialog
-            item={item}
-            owners={owners}
-            trigger={
-              <Button
-                variant="secondary"
-                size="small"
-                className={styles.action}
-                disabled={pending}
-                aria-label={`Reschedule ${item.subject}`}
-              >
-                Reschedule
-              </Button>
-            }
-          />
-          <ConfirmDialog
-            trigger={
-              <Button
-                variant="ghost"
-                size="small"
-                className={styles.action}
-                disabled={pending}
-                aria-label={`Cancel ${item.subject}`}
-              >
-                Cancel
-              </Button>
-            }
-            title="Cancel this follow-up?"
-            description={`${item.subject} is removed from the plan. It does not appear in History.`}
-            confirmLabel="Cancel follow-up"
-            cancelLabel="Keep follow-up"
-            destructive
-            onConfirm={cancel}
-          />
-        </>
-      )}
+      {can.complete ? (
+        <Button
+          size="small"
+          className={styles.action}
+          disabled={pending}
+          aria-label={`Complete ${item.subject}`}
+          onClick={complete}
+        >
+          Complete
+        </Button>
+      ) : null}
+      {can.reschedule ? (
+        <RescheduleFollowUpDialog
+          item={item}
+          owners={owners}
+          trigger={
+            <Button
+              variant="secondary"
+              size="small"
+              className={styles.action}
+              disabled={pending}
+              aria-label={`Reschedule ${item.subject}`}
+            >
+              Reschedule
+            </Button>
+          }
+        />
+      ) : null}
+      {can.cancel ? (
+        <ConfirmDialog
+          trigger={
+            <Button
+              variant="ghost"
+              size="small"
+              className={styles.action}
+              disabled={pending}
+              aria-label={`Cancel ${item.subject}`}
+            >
+              Cancel
+            </Button>
+          }
+          title="Cancel this follow-up?"
+          description={`${item.subject} is removed from the plan. It does not appear in History.`}
+          confirmLabel="Cancel follow-up"
+          cancelLabel="Keep follow-up"
+          destructive
+          onConfirm={cancel}
+        />
+      ) : null}
     </div>
   );
 }
@@ -193,16 +196,11 @@ function FollowUpRow({
   item,
   owners,
   now,
-  canEdit,
-  currentUserId,
 }: {
   item: ActivityDto;
   owners: readonly LeadOwnerOption[];
   now: Date;
-  canEdit: boolean;
-  currentUserId: string | null | undefined;
 }) {
-  const ownFollowUp = currentUserId != null && item.assigneeUserId === currentUserId;
   const overdue = isOverdue(item, now);
   const assignee = assigneeName(item);
 
@@ -224,32 +222,28 @@ function FollowUpRow({
           </span>
         </p>
       </div>
-      {canEdit ? (
-        <FollowUpActions item={item} owners={owners} />
-      ) : ownFollowUp ? (
-        <FollowUpActions item={item} owners={owners} completeOnly />
-      ) : null}
+      <FollowUpActions item={item} owners={owners} />
     </li>
   );
 }
 
 /**
- * A record's planned follow-ups, earliest first, each with the actions the caller may take: all of
- * them with edit access, Complete alone on their own follow-up without it. `empty` shows when
- * nothing is planned. Used by the lead's Follow-ups card and the opportunity's Activities panel.
+ * A record's planned follow-ups, earliest first, each with the actions its own `can` flags allow.
+ * `empty` shows when nothing is planned. Used by the lead's Follow-ups card and the opportunity's
+ * Activities panel.
  */
 export function FollowUpList({
   items,
   owners,
-  canEdit = true,
-  currentUserId,
   now,
   empty,
   label,
 }: {
   items: readonly ActivityDto[];
   owners: readonly LeadOwnerOption[];
+  /** Ignored: each row's `can` flags decide its actions. Kept until the callers stop passing it. */
   canEdit?: boolean | undefined;
+  /** Ignored, as `canEdit`. */
   currentUserId?: string | null | undefined;
   now?: Date | undefined;
   empty: ReactNode;
@@ -262,14 +256,7 @@ export function FollowUpList({
   return (
     <ol className={styles.list} aria-label={label}>
       {planned.map((item) => (
-        <FollowUpRow
-          key={item.id}
-          item={item}
-          owners={owners}
-          now={at}
-          canEdit={canEdit}
-          currentUserId={currentUserId}
-        />
+        <FollowUpRow key={item.id} item={item} owners={owners} now={at} />
       ))}
     </ol>
   );
@@ -287,7 +274,6 @@ export function FollowUpsCard({
   owners,
   schedule,
   canEdit = true,
-  currentUserId,
   now,
   className,
 }: FollowUpsCardProps) {
@@ -311,8 +297,6 @@ export function FollowUpsCard({
       <FollowUpList
         items={items}
         owners={owners}
-        canEdit={canEdit}
-        currentUserId={currentUserId}
         now={at}
         empty={
           <EmptyState title="No follow-ups planned" icon="calendar-days" headingLevel={3}>

@@ -50,6 +50,9 @@ function toInline(disposition: string | null): string {
   return `inline${rest}`;
 }
 
+/** What a customer reads when their PDF failed to render or was refused by the scan. */
+export const DELAYED_MESSAGE = 'This PDF is delayed. Our team has been told.';
+
 const isPdf = (contentType: string | null): boolean =>
   (contentType ?? '').split(';')[0]?.trim().toLowerCase() === 'application/pdf';
 
@@ -62,7 +65,9 @@ const isPdf = (contentType: string | null): boolean =>
  * header (a sandbox stops the browser's PDF viewer) and nothing that could set a cookie.
  *
  * A bad id, a 404 and a 403 all answer the same `notFound` text, and 409 and 410 both mean the PDF
- * is not ready. The token and the API address never reach the browser.
+ * is not ready. On a customer route the API's 424 (the PDF failed or was refused) answers 424 with
+ * `DELAYED_MESSAGE`; vendor routes keep their old answer. The token and the API address never
+ * reach the browser.
  */
 export async function handleSignedFile(opts: SignedFileRouteOptions): Promise<Response> {
   let session: Session | null;
@@ -114,6 +119,8 @@ export async function handleSignedFile(opts: SignedFileRouteOptions): Promise<Re
         409,
       );
     }
+    // Only the customer document routes have the failed-PDF state; vendor PO routes are unchanged.
+    if (status === 424 && opts.orgKind === 'customer') return plain(DELAYED_MESSAGE, 424);
     return plain('We could not fetch the PDF just now. Please try again.', 502);
   }
 }

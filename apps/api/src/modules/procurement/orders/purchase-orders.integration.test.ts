@@ -51,6 +51,7 @@ import {
 import { ReceiptsService } from '../receipts/receipts.service';
 import { quotationLineAmounts } from '../sourcing/sourcing.rules';
 import { PoAmendmentSubject } from './po-amendment.subject';
+import { PO_ISSUE_ACTION, PO_READ_ONLY_ACTIONS } from './po-read-access';
 import { PO_AMENDMENT_DOCUMENT_TYPE, PO_AMENDMENT_WORKFLOW_SPEC } from './purchase-order.rules';
 import { PurchaseOrdersService } from './purchase-orders.service';
 import { PurchaseOrderRenderNudge } from './render/purchase-order-render.nudge';
@@ -208,7 +209,7 @@ beforeAll(async () => {
   approvals = new ApprovalsService(db, audit, notify, directory, caller, () => now);
   const renderNudge = new PurchaseOrderRenderNudge(renderQueue as unknown as Queue);
   approvals.registerSubject(new PoAmendmentSubject(audit, approvals, () => now, renderNudge));
-  approvals.registerSubject(new EmergencyReviewSubject(audit));
+  approvals.registerSubject(new EmergencyReviewSubject(audit, approvals));
   service = new PurchaseOrdersService(
     db,
     approvals,
@@ -1051,7 +1052,8 @@ describe('a read-only purchase order view for accountant, finance and warehouse 
     for (const [userId, role] of refused) {
       as(userId, role);
       expect((await httpErrorOf(service.list(PAGE))).getStatus()).toBe(403);
-      expect((await httpErrorOf(service.get(po.id))).getStatus()).toBe(403);
+      // The detail is a 404 for staff with no way in (R4f Q1 b): it never says whether the order exists.
+      expect((await httpErrorOf(service.get(po.id))).getStatus()).toBe(404);
       expect((await httpErrorOf(service.versions(po.id))).getStatus()).toBe(403);
     }
   });
@@ -1089,6 +1091,224 @@ describe('a read-only purchase order view for accountant, finance and warehouse 
     );
     as(U.mgmt, 'management');
     expect((await approvals.get(r.approvalRequestId!)).context?.href).toBeNull();
+  });
+});
+
+// ---------------------------------------------------------------------------------------- approver read
+
+describe('an approver opens the order they approve, read-only, the detail only (R4f Q1 b)', () => {
+  /** `role`'s default grants without any grant that opens purchase orders. */
+  const withoutPoGrants = (role: RoleKey) =>
+    new Map(
+      [...grantsOf(role)].filter(
+        ([p]) => p !== PO_ISSUE_ACTION && !PO_READ_ONLY_ACTIONS.includes(p),
+      ),
+    );
+  const statusOf = async (call: Promise<unknown>) => (await httpErrorOf(call)).getStatus();
+  const reviewOf = async (poId: string) => {
+    const [review] = await read((tx) =>
+      tx
+        .select({ id: approvalRequests.id })
+        .from(approvalRequests)
+        .where(
+          sql`${approvalRequests.documentType} = ${EMERGENCY_REVIEW_DOCUMENT_TYPE}
+              AND ${approvalRequests.documentId} = ${poId}`,
+        ),
+    );
+    return review!.id;
+  };
+  /** An emergency order received in full, so its review waits for Management. */
+  const reviewedPo = async () => {
+    const po = await issued({ quantity: '5', unitPrice: '100.00', emergency: true });
+    await receive(po, '5');
+    return { po, reviewId: await reviewOf(po.id) };
+  };
+
+  it('opens an emergency review to Management while pending and once decided; nothing else opens', async () => {
+    const { po, reviewId } = await reviewedPo();
+    const other = await issued();
+    as(U.mgmt, 'management');
+    expect(grantsOf('management').has(PO_ISSUE_ACTION)).toBe(false);
+    // Pending, in Management's inbox: the detail, with no action of the order's own.
+    expect(await service.get(po.id)).toMatchObject({
+      id: po.id,
+      status: 'fully_received',
+      can: { enterBill: false, receive: false },
+    });
+    // No broader procurement access: the list and the versions are still refused, another order is a 404.
+    expect(await statusOf(service.list(PAGE))).toBe(403);
+    expect(await statusOf(service.versions(po.id))).toBe(403);
+    expect(await statusOf(service.get(other.id))).toBe(404);
+    // Whoever submitted the review (the warehouse, here without its order grants) approves nothing: 404.
+    as(U.wh, 'warehouse');
+    current.grants = withoutPoGrants('warehouse');
+    expect(await statusOf(service.get(po.id))).toBe(404);
+    current.grants = null;
+
+    await decide(U.mgmt, 'management', reviewId);
+    as(U.mgmt, 'management');
+    expect((await service.get(po.id)).id).toBe(po.id);
+    expect(await statusOf(service.list(PAGE))).toBe(403);
+    // The same order from another entity of the tenant, or from another tenant, is a 404.
+    current.scope = scopeB;
+    expect(await statusOf(service.get(po.id))).toBe(404);
+    const otherTenant = await createTenantWithEntity(appPool);
+    current.scope = { tenantId: otherTenant.tenantId, organizationId: otherTenant.organizationId };
+    expect(await statusOf(service.get(po.id))).toBe(404);
+  });
+
+  it('opens an amendment to the approver of its active step, keeps it after a rejection, and not to later steps', async () => {
+    const po = await issued();
+    as(U.acct, 'accountant');
+    current.grants = withoutPoGrants('accountant');
+    expect(await statusOf(service.get(po.id))).toBe(404);
+
+    as(U.proc, 'procurement');
+    const r = await service.amend(
+      po.id,
+      { reason, lines: [{ poLineId: po.lineId, unitPrice: '132743.36' }] },
+      randomUUID(),
+    );
+    expect(r.outcome).toBe('pending_approval');
+    expect(await stepRoles(r.approvalRequestId!)).toEqual(['accountant', 'finance', 'management']);
+
+    as(U.acct, 'accountant');
+    current.grants = withoutPoGrants('accountant');
+    expect(await service.get(po.id)).toMatchObject({
+      id: po.id,
+      status: 'amendment_pending',
+      can: { enterBill: false, receive: false },
+    });
+    expect(await statusOf(service.list(PAGE))).toBe(403);
+    // A bill grant that does not reach the order (own, and the requester is someone else) opens the detail through
+    // the approval, and still not the list or the versions.
+    current.grants = new Map([
+      ...grantsOf('accountant'),
+      ['payables.bill.enter', 'own'],
+      ['payables.bill.read', 'own'],
+    ]);
+    expect(await service.get(po.id)).toMatchObject({
+      id: po.id,
+      can: { enterBill: false, receive: false },
+    });
+    const page = await service.list(PAGE);
+    expect(page.rows.map((p) => p.id)).not.toContain(po.id);
+    expect(page.total).toBe(page.rows.length);
+    expect(await statusOf(service.versions(po.id))).toBe(404);
+    // An amendment whose snapshot carries the order id in capitals opens the same way.
+    await exec(
+      scopeA,
+      sql`UPDATE app.approval_requests
+            SET snapshot = jsonb_set(snapshot, '{amendment,purchaseOrderId}', to_jsonb(upper(${po.id}::text)))
+          WHERE id = ${r.approvalRequestId!}`,
+    );
+    expect(await service.get(po.id)).toMatchObject({ id: po.id });
+    // Finance's step is not active yet: nothing opens.
+    as(U.fin, 'finance');
+    current.grants = withoutPoGrants('finance');
+    expect(await statusOf(service.get(po.id))).toBe(404);
+
+    current.grants = null;
+    await decide(U.acct, 'accountant', r.approvalRequestId!, 'reject');
+    as(U.acct, 'accountant');
+    current.grants = withoutPoGrants('accountant');
+    expect(await service.get(po.id)).toMatchObject({ id: po.id, status: 'issued' });
+    // Management's step never became active.
+    as(U.mgmt, 'management');
+    current.grants = null;
+    expect(await statusOf(service.get(po.id))).toBe(404);
+  });
+
+  it('opens it to a delegate acting for Management, and to Management once the delegate decided', async () => {
+    const { po, reviewId } = await reviewedPo();
+    const [{ idp_org_id: idpOrgId }] = (
+      await exec(scopeA, sql`SELECT idp_org_id FROM app.users WHERE id = ${U.mgmt}`)
+    ).rows as [{ idp_org_id: string }];
+    const deputy = (
+      await createStaffUser(appPool, { ...scopeA, idpOrgId, roleKeys: ['management'] })
+    ).userId;
+    as(U.founder, 'founder');
+    await new ApprovalsAdminService(db, audit, caller, () => now).createDelegation({
+      fromUserId: U.mgmt,
+      toUserId: deputy,
+      startsAt: new Date(now.getTime() - 3_600_000),
+      endsAt: new Date(now.getTime() + 3_600_000),
+      documentType: null,
+    });
+
+    // The deputy holds no role in the directory: only the delegation puts the review in their inbox.
+    const link = `/procurement/orders/${po.id}`;
+    as(deputy, 'management');
+    expect((await service.get(po.id)).id).toBe(po.id);
+    expect((await approvals.get(reviewId)).context?.href).toBe(link);
+    await decide(deputy, 'management', reviewId);
+    as(deputy, 'management');
+    expect((await service.get(po.id)).id).toBe(po.id);
+    expect((await approvals.get(reviewId)).context?.href).toBe(link);
+    as(U.mgmt, 'management');
+    expect((await service.get(po.id)).id).toBe(po.id);
+    expect((await approvals.get(reviewId)).context?.href).toBe(link);
+  });
+
+  it("links the approval to the order for its approver with no order grant; not for its submitter, another approver or another order's approver", async () => {
+    const hrefOf = async (requestId: string) => (await approvals.get(requestId)).context?.href;
+    const { po, reviewId } = await reviewedPo();
+    const link = `/procurement/orders/${po.id}`;
+    const other = await issued();
+    const amendment = (
+      await service.amend(
+        other.id,
+        { reason, lines: [{ poLineId: other.lineId, unitPrice: '132743.36' }] },
+        randomUUID(),
+      )
+    ).approvalRequestId!;
+    const otherLink = `/procurement/orders/${other.id}`;
+
+    // Management, the review's pending approver, holds no order grant: linked, and the link opens the detail.
+    as(U.mgmt, 'management');
+    expect(await hrefOf(reviewId)).toBe(link);
+    expect((await service.get(po.id)).id).toBe(po.id);
+    // The order's versions and receipt progress stay closed to it (the page hides them on these answers).
+    expect(await statusOf(service.versions(po.id))).toBe(403);
+    expect(await statusOf(receiptsService.progress(po.id))).toBe(403);
+    // Its step on the amendment is not active yet: no link there, and that order is a 404.
+    expect(await hrefOf(amendment)).toBeNull();
+    expect(await statusOf(service.get(other.id))).toBe(404);
+
+    // The accountant, active on the amendment with no order grant: linked to that order only.
+    as(U.acct, 'accountant');
+    current.grants = withoutPoGrants('accountant');
+    expect(await hrefOf(amendment)).toBe(otherLink);
+    expect((await service.get(other.id)).id).toBe(other.id);
+    expect(await hrefOf(reviewId)).toBeNull();
+    expect(await statusOf(service.get(po.id))).toBe(404);
+
+    // Finance reads every request but holds no active step on either: no link, and both orders are a 404.
+    as(U.fin, 'finance');
+    current.grants = withoutPoGrants('finance');
+    expect(await hrefOf(reviewId)).toBeNull();
+    expect(await hrefOf(amendment)).toBeNull();
+    expect(await statusOf(service.get(po.id))).toBe(404);
+    expect(await statusOf(service.get(other.id))).toBe(404);
+
+    // Whoever submitted the review (the warehouse, without its order grants) reads it, and gets no link.
+    as(U.wh, 'warehouse');
+    current.grants = withoutPoGrants('warehouse');
+    expect(await hrefOf(reviewId)).toBeNull();
+    expect(await statusOf(service.get(po.id))).toBe(404);
+
+    // A decided step keeps the link: the accountant after rejecting the amendment, Management after its review.
+    current.grants = null;
+    await decide(U.acct, 'accountant', amendment, 'reject');
+    as(U.acct, 'accountant');
+    current.grants = withoutPoGrants('accountant');
+    expect(await hrefOf(amendment)).toBe(otherLink);
+    expect((await service.get(other.id)).id).toBe(other.id);
+    current.grants = null;
+    await decide(U.mgmt, 'management', reviewId);
+    as(U.mgmt, 'management');
+    expect(await hrefOf(reviewId)).toBe(link);
+    expect((await service.get(po.id)).id).toBe(po.id);
   });
 });
 

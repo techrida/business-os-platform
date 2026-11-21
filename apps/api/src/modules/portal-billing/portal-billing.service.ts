@@ -6,6 +6,8 @@
 // - only issued tax invoices, credit notes and debit notes are read (the SQL filter is the authority). A draft,
 //   submitted, returned, approved or discarded invoice, a proforma, another party's invoice and an unknown id all
 //   answer the same 404, on every `:id` route, so existence never leaks;
+// - the PDF state (view `file` and `renderFailed`, the document route's 409 and 424) comes from generatedPdfState, the
+//   same derivation as the staff download, and is told apart only after the invoice passed the visibility check;
 // - the views are built field by field and parsed with the strict contract schemas: no staff field (status, NPR
 //   value, FX rate, approval, editor, content hash) can ride along. The seller contact is four named keys of the
 //   saved company profile, never the whole profile (no logo, display name or website).
@@ -24,6 +26,8 @@ import {
   type SignedLinkDto,
 } from '@bos/contracts';
 import {
+  documents,
+  documentVersions,
   invoiceLines,
   invoicePrintLog,
   invoices,
@@ -32,8 +36,15 @@ import {
   organizations,
   scoped,
 } from '@bos/db';
-import { Inject, Injectable, NotFoundException, Optional } from '@nestjs/common';
-import { and, asc, desc, eq, inArray, sql, type SQL } from 'drizzle-orm';
+import {
+  ConflictException,
+  HttpException,
+  Inject,
+  Injectable,
+  NotFoundException,
+  Optional,
+} from '@nestjs/common';
+import { and, asc, desc, eq, inArray, isNull, sql, type SQL } from 'drizzle-orm';
 
 import type { Principal } from '../../platform/authz/principal';
 import { DB, type Db } from '../../platform/db/db.module';
@@ -42,6 +53,12 @@ import { DocumentsService } from '../../platform/documents/documents.service';
 import { SettingsService } from '../../platform/settings/settings.service';
 import { firstPrintFormat } from '../invoices/invoice-mapping';
 import { INVOICE_OWNER_TYPE } from '../invoices/invoice-owner.policy';
+import { renderGivenUp } from '../invoices/render/render-failures';
+import {
+  generatedPdfState,
+  renderStateOf,
+  type GeneratedPdfState,
+} from '../invoices/render/render-state';
 import { assertCustomerCaller, PortalCaller } from '../portal/portal.caller';
 import { kathmanduDay, settlementRow } from '../receivables/receivables.rules';
 
@@ -54,6 +71,10 @@ type PortalInvoiceKind = (typeof PORTAL_INVOICE_KINDS)[number];
 
 /** One fixed refusal for every hidden id on every route: the bodies are byte-identical. */
 const notFound = () => new NotFoundException('Invoice not found');
+/** The caller's invoice whose PDF is still being prepared. Plain messages, as the 404: the portal reads the status. */
+const pdfNotReady = () => new ConflictException('The PDF of this invoice is still being prepared');
+/** 424 Failed Dependency: the render was given up, or the virus scan refused the file. */
+const pdfFailed = () => new HttpException('The PDF could not be prepared', 424);
 
 /** What the portal shows of one invoice's money position: the settlement less the staff-side keys. */
 export type PortalSettlement = Pick<
@@ -168,10 +189,18 @@ export function toSellerContact(rawProfile: unknown): SellerContact | null {
   return documentSellerContact(rawProfile);
 }
 
-/** What the view adds beyond the invoice rows: the original print's format and the seller's contact. */
+/** What the view adds beyond the invoice rows: the original print's format, the seller's contact, the PDF state. */
 export interface CustomerInvoiceExtras {
   format: DocumentFormatSnapshot | null;
   sellerContact: SellerContact | null;
+  /** The PDF could not be prepared (renderStateOf is `failed`). False when left out. */
+  renderFailed?: boolean;
+}
+
+/** The invoice PDF as generatedPdfState sees it, and the customer `file` of its clean original (null otherwise). */
+export interface CustomerPdf {
+  state: GeneratedPdfState;
+  file: CustomerInvoiceView['file'];
 }
 
 /** The strict customer view, field by field. Throws on a row that is not an issued portal kind (a bug, never data). */
@@ -218,6 +247,7 @@ export function toCustomerInvoiceView(
       tax: t.tax,
     })),
     file,
+    ...(extras.renderFailed === true ? { renderFailed: true } : {}),
     format: extras.format,
     sellerContact: extras.sellerContact,
   });
@@ -274,7 +304,7 @@ export class PortalBillingService {
       .from(invoiceTaxSummary)
       .where(s.where(invoiceTaxSummary, eq(invoiceTaxSummary.invoiceId, invoice.id)))
       .orderBy(asc(invoiceTaxSummary.label));
-    const file = toCustomerFile(await this.invoiceFile(p, invoice.id));
+    const pdf = await this.invoicePdf(p, invoice.id);
     // Print 1 is the original: its stored format is the one every copy of the PDF is drawn with.
     const original = await this.db
       .select({ printNo: invoicePrintLog.printNo, renderFormat: invoicePrintLog.renderFormat })
@@ -287,9 +317,10 @@ export class PortalBillingService {
       )
       .limit(1);
     const sellerContact = toSellerContact(await this.settings.get(scopeOf(p), 'entity.profile'));
-    return toCustomerInvoiceView(invoice, lines, taxSummary, file, {
+    return toCustomerInvoiceView(invoice, lines, taxSummary, pdf.file, {
       format: firstPrintFormat(original),
       sellerContact,
+      renderFailed: renderStateOf(pdf.state) === 'failed',
     });
   }
 
@@ -302,10 +333,11 @@ export class PortalBillingService {
   }
 
   /**
-   * A 60 s single-use link to the invoice PDF. 404 unless the invoice is the caller's and visible, it has a generated
-   * PDF, and that PDF's newest version scanned clean. DocumentsService.issueLinkForOwner asks no permission (customers
-   * hold no `documents.read`), so this method is the whole authorization; the documents module then re-checks the
-   * owner, the scope and the newest version's status itself.
+   * A 60 s single-use link to the clean original of the invoice PDF. 404 unless the invoice is the caller's and
+   * visible; then 409 while the PDF is being prepared, 424 when its render was given up or the virus scan refused it,
+   * and the same 404 when the file went away before the link was issued. DocumentsService.issueLinkForOwner asks no
+   * permission (customers hold no `documents.read`), so this method is the whole authorization; the documents module
+   * then re-checks the owner, the scope and the newest version's status itself.
    */
   async documentLink(id: string): Promise<SignedLinkDto> {
     const p = this.customer();
@@ -315,13 +347,14 @@ export class PortalBillingService {
       .where(visibleTo(p, eq(invoices.id, id)))
       .limit(1);
     if (invoice === undefined) throw notFound();
-    const file = await this.invoiceFile(p, invoice.id);
-    if (file === undefined || file.status !== 'clean') throw notFound();
+    const { state } = await this.invoicePdf(p, invoice.id);
+    if (state.kind === 'preparing') throw pdfNotReady();
+    if (state.kind !== 'clean') throw pdfFailed();
     try {
       return await this.documents.issueLinkForOwner(
         scopeOf(p),
         { ownerType: INVOICE_OWNER_TYPE, ownerId: invoice.id },
-        file.documentId,
+        state.documentId,
       );
     } catch (error) {
       // Its own 404 has another message; keep this route's refusal the one body.
@@ -338,11 +371,60 @@ export class PortalBillingService {
     return p;
   }
 
-  /** The files of the invoice, read without a permission check: this module authorized the caller already. */
-  private async invoiceFile(p: Principal, invoiceId: string) {
-    return pickInvoiceFile(
-      await this.documents.listForOwner(scopeOf(p), INVOICE_OWNER_TYPE, invoiceId),
-    );
+  /**
+   * The PDF of a visible invoice, read the way InvoiceDocumentService.link reads it (no permission check: this module
+   * authorized the caller already). Every upload of every live document, oldest document first and newest upload first
+   * within it, plus the given-up flag; the file data is the clean upload generatedPdfState picked.
+   */
+  private async invoicePdf(p: Principal, invoiceId: string): Promise<CustomerPdf> {
+    const scope = scopeOf(p);
+    const { uploads, givenUp } = await this.db.transaction(async (tx) => {
+      const rows = await tx
+        .select({
+          documentId: documents.id,
+          status: documentVersions.status,
+          filename: documentVersions.filename,
+          sha256: documentVersions.sha256,
+        })
+        .from(documents)
+        .innerJoin(
+          documentVersions,
+          and(
+            eq(documentVersions.tenantId, documents.tenantId),
+            eq(documentVersions.documentId, documents.id),
+          ),
+        )
+        .where(
+          scoped(scope).where(
+            documents,
+            and(
+              eq(documents.ownerType, INVOICE_OWNER_TYPE),
+              eq(documents.ownerId, invoiceId),
+              isNull(documents.removedAt),
+            ),
+          ),
+        )
+        .orderBy(asc(documents.createdAt), asc(documents.id), desc(documentVersions.version));
+      const given = await renderGivenUp(tx, {
+        ...scope,
+        ownerType: INVOICE_OWNER_TYPE,
+        ownerId: invoiceId,
+      });
+      return { uploads: rows, givenUp: given };
+    });
+    const state = generatedPdfState(uploads, givenUp);
+    if (state.kind !== 'clean') return { state, file: null };
+    // generatedPdfState took the first clean upload in this order; rejected rows never are clean.
+    const clean = uploads.find((u) => u.status === 'clean');
+    const file =
+      clean === undefined || clean.sha256 === null
+        ? null
+        : {
+            documentId: clean.documentId,
+            filename: clean.filename,
+            sha256: clean.sha256.toString('hex'),
+          };
+    return { state, file };
   }
 
   /** The caller's visible invoices (or the one `id`) with their open item balance, newest first. */

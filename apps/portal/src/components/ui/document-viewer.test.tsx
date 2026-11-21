@@ -191,6 +191,35 @@ it('shows a plain "not available" message on a 404, with no Retry and no technic
   expect(fetchMock).toHaveBeenCalledTimes(1);
 });
 
+it('shows "delayed" on a 424 (failed or refused PDF), with no Retry, no code and no polling', async () => {
+  vi.useFakeTimers({ shouldAdvanceTime: true });
+  try {
+    // What signed-file-route.ts answers for a customer 424.
+    fetchMock.mockImplementationOnce(() =>
+      Promise.resolve(
+        new Response('This PDF is delayed. Our team has been told.', {
+          status: 424,
+          headers: { 'content-type': 'text/plain; charset=utf-8' },
+        }),
+      ),
+    );
+    await mount(<ViewDocument {...PROPS} />);
+    await open();
+    const text = dialog().textContent ?? '';
+    expect(text).toContain('This PDF is delayed. Our team has been told.');
+    expect(text).not.toContain('Preparing');
+    expect(text).not.toContain('Could not load');
+    expect(text).not.toMatch(/424|render|scan|quarantine|virus|failed/i);
+    expect(byText('Retry')).toBeUndefined();
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(60_000);
+    });
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  } finally {
+    vi.useRealTimers();
+  }
+});
+
 it('shows an error with Retry on a 500 and on a network failure', async () => {
   fetchMock.mockImplementationOnce(() => Promise.resolve(new Response('', { status: 500 })));
   await mount(<ViewDocument {...PROPS} />);
@@ -317,6 +346,29 @@ it("keeps a refused download in the page: the route's sentence beside the button
     'The file could not be downloaded.',
   );
   expect(save.saved).toHaveLength(0);
+  save.restore();
+});
+
+it('keeps a delayed (424) download in the page: the delayed sentence beside the button, nothing saved', async () => {
+  const onDownload = vi.fn();
+  const save = stubSave();
+  await mount(<ViewDocument {...PROPS} withDownload onDownload={onDownload} />);
+  fetchMock.mockImplementation(() =>
+    Promise.resolve(
+      new Response('This PDF is delayed. Our team has been told.', {
+        status: 424,
+        headers: { 'content-type': 'text/plain; charset=utf-8' },
+      }),
+    ),
+  );
+  await act(() => Promise.resolve(downloadButtons()[0]?.click()));
+  await settle();
+  expect(container.querySelector('[role="alert"]')?.textContent).toBe(
+    'This PDF is delayed. Our team has been told.',
+  );
+  expect(container.querySelector('dialog')).not.toBeNull();
+  expect(save.saved).toHaveLength(0);
+  expect(onDownload).not.toHaveBeenCalled();
   save.restore();
 });
 

@@ -93,6 +93,11 @@ export interface CustomerViewInput {
    * default is deny.
    */
   renderedScanClean?: boolean;
+  /**
+   * The portal's "this PDF will not come without the team" flag (render given up, or the scan refused the file). Only
+   * the portal passes it; the view carries the key only then, so the PDF render path builds the same view as before.
+   */
+  renderFailed?: boolean;
 }
 
 /** The version is not one a customer may see (draft, in approval, never sent, cancelled, internal rejection). */
@@ -222,5 +227,7 @@ export function toCustomerQuotationView(
       dateFormat: input.display.dateFormat,
     },
     file,
+    // Sent only when true, so an older portal's strict parser still accepts every document that is not failed.
+    ...(input.renderFailed === true && file === null ? { renderFailed: true } : {}),
   });
 }

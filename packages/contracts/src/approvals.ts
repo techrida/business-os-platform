@@ -259,6 +259,10 @@ export const ApprovalContextDocumentSchema = z.object({
   versionId: z.string(),
   filename: z.string(),
   detectedMime: z.string().nullable(),
+  /** That version's size, its uploader (null for a system or portal upload) and when it was uploaded. */
+  sizeBytes: z.number().int().nonnegative().optional(),
+  uploadedBy: z.guid().nullable().optional(),
+  uploadedAt: isoDateTime.optional(),
 });
 export type ApprovalContextDocument = z.infer<typeof ApprovalContextDocumentSchema>;
 

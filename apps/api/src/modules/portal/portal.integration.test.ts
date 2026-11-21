@@ -8,7 +8,8 @@
 // QuotationOutcomeService (settings, audit, opportunities), as a real portal user, with notify faked.
 // The PDF link (`quotationPdfLink`) runs over a real DocumentsService (disk storage on a temp dir, the real
 // ScanProcessor against the fake clamd, real SignedLinks): only an own, customer-visible version whose rendered PDF
-// scanned clean gets a link, and the link redeems once.
+// scanned clean gets a link, and the link redeems once. P5: the view's `renderFailed` and the link's 409 (being
+// prepared) and 424 (render given up, or the scan refused the file) agree; a foreign version stays a plain 404.
 import 'reflect-metadata';
 
 import { randomUUID } from 'node:crypto';
@@ -31,7 +32,7 @@ import type { Db } from '../../platform/db/db.module';
 import { systemActor, withTx, type Actor, type TxScope } from '../../platform/db/tx';
 import { ClamdClient } from '../../platform/documents/clamd.client';
 import { DocumentsService, type GeneratedFile } from '../../platform/documents/documents.service';
-import { startFakeClamd, type FakeClamd } from '../../platform/documents/fake-clamd';
+import { eicarBytes, startFakeClamd, type FakeClamd } from '../../platform/documents/fake-clamd';
 import { ScanProcessor } from '../../platform/documents/scan.processor';
 import { SignedLinks, type LinkStore } from '../../platform/documents/signed-link';
 import { DiskStorageAdapter } from '../../platform/documents/storage.adapter';
@@ -41,6 +42,7 @@ import { OpportunitiesService } from '../opportunities/opportunities.service';
 import { readEvidenceState } from '../quotations/outcome/evidence-state';
 import { QuotationOutcomeService } from '../quotations/outcome/quotation-outcome.service';
 import { QUOTATION_OWNER_TYPE } from '../quotations/quotation-owner.policy';
+import { MAX_RENDER_ATTEMPTS } from '../quotations/render/render-retry';
 import { PortalRespondService } from './portal-respond.service';
 import { PortalService } from './portal.service';
 import { DrizzlePortalQuotationStore, DrizzlePortalRespondStore } from './portal.store';
@@ -339,12 +341,13 @@ function serviceWithDocuments(p: Principal): PortalService {
   );
 }
 
-const pdf = (): GeneratedFile => ({
+const pdf = (infected = false): GeneratedFile => ({
   filename: 'QT-1-R1.pdf',
   declaredMime: 'application/pdf',
   bytes: Buffer.concat([
     Buffer.from('%PDF-1.4\n1 0 obj\n<<>>\nendobj\n%%EOF\n'),
     Buffer.alloc(200, 0x20),
+    ...(infected ? [eicarBytes()] : []),
   ]),
 });
 
@@ -357,10 +360,10 @@ async function renderPdf(
   w: World,
   entity: string,
   versionId: string,
-  opts: { scan?: boolean } = {},
+  opts: { scan?: boolean; infected?: boolean } = {},
 ): Promise<{ documentId: string; documentVersionId: string }> {
   const scope: TxScope = { tenantId: w.tenantId, organizationId: entity };
-  const file = pdf();
+  const file = pdf(opts.infected === true);
   const who = { scope, actor: systemActor(RENDER_JOB) };
   const created = await withTx(db, who.scope, who.actor, (tx) =>
     documents.createGenerated(tx, { ownerType: QUOTATION_OWNER_TYPE, ownerId: versionId }, file),
@@ -394,6 +397,30 @@ async function renderPdf(
 }
 
 const tokenOf = (url: string): string => url.replace(/^\/v1\/files\//, '');
+
+/** A render the sweeper tried `attempts` times and left `failed` (none -> pending -> failed, as the sweeper moves it). */
+async function failRender(w: World, entity: string, versionId: string, attempts: number) {
+  await withTx(db, { tenantId: w.tenantId, organizationId: entity }, seedActor(), async (tx) => {
+    await tx.execute(
+      sql`UPDATE app.quotation_versions SET render_state = 'pending' WHERE id = ${versionId}::uuid`,
+    );
+    await tx.execute(sql`
+      UPDATE app.quotation_versions SET render_state = 'failed', render_attempts = ${attempts}
+       WHERE id = ${versionId}::uuid`);
+  });
+}
+
+/** The status and whole response body a call was refused with. */
+async function refusal(promise: Promise<unknown>): Promise<{ status: number; body: unknown }> {
+  try {
+    await promise;
+  } catch (error) {
+    if (error instanceof HttpException)
+      return { status: error.getStatus(), body: error.getResponse() };
+    throw error;
+  }
+  throw new Error('expected a refusal');
+}
 
 // ---------------------------------------------------------------------------------------- tests
 
@@ -689,13 +716,19 @@ describe('portal PDF link on a real database', () => {
     );
   });
 
-  it('answers 404 while the rendered PDF is quarantined, then links once it is clean', async () => {
+  it('answers 409 while the rendered PDF is quarantined, then links once it is clean', async () => {
     const w = await seedWorld();
     const sent = await seedQuotation(w, w.entityA, w.partyP, 'sent');
     const { documentVersionId } = await renderPdf(w, w.entityA, sent.versionId, { scan: false });
     const portal = serviceWithDocuments(customerOf(w, w.entityA, w.partyP));
 
-    await expect(portal.quotationPdfLink(sent.versionId)).rejects.toBeInstanceOf(NotFoundException);
+    expect(await failure(portal.quotationPdfLink(sent.versionId))).toEqual({
+      status: 409,
+      code: 'quotation_pdf_not_ready',
+    });
+    const pending = await portal.get(sent.versionId);
+    expect(pending.file).toBeNull();
+    expect(pending.renderFailed).toBeUndefined();
 
     const scope: TxScope = { tenantId: w.tenantId, organizationId: w.entityA };
     expect(await scanner.scanVersion({ versionId: documentVersionId, ...scope }, true)).toBe(
@@ -703,9 +736,12 @@ describe('portal PDF link on a real database', () => {
     );
     const link = await portal.quotationPdfLink(sent.versionId);
     expect(link.url).toMatch(SIGNED_PATH);
+    const view = await portal.get(sent.versionId);
+    expect(view.file).not.toBeNull();
+    expect(view.renderFailed).toBeUndefined();
   });
 
-  it('answers 404 for another party, another entity, a draft, an unrendered version and an unknown id', async () => {
+  it('answers 404 for another party, another entity, a draft and an unknown id', async () => {
     const w = await seedWorld();
     // Each one that can has a clean rendered PDF, so its 404 comes from the portal's scope, not from the scan.
     const otherParty = await seedQuotation(w, w.entityA, w.partyQ, 'sent');
@@ -714,17 +750,80 @@ describe('portal PDF link on a real database', () => {
     await renderPdf(w, w.entityB, otherEntity.versionId);
     const draft = await seedQuotation(w, w.entityA, w.partyP, 'draft');
     await renderPdf(w, w.entityA, draft.versionId);
-    const unrendered = await seedQuotation(w, w.entityA, w.partyP, 'sent');
     const portal = serviceWithDocuments(customerOf(w, w.entityA, w.partyP));
 
     for (const [name, id] of [
       ['other party', otherParty.versionId],
       ['other entity', otherEntity.versionId],
       ['draft', draft.versionId],
-      ['not rendered', unrendered.versionId],
       ['unknown', randomUUID()],
     ] as const) {
       await expect(portal.quotationPdfLink(id), name).rejects.toBeInstanceOf(NotFoundException);
     }
+  });
+});
+
+describe('portal PDF status on a real database (P5)', () => {
+  it('tells the customer pending, failed and ready, the same in the view and on the file route', async () => {
+    const w = await seedWorld();
+    const pending = await seedQuotation(w, w.entityA, w.partyP, 'sent');
+    const retrying = await seedQuotation(w, w.entityA, w.partyP, 'sent');
+    await failRender(w, w.entityA, retrying.versionId, MAX_RENDER_ATTEMPTS - 1);
+    const givenUp = await seedQuotation(w, w.entityA, w.partyP, 'sent');
+    await failRender(w, w.entityA, givenUp.versionId, MAX_RENDER_ATTEMPTS);
+    const refused = await seedQuotation(w, w.entityA, w.partyP, 'sent');
+    const { documentVersionId } = await renderPdf(w, w.entityA, refused.versionId, {
+      scan: false,
+      infected: true,
+    });
+    const scope: TxScope = { tenantId: w.tenantId, organizationId: w.entityA };
+    expect(await scanner.scanVersion({ versionId: documentVersionId, ...scope }, true)).toBe(
+      'infected',
+    );
+    const ready = await seedQuotation(w, w.entityA, w.partyP, 'sent');
+    await renderPdf(w, w.entityA, ready.versionId);
+    const portal = serviceWithDocuments(customerOf(w, w.entityA, w.partyP));
+
+    for (const [name, seeded, renderFailed, answer] of [
+      ['not rendered yet', pending, false, { status: 409, code: 'quotation_pdf_not_ready' }],
+      ['failed with tries left', retrying, false, { status: 409, code: 'quotation_pdf_not_ready' }],
+      ['render given up', givenUp, true, { status: 424, code: 'quotation_pdf_failed' }],
+      ['scan refused', refused, true, { status: 424, code: 'quotation_pdf_failed' }],
+    ] as const) {
+      const view = await portal.get(seeded.versionId);
+      expect({ file: view.file, renderFailed: view.renderFailed === true }, name).toEqual({
+        file: null,
+        renderFailed,
+      });
+      expect(await failure(portal.quotationPdfLink(seeded.versionId)), name).toEqual(answer);
+    }
+
+    const view = await portal.get(ready.versionId);
+    expect(view.renderFailed).toBeUndefined();
+    expect(view.file?.documentId).toEqual(expect.any(String));
+    expect((await portal.quotationPdfLink(ready.versionId)).url).toMatch(SIGNED_PATH);
+  });
+
+  it("answers another customer's failed version with the same plain 404 as an unknown id", async () => {
+    const w = await seedWorld();
+    const theirs = await seedQuotation(w, w.entityA, w.partyQ, 'sent');
+    await failRender(w, w.entityA, theirs.versionId, MAX_RENDER_ATTEMPTS);
+    const theirsPending = await seedQuotation(w, w.entityA, w.partyQ, 'sent');
+    await renderPdf(w, w.entityA, theirsPending.versionId, { scan: false });
+    const portal = serviceWithDocuments(customerOf(w, w.entityA, w.partyP));
+    // The owner sees the failure, so the 404 below comes from the scope, not from the state.
+    expect(
+      await failure(
+        serviceWithDocuments(customerOf(w, w.entityA, w.partyQ)).quotationPdfLink(theirs.versionId),
+      ),
+    ).toEqual({ status: 424, code: 'quotation_pdf_failed' });
+
+    const unknown = await refusal(portal.quotationPdfLink(randomUUID()));
+    expect(unknown.status).toBe(404);
+    expect(await refusal(portal.quotationPdfLink(theirs.versionId))).toEqual(unknown);
+    expect(await refusal(portal.quotationPdfLink(theirsPending.versionId))).toEqual(unknown);
+    expect(await refusal(portal.get(theirs.versionId))).toEqual(
+      await refusal(portal.get(randomUUID())),
+    );
   });
 });

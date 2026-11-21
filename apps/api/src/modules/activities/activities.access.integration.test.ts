@@ -617,6 +617,57 @@ describe('a collection call (R4c1 Q1: the receivables permissions, not the custo
     ).not.toContain(callId);
   });
 
+  it("reports the list's can flags by the same rule its routes enforce", async () => {
+    const finance = await h.member({ roles: ['finance'], displayName: 'Faye Finance' });
+    const financePeer = await h.member({ roles: ['finance'], displayName: 'Fern Finance' });
+    const manager = await h.member({ roles: ['management'], displayName: 'Mira Management' });
+    const customer = await h.seedCustomer(P.sales);
+    const ALL = { complete: true, reschedule: true, cancel: true };
+    const NONE = { complete: false, reschedule: false, cancel: false };
+    const flagsOf = async (callId: string) =>
+      (await listed('?status=planned&limit=200')).find((a) => a.id === callId)?.can;
+
+    // Finance, assignee or not, gets every action from ar.read and payment.record; the routes then allow each.
+    const assigned = await collectionCall(customer, finance);
+    await h.actAs(finance);
+    expect(await flagsOf(assigned)).toEqual(ALL);
+    const moved = await patch(assigned, 'reschedule', { expectedVersion: 1, dueAt: DUE_2 });
+    expect(moved.status, JSON.stringify(moved.body)).toBe(200);
+    const done = await patch(assigned, 'complete', { expectedVersion: 2 });
+    expect(done.status, JSON.stringify(done.body)).toBe(200);
+
+    const covered = await collectionCall(customer, finance);
+    await h.actAs(financePeer);
+    expect(await flagsOf(covered)).toEqual(ALL);
+    const cancelled = await patch(covered, 'cancel', { expectedVersion: 1 });
+    expect(cancelled.status, JSON.stringify(cancelled.body)).toBe(200);
+
+    // Management reads receivables but records no payment: listed with no action, and each route is a 403.
+    const watched = await collectionCall(customer, finance);
+    await h.actAs(manager);
+    expect(await flagsOf(watched)).toEqual(NONE);
+    expect((await patch(watched, 'complete', { expectedVersion: 1 })).status).toBe(403);
+    expect((await patch(watched, 'reschedule', { expectedVersion: 1, dueAt: DUE_2 })).status).toBe(
+      403,
+    );
+    expect((await patch(watched, 'cancel', { expectedVersion: 1 })).status).toBe(403);
+
+    // The customer's Sales owner, even as the assignee, never lists it and each route is a 404.
+    const salesCall = await collectionCall(customer, P.sales);
+    await h.actAs(P.sales);
+    for (const callId of [watched, salesCall]) {
+      expect((await listed('?status=planned&limit=200')).map((a) => a.id)).not.toContain(callId);
+      expect((await listed(`?customerId=${customer}&limit=200`)).map((a) => a.id)).not.toContain(
+        callId,
+      );
+      expect((await patch(callId, 'complete', { expectedVersion: 1 })).status).toBe(404);
+      expect((await patch(callId, 'reschedule', { expectedVersion: 1, dueAt: DUE_2 })).status).toBe(
+        404,
+      );
+      expect((await patch(callId, 'cancel', { expectedVersion: 1 })).status).toBe(404);
+    }
+  });
+
   it('moves it only to someone who records payments', async () => {
     const finance = await h.member({ roles: ['finance'], displayName: 'Fred Finance' });
     const accountant = await h.member({ roles: ['accountant'], displayName: 'Anu Accountant' });
