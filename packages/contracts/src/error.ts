@@ -6,6 +6,8 @@ import { z } from 'zod';
  * too. ADR 0027 §4 adds `entity_not_permitted` (403: the caller may not act for that entity, or it is
  * unknown) and `invalid_entity` (400: a malformed `X-Entity-Id` header). `deadline_in_past` (400, P4 sourcing): an
  * RFQ's quotation deadline is not after now, so no invited vendor could ever quote.
+ * `requester_cannot_release` and `role_cannot_release_amount` (403, F1-Q32): a delivery-hold release refused to the
+ * order's creator, or to a caller none of whose roles may release an order of that amount under the live threshold.
  */
 export const ERROR_REASONS = [
   'no_permission',
@@ -20,6 +22,9 @@ export const ERROR_REASONS = [
   // F1-Q55 (400): a customer of the same name, or the same PAN/VAT number once spaces and hyphens are dropped,
   // already exists and the create named no `duplicateOverrideReason`.
   'duplicate_reason_required',
+  // F1-Q32 (403): the delivery-hold release rule.
+  'requester_cannot_release',
+  'role_cannot_release_amount',
 ] as const;
 export const ErrorReasonSchema = z.enum(ERROR_REASONS);
 export type ErrorReason = z.infer<typeof ErrorReasonSchema>;

@@ -3,7 +3,8 @@
 // table and the audit log. Orders are confirmed from quotations the quotation unit really writes (drafted, moved
 // to Sent along 0016's transitions, accepted by RecordOutcomeService), so `created_by` is what confirm writes.
 // Faked: the request context and authz.assert (the real pure can() on a principal whose grants are the real role
-// defaults). Every answer is parsed with the contract schema the workspace parses it with.
+// defaults). Every answer is parsed with the contract schema the workspace parses it with, and every refusal goes
+// through the real ErrorBodyFilter, so a test sees only the `reason` an HTTP client would get.
 // The golden order is NPR 5,045,450.00, so the threshold is moved to sit at, or one paisa below, that amount.
 // Run: pnpm --filter @bos/api exec vitest run src/modules/sales-orders/sales-order-delivery-release.integration.test.ts
 import 'reflect-metadata';
@@ -12,6 +13,7 @@ import { randomUUID } from 'node:crypto';
 
 import {
   DEFAULT_ROLE_PERMISSIONS,
+  ErrorBodySchema,
   SalesOrderDetailSchema,
   type Permission,
   type QuotationDto,
@@ -27,7 +29,7 @@ import {
   salesOrders,
 } from '@bos/db';
 import { createTestDatabase, type TestDatabase } from '@bos/db/testing';
-import { ForbiddenException, HttpException } from '@nestjs/common';
+import { ForbiddenException, HttpException, type ArgumentsHost } from '@nestjs/common';
 import { eq, sql } from 'drizzle-orm';
 import { drizzle } from 'drizzle-orm/node-postgres';
 import { Pool } from 'pg';
@@ -44,6 +46,7 @@ import { DELIVERY_HOLD_THRESHOLD_KEY } from '../../platform/settings/delivery-ho
 import type { MoneyService } from '../../platform/settings/money.service';
 import { NumberingService } from '../../platform/settings/numbering.service';
 import { SettingsService } from '../../platform/settings/settings.service';
+import { ErrorBodyFilter } from '../../platform/tenancy/error-body.filter';
 import { LedgerService } from '../ledger/ledger.service';
 import { LeadLostReasonsService } from '../leads/lost-reasons.service';
 import { OpportunitiesService } from '../opportunities/opportunities.service';
@@ -210,24 +213,39 @@ async function setThreshold(value: string): Promise<void> {
   );
 }
 
+/** What the API's ErrorBodyFilter would send for `exception`: its status and the parsed ErrorBody. */
+function throughFilter(exception: HttpException) {
+  const out: { status?: number; body?: unknown } = {};
+  const req = { method: 'POST', path: '/v1/sales-orders/x/delivery-release', headers: {} };
+  const res = {
+    headersSent: false,
+    setHeader: () => undefined,
+    status(code: number) {
+      out.status = code;
+      return this;
+    },
+    json(body: unknown) {
+      out.body = body;
+    },
+  };
+  const host = {
+    getType: () => 'http',
+    switchToHttp: () => ({ getRequest: () => req, getResponse: () => res }),
+  } as unknown as ArgumentsHost;
+  new ErrorBodyFilter().catch(exception, host);
+  return { status: out.status, body: ErrorBodySchema.parse(out.body) };
+}
+
+/** The refusal as an HTTP client sees it; anything that is not an HttpException is rethrown, not hidden. */
 async function refusal(
   promise: Promise<unknown>,
-): Promise<{ status: number; code: unknown; reason: unknown; allowedRoles?: unknown }> {
+): Promise<{ status: number | undefined; code: string; reason: unknown }> {
   try {
     await promise;
   } catch (error) {
     if (error instanceof HttpException) {
-      const body = error.getResponse() as {
-        code?: unknown;
-        reason?: unknown;
-        allowedRoles?: unknown;
-      };
-      return {
-        status: error.getStatus(),
-        code: body.code,
-        reason: body.reason,
-        ...(body.allowedRoles === undefined ? {} : { allowedRoles: body.allowedRoles }),
-      };
+      const { status, body } = throughFilter(error);
+      return { status, code: body.error.code, reason: body.error.reason };
     }
     throw error;
   }
@@ -443,7 +461,6 @@ describe('SalesOrdersService.releaseDelivery (F1-Q32)', () => {
       status: 403,
       code: 'forbidden',
       reason: 'role_cannot_release_amount',
-      allowedRoles: ['management', 'founder'],
     });
     expect(await releaseRows(orderId)).toHaveLength(0);
 
@@ -470,7 +487,6 @@ describe('SalesOrdersService.releaseDelivery (F1-Q32)', () => {
       status: 403,
       code: 'forbidden',
       reason: 'role_cannot_release_amount',
-      allowedRoles: ['finance', 'founder'],
     });
 
     as('founder', founderUser);
@@ -492,7 +508,6 @@ describe('SalesOrdersService.releaseDelivery (F1-Q32)', () => {
       status: 403,
       code: 'forbidden',
       reason: 'requester_cannot_release',
-      allowedRoles: ['management', 'founder'],
     });
     expect(await releaseRows(orderId)).toHaveLength(0);
 
@@ -551,6 +566,42 @@ describe('SalesOrdersService.releaseDelivery (F1-Q32)', () => {
     current.scope = scopeA;
     expect(await releaseRows(orderId)).toHaveLength(0);
     expect(await releaseRows(draft!.id)).toHaveLength(0);
+  });
+
+  it('reads the threshold on the transaction it runs in: detail and release work on a one-connection pool', async () => {
+    await setThreshold(AMOUNT_NPR);
+    const orderId = await confirmedOrder();
+    // One connection, held by withTx: a threshold read that asked the pool for a second one would wait for it
+    // forever under load (here: fail after the connection timeout).
+    const onePool = new Pool({
+      connectionString: testDb.appUrl,
+      max: 1,
+      connectionTimeoutMillis: 5_000,
+    });
+    try {
+      const oneDb = drizzle({ client: onePool });
+      const tight = new SalesOrdersService(
+        oneDb,
+        new SettingsService(oneDb),
+        new NumberingService(),
+        new AuditService(oneDb),
+        new LedgerService(),
+        caller,
+        () => NOW,
+      );
+      as('finance', financeUser);
+      expect(SalesOrderDetailSchema.parse(await tight.detail(orderId)).can).toMatchObject({
+        releaseDelivery: true,
+        releaseDeliveryAllowedRoles: ['finance', 'founder'],
+      });
+      const after = SalesOrderDetailSchema.parse(
+        await tight.releaseDelivery(orderId, { reason: 'Picked up' }, `release-${randomUUID()}`),
+      );
+      expect(after.deliveryReleased).toBe(true);
+      expect(await releaseRows(orderId)).toHaveLength(1);
+    } finally {
+      await onePool.end();
+    }
   });
 
   it('refuses a change to a release row in the database: a release is final', async () => {
