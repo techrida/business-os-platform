@@ -271,7 +271,10 @@ export type SalesOrderDetail = z.infer<typeof SalesOrderDetailSchema>;
 // Bodies (an `Idempotency-Key` header goes with every command; it is not a body field)
 // ---------------------------------------------------------------------------------------------
 
-/** Confirm an accepted quotation version as a sales order. The evidence policy decides what must be attached. */
+/**
+ * Confirm an accepted quotation version as a sales order. The evidence policy decides what must be attached by the
+ * acceptance; each named id must be evidence uploaded to this version (422 `invalid_evidence_document` otherwise).
+ */
 export const ConfirmSalesOrderBodySchema = z.strictObject({
   quotationVersionId: z.guid(),
   evidenceDocumentIds: z.array(z.guid()).max(10).default([]),
