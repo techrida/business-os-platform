@@ -251,6 +251,15 @@ export const PO_VENDOR_CHANGE_NOT_DRAFT = {
 } as const;
 
 /**
+ * The refusal of a vendor change on a draft a payment request, bill or portal bill submission already names: each
+ * refers to the order together with its vendor (a composite foreign key), so the vendor cannot move under it.
+ */
+export const PO_REFERENCED = {
+  code: 'PO_REFERENCED',
+  message: 'Payment requests or bills already refer to this order; cancel it and create a new one',
+} as const;
+
+/**
  * Why the vendor of an order cannot change to `nextVendorId`, or null when it can as far as the order goes (the new
  * vendor's own checks are the service's). Only a draft changes vendor: an issued order went to its vendor, so it is
  * cancelled and raised again. Changing to the same vendor changes nothing and is refused.

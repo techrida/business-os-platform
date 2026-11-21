@@ -4,6 +4,7 @@
 // transaction and scoped() to the acting entity, so another entity's PO is simply not found.
 import {
   approvalRequests,
+  paymentRequests,
   paymentTerms,
   purchaseOrderLines,
   purchaseOrderVersions,
@@ -13,6 +14,8 @@ import {
   scoped,
   vendorAccounts,
   vendorBankAccounts,
+  vendorBillSubmissions,
+  vendorBills,
 } from '@bos/db';
 import { ConflictException, NotFoundException } from '@nestjs/common';
 import Decimal from 'decimal.js';
@@ -29,6 +32,7 @@ import { PO_SERIES } from '../sourcing/sourcing.rules';
 import {
   PO_AMENDMENT_DOCUMENT_TYPE,
   PO_AUDIT_ENTITY,
+  PO_REFERENCED,
   type AmendedLine,
 } from './purchase-order.rules';
 
@@ -110,6 +114,39 @@ export async function assertVerifiedBankAccount(
     );
   if (row === undefined) {
     throw conflict('The vendor has no verified bank account', 'VENDOR_NO_VERIFIED_BANK_ACCOUNT');
+  }
+}
+
+/**
+ * 409 PO_REFERENCED when a payment request, vendor bill or portal bill submission names the PO, in any status (a
+ * cancelled or voided row still holds its foreign key). Each refers to the PO together with its vendor
+ * (payment_requests_purchase_order_fk, vendor_bills_purchase_order_fk, vendor_bill_submissions_purchase_order_fk), so
+ * changing the vendor would fail on the key. Call it after lockPo: the PO's row lock blocks a concurrent insert that
+ * names it until this transaction ends.
+ */
+export async function assertPoNotReferenced(
+  tx: DbTransaction,
+  scope: TxScope,
+  poId: string,
+): Promise<void> {
+  const s = scoped(scope);
+  const [request] = await tx
+    .select({ id: paymentRequests.id })
+    .from(paymentRequests)
+    .where(s.where(paymentRequests, eq(paymentRequests.purchaseOrderId, poId)))
+    .limit(1);
+  const [bill] = await tx
+    .select({ id: vendorBills.id })
+    .from(vendorBills)
+    .where(s.where(vendorBills, eq(vendorBills.purchaseOrderId, poId)))
+    .limit(1);
+  const [submission] = await tx
+    .select({ id: vendorBillSubmissions.id })
+    .from(vendorBillSubmissions)
+    .where(s.where(vendorBillSubmissions, eq(vendorBillSubmissions.purchaseOrderId, poId)))
+    .limit(1);
+  if (request !== undefined || bill !== undefined || submission !== undefined) {
+    throw conflict(PO_REFERENCED.message, PO_REFERENCED.code);
   }
 }
 

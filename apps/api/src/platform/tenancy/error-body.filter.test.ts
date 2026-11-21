@@ -384,6 +384,11 @@ describe('ErrorBodyFilter', () => {
     'FEWER_THAN_MIN_QUOTES',
     'PO_HAS_RECEIPTS',
     'PO_HAS_NO_LINES',
+    // F1-Q40 a: changing the vendor of a purchase order.
+    'PO_VENDOR_CHANGE_NOT_DRAFT',
+    'PO_VENDOR_UNCHANGED',
+    'PO_REFERENCED',
+    'VENDOR_NO_VERIFIED_BANK_ACCOUNT',
   ])('keeps the vendor conflict code %s on a 409, and only on a 409', (code) => {
     const out = filter(new ConflictException({ code, message: 'm' }));
     expect(out.status).toBe(409);

@@ -13,6 +13,7 @@ import { randomUUID } from 'node:crypto';
 
 import {
   DEFAULT_ROLE_PERMISSIONS,
+  ErrorBodySchema,
   type Permission,
   type RoleKey,
   type Scope,
@@ -27,7 +28,7 @@ import {
   purchaseOrderLines,
   purchaseOrders,
 } from '@bos/db';
-import { HttpException } from '@nestjs/common';
+import { HttpException, type ArgumentsHost } from '@nestjs/common';
 import { eq, sql } from 'drizzle-orm';
 import { drizzle } from 'drizzle-orm/node-postgres';
 import { Pool } from 'pg';
@@ -39,6 +40,7 @@ import type { Db, DbTransaction } from '../../../platform/db/db.module';
 import { systemActor, withTx, type TxScope } from '../../../platform/db/tx';
 import { MoneyService } from '../../../platform/settings/money.service';
 import { NumberingService } from '../../../platform/settings/numbering.service';
+import { ErrorBodyFilter } from '../../../platform/tenancy/error-body.filter';
 import { ApprovalsAdminService } from '../../approvals/admin.service';
 import { asSecondPerson, SKIP_LIVE_PUBLISHER_CHECK } from '../../../../test/support/second-person';
 import { ApprovalsService } from '../../approvals/requests.service';
@@ -228,6 +230,28 @@ async function httpErrorOf(promise: Promise<unknown>): Promise<HttpException> {
 }
 const codeOf = (e: HttpException) => (e.getResponse() as { code?: string }).code;
 const messageOf = (e: HttpException) => (e.getResponse() as { message?: string }).message;
+/** The error body the global ErrorBodyFilter sends for `e` (fake Express objects, as error-body.filter.test.ts). */
+function wireBody(e: HttpException) {
+  const out: { status?: number; body?: unknown } = {};
+  const req = { method: 'POST', path: '/v1/purchase-orders/x/change-vendor', headers: {} };
+  const res = {
+    headersSent: false,
+    setHeader: () => undefined,
+    status(code: number) {
+      out.status = code;
+      return this;
+    },
+    json(body: unknown) {
+      out.body = body;
+    },
+  };
+  const host = {
+    getType: () => 'http',
+    switchToHttp: () => ({ getRequest: () => req, getResponse: () => res }),
+  } as unknown as ArgumentsHost;
+  new ErrorBodyFilter().catch(e, host);
+  return { status: out.status, ...ErrorBodySchema.parse(out.body).error };
+}
 
 /** A clean kernel document, the call-back evidence an active bank account needs. */
 async function evidenceDoc(): Promise<string> {
@@ -370,8 +394,11 @@ async function commitmentDraft(vendorId: string) {
 }
 
 let poSeq = 0;
-/** A draft PO inserted directly (number taken, version 0) with one line of 1 x 79,646.02 + 13% VAT. */
-async function plainDraft(vendorId: string): Promise<string> {
+/**
+ * A draft PO inserted directly (number taken, version 0) with one line of 1 x 79,646.02 + 13% VAT, or with no line
+ * (`withLine: false`; it has no quotation link either, so there is nothing to copy).
+ */
+async function plainDraft(vendorId: string, opts: { withLine?: boolean } = {}): Promise<string> {
   const a = quotationLineAmounts('1', '79646.02', 1300);
   const prId = randomUUID();
   await exec(
@@ -396,6 +423,7 @@ async function plainDraft(vendorId: string): Promise<string> {
         VALUES (${id}, ${scopeA.tenantId}, ${scopeA.organizationId}, ${`PO-CV-${poSeq}`}, ${900 + poSeq},
                 '2082/83', ${prId}, ${vendorId}, 'NPR', 30, ${a.lineTotal}, 1, ${a.lineTotal}, 'base', ${U.proc})`,
   );
+  if (opts.withLine === false) return id;
   await exec(
     scopeA,
     sql`INSERT INTO app.purchase_order_lines (id, tenant_id, organization_id, purchase_order_id,
@@ -522,6 +550,12 @@ describe('changeVendor on a commitment draft', () => {
       );
       expect(refused.getStatus()).toBe(409);
       expect(codeOf(refused)).toBe('VENDOR_NO_VERIFIED_BANK_ACCOUNT');
+      // The workspace reads the code the global filter sends, not plain `conflict`.
+      expect(wireBody(refused)).toMatchObject({
+        status: 409,
+        code: 'VENDOR_NO_VERIFIED_BANK_ACCOUNT',
+        message: 'The vendor has no verified bank account',
+      });
     }
     expect(await poRow(draft.id)).toEqual(draft);
     expect(await lineCount(draft.id)).toBe(0);
@@ -544,6 +578,7 @@ describe('changeVendor refusals', () => {
       expect(refused.getStatus()).toBe(409);
       expect(codeOf(refused)).toBe('PO_VENDOR_CHANGE_NOT_DRAFT');
       expect(messageOf(refused)).toBe('Cancel this order and create a new one');
+      expect(wireBody(refused)).toMatchObject({ status: 409, code: 'PO_VENDOR_CHANGE_NOT_DRAFT' });
       expect((await poRow(id)).status).toBe(status);
     },
   );
@@ -619,6 +654,56 @@ describe('changeVendor refusals', () => {
     );
     expect(refused.getStatus()).toBe(409);
     expect(codeOf(refused)).toBe('PO_VENDOR_UNCHANGED');
+    expect(wireBody(refused)).toMatchObject({ status: 409, code: 'PO_VENDOR_UNCHANGED' });
+    expect(await auditRows(id)).toEqual([]);
+  });
+
+  it('refuses a draft a payment request already refers to, instead of failing on its foreign key', async () => {
+    const current = await vendor();
+    const id = await plainDraft(current);
+    const { rows } = await exec(
+      scopeA,
+      sql`SELECT id FROM app.vendor_bank_accounts
+          WHERE tenant_id = ${scopeA.tenantId} AND vendor_id = ${current} AND status = 'active'`,
+    );
+    const bankAccountId = (rows[0] as { id: string }).id;
+    await exec(
+      scopeA,
+      sql`INSERT INTO app.payment_requests (tenant_id, organization_id, vendor_id, payment_type,
+            purchase_order_id, currency, total_amount, from_bank_account_id, vendor_bank_account_id, bank_last4,
+            requested_by)
+          VALUES (${scopeA.tenantId}, ${scopeA.organizationId}, ${current}, 'advance', ${id}, 'NPR', 1000,
+                  ${randomUUID()}, ${bankAccountId}, '1234', ${U.proc})`,
+    );
+    const before = await poRow(id);
+
+    const refused = await httpErrorOf(
+      service.changeVendor(id, { vendorId: await vendor() }, randomUUID()),
+    );
+
+    expect(refused.getStatus()).toBe(409);
+    expect(codeOf(refused)).toBe('PO_REFERENCED');
+    expect(messageOf(refused)).toBe(
+      'Payment requests or bills already refer to this order; cancel it and create a new one',
+    );
+    expect(wireBody(refused)).toMatchObject({ status: 409, code: 'PO_REFERENCED' });
+    expect(await poRow(id)).toEqual(before);
+    expect(await auditRows(id)).toEqual([]);
+  });
+
+  it('refuses a draft with no lines and no quotation to copy them from, and writes nothing', async () => {
+    const id = await plainDraft(await vendor(), { withLine: false });
+    const before = await poRow(id);
+
+    const refused = await httpErrorOf(
+      service.changeVendor(id, { vendorId: await vendor() }, randomUUID()),
+    );
+
+    expect(refused.getStatus()).toBe(409);
+    expect(codeOf(refused)).toBe('PO_HAS_NO_LINES');
+    expect(wireBody(refused)).toMatchObject({ status: 409, code: 'PO_HAS_NO_LINES' });
+    expect(await poRow(id)).toEqual(before);
+    expect(await lineCount(id)).toBe(0);
     expect(await auditRows(id)).toEqual([]);
   });
 });
