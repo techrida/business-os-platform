@@ -195,7 +195,12 @@ describe('an approval action idempotency key is scoped to the entity (R5 FU6, 01
     await insertAction(second, { action: 'approve', actor: approver, key });
     // Within one entity the key is still unique for the approver.
     await expect(
-      insertAction(first, { action: 'approve', actor: approver, key, stepId: first.stepIds[1] }),
+      insertAction(first, {
+        action: 'approve',
+        actor: approver,
+        key,
+        stepId: first.stepIds[1] ?? null,
+      }),
     ).rejects.toMatchObject({ code: '23505', constraint: 'approval_actions_idempotency_unique' });
   });
 });
