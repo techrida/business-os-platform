@@ -42,7 +42,8 @@ import { configureApp } from '../../app.setup';
 import { AuditService } from '../../platform/audit/audit.service';
 import { can } from '../../platform/authz/can';
 import { CAN_KEY } from '../../platform/authz/decorators';
-import type { AuthzService } from '../../platform/authz/authz.service';
+import { RoleCache } from '../../platform/authz/role-cache';
+import { AuthzService } from '../../platform/authz/authz.service';
 import type { Principal } from '../../platform/authz/principal';
 import type { Db } from '../../platform/db/db.module';
 import { systemActor, withTx } from '../../platform/db/tx';
@@ -105,7 +106,10 @@ const caller = {
     principal: principalNow(),
   }),
 };
+// The real role cache over the test database, for the grant lookup behind the owner list.
+let realAuthz: AuthzService;
 const authz = {
+  rolesHold: (...args: Parameters<AuthzService['rolesHold']>) => realAuthz.rolesHold(...args),
   assert: (action: Permission, ref?: Parameters<typeof can>[2]) => {
     const d = can(principalNow(), action, ref);
     if (!d.allowed) {
@@ -118,6 +122,7 @@ beforeAll(async () => {
   testDb = await createTestDatabase();
   appPool = new Pool({ connectionString: testDb.appUrl, max: 6 });
   db = drizzle({ client: appPool });
+  realAuthz = new AuthzService(db, new RoleCache(db));
 
   const tenant = async (code: string): Promise<Tenant> => {
     const t = await createTenantWithEntity(appPool, { code });
@@ -201,6 +206,7 @@ describe('GET /v1/customers/owners', () => {
     await withTx(db, a, systemActor('test'), (tx) =>
       tx.insert(rolePermissions).values({ ...grant, scope: 'all' }),
     );
+    await realAuthz.invalidate(a.tenantId, a.organizationId);
     try {
       const withGrant = parse((await list()).body).map((p) => p.userId);
       expect(withGrant).toContain(usersA.finance);
@@ -217,6 +223,7 @@ describe('GET /v1/customers/owners', () => {
             ),
           ),
       );
+      await realAuthz.invalidate(a.tenantId, a.organizationId);
     }
     expect(parse((await list()).body).map((p) => p.userId)).not.toContain(usersA.finance);
   });
