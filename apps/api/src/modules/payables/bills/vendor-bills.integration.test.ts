@@ -1765,6 +1765,29 @@ describe('evidence uploads on a bill (round 5 P2)', () => {
     expect((await service.get(bill.id)).status).toBe('variance');
   });
 
+  it('refuses evidence whose upload claimed the version but has not recorded its bytes yet (422), and requests nothing', async () => {
+    const bill = await varianceBill();
+    const reserved = await evidence.service.create('vendor_bill', bill.id, file);
+    // The receive's first transaction: claimed (quarantined) before any byte is stored, no sha256 yet.
+    await exec(
+      scopeA,
+      sql`UPDATE app.document_versions SET status = 'quarantined' WHERE document_id = ${reserved.documentId}::uuid`,
+    );
+    const refused = await httpErrorOf(
+      service.requestException(
+        bill.id,
+        { reason: 'Vendor raised the price', evidenceDocumentId: reserved.documentId },
+        randomUUID(),
+      ),
+    );
+    expect(refused.getStatus()).toBe(422);
+    expect(refused.getResponse()).toMatchObject({
+      code: 'invalid_evidence_document',
+      message: expect.stringMatching(/has not finished uploading/) as string,
+    });
+    expect((await service.get(bill.id)).status).toBe('variance');
+  });
+
   it('freezes the evidence an exception took: no removal or new version while the bill is still open', async () => {
     const bill = await varianceBill();
     const uploaded = await evidence.upload('vendor_bill', bill.id);
