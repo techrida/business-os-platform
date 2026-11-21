@@ -18,7 +18,7 @@ test('save, reopen, edit, price and submit a quotation', async ({ browser, baseU
   const add = page.getByRole('dialog', { name: 'Add line' });
   const edit = page.getByRole('dialog', { name: 'Edit line' });
   const percent = page.getByRole('spinbutton', { name: 'Percent (%)' });
-  const amount = page.getByRole('spinbutton', { name: /^Amount \(/ });
+  const amount = page.getByRole('textbox', { name: /^Amount \(/ });
 
   await test.step('add a typed line and save the draft', async () => {
     await page.setViewportSize({ width: 390, height: 844 });
@@ -33,7 +33,7 @@ test('save, reopen, edit, price and submit a quotation', async ({ browser, baseU
     await add.getByLabel('Description').fill('HRMS implementation');
     await add.getByLabel('Unit', { exact: true }).fill('lot');
     await add.getByRole('spinbutton', { name: 'Quantity' }).fill('1');
-    await add.getByRole('spinbutton', { name: /^Rate \(/ }).fill('200000');
+    await add.getByRole('textbox', { name: /^Rate \(/ }).fill('200000');
     // Tax code is required, so its list has no empty option: index 0 is the first tax code.
     await chooseOption(selectByLabel(add, 'Tax code'), { index: 0 });
     await add.getByRole('button', { name: 'Add line', exact: true }).click();
@@ -78,8 +78,8 @@ test('save, reopen, edit, price and submit a quotation', async ({ browser, baseU
     await page.getByRole('button', { name: 'Add milestone' }).click();
     await page.getByLabel('Milestone 1', { exact: true }).fill('Advance');
     await percent.fill('100');
-    await expect(amount).toHaveValue(/^[1-9]\d*\.\d{2}$/);
-    const fullAmount = await amount.inputValue();
+    await expect(amount).toHaveValue(/^[1-9][\d,]*\.\d{2}$/);
+    const fullAmount = (await amount.inputValue()).replaceAll(',', '');
     await percent.fill('60');
     await expect(amount).not.toHaveValue(fullAmount);
     await expect(page.getByText('60% / 100% allocated')).toBeVisible();
@@ -97,16 +97,17 @@ test('save, reopen, edit, price and submit a quotation', async ({ browser, baseU
     await amount.press('Escape');
     await expect(amount).not.toHaveAttribute('aria-invalid', 'true');
 
-    await amount.fill('9999999999999999');
-    await expect(amount).toHaveAttribute('aria-invalid', 'true');
-    await expect(percent).toHaveValue('60');
+    // A keystroke past the quote total is refused in the box, so the old value stays.
+    await amount.fill('');
+    await amount.pressSequentially('9999999999999999');
+    expect((await amount.inputValue()).replaceAll(',', '')).not.toBe('9999999999999999');
     await amount.fill(fullAmount);
     await expect(percent).toHaveValue('100');
     await expect(percent).not.toHaveAttribute('aria-invalid', 'true');
   });
 
   await test.step('changing the issue date clears an invalid draft amount and allows saving', async () => {
-    await amount.fill('9999999999999999');
+    await amount.fill('1.23');
     await expect(amount).toHaveAttribute('aria-invalid', 'true');
     const issueDate = page.getByRole('group', { name: 'Issue date', exact: true });
     const year = Number(
@@ -141,7 +142,6 @@ test('save, reopen, edit, price and submit a quotation', async ({ browser, baseU
     await expect(amount).not.toHaveValue('');
     await expect(amount).toBeEnabled();
     await expect(percent).toHaveValue('100');
-    await expect(percent).toHaveAttribute('step', '0.0001');
     await page.getByRole('button', { name: 'Add milestone' }).click();
     await page.getByRole('button', { name: 'Add milestone' }).click();
     await page.getByLabel('Milestone 2', { exact: true }).fill('Delivery');

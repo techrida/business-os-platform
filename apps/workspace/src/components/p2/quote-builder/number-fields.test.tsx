@@ -154,6 +154,16 @@ describe('quote builder number fields', () => {
     expect(box('Discount (%)').type).toBe('text');
   });
 
+  it('clears the discount value when the type changes, so 1000 never becomes 1000%', async () => {
+    await mountPriced();
+    expect(box('Discount amount (NPR)').value).toBe('1,000.00');
+    const discountType = Array.from(document.querySelectorAll('select')).find((s) =>
+      Array.from(s.options).some((o) => o.value === 'pct'),
+    );
+    await fill(discountType ?? null, 'pct');
+    expect(box('Discount (%)').value).toBe('');
+  });
+
   it('groups a typed rate in the box and hands the line form plain digits', async () => {
     await mountPriced();
     await openLineEditor();

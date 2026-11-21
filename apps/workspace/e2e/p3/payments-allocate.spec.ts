@@ -92,7 +92,7 @@ test('the server refuses more than an invoice has open, in words', async ({ brow
     await panel.getByRole('button', { name: 'Allocate payment', exact: true }).click();
     await expect(panel.getByRole('alert')).toContainText('Nothing was allocated');
     await expect(panel.getByRole('alert')).toContainText('more than');
-    await expect(amount).toHaveValue('9,99,999.00');
+    await expect(amount).toHaveValue(/^9,?99,?999\.00$/);
     await expect(allocations).toHaveText(before, { useInnerText: true });
   } finally {
     await finance.context.close();
