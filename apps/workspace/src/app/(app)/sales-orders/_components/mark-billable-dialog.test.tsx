@@ -200,6 +200,8 @@ describe('MarkBillableDialog', () => {
       (b) => b.textContent === 'Cancel',
     );
     await click(cancel ?? null);
-    expect(deletes().map(([url]) => url)).toEqual([`/api/documents/${DOC}`]);
+    expect(deletes().map(([url]) => url)).toEqual([
+      `/api/evidence/sales-order/${IDS.order}/${DOC}`,
+    ]);
   });
 });

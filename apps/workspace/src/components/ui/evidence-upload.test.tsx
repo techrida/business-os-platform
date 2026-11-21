@@ -208,13 +208,26 @@ describe('EvidenceUpload', () => {
     expect(document.activeElement).toBe(removeButton());
   });
 
-  it('removing before save deletes the staged document and clears the field', async () => {
+  // Through the record's own evidence route: the generic /api/documents removal needs
+  // documents.upload, which the Accountant and Finance do not hold.
+  it.each(['sales-order', 'vendor-bill', 'rfq'] as const)(
+    'removing before save deletes the staged %s document through its record route',
+    async (kind) => {
+      mounted = await mountForm(inForm({ kind }));
+      await choose(pdf());
+      await answer(201, staged());
+      await click(removeButton());
+      expect(deletes().map(([url]) => url)).toEqual([`/api/evidence/${kind}/${ORDER}/${DOC}`]);
+      expect(deletes()[0]![1]).toMatchObject({ method: 'DELETE', keepalive: true });
+    },
+  );
+
+  it('removing before save clears the field and brings the drop zone back', async () => {
     mounted = await mountForm(inForm());
     await choose(pdf());
     await answer(201, staged());
     await click(removeButton());
     expect(deletes()).toHaveLength(1);
-    expect(deletes()[0]![0]).toBe(`/api/documents/${DOC}`);
     expect(hidden().value).toBe('');
     expect(document.querySelector('input[type="file"]')).not.toBeNull();
   });
@@ -235,8 +248,7 @@ describe('EvidenceUpload', () => {
     await answer(201, staged());
     await mounted.unmount();
     mounted = undefined;
-    expect(deletes()).toHaveLength(1);
-    expect(deletes()[0]![0]).toBe(`/api/documents/${DOC}`);
+    expect(deletes().map(([url]) => url)).toEqual([`/api/evidence/sales-order/${ORDER}/${DOC}`]);
   });
 
   it('blocks an infected file and says so in the words every file form uses', async () => {

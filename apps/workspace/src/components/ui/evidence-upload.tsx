@@ -49,9 +49,13 @@ export interface EvidenceUploadProps {
   className?: string | undefined;
 }
 
-/** Deletes an upload that no saved record uses. The route also checks the owner may be edited. */
-function discard(documentId: string) {
-  void fetch(`/api/documents/${encodeURIComponent(documentId)}`, {
+/**
+ * Deletes an upload that no saved record uses, through the record's own evidence route (its
+ * permission, not `documents.upload`, which the Accountant and Finance do not hold). The API removes
+ * only the uploader's own file, and only while the record has not taken it.
+ */
+function discard(endpoint: string, documentId: string) {
+  void fetch(`${endpoint}/${encodeURIComponent(documentId)}`, {
     method: 'DELETE',
     keepalive: true,
   }).catch(() => {});
@@ -111,6 +115,8 @@ export function EvidenceUpload({
   // What unmounting must know without re-running effects: the staged id, whether a submit may have
   // used it, and an upload still on the wire.
   const stagedIdRef = useRef<string | null>(null);
+  /** The record route the staged file was uploaded through: the one that removes it. */
+  const stagedEndpointRef = useRef(endpoint);
   const submittedRef = useRef(false);
   const sendingRef = useRef<SendingFile | null>(null);
   const onBlockingRef = useRef(onBlockingChange);
@@ -138,7 +144,7 @@ export function EvidenceUpload({
     () => () => {
       sendingRef.current?.abort();
       const id = stagedIdRef.current;
-      if (id !== null && !submittedRef.current) discard(id);
+      if (id !== null && !submittedRef.current) discard(stagedEndpointRef.current, id);
       // The form outlives this control (a dialog keeps its trigger): it must not stay blocked.
       onBlockingRef.current?.(false);
     },
@@ -188,6 +194,7 @@ export function EvidenceUpload({
         return;
       }
       submittedRef.current = false;
+      stagedEndpointRef.current = endpoint;
       // The chip replaces the drop zone. Focus follows to Remove only when it was in this control;
       // someone typing in another field while the file uploaded keeps their place.
       const focusWasHere = rootRef.current?.contains(document.activeElement) === true;
@@ -204,7 +211,7 @@ export function EvidenceUpload({
 
   function remove() {
     if (staged === null) return;
-    if (!submittedRef.current) discard(staged.documentId);
+    if (!submittedRef.current) discard(stagedEndpointRef.current, staged.documentId);
     submittedRef.current = false;
     setStaged(null);
     setProblem(null);
