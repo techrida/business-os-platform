@@ -35,6 +35,8 @@ vi.mock('@/app/(app)/leads/actions', () => ({
 import ActivitiesPage from './page';
 
 const LEAD = '11111111-1111-4111-8111-111111111111';
+const ALL = { complete: true, reschedule: true, cancel: true };
+const NONE = { complete: false, reschedule: false, cancel: false };
 
 function activity(id: string, over: Partial<ActivityDto> = {}): ActivityDto {
   return {
@@ -57,6 +59,8 @@ function activity(id: string, over: Partial<ActivityDto> = {}): ActivityDto {
     createdByName: null,
     occurredAt: '2026-11-18T04:00:00.000Z',
     version: 1,
+    // The API sends every row its flags; a planned one here allows everything unless a test says otherwise.
+    can: over.planned === true ? ALL : NONE,
     ...over,
   };
 }
@@ -165,52 +169,110 @@ it('gives every planned row Complete, Reschedule and Cancel, whatever its subjec
 });
 
 it('asks for the owners list only with crm.lead.write, so a reader gets no 403', async () => {
-  byStatus([LATER], []);
+  byStatus([{ ...LATER, can: NONE }], []);
   mocks.requireStaffSession.mockResolvedValue({ accessToken: 't', roles: ['no-such-role'] });
   const html = await render();
   expect(mocks.listLeadOwners).not.toHaveBeenCalled();
-  // Neither the lead's writer nor its assignee: no action the API would refuse.
+  // The API's flags allow nothing: no action it would refuse.
   expect(html).toContain('Call back next month');
   expect(html).not.toContain('aria-label="Complete Call back next month"');
   expect(html).not.toContain('aria-label="Reschedule Call back next month"');
 });
 
-// U20a2-Q7: an assignee may complete a follow-up on a subject they cannot write (a customer they do not
-// own), but Reschedule and Cancel need the subject's write, so they are not offered.
-it('offers Complete alone to the assignee who cannot write the subject', async () => {
-  const ME = '99999999-9999-4999-8999-999999999999';
-  const onCustomer = activity('55555555-5555-4555-8555-555555555555', {
-    subject: 'Call the customer back',
-    leadId: null,
-    customerId: '66666666-6666-4666-8666-666666666666',
-    dueAt: '2099-02-01T04:00:00.000Z',
-    planned: true,
-    assigneeUserId: ME,
-    assigneeName: 'Me',
-  });
-  const someoneElses = activity('77777777-7777-4777-8777-777777777777', {
-    subject: 'Visit the customer',
-    leadId: null,
-    customerId: '66666666-6666-4666-8666-666666666666',
-    dueAt: '2099-02-02T04:00:00.000Z',
-    planned: true,
-    assigneeUserId: '88888888-8888-4888-8888-888888888888',
-  });
-  byStatus([onCustomer, someoneElses, LATER], []);
-  mocks.getMe.mockResolvedValue({
-    id: ME,
-    ...liveGrants('customer.read', 'crm.lead.read', 'crm.lead.write'),
-  });
+// Each button follows its own flag from the API, never a guess from the caller's grants: the caller here
+// holds crm.lead.write, which the old rule took as every action on a lead's follow-up.
+const leadWriter = (id = '99999999-9999-4999-8999-999999999999') => ({
+  id,
+  ...liveGrants('customer.read', 'crm.lead.read', 'crm.lead.write'),
+});
+const plannedOn = (n: number, subject: string, over: Partial<ActivityDto> = {}) =>
+  activity(
+    `${n}${n}${n}${n}${n}${n}${n}${n}-${n}${n}${n}${n}-4${n}${n}${n}-8${n}${n}${n}-${String(n).repeat(12)}`,
+    {
+      subject,
+      dueAt: `2099-02-0${n}T04:00:00.000Z`,
+      planned: true,
+      ...over,
+    },
+  );
+const offered = (html: string, subject: string) =>
+  ['Complete', 'Reschedule', 'Cancel'].filter((a) => html.includes(`aria-label="${a} ${subject}"`));
+
+it("shows each action only when the row's own flag allows it", async () => {
+  byStatus(
+    [
+      plannedOn(5, 'Only complete', { can: { ...NONE, complete: true } }),
+      plannedOn(6, 'Only reschedule', { can: { ...NONE, reschedule: true } }),
+      plannedOn(7, 'Only cancel', { can: { ...NONE, cancel: true } }),
+      plannedOn(8, 'All but complete', { can: { ...ALL, complete: false } }),
+    ],
+    [],
+  );
+  mocks.getMe.mockResolvedValue(leadWriter());
   const html = await render();
-  expect(html).toContain('aria-label="Complete Call the customer back"');
-  expect(html).not.toContain('aria-label="Reschedule Call the customer back"');
-  expect(html).not.toContain('aria-label="Cancel Call the customer back"');
-  expect(html).toContain('Visit the customer');
-  expect(html).not.toContain('aria-label="Complete Visit the customer"');
-  // The lead's writer keeps every action.
-  for (const action of ['Complete', 'Reschedule', 'Cancel']) {
-    expect(html).toContain(`aria-label="${action} Call back next month"`);
-  }
+  expect(offered(html, 'Only complete')).toEqual(['Complete']);
+  expect(offered(html, 'Only reschedule')).toEqual(['Reschedule']);
+  expect(offered(html, 'Only cancel')).toEqual(['Cancel']);
+  expect(offered(html, 'All but complete')).toEqual(['Reschedule', 'Cancel']);
+});
+
+it('shows no action on a row without flags, with no fallback to the role', async () => {
+  const ME = '99999999-9999-4999-8999-999999999999';
+  const { can: _omitted, ...unflagged } = plannedOn(5, 'No flags here', {
+    assigneeUserId: ME,
+  });
+  expect('can' in unflagged).toBe(false);
+  byStatus([unflagged], []);
+  mocks.getMe.mockResolvedValue(leadWriter(ME));
+  const html = await render();
+  expect(html).toContain('No flags here');
+  expect(offered(html, 'No flags here')).toEqual([]);
+});
+
+it("shows no action on someone else's follow-up whose flags are all false (a Finance viewer)", async () => {
+  byStatus(
+    [
+      plannedOn(5, 'Their customer call', {
+        leadId: null,
+        customerId: '66666666-6666-4666-8666-666666666666',
+        assigneeUserId: '88888888-8888-4888-8888-888888888888',
+        can: NONE,
+      }),
+      plannedOn(6, 'Their lead call', {
+        assigneeUserId: '88888888-8888-4888-8888-888888888888',
+        can: NONE,
+      }),
+    ],
+    [],
+  );
+  mocks.getMe.mockResolvedValue(leadWriter());
+  const html = await render();
+  expect(html).toContain('Their customer call');
+  expect(offered(html, 'Their customer call')).toEqual([]);
+  expect(offered(html, 'Their lead call')).toEqual([]);
+});
+
+// U20a2-Q7: the API lets an assignee complete a follow-up on a subject they cannot write, and says so in
+// the flags; Reschedule and Cancel stay hidden because their flags are false.
+it("offers Complete alone where the flags allow only Complete (the assignee's own follow-up)", async () => {
+  const ME = '99999999-9999-4999-8999-999999999999';
+  byStatus(
+    [
+      plannedOn(5, 'Call the customer back', {
+        leadId: null,
+        customerId: '66666666-6666-4666-8666-666666666666',
+        assigneeUserId: ME,
+        assigneeName: 'Me',
+        can: { ...NONE, complete: true },
+      }),
+      LATER,
+    ],
+    [],
+  );
+  mocks.getMe.mockResolvedValue(leadWriter(ME));
+  const html = await render();
+  expect(offered(html, 'Call the customer back')).toEqual(['Complete']);
+  expect(offered(html, 'Call back next month')).toEqual(['Complete', 'Reschedule', 'Cancel']);
 });
 
 it('asks for the owners list when the saved grants add crm.lead.write to a role without it', async () => {
@@ -222,12 +284,12 @@ it('asks for the owners list when the saved grants add crm.lead.write to a role 
 });
 
 it('skips the owners list when the saved grants removed crm.lead.write from sales', async () => {
-  byStatus([LATER], []);
+  byStatus([{ ...LATER, can: NONE }], []);
   mocks.requireStaffSession.mockResolvedValue({ accessToken: 'live-2', roles: ['sales'] });
   mocks.getMe.mockResolvedValue(liveGrants('crm.lead.read'));
   const html = await render();
   expect(mocks.listLeadOwners).not.toHaveBeenCalled();
-  // Without the lead write the row stays listed, and offers nothing the API would refuse.
+  // The row stays listed, and offers nothing its flags do not allow.
   expect(html).toContain('Call back next month');
   expect(html).not.toContain('aria-label="Reschedule Call back next month"');
 });
