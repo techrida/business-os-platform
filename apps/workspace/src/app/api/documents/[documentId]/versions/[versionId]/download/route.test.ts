@@ -88,3 +88,26 @@ describe('GET /api/documents/:documentId/versions/:versionId/download session ou
     expect(fetchMock).not.toHaveBeenCalled();
   });
 });
+
+describe('GET /api/documents/:documentId/versions/:versionId/download busy API', () => {
+  it('passes a db_busy 503 through with its wait, not a 502', async () => {
+    getSession.mockResolvedValue(staff);
+    fetchMock.mockResolvedValue(
+      Response.json(
+        {
+          error: {
+            code: 'db_busy',
+            message: 'Busy, please try again',
+            correlationId: 'c-1',
+            details: { retryAfterSeconds: 2 },
+          },
+        },
+        { status: 503, headers: { 'retry-after': '2' } },
+      ),
+    );
+    const res = await download();
+    expect(res.status).toBe(503);
+    expect(res.headers.get('retry-after')).toBe('2');
+    expect(await res.text()).toBe('Busy, please try again.');
+  });
+});

@@ -141,6 +141,34 @@ describe('errorResponse', () => {
     expect(errorResponse(new ApiError(500, 'x')).status).toBe(502);
     expect(errorResponse(new TypeError('fetch failed')).status).toBe(502);
   });
+
+  const busy = (retryAfterSeconds?: number) =>
+    new ApiError(503, 'x', {
+      error: {
+        code: 'db_busy',
+        message: 'Busy, please try again',
+        correlationId: 'c',
+        ...(retryAfterSeconds === undefined ? {} : { details: { retryAfterSeconds } }),
+      },
+    });
+
+  it('passes an API 503 db_busy through as a 503 with its Retry-After, not a 502', async () => {
+    const res = errorResponse(busy(2));
+    expect(res.status).toBe(503);
+    expect(res.headers.get('retry-after')).toBe('2');
+    expect(res.headers.get('cache-control')).toBe('no-store');
+    const body = (await res.json()) as { error: { message: string; reload: boolean } };
+    expect(body.error).toEqual({ message: 'Busy, please try again.', reload: false });
+  });
+
+  it('waits one second when the busy refusal names no wait, and keeps other 503s a 502', () => {
+    expect(errorResponse(busy()).headers.get('retry-after')).toBe('1');
+    const plain503 = new ApiError(503, 'x', {
+      error: { code: 'unavailable', message: 'x', correlationId: 'c' },
+    });
+    expect(errorResponse(plain503).status).toBe(502);
+    expect(errorResponse(new ApiError(503, 'x')).status).toBe(502);
+  });
 });
 
 // K7: the API answers a Founder decision on a stale sign-in with 401 step_up_required.
