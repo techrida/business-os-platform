@@ -371,7 +371,10 @@ export function changePurchaseOrderVendor(
     session,
     `${PO}/${seg(id)}/change-vendor`,
     PurchaseOrderSchema,
-    post(idempotencyKey, acknowledgeVatWarning ? { vendorId, acknowledgeVatWarning } : { vendorId }),
+    post(
+      idempotencyKey,
+      acknowledgeVatWarning ? { vendorId, acknowledgeVatWarning } : { vendorId },
+    ),
   );
 }
 

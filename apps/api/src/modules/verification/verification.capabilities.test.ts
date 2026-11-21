@@ -141,9 +141,9 @@ describe('caseCapabilities', () => {
     ).toEqual(NONE);
 
     // Without vendor.write (even with verification.read all and documents.upload own), attach is refused.
-    expect(
-      caseCapabilities(principal('pmo', buyer), SCOPE, loaded('vendor', OWNER)).attach,
-    ).toBe(false);
+    expect(caseCapabilities(principal('pmo', buyer), SCOPE, loaded('vendor', OWNER)).attach).toBe(
+      false,
+    );
     expect(
       caseCapabilities(principal('operations_head', buyer), SCOPE, loaded('vendor', OWNER)).attach,
     ).toBe(false);

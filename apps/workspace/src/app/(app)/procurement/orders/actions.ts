@@ -80,7 +80,9 @@ function refused(o: Opened, err: unknown, op: PoOp): ActionState {
 
 /** The soft VAT warning of a vendor change (K3 Q2): the dialog shows it and asks for a tick before it goes on. */
 const vatWarningOf = (err: unknown): boolean =>
-  err instanceof ApiError && err.status === 409 && ErrorBodySchema.safeParse(err.body).data?.error.code === 'VENDOR_NOT_VAT_REGISTERED';
+  err instanceof ApiError &&
+  err.status === 409 &&
+  ErrorBodySchema.safeParse(err.body).data?.error.code === 'VENDOR_NOT_VAT_REGISTERED';
 function vatWarned(o: Opened, err: unknown): ActionState {
   return {
     key: randomUUID(),

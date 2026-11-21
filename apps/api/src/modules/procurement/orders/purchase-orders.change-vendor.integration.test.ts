@@ -230,11 +230,8 @@ beforeAll(async () => {
       ),
   } as never;
   const money = new MoneyService(db, settings);
-  await withTx(
-    db,
-    scopeA,
-    { kind: 'user', id: U.acct, correlationId: 'test-corr' },
-    (tx) => money.setRate(tx, 'USD', '135.00', '2026-11-09', 'NRB'),
+  await withTx(db, scopeA, { kind: 'user', id: U.acct, correlationId: 'test-corr' }, (tx) =>
+    money.setRate(tx, 'USD', '135.00', '2026-11-09', 'NRB'),
   );
   sourcing = new SourcingService(
     db,
@@ -780,7 +777,9 @@ describe('changeVendor approval flow (different total)', () => {
     // The order itself is untouched until the approval is decided.
     expect(await poRow(draft.id)).toEqual(draft);
     expect(await lineCount(draft.id)).toBe(0);
-    expect((await service.get(draft.id)).pendingVendorChange).toEqual(submitted.pendingVendorChange);
+    expect((await service.get(draft.id)).pendingVendorChange).toEqual(
+      submitted.pendingVendorChange,
+    );
 
     // Idempotent replay while pending returns the same response without creating a second approval request.
     expect(await service.changeVendor(draft.id, { vendorId: newVendor }, key)).toEqual(submitted);

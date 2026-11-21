@@ -135,7 +135,9 @@ export class PoVendorChangeSubject implements ApprovalSubject {
     const [quote] = await tx
       .select()
       .from(vendorQuotations)
-      .where(scoped(scope).where(vendorQuotations, eq(vendorQuotations.id, proposal.vendorQuotationId)));
+      .where(
+        scoped(scope).where(vendorQuotations, eq(vendorQuotations.id, proposal.vendorQuotationId)),
+      );
     if (quote === undefined) throw conflict('The new vendor quotation is missing');
     await applyVendorChange(tx, scope, this.audit, po, quote, {
       now,
