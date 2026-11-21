@@ -11,6 +11,7 @@ const api = vi.hoisted(() => ({
   getCustomerDetail: vi.fn(),
   listContacts: vi.fn(),
   listVerificationCases: vi.fn(),
+  listCustomerOwners: vi.fn(),
 }));
 
 vi.mock('server-only', () => ({}));
@@ -76,6 +77,7 @@ beforeEach(() => {
   vi.clearAllMocks();
   api.listContacts.mockResolvedValue({ items: [], total: 0 });
   api.listVerificationCases.mockResolvedValue({ items: [], total: 0 });
+  api.listCustomerOwners.mockResolvedValue([{ userId: OWNER, displayName: 'Sita Rai' }]);
 });
 
 const ENTITY = '33333333-3333-4333-8333-333333333333';
@@ -109,5 +111,68 @@ describe('customer terms by legal entity', () => {
     expect(text).toContain('Techrida Nepal Pvt. Ltd.');
     expect(text.match(/Legal entity name unavailable/g)?.length).toBe(1);
     expect(text).not.toContain(ENTITY);
+  });
+});
+
+const CAN = {
+  write: false,
+  readVerification: false,
+  openVerification: false,
+  creditLimit: false,
+  owner: false,
+  paymentTerms: false,
+};
+
+describe('the Commercial terms card on the page', () => {
+  const acting = {
+    actingEntity: { organizationId: ENTITY, name: 'Techrida Nepal Pvt. Ltd.' },
+    accounts: [
+      {
+        partyId: ID,
+        organizationId: ENTITY,
+        organizationName: 'Techrida Nepal Pvt. Ltd.',
+        paymentTermId: null,
+        creditLimit: '0.00',
+        version: 2,
+      },
+      {
+        partyId: ID,
+        organizationId: OTHER,
+        organizationName: 'Techrida Trading',
+        paymentTermId: null,
+        creditLimit: null,
+        version: 1,
+      },
+    ],
+  };
+
+  it('asks for the people list only for someone who may change the owner (Management)', async () => {
+    api.getCustomerDetail.mockResolvedValue(customer({ ...acting, can: { ...CAN, owner: true } }));
+    const text = await render();
+    expect(api.listCustomerOwners).toHaveBeenCalledTimes(1);
+    expect(text).toContain('Change account owner');
+    expect(text).not.toContain('Change credit limit');
+    expect(text).not.toContain('Change payment terms');
+  });
+
+  it('never asks for the people list for Sales, and offers only the payment terms', async () => {
+    api.getCustomerDetail.mockResolvedValue(
+      customer({ ...acting, can: { ...CAN, write: true, paymentTerms: true } }),
+    );
+    const text = await render();
+    expect(api.listCustomerOwners).not.toHaveBeenCalled();
+    expect(text).toContain('Change payment terms');
+    expect(text).not.toContain('Change account owner');
+  });
+
+  it("shows the acting entity's terms in the card, and every entity's in the read-only table", async () => {
+    api.getCustomerDetail.mockResolvedValue(customer({ ...acting, can: CAN }));
+    const text = await render();
+    expect(text).toContain('Commercial terms');
+    expect(text).toContain('agreed with Techrida Nepal Pvt. Ltd.');
+    // The acting entity's zero limit, not the other entity's "no limit".
+    expect(text).toContain('A zero limit holds every order');
+    expect(text).toContain('Techrida Trading');
+    expect(text).not.toContain('Change ');
   });
 });
