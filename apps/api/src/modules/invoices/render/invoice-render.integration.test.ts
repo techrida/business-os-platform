@@ -1080,7 +1080,7 @@ describe('a render that keeps failing (R4c2: TR-Q4, F1-Q13)', () => {
     const [doc] = await documentRows(inv.invoiceId);
     expect(doc?.status).toBe('clean');
     expect(doc?.removed_at).toBeNull();
-    // Known limitation: no print row, and no failure counted either.
+    // No print row yet (the next sweep writes it from the print stored with the PDF), and no failure counted.
     expect(await printFormats(inv.invoiceId)).toEqual([]);
     expect(await failureRow(inv.invoiceId)).toBeUndefined();
     // The live PDF keeps the invoice out of the candidates, so no later sweep prints another original.
@@ -1089,5 +1089,25 @@ describe('a render that keeps failing (R4c2: TR-Q4, F1-Q13)', () => {
     expect(await sweeper.renderOne(inv)).toBe('skipped');
     expect(await documentRows(inv.invoiceId)).toHaveLength(1);
     expect(await printFormats(inv.invoiceId)).toEqual([]);
+  });
+
+  it('restores print 1 with its frozen format on the next sweep when both print writes failed', async () => {
+    const scope = await newScope();
+    const inv = await seedInvoice(scope);
+    const { worker } = flakyPrintLog(2);
+    expect(await worker.renderOne(inv)).toBe('rendered');
+    expect(await printFormats(inv.invoiceId)).toEqual([]);
+    // The settings change before the next sweep: print 1 must keep what the stored PDF printed with.
+    liveSettings['format.date'] = 'yyyy-MM-dd';
+
+    await sweeper.sweep();
+
+    const prints = await printFormats(inv.invoiceId);
+    expect(prints.map((p) => p.print_no)).toEqual([1]);
+    const format = DocumentFormatSnapshotSchema.parse(prints[0]?.render_format);
+    expect(format.dateFormat).toBe('dd MMM yyyy');
+    // Restored once: a second sweep writes nothing more.
+    await sweeper.sweep();
+    expect((await printFormats(inv.invoiceId)).map((p) => p.print_no)).toEqual([1]);
   });
 });
