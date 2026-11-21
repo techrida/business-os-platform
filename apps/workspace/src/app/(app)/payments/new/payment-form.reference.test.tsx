@@ -119,7 +119,11 @@ describe('payment form, bank reference already recorded (TR-Q12d)', () => {
     const mounted = await mount();
     try {
       const { container } = mounted;
-      await fill(container.querySelector('input[name="amount"]'), '250.50');
+      const amountFor = Array.from(container.querySelectorAll('label[for]'))
+        .find((l) => l.textContent?.trim().startsWith('Amount received'))
+        ?.getAttribute('for');
+      // The visible box is the labelled one; the posted value sits on a hidden input named amount.
+      await fill(container.querySelector(`input#${CSS.escape(amountFor ?? 'missing')}`), '250.50');
       await fill(container.querySelector('input[name="bankReference"]'), 'NIC 77812');
       await submit(container);
       await click(container.querySelector('input[name="referenceConfirmed"]'));

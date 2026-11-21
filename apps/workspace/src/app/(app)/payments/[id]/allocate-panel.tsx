@@ -8,7 +8,7 @@ import { PendingLine, useFocusOnProblem } from '@/components/p2/quotations/actio
 import { Alert } from '@/components/ui/alert';
 import { Button } from '@/components/ui/button';
 import { toast } from '@/components/ui/toast';
-import { Input } from '@/components/ui/field';
+import { MoneyInput } from '@/components/ui/number-input';
 import { useNumberSystems } from '@/components/ui/number-system-context';
 import { Panel, FactList } from '@/components/ui/panel';
 import { Table, Td, Th } from '@/components/ui/table';
@@ -156,7 +156,8 @@ function AllocateForm({
           <tbody>
             {items.map((item) => {
               const rowError = state.errors?.lines?.[item.invoiceId];
-              const errorId = `amount-error-${item.invoiceId}`;
+              // Ends in -error so MoneyInput reads it after the currency, as it does for Field errors.
+              const errorId = `amount-${item.invoiceId}-error`;
               return (
                 <tr key={item.invoiceId}>
                   <Td>
@@ -184,15 +185,14 @@ function AllocateForm({
                     </span>
                   </Td>
                   <Td>
-                    <Input
+                    <MoneyInput
                       name={`amount:${item.invoiceId}`}
+                      currency={currency}
+                      min="0.01"
                       value={amounts[item.invoiceId] ?? ''}
-                      onChange={(e) => {
-                        const value = e.target.value;
+                      onValueChange={(value) => {
                         setAmounts((prev) => ({ ...prev, [item.invoiceId]: value }));
                       }}
-                      inputMode="decimal"
-                      autoComplete="off"
                       placeholder="0.00"
                       aria-label={`Amount to allocate to ${item.number}`}
                       aria-invalid={rowError ? true : undefined}

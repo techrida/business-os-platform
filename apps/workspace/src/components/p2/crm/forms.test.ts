@@ -1,3 +1,4 @@
+import { NO_SPACES } from '@bos/locale';
 import { describe, expect, it } from 'vitest';
 
 import {
@@ -323,6 +324,11 @@ describe('parseLead', () => {
       ]);
       expect(r.fieldErrors.phone).toMatch(/\+977/);
     }
+  });
+
+  it('says to remove the space in an expected value typed as 10 50, not read as 1050', () => {
+    const r = parseLead(form({ ...base, expectedValue: '10 50', currency: 'NPR' }));
+    expect(r).toEqual({ ok: false, fieldErrors: { expectedValue: NO_SPACES } });
   });
 });
 
