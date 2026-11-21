@@ -801,7 +801,7 @@ describe('portal PDF status on a real database (P5)', () => {
 
     const view = await portal.get(ready.versionId);
     expect(view.renderFailed).toBe(false);
-    expect(view.file).toMatchObject({ documentId: expect.any(String) });
+    expect(view.file?.documentId).toEqual(expect.any(String));
     expect((await portal.quotationPdfLink(ready.versionId)).url).toMatch(SIGNED_PATH);
   });
 
