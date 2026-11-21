@@ -56,7 +56,7 @@ beforeEach(() => {
   mocks.requireStaffSession.mockResolvedValue({ accessToken: 't', roles: ['accountant'] });
   mocks.listPaymentsPage.mockResolvedValue(page([listItem()]));
   mocks.getPaymentsSummary.mockResolvedValue(SUMMARY);
-  // Without a live answer the gate falls back to the role defaults.
+  // Without a live answer the action buttons hide (the sidebar keeps the role defaults).
   mocks.getMe.mockRejectedValue(new Error('GET /v1/me failed'));
 });
 
@@ -198,11 +198,20 @@ describe('payments list', () => {
   });
 
   it('links to Record payment for a role with payment.record, with rows and when empty', async () => {
+    mocks.getMe.mockResolvedValue(liveGrants('payment.read', 'payment.record'));
     const html = await render();
     expect(html).toContain('href="/payments/new"');
     expect(html).toContain('Record payment');
     mocks.listPaymentsPage.mockResolvedValue(page([]));
     expect(await render()).toContain('href="/payments/new"');
+  });
+
+  it('hides the Record payment link when GET /v1/me fails, even for a role that normally records', async () => {
+    mocks.requireStaffSession.mockResolvedValue({ accessToken: 't', roles: ['accountant'] });
+    mocks.getMe.mockRejectedValue(new Error('GET /v1/me failed'));
+    const html = await render();
+    expect(html).not.toContain('/payments/new');
+    expect(html).not.toContain('Record payment');
   });
 
   it('hides the Record payment link from roles without payment.record', async () => {
