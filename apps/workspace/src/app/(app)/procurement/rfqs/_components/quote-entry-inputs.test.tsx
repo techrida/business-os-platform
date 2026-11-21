@@ -69,7 +69,7 @@ describe('quotation entry boxes', () => {
     );
     expect(posted).toHaveLength(1);
     expect(posted[0]!.hidden).toBe(true);
-    expect(new FormData(panel as HTMLFormElement).get('validUntil')).toBe('');
+    expect(new FormData(panel).get('validUntil')).toBe('');
   });
 
   it('groups a typed quantity and steps it with both buttons, posting the plain number', async () => {
