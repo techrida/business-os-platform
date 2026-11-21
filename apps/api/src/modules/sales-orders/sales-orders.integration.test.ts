@@ -2507,6 +2507,30 @@ describe('credit hold at the hand-over to a sales order (F1-Q20, F1-Q26)', () =>
       expect(parsed(await confirm(q)).order.status).toBe('confirmed');
     });
 
+    it("refuses an override given for another order value than the deal's order has now", async () => {
+      await setLimit('100000.00');
+      await openItem('debit', 'NPR', '90000.00');
+      const q = await accepted({ unitPrice: '20000.00' });
+      asFinance();
+      // Finance reviewed an order of 5,000.00; the order is 22,600.00 by the time the override arrives.
+      expect(
+        await statusOf(
+          credit.override(q.opportunityId, {
+            reason: 'Reviewed the small order',
+            orderValue: '5000.00',
+          }),
+        ),
+      ).toEqual({ status: 409, code: 'conflict' });
+      expect((await flagAndPage(q.opportunityId)).flag.overridden).toBe(false);
+      const given = CreditHoldDtoSchema.parse(
+        await credit.override(q.opportunityId, {
+          reason: 'Reviewed the order of 22,600.00',
+          orderValue: '22600.00',
+        }),
+      );
+      expect(given).toMatchObject({ overrideCovers: true, override: { orderValue: '22600.00' } });
+    });
+
     it('treats an override with no recorded value as covering nothing', async () => {
       const q = await overriddenDeal();
       await setRecordedValue(q.opportunityId, null);

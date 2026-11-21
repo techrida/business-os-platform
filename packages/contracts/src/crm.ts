@@ -589,8 +589,19 @@ export const OpportunityStageChangeBodySchema = z
   });
 export type OpportunityStageChangeBody = z.infer<typeof OpportunityStageChangeBodySchema>;
 
-/** `POST /v1/opportunities/:id/credit-override` (F1-Q20/F1-Q26): why the deal may go ahead over the limit. */
-export const CreditOverrideBodySchema = z.strictObject({ reason: text(500) });
+/** `POST /v1/opportunities/:id/credit-override` (F1-Q20/F1-Q26): why the deal may go ahead over the limit, and for which order value. */
+export const CreditOverrideBodySchema = z.strictObject({
+  reason: text(500),
+  /**
+   * The pending order's value (NPR, two decimals) the person saw when they gave the override. When sent, the API
+   * refuses the override (409) if the order is worth something else by then, so an override never covers an order
+   * nobody reviewed (R5 FU4). The workspace always sends it.
+   */
+  orderValue: z
+    .string()
+    .regex(/^d+.d{2}$/)
+    .optional(),
+});
 export type CreditOverrideBody = z.infer<typeof CreditOverrideBodySchema>;
 
 /**
