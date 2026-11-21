@@ -3,6 +3,8 @@
  * is not a plain number) gets a leading apostrophe, so text that came from a person or a file never executes when the
  * export is opened. Same rule as the VAT register exports.
  */
+const BOM = String.fromCodePoint(0xfeff);
+
 export function csvCell(value: string | null | undefined): string {
   let text = value ?? '';
   if (/^[\t\r]/.test(text) || (!/^-?\d+(?:\.\d+)?$/.test(text) && /^\s*[=+@-]/.test(text)))
@@ -12,5 +14,5 @@ export function csvCell(value: string | null | undefined): string {
 
 /** Rows as a UTF-8 CSV with a byte-order mark (so Excel reads the encoding) and CRLF line ends. */
 export function csvDocument(rows: readonly (readonly (string | null | undefined)[])[]): string {
-  return `﻿${rows.map((row) => row.map(csvCell).join(',')).join('\r\n')}\r\n`;
+  return `${BOM}${rows.map((row) => row.map(csvCell).join(',')).join('\r\n')}\r\n`;
 }

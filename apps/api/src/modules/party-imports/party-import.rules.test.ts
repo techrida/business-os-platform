@@ -12,8 +12,6 @@ import {
   startsLikeFormula,
 } from './party-import.rules';
 
-const CUSTOMER_HEADER =
-  'legal_name,pan_vat_no,industry,address_line1,address_city,address_country,contact_name,contact_email,contact_phone';
 const customerLine = (over: Partial<Record<string, string>> = {}) => {
   const base: Record<string, string> = {
     legal_name: 'Himal Traders',
@@ -151,7 +149,7 @@ describe('second review fixes', () => {
     const row = buildRows('customer', [
       rec(2, { legal_name: `${'x'.repeat(499)}\u{1F600}`, pan_vat_no: '' }),
     ])[0]!;
-    expect(JSON.parse(JSON.stringify(row)).name).toHaveLength(499);
+    expect((JSON.parse(JSON.stringify(row)) as { name: string }).name).toHaveLength(499);
   });
 });
 
