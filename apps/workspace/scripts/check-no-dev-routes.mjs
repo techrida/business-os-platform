@@ -15,6 +15,10 @@
 // check catches the route. If someone renames the route but keeps the component, the marker
 // checks still catch it.
 //
+// `--profile dev` checks the other direction, for a build made with BOS_BUILD_PROFILE=dev
+// (output in `.next-devtools/`): it fails when the dev layer is MISSING, so a "dev build" that
+// silently lost its dev menu cannot pass as one. Default is `--profile production`.
+//
 // Exit codes: 0 clean, 1 dev content found, 2 the build output could not be inspected. Exit 2 is
 // "fail closed": a checker that cannot find a build must not read as a pass.
 //
@@ -29,6 +33,13 @@ export const MARKER = 'BOS_DEV_PERSONA_SWITCHER';
 
 /** Carried by the DEV MENU widget, which lives only in the dev layer. */
 export const DEV_MENU_MARKER = 'BOS_DEV_MENU';
+
+/**
+ * Next inlines `process.env.BOS_DEV_TOOLS` at build time (next.config.ts `env`). In a production build the
+ * read must therefore be gone from every emitted file. A surviving read is evaluated at run time, so an
+ * environment variable on the server could switch the dev tools on.
+ */
+export const RUNTIME_SWITCH = 'process.env.BOS_DEV_TOOLS';
 
 const MARKERS = [
   MARKER,
@@ -71,7 +82,7 @@ function* walk(dir, isTopLevel) {
 }
 
 /** Returns a list of human-readable problems. Throws if the build output cannot be inspected. */
-export function findProblems(nextDir) {
+export function findProblems(nextDir, profile = 'production') {
   if (!existsSync(nextDir) || !statSync(nextDir).isDirectory()) {
     throw new Error(`no build output at ${nextDir} (run \`next build\` first)`);
   }
@@ -91,17 +102,35 @@ export function findProblems(nextDir) {
   }
 
   const problems = [];
-  for (const route of Object.keys(manifest)) {
-    if (isDevRoute(route)) problems.push(`dev route in ${APP_PATHS_MANIFEST}: ${route}`);
+  const wantDev = profile === 'dev';
+  const devRoutes = Object.keys(manifest).filter(isDevRoute);
+  if (!wantDev) {
+    for (const route of devRoutes) problems.push(`dev route in ${APP_PATHS_MANIFEST}: ${route}`);
+  } else if (!devRoutes.some((route) => route.includes('/dev/personas'))) {
+    problems.push(`dev build is missing the /dev/personas route in ${APP_PATHS_MANIFEST}`);
   }
 
   const needles = MARKERS.map((marker) => [marker, Buffer.from(marker)]);
+  const runtimeSwitch = Buffer.from(RUNTIME_SWITCH);
+  const seen = new Set();
   for (const file of walk(nextDir, true)) {
     const content = readFileSync(file);
+    // Source maps carry the original source text, so only executable files can show a surviving read.
+    if (!wantDev && !file.endsWith('.map') && content.includes(runtimeSwitch)) {
+      problems.push(
+        `${RUNTIME_SWITCH} is read at run time (not inlined at build time) in ${path.relative(nextDir, file)}`,
+      );
+    }
     for (const [marker, needle] of needles) {
       if (content.includes(needle)) {
-        problems.push(`marker ${marker} found in ${path.relative(nextDir, file)}`);
+        seen.add(marker);
+        if (!wantDev) problems.push(`marker ${marker} found in ${path.relative(nextDir, file)}`);
       }
+    }
+  }
+  if (wantDev) {
+    for (const marker of [MARKER, DEV_MENU_MARKER]) {
+      if (!seen.has(marker)) problems.push(`dev build is missing marker ${marker}`);
     }
   }
   return problems;
@@ -111,22 +140,40 @@ function main() {
   const here = path.dirname(fileURLToPath(import.meta.url));
   // Default is relative to this file, not the working directory: CI and the lead run it from the
   // repository root, while `next build` writes to apps/workspace/.next.
-  const nextDir = path.resolve(process.argv[2] ?? path.join(here, '..', '.next'));
+  const args = process.argv.slice(2);
+  const profileAt = args.indexOf('--profile');
+  const profile = profileAt === -1 ? 'production' : args[profileAt + 1];
+  if (profile !== 'dev' && profile !== 'production') {
+    console.error('check-no-dev-routes: --profile must be "dev" or "production"');
+    process.exit(2);
+  }
+  const positional =
+    profileAt === -1 ? args : args.filter((_, i) => i !== profileAt && i !== profileAt + 1);
+  const defaultDir = profile === 'dev' ? '.next-devtools' : '.next';
+  const nextDir = path.resolve(positional[0] ?? path.join(here, '..', defaultDir));
 
   let problems;
   try {
-    problems = findProblems(nextDir);
+    problems = findProblems(nextDir, profile);
   } catch (error) {
     console.error(`check-no-dev-routes: cannot check: ${error.message}`);
     process.exit(2);
   }
 
   if (problems.length > 0) {
-    console.error('check-no-dev-routes: FAILED, the build contains dev-only content:');
+    console.error(
+      profile === 'dev'
+        ? 'check-no-dev-routes: FAILED, the dev build lost its dev layer:'
+        : 'check-no-dev-routes: FAILED, the build contains dev-only content:',
+    );
     for (const problem of problems) console.error(`  - ${problem}`);
     process.exit(1);
   }
-  console.log(`check-no-dev-routes: OK, no dev routes or dev markers in ${nextDir}`);
+  console.log(
+    profile === 'dev'
+      ? `check-no-dev-routes: OK, the dev layer is present in ${nextDir}`
+      : `check-no-dev-routes: OK, no dev routes or dev markers in ${nextDir}`,
+  );
 }
 
 // Only run when executed directly, so the helpers can be imported without side effects.
