@@ -23,6 +23,9 @@ const routes: [keyof EvidenceDocumentsController, string, string][] = [
     'sales-orders/:id/evidence-documents/:docId',
     'sales_order.mark_billable',
   ],
+  ['readForSalesOrder', 'sales-orders/:id/evidence-documents/:docId', 'sales_order.mark_billable'],
+  ['readForBill', 'payables/bills/:id/evidence-documents/:docId', 'payables.bill.enter'],
+  ['readForRfq', 'procurement/rfqs/:id/evidence-documents/:docId', 'procurement.sourcing'],
   ['createForBill', 'payables/bills/:id/evidence-documents', 'payables.bill.enter'],
   [
     'uploadForBill',
@@ -45,6 +48,11 @@ describe('EvidenceDocumentsController', () => {
     expect(Reflect.getMetadata(PATH_METADATA, EvidenceDocumentsController)).toBe('v1');
     expect(Reflect.getMetadata(PATH_METADATA, handler)).toBe(path);
     expect(Reflect.getMetadata(CAN_KEY, handler)).toBe(permission);
+  });
+
+  it.each(['readForSalesOrder', 'readForBill', 'readForRfq'] as const)('%s is a GET', (method) => {
+    const handler = EvidenceDocumentsController.prototype[method];
+    expect(Reflect.getMetadata(METHOD_METADATA, handler)).toBe(RequestMethod.GET);
   });
 
   it.each(['removeForSalesOrder', 'removeForBill', 'removeForRfq'] as const)(

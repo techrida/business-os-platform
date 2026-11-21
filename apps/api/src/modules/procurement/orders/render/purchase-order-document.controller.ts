@@ -29,7 +29,8 @@ export class PurchaseOrderDocumentController {
    * 200 with a SignedLinkDto: a short-lived, single-use link to the clean PDF, redeemed at GET /v1/files/:token.
    * Every call issues a new link. 403 for a portal caller and for staff with no grant that opens purchase orders; 404 `not_found` for a version outside the caller's entity
    * or a random id; 409 `purchase_order_pdf_not_ready` while the PDF is being prepared; 424 `purchase_order_pdf_failed`
-   * once its render was given up; 404 `purchase_order_pdf_unavailable` when the scan refused it.
+   * once its render was given up; 404 `purchase_order_pdf_scan_refused` when the virus scan refused it, 404
+   * `purchase_order_pdf_unavailable` when it went away before the link was issued.
    */
   @Get(':id/versions/:version/document')
   @AnyAuthenticated()
