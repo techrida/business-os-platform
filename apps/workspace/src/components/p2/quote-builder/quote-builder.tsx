@@ -763,7 +763,7 @@ export function QuoteBuilder({
                       edit((v) => ({
                         ...v,
                         discountMode: e.target.value as DiscountMode,
-                        discountValue: e.target.value === 'none' ? '' : v.discountValue,
+                        discountValue: '',
                       }))
                     }
                     {...control}
