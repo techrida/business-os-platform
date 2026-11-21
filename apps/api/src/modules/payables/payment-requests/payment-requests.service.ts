@@ -570,7 +570,8 @@ export class PaymentRequestsService {
    * Sends a draft to the `payment_request` route. 200 with the request in pending_approval. 404 outside the acting
    * entity; 409 invalid_transition unless it is a draft, `no_verified_bank_account`, OVER_ALLOCATION when another
    * request claimed the balance first; 422 NO_ELIGIBLE_APPROVER (nothing written) when nobody outside the SoD set
-   * can take a step.
+   * can take a step; 422 BANK_ACCOUNT_INVALID (nothing written) when the paying bank account was retired after the
+   * draft was made. A draft whose paying account id matches no row (made before the account list) still submits.
    */
   async submit(id: string, idempotencyKey: string): Promise<PaymentRequestDto> {
     const { scope, actor, principal } = this.caller.current();
@@ -588,6 +589,9 @@ export class PaymentRequestsService {
                 `A ${request.status} payment request cannot be submitted`,
               );
             }
+            // Before the vendor lock, the same order create uses: a paying account retired since the draft
+            // was made is refused here, before anything is written (round 5, P1).
+            await this.accounts.assertBankAccountNotRetired(tx, scope, request.fromBankAccountId);
             const vendorName = await this.lockVendor(tx, scope, request.vendorId);
             const snapshot = await this.bank.activeVerifiedAccount(scope, request.vendorId, tx);
             const lines = await this.linesOf(tx, scope, request.id);

@@ -638,6 +638,106 @@ describe('the paying bank account (round 5, P1)', () => {
     expect(replayed.fromBankAccountId).toBe(bankOf.A);
     expect(await writes()).toEqual(before);
   });
+
+  /** A fresh active NPR account of entity A, so retiring it leaves bankOf.A to the other tests. */
+  const ownAccount = async () =>
+    (
+      await createCompanyBankAccount(appPool, {
+        ...scopeA,
+        name: `Own ${randomUUID().slice(0, 8)}`,
+        last4: 'OWN1',
+      })
+    ).id;
+  const retire = (id: string) =>
+    exec(
+      scopeA,
+      sql`UPDATE app.company_bank_accounts SET status = 'retired', retired_at = now() WHERE id = ${id}`,
+    );
+
+  it('replays a stored request after its account is retired, and refuses a new key', async () => {
+    const v = await vendor();
+    const bill = await approvedBill(v);
+    const account = await ownAccount();
+    as(U.fin2, 'finance');
+    const key = randomUUID();
+    const request = {
+      ...body(v, [{ openItemId: bill.openItemId, amount: '100.00' }]),
+      fromBankAccountId: account,
+    };
+    const created = await service.create(request, key);
+    await retire(account);
+    const replayed = await service.create(request, key);
+    expect(replayed.id).toBe(created.id);
+    const refused = await httpErrorOf(service.create(request, randomUUID()));
+    expect(codeOf(refused)).toBe('BANK_ACCOUNT_INVALID');
+  });
+
+  it('refuses at submit a draft whose account was retired after it was made, and writes nothing', async () => {
+    const v = await vendor();
+    const bill = await approvedBill(v);
+    const account = await ownAccount();
+    as(U.fin2, 'finance');
+    const d = await service.create(
+      {
+        ...body(v, [{ openItemId: bill.openItemId, amount: '100.00' }]),
+        fromBankAccountId: account,
+      },
+      randomUUID(),
+    );
+    await retire(account);
+    // Approvers exist, so the only reason left to refuse is the retired account.
+    roles.finance = [U.fin, U.fin2, U.fin3];
+    const before = await writes();
+    const refused = await httpErrorOf(service.submit(d.id, randomUUID()));
+    // Fails on the old code: submit did not look at the paying account again.
+    expect(refused.getStatus()).toBe(422);
+    expect(codeOf(refused)).toBe('BANK_ACCOUNT_INVALID');
+    expect((refused.getResponse() as { message?: string }).message).toBe(
+      'This bank account was retired. Create a new request from an active account.',
+    );
+    expect(sent(refused)).toEqual({ status: 422, code: 'BANK_ACCOUNT_INVALID' });
+    const row = await requestRow(d.id);
+    expect(row.status).toBe('draft');
+    expect(row.approvalRequestId).toBeNull();
+    expect(await writes()).toEqual(before);
+    const approvals = await read((tx) =>
+      tx.select().from(approvalRequests).where(eq(approvalRequests.documentId, d.id)),
+    );
+    expect(approvals).toHaveLength(0);
+  });
+
+  it('submits a draft whose account id matches no row (made before the account list)', async () => {
+    const v = await vendor();
+    const bill = await approvedBill(v);
+    const d = await draft(v, [{ openItemId: bill.openItemId, amount: '100.00' }]);
+    const legacy = randomUUID();
+    await exec(
+      scopeA,
+      sql`UPDATE app.payment_requests SET from_bank_account_id = ${legacy} WHERE id = ${d.id}`,
+    );
+    roles.finance = [U.fin, U.fin2, U.fin3];
+    const submitted = await service.submit(d.id, randomUUID());
+    expect(submitted.status).toBe('pending_approval');
+    expect(submitted.fromBankAccountId).toBe(legacy);
+  });
+
+  it('submits a draft whose account is still active', async () => {
+    const v = await vendor();
+    const bill = await approvedBill(v);
+    const account = await ownAccount();
+    as(U.fin2, 'finance');
+    const d = await service.create(
+      {
+        ...body(v, [{ openItemId: bill.openItemId, amount: '100.00' }]),
+        fromBankAccountId: account,
+      },
+      randomUUID(),
+    );
+    roles.finance = [U.fin, U.fin2, U.fin3];
+    const submitted = await service.submit(d.id, randomUUID());
+    expect(submitted.status).toBe('pending_approval');
+    expect(submitted.fromBankAccountId).toBe(account);
+  });
 });
 
 // ---------------------------------------------------------------------------------------- lines and bank

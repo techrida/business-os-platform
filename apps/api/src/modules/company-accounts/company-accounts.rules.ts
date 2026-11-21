@@ -20,10 +20,9 @@ export const normalizeAccountId = (id: string): string => id.toLowerCase();
  */
 export const isAccountId = (id: string): boolean => UUID.test(id);
 
-/** The distinct lowercase ids still to check: `unchanged` ones were valid when saved and stay allowed. */
-export function idsToCheck(ids: readonly string[], unchanged?: ReadonlySet<string>): string[] {
-  const kept = new Set([...(unchanged ?? [])].map(normalizeAccountId));
-  return [...new Set(ids.map(normalizeAccountId))].filter((id) => !kept.has(id));
+/** The distinct lowercase ids to check, in first-seen order. */
+export function idsToCheck(ids: readonly string[]): string[] {
+  return [...new Set(ids.map(normalizeAccountId))];
 }
 
 /** Null when every checked id is an active expense account of the entity (`found` is already entity-scoped). */
@@ -58,6 +57,21 @@ export function bankAccountViolation(
       message: `This bank account holds ${found.currency}, but the payment is in ${currency}`,
     };
   return null;
+}
+
+/**
+ * Null unless `found` (the entity's row for a draft's paying account, if any) is retired. A draft whose id names no
+ * row at all predates the account list and is left alone; only a row retired since the draft was made is refused.
+ */
+export function retiredBankAccountViolation(
+  found: { status: CompanyAccountStatus } | undefined,
+): AccountRuleViolation | null {
+  return found?.status === 'retired'
+    ? {
+        code: 'BANK_ACCOUNT_INVALID',
+        message: 'This bank account was retired. Create a new request from an active account.',
+      }
+    : null;
 }
 
 /** ISO text, not a Date: an idempotent replay returns the stored JSON, so the first answer must match it. */
