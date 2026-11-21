@@ -25,7 +25,9 @@ import {
   createCostCenter,
   approvalRequests,
   approvalSteps,
+  createCompanyBankAccount,
   createDepartment,
+  createExpenseAccount,
   createParty,
   createStaffUser,
   createTenantWithEntity,
@@ -33,7 +35,7 @@ import {
   paymentRequests,
   vendorBills,
 } from '@bos/db';
-import { ForbiddenException, HttpException } from '@nestjs/common';
+import { ForbiddenException, HttpException, type ArgumentsHost } from '@nestjs/common';
 import { asc, eq, sql } from 'drizzle-orm';
 import { drizzle } from 'drizzle-orm/node-postgres';
 import { Pool } from 'pg';
@@ -47,6 +49,7 @@ import type { Db, DbTransaction } from '../../../platform/db/db.module';
 import { systemActor, withTx, type TxScope } from '../../../platform/db/tx';
 import { NumberingService } from '../../../platform/settings/numbering.service';
 import { SettingsService } from '../../../platform/settings/settings.service';
+import { ErrorBodyFilter } from '../../../platform/tenancy/error-body.filter';
 import { ApprovalsAdminService } from '../../approvals/admin.service';
 import { asSecondPerson, SKIP_LIVE_PUBLISHER_CHECK } from '../../../../test/support/second-person';
 import { ApprovalsService } from '../../approvals/requests.service';
@@ -60,6 +63,7 @@ import { VENDOR_BILL_DOCUMENT_TYPE, VENDOR_BILL_WORKFLOW_SPEC } from '../bills/v
 import { VendorBillSubject } from '../bills/vendor-bill.subject';
 import { VendorBillsService } from '../bills/vendor-bills.service';
 import {
+  PAYMENT_REQUEST_AUDIT_ENTITY,
   PAYMENT_REQUEST_DOCUMENT_TYPE,
   PAYMENT_REQUEST_WORKFLOW_SPEC,
 } from './payment-request.rules';
@@ -85,6 +89,9 @@ let receiptsService: ReceiptsService;
 const ledger = new LedgerService();
 let deptA = '';
 let vatCode = '';
+/** The active NPR company bank account of each entity a request pays from, and an expense account bills code to. */
+const bankOf = { A: '', B: '' };
+let expenseA = '';
 
 const U = {
   req: '',
@@ -195,6 +202,13 @@ beforeAll(async () => {
   U.founder = await staff('founder');
   U.wh = await staff('warehouse');
   deptA = (await createDepartment(appPool, scopeA)).departmentId;
+  bankOf.A = (
+    await createCompanyBankAccount(appPool, { ...scopeA, name: 'Operating A', last4: 'OPA1' })
+  ).id;
+  bankOf.B = (
+    await createCompanyBankAccount(appPool, { ...scopeB, name: 'Operating B', last4: 'OPB1' })
+  ).id;
+  expenseA = (await createExpenseAccount(appPool, scopeA)).id;
 
   const vat = await exec(
     scopeA,
@@ -442,7 +456,7 @@ async function approvedBill(
       lines: [
         {
           ...(po === undefined ? {} : { poLineId: po.lineId }),
-          accountId: randomUUID(),
+          accountId: expenseA,
           quantity: '1',
           unitPrice,
           taxCodeId: vatCode,
@@ -469,7 +483,8 @@ const body = (
   vendorPartyId,
   paymentType: 'settlement',
   currency: 'NPR',
-  fromBankAccountId: randomUUID(),
+  // The acting entity's active NPR account, so the bank account check (round 5, P1) lets the request through.
+  fromBankAccountId: current.inB ? bankOf.B : bankOf.A,
   allocations,
 });
 
@@ -492,6 +507,138 @@ const stepRoles = async (approvalRequestId: string) =>
 
 const requestRow = async (id: string) =>
   (await read((tx) => tx.select().from(paymentRequests).where(eq(paymentRequests.id, id))))[0]!;
+
+// ---------------------------------------------------------------------------------------- paying bank account
+
+/** What the global filter would send for `e`: the HTTP status and the body's code. */
+function sent(e: HttpException): { status?: number; code?: string } {
+  const out: { status?: number; code?: string } = {};
+  const res = {
+    headersSent: false,
+    setHeader: () => undefined,
+    status(code: number) {
+      out.status = code;
+      return this;
+    },
+    json(json: { error?: { code?: string } }) {
+      if (json.error?.code !== undefined) out.code = json.error.code;
+    },
+  };
+  const req = { method: 'POST', path: '/v1/payables/payment-requests', headers: {} };
+  const host = {
+    getType: () => 'http',
+    switchToHttp: () => ({ getRequest: () => req, getResponse: () => res }),
+  } as unknown as ArgumentsHost;
+  new ErrorBodyFilter().catch(e, host);
+  return out;
+}
+
+/** Requests, lines and payment-request audit rows of the tenant, read as the owner (bos_app cannot read audit). */
+async function writes() {
+  const count = async (text: string) =>
+    (await ownerPool.query<{ n: number }>(text, [scopeA.tenantId])).rows[0]!.n;
+  return {
+    requests: await count(
+      'SELECT count(*)::int AS n FROM app.payment_requests WHERE tenant_id = $1',
+    ),
+    lines: await count(
+      'SELECT count(*)::int AS n FROM app.payment_request_lines WHERE tenant_id = $1',
+    ),
+    audit: await count(
+      `SELECT count(*)::int AS n FROM audit.audit_events
+        WHERE tenant_id = $1
+          AND (entity_type = '${PAYMENT_REQUEST_AUDIT_ENTITY}' OR action LIKE 'payables.payment_request.%')`,
+    ),
+  };
+}
+
+describe('the paying bank account (round 5, P1)', () => {
+  it('refuses an unknown, retired or other entity account with 422 BANK_ACCOUNT_INVALID and writes nothing', async () => {
+    const v = await vendor();
+    const bill = await approvedBill(v);
+    const lines = [{ openItemId: bill.openItemId, amount: '100.00' }];
+    const retired = await createCompanyBankAccount(appPool, {
+      ...scopeA,
+      name: 'Closed account',
+      last4: 'RT01',
+      status: 'retired',
+    });
+    as(U.fin2, 'finance');
+    const before = await writes();
+    for (const id of [randomUUID(), retired.id, bankOf.B, 'not-an-id']) {
+      const refused = await httpErrorOf(
+        service.create({ ...body(v, lines), fromBankAccountId: id }, randomUUID()),
+      );
+      expect(refused.getStatus()).toBe(422);
+      expect(codeOf(refused)).toBe('BANK_ACCOUNT_INVALID');
+      expect(sent(refused)).toEqual({ status: 422, code: 'BANK_ACCOUNT_INVALID' });
+    }
+    expect(await writes()).toEqual(before);
+  });
+
+  it('refuses an account in another currency with 422 BANK_ACCOUNT_CURRENCY_MISMATCH and writes nothing', async () => {
+    const v = await vendor();
+    const bill = await approvedBill(v);
+    const usd = await createCompanyBankAccount(appPool, {
+      ...scopeA,
+      name: 'Dollar account',
+      last4: 'USD1',
+      currency: 'USD',
+    });
+    as(U.fin2, 'finance');
+    const before = await writes();
+    const refused = await httpErrorOf(
+      service.create(
+        {
+          ...body(v, [{ openItemId: bill.openItemId, amount: '100.00' }]),
+          fromBankAccountId: usd.id,
+        },
+        randomUUID(),
+      ),
+    );
+    expect(refused.getStatus()).toBe(422);
+    expect(codeOf(refused)).toBe('BANK_ACCOUNT_CURRENCY_MISMATCH');
+    expect(sent(refused)).toEqual({ status: 422, code: 'BANK_ACCOUNT_CURRENCY_MISMATCH' });
+    expect(await writes()).toEqual(before);
+  });
+
+  it('answers CURRENCY_NOT_ENABLED before looking at the account', async () => {
+    const v = await vendor();
+    // Entity B alone switches USD off, so no other test here meets the setting.
+    await withTx(db, scopeB, systemActor('test'), (tx) =>
+      new SettingsService(db).set(tx, 'currency.enabled', ['NPR', 'INR']),
+    );
+    current.inB = true;
+    as(U.fin2, 'finance');
+    const refused = await httpErrorOf(
+      service.create(
+        {
+          ...body(v, [{ openItemId: randomUUID(), amount: '100.00' }]),
+          currency: 'USD',
+          fromBankAccountId: randomUUID(),
+        },
+        randomUUID(),
+      ),
+    );
+    expect(codeOf(refused)).toBe('CURRENCY_NOT_ENABLED');
+  });
+
+  it('keeps an active account in the currency on the request and replays the same request for the same key', async () => {
+    const v = await vendor();
+    const bill = await approvedBill(v);
+    as(U.fin2, 'finance');
+    const key = randomUUID();
+    const request = body(v, [{ openItemId: bill.openItemId, amount: '100.00' }]);
+    const created = await service.create(request, key);
+    expect(created.fromBankAccountId).toBe(bankOf.A);
+    expect((await requestRow(created.id)).fromBankAccountId).toBe(bankOf.A);
+    const before = await writes();
+    const replayed = await service.create(request, key);
+    expect(replayed.id).toBe(created.id);
+    expect(replayed.fromBankAccountId).toBe(bankOf.A);
+    expect(await writes()).toEqual(before);
+  });
+});
 
 // ---------------------------------------------------------------------------------------- lines and bank
 
