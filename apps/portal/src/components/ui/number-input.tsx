@@ -13,6 +13,7 @@ import {
   formatMoney,
   groupDigits,
   normalisePastedNumber,
+  plainAmount,
   refusalMessage,
   withinLimits,
   type Currency,
@@ -105,8 +106,8 @@ const LOWER_BOUND = new Set<Problem['reason']>(['below_min', 'zero']);
 
 const DIGITS = /^\d*\.?\d*$/;
 const ungroup = (text: string) => text.replaceAll(',', '');
-/** What the hidden input posts for the text in the box. */
-const postedOf = (text: string) => ungroup(text).replace(/\.$/, '');
+/** What the hidden input posts for typed text: the grouping commas and a bare trailing point go. */
+const plainOf = (text: string) => ungroup(text).replace(/\.$/, '');
 
 const isDecimal = (text: string) => /^(\d+\.?\d*|\.\d+)$/.test(text);
 
@@ -151,11 +152,19 @@ function caretAfter(shown: string, count: number): number {
   return shown.length;
 }
 
+/** The whole part of `plain` grouped as this field groups it, or null for a field without grouping. */
+function regroup(plain: string, grouping: NumberSystem | null): string | null {
+  if (!grouping) return null;
+  const [whole = '', fraction] = plain.split('.');
+  return groupWhole(whole, grouping) + (fraction === undefined ? '' : `.${fraction}`);
+}
+
 /**
- * A value from outside (default, controlled value, reset) as the box shows it. Zero-only decimals
- * past the field's scale are dropped (`12.5000` is `12.50` in a 2-decimal field), because the server
- * sends numeric columns at full scale. A value the field cannot hold (`-1250.50`, `12.5555` in a
- * 2-decimal field) is shown exactly as given, so what posts is what the user sees.
+ * A value from outside (default, controlled value, reset) as the box shows it. Commas are taken out
+ * only when they are valid grouping (`12,50,000`); `1,5` is a decimal comma and stays. Zero-only
+ * decimals past the field's scale are dropped (`12.5000` is `12.50` in a 2-decimal field), because
+ * the server sends numeric columns at full scale. A value the field cannot hold (`-1250.50`, `1,5`,
+ * `12.5555` in a 2-decimal field) is shown exactly as given, so what posts is what the user sees.
  */
 function fromValue(
   value: string,
@@ -164,8 +173,8 @@ function fromValue(
   padTo: number | undefined,
 ): string {
   if (value === '') return '';
-  let trimmed = value;
-  const [whole = '', fraction] = value.split('.');
+  let trimmed = value.includes(',') ? plainAmount(value) : value;
+  const [whole = '', fraction] = trimmed.split('.');
   if (fraction !== undefined && fraction.length > limits.scale) {
     if (/^0*$/.test(fraction.slice(limits.scale))) {
       const kept = fraction.slice(0, limits.scale);
@@ -274,10 +283,19 @@ function NumberBox({
   };
   const rawBounds = { min: hasMin ? min : undefined, max: hasMax ? max : undefined };
 
-  /** True when the text is something typing could not produce (a negative or over-long server value). */
+  /**
+   * True when the text is something typing could not produce: a negative or over-long server value,
+   * or a comma that is not this field's grouping (`1,5`).
+   */
   function foreign(text: string): boolean {
     const plain = ungroup(text);
-    return !DIGITS.test(plain) || !fitsWhileTyping(plain, limits);
+    if (!DIGITS.test(plain) || !fitsWhileTyping(plain, limits)) return true;
+    return text.includes(',') && regroup(plain, grouping) !== text;
+  }
+
+  /** What the hidden input posts: typed text without its grouping, a foreign text exactly as shown. */
+  function postedOf(text: string): string {
+    return foreign(text) ? text : plainOf(text);
   }
 
   /** What is wrong with the text as a finished value, or null when it is acceptable. */
@@ -288,7 +306,8 @@ function NumberBox({
     }
     const check = withinLimits(posted, limits, rawBounds);
     if (!check.ok) {
-      return { reason: check.reason, message: refusalMessage(check.reason, limits, bounds) };
+      const reason = posted.includes(',') ? 'comma' : check.reason;
+      return { reason, message: refusalMessage(reason, limits, bounds) };
     }
     if (positive && new Dec(check.value).lte(0)) return { reason: 'zero', message: ABOVE_ZERO };
     return null;
@@ -308,10 +327,12 @@ function NumberBox({
   const [, setCaretTick] = useState(0);
 
   // A controlled parent that holds a different number wins: it refused the edit or set a new value.
-  if (controlled && !sameNumber(postedOf(text), postedOf(value))) {
-    const rebuilt = fromValue(value, limits, grouping, padTo);
-    setText(rebuilt);
-    setError(foreign(rebuilt) ? problem(rebuilt) : null);
+  // The comparison is with the parent value as the box would show it, so a rebuilt text always
+  // matches on the next render (`1,250,000` is shown as `12,50,000.00`).
+  const fromParent = controlled ? fromValue(value, limits, grouping, padTo) : '';
+  if (controlled && !sameNumber(postedOf(text), postedOf(fromParent))) {
+    setText(fromParent);
+    setError(foreign(fromParent) ? problem(fromParent) : null);
   }
 
   // Handlers may run back to back in one event, so they read and write these rather than state from
@@ -427,20 +448,26 @@ function NumberBox({
     const input = inputRef.current;
     if (!input) return;
     const listener = (event: Event) => onNativeBeforeInput(event);
+    // A keystroke that changes nothing (5 typed over a selected 5) fires input but not onChange, so
+    // its verdict would vouch for the next change, such as autofill. This document listener runs
+    // after React's own root listener for every input event and drops the verdict.
+    const consumed = (event: Event) => {
+      if (event.target === input) keyed.current = null;
+    };
+    const page = input.ownerDocument;
     input.addEventListener('beforeinput', listener);
-    return () => input.removeEventListener('beforeinput', listener);
+    page.addEventListener('input', consumed);
+    return () => {
+      input.removeEventListener('beforeinput', listener);
+      page.removeEventListener('input', consumed);
+    };
   }, []);
 
   /** Why a whole new text that did not come through our handlers is refused, or null. */
   function strictRefusal(raw: string): NumberRefusal | null {
     if (DIGITS.test(raw)) return null;
     const plain = ungroup(raw);
-    if (grouping && DIGITS.test(plain)) {
-      const [whole = '', fraction] = plain.split('.');
-      const regrouped =
-        groupWhole(whole, grouping) + (fraction === undefined ? '' : `.${fraction}`);
-      if (regrouped === raw) return null;
-    }
+    if (DIGITS.test(plain) && regroup(plain, grouping) === raw) return null;
     return refusedText(raw, limits.scale, false) ?? 'not_a_number';
   }
 
@@ -467,11 +494,11 @@ function NumberBox({
       const reason = strictRefusal(raw);
       if (reason) return refuseEdit(reason);
     }
+    // Editing a server value the field cannot hold: the edit stays as typed, unformatted, until it
+    // becomes a value the field can hold. The blur check keeps reporting what is wrong.
+    if (verdict === 'ok' && foreign(current) && foreign(raw)) return accept(raw, caret);
     const plain = ungroup(raw);
     if (!DIGITS.test(plain) || !fitsWhileTyping(plain, limits)) {
-      // Editing a server value the field cannot hold: the edit stays as typed, unformatted, until
-      // it becomes a value the field can hold. The blur check keeps reporting what is wrong.
-      if (verdict === 'ok' && foreign(current)) return accept(raw, caret);
       return refuseEdit(
         DIGITS.test(plain)
           ? overLimit(plain)

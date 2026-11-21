@@ -1223,12 +1223,93 @@ describe('edges of the one-value rule', () => {
     ['-5', '-5'],
     ['.', '.'],
     ['12.', '12.00'],
-    ['1,000', '1,000'],
+    ['1,000', '1,000.00'],
+    ['1,250,000', '12,50,000.00'],
   ])('settles on controlled value %s and shows %s', async (given, shown) => {
     const { box, hidden } = await mount(
       <MoneyInput aria-label="Amount" name="amount" currency="NPR" value={given} />,
     );
     expect(box.value).toBe(shown);
     expect(hidden()).toBe(shown.replaceAll(',', '').replace(/\.$/, ''));
+  });
+});
+
+describe('re-review fixes', () => {
+  it('restores the default the parent saved during the action', async () => {
+    function Saved() {
+      const [saved, setSaved] = useState('100');
+      return (
+        <form
+          action={(data) => {
+            const amount = data.get('amount');
+            setSaved(typeof amount === 'string' ? amount : '');
+          }}
+        >
+          <MoneyInput aria-label="Amount" name="amount" currency="NPR" defaultValue={saved} />
+          <input aria-label="Native" name="native" defaultValue={saved} />
+        </form>
+      );
+    }
+    mounted = await mountForm(<Saved />);
+    const { container } = mounted;
+    const box = container.querySelector<HTMLInputElement>('input[aria-label="Amount"]')!;
+    const native = container.querySelector<HTMLInputElement>('input[aria-label="Native"]')!;
+    const hidden = () => container.querySelector<HTMLInputElement>('input[name="amount"]')!.value;
+    expect(box.value).toBe('100.00');
+    await act(() => Promise.resolve(box.focus()));
+    box.setSelectionRange(0, box.value.length);
+    await typeKeys(box, '250');
+    expect(hidden()).toBe('250');
+    await submit(container);
+    await act(() => new Promise((resolve) => setTimeout(resolve, 0)));
+    expect(native.value).toBe('250');
+    expect(box.value).toBe('250.00');
+    expect(hidden()).toBe('250.00');
+  });
+
+  it('shows a default with a decimal comma as sent, marks it invalid and posts it unchanged', async () => {
+    const { box, hidden, status } = await mount(
+      <MoneyInput aria-label="Amount" name="amount" currency="NPR" defaultValue="1,5" />,
+    );
+    expect(box.value).toBe('1,5');
+    expect(hidden()).toBe('1,5');
+    expect(box.getAttribute('aria-invalid')).toBe('true');
+    expect(status()).toBe(USE_A_POINT);
+    await act(() => Promise.resolve(box.focus()));
+    await blur(box);
+    expect(box.value).toBe('1,5');
+    expect(hidden()).toBe('1,5');
+    expect(status()).toBe(USE_A_POINT);
+  });
+
+  it('shows a controlled value with a stray comma as sent and posts it unchanged', async () => {
+    const { box, hidden } = await mount(
+      <MoneyInput aria-label="Amount" name="amount" currency="NPR" value="10,50" />,
+    );
+    expect(box.value).toBe('10,50');
+    expect(hidden()).toBe('10,50');
+    expect(box.getAttribute('aria-invalid')).toBe('true');
+  });
+
+  it('takes a validly grouped default as the number it groups', async () => {
+    const { box, hidden } = await mount(
+      <MoneyInput aria-label="Amount" name="amount" currency="NPR" defaultValue="12,50,000" />,
+    );
+    expect(box.value).toBe('12,50,000.00');
+    expect(hidden()).toBe('1250000.00');
+    expect(box.getAttribute('aria-invalid')).toBeNull();
+  });
+
+  it('does not let a keystroke that changed nothing vouch for a later input event', async () => {
+    const { box, hidden, status } = await mount(
+      <MoneyInput aria-label="Amount" name="amount" currency="NPR" />,
+    );
+    await typeKeys(box, '5');
+    box.setSelectionRange(0, 1);
+    await typeKeys(box, '5');
+    await fill(box, '1,5');
+    expect(box.value).toBe('5');
+    expect(hidden()).toBe('5');
+    expect(status()).toBe(USE_A_POINT);
   });
 });
