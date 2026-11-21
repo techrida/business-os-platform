@@ -7,7 +7,9 @@ import { sql } from 'drizzle-orm';
 
 import { principal } from '../authz/principal';
 import { ctx } from '../tenancy/request-context';
+import { dbBusyKindOf } from './busy';
 import { type Db, type DbTransaction, inTransaction } from './db.module';
+import { txObserver, txTimeouts } from './tx-settings';
 
 // Kernel services import the transaction type from here, next to withTx.
 export type { Db, DbTransaction };
@@ -36,6 +38,10 @@ function requireNonEmpty(value: string, what: string): void {
  * transaction. `set_config(..., true)` is the function form of SET LOCAL: it vanishes at COMMIT or
  * ROLLBACK, so a pooled connection never carries one request's identity into the next.
  *
+ * The same statement sets `lock_timeout` and `idle_in_transaction_session_timeout` for this
+ * transaction only (configureTx in tx-settings.ts), so a write stuck behind a lock fails with 55P03 instead of
+ * holding its pool connection, and a transaction left open is ended by the server.
+ *
  * Rejects before opening a transaction when the actor id or the correlation id is empty: an audit
  * row without a who or a trace id is worse than a failed write.
  */
@@ -47,17 +53,33 @@ export async function withTx<T>(
 ): Promise<T> {
   requireNonEmpty(actor.id, 'actor.id');
   requireNonEmpty(actor.correlationId, 'actor.correlationId');
-  return inTransaction(db, async (tx) => {
-    await tx.execute(sql`SELECT
-      set_config('bos.tenant_id', ${scope.tenantId}, true),
-      set_config('bos.organization_id', ${scope.organizationId}, true),
-      set_config('bos.actor_kind', ${actor.kind}, true),
-      set_config('bos.actor_id', ${actor.id}, true),
-      set_config('bos.correlation_id', ${actor.correlationId}, true),
-      set_config('bos.ip', ${actor.ip ?? ''}, true),
-      set_config('bos.user_agent', ${actor.userAgent ?? ''}, true)`);
-    return fn(tx);
-  });
+  const { lockTimeoutMs, idleInTxTimeoutMs } = txTimeouts();
+  const observer = txObserver();
+  const started = performance.now();
+  let setupSeconds: number | undefined;
+  try {
+    const result = await inTransaction(db, async (tx) => {
+      await tx.execute(sql`SELECT
+        set_config('bos.tenant_id', ${scope.tenantId}, true),
+        set_config('bos.organization_id', ${scope.organizationId}, true),
+        set_config('bos.actor_kind', ${actor.kind}, true),
+        set_config('bos.actor_id', ${actor.id}, true),
+        set_config('bos.correlation_id', ${actor.correlationId}, true),
+        set_config('bos.ip', ${actor.ip ?? ''}, true),
+        set_config('bos.user_agent', ${actor.userAgent ?? ''}, true),
+        set_config('lock_timeout', ${`${lockTimeoutMs}ms`}, true),
+        set_config('idle_in_transaction_session_timeout', ${`${idleInTxTimeoutMs}ms`}, true)`);
+      setupSeconds = (performance.now() - started) / 1000;
+      return fn(tx);
+    });
+    observer?.observeTx('commit', setupSeconds, (performance.now() - started) / 1000);
+    return result;
+  } catch (error) {
+    observer?.observeTx('rollback', setupSeconds, (performance.now() - started) / 1000);
+    const busy = dbBusyKindOf(error);
+    if (busy !== undefined) observer?.countDbBusy(busy);
+    throw error;
+  }
 }
 
 /**
