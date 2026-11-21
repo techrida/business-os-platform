@@ -30,6 +30,8 @@
 // owner policy's `readPermission`, on the owner ref. An owning module's route may also name the action the upload
 // belongs to (`UploadAction`, U20a2-Q3); when the policy lists it in `uploadActions`, that action on the uploader's
 // own file is enough (an `own` bill enterer uploads their own invoice), and the usual check still runs otherwise.
+// An owner type that spans several record kinds names the grant per record instead (`uploadGrants`, round 5 P2:
+// evidence on a sales order, a bill or an RFQ), so one kind's grant never reaches another kind's record.
 import { randomUUID } from 'node:crypto';
 import { Readable } from 'node:stream';
 
@@ -106,6 +108,23 @@ function picturesUploadedElsewhere(): ConflictException {
   return new ConflictException({
     code: 'conflict',
     message: 'Pictures are uploaded from their own settings.',
+  });
+}
+
+/** The refusal of a generic new version or removal of a file its owning module manages (`ownRoutesOnly`). */
+function managedByRecord(): ConflictException {
+  return new ConflictException({
+    code: 'conflict',
+    message: 'This file is managed from its record: remove it there and upload a new one.',
+  });
+}
+
+/** The refusal of a version's bytes from anyone but its uploader, for an `ownRoutesOnly` owner. */
+function notVersionUploader(): ForbiddenException {
+  return new ForbiddenException({
+    code: 'forbidden',
+    message: 'Only the person who started this upload can send its file.',
+    reason: 'no_permission',
   });
 }
 
@@ -572,6 +591,7 @@ export class DocumentsService {
     if (!byAction) {
       await this.assertOwner(who.scope, doc.ownerType, doc.ownerId, 'documents.upload');
     }
+    if (this.owners.get(doc.ownerType)?.ownRoutesOnly === true) throw managedByRecord();
     await this.assertCanAttach(who.scope, doc.ownerType, doc.ownerId, tx, documentId);
     if (isImageOwnerType(doc.ownerType)) throw picturesUploadedElsewhere();
     await this.loadDocument(tx, who.scope, documentId, true);
@@ -634,10 +654,10 @@ export class DocumentsService {
   private async removeAndCleanUp(
     documentId: string,
     who: { scope: TxScope; actor: Actor },
-    refuseImages: boolean,
+    genericRoute: boolean,
   ): Promise<void> {
     const unclean = await withTx(this.db, who.scope, who.actor, (tx) =>
-      this.removeDocument(tx, who.scope, documentId, refuseImages),
+      this.removeDocument(tx, who.scope, documentId, genericRoute),
     );
     await this.cleanupRemoved(unclean);
   }
@@ -661,17 +681,21 @@ export class DocumentsService {
     return this.removeDocument(tx, scope, documentId, false);
   }
 
+  /** `genericRoute`: the generic DELETE route, which refuses pictures and `ownRoutesOnly` owners' files. */
   private async removeDocument(
     tx: DbTransaction,
     scope: TxScope,
     documentId: string,
-    refuseImages: boolean,
+    genericRoute: boolean,
   ) {
     const doc = await this.loadDocument(tx, scope, documentId, false, true);
     await this.assertOwner(scope, doc.ownerType, doc.ownerId, 'documents.upload');
-    await this.assertCanAttach(scope, doc.ownerType, doc.ownerId, tx, documentId);
     // After the permission check (someone who may not remove learns nothing), before the lock and any write.
-    if (refuseImages && isImageOwnerType(doc.ownerType)) {
+    if (genericRoute && this.owners.get(doc.ownerType)?.ownRoutesOnly === true) {
+      throw managedByRecord();
+    }
+    await this.assertCanAttach(scope, doc.ownerType, doc.ownerId, tx, documentId);
+    if (genericRoute && isImageOwnerType(doc.ownerType)) {
       throw new ConflictException({
         code: 'conflict',
         message: 'This picture is managed from its own settings: replace or remove it there.',
@@ -770,6 +794,12 @@ export class DocumentsService {
           action: opts.action,
           uploaderUserId: found.version.uploadedBy,
         });
+        if (
+          this.owners.get(found.ownerType)?.ownRoutesOnly === true &&
+          (who.actor.kind !== 'user' || found.version.uploadedBy !== who.actor.id)
+        ) {
+          throw notVersionUploader();
+        }
         // The memo may have been submitted since the document was created: no bytes are written then.
         await this.assertCanAttach(
           who.scope,
@@ -1271,10 +1301,63 @@ export class DocumentsService {
     }
     const ref: ResourceRef | null = await policy.resource(scope, ownerId);
     if (ref === null) throw new NotFoundException('Owner record not found');
-    this.assertAnyOf(
-      action === 'documents.upload' ? uploadPermissionsOf(policy) : readPermissionsOf(policy),
-      ref,
-    );
+    if (action === 'documents.upload') await this.assertUploadGrant(policy, scope, ownerId, ref);
+    else await this.assertReader(policy, scope, ownerId, ref);
+  }
+
+  /**
+   * The staff read check on an owner that exists: `documents.read` or the policy's `readPermission` on `ref`. An owner
+   * with per-record `uploadGrants` (round 5 P2: evidence) also lets whoever may add files to that record open them,
+   * so the uploader can watch the scan of a file on a record someone else owns. A refusal is the read refusal.
+   */
+  private async assertReader(
+    policy: DocumentOwnerPolicy,
+    scope: TxScope,
+    ownerId: string,
+    ref: ResourceRef,
+  ): Promise<void> {
+    try {
+      this.assertAnyOf(readPermissionsOf(policy), ref);
+    } catch (refused) {
+      if (!(refused instanceof ForbiddenException) || policy.uploadGrants === undefined) {
+        throw refused;
+      }
+      try {
+        await this.assertUploadGrant(policy, scope, ownerId, ref);
+      } catch (error) {
+        throw error instanceof ForbiddenException ? refused : error;
+      }
+    }
+  }
+
+  /**
+   * The staff upload check on an owner that exists: the policy's per-record `uploadGrants` when it has them (any one
+   * action allowed on its ref), else `uploadPermission` (or `documents.upload`) on `ref`. Every upload path (create,
+   * receive, new version, remove, the image pointer routes) ends here.
+   */
+  private async assertUploadGrant(
+    policy: DocumentOwnerPolicy,
+    scope: TxScope,
+    ownerId: string,
+    ref: ResourceRef,
+  ): Promise<void> {
+    if (policy.uploadGrants === undefined) {
+      this.assertAnyOf(uploadPermissionsOf(policy), ref);
+      return;
+    }
+    const grants = await policy.uploadGrants(scope, ownerId);
+    if (grants === null) throw new NotFoundException('Owner record not found');
+    let first: ForbiddenException | undefined;
+    for (const grant of grants) {
+      try {
+        this.authz.assert(grant.action, grant.ref);
+        return;
+      } catch (error) {
+        if (!(error instanceof ForbiddenException)) throw error;
+        first ??= error;
+      }
+    }
+    throw first ?? new ForbiddenException({ code: 'forbidden', reason: 'no_permission' });
   }
 
   /**
@@ -1343,7 +1426,7 @@ export class DocumentsService {
     if (ref === null) throw new NotFoundException('Owner record not found');
     // Called as a method, not detached: a policy class may use `this`.
     if (await policy.allowsCounterparty(counterparty, ownerId, tx)) return;
-    this.assertAnyOf(uploadPermissionsOf(policy), ref);
+    await this.assertUploadGrant(policy, scope, ownerId, ref);
   }
 
   /**
