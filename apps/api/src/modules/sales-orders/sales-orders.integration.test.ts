@@ -1303,6 +1303,62 @@ describe('SalesOrdersService.markBillable', () => {
     ).toBe(409);
   });
 
+  // Round 5 P2: Remove in the dialog (and closing it unsaved) goes through the order's own evidence route, which
+  // the Accountant and Finance reach without documents.upload.
+  it.each<[string, RoleKey]>([
+    ['the Accountant', 'accountant'],
+    ['Finance', 'finance'],
+  ])(
+    'lets %s remove their unused upload, which Mark billable then refuses; others and a marked file are refused',
+    async (_label, role) => {
+      const detail = await confirm(await acceptedQuotation());
+      current.grants = grantsOf(role);
+      current.userId = await seedOtherStaffUser(db, f);
+      expect(principalNow().grants.has('documents.upload')).toBe(false);
+      const removedOf = async (id: string) => {
+        const [row] = await db
+          .select({ removedAt: documents.removedAt })
+          .from(documents)
+          .where(eq(documents.id, id));
+        return row?.removedAt !== null;
+      };
+      const abandoned = await evidence.upload('sales_order', detail.order.id);
+      const kept = await evidence.upload('sales_order', detail.order.id);
+      const uploader = current.userId;
+
+      // Another holder of mark_billable on every order did not upload it; the bill and RFQ routes do not take it.
+      current.userId = undefined;
+      expect(
+        await statusOf(evidence.service.remove('sales_order', detail.order.id, abandoned)),
+      ).toEqual({ status: 403, code: 'forbidden' });
+      current.userId = uploader;
+      for (const kind of ['vendor_bill', 'rfq'] as const) {
+        expect(
+          (await statusOf(evidence.service.remove(kind, detail.order.id, abandoned))).status,
+        ).toBe(404);
+      }
+      current.scope = scopeB;
+      expect(
+        (await statusOf(evidence.service.remove('sales_order', detail.order.id, abandoned))).status,
+      ).toBe(404);
+      current.scope = scopeA;
+      expect(await removedOf(abandoned)).toBe(false);
+
+      await evidence.service.remove('sales_order', detail.order.id, abandoned);
+      expect(await removedOf(abandoned)).toBe(true);
+      expect(await statusOf(mark(detail, 1, { evidenceDocumentId: abandoned }))).toEqual({
+        status: 422,
+        code: 'invalid_evidence_document',
+      });
+
+      await mark(detail, 1, { evidenceDocumentId: kept });
+      expect(await statusOf(evidence.service.remove('sales_order', detail.order.id, kept))).toEqual(
+        { status: 409, code: 'conflict' },
+      );
+      expect(await removedOf(kept)).toBe(false);
+    },
+  );
+
   it('takes a file already filed as the order evidence (the dialog list), whatever its owner type', async () => {
     const filed = await seedDocument();
     const detail = await confirm(await acceptedQuotation(), [filed]);
