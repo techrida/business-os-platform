@@ -49,6 +49,7 @@ import { OpportunityOwnersService } from '../opportunities/opportunity-owners.se
 import { DraftingService } from '../quotations/drafting/drafting.service';
 import { PricingService } from '../quotations/pricing/pricing.service';
 import { quotationRef } from '../quotations/preview/quotation-preview.service';
+import { drizzlePromiseStore } from '../receivables/promises/payment-promise.sweeper';
 import { ActivitiesController } from './activities.controller';
 import { ActivitiesService } from './activities.service';
 
@@ -550,5 +551,91 @@ describe('opportunities and quotations', () => {
       .parse((await get('/v1/opportunities/owner-filter')).body);
     expect(people.find((p) => p.userId === nameless)?.displayName).toBe('Unnamed user');
     expect(JSON.stringify(people)).not.toMatch(/hidden\.person/);
+  });
+});
+
+describe('a collection call (R4c1 Q1: the receivables permissions, not the customer reach)', () => {
+  /** A collection call on `customer`, written by the payment-promise job's own store (the real producer). */
+  const collectionCall = (customer: string, assigneeUserId: string | null): Promise<string> =>
+    withTx(h.db, h.scopeA, systemActor('payment-promise'), (tx) =>
+      drizzlePromiseStore(h.db).planCall(
+        tx,
+        { ...h.scopeA, promiseId: randomUUID() },
+        {
+          customerPartyId: customer,
+          subject: 'Collect payment for INV-1',
+          body: 'The customer promised to pay INV-1 by 2030-01-01, and it is still open.',
+          dueAt: new Date(DUE_1),
+          assigneeUserId,
+        },
+      ),
+    );
+
+  it('hides it from the Sales owner of the customer and lets the Finance assignee list and complete it', async () => {
+    const finance = await h.member({ roles: ['finance'], displayName: 'Fina Finance' });
+    const manager = await h.member({ roles: ['management'], displayName: 'Mona Management' });
+    const customer = await h.seedCustomer(P.sales);
+    const callId = await collectionCall(customer, finance);
+
+    // The Sales owner reads the customer and its other activities, never the call about its money.
+    await h.actAs(P.sales);
+    const salesCall = await plan({ customerId: customer });
+    const onCustomer = (await listed(`?customerId=${customer}&limit=200`)).map((a) => a.id);
+    expect(onCustomer).toContain(salesCall.id);
+    expect(onCustomer).not.toContain(callId);
+    expect((await listed('?status=planned&limit=200')).map((a) => a.id)).not.toContain(callId);
+    expect((await patch(callId, 'cancel', { expectedVersion: 1 })).status).toBe(404);
+    expect((await patch(callId, 'complete', { expectedVersion: 1 })).status).toBe(404);
+    expect((await patch(callId, 'reschedule', { expectedVersion: 1, dueAt: DUE_2 })).status).toBe(
+      404,
+    );
+
+    // Management reads receivables but records no payment: it sees the call and may not change it.
+    await h.actAs(manager);
+    expect((await listed('?status=planned&limit=200')).map((a) => a.id)).toContain(callId);
+    expect((await patch(callId, 'cancel', { expectedVersion: 1 })).status).toBe(403);
+
+    // The Finance assignee finds it on the Follow-ups list and completes it.
+    await h.actAs(finance);
+    const planned = await listed('?status=planned&limit=200');
+    expect(planned.find((a) => a.id === callId)).toMatchObject({
+      kind: 'collection_call',
+      planned: true,
+      customerId: customer,
+      assigneeUserId: finance,
+      assigneeName: 'Fina Finance',
+    });
+    const done = await patch(callId, 'complete', { expectedVersion: 1, note: 'Pays on Friday' });
+    expect(done.status, JSON.stringify(done.body)).toBe(200);
+    expect(dto(done.body)).toMatchObject({ id: callId, planned: false, version: 2 });
+    expect((await listed('?status=logged&limit=200')).map((a) => a.id)).toContain(callId);
+
+    // Done, it stays out of the Sales owner's customer history too.
+    await h.actAs(P.sales);
+    expect(
+      (await listed(`?customerId=${customer}&status=logged&limit=200`)).map((a) => a.id),
+    ).not.toContain(callId);
+  });
+
+  it('moves it only to someone who records payments', async () => {
+    const finance = await h.member({ roles: ['finance'], displayName: 'Fred Finance' });
+    const accountant = await h.member({ roles: ['accountant'], displayName: 'Anu Accountant' });
+    const customer = await h.seedCustomer(P.sales);
+    const callId = await collectionCall(customer, finance);
+
+    await h.actAs(finance);
+    const toSales = await patch(callId, 'reschedule', {
+      expectedVersion: 1,
+      dueAt: DUE_2,
+      assigneeUserId: P.sales,
+    });
+    expect(toSales.status, JSON.stringify(toSales.body)).toBe(400);
+    const toAccountant = await patch(callId, 'reschedule', {
+      expectedVersion: 1,
+      dueAt: DUE_2,
+      assigneeUserId: accountant,
+    });
+    expect(toAccountant.status, JSON.stringify(toAccountant.body)).toBe(200);
+    expect(dto(toAccountant.body)).toMatchObject({ assigneeUserId: accountant, dueAt: DUE_2 });
   });
 });

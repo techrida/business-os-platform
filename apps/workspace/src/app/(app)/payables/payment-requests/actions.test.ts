@@ -119,8 +119,21 @@ describe('payment request actions', () => {
     expect(out.error).toMatch(/amount|claim|open/i);
   });
 
-  it('names a currency the company switched off (422) and rotates the key', async () => {
-    // The body the API sends today: its error filter does not pass CURRENCY_NOT_ENABLED yet.
+  it('sends a request in a currency the company switched off as it is (D56 U16-Q1)', async () => {
+    // Payment requests are exempt from the switch-off: the action reads no enabled list and the API accepts it.
+    api.createPaymentRequest.mockResolvedValue({ id });
+    await expect(createPaymentRequestAction(prev, form({ currency: 'INR' }))).rejects.toThrow(
+      `REDIRECT /payables/payment-requests/${id}`,
+    );
+    expect(api.createPaymentRequest).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ currency: 'INR' }),
+      key,
+    );
+  });
+
+  it('still names the currency if an older API refuses it as switched off (422), and rotates the key', async () => {
+    // What an API from before the exemption sent: `bad_request`, with only the message naming the currency.
     api.createPaymentRequest.mockRejectedValueOnce(
       new ApiError(422, 'refused', {
         error: {

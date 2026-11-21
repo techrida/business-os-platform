@@ -32,8 +32,9 @@ export function paymentRequestFieldError(
 }
 
 export function paymentRequestFailure(err: unknown): ProcFailure {
-  // A currency switched off for the company (D44). Read before the code map: until the API passes
-  // CURRENCY_NOT_ENABLED, its 422 says `bad_request` and only the message names the currency.
+  // Payment requests are exempt from the currency switch-off (D56 U16-Q1), so the API no longer refuses
+  // one for its currency. Kept for an API from before the exemption, whose 422 says `bad_request` and
+  // names the currency only in its message: read before the code map so it names the currency.
   const switchedOff = currencyNotEnabledText(err);
   if (switchedOff !== undefined) {
     return { message: switchedOff, reload: false, definite: true, status: 422 };

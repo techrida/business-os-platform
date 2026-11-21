@@ -62,10 +62,15 @@ export const FOLLOW_UP_WRITE: Readonly<Record<FollowUpSubjectKind, string>> = {
  * would only refuse. Only permission names are known here, not their scope.
  */
 export function followUpActionsFor(
-  item: Pick<ActivityDto, FollowUpSubjectKind | 'assigneeUserId'>,
+  item: Pick<ActivityDto, FollowUpSubjectKind | 'assigneeUserId'> & { kind?: string },
   can: (permission: string) => boolean,
   currentUserId: string | null | undefined,
 ): 'all' | 'complete' | 'none' {
+  // A collection call follows receivables permissions, not the customer's reach: whoever may read receivables and
+  // record payments may finish, move or cancel it, the assignee or not (the API refuses everyone else).
+  if (item.kind === 'collection_call') {
+    return can('ar.read') && can('payment.record') ? 'all' : 'none';
+  }
   const subject = subjectOf(item);
   if (subject !== null && can(FOLLOW_UP_WRITE[subject.kind])) return 'all';
   if (currentUserId != null && item.assigneeUserId === currentUserId) return 'complete';

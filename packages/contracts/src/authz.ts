@@ -67,6 +67,9 @@ export const PERMISSIONS = [
   'sales_order.read',
   'sales_order.confirm',
   'sales_order.mark_billable',
+  // F1-Q32: release a confirmed order's delivery hold before its advance is paid, with a reason. Who may release a
+  // given order is then decided by `mayReleaseDeliveryHold` (@bos/money-rules) against the live NPR threshold.
+  'sales_order.delivery_release',
   'invoice.read',
   'invoice.draft',
   'invoice.submit',
@@ -249,6 +252,14 @@ const customerCreditLimitGrants: RoleGrants = { 'customers.credit_limit.write': 
 const customerOwnerGrants: RoleGrants = { 'customers.owner.write': 'all' };
 
 /**
+ * F1-Q32 (R4c1 Q4): Finance, Management and the Founder release a delivery hold (with a reason, audited). The grant
+ * lets them ask; the money rule then picks Finance up to the threshold and Management above it (Founder at any
+ * amount), never the order's creator. Founder gets it through PERMISSIONS. Migration 0155 writes the rows for
+ * tenants that already hold role_permissions rows.
+ */
+const deliveryReleaseGrants: RoleGrants = { 'sales_order.delivery_release': 'all' };
+
+/**
  * Every staff role sets its own profile picture (U12). Founder holds it at `all` through PERMISSIONS, and so may
  * set anyone's; no other default role holds `admin.users.invite`. Migration 0053 gives existing staff roles `own`,
  * and `all` to founder and to any role that holds `admin.users.invite`. Portal roles get none.
@@ -327,6 +338,7 @@ export const DEFAULT_ROLE_PERMISSIONS: Record<RoleKey, RoleGrants> = {
     ...billingReadAllGrants,
     ...creditOverrideGrants,
     ...customerOwnerGrants,
+    ...deliveryReleaseGrants,
   },
   finance: {
     ...ownProfileGrants,
@@ -341,6 +353,7 @@ export const DEFAULT_ROLE_PERMISSIONS: Record<RoleKey, RoleGrants> = {
     ...billingFinanceGrants,
     ...creditOverrideGrants,
     ...customerCreditLimitGrants,
+    ...deliveryReleaseGrants,
     ...p4FinanceGrants,
     ...leadReopenGrants,
     ...settingsFinanceGrants,

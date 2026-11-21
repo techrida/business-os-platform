@@ -15,6 +15,7 @@ import {
   ActivityDtoSchema,
   ArAgingReportSchema,
   PaymentPromiseDtoSchema,
+  PaymentPromiseListSchema,
   type RecordPaymentPromiseBody,
 } from '@bos/contracts';
 import { activities, paymentPromises } from '@bos/db';
@@ -106,6 +107,28 @@ const record = (invoiceId: string, body: RecordPaymentPromiseBody, key = randomU
   return promises.record(scope, actor, invoiceId, body, key);
 };
 
+const list = (invoiceId: string) => {
+  const { scope, actor } = h.caller.current();
+  return promises.list(scope, actor, invoiceId).then((r) => PaymentPromiseListSchema.parse(r));
+};
+
+/** A draft NPR tax invoice of `total` for `customerId`: no number, no open item, so it takes no promise. */
+async function draftInvoice(scope: TxScope, customerId: string, total: string): Promise<string> {
+  return withTx(h.db, scope, system, async (tx) => {
+    const inserted = await tx.execute<{ id: string }>(
+      sql`INSERT INTO app.invoices
+            (tenant_id, organization_id, kind, customer_party_id, manual_reason, currency, subtotal,
+             discount_amount, taxable_vat_amount, tax_amount, total)
+          VALUES (${scope.tenantId}, ${scope.organizationId}, 'tax_invoice', ${customerId}, 'One-off sale', 'NPR',
+                  ${total}, 0, ${total}, 0, ${total})
+          RETURNING id`,
+    );
+    const id = inserted.rows[0]?.id;
+    if (id === undefined) throw new Error('invoice insert returned no row');
+    return id;
+  });
+}
+
 const callsOn = (customerId: string) =>
   withTx(h.db, h.scopeA, system, (tx) =>
     tx
@@ -140,7 +163,7 @@ describe('a missed promise to pay (F1-Q33)', () => {
   it('records, misses, plans one call for Finance, flags the aging, and plans nothing more on a second run', async () => {
     const invoice = await issuedInvoice(h.scopeA, customer, '50000.00');
 
-    // The Accountant records the promise; the same key replays it, a second promise is refused.
+    // The Accountant records the promise; the same key replays it.
     await h.actAs(accountant);
     const key = randomUUID();
     const promise = PaymentPromiseDtoSchema.parse(
@@ -157,9 +180,6 @@ describe('a missed promise to pay (F1-Q33)', () => {
     await expect(
       record(invoice, { promisedDate: PROMISED, note: 'Pays after the board meets' }, key),
     ).resolves.toEqual(promise);
-    await expect(record(invoice, { promisedDate: '2026-11-20' })).rejects.toBeInstanceOf(
-      ConflictException,
-    );
 
     // Before the day has passed the job leaves it alone.
     const early = new PaymentPromiseSweeper(
@@ -185,7 +205,7 @@ describe('a missed promise to pay (F1-Q33)', () => {
       .parse((await followUps.list(ListActivitiesQuerySchema.parse({ status: 'planned' }))).items);
     const call = planned.find((a) => a.id === stored?.collectionActivityId);
     expect(call).toMatchObject({
-      kind: 'call',
+      kind: 'collection_call',
       subject: expect.stringMatching(/^Collect payment for INV-2083\/84-\d{5}$/) as string,
       customerId: customer,
       assigneeUserId: finance,
@@ -265,5 +285,195 @@ describe('a missed promise to pay (F1-Q33)', () => {
     await expect(record(other, { promisedDate: PROMISED })).rejects.toBeInstanceOf(
       NotFoundException,
     );
+  });
+});
+
+describe('replacing and listing promises to pay (R4c1 Q6)', () => {
+  it('replaces the open promise in the same transaction, audits it, and replays the key without replacing again', async () => {
+    const invoice = await issuedInvoice(h.scopeA, customer, '7000.00');
+    await h.actAs(accountant);
+    const first = PaymentPromiseDtoSchema.parse(
+      await record(invoice, { promisedDate: '2026-11-15', note: 'First word' }),
+    );
+
+    // A second promise while the first is open replaces it (was 409 promise_open before 0153).
+    const key = randomUUID();
+    const second = PaymentPromiseDtoSchema.parse(
+      await record(invoice, { promisedDate: '2026-11-25', note: 'Moved after the audit' }, key),
+    );
+    expect(second).toMatchObject({ status: 'open', promisedDate: '2026-11-25' });
+    expect(second.id).not.toBe(first.id);
+
+    // The recorder reads both back, newest first: the new one open, the old one replaced.
+    const listed = await list(invoice);
+    expect(listed.items.map((p) => [p.id, p.status])).toEqual([
+      [second.id, 'open'],
+      [first.id, 'replaced'],
+    ]);
+    expect(listed.items[0]).toMatchObject({
+      recordedByUserId: accountant,
+      recordedByName: 'Asha Accountant',
+      note: 'Moved after the audit',
+    });
+    expect(listed.can).toEqual({ record: true, reason: null });
+    const [old] = await withTx(h.db, h.scopeA, system, (tx) =>
+      tx.select().from(paymentPromises).where(eq(paymentPromises.id, first.id)),
+    );
+    expect(old).toMatchObject({ status: 'replaced', version: 2, missedAt: null });
+
+    // The replacement is audited on the old promise, naming the new one, by the recorder.
+    const audited = await h.ownerPool.query(
+      `SELECT action, actor_id, after FROM audit.audit_events
+        WHERE tenant_id = $1 AND entity_id = $2 AND action = 'payment_promise.replaced'`,
+      [h.tenantId, first.id],
+    );
+    expect(audited.rows).toEqual([
+      {
+        action: 'payment_promise.replaced',
+        actor_id: accountant,
+        after: { status: 'replaced', replacedByPromiseId: second.id },
+      },
+    ]);
+
+    // A retry of the second command replays its answer: no third row, nothing replaced again.
+    await expect(
+      record(invoice, { promisedDate: '2026-11-25', note: 'Moved after the audit' }, key),
+    ).resolves.toEqual(second);
+    expect((await list(invoice)).items.map((p) => [p.id, p.status])).toEqual([
+      [second.id, 'open'],
+      [first.id, 'replaced'],
+    ]);
+
+    // The hourly job never touches a replaced promise: after both days pass only the open one is missed.
+    const late = new PaymentPromiseSweeper(
+      drizzlePromiseStore(h.db),
+      (scope, actor, fn) => withTx(h.db, scope, actor, fn),
+      new AuditService(h.db),
+      () => new Date('2026-11-26T06:00:00Z'),
+    );
+    await late.sweep();
+    expect((await list(invoice)).items.map((p) => p.status)).toEqual(['missed', 'replaced']);
+  });
+
+  it('tells a reader without payment.record why they cannot record, and refuses a role without ar.read', async () => {
+    const invoice = await issuedInvoice(h.scopeA, customer, '3000.00');
+    await h.actAs(accountant);
+    const promise = PaymentPromiseDtoSchema.parse(
+      await record(invoice, { promisedDate: PROMISED }),
+    );
+
+    // Management reads receivables but does not record payments.
+    const manager = await h.member({ roles: ['management'], displayName: 'Mira Manager' });
+    await h.actAs(manager);
+    const seen = await list(invoice);
+    expect(seen.items.map((p) => p.id)).toEqual([promise.id]);
+    expect(seen.can).toEqual({ record: false, reason: 'no_permission' });
+
+    h.as('salesA', 'sales');
+    await expect(list(invoice)).rejects.toBeInstanceOf(ForbiddenException);
+  });
+
+  it("says a draft invoice is not open, and answers 404 for an unknown or another entity's invoice", async () => {
+    const draft = await draftInvoice(h.scopeA, customer, '900.00');
+    await h.actAs(accountant);
+    await expect(list(draft)).resolves.toEqual({
+      items: [],
+      can: { record: false, reason: 'invoice_not_open' },
+    });
+
+    await expect(list(randomUUID())).rejects.toBeInstanceOf(NotFoundException);
+    const other = await issuedInvoice(h.scopeB, customer, '1000.00');
+    await expect(list(other)).rejects.toBeInstanceOf(NotFoundException);
+  });
+});
+
+describe('recording over an open promise whose day has passed', () => {
+  /** A service and a sweeper reading one clock the test moves. */
+  function clocked(start: string) {
+    let now = new Date(start);
+    const audit = new AuditService(h.db);
+    return {
+      at: (iso: string) => {
+        now = new Date(iso);
+      },
+      service: new PaymentPromisesService(
+        h.db,
+        h.authz as unknown as AuthzService,
+        audit,
+        () => now,
+      ),
+      sweeper: new PaymentPromiseSweeper(
+        drizzlePromiseStore(h.db),
+        (scope, actor, fn) => withTx(h.db, scope, actor, fn),
+        audit,
+        () => now,
+      ),
+    };
+  }
+
+  const stored = (id: string) =>
+    withTx(h.db, h.scopeA, system, (tx) =>
+      tx.select().from(paymentPromises).where(eq(paymentPromises.id, id)),
+    ).then((rows) => rows[0]);
+
+  it('refuses until the hourly job has checked it, which then marks it missed and plans the call', async () => {
+    const invoice = await issuedInvoice(h.scopeA, customer, '4000.00');
+    // 11:45 in Kathmandu on 2026-11-09: the promise is for that day.
+    const t = clocked('2026-11-09T06:00:00Z');
+    await h.actAs(accountant);
+    const { scope, actor } = h.caller.current();
+    const first = PaymentPromiseDtoSchema.parse(
+      await t.service.record(scope, actor, invoice, { promisedDate: '2026-11-09' }, randomUUID()),
+    );
+
+    // 00:10 on 2026-11-10 in Kathmandu (still 2026-11-09 in UTC): the day has passed, the job has not run yet.
+    t.at('2026-11-09T18:25:00Z');
+    const refused = await t.service
+      .record(scope, actor, invoice, { promisedDate: '2026-11-20' }, randomUUID())
+      .catch((e: unknown) => e);
+    expect(refused).toBeInstanceOf(ConflictException);
+    expect((refused as ConflictException).getResponse()).toEqual({
+      code: 'promise_open',
+      message: 'This promise date has passed and is being checked. Try again in a few minutes.',
+    });
+    // Nothing changed: the promise is still open, untouched, and no second one was stored.
+    expect(await stored(first.id)).toMatchObject({ status: 'open', version: 1 });
+    expect((await list(invoice)).items.map((p) => p.id)).toEqual([first.id]);
+
+    // The job marks it missed and plans the collection call.
+    await t.sweeper.sweep();
+    const missed = await stored(first.id);
+    expect(missed).toMatchObject({ status: 'missed' });
+    expect(missed?.collectionActivityId).toEqual(expect.any(String));
+
+    // Now a new promise may be recorded, and the missed one stays missed.
+    await h.actAs(accountant);
+    const next = PaymentPromiseDtoSchema.parse(
+      await t.service.record(scope, actor, invoice, { promisedDate: '2026-11-20' }, randomUUID()),
+    );
+    expect((await list(invoice)).items.map((p) => [p.id, p.status])).toEqual([
+      [next.id, 'open'],
+      [first.id, 'missed'],
+    ]);
+  });
+
+  it('still replaces an open promise for today before Kathmandu midnight', async () => {
+    const invoice = await issuedInvoice(h.scopeA, customer, '4500.00');
+    const t = clocked('2026-11-09T06:00:00Z');
+    await h.actAs(accountant);
+    const { scope, actor } = h.caller.current();
+    const first = PaymentPromiseDtoSchema.parse(
+      await t.service.record(scope, actor, invoice, { promisedDate: '2026-11-09' }, randomUUID()),
+    );
+
+    // 23:50 on 2026-11-09 in Kathmandu: the promised day is today, so it is replaced.
+    t.at('2026-11-09T18:05:00Z');
+    const second = PaymentPromiseDtoSchema.parse(
+      await t.service.record(scope, actor, invoice, { promisedDate: '2026-11-12' }, randomUUID()),
+    );
+    expect((await list(invoice)).items.map((p) => [p.id, p.status])).toEqual([
+      [second.id, 'open'],
+      [first.id, 'replaced'],
+    ]);
   });
 });

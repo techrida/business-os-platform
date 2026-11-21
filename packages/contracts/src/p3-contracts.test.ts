@@ -133,6 +133,26 @@ describe('P3 permissions', () => {
   });
 });
 
+// F1-Q32 (R4c1 Q4): kept out of P3_PERMISSIONS because Management holds it, unlike every other P3 change grant.
+describe('delivery-hold release permission', () => {
+  const RELEASERS = ['founder', 'management', 'finance'] as const;
+
+  it('is listed once', () => {
+    expect(PERMISSIONS.filter((p) => p === 'sales_order.delivery_release')).toHaveLength(1);
+  });
+
+  it.each(RELEASERS)('gives %s scope all', (role) => {
+    expect(DEFAULT_ROLE_PERMISSIONS[role]['sales_order.delivery_release']).toBe('all');
+  });
+
+  it('gives no other role it, the Accountant included (it confirms orders but does not release them)', () => {
+    for (const role of ROLE_KEYS) {
+      if ((RELEASERS as readonly string[]).includes(role)) continue;
+      expect(DEFAULT_ROLE_PERMISSIONS[role]['sales_order.delivery_release'], role).toBeUndefined();
+    }
+  });
+});
+
 // ---------------------------------------------------------------------------------------------
 // Error codes and the schedule setting
 // ---------------------------------------------------------------------------------------------
@@ -927,6 +947,9 @@ describe('receivables read models', () => {
           totalOpen: '150.00',
           promiseMissed: false,
           promiseMissedOn: null,
+          promiseMissedInvoice: null,
+          openPromiseDate: null,
+          openPromiseInvoice: null,
         },
       ],
       totals: [{ currency: 'NPR', buckets, totalOpen: '150.00' }],

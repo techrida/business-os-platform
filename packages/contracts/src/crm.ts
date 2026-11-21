@@ -854,7 +854,11 @@ export type OpportunityDto = z.infer<typeof OpportunityDtoSchema>;
 // Activities
 // ---------------------------------------------------------------------------------------------
 
-/** A2 section 2.1. `stage_change` and `system` are written by the server, never posted by a user. */
+/**
+ * A2 section 2.1. `stage_change`, `system` and `collection_call` are written by the server, never posted by a user.
+ * A `collection_call` is the call the payment-promise job plans for Finance after a missed promise (R4c1 Q1): it is
+ * read and changed by the receivables permissions, not the customer's activity reach.
+ */
 export const ACTIVITY_KINDS = [
   'call',
   'meeting',
@@ -863,6 +867,7 @@ export const ACTIVITY_KINDS = [
   'task',
   'stage_change',
   'system',
+  'collection_call',
 ] as const;
 export const ActivityKindSchema = z.enum(ACTIVITY_KINDS);
 export type ActivityKind = z.infer<typeof ActivityKindSchema>;

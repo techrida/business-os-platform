@@ -9,6 +9,7 @@ import {
   SCHEDULABLE_ACTIVITY_KINDS,
   searchParam,
   type ActivityDto,
+  type ActivityKind,
   type Permission,
 } from '@bos/contracts';
 import { activities, leads } from '@bos/db';
@@ -33,13 +34,28 @@ export const SUBJECT_PERMISSION: Record<SubjectKey, { read: Permission; write: P
 };
 
 /**
- * The one definition of a planned activity (D39): a call, meeting or email that has a due time and is neither
- * completed nor cancelled. Everything else that is not cancelled is logged: an old note, system or stage_change row
+ * The call the payment-promise job plans for Finance (0154, R4c1 Q1). Nobody posts it (it is not a user or
+ * schedulable kind); it is read with `ar.read` and completed, moved or cancelled with `payment.record`, never through
+ * the customer's activity reach, so the customer's Sales owner neither sees nor cancels it.
+ */
+export const COLLECTION_CALL_KIND = 'collection_call' satisfies ActivityKind;
+export const COLLECTION_CALL_READ: Permission = 'ar.read';
+export const COLLECTION_CALL_CHANGE: Permission = 'payment.record';
+
+/** The kinds a follow-up can be: what a person plans, and the collection call the job plans. */
+const PLANNED_KINDS: readonly ActivityKind[] = [
+  ...SCHEDULABLE_ACTIVITY_KINDS,
+  COLLECTION_CALL_KIND,
+];
+
+/**
+ * The one definition of a planned activity (D39): a call, meeting, email or collection call that has a due time and
+ * is neither completed nor cancelled. Everything else that is not cancelled is logged: an old note, system or stage_change row
  * that carries a due_at is never a follow-up. `planned` is never stored; queries use this and the mapper below
  * mirrors it. Never NULL, so `not(isPlannedSql)` is safe.
  */
 export const isPlannedSql: SQL = and(
-  inArray(activities.kind, [...SCHEDULABLE_ACTIVITY_KINDS]),
+  inArray(activities.kind, [...PLANNED_KINDS]),
   isNotNull(activities.dueAt),
   isNull(activities.completedAt),
   isNull(activities.cancelledAt),
@@ -120,7 +136,7 @@ export type ActivityRow = typeof activities.$inferSelect;
 export const isPlannedRow = (
   row: Pick<ActivityRow, 'kind' | 'dueAt' | 'completedAt' | 'cancelledAt'>,
 ): boolean =>
-  (SCHEDULABLE_ACTIVITY_KINDS as readonly string[]).includes(row.kind) &&
+  PLANNED_KINDS.includes(row.kind) &&
   row.dueAt !== null &&
   row.completedAt === null &&
   row.cancelledAt === null;

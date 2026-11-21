@@ -1,5 +1,5 @@
 // InvoiceDraftingService (P3 unit U10): list, detail, the three ways to start a draft (a billable schedule line, a
-// manual tax invoice, a proforma) and discard. Serves the NFRs:
+// manual tax invoice, a proforma), the due-date edit and discard. Serves the NFRs:
 // - "amounts are exact": every figure comes from @bos/money-rules (`priceInvoice`, `priceSlice`), never from the client;
 // - "no double effects": every command runs inside withIdempotency, and a schedule line has one live invoice: the line
 //   is locked (sales order, then schedule line: the P3 lock order) and flipped billable -> drafted in the same
@@ -18,6 +18,7 @@ import {
   type CreateProformaBody,
   type Currency,
   type Discount,
+  type EditInvoiceDueDateBody,
   type InvoiceDetail,
   type InvoiceKind,
   type InvoiceListItem,
@@ -52,13 +53,21 @@ import { CurrencyEnabledService } from '../../platform/settings/currency-enabled
 import { LedgerService } from '../ledger/ledger.service';
 import { invoiceSettlements } from '../receivables/invoice-settlements';
 import { loadTaxCodePeriods } from '../quotations/pricing/tax-codes.resolver';
-import { invoiceCan, toInvoiceDetail, toInvoiceListItem } from './invoice-mapping';
+import {
+  dueDateEditRefusal,
+  editDueDateCan,
+  invoiceCan,
+  toInvoiceDetail,
+  toInvoiceListItem,
+} from './invoice-mapping';
 import { priceInvoice, priceSlice, type PricedInvoice } from './invoice-pricing';
 import {
   assertStaff,
   badRequest,
   conflict,
   createdThisNote,
+  dueDateBeforeIssue,
+  forbidden,
   INVOICE_CLOCK,
   InvoiceCaller,
   invoiceNotFound,
@@ -334,6 +343,8 @@ export class InvoiceDraftingService {
           .select({
             id: invoices.id,
             kind: invoices.kind,
+            status: invoices.status,
+            salesOrderId: invoices.salesOrderId,
             createdBy: invoices.createdBy,
             customerPartyId: invoices.customerPartyId,
           })
@@ -345,7 +356,10 @@ export class InvoiceDraftingService {
         // The issue route refuses the note's creator (TR-Q12f); the page says so before the click.
         return {
           ...detail,
-          can: invoiceCan(principal, scope, row),
+          can: {
+            ...invoiceCan(principal, scope, row),
+            editDueDate: editDueDateCan(principal, scope, row),
+          },
           ...(createdThisNote(row, principal.userId) ? { issueBlockedBySod: true } : {}),
         };
       },
@@ -451,6 +465,65 @@ export class InvoiceDraftingService {
           status: 200,
           response: await this.discardInTx(tx, scope, principal, id, body, now),
         }),
+      );
+      return done.response;
+    });
+  }
+
+  /**
+   * A new due date on a draft or returned invoice (Kuu, leftovers Q3): the way out after "back to draft" on an approved
+   * invoice whose due date passed. 200 with the InvoiceDetail. 404 outside the caller's read, 403 without
+   * `invoice.draft` on the drafter, 409 for a kind whose due date is set at issue, a status that is not editable or a
+   * stale `expectedVersion`, 422 DUE_DATE_BEFORE_ISSUE for a date before today: the issue step's rule and wording, so
+   * a date that issue would refuse is refused here.
+   */
+  async editDueDate(
+    id: string,
+    body: EditInvoiceDueDateBody,
+    idempotencyKey: string,
+  ): Promise<InvoiceDetail> {
+    const { scope, actor, principal } = this.caller.current();
+    assertStaff(principal);
+    const today = kathmanduDay(this.clock());
+    return withTx(this.db, scope, actor, async (tx) => {
+      // Read through the list's scope (404 outside it), then `invoice.draft` on the stored drafter (403), as discard.
+      const [owned] = await tx
+        .select({ createdBy: invoices.createdBy })
+        .from(invoices)
+        .where(and(scopeWhereFor(principal, invoices, 'invoice.read'), eq(invoices.id, id)))
+        .limit(1);
+      if (owned === undefined) throw invoiceNotFound();
+      this.authz.assert('invoice.draft', { ...scope, ownerUserId: owned.createdBy });
+      const done = await withIdempotency(
+        tx,
+        { command: 'invoice.edit_due_date', key: idempotencyKey, body: { id, ...body } },
+        async () => {
+          // The invoice alone: no order or schedule line is touched, so no other lock is needed.
+          const [invoice] = await tx
+            .select()
+            .from(invoices)
+            .where(scoped(scope).where(invoices, eq(invoices.id, id)))
+            .for('update');
+          if (invoice === undefined) throw invoiceNotFound();
+          const refusal = dueDateEditRefusal(principal, scope, invoice);
+          if (refusal?.status === 403) throw forbidden();
+          if (refusal !== null) throw conflict(refusal.reason);
+          if (invoice.version !== body.expectedVersion) {
+            throw conflict('This invoice was changed by someone else; reload it and try again');
+          }
+          if (body.dueDate < today) {
+            throw dueDateBeforeIssue({ dueDate: body.dueDate, issueDate: today });
+          }
+          await updateVersioned(tx, invoices, id, body.expectedVersion, { dueDate: body.dueDate });
+          await this.audit.record(tx, {
+            action: 'invoice.due_date_changed',
+            entityType: AUDIT_ENTITY,
+            entityId: id,
+            before: { dueDate: invoice.dueDate, version: invoice.version },
+            after: { dueDate: body.dueDate, version: invoice.version + 1 },
+          });
+          return { status: 200, response: await this.loadDetail(tx, scope, id) };
+        },
       );
       return done.response;
     });

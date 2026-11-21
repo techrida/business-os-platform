@@ -18,7 +18,7 @@ import { and, asc, eq, gt, inArray, sql } from 'drizzle-orm';
 import { AuthzService } from '../../platform/authz/authz.service';
 import { DB, type Db, type DbTransaction } from '../../platform/db/db.module';
 import { withTx, type Actor, type TxScope, READ_ONLY } from '../../platform/db/tx';
-import { agingReport, agingRowKey, kathmanduDay, settlementRow } from './receivables.rules';
+import { type AgingPromise, agingReport, kathmanduDay, settlementRow } from './receivables.rules';
 
 /** Injection token for a test clock; production falls back to the system time. */
 export const RECEIVABLES_CLOCK = Symbol('RECEIVABLES_CLOCK');
@@ -165,7 +165,7 @@ export class ReceivablesService {
             dueDate: r.dueDate ?? r.documentDate ?? this.today(),
           })),
           this.today(),
-          await this.missedPromises(tx, scope),
+          await this.promisesOnOpenInvoices(tx, scope),
         );
       },
       READ_ONLY,
@@ -222,16 +222,19 @@ export class ReceivablesService {
   // -------------------------------------------------------------------------------------- internals
 
   /**
-   * F1-Q33: per customer and currency, the latest promised day of a missed promise to pay whose invoice still has an
-   * open amount. Paying the invoice (or crediting it to zero) clears the flag on the next read: nothing is stored.
+   * F1-Q33: the open and missed promises to pay on invoices that still have an open amount, in one read for the whole
+   * report (no per-row query). Paying the invoice (or crediting it to zero) drops its promises from the next read:
+   * nothing is stored. The status list is explicit so a replaced (or any later) status never shows here.
    */
-  private async missedPromises(tx: DbTransaction, scope: TxScope): Promise<Map<string, string>> {
-    const latest = sql<string>`max(${paymentPromises.promisedDate})::text`;
+  private async promisesOnOpenInvoices(tx: DbTransaction, scope: TxScope): Promise<AgingPromise[]> {
     const rows = await tx
       .select({
         customerId: invoices.customerPartyId,
         currency: invoices.currency,
-        promisedDate: latest,
+        status: paymentPromises.status,
+        promisedDate: paymentPromises.promisedDate,
+        invoiceId: invoices.id,
+        invoiceNumber: invoices.number,
       })
       .from(paymentPromises)
       .innerJoin(
@@ -257,17 +260,24 @@ export class ReceivablesService {
         and(
           eq(paymentPromises.tenantId, scope.tenantId),
           eq(paymentPromises.organizationId, scope.organizationId),
-          eq(paymentPromises.status, 'missed'),
+          inArray(paymentPromises.status, ['open', 'missed']),
           gt(openItemBalances.openAmount, '0'),
         ),
-      )
-      .groupBy(invoices.customerPartyId, invoices.currency);
-    return new Map(
-      rows.flatMap((r) =>
-        r.customerId === null
-          ? []
-          : [[agingRowKey(r.customerId, r.currency), r.promisedDate] as const],
-      ),
+      );
+    // An issued invoice always has a customer and a number; a row without either has nothing to link to.
+    return rows.flatMap((r) =>
+      r.customerId === null || r.invoiceNumber === null
+        ? []
+        : [
+            {
+              customerId: r.customerId,
+              currency: r.currency,
+              status: r.status === 'open' ? ('open' as const) : ('missed' as const),
+              promisedDate: r.promisedDate,
+              invoiceId: r.invoiceId,
+              invoiceNumber: r.invoiceNumber,
+            },
+          ],
     );
   }
 

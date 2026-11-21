@@ -317,7 +317,8 @@ export class InvoiceApprovalService {
    * Takes an approved invoice back to draft (its due date passed before issue, say: issue answers 422
    * DUE_DATE_BEFORE_ISSUE and nothing else moves it). Returns the InvoiceDetail (status draft). 404 outside the entity,
    * 403 without `invoice.issue` on the drafter (the people who issue it are the ones it is stuck for), 409 for any
-   * other status or a stale `expectedVersion`. The approval no longer counts: it must be submitted and approved again.
+   * other status or a stale `expectedVersion`. The approval no longer counts; while it is a draft a manual tax invoice's
+   * due date can be changed (InvoiceDraftingService.editDueDate), then it must be submitted for approval again.
    */
   async reopen(
     id: string,
@@ -363,10 +364,10 @@ export class InvoiceApprovalService {
   }
 
   /**
-   * Called by any path that changes a submitted or approved invoice (there is no edit route yet): the approval no
-   * longer covers the content. A submitted invoice's open request is cancelled and the invoice is returned; an
-   * approved invoice goes back to draft (its request is already decided, and the engine cancels open requests only),
-   * so it must be submitted and approved again before issue. Draft and returned invoices are left as they are.
+   * Called by any path that changes a submitted or approved invoice: the approval no longer covers the content. A
+   * submitted invoice's open request is cancelled and the invoice is returned; an approved invoice goes back to draft
+   * (its request is already decided, and the engine cancels open requests only). Either way it must be submitted for
+   * approval again, which opens a new request, before issue. Draft and returned invoices are left as they are.
    */
   async reopenForEdit(
     tx: DbTransaction,

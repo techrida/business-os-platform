@@ -349,6 +349,64 @@ export const salesOrderEvidence = appSchema.table(
 );
 
 /**
+ * Migration 0155: a manual release of an order's delivery hold (F1-Q32). One per order and final (a SQL-only guard
+ * trigger refuses UPDATE and DELETE). `orderAmountNpr` and `thresholdNpr` snapshot the amount and the
+ * `sales.delivery_hold.management_npr` setting the release rule was decided with.
+ */
+export const salesOrderDeliveryReleases = appSchema.table(
+  'sales_order_delivery_releases',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    tenantId: uuid('tenant_id')
+      .notNull()
+      .references(() => tenants.id),
+    organizationId: uuid('organization_id').notNull(),
+    salesOrderId: uuid('sales_order_id').notNull(),
+    releasedByUserId: uuid('released_by_user_id').notNull(),
+    reason: text('reason').notNull(),
+    orderAmountNpr: money('order_amount_npr').notNull(),
+    thresholdNpr: money('threshold_npr').notNull(),
+    releasedAt: timestamp('released_at', { withTimezone: true }).notNull().defaultNow(),
+    createdAt: createdAt(),
+  },
+  (t) => [
+    unique('sales_order_delivery_releases_tenant_org_id_unique').on(
+      t.tenantId,
+      t.organizationId,
+      t.id,
+    ),
+    unique('sales_order_delivery_releases_order_unique').on(
+      t.tenantId,
+      t.organizationId,
+      t.salesOrderId,
+    ),
+    foreignKey({
+      name: 'sales_order_delivery_releases_tenant_org_fk',
+      columns: [t.tenantId, t.organizationId],
+      foreignColumns: [organizations.tenantId, organizations.id],
+    }),
+    foreignKey({
+      name: 'sales_order_delivery_releases_sales_order_fk',
+      columns: [t.tenantId, t.organizationId, t.salesOrderId],
+      foreignColumns: [salesOrders.tenantId, salesOrders.organizationId, salesOrders.id],
+    }),
+    foreignKey({
+      name: 'sales_order_delivery_releases_released_by_fk',
+      columns: [t.tenantId, t.releasedByUserId],
+      foreignColumns: [users.tenantId, users.id],
+    }),
+    check(
+      'sales_order_delivery_releases_reason_check',
+      sql`btrim(${t.reason}) <> '' AND length(${t.reason}) <= 1000`,
+    ),
+    check(
+      'sales_order_delivery_releases_amount_check',
+      sql`${t.orderAmountNpr} > 0 AND ${t.thresholdNpr} >= 0`,
+    ),
+  ],
+);
+
+/**
  * One VAT-inclusive slice of an order's total. At commit, the live (not cancelled) lines of an order sum to its
  * total (SQL-only deferred trigger). `invoiceId` is set exactly while drafted or invoiced.
  */
