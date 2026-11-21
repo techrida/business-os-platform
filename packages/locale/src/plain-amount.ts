@@ -12,8 +12,11 @@ const SOUTH_ASIAN = /^[1-9]\d?(,\d{2})*,\d{3}$/;
  * "1,5" and "10,50" are decimal commas, and reading them as 15 and 1050 would be a silent 10 to 100 times error.
  */
 export function plainAmount(raw: string): string {
-  const text = raw.replace(/\s/g, '');
-  if (!text.includes(',')) return text;
+  const trimmed = raw.trim();
+  if (!trimmed.includes(',')) return trimmed.replace(/\s/g, '');
+  // Grouping is typed solid: a space inside a comma-grouped number ("10,50 0") is not grouping, so it stays and is refused.
+  const text = trimmed;
+  if (/\s/.test(text)) return text;
   const dot = text.indexOf('.');
   const whole = dot === -1 ? text : text.slice(0, dot);
   const rest = dot === -1 ? '' : text.slice(dot);
