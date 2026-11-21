@@ -11,6 +11,7 @@ import {
   getVerificationCase,
   listCustomerIndustries,
   listCustomerOwners,
+  listCustomerPaymentTerms,
   listCustomers,
   listVerificationCasePage,
   listVerificationCases,
@@ -178,6 +179,12 @@ describe('customers', () => {
     );
     const err = await listCustomerOwners(session).catch((e: unknown) => e);
     expect((err as ApiError).status).toBe(502);
+  });
+
+  it('reads the payment terms from a customers route, not the quotation one', async () => {
+    fetchMock.mockResolvedValue(reply([{ id: ID_B, label: 'Net 30 days' }]));
+    expect(await listCustomerPaymentTerms(session)).toEqual([{ id: ID_B, label: 'Net 30 days' }]);
+    expect(lastCall().url).toBe('http://api:3001/v1/customers/payment-terms');
   });
 
   it('patches the terms with one field and the version, and keeps null apart from absent', async () => {
