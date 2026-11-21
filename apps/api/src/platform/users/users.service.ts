@@ -14,13 +14,23 @@ import {
   UnprocessableEntityException,
 } from '@nestjs/common';
 
+import { lockAccessRevision } from '../../modules/access-settings/access-revision';
 import { UserDirectory } from '../authz/user-directory';
 import { AuditService } from '../audit/audit.service';
 import { DB, type Db, type DbTransaction } from '../db/db.module';
-import { type Actor, type TxScope, withTx } from '../db/tx';
-import { type InvitedUser, type ResolvedUser, UserMirror } from './user-mirror';
-import { type ListedUsers, UsersStore } from './users.store';
-import { ZitadelAdminClient, type ZitadelUser } from './zitadel-admin.client';
+import { type Actor, READ_ONLY, type TxOptions, type TxScope, withTx } from '../db/tx';
+import { type InvitedUser, type InviteInput, type ResolvedUser, UserMirror } from './user-mirror';
+import { type IdpOrgRow, type ListedUsers, UsersStore } from './users.store';
+import { ZitadelAdminClient, ZitadelHttpError, type ZitadelUser } from './zitadel-admin.client';
+
+export interface InvitePlacement {
+  departmentId: string | null;
+  level: AccessLevel;
+}
+
+// Takes the access-revision lock and/or user row lock before the first audited write, matching
+// DepartmentsAdminService, AccessSettingsService, UserMirror.apply and UserLocks.whileLockHeld.
+const AFTER_ACCESS_LOCK: TxOptions = { audit: 'lazy' };
 
 @Injectable()
 export class UsersService extends UserDirectory {
@@ -132,47 +142,71 @@ export class UsersService extends UserDirectory {
   }
 
   /**
-   * Invites a user. If ZITADEL already holds that email as a still-open invite (an earlier attempt
-   * created the user, then failed before the grant or the mirror write), this finishes the missing
-   * steps instead of failing with "already exists". An email that belongs to a user who finished
-   * sign-up stays a 409: an invite must never re-grant roles to a live account.
+   * Invites a user (and optionally places them in a department at a level, F1-Q50) with ZITADEL called outside any
+   * transaction:
+   *   (A) short READ_ONLY tx (when granting access): lock access-revision, check live grant, validate placement.
+   *   (B) ZITADEL createHuman + setGrants + sendInviteCode (or finish an earlier open invite on 409).
+   *   (C) short tx: re-lock access-revision, re-check live grant and placement, write mirror + membership + roles.
+   * If (C) fails, takes back the grants and deletes the identity when this invite created it (never throwing), then
+   * rethrows the original error.
    */
   async invite(
-    tx: DbTransaction,
-    b: { email: string; givenName: string; familyName: string; roles: RoleKey[] },
+    scope: TxScope,
+    actor: Actor,
+    b: InviteInput,
+    placement: InvitePlacement | null = null,
+    assertAccess?: (tx: DbTransaction) => Promise<void>,
   ): Promise<InvitedUser> {
-    try {
-      return await this.mirror.invite(tx, b);
-    } catch (error) {
-      if (!(error instanceof ConflictException)) throw error;
-      return this.finishInvite(tx, b, error);
-    }
-  }
+    const assignsAccess = b.roles.length > 0 || placement !== null;
+    const org = assignsAccess
+      ? await withTx(
+          this.db,
+          scope,
+          actor,
+          async (tx) => {
+            await lockAccessRevision(tx, scope.tenantId);
+            if (assertAccess) await assertAccess(tx);
+            const found = await this.store.staffIdpOrgOf(scope.tenantId, tx);
+            if (!found) throw new NotFoundException('Organization not found');
+            if (placement !== null) await this.assertPlacement(tx, scope, placement);
+            return found;
+          },
+          READ_ONLY,
+        )
+      : await this.staffOrgOf(scope.tenantId);
 
-  /**
-   * F1-Q50: puts a just-invited person in a department at a level, on the membership the invite bootstrapped in the
-   * tenant's default entity, checking the placement again first (assertPlacement).
-   *
-   * The caller checked the placement before the invite wrote anything to ZITADEL, holding the tenant's access-revision
-   * lock, which every department write takes too (DepartmentsService.lockForDepartmentWrite), so this check cannot
-   * normally fail. If it does, or the write fails, ZITADEL has already been written: this takes the person's roles
-   * back there and deletes the identity when this invite created it (an identity that existed before, an earlier open
-   * invite, is kept with no roles), then rethrows, and the transaction undoes the mirror rows. A ZITADEL failure while
-   * taking things back is logged; the invite mail already sent cannot be recalled, but a deleted identity's link no
-   * longer works.
-   */
-  async placeInvitee(
-    tx: DbTransaction,
-    invited: InvitedUser,
-    placement: { departmentId: string | null; level: AccessLevel },
-  ): Promise<void> {
+    const prepared = await this.prepareInviteInZitadel(org, b);
+
     try {
-      const entityId = await this.assertPlacement(tx, placement);
-      const scope = await this.store.txScope(tx);
-      await this.store.placeMembership(tx, scope.tenantId, entityId, invited.userId, placement);
-      await this.store.bumpAuthzVersion(tx, scope);
+      const userId = await withTx(
+        this.db,
+        scope,
+        actor,
+        async (tx) => {
+          if (assignsAccess) {
+            await lockAccessRevision(tx, scope.tenantId);
+            if (assertAccess) await assertAccess(tx);
+          }
+          const entityId =
+            placement !== null ? await this.assertPlacement(tx, scope, placement) : null;
+          if (!prepared.created) {
+            const existing = await this.store.findByZitadelId(tx, prepared.zitadelUserId, true);
+            if (existing && existing.status !== 'invited') {
+              throw new ConflictException('A user with this email already exists');
+            }
+          }
+          const id = await this.mirror.writeInvitedUser(tx, org, scope, prepared.zitadelUserId, b);
+          if (placement !== null && entityId !== null) {
+            await this.store.placeMembership(tx, scope.tenantId, entityId, id, placement);
+            await this.store.bumpAuthzVersion(tx, scope);
+          }
+          return id;
+        },
+        AFTER_ACCESS_LOCK,
+      );
+      return { userId, zitadelUserId: prepared.zitadelUserId, created: prepared.created };
     } catch (error) {
-      await this.takeBackInvite(tx, invited);
+      await this.mirror.takeBackInvite(org, prepared);
       throw error;
     }
   }
@@ -180,11 +214,12 @@ export class UsersService extends UserDirectory {
   /**
    * Whether `placement` fits a new person (F1-Q50), returning the default entity they are placed in. A head needs a
    * department; the department must be active, in the default entity, and without a head (changing a head goes
-   * through Departments, which shows what the change does). The invite calls it before ZITADEL is written.
+   * through Departments, which shows what the change does). The invite calls it in (A) and again in (C).
    */
   async assertPlacement(
     tx: DbTransaction,
-    placement: { departmentId: string | null; level: AccessLevel },
+    scope: TxScope,
+    placement: InvitePlacement,
   ): Promise<string> {
     if (placement.level === 'head' && placement.departmentId === null) {
       throw new BadRequestException({
@@ -193,8 +228,7 @@ export class UsersService extends UserDirectory {
         details: { departmentId: 'Choose a department for a department head.' },
       });
     }
-    const scope = await this.store.txScope(tx);
-    const entityId = await this.store.defaultEntityOf(scope.tenantId);
+    const entityId = await this.store.defaultEntityOf(scope.tenantId, tx);
     if (!entityId) throw new NotFoundException('Organization not found');
     if (placement.departmentId !== null) {
       const department = await this.store.departmentForPlacement(
@@ -226,65 +260,57 @@ export class UsersService extends UserDirectory {
     return entityId;
   }
 
-  /** Undoes what an invite wrote to ZITADEL (see placeInvitee). Never throws: the caller rethrows its own error. */
-  private async takeBackInvite(tx: DbTransaction, invited: InvitedUser): Promise<void> {
-    const scope = await this.store.txScope(tx);
-    const org = await this.store.staffIdpOrgOf(scope.tenantId);
-    const kind = (error: unknown) => (error instanceof Error ? error.name : 'error');
-    if (!org) return;
-    try {
-      await this.zitadel.setGrants(invited.zitadelUserId, org.zitadelOrgId, []);
-    } catch (error) {
-      this.logger.error(
-        `users.invite: could not take back the roles of ${invited.zitadelUserId} in ZITADEL (kind=${kind(error)})`,
-      );
-    }
-    if (!invited.created) return;
-    try {
-      await this.zitadel.deleteUser(invited.zitadelUserId);
-    } catch (error) {
-      this.logger.error(
-        `users.invite: could not delete the identity ${invited.zitadelUserId} the failed invite created (kind=${kind(error)})`,
-      );
-    }
+  setRoles(
+    scope: TxScope,
+    actor: Actor,
+    userId: string,
+    roles: RoleKey[],
+    assertAccess?: (tx: DbTransaction) => Promise<void>,
+  ): Promise<void> {
+    return this.mirror.setRoles(scope, actor, userId, roles, assertAccess);
   }
 
-  setRoles(tx: DbTransaction, userId: string, roles: RoleKey[]): Promise<void> {
-    return this.mirror.setRoles(tx, userId, roles);
-  }
-
-  private async finishInvite(
-    tx: DbTransaction,
-    b: { email: string; givenName: string; familyName: string; roles: RoleKey[] },
-    conflict: ConflictException,
-  ): Promise<InvitedUser> {
-    const scope = await this.store.txScope(tx);
-    const org = await this.store.staffIdpOrgOf(scope.tenantId);
+  private async staffOrgOf(tenantId: string): Promise<IdpOrgRow> {
+    const org = await this.store.staffIdpOrgOf(tenantId);
     if (!org) throw new NotFoundException('Organization not found');
+    return org;
+  }
 
+  /**
+   * Creates the ZITADEL user, sets grants and sends the invite code with no transaction open. On 409 from
+   * createHuman, walks the org for an open invite (an earlier half-finished attempt) and finishes its missing steps;
+   * an email that belongs to a user who finished sign-up stays a 409.
+   */
+  private async prepareInviteInZitadel(
+    org: IdpOrgRow,
+    b: InviteInput,
+  ): Promise<{ zitadelUserId: string; created: boolean; previousGrants?: RoleKey[] }> {
+    let zitadelUserId: string | null = null;
+    try {
+      zitadelUserId = await this.zitadel.createHuman(org.zitadelOrgId, b);
+    } catch (error) {
+      if (!(error instanceof ZitadelHttpError && error.status === 409)) throw error;
+    }
+    if (zitadelUserId !== null) {
+      await this.zitadel.setGrants(zitadelUserId, org.zitadelOrgId, b.roles);
+      await this.zitadel.sendInviteCode(zitadelUserId);
+      return { zitadelUserId, created: true };
+    }
+
+    const conflict = new ConflictException('A user with this email already exists');
     const open = await this.findOpenInvite(org.zitadelOrgId, b.email);
     if (!open) throw conflict;
-    const row = await this.store.findByZitadelId(tx, open.id);
+    const row = await this.store.findByZitadelId(this.db, open.id);
     if (row && row.status !== 'invited') throw conflict;
 
-    // The same steps as a first invite, in the same order. Each one is safe to repeat: setGrants
-    // replaces the whole set, insertUser returns the row that exists, the bootstrap membership is
-    // added only when the user has none, replaceRoles diffs.
+    // Read the existing grants before replacing them so takeBackInvite can restore them instead of wiping grants if
+    // phase (C) fails while the user is still invited.
+    const previousGrants = await this.zitadel.listGrants(open.id, org.zitadelOrgId);
+    // The same steps as a first invite, in the same order. Each one is safe to repeat: setGrants replaces the whole
+    // set, and sendInviteCode resends the invite link.
     await this.zitadel.setGrants(open.id, org.zitadelOrgId, b.roles);
     await this.zitadel.sendInviteCode(open.id);
-    const userId = await this.store.insertUser(tx, scope, {
-      zitadelUserId: open.id,
-      idpOrgId: org.idpOrgId,
-      email: b.email,
-      displayName: `${b.givenName} ${b.familyName}`,
-      status: 'invited',
-    });
-    await this.mirror.bootstrap(tx, org, scope, userId);
-    if (b.roles.length > 0) {
-      await this.store.replaceRoles(tx, scope, userId, b.roles);
-      await this.store.bumpAuthzVersion(tx, scope);
-    }
-    return { userId, zitadelUserId: open.id, created: false };
+    return { zitadelUserId: open.id, created: false, previousGrants };
   }
 
   /** ZITADEL has no lookup by email in our client, so walk the org's pages for an open invite. */
