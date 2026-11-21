@@ -128,17 +128,21 @@ function subjectLink(a: ActivityDto): { href: string; label: string } | null {
  */
 export function ActivityList({
   items,
+  record,
   showSubjectLink = false,
   empty,
 }: {
   items: readonly ActivityDto[];
+  /** The record this History belongs to; the empty state names it. */
+  record: 'lead' | 'opportunity';
   showSubjectLink?: boolean;
+  /** How to add one, or what will show here for a viewer who cannot. */
   empty: ReactNode;
 }) {
   const rows = historyItems(items);
   if (rows.length === 0) {
     return (
-      <EmptyState title="No activity yet" headingLevel={3} icon="inbox">
+      <EmptyState title={`No activities on this ${record} yet`} headingLevel={3} icon="inbox">
         {empty}
       </EmptyState>
     );
