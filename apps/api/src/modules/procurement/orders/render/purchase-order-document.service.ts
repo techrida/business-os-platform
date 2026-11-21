@@ -9,7 +9,8 @@
 // `not_found`. Once the version is there, the refusals are told apart so the screen shows one "Preparing PDF" state
 // and never a "not found" for a PDF that is on its way (TR-Q4): no PDF yet, or a file still being stored, is a 409
 // `purchase_order_pdf_not_ready` (the render sweeper is still trying, see render-retry.ts); a render that was given up
-// is a 424 `purchase_order_pdf_failed` (staff may Retry); a file the scan refused is a 404
+// is a 424 `purchase_order_pdf_failed` (staff may Retry); a file the virus scan refused is a 404
+// `purchase_order_pdf_scan_refused`, and one that went away between the read and the link a 404
 // `purchase_order_pdf_unavailable`.
 // Staff only: a vendor reads through the vendor portal API, which asks the same documents module with its own checks.
 // The download is open to whoever may read the order (F1-Q52, po-read-access.ts: issuers, and read-only the bill and
@@ -31,6 +32,7 @@ import {
   Inject,
   Injectable,
   NotFoundException,
+  Optional,
 } from '@nestjs/common';
 import { and, asc, desc, eq, isNull } from 'drizzle-orm';
 
@@ -47,6 +49,7 @@ import { generatedPdfState } from '../../../invoices/render/render-state';
 import { assertHoldsPoRead, mayReadPo, requestFactsColumns, requestOf } from '../po-read-access';
 import { PO_AUDIT_ENTITY } from '../purchase-order.rules';
 import { PurchaseOrdersCaller } from '../purchase-orders.caller';
+import { PurchaseOrderRenderNudge } from './purchase-order-render.nudge';
 import { PO_VERSION_OWNER_TYPE } from './purchase-order-version-owner.policy';
 
 /** What the retry answers: the version is back in the render queue. */
@@ -72,6 +75,12 @@ const unavailable = () =>
     code: 'purchase_order_pdf_unavailable',
     message: 'This PDF is not available',
   });
+/** The virus scan refused the stored file (infected, or the scan failed): it is never served. */
+const scanRefused = () =>
+  new NotFoundException({
+    code: 'purchase_order_pdf_scan_refused',
+    message: 'The virus scan refused this PDF, so it cannot be served',
+  });
 const retryNotNeeded = () =>
   new ConflictException({
     code: 'purchase_order_pdf_retry_not_needed',
@@ -87,7 +96,7 @@ type LinkState =
   | { kind: 'clean'; versionId: string; documentId: string }
   | { kind: 'preparing' }
   | { kind: 'failed' }
-  | { kind: 'unavailable' };
+  | { kind: 'scan_refused' };
 
 const ownerOf = (scope: TxScope, versionId: string): RenderFailureOwner => ({
   tenantId: scope.tenantId,
@@ -103,13 +112,16 @@ export class PurchaseOrderDocumentService {
     private readonly documents: DocumentsService,
     private readonly caller: PurchaseOrdersCaller,
     private readonly audit: AuditService,
+    // Optional so a hand-built service (tests) keeps its argument list; without it a Retry waits for the sweep.
+    @Optional() private readonly renderNudge?: PurchaseOrderRenderNudge,
   ) {}
 
   /**
    * A signed link to the clean PDF of version `version` of one purchase order: the oldest live document that scanned
    * clean. 403 for a portal caller; 404 `not_found` for a version outside the caller's entity or one that does not
    * exist; then 409 `purchase_order_pdf_not_ready` while the PDF is being prepared, 424 `purchase_order_pdf_failed`
-   * once its render was given up, 404 `purchase_order_pdf_unavailable` when the scan refused it.
+   * once its render was given up, 404 `purchase_order_pdf_scan_refused` when the virus scan refused it, 404
+   * `purchase_order_pdf_unavailable` when it went away before the link was issued.
    */
   async link(purchaseOrderId: string, version: number): Promise<SignedLinkDto> {
     const { scope, actor, principal } = this.staffCaller();
@@ -152,15 +164,14 @@ export class PurchaseOrderDocumentService {
           .orderBy(asc(documents.createdAt), asc(documents.id), desc(documentVersions.version));
         const pdf = generatedPdfState(uploads, await renderGivenUp(tx, ownerOf(scope, versionId)));
         if (pdf.kind === 'clean') return { kind: 'clean', versionId, documentId: pdf.documentId };
-        // A file the scan refused will never be offered: there is nothing to serve.
-        return pdf.kind === 'scan_refused' ? { kind: 'unavailable' } : pdf;
+        return pdf;
       },
       READ_ONLY,
     );
     if (state.kind === 'hidden') throw notFound();
     if (state.kind === 'preparing') throw notReady();
     if (state.kind === 'failed') throw renderFailed();
-    if (state.kind === 'unavailable') throw unavailable();
+    if (state.kind === 'scan_refused') throw scanRefused();
     try {
       return await this.documents.issueLinkForOwner(
         scope,
@@ -197,6 +208,8 @@ export class PurchaseOrderDocumentService {
         after: { versionId, state: 'queued' },
       });
     });
+    // After the commit: render now instead of on the next one-minute sweep. Never throws.
+    await this.renderNudge?.nudge(scope, purchaseOrderId, version);
     return { state: 'queued' };
   }
 
